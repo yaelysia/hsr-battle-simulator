@@ -107,7 +107,10 @@ from hsr_engine.enemy_template_compiler import compile_enemy_model_pack
 from hsr_engine.enemy_ability_graph_lowerer import write_monster_ability_graph_lowering
 from hsr_engine.character_mechanism_auditor import write_character_mechanism_audit
 from hsr_engine.settlement import (
+    ActionRequest,
     SettlementCollector,
+    SourceRef,
+    StateChange,
     ENERGY_SOURCE_ACTION,
     ENERGY_SOURCE_HIT_TAKEN,
     ENERGY_SOURCE_KILL,
@@ -804,6 +807,224 @@ class BattleSimulator:
             if method is not None:
                 method(**kwargs)
 
+    def kernel_source_from_context(self, ctx: Optional[dict[str, Any]], reason: str = "") -> SourceRef:
+        ctx = ctx or {}
+        action = ctx.get("action") if isinstance(ctx.get("action"), dict) else {}
+        actor_id = str(ctx.get("actor_id") or action.get("actor_id") or "")
+        action_id = str(action.get("id") or action.get("action_id") or reason or "")
+        source_type = "effect" if str(reason).startswith("effect:") else "action"
+        origin_path = ""
+        stl = self._settlement(ctx)
+        if stl is not None:
+            origin_path = stl.transition.request.source.origin_path
+        return SourceRef(source_type=source_type, source_id=action_id, owner_id=actor_id, origin_path=origin_path)
+
+    def record_committed_state_change(self, ctx: Optional[dict[str, Any]], change: StateChange) -> None:
+        stl = self._settlement(ctx or {})
+        if stl is not None:
+            stl.record_state_change(change)
+
+    def commit_state_change(self, change: StateChange, ctx: Optional[dict[str, Any]] = None) -> StateChange:
+        """Apply a normalized state change to BattleState and attach it to the current transition."""
+        if change.scope == "global" and change.field_path == "global.skill_points":
+            self.state.skill_points = int(change.new_value)
+        elif change.scope == "global" and change.field_path == "global.skill_point_cap":
+            self.state.skill_point_cap = int(change.new_value)
+        elif change.scope == "global" and change.field_path.startswith("global.flags."):
+            key = change.field_path[len("global.flags."):]
+            self.state.global_flags[key] = deepcopy(change.new_value)
+        elif change.scope == "unit" and change.field_path == "unit.energy":
+            self.state.unit(change.subject_id).energy = float(change.new_value)
+        elif change.scope == "unit" and change.field_path == "unit.hp":
+            self.state.unit(change.subject_id).hp = float(change.new_value)
+        elif change.scope == "unit" and change.field_path == "unit.shield":
+            self.state.unit(change.subject_id).shield = float(change.new_value)
+        elif change.scope == "unit" and change.field_path == "unit.max_hp":
+            self.state.unit(change.subject_id).max_hp = float(change.new_value)
+        elif change.scope == "unit" and change.field_path == "unit.hp_bars_remaining":
+            self.state.unit(change.subject_id).hp_bars_remaining = int(change.new_value)
+        elif change.scope == "unit" and change.field_path == "unit.alive":
+            self.state.unit(change.subject_id).alive = bool(change.new_value)
+        elif change.scope == "unit" and change.field_path.startswith("unit.flags."):
+            key = change.field_path[len("unit.flags."):]
+            self.state.unit(change.subject_id).flags[key] = deepcopy(change.new_value)
+        else:
+            raise SimulatorError(f"Unsupported StateChange commit path: {change.scope}:{change.field_path}")
+        self.record_committed_state_change(ctx, change)
+        return change
+
+    def commit_skill_points(self, new_value: float, *, reason: str, ctx: Optional[dict[str, Any]] = None, payload: Optional[dict[str, Any]] = None) -> StateChange:
+        old = self.state.skill_points
+        new_sp = int(clamp(coerce_float(new_value, old), 0, self.state.skill_point_cap))
+        change = StateChange(
+            change_type="resource",
+            scope="global",
+            subject_id="team",
+            field_path="global.skill_points",
+            old_value=old,
+            new_value=new_sp,
+            delta=new_sp - old,
+            source=self.kernel_source_from_context(ctx, reason),
+            reason=reason,
+            payload=payload or {},
+        )
+        return self.commit_state_change(change, ctx)
+
+    def commit_unit_alive(self, unit: UnitState, alive: bool, *, reason: str, ctx: Optional[dict[str, Any]] = None, payload: Optional[dict[str, Any]] = None) -> StateChange:
+        old = unit.alive
+        new_alive = bool(alive)
+        change = StateChange(
+            change_type="mechanic",
+            scope="unit",
+            subject_id=unit.id,
+            field_path="unit.alive",
+            old_value=old,
+            new_value=new_alive,
+            source=self.kernel_source_from_context(ctx, reason),
+            reason=reason,
+            payload=payload or {},
+        )
+        return self.commit_state_change(change, ctx)
+
+    def commit_unit_max_hp(self, unit: UnitState, new_value: float, *, reason: str, ctx: Optional[dict[str, Any]] = None, payload: Optional[dict[str, Any]] = None) -> StateChange:
+        old = unit.max_hp
+        new_max_hp = max(1.0, coerce_float(new_value, old))
+        change = StateChange(
+            change_type="resource",
+            scope="unit",
+            subject_id=unit.id,
+            field_path="unit.max_hp",
+            old_value=old,
+            new_value=new_max_hp,
+            delta=new_max_hp - old,
+            source=self.kernel_source_from_context(ctx, reason),
+            reason=reason,
+            payload=payload or {},
+        )
+        return self.commit_state_change(change, ctx)
+
+    def commit_unit_hp_bars_remaining(self, unit: UnitState, new_value: int, *, reason: str, ctx: Optional[dict[str, Any]] = None, payload: Optional[dict[str, Any]] = None) -> StateChange:
+        old = unit.hp_bars_remaining
+        total = max(0, int(unit.hp_bars_total or old or 0))
+        new_bars = coerce_int(new_value, old)
+        if total > 0:
+            new_bars = max(0, min(total, new_bars))
+        else:
+            new_bars = max(0, new_bars)
+        change = StateChange(
+            change_type="mechanic",
+            scope="unit",
+            subject_id=unit.id,
+            field_path="unit.hp_bars_remaining",
+            old_value=old,
+            new_value=new_bars,
+            delta=new_bars - old,
+            source=self.kernel_source_from_context(ctx, reason),
+            reason=reason,
+            payload=payload or {},
+        )
+        return self.commit_state_change(change, ctx)
+
+    def commit_unit_flag(self, unit: UnitState, key: str, value: Any, *, reason: str, ctx: Optional[dict[str, Any]] = None, payload: Optional[dict[str, Any]] = None) -> StateChange:
+        key = str(key)
+        old = deepcopy(unit.flags.get(key))
+        change = StateChange(
+            change_type="flag",
+            scope="unit",
+            subject_id=unit.id,
+            field_path=f"unit.flags.{key}",
+            old_value=old,
+            new_value=deepcopy(value),
+            source=self.kernel_source_from_context(ctx, reason),
+            reason=reason,
+            payload=payload or {},
+        )
+        return self.commit_state_change(change, ctx)
+
+    def commit_unit_hp(self, unit: UnitState, new_value: float, *, reason: str, ctx: Optional[dict[str, Any]] = None, payload: Optional[dict[str, Any]] = None) -> StateChange:
+        old = unit.hp
+        new_hp = clamp(coerce_float(new_value, old), 0.0, unit.max_hp)
+        change = StateChange(
+            change_type="resource",
+            scope="unit",
+            subject_id=unit.id,
+            field_path="unit.hp",
+            old_value=old,
+            new_value=new_hp,
+            delta=new_hp - old,
+            source=self.kernel_source_from_context(ctx, reason),
+            reason=reason,
+            payload=payload or {},
+        )
+        return self.commit_state_change(change, ctx)
+
+    def commit_unit_shield(self, unit: UnitState, new_value: float, *, reason: str, ctx: Optional[dict[str, Any]] = None, payload: Optional[dict[str, Any]] = None) -> StateChange:
+        old = unit.shield
+        new_shield = max(0.0, coerce_float(new_value, old))
+        change = StateChange(
+            change_type="resource",
+            scope="unit",
+            subject_id=unit.id,
+            field_path="unit.shield",
+            old_value=old,
+            new_value=new_shield,
+            delta=new_shield - old,
+            source=self.kernel_source_from_context(ctx, reason),
+            reason=reason,
+            payload=payload or {},
+        )
+        return self.commit_state_change(change, ctx)
+
+    def commit_unit_energy(self, unit: UnitState, new_value: float, *, reason: str, ctx: Optional[dict[str, Any]] = None, payload: Optional[dict[str, Any]] = None) -> StateChange:
+        old = unit.energy
+        new_energy = clamp(coerce_float(new_value, old), 0.0, unit.max_energy)
+        change = StateChange(
+            change_type="resource",
+            scope="unit",
+            subject_id=unit.id,
+            field_path="unit.energy",
+            old_value=old,
+            new_value=new_energy,
+            delta=new_energy - old,
+            source=self.kernel_source_from_context(ctx, reason),
+            reason=reason,
+            payload=payload or {},
+        )
+        return self.commit_state_change(change, ctx)
+
+    def commit_skill_point_cap(self, new_cap: float, *, reason: str, ctx: Optional[dict[str, Any]] = None, payload: Optional[dict[str, Any]] = None) -> StateChange:
+        old = self.state.skill_point_cap
+        cap = int(max(0, coerce_float(new_cap, old)))
+        change = StateChange(
+            change_type="resource",
+            scope="global",
+            subject_id="team",
+            field_path="global.skill_point_cap",
+            old_value=old,
+            new_value=cap,
+            delta=cap - old,
+            source=self.kernel_source_from_context(ctx, reason),
+            reason=reason,
+            payload=payload or {},
+        )
+        return self.commit_state_change(change, ctx)
+
+    def commit_global_flag(self, key: str, value: Any, *, reason: str, ctx: Optional[dict[str, Any]] = None, payload: Optional[dict[str, Any]] = None) -> StateChange:
+        key = str(key)
+        old = deepcopy(self.state.global_flags.get(key))
+        change = StateChange(
+            change_type="flag",
+            scope="global",
+            subject_id="global",
+            field_path=f"global.flags.{key}",
+            old_value=old,
+            new_value=deepcopy(value),
+            source=self.kernel_source_from_context(ctx, reason),
+            reason=reason,
+            payload=payload or {},
+        )
+        return self.commit_state_change(change, ctx)
+
     def snapshot(self) -> dict[str, Any]:
         """Return a compact debug snapshot for assertions and diagnostics."""
         return {
@@ -836,7 +1057,12 @@ class BattleSimulator:
         else:
             new_value = int(clamp(old + amount_f, 0, cap))
             applied = new_value - old
-        self.state.skill_points = new_value
+        self.commit_skill_points(
+            new_value,
+            reason=reason,
+            ctx=ctx,
+            payload={"requested_delta": amount_f, "applied": applied, "overflow": overflow},
+        )
         reserve_after = self.state.global_flags.get("sparkle_overflow_skill_points", 0.0)
         recorded = 0.0
         if overflow > EPS and isinstance(overflow_record, dict) and coerce_bool(overflow_record.get("enabled", True), default=True):
@@ -845,7 +1071,13 @@ class BattleSimulator:
             before_reserve = coerce_float(self.state.global_flags.get(reserve_key, 0.0), 0.0)
             reserve_after = min(max_recorded, before_reserve + overflow)
             recorded = max(0.0, reserve_after - before_reserve)
-            self.state.global_flags[reserve_key] = reserve_after
+            self.commit_global_flag(
+                reserve_key,
+                reserve_after,
+                reason=f"{reason}:overflow_reserve",
+                ctx=ctx,
+                payload={"old_reserve": before_reserve, "overflow": overflow, "max_recorded": max_recorded},
+            )
             self.state.log_event(
                 "resource",
                 f"Recorded {recorded:.3f} overflow skill point(s) into {reserve_key}",
@@ -858,7 +1090,7 @@ class BattleSimulator:
         )
         return {"old": old, "new": self.state.skill_points, "delta": amount_f, "applied": applied, "overflow": overflow, "overflow_recorded": recorded, "reserve_after": reserve_after}
 
-    def consume_skill_point_overflow_reserve_at_turn_end(self, actor: UnitState, turn_kind: str) -> None:
+    def consume_skill_point_overflow_reserve_at_turn_end(self, actor: UnitState, turn_kind: str, context: Optional[dict[str, Any]] = None) -> None:
         """Consume Sparkle stored overflow SP at allied regular-turn end."""
         if turn_kind != "regular" or actor.side != "ally":
             return
@@ -870,8 +1102,20 @@ class BattleSimulator:
         consume = min(reserve, need)
         old_sp = self.state.skill_points
         old_reserve = reserve
-        self.state.skill_points = int(clamp(self.state.skill_points + consume, 0, self.state.skill_point_cap))
-        self.state.global_flags[reserve_key] = max(0.0, reserve - consume)
+        ctx = context or {}
+        self.commit_skill_points(
+            self.state.skill_points + consume,
+            reason="overflow_reserve_restore",
+            ctx=ctx,
+            payload={"actor": actor.id, "old_reserve": old_reserve, "consume": consume},
+        )
+        self.commit_global_flag(
+            reserve_key,
+            max(0.0, reserve - consume),
+            reason="overflow_reserve_consume",
+            ctx=ctx,
+            payload={"actor": actor.id, "consume": consume},
+        )
         self.state.log_event(
             "resource",
             f"Sparkle overflow SP reserve restores {consume:.3f} at {actor.id} turn end",
@@ -936,7 +1180,13 @@ class BattleSimulator:
         new_shield = max(0.0, old + max(0.0, amount))
         if cap is not None:
             new_shield = min(new_shield, cap)
-        unit.shield = new_shield
+        self.commit_unit_shield(
+            unit,
+            new_shield,
+            reason=reason,
+            ctx=ctx,
+            payload={"amount": amount, "cap": cap, "effect": deepcopy(eff)},
+        )
         added = max(0.0, new_shield - old)
         self.refresh_shield_status_after_stack(unit, eff, added, cap)
         self.state.log_event("effect", f"{target_id} shield stacked by {amount:.3f}", {"old": old, "new": unit.shield, "effective_added": added, "cap": cap, "source_effect": eff, "reason": reason})
@@ -1860,7 +2110,7 @@ class BattleSimulator:
         else:
             self.run_triggers(f"{turn_kind}_turn_end", ctx)
         self.tick_status_durations(event="turn_end", actor=actor, turn_kind=turn_kind, action=action or {})
-        self.consume_skill_point_overflow_reserve_at_turn_end(actor, turn_kind)
+        self.consume_skill_point_overflow_reserve_at_turn_end(actor, turn_kind, context=context)
         self.state.log_event("turn_end", f"{actor.id} ends {turn_kind} turn")
         # Phase 2: 回合结束记录
         self._settle(context or {}, "turn", unit_id=actor.id, turn_kind=turn_kind, event="end")
@@ -1874,7 +2124,7 @@ class BattleSimulator:
         generic so character mechanics and future enemy states share one path.
         """
         ctx = ctx or {}
-        self.remove_status_resource_side_effects(unit, status)
+        self.remove_status_resource_side_effects(unit, status, ctx=ctx)
         self.state.log_event(
             "status_expire",
             f"{unit.id}.{status.id} expired",
@@ -2133,11 +2383,17 @@ class BattleSimulator:
             status_registry=self._status_registry,
             skill_registry=self._skill_registry,
         )
+        action_request = ActionRequest.from_route_step(step, targets or [])
+        action_request.timing = mode
+        action_request.turn_kind = turn_kind
+        settlement.begin_action(action_request)
+        settlement.capture_before_snapshot(self.full_scene_snapshot())
         settlement.record_target(targets or [], method="explicit" if "targets" in step else "auto")
         step_context["_settlement"] = settlement
         # 让 run_route 能取出结算数据
         step["_settlement"] = settlement
         self.resolve_action(action, targets or [], step.get("events", {}), context=step_context)
+        settlement.capture_after_snapshot(self.full_scene_snapshot())
 
         if coerce_bool(step.get("auto_resolve_queues_after", True), default=True):
             self.drain_queues(default_events=step.get("events", {}))
@@ -2656,10 +2912,10 @@ class BattleSimulator:
             if st.id not in override_ids:
                 continue
             old_speed = self.effective_speed(actor)
-            self.remove_status_resource_side_effects(actor, st)
+            lifecycle_ctx = {"actor_id": actor.id, "actor": actor, "action": action, "status_id": st.id, "status": st, "removed_status": st, "trigger": {"status_id": st.id}, "status_owner_id": actor.id}
+            self.remove_status_resource_side_effects(actor, st, ctx=lifecycle_ctx)
             actor.remove_status(st.id)
             self.recalculate_remaining_av_for_speed_change(actor, old_speed, reason="consume_next_skill_cost_override")
-            lifecycle_ctx = {"actor_id": actor.id, "actor": actor, "action": action, "status_id": st.id, "status": st, "removed_status": st, "trigger": {"status_id": st.id}, "status_owner_id": actor.id}
             self.state.log_event("resource", f"{actor.id}.{st.id} consumed by next Skill cost override", {"action": action.get("id"), "status": st.to_json()})
             self.run_triggers("status_destroy", lifecycle_ctx)
 
@@ -2684,7 +2940,9 @@ class BattleSimulator:
             energy_cost = coerce_float(cost.get("energy", 0))
             raise SimulatorError(f"Not enough energy for {actor.id}.{action['id']}: {actor.energy} < {energy_cost}")
         if sp_delta:
-            sp_change = self.modify_skill_points_with_overflow(sp_delta, reason=f"action_cost:{actor.id}.{action.get('id')}", ctx={"actor_id": actor.id, "actor": actor, "action": action})
+            sp_ctx = dict(action_ctx or {})
+            sp_ctx.update({"actor_id": actor.id, "actor": actor, "action": action})
+            sp_change = self.modify_skill_points_with_overflow(sp_delta, reason=f"action_cost:{actor.id}.{action.get('id')}", ctx=sp_ctx)
             old = sp_change["old"]
             # Phase 2: 记录 SP 变化
             settlement = action_ctx.get("_settlement") if action_ctx else None
@@ -2697,6 +2955,7 @@ class BattleSimulator:
                     reason="action_cost" if sp_delta < 0 else "action_refund",
                     reason_detail=f"{actor.id} 使用 {action.get('id', '?')}",
                     source_unit_id=actor.id,
+                    record_state_change=False,
                 )
             if sp_delta < 0:
                 sp_ctx = {
@@ -2718,7 +2977,15 @@ class BattleSimulator:
             if actor.energy + EPS < energy_cost:
                 raise SimulatorError(f"Not enough energy for {actor.id}.{action['id']}: {actor.energy} < {energy_cost}")
             old = actor.energy
-            actor.energy = max(0.0, actor.energy - energy_cost)
+            energy_ctx = dict(action_ctx or {})
+            energy_ctx.update({"actor_id": actor.id, "actor": actor, "action": action})
+            self.commit_unit_energy(
+                actor,
+                actor.energy - energy_cost,
+                reason=f"action_cost:{actor.id}.{action.get('id')}:energy",
+                ctx=energy_ctx,
+                payload={"energy_cost": energy_cost},
+            )
             self.state.log_event("resource", f"{actor.id} energy {old:.3f} -> {actor.energy:.3f}", {"delta": -energy_cost})
             # Phase 2: 记录能量消耗
             settlement = action_ctx.get("_settlement") if action_ctx else None
@@ -2732,6 +2999,7 @@ class BattleSimulator:
                     source_type=ENERGY_SOURCE_COST,
                     source_detail=f"使用 {action.get('id', '?')} 消耗",
                     affected_by_err=False,
+                    record_state_change=False,
                 )
 
     # ---------- damage ----------
@@ -3495,7 +3763,7 @@ class BattleSimulator:
                 return deepcopy(effects)
         return []
 
-    def _apply_hp_damage_to_bars(self, target: UnitState, incoming: float, carry_over_hp_bar_damage: Optional[bool], label: str) -> dict[str, Any]:
+    def _apply_hp_damage_to_bars(self, target: UnitState, incoming: float, carry_over_hp_bar_damage: Optional[bool], label: str, ctx: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         """Apply post-shield HP loss across HP bars.
 
         v1.4 honors explicit ``hp_model.bars`` data:
@@ -3514,7 +3782,13 @@ class BattleSimulator:
 
         while remaining > EPS and target.alive:
             if remaining + EPS < target.hp:
-                target.hp = max(0.0, target.hp - remaining)
+                self.commit_unit_hp(
+                    target,
+                    target.hp - remaining,
+                    reason=f"{label}:hp_damage",
+                    ctx=ctx,
+                    payload={"incoming": incoming, "remaining_before": remaining},
+                )
                 remaining = 0.0
                 break
 
@@ -3530,17 +3804,41 @@ class BattleSimulator:
                 })
 
             overflow = max(0.0, remaining - target.hp)
-            target.hp = 0.0
+            self.commit_unit_hp(
+                target,
+                0.0,
+                reason=f"{label}:hp_bar_depleted",
+                ctx=ctx,
+                payload={"incoming": incoming, "remaining_before": remaining, "bar_index": depleted_index},
+            )
             remaining = overflow
 
             if target.hp_bars_remaining > 1:
                 hp_bar_depleted = True
                 bars_depleted += 1
-                target.hp_bars_remaining -= 1
+                self.commit_unit_hp_bars_remaining(
+                    target,
+                    target.hp_bars_remaining - 1,
+                    reason=f"{label}:hp_bar_depleted",
+                    ctx=ctx,
+                    payload={"bar_index_depleted": depleted_index + 1, "incoming": incoming},
+                )
                 next_index = self.hp_bar_index(target)
                 next_bar_hp = self.hp_bar_max_hp(target, next_index)
-                target.max_hp = next_bar_hp
-                target.hp = next_bar_hp
+                self.commit_unit_max_hp(
+                    target,
+                    next_bar_hp,
+                    reason=f"{label}:next_hp_bar_max_hp",
+                    ctx=ctx,
+                    payload={"bar_index": next_index, "hp_bars_remaining": target.hp_bars_remaining},
+                )
+                self.commit_unit_hp(
+                    target,
+                    next_bar_hp,
+                    reason=f"{label}:next_hp_bar",
+                    ctx=ctx,
+                    payload={"bar_index": next_index, "hp_bars_remaining": target.hp_bars_remaining},
+                )
                 if carry_over_hp_bar_damage:
                     self.state.log_event(
                         "hp_bar",
@@ -3579,7 +3877,13 @@ class BattleSimulator:
             # Final bar depleted.
             hp_bar_depleted = True
             bars_depleted += 1
-            target.alive = False
+            self.commit_unit_alive(
+                target,
+                False,
+                reason=f"{label}:target_defeated",
+                ctx=ctx,
+                payload={"incoming": incoming, "bar_index": depleted_index},
+            )
             target_defeated = True
             remaining = 0.0
             break
@@ -3633,9 +3937,15 @@ class BattleSimulator:
             if unit.flags.get("shared_hp_group_id") != group and unit.flags.get("shared_hp_with") != group:
                 continue
             partner_old = unit.hp
-            unit.hp = max(0.0, unit.hp - delta)
+            self.commit_unit_hp(
+                unit,
+                unit.hp - delta,
+                reason=f"{label}:shared_hp_loss",
+                ctx=ctx,
+                payload={"group": group, "source": source.id, "delta": delta},
+            )
             if unit.hp <= EPS:
-                unit.alive = False
+                self.commit_unit_alive(unit, False, reason=f"{label}:shared_hp_defeat", ctx=ctx, payload={"group": group, "source": source.id})
             self.state.log_event("shared_hp", f"{source.id} shares {delta:.3f} HP loss with {unit.id}", {"group": group, "source": source.id, "partner": unit.id, "old_hp": partner_old, "new_hp": unit.hp, "label": label})
 
     def apply_hp_loss(self, target: UnitState, amount: float, ctx: dict[str, Any], label: str = "hp_loss", ignore_shield: bool = False, carry_over_hp_bar_damage: Optional[bool] = None) -> dict[str, Any]:
@@ -3645,7 +3955,13 @@ class BattleSimulator:
         incoming = max(0.0, amount)
         if target.shield > EPS and not ignore_shield:
             absorbed = min(target.shield, incoming)
-            target.shield -= absorbed
+            self.commit_unit_shield(
+                target,
+                target.shield - absorbed,
+                reason=f"{label}:shield_absorb",
+                ctx=ctx,
+                payload={"absorbed": absorbed, "incoming_before": incoming},
+            )
             incoming -= absorbed
             self.state.log_event(
                 "shield",
@@ -3653,12 +3969,12 @@ class BattleSimulator:
                 {"old_shield": old_shield, "new_shield": target.shield, "remaining_damage": incoming},
             )
 
-        bar_result = self._apply_hp_damage_to_bars(target, incoming, carry_over_hp_bar_damage, label)
+        bar_result = self._apply_hp_damage_to_bars(target, incoming, carry_over_hp_bar_damage, label, ctx=ctx)
         if bar_result.get("bars_depleted") and target.alive and target.hp_model_type == "phase_hp":
             old_phase = coerce_int(target.flags.get("current_phase", target.flags.get("monster_phase", 1)), 1)
             new_phase = min(target.hp_bars_total, old_phase + coerce_int(bar_result.get("bars_depleted", 1), 1))
-            target.flags["current_phase"] = new_phase
-            target.flags["monster_phase"] = new_phase
+            self.commit_unit_flag(target, "current_phase", new_phase, reason="phase_transition:current_phase", ctx=ctx, payload={"old_phase": old_phase, "bars_depleted": bar_result.get("bars_depleted")})
+            self.commit_unit_flag(target, "monster_phase", new_phase, reason="phase_transition:monster_phase", ctx=ctx, payload={"old_phase": old_phase, "bars_depleted": bar_result.get("bars_depleted")})
             self.state.log_event("phase_transition", f"{target.id} phase {old_phase}->{new_phase}", {"unit": target.id, "old_phase": old_phase, "new_phase": new_phase, "bars_depleted": bar_result.get("bars_depleted")})
         self.sync_shared_hp_group_after_loss(target, old_hp, target.hp, ctx, label)
         self.state.log_event(
@@ -3945,15 +4261,28 @@ class BattleSimulator:
         remaining = final
         if unit.shield > EPS:
             absorbed = min(unit.shield, remaining)
-            unit.shield -= absorbed
+            self.commit_unit_shield(
+                unit,
+                unit.shield - absorbed,
+                reason=f"dot:{kind}:shield_absorb",
+                ctx=ctx,
+                payload={"absorbed": absorbed, "incoming_before": remaining, "status_id": st.id},
+            )
             remaining -= absorbed
             shield_absorbed = absorbed
         if remaining > EPS and unit.alive:
             hp_loss = min(unit.hp, remaining)
-            unit.hp -= hp_loss
+            self.commit_unit_hp(
+                unit,
+                unit.hp - hp_loss,
+                reason=f"dot:{kind}:hp_loss",
+                ctx=ctx,
+                payload={"hp_loss": hp_loss, "incoming_before": remaining, "status_id": st.id},
+            )
             self._settle(ctx, "hp",
                 unit_id=unit.id, delta=-hp_loss, reason=f"DoT {kind}",
                 old_value=unit.hp + hp_loss, new_value=unit.hp,
+                record_state_change=False,
             )
 
         self._settle(ctx, "dot",
@@ -3988,15 +4317,28 @@ class BattleSimulator:
         remaining = amount
         if unit.shield > EPS:
             absorbed = min(unit.shield, remaining)
-            unit.shield -= absorbed
+            self.commit_unit_shield(
+                unit,
+                unit.shield - absorbed,
+                reason=f"dot:{kind}:shield_absorb",
+                ctx=ctx,
+                payload={"absorbed": absorbed, "incoming_before": remaining, "status_id": st.id},
+            )
             remaining -= absorbed
             shield_absorbed = absorbed
         if remaining > EPS and unit.alive:
             hp_loss = min(unit.hp, remaining)
-            unit.hp -= hp_loss
+            self.commit_unit_hp(
+                unit,
+                unit.hp - hp_loss,
+                reason=f"dot:{kind}:hp_loss",
+                ctx=ctx,
+                payload={"hp_loss": hp_loss, "incoming_before": remaining, "status_id": st.id},
+            )
             self._settle(ctx, "hp",
                 unit_id=unit.id, delta=-hp_loss, reason=f"DoT {kind}",
                 old_value=unit.hp + hp_loss, new_value=unit.hp,
+                record_state_change=False,
             )
 
         self._settle(ctx, "dot",
@@ -4034,7 +4376,13 @@ class BattleSimulator:
         # Simple shield layer: shield absorbs HP damage before HP unless explicitly ignored.
         if was_alive_before_damage and target.shield > EPS and not coerce_bool(ctx.get("packet", {}).get("ignore_shield", False), default=False):
             absorbed = min(target.shield, incoming)
-            target.shield -= absorbed
+            self.commit_unit_shield(
+                target,
+                target.shield - absorbed,
+                reason="damage:shield_absorb",
+                ctx=ctx,
+                payload={"absorbed": absorbed, "incoming_before": incoming},
+            )
             incoming -= absorbed
             shield_absorbed = absorbed
             self.state.log_event(
@@ -4047,11 +4395,12 @@ class BattleSimulator:
                 unit_id=target.id, delta=-absorbed,
                 old_value=old_shield, new_value=target.shield,
                 reason=f"伤害吸收: {ctx.get('action', {}).get('id', ctx.get('actor_id', '?'))}",
+                record_state_change=False,
             )
 
         packet = ctx.get("packet", {})
         carry = packet.get("carry_over_hp_bar_damage", packet.get("carry_over_damage", None))
-        bar_result = self._apply_hp_damage_to_bars(target, incoming, carry, "damage") if was_alive_before_damage else {
+        bar_result = self._apply_hp_damage_to_bars(target, incoming, carry, "damage", ctx=ctx) if was_alive_before_damage else {
             "hp_bar_depleted": False,
             "target_defeated": False,
             "bars_depleted": 0,
@@ -4070,8 +4419,8 @@ class BattleSimulator:
         if bar_result.get("bars_depleted") and target.alive and target.hp_model_type == "phase_hp":
             old_phase = coerce_int(target.flags.get("current_phase", target.flags.get("monster_phase", 1)), 1)
             new_phase = min(target.hp_bars_total, old_phase + coerce_int(bar_result.get("bars_depleted", 1), 1))
-            target.flags["current_phase"] = new_phase
-            target.flags["monster_phase"] = new_phase
+            self.commit_unit_flag(target, "current_phase", new_phase, reason="damage:phase_transition:current_phase", ctx=ctx, payload={"old_phase": old_phase, "bars_depleted": bar_result.get("bars_depleted")})
+            self.commit_unit_flag(target, "monster_phase", new_phase, reason="damage:phase_transition:monster_phase", ctx=ctx, payload={"old_phase": old_phase, "bars_depleted": bar_result.get("bars_depleted")})
             self.state.log_event("phase_transition", f"{target.id} phase {old_phase}->{new_phase}", {"unit": target.id, "old_phase": old_phase, "new_phase": new_phase, "bars_depleted": bar_result.get("bars_depleted")})
 
         self.state.log_event(
@@ -4086,6 +4435,7 @@ class BattleSimulator:
                 unit_id=target.id, delta=hp_delta,
                 old_value=old_hp, new_value=target.hp, max_hp=target.max_hp,
                 reason=f"受到伤害: {ctx.get('action', {}).get('id', ctx.get('actor_id', '?'))}",
+                record_state_change=False,
             )
         # 回填伤害记录的 shield_absorbed 和 applied_damage
         stl = self._settlement(ctx)
@@ -4131,15 +4481,28 @@ class BattleSimulator:
                             break_remaining = break_final
                             if target.shield > EPS:
                                 absorbed = min(target.shield, break_remaining)
-                                target.shield -= absorbed
+                                self.commit_unit_shield(
+                                    target,
+                                    target.shield - absorbed,
+                                    reason="break_damage:shield_absorb",
+                                    ctx=ctx,
+                                    payload={"absorbed": absorbed, "incoming_before": break_remaining},
+                                )
                                 break_remaining -= absorbed
                                 break_shield_absorbed = absorbed
                             if break_remaining > EPS and target.alive:
                                 break_hp_loss = min(target.hp, break_remaining)
-                                target.hp -= break_hp_loss
+                                self.commit_unit_hp(
+                                    target,
+                                    target.hp - break_hp_loss,
+                                    reason="break_damage:hp_loss",
+                                    ctx=ctx,
+                                    payload={"hp_loss": break_hp_loss, "incoming_before": break_remaining},
+                                )
                                 self._settle(ctx, "hp",
                                     unit_id=target.id, delta=-break_hp_loss, reason="击破伤害",
                                     old_value=target.hp + break_hp_loss, new_value=target.hp,
+                                    record_state_change=False,
                                 )
                             # Phase 3: 结算记录
                             self._settle(ctx, "break",
@@ -4184,15 +4547,28 @@ class BattleSimulator:
                         sb_remaining = sb_damage
                         if target.shield > EPS:
                             absorbed = min(target.shield, sb_remaining)
-                            target.shield -= absorbed
+                            self.commit_unit_shield(
+                                target,
+                                target.shield - absorbed,
+                                reason="super_break:shield_absorb",
+                                ctx=ctx,
+                                payload={"absorbed": absorbed, "incoming_before": sb_remaining},
+                            )
                             sb_remaining -= absorbed
                             sb_shield_absorbed = absorbed
                         if sb_remaining > EPS and target.alive:
                             sb_hp_loss = min(target.hp, sb_remaining)
-                            target.hp -= sb_hp_loss
+                            self.commit_unit_hp(
+                                target,
+                                target.hp - sb_hp_loss,
+                                reason="super_break:hp_loss",
+                                ctx=ctx,
+                                payload={"hp_loss": sb_hp_loss, "incoming_before": sb_remaining},
+                            )
                             self._settle(ctx, "hp",
                                 unit_id=target.id, delta=-sb_hp_loss, reason="超击破伤害",
                                 old_value=target.hp + sb_hp_loss, new_value=target.hp,
+                                record_state_change=False,
                             )
                         self._settle(ctx, "super_break",
                             actor_id=actor.id, target_id=target.id,
@@ -4276,13 +4652,19 @@ class BattleSimulator:
         err = self.energy_regeneration_rate(unit)
         gain = base * (err if affected else 1.0) + fixed
         old = unit.energy
-        unit.energy = min(unit.max_energy, unit.energy + gain)
+        self.commit_unit_energy(
+            unit,
+            unit.energy + gain,
+            reason=f"energy:{label}",
+            ctx=ctx,
+            payload={"gain": gain, "source": deepcopy(source), "affected_by_err": affected},
+        )
         self.state.log_event("resource", f"{unit.id} gains {gain:.3f} energy from {label}", {"old": old, "new": unit.energy, "gain": gain, "source": source})
         # Phase 2: 能量获取记录
         self._settle(ctx or {}, "energy",
             unit_id=unit.id, delta=gain, old_value=old, new_value=unit.energy,
             max_energy=unit.max_energy, source_type=ENERGY_SOURCE_EFFECT if "effect:" in label else ENERGY_SOURCE_ACTION,
-            source_detail=label, affected_by_err=affected,
+            source_detail=label, affected_by_err=affected, record_state_change=False,
         )
         return gain
 
@@ -5783,7 +6165,7 @@ class BattleSimulator:
         # logging the probability.  Stochastic/search modes can override via events.
         return True, {"event_id": event_id, "mode": mode, **prob}
 
-    def apply_status_resource_side_effects(self, unit: UnitState, status: StatusEffect) -> None:
+    def apply_status_resource_side_effects(self, unit: UnitState, status: StatusEffect, ctx: Optional[dict[str, Any]] = None) -> None:
         """Apply non-stat resource side effects carried by formula-bucket hints.
 
         HPAddedRatio changes max HP and increases current HP by the same delta.
@@ -5802,21 +6184,44 @@ class BattleSimulator:
             hp_delta += team_max_hp * coerce_float(mods.get("max_hp_from_team_hp_pct", 0.0)) * status.stacks
         if abs(hp_delta) > EPS and not mods.get("__hp_added_ratio_applied"):
             old_hp, old_max = unit.hp, unit.max_hp
-            unit.max_hp = max(1.0, unit.max_hp + hp_delta)
-            unit.hp = clamp(unit.hp + hp_delta, 0.0, unit.max_hp)
+            self.commit_unit_max_hp(
+                unit,
+                unit.max_hp + hp_delta,
+                reason=f"status:{status.id}:max_hp_side_effect",
+                ctx=ctx,
+                payload={"status_id": status.id, "hp_delta": hp_delta, "property": "HPAddedRatio/max_hp_from_team_hp_pct"},
+            )
+            self.commit_unit_hp(
+                unit,
+                unit.hp + hp_delta,
+                reason=f"status:{status.id}:max_hp_side_effect",
+                ctx=ctx,
+                payload={"status_id": status.id, "hp_delta": hp_delta, "property": "HPAddedRatio/max_hp_from_team_hp_pct"},
+            )
             mods["__hp_added_ratio_applied"] = True
             mods["__applied_max_hp_delta"] = hp_delta
             self.state.log_event("resource", f"{unit.id} max_hp {old_max:.3f}->{unit.max_hp:.3f}, hp {old_hp:.3f}->{unit.hp:.3f}", {"status_id": status.id, "hp_delta": hp_delta, "property": "HPAddedRatio/max_hp_from_team_hp_pct", "modifiers": deepcopy(mods)})
         sp_delta = coerce_int(mods.get("skill_point_cap_add", 0), 0)
         if sp_delta and not mods.get("__skill_point_cap_applied"):
             old_cap, old_sp = self.state.skill_point_cap, self.state.skill_points
-            self.state.skill_point_cap = max(0, self.state.skill_point_cap + sp_delta)
-            self.state.skill_points = min(self.state.skill_points, self.state.skill_point_cap)
+            self.commit_skill_point_cap(
+                self.state.skill_point_cap + sp_delta,
+                reason=f"status:{status.id}:skill_point_cap_add",
+                ctx=ctx,
+                payload={"status_id": status.id, "property": "MaxSP", "unit_id": unit.id},
+            )
+            if self.state.skill_points > self.state.skill_point_cap:
+                self.commit_skill_points(
+                    self.state.skill_point_cap,
+                    reason=f"status:{status.id}:skill_points_clamp",
+                    ctx=ctx,
+                    payload={"status_id": status.id, "old_skill_points": old_sp},
+                )
             mods["__skill_point_cap_applied"] = True
             mods["__applied_skill_point_cap_delta"] = sp_delta
             self.state.log_event("resource", f"skill point cap {old_cap}->{self.state.skill_point_cap}", {"status_id": status.id, "old_skill_points": old_sp, "new_skill_points": self.state.skill_points, "property": "MaxSP"})
 
-    def remove_status_resource_side_effects(self, unit: UnitState, status: StatusEffect) -> None:
+    def remove_status_resource_side_effects(self, unit: UnitState, status: StatusEffect, ctx: Optional[dict[str, Any]] = None) -> None:
         mods = status.modifiers if isinstance(status.modifiers, dict) else {}
         # Timed shield status support for live replay. Some shields are imported
         # as already-applied numeric shield values, but their status duration must
@@ -5825,19 +6230,48 @@ class BattleSimulator:
         shield_remove = coerce_float(mods.get("shield_expire_remove_amount", mods.get("__applied_shield_delta", 0.0)), 0.0)
         if shield_remove > EPS:
             old_shield = unit.shield
-            unit.shield = max(0.0, unit.shield - min(unit.shield, shield_remove))
+            self.commit_unit_shield(
+                unit,
+                unit.shield - min(unit.shield, shield_remove),
+                reason=f"status:{status.id}:shield_side_effect_removed",
+                ctx=ctx,
+                payload={"status_id": status.id, "remove_amount": shield_remove},
+            )
             self.state.log_event("resource", f"{unit.id}.{status.id} shield side effect removed", {"old_shield": old_shield, "new_shield": unit.shield, "remove_amount": shield_remove})
         hp_delta = coerce_float(mods.get("__applied_max_hp_delta", 0.0))
         if abs(hp_delta) > EPS:
             old_hp, old_max = unit.hp, unit.max_hp
-            unit.max_hp = max(1.0, unit.max_hp - hp_delta)
-            unit.hp = min(unit.hp, unit.max_hp)
+            self.commit_unit_max_hp(
+                unit,
+                unit.max_hp - hp_delta,
+                reason=f"status:{status.id}:max_hp_side_effect_removed",
+                ctx=ctx,
+                payload={"status_id": status.id, "hp_delta": -hp_delta, "property": "HPAddedRatio/max_hp_from_team_hp_pct", "removed": True},
+            )
+            self.commit_unit_hp(
+                unit,
+                min(unit.hp, unit.max_hp),
+                reason=f"status:{status.id}:max_hp_side_effect_removed",
+                ctx=ctx,
+                payload={"status_id": status.id, "hp_delta": -hp_delta, "property": "HPAddedRatio/max_hp_from_team_hp_pct", "removed": True},
+            )
             self.state.log_event("resource", f"{unit.id} max_hp {old_max:.3f}->{unit.max_hp:.3f}, hp {old_hp:.3f}->{unit.hp:.3f}", {"status_id": status.id, "hp_delta": -hp_delta, "property": "HPAddedRatio/max_hp_from_team_hp_pct", "removed": True})
         sp_delta = coerce_int(mods.get("__applied_skill_point_cap_delta", 0), 0)
         if sp_delta:
             old_cap, old_sp = self.state.skill_point_cap, self.state.skill_points
-            self.state.skill_point_cap = max(0, self.state.skill_point_cap - sp_delta)
-            self.state.skill_points = min(self.state.skill_points, self.state.skill_point_cap)
+            self.commit_skill_point_cap(
+                self.state.skill_point_cap - sp_delta,
+                reason=f"status:{status.id}:skill_point_cap_remove",
+                ctx=ctx,
+                payload={"status_id": status.id, "property": "MaxSP", "unit_id": unit.id, "removed": True},
+            )
+            if self.state.skill_points > self.state.skill_point_cap:
+                self.commit_skill_points(
+                    self.state.skill_point_cap,
+                    reason=f"status:{status.id}:skill_points_clamp",
+                    ctx=ctx,
+                    payload={"status_id": status.id, "old_skill_points": old_sp, "removed": True},
+                )
             self.state.log_event("resource", f"skill point cap {old_cap}->{self.state.skill_point_cap}", {"status_id": status.id, "old_skill_points": old_sp, "new_skill_points": self.state.skill_points, "property": "MaxSP", "removed": True})
 
     def apply_effect(self, eff: dict[str, Any], ctx: dict[str, Any]) -> None:
@@ -5967,7 +6401,7 @@ class BattleSimulator:
                     after.modifiers.setdefault("_created_turn_actor_id", self.state.global_flags.get("_active_turn_actor_id"))
                     after.modifiers.setdefault("_created_turn_kind", self.state.global_flags.get("_active_turn_kind"))
                 if before is None:
-                    self.apply_status_resource_side_effects(unit, after)
+                    self.apply_status_resource_side_effects(unit, after, ctx=ctx)
                 self.recalculate_remaining_av_for_speed_change(unit, old_speed, reason="add_status")
                 self.state.log_event("effect", f"Add status {status.id} to {target_id}", {"status": after.to_json(), "was_present": before is not None, "old_stacks": before_stacks, "new_stacks": after.stacks})
                 # Phase 2: 状态记录
@@ -5992,7 +6426,7 @@ class BattleSimulator:
                 status_id = str(eff["status_id"])
                 removed = next((s for s in unit.statuses if s.id == status_id), None)
                 if removed is not None:
-                    self.remove_status_resource_side_effects(unit, removed)
+                    self.remove_status_resource_side_effects(unit, removed, ctx=ctx)
                 unit.remove_status(status_id)
                 self.recalculate_remaining_av_for_speed_change(unit, old_speed, reason="remove_status")
                 self.state.log_event("effect", f"Remove status {status_id} from {target_id}")
@@ -6020,15 +6454,32 @@ class BattleSimulator:
                         val = coerce_float(eff.get(key), old)
                         if key == "hp":
                             val = max(0.0, min(val, unit.max_hp))
-                            unit.alive = val > EPS
+                            self.commit_unit_hp(unit, val, reason="effect:set_resources:hp", ctx=ctx, payload={"effect": deepcopy(eff)})
+                            self.commit_unit_alive(unit, val > EPS, reason="effect:set_resources:hp_alive", ctx=ctx, payload={"hp": val})
+                            audit[key] = {"old": old, "new": unit.hp}
+                            audit["alive"] = unit.alive
+                            continue
+                        if key == "max_hp":
+                            val = max(0.0, val)
+                            self.commit_unit_max_hp(unit, val, reason="effect:set_resources:max_hp", ctx=ctx, payload={"effect": deepcopy(eff)})
+                            audit[key] = {"old": old, "new": unit.max_hp}
+                            continue
+                        if key == "shield":
+                            val = max(0.0, val)
+                            self.commit_unit_shield(unit, val, reason="effect:set_resources:shield", ctx=ctx, payload={"effect": deepcopy(eff)})
+                            audit[key] = {"old": old, "new": unit.shield}
+                            continue
                         if key == "energy":
                             val = max(0.0, min(val, unit.max_energy))
+                            self.commit_unit_energy(unit, val, reason="effect:set_resources:energy", ctx=ctx, payload={"effect": deepcopy(eff)})
+                            audit[key] = {"old": old, "new": unit.energy}
+                            continue
                         if key in {"shield", "remaining_av", "toughness", "max_toughness", "max_hp", "max_energy"}:
                             val = max(0.0, val)
                         setattr(unit, key, val)
                         audit[key] = {"old": old, "new": val}
                 if "alive" in eff:
-                    unit.alive = coerce_bool(eff.get("alive"), default=unit.alive)
+                    self.commit_unit_alive(unit, coerce_bool(eff.get("alive"), default=unit.alive), reason="effect:set_resources:alive", ctx=ctx, payload={"effect": deepcopy(eff)})
                     audit["alive"] = unit.alive
                 self.state.log_event("effect", f"Set resources for {target_id}", audit)
         elif etype == "set_status_stacks":
@@ -6052,12 +6503,28 @@ class BattleSimulator:
         elif etype == "set_global_resource":
             if "skill_points" in eff:
                 old = self.state.skill_points
-                self.state.skill_points = int(clamp(coerce_float(eff.get("skill_points"), old), 0, self.state.skill_point_cap))
+                self.commit_skill_points(
+                    coerce_float(eff.get("skill_points"), old),
+                    reason="effect:set_global_resource:skill_points",
+                    ctx=ctx,
+                    payload={"effect": deepcopy(eff)},
+                )
                 self.state.log_event("effect", "Set global skill_points", {"old": old, "new": self.state.skill_points})
             if "skill_point_cap" in eff:
                 old = self.state.skill_point_cap
-                self.state.skill_point_cap = int(max(0, coerce_float(eff.get("skill_point_cap"), old)))
-                self.state.skill_points = min(self.state.skill_points, self.state.skill_point_cap)
+                self.commit_skill_point_cap(
+                    coerce_float(eff.get("skill_point_cap"), old),
+                    reason="effect:set_global_resource:skill_point_cap",
+                    ctx=ctx,
+                    payload={"effect": deepcopy(eff)},
+                )
+                if self.state.skill_points > self.state.skill_point_cap:
+                    self.commit_skill_points(
+                        self.state.skill_point_cap,
+                        reason="effect:set_global_resource:skill_points_clamp",
+                        ctx=ctx,
+                        payload={"old_skill_points": self.state.skill_points},
+                    )
                 self.state.log_event("effect", "Set global skill_point_cap", {"old": old, "new": self.state.skill_point_cap})
             if "av" in eff:
                 old = self.state.av
@@ -6073,7 +6540,13 @@ class BattleSimulator:
                     src_id = self.resolve_special_unit(eff.get("source", "actor"), ctx)
                     amount += self.state.unit(src_id).max_energy * coerce_float(eff["source_max_energy_pct"])
                 old = u.energy
-                u.energy = clamp(u.energy + amount, 0.0, u.max_energy)
+                self.commit_unit_energy(
+                    u,
+                    u.energy + amount,
+                    reason="effect:modify_energy",
+                    ctx=ctx,
+                    payload={"amount": amount, "effect": deepcopy(eff)},
+                )
                 self.state.log_event("effect", f"{target_id} energy modified by {amount:.3f}", {"old": old, "new": u.energy})
                 # Phase 2: 能量修改记录
                 self._settle(ctx, "energy",
@@ -6081,6 +6554,7 @@ class BattleSimulator:
                     old_value=old, new_value=u.energy, max_energy=u.max_energy,
                     source_type=ENERGY_SOURCE_EFFECT,
                     source_detail=f"modify_energy: {ctx.get('action', {}).get('id', ctx.get('actor_id', '?'))}",
+                    record_state_change=False,
                 )
         elif etype in {"gain_energy", "grant_energy"}:
             source = deepcopy(eff.get("energy_gain", eff))
@@ -6108,13 +6582,19 @@ class BattleSimulator:
                     source["fixed"] = amount_value
                 source["affected_by_err"] = affected
             for target_id in self.resolve_effect_targets(eff, ctx, default="actor"):
-                self.apply_energy_source(self.state.unit(target_id), source, f"effect:{etype}", default_affected_by_err=True)
+                self.apply_energy_source(self.state.unit(target_id), source, f"effect:{etype}", default_affected_by_err=True, ctx=ctx)
         elif etype == "consume_energy":
             for target_id in self.resolve_effect_targets(eff, ctx, default="actor"):
                 u = self.state.unit(target_id)
                 amount = coerce_float(eff.get("amount", eff.get("energy", 0.0)))
                 old = u.energy
-                u.energy = max(0.0, u.energy - amount)
+                self.commit_unit_energy(
+                    u,
+                    u.energy - amount,
+                    reason="effect:consume_energy",
+                    ctx=ctx,
+                    payload={"amount": amount, "effect": deepcopy(eff)},
+                )
                 self.state.log_event("effect", f"{target_id} consumes {amount:.3f} energy", {"old": old, "new": u.energy})
                 # Phase 2: 能量消耗记录
                 self._settle(ctx, "energy",
@@ -6122,6 +6602,7 @@ class BattleSimulator:
                     old_value=old, new_value=u.energy, max_energy=u.max_energy,
                     source_type=ENERGY_SOURCE_COST,
                     source_detail=f"consume_energy: {ctx.get('action', {}).get('id', ctx.get('actor_id', '?'))}",
+                    record_state_change=False,
                 )
         elif etype == "modify_skill_points":
             amount = coerce_float(eff.get("amount", 0), 0.0)
@@ -6134,6 +6615,7 @@ class BattleSimulator:
                 reason="modify_skill_points" if amount >= 0 else "consume",
                 reason_detail=f"effect: {ctx.get('action', {}).get('id', ctx.get('actor_id', '?'))}",
                 source_unit_id=str(ctx.get("actor_id", "")),
+                record_state_change=False,
             )
         elif etype == "modify_skill_points_from_flag":
             flag = eff.get("flag")
@@ -6148,13 +6630,24 @@ class BattleSimulator:
                 delta=int(amount), old_value=int(old_sp2), new_value=self.state.skill_points,
                 max_value=self.state.skill_point_cap, reason=f"modify_skill_points_from_flag:{flag}",
                 reason_detail=f"flag {flag}={raw}", source_unit_id=str(ctx.get("actor_id", "")),
+                record_state_change=False,
             )
         elif etype == "modify_skill_point_cap":
             amount = coerce_int(eff.get("amount", eff.get("delta", 0)), 0)
             old_cap = self.state.skill_point_cap
-            self.state.skill_point_cap = max(0, self.state.skill_point_cap + amount)
+            self.commit_skill_point_cap(
+                self.state.skill_point_cap + amount,
+                reason="effect:modify_skill_point_cap",
+                ctx=ctx,
+                payload={"amount": amount, "effect": deepcopy(eff)},
+            )
             if self.state.skill_points > self.state.skill_point_cap:
-                self.state.skill_points = self.state.skill_point_cap
+                self.commit_skill_points(
+                    self.state.skill_point_cap,
+                    reason="effect:modify_skill_point_cap:skill_points_clamp",
+                    ctx=ctx,
+                    payload={"old_skill_points": self.state.skill_points},
+                )
             self.state.log_event("effect", f"Skill point cap modified by {amount}", {"old": old_cap, "new": self.state.skill_point_cap, "skill_points": self.state.skill_points})
         elif etype == "advance_action":
             # Accept simulator-native `percent`, model-pack `advance_percent`,
@@ -6806,13 +7299,20 @@ class BattleSimulator:
                     if "recoverable_hp_cap_ratio" in mods:
                         heal_cap_ratio = min(heal_cap_ratio, coerce_float(mods.get("recoverable_hp_cap_ratio"), 1.0))
                 heal_cap = unit.max_hp * max(0.0, min(1.0, heal_cap_ratio))
-                unit.hp = min(heal_cap, unit.hp + amount)
+                self.commit_unit_hp(
+                    unit,
+                    min(heal_cap, unit.hp + amount),
+                    reason="effect:heal",
+                    ctx=ctx,
+                    payload={"amount": amount, "heal_cap": heal_cap, "max_restorable_hp_ratio": heal_cap_ratio, "effect": deepcopy(eff)},
+                )
                 self.state.log_event("effect_heal", f"{target_id} heals {amount:.3f} HP", {"old_hp": old, "new_hp": unit.hp, "heal_cap": heal_cap, "max_restorable_hp_ratio": heal_cap_ratio})
                 # Phase 2: 治疗 HP 记录
                 self._settle(ctx, "hp",
                     unit_id=target_id, delta=unit.hp - old,
                     old_value=old, new_value=unit.hp, max_hp=unit.max_hp,
                     reason=f"heal: {ctx.get('action', {}).get('id', ctx.get('actor_id', '?'))}",
+                    record_state_change=False,
                 )
         elif etype == "cleanse_debuffs":
             count = coerce_int(eff.get("count", eff.get("amount", 1)), 1)
@@ -7051,13 +7551,19 @@ class BattleSimulator:
                 tag_match = (not tag) or tag in {str(t).lower() for t in unit.tags}
                 id_match = (not contains) or contains in str(unit.id).lower()
                 if tag_match and id_match and unit.id != ctx.get("actor_id"):
-                    unit.hp = 0.0
-                    unit.alive = False
+                    self.commit_unit_hp(
+                        unit,
+                        0.0,
+                        reason="effect:absorb_remaining_summons",
+                        ctx=ctx,
+                        payload={"absorbed_by": ctx.get("actor_id"), "summon_id_contains": contains, "summon_tag": tag},
+                    )
+                    self.commit_unit_alive(unit, False, reason="effect:absorb_remaining_summons", ctx=ctx, payload={"absorbed_by": ctx.get("actor_id"), "summon_id_contains": contains, "summon_tag": tag})
                     absorbed += 1
                     self.state.log_event("enemy_mechanic", f"{ctx.get('actor_id')} absorbs {unit.id}", {"absorbed_unit": unit.id})
             flag = eff.get("store_count_flag")
             if flag and ctx.get("actor_id") in self.state.units:
-                self.state.unit(ctx["actor_id"]).flags[str(flag)] = absorbed
+                self.commit_unit_flag(self.state.unit(ctx["actor_id"]), str(flag), absorbed, reason="effect:absorb_remaining_summons:store_count_flag", ctx=ctx, payload={"summon_id_contains": contains, "summon_tag": tag})
             self.state.log_event("enemy_mechanic", f"Absorbed {absorbed} enemy summons", {"absorbed_count": absorbed, "summon_id_contains": contains, "summon_tag": tag})
         elif etype == "dispel_status_categories":
             categories = {str(x).lower() for x in normalize_str_list(eff.get("categories", []))}
@@ -7428,6 +7934,7 @@ class BattleSimulator:
                 "before_scene": before_full_scene,
             }
             before_log_len = len(self.state.log)
+            step["_route_step_index"] = i
             self.resolve_route_step(step)
             new_events = self.state.log[before_log_len:]
             trace_entry["event_summary"] = self.summarize_auto_probe_events(new_events)
@@ -8158,13 +8665,31 @@ class BattleSimulator:
             trace_entry = {"step": step_no, "attempt": attempts, "actor": actor_id, "action": action_id, "targets": list(targets or []), "av": round(self.state.av, 6), "before": self.generated_route_snapshot()}
             action_trace.append(trace_entry)
             before_log_len = len(self.state.log)
-            self.resolve_action(action, targets or [], {}, context={"turn_kind": "regular", "auto_probe": True})
+            probe_step = {
+                "actor": actor_id,
+                "action": action_id,
+                "timing": "auto_probe",
+                "turn_kind": "regular",
+                "targets": list(targets or []),
+                "_route_step_index": step_no,
+            }
+            settlement = SettlementCollector(
+                text_map=self._text_map,
+                status_registry=self._status_registry,
+                skill_registry=self._skill_registry,
+            )
+            action_request = ActionRequest.from_route_step(probe_step, targets or [])
+            action_request.source.origin_path = f"auto_probe[{step_no}]"
+            action_request.metadata["target_source"] = "auto_probe"
+            settlement.begin_action(action_request)
+            settlement.capture_before_snapshot(self.full_scene_snapshot())
+            settlement.record_target(targets or [], method="auto_probe")
+            self.resolve_action(action, targets or [], {}, context={"turn_kind": "regular", "auto_probe": True, "_settlement": settlement})
+            settlement.capture_after_snapshot(self.full_scene_snapshot())
             new_events = self.state.log[before_log_len:]
             trace_entry["event_summary"] = self.summarize_auto_probe_events(new_events)
-            trace_entry["action_resolution"] = self.summarize_action_resolution(step, new_events)
-            # Phase 2: 合并结算数据
-            if "_settlement" in step:
-                trace_entry["settlement"] = step["_settlement"].to_dict()
+            trace_entry["action_resolution"] = self.summarize_action_resolution(probe_step, new_events)
+            trace_entry["settlement"] = settlement.to_dict()
             trace_entry["after"] = self.generated_route_snapshot()
             trace_entry["after_scene"] = self.full_scene_snapshot()
             executed += 1

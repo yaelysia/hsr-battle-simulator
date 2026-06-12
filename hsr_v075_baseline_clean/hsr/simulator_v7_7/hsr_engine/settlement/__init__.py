@@ -1,5 +1,15 @@
 """Phase 2-3: 结算系统 — 与引擎状态变更同源的结算记录。"""
 
+from hsr_engine.kernel import (
+    KERNEL_FULL_SCENE_SNAPSHOT_ENCODING,
+    KERNEL_TRANSITION_ENCODING,
+    ActionRequest,
+    ActionTransition,
+    SourceRef,
+    StateChange,
+    TargetResolution,
+)
+
 from .records import (
     DamageRecord,
     ShieldRecord,
@@ -48,6 +58,13 @@ __all__ = [
     "DotRecord",
     "SuperBreakRecord",
     "SettlementCollector",
+    "KERNEL_TRANSITION_ENCODING",
+    "KERNEL_FULL_SCENE_SNAPSHOT_ENCODING",
+    "ActionRequest",
+    "ActionTransition",
+    "SourceRef",
+    "StateChange",
+    "TargetResolution",
     "ENERGY_SOURCE_ACTION",
     "ENERGY_SOURCE_HIT_TAKEN",
     "ENERGY_SOURCE_KILL",

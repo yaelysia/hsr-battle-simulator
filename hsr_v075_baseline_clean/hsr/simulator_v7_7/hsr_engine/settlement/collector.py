@@ -8,6 +8,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field, asdict
 from typing import Any
 
+from hsr_engine.kernel import ActionRequest, ActionTransition, SourceRef, StateChange, TargetResolution
+
 from .records import (
     DamageRecord,
     ShieldRecord,
@@ -49,6 +51,7 @@ class SettlementCollector:
     dot_records: list[DotRecord] = field(default_factory=list)
     super_break_records: list[SuperBreakRecord] = field(default_factory=list)
     target_record: TargetRecord | None = None
+    transition: ActionTransition = field(default_factory=ActionTransition)
 
     def __init__(
         self,
@@ -70,16 +73,76 @@ class SettlementCollector:
         self.dot_records = []
         self.super_break_records = []
         self.target_record = None
+        self.transition = ActionTransition()
         self._text_map = text_map
         self._status_registry = status_registry
         self._skill_registry = skill_registry
 
     # ── 便捷记录方法 (主代码通过 _settle(ctx, record_type, **kwargs) 调用) ──
 
+    def begin_action(self, request: ActionRequest) -> None:
+        self.transition = ActionTransition(request=request)
+
+    def capture_before_snapshot(self, snapshot: dict[str, Any]) -> None:
+        self.transition.capture_before(snapshot)
+
+    def capture_after_snapshot(self, snapshot: dict[str, Any]) -> None:
+        self.transition.capture_after(snapshot)
+
+    def record_state_change(self, change: StateChange) -> None:
+        self.transition.append_change(change)
+
+    def _action_source(self, *, source_id: str = "", owner_id: str = "") -> SourceRef:
+        request = self.transition.request
+        return SourceRef.action(
+            actor_id=owner_id or request.actor_id,
+            action_id=source_id or request.action_id,
+            origin_path=request.source.origin_path,
+        )
+
+    def _record_change(
+        self,
+        change_type: str,
+        *,
+        scope: str,
+        subject_id: str = "",
+        field_path: str = "",
+        old_value: Any = None,
+        new_value: Any = None,
+        delta: Any = None,
+        source: SourceRef | None = None,
+        reason: str = "",
+        payload: dict[str, Any] | None = None,
+    ) -> None:
+        self.transition.append_change(
+            StateChange(
+                change_type=change_type,
+                scope=scope,
+                subject_id=str(subject_id or ""),
+                field_path=str(field_path or ""),
+                old_value=old_value,
+                new_value=new_value,
+                delta=delta,
+                source=source or self._action_source(),
+                reason=str(reason or ""),
+                payload=dict(payload or {}),
+            )
+        )
+
     def record_target(self, target_ids: list[str], method: str = "explicit") -> None:
+        request = self.transition.request
         self.target_record = TargetRecord(
-            action_id="", actor_id="",
+            action_id=request.action_id, actor_id=request.actor_id,
             target_ids=list(target_ids), target_selection_reason=method,
+        )
+        self.transition.target_resolution = TargetResolution(
+            actor_id=request.actor_id,
+            action_id=request.action_id,
+            requested_target_ids=list(request.target_ids or []),
+            resolved_target_ids=list(target_ids or []),
+            method=str(method or ""),
+            reason=str(method or ""),
+            source=request.source,
         )
 
     def record_damage(self, **kwargs: Any) -> None:
@@ -102,7 +165,18 @@ class SettlementCollector:
                 mapped["damage_applied"] = v
             elif k in DamageRecord.__dataclass_fields__:
                 mapped[k] = v
-        self.damage_records.append(DamageRecord(**mapped))
+        rec = DamageRecord(**mapped)
+        self.damage_records.append(rec)
+        self._record_change(
+            "damage",
+            scope="unit",
+            subject_id=rec.target_id,
+            field_path="unit.hp_or_shield",
+            delta=-rec.damage_applied,
+            source=self._action_source(source_id=rec.source_action_id, owner_id=rec.actor_id),
+            reason=rec.damage_type,
+            payload=asdict(rec),
+        )
 
     def record_sp(self, **kwargs: Any) -> None:
         mapped = {}
@@ -121,7 +195,20 @@ class SettlementCollector:
                 mapped[k] = int(v)
             elif k in SPRecord.__dataclass_fields__:
                 mapped[k] = v
-        self.sp_records.append(SPRecord(**mapped))
+        rec = SPRecord(**mapped)
+        self.sp_records.append(rec)
+        if kwargs.get("record_state_change", True):
+            self._record_change(
+                "resource",
+                scope="global",
+                subject_id="team",
+                field_path="global.skill_points",
+                old_value=rec.old_sp,
+                new_value=rec.new_sp,
+                delta=rec.delta,
+                reason=rec.reason,
+                payload=asdict(rec),
+            )
 
     def record_energy(self, **kwargs: Any) -> None:
         mapped = {}
@@ -136,7 +223,21 @@ class SettlementCollector:
                 pass  # 元信息，不存入记录
             elif k in EnergyRecord.__dataclass_fields__:
                 mapped[k] = v
-        self.energy_records.append(EnergyRecord(**mapped))
+        rec = EnergyRecord(**mapped)
+        self.energy_records.append(rec)
+        if kwargs.get("record_state_change", True):
+            self._record_change(
+                "resource",
+                scope="unit",
+                subject_id=rec.unit_id,
+                field_path="unit.energy",
+                old_value=rec.old_energy,
+                new_value=rec.new_energy,
+                delta=rec.delta,
+                source=self._action_source(source_id=rec.source_id, owner_id=rec.unit_id),
+                reason=rec.source_type or rec.label,
+                payload=asdict(rec),
+            )
 
     def record_shield(self, **kwargs: Any) -> None:
         mapped = {}
@@ -147,7 +248,21 @@ class SettlementCollector:
                 mapped["new_shield"] = float(v)
             elif k in ShieldRecord.__dataclass_fields__:
                 mapped[k] = v
-        self.shield_records.append(ShieldRecord(**mapped))
+        rec = ShieldRecord(**mapped)
+        self.shield_records.append(rec)
+        if kwargs.get("record_state_change", True):
+            self._record_change(
+                "resource",
+                scope="unit",
+                subject_id=rec.unit_id,
+                field_path="unit.shield",
+                old_value=rec.old_shield,
+                new_value=rec.new_shield,
+                delta=rec.delta,
+                source=self._action_source(source_id=rec.source_id),
+                reason=rec.reason,
+                payload=asdict(rec),
+            )
 
     def record_hp(self, **kwargs: Any) -> None:
         mapped = {}
@@ -160,7 +275,21 @@ class SettlementCollector:
                 mapped["reason"] = str(v)
             elif k in HPRecord.__dataclass_fields__:
                 mapped[k] = v
-        self.hp_records.append(HPRecord(**mapped))
+        rec = HPRecord(**mapped)
+        self.hp_records.append(rec)
+        if kwargs.get("record_state_change", True):
+            self._record_change(
+                "resource",
+                scope="unit",
+                subject_id=rec.unit_id,
+                field_path="unit.hp",
+                old_value=rec.old_hp,
+                new_value=rec.new_hp,
+                delta=rec.delta,
+                source=self._action_source(source_id=rec.source_id),
+                reason=rec.reason,
+                payload=asdict(rec),
+            )
 
     def record_status(self, **kwargs: Any) -> None:
         mapped = {}
@@ -192,6 +321,18 @@ class SettlementCollector:
             except (ValueError, TypeError):
                 pass
         self.status_records.append(rec)
+        self._record_change(
+            "status",
+            scope="unit",
+            subject_id=rec.unit_id,
+            field_path=f"unit.statuses.{rec.status_id}",
+            old_value=rec.old_stacks,
+            new_value=rec.new_stacks,
+            delta=rec.new_stacks - rec.old_stacks,
+            source=SourceRef.status(owner_id=rec.source_id or rec.unit_id, status_id=rec.status_id),
+            reason=rec.change_type or rec.reason,
+            payload=asdict(rec),
+        )
 
     def record_av(self, **kwargs: Any) -> None:
         mapped = {}
@@ -211,7 +352,20 @@ class SettlementCollector:
                 mapped["delta"] = new_val - float(kwargs.get("old_remaining_av", new_val))
             elif k in AVRecord.__dataclass_fields__:
                 mapped[k] = v
-        self.av_records.append(AVRecord(**mapped))
+        rec = AVRecord(**mapped)
+        self.av_records.append(rec)
+        self._record_change(
+            "av",
+            scope="unit",
+            subject_id=rec.unit_id,
+            field_path="unit.remaining_av",
+            old_value=rec.old_remaining_av,
+            new_value=rec.new_remaining_av,
+            delta=rec.delta,
+            source=self._action_source(source_id=rec.source_id),
+            reason=rec.reason,
+            payload=asdict(rec),
+        )
 
     def record_turn(self, **kwargs: Any) -> None:
         mapped = {}
@@ -220,7 +374,17 @@ class SettlementCollector:
                 mapped["event_type"] = str(v)
             elif k in TurnRecord.__dataclass_fields__:
                 mapped[k] = v
-        self.turn_records.append(TurnRecord(**mapped))
+        rec = TurnRecord(**mapped)
+        self.turn_records.append(rec)
+        self._record_change(
+            "turn",
+            scope="unit",
+            subject_id=rec.unit_id,
+            field_path="unit.turn",
+            source=self._action_source(source_id=rec.action_id, owner_id=rec.unit_id),
+            reason=rec.event_type,
+            payload=asdict(rec),
+        )
 
     def record_mechanic(self, **kwargs: Any) -> None:
         mapped = {}
@@ -231,7 +395,16 @@ class SettlementCollector:
                 mapped["description"] = str(v)
             elif k == "data":
                 mapped["data"] = dict(v) if isinstance(v, dict) else {}
-        self.mechanic_records.append(MechanicRecord(**mapped))
+        rec = MechanicRecord(**mapped)
+        self.mechanic_records.append(rec)
+        self._record_change(
+            "mechanic",
+            scope="unit" if rec.unit_id else "battle",
+            subject_id=rec.unit_id,
+            field_path="mechanic",
+            reason=rec.event_type,
+            payload=asdict(rec),
+        )
 
     def record_break(self, **kwargs: Any) -> None:
         mapped = {}
@@ -242,7 +415,18 @@ class SettlementCollector:
                 mapped["aftermath_status_id"] = str(v)
             elif k in BreakRecord.__dataclass_fields__:
                 mapped[k] = v
-        self.break_records.append(BreakRecord(**mapped))
+        rec = BreakRecord(**mapped)
+        self.break_records.append(rec)
+        self._record_change(
+            "break",
+            scope="unit",
+            subject_id=rec.target_id,
+            field_path="unit.toughness.break",
+            delta=-rec.damage_applied,
+            source=self._action_source(owner_id=rec.actor_id),
+            reason="weakness_break",
+            payload=asdict(rec),
+        )
 
     def record_toughness(self, **kwargs: Any) -> None:
         mapped = {}
@@ -253,7 +437,20 @@ class SettlementCollector:
                 mapped["new_toughness"] = float(v)
             elif k in ToughnessRecord.__dataclass_fields__:
                 mapped[k] = v
-        self.toughness_records.append(ToughnessRecord(**mapped))
+        rec = ToughnessRecord(**mapped)
+        self.toughness_records.append(rec)
+        self._record_change(
+            "toughness",
+            scope="unit",
+            subject_id=rec.unit_id,
+            field_path="unit.toughness",
+            old_value=rec.old_toughness,
+            new_value=rec.new_toughness,
+            delta=rec.delta,
+            source=self._action_source(source_id=rec.source_id),
+            reason=rec.reason,
+            payload=asdict(rec),
+        )
 
     def record_dot(self, **kwargs: Any) -> None:
         mapped = {}
@@ -264,7 +461,18 @@ class SettlementCollector:
                 mapped["source_status_id"] = str(v)
             elif k in DotRecord.__dataclass_fields__:
                 mapped[k] = v
-        self.dot_records.append(DotRecord(**mapped))
+        rec = DotRecord(**mapped)
+        self.dot_records.append(rec)
+        self._record_change(
+            "dot",
+            scope="unit",
+            subject_id=rec.unit_id,
+            field_path="unit.hp_or_shield",
+            delta=-rec.damage_applied,
+            source=SourceRef.status(owner_id=rec.unit_id, status_id=rec.source_status_id),
+            reason=rec.kind,
+            payload=asdict(rec),
+        )
 
     def record_super_break(self, **kwargs: Any) -> None:
         mapped = {}
@@ -275,7 +483,18 @@ class SettlementCollector:
                 mapped["super_break_bonus"] = float(v)
             elif k in SuperBreakRecord.__dataclass_fields__:
                 mapped[k] = v
-        self.super_break_records.append(SuperBreakRecord(**mapped))
+        rec = SuperBreakRecord(**mapped)
+        self.super_break_records.append(rec)
+        self._record_change(
+            "super_break",
+            scope="unit",
+            subject_id=rec.target_id,
+            field_path="unit.hp_or_shield",
+            delta=-rec.damage_applied,
+            source=self._action_source(owner_id=rec.actor_id),
+            reason="super_break",
+            payload=asdict(rec),
+        )
 
     # ── 序列化 ──
 
@@ -296,4 +515,5 @@ class SettlementCollector:
             "dot_records": [asdict(r) for r in self.dot_records],
             "super_break_records": [asdict(r) for r in self.super_break_records],
             "target_record": asdict(self.target_record) if self.target_record else None,
+            "transition": self.transition.to_dict(),
         }
