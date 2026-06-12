@@ -58,7 +58,8 @@ Results:
 - C0 to C8 exact route: `metadata.route_assertions.ok = True`.
 - C0 to C8 route trace count: 8.
 - C0 to C8 log event count: 172.
-- C0 to C8 transition RNG events: 11, all `crit`.
+- C0 to C8 route-step settlement RNG events: 11, all `crit`.
+- C0 to C8 RNG events including queued action transitions: 14, all `crit`.
 - Auto probe assertions: ok, executed step count 1.
 - Seele five-dummy route assertions: ok.
 - Seele five-dummy transition RNG events: 2, all `crit`.

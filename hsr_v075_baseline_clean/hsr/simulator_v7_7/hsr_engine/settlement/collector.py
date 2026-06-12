@@ -9,7 +9,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field, asdict
 from typing import Any
 
-from hsr_engine.kernel import ActionRequest, ActionTransition, RNGEvent, SourceRef, StateChange, TargetResolution
+from hsr_engine.kernel import ActionRequest, ActionTransition, ProcessEvent, RNGEvent, SourceRef, StateChange, TargetResolution
 
 from .records import (
     DamageRecord,
@@ -95,6 +95,9 @@ class SettlementCollector:
 
     def record_rng_event(self, event: RNGEvent) -> None:
         self.transition.append_rng_event(event)
+
+    def record_process_event(self, event: ProcessEvent) -> None:
+        self.transition.append_process_event(event)
 
     def _action_source(self, *, source_id: str = "", owner_id: str = "") -> SourceRef:
         request = self.transition.request

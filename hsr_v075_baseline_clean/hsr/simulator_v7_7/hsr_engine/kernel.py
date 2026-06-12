@@ -219,6 +219,23 @@ class RNGEvent:
 
 
 @dataclass
+class ProcessEvent:
+    """A deterministic record of action-local control-flow facts."""
+
+    sequence: int = 0
+    event_type: str = ""
+    subject_id: str = ""
+    source: SourceRef = field(default_factory=SourceRef)
+    reason: str = ""
+    payload: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        data = asdict(self)
+        data["payload"] = _copy_json_value(self.payload)
+        return data
+
+
+@dataclass
 class ActionTransition:
     """Canonical transition record for one action request."""
 
@@ -230,6 +247,7 @@ class ActionTransition:
     after_snapshot: dict[str, Any] | None = None
     state_changes: list[StateChange] = field(default_factory=list)
     rng_events: list[RNGEvent] = field(default_factory=list)
+    process_events: list[ProcessEvent] = field(default_factory=list)
 
     def capture_before(self, snapshot: dict[str, Any]) -> None:
         self.before_snapshot = _copy_json_value(snapshot)
@@ -245,6 +263,10 @@ class ActionTransition:
         event.sequence = len(self.rng_events) + 1
         self.rng_events.append(event)
 
+    def append_process_event(self, event: ProcessEvent) -> None:
+        event.sequence = len(self.process_events) + 1
+        self.process_events.append(event)
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "encoding": self.encoding,
@@ -255,4 +277,5 @@ class ActionTransition:
             "after_snapshot": _copy_json_value(self.after_snapshot),
             "state_changes": [change.to_dict() for change in self.state_changes],
             "rng_events": [event.to_dict() for event in self.rng_events],
+            "process_events": [event.to_dict() for event in self.process_events],
         }

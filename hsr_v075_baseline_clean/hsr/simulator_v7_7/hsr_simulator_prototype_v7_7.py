@@ -108,6 +108,7 @@ from hsr_engine.enemy_ability_graph_lowerer import write_monster_ability_graph_l
 from hsr_engine.character_mechanism_auditor import write_character_mechanism_audit
 from hsr_engine.settlement import (
     ActionRequest,
+    ProcessEvent,
     RNGEvent,
     SettlementCollector,
     SourceRef,
@@ -837,6 +838,27 @@ class BattleSimulator:
                     outcome=deepcopy(outcome),
                     probability=deepcopy(probability or {}),
                     source=self.kernel_source_from_context(ctx, reason),
+                    payload=deepcopy(payload or {}),
+                )
+            )
+
+    def record_process_event(
+        self,
+        ctx: Optional[dict[str, Any]],
+        *,
+        event_type: str,
+        subject_id: str = "",
+        reason: str = "",
+        payload: Optional[dict[str, Any]] = None,
+    ) -> None:
+        stl = self._settlement(ctx or {})
+        if stl is not None:
+            stl.record_process_event(
+                ProcessEvent(
+                    event_type=str(event_type or ""),
+                    subject_id=str(subject_id or ""),
+                    source=self.kernel_source_from_context(ctx, reason or event_type),
+                    reason=str(reason or ""),
                     payload=deepcopy(payload or {}),
                 )
             )
@@ -3476,6 +3498,17 @@ class BattleSimulator:
                 packet_for_targets["split_damage_divisor"] = divisor
             for target_id in packet_targets:
                 if target_id in phase_locked_targets:
+                    self.record_process_event(
+                        action_ctx,
+                        event_type="damage_target_skip",
+                        subject_id=str(target_id),
+                        reason="damage:phase_boundary_locked",
+                        payload={
+                            "target_id": str(target_id),
+                            "packet_id": packet.get("id"),
+                            "phase_locked_targets": sorted(str(x) for x in phase_locked_targets),
+                        },
+                    )
                     self.state.log_event(
                         "damage_skip",
                         f"Skip {target_id}: phase HP boundary locked further damage from {actor.id}.{action['id']}",
@@ -3490,6 +3523,17 @@ class BattleSimulator:
                 if not target_unit_for_packet.alive and not already_defeated_by_primary:
                     continue
                 if already_defeated_by_primary:
+                    self.record_process_event(
+                        action_ctx,
+                        event_type="primary_damage_continue_defeated_target",
+                        subject_id=str(target_id),
+                        reason="damage:primary_action_full_resolution",
+                        payload={
+                            "target_id": str(target_id),
+                            "packet_id": packet.get("id"),
+                            "defeated_targets_this_action": sorted(str(x) for x in defeated_this_action) if isinstance(defeated_this_action, set) else [],
+                        },
+                    )
                     self.state.log_event(
                         "primary_damage_overkill",
                         f"{actor.id}.{action['id']} continues primary damage packet {packet.get('id')} on already defeated {target_id}",
@@ -3548,6 +3592,20 @@ class BattleSimulator:
                     self.run_triggers("after_defeat_enemy", packet_ctx)
                 if result.get("phase_damage_locked_until_action_end"):
                     phase_locked_targets.add(target_id)
+                    self.record_process_event(
+                        action_ctx,
+                        event_type="phase_damage_lock",
+                        subject_id=str(target_id),
+                        reason="damage:phase_boundary_lock",
+                        payload={
+                            "target_id": str(target_id),
+                            "packet_id": packet.get("id"),
+                            "damage_type": packet.get("damage_type", "direct_damage"),
+                            "hp_bars_remaining": result.get("hp_bars_remaining"),
+                            "bars_depleted": result.get("bars_depleted"),
+                            "phase_locked_targets": sorted(str(x) for x in phase_locked_targets),
+                        },
+                    )
                 self.tick_hit_durations(actor, self.state.unit(target_id), action, ctx=action_ctx)
                 if "attack" in action_tags:
                     any_packet_hit = True
@@ -5653,6 +5711,19 @@ class BattleSimulator:
         credits = ctx.setdefault("defeat_credits_this_action", {})
         if isinstance(credits, dict):
             credits[str(target_id)] = {"source_id": source_id, "damage_kind": damage_kind}
+        self.record_process_event(
+            ctx,
+            event_type="action_defeat_credit",
+            subject_id=str(target_id),
+            reason="action:defeat_credit",
+            payload={
+                "target_id": str(target_id),
+                "source_id": source_id,
+                "damage_kind": damage_kind,
+                "defeated_targets_this_action": sorted(str(x) for x in defeated) if isinstance(defeated, set) else [],
+                "defeat_credits_this_action": deepcopy(credits) if isinstance(credits, dict) else {},
+            },
+        )
 
     def derived_damage_live_targets(self, targets: list[str], ctx: dict[str, Any], *, effect_name: str) -> list[str]:
         """Return targets still eligible for non-primary/derived damage.
@@ -5668,9 +5739,23 @@ class BattleSimulator:
         for tid in targets:
             tid_s = str(tid)
             if tid_s in defeated_set:
+                self.record_process_event(
+                    ctx,
+                    event_type="derived_damage_target_skip",
+                    subject_id=tid_s,
+                    reason="derived_damage:already_defeated_this_action",
+                    payload={"target_id": tid_s, "effect": effect_name, "defeated_targets_this_action": sorted(defeated_set)},
+                )
                 self.state.log_event("derived_damage_skip", f"{effect_name} skipped {tid_s}: target already defeated in this action", {"target": tid_s, "effect": effect_name, "reason": "already_defeated_this_action"})
                 continue
             if tid_s not in self.state.units or not self.state.unit(tid_s).alive:
+                self.record_process_event(
+                    ctx,
+                    event_type="derived_damage_target_skip",
+                    subject_id=tid_s,
+                    reason="derived_damage:not_alive",
+                    payload={"target_id": tid_s, "effect": effect_name, "target_exists": tid_s in self.state.units},
+                )
                 self.state.log_event("derived_damage_skip", f"{effect_name} skipped {tid_s}: target is dead or missing", {"target": tid_s, "effect": effect_name, "reason": "not_alive"})
                 continue
             out.append(tid_s)
@@ -8336,6 +8421,13 @@ class BattleSimulator:
             for target_id in self.derived_damage_live_targets(raw_targets, ctx, effect_name=str(eff.get("id") or "damage_unit")):
                 phase_locked = ctx.get("phase_locked_targets")
                 if isinstance(phase_locked, set) and target_id in phase_locked:
+                    self.record_process_event(
+                        ctx,
+                        event_type="effect_damage_target_skip",
+                        subject_id=str(target_id),
+                        reason="effect_damage:phase_boundary_locked",
+                        payload={"target_id": str(target_id), "effect": deepcopy(eff), "phase_locked_targets": sorted(str(x) for x in phase_locked)},
+                    )
                     self.state.log_event(
                         "effect_damage_skip",
                         f"Skip {target_id}: phase HP boundary locked further effect damage in this action",
@@ -8373,6 +8465,19 @@ class BattleSimulator:
                     phase_locked = ctx.get("phase_locked_targets")
                     if isinstance(phase_locked, set):
                         phase_locked.add(target_id)
+                        self.record_process_event(
+                            ctx,
+                            event_type="phase_damage_lock",
+                            subject_id=str(target_id),
+                            reason="effect_damage:phase_boundary_lock",
+                            payload={
+                                "target_id": str(target_id),
+                                "effect": deepcopy(eff),
+                                "hp_bars_remaining": result.get("hp_bars_remaining"),
+                                "bars_depleted": result.get("bars_depleted"),
+                                "phase_locked_targets": sorted(str(x) for x in phase_locked),
+                            },
+                        )
                 self.run_triggers("after_hp_change", nested_ctx)
                 if result.get("hp_bar_depleted"):
                     self.run_triggers("after_hp_bar_depleted", nested_ctx)
