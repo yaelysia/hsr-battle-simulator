@@ -35,6 +35,54 @@ SPECIAL_MECHANIC_FLAG_KEYS = {
     "bondmate",
     "bondmate_target",
 }
+STATUS_PAYLOAD_KEYS = (
+    "armor_layers",
+    "titanic_corpus",
+    "count_attacks_taken",
+    "immediate_action_on_hit_by_element",
+    "break_dot",
+    "break_delayed_damage",
+    "zone_followup_true_damage",
+    "souldragon",
+    "shield_expire_remove_amount",
+)
+PANEL_KEYS = (
+    "hp",
+    "max_hp",
+    "atk",
+    "attack",
+    "def",
+    "defense",
+    "speed",
+    "crit_rate",
+    "crit_dmg",
+    "break_effect",
+    "effect_hit_rate",
+    "effect_res",
+    "energy_regeneration_rate",
+    "err_bonus",
+    "err",
+    "all_dmg_bonus",
+    "physical_dmg_bonus",
+    "fire_dmg_bonus",
+    "ice_dmg_bonus",
+    "thunder_dmg_bonus",
+    "wind_dmg_bonus",
+    "quantum_dmg_bonus",
+    "imaginary_dmg_bonus",
+    "all_res_pen",
+    "physical_res_pen",
+    "fire_res_pen",
+    "ice_res_pen",
+    "thunder_res_pen",
+    "wind_res_pen",
+    "quantum_res_pen",
+    "imaginary_res_pen",
+    "healing_bonus",
+    "outgoing_healing_bonus",
+    "damage_taken",
+    "damage_reduction",
+)
 NUMERIC_TOLERANCE = 1e-5
 
 
@@ -107,6 +155,26 @@ def _sync_status_modifier_keys(status: dict[str, Any]) -> None:
     status["modifier_keys"] = sorted(str(k) for k in mods.keys())
 
 
+def _sync_status_payloads(entity: dict[str, Any]) -> None:
+    payloads: dict[str, list[dict[str, Any]]] = {}
+    for status in entity.get("statuses", []) or []:
+        mods = status.get("modifiers") if isinstance(status.get("modifiers"), dict) else {}
+        for key in STATUS_PAYLOAD_KEYS:
+            if key in mods:
+                payloads.setdefault(key, []).append(
+                    {
+                        "status_id": status.get("id"),
+                        "stacks": status.get("stacks", 1),
+                        "payload": _copy(mods.get(key)),
+                    }
+                )
+    mechanics = entity.setdefault("special_mechanics", {})
+    if payloads:
+        mechanics["status_payloads"] = payloads
+    else:
+        mechanics.pop("status_payloads", None)
+
+
 def _sync_hp_percent(entity: dict[str, Any]) -> None:
     resources = entity.setdefault("resources", {})
     max_hp = float(resources.get("max_hp") or 0.0)
@@ -156,6 +224,193 @@ def _sync_special_flag(entity: dict[str, Any], key: str, value: Any, *, remove: 
         mechanics.pop(key, None)
     else:
         mechanics[key] = _copy(value)
+
+
+def _panel_from_unit_payload(raw: dict[str, Any]) -> dict[str, Any]:
+    panel: dict[str, Any] = {}
+    stats = raw.get("stats") if isinstance(raw.get("stats"), dict) else {}
+    stat_base = raw.get("stat_base") if isinstance(raw.get("stat_base"), dict) else {}
+    stat_pct = raw.get("stat_pct") if isinstance(raw.get("stat_pct"), dict) else {}
+    stat_flat = raw.get("stat_flat") if isinstance(raw.get("stat_flat"), dict) else {}
+    statuses = raw.get("statuses") if isinstance(raw.get("statuses"), list) else []
+
+    def stat_value(name: str) -> float:
+        add = 0.0
+        pct = 0.0
+        for status in statuses:
+            if not isinstance(status, dict):
+                continue
+            mods = status.get("modifiers") if isinstance(status.get("modifiers"), dict) else {}
+            stacks = int(status.get("stacks", 1) or 1)
+            add += float(mods.get(f"{name}_add", 0.0) or 0.0) * stacks
+            pct += float(mods.get(f"{name}_pct", 0.0) or 0.0) * stacks
+        if name in stat_base or name in stat_pct or name in stat_flat:
+            base = float(stat_base.get(name, 0.0) or 0.0)
+            flat = float(stat_flat.get(name, 0.0) or 0.0)
+            base_pct = float(stat_pct.get(name, 0.0) or 0.0)
+            return base * (1.0 + base_pct + pct) + flat + add
+        base = float(stats.get(name, 0.0) or 0.0)
+        return base * (1.0 + pct) + add
+
+    for key in PANEL_KEYS:
+        if key == "hp":
+            value = raw.get("hp")
+        elif key == "max_hp":
+            value = raw.get("max_hp")
+        else:
+            value = stat_value(key)
+        if isinstance(value, (int, float)) and abs(float(value)) > NUMERIC_TOLERANCE:
+            panel[key] = round(float(value), 6)
+    return panel
+
+
+def _entity_stat_value(entity: dict[str, Any], name: str) -> float:
+    stat_parts = entity.get("stat_parts") if isinstance(entity.get("stat_parts"), dict) else {}
+    stat_base = stat_parts.get("base") if isinstance(stat_parts.get("base"), dict) else {}
+    stat_pct = stat_parts.get("pct") if isinstance(stat_parts.get("pct"), dict) else {}
+    stat_flat = stat_parts.get("flat") if isinstance(stat_parts.get("flat"), dict) else {}
+    stats = stat_parts.get("legacy_stats") if isinstance(stat_parts.get("legacy_stats"), dict) else {}
+    add = 0.0
+    pct = 0.0
+    for status in entity.get("statuses", []) or []:
+        if not isinstance(status, dict):
+            continue
+        mods = status.get("modifiers") if isinstance(status.get("modifiers"), dict) else {}
+        stacks = int(status.get("stacks", 1) or 1)
+        add += float(mods.get(f"{name}_add", 0.0) or 0.0) * stacks
+        pct += float(mods.get(f"{name}_pct", 0.0) or 0.0) * stacks
+    if name in stat_base or name in stat_pct or name in stat_flat:
+        base = float(stat_base.get(name, 0.0) or 0.0)
+        flat = float(stat_flat.get(name, 0.0) or 0.0)
+        base_pct = float(stat_pct.get(name, 0.0) or 0.0)
+        return base * (1.0 + base_pct + pct) + flat + add
+    base = float(stats.get(name, 0.0) or 0.0)
+    return base * (1.0 + pct) + add
+
+
+def _recompute_entity_derived(snapshot: dict[str, Any], entity: dict[str, Any]) -> None:
+    # Do not broadly overwrite panel stats here. Some panel fields are produced
+    # by engine-side dynamic properties such as AttackConvert and need richer
+    # formula context than the snapshot reducer currently has. Keep direct HP
+    # panel updates in _set_panel_number and only update action-axis speed,
+    # which follows the local stat/status model used by UnitState.get_stat.
+    speed = _entity_stat_value(entity, "speed")
+    if abs(speed) <= NUMERIC_TOLERANCE:
+        speed = float((entity.get("action_axis") or {}).get("speed") or 0.0)
+    if speed > NUMERIC_TOLERANCE:
+        if "speed" in entity.setdefault("panel", {}):
+            entity["panel"]["speed"] = round(speed, 6)
+        axis = entity.setdefault("action_axis", {})
+        axis["speed"] = round(speed, 6)
+        axis["action_interval"] = None if not entity.get("alive") else round(10000.0 / speed, 6)
+        axis_rec = _axis_record(snapshot, str(entity.get("id") or ""))
+        if axis_rec is not None:
+            axis_rec["speed"] = axis["speed"]
+            axis_rec["action_interval"] = axis["action_interval"]
+    _sync_hp_percent(entity)
+    _sync_status_payloads(entity)
+
+
+def _special_mechanics_from_unit_payload(raw: dict[str, Any], statuses: list[dict[str, Any]]) -> dict[str, Any]:
+    flags = raw.get("flags") if isinstance(raw.get("flags"), dict) else {}
+    mechanics = {k: _copy(flags.get(k)) for k in SPECIAL_MECHANIC_FLAG_KEYS if k in flags}
+    entity = {"statuses": statuses, "special_mechanics": mechanics}
+    _sync_status_payloads(entity)
+    mechanics = entity.get("special_mechanics", {})
+    if raw.get("side") == "enemy":
+        mechanics["inferred_next_action"] = None
+    return mechanics
+
+
+def _entity_from_unit_payload(snapshot: dict[str, Any], raw: dict[str, Any], unit_id: str) -> dict[str, Any]:
+    statuses = [_status_from_value(row if isinstance(row, dict) else {}, str((row or {}).get("id") or "")) for row in raw.get("statuses", []) or []]
+    for status in statuses:
+        _sync_status_modifier_keys(status)
+    hp = round(float(raw.get("hp", 0.0) or 0.0), 6)
+    max_hp = round(float(raw.get("max_hp", hp) or 0.0), 6)
+    speed = round(float(raw.get("speed", raw.get("base_speed_field", 100.0)) or 0.0), 6)
+    remaining_av = round(float(raw.get("remaining_av", 0.0) or 0.0), 6)
+    av = float((snapshot.get("global") or {}).get("av", 0.0) or 0.0)
+    alive = bool(raw.get("alive", hp > 0))
+    action_interval = None if not alive or speed <= NUMERIC_TOLERANCE else round(10000.0 / speed, 6)
+    entity = {
+        "id": str(raw.get("id") or unit_id),
+        "name": raw.get("name", unit_id),
+        "side": raw.get("side", "ally"),
+        "alive": alive,
+        "tags": sorted(str(t) for t in (raw.get("tags") or [])),
+        "resources": {
+            "hp": hp,
+            "max_hp": max_hp,
+            "hp_percent": 0.0 if max_hp <= 0 else round(hp / max_hp, 6),
+            "shield": round(float(raw.get("shield", 0.0) or 0.0), 6),
+            "energy": round(float(raw.get("energy", 0.0) or 0.0), 6),
+            "max_energy": round(float(raw.get("max_energy", 0.0) or 0.0), 6),
+            "toughness": None if raw.get("toughness") is None else round(float(raw.get("toughness", 0.0)), 6),
+            "max_toughness": None if raw.get("max_toughness") is None else round(float(raw.get("max_toughness", 0.0)), 6),
+            "is_broken": bool(raw.get("is_broken", False)),
+            "hp_bars_total": int(raw.get("hp_bars_total", 1) or 1),
+            "hp_bars_remaining": int(raw.get("hp_bars_remaining", 1) or 1),
+            "hp_model_type": raw.get("hp_model_type", "normal_hp"),
+            "hp_carry_over_damage": raw.get("hp_carry_over_damage"),
+        },
+        "action_axis": {
+            "remaining_av": remaining_av,
+            "absolute_av": round(av + remaining_av, 6),
+            "speed": speed,
+            "action_interval": action_interval,
+        },
+        "panel": _panel_from_unit_payload(raw),
+        "stat_parts": {
+            "base": _copy(raw.get("stat_base") or {}),
+            "pct": _copy(raw.get("stat_pct") or {}),
+            "flat": _copy(raw.get("stat_flat") or {}),
+            "legacy_stats": _copy(raw.get("stats") or {}),
+        },
+        "resistance": _copy(raw.get("res") or {}),
+        "weaknesses": sorted(str(t) for t in (raw.get("weaknesses") or [])),
+        "statuses": statuses,
+        "special_mechanics": _special_mechanics_from_unit_payload(raw, statuses),
+        "flags": _copy(raw.get("flags") or {}),
+    }
+    return entity
+
+
+def _axis_from_entity(snapshot: dict[str, Any], entity: dict[str, Any]) -> dict[str, Any]:
+    axis = entity.get("action_axis") or {}
+    interval = axis.get("action_interval") if entity.get("alive") else None
+    return {
+        "id": entity.get("id"),
+        "name": entity.get("name"),
+        "side": entity.get("side"),
+        "alive": bool(entity.get("alive")),
+        "speed": axis.get("speed"),
+        "action_interval": interval,
+        "remaining_av": axis.get("remaining_av"),
+        "absolute_av": axis.get("absolute_av"),
+        "tags": sorted(str(t) for t in (entity.get("tags") or [])),
+    }
+
+
+def _entity_group_for_record(entity: dict[str, Any]) -> str:
+    side = entity.get("side")
+    tags = {str(t).lower() for t in (entity.get("tags") or [])}
+    flags = entity.get("flags") if isinstance(entity.get("flags"), dict) else {}
+    if side == "ally" and ("summon" in tags or flags.get("owner_id")):
+        return "summons"
+    if side == "ally":
+        return "allies"
+    if side == "enemy":
+        return "enemies"
+    return "others"
+
+
+def _upsert_unit(snapshot: dict[str, Any], unit_id: str, raw: dict[str, Any]) -> None:
+    _remove_unit(snapshot, unit_id)
+    entity = _entity_from_unit_payload(snapshot, raw, unit_id)
+    snapshot.setdefault(_entity_group_for_record(entity), []).append(entity)
+    if "not_on_timeline" not in {str(t) for t in entity.get("tags", [])}:
+        snapshot.setdefault("action_axis", []).append(_axis_from_entity(snapshot, entity))
 
 
 def _remove_unit(snapshot: dict[str, Any], unit_id: str) -> None:
@@ -293,7 +548,10 @@ def _apply_change(snapshot: dict[str, Any], change: dict[str, Any]) -> tuple[str
         if new_value is None:
             _remove_unit(snapshot, unit_id)
             return "applied", field_path
-        return "unsupported", field_path
+        if not isinstance(new_value, dict):
+            return "unsupported", field_path
+        _upsert_unit(snapshot, unit_id, new_value)
+        return "applied", field_path
 
     if scope != "unit":
         return "unsupported", field_path
@@ -370,6 +628,8 @@ def _apply_change(snapshot: dict[str, Any], change: dict[str, Any]) -> tuple[str
                         break
                 else:
                     statuses.append(replacement)
+            _sync_status_payloads(entity)
+            _recompute_entity_derived(snapshot, entity)
             return "applied", field_path
         if status is None:
             return "unsupported", field_path
@@ -387,6 +647,8 @@ def _apply_change(snapshot: dict[str, Any], change: dict[str, Any]) -> tuple[str
             _sync_status_modifier_keys(status)
         else:
             return "unsupported", field_path
+        _sync_status_payloads(entity)
+        _recompute_entity_derived(snapshot, entity)
         return "applied", field_path
 
     return "unsupported", field_path
