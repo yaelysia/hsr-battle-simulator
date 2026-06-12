@@ -1012,6 +1012,13 @@ class BattleSimulator:
                 self.state.unit(change.subject_id).flags.pop(key, None)
             else:
                 self.state.unit(change.subject_id).flags[key] = deepcopy(change.new_value)
+        elif change.scope == "unit" and change.field_path.startswith("unit.actions."):
+            action_id = change.field_path[len("unit.actions."):]
+            unit = self.state.unit(change.subject_id)
+            if change.delta == "remove":
+                unit.action_defs.pop(action_id, None)
+            else:
+                unit.action_defs[action_id] = deepcopy(change.new_value)
         elif change.scope == "unit" and change.field_path.startswith("unit.statuses."):
             path = change.field_path[len("unit.statuses."):]
             unit = self.state.unit(change.subject_id)
@@ -1105,6 +1112,27 @@ class BattleSimulator:
             old_value=self.unit_state_payload(old_unit),
             new_value=None,
             delta="remove",
+            source=self.kernel_source_from_context(ctx, reason),
+            reason=reason,
+            payload=payload or {},
+        )
+        return self.commit_state_change(change, ctx)
+
+    def commit_unit_action_def(self, unit: UnitState, action_id: str, action_def: dict[str, Any], *, reason: str, ctx: Optional[dict[str, Any]] = None, payload: Optional[dict[str, Any]] = None) -> Optional[StateChange]:
+        action_key = str(action_id)
+        old = deepcopy(unit.action_defs.get(action_key))
+        new_action = deepcopy(action_def)
+        if unit.id not in self.state.units:
+            unit.action_defs[action_key] = new_action
+            return None
+        change = StateChange(
+            change_type="action_def",
+            scope="unit",
+            subject_id=unit.id,
+            field_path=f"unit.actions.{action_key}",
+            old_value=old,
+            new_value=new_action,
+            delta="add" if old is None else "replace",
             source=self.kernel_source_from_context(ctx, reason),
             reason=reason,
             payload=payload or {},
@@ -2206,19 +2234,35 @@ class BattleSimulator:
             unit.action_defs = {}
         template_actions = ((self.SOULDRAGON_TEMPLATE or {}).get("summon_action_ir") or {}).get("actions") or (self.SOULDRAGON_TEMPLATE or {}).get("derived_actions") or {}
         for action_id, action_def in template_actions.items():
-            unit.action_defs.setdefault(str(action_id), deepcopy(action_def))
+            action_key = str(action_id)
+            if action_key not in unit.action_defs:
+                self.commit_unit_action_def(
+                    unit,
+                    action_key,
+                    action_def,
+                    reason="souldragon:default_action_def",
+                    ctx=ctx,
+                    payload={"source": "souldragon_template"},
+                )
         self.apply_pending_souldragon_enhancement(unit, ctx=ctx)
         # Failsafe for malformed template data: keep the unit actionable even if
         # the generated template file is missing/corrupt.
         if "normal" not in unit.action_defs:
-            unit.action_defs["normal"] = {
-                "id": "normal",
-                "action_type": "summon",
-                "tags": ["souldragon_action", "summon_action", "consumes_regular_action", "support", "failsafe_fallback"],
-                "target_policy": "all_allies",
-                "damage_packets": [],
-                "effects": [{"type": "modify_shield", "target": "all_allies", "source": "owner", "source_stat": "atk", "source_stat_pct": 0.10, "amount": 200}],
-            }
+            self.commit_unit_action_def(
+                unit,
+                "normal",
+                {
+                    "id": "normal",
+                    "action_type": "summon",
+                    "tags": ["souldragon_action", "summon_action", "consumes_regular_action", "support", "failsafe_fallback"],
+                    "target_policy": "all_allies",
+                    "damage_packets": [],
+                    "effects": [{"type": "modify_shield", "target": "all_allies", "source": "owner", "source_stat": "atk", "source_stat_pct": 0.10, "amount": 200}],
+                },
+                reason="souldragon:failsafe_action_def",
+                ctx=ctx,
+                payload={"source": "failsafe"},
+            )
 
     def apply_pending_souldragon_enhancement(self, dragon: UnitState, ctx: Optional[dict[str, Any]] = None) -> None:
         """Apply global pending enhanced-action count to a newly created dragon.
