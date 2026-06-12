@@ -1,0 +1,80 @@
+settings:
+  default_crit_mode: noncrit
+
+global:
+  av: 0
+  skill_points: 3
+  skill_point_cap: 5
+
+units:
+  attacker:
+    name: Attacker
+    side: ally
+    level: 80
+    hp: 1000
+    max_hp: 1000
+    energy: 0
+    max_energy: 100
+    speed: 100
+    remaining_av: 100
+    stats:
+      atk: 1000
+      crit_rate: 0
+      crit_dmg: 0.5
+    statuses:
+      - id: skill_only_bonus
+        modifiers:
+          conditional_modifiers:
+            - condition: {left: action.tags, op: contains, right: skill_damage}
+              modifiers:
+                dmg_bonus_add: 0.20
+    actions:
+      skill:
+        tags: [attack, skill_damage]
+        target_policy: manual
+        cost: {}
+        damage_packets:
+          - id: hit
+            element: quantum
+            scaling_stat: atk
+            multiplier: 1.0
+            can_crit: false
+            tags: [skill_damage]
+      basic:
+        tags: [attack, basic_damage]
+        target_policy: manual
+        cost: {}
+        damage_packets:
+          - id: hit
+            element: quantum
+            scaling_stat: atk
+            multiplier: 1.0
+            can_crit: false
+            tags: [basic_damage]
+  e_skill:
+    name: SkillTarget
+    side: enemy
+    hp: 2000
+    max_hp: 2000
+    speed: 100
+    remaining_av: 100
+    stats: {defense: 0}
+    res: {quantum: 0}
+  e_basic:
+    name: BasicTarget
+    side: enemy
+    hp: 2000
+    max_hp: 2000
+    speed: 100
+    remaining_av: 100
+    stats: {defense: 0}
+    res: {quantum: 0}
+route:
+  - actor: attacker
+    action: skill
+    timing: manual
+    targets: [e_skill]
+  - actor: attacker
+    action: basic
+    timing: manual
+    targets: [e_basic]

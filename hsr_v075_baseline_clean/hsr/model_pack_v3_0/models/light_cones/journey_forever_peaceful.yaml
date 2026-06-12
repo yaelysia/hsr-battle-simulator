@@ -1,0 +1,14 @@
+kind: equipment_template
+schema_version: '3.0'
+slot: light_cone
+id: journey_forever_peaceful
+name: Journey, Forever Peaceful
+cn_name: 愿旅途永远坦然
+source_file: light_cone_journey_forever_peaceful_template_v1_6.yaml
+equip_requirement: {}
+base_stats: {}
+superimposition_effects: {}
+stack_model: {}
+status_effects: {}
+triggers: []
+raw_user_case: {}

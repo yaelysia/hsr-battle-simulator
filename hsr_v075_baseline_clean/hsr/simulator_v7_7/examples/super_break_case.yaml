@@ -1,0 +1,97 @@
+# Phase 4: 超击破集成测试
+# 验证：破韧→第二次攻击触发超击破→settlement 包含 SuperBreakRecord
+settings:
+  default_crit_mode: noncrit
+
+global:
+  av: 0
+  cycle: 0
+  skill_points: 3
+  skill_point_cap: 5
+
+units:
+  attacker:
+    name: Test Attacker
+    side: ally
+    level: 80
+    hp: 3000
+    max_hp: 3000
+    energy: 0
+    max_energy: 120
+    speed: 120
+    remaining_av: 83.33
+    stats:
+      atk: 2500
+      speed: 120
+      crit_rate: 0.05
+      crit_dmg: 0.50
+      break_effect: 0.50
+    tags: [ally, on_timeline]
+    statuses: []
+    actions:
+      break_attack:
+        tags: [attack, basic_attack, grants_base_energy]
+        target_policy: manual
+        cost: {skill_points: 0, energy: 0}
+        energy_gain: {base: 20, affected_by_err: false}
+        damage_packets:
+          - id: break_hit
+            element: physical
+            damage_type: basic_damage
+            scaling_stat: atk
+            multiplier: 1.0
+            can_crit: true
+            toughness_reduction: 60
+            tags: [basic_damage]
+      follow_up:
+        tags: [attack, basic_attack, grants_base_energy]
+        target_policy: manual
+        cost: {skill_points: 0, energy: 0}
+        energy_gain: {base: 20, affected_by_err: false}
+        damage_packets:
+          - id: follow_hit
+            element: physical
+            damage_type: basic_damage
+            scaling_stat: atk
+            multiplier: 1.0
+            can_crit: true
+            toughness_reduction: 30
+            tags: [basic_damage]
+
+  target:
+    name: Test Target
+    side: enemy
+    level: 80
+    hp: 50000
+    max_hp: 50000
+    energy: 0
+    max_energy: 120
+    speed: 100
+    remaining_av: 100.0
+    toughness: 60
+    max_toughness: 60
+    weaknesses: [physical]
+    armor_layers: 0
+    stats:
+      atk: 1500
+      speed: 100
+      defense: 800
+    tags: [enemy, on_timeline]
+    statuses: []
+    res: {physical: 0.0}
+    actions:
+      idle:
+        tags: [no_op, consumes_turn]
+        target_policy: self
+        cost: {energy: 0}
+        energy_gain: {base: 0, affected_by_err: false}
+
+route:
+  - actor: attacker
+    action: break_attack
+    timing: manual
+    targets: [target]
+  - actor: attacker
+    action: follow_up
+    timing: manual
+    targets: [target]

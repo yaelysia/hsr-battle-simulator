@@ -1,0 +1,135 @@
+kind: relic_build
+schema_version: '3.0'
+id: sparkle_user_current_build
+source_file: relic_sparkle_user_current_build_v1_7.yaml
+raw:
+  relic_build:
+    id: sparkle_user_current_build
+    owner: sparkle
+    template_version: '1.7'
+    source: user_screenshot_2026_06_10_sparkle
+    panel_snapshot_is_authoritative: true
+  panel_snapshot:
+    total_stats:
+      hp: 4270
+      atk: 1482
+      def: 1689
+      speed: 150
+      crit_rate: 0.05
+      crit_dmg: 2.634
+      break_effect: 0.187
+      max_energy: 110
+      energy_regeneration_rate: 1.244
+      effect_hit_rate: 0.082
+      effect_res: 0.259
+      wind_dmg_bonus: 0.1
+      quantum_dmg_bonus: 0.0
+  sets:
+    cavern:
+      id: eagle_of_twilight_line
+      cn_name: 晨昏交界的翔鹰
+      pieces: 4
+      static_effects_in_panel:
+        wind_dmg_bonus: 0.1
+      dynamic_effects:
+      - id: eagle_4pc_action_advance_after_ultimate
+        trigger:
+          timing: after_wearer_uses_ultimate
+        effect:
+          type: advance_action
+          target: wearer
+          advance_percent: 0.25
+    planar:
+      id: sprightly_vonwacq
+      cn_name: 生命的翁瓦克
+      pieces: 2
+      static_effects_in_panel:
+        energy_regeneration_rate_delta: 0.05
+      dynamic_effects:
+      - id: vonwacq_battle_start_action_advance
+        trigger:
+          timing: battle_start
+          condition: wearer.final_speed >= 120
+        effect:
+          type: advance_action
+          target: wearer
+          advance_percent: 0.4
+  notes:
+  - The total panel snapshot already includes static relic and light-cone stat effects shown in game.
+  - Dynamic action-advance effects are modeled as triggers.
+  pieces:
+    head:
+      slot: head
+      level: 15
+      main_stat:
+        hp_flat: 705
+      substats:
+        def_pct: 0.054
+        speed_flat: 4
+        crit_dmg: 0.233
+        effect_hit_rate: 0.082
+    hands:
+      slot: hands
+      level: 15
+      main_stat:
+        atk_flat: 352
+      substats:
+        speed_flat: 6
+        crit_dmg: 0.226
+        effect_res: 0.034
+        break_effect: 0.064
+    body:
+      slot: body
+      level: 15
+      main_stat:
+        crit_dmg: 0.648
+      substats:
+        atk_flat: 40
+        def_flat: 40
+        def_pct: 0.102
+        speed_flat: 7
+    feet:
+      slot: feet
+      level: 15
+      main_stat:
+        speed_flat: 25
+      substats:
+        hp_flat: 38
+        def_flat: 40
+        crit_dmg: 0.123
+        effect_res: 0.125
+    planar_sphere:
+      slot: planar_sphere
+      level: 15
+      main_stat:
+        def_pct: 0.54
+      substats:
+        atk_flat: 35
+        hp_pct: 0.082
+        speed_flat: 2
+        crit_dmg: 0.168
+    link_rope:
+      slot: link_rope
+      level: 15
+      main_stat:
+        energy_regeneration_rate_bonus: 0.194
+      substats:
+        hp_flat: 38
+        speed_flat: 4
+        crit_dmg: 0.174
+        break_effect: 0.123
+  stat_summary_from_relics_only:
+    hp_flat: 781
+    atk_flat: 427
+    def_flat: 80
+    hp_pct: 0.082
+    atk_pct: 0.0
+    def_pct: 0.696
+    speed_flat: 48
+    crit_rate: 0.0
+    crit_dmg: 1.572
+    break_effect: 0.187
+    energy_regeneration_rate_bonus: 0.194
+    effect_hit_rate: 0.082
+    effect_res: 0.159
+    wind_dmg_bonus: 0.1

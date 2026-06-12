@@ -1,0 +1,99 @@
+{
+  "tribbie": {
+    "observed_total": 4401,
+    "sim_total_after_sparkle_cipher_extra": 4393.00559968331,
+    "diff": -7.994400316690189,
+    "ratio": 0.9981835036771892,
+    "packets": [
+      {
+        "target": "blaze",
+        "damage": 2312.108210359637,
+        "base": 942.48,
+        "crit": 3.527,
+        "dmg_bonus": 1.3399999999999999,
+        "def": 0.46511630070308374,
+        "res": 1.24,
+        "taken": 1.0,
+        "reduction": 1.0,
+        "toughness": 0.9
+      },
+      {
+        "target": "titan",
+        "damage": 2080.897389323673,
+        "base": 942.48,
+        "crit": 3.527,
+        "dmg_bonus": 1.3399999999999999,
+        "def": 0.46511630070308374,
+        "res": 1.24,
+        "taken": 1.0,
+        "reduction": 0.9,
+        "toughness": 0.9
+      }
+    ]
+  },
+  "seele": {
+    "observed_total": 109262,
+    "sim_total_after_sparkle_cipher_extra": 115919.63539530325,
+    "diff": 6657.635395303252,
+    "ratio": 1.060932761575875,
+    "packets": [
+      {
+        "packet": "seele_skill_formula_total_hit_1",
+        "damage": 27496.85052275124,
+        "base": 4052.0779199999997,
+        "crit_is": true,
+        "crit_mult": 4.635160000000001,
+        "dmg_bonus": 2.608,
+        "def": 0.46511630070308374,
+        "res": 1.49,
+        "taken": 1.0,
+        "reduction": 0.9,
+        "toughness": 0.9
+      },
+      {
+        "packet": "seele_skill_formula_total_hit_2",
+        "damage": 2966.1166521491427,
+        "base": 2026.0389599999999,
+        "crit_is": false,
+        "crit_mult": 1.0,
+        "dmg_bonus": 2.608,
+        "def": 0.46511630070308374,
+        "res": 1.49,
+        "taken": 1.0,
+        "reduction": 0.9,
+        "toughness": 0.9
+      },
+      {
+        "packet": "seele_skill_formula_total_hit_3",
+        "damage": 2966.1166521491427,
+        "base": 2026.0389599999999,
+        "crit_is": false,
+        "crit_mult": 1.0,
+        "dmg_bonus": 2.608,
+        "def": 0.46511630070308374,
+        "res": 1.49,
+        "taken": 1.0,
+        "reduction": 0.9,
+        "toughness": 0.9
+      },
+      {
+        "packet": "seele_skill_formula_total_hit_4",
+        "damage": 82490.55156825372,
+        "base": 12156.233759999997,
+        "crit_is": true,
+        "crit_mult": 4.635160000000001,
+        "dmg_bonus": 2.608,
+        "def": 0.46511630070308374,
+        "res": 1.49,
+        "taken": 1.0,
+        "reduction": 0.9,
+        "toughness": 0.9
+      }
+    ]
+  },
+  "findings": [
+    "Tribbie E1 true damage is implemented in model pack but current C0-C8 case has no active Tribbie Zone status/effect; therefore it is not included in this route.",
+    "Sparkle Cipher extra +6% per active Figment/talent stack was missing from C3 onward. C0 observed damage-up is 12% = two stacks, so Cipher adds +12% DMG bonus. Adding it brings Tribbie follow-up from 3999.60 to 4393.01, close to observed 4401.",
+    "Adding the same Cipher extra makes Seele skill over by about 6.09%, so Seele still has a separate buff/debuff/window issue; not solved by Tribbie E1."
+  ]
+}

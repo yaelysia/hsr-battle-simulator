@@ -1,0 +1,54 @@
+{
+  "version": "v0.61",
+  "source_images": [
+    "2905d5e683761aea5077468efaec9ed4.jpg",
+    "7c385d72dd5db227439dcccfa1709be9.jpg"
+  ],
+  "seele": {
+    "panel": {
+      "hp": 3082,
+      "atk": 3254,
+      "def": 1057,
+      "speed": 117,
+      "crit_rate": 0.762,
+      "crit_dmg": 2.087,
+      "break_effect": 0.0,
+      "max_energy": 120,
+      "energy_regeneration_rate": 1.0,
+      "effect_hit_rate": 0.077,
+      "effect_res": 0.082,
+      "quantum_dmg_bonus": 0.488
+    },
+    "relic_sets": "繁星璀璨的天才4 + 无主荒星茨冈尼亚2",
+    "light_cone": "于夜色中 Lv80 S1",
+    "eidolons": 3,
+    "traces": "6-12-10-12"
+  },
+  "sparkle": {
+    "panel": {
+      "hp": 4270,
+      "atk": 1482,
+      "def": 1689,
+      "speed": 150,
+      "crit_rate": 0.05,
+      "crit_dmg": 2.634,
+      "break_effect": 0.187,
+      "max_energy": 110,
+      "energy_regeneration_rate": 1.244,
+      "effect_hit_rate": 0.082,
+      "effect_res": 0.259,
+      "wind_dmg_bonus": 0.1,
+      "quantum_dmg_bonus": 0.0
+    },
+    "relic_sets": "晨昏交界的翔鹰4 + 生命的翁瓦克2",
+    "light_cone": "游戏尘寰 Lv80 S1",
+    "eidolons": 1,
+    "traces": "6-10-10-10"
+  },
+  "notes": [
+    "Seele planar set changed from Rutilant Arena to Sigonia, the Unclaimed Desolation; Rutilant basic/skill damage trigger removed.",
+    "Seele link rope changed from ERR to ATK%; energy regeneration rate aligned to 1.0 unless external buffs apply.",
+    "Sparkle crit damage stayed 263.4%, so Dreamdiver skill crit-damage buff remains 108.216%.",
+    "Compiled opening case was updated so route smoke uses the new panel values."
+  ]
+}

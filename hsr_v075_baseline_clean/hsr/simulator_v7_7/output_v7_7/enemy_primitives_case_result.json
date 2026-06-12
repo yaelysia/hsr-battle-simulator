@@ -1,0 +1,1295 @@
+{
+  "state": {
+    "global": {
+      "av": 0.0,
+      "cycle": 0,
+      "skill_points": 3,
+      "skill_point_cap": 5,
+      "wave_index": 0,
+      "flags": {}
+    },
+    "units": {
+      "hero": {
+        "id": "hero",
+        "name": "Hero",
+        "side": "ally",
+        "hp": 1000.0,
+        "max_hp": 1000.0,
+        "shield": 0.0,
+        "hp_bars_total": 1,
+        "hp_bars_remaining": 1,
+        "hp_model_type": "normal_hp",
+        "hp_carry_over_damage": null,
+        "hp_model_bars": [],
+        "hp_percent": 1.0,
+        "energy": 0.0,
+        "max_energy": 0.0,
+        "speed": 100.0,
+        "base_speed_field": 100.0,
+        "remaining_av": 100.0,
+        "toughness": null,
+        "max_toughness": null,
+        "is_broken": false,
+        "alive": true,
+        "weaknesses": [],
+        "tags": [],
+        "stats": {
+          "atk": 1000.0,
+          "crit_rate": 0.0,
+          "crit_dmg": 0.0
+        },
+        "stat_base": {},
+        "stat_pct": {},
+        "stat_flat": {},
+        "res": {},
+        "statuses": [],
+        "status_defs": [],
+        "flags": {}
+      },
+      "armored_enemy": {
+        "id": "armored_enemy",
+        "name": "Armored Enemy",
+        "side": "enemy",
+        "hp": 800.0,
+        "max_hp": 1000.0,
+        "shield": 0.0,
+        "hp_bars_total": 1,
+        "hp_bars_remaining": 1,
+        "hp_model_type": "normal_hp",
+        "hp_carry_over_damage": null,
+        "hp_model_bars": [],
+        "hp_percent": 0.8,
+        "energy": 0.0,
+        "max_energy": 0.0,
+        "speed": 100.0,
+        "base_speed_field": 100.0,
+        "remaining_av": 120.0,
+        "toughness": null,
+        "max_toughness": null,
+        "is_broken": false,
+        "alive": true,
+        "weaknesses": [],
+        "tags": [],
+        "stats": {
+          "defense": 0.0
+        },
+        "stat_base": {},
+        "stat_pct": {},
+        "stat_flat": {},
+        "res": {
+          "quantum": 0.0
+        },
+        "statuses": [],
+        "status_defs": [],
+        "flags": {
+          "armor": 0.0,
+          "armor_broken": true
+        }
+      }
+    },
+    "trigger_usage": {},
+    "queued_actions": {
+      "ultimate_queue": [],
+      "immediate_queue": [],
+      "interrupt_queue": []
+    }
+  },
+  "scene": {
+    "global": {
+      "av": 0.0,
+      "cycle": 0,
+      "skill_points": 3,
+      "skill_point_cap": 5,
+      "_sp": 3,
+      "_sp_cap": 5,
+      "wave_index": 0,
+      "flags": {}
+    },
+    "action_axis": [
+      {
+        "id": "hero",
+        "name": "Hero",
+        "side": "ally",
+        "alive": true,
+        "speed": 100.0,
+        "action_interval": 100.0,
+        "remaining_av": 100.0,
+        "absolute_av": 100.0,
+        "tags": []
+      },
+      {
+        "id": "armored_enemy",
+        "name": "Armored Enemy",
+        "side": "enemy",
+        "alive": true,
+        "speed": 100.0,
+        "action_interval": 100.0,
+        "remaining_av": 120.0,
+        "absolute_av": 120.0,
+        "tags": []
+      }
+    ],
+    "allies": [
+      {
+        "id": "hero",
+        "name": "Hero",
+        "side": "ally",
+        "alive": true,
+        "tags": [],
+        "resources": {
+          "hp": 1000.0,
+          "max_hp": 1000.0,
+          "hp_percent": 1.0,
+          "shield": 0.0,
+          "energy": 0.0,
+          "max_energy": 0.0,
+          "toughness": null,
+          "max_toughness": null,
+          "is_broken": false,
+          "hp_bars_total": 1,
+          "hp_bars_remaining": 1,
+          "hp_model_type": "normal_hp",
+          "hp_carry_over_damage": null
+        },
+        "action_axis": {
+          "remaining_av": 100.0,
+          "absolute_av": 100.0,
+          "speed": 100.0,
+          "action_interval": 100.0
+        },
+        "panel": {
+          "hp": 1000.0,
+          "max_hp": 1000.0,
+          "atk": 1000.0
+        },
+        "stat_parts": {
+          "base": {},
+          "pct": {},
+          "flat": {},
+          "legacy_stats": {
+            "atk": 1000.0,
+            "crit_rate": 0.0,
+            "crit_dmg": 0.0
+          }
+        },
+        "resistance": {},
+        "weaknesses": [],
+        "statuses": [],
+        "special_mechanics": {},
+        "flags": {}
+      }
+    ],
+    "summons": [],
+    "enemies": [
+      {
+        "id": "armored_enemy",
+        "name": "Armored Enemy",
+        "side": "enemy",
+        "alive": true,
+        "tags": [],
+        "resources": {
+          "hp": 800.0,
+          "max_hp": 1000.0,
+          "hp_percent": 0.8,
+          "shield": 0.0,
+          "energy": 0.0,
+          "max_energy": 0.0,
+          "toughness": null,
+          "max_toughness": null,
+          "is_broken": false,
+          "hp_bars_total": 1,
+          "hp_bars_remaining": 1,
+          "hp_model_type": "normal_hp",
+          "hp_carry_over_damage": null
+        },
+        "action_axis": {
+          "remaining_av": 120.0,
+          "absolute_av": 120.0,
+          "speed": 100.0,
+          "action_interval": 100.0
+        },
+        "panel": {
+          "hp": 800.0,
+          "max_hp": 1000.0
+        },
+        "stat_parts": {
+          "base": {},
+          "pct": {},
+          "flat": {},
+          "legacy_stats": {
+            "defense": 0.0
+          }
+        },
+        "resistance": {
+          "quantum": 0.0
+        },
+        "weaknesses": [],
+        "statuses": [],
+        "special_mechanics": {
+          "inferred_next_action": null
+        },
+        "flags": {
+          "armor": 0.0,
+          "armor_broken": true
+        }
+      }
+    ],
+    "others": [],
+    "queues": {
+      "ultimate_queue": [],
+      "immediate_queue": [],
+      "interrupt_queue": []
+    },
+    "trigger_usage": {}
+  },
+  "log": [
+    {
+      "av": 0.0,
+      "event_type": "route",
+      "message": "Route step 1: {'actor': 'hero', 'action': 'hit', 'timing': 'manual', 'targets': ['armored_enemy']}",
+      "data": {}
+    },
+    {
+      "av": 0.0,
+      "event_type": "action_start",
+      "message": "hero uses hit on ['armored_enemy']",
+      "data": {
+        "tags": [
+          "attack"
+        ],
+        "turn_kind": null
+      }
+    },
+    {
+      "av": 0.0,
+      "event_type": "damage",
+      "message": "hero deals 100.000 quantum damage to armored_enemy",
+      "data": {
+        "old_hp": 1000.0,
+        "new_hp": 900.0,
+        "old_shield": 0.0,
+        "new_shield": 0.0,
+        "actor_id": "hero",
+        "target_id": "armored_enemy",
+        "packet_id": "hit",
+        "element": "quantum",
+        "base_damage": 100.0,
+        "crit": {
+          "is_crit": false,
+          "multiplier": 1.0,
+          "source": "cannot_crit",
+          "crit_rate": 0.0,
+          "crit_dmg": 0.0
+        },
+        "multipliers": {
+          "dmg_bonus": 1.0,
+          "defense": 1.0,
+          "res": 1.0,
+          "damage_taken": 1.0,
+          "universal_reduction": 1.0,
+          "toughness_state": 1.0,
+          "other": 1.0
+        },
+        "formula_ledger": {
+          "formula_type": "direct_damage",
+          "actor_id": "hero",
+          "target_id": "armored_enemy",
+          "action_id": "hit",
+          "packet_id": "hit",
+          "tags": [
+            "attack"
+          ],
+          "scaling": {
+            "stat": "atk",
+            "scaling_value": 1000.0,
+            "multiplier": 0.1,
+            "flat_damage": 0.0,
+            "base_damage": 100.0
+          },
+          "crit": {
+            "is_crit": false,
+            "multiplier": 1.0,
+            "source": "cannot_crit",
+            "crit_rate": 0.0,
+            "crit_dmg": 0.0
+          },
+          "buckets": {
+            "dmg_bonus": {
+              "multiplier": 1.0,
+              "terms": []
+            },
+            "defense": {
+              "multiplier": 1.0,
+              "raw_target_def": 0.0,
+              "effective_target_def": 0.0,
+              "ignore_defense_multiplier": false,
+              "terms": []
+            },
+            "res": {
+              "multiplier": 1.0,
+              "base_target_res": 0.0,
+              "target_res_after_delta": 0.0,
+              "res_pen_total": 0,
+              "terms": []
+            },
+            "damage_taken": {
+              "multiplier": 1.0,
+              "terms": []
+            },
+            "universal_reduction": {
+              "multiplier": 1.0,
+              "terms": []
+            },
+            "toughness_state": {
+              "multiplier": 1.0,
+              "target_toughness_before_packet": null,
+              "target_is_broken_before_packet": false,
+              "ignore_toughness_state_multiplier": false
+            },
+            "other": {
+              "multiplier": 1.0,
+              "source": "packet.other_multiplier"
+            }
+          },
+          "formula": "base * crit * dmg_bonus * defense * res * damage_taken * universal_reduction * toughness_state * other",
+          "final_damage": 100.0
+        },
+        "damage": 100.0,
+        "toughness_reduction": 0.0,
+        "target_defeated": false,
+        "hp_bar_depleted": false,
+        "bars_depleted": 0,
+        "hp_bars_remaining": 1,
+        "depleted_bar_events": [],
+        "phase_damage_locked_until_action_end": false
+      }
+    },
+    {
+      "av": 0.0,
+      "event_type": "trigger",
+      "message": "Trigger armor_hit_counter fired",
+      "data": {
+        "timing": "after_damage"
+      }
+    },
+    {
+      "av": 0.0,
+      "event_type": "effect",
+      "message": "armored_enemy.armor 1.0 -> 0.0",
+      "data": {}
+    },
+    {
+      "av": 0.0,
+      "event_type": "trigger",
+      "message": "Trigger armor_break_self_damage fired",
+      "data": {
+        "timing": "after_damage"
+      }
+    },
+    {
+      "av": 0.0,
+      "event_type": "effect",
+      "message": "Set armored_enemy.armor_broken=True",
+      "data": {}
+    },
+    {
+      "av": 0.0,
+      "event_type": "effect_damage",
+      "message": "armored_enemy loses 100.000 HP from effect_damage",
+      "data": {
+        "old_hp": 900.0,
+        "new_hp": 800.0,
+        "raw_amount": 100.0,
+        "applied_hp_loss": 100.0
+      }
+    },
+    {
+      "av": 0.0,
+      "event_type": "av_change",
+      "message": "armored_enemy action delayed by 20.0%",
+      "data": {
+        "old": 100.0,
+        "new": 120.0
+      }
+    },
+    {
+      "av": 0.0,
+      "event_type": "action_end",
+      "message": "hero finished hit",
+      "data": {}
+    }
+  ],
+  "runtime_audit": {
+    "property_hint_applications": {
+      "applied_count": 0,
+      "skipped_count": 0,
+      "by_property": {},
+      "skipped_reason_counts": {},
+      "records": []
+    },
+    "symbolic_formula_applications": {
+      "applied_count": 0,
+      "skipped_count": 0,
+      "skipped_reason_counts": {},
+      "records": []
+    },
+    "engine_property_reads": {
+      "attempted_count": 0,
+      "resolved_count": 0,
+      "unresolved_count": 0,
+      "by_property": {},
+      "records": []
+    }
+  },
+  "metadata": {
+    "route_executed_step_count": 1,
+    "route_action_trace": [
+      {
+        "step": 1,
+        "step_type": "action",
+        "actor": "hero",
+        "action": "hit",
+        "timing": "manual",
+        "targets": [
+          "armored_enemy"
+        ],
+        "before": {
+          "av": 0.0,
+          "skill_points": 3,
+          "skill_point_cap": 5,
+          "_sp": 3,
+          "_sp_cap": 5,
+          "allies": [
+            {
+              "id": "hero",
+              "alive": true,
+              "hp": 1000.0,
+              "max_hp": 1000.0,
+              "energy": 0.0,
+              "max_energy": 0.0,
+              "remaining_av": 100.0,
+              "toughness": null,
+              "max_toughness": null,
+              "hp_bars_remaining": 1,
+              "status_count": 0
+            }
+          ],
+          "enemies": [
+            {
+              "id": "armored_enemy",
+              "alive": true,
+              "hp": 1000.0,
+              "max_hp": 1000.0,
+              "energy": 0.0,
+              "max_energy": 0.0,
+              "remaining_av": 100.0,
+              "toughness": null,
+              "max_toughness": null,
+              "hp_bars_remaining": 1,
+              "status_count": 0
+            }
+          ],
+          "queue_size": 0
+        },
+        "before_scene": {
+          "global": {
+            "av": 0.0,
+            "cycle": 0,
+            "skill_points": 3,
+            "skill_point_cap": 5,
+            "_sp": 3,
+            "_sp_cap": 5,
+            "wave_index": 0,
+            "flags": {}
+          },
+          "action_axis": [
+            {
+              "id": "hero",
+              "name": "Hero",
+              "side": "ally",
+              "alive": true,
+              "speed": 100.0,
+              "action_interval": 100.0,
+              "remaining_av": 100.0,
+              "absolute_av": 100.0,
+              "tags": []
+            },
+            {
+              "id": "armored_enemy",
+              "name": "Armored Enemy",
+              "side": "enemy",
+              "alive": true,
+              "speed": 100.0,
+              "action_interval": 100.0,
+              "remaining_av": 100.0,
+              "absolute_av": 100.0,
+              "tags": []
+            }
+          ],
+          "allies": [
+            {
+              "id": "hero",
+              "name": "Hero",
+              "side": "ally",
+              "alive": true,
+              "tags": [],
+              "resources": {
+                "hp": 1000.0,
+                "max_hp": 1000.0,
+                "hp_percent": 1.0,
+                "shield": 0.0,
+                "energy": 0.0,
+                "max_energy": 0.0,
+                "toughness": null,
+                "max_toughness": null,
+                "is_broken": false,
+                "hp_bars_total": 1,
+                "hp_bars_remaining": 1,
+                "hp_model_type": "normal_hp",
+                "hp_carry_over_damage": null
+              },
+              "action_axis": {
+                "remaining_av": 100.0,
+                "absolute_av": 100.0,
+                "speed": 100.0,
+                "action_interval": 100.0
+              },
+              "panel": {
+                "hp": 1000.0,
+                "max_hp": 1000.0,
+                "atk": 1000.0
+              },
+              "stat_parts": {
+                "base": {},
+                "pct": {},
+                "flat": {},
+                "legacy_stats": {
+                  "atk": 1000.0,
+                  "crit_rate": 0.0,
+                  "crit_dmg": 0.0
+                }
+              },
+              "resistance": {},
+              "weaknesses": [],
+              "statuses": [],
+              "special_mechanics": {},
+              "flags": {}
+            }
+          ],
+          "summons": [],
+          "enemies": [
+            {
+              "id": "armored_enemy",
+              "name": "Armored Enemy",
+              "side": "enemy",
+              "alive": true,
+              "tags": [],
+              "resources": {
+                "hp": 1000.0,
+                "max_hp": 1000.0,
+                "hp_percent": 1.0,
+                "shield": 0.0,
+                "energy": 0.0,
+                "max_energy": 0.0,
+                "toughness": null,
+                "max_toughness": null,
+                "is_broken": false,
+                "hp_bars_total": 1,
+                "hp_bars_remaining": 1,
+                "hp_model_type": "normal_hp",
+                "hp_carry_over_damage": null
+              },
+              "action_axis": {
+                "remaining_av": 100.0,
+                "absolute_av": 100.0,
+                "speed": 100.0,
+                "action_interval": 100.0
+              },
+              "panel": {
+                "hp": 1000.0,
+                "max_hp": 1000.0
+              },
+              "stat_parts": {
+                "base": {},
+                "pct": {},
+                "flat": {},
+                "legacy_stats": {
+                  "defense": 0.0
+                }
+              },
+              "resistance": {
+                "quantum": 0.0
+              },
+              "weaknesses": [],
+              "statuses": [],
+              "special_mechanics": {
+                "inferred_next_action": null
+              },
+              "flags": {
+                "armor": 1
+              }
+            }
+          ],
+          "others": [],
+          "queues": {
+            "ultimate_queue": [],
+            "immediate_queue": [],
+            "interrupt_queue": []
+          },
+          "trigger_usage": {}
+        },
+        "event_summary": {
+          "event_count": 9,
+          "event_counts": {
+            "action_start": 1,
+            "damage": 1,
+            "trigger": 2,
+            "effect": 2,
+            "effect_damage": 1,
+            "av_change": 1,
+            "action_end": 1
+          },
+          "damage_total": 100.0,
+          "toughness_damage_total": 0.0,
+          "defeated_units": [],
+          "queued_event_count": 0
+        },
+        "action_resolution": {
+          "requested": {
+            "step_type": "action",
+            "actor": "hero",
+            "action": "hit",
+            "timing": "manual",
+            "targets": [
+              "armored_enemy"
+            ]
+          },
+          "damage_events": [
+            {
+              "av": 0.0,
+              "event_type": "damage",
+              "message": "hero deals 100.000 quantum damage to armored_enemy",
+              "data": {
+                "old_hp": 1000.0,
+                "new_hp": 900.0,
+                "old_shield": 0.0,
+                "new_shield": 0.0,
+                "actor_id": "hero",
+                "target_id": "armored_enemy",
+                "packet_id": "hit",
+                "element": "quantum",
+                "base_damage": 100.0,
+                "crit": {
+                  "is_crit": false,
+                  "multiplier": 1.0,
+                  "source": "cannot_crit",
+                  "crit_rate": 0.0,
+                  "crit_dmg": 0.0
+                },
+                "multipliers": {
+                  "dmg_bonus": 1.0,
+                  "defense": 1.0,
+                  "res": 1.0,
+                  "damage_taken": 1.0,
+                  "universal_reduction": 1.0,
+                  "toughness_state": 1.0,
+                  "other": 1.0
+                },
+                "formula_ledger": {
+                  "formula_type": "direct_damage",
+                  "actor_id": "hero",
+                  "target_id": "armored_enemy",
+                  "action_id": "hit",
+                  "packet_id": "hit",
+                  "tags": [
+                    "attack"
+                  ],
+                  "scaling": {
+                    "stat": "atk",
+                    "scaling_value": 1000.0,
+                    "multiplier": 0.1,
+                    "flat_damage": 0.0,
+                    "base_damage": 100.0
+                  },
+                  "crit": {
+                    "is_crit": false,
+                    "multiplier": 1.0,
+                    "source": "cannot_crit",
+                    "crit_rate": 0.0,
+                    "crit_dmg": 0.0
+                  },
+                  "buckets": {
+                    "dmg_bonus": {
+                      "multiplier": 1.0,
+                      "terms": []
+                    },
+                    "defense": {
+                      "multiplier": 1.0,
+                      "raw_target_def": 0.0,
+                      "effective_target_def": 0.0,
+                      "ignore_defense_multiplier": false,
+                      "terms": []
+                    },
+                    "res": {
+                      "multiplier": 1.0,
+                      "base_target_res": 0.0,
+                      "target_res_after_delta": 0.0,
+                      "res_pen_total": 0,
+                      "terms": []
+                    },
+                    "damage_taken": {
+                      "multiplier": 1.0,
+                      "terms": []
+                    },
+                    "universal_reduction": {
+                      "multiplier": 1.0,
+                      "terms": []
+                    },
+                    "toughness_state": {
+                      "multiplier": 1.0,
+                      "target_toughness_before_packet": null,
+                      "target_is_broken_before_packet": false,
+                      "ignore_toughness_state_multiplier": false
+                    },
+                    "other": {
+                      "multiplier": 1.0,
+                      "source": "packet.other_multiplier"
+                    }
+                  },
+                  "formula": "base * crit * dmg_bonus * defense * res * damage_taken * universal_reduction * toughness_state * other",
+                  "final_damage": 100.0
+                },
+                "damage": 100.0,
+                "toughness_reduction": 0.0,
+                "target_defeated": false,
+                "hp_bar_depleted": false,
+                "bars_depleted": 0,
+                "hp_bars_remaining": 1,
+                "depleted_bar_events": [],
+                "phase_damage_locked_until_action_end": false
+              },
+              "index": 1
+            },
+            {
+              "av": 0.0,
+              "event_type": "effect_damage",
+              "message": "armored_enemy loses 100.000 HP from effect_damage",
+              "data": {
+                "old_hp": 900.0,
+                "new_hp": 800.0,
+                "raw_amount": 100.0,
+                "applied_hp_loss": 100.0
+              },
+              "index": 6
+            }
+          ],
+          "status_events": [
+            {
+              "av": 0.0,
+              "event_type": "effect",
+              "message": "armored_enemy.armor 1.0 -> 0.0",
+              "data": {},
+              "index": 3
+            },
+            {
+              "av": 0.0,
+              "event_type": "effect",
+              "message": "Set armored_enemy.armor_broken=True",
+              "data": {},
+              "index": 5
+            }
+          ],
+          "resource_events": [],
+          "av_events": [
+            {
+              "av": 0.0,
+              "event_type": "av_change",
+              "message": "armored_enemy action delayed by 20.0%",
+              "data": {
+                "old": 100.0,
+                "new": 120.0
+              },
+              "index": 7
+            }
+          ],
+          "mechanism_events": [
+            {
+              "av": 0.0,
+              "event_type": "trigger",
+              "message": "Trigger armor_hit_counter fired",
+              "data": {
+                "timing": "after_damage"
+              },
+              "index": 2
+            },
+            {
+              "av": 0.0,
+              "event_type": "trigger",
+              "message": "Trigger armor_break_self_damage fired",
+              "data": {
+                "timing": "after_damage"
+              },
+              "index": 4
+            }
+          ],
+          "all_events": [
+            {
+              "av": 0.0,
+              "event_type": "action_start",
+              "message": "hero uses hit on ['armored_enemy']",
+              "data": {
+                "tags": [
+                  "attack"
+                ],
+                "turn_kind": null
+              },
+              "index": 0
+            },
+            {
+              "av": 0.0,
+              "event_type": "damage",
+              "message": "hero deals 100.000 quantum damage to armored_enemy",
+              "data": {
+                "old_hp": 1000.0,
+                "new_hp": 900.0,
+                "old_shield": 0.0,
+                "new_shield": 0.0,
+                "actor_id": "hero",
+                "target_id": "armored_enemy",
+                "packet_id": "hit",
+                "element": "quantum",
+                "base_damage": 100.0,
+                "crit": {
+                  "is_crit": false,
+                  "multiplier": 1.0,
+                  "source": "cannot_crit",
+                  "crit_rate": 0.0,
+                  "crit_dmg": 0.0
+                },
+                "multipliers": {
+                  "dmg_bonus": 1.0,
+                  "defense": 1.0,
+                  "res": 1.0,
+                  "damage_taken": 1.0,
+                  "universal_reduction": 1.0,
+                  "toughness_state": 1.0,
+                  "other": 1.0
+                },
+                "formula_ledger": {
+                  "formula_type": "direct_damage",
+                  "actor_id": "hero",
+                  "target_id": "armored_enemy",
+                  "action_id": "hit",
+                  "packet_id": "hit",
+                  "tags": [
+                    "attack"
+                  ],
+                  "scaling": {
+                    "stat": "atk",
+                    "scaling_value": 1000.0,
+                    "multiplier": 0.1,
+                    "flat_damage": 0.0,
+                    "base_damage": 100.0
+                  },
+                  "crit": {
+                    "is_crit": false,
+                    "multiplier": 1.0,
+                    "source": "cannot_crit",
+                    "crit_rate": 0.0,
+                    "crit_dmg": 0.0
+                  },
+                  "buckets": {
+                    "dmg_bonus": {
+                      "multiplier": 1.0,
+                      "terms": []
+                    },
+                    "defense": {
+                      "multiplier": 1.0,
+                      "raw_target_def": 0.0,
+                      "effective_target_def": 0.0,
+                      "ignore_defense_multiplier": false,
+                      "terms": []
+                    },
+                    "res": {
+                      "multiplier": 1.0,
+                      "base_target_res": 0.0,
+                      "target_res_after_delta": 0.0,
+                      "res_pen_total": 0,
+                      "terms": []
+                    },
+                    "damage_taken": {
+                      "multiplier": 1.0,
+                      "terms": []
+                    },
+                    "universal_reduction": {
+                      "multiplier": 1.0,
+                      "terms": []
+                    },
+                    "toughness_state": {
+                      "multiplier": 1.0,
+                      "target_toughness_before_packet": null,
+                      "target_is_broken_before_packet": false,
+                      "ignore_toughness_state_multiplier": false
+                    },
+                    "other": {
+                      "multiplier": 1.0,
+                      "source": "packet.other_multiplier"
+                    }
+                  },
+                  "formula": "base * crit * dmg_bonus * defense * res * damage_taken * universal_reduction * toughness_state * other",
+                  "final_damage": 100.0
+                },
+                "damage": 100.0,
+                "toughness_reduction": 0.0,
+                "target_defeated": false,
+                "hp_bar_depleted": false,
+                "bars_depleted": 0,
+                "hp_bars_remaining": 1,
+                "depleted_bar_events": [],
+                "phase_damage_locked_until_action_end": false
+              },
+              "index": 1
+            },
+            {
+              "av": 0.0,
+              "event_type": "trigger",
+              "message": "Trigger armor_hit_counter fired",
+              "data": {
+                "timing": "after_damage"
+              },
+              "index": 2
+            },
+            {
+              "av": 0.0,
+              "event_type": "effect",
+              "message": "armored_enemy.armor 1.0 -> 0.0",
+              "data": {},
+              "index": 3
+            },
+            {
+              "av": 0.0,
+              "event_type": "trigger",
+              "message": "Trigger armor_break_self_damage fired",
+              "data": {
+                "timing": "after_damage"
+              },
+              "index": 4
+            },
+            {
+              "av": 0.0,
+              "event_type": "effect",
+              "message": "Set armored_enemy.armor_broken=True",
+              "data": {},
+              "index": 5
+            },
+            {
+              "av": 0.0,
+              "event_type": "effect_damage",
+              "message": "armored_enemy loses 100.000 HP from effect_damage",
+              "data": {
+                "old_hp": 900.0,
+                "new_hp": 800.0,
+                "raw_amount": 100.0,
+                "applied_hp_loss": 100.0
+              },
+              "index": 6
+            },
+            {
+              "av": 0.0,
+              "event_type": "av_change",
+              "message": "armored_enemy action delayed by 20.0%",
+              "data": {
+                "old": 100.0,
+                "new": 120.0
+              },
+              "index": 7
+            },
+            {
+              "av": 0.0,
+              "event_type": "action_end",
+              "message": "hero finished hit",
+              "data": {},
+              "index": 8
+            }
+          ]
+        },
+        "settlement": {
+          "damage_records": [
+            {
+              "packet_index": 0,
+              "source_action_id": "hit",
+              "actor_id": "hero",
+              "target_id": "armored_enemy",
+              "element": "quantum",
+              "damage_type": "direct_damage",
+              "base_damage": 100.0,
+              "crit": false,
+              "crit_dmg_mult": 1.0,
+              "dmg_bonus_mult": 1.0,
+              "def_mult": 1.0,
+              "res_mult": 1.0,
+              "dmg_taken_mult": 1.0,
+              "toughness_mult": 1.0,
+              "final_damage": 100.0,
+              "damage_applied": 100.0,
+              "shield_absorbed": 0.0,
+              "hp_loss": 0.0,
+              "overkill": 0.0,
+              "is_overkill": false
+            }
+          ],
+          "shield_records": [],
+          "hp_records": [
+            {
+              "unit_id": "armored_enemy",
+              "old_hp": 1000.0,
+              "new_hp": 900.0,
+              "delta": -100.0,
+              "reason": "受到伤害: hit",
+              "source_id": "",
+              "overkill": 0.0
+            }
+          ],
+          "energy_records": [],
+          "sp_records": [],
+          "status_records": [],
+          "av_records": [
+            {
+              "unit_id": "armored_enemy",
+              "old_remaining_av": 100.0,
+              "new_remaining_av": 120.0,
+              "delta": 20.0,
+              "reason": "action_delay",
+              "source_id": ""
+            },
+            {
+              "unit_id": "hero",
+              "old_remaining_av": 0.0,
+              "new_remaining_av": 100.0,
+              "delta": 100.0,
+              "reason": "regular_turn_end",
+              "source_id": ""
+            }
+          ],
+          "turn_records": [],
+          "mechanic_records": [],
+          "target_record": {
+            "action_id": "",
+            "actor_id": "",
+            "target_ids": [
+              "armored_enemy"
+            ],
+            "target_selection_reason": "explicit"
+          }
+        },
+        "after": {
+          "av": 0.0,
+          "skill_points": 3,
+          "skill_point_cap": 5,
+          "_sp": 3,
+          "_sp_cap": 5,
+          "allies": [
+            {
+              "id": "hero",
+              "alive": true,
+              "hp": 1000.0,
+              "max_hp": 1000.0,
+              "energy": 0.0,
+              "max_energy": 0.0,
+              "remaining_av": 100.0,
+              "toughness": null,
+              "max_toughness": null,
+              "hp_bars_remaining": 1,
+              "status_count": 0
+            }
+          ],
+          "enemies": [
+            {
+              "id": "armored_enemy",
+              "alive": true,
+              "hp": 800.0,
+              "max_hp": 1000.0,
+              "energy": 0.0,
+              "max_energy": 0.0,
+              "remaining_av": 120.0,
+              "toughness": null,
+              "max_toughness": null,
+              "hp_bars_remaining": 1,
+              "status_count": 0
+            }
+          ],
+          "queue_size": 0
+        },
+        "after_scene": {
+          "global": {
+            "av": 0.0,
+            "cycle": 0,
+            "skill_points": 3,
+            "skill_point_cap": 5,
+            "_sp": 3,
+            "_sp_cap": 5,
+            "wave_index": 0,
+            "flags": {}
+          },
+          "action_axis": [
+            {
+              "id": "hero",
+              "name": "Hero",
+              "side": "ally",
+              "alive": true,
+              "speed": 100.0,
+              "action_interval": 100.0,
+              "remaining_av": 100.0,
+              "absolute_av": 100.0,
+              "tags": []
+            },
+            {
+              "id": "armored_enemy",
+              "name": "Armored Enemy",
+              "side": "enemy",
+              "alive": true,
+              "speed": 100.0,
+              "action_interval": 100.0,
+              "remaining_av": 120.0,
+              "absolute_av": 120.0,
+              "tags": []
+            }
+          ],
+          "allies": [
+            {
+              "id": "hero",
+              "name": "Hero",
+              "side": "ally",
+              "alive": true,
+              "tags": [],
+              "resources": {
+                "hp": 1000.0,
+                "max_hp": 1000.0,
+                "hp_percent": 1.0,
+                "shield": 0.0,
+                "energy": 0.0,
+                "max_energy": 0.0,
+                "toughness": null,
+                "max_toughness": null,
+                "is_broken": false,
+                "hp_bars_total": 1,
+                "hp_bars_remaining": 1,
+                "hp_model_type": "normal_hp",
+                "hp_carry_over_damage": null
+              },
+              "action_axis": {
+                "remaining_av": 100.0,
+                "absolute_av": 100.0,
+                "speed": 100.0,
+                "action_interval": 100.0
+              },
+              "panel": {
+                "hp": 1000.0,
+                "max_hp": 1000.0,
+                "atk": 1000.0
+              },
+              "stat_parts": {
+                "base": {},
+                "pct": {},
+                "flat": {},
+                "legacy_stats": {
+                  "atk": 1000.0,
+                  "crit_rate": 0.0,
+                  "crit_dmg": 0.0
+                }
+              },
+              "resistance": {},
+              "weaknesses": [],
+              "statuses": [],
+              "special_mechanics": {},
+              "flags": {}
+            }
+          ],
+          "summons": [],
+          "enemies": [
+            {
+              "id": "armored_enemy",
+              "name": "Armored Enemy",
+              "side": "enemy",
+              "alive": true,
+              "tags": [],
+              "resources": {
+                "hp": 800.0,
+                "max_hp": 1000.0,
+                "hp_percent": 0.8,
+                "shield": 0.0,
+                "energy": 0.0,
+                "max_energy": 0.0,
+                "toughness": null,
+                "max_toughness": null,
+                "is_broken": false,
+                "hp_bars_total": 1,
+                "hp_bars_remaining": 1,
+                "hp_model_type": "normal_hp",
+                "hp_carry_over_damage": null
+              },
+              "action_axis": {
+                "remaining_av": 120.0,
+                "absolute_av": 120.0,
+                "speed": 100.0,
+                "action_interval": 100.0
+              },
+              "panel": {
+                "hp": 800.0,
+                "max_hp": 1000.0
+              },
+              "stat_parts": {
+                "base": {},
+                "pct": {},
+                "flat": {},
+                "legacy_stats": {
+                  "defense": 0.0
+                }
+              },
+              "resistance": {
+                "quantum": 0.0
+              },
+              "weaknesses": [],
+              "statuses": [],
+              "special_mechanics": {
+                "inferred_next_action": null
+              },
+              "flags": {
+                "armor": 0.0,
+                "armor_broken": true
+              }
+            }
+          ],
+          "others": [],
+          "queues": {
+            "ultimate_queue": [],
+            "immediate_queue": [],
+            "interrupt_queue": []
+          },
+          "trigger_usage": {}
+        }
+      }
+    ],
+    "route_assertions": {
+      "ok": true,
+      "check_count": 7,
+      "checks": {
+        "skill_points_in_bounds": true,
+        "av_monotonic": true,
+        "unit_resources_non_negative": true,
+        "unit_resources_not_above_known_caps": true,
+        "executed_actions_have_after_snapshot": true,
+        "executed_actions_emit_events": true,
+        "expected_action_prefix_match": true
+      },
+      "failure_count": 0,
+      "failures": [],
+      "expectations": {
+        "ok": true,
+        "step_count_with_expectations": 0,
+        "failure_count": 0,
+        "failures": []
+      }
+    }
+  }
+}

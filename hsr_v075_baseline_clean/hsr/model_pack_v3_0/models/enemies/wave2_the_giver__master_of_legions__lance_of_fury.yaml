@@ -1,0 +1,225 @@
+kind: enemy_template
+schema_version: '3.0'
+id: wave2_the_giver__master_of_legions__lance_of_fury
+unit:
+  id: wave2_the_giver__master_of_legions__lance_of_fury
+  template_id: 4014020
+  name: The Giver, Master of Legions, Lance of Fury
+  cn_name: 颁赐者，千军首，天谴之矛
+  side: enemy
+  level: 95
+  hp: 18016542.737999998
+  max_hp: 18016542.737999998
+  speed: 79.2
+  toughness: 0
+  max_toughness: 0
+  stats:
+    atk: 688.0628700000001
+    def: 1149.9999
+  weaknesses: &id001 []
+  res: &id002
+    Physical: 0.2
+    Fire: 0.2
+    Ice: 0.2
+    Thunder: 0.2
+    Wind: 0.2
+    Quantum: 0.2
+    Imaginary: 0.2
+  core_mechanics: &id003
+    shared_hp_with_savage_god:
+      shared_with_monster_id: 4014012
+      source: MonsterConfig summons + template equal HP
+    phase_two_extra_action:
+      source: skill/description phase behavior from data text, preserved from prior audit; verify in action runtime if needed
+    phase_transition:
+      trigger: first_hp_bar_depleted
+      effect: immediate_action
+      user_confirmed: true
+    summon_conquer_or_be_conquered:
+      source_skill_id: 401402001
+      summon_monster_id: 4012060
+      count: one per ally character
+      applies_status: 受征服
+      max_restorable_hp_reduction_ratio: 0.5
+    fear_bestowed_by_strife:
+      source_skill_id: 401402002
+      damage_taken_increase: 0.1
+      removed_when_corresponding_conquered_status_removed: true
+    savage_god_hp_based_aoe:
+      source_skill_id: 401402003
+      params:
+      - 0.9
+      - 1.5
+      - 0.3
+      - 0.15
+      - 0.3
+      rules:
+      - commands Savage God to deal Imaginary damage based on allies max HP
+      - ignores target defence
+      - high chance to imprison conquered targets
+    absorb_remaining_conquer_or_be_conquered:
+      source_skill_id: 401402004
+      rules:
+      - absorbs remaining Conquer or Be Conquered
+      - enhances Savage God
+      - adds toughness protection
+      - removes control debuffs and weakness break from Savage God
+  skills: &id004
+  - skill_id: 401402001
+    trigger_key: Skill01
+    name_chs: 受征伐者皆见灾殃
+    name_en: The Vanquished Behold Woe
+    type_chs: 技能
+    tag_chs: 妨害
+    damage_type: Imaginary
+    attack_type: Normal
+    toughness_damage_display_basic_atk_10_scale: 3.3333333333333335
+    delay_ratio: 1
+    phase_list:
+    - 1
+    - 2
+    params:
+    - 0.5
+    extra_effects: []
+    description_chs: 每个我方角色生成1个对应的【征服或被征服】，并使对应角色进入【受征服】状态。【受征服】会降低角色可回复的生命上限，降低对应【征服或被征服】的生命值可恢复对应比例的可回复生命上限。
+  - skill_id: 401402002
+    trigger_key: Skill02
+    name_chs: 殊死御侮皆临荣光
+    name_en: Glory to All Honorable Dead
+    type_chs: 技能
+    tag_chs: 妨害
+    damage_type: null
+    attack_type: Normal
+    toughness_damage_display_basic_atk_10_scale: null
+    delay_ratio: 1
+    phase_list:
+    - 2
+    params:
+    - 0.1
+    extra_effects: []
+    description_chs: 对所有我方角色施加【纷争赐的畏怖】，【受征服】状态解除时对应【纷争赐的畏怖】一同解除。
+  - skill_id: 401402003
+    trigger_key: Skill03
+    name_chs: 天谴降，皆奠纷争昂藏
+    name_en: Fury Falls, and All Bows to Strife
+    type_chs: 技能
+    tag_chs: 群攻
+    damage_type: Imaginary
+    attack_type: Normal
+    toughness_damage_display_basic_atk_10_scale: 6.666666666666667
+    delay_ratio: 1
+    phase_list:
+    - 2
+    params:
+    - 0.9
+    - 1.5
+    - 0.3
+    - 0.15
+    - 0.3
+    extra_effects: []
+    description_chs: 控制【蛮神，疯王，纷争的化身】对我方全体角色造成基于其生命上限百分比的虚数属性伤害，该伤害无视目标的防御力并大概率对处于【受征服】状态的目标附加禁锢。
+  - skill_id: 401402004
+    trigger_key: Skill04
+    name_chs: 畏怖溃军皆成铠仗
+    name_en: The Fallen Feeds My Might
+    type_chs: 技能
+    tag_chs: 强化
+    damage_type: null
+    attack_type: Normal
+    toughness_damage_display_basic_atk_10_scale: null
+    delay_ratio: 1
+    phase_list:
+    - 2
+    params: []
+    extra_effects: []
+    description_chs: 吸收剩余的【征服或被征服】强化【蛮神，疯王，纷争的化身】，同时添加韧性保护并解除【蛮神，疯王，纷争的化身】身上的控制类负面状态与弱点击破状态。
+  raw:
+    identity:
+      monster_id: 4014020
+      monster_template_id: 4014020
+      name_chs: 颁赐者，千军首，天谴之矛
+      name_en: The Giver, Master of Legions, Lance of Fury
+      role_in_stage: wave_2_boss_controller
+      rank: LittleBoss
+    stage_scaled_stats:
+      level: 95
+      hp_raw: 18016542.737999998
+      hp_display_rounded: 18016543
+      attack_raw: 688.0628700000001
+      defence_raw: 1149.9999
+      speed_raw: 79.2
+      speed_display: 79.2
+      toughness_internal: 0
+      toughness_display_basic_atk_10_scale: 0
+    weaknesses: *id001
+    damage_type_resistance: *id002
+    debuff_resistance:
+      STAT_CTRL: 0.5
+    summon_id_list:
+    - 4014012
+    - 4012060
+    core_mechanics: *id003
+    skills: *id004
+    ai:
+      ai_path: Config/ConfigAI/Monster_W4_Hearse_00_AI.json
+      available: true
+      decision_count: 5
+      skill_trigger_references:
+      - path: /DecisionList[0]/RootTask/TaskList[1]/SkillName
+        skill_trigger_key: Skill01
+      - path: /DecisionList[1]/RootTask/TaskList[1]/SkillName
+        skill_trigger_key: Skill01
+      - path: /DecisionList[2]/RootTask/TaskList[1]/SkillName
+        skill_trigger_key: Skill02
+      - path: /DecisionList[3]/RootTask/TaskList[1]/SkillName
+        skill_trigger_key: Skill04
+      - path: /DecisionList[4]/RootTask/TaskList[1]/SkillName
+        skill_trigger_key: Skill03
+    raw_source_trace:
+      excel_rows:
+      - StageConfig[StageID=30507013]
+      - MonsterConfig[MonsterID=4014020]
+      - MonsterTemplateConfig[MonsterTemplateID=4014020]
+      - HardLevelGroup[HardLevelGroup=3,Level=95]
+      - InfiniteEliteGroup[EliteGroup=370]
+      config_paths:
+      - Config/ConfigAI/Monster_W4_Hearse_00_AI.json
+      - Config/ConfigCharacter/Monster/Monster_W4_Hearse_00_Config.json
+    combat_role_in_case: wave_2_boss_controller
+    template_base_stats:
+      attack_base: 18
+      defence_base: 210
+      hp_base: 5580
+      speed_base: 60
+      stance_base_internal: null
+      status_resistance_base: 0.3
+      initial_delay_ratio: 0.5
+    stage_overrides_and_modifiers:
+      monster_modify_ratios:
+        attack: 1
+        defence: 1
+        hp: 1
+        speed: 1
+        toughness: 1
+      hard_level_group_row:
+        HardLevelGroup: 3
+        Level: 95
+        AttackRatio: 34.75065
+        DefenceRatio: 5.47619
+        HPRatio: 375.4385
+        SpeedRatio: 1.32
+        StanceRatio: 1
+      infinite_elite_group_row:
+        EliteGroup: 370
+        AttackRatio: 1.1
+        DefenceRatio: 1
+        HPRatio: 8.6
+        SpeedRatio: 1
+        StanceRatio: 1
+    custom_values:
+    - BFLIFKBEOPJ: SummonID0
+      MNDFOPKBHKP: 4014012
+    - BFLIFKBEOPJ: SummonID1
+      MNDFOPKBHKP: 4012060
+    dynamic_values: []
+source_stage: arbitration_4_3_knight_3

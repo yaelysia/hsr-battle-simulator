@@ -1,0 +1,1002 @@
+{
+  "state": {
+    "global": {
+      "av": 0.0,
+      "cycle": 0,
+      "skill_points": 3,
+      "skill_point_cap": 5,
+      "wave_index": 0,
+      "flags": {}
+    },
+    "units": {
+      "seele": {
+        "id": "seele",
+        "name": "Seele",
+        "side": "ally",
+        "hp": 3000.0,
+        "max_hp": 3000.0,
+        "shield": 0.0,
+        "hp_bars_total": 1,
+        "hp_bars_remaining": 1,
+        "hp_model_type": "normal_hp",
+        "hp_carry_over_damage": null,
+        "hp_model_bars": [],
+        "hp_percent": 1.0,
+        "energy": 0.0,
+        "max_energy": 120.0,
+        "speed": 151.75,
+        "base_speed_field": 123.0,
+        "remaining_av": 65.897858,
+        "toughness": null,
+        "max_toughness": null,
+        "is_broken": false,
+        "alive": true,
+        "weaknesses": [],
+        "tags": [],
+        "stats": {
+          "atk": 1000.0,
+          "crit_rate": 0.0,
+          "crit_dmg": 0.5
+        },
+        "stat_base": {
+          "speed": 115.0
+        },
+        "stat_pct": {},
+        "stat_flat": {
+          "speed": 8.0
+        },
+        "res": {},
+        "statuses": [
+          {
+            "id": "skill_speed_buff",
+            "tags": [
+              "buff",
+              "speed"
+            ],
+            "modifiers": {
+              "speed_pct": 0.25,
+              "_sim_aliases_normalized": true
+            },
+            "stacks": 1,
+            "max_stacks": 1,
+            "duration_type": null,
+            "duration_value": null,
+            "source_id": "seele",
+            "duration_extra_turn_consumes": false,
+            "refresh_duration": true
+          }
+        ],
+        "status_defs": [],
+        "flags": {}
+      },
+      "enemy": {
+        "id": "enemy",
+        "name": "Enemy",
+        "side": "enemy",
+        "hp": 1.0,
+        "max_hp": 1.0,
+        "shield": 0.0,
+        "hp_bars_total": 1,
+        "hp_bars_remaining": 1,
+        "hp_model_type": "normal_hp",
+        "hp_carry_over_damage": null,
+        "hp_model_bars": [],
+        "hp_percent": 1.0,
+        "energy": 0.0,
+        "max_energy": 0.0,
+        "speed": 100.0,
+        "base_speed_field": 100.0,
+        "remaining_av": 100.0,
+        "toughness": null,
+        "max_toughness": null,
+        "is_broken": false,
+        "alive": true,
+        "weaknesses": [],
+        "tags": [],
+        "stats": {
+          "defense": 0.0
+        },
+        "stat_base": {},
+        "stat_pct": {},
+        "stat_flat": {},
+        "res": {},
+        "statuses": [],
+        "status_defs": [],
+        "flags": {}
+      }
+    },
+    "trigger_usage": {},
+    "queued_actions": {
+      "ultimate_queue": [],
+      "immediate_queue": [],
+      "interrupt_queue": []
+    }
+  },
+  "scene": {
+    "global": {
+      "av": 0.0,
+      "cycle": 0,
+      "skill_points": 3,
+      "skill_point_cap": 5,
+      "_sp": 3,
+      "_sp_cap": 5,
+      "wave_index": 0,
+      "flags": {}
+    },
+    "action_axis": [
+      {
+        "id": "seele",
+        "name": "Seele",
+        "side": "ally",
+        "alive": true,
+        "speed": 151.75,
+        "action_interval": 65.897858,
+        "remaining_av": 65.897858,
+        "absolute_av": 65.897858,
+        "tags": []
+      },
+      {
+        "id": "enemy",
+        "name": "Enemy",
+        "side": "enemy",
+        "alive": true,
+        "speed": 100.0,
+        "action_interval": 100.0,
+        "remaining_av": 100.0,
+        "absolute_av": 100.0,
+        "tags": []
+      }
+    ],
+    "allies": [
+      {
+        "id": "seele",
+        "name": "Seele",
+        "side": "ally",
+        "alive": true,
+        "tags": [],
+        "resources": {
+          "hp": 3000.0,
+          "max_hp": 3000.0,
+          "hp_percent": 1.0,
+          "shield": 0.0,
+          "energy": 0.0,
+          "max_energy": 120.0,
+          "toughness": null,
+          "max_toughness": null,
+          "is_broken": false,
+          "hp_bars_total": 1,
+          "hp_bars_remaining": 1,
+          "hp_model_type": "normal_hp",
+          "hp_carry_over_damage": null
+        },
+        "action_axis": {
+          "remaining_av": 65.897858,
+          "absolute_av": 65.897858,
+          "speed": 151.75,
+          "action_interval": 65.897858
+        },
+        "panel": {
+          "hp": 3000.0,
+          "max_hp": 3000.0,
+          "atk": 1000.0,
+          "speed": 151.75,
+          "crit_dmg": 0.5
+        },
+        "stat_parts": {
+          "base": {
+            "speed": 115.0
+          },
+          "pct": {},
+          "flat": {
+            "speed": 8.0
+          },
+          "legacy_stats": {
+            "atk": 1000.0,
+            "crit_rate": 0.0,
+            "crit_dmg": 0.5
+          }
+        },
+        "resistance": {},
+        "weaknesses": [],
+        "statuses": [
+          {
+            "id": "skill_speed_buff",
+            "source_id": "seele",
+            "stacks": 1,
+            "max_stacks": 1,
+            "duration": {
+              "type": null,
+              "value": null,
+              "extra_turn_consumes": false,
+              "refresh_duration": true
+            },
+            "tags": [
+              "buff",
+              "speed"
+            ],
+            "modifier_keys": [
+              "_sim_aliases_normalized",
+              "speed_pct"
+            ],
+            "modifiers": {
+              "speed_pct": 0.25,
+              "_sim_aliases_normalized": true
+            }
+          }
+        ],
+        "special_mechanics": {},
+        "flags": {}
+      }
+    ],
+    "summons": [],
+    "enemies": [
+      {
+        "id": "enemy",
+        "name": "Enemy",
+        "side": "enemy",
+        "alive": true,
+        "tags": [],
+        "resources": {
+          "hp": 1.0,
+          "max_hp": 1.0,
+          "hp_percent": 1.0,
+          "shield": 0.0,
+          "energy": 0.0,
+          "max_energy": 0.0,
+          "toughness": null,
+          "max_toughness": null,
+          "is_broken": false,
+          "hp_bars_total": 1,
+          "hp_bars_remaining": 1,
+          "hp_model_type": "normal_hp",
+          "hp_carry_over_damage": null
+        },
+        "action_axis": {
+          "remaining_av": 100.0,
+          "absolute_av": 100.0,
+          "speed": 100.0,
+          "action_interval": 100.0
+        },
+        "panel": {
+          "hp": 1.0,
+          "max_hp": 1.0
+        },
+        "stat_parts": {
+          "base": {},
+          "pct": {},
+          "flat": {},
+          "legacy_stats": {
+            "defense": 0.0
+          }
+        },
+        "resistance": {},
+        "weaknesses": [],
+        "statuses": [],
+        "special_mechanics": {
+          "inferred_next_action": null
+        },
+        "flags": {}
+      }
+    ],
+    "others": [],
+    "queues": {
+      "ultimate_queue": [],
+      "immediate_queue": [],
+      "interrupt_queue": []
+    },
+    "trigger_usage": {}
+  },
+  "log": [
+    {
+      "av": 0.0,
+      "event_type": "route",
+      "message": "Route step 1: {'actor': 'seele', 'action': 'add_skill_speed_buff', 'timing': 'manual', 'targets': ['seele']}",
+      "data": {}
+    },
+    {
+      "av": 0.0,
+      "event_type": "action_start",
+      "message": "seele uses add_skill_speed_buff on ['seele']",
+      "data": {
+        "tags": [
+          "buff_action"
+        ],
+        "turn_kind": null
+      }
+    },
+    {
+      "av": 0.0,
+      "event_type": "speed_change",
+      "message": "seele speed 123.000 -> 151.750",
+      "data": {
+        "old_remaining_av": 81.3008130081,
+        "new_remaining_av": 65.89785831958022,
+        "reason": "add_status"
+      }
+    },
+    {
+      "av": 0.0,
+      "event_type": "effect",
+      "message": "Add status skill_speed_buff to seele",
+      "data": {
+        "status": {
+          "id": "skill_speed_buff",
+          "tags": [
+            "buff",
+            "speed"
+          ],
+          "modifiers": {
+            "speed_pct": 0.25,
+            "_sim_aliases_normalized": true
+          },
+          "stacks": 1,
+          "max_stacks": 1,
+          "duration_type": null,
+          "duration_value": null,
+          "source_id": "seele",
+          "duration_extra_turn_consumes": false,
+          "refresh_duration": true
+        },
+        "was_present": false,
+        "old_stacks": 0,
+        "new_stacks": 1
+      }
+    },
+    {
+      "av": 0.0,
+      "event_type": "action_end",
+      "message": "seele finished add_skill_speed_buff",
+      "data": {}
+    }
+  ],
+  "runtime_audit": {
+    "property_hint_applications": {
+      "applied_count": 0,
+      "skipped_count": 0,
+      "by_property": {},
+      "skipped_reason_counts": {},
+      "records": []
+    },
+    "symbolic_formula_applications": {
+      "applied_count": 0,
+      "skipped_count": 0,
+      "skipped_reason_counts": {},
+      "records": []
+    },
+    "engine_property_reads": {
+      "attempted_count": 0,
+      "resolved_count": 0,
+      "unresolved_count": 0,
+      "by_property": {},
+      "records": []
+    }
+  },
+  "metadata": {
+    "route_executed_step_count": 1,
+    "route_action_trace": [
+      {
+        "step": 1,
+        "step_type": "action",
+        "actor": "seele",
+        "action": "add_skill_speed_buff",
+        "timing": "manual",
+        "targets": [
+          "seele"
+        ],
+        "before": {
+          "av": 0.0,
+          "skill_points": 3,
+          "skill_point_cap": 5,
+          "_sp": 3,
+          "_sp_cap": 5,
+          "allies": [
+            {
+              "id": "seele",
+              "alive": true,
+              "hp": 3000.0,
+              "max_hp": 3000.0,
+              "energy": 0.0,
+              "max_energy": 120.0,
+              "remaining_av": 81.300813,
+              "toughness": null,
+              "max_toughness": null,
+              "hp_bars_remaining": 1,
+              "status_count": 0
+            }
+          ],
+          "enemies": [
+            {
+              "id": "enemy",
+              "alive": true,
+              "hp": 1.0,
+              "max_hp": 1.0,
+              "energy": 0.0,
+              "max_energy": 0.0,
+              "remaining_av": 100.0,
+              "toughness": null,
+              "max_toughness": null,
+              "hp_bars_remaining": 1,
+              "status_count": 0
+            }
+          ],
+          "queue_size": 0
+        },
+        "before_scene": {
+          "global": {
+            "av": 0.0,
+            "cycle": 0,
+            "skill_points": 3,
+            "skill_point_cap": 5,
+            "_sp": 3,
+            "_sp_cap": 5,
+            "wave_index": 0,
+            "flags": {}
+          },
+          "action_axis": [
+            {
+              "id": "seele",
+              "name": "Seele",
+              "side": "ally",
+              "alive": true,
+              "speed": 123.0,
+              "action_interval": 81.300813,
+              "remaining_av": 81.300813,
+              "absolute_av": 81.300813,
+              "tags": []
+            },
+            {
+              "id": "enemy",
+              "name": "Enemy",
+              "side": "enemy",
+              "alive": true,
+              "speed": 100.0,
+              "action_interval": 100.0,
+              "remaining_av": 100.0,
+              "absolute_av": 100.0,
+              "tags": []
+            }
+          ],
+          "allies": [
+            {
+              "id": "seele",
+              "name": "Seele",
+              "side": "ally",
+              "alive": true,
+              "tags": [],
+              "resources": {
+                "hp": 3000.0,
+                "max_hp": 3000.0,
+                "hp_percent": 1.0,
+                "shield": 0.0,
+                "energy": 0.0,
+                "max_energy": 120.0,
+                "toughness": null,
+                "max_toughness": null,
+                "is_broken": false,
+                "hp_bars_total": 1,
+                "hp_bars_remaining": 1,
+                "hp_model_type": "normal_hp",
+                "hp_carry_over_damage": null
+              },
+              "action_axis": {
+                "remaining_av": 81.300813,
+                "absolute_av": 81.300813,
+                "speed": 123.0,
+                "action_interval": 81.300813
+              },
+              "panel": {
+                "hp": 3000.0,
+                "max_hp": 3000.0,
+                "atk": 1000.0,
+                "speed": 123.0,
+                "crit_dmg": 0.5
+              },
+              "stat_parts": {
+                "base": {
+                  "speed": 115.0
+                },
+                "pct": {},
+                "flat": {
+                  "speed": 8.0
+                },
+                "legacy_stats": {
+                  "atk": 1000.0,
+                  "crit_rate": 0.0,
+                  "crit_dmg": 0.5
+                }
+              },
+              "resistance": {},
+              "weaknesses": [],
+              "statuses": [],
+              "special_mechanics": {},
+              "flags": {}
+            }
+          ],
+          "summons": [],
+          "enemies": [
+            {
+              "id": "enemy",
+              "name": "Enemy",
+              "side": "enemy",
+              "alive": true,
+              "tags": [],
+              "resources": {
+                "hp": 1.0,
+                "max_hp": 1.0,
+                "hp_percent": 1.0,
+                "shield": 0.0,
+                "energy": 0.0,
+                "max_energy": 0.0,
+                "toughness": null,
+                "max_toughness": null,
+                "is_broken": false,
+                "hp_bars_total": 1,
+                "hp_bars_remaining": 1,
+                "hp_model_type": "normal_hp",
+                "hp_carry_over_damage": null
+              },
+              "action_axis": {
+                "remaining_av": 100.0,
+                "absolute_av": 100.0,
+                "speed": 100.0,
+                "action_interval": 100.0
+              },
+              "panel": {
+                "hp": 1.0,
+                "max_hp": 1.0
+              },
+              "stat_parts": {
+                "base": {},
+                "pct": {},
+                "flat": {},
+                "legacy_stats": {
+                  "defense": 0.0
+                }
+              },
+              "resistance": {},
+              "weaknesses": [],
+              "statuses": [],
+              "special_mechanics": {
+                "inferred_next_action": null
+              },
+              "flags": {}
+            }
+          ],
+          "others": [],
+          "queues": {
+            "ultimate_queue": [],
+            "immediate_queue": [],
+            "interrupt_queue": []
+          },
+          "trigger_usage": {}
+        },
+        "event_summary": {
+          "event_count": 4,
+          "event_counts": {
+            "action_start": 1,
+            "speed_change": 1,
+            "effect": 1,
+            "action_end": 1
+          },
+          "damage_total": 0.0,
+          "toughness_damage_total": 0.0,
+          "defeated_units": [],
+          "queued_event_count": 0
+        },
+        "action_resolution": {
+          "requested": {
+            "step_type": "action",
+            "actor": "seele",
+            "action": "add_skill_speed_buff",
+            "timing": "manual",
+            "targets": [
+              "seele"
+            ]
+          },
+          "damage_events": [],
+          "status_events": [
+            {
+              "av": 0.0,
+              "event_type": "effect",
+              "message": "Add status skill_speed_buff to seele",
+              "data": {
+                "status": {
+                  "id": "skill_speed_buff",
+                  "tags": [
+                    "buff",
+                    "speed"
+                  ],
+                  "modifiers": {
+                    "speed_pct": 0.25,
+                    "_sim_aliases_normalized": true
+                  },
+                  "stacks": 1,
+                  "max_stacks": 1,
+                  "duration_type": null,
+                  "duration_value": null,
+                  "source_id": "seele",
+                  "duration_extra_turn_consumes": false,
+                  "refresh_duration": true
+                },
+                "was_present": false,
+                "old_stacks": 0,
+                "new_stacks": 1
+              },
+              "index": 2
+            }
+          ],
+          "resource_events": [
+            {
+              "av": 0.0,
+              "event_type": "effect",
+              "message": "Add status skill_speed_buff to seele",
+              "data": {
+                "status": {
+                  "id": "skill_speed_buff",
+                  "tags": [
+                    "buff",
+                    "speed"
+                  ],
+                  "modifiers": {
+                    "speed_pct": 0.25,
+                    "_sim_aliases_normalized": true
+                  },
+                  "stacks": 1,
+                  "max_stacks": 1,
+                  "duration_type": null,
+                  "duration_value": null,
+                  "source_id": "seele",
+                  "duration_extra_turn_consumes": false,
+                  "refresh_duration": true
+                },
+                "was_present": false,
+                "old_stacks": 0,
+                "new_stacks": 1
+              },
+              "index": 2
+            }
+          ],
+          "av_events": [],
+          "mechanism_events": [],
+          "all_events": [
+            {
+              "av": 0.0,
+              "event_type": "action_start",
+              "message": "seele uses add_skill_speed_buff on ['seele']",
+              "data": {
+                "tags": [
+                  "buff_action"
+                ],
+                "turn_kind": null
+              },
+              "index": 0
+            },
+            {
+              "av": 0.0,
+              "event_type": "speed_change",
+              "message": "seele speed 123.000 -> 151.750",
+              "data": {
+                "old_remaining_av": 81.3008130081,
+                "new_remaining_av": 65.89785831958022,
+                "reason": "add_status"
+              },
+              "index": 1
+            },
+            {
+              "av": 0.0,
+              "event_type": "effect",
+              "message": "Add status skill_speed_buff to seele",
+              "data": {
+                "status": {
+                  "id": "skill_speed_buff",
+                  "tags": [
+                    "buff",
+                    "speed"
+                  ],
+                  "modifiers": {
+                    "speed_pct": 0.25,
+                    "_sim_aliases_normalized": true
+                  },
+                  "stacks": 1,
+                  "max_stacks": 1,
+                  "duration_type": null,
+                  "duration_value": null,
+                  "source_id": "seele",
+                  "duration_extra_turn_consumes": false,
+                  "refresh_duration": true
+                },
+                "was_present": false,
+                "old_stacks": 0,
+                "new_stacks": 1
+              },
+              "index": 2
+            },
+            {
+              "av": 0.0,
+              "event_type": "action_end",
+              "message": "seele finished add_skill_speed_buff",
+              "data": {},
+              "index": 3
+            }
+          ]
+        },
+        "settlement": {
+          "damage_records": [],
+          "shield_records": [],
+          "hp_records": [],
+          "energy_records": [],
+          "sp_records": [],
+          "status_records": [
+            {
+              "unit_id": "seele",
+              "status_id": "skill_speed_buff",
+              "status_name_cn": "",
+              "status_type": "",
+              "change_type": "add",
+              "old_stacks": 0,
+              "new_stacks": 1,
+              "max_stacks": 1,
+              "duration_type": "",
+              "duration_value": 0,
+              "source_id": "seele",
+              "reason": "effect:add_skill_speed_buff"
+            }
+          ],
+          "av_records": [
+            {
+              "unit_id": "seele",
+              "old_remaining_av": 0.0,
+              "new_remaining_av": 65.89785831958022,
+              "delta": 65.89785831958022,
+              "reason": "regular_turn_end",
+              "source_id": ""
+            }
+          ],
+          "turn_records": [],
+          "mechanic_records": [],
+          "target_record": {
+            "action_id": "",
+            "actor_id": "",
+            "target_ids": [
+              "seele"
+            ],
+            "target_selection_reason": "explicit"
+          }
+        },
+        "after": {
+          "av": 0.0,
+          "skill_points": 3,
+          "skill_point_cap": 5,
+          "_sp": 3,
+          "_sp_cap": 5,
+          "allies": [
+            {
+              "id": "seele",
+              "alive": true,
+              "hp": 3000.0,
+              "max_hp": 3000.0,
+              "energy": 0.0,
+              "max_energy": 120.0,
+              "remaining_av": 65.897858,
+              "toughness": null,
+              "max_toughness": null,
+              "hp_bars_remaining": 1,
+              "status_count": 1
+            }
+          ],
+          "enemies": [
+            {
+              "id": "enemy",
+              "alive": true,
+              "hp": 1.0,
+              "max_hp": 1.0,
+              "energy": 0.0,
+              "max_energy": 0.0,
+              "remaining_av": 100.0,
+              "toughness": null,
+              "max_toughness": null,
+              "hp_bars_remaining": 1,
+              "status_count": 0
+            }
+          ],
+          "queue_size": 0
+        },
+        "after_scene": {
+          "global": {
+            "av": 0.0,
+            "cycle": 0,
+            "skill_points": 3,
+            "skill_point_cap": 5,
+            "_sp": 3,
+            "_sp_cap": 5,
+            "wave_index": 0,
+            "flags": {}
+          },
+          "action_axis": [
+            {
+              "id": "seele",
+              "name": "Seele",
+              "side": "ally",
+              "alive": true,
+              "speed": 151.75,
+              "action_interval": 65.897858,
+              "remaining_av": 65.897858,
+              "absolute_av": 65.897858,
+              "tags": []
+            },
+            {
+              "id": "enemy",
+              "name": "Enemy",
+              "side": "enemy",
+              "alive": true,
+              "speed": 100.0,
+              "action_interval": 100.0,
+              "remaining_av": 100.0,
+              "absolute_av": 100.0,
+              "tags": []
+            }
+          ],
+          "allies": [
+            {
+              "id": "seele",
+              "name": "Seele",
+              "side": "ally",
+              "alive": true,
+              "tags": [],
+              "resources": {
+                "hp": 3000.0,
+                "max_hp": 3000.0,
+                "hp_percent": 1.0,
+                "shield": 0.0,
+                "energy": 0.0,
+                "max_energy": 120.0,
+                "toughness": null,
+                "max_toughness": null,
+                "is_broken": false,
+                "hp_bars_total": 1,
+                "hp_bars_remaining": 1,
+                "hp_model_type": "normal_hp",
+                "hp_carry_over_damage": null
+              },
+              "action_axis": {
+                "remaining_av": 65.897858,
+                "absolute_av": 65.897858,
+                "speed": 151.75,
+                "action_interval": 65.897858
+              },
+              "panel": {
+                "hp": 3000.0,
+                "max_hp": 3000.0,
+                "atk": 1000.0,
+                "speed": 151.75,
+                "crit_dmg": 0.5
+              },
+              "stat_parts": {
+                "base": {
+                  "speed": 115.0
+                },
+                "pct": {},
+                "flat": {
+                  "speed": 8.0
+                },
+                "legacy_stats": {
+                  "atk": 1000.0,
+                  "crit_rate": 0.0,
+                  "crit_dmg": 0.5
+                }
+              },
+              "resistance": {},
+              "weaknesses": [],
+              "statuses": [
+                {
+                  "id": "skill_speed_buff",
+                  "source_id": "seele",
+                  "stacks": 1,
+                  "max_stacks": 1,
+                  "duration": {
+                    "type": null,
+                    "value": null,
+                    "extra_turn_consumes": false,
+                    "refresh_duration": true
+                  },
+                  "tags": [
+                    "buff",
+                    "speed"
+                  ],
+                  "modifier_keys": [
+                    "_sim_aliases_normalized",
+                    "speed_pct"
+                  ],
+                  "modifiers": {
+                    "speed_pct": 0.25,
+                    "_sim_aliases_normalized": true
+                  }
+                }
+              ],
+              "special_mechanics": {},
+              "flags": {}
+            }
+          ],
+          "summons": [],
+          "enemies": [
+            {
+              "id": "enemy",
+              "name": "Enemy",
+              "side": "enemy",
+              "alive": true,
+              "tags": [],
+              "resources": {
+                "hp": 1.0,
+                "max_hp": 1.0,
+                "hp_percent": 1.0,
+                "shield": 0.0,
+                "energy": 0.0,
+                "max_energy": 0.0,
+                "toughness": null,
+                "max_toughness": null,
+                "is_broken": false,
+                "hp_bars_total": 1,
+                "hp_bars_remaining": 1,
+                "hp_model_type": "normal_hp",
+                "hp_carry_over_damage": null
+              },
+              "action_axis": {
+                "remaining_av": 100.0,
+                "absolute_av": 100.0,
+                "speed": 100.0,
+                "action_interval": 100.0
+              },
+              "panel": {
+                "hp": 1.0,
+                "max_hp": 1.0
+              },
+              "stat_parts": {
+                "base": {},
+                "pct": {},
+                "flat": {},
+                "legacy_stats": {
+                  "defense": 0.0
+                }
+              },
+              "resistance": {},
+              "weaknesses": [],
+              "statuses": [],
+              "special_mechanics": {
+                "inferred_next_action": null
+              },
+              "flags": {}
+            }
+          ],
+          "others": [],
+          "queues": {
+            "ultimate_queue": [],
+            "immediate_queue": [],
+            "interrupt_queue": []
+          },
+          "trigger_usage": {}
+        }
+      }
+    ],
+    "route_assertions": {
+      "ok": true,
+      "check_count": 7,
+      "checks": {
+        "skill_points_in_bounds": true,
+        "av_monotonic": true,
+        "unit_resources_non_negative": true,
+        "unit_resources_not_above_known_caps": true,
+        "executed_actions_have_after_snapshot": true,
+        "executed_actions_emit_events": true,
+        "expected_action_prefix_match": true
+      },
+      "failure_count": 0,
+      "failures": [],
+      "expectations": {
+        "ok": true,
+        "step_count_with_expectations": 0,
+        "failure_count": 0,
+        "failures": []
+      }
+    }
+  }
+}

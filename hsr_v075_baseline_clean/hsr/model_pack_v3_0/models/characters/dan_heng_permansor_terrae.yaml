@@ -1,0 +1,300 @@
+kind: character_template
+schema_version: '3.0'
+id: dan_heng_permansor_terrae
+name: Dan Heng • Permansor Terrae
+cn_name: 丹恒•腾荒
+source_file: character_dan_heng_perm_terrae_template_v1_6.yaml
+unit:
+  side: ally
+  level: 80
+  element: physical
+  path: preservation
+  rarity: 5
+  tags:
+  - character
+  - preservation
+  - physical
+  base_stats_by_level: {}
+  trace_level_defaults:
+    basic: 6
+    skill: 10
+    ultimate: 10
+    talent: 10
+    note: user_confirmed_all_trace_levels_max_v1_6
+  minor_traces_total: {}
+  status_effects:
+    bondmate:
+      type: character_mark
+      owner: dan_heng_permansor_terrae
+      target: selected_ally
+      uniqueness: only_latest_skill_target
+      effects:
+      - summon_souldragon_for_target
+      id: bondmate
+      tags: []
+    souldragon:
+      type: summon_or_attached_unit
+      owner: dan_heng_permansor_terrae
+      attached_to: bondmate
+      initial_speed: 165
+      disappears_if:
+      - dan_heng_permansor_terrae_is_down
+      - bondmate_is_down
+      normal_action:
+        effects:
+        - type: dispel_debuff
+          target: all_allies
+          count: 1
+        - type: provide_shield
+          target: all_allies
+          shield_formula_at_talent_10: 0.10 * dan_heng_permansor_terrae.atk + 200
+          duration_turns: 3
+          stack_cap_reference: skill_shield * 3
+      enhanced_state:
+        source: ultimate
+        remaining_souldragon_actions: 2
+        action_effects:
+        - type: follow_up_attack
+          actor: souldragon
+          damage_packets:
+          - id: souldragon_enhanced_physical_fua
+            element: physical
+            damage_type: follow_up_damage
+            target: all_enemies
+            hit_model:
+              mode: per_hit
+              hits:
+              - 0.25
+              - 0.25
+              - 0.25
+              - 0.25
+            scaling:
+              stat: dan_heng_permansor_terrae.atk
+              multiplier_at_ultimate_10: 0.8
+          - id: souldragon_enhanced_bondmate_additional_damage
+            element: bondmate.element
+            damage_type: additional_damage
+            target: all_enemies
+            scaling:
+              stat: bondmate.atk
+              multiplier_at_ultimate_10: 0.8
+            is_attack: false
+      id: souldragon
+      tags: []
+  actions:
+    basic:
+      id: dan_heng_pt_basic_aegis_vitae
+      actor: dan_heng_permansor_terrae
+      action_type: basic
+      tags:
+      - attack
+      - basic_use
+      - basic_damage
+      - consumes_regular_action
+      - grants_base_energy
+      - can_trigger_kill_energy
+      skill_point_delta: 1
+      energy_gain:
+        base_energy_gain: 20
+        affected_by_err: true
+      damage_packets:
+      - id: dan_heng_pt_basic_damage_hit_1
+        element: physical
+        damage_type: basic_damage
+        target: selected_enemy
+        scaling:
+          stat: atk
+          multiplier_at_basic_6: 1.0
+        toughness:
+          toughness_reduction: 10
+        target_policy: selected_enemy
+        scaling_stat: atk
+        toughness_reduction: 10.0
+        multiplier: 0.0
+      - id: dan_heng_pt_basic_damage_hit_2
+        element: physical
+        damage_type: basic_damage
+        target: selected_enemy
+        scaling:
+          stat: atk
+          multiplier_at_basic_6: 1.0
+        toughness:
+          toughness_reduction: 10
+        target_policy: selected_enemy
+        scaling_stat: atk
+        toughness_reduction: 10.0
+        multiplier: 0.0
+      cost:
+        skill_points: 1
+    skill:
+      id: dan_heng_pt_skill_terra_omnibus
+      actor: dan_heng_permansor_terrae
+      action_type: skill
+      tags:
+      - skill_use
+      - support
+      - shield
+      - consumes_regular_action
+      - consumes_skill_point
+      - grants_base_energy
+      cost:
+        skill_points: -1
+      energy_gain:
+        base_energy_gain: 30
+        affected_by_err: true
+      target_policy: selected_ally
+      effects:
+      - type: set_target
+        status_id: bondmate
+        target: selected_ally
+      - type: provide_shield
+        target: all_allies
+        shield_formula_at_skill_10: 0.20 * dan_heng_permansor_terrae.atk + 400
+        duration_turns: 3
+        stack_cap_reference: current_skill_shield * 3
+      - type: modify_stat
+        target: bondmate
+        stat: atk
+        delta_formula_from_bonus_ability: 0.15 * dan_heng_permansor_terrae.atk
+      damage_packets: []
+    ultimate:
+      id: dan_heng_pt_ultimate_a_dragons_zenith_knows_no_rue
+      actor: dan_heng_permansor_terrae
+      action_type: ultimate
+      tags:
+      - ultimate_use
+      - attack
+      - ultimate_damage
+      - shield
+      - consumes_energy
+      cost:
+        energy: 135
+      energy_gain:
+        base_energy_gain: 5
+        affected_by_err: true
+      damage_packets:
+      - id: dan_heng_pt_ultimate_physical_aoe
+        element: physical
+        damage_type: ultimate_damage
+        target: all_enemies
+        scaling:
+          stat: atk
+          multiplier_at_ultimate_10: 3.0
+        hit_model:
+          mode: single_packet
+        toughness:
+          toughness_reduction: 20
+        target_policy: all_enemies
+        scaling_stat: atk
+        toughness_reduction: 20.0
+      effects:
+      - type: provide_shield
+        target: all_allies
+        shield_formula_at_ultimate_10: 0.20 * dan_heng_permansor_terrae.atk + 400
+        duration_turns: 3
+        stack_cap_reference: current_skill_shield * 3
+      - type: enhance_souldragon
+        remaining_actions_added: 2
+    technique:
+      id: dan_heng_pt_technique_earthrend
+      actor: dan_heng_permansor_terrae
+      action_type: technique
+      tags:
+      - technique_use
+      - prebattle
+      - impair
+      effects:
+      - type: add_prebattle_status
+        status_id: bondmate
+        target: current_active_character
+      - type: apply_enemy_field_status
+        status_id: daze
+        duration_seconds: 10
+      - type: auto_use_skill_on_battle_start
+        target: bondmate
+        consumes_skill_points: false
+      damage_packets: []
+  triggers:
+  - timing: battle_start
+    condition: always
+    effect:
+      type: advance_action
+      target: dan_heng_permansor_terrae
+      advance_percent: 0.4
+    id: sylvanity_battle_start_action_advance
+    effects:
+    - type: advance_action
+      target: dan_heng_permansor_terrae
+      advance_percent: 0.4
+  - timing: after_bondmate_uses_attack
+    effects:
+    - type: gain_energy
+      target: dan_heng_permansor_terrae
+      amount: 6
+      affected_by_err: true
+    - type: advance_action
+      target: souldragon
+      advance_percent: 0.15
+    id: sylvanity_bondmate_attack
+  - timing: after_souldragon_action
+    effects:
+    - type: provide_shield
+      target: ally_with_lowest_current_shield
+      shield_formula: 0.05 * dan_heng_permansor_terrae.atk + 100
+    - type: conditional_branch
+      condition: souldragon.is_enhanced
+      effects:
+      - type: deal_damage
+        damage_packet:
+          id: souldragon_bonus_bondmate_damage_single_highest_hp
+          element: bondmate.element
+          damage_type: additional_damage
+          target: enemy_highest_current_hp
+          scaling:
+            stat: bondmate.atk
+            multiplier: 0.4
+          is_attack: false
+    id: extra_shield_and_bondmate_damage
+  passive_modifiers: {}
+  eidolons: {}
+  current_panel_snapshot:
+    source: user_image_41
+    hp:
+      base_display: 2106
+      added_display: 1354
+      total_display: 3460
+    atk:
+      base_display: 952
+      added_display: 1774
+      total_display: 2726
+    def:
+      base_display: 1305
+      added_display: 699
+      total_display: 2004
+    speed:
+      base_display: 97
+      added_display: 44
+      total_display: 141
+    crit_rate: 0.05
+    crit_dmg: 0.558
+    break_effect: 0.298
+    max_energy: 135
+    energy_regeneration_rate: 1.244
+    effect_hit_rate: 0.203
+    effect_res: 0.073
+source_detail:
+  character:
+    id: dan_heng_permansor_terrae
+    name: Dan Heng • Permansor Terrae
+    cn_name: 丹恒•腾荒
+    element: physical
+    path: preservation
+    rarity: 5
+    eidolons: 0
+    template_version: 1.6
+    schema: hsr_trigger_effect_schema_v1_6
+    foundation_model: hsr_foundation_model_v1_6
+    data_policy:
+      patch_policy: enhanced_current_version_v1_6
+      final_panel_snapshot_from_user_screenshot: true
+      trace_levels_default: user_confirmed_max_v1_6

@@ -1,0 +1,113 @@
+kind: enemy_template
+schema_version: 3.1-generated-non-knight-v0.59
+id: real_sample_aml_boss_part1
+unit:
+  id: real_sample_aml_boss_part1
+  template_id: 8012140
+  name: real_sample_aml_boss_part1
+  cn_name: 非骑士三真实样例 8012140
+  side: enemy
+  level: 80
+  hp: 46500.0
+  max_hp: 46500.0
+  speed: 120.0
+  toughness: 120.0
+  max_toughness: 120.0
+  stats:
+    atk: 900.0
+    def: 210.0
+  weaknesses:
+  - Fire
+  - Ice
+  res:
+    Physical: 0.2
+    Thunder: 0.2
+    Wind: 0.2
+    Quantum: 0.2
+    Imaginary: 0.4
+  core_mechanics: {}
+  skills:
+  - skill_id: 801214001
+    trigger_key: Skill01
+    name_chs: TBGD Skill 801214001
+    name_en: TBGD Skill 801214001
+    type_chs: '4236760374151560033'
+    tag_chs: '13718219806540082081'
+    damage_type: Imaginary
+    attack_type: Normal
+    toughness_damage_display_basic_atk_10_scale: 1.6666666666666667
+    delay_ratio: 1
+    phase_list:
+    - 1
+    params:
+    - 1.35
+    extra_effects: []
+    description_chs: 从 TurnBasedGameData MonsterSkillConfig[801214001] 自动生成的非骑士三样例技能。
+  - skill_id: 801214002
+    trigger_key: Skill02
+    name_chs: TBGD Skill 801214002
+    name_en: TBGD Skill 801214002
+    type_chs: '4236760374151560033'
+    tag_chs: '13718219806540082081'
+    damage_type: Imaginary
+    attack_type: Normal
+    toughness_damage_display_basic_atk_10_scale: 1.6666666666666667
+    delay_ratio: 1
+    phase_list:
+    - 1
+    - 2
+    params:
+    - 1.5
+    - 0.2
+    - 1
+    - 0.3
+    - 0.2
+    extra_effects: []
+    description_chs: 从 TurnBasedGameData MonsterSkillConfig[801214002] 自动生成的非骑士三样例技能。
+  - skill_id: 801214003
+    trigger_key: Skill03
+    name_chs: TBGD Skill 801214003
+    name_en: TBGD Skill 801214003
+    type_chs: '4236760374151560033'
+    tag_chs: '13718219806540082081'
+    damage_type: Imaginary
+    attack_type: Normal
+    toughness_damage_display_basic_atk_10_scale: 3.3333333333333335
+    delay_ratio: 1
+    phase_list:
+    - 2
+    params:
+    - 2
+    - 0.25
+    - 1
+    - 0.3
+    - 0.2
+    extra_effects: []
+    description_chs: 从 TurnBasedGameData MonsterSkillConfig[801214003] 自动生成的非骑士三样例技能。
+  raw:
+    identity:
+      monster_id: 8012140
+      monster_template_id: 8012140
+      rank: MinionLv2
+    config_ai:
+      ai_path: Config/ConfigAI/Monster_AML_Boss_00_Part1_AI.json
+      skill_trigger_references:
+      - skill_id: 801214001
+        skill_trigger_key: Skill01
+      - skill_id: 801214001
+        skill_trigger_key: Skill01
+      - skill_id: 801214003
+        skill_trigger_key: Skill03
+      - skill_id: 801214003
+        skill_trigger_key: Skill03
+      - skill_id: 801214002
+        skill_trigger_key: Skill02
+      - skill_id: 801214002
+        skill_trigger_key: Skill02
+    raw_source_trace:
+      excel_rows:
+      - MonsterConfig[MonsterID=8012140]
+      - MonsterTemplateConfig[MonsterTemplateID=8012140]
+      config_paths:
+      - Config/ConfigAI/Monster_AML_Boss_00_Part1_AI.json
+      - Config/ConfigCharacter/Monster/Monster_AML_Boss_00_Part1_Config.json

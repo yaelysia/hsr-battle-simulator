@@ -1,0 +1,1217 @@
+{
+  "state": {
+    "global": {
+      "av": 0.0,
+      "cycle": 0,
+      "skill_points": 3,
+      "skill_point_cap": 5,
+      "wave_index": 0,
+      "flags": {
+        "_turn_token": 2,
+        "_active_turn_token": 2,
+        "_active_turn_actor_id": "actor",
+        "_active_turn_kind": "regular"
+      }
+    },
+    "units": {
+      "actor": {
+        "id": "actor",
+        "name": "Actor",
+        "side": "ally",
+        "hp": 1000.0,
+        "max_hp": 1000.0,
+        "shield": 0.0,
+        "hp_bars_total": 1,
+        "hp_bars_remaining": 1,
+        "hp_model_type": "normal_hp",
+        "hp_carry_over_damage": null,
+        "hp_model_bars": [],
+        "hp_percent": 1.0,
+        "energy": 0.0,
+        "max_energy": 100.0,
+        "speed": 100.0,
+        "base_speed_field": 100.0,
+        "remaining_av": 100.0,
+        "toughness": null,
+        "max_toughness": null,
+        "is_broken": false,
+        "alive": true,
+        "weaknesses": [],
+        "tags": [],
+        "stats": {
+          "atk": 100.0,
+          "speed": 100.0,
+          "crit_rate": 0.0,
+          "crit_dmg": 0.5
+        },
+        "stat_base": {},
+        "stat_pct": {},
+        "stat_flat": {},
+        "res": {},
+        "statuses": [],
+        "status_defs": [],
+        "flags": {}
+      }
+    },
+    "trigger_usage": {},
+    "queued_actions": {
+      "ultimate_queue": [],
+      "immediate_queue": [],
+      "interrupt_queue": []
+    }
+  },
+  "scene": {
+    "global": {
+      "av": 0.0,
+      "cycle": 0,
+      "skill_points": 3,
+      "skill_point_cap": 5,
+      "_sp": 3,
+      "_sp_cap": 5,
+      "wave_index": 0,
+      "flags": {
+        "_turn_token": 2,
+        "_active_turn_token": 2,
+        "_active_turn_actor_id": "actor",
+        "_active_turn_kind": "regular"
+      }
+    },
+    "action_axis": [
+      {
+        "id": "actor",
+        "name": "Actor",
+        "side": "ally",
+        "alive": true,
+        "speed": 100.0,
+        "action_interval": 100.0,
+        "remaining_av": 100.0,
+        "absolute_av": 100.0,
+        "tags": []
+      }
+    ],
+    "allies": [
+      {
+        "id": "actor",
+        "name": "Actor",
+        "side": "ally",
+        "alive": true,
+        "tags": [],
+        "resources": {
+          "hp": 1000.0,
+          "max_hp": 1000.0,
+          "hp_percent": 1.0,
+          "shield": 0.0,
+          "energy": 0.0,
+          "max_energy": 100.0,
+          "toughness": null,
+          "max_toughness": null,
+          "is_broken": false,
+          "hp_bars_total": 1,
+          "hp_bars_remaining": 1,
+          "hp_model_type": "normal_hp",
+          "hp_carry_over_damage": null
+        },
+        "action_axis": {
+          "remaining_av": 100.0,
+          "absolute_av": 100.0,
+          "speed": 100.0,
+          "action_interval": 100.0
+        },
+        "panel": {
+          "hp": 1000.0,
+          "max_hp": 1000.0,
+          "atk": 100.0,
+          "speed": 100.0,
+          "crit_dmg": 0.5
+        },
+        "stat_parts": {
+          "base": {},
+          "pct": {},
+          "flat": {},
+          "legacy_stats": {
+            "atk": 100.0,
+            "speed": 100.0,
+            "crit_rate": 0.0,
+            "crit_dmg": 0.5
+          }
+        },
+        "resistance": {},
+        "weaknesses": [],
+        "statuses": [],
+        "special_mechanics": {},
+        "flags": {}
+      }
+    ],
+    "summons": [],
+    "enemies": [],
+    "others": [],
+    "queues": {
+      "ultimate_queue": [],
+      "immediate_queue": [],
+      "interrupt_queue": []
+    },
+    "trigger_usage": {}
+  },
+  "log": [
+    {
+      "av": 0.0,
+      "event_type": "route",
+      "message": "Route step 1: {'actor': 'actor', 'action': 'extra_ping', 'timing': 'extra_turn', 'targets': ['actor']}",
+      "data": {}
+    },
+    {
+      "av": 0.0,
+      "event_type": "turn_start",
+      "message": "actor begins extra_turn turn",
+      "data": {}
+    },
+    {
+      "av": 0.0,
+      "event_type": "action_start",
+      "message": "actor uses extra_ping on ['actor']",
+      "data": {
+        "tags": [
+          "extra_action"
+        ],
+        "turn_kind": "extra_turn"
+      }
+    },
+    {
+      "av": 0.0,
+      "event_type": "turn_end",
+      "message": "actor ends extra_turn turn",
+      "data": {}
+    },
+    {
+      "av": 0.0,
+      "event_type": "battle_end",
+      "message": "All enemies defeated",
+      "data": {}
+    },
+    {
+      "av": 0.0,
+      "event_type": "action_end",
+      "message": "actor finished extra_ping",
+      "data": {}
+    },
+    {
+      "av": 0.0,
+      "event_type": "route",
+      "message": "Route step 2: {'actor': 'actor', 'action': 'regular_ping', 'timing': 'regular_turn', 'targets': ['actor']}",
+      "data": {}
+    },
+    {
+      "av": 0.0,
+      "event_type": "timeline",
+      "message": "Regular timeline advanced by 0.000000 AV; next actor actor",
+      "data": {
+        "delta": 0.0
+      }
+    },
+    {
+      "av": 0.0,
+      "event_type": "turn_start",
+      "message": "actor begins regular turn",
+      "data": {}
+    },
+    {
+      "av": 0.0,
+      "event_type": "action_start",
+      "message": "actor uses regular_ping on ['actor']",
+      "data": {
+        "tags": [
+          "consumes_regular_action"
+        ],
+        "turn_kind": "regular"
+      }
+    },
+    {
+      "av": 0.0,
+      "event_type": "timeline",
+      "message": "actor regular action interval added",
+      "data": {
+        "remaining_av": 100.0
+      }
+    },
+    {
+      "av": 0.0,
+      "event_type": "duration_tick",
+      "message": "actor.regular_turn_buff duration 1 -> 0",
+      "data": {
+        "unit": "actor",
+        "status": "regular_turn_buff",
+        "duration_type": "target_turns",
+        "event": "turn_end",
+        "turn_kind": "regular"
+      }
+    },
+    {
+      "av": 0.0,
+      "event_type": "status_expire",
+      "message": "actor.regular_turn_buff expired",
+      "data": {
+        "unit": "actor",
+        "status": "regular_turn_buff",
+        "reason": "status_duration_tick",
+        "duration_type": "target_turns"
+      }
+    },
+    {
+      "av": 0.0,
+      "event_type": "turn_end",
+      "message": "actor ends regular turn",
+      "data": {}
+    },
+    {
+      "av": 0.0,
+      "event_type": "battle_end",
+      "message": "All enemies defeated",
+      "data": {}
+    },
+    {
+      "av": 0.0,
+      "event_type": "action_end",
+      "message": "actor finished regular_ping",
+      "data": {}
+    }
+  ],
+  "runtime_audit": {
+    "property_hint_applications": {
+      "applied_count": 0,
+      "skipped_count": 0,
+      "by_property": {},
+      "skipped_reason_counts": {},
+      "records": []
+    },
+    "symbolic_formula_applications": {
+      "applied_count": 0,
+      "skipped_count": 0,
+      "skipped_reason_counts": {},
+      "records": []
+    },
+    "engine_property_reads": {
+      "attempted_count": 0,
+      "resolved_count": 0,
+      "unresolved_count": 0,
+      "by_property": {},
+      "records": []
+    }
+  },
+  "metadata": {
+    "route_executed_step_count": 2,
+    "route_action_trace": [
+      {
+        "step": 1,
+        "step_type": "action",
+        "actor": "actor",
+        "action": "extra_ping",
+        "timing": "extra_turn",
+        "targets": [
+          "actor"
+        ],
+        "before": {
+          "av": 0.0,
+          "skill_points": 3,
+          "skill_point_cap": 5,
+          "_sp": 3,
+          "_sp_cap": 5,
+          "allies": [
+            {
+              "id": "actor",
+              "alive": true,
+              "hp": 1000.0,
+              "max_hp": 1000.0,
+              "energy": 0.0,
+              "max_energy": 100.0,
+              "remaining_av": 0.0,
+              "toughness": null,
+              "max_toughness": null,
+              "hp_bars_remaining": 1,
+              "status_count": 1
+            }
+          ],
+          "enemies": [],
+          "queue_size": 0
+        },
+        "before_scene": {
+          "global": {
+            "av": 0.0,
+            "cycle": 0,
+            "skill_points": 3,
+            "skill_point_cap": 5,
+            "_sp": 3,
+            "_sp_cap": 5,
+            "wave_index": 0,
+            "flags": {}
+          },
+          "action_axis": [
+            {
+              "id": "actor",
+              "name": "Actor",
+              "side": "ally",
+              "alive": true,
+              "speed": 100.0,
+              "action_interval": 100.0,
+              "remaining_av": 0.0,
+              "absolute_av": 0.0,
+              "tags": []
+            }
+          ],
+          "allies": [
+            {
+              "id": "actor",
+              "name": "Actor",
+              "side": "ally",
+              "alive": true,
+              "tags": [],
+              "resources": {
+                "hp": 1000.0,
+                "max_hp": 1000.0,
+                "hp_percent": 1.0,
+                "shield": 0.0,
+                "energy": 0.0,
+                "max_energy": 100.0,
+                "toughness": null,
+                "max_toughness": null,
+                "is_broken": false,
+                "hp_bars_total": 1,
+                "hp_bars_remaining": 1,
+                "hp_model_type": "normal_hp",
+                "hp_carry_over_damage": null
+              },
+              "action_axis": {
+                "remaining_av": 0.0,
+                "absolute_av": 0.0,
+                "speed": 100.0,
+                "action_interval": 100.0
+              },
+              "panel": {
+                "hp": 1000.0,
+                "max_hp": 1000.0,
+                "atk": 200.0,
+                "speed": 100.0,
+                "crit_dmg": 0.5
+              },
+              "stat_parts": {
+                "base": {},
+                "pct": {},
+                "flat": {},
+                "legacy_stats": {
+                  "atk": 100.0,
+                  "speed": 100.0,
+                  "crit_rate": 0.0,
+                  "crit_dmg": 0.5
+                }
+              },
+              "resistance": {},
+              "weaknesses": [],
+              "statuses": [
+                {
+                  "id": "regular_turn_buff",
+                  "source_id": null,
+                  "stacks": 1,
+                  "max_stacks": 1,
+                  "duration": {
+                    "type": "target_turns",
+                    "value": 1,
+                    "extra_turn_consumes": false,
+                    "refresh_duration": true
+                  },
+                  "tags": [
+                    "buff"
+                  ],
+                  "modifier_keys": [
+                    "atk_pct"
+                  ],
+                  "modifiers": {
+                    "atk_pct": 1.0
+                  }
+                }
+              ],
+              "special_mechanics": {},
+              "flags": {}
+            }
+          ],
+          "summons": [],
+          "enemies": [],
+          "others": [],
+          "queues": {
+            "ultimate_queue": [],
+            "immediate_queue": [],
+            "interrupt_queue": []
+          },
+          "trigger_usage": {}
+        },
+        "event_summary": {
+          "event_count": 5,
+          "event_counts": {
+            "turn_start": 1,
+            "action_start": 1,
+            "turn_end": 1,
+            "battle_end": 1,
+            "action_end": 1
+          },
+          "damage_total": 0.0,
+          "toughness_damage_total": 0.0,
+          "defeated_units": [],
+          "queued_event_count": 0
+        },
+        "action_resolution": {
+          "requested": {
+            "step_type": "action",
+            "actor": "actor",
+            "action": "extra_ping",
+            "timing": "extra_turn",
+            "targets": [
+              "actor"
+            ]
+          },
+          "damage_events": [],
+          "status_events": [],
+          "resource_events": [],
+          "av_events": [
+            {
+              "av": 0.0,
+              "event_type": "turn_start",
+              "message": "actor begins extra_turn turn",
+              "data": {},
+              "index": 0
+            },
+            {
+              "av": 0.0,
+              "event_type": "turn_end",
+              "message": "actor ends extra_turn turn",
+              "data": {},
+              "index": 2
+            }
+          ],
+          "mechanism_events": [],
+          "all_events": [
+            {
+              "av": 0.0,
+              "event_type": "turn_start",
+              "message": "actor begins extra_turn turn",
+              "data": {},
+              "index": 0
+            },
+            {
+              "av": 0.0,
+              "event_type": "action_start",
+              "message": "actor uses extra_ping on ['actor']",
+              "data": {
+                "tags": [
+                  "extra_action"
+                ],
+                "turn_kind": "extra_turn"
+              },
+              "index": 1
+            },
+            {
+              "av": 0.0,
+              "event_type": "turn_end",
+              "message": "actor ends extra_turn turn",
+              "data": {},
+              "index": 2
+            },
+            {
+              "av": 0.0,
+              "event_type": "battle_end",
+              "message": "All enemies defeated",
+              "data": {},
+              "index": 3
+            },
+            {
+              "av": 0.0,
+              "event_type": "action_end",
+              "message": "actor finished extra_ping",
+              "data": {},
+              "index": 4
+            }
+          ]
+        },
+        "settlement": {
+          "damage_records": [],
+          "shield_records": [],
+          "hp_records": [],
+          "energy_records": [],
+          "sp_records": [],
+          "status_records": [],
+          "av_records": [
+            {
+              "unit_id": "actor",
+              "old_remaining_av": 0.0,
+              "new_remaining_av": 0.0,
+              "delta": 0.0,
+              "reason": "regular_turn_end",
+              "source_id": ""
+            }
+          ],
+          "turn_records": [
+            {
+              "unit_id": "actor",
+              "turn_kind": "extra_turn",
+              "event_type": "begin",
+              "action_id": ""
+            },
+            {
+              "unit_id": "actor",
+              "turn_kind": "extra_turn",
+              "event_type": "end",
+              "action_id": ""
+            }
+          ],
+          "mechanic_records": [],
+          "target_record": {
+            "action_id": "",
+            "actor_id": "",
+            "target_ids": [
+              "actor"
+            ],
+            "target_selection_reason": "explicit"
+          }
+        },
+        "after": {
+          "av": 0.0,
+          "skill_points": 3,
+          "skill_point_cap": 5,
+          "_sp": 3,
+          "_sp_cap": 5,
+          "allies": [
+            {
+              "id": "actor",
+              "alive": true,
+              "hp": 1000.0,
+              "max_hp": 1000.0,
+              "energy": 0.0,
+              "max_energy": 100.0,
+              "remaining_av": 0.0,
+              "toughness": null,
+              "max_toughness": null,
+              "hp_bars_remaining": 1,
+              "status_count": 1
+            }
+          ],
+          "enemies": [],
+          "queue_size": 0
+        },
+        "after_scene": {
+          "global": {
+            "av": 0.0,
+            "cycle": 0,
+            "skill_points": 3,
+            "skill_point_cap": 5,
+            "_sp": 3,
+            "_sp_cap": 5,
+            "wave_index": 0,
+            "flags": {
+              "_turn_token": 1,
+              "_active_turn_token": 1,
+              "_active_turn_actor_id": "actor",
+              "_active_turn_kind": "extra_turn"
+            }
+          },
+          "action_axis": [
+            {
+              "id": "actor",
+              "name": "Actor",
+              "side": "ally",
+              "alive": true,
+              "speed": 100.0,
+              "action_interval": 100.0,
+              "remaining_av": 0.0,
+              "absolute_av": 0.0,
+              "tags": []
+            }
+          ],
+          "allies": [
+            {
+              "id": "actor",
+              "name": "Actor",
+              "side": "ally",
+              "alive": true,
+              "tags": [],
+              "resources": {
+                "hp": 1000.0,
+                "max_hp": 1000.0,
+                "hp_percent": 1.0,
+                "shield": 0.0,
+                "energy": 0.0,
+                "max_energy": 100.0,
+                "toughness": null,
+                "max_toughness": null,
+                "is_broken": false,
+                "hp_bars_total": 1,
+                "hp_bars_remaining": 1,
+                "hp_model_type": "normal_hp",
+                "hp_carry_over_damage": null
+              },
+              "action_axis": {
+                "remaining_av": 0.0,
+                "absolute_av": 0.0,
+                "speed": 100.0,
+                "action_interval": 100.0
+              },
+              "panel": {
+                "hp": 1000.0,
+                "max_hp": 1000.0,
+                "atk": 200.0,
+                "speed": 100.0,
+                "crit_dmg": 0.5
+              },
+              "stat_parts": {
+                "base": {},
+                "pct": {},
+                "flat": {},
+                "legacy_stats": {
+                  "atk": 100.0,
+                  "speed": 100.0,
+                  "crit_rate": 0.0,
+                  "crit_dmg": 0.5
+                }
+              },
+              "resistance": {},
+              "weaknesses": [],
+              "statuses": [
+                {
+                  "id": "regular_turn_buff",
+                  "source_id": null,
+                  "stacks": 1,
+                  "max_stacks": 1,
+                  "duration": {
+                    "type": "target_turns",
+                    "value": 1,
+                    "extra_turn_consumes": false,
+                    "refresh_duration": true
+                  },
+                  "tags": [
+                    "buff"
+                  ],
+                  "modifier_keys": [
+                    "atk_pct"
+                  ],
+                  "modifiers": {
+                    "atk_pct": 1.0
+                  }
+                }
+              ],
+              "special_mechanics": {},
+              "flags": {}
+            }
+          ],
+          "summons": [],
+          "enemies": [],
+          "others": [],
+          "queues": {
+            "ultimate_queue": [],
+            "immediate_queue": [],
+            "interrupt_queue": []
+          },
+          "trigger_usage": {}
+        }
+      },
+      {
+        "step": 2,
+        "step_type": "action",
+        "actor": "actor",
+        "action": "regular_ping",
+        "timing": "regular_turn",
+        "targets": [
+          "actor"
+        ],
+        "before": {
+          "av": 0.0,
+          "skill_points": 3,
+          "skill_point_cap": 5,
+          "_sp": 3,
+          "_sp_cap": 5,
+          "allies": [
+            {
+              "id": "actor",
+              "alive": true,
+              "hp": 1000.0,
+              "max_hp": 1000.0,
+              "energy": 0.0,
+              "max_energy": 100.0,
+              "remaining_av": 0.0,
+              "toughness": null,
+              "max_toughness": null,
+              "hp_bars_remaining": 1,
+              "status_count": 1
+            }
+          ],
+          "enemies": [],
+          "queue_size": 0
+        },
+        "before_scene": {
+          "global": {
+            "av": 0.0,
+            "cycle": 0,
+            "skill_points": 3,
+            "skill_point_cap": 5,
+            "_sp": 3,
+            "_sp_cap": 5,
+            "wave_index": 0,
+            "flags": {
+              "_turn_token": 1,
+              "_active_turn_token": 1,
+              "_active_turn_actor_id": "actor",
+              "_active_turn_kind": "extra_turn"
+            }
+          },
+          "action_axis": [
+            {
+              "id": "actor",
+              "name": "Actor",
+              "side": "ally",
+              "alive": true,
+              "speed": 100.0,
+              "action_interval": 100.0,
+              "remaining_av": 0.0,
+              "absolute_av": 0.0,
+              "tags": []
+            }
+          ],
+          "allies": [
+            {
+              "id": "actor",
+              "name": "Actor",
+              "side": "ally",
+              "alive": true,
+              "tags": [],
+              "resources": {
+                "hp": 1000.0,
+                "max_hp": 1000.0,
+                "hp_percent": 1.0,
+                "shield": 0.0,
+                "energy": 0.0,
+                "max_energy": 100.0,
+                "toughness": null,
+                "max_toughness": null,
+                "is_broken": false,
+                "hp_bars_total": 1,
+                "hp_bars_remaining": 1,
+                "hp_model_type": "normal_hp",
+                "hp_carry_over_damage": null
+              },
+              "action_axis": {
+                "remaining_av": 0.0,
+                "absolute_av": 0.0,
+                "speed": 100.0,
+                "action_interval": 100.0
+              },
+              "panel": {
+                "hp": 1000.0,
+                "max_hp": 1000.0,
+                "atk": 200.0,
+                "speed": 100.0,
+                "crit_dmg": 0.5
+              },
+              "stat_parts": {
+                "base": {},
+                "pct": {},
+                "flat": {},
+                "legacy_stats": {
+                  "atk": 100.0,
+                  "speed": 100.0,
+                  "crit_rate": 0.0,
+                  "crit_dmg": 0.5
+                }
+              },
+              "resistance": {},
+              "weaknesses": [],
+              "statuses": [
+                {
+                  "id": "regular_turn_buff",
+                  "source_id": null,
+                  "stacks": 1,
+                  "max_stacks": 1,
+                  "duration": {
+                    "type": "target_turns",
+                    "value": 1,
+                    "extra_turn_consumes": false,
+                    "refresh_duration": true
+                  },
+                  "tags": [
+                    "buff"
+                  ],
+                  "modifier_keys": [
+                    "atk_pct"
+                  ],
+                  "modifiers": {
+                    "atk_pct": 1.0
+                  }
+                }
+              ],
+              "special_mechanics": {},
+              "flags": {}
+            }
+          ],
+          "summons": [],
+          "enemies": [],
+          "others": [],
+          "queues": {
+            "ultimate_queue": [],
+            "immediate_queue": [],
+            "interrupt_queue": []
+          },
+          "trigger_usage": {}
+        },
+        "event_summary": {
+          "event_count": 9,
+          "event_counts": {
+            "timeline": 2,
+            "turn_start": 1,
+            "action_start": 1,
+            "duration_tick": 1,
+            "status_expire": 1,
+            "turn_end": 1,
+            "battle_end": 1,
+            "action_end": 1
+          },
+          "damage_total": 0.0,
+          "toughness_damage_total": 0.0,
+          "defeated_units": [],
+          "queued_event_count": 0
+        },
+        "action_resolution": {
+          "requested": {
+            "step_type": "action",
+            "actor": "actor",
+            "action": "regular_ping",
+            "timing": "regular_turn",
+            "targets": [
+              "actor"
+            ]
+          },
+          "damage_events": [],
+          "status_events": [
+            {
+              "av": 0.0,
+              "event_type": "duration_tick",
+              "message": "actor.regular_turn_buff duration 1 -> 0",
+              "data": {
+                "unit": "actor",
+                "status": "regular_turn_buff",
+                "duration_type": "target_turns",
+                "event": "turn_end",
+                "turn_kind": "regular"
+              },
+              "index": 4
+            },
+            {
+              "av": 0.0,
+              "event_type": "status_expire",
+              "message": "actor.regular_turn_buff expired",
+              "data": {
+                "unit": "actor",
+                "status": "regular_turn_buff",
+                "reason": "status_duration_tick",
+                "duration_type": "target_turns"
+              },
+              "index": 5
+            }
+          ],
+          "resource_events": [],
+          "av_events": [
+            {
+              "av": 0.0,
+              "event_type": "timeline",
+              "message": "Regular timeline advanced by 0.000000 AV; next actor actor",
+              "data": {
+                "delta": 0.0
+              },
+              "index": 0
+            },
+            {
+              "av": 0.0,
+              "event_type": "turn_start",
+              "message": "actor begins regular turn",
+              "data": {},
+              "index": 1
+            },
+            {
+              "av": 0.0,
+              "event_type": "timeline",
+              "message": "actor regular action interval added",
+              "data": {
+                "remaining_av": 100.0
+              },
+              "index": 3
+            },
+            {
+              "av": 0.0,
+              "event_type": "turn_end",
+              "message": "actor ends regular turn",
+              "data": {},
+              "index": 6
+            }
+          ],
+          "mechanism_events": [],
+          "all_events": [
+            {
+              "av": 0.0,
+              "event_type": "timeline",
+              "message": "Regular timeline advanced by 0.000000 AV; next actor actor",
+              "data": {
+                "delta": 0.0
+              },
+              "index": 0
+            },
+            {
+              "av": 0.0,
+              "event_type": "turn_start",
+              "message": "actor begins regular turn",
+              "data": {},
+              "index": 1
+            },
+            {
+              "av": 0.0,
+              "event_type": "action_start",
+              "message": "actor uses regular_ping on ['actor']",
+              "data": {
+                "tags": [
+                  "consumes_regular_action"
+                ],
+                "turn_kind": "regular"
+              },
+              "index": 2
+            },
+            {
+              "av": 0.0,
+              "event_type": "timeline",
+              "message": "actor regular action interval added",
+              "data": {
+                "remaining_av": 100.0
+              },
+              "index": 3
+            },
+            {
+              "av": 0.0,
+              "event_type": "duration_tick",
+              "message": "actor.regular_turn_buff duration 1 -> 0",
+              "data": {
+                "unit": "actor",
+                "status": "regular_turn_buff",
+                "duration_type": "target_turns",
+                "event": "turn_end",
+                "turn_kind": "regular"
+              },
+              "index": 4
+            },
+            {
+              "av": 0.0,
+              "event_type": "status_expire",
+              "message": "actor.regular_turn_buff expired",
+              "data": {
+                "unit": "actor",
+                "status": "regular_turn_buff",
+                "reason": "status_duration_tick",
+                "duration_type": "target_turns"
+              },
+              "index": 5
+            },
+            {
+              "av": 0.0,
+              "event_type": "turn_end",
+              "message": "actor ends regular turn",
+              "data": {},
+              "index": 6
+            },
+            {
+              "av": 0.0,
+              "event_type": "battle_end",
+              "message": "All enemies defeated",
+              "data": {},
+              "index": 7
+            },
+            {
+              "av": 0.0,
+              "event_type": "action_end",
+              "message": "actor finished regular_ping",
+              "data": {},
+              "index": 8
+            }
+          ]
+        },
+        "settlement": {
+          "damage_records": [],
+          "shield_records": [],
+          "hp_records": [],
+          "energy_records": [],
+          "sp_records": [],
+          "status_records": [],
+          "av_records": [
+            {
+              "unit_id": "actor",
+              "old_remaining_av": 0.0,
+              "new_remaining_av": 100.0,
+              "delta": 100.0,
+              "reason": "regular_turn_end",
+              "source_id": ""
+            }
+          ],
+          "turn_records": [
+            {
+              "unit_id": "actor",
+              "turn_kind": "regular",
+              "event_type": "begin",
+              "action_id": ""
+            },
+            {
+              "unit_id": "actor",
+              "turn_kind": "regular",
+              "event_type": "end",
+              "action_id": ""
+            }
+          ],
+          "mechanic_records": [],
+          "target_record": {
+            "action_id": "",
+            "actor_id": "",
+            "target_ids": [
+              "actor"
+            ],
+            "target_selection_reason": "explicit"
+          }
+        },
+        "after": {
+          "av": 0.0,
+          "skill_points": 3,
+          "skill_point_cap": 5,
+          "_sp": 3,
+          "_sp_cap": 5,
+          "allies": [
+            {
+              "id": "actor",
+              "alive": true,
+              "hp": 1000.0,
+              "max_hp": 1000.0,
+              "energy": 0.0,
+              "max_energy": 100.0,
+              "remaining_av": 100.0,
+              "toughness": null,
+              "max_toughness": null,
+              "hp_bars_remaining": 1,
+              "status_count": 0
+            }
+          ],
+          "enemies": [],
+          "queue_size": 0
+        },
+        "after_scene": {
+          "global": {
+            "av": 0.0,
+            "cycle": 0,
+            "skill_points": 3,
+            "skill_point_cap": 5,
+            "_sp": 3,
+            "_sp_cap": 5,
+            "wave_index": 0,
+            "flags": {
+              "_turn_token": 2,
+              "_active_turn_token": 2,
+              "_active_turn_actor_id": "actor",
+              "_active_turn_kind": "regular"
+            }
+          },
+          "action_axis": [
+            {
+              "id": "actor",
+              "name": "Actor",
+              "side": "ally",
+              "alive": true,
+              "speed": 100.0,
+              "action_interval": 100.0,
+              "remaining_av": 100.0,
+              "absolute_av": 100.0,
+              "tags": []
+            }
+          ],
+          "allies": [
+            {
+              "id": "actor",
+              "name": "Actor",
+              "side": "ally",
+              "alive": true,
+              "tags": [],
+              "resources": {
+                "hp": 1000.0,
+                "max_hp": 1000.0,
+                "hp_percent": 1.0,
+                "shield": 0.0,
+                "energy": 0.0,
+                "max_energy": 100.0,
+                "toughness": null,
+                "max_toughness": null,
+                "is_broken": false,
+                "hp_bars_total": 1,
+                "hp_bars_remaining": 1,
+                "hp_model_type": "normal_hp",
+                "hp_carry_over_damage": null
+              },
+              "action_axis": {
+                "remaining_av": 100.0,
+                "absolute_av": 100.0,
+                "speed": 100.0,
+                "action_interval": 100.0
+              },
+              "panel": {
+                "hp": 1000.0,
+                "max_hp": 1000.0,
+                "atk": 100.0,
+                "speed": 100.0,
+                "crit_dmg": 0.5
+              },
+              "stat_parts": {
+                "base": {},
+                "pct": {},
+                "flat": {},
+                "legacy_stats": {
+                  "atk": 100.0,
+                  "speed": 100.0,
+                  "crit_rate": 0.0,
+                  "crit_dmg": 0.5
+                }
+              },
+              "resistance": {},
+              "weaknesses": [],
+              "statuses": [],
+              "special_mechanics": {},
+              "flags": {}
+            }
+          ],
+          "summons": [],
+          "enemies": [],
+          "others": [],
+          "queues": {
+            "ultimate_queue": [],
+            "immediate_queue": [],
+            "interrupt_queue": []
+          },
+          "trigger_usage": {}
+        }
+      }
+    ],
+    "route_assertions": {
+      "ok": true,
+      "check_count": 7,
+      "checks": {
+        "skill_points_in_bounds": true,
+        "av_monotonic": true,
+        "unit_resources_non_negative": true,
+        "unit_resources_not_above_known_caps": true,
+        "executed_actions_have_after_snapshot": true,
+        "executed_actions_emit_events": true,
+        "expected_action_prefix_match": true
+      },
+      "failure_count": 0,
+      "failures": [],
+      "expectations": {
+        "ok": true,
+        "step_count_with_expectations": 0,
+        "failure_count": 0,
+        "failures": []
+      }
+    }
+  }
+}

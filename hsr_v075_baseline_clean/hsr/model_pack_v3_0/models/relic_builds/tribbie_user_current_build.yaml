@@ -1,0 +1,61 @@
+kind: relic_build
+schema_version: '3.0'
+id: tribbie_user_current_build
+source_file: relic_tribbie_user_current_build_v1_6.yaml
+raw:
+  relic_build:
+    id: tribbie_user_current_build
+    owner: tribbie
+    template_version: 1.6
+    source: user_image_40
+    panel_snapshot_is_authoritative: true
+  panel_snapshot:
+    total_stats:
+      hp: 5236
+      atk: 1408
+      def: 1292
+      speed: 95
+      crit_rate: 0.575
+      crit_dmg: 2.097
+      max_energy: 120
+      energy_regeneration_rate: 1.244
+      effect_hit_rate: 0.125
+      effect_res: 0.034
+      quantum_dmg_bonus: 0.1
+  sets:
+    cavern:
+      id: poet_of_mourning_collapse
+      cn_name: 哀歌覆国的诗人
+      pieces: 4
+      static_effects_in_panel:
+        quantum_dmg_bonus: 0.1
+        speed_delta: -8
+        conditional_crit_rate_from_speed_threshold: included_or_displayed_by_game_panel
+      set_effect_model:
+        two_piece:
+          quantum_dmg_bonus: 0.1
+        four_piece:
+          speed_delta: -8
+          prebattle_condition_thresholds:
+          - if_speed_lower_than: 110
+            crit_rate: 0.2
+          - if_speed_lower_than: 95
+            crit_rate: 0.32
+          applies_to_memosprite: true
+          note: 'The current panel snapshot already displays 57.5% CRIT Rate at 95 SPD. Use snapshot stats for current build
+            unless recalculating from raw relic pieces.
+
+            '
+    planar:
+      id: lushaka_the_sunken_seas
+      cn_name: 沉陆海域露莎卡
+      pieces: 2
+      static_effects_in_panel:
+        energy_regeneration_rate_delta: 0.05
+      team_effects:
+      - id: lushaka_first_position_atk_buff
+        condition: wearer.position != 1
+        target: team.position_1
+        modifiers:
+          atk_pct: 0.12
+        stacking_policy: multiple_wearers_stack_unless_game_rules_override

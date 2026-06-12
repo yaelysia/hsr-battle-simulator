@@ -1,0 +1,69 @@
+kind: battle_case
+schema_version: '3.0'
+id: arbitration_4_3_knight_3_full_combat
+source_file: battle_case_arbitration_4_3_knight_3_full_combat_v2_8.yaml
+team_ref: teams/seele_sparkle_tribbie_dan_heng_pt.yaml
+stage_ref: stages/arbitration_4_3_knight_3.yaml
+objective:
+  primary: clear_stage
+  deadline_interpretation:
+    assumed: before_end_of_cycle_3
+    av_limit: 350
+    note: 'HSR cycle convention: 150 AV first cycle, +100 AV each later cycle.'
+  survival_requirement:
+    all_party_members_alive_required: false
+    ignore_character_death_for_route_validity: true
+calculation_scope:
+  include_player_actions: true
+  include_enemy_actions: true
+  include_enemy_mechanics: true
+  include_stage_trait: true
+  include_survival_state: false
+  pure_dummy_damage_mode: false
+initial_energy_policy:
+  status: user_confirmed
+  rule: Anomaly Arbitration starts at 50% energy
+  fixed_initial_energy:
+    seele: 60
+    sparkle: 55
+    tribbie: 60
+    dan_heng_permansor_terrae: 67.5
+technique_policy:
+  fixed_all_techniques_active: false
+  enumerate_technique_usage: true
+  note: Technique usage remains part of route search. Candidate A uses all four techniques for first detailed ledger.
+candidate_openings:
+  all_techniques:
+    techniques:
+      seele: true
+      sparkle: true
+      tribbie: true
+      dan_heng_permansor_terrae: true
+    confirmed_initial_energy_after_technique_pre_actions:
+      seele: 60
+      sparkle: 75
+      tribbie: 60
+      dan_heng_permansor_terrae: 104.82 if Dan Heng technique auto-skill grants 30 base energy affected by ERR
+    initial_skill_points:
+      base: 3
+      sparkle_technique_plus: 3
+      cap_with_sparkle_talent: 7
+      start_sp: 6
+    opening_av_checkpoints:
+    - av: 0
+      event: battle_start_technique_resolution
+    - av: 34.78
+      actor: sparkle
+      event: first_regular_action_due_to_vonwacq_and_e1_speed_after_v0_61_panel_alignment
+    - av: 40.95
+      actor: dan_heng_permansor_terrae
+      event: after Tribbie DDD advance; can act before wave1_titan_vanguard
+    - av: 53.15
+      actor: seele
+      event: after Sparkle skill advance + Tribbie DDD advance
+    - av: 57.39
+      actor: wave1_titan_vanguard
+      event: enemy first natural action if not delayed/killed/interrupted
+    - av: 63.13
+      actor: wave1_blazeweaver
+      event: enemy first natural action if not delayed/killed/interrupted

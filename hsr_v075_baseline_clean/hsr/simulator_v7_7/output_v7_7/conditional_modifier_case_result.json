@@ -1,0 +1,2552 @@
+{
+  "state": {
+    "global": {
+      "av": 0.0,
+      "cycle": 0,
+      "skill_points": 3,
+      "skill_point_cap": 5,
+      "wave_index": 0,
+      "flags": {}
+    },
+    "units": {
+      "attacker": {
+        "id": "attacker",
+        "name": "Attacker",
+        "side": "ally",
+        "hp": 1000.0,
+        "max_hp": 1000.0,
+        "shield": 0.0,
+        "hp_bars_total": 1,
+        "hp_bars_remaining": 1,
+        "hp_model_type": "normal_hp",
+        "hp_carry_over_damage": null,
+        "hp_model_bars": [],
+        "hp_percent": 1.0,
+        "energy": 0.0,
+        "max_energy": 100.0,
+        "speed": 100.0,
+        "base_speed_field": 100.0,
+        "remaining_av": 100.0,
+        "toughness": null,
+        "max_toughness": null,
+        "is_broken": false,
+        "alive": true,
+        "weaknesses": [],
+        "tags": [],
+        "stats": {
+          "atk": 1000.0,
+          "crit_rate": 0.0,
+          "crit_dmg": 0.5
+        },
+        "stat_base": {},
+        "stat_pct": {},
+        "stat_flat": {},
+        "res": {},
+        "statuses": [
+          {
+            "id": "skill_only_bonus",
+            "tags": [],
+            "modifiers": {
+              "conditional_modifiers": [
+                {
+                  "condition": {
+                    "left": "action.tags",
+                    "op": "contains",
+                    "right": "skill_damage"
+                  },
+                  "modifiers": {
+                    "dmg_bonus_add": 0.2
+                  }
+                }
+              ]
+            },
+            "stacks": 1,
+            "max_stacks": 1,
+            "duration_type": null,
+            "duration_value": null,
+            "source_id": null,
+            "duration_extra_turn_consumes": false,
+            "refresh_duration": true
+          }
+        ],
+        "status_defs": [],
+        "flags": {}
+      },
+      "e_skill": {
+        "id": "e_skill",
+        "name": "SkillTarget",
+        "side": "enemy",
+        "hp": 800.0,
+        "max_hp": 2000.0,
+        "shield": 0.0,
+        "hp_bars_total": 1,
+        "hp_bars_remaining": 1,
+        "hp_model_type": "normal_hp",
+        "hp_carry_over_damage": null,
+        "hp_model_bars": [],
+        "hp_percent": 0.4,
+        "energy": 0.0,
+        "max_energy": 0.0,
+        "speed": 100.0,
+        "base_speed_field": 100.0,
+        "remaining_av": 100.0,
+        "toughness": null,
+        "max_toughness": null,
+        "is_broken": false,
+        "alive": true,
+        "weaknesses": [],
+        "tags": [],
+        "stats": {
+          "defense": 0.0
+        },
+        "stat_base": {},
+        "stat_pct": {},
+        "stat_flat": {},
+        "res": {
+          "quantum": 0.0
+        },
+        "statuses": [],
+        "status_defs": [],
+        "flags": {}
+      },
+      "e_basic": {
+        "id": "e_basic",
+        "name": "BasicTarget",
+        "side": "enemy",
+        "hp": 1000.0,
+        "max_hp": 2000.0,
+        "shield": 0.0,
+        "hp_bars_total": 1,
+        "hp_bars_remaining": 1,
+        "hp_model_type": "normal_hp",
+        "hp_carry_over_damage": null,
+        "hp_model_bars": [],
+        "hp_percent": 0.5,
+        "energy": 0.0,
+        "max_energy": 0.0,
+        "speed": 100.0,
+        "base_speed_field": 100.0,
+        "remaining_av": 100.0,
+        "toughness": null,
+        "max_toughness": null,
+        "is_broken": false,
+        "alive": true,
+        "weaknesses": [],
+        "tags": [],
+        "stats": {
+          "defense": 0.0
+        },
+        "stat_base": {},
+        "stat_pct": {},
+        "stat_flat": {},
+        "res": {
+          "quantum": 0.0
+        },
+        "statuses": [],
+        "status_defs": [],
+        "flags": {}
+      }
+    },
+    "trigger_usage": {},
+    "queued_actions": {
+      "ultimate_queue": [],
+      "immediate_queue": [],
+      "interrupt_queue": []
+    }
+  },
+  "scene": {
+    "global": {
+      "av": 0.0,
+      "cycle": 0,
+      "skill_points": 3,
+      "skill_point_cap": 5,
+      "_sp": 3,
+      "_sp_cap": 5,
+      "wave_index": 0,
+      "flags": {}
+    },
+    "action_axis": [
+      {
+        "id": "attacker",
+        "name": "Attacker",
+        "side": "ally",
+        "alive": true,
+        "speed": 100.0,
+        "action_interval": 100.0,
+        "remaining_av": 100.0,
+        "absolute_av": 100.0,
+        "tags": []
+      },
+      {
+        "id": "e_basic",
+        "name": "BasicTarget",
+        "side": "enemy",
+        "alive": true,
+        "speed": 100.0,
+        "action_interval": 100.0,
+        "remaining_av": 100.0,
+        "absolute_av": 100.0,
+        "tags": []
+      },
+      {
+        "id": "e_skill",
+        "name": "SkillTarget",
+        "side": "enemy",
+        "alive": true,
+        "speed": 100.0,
+        "action_interval": 100.0,
+        "remaining_av": 100.0,
+        "absolute_av": 100.0,
+        "tags": []
+      }
+    ],
+    "allies": [
+      {
+        "id": "attacker",
+        "name": "Attacker",
+        "side": "ally",
+        "alive": true,
+        "tags": [],
+        "resources": {
+          "hp": 1000.0,
+          "max_hp": 1000.0,
+          "hp_percent": 1.0,
+          "shield": 0.0,
+          "energy": 0.0,
+          "max_energy": 100.0,
+          "toughness": null,
+          "max_toughness": null,
+          "is_broken": false,
+          "hp_bars_total": 1,
+          "hp_bars_remaining": 1,
+          "hp_model_type": "normal_hp",
+          "hp_carry_over_damage": null
+        },
+        "action_axis": {
+          "remaining_av": 100.0,
+          "absolute_av": 100.0,
+          "speed": 100.0,
+          "action_interval": 100.0
+        },
+        "panel": {
+          "hp": 1000.0,
+          "max_hp": 1000.0,
+          "atk": 1000.0,
+          "crit_dmg": 0.5
+        },
+        "stat_parts": {
+          "base": {},
+          "pct": {},
+          "flat": {},
+          "legacy_stats": {
+            "atk": 1000.0,
+            "crit_rate": 0.0,
+            "crit_dmg": 0.5
+          }
+        },
+        "resistance": {},
+        "weaknesses": [],
+        "statuses": [
+          {
+            "id": "skill_only_bonus",
+            "source_id": null,
+            "stacks": 1,
+            "max_stacks": 1,
+            "duration": {
+              "type": null,
+              "value": null,
+              "extra_turn_consumes": false,
+              "refresh_duration": true
+            },
+            "tags": [],
+            "modifier_keys": [
+              "conditional_modifiers"
+            ],
+            "modifiers": {
+              "conditional_modifiers": [
+                {
+                  "condition": {
+                    "left": "action.tags",
+                    "op": "contains",
+                    "right": "skill_damage"
+                  },
+                  "modifiers": {
+                    "dmg_bonus_add": 0.2
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "special_mechanics": {},
+        "flags": {}
+      }
+    ],
+    "summons": [],
+    "enemies": [
+      {
+        "id": "e_skill",
+        "name": "SkillTarget",
+        "side": "enemy",
+        "alive": true,
+        "tags": [],
+        "resources": {
+          "hp": 800.0,
+          "max_hp": 2000.0,
+          "hp_percent": 0.4,
+          "shield": 0.0,
+          "energy": 0.0,
+          "max_energy": 0.0,
+          "toughness": null,
+          "max_toughness": null,
+          "is_broken": false,
+          "hp_bars_total": 1,
+          "hp_bars_remaining": 1,
+          "hp_model_type": "normal_hp",
+          "hp_carry_over_damage": null
+        },
+        "action_axis": {
+          "remaining_av": 100.0,
+          "absolute_av": 100.0,
+          "speed": 100.0,
+          "action_interval": 100.0
+        },
+        "panel": {
+          "hp": 800.0,
+          "max_hp": 2000.0
+        },
+        "stat_parts": {
+          "base": {},
+          "pct": {},
+          "flat": {},
+          "legacy_stats": {
+            "defense": 0.0
+          }
+        },
+        "resistance": {
+          "quantum": 0.0
+        },
+        "weaknesses": [],
+        "statuses": [],
+        "special_mechanics": {
+          "inferred_next_action": null
+        },
+        "flags": {}
+      },
+      {
+        "id": "e_basic",
+        "name": "BasicTarget",
+        "side": "enemy",
+        "alive": true,
+        "tags": [],
+        "resources": {
+          "hp": 1000.0,
+          "max_hp": 2000.0,
+          "hp_percent": 0.5,
+          "shield": 0.0,
+          "energy": 0.0,
+          "max_energy": 0.0,
+          "toughness": null,
+          "max_toughness": null,
+          "is_broken": false,
+          "hp_bars_total": 1,
+          "hp_bars_remaining": 1,
+          "hp_model_type": "normal_hp",
+          "hp_carry_over_damage": null
+        },
+        "action_axis": {
+          "remaining_av": 100.0,
+          "absolute_av": 100.0,
+          "speed": 100.0,
+          "action_interval": 100.0
+        },
+        "panel": {
+          "hp": 1000.0,
+          "max_hp": 2000.0
+        },
+        "stat_parts": {
+          "base": {},
+          "pct": {},
+          "flat": {},
+          "legacy_stats": {
+            "defense": 0.0
+          }
+        },
+        "resistance": {
+          "quantum": 0.0
+        },
+        "weaknesses": [],
+        "statuses": [],
+        "special_mechanics": {
+          "inferred_next_action": null
+        },
+        "flags": {}
+      }
+    ],
+    "others": [],
+    "queues": {
+      "ultimate_queue": [],
+      "immediate_queue": [],
+      "interrupt_queue": []
+    },
+    "trigger_usage": {}
+  },
+  "log": [
+    {
+      "av": 0.0,
+      "event_type": "route",
+      "message": "Route step 1: {'actor': 'attacker', 'action': 'skill', 'timing': 'manual', 'targets': ['e_skill']}",
+      "data": {}
+    },
+    {
+      "av": 0.0,
+      "event_type": "action_start",
+      "message": "attacker uses skill on ['e_skill']",
+      "data": {
+        "tags": [
+          "attack",
+          "skill_damage"
+        ],
+        "turn_kind": null
+      }
+    },
+    {
+      "av": 0.0,
+      "event_type": "damage",
+      "message": "attacker deals 1200.000 quantum damage to e_skill",
+      "data": {
+        "old_hp": 2000.0,
+        "new_hp": 800.0,
+        "old_shield": 0.0,
+        "new_shield": 0.0,
+        "actor_id": "attacker",
+        "target_id": "e_skill",
+        "packet_id": "hit",
+        "element": "quantum",
+        "base_damage": 1000.0,
+        "crit": {
+          "is_crit": false,
+          "multiplier": 1.0,
+          "source": "cannot_crit",
+          "crit_rate": 0.0,
+          "crit_dmg": 0.5
+        },
+        "multipliers": {
+          "dmg_bonus": 1.2,
+          "defense": 1.0,
+          "res": 1.0,
+          "damage_taken": 1.0,
+          "universal_reduction": 1.0,
+          "toughness_state": 1.0,
+          "other": 1.0
+        },
+        "formula_ledger": {
+          "formula_type": "direct_damage",
+          "actor_id": "attacker",
+          "target_id": "e_skill",
+          "action_id": "skill",
+          "packet_id": "hit",
+          "tags": [
+            "attack",
+            "skill_damage"
+          ],
+          "scaling": {
+            "stat": "atk",
+            "scaling_value": 1000.0,
+            "multiplier": 1.0,
+            "flat_damage": 0.0,
+            "base_damage": 1000.0
+          },
+          "crit": {
+            "is_crit": false,
+            "multiplier": 1.0,
+            "source": "cannot_crit",
+            "crit_rate": 0.0,
+            "crit_dmg": 0.5
+          },
+          "buckets": {
+            "dmg_bonus": {
+              "multiplier": 1.2,
+              "terms": [
+                {
+                  "source_type": "actor.status",
+                  "source_id": "skill_only_bonus",
+                  "key": "dmg_bonus_add",
+                  "value": 0.2,
+                  "stacks": 1,
+                  "applied_value": 0.2,
+                  "note": "source=None"
+                }
+              ]
+            },
+            "defense": {
+              "multiplier": 1.0,
+              "raw_target_def": 0.0,
+              "effective_target_def": 0.0,
+              "ignore_defense_multiplier": false,
+              "terms": []
+            },
+            "res": {
+              "multiplier": 1.0,
+              "base_target_res": 0.0,
+              "target_res_after_delta": 0.0,
+              "res_pen_total": 0,
+              "terms": []
+            },
+            "damage_taken": {
+              "multiplier": 1.0,
+              "terms": []
+            },
+            "universal_reduction": {
+              "multiplier": 1.0,
+              "terms": []
+            },
+            "toughness_state": {
+              "multiplier": 1.0,
+              "target_toughness_before_packet": null,
+              "target_is_broken_before_packet": false,
+              "ignore_toughness_state_multiplier": false
+            },
+            "other": {
+              "multiplier": 1.0,
+              "source": "packet.other_multiplier"
+            }
+          },
+          "formula": "base * crit * dmg_bonus * defense * res * damage_taken * universal_reduction * toughness_state * other",
+          "final_damage": 1200.0
+        },
+        "damage": 1200.0,
+        "toughness_reduction": 0.0,
+        "target_defeated": false,
+        "hp_bar_depleted": false,
+        "bars_depleted": 0,
+        "hp_bars_remaining": 1,
+        "depleted_bar_events": [],
+        "phase_damage_locked_until_action_end": false
+      }
+    },
+    {
+      "av": 0.0,
+      "event_type": "action_end",
+      "message": "attacker finished skill",
+      "data": {}
+    },
+    {
+      "av": 0.0,
+      "event_type": "route",
+      "message": "Route step 2: {'actor': 'attacker', 'action': 'basic', 'timing': 'manual', 'targets': ['e_basic']}",
+      "data": {}
+    },
+    {
+      "av": 0.0,
+      "event_type": "action_start",
+      "message": "attacker uses basic on ['e_basic']",
+      "data": {
+        "tags": [
+          "attack",
+          "basic_damage"
+        ],
+        "turn_kind": null
+      }
+    },
+    {
+      "av": 0.0,
+      "event_type": "damage",
+      "message": "attacker deals 1000.000 quantum damage to e_basic",
+      "data": {
+        "old_hp": 2000.0,
+        "new_hp": 1000.0,
+        "old_shield": 0.0,
+        "new_shield": 0.0,
+        "actor_id": "attacker",
+        "target_id": "e_basic",
+        "packet_id": "hit",
+        "element": "quantum",
+        "base_damage": 1000.0,
+        "crit": {
+          "is_crit": false,
+          "multiplier": 1.0,
+          "source": "cannot_crit",
+          "crit_rate": 0.0,
+          "crit_dmg": 0.5
+        },
+        "multipliers": {
+          "dmg_bonus": 1.0,
+          "defense": 1.0,
+          "res": 1.0,
+          "damage_taken": 1.0,
+          "universal_reduction": 1.0,
+          "toughness_state": 1.0,
+          "other": 1.0
+        },
+        "formula_ledger": {
+          "formula_type": "direct_damage",
+          "actor_id": "attacker",
+          "target_id": "e_basic",
+          "action_id": "basic",
+          "packet_id": "hit",
+          "tags": [
+            "attack",
+            "basic_damage"
+          ],
+          "scaling": {
+            "stat": "atk",
+            "scaling_value": 1000.0,
+            "multiplier": 1.0,
+            "flat_damage": 0.0,
+            "base_damage": 1000.0
+          },
+          "crit": {
+            "is_crit": false,
+            "multiplier": 1.0,
+            "source": "cannot_crit",
+            "crit_rate": 0.0,
+            "crit_dmg": 0.5
+          },
+          "buckets": {
+            "dmg_bonus": {
+              "multiplier": 1.0,
+              "terms": []
+            },
+            "defense": {
+              "multiplier": 1.0,
+              "raw_target_def": 0.0,
+              "effective_target_def": 0.0,
+              "ignore_defense_multiplier": false,
+              "terms": []
+            },
+            "res": {
+              "multiplier": 1.0,
+              "base_target_res": 0.0,
+              "target_res_after_delta": 0.0,
+              "res_pen_total": 0,
+              "terms": []
+            },
+            "damage_taken": {
+              "multiplier": 1.0,
+              "terms": []
+            },
+            "universal_reduction": {
+              "multiplier": 1.0,
+              "terms": []
+            },
+            "toughness_state": {
+              "multiplier": 1.0,
+              "target_toughness_before_packet": null,
+              "target_is_broken_before_packet": false,
+              "ignore_toughness_state_multiplier": false
+            },
+            "other": {
+              "multiplier": 1.0,
+              "source": "packet.other_multiplier"
+            }
+          },
+          "formula": "base * crit * dmg_bonus * defense * res * damage_taken * universal_reduction * toughness_state * other",
+          "final_damage": 1000.0
+        },
+        "damage": 1000.0,
+        "toughness_reduction": 0.0,
+        "target_defeated": false,
+        "hp_bar_depleted": false,
+        "bars_depleted": 0,
+        "hp_bars_remaining": 1,
+        "depleted_bar_events": [],
+        "phase_damage_locked_until_action_end": false
+      }
+    },
+    {
+      "av": 0.0,
+      "event_type": "action_end",
+      "message": "attacker finished basic",
+      "data": {}
+    }
+  ],
+  "runtime_audit": {
+    "property_hint_applications": {
+      "applied_count": 0,
+      "skipped_count": 0,
+      "by_property": {},
+      "skipped_reason_counts": {},
+      "records": []
+    },
+    "symbolic_formula_applications": {
+      "applied_count": 0,
+      "skipped_count": 0,
+      "skipped_reason_counts": {},
+      "records": []
+    },
+    "engine_property_reads": {
+      "attempted_count": 0,
+      "resolved_count": 0,
+      "unresolved_count": 0,
+      "by_property": {},
+      "records": []
+    }
+  },
+  "metadata": {
+    "route_executed_step_count": 2,
+    "route_action_trace": [
+      {
+        "step": 1,
+        "step_type": "action",
+        "actor": "attacker",
+        "action": "skill",
+        "timing": "manual",
+        "targets": [
+          "e_skill"
+        ],
+        "before": {
+          "av": 0.0,
+          "skill_points": 3,
+          "skill_point_cap": 5,
+          "_sp": 3,
+          "_sp_cap": 5,
+          "allies": [
+            {
+              "id": "attacker",
+              "alive": true,
+              "hp": 1000.0,
+              "max_hp": 1000.0,
+              "energy": 0.0,
+              "max_energy": 100.0,
+              "remaining_av": 100.0,
+              "toughness": null,
+              "max_toughness": null,
+              "hp_bars_remaining": 1,
+              "status_count": 1
+            }
+          ],
+          "enemies": [
+            {
+              "id": "e_skill",
+              "alive": true,
+              "hp": 2000.0,
+              "max_hp": 2000.0,
+              "energy": 0.0,
+              "max_energy": 0.0,
+              "remaining_av": 100.0,
+              "toughness": null,
+              "max_toughness": null,
+              "hp_bars_remaining": 1,
+              "status_count": 0
+            },
+            {
+              "id": "e_basic",
+              "alive": true,
+              "hp": 2000.0,
+              "max_hp": 2000.0,
+              "energy": 0.0,
+              "max_energy": 0.0,
+              "remaining_av": 100.0,
+              "toughness": null,
+              "max_toughness": null,
+              "hp_bars_remaining": 1,
+              "status_count": 0
+            }
+          ],
+          "queue_size": 0
+        },
+        "before_scene": {
+          "global": {
+            "av": 0.0,
+            "cycle": 0,
+            "skill_points": 3,
+            "skill_point_cap": 5,
+            "_sp": 3,
+            "_sp_cap": 5,
+            "wave_index": 0,
+            "flags": {}
+          },
+          "action_axis": [
+            {
+              "id": "attacker",
+              "name": "Attacker",
+              "side": "ally",
+              "alive": true,
+              "speed": 100.0,
+              "action_interval": 100.0,
+              "remaining_av": 100.0,
+              "absolute_av": 100.0,
+              "tags": []
+            },
+            {
+              "id": "e_basic",
+              "name": "BasicTarget",
+              "side": "enemy",
+              "alive": true,
+              "speed": 100.0,
+              "action_interval": 100.0,
+              "remaining_av": 100.0,
+              "absolute_av": 100.0,
+              "tags": []
+            },
+            {
+              "id": "e_skill",
+              "name": "SkillTarget",
+              "side": "enemy",
+              "alive": true,
+              "speed": 100.0,
+              "action_interval": 100.0,
+              "remaining_av": 100.0,
+              "absolute_av": 100.0,
+              "tags": []
+            }
+          ],
+          "allies": [
+            {
+              "id": "attacker",
+              "name": "Attacker",
+              "side": "ally",
+              "alive": true,
+              "tags": [],
+              "resources": {
+                "hp": 1000.0,
+                "max_hp": 1000.0,
+                "hp_percent": 1.0,
+                "shield": 0.0,
+                "energy": 0.0,
+                "max_energy": 100.0,
+                "toughness": null,
+                "max_toughness": null,
+                "is_broken": false,
+                "hp_bars_total": 1,
+                "hp_bars_remaining": 1,
+                "hp_model_type": "normal_hp",
+                "hp_carry_over_damage": null
+              },
+              "action_axis": {
+                "remaining_av": 100.0,
+                "absolute_av": 100.0,
+                "speed": 100.0,
+                "action_interval": 100.0
+              },
+              "panel": {
+                "hp": 1000.0,
+                "max_hp": 1000.0,
+                "atk": 1000.0,
+                "crit_dmg": 0.5
+              },
+              "stat_parts": {
+                "base": {},
+                "pct": {},
+                "flat": {},
+                "legacy_stats": {
+                  "atk": 1000.0,
+                  "crit_rate": 0.0,
+                  "crit_dmg": 0.5
+                }
+              },
+              "resistance": {},
+              "weaknesses": [],
+              "statuses": [
+                {
+                  "id": "skill_only_bonus",
+                  "source_id": null,
+                  "stacks": 1,
+                  "max_stacks": 1,
+                  "duration": {
+                    "type": null,
+                    "value": null,
+                    "extra_turn_consumes": false,
+                    "refresh_duration": true
+                  },
+                  "tags": [],
+                  "modifier_keys": [
+                    "conditional_modifiers"
+                  ],
+                  "modifiers": {
+                    "conditional_modifiers": [
+                      {
+                        "condition": {
+                          "left": "action.tags",
+                          "op": "contains",
+                          "right": "skill_damage"
+                        },
+                        "modifiers": {
+                          "dmg_bonus_add": 0.2
+                        }
+                      }
+                    ]
+                  }
+                }
+              ],
+              "special_mechanics": {},
+              "flags": {}
+            }
+          ],
+          "summons": [],
+          "enemies": [
+            {
+              "id": "e_skill",
+              "name": "SkillTarget",
+              "side": "enemy",
+              "alive": true,
+              "tags": [],
+              "resources": {
+                "hp": 2000.0,
+                "max_hp": 2000.0,
+                "hp_percent": 1.0,
+                "shield": 0.0,
+                "energy": 0.0,
+                "max_energy": 0.0,
+                "toughness": null,
+                "max_toughness": null,
+                "is_broken": false,
+                "hp_bars_total": 1,
+                "hp_bars_remaining": 1,
+                "hp_model_type": "normal_hp",
+                "hp_carry_over_damage": null
+              },
+              "action_axis": {
+                "remaining_av": 100.0,
+                "absolute_av": 100.0,
+                "speed": 100.0,
+                "action_interval": 100.0
+              },
+              "panel": {
+                "hp": 2000.0,
+                "max_hp": 2000.0
+              },
+              "stat_parts": {
+                "base": {},
+                "pct": {},
+                "flat": {},
+                "legacy_stats": {
+                  "defense": 0.0
+                }
+              },
+              "resistance": {
+                "quantum": 0.0
+              },
+              "weaknesses": [],
+              "statuses": [],
+              "special_mechanics": {
+                "inferred_next_action": null
+              },
+              "flags": {}
+            },
+            {
+              "id": "e_basic",
+              "name": "BasicTarget",
+              "side": "enemy",
+              "alive": true,
+              "tags": [],
+              "resources": {
+                "hp": 2000.0,
+                "max_hp": 2000.0,
+                "hp_percent": 1.0,
+                "shield": 0.0,
+                "energy": 0.0,
+                "max_energy": 0.0,
+                "toughness": null,
+                "max_toughness": null,
+                "is_broken": false,
+                "hp_bars_total": 1,
+                "hp_bars_remaining": 1,
+                "hp_model_type": "normal_hp",
+                "hp_carry_over_damage": null
+              },
+              "action_axis": {
+                "remaining_av": 100.0,
+                "absolute_av": 100.0,
+                "speed": 100.0,
+                "action_interval": 100.0
+              },
+              "panel": {
+                "hp": 2000.0,
+                "max_hp": 2000.0
+              },
+              "stat_parts": {
+                "base": {},
+                "pct": {},
+                "flat": {},
+                "legacy_stats": {
+                  "defense": 0.0
+                }
+              },
+              "resistance": {
+                "quantum": 0.0
+              },
+              "weaknesses": [],
+              "statuses": [],
+              "special_mechanics": {
+                "inferred_next_action": null
+              },
+              "flags": {}
+            }
+          ],
+          "others": [],
+          "queues": {
+            "ultimate_queue": [],
+            "immediate_queue": [],
+            "interrupt_queue": []
+          },
+          "trigger_usage": {}
+        },
+        "event_summary": {
+          "event_count": 3,
+          "event_counts": {
+            "action_start": 1,
+            "damage": 1,
+            "action_end": 1
+          },
+          "damage_total": 1200.0,
+          "toughness_damage_total": 0.0,
+          "defeated_units": [],
+          "queued_event_count": 0
+        },
+        "action_resolution": {
+          "requested": {
+            "step_type": "action",
+            "actor": "attacker",
+            "action": "skill",
+            "timing": "manual",
+            "targets": [
+              "e_skill"
+            ]
+          },
+          "damage_events": [
+            {
+              "av": 0.0,
+              "event_type": "damage",
+              "message": "attacker deals 1200.000 quantum damage to e_skill",
+              "data": {
+                "old_hp": 2000.0,
+                "new_hp": 800.0,
+                "old_shield": 0.0,
+                "new_shield": 0.0,
+                "actor_id": "attacker",
+                "target_id": "e_skill",
+                "packet_id": "hit",
+                "element": "quantum",
+                "base_damage": 1000.0,
+                "crit": {
+                  "is_crit": false,
+                  "multiplier": 1.0,
+                  "source": "cannot_crit",
+                  "crit_rate": 0.0,
+                  "crit_dmg": 0.5
+                },
+                "multipliers": {
+                  "dmg_bonus": 1.2,
+                  "defense": 1.0,
+                  "res": 1.0,
+                  "damage_taken": 1.0,
+                  "universal_reduction": 1.0,
+                  "toughness_state": 1.0,
+                  "other": 1.0
+                },
+                "formula_ledger": {
+                  "formula_type": "direct_damage",
+                  "actor_id": "attacker",
+                  "target_id": "e_skill",
+                  "action_id": "skill",
+                  "packet_id": "hit",
+                  "tags": [
+                    "attack",
+                    "skill_damage"
+                  ],
+                  "scaling": {
+                    "stat": "atk",
+                    "scaling_value": 1000.0,
+                    "multiplier": 1.0,
+                    "flat_damage": 0.0,
+                    "base_damage": 1000.0
+                  },
+                  "crit": {
+                    "is_crit": false,
+                    "multiplier": 1.0,
+                    "source": "cannot_crit",
+                    "crit_rate": 0.0,
+                    "crit_dmg": 0.5
+                  },
+                  "buckets": {
+                    "dmg_bonus": {
+                      "multiplier": 1.2,
+                      "terms": [
+                        {
+                          "source_type": "actor.status",
+                          "source_id": "skill_only_bonus",
+                          "key": "dmg_bonus_add",
+                          "value": 0.2,
+                          "stacks": 1,
+                          "applied_value": 0.2,
+                          "note": "source=None"
+                        }
+                      ]
+                    },
+                    "defense": {
+                      "multiplier": 1.0,
+                      "raw_target_def": 0.0,
+                      "effective_target_def": 0.0,
+                      "ignore_defense_multiplier": false,
+                      "terms": []
+                    },
+                    "res": {
+                      "multiplier": 1.0,
+                      "base_target_res": 0.0,
+                      "target_res_after_delta": 0.0,
+                      "res_pen_total": 0,
+                      "terms": []
+                    },
+                    "damage_taken": {
+                      "multiplier": 1.0,
+                      "terms": []
+                    },
+                    "universal_reduction": {
+                      "multiplier": 1.0,
+                      "terms": []
+                    },
+                    "toughness_state": {
+                      "multiplier": 1.0,
+                      "target_toughness_before_packet": null,
+                      "target_is_broken_before_packet": false,
+                      "ignore_toughness_state_multiplier": false
+                    },
+                    "other": {
+                      "multiplier": 1.0,
+                      "source": "packet.other_multiplier"
+                    }
+                  },
+                  "formula": "base * crit * dmg_bonus * defense * res * damage_taken * universal_reduction * toughness_state * other",
+                  "final_damage": 1200.0
+                },
+                "damage": 1200.0,
+                "toughness_reduction": 0.0,
+                "target_defeated": false,
+                "hp_bar_depleted": false,
+                "bars_depleted": 0,
+                "hp_bars_remaining": 1,
+                "depleted_bar_events": [],
+                "phase_damage_locked_until_action_end": false
+              },
+              "index": 1
+            }
+          ],
+          "status_events": [],
+          "resource_events": [],
+          "av_events": [],
+          "mechanism_events": [],
+          "all_events": [
+            {
+              "av": 0.0,
+              "event_type": "action_start",
+              "message": "attacker uses skill on ['e_skill']",
+              "data": {
+                "tags": [
+                  "attack",
+                  "skill_damage"
+                ],
+                "turn_kind": null
+              },
+              "index": 0
+            },
+            {
+              "av": 0.0,
+              "event_type": "damage",
+              "message": "attacker deals 1200.000 quantum damage to e_skill",
+              "data": {
+                "old_hp": 2000.0,
+                "new_hp": 800.0,
+                "old_shield": 0.0,
+                "new_shield": 0.0,
+                "actor_id": "attacker",
+                "target_id": "e_skill",
+                "packet_id": "hit",
+                "element": "quantum",
+                "base_damage": 1000.0,
+                "crit": {
+                  "is_crit": false,
+                  "multiplier": 1.0,
+                  "source": "cannot_crit",
+                  "crit_rate": 0.0,
+                  "crit_dmg": 0.5
+                },
+                "multipliers": {
+                  "dmg_bonus": 1.2,
+                  "defense": 1.0,
+                  "res": 1.0,
+                  "damage_taken": 1.0,
+                  "universal_reduction": 1.0,
+                  "toughness_state": 1.0,
+                  "other": 1.0
+                },
+                "formula_ledger": {
+                  "formula_type": "direct_damage",
+                  "actor_id": "attacker",
+                  "target_id": "e_skill",
+                  "action_id": "skill",
+                  "packet_id": "hit",
+                  "tags": [
+                    "attack",
+                    "skill_damage"
+                  ],
+                  "scaling": {
+                    "stat": "atk",
+                    "scaling_value": 1000.0,
+                    "multiplier": 1.0,
+                    "flat_damage": 0.0,
+                    "base_damage": 1000.0
+                  },
+                  "crit": {
+                    "is_crit": false,
+                    "multiplier": 1.0,
+                    "source": "cannot_crit",
+                    "crit_rate": 0.0,
+                    "crit_dmg": 0.5
+                  },
+                  "buckets": {
+                    "dmg_bonus": {
+                      "multiplier": 1.2,
+                      "terms": [
+                        {
+                          "source_type": "actor.status",
+                          "source_id": "skill_only_bonus",
+                          "key": "dmg_bonus_add",
+                          "value": 0.2,
+                          "stacks": 1,
+                          "applied_value": 0.2,
+                          "note": "source=None"
+                        }
+                      ]
+                    },
+                    "defense": {
+                      "multiplier": 1.0,
+                      "raw_target_def": 0.0,
+                      "effective_target_def": 0.0,
+                      "ignore_defense_multiplier": false,
+                      "terms": []
+                    },
+                    "res": {
+                      "multiplier": 1.0,
+                      "base_target_res": 0.0,
+                      "target_res_after_delta": 0.0,
+                      "res_pen_total": 0,
+                      "terms": []
+                    },
+                    "damage_taken": {
+                      "multiplier": 1.0,
+                      "terms": []
+                    },
+                    "universal_reduction": {
+                      "multiplier": 1.0,
+                      "terms": []
+                    },
+                    "toughness_state": {
+                      "multiplier": 1.0,
+                      "target_toughness_before_packet": null,
+                      "target_is_broken_before_packet": false,
+                      "ignore_toughness_state_multiplier": false
+                    },
+                    "other": {
+                      "multiplier": 1.0,
+                      "source": "packet.other_multiplier"
+                    }
+                  },
+                  "formula": "base * crit * dmg_bonus * defense * res * damage_taken * universal_reduction * toughness_state * other",
+                  "final_damage": 1200.0
+                },
+                "damage": 1200.0,
+                "toughness_reduction": 0.0,
+                "target_defeated": false,
+                "hp_bar_depleted": false,
+                "bars_depleted": 0,
+                "hp_bars_remaining": 1,
+                "depleted_bar_events": [],
+                "phase_damage_locked_until_action_end": false
+              },
+              "index": 1
+            },
+            {
+              "av": 0.0,
+              "event_type": "action_end",
+              "message": "attacker finished skill",
+              "data": {},
+              "index": 2
+            }
+          ]
+        },
+        "settlement": {
+          "damage_records": [
+            {
+              "packet_index": 0,
+              "source_action_id": "skill",
+              "actor_id": "attacker",
+              "target_id": "e_skill",
+              "element": "quantum",
+              "damage_type": "direct_damage",
+              "base_damage": 1000.0,
+              "crit": false,
+              "crit_dmg_mult": 1.0,
+              "dmg_bonus_mult": 1.2,
+              "def_mult": 1.0,
+              "res_mult": 1.0,
+              "dmg_taken_mult": 1.0,
+              "toughness_mult": 1.0,
+              "final_damage": 1200.0,
+              "damage_applied": 1200.0,
+              "shield_absorbed": 0.0,
+              "hp_loss": 0.0,
+              "overkill": 0.0,
+              "is_overkill": false
+            }
+          ],
+          "shield_records": [],
+          "hp_records": [
+            {
+              "unit_id": "e_skill",
+              "old_hp": 2000.0,
+              "new_hp": 800.0,
+              "delta": -1200.0,
+              "reason": "受到伤害: skill",
+              "source_id": "",
+              "overkill": 0.0
+            }
+          ],
+          "energy_records": [],
+          "sp_records": [],
+          "status_records": [],
+          "av_records": [
+            {
+              "unit_id": "attacker",
+              "old_remaining_av": 0.0,
+              "new_remaining_av": 100.0,
+              "delta": 100.0,
+              "reason": "regular_turn_end",
+              "source_id": ""
+            }
+          ],
+          "turn_records": [],
+          "mechanic_records": [],
+          "target_record": {
+            "action_id": "",
+            "actor_id": "",
+            "target_ids": [
+              "e_skill"
+            ],
+            "target_selection_reason": "explicit"
+          }
+        },
+        "after": {
+          "av": 0.0,
+          "skill_points": 3,
+          "skill_point_cap": 5,
+          "_sp": 3,
+          "_sp_cap": 5,
+          "allies": [
+            {
+              "id": "attacker",
+              "alive": true,
+              "hp": 1000.0,
+              "max_hp": 1000.0,
+              "energy": 0.0,
+              "max_energy": 100.0,
+              "remaining_av": 100.0,
+              "toughness": null,
+              "max_toughness": null,
+              "hp_bars_remaining": 1,
+              "status_count": 1
+            }
+          ],
+          "enemies": [
+            {
+              "id": "e_skill",
+              "alive": true,
+              "hp": 800.0,
+              "max_hp": 2000.0,
+              "energy": 0.0,
+              "max_energy": 0.0,
+              "remaining_av": 100.0,
+              "toughness": null,
+              "max_toughness": null,
+              "hp_bars_remaining": 1,
+              "status_count": 0
+            },
+            {
+              "id": "e_basic",
+              "alive": true,
+              "hp": 2000.0,
+              "max_hp": 2000.0,
+              "energy": 0.0,
+              "max_energy": 0.0,
+              "remaining_av": 100.0,
+              "toughness": null,
+              "max_toughness": null,
+              "hp_bars_remaining": 1,
+              "status_count": 0
+            }
+          ],
+          "queue_size": 0
+        },
+        "after_scene": {
+          "global": {
+            "av": 0.0,
+            "cycle": 0,
+            "skill_points": 3,
+            "skill_point_cap": 5,
+            "_sp": 3,
+            "_sp_cap": 5,
+            "wave_index": 0,
+            "flags": {}
+          },
+          "action_axis": [
+            {
+              "id": "attacker",
+              "name": "Attacker",
+              "side": "ally",
+              "alive": true,
+              "speed": 100.0,
+              "action_interval": 100.0,
+              "remaining_av": 100.0,
+              "absolute_av": 100.0,
+              "tags": []
+            },
+            {
+              "id": "e_basic",
+              "name": "BasicTarget",
+              "side": "enemy",
+              "alive": true,
+              "speed": 100.0,
+              "action_interval": 100.0,
+              "remaining_av": 100.0,
+              "absolute_av": 100.0,
+              "tags": []
+            },
+            {
+              "id": "e_skill",
+              "name": "SkillTarget",
+              "side": "enemy",
+              "alive": true,
+              "speed": 100.0,
+              "action_interval": 100.0,
+              "remaining_av": 100.0,
+              "absolute_av": 100.0,
+              "tags": []
+            }
+          ],
+          "allies": [
+            {
+              "id": "attacker",
+              "name": "Attacker",
+              "side": "ally",
+              "alive": true,
+              "tags": [],
+              "resources": {
+                "hp": 1000.0,
+                "max_hp": 1000.0,
+                "hp_percent": 1.0,
+                "shield": 0.0,
+                "energy": 0.0,
+                "max_energy": 100.0,
+                "toughness": null,
+                "max_toughness": null,
+                "is_broken": false,
+                "hp_bars_total": 1,
+                "hp_bars_remaining": 1,
+                "hp_model_type": "normal_hp",
+                "hp_carry_over_damage": null
+              },
+              "action_axis": {
+                "remaining_av": 100.0,
+                "absolute_av": 100.0,
+                "speed": 100.0,
+                "action_interval": 100.0
+              },
+              "panel": {
+                "hp": 1000.0,
+                "max_hp": 1000.0,
+                "atk": 1000.0,
+                "crit_dmg": 0.5
+              },
+              "stat_parts": {
+                "base": {},
+                "pct": {},
+                "flat": {},
+                "legacy_stats": {
+                  "atk": 1000.0,
+                  "crit_rate": 0.0,
+                  "crit_dmg": 0.5
+                }
+              },
+              "resistance": {},
+              "weaknesses": [],
+              "statuses": [
+                {
+                  "id": "skill_only_bonus",
+                  "source_id": null,
+                  "stacks": 1,
+                  "max_stacks": 1,
+                  "duration": {
+                    "type": null,
+                    "value": null,
+                    "extra_turn_consumes": false,
+                    "refresh_duration": true
+                  },
+                  "tags": [],
+                  "modifier_keys": [
+                    "conditional_modifiers"
+                  ],
+                  "modifiers": {
+                    "conditional_modifiers": [
+                      {
+                        "condition": {
+                          "left": "action.tags",
+                          "op": "contains",
+                          "right": "skill_damage"
+                        },
+                        "modifiers": {
+                          "dmg_bonus_add": 0.2
+                        }
+                      }
+                    ]
+                  }
+                }
+              ],
+              "special_mechanics": {},
+              "flags": {}
+            }
+          ],
+          "summons": [],
+          "enemies": [
+            {
+              "id": "e_skill",
+              "name": "SkillTarget",
+              "side": "enemy",
+              "alive": true,
+              "tags": [],
+              "resources": {
+                "hp": 800.0,
+                "max_hp": 2000.0,
+                "hp_percent": 0.4,
+                "shield": 0.0,
+                "energy": 0.0,
+                "max_energy": 0.0,
+                "toughness": null,
+                "max_toughness": null,
+                "is_broken": false,
+                "hp_bars_total": 1,
+                "hp_bars_remaining": 1,
+                "hp_model_type": "normal_hp",
+                "hp_carry_over_damage": null
+              },
+              "action_axis": {
+                "remaining_av": 100.0,
+                "absolute_av": 100.0,
+                "speed": 100.0,
+                "action_interval": 100.0
+              },
+              "panel": {
+                "hp": 800.0,
+                "max_hp": 2000.0
+              },
+              "stat_parts": {
+                "base": {},
+                "pct": {},
+                "flat": {},
+                "legacy_stats": {
+                  "defense": 0.0
+                }
+              },
+              "resistance": {
+                "quantum": 0.0
+              },
+              "weaknesses": [],
+              "statuses": [],
+              "special_mechanics": {
+                "inferred_next_action": null
+              },
+              "flags": {}
+            },
+            {
+              "id": "e_basic",
+              "name": "BasicTarget",
+              "side": "enemy",
+              "alive": true,
+              "tags": [],
+              "resources": {
+                "hp": 2000.0,
+                "max_hp": 2000.0,
+                "hp_percent": 1.0,
+                "shield": 0.0,
+                "energy": 0.0,
+                "max_energy": 0.0,
+                "toughness": null,
+                "max_toughness": null,
+                "is_broken": false,
+                "hp_bars_total": 1,
+                "hp_bars_remaining": 1,
+                "hp_model_type": "normal_hp",
+                "hp_carry_over_damage": null
+              },
+              "action_axis": {
+                "remaining_av": 100.0,
+                "absolute_av": 100.0,
+                "speed": 100.0,
+                "action_interval": 100.0
+              },
+              "panel": {
+                "hp": 2000.0,
+                "max_hp": 2000.0
+              },
+              "stat_parts": {
+                "base": {},
+                "pct": {},
+                "flat": {},
+                "legacy_stats": {
+                  "defense": 0.0
+                }
+              },
+              "resistance": {
+                "quantum": 0.0
+              },
+              "weaknesses": [],
+              "statuses": [],
+              "special_mechanics": {
+                "inferred_next_action": null
+              },
+              "flags": {}
+            }
+          ],
+          "others": [],
+          "queues": {
+            "ultimate_queue": [],
+            "immediate_queue": [],
+            "interrupt_queue": []
+          },
+          "trigger_usage": {}
+        }
+      },
+      {
+        "step": 2,
+        "step_type": "action",
+        "actor": "attacker",
+        "action": "basic",
+        "timing": "manual",
+        "targets": [
+          "e_basic"
+        ],
+        "before": {
+          "av": 0.0,
+          "skill_points": 3,
+          "skill_point_cap": 5,
+          "_sp": 3,
+          "_sp_cap": 5,
+          "allies": [
+            {
+              "id": "attacker",
+              "alive": true,
+              "hp": 1000.0,
+              "max_hp": 1000.0,
+              "energy": 0.0,
+              "max_energy": 100.0,
+              "remaining_av": 100.0,
+              "toughness": null,
+              "max_toughness": null,
+              "hp_bars_remaining": 1,
+              "status_count": 1
+            }
+          ],
+          "enemies": [
+            {
+              "id": "e_skill",
+              "alive": true,
+              "hp": 800.0,
+              "max_hp": 2000.0,
+              "energy": 0.0,
+              "max_energy": 0.0,
+              "remaining_av": 100.0,
+              "toughness": null,
+              "max_toughness": null,
+              "hp_bars_remaining": 1,
+              "status_count": 0
+            },
+            {
+              "id": "e_basic",
+              "alive": true,
+              "hp": 2000.0,
+              "max_hp": 2000.0,
+              "energy": 0.0,
+              "max_energy": 0.0,
+              "remaining_av": 100.0,
+              "toughness": null,
+              "max_toughness": null,
+              "hp_bars_remaining": 1,
+              "status_count": 0
+            }
+          ],
+          "queue_size": 0
+        },
+        "before_scene": {
+          "global": {
+            "av": 0.0,
+            "cycle": 0,
+            "skill_points": 3,
+            "skill_point_cap": 5,
+            "_sp": 3,
+            "_sp_cap": 5,
+            "wave_index": 0,
+            "flags": {}
+          },
+          "action_axis": [
+            {
+              "id": "attacker",
+              "name": "Attacker",
+              "side": "ally",
+              "alive": true,
+              "speed": 100.0,
+              "action_interval": 100.0,
+              "remaining_av": 100.0,
+              "absolute_av": 100.0,
+              "tags": []
+            },
+            {
+              "id": "e_basic",
+              "name": "BasicTarget",
+              "side": "enemy",
+              "alive": true,
+              "speed": 100.0,
+              "action_interval": 100.0,
+              "remaining_av": 100.0,
+              "absolute_av": 100.0,
+              "tags": []
+            },
+            {
+              "id": "e_skill",
+              "name": "SkillTarget",
+              "side": "enemy",
+              "alive": true,
+              "speed": 100.0,
+              "action_interval": 100.0,
+              "remaining_av": 100.0,
+              "absolute_av": 100.0,
+              "tags": []
+            }
+          ],
+          "allies": [
+            {
+              "id": "attacker",
+              "name": "Attacker",
+              "side": "ally",
+              "alive": true,
+              "tags": [],
+              "resources": {
+                "hp": 1000.0,
+                "max_hp": 1000.0,
+                "hp_percent": 1.0,
+                "shield": 0.0,
+                "energy": 0.0,
+                "max_energy": 100.0,
+                "toughness": null,
+                "max_toughness": null,
+                "is_broken": false,
+                "hp_bars_total": 1,
+                "hp_bars_remaining": 1,
+                "hp_model_type": "normal_hp",
+                "hp_carry_over_damage": null
+              },
+              "action_axis": {
+                "remaining_av": 100.0,
+                "absolute_av": 100.0,
+                "speed": 100.0,
+                "action_interval": 100.0
+              },
+              "panel": {
+                "hp": 1000.0,
+                "max_hp": 1000.0,
+                "atk": 1000.0,
+                "crit_dmg": 0.5
+              },
+              "stat_parts": {
+                "base": {},
+                "pct": {},
+                "flat": {},
+                "legacy_stats": {
+                  "atk": 1000.0,
+                  "crit_rate": 0.0,
+                  "crit_dmg": 0.5
+                }
+              },
+              "resistance": {},
+              "weaknesses": [],
+              "statuses": [
+                {
+                  "id": "skill_only_bonus",
+                  "source_id": null,
+                  "stacks": 1,
+                  "max_stacks": 1,
+                  "duration": {
+                    "type": null,
+                    "value": null,
+                    "extra_turn_consumes": false,
+                    "refresh_duration": true
+                  },
+                  "tags": [],
+                  "modifier_keys": [
+                    "conditional_modifiers"
+                  ],
+                  "modifiers": {
+                    "conditional_modifiers": [
+                      {
+                        "condition": {
+                          "left": "action.tags",
+                          "op": "contains",
+                          "right": "skill_damage"
+                        },
+                        "modifiers": {
+                          "dmg_bonus_add": 0.2
+                        }
+                      }
+                    ]
+                  }
+                }
+              ],
+              "special_mechanics": {},
+              "flags": {}
+            }
+          ],
+          "summons": [],
+          "enemies": [
+            {
+              "id": "e_skill",
+              "name": "SkillTarget",
+              "side": "enemy",
+              "alive": true,
+              "tags": [],
+              "resources": {
+                "hp": 800.0,
+                "max_hp": 2000.0,
+                "hp_percent": 0.4,
+                "shield": 0.0,
+                "energy": 0.0,
+                "max_energy": 0.0,
+                "toughness": null,
+                "max_toughness": null,
+                "is_broken": false,
+                "hp_bars_total": 1,
+                "hp_bars_remaining": 1,
+                "hp_model_type": "normal_hp",
+                "hp_carry_over_damage": null
+              },
+              "action_axis": {
+                "remaining_av": 100.0,
+                "absolute_av": 100.0,
+                "speed": 100.0,
+                "action_interval": 100.0
+              },
+              "panel": {
+                "hp": 800.0,
+                "max_hp": 2000.0
+              },
+              "stat_parts": {
+                "base": {},
+                "pct": {},
+                "flat": {},
+                "legacy_stats": {
+                  "defense": 0.0
+                }
+              },
+              "resistance": {
+                "quantum": 0.0
+              },
+              "weaknesses": [],
+              "statuses": [],
+              "special_mechanics": {
+                "inferred_next_action": null
+              },
+              "flags": {}
+            },
+            {
+              "id": "e_basic",
+              "name": "BasicTarget",
+              "side": "enemy",
+              "alive": true,
+              "tags": [],
+              "resources": {
+                "hp": 2000.0,
+                "max_hp": 2000.0,
+                "hp_percent": 1.0,
+                "shield": 0.0,
+                "energy": 0.0,
+                "max_energy": 0.0,
+                "toughness": null,
+                "max_toughness": null,
+                "is_broken": false,
+                "hp_bars_total": 1,
+                "hp_bars_remaining": 1,
+                "hp_model_type": "normal_hp",
+                "hp_carry_over_damage": null
+              },
+              "action_axis": {
+                "remaining_av": 100.0,
+                "absolute_av": 100.0,
+                "speed": 100.0,
+                "action_interval": 100.0
+              },
+              "panel": {
+                "hp": 2000.0,
+                "max_hp": 2000.0
+              },
+              "stat_parts": {
+                "base": {},
+                "pct": {},
+                "flat": {},
+                "legacy_stats": {
+                  "defense": 0.0
+                }
+              },
+              "resistance": {
+                "quantum": 0.0
+              },
+              "weaknesses": [],
+              "statuses": [],
+              "special_mechanics": {
+                "inferred_next_action": null
+              },
+              "flags": {}
+            }
+          ],
+          "others": [],
+          "queues": {
+            "ultimate_queue": [],
+            "immediate_queue": [],
+            "interrupt_queue": []
+          },
+          "trigger_usage": {}
+        },
+        "event_summary": {
+          "event_count": 3,
+          "event_counts": {
+            "action_start": 1,
+            "damage": 1,
+            "action_end": 1
+          },
+          "damage_total": 1000.0,
+          "toughness_damage_total": 0.0,
+          "defeated_units": [],
+          "queued_event_count": 0
+        },
+        "action_resolution": {
+          "requested": {
+            "step_type": "action",
+            "actor": "attacker",
+            "action": "basic",
+            "timing": "manual",
+            "targets": [
+              "e_basic"
+            ]
+          },
+          "damage_events": [
+            {
+              "av": 0.0,
+              "event_type": "damage",
+              "message": "attacker deals 1000.000 quantum damage to e_basic",
+              "data": {
+                "old_hp": 2000.0,
+                "new_hp": 1000.0,
+                "old_shield": 0.0,
+                "new_shield": 0.0,
+                "actor_id": "attacker",
+                "target_id": "e_basic",
+                "packet_id": "hit",
+                "element": "quantum",
+                "base_damage": 1000.0,
+                "crit": {
+                  "is_crit": false,
+                  "multiplier": 1.0,
+                  "source": "cannot_crit",
+                  "crit_rate": 0.0,
+                  "crit_dmg": 0.5
+                },
+                "multipliers": {
+                  "dmg_bonus": 1.0,
+                  "defense": 1.0,
+                  "res": 1.0,
+                  "damage_taken": 1.0,
+                  "universal_reduction": 1.0,
+                  "toughness_state": 1.0,
+                  "other": 1.0
+                },
+                "formula_ledger": {
+                  "formula_type": "direct_damage",
+                  "actor_id": "attacker",
+                  "target_id": "e_basic",
+                  "action_id": "basic",
+                  "packet_id": "hit",
+                  "tags": [
+                    "attack",
+                    "basic_damage"
+                  ],
+                  "scaling": {
+                    "stat": "atk",
+                    "scaling_value": 1000.0,
+                    "multiplier": 1.0,
+                    "flat_damage": 0.0,
+                    "base_damage": 1000.0
+                  },
+                  "crit": {
+                    "is_crit": false,
+                    "multiplier": 1.0,
+                    "source": "cannot_crit",
+                    "crit_rate": 0.0,
+                    "crit_dmg": 0.5
+                  },
+                  "buckets": {
+                    "dmg_bonus": {
+                      "multiplier": 1.0,
+                      "terms": []
+                    },
+                    "defense": {
+                      "multiplier": 1.0,
+                      "raw_target_def": 0.0,
+                      "effective_target_def": 0.0,
+                      "ignore_defense_multiplier": false,
+                      "terms": []
+                    },
+                    "res": {
+                      "multiplier": 1.0,
+                      "base_target_res": 0.0,
+                      "target_res_after_delta": 0.0,
+                      "res_pen_total": 0,
+                      "terms": []
+                    },
+                    "damage_taken": {
+                      "multiplier": 1.0,
+                      "terms": []
+                    },
+                    "universal_reduction": {
+                      "multiplier": 1.0,
+                      "terms": []
+                    },
+                    "toughness_state": {
+                      "multiplier": 1.0,
+                      "target_toughness_before_packet": null,
+                      "target_is_broken_before_packet": false,
+                      "ignore_toughness_state_multiplier": false
+                    },
+                    "other": {
+                      "multiplier": 1.0,
+                      "source": "packet.other_multiplier"
+                    }
+                  },
+                  "formula": "base * crit * dmg_bonus * defense * res * damage_taken * universal_reduction * toughness_state * other",
+                  "final_damage": 1000.0
+                },
+                "damage": 1000.0,
+                "toughness_reduction": 0.0,
+                "target_defeated": false,
+                "hp_bar_depleted": false,
+                "bars_depleted": 0,
+                "hp_bars_remaining": 1,
+                "depleted_bar_events": [],
+                "phase_damage_locked_until_action_end": false
+              },
+              "index": 1
+            }
+          ],
+          "status_events": [],
+          "resource_events": [],
+          "av_events": [],
+          "mechanism_events": [],
+          "all_events": [
+            {
+              "av": 0.0,
+              "event_type": "action_start",
+              "message": "attacker uses basic on ['e_basic']",
+              "data": {
+                "tags": [
+                  "attack",
+                  "basic_damage"
+                ],
+                "turn_kind": null
+              },
+              "index": 0
+            },
+            {
+              "av": 0.0,
+              "event_type": "damage",
+              "message": "attacker deals 1000.000 quantum damage to e_basic",
+              "data": {
+                "old_hp": 2000.0,
+                "new_hp": 1000.0,
+                "old_shield": 0.0,
+                "new_shield": 0.0,
+                "actor_id": "attacker",
+                "target_id": "e_basic",
+                "packet_id": "hit",
+                "element": "quantum",
+                "base_damage": 1000.0,
+                "crit": {
+                  "is_crit": false,
+                  "multiplier": 1.0,
+                  "source": "cannot_crit",
+                  "crit_rate": 0.0,
+                  "crit_dmg": 0.5
+                },
+                "multipliers": {
+                  "dmg_bonus": 1.0,
+                  "defense": 1.0,
+                  "res": 1.0,
+                  "damage_taken": 1.0,
+                  "universal_reduction": 1.0,
+                  "toughness_state": 1.0,
+                  "other": 1.0
+                },
+                "formula_ledger": {
+                  "formula_type": "direct_damage",
+                  "actor_id": "attacker",
+                  "target_id": "e_basic",
+                  "action_id": "basic",
+                  "packet_id": "hit",
+                  "tags": [
+                    "attack",
+                    "basic_damage"
+                  ],
+                  "scaling": {
+                    "stat": "atk",
+                    "scaling_value": 1000.0,
+                    "multiplier": 1.0,
+                    "flat_damage": 0.0,
+                    "base_damage": 1000.0
+                  },
+                  "crit": {
+                    "is_crit": false,
+                    "multiplier": 1.0,
+                    "source": "cannot_crit",
+                    "crit_rate": 0.0,
+                    "crit_dmg": 0.5
+                  },
+                  "buckets": {
+                    "dmg_bonus": {
+                      "multiplier": 1.0,
+                      "terms": []
+                    },
+                    "defense": {
+                      "multiplier": 1.0,
+                      "raw_target_def": 0.0,
+                      "effective_target_def": 0.0,
+                      "ignore_defense_multiplier": false,
+                      "terms": []
+                    },
+                    "res": {
+                      "multiplier": 1.0,
+                      "base_target_res": 0.0,
+                      "target_res_after_delta": 0.0,
+                      "res_pen_total": 0,
+                      "terms": []
+                    },
+                    "damage_taken": {
+                      "multiplier": 1.0,
+                      "terms": []
+                    },
+                    "universal_reduction": {
+                      "multiplier": 1.0,
+                      "terms": []
+                    },
+                    "toughness_state": {
+                      "multiplier": 1.0,
+                      "target_toughness_before_packet": null,
+                      "target_is_broken_before_packet": false,
+                      "ignore_toughness_state_multiplier": false
+                    },
+                    "other": {
+                      "multiplier": 1.0,
+                      "source": "packet.other_multiplier"
+                    }
+                  },
+                  "formula": "base * crit * dmg_bonus * defense * res * damage_taken * universal_reduction * toughness_state * other",
+                  "final_damage": 1000.0
+                },
+                "damage": 1000.0,
+                "toughness_reduction": 0.0,
+                "target_defeated": false,
+                "hp_bar_depleted": false,
+                "bars_depleted": 0,
+                "hp_bars_remaining": 1,
+                "depleted_bar_events": [],
+                "phase_damage_locked_until_action_end": false
+              },
+              "index": 1
+            },
+            {
+              "av": 0.0,
+              "event_type": "action_end",
+              "message": "attacker finished basic",
+              "data": {},
+              "index": 2
+            }
+          ]
+        },
+        "settlement": {
+          "damage_records": [
+            {
+              "packet_index": 0,
+              "source_action_id": "basic",
+              "actor_id": "attacker",
+              "target_id": "e_basic",
+              "element": "quantum",
+              "damage_type": "direct_damage",
+              "base_damage": 1000.0,
+              "crit": false,
+              "crit_dmg_mult": 1.0,
+              "dmg_bonus_mult": 1.0,
+              "def_mult": 1.0,
+              "res_mult": 1.0,
+              "dmg_taken_mult": 1.0,
+              "toughness_mult": 1.0,
+              "final_damage": 1000.0,
+              "damage_applied": 1000.0,
+              "shield_absorbed": 0.0,
+              "hp_loss": 0.0,
+              "overkill": 0.0,
+              "is_overkill": false
+            }
+          ],
+          "shield_records": [],
+          "hp_records": [
+            {
+              "unit_id": "e_basic",
+              "old_hp": 2000.0,
+              "new_hp": 1000.0,
+              "delta": -1000.0,
+              "reason": "受到伤害: basic",
+              "source_id": "",
+              "overkill": 0.0
+            }
+          ],
+          "energy_records": [],
+          "sp_records": [],
+          "status_records": [],
+          "av_records": [
+            {
+              "unit_id": "attacker",
+              "old_remaining_av": 0.0,
+              "new_remaining_av": 100.0,
+              "delta": 100.0,
+              "reason": "regular_turn_end",
+              "source_id": ""
+            }
+          ],
+          "turn_records": [],
+          "mechanic_records": [],
+          "target_record": {
+            "action_id": "",
+            "actor_id": "",
+            "target_ids": [
+              "e_basic"
+            ],
+            "target_selection_reason": "explicit"
+          }
+        },
+        "after": {
+          "av": 0.0,
+          "skill_points": 3,
+          "skill_point_cap": 5,
+          "_sp": 3,
+          "_sp_cap": 5,
+          "allies": [
+            {
+              "id": "attacker",
+              "alive": true,
+              "hp": 1000.0,
+              "max_hp": 1000.0,
+              "energy": 0.0,
+              "max_energy": 100.0,
+              "remaining_av": 100.0,
+              "toughness": null,
+              "max_toughness": null,
+              "hp_bars_remaining": 1,
+              "status_count": 1
+            }
+          ],
+          "enemies": [
+            {
+              "id": "e_skill",
+              "alive": true,
+              "hp": 800.0,
+              "max_hp": 2000.0,
+              "energy": 0.0,
+              "max_energy": 0.0,
+              "remaining_av": 100.0,
+              "toughness": null,
+              "max_toughness": null,
+              "hp_bars_remaining": 1,
+              "status_count": 0
+            },
+            {
+              "id": "e_basic",
+              "alive": true,
+              "hp": 1000.0,
+              "max_hp": 2000.0,
+              "energy": 0.0,
+              "max_energy": 0.0,
+              "remaining_av": 100.0,
+              "toughness": null,
+              "max_toughness": null,
+              "hp_bars_remaining": 1,
+              "status_count": 0
+            }
+          ],
+          "queue_size": 0
+        },
+        "after_scene": {
+          "global": {
+            "av": 0.0,
+            "cycle": 0,
+            "skill_points": 3,
+            "skill_point_cap": 5,
+            "_sp": 3,
+            "_sp_cap": 5,
+            "wave_index": 0,
+            "flags": {}
+          },
+          "action_axis": [
+            {
+              "id": "attacker",
+              "name": "Attacker",
+              "side": "ally",
+              "alive": true,
+              "speed": 100.0,
+              "action_interval": 100.0,
+              "remaining_av": 100.0,
+              "absolute_av": 100.0,
+              "tags": []
+            },
+            {
+              "id": "e_basic",
+              "name": "BasicTarget",
+              "side": "enemy",
+              "alive": true,
+              "speed": 100.0,
+              "action_interval": 100.0,
+              "remaining_av": 100.0,
+              "absolute_av": 100.0,
+              "tags": []
+            },
+            {
+              "id": "e_skill",
+              "name": "SkillTarget",
+              "side": "enemy",
+              "alive": true,
+              "speed": 100.0,
+              "action_interval": 100.0,
+              "remaining_av": 100.0,
+              "absolute_av": 100.0,
+              "tags": []
+            }
+          ],
+          "allies": [
+            {
+              "id": "attacker",
+              "name": "Attacker",
+              "side": "ally",
+              "alive": true,
+              "tags": [],
+              "resources": {
+                "hp": 1000.0,
+                "max_hp": 1000.0,
+                "hp_percent": 1.0,
+                "shield": 0.0,
+                "energy": 0.0,
+                "max_energy": 100.0,
+                "toughness": null,
+                "max_toughness": null,
+                "is_broken": false,
+                "hp_bars_total": 1,
+                "hp_bars_remaining": 1,
+                "hp_model_type": "normal_hp",
+                "hp_carry_over_damage": null
+              },
+              "action_axis": {
+                "remaining_av": 100.0,
+                "absolute_av": 100.0,
+                "speed": 100.0,
+                "action_interval": 100.0
+              },
+              "panel": {
+                "hp": 1000.0,
+                "max_hp": 1000.0,
+                "atk": 1000.0,
+                "crit_dmg": 0.5
+              },
+              "stat_parts": {
+                "base": {},
+                "pct": {},
+                "flat": {},
+                "legacy_stats": {
+                  "atk": 1000.0,
+                  "crit_rate": 0.0,
+                  "crit_dmg": 0.5
+                }
+              },
+              "resistance": {},
+              "weaknesses": [],
+              "statuses": [
+                {
+                  "id": "skill_only_bonus",
+                  "source_id": null,
+                  "stacks": 1,
+                  "max_stacks": 1,
+                  "duration": {
+                    "type": null,
+                    "value": null,
+                    "extra_turn_consumes": false,
+                    "refresh_duration": true
+                  },
+                  "tags": [],
+                  "modifier_keys": [
+                    "conditional_modifiers"
+                  ],
+                  "modifiers": {
+                    "conditional_modifiers": [
+                      {
+                        "condition": {
+                          "left": "action.tags",
+                          "op": "contains",
+                          "right": "skill_damage"
+                        },
+                        "modifiers": {
+                          "dmg_bonus_add": 0.2
+                        }
+                      }
+                    ]
+                  }
+                }
+              ],
+              "special_mechanics": {},
+              "flags": {}
+            }
+          ],
+          "summons": [],
+          "enemies": [
+            {
+              "id": "e_skill",
+              "name": "SkillTarget",
+              "side": "enemy",
+              "alive": true,
+              "tags": [],
+              "resources": {
+                "hp": 800.0,
+                "max_hp": 2000.0,
+                "hp_percent": 0.4,
+                "shield": 0.0,
+                "energy": 0.0,
+                "max_energy": 0.0,
+                "toughness": null,
+                "max_toughness": null,
+                "is_broken": false,
+                "hp_bars_total": 1,
+                "hp_bars_remaining": 1,
+                "hp_model_type": "normal_hp",
+                "hp_carry_over_damage": null
+              },
+              "action_axis": {
+                "remaining_av": 100.0,
+                "absolute_av": 100.0,
+                "speed": 100.0,
+                "action_interval": 100.0
+              },
+              "panel": {
+                "hp": 800.0,
+                "max_hp": 2000.0
+              },
+              "stat_parts": {
+                "base": {},
+                "pct": {},
+                "flat": {},
+                "legacy_stats": {
+                  "defense": 0.0
+                }
+              },
+              "resistance": {
+                "quantum": 0.0
+              },
+              "weaknesses": [],
+              "statuses": [],
+              "special_mechanics": {
+                "inferred_next_action": null
+              },
+              "flags": {}
+            },
+            {
+              "id": "e_basic",
+              "name": "BasicTarget",
+              "side": "enemy",
+              "alive": true,
+              "tags": [],
+              "resources": {
+                "hp": 1000.0,
+                "max_hp": 2000.0,
+                "hp_percent": 0.5,
+                "shield": 0.0,
+                "energy": 0.0,
+                "max_energy": 0.0,
+                "toughness": null,
+                "max_toughness": null,
+                "is_broken": false,
+                "hp_bars_total": 1,
+                "hp_bars_remaining": 1,
+                "hp_model_type": "normal_hp",
+                "hp_carry_over_damage": null
+              },
+              "action_axis": {
+                "remaining_av": 100.0,
+                "absolute_av": 100.0,
+                "speed": 100.0,
+                "action_interval": 100.0
+              },
+              "panel": {
+                "hp": 1000.0,
+                "max_hp": 2000.0
+              },
+              "stat_parts": {
+                "base": {},
+                "pct": {},
+                "flat": {},
+                "legacy_stats": {
+                  "defense": 0.0
+                }
+              },
+              "resistance": {
+                "quantum": 0.0
+              },
+              "weaknesses": [],
+              "statuses": [],
+              "special_mechanics": {
+                "inferred_next_action": null
+              },
+              "flags": {}
+            }
+          ],
+          "others": [],
+          "queues": {
+            "ultimate_queue": [],
+            "immediate_queue": [],
+            "interrupt_queue": []
+          },
+          "trigger_usage": {}
+        }
+      }
+    ],
+    "route_assertions": {
+      "ok": true,
+      "check_count": 7,
+      "checks": {
+        "skill_points_in_bounds": true,
+        "av_monotonic": true,
+        "unit_resources_non_negative": true,
+        "unit_resources_not_above_known_caps": true,
+        "executed_actions_have_after_snapshot": true,
+        "executed_actions_emit_events": true,
+        "expected_action_prefix_match": true
+      },
+      "failure_count": 0,
+      "failures": [],
+      "expectations": {
+        "ok": true,
+        "step_count_with_expectations": 0,
+        "failure_count": 0,
+        "failures": []
+      }
+    }
+  }
+}

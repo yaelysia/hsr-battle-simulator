@@ -1,0 +1,369 @@
+kind: character_template
+schema_version: '3.0'
+id: tribbie
+name: Tribbie
+cn_name: 缇宝
+source_file: character_tribbie_template_v1_6.yaml
+unit:
+  side: ally
+  level: 80
+  element: quantum
+  path: harmony
+  rarity: 5
+  tags:
+  - character
+  - harmony
+  - quantum
+  base_stats_by_level: {}
+  trace_level_defaults:
+    basic: 6
+    skill: 10
+    ultimate: 10
+    talent: 10
+    note: user_confirmed_all_trace_levels_max_v1_6
+  minor_traces_total: {}
+  status_effects:
+    numinosity:
+      type: buff
+      owner: tribbie
+      modifiers:
+        all_type_res_pen_at_skill_10: 0.24
+      duration:
+        type: owner_turn_start_decrement
+        value: 3.0
+      id: numinosity
+      tags: []
+    tribbie_zone_guess_who_lives_here:
+      type: zone
+      owner: tribbie
+      duration:
+        type: owner_turn_start_decrement
+        value: 2.0
+      modifiers:
+        enemy_dmg_taken_delta_at_ult_10: 0.3
+      additional_damage:
+        trigger: after_ally_attacks
+        type: zone_additional_damage
+        source: tribbie
+        per_target_hit: true
+        target_policy: highest_hp_among_hit_targets
+        damage_type: additional_damage
+        element: quantum
+        scaling:
+          stat: tribbie.max_hp
+          multiplier_at_ult_10: 0.12
+        scaling_stat: hp
+        multiplier: 0.12
+        is_attack: false
+      id: tribbie_zone_guess_who_lives_here
+      tags: []
+    eidolon_1_rite_of_sugar_scoop:
+      type: zone_followup_true_damage
+      trigger: after_tribbie_zone_additional_damage
+      effect:
+        true_damage_equal_to_total_attack_damage: 0.24
+        target: targets_dealt_zone_additional_damage
+      note: True DMG is not considered an attack.
+      id: eidolon_1_rite_of_sugar_scoop
+      tags: []
+    tribbie_a2_talent_dmg_bonus:
+      type: buff
+      owner: tribbie
+      source: bonus_ability_lamb_outside_the_wall
+      modifiers:
+        dmg_bonus:
+          all: 0.72
+      stack_rule:
+        max_stacks: 3
+        refresh_duration: true
+      duration:
+        type: owner_turns
+        value: 3.0
+      id: tribbie_a2_talent_dmg_bonus
+      tags:
+      - bonus_ability
+      - talent_followup_reward
+    tribbie_a4_zone_hp_boost:
+      type: buff
+      owner: tribbie
+      source: bonus_ability_glass_ball_with_wings
+      modifiers:
+        max_hp_from_team_hp_pct: 0.09
+        __audit_semantic: increase Tribbie max HP by 9% of sum of all allies max HP
+          while Zone lasts
+      duration:
+        type: while_zone_active
+      id: tribbie_a4_zone_hp_boost
+      tags:
+      - bonus_ability
+      - zone_hp_scaling
+      - runtime_max_hp_formula_hook_supported_v0_44
+  actions:
+    basic:
+      id: tribbie_basic_hundred_rockets
+      actor: tribbie
+      action_type: basic
+      tags:
+      - attack
+      - basic_use
+      - basic_damage
+      - blast
+      - consumes_regular_action
+      - grants_base_energy
+      - can_trigger_kill_energy
+      skill_point_delta: 1
+      energy_gain:
+        base_energy_gain: 20
+        affected_by_err: true
+      damage_packets:
+      - id: tribbie_basic_main_damage
+        element: quantum
+        damage_type: basic_damage
+        scaling:
+          stat: hp
+          multiplier_at_basic_6: 0.3
+        target: selected_enemy
+        toughness:
+          toughness_reduction: 10
+        target_policy: selected_enemy
+        scaling_stat: hp
+        toughness_reduction: 10.0
+      - id: tribbie_basic_adjacent_damage
+        element: quantum
+        damage_type: basic_damage
+        scaling:
+          stat: hp
+          multiplier_at_basic_6: 0.15
+        target: adjacent_enemies
+        toughness:
+          toughness_reduction: 5
+        target_policy: adjacent_enemies
+        scaling_stat: hp
+        toughness_reduction: 5.0
+      cost:
+        skill_points: 1
+    skill:
+      id: tribbie_skill_whered_the_gifts_go
+      actor: tribbie
+      action_type: skill
+      tags:
+      - skill_use
+      - support
+      - consumes_regular_action
+      - consumes_skill_point
+      - grants_base_energy
+      cost:
+        skill_points: -1
+      energy_gain:
+        base_energy_gain: 30
+        affected_by_err: true
+      effects:
+      - type: add_buff
+        buff_id: numinosity
+        target: tribbie
+        status_id: numinosity
+      damage_packets: []
+    ultimate:
+      id: tribbie_ultimate_guess_who_lives_here
+      actor: tribbie
+      action_type: ultimate
+      tags:
+      - ultimate_use
+      - attack
+      - ultimate_damage
+      - creates_zone
+      - consumes_energy
+      cost:
+        energy: 120
+      energy_gain:
+        base_energy_gain: 5
+        affected_by_err: true
+      damage_packets:
+      - id: tribbie_ultimate_aoe_damage
+        element: quantum
+        damage_type: ultimate_damage
+        target: all_enemies
+        scaling:
+          stat: hp
+          multiplier_at_ult_10: 0.3
+        toughness:
+          toughness_reduction: 20
+        target_policy: all_enemies
+        scaling_stat: hp
+        toughness_reduction: 20.0
+      effects:
+      - type: add_zone
+        zone_id: tribbie_zone_guess_who_lives_here
+        target: enemy_side
+      - type: reset_trigger_usage
+        trigger_id: tribbie_talent_after_other_ally_ultimate_per_character
+      - type: add_buff
+        buff_id: tribbie_a4_zone_hp_boost
+        target: tribbie
+        status_id: tribbie_a4_zone_hp_boost
+    technique:
+      id: tribbie_technique_if_youre_happy_and_you_know_it
+      actor: tribbie
+      action_type: technique
+      tags:
+      - technique_use
+      - prebattle
+      - support
+      effects:
+      - type: add_buff_on_battle_start
+        buff_id: numinosity
+        target: tribbie
+        duration_turns: 3
+        status_id: numinosity
+      damage_packets: []
+    talent_followup:
+      id: tribbie_talent_followup_busy_as_tribbie
+      actor: tribbie
+      action_type: follow_up
+      tags:
+      - attack
+      - follow_up_attack
+      - follow_up_damage
+      - does_not_consume_action
+      - grants_base_energy
+      - can_trigger_kill_energy
+      target_policy: all_enemies
+      energy_gain:
+        base_energy_gain: 5
+        affected_by_err: true
+      damage_packets:
+      - id: tribbie_talent_followup_aoe_damage
+        element: quantum
+        damage_type: follow_up_damage
+        target: all_enemies
+        scaling:
+          stat: hp
+          multiplier_at_talent_10: 0.18
+        scaling_stat: hp
+        multiplier: 0.18
+        toughness:
+          toughness_reduction: 5
+        toughness_reduction: 5.0
+        can_crit: true
+      effects_after_damage:
+      - type: add_or_refresh_stack
+        target: tribbie
+        status_id: tribbie_a2_talent_dmg_bonus
+        stacks: 1
+        max_stacks: 3
+      damage_packets_source:
+        tbgd_skill_id: 140304
+        talent_10_param_0: 0.18
+  triggers:
+  - id: tribbie_talent_after_other_ally_ultimate_per_character
+    owner: tribbie
+    source: talent
+    timing: after_other_ally_uses_ultimate
+    condition: always
+    effects:
+    - type: launch_action
+      actor: tribbie
+      action_id: tribbie_talent_followup_busy_as_tribbie
+      target_policy: all_enemies
+      queue: immediate_queue
+    usage_limit:
+      scope: per_trigger_actor
+      max_times: 1
+    reset:
+      timing: tribbie_ultimate
+      effect: reset_trigger_usage
+  - id: tribbie_zone_after_ally_attack_additional_damage
+    owner: tribbie
+    source: ultimate_zone
+    timing: after_ally_attacks
+    condition: zone_active and action.actor_id != tribbie
+    effects:
+    - type: zone_additional_damage
+      source: tribbie
+      per_target_hit: true
+      target_policy: highest_hp_among_hit_targets
+      element: quantum
+      damage_type: additional_damage
+      scaling_stat: hp
+      multiplier: 0.12
+      can_crit: false
+  - id: tribbie_e1_true_damage_after_zone_additional_damage
+    owner: tribbie
+    source: eidolon_1
+    timing: after_tribbie_zone_additional_damage
+    condition: zone_active
+    effects:
+    - type: zone_followup_true_damage
+      effect:
+        true_damage_equal_to_total_attack_damage: 0.24
+        target: targets_dealt_zone_additional_damage
+  - id: tribbie_a6_battle_start_energy
+    owner: tribbie
+    source: bonus_ability_pebble_at_crossroads
+    timing: battle_start
+    condition: always
+    effects:
+    - type: gain_energy
+      target: tribbie
+      amount: 30
+      affected_by_err: true
+  - id: tribbie_a6_after_ally_attack_energy_per_hit
+    owner: tribbie
+    source: bonus_ability_pebble_at_crossroads
+    timing: after_ally_attacks
+    condition: action.actor_id != tribbie
+    effects:
+    - type: gain_energy
+      target: tribbie
+      amount: 0
+      affected_by_err: true
+      energy_per_hit: 1.5
+  passive_modifiers: {}
+  eidolons:
+    active_for_user_case: 1
+    e1:
+      effects:
+      - eidolon_1_rite_of_sugar_scoop
+      - tribbie_e1_true_damage_after_zone_additional_damage
+  current_panel_snapshot:
+    source: user_image_40
+    hp:
+      base_display: 2000
+      added_display: 3236
+      total_display: 5236
+    atk:
+      base_display: 947
+      added_display: 461
+      total_display: 1408
+    def:
+      base_display: 1124
+      added_display: 168
+      total_display: 1292
+    speed:
+      base_display: 96
+      added_display: -1
+      total_display: 95
+    crit_rate: 0.575
+    crit_dmg: 2.097
+    break_effect: 0
+    max_energy: 120
+    energy_regeneration_rate: 1.244
+    effect_hit_rate: 0.125
+    effect_res: 0.034
+    quantum_dmg_bonus: 0.1
+source_detail:
+  character:
+    id: tribbie
+    name: Tribbie
+    cn_name: 缇宝
+    element: quantum
+    path: harmony
+    rarity: 5
+    eidolons: 1
+    template_version: 1.6
+    schema: hsr_trigger_effect_schema_v1_6
+    foundation_model: hsr_foundation_model_v1_6
+    data_policy:
+      patch_policy: enhanced_current_version_v1_6
+      final_panel_snapshot_from_user_screenshot: true
+      trace_levels_default: user_confirmed_max_v1_6

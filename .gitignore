@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# QwenPaw internal
+.kilo/
+
+# Large external data (2GB+)
+turnbasedgamedata-main/
+
+# CodeGraph index (to be added later)
+.codegraph/

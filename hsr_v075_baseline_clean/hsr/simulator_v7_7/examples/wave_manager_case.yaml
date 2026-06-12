@@ -1,0 +1,58 @@
+settings:
+  default_crit_mode: noncrit
+
+global:
+  av: 0
+  skill_points: 3
+  skill_point_cap: 5
+  wave_index: 0
+
+units:
+  hero:
+    name: Hero
+    side: ally
+    hp: 1000
+    max_hp: 1000
+    speed: 100
+    remaining_av: 100
+    stats: {atk: 1000, crit_rate: 0, crit_dmg: 0}
+    actions:
+      strike:
+        tags: [attack, can_trigger_kill_energy]
+        target_policy: manual
+        damage_packets:
+          - id: hit
+            element: quantum
+            scaling_stat: atk
+            multiplier: 1.0
+            can_crit: false
+
+waves:
+  - units:
+      wave1_enemy:
+        name: Wave1 Enemy
+        side: enemy
+        hp: 10
+        max_hp: 10
+        speed: 100
+        stats: {defense: 0}
+        res: {quantum: 0}
+  - units:
+      wave2_enemy:
+        name: Wave2 Enemy
+        side: enemy
+        hp: 10
+        max_hp: 10
+        speed: 100
+        stats: {defense: 0}
+        res: {quantum: 0}
+
+route:
+  - actor: hero
+    action: strike
+    timing: manual
+    targets: [wave1_enemy]
+  - actor: hero
+    action: strike
+    timing: manual
+    targets: [wave2_enemy]

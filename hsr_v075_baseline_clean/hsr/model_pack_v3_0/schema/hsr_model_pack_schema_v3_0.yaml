@@ -1,0 +1,68 @@
+schema_id: hsr_model_pack_schema_v3_0
+purpose: Canonical structured data contract between model pack and HSR battle simulator.
+top_level_kinds:
+- character_template
+- equipment_template
+- relic_build
+- enemy_template
+- stage_template
+- team_template
+- battle_case
+- simulator_case
+unit_template:
+  required:
+  - kind
+  - id
+  - unit
+  unit_fields:
+  - side
+  - level
+  - stats
+  - stat_base
+  - stat_pct
+  - stat_flat
+  - res
+  - weaknesses
+  - status_effects
+  - actions
+  - triggers
+  rule: All external aliases must be normalized before entering simulator core; canonical simulator IR is stable.
+action:
+  canonical_fields:
+  - id
+  - actor
+  - action_type
+  - tags
+  - target_policy
+  - targets
+  - cost
+  - skill_point_delta
+  - energy_gain
+  - damage_packets
+  - effects_after_action_start
+  - effects_before_damage
+  - effects_after_damage
+  - effects
+  - queued_action_policy
+  damage_packet_fields:
+  - id
+  - element
+  - damage_type
+  - tags
+  - target_policy
+  - scaling_stat
+  - multiplier
+  - flat_damage
+  - can_crit
+  - forced_crit
+  - toughness_reduction
+  - def_ignore
+  - res_pen
+  - dmg_bonus_add
+  - damage_taken
+normalization_rules:
+  booleans: true/false/yes/no/1/0/on/off strings are parsed at data boundary
+  numbers: quoted numerics and percentages are parsed at data boundary
+  lists: scalar tags/weaknesses/targets are treated as one-item lists, never iterated character-by-character
+  effects: singular effect and plural effects are both normalized to effects list
+  triggers: dict and list trigger styles are normalized to list with stable id

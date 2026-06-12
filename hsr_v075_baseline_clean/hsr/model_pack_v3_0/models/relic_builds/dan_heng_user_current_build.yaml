@@ -1,0 +1,49 @@
+kind: relic_build
+schema_version: '3.0'
+id: dan_heng_user_current_build
+source_file: relic_dan_heng_user_current_build_v1_6.yaml
+raw:
+  relic_build:
+    id: dan_heng_perm_terrae_user_current_build
+    owner: dan_heng_permansor_terrae
+    template_version: 1.6
+    source: user_image_41
+    panel_snapshot_is_authoritative: true
+  panel_snapshot:
+    total_stats:
+      hp: 3460
+      atk: 2726
+      def: 2004
+      speed: 141
+      crit_rate: 0.05
+      crit_dmg: 0.558
+      break_effect: 0.298
+      max_energy: 135
+      energy_regeneration_rate: 1.244
+      effect_hit_rate: 0.203
+      effect_res: 0.073
+  sets:
+    cavern:
+      id: self_enshrouded_recluse
+      cn_name: 自匿星芒的隐士
+      pieces: 4
+      effects:
+        two_piece:
+          shield_effect_delta: 0.1
+        four_piece:
+          shield_effect_delta_for_wearer_provided_shields: 0.12
+          ally_holding_wearer_shield:
+            crit_dmg: 0.15
+    planar:
+      id: lushaka_the_sunken_seas
+      cn_name: 沉陆海域露莎卡
+      pieces: 2
+      static_effects_in_panel:
+        energy_regeneration_rate_delta: 0.05
+      team_effects:
+      - id: lushaka_first_position_atk_buff
+        condition: wearer.position != 1
+        target: team.position_1
+        modifiers:
+          atk_pct: 0.12
+        stacking_policy: multiple_wearers_stack_unless_game_rules_override

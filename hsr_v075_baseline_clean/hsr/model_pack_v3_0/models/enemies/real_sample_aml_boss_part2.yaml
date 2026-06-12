@@ -1,0 +1,162 @@
+kind: enemy_template
+schema_version: 3.1-generated-non-knight-v0.59
+id: real_sample_aml_boss_part2
+unit:
+  id: real_sample_aml_boss_part2
+  template_id: 8013141
+  name: real_sample_aml_boss_part2
+  cn_name: 非骑士三真实样例 8013141
+  side: enemy
+  level: 80
+  hp: 87420.0
+  max_hp: 87420.0
+  speed: 100.0
+  toughness: 180.0
+  max_toughness: 180.0
+  stats:
+    atk: 900.0
+    def: 210.0
+  weaknesses:
+  - Physical
+  - Fire
+  res:
+    Ice: 0.2
+    Thunder: 0.2
+    Quantum: 0.4
+    Imaginary: 0.4
+  core_mechanics: {}
+  skills:
+  - skill_id: 801314101
+    trigger_key: Skill07
+    name_chs: TBGD Skill 801314101
+    name_en: TBGD Skill 801314101
+    type_chs: '4236760374151560033'
+    tag_chs: '3085594440740593641'
+    damage_type: null
+    attack_type: Normal
+    toughness_damage_display_basic_atk_10_scale: null
+    delay_ratio: 1
+    phase_list:
+    - 1
+    params:
+    - 0.6
+    - 2
+    extra_effects: []
+    description_chs: 从 TurnBasedGameData MonsterSkillConfig[801314101] 自动生成的非骑士三样例技能。
+  - skill_id: 801314102
+    trigger_key: Skill08
+    name_chs: TBGD Skill 801314102
+    name_en: TBGD Skill 801314102
+    type_chs: '4236760374151560033'
+    tag_chs: '3085594440740593641'
+    damage_type: null
+    attack_type: Normal
+    toughness_damage_display_basic_atk_10_scale: null
+    delay_ratio: 1
+    phase_list:
+    - 1
+    params:
+    - 0.6
+    - 2
+    extra_effects: []
+    description_chs: 从 TurnBasedGameData MonsterSkillConfig[801314102] 自动生成的非骑士三样例技能。
+  - skill_id: 801314103
+    trigger_key: Skill09
+    name_chs: TBGD Skill 801314103
+    name_en: TBGD Skill 801314103
+    type_chs: '4236760374151560033'
+    tag_chs: '3085594440740593641'
+    damage_type: null
+    attack_type: Normal
+    toughness_damage_display_basic_atk_10_scale: null
+    delay_ratio: 1
+    phase_list:
+    - 2
+    params:
+    - 0.6
+    - 2
+    extra_effects: []
+    description_chs: 从 TurnBasedGameData MonsterSkillConfig[801314103] 自动生成的非骑士三样例技能。
+  - skill_id: 801314104
+    trigger_key: Skill10
+    name_chs: TBGD Skill 801314104
+    name_en: TBGD Skill 801314104
+    type_chs: '4236760374151560033'
+    tag_chs: '4014610187872883999'
+    damage_type: Imaginary
+    attack_type: Normal
+    toughness_damage_display_basic_atk_10_scale: 5.0
+    delay_ratio: 1
+    phase_list:
+    - 1
+    - 2
+    params:
+    - 4.8
+    extra_effects: []
+    description_chs: 从 TurnBasedGameData MonsterSkillConfig[801314104] 自动生成的非骑士三样例技能。
+  - skill_id: 801314105
+    trigger_key: Skill11
+    name_chs: TBGD Skill 801314105
+    name_en: TBGD Skill 801314105
+    type_chs: '4236760374151560033'
+    tag_chs: '2002671141766797902'
+    damage_type: Quantum
+    attack_type: Normal
+    toughness_damage_display_basic_atk_10_scale: null
+    delay_ratio: 1
+    phase_list:
+    - 2
+    params:
+    - 0.6
+    - 1
+    extra_effects: []
+    description_chs: 从 TurnBasedGameData MonsterSkillConfig[801314105] 自动生成的非骑士三样例技能。
+  - skill_id: 801314106
+    trigger_key: Skill12
+    name_chs: TBGD Skill 801314106
+    name_en: TBGD Skill 801314106
+    type_chs: '4236760374151560033'
+    tag_chs: '13718219806540082081'
+    damage_type: Quantum
+    attack_type: Normal
+    toughness_damage_display_basic_atk_10_scale: 5.0
+    delay_ratio: 1
+    phase_list:
+    - 2
+    params:
+    - 3.6
+    extra_effects: []
+    description_chs: 从 TurnBasedGameData MonsterSkillConfig[801314106] 自动生成的非骑士三样例技能。
+  - skill_id: 801314107
+    trigger_key: PassiveSkill03
+    name_chs: TBGD Skill 801314107
+    name_en: TBGD Skill 801314107
+    type_chs: '4236760374151560033'
+    tag_chs: '10170918581498782760'
+    damage_type: Quantum
+    attack_type: Normal
+    toughness_damage_display_basic_atk_10_scale: null
+    delay_ratio: 1
+    phase_list:
+    - 1
+    params:
+    - 0.4
+    extra_effects: []
+    description_chs: 从 TurnBasedGameData MonsterSkillConfig[801314107] 自动生成的非骑士三样例技能。
+  raw:
+    identity:
+      monster_id: 8013141
+      monster_template_id: 8013141
+      rank: Elite
+    config_ai:
+      ai_path: Config/ConfigAI/Monster_AML_Boss_00_Part2_AI.json
+      skill_trigger_references:
+      - skill_id: 801314107
+        skill_trigger_key: PassiveSkill03
+    raw_source_trace:
+      excel_rows:
+      - MonsterConfig[MonsterID=8013141]
+      - MonsterTemplateConfig[MonsterTemplateID=8013141]
+      config_paths:
+      - Config/ConfigAI/Monster_AML_Boss_00_Part2_AI.json
+      - Config/ConfigCharacter/Monster/Monster_AML_Boss_00_Part2_Config.json

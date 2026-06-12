@@ -1,0 +1,226 @@
+kind: enemy_template
+schema_version: '3.0'
+id: wave1_daybreak_squadron_blazeweaver
+unit:
+  id: wave1_daybreak_squadron_blazeweaver
+  template_id: 5013050
+  name: 'Daybreak Squadron: Blazeweaver'
+  cn_name: 破晓战队•赤焰
+  side: enemy
+  level: 95
+  hp: 4504135.6844999995
+  max_hp: 4504135.6844999995
+  speed: 158.4
+  toughness: 480
+  max_toughness: 480
+  stats:
+    atk: 688.0628700000001
+    def: 1149.9999
+  weaknesses: &id001
+  - Physical
+  - Quantum
+  - Imaginary
+  res: &id002
+    Fire: 0.8
+    Ice: 0.2
+    Thunder: 0.2
+    Wind: 0.2
+  core_mechanics: &id003
+    daybreak_force_field:
+      source_skill_id: 501305003
+      source_param_list:
+      - 7
+      - 1
+      rules:
+      - control_immunity_while_active
+      - toughness_cannot_be_reduced_while_active
+      - if_hit_by_fire_damage_then_immediate_action
+      - while_active_continuously_uses_shadow_dance
+      - after_7_hits_uses_daybreak_dispersal
+    despondent:
+      source_skill_id: 501305005
+      source_param_list:
+      - 0.3
+      - 0.4
+      - 2
+      rules:
+      - remove_force_field
+      - apply_despondent
+      - damage_taken_increased_30_percent
+      - fire_resistance_reduced_40_percent
+      - duration_param_2
+  skills: &id004
+  - skill_id: 501305001
+    trigger_key: Skill01
+    name_chs: 破晓战刃
+    name_en: Daybreak Blade
+    type_chs: 技能
+    tag_chs: 单攻
+    damage_type: Fire
+    attack_type: Normal
+    toughness_damage_display_basic_atk_10_scale: 3.3333333333333335
+    delay_ratio: 1
+    phase_list:
+    - 1
+    params:
+    - 4
+    extra_effects: []
+    description_chs: 对指定我方单体造成火属性伤害。
+  - skill_id: 501305002
+    trigger_key: Skill02
+    name_chs: 破晓飞轮
+    name_en: Daybreak Flywheel
+    type_chs: 技能
+    tag_chs: 扩散
+    damage_type: Fire
+    attack_type: Normal
+    toughness_damage_display_basic_atk_10_scale: 1.6666666666666667
+    delay_ratio: 1
+    phase_list:
+    - 1
+    params:
+    - 6
+    - 3
+    - 0.15
+    - 60
+    - 1
+    extra_effects: []
+    description_chs: 对指定我方单体及其相邻目标造成火属性伤害。
+  - skill_id: 501305003
+    trigger_key: Skill03
+    name_chs: 破晓意志
+    name_en: Daybreak Will
+    type_chs: 技能
+    tag_chs: 强化
+    damage_type: null
+    attack_type: Normal
+    toughness_damage_display_basic_atk_10_scale: null
+    delay_ratio: 1
+    phase_list:
+    - 1
+    params:
+    - 7
+    - 1
+    extra_effects: []
+    description_chs: 为自身附加【破晓力场】。此状态下，破晓战队会持续施放【破晓剑影舞】，且免疫控制类负面状态，自身的韧性无法被削减，若自身受到火属性攻击时则会立即行动。当破晓战队处于【破晓力场】状态时，受到一定次数攻击后会施放【破晓退散】。
+  - skill_id: 501305004
+    trigger_key: Skill04
+    name_chs: 破晓剑影舞
+    name_en: Shadow Dance of the Daybreak Blade
+    type_chs: 技能
+    tag_chs: 单攻
+    damage_type: Fire
+    attack_type: Normal
+    toughness_damage_display_basic_atk_10_scale: 3.3333333333333335
+    delay_ratio: 1
+    phase_list:
+    - 1
+    params:
+    - 8
+    extra_effects: []
+    description_chs: 对指定我方单体造成大量火属性伤害。
+  - skill_id: 501305005
+    trigger_key: Skill05
+    name_chs: 破晓退散
+    name_en: Daybreak Dispersal
+    type_chs: 技能
+    tag_chs: 其他
+    damage_type: null
+    attack_type: Normal
+    toughness_damage_display_basic_atk_10_scale: 3.3333333333333335
+    delay_ratio: 1
+    phase_list:
+    - 1
+    params:
+    - 0.3
+    - 0.4
+    - 2
+    extra_effects: []
+    description_chs: 解除【破晓力场】并为自身附加【失意】，受到的伤害提高，且自身火属性抗性降低。
+  raw:
+    identity:
+      monster_id: 5013050
+      monster_template_id: 5013050
+      name_chs: 破晓战队•赤焰
+      name_en: 'Daybreak Squadron: Blazeweaver'
+      role_in_stage: wave_1_enemy
+      rank: Elite
+    stage_scaled_stats:
+      level: 95
+      hp_raw: 4504135.6844999995
+      hp_display_rounded: 4504136
+      attack_raw: 688.0628700000001
+      defence_raw: 1149.9999
+      speed_raw: 158.4
+      speed_display: 158.4
+      toughness_internal: 480
+      toughness_display_basic_atk_10_scale: 160.0
+    weaknesses: *id001
+    damage_type_resistance: *id002
+    debuff_resistance: {}
+    summon_id_list: []
+    core_mechanics: *id003
+    skills: *id004
+    ai:
+      ai_path: Config/ConfigAI/Monster_W5_Ranger_00_AI.json
+      available: true
+      decision_count: 1
+      skill_trigger_references:
+      - path: /DecisionList[0]/DecisionList[0]/RootTask/TaskList[1]/SkillName
+        skill_trigger_key: Skill01
+      - path: /DecisionList[0]/DecisionList[1]/RootTask/TaskList[1]/SkillName
+        skill_trigger_key: Skill02
+      - path: /DecisionList[0]/DecisionList[2]/RootTask/TaskList[1]/SkillName
+        skill_trigger_key: Skill03
+      - path: /DecisionList[0]/DecisionList[3]/RootTask/TaskList[1]/SkillName
+        skill_trigger_key: Skill02
+      - path: /DecisionList[0]/DecisionList[4]/RootTask/TaskList[1]/SkillName
+        skill_trigger_key: Skill05
+      - path: /DecisionList[0]/DecisionList[5]/RootTask/TaskList[1]/SkillName
+        skill_trigger_key: Skill04
+    raw_source_trace:
+      excel_rows:
+      - StageConfig[StageID=30507013]
+      - MonsterConfig[MonsterID=5013050]
+      - MonsterTemplateConfig[MonsterTemplateID=5013050]
+      - HardLevelGroup[HardLevelGroup=3,Level=95]
+      - InfiniteEliteGroup[EliteGroup=370]
+      config_paths:
+      - Config/ConfigAI/Monster_W5_Ranger_00_AI.json
+      - Config/ConfigCharacter/Monster/Monster_W5_Ranger_01_Config.json
+    combat_role_in_case: wave_1_enemy_slot_1
+    template_base_stats:
+      attack_base: 18
+      defence_base: 210
+      hp_base: 1395
+      speed_base: 120
+      stance_base_internal: 480
+      status_resistance_base: 0.2
+      initial_delay_ratio: 1
+    stage_overrides_and_modifiers:
+      monster_modify_ratios:
+        attack: 1
+        defence: 1
+        hp: 1
+        speed: 1
+        toughness: 1
+      hard_level_group_row:
+        HardLevelGroup: 3
+        Level: 95
+        AttackRatio: 34.75065
+        DefenceRatio: 5.47619
+        HPRatio: 375.4385
+        SpeedRatio: 1.32
+        StanceRatio: 1
+      infinite_elite_group_row:
+        EliteGroup: 370
+        AttackRatio: 1.1
+        DefenceRatio: 1
+        HPRatio: 8.6
+        SpeedRatio: 1
+        StanceRatio: 1
+    custom_values:
+    - BFLIFKBEOPJ: CurrentRanger
+      MNDFOPKBHKP: 1
+    dynamic_values: []
+source_stage: arbitration_4_3_knight_3

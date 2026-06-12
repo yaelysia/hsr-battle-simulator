@@ -1,0 +1,207 @@
+# HSR simulator prototype v7.7 validation
+
+All smoke tests and targeted regression checks passed.
+
+- SMOKE PASS examples/conditional_modifier_case.yaml
+- SMOKE PASS examples/duration_lifecycle_case_v0_3.yaml
+- SMOKE PASS examples/enemy_primitives_case.yaml
+- SMOKE PASS examples/seele_five_dummy_case_v0_3.yaml
+- SMOKE PASS examples/stat_speed_case.yaml
+- SMOKE PASS examples/wave_manager_case.yaml
+- SMOKE PASS validation/action_advance_av_case.yaml
+- SMOKE PASS validation/cycle_case.yaml
+- SMOKE PASS validation/deferred_queue_wave_case.yaml
+- SMOKE PASS validation/effect_hit_case.yaml
+- SMOKE PASS validation/err_bonus_case.yaml
+- SMOKE PASS validation/group_shield_case.yaml
+- SMOKE PASS validation/hit_taken_energy_case.yaml
+- SMOKE PASS validation/hp_bar_phase_case.yaml
+- SMOKE PASS validation/knight3_short_route_case.yaml
+- SMOKE PASS validation/speed_expire_case.yaml
+- SMOKE PASS validation/split_initial_av_case.yaml
+- PASS multi-hit per-hit vs per-attack duration separation
+- PASS AoE multi-kill grants one kill energy reward per defeated enemy
+- PASS shield absorption still allows configured hit-taken energy
+- PASS queue priority: immediate before interrupt
+- PASS expected crit mode clamps crit rate to [0, 1]
+- PASS HP-bar transition trigger and immediate phase action
+- PASS multi-HP-bar carry-over consumes multiple bars and no-carry stops at phase boundary
+- PASS explicit HP model semantics: phase_hp no-carry, segmented_hp carry
+- PASS legacy action_has_tag shorthand predicate evaluates as boolean
+- PASS conditional Crit DMG / Crit Rate modifiers are applied in crit resolution
+- PASS explicit hp_model.bars next-bar HP and on_depleted effects
+- PASS carry-over across non-uniform hp_model.bars uses each next bar HP
+- PASS conditional modifiers apply to packet scaling stat
+- PASS conditional pct modifiers preserve split stat semantics
+- PASS phase_hp boundary locks later packets from the same action
+- PASS condition right-side references resolve before comparison
+- PASS immediate_action target policy is deferred across wave transition
+- PASS single-target YAML strings are normalized to target lists
+- PASS kill energy is applied before after_defeat_enemy trigger conditions
+- PASS deferred queued actions with no valid targets are skipped without costs
+- PASS packet-level same_target resolves from the action selected target
+- PASS queued action packet-level same_target resolves from the queued action selected target
+- PASS stale explicit queued attack targets are skipped before costs/action energy
+- PASS action-owned effect damage grants kill energy before after_defeat_enemy
+- PASS action-owned effect damage defers wave transition until action end
+- PASS gain_energy effect alias uses standard ERR-aware energy source
+- PASS action-owned effect damage phase boundary locks later packets
+- PASS action-owned effect damage phase boundary locks later effect damage
+- PASS advance_action/delay_action percent aliases are accepted
+- PASS stale queued effect-damage targets are skipped before costs/action energy
+- PASS dead queued actors are skipped before costs/action energy
+- PASS effect-level conditions gate individual effects
+- PASS gain_energy amount shorthand respects affected_by_err
+- PASS per-packet action energy can queue Ultimate before later-hit Reappearance
+- PASS Reappearance can be non-carry across wave while auto Skill carries
+- PASS queued action wave-carry policy can live on action definitions
+- PASS quoted boolean strings for wave-carry policy are parsed safely
+- PASS queued action turn_kind can be inferred from action tags
+- PASS queued action turn_kind can live on action queued_action_policy
+- PASS quoted false affected_by_err does not apply ERR
+- PASS quoted false grant_if_defeated skips defeated hit energy
+- PASS quoted false hp_model carry_over_damage blocks phase overflow
+- PASS duration extra_turn_consumes_duration alias is honored
+- PASS owner_turn_start_decrement duration alias ticks at turn start
+- PASS action effects_after_action_start/effects_after_damage windows resolve in order
+- PASS modify_damage_packet can mutate current packet before damage
+- PASS conditional_branch can gate nested packet modification effects
+- PASS gain_skill_point/consume_skill_point aliases modify SP
+- PASS battle-start/initial effects apply before route actions
+- PASS summoned units honor initial_delay_ratio / default full interval
+- PASS video-derived four-technique opening action order matches expected AV gates
+- PASS add_status effect_hit/chance false gates are parsed safely
+- PASS quoted false packet can_crit disables crit resolution
+- PASS quoted false unit alive field is parsed safely
+- PASS stale queued damage in effects_after_action_start is skipped before costs/action energy
+- PASS queued preflight recursively detects conditional_branch damage_unit effects
+- PASS conditional_branch effects_if_false executes when branch condition is false
+- PASS quoted boolean condition RHS is normalized for comparison
+- PASS scalar tags and weaknesses are normalized as single tokens
+- PASS quoted true carry_over_damage infers segmented HP semantics
+- PASS modify_damage_packet crit_rate_add/crit_dmg_add enter crit resolution
+- PASS scalar action tags are honored for regular action consumption
+- PASS scalar action tags are honored for kill-energy eligibility
+- PASS quoted false queue auto-resolve fields are parsed safely
+- PASS quoted false packet ignore_shield preserves shield absorption
+- PASS quoted numeric stat fields are parsed instead of ignored
+- PASS numeric string condition values compare numerically
+- PASS quoted false crit event mode resolves as noncrit
+- PASS infinite/no-toughness targets use neutral toughness-state multiplier
+- PASS quoted false allow_dead_actor rejects dead actors
+- PASS action_end advance on a regular actor applies to refreshed next AV
+- PASS quoted numeric effect fields and flag values are parsed safely
+- PASS quoted numeric status/packet/resistance damage modifiers enter the formula
+- PASS quoted numeric effect damage/heal/shield/toughness fields resolve
+- PASS percent initial delay and infinity toughness aliases parse correctly
+- PASS model-pack style damage packet scaling/crit/toughness/target aliases resolve
+- PASS action_id and singular damage_packet aliases resolve
+- PASS per_owner_turn usage-limit alias resets on owner regular turn
+- PASS model-pack string predicates evaluate common action/target/usage expressions
+- PASS model-pack has-status and defeated_by string predicates evaluate
+- PASS model-pack effect aliases add_buff/apply_status/launch_follow_up_attack resolve
+- PASS add_buff/apply_status materialize status templates before action damage
+- PASS set_target/data-derived Dan Heng shield/live AttackConvert model-pack effects resolve selected ally and formulas
+- PASS model-pack hit_model.hits expands into per-hit packets without changing total damage/energy
+- PASS dict-style triggers, singular effect, add_zone, and zone_active condition resolve
+- PASS direct Sparkle/Dan Heng/Tribbie model-template actions replay with target aliases, formulas, and ult multiplier aliases
+- PASS model-pack in-list predicates, wearer metadata, relic piece predicates, stack_count formulas, and packet crit/damage bonus aliases resolve
+- PASS scaling.multiplier_by_reference reuses referenced action packet multiplier
+- PASS actionless enqueue_extra_turn records an extra-turn grant instead of crashing or inventing an action
+- PASS unit-local triggers, after_skill_point_consumed, add_or_refresh_stack, and consumed_skill_points resolve
+- PASS model-pack status modifier aliases enter damage formulas
+- PASS embedded follow_up_attack with missing attached actor and dotted scaling stat resolves
+- PASS action lookup by model action id and context.extra_turn_type gating work
+- PASS hp_loss and summon/summon_entity aliases resolve for enemy video-chain actions
+- PASS Seele basic Rippling Waves action advance applies to refreshed next AV
+- PASS Dance! Dance! Dance! superimposition table triggers after wearer Ultimate and advances all allies
+- PASS Dan Heng bondmate attack trigger advances Souldragon and grants energy
+- PASS after_other_ally_uses_ultimate is owner-relative and excludes the owner's own Ultimate
+- PASS v7.0 canonical schema normalizer merges flags and canonicalizes model-pack packets
+- PASS canonical model-pack manifest/index validates
+- PASS canonical model-pack compiled opening case loads and replays with v0.61 panel-aligned AV
+- PASS kernel evaluates generated battle.wave_number and any_enemy_alive predicates
+- PASS load_case accepts model-pack directories as simulator input
+- PASS TurnBasedGameData adapter inventories core tables and builds normalized source catalogs
+- PASS TurnBasedGameData Content Compiler emits canonical template-level Content IR
+- PASS TurnBasedGameData ability graph inventory classifies RPG.GameCore node types and character entry abilities
+- PASS RPG.GameCore lowering registry follows TriggerAbility chains and emits IR hints
+- PASS high-frequency GameCore backlog nodes lower into ConditionIR/EffectIR hints and visual UI/pose helpers stay evidence-only
+- PASS targeted ActionIR compiler partitions lowered hints and deduplicates nested AttackData packets
+- PASS targeted ActionIR keeps modifier-definition callbacks out of direct action damage
+- PASS dynamic expression binder resolves per-hit multipliers/toughness from AvatarSkillConfig parameters
+- PASS StatusIR compiler groups modifier callbacks, branches, and direct status effects
+- PASS StatusIR compiler emits target-team status bundle from bound ActionIR hints
+- PASS Status dynamic binder preserves runtime DynamicValues and attaches resolve traces to nested StatusIR paths
+- PASS real target-team StatusIR dynamic binder emits conservative BoundStatusIR bundle
+- PASS Status template compiler preserves branches, wave-count predicates, and executable simulator-facing triggers
+- PASS real BoundStatusIR lowers into conservative status template bundle
+- PASS compiled StatusTemplate bundle attaches to runtime case, rank-gates inactive Eidolons, and executes battle-start trigger effects
+- PASS status lifecycle triggers fire for create/stack/destroy and listener conditions without cross-status leakage
+- PASS modify_skill_point_cap effect updates cap and clamps current skill points
+- PASS wave_start triggers execute after wave spawn with 1-based battle.wave_number
+- PASS extra_turn_start triggers receive queued extra_turn_type context for generated compare_param_string
+- PASS set_flag_from_context_value captures consumed skill-point context for generated status templates
+- PASS force_defeat effect kills the selected target and fires after_defeat_enemy triggers
+- PASS generated action-delay effects lower and execute add/set normalized AV semantics
+- PASS generated property/copy/status-value/template effects lower and execute conservatively
+- PASS generated TurnInsertAction lowers and executes as queued extra-turn action
+- PASS generated target-list/entity-type conditions and trigger_effect custom events execute conservatively
+- PASS ability-property and status-dynamic watcher timings run through initial/runtime windows with owner-relative context
+- PASS identical true/false branch effects ignore unsupported predicate safely
+- PASS owner-rank predicates, compare-param runtime binding, and skill-type queued extra turns execute conservatively
+- PASS preshow audit, symbolic DynamicValues, mixed runtime-param SP deltas, and nested watcher guard lower conservatively
+- PASS symbolic DynamicValue expression IR is explicit and import-only route mode separates generated-template validation from exact route replay
+- PASS TBGD StackProperty status hints are extracted as audit-only property metadata and preserved at runtime
+- PASS property hints lower into damage/res-pen modifiers only with unambiguous numeric DynamicValues
+- PASS symbolic formula executor evaluates proven add/sub/mul postfix formulas, materializes AttackConvert as non-snapshot flat ATK, and auto-probe route mode skips unaffordable probe actions
+- PASS prioritized and elemental formula-bucket property hints lower into stat/damage modifiers only when values are unambiguous
+- PASS weakness-break DoT/delayed damage formulas tick on turn start, cap physical bleed, stack entanglement, and block frozen turns
+- PASS weakness-break aftermath applies elemental statuses/action-delay metadata and generated AddModifier/ByRandomChance debuff chances lower into effect-hit gates
+- PASS break/super-break formula paths ignore crit/normal damage bonus and effect-hit gates compute probability with forced miss support
+- PASS route expectations validate event counts, damage totals, unit state, flags, and auto-summoned Souldragon bondmate attachment
+- PASS summoned/attached units support owner/lifespan/attached-target/enhanced-action/data-derived Souldragon action, cleanse/shield, and bondmate attack semantics
+- PASS engine-side property model layer classifies AttackConvert as derived flat ATK, inventories property usage, and auto-probe records before/after snapshots/assertions/event summaries
+- PASS Dan Heng PT 141404 ParamList[4]=165 is guarded as Souldragon initial speed, not action delay
+- PASS random-choice/random-select runtime gates support deterministic single/multi unique branches, masks, custom strings, and selected entity parameters
+- PASS Souldragon summon actions are lowered from TBGD BE_InsertShield/BE_InsertAttack graphs and exact-route expectations support comparison operators
+- PASS review/audit reports add Chinese mechanism explanations, genericity refactor items, break-formula audit, enemy mechanism inventory, and executable enemy exact-route harness cases
+- PASS enemy core mechanics execute force-field toughness locks, armor layers/break hooks, phase-transition immediate actions, and generated enemy harnesses
+- PASS enemy template compiler emits runtime units/actions/statuses and executes conquer/heal-cap/summon-absorb/toughness-protection hooks
+- PASS enemy formation targeting, split damage, AI sequence fallback, and legacy summon templates execute
+- PASS enemy ConfigAI-derived duplicate sequence, phase-gated action selection, and phase-transition immediate action execute
+- PASS continuous Lance-like chain validates summon correspondence, heal-cap restore, phase transition, absorb, and HP-based AoE
+- PASS Dan Heng AttackConvert is live/non-snapshot and bondmate switching clears old mark/derived ATK
+- PASS pending Souldragon enhanced actions are inherited when the dragon shell is created later
+- PASS current-team character mechanism audit covers Seele/Sparkle/Tribbie/Dan Heng PT before solver work
+- PASS generic per_trigger_actor usage scope supports Tribbie once-per-other-ally Ultimate talent semantics
+- PASS Tribbie zone additional damage, E1 true-damage target alias, and per-hit energy hook execute
+- PASS Tribbie zone/additional damage owns kill credit, kill energy, and does not trigger Seele Resurgence
+- PASS generic next-Skill SP cost override executes Sparkle A4-style free Skill and consumes the one-shot status
+- PASS Tribbie A4 max_hp_from_team_hp_pct applies and reverts as a generic HPAddedRatio-style status side effect
+- PASS natural status expiry reverts HPAddedRatio/MaxSP-style resource side effects and emits status_destroy
+- PASS while_zone_active statuses expire and revert resource side effects when the zone is removed
+- PASS Tribbie once-per-other-ally Ultimate trigger excludes self, persists per ally, and resets after Tribbie Ultimate
+- PASS Sparkle Cipher/Figment source-turn duration boundaries, stack cap, and refresh behavior are route-verified
+- PASS enemy ConfigAI phase/dynamic-value predicates drive Lance AIFlag action chain
+- PASS enemy ConfigAI TargetAliveState uses formation slot liveness, not compacted alive order
+- PASS enemy AI skill-use record/cooldown hooks and TargetSortByFormation direction execute
+- PASS Lance/Savage-God shared-HP group is compiled and runtime HP-loss sync executes
+- PASS Savage God Glory/Titanic Corpus states execute with delayed Glory cleanup and layer removal
+- PASS Furiae Praetor charge sets forced next action and follow-up absorbs Furiae Warrior
+- PASS enemy ConfigAI SelectAISkillTarget selector, target-count, and HP-ratio predicates execute conservatively
+- PASS enemy ConfigAI TargetFilter/custom-value/identity predicates and AIPropertySelector baseline execute
+- PASS non-Knight ConfigAI dynamic-value add/count/switch tasks execute
+- PASS non-Knight ConfigAI Retarget success/failure branches and target selector execute
+- PASS enemy ConfigAI DefaultDSE SuccessScore/CheckScore baseline ranks available decisions deterministically
+- PASS enemy scripted sequence takes priority over score ranking and only falls back when current scripted action is illegal
+- PASS enemy same-turn multi-action chains skip queued continuations after weakness break or control without disturbing normal chains
+- PASS Monster ConfigAbility graph lowering preview extracts high-confidence combat nodes and keeps visual evidence-only
+- PASS full Monster ConfigAbility lowering scan finds non-Knight real enemy samples for later exact-route binding
+- PASS enemy chained continuations record executed skill use/cooldown but do not advance fixed AI cursor by default
+- PASS Monster ConfigAbility preview IR is bound into compiled enemy runtime actions and executes on non-Knight sample
+- PASS non-Knight real enemy templates compile with ConfigAI and Monster Ability graph bindings
+- PASS enemy chained continuations are skipped when phase changes before queued follow-up resolves
+- PASS derived/additional damage stops when the primary attack already defeated the target
+- PASS immediate DoT detonation stops at the killing DoT and credits the DoT applier
+- PASS primary multi-hit and large-hit damage windows resolve full numeric damage after lethal HP is reached

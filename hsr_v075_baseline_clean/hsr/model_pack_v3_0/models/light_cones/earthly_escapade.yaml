@@ -1,0 +1,14 @@
+kind: equipment_template
+schema_version: '3.0'
+slot: light_cone
+id: earthly_escapade
+name: Earthly Escapade
+cn_name: 游戏尘寰
+source_file: light_cone_earthly_escapade_template_v1_6.yaml
+equip_requirement: {}
+base_stats: {}
+superimposition_effects: {}
+stack_model: {}
+status_effects: {}
+triggers: []
+raw_user_case: {}

@@ -1,0 +1,847 @@
+{
+  "format": "hsr_souldragon_action_template",
+  "version": "v0.3",
+  "source": "TurnBasedGameData.ExcelOutput.AvatarSkillConfig",
+  "avatar_id": 1414,
+  "normal_skill_id": 141404,
+  "enhanced_skill_id": 141403,
+  "normal_level": 15,
+  "enhanced_level": 15,
+  "skill_level": 15,
+  "trace_point_level": 1,
+  "initial_speed": 165.0,
+  "normal_shield_owner_atk_pct": 0.115,
+  "normal_shield_flat": 256.25,
+  "normal_shield_duration_turns": 3.0,
+  "shield_stack_cap_multiplier": 3.0,
+  "cleanse_debuff_count": 1.0,
+  "skill_shield_owner_atk_pct": 0.23,
+  "skill_shield_flat": 512.5,
+  "ultimate_shield_owner_atk_pct": 0.23,
+  "ultimate_shield_flat": 512.5,
+  "enhanced_owner_physical_multiplier": 1.0,
+  "enhanced_bondmate_multiplier": 1.0,
+  "enhanced_action_count": 2.0,
+  "bondmate_attack_energy": 6.0,
+  "bondmate_attack_souldragon_advance": 0.15,
+  "battle_start_danheng_advance": 0.4,
+  "attack_convert_scale": 0.15,
+  "notes_cn": {
+    "initial_speed": "龙灵初始速度。来自丹恒·腾荒天赋 141404 的第 5 个参数。不是行动延后。",
+    "normal_shield": "龙灵普通行动护盾：丹恒攻击力百分比 + 固定值。",
+    "enhanced_action": "龙灵强化行动：物理群攻取丹恒攻击力倍率，同袍属性附加伤害取同袍攻击力倍率。"
+  },
+  "raw_param_lists": {
+    "141404": [
+      0.115,
+      256.25,
+      3.0,
+      3.0,
+      165.0,
+      1.0
+    ],
+    "141403": [
+      3.75,
+      1.0,
+      2.0,
+      0.23,
+      512.5,
+      3.0,
+      3.0,
+      1.0
+    ],
+    "141402": [
+      0.23,
+      512.5,
+      3.0,
+      3.0
+    ],
+    "1414102": [
+      0.4,
+      6.0,
+      0.15
+    ],
+    "1414101": [
+      0.15
+    ]
+  },
+  "derived_actions": {
+    "normal": {
+      "id": "normal",
+      "action_type": "summon",
+      "tags": [
+        "souldragon_action",
+        "summon_action",
+        "consumes_regular_action",
+        "support",
+        "data_derived_summon_action_ir"
+      ],
+      "target_policy": "all_allies",
+      "damage_packets": [],
+      "effects": [
+        {
+          "type": "cleanse_debuffs",
+          "target": "all_allies",
+          "count": 1,
+          "source_template": "souldragon_action_template"
+        },
+        {
+          "type": "modify_shield",
+          "target": "all_allies",
+          "source": "owner",
+          "source_stat": "atk",
+          "source_stat_pct": 0.115,
+          "amount": 256.25,
+          "shield_cap_source": "dan_heng_skill_shield",
+          "shield_cap_source_stat_pct": 0.23,
+          "shield_cap_flat": 512.5,
+          "shield_cap_multiplier": 3.0,
+          "duration_turns": 3.0,
+          "source_template": "souldragon_action_template"
+        }
+      ]
+    },
+    "enhanced": {
+      "id": "enhanced",
+      "action_type": "summon",
+      "tags": [
+        "souldragon_action",
+        "souldragon_enhanced",
+        "summon_action",
+        "followup_damage",
+        "attack",
+        "consumes_regular_action",
+        "data_derived_summon_action_ir"
+      ],
+      "target_policy": "all_enemies",
+      "effects_before_damage": [
+        {
+          "type": "cleanse_debuffs",
+          "target": "all_allies",
+          "count": 1,
+          "source_template": "souldragon_action_template"
+        },
+        {
+          "type": "modify_shield",
+          "target": "all_allies",
+          "source": "owner",
+          "source_stat": "atk",
+          "source_stat_pct": 0.115,
+          "amount": 256.25,
+          "shield_cap_source": "dan_heng_skill_shield",
+          "shield_cap_source_stat_pct": 0.23,
+          "shield_cap_flat": 512.5,
+          "shield_cap_multiplier": 3.0,
+          "duration_turns": 3.0,
+          "source_template": "souldragon_action_template"
+        }
+      ],
+      "damage_packets": [
+        {
+          "id": "souldragon_enhanced_physical",
+          "element": "physical",
+          "damage_type": "follow_up_damage",
+          "target_policy": "all_enemies",
+          "scaling_stat": "owner.atk",
+          "multiplier": 1.0,
+          "can_crit": true,
+          "source_template": "souldragon_action_template"
+        },
+        {
+          "id": "souldragon_enhanced_bondmate",
+          "element": "bondmate.element",
+          "damage_type": "additional_damage",
+          "target_policy": "all_enemies",
+          "scaling_stat": "bondmate.atk",
+          "multiplier": 1.0,
+          "can_crit": false,
+          "source_template": "souldragon_action_template"
+        }
+      ],
+      "effects": []
+    }
+  },
+  "graph_derived_actions": {
+    "normal": {
+      "id": "normal",
+      "action_type": "summon",
+      "tags": [
+        "souldragon_action",
+        "summon_action",
+        "consumes_regular_action",
+        "support",
+        "tbgd_graph_derived_summon_action_ir"
+      ],
+      "target_policy": "all_allies",
+      "damage_packets": [],
+      "effects": [
+        {
+          "type": "cleanse_debuffs",
+          "target": "all_allies",
+          "count": 1,
+          "source_template": "souldragon_tbgd_action_graph",
+          "source_ability": "Avatar_DanHengPT_00_BE_InsertShield_Phase01",
+          "source_graph_nodes": [
+            {
+              "type": "dispel_status",
+              "source_node_type": "RPG.GameCore.DispelStatus",
+              "source_path": "OnStart[1]",
+              "status_id": null,
+              "target_policy": "tbgd_alias:AllTeamMember",
+              "ability_name": null,
+              "action_id": null
+            }
+          ],
+          "cn": "由 TBGD 龙灵插入行动图中的 DispelStatus 推导：龙灵行动驱散我方负面效果。"
+        },
+        {
+          "type": "modify_shield",
+          "target": "all_allies",
+          "source": "owner",
+          "source_stat": "atk",
+          "source_stat_pct": 0.115,
+          "amount": 256.25,
+          "shield_cap_source": "dan_heng_skill_shield",
+          "shield_cap_source_stat_pct": 0.23,
+          "shield_cap_flat": 512.5,
+          "shield_cap_multiplier": 3.0,
+          "duration_turns": 3.0,
+          "source_template": "souldragon_tbgd_action_graph",
+          "source_ability": "Avatar_DanHengPT_00_BE_InsertShield_Phase01",
+          "source_graph_nodes": [
+            {
+              "type": "include_task_list_template",
+              "source_node_type": "RPG.GameCore.IncludeTaskListTemplate",
+              "source_path": "OnStart[1]",
+              "status_id": null,
+              "target_policy": null,
+              "ability_name": null,
+              "action_id": null
+            }
+          ],
+          "cn": "由 TBGD 龙灵插入行动图中的 DanHengPT_BE_AddShield 推导：龙灵行动后给全队上护盾。"
+        }
+      ],
+      "source_ability_graph": {
+        "entry_ability": "Avatar_DanHengPT_00_BE_InsertShield_Phase01",
+        "ordered_abilities": null,
+        "lowering_coverage": {
+          "lowered_count": 11,
+          "unlowered_relevant_count": 0,
+          "coverage_estimate": 1.0
+        }
+      }
+    },
+    "enhanced": {
+      "id": "enhanced",
+      "action_type": "summon",
+      "tags": [
+        "souldragon_action",
+        "souldragon_enhanced",
+        "summon_action",
+        "followup_damage",
+        "attack",
+        "consumes_regular_action",
+        "tbgd_graph_derived_summon_action_ir"
+      ],
+      "target_policy": "all_enemies",
+      "effects_before_damage": [
+        {
+          "type": "cleanse_debuffs",
+          "target": "all_allies",
+          "count": 1,
+          "source_template": "souldragon_tbgd_action_graph",
+          "source_ability": "Avatar_DanHengPT_00_BE_InsertAttack_Phase01",
+          "source_graph_nodes": [
+            {
+              "type": "dispel_status",
+              "source_node_type": "RPG.GameCore.DispelStatus",
+              "source_path": "OnStart[2]",
+              "status_id": null,
+              "target_policy": "tbgd_alias:AllTeamMember",
+              "ability_name": null,
+              "action_id": null
+            }
+          ],
+          "cn": "由 TBGD 龙灵插入行动图中的 DispelStatus 推导：龙灵行动驱散我方负面效果。"
+        },
+        {
+          "type": "modify_shield",
+          "target": "all_allies",
+          "source": "owner",
+          "source_stat": "atk",
+          "source_stat_pct": 0.115,
+          "amount": 256.25,
+          "shield_cap_source": "dan_heng_skill_shield",
+          "shield_cap_source_stat_pct": 0.23,
+          "shield_cap_flat": 512.5,
+          "shield_cap_multiplier": 3.0,
+          "duration_turns": 3.0,
+          "source_template": "souldragon_tbgd_action_graph",
+          "source_ability": "Avatar_DanHengPT_00_BE_InsertAttack_Phase01",
+          "source_graph_nodes": [
+            {
+              "type": "include_task_list_template",
+              "source_node_type": "RPG.GameCore.IncludeTaskListTemplate",
+              "source_path": "OnStart[1]",
+              "status_id": null,
+              "target_policy": null,
+              "ability_name": null,
+              "action_id": null
+            }
+          ],
+          "cn": "由 TBGD 龙灵插入行动图中的 DanHengPT_BE_AddShield 推导：龙灵行动后给全队上护盾。"
+        }
+      ],
+      "damage_packets": [
+        {
+          "id": "souldragon_graph_physical_hit_1",
+          "element": "physical",
+          "damage_type": "follow_up_damage",
+          "attack_type": "Insert",
+          "target_policy": "all_enemies",
+          "scaling_stat": "owner.atk",
+          "multiplier": 0.25,
+          "toughness_reduction": 15.0,
+          "can_crit": true,
+          "source_template": "souldragon_tbgd_action_graph",
+          "source_ability": "Avatar_DanHengPT_00_BE_InsertAttack_Phase01",
+          "source_node_type": "RPG.GameCore.DamageByAttackProperty",
+          "source_path": "OnStart[5]",
+          "source_dynamic_expr": {
+            "damage": {
+              "expr_kind": "tbgd_postfix_dynamic",
+              "opcodes": "AQAR",
+              "fixed_values": [],
+              "dynamic_hashes": [
+                157845464
+              ]
+            },
+            "toughness": {
+              "expr_kind": "tbgd_postfix_dynamic",
+              "opcodes": "AQAR",
+              "fixed_values": [],
+              "dynamic_hashes": [
+                1988696534
+              ]
+            },
+            "hit_split_ratio": 0.25
+          },
+          "cn": "由 TBGD BE_InsertAttack 图中的 4 个物理 Insert 命中节点推导。"
+        },
+        {
+          "id": "souldragon_graph_physical_hit_2",
+          "element": "physical",
+          "damage_type": "follow_up_damage",
+          "attack_type": "Insert",
+          "target_policy": "all_enemies",
+          "scaling_stat": "owner.atk",
+          "multiplier": 0.25,
+          "toughness_reduction": 15.0,
+          "can_crit": true,
+          "source_template": "souldragon_tbgd_action_graph",
+          "source_ability": "Avatar_DanHengPT_00_BE_InsertAttack_Phase01",
+          "source_node_type": "RPG.GameCore.DamageByAttackProperty",
+          "source_path": "OnStart[7]",
+          "source_dynamic_expr": {
+            "damage": {
+              "expr_kind": "tbgd_postfix_dynamic",
+              "opcodes": "AQAR",
+              "fixed_values": [],
+              "dynamic_hashes": [
+                157845464
+              ]
+            },
+            "toughness": {
+              "expr_kind": "tbgd_postfix_dynamic",
+              "opcodes": "AQAR",
+              "fixed_values": [],
+              "dynamic_hashes": [
+                1988696534
+              ]
+            },
+            "hit_split_ratio": 0.25
+          },
+          "cn": "由 TBGD BE_InsertAttack 图中的 4 个物理 Insert 命中节点推导。"
+        },
+        {
+          "id": "souldragon_graph_physical_hit_3",
+          "element": "physical",
+          "damage_type": "follow_up_damage",
+          "attack_type": "Insert",
+          "target_policy": "all_enemies",
+          "scaling_stat": "owner.atk",
+          "multiplier": 0.25,
+          "toughness_reduction": 15.0,
+          "can_crit": true,
+          "source_template": "souldragon_tbgd_action_graph",
+          "source_ability": "Avatar_DanHengPT_00_BE_InsertAttack_Phase01",
+          "source_node_type": "RPG.GameCore.DamageByAttackProperty",
+          "source_path": "OnStart[9]",
+          "source_dynamic_expr": {
+            "damage": {
+              "expr_kind": "tbgd_postfix_dynamic",
+              "opcodes": "AQAR",
+              "fixed_values": [],
+              "dynamic_hashes": [
+                157845464
+              ]
+            },
+            "toughness": {
+              "expr_kind": "tbgd_postfix_dynamic",
+              "opcodes": "AQAR",
+              "fixed_values": [],
+              "dynamic_hashes": [
+                1988696534
+              ]
+            },
+            "hit_split_ratio": 0.25
+          },
+          "cn": "由 TBGD BE_InsertAttack 图中的 4 个物理 Insert 命中节点推导。"
+        },
+        {
+          "id": "souldragon_graph_physical_hit_4",
+          "element": "physical",
+          "damage_type": "follow_up_damage",
+          "attack_type": "Insert",
+          "target_policy": "all_enemies",
+          "scaling_stat": "owner.atk",
+          "multiplier": 0.25,
+          "toughness_reduction": 15.0,
+          "can_crit": true,
+          "source_template": "souldragon_tbgd_action_graph",
+          "source_ability": "Avatar_DanHengPT_00_BE_InsertAttack_Phase01",
+          "source_node_type": "RPG.GameCore.DamageByAttackProperty",
+          "source_path": "OnStart[11]",
+          "source_dynamic_expr": {
+            "damage": {
+              "expr_kind": "tbgd_postfix_dynamic",
+              "opcodes": "AQAR",
+              "fixed_values": [],
+              "dynamic_hashes": [
+                157845464
+              ]
+            },
+            "toughness": {
+              "expr_kind": "tbgd_postfix_dynamic",
+              "opcodes": "AQAR",
+              "fixed_values": [],
+              "dynamic_hashes": [
+                1988696534
+              ]
+            },
+            "hit_split_ratio": 0.25
+          },
+          "cn": "由 TBGD BE_InsertAttack 图中的 4 个物理 Insert 命中节点推导。"
+        },
+        {
+          "id": "souldragon_graph_bondmate_additional",
+          "element": "bondmate.element",
+          "damage_type": "additional_damage",
+          "attack_type": "Pursued",
+          "target_policy": "all_enemies",
+          "scaling_stat": "bondmate.atk",
+          "multiplier": 1.0,
+          "can_crit": false,
+          "source_template": "souldragon_tbgd_action_graph",
+          "source_ability": "Avatar_DanHengPT_00_BE_InsertAttack_Phase01",
+          "source_node_type": "RPG.GameCore.DamageByAttackProperty",
+          "source_path": "OnStart[12]",
+          "source_dynamic_expr": {
+            "expr_kind": "tbgd_postfix_dynamic",
+            "opcodes": "AQAR",
+            "fixed_values": [],
+            "dynamic_hashes": [
+              39662292
+            ]
+          },
+          "cn": "由 TBGD BE_InsertAttack 图中的 Pursued 附加伤害节点推导；元素与攻击力跟随【同袍】。"
+        }
+      ],
+      "effects": [],
+      "source_ability_graph": {
+        "entry_ability": "Avatar_DanHengPT_00_BE_InsertAttack_Phase01",
+        "ordered_abilities": null,
+        "lowering_coverage": {
+          "lowered_count": 48,
+          "unlowered_relevant_count": 0,
+          "coverage_estimate": 1.0
+        }
+      }
+    }
+  },
+  "graph_lowering_evidence": {
+    "passive_router": {
+      "entry_ability": "Avatar_DanHengPT_00_BE_PassiveSkill",
+      "lowering_coverage": {
+        "lowered_count": 15,
+        "unlowered_relevant_count": 2,
+        "coverage_estimate": 0.8823529411764706
+      },
+      "enqueue_actions": [
+        {
+          "type": "enqueue_action",
+          "actor_policy": "self",
+          "action_id": "Avatar_DanHengPT_00_BE_InsertAttack_Phase01",
+          "target_policy": "all_enemies",
+          "priority": "AvatarInsertAttackSelf",
+          "show_in_action_bar": null,
+          "source_node_type": "RPG.GameCore.TurnInsertAbility",
+          "source_path": "Modifiers.MAvatar_DanHengPT_00_BEModifier._CallbackList[0].CallbackConfig[0].SuccessTaskList[0]"
+        },
+        {
+          "type": "enqueue_action",
+          "actor_policy": "self",
+          "action_id": "Avatar_DanHengPT_00_BE_InsertShield_Phase01",
+          "target_policy": "tbgd_alias:AllTeamMember",
+          "priority": "AvatarBuffSelf",
+          "show_in_action_bar": true,
+          "source_node_type": "RPG.GameCore.TurnInsertAbility",
+          "source_path": "Modifiers.MAvatar_DanHengPT_00_BEModifier._CallbackList[0].CallbackConfig[0].FailedTaskList[0]"
+        }
+      ],
+      "cn": "BEModifier 的 OnPhase1 根据 BoostEnergy 状态选择插入强化攻击，否则插入普通护盾行动。"
+    },
+    "normal_source": {
+      "entry_ability": "Avatar_DanHengPT_00_BE_InsertShield_Phase01",
+      "lowering_coverage": {
+        "lowered_count": 11,
+        "unlowered_relevant_count": 0,
+        "coverage_estimate": 1.0
+      },
+      "unlowered_combat_node_types": {}
+    },
+    "enhanced_source": {
+      "entry_ability": "Avatar_DanHengPT_00_BE_InsertAttack_Phase01",
+      "lowering_coverage": {
+        "lowered_count": 48,
+        "unlowered_relevant_count": 0,
+        "coverage_estimate": 1.0
+      },
+      "unlowered_combat_node_types": {},
+      "physical_hit_packet_count": 4
+    }
+  },
+  "summon_action_ir": {
+    "format": "hsr_summon_action_ir",
+    "version": "v0.3",
+    "source": "tbgd_action_graph_lowered_souldragon",
+    "owner_ref": "owner",
+    "attached_ref": "bondmate",
+    "actions": {
+      "normal": {
+        "id": "normal",
+        "action_type": "summon",
+        "tags": [
+          "souldragon_action",
+          "summon_action",
+          "consumes_regular_action",
+          "support",
+          "tbgd_graph_derived_summon_action_ir"
+        ],
+        "target_policy": "all_allies",
+        "damage_packets": [],
+        "effects": [
+          {
+            "type": "cleanse_debuffs",
+            "target": "all_allies",
+            "count": 1,
+            "source_template": "souldragon_tbgd_action_graph",
+            "source_ability": "Avatar_DanHengPT_00_BE_InsertShield_Phase01",
+            "source_graph_nodes": [
+              {
+                "type": "dispel_status",
+                "source_node_type": "RPG.GameCore.DispelStatus",
+                "source_path": "OnStart[1]",
+                "status_id": null,
+                "target_policy": "tbgd_alias:AllTeamMember",
+                "ability_name": null,
+                "action_id": null
+              }
+            ],
+            "cn": "由 TBGD 龙灵插入行动图中的 DispelStatus 推导：龙灵行动驱散我方负面效果。"
+          },
+          {
+            "type": "modify_shield",
+            "target": "all_allies",
+            "source": "owner",
+            "source_stat": "atk",
+            "source_stat_pct": 0.115,
+            "amount": 256.25,
+            "shield_cap_source": "dan_heng_skill_shield",
+            "shield_cap_source_stat_pct": 0.23,
+            "shield_cap_flat": 512.5,
+            "shield_cap_multiplier": 3.0,
+            "duration_turns": 3.0,
+            "source_template": "souldragon_tbgd_action_graph",
+            "source_ability": "Avatar_DanHengPT_00_BE_InsertShield_Phase01",
+            "source_graph_nodes": [
+              {
+                "type": "include_task_list_template",
+                "source_node_type": "RPG.GameCore.IncludeTaskListTemplate",
+                "source_path": "OnStart[1]",
+                "status_id": null,
+                "target_policy": null,
+                "ability_name": null,
+                "action_id": null
+              }
+            ],
+            "cn": "由 TBGD 龙灵插入行动图中的 DanHengPT_BE_AddShield 推导：龙灵行动后给全队上护盾。"
+          }
+        ],
+        "source_ability_graph": {
+          "entry_ability": "Avatar_DanHengPT_00_BE_InsertShield_Phase01",
+          "ordered_abilities": null,
+          "lowering_coverage": {
+            "lowered_count": 11,
+            "unlowered_relevant_count": 0,
+            "coverage_estimate": 1.0
+          }
+        }
+      },
+      "enhanced": {
+        "id": "enhanced",
+        "action_type": "summon",
+        "tags": [
+          "souldragon_action",
+          "souldragon_enhanced",
+          "summon_action",
+          "followup_damage",
+          "attack",
+          "consumes_regular_action",
+          "tbgd_graph_derived_summon_action_ir"
+        ],
+        "target_policy": "all_enemies",
+        "effects_before_damage": [
+          {
+            "type": "cleanse_debuffs",
+            "target": "all_allies",
+            "count": 1,
+            "source_template": "souldragon_tbgd_action_graph",
+            "source_ability": "Avatar_DanHengPT_00_BE_InsertAttack_Phase01",
+            "source_graph_nodes": [
+              {
+                "type": "dispel_status",
+                "source_node_type": "RPG.GameCore.DispelStatus",
+                "source_path": "OnStart[2]",
+                "status_id": null,
+                "target_policy": "tbgd_alias:AllTeamMember",
+                "ability_name": null,
+                "action_id": null
+              }
+            ],
+            "cn": "由 TBGD 龙灵插入行动图中的 DispelStatus 推导：龙灵行动驱散我方负面效果。"
+          },
+          {
+            "type": "modify_shield",
+            "target": "all_allies",
+            "source": "owner",
+            "source_stat": "atk",
+            "source_stat_pct": 0.115,
+            "amount": 256.25,
+            "shield_cap_source": "dan_heng_skill_shield",
+            "shield_cap_source_stat_pct": 0.23,
+            "shield_cap_flat": 512.5,
+            "shield_cap_multiplier": 3.0,
+            "duration_turns": 3.0,
+            "source_template": "souldragon_tbgd_action_graph",
+            "source_ability": "Avatar_DanHengPT_00_BE_InsertAttack_Phase01",
+            "source_graph_nodes": [
+              {
+                "type": "include_task_list_template",
+                "source_node_type": "RPG.GameCore.IncludeTaskListTemplate",
+                "source_path": "OnStart[1]",
+                "status_id": null,
+                "target_policy": null,
+                "ability_name": null,
+                "action_id": null
+              }
+            ],
+            "cn": "由 TBGD 龙灵插入行动图中的 DanHengPT_BE_AddShield 推导：龙灵行动后给全队上护盾。"
+          }
+        ],
+        "damage_packets": [
+          {
+            "id": "souldragon_graph_physical_hit_1",
+            "element": "physical",
+            "damage_type": "follow_up_damage",
+            "attack_type": "Insert",
+            "target_policy": "all_enemies",
+            "scaling_stat": "owner.atk",
+            "multiplier": 0.25,
+            "toughness_reduction": 15.0,
+            "can_crit": true,
+            "source_template": "souldragon_tbgd_action_graph",
+            "source_ability": "Avatar_DanHengPT_00_BE_InsertAttack_Phase01",
+            "source_node_type": "RPG.GameCore.DamageByAttackProperty",
+            "source_path": "OnStart[5]",
+            "source_dynamic_expr": {
+              "damage": {
+                "expr_kind": "tbgd_postfix_dynamic",
+                "opcodes": "AQAR",
+                "fixed_values": [],
+                "dynamic_hashes": [
+                  157845464
+                ]
+              },
+              "toughness": {
+                "expr_kind": "tbgd_postfix_dynamic",
+                "opcodes": "AQAR",
+                "fixed_values": [],
+                "dynamic_hashes": [
+                  1988696534
+                ]
+              },
+              "hit_split_ratio": 0.25
+            },
+            "cn": "由 TBGD BE_InsertAttack 图中的 4 个物理 Insert 命中节点推导。"
+          },
+          {
+            "id": "souldragon_graph_physical_hit_2",
+            "element": "physical",
+            "damage_type": "follow_up_damage",
+            "attack_type": "Insert",
+            "target_policy": "all_enemies",
+            "scaling_stat": "owner.atk",
+            "multiplier": 0.25,
+            "toughness_reduction": 15.0,
+            "can_crit": true,
+            "source_template": "souldragon_tbgd_action_graph",
+            "source_ability": "Avatar_DanHengPT_00_BE_InsertAttack_Phase01",
+            "source_node_type": "RPG.GameCore.DamageByAttackProperty",
+            "source_path": "OnStart[7]",
+            "source_dynamic_expr": {
+              "damage": {
+                "expr_kind": "tbgd_postfix_dynamic",
+                "opcodes": "AQAR",
+                "fixed_values": [],
+                "dynamic_hashes": [
+                  157845464
+                ]
+              },
+              "toughness": {
+                "expr_kind": "tbgd_postfix_dynamic",
+                "opcodes": "AQAR",
+                "fixed_values": [],
+                "dynamic_hashes": [
+                  1988696534
+                ]
+              },
+              "hit_split_ratio": 0.25
+            },
+            "cn": "由 TBGD BE_InsertAttack 图中的 4 个物理 Insert 命中节点推导。"
+          },
+          {
+            "id": "souldragon_graph_physical_hit_3",
+            "element": "physical",
+            "damage_type": "follow_up_damage",
+            "attack_type": "Insert",
+            "target_policy": "all_enemies",
+            "scaling_stat": "owner.atk",
+            "multiplier": 0.25,
+            "toughness_reduction": 15.0,
+            "can_crit": true,
+            "source_template": "souldragon_tbgd_action_graph",
+            "source_ability": "Avatar_DanHengPT_00_BE_InsertAttack_Phase01",
+            "source_node_type": "RPG.GameCore.DamageByAttackProperty",
+            "source_path": "OnStart[9]",
+            "source_dynamic_expr": {
+              "damage": {
+                "expr_kind": "tbgd_postfix_dynamic",
+                "opcodes": "AQAR",
+                "fixed_values": [],
+                "dynamic_hashes": [
+                  157845464
+                ]
+              },
+              "toughness": {
+                "expr_kind": "tbgd_postfix_dynamic",
+                "opcodes": "AQAR",
+                "fixed_values": [],
+                "dynamic_hashes": [
+                  1988696534
+                ]
+              },
+              "hit_split_ratio": 0.25
+            },
+            "cn": "由 TBGD BE_InsertAttack 图中的 4 个物理 Insert 命中节点推导。"
+          },
+          {
+            "id": "souldragon_graph_physical_hit_4",
+            "element": "physical",
+            "damage_type": "follow_up_damage",
+            "attack_type": "Insert",
+            "target_policy": "all_enemies",
+            "scaling_stat": "owner.atk",
+            "multiplier": 0.25,
+            "toughness_reduction": 15.0,
+            "can_crit": true,
+            "source_template": "souldragon_tbgd_action_graph",
+            "source_ability": "Avatar_DanHengPT_00_BE_InsertAttack_Phase01",
+            "source_node_type": "RPG.GameCore.DamageByAttackProperty",
+            "source_path": "OnStart[11]",
+            "source_dynamic_expr": {
+              "damage": {
+                "expr_kind": "tbgd_postfix_dynamic",
+                "opcodes": "AQAR",
+                "fixed_values": [],
+                "dynamic_hashes": [
+                  157845464
+                ]
+              },
+              "toughness": {
+                "expr_kind": "tbgd_postfix_dynamic",
+                "opcodes": "AQAR",
+                "fixed_values": [],
+                "dynamic_hashes": [
+                  1988696534
+                ]
+              },
+              "hit_split_ratio": 0.25
+            },
+            "cn": "由 TBGD BE_InsertAttack 图中的 4 个物理 Insert 命中节点推导。"
+          },
+          {
+            "id": "souldragon_graph_bondmate_additional",
+            "element": "bondmate.element",
+            "damage_type": "additional_damage",
+            "attack_type": "Pursued",
+            "target_policy": "all_enemies",
+            "scaling_stat": "bondmate.atk",
+            "multiplier": 1.0,
+            "can_crit": false,
+            "source_template": "souldragon_tbgd_action_graph",
+            "source_ability": "Avatar_DanHengPT_00_BE_InsertAttack_Phase01",
+            "source_node_type": "RPG.GameCore.DamageByAttackProperty",
+            "source_path": "OnStart[12]",
+            "source_dynamic_expr": {
+              "expr_kind": "tbgd_postfix_dynamic",
+              "opcodes": "AQAR",
+              "fixed_values": [],
+              "dynamic_hashes": [
+                39662292
+              ]
+            },
+            "cn": "由 TBGD BE_InsertAttack 图中的 Pursued 附加伤害节点推导；元素与攻击力跟随【同袍】。"
+          }
+        ],
+        "effects": [],
+        "source_ability_graph": {
+          "entry_ability": "Avatar_DanHengPT_00_BE_InsertAttack_Phase01",
+          "ordered_abilities": null,
+          "lowering_coverage": {
+            "lowered_count": 48,
+            "unlowered_relevant_count": 0,
+            "coverage_estimate": 1.0
+          }
+        }
+      }
+    },
+    "lifecycle": {
+      "remove_when_owner_defeated": true,
+      "remove_when_attached_target_defeated": true,
+      "enhanced_action_count": 2.0
+    },
+    "cn": "龙灵行动优先由 TBGD BE_InsertShield/BE_InsertAttack 能力图 lower 得到；参数仍来自 AvatarSkillConfig。"
+  }
+}

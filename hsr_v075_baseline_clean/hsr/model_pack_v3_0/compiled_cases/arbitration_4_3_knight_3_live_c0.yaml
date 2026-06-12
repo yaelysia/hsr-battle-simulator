@@ -1,0 +1,904 @@
+settings:
+  default_crit_mode: noncrit
+  kill_energy_base: 10
+  kill_energy_affected_by_err: true
+  first_cycle_av: 150
+  later_cycle_av: 100
+global:
+  av: 34.7826086957
+  cycle: 0.0
+  skill_points: 6.0
+  skill_point_cap: 7.0
+  flags:
+    bondmate: seele
+    bondmate_target: seele
+    live_checkpoint: knight3_c0_four_techniques_v0_65
+    seele_technique_damage_observed: 81385
+    dan_heng_technique_stun_applied: true
+units:
+  seele:
+    side: ally
+    hp: 3082.0
+    max_hp: 3082.0
+    max_energy: 120.0
+    energy: 60.0
+    stat_base:
+      speed: 115.0
+      atk: 1222.0
+    stat_flat:
+      speed: 2.0
+      atk: 2032.0
+    stats:
+      energy_regeneration_rate: 1.0
+      quantum_dmg_bonus: 0.488
+      def: 1057.0
+      crit_rate: 0.762
+      crit_dmg: 2.087
+      effect_hit_rate: 0.077
+      effect_res: 0.082
+    remaining_av: 49.0
+    actions:
+      skill:
+        tags:
+        - attack
+        - skill_use
+        - skill_damage
+        - consumes_regular_action
+        - can_trigger_kill_energy
+        cost:
+          skill_points: -1
+        energy_gain:
+          base: 30
+          affected_by_err: true
+        effects_after_action_start:
+        - type: add_status
+          target: actor
+          status:
+            id: seele_skill_speed_buff
+            modifiers:
+              speed_pct: 0.25
+            duration:
+              type: actor_turns
+              value: 2
+              extra_turn_consumes: false
+        damage_packets:
+        - id: skill_1
+          element: quantum
+          scaling_stat: atk
+          multiplier: 0.1
+          can_crit: false
+          toughness_reduction: 10.0
+        id: skill
+    id: seele
+    tags: []
+    weaknesses: []
+    flags:
+      outside_panel_atk: 3254.0
+      bloodlust_pending: true
+      live_c0_observed_atk: 4571
+      live_c0_observed_crit_rate: 0.862
+      live_c0_observed_crit_dmg: 2.517
+      element: quantum
+    statuses:
+    - id: relic_stealthy_starshade_hermit
+      tags:
+      - buff
+      - relic
+      - live_checkpoint_evidence
+      modifiers:
+        crit_dmg_add: 0.15
+      cn_name: 自匿星芒的隐士
+    - id: generic_damage_up_12pct
+      tags:
+      - buff
+      - live_checkpoint_evidence
+      modifiers:
+        dmg_bonus_add: 0.12
+      cn_name: 伤害提高
+    - id: dan_heng_pt_shield_c0
+      tags:
+      - shield
+      - buff
+      - live_checkpoint_evidence
+      modifiers:
+        shield_expire_remove_amount: 1381.0
+      source_id: dan_heng_permansor_terrae
+      duration:
+        type: actor_turns
+        value: 3
+      cn_name: 护盾
+    - id: dan_heng_pt_night_fantasia
+      tags:
+      - buff
+      - live_checkpoint_evidence
+      modifiers:
+        atk_pct: 0.45
+      source_id: dan_heng_permansor_terrae
+      cn_name: 夜想曲
+    - id: dan_heng_pt_all_res_pen
+      tags:
+      - buff
+      - live_checkpoint_evidence
+      modifiers:
+        all_res_pen: 0.24
+      source_id: dan_heng_permansor_terrae
+      cn_name: 神启
+    - id: sparkle_mask
+      tags:
+      - buff
+      - light_cone
+      - live_checkpoint_evidence
+      modifiers:
+        crit_rate_add: 0.1
+        crit_dmg_add: 0.28
+      source_id: sparkle
+      duration:
+        type: source_turns
+        value: 3
+      cn_name: 假面
+    - id: tribbie_busy_busy
+      tags:
+      - followup_marker
+      - buff
+      - live_checkpoint_evidence
+      modifiers: {}
+      source_id: tribbie
+      cn_name: 好忙好忙的缇宝
+    - id: stage_bloodlust
+      tags:
+      - stage
+      - bloodlust
+      - live_checkpoint_evidence
+      modifiers: {}
+      cn_name: 血嗜
+    - id: lushaka_atk_from_tribbie
+      tags:
+      - buff
+      - relic
+      - live_checkpoint_evidence
+      modifiers:
+        atk_pct: 0.12
+      source_id: tribbie
+      cn_name: 沉陆海域露莎卡
+    - id: lushaka_atk_from_dan_heng
+      tags:
+      - buff
+      - relic
+      - live_checkpoint_evidence
+      modifiers:
+        atk_pct: 0.12
+      source_id: dan_heng_permansor_terrae
+      cn_name: 沉陆海域露莎卡
+    - id: seele_technique_amplified
+      tags:
+      - buff
+      - technique
+      - live_checkpoint_evidence
+      modifiers:
+        dmg_bonus_add: 0.88
+        res_pen:
+          quantum: 0.25
+      source_id: seele
+      duration:
+        type: source_turns
+        value: 3
+      cn_name: 增幅
+    - id: bondmate
+      tags:
+      - bondmate
+      - dan_heng_pt
+      - live_checkpoint_evidence
+      modifiers: {}
+      source_id: dan_heng_permansor_terrae
+      cn_name: 同袍
+    - id: dan_heng_pt_attack_convert_dynamic
+      tags:
+      - bondmate
+      - attack_convert
+      - derived_stat
+      - dan_heng_pt
+      - live_checkpoint_evidence
+      modifiers:
+        attack_convert_dynamic: true
+        derived_stat_add:
+        - id: AttackConvert
+          stat: atk
+          source: dan_heng_permansor_terrae
+          source_stat: atk
+          scale: 0.15
+          snapshot: false
+          bucket: atk_add
+          cn: 同袍固定攻击力加成：丹恒当前攻击力 × 15%，非快照。
+        property_hint_applications:
+        - property: AttackConvert
+          applied: true
+          reason: live_c0_runtime_dynamic_attack_convert
+          modifier_key: atk_add
+          refresh_policy: live_source_stat_non_snapshot
+          scale: 0.15
+        __replace_existing_modifiers: true
+      source_id: dan_heng_permansor_terrae
+    - id: seele_auto_skill_ready
+      tags:
+      - auto_skill
+      - live_checkpoint_evidence
+      modifiers: {}
+      source_id: seele
+      cn_name: 归刃
+    triggers: []
+    shield: 1381.0
+  sparkle:
+    side: ally
+    hp: 4270.0
+    max_hp: 4270.0
+    max_energy: 110.0
+    energy: 79.0
+    stats:
+      energy_regeneration_rate: 1.244
+      crit_dmg: 2.634
+      def: 1689.0
+      crit_rate: 0.05
+      break_effect: 0.187
+      effect_hit_rate: 0.082
+      effect_res: 0.259
+      wind_dmg_bonus: 0.1
+    remaining_av: 0.0
+    actions:
+      skill:
+        tags:
+        - skill_use
+        - support
+        - consumes_regular_action
+        cost:
+          skill_points: -1
+        energy_gain:
+          base: 30
+          affected_by_err: true
+        effects:
+        - type: add_status
+          target: target
+          status:
+            id: sparkle_skill_crit_dmg_buff
+            modifiers:
+              crit_dmg_add: 1.11816
+              live_c0_formula: 0.24 * 278.4% + 45%
+            duration:
+              type: target_turns
+              value: 1
+              extra_turn_consumes: false
+        - type: advance_action
+          target: target
+          percent: 0.5
+        id: skill
+        damage_packets: []
+      ultimate:
+        tags:
+        - ultimate
+        - ultimate_use
+        - support
+        cost:
+          energy: 110
+        energy_gain:
+          base: 5
+          affected_by_err: true
+        effects:
+        - type: modify_skill_points
+          amount: 6.0
+          overflow_record:
+            enabled: true
+            max_recorded_overflow: 10
+            reserve_key: sparkle_overflow_skill_points
+        - type: add_status
+          target: all_allies
+          status:
+            id: sparkle_cipher
+            modifiers:
+              atk_pct: 0.4
+            duration:
+              type: actor_turns
+              value: 3
+              extra_turn_consumes: false
+        - type: advance_action
+          target: sparkle
+          percent: 0.25
+        id: ultimate
+        damage_packets: []
+    id: sparkle
+    tags: []
+    weaknesses: []
+    flags:
+      outside_panel_atk: 1482.0
+      outside_panel_speed: 150.0
+      bloodlust_pending: false
+      bloodlust_already_resolved_for_current_turn: true
+      live_c0_observed_atk: 1955
+      live_c0_observed_speed: 165
+      live_c0_observed_crit_dmg: 2.784
+      element: quantum
+      live_c0_observed_crit_rate: 0.05
+    statuses:
+    - id: relic_stealthy_starshade_hermit
+      tags:
+      - buff
+      - relic
+      - live_checkpoint_evidence
+      modifiers:
+        crit_dmg_add: 0.15
+      cn_name: 自匿星芒的隐士
+    - id: generic_damage_up_12pct
+      tags:
+      - buff
+      - live_checkpoint_evidence
+      modifiers:
+        dmg_bonus_add: 0.12
+      cn_name: 伤害提高
+    - id: dan_heng_pt_shield_c0
+      tags:
+      - shield
+      - buff
+      - live_checkpoint_evidence
+      modifiers:
+        shield_expire_remove_amount: 1381.0
+      source_id: dan_heng_permansor_terrae
+      duration:
+        type: actor_turns
+        value: 3
+      cn_name: 护盾
+    - id: dan_heng_pt_night_fantasia
+      tags:
+      - buff
+      - live_checkpoint_evidence
+      modifiers:
+        atk_pct: 0.45
+      source_id: dan_heng_permansor_terrae
+      cn_name: 夜想曲
+    - id: dan_heng_pt_all_res_pen
+      tags:
+      - buff
+      - live_checkpoint_evidence
+      modifiers:
+        all_res_pen: 0.24
+      source_id: dan_heng_permansor_terrae
+      cn_name: 神启
+    - id: sparkle_mask
+      tags:
+      - buff
+      - light_cone
+      - live_checkpoint_evidence
+      modifiers: {}
+      source_id: sparkle
+      duration:
+        type: source_turns
+        value: 3
+      cn_name: 假面
+      self_display_only: true
+    - id: tribbie_busy_busy
+      tags:
+      - followup_marker
+      - buff
+      - live_checkpoint_evidence
+      modifiers: {}
+      source_id: tribbie
+      cn_name: 好忙好忙的缇宝
+    - id: stage_bloodlust
+      tags:
+      - stage
+      - bloodlust
+      - live_checkpoint_evidence
+      modifiers: {}
+      cn_name: 血嗜
+    - id: sparkle_e1_speed_buff
+      tags:
+      - buff
+      - live_checkpoint_evidence
+      modifiers:
+        speed_pct: 0.15
+      source_id: sparkle
+      duration:
+        type: source_turns
+        value: 2
+      cn_name: 悬置怀疑
+    - id: sparkle_flame_stacks
+      tags:
+      - counter
+      - live_checkpoint_evidence
+      modifiers: {}
+      source_id: sparkle
+      stacks: 3
+      max_stacks: 4
+      cn_name: 彩焰
+    triggers: []
+    shield: 881.0
+    stat_base:
+      atk: 1053.0
+      speed: 101.0
+    stat_flat:
+      atk: 429.0
+      speed: 49.0
+  tribbie:
+    side: ally
+    hp: 5236.0
+    max_hp: 5236.0
+    max_energy: 120.0
+    energy: 99.0
+    stats:
+      energy_regeneration_rate: 1.244
+      def: 1292.0
+      crit_rate: 0.575
+      crit_dmg: 2.097
+    remaining_av: 69.0
+    actions:
+      followup:
+        tags:
+        - attack
+        - followup_damage
+        target_policy: all_enemies
+        energy_gain:
+          base: 55
+          affected_by_err: true
+        damage_packets:
+        - id: followup_probe
+          element: quantum
+          scaling_stat: atk
+          multiplier: 0.01
+          can_crit: false
+        id: followup
+      ultimate:
+        tags:
+        - ultimate
+        - ultimate_use
+        - ultimate_damage
+        - attack
+        target_policy: all_enemies
+        cost:
+          energy: 120
+        energy_gain:
+          base: 5
+          affected_by_err: true
+        damage_packets:
+        - id: ult_probe
+          element: quantum
+          scaling_stat: atk
+          multiplier: 0.01
+          can_crit: false
+        effects:
+        - type: add_status
+          target: all_enemies
+          status:
+            id: tribbie_field_damage_taken
+            modifiers:
+              damage_taken_add: 0.3
+            duration:
+              type: permanent
+        - type: advance_action
+          target: all_allies
+          percent: 0.24
+        id: ultimate
+    id: tribbie
+    tags: []
+    weaknesses: []
+    flags:
+      outside_panel_atk: 1408.0
+      outside_panel_speed: 95.0
+      bloodlust_pending: true
+      live_c0_observed_atk: 1835
+      live_c0_observed_crit_rate: 0.875
+      live_c0_observed_crit_dmg: 2.527
+      element: quantum
+    statuses:
+    - id: relic_stealthy_starshade_hermit
+      tags:
+      - buff
+      - relic
+      - live_checkpoint_evidence
+      modifiers:
+        crit_dmg_add: 0.15
+      cn_name: 自匿星芒的隐士
+    - id: generic_damage_up_12pct
+      tags:
+      - buff
+      - live_checkpoint_evidence
+      modifiers:
+        dmg_bonus_add: 0.12
+      cn_name: 伤害提高
+    - id: dan_heng_pt_shield_c0
+      tags:
+      - shield
+      - buff
+      - live_checkpoint_evidence
+      modifiers:
+        shield_expire_remove_amount: 1381.0
+      source_id: dan_heng_permansor_terrae
+      duration:
+        type: actor_turns
+        value: 3
+      cn_name: 护盾
+    - id: dan_heng_pt_night_fantasia
+      tags:
+      - buff
+      - live_checkpoint_evidence
+      modifiers:
+        atk_pct: 0.45
+      source_id: dan_heng_permansor_terrae
+      cn_name: 夜想曲
+    - id: dan_heng_pt_all_res_pen
+      tags:
+      - buff
+      - live_checkpoint_evidence
+      modifiers:
+        all_res_pen: 0.24
+      source_id: dan_heng_permansor_terrae
+      cn_name: 神启
+    - id: sparkle_mask
+      tags:
+      - buff
+      - light_cone
+      - live_checkpoint_evidence
+      modifiers:
+        crit_rate_add: 0.1
+        crit_dmg_add: 0.28
+      source_id: sparkle
+      duration:
+        type: source_turns
+        value: 3
+      cn_name: 假面
+    - id: tribbie_busy_busy
+      tags:
+      - followup_marker
+      - buff
+      - live_checkpoint_evidence
+      modifiers: {}
+      source_id: tribbie
+      cn_name: 好忙好忙的缇宝
+    - id: stage_bloodlust
+      tags:
+      - stage
+      - bloodlust
+      - live_checkpoint_evidence
+      modifiers: {}
+      cn_name: 血嗜
+    - id: poet_crit_rate
+      tags:
+      - buff
+      - relic
+      - live_checkpoint_evidence
+      modifiers:
+        crit_rate_add: 0.2
+      source_id: tribbie
+      cn_name: 哀歌覆国的诗人
+    triggers: []
+    shield: 1381.0
+    stat_base:
+      atk: 947.0
+      speed: 96.0
+    stat_flat:
+      atk: 461.0
+      speed: -1.0
+  dan_heng_permansor_terrae:
+    side: ally
+    hp: 3460.0
+    max_hp: 3460.0
+    max_energy: 135.0
+    energy: 104.0
+    stats:
+      energy_regeneration_rate: 1.244
+      def: 2004.0
+      crit_rate: 0.05
+      crit_dmg: 0.558
+    remaining_av: 7.0
+    actions:
+      skill:
+        tags:
+        - skill_use
+        - support
+        - consumes_regular_action
+        cost:
+          skill_points: -1
+        energy_gain:
+          base: 30
+          affected_by_err: true
+        effects:
+        - type: modify_shield
+          target: all_allies
+          amount: 500.0
+        id: skill
+        damage_packets: []
+      ultimate:
+        tags:
+        - ultimate
+        - ultimate_use
+        - attack
+        target_policy: all_enemies
+        cost:
+          energy: 135
+        energy_gain:
+          base: 5
+          affected_by_err: true
+        damage_packets:
+        - id: ult_probe
+          element: physical
+          scaling_stat: atk
+          multiplier: 0.01
+          can_crit: false
+        effects:
+        - type: modify_shield
+          target: all_allies
+          amount: 500.0
+        id: ultimate
+    id: dan_heng
+    tags: []
+    weaknesses: []
+    flags:
+      outside_panel_atk: 2726.0
+      outside_panel_speed: 141.0
+      bloodlust_pending: true
+      live_c0_observed_atk: 3155
+      live_c0_observed_crit_rate: 0.15
+      live_c0_observed_crit_dmg: 0.988
+      element: physical
+    statuses:
+    - id: relic_stealthy_starshade_hermit
+      tags:
+      - buff
+      - relic
+      - live_checkpoint_evidence
+      modifiers:
+        crit_dmg_add: 0.15
+      cn_name: 自匿星芒的隐士
+    - id: generic_damage_up_12pct
+      tags:
+      - buff
+      - live_checkpoint_evidence
+      modifiers:
+        dmg_bonus_add: 0.12
+      cn_name: 伤害提高
+    - id: dan_heng_pt_shield_c0
+      tags:
+      - shield
+      - buff
+      - live_checkpoint_evidence
+      modifiers:
+        shield_expire_remove_amount: 1381.0
+      source_id: dan_heng_permansor_terrae
+      duration:
+        type: actor_turns
+        value: 3
+      cn_name: 护盾
+    - id: dan_heng_pt_night_fantasia
+      tags:
+      - buff
+      - live_checkpoint_evidence
+      modifiers:
+        atk_pct: 0.45
+      source_id: dan_heng_permansor_terrae
+      cn_name: 夜想曲
+    - id: dan_heng_pt_all_res_pen
+      tags:
+      - buff
+      - live_checkpoint_evidence
+      modifiers:
+        all_res_pen: 0.24
+      source_id: dan_heng_permansor_terrae
+      cn_name: 神启
+    - id: sparkle_mask
+      tags:
+      - buff
+      - light_cone
+      - live_checkpoint_evidence
+      modifiers:
+        crit_rate_add: 0.1
+        crit_dmg_add: 0.28
+      source_id: sparkle
+      duration:
+        type: source_turns
+        value: 3
+      cn_name: 假面
+    - id: tribbie_busy_busy
+      tags:
+      - followup_marker
+      - buff
+      - live_checkpoint_evidence
+      modifiers: {}
+      source_id: tribbie
+      cn_name: 好忙好忙的缇宝
+    - id: stage_bloodlust
+      tags:
+      - stage
+      - bloodlust
+      - live_checkpoint_evidence
+      modifiers: {}
+      cn_name: 血嗜
+    triggers: []
+    shield: 1381.0
+    stat_base:
+      atk: 952.0
+      speed: 97.0
+    stat_flat:
+      atk: 1774.0
+      speed: 44.0
+  blaze:
+    side: enemy
+    hp: 4504136.0
+    max_hp: 4504136.0
+    stats:
+      speed: 158.4
+      defense: 0.0
+    remaining_av: 27.0
+    id: blaze
+    tags: []
+    weaknesses: []
+    flags: {}
+    statuses:
+    - id: dan_heng_technique_stun
+      tags:
+      - control
+      - stun
+      - action_block
+      - technique
+      - live_checkpoint_evidence
+      modifiers: {}
+      source_id: dan_heng_permansor_terrae
+      cn_name: 丹恒腾荒秘技眩晕
+    triggers: []
+  titan:
+    side: enemy
+    hp: 5404963.0
+    max_hp: 5404963.0
+    stats:
+      speed: 174.24
+      defense: 0.0
+    remaining_av: 22.0
+    id: titan
+    tags: []
+    weaknesses: []
+    flags: {}
+    statuses:
+    - id: dan_heng_technique_stun
+      tags:
+      - control
+      - stun
+      - action_block
+      - technique
+      - live_checkpoint_evidence
+      modifiers: {}
+      source_id: dan_heng_permansor_terrae
+      cn_name: 丹恒腾荒秘技眩晕
+    triggers: []
+  souldragon:
+    side: ally
+    hp: 1.0
+    max_hp: 1.0
+    speed: 165.0
+    remaining_av: 264.0
+    level: 80
+    tags:
+    - summoned
+    - attached_unit
+    - souldragon
+    flags:
+      summoned: true
+      attached_unit: true
+      souldragon: true
+      owner_id: dan_heng_permansor_terrae
+      attached_to: seele
+      remove_when_owner_defeated: true
+      remove_when_attached_target_defeated: true
+    statuses: []
+    actions: {}
+initial_effects: []
+route:
+- actor: sparkle
+  action: skill
+  timing: regular_turn
+  targets:
+  - seele
+- actor: sparkle
+  action: ultimate
+  timing: ultimate
+  targets: []
+- actor: tribbie
+  action: followup
+  timing: interrupt
+- actor: tribbie
+  action: ultimate
+  timing: ultimate
+- actor: dan_heng_permansor_terrae
+  action: skill
+  timing: regular_turn
+  targets:
+  - seele
+- actor: dan_heng_permansor_terrae
+  action: ultimate
+  timing: ultimate
+- actor: tribbie
+  action: followup
+  timing: interrupt
+- actor: seele
+  action: skill
+  timing: regular_turn
+  targets:
+  - titan
+kind: simulator_case
+schema_version: '3.0'
+compiled_from:
+  model_pack: hsr_model_pack_v3_0
+  battle_ref: battles/arbitration_4_3_knight_3_full_combat.yaml
+  team_ref: teams/seele_sparkle_tribbie_dan_heng_pt.yaml
+  stage_ref: stages/arbitration_4_3_knight_3.yaml
+  note: Opening checkpoint case retained for regression; full compiler will replace
+    hand-authored reductions incrementally.
+triggers:
+- id: stage_bloodlust_future_turn_start
+  owner: stage
+  timing: owner_turn_start
+  condition:
+    all:
+    - left: unit:actor:side
+      op: ==
+      right: ally
+    - left: unit:actor:flags.bloodlust_pending
+      op: ==
+      right: true
+  effects:
+  - type: damage_unit
+    target: actor
+    amount: 500
+    ignore_shield: false
+    id: stage_bloodlust
+  - type: set_unit_flag
+    target: actor
+    key: bloodlust_pending
+    value: false
+- id: stage_bloodlust_rearm_after_ally_regular_turn
+  owner: stage
+  timing: regular_turn_end
+  condition:
+    left: unit:actor:side
+    op: ==
+    right: ally
+  effects:
+  - type: set_unit_flag
+    target: actor
+    key: bloodlust_pending
+    value: true
+resolve_initial_queues: false
+live_checkpoint_v0_65:
+  source: user screenshots during real-combat calibration
+  description: 'C0: four techniques entered Knight III; Dan Heng technique stun applied;
+    Seele technique damage 81385; Dan Heng technique auto-skill/bondmate puts Tongpao
+    on Seele; Sparkle is current actor after her turn-start Bloodlust consumed 500
+    shield.'
+  observed:
+    skill_points: 6
+    seele:
+      hp: 3082/3082
+      energy: 60/120
+      shield: 1381
+      atk: 1222+3349=4571
+      crit_rate: 86.2%
+      crit_dmg: 251.7%
+      speed: 115+2=117
+    sparkle:
+      hp: 4270/4270
+      energy: 79/110
+      shield: 881
+      atk: 1053+902=1955
+      crit_dmg: 278.4%
+      speed: 101+64=165
+    tribbie:
+      hp: 5236/5236
+      energy: 99/120
+      shield: 1381
+      atk: 947+888=1835
+      crit_rate: 87.5%
+      crit_dmg: 252.7%
+      speed: 96-1=95
+    dan_heng_permansor_terrae:
+      hp: 3460/3460
+      energy: 104/135
+      shield: 1381
+      atk: 952+2203=3155
+      crit_rate: 15.0%
+      crit_dmg: 98.8%
+      speed: 97+44=141
+id: arbitration_4_3_knight_3_live_c0

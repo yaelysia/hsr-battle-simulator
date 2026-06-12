@@ -1,0 +1,6183 @@
+{
+  "state": {
+    "global": {
+      "av": 65.04065,
+      "cycle": 0,
+      "skill_points": 2,
+      "skill_point_cap": 5,
+      "wave_index": 0,
+      "flags": {
+        "_turn_token": 1,
+        "_active_turn_token": 1,
+        "_active_turn_actor_id": "seele",
+        "_active_turn_kind": "regular"
+      }
+    },
+    "units": {
+      "seele": {
+        "id": "seele",
+        "name": "Seele",
+        "side": "ally",
+        "hp": 3021.0,
+        "max_hp": 3021.0,
+        "shield": 0.0,
+        "hp_bars_total": 1,
+        "hp_bars_remaining": 1,
+        "hp_model_type": "normal_hp",
+        "hp_carry_over_damage": null,
+        "hp_model_bars": [],
+        "hp_percent": 1.0,
+        "energy": 119.7,
+        "max_energy": 120.0,
+        "speed": 184.5,
+        "base_speed_field": 123.0,
+        "remaining_av": 54.200542,
+        "toughness": null,
+        "max_toughness": null,
+        "is_broken": false,
+        "alive": true,
+        "weaknesses": [],
+        "tags": [
+          "ally",
+          "on_timeline"
+        ],
+        "stats": {
+          "atk": 2788.0,
+          "speed": 123.0,
+          "crit_rate": 0.711,
+          "crit_dmg": 2.249,
+          "quantum_dmg_bonus": 0.488,
+          "energy_regeneration_rate": 1.194
+        },
+        "stat_base": {},
+        "stat_pct": {},
+        "stat_flat": {},
+        "res": {},
+        "statuses": [
+          {
+            "id": "seele_buffed_state",
+            "tags": [
+              "buff",
+              "dmg_bonus"
+            ],
+            "modifiers": {
+              "dmg_bonus_add": 0.8,
+              "_sim_aliases_normalized": true
+            },
+            "stacks": 1,
+            "max_stacks": 1,
+            "duration_type": null,
+            "duration_value": null,
+            "source_id": "seele",
+            "duration_extra_turn_consumes": false,
+            "refresh_duration": true
+          },
+          {
+            "id": "seele_skill_spd_buff",
+            "tags": [
+              "buff",
+              "speed"
+            ],
+            "modifiers": {
+              "speed_pct": 0.25,
+              "_sim_aliases_normalized": true,
+              "_created_turn_token": 1,
+              "_created_turn_actor_id": "seele",
+              "_created_turn_kind": "regular"
+            },
+            "stacks": 2,
+            "max_stacks": 2,
+            "duration_type": null,
+            "duration_value": null,
+            "source_id": "seele",
+            "duration_extra_turn_consumes": false,
+            "refresh_duration": true
+          }
+        ],
+        "status_defs": [],
+        "flags": {}
+      },
+      "e1": {
+        "id": "e1",
+        "name": "Dummy 1",
+        "side": "enemy",
+        "hp": 0.0,
+        "max_hp": 100000.0,
+        "shield": 0.0,
+        "hp_bars_total": 1,
+        "hp_bars_remaining": 1,
+        "hp_model_type": "normal_hp",
+        "hp_carry_over_damage": null,
+        "hp_model_bars": [],
+        "hp_percent": 0.0,
+        "energy": 0.0,
+        "max_energy": 0.0,
+        "speed": 100.0,
+        "base_speed_field": 100.0,
+        "remaining_av": 100.0,
+        "toughness": null,
+        "max_toughness": null,
+        "is_broken": false,
+        "alive": false,
+        "weaknesses": [
+          "quantum"
+        ],
+        "tags": [
+          "enemy"
+        ],
+        "stats": {
+          "defense": 0.0
+        },
+        "stat_base": {},
+        "stat_pct": {},
+        "stat_flat": {},
+        "res": {
+          "quantum": 0.0
+        },
+        "statuses": [],
+        "status_defs": [],
+        "flags": {}
+      },
+      "e2": {
+        "id": "e2",
+        "name": "Dummy 2",
+        "side": "enemy",
+        "hp": 0.0,
+        "max_hp": 100000.0,
+        "shield": 0.0,
+        "hp_bars_total": 1,
+        "hp_bars_remaining": 1,
+        "hp_model_type": "normal_hp",
+        "hp_carry_over_damage": null,
+        "hp_model_bars": [],
+        "hp_percent": 0.0,
+        "energy": 0.0,
+        "max_energy": 0.0,
+        "speed": 100.0,
+        "base_speed_field": 100.0,
+        "remaining_av": 34.95935,
+        "toughness": null,
+        "max_toughness": null,
+        "is_broken": false,
+        "alive": false,
+        "weaknesses": [
+          "quantum"
+        ],
+        "tags": [
+          "enemy"
+        ],
+        "stats": {
+          "defense": 0.0
+        },
+        "stat_base": {},
+        "stat_pct": {},
+        "stat_flat": {},
+        "res": {
+          "quantum": 0.0
+        },
+        "statuses": [],
+        "status_defs": [],
+        "flags": {}
+      },
+      "e3": {
+        "id": "e3",
+        "name": "Dummy 3",
+        "side": "enemy",
+        "hp": 100000.0,
+        "max_hp": 100000.0,
+        "shield": 0.0,
+        "hp_bars_total": 1,
+        "hp_bars_remaining": 1,
+        "hp_model_type": "normal_hp",
+        "hp_carry_over_damage": null,
+        "hp_model_bars": [],
+        "hp_percent": 1.0,
+        "energy": 0.0,
+        "max_energy": 0.0,
+        "speed": 100.0,
+        "base_speed_field": 100.0,
+        "remaining_av": 34.95935,
+        "toughness": null,
+        "max_toughness": null,
+        "is_broken": false,
+        "alive": true,
+        "weaknesses": [
+          "quantum"
+        ],
+        "tags": [
+          "enemy"
+        ],
+        "stats": {
+          "defense": 0.0
+        },
+        "stat_base": {},
+        "stat_pct": {},
+        "stat_flat": {},
+        "res": {
+          "quantum": 0.0
+        },
+        "statuses": [],
+        "status_defs": [],
+        "flags": {}
+      },
+      "e4": {
+        "id": "e4",
+        "name": "Dummy 4",
+        "side": "enemy",
+        "hp": 100000.0,
+        "max_hp": 100000.0,
+        "shield": 0.0,
+        "hp_bars_total": 1,
+        "hp_bars_remaining": 1,
+        "hp_model_type": "normal_hp",
+        "hp_carry_over_damage": null,
+        "hp_model_bars": [],
+        "hp_percent": 1.0,
+        "energy": 0.0,
+        "max_energy": 0.0,
+        "speed": 100.0,
+        "base_speed_field": 100.0,
+        "remaining_av": 34.95935,
+        "toughness": null,
+        "max_toughness": null,
+        "is_broken": false,
+        "alive": true,
+        "weaknesses": [
+          "quantum"
+        ],
+        "tags": [
+          "enemy"
+        ],
+        "stats": {
+          "defense": 0.0
+        },
+        "stat_base": {},
+        "stat_pct": {},
+        "stat_flat": {},
+        "res": {
+          "quantum": 0.0
+        },
+        "statuses": [],
+        "status_defs": [],
+        "flags": {}
+      },
+      "e5": {
+        "id": "e5",
+        "name": "Dummy 5",
+        "side": "enemy",
+        "hp": 100000.0,
+        "max_hp": 100000.0,
+        "shield": 0.0,
+        "hp_bars_total": 1,
+        "hp_bars_remaining": 1,
+        "hp_model_type": "normal_hp",
+        "hp_carry_over_damage": null,
+        "hp_model_bars": [],
+        "hp_percent": 1.0,
+        "energy": 0.0,
+        "max_energy": 0.0,
+        "speed": 100.0,
+        "base_speed_field": 100.0,
+        "remaining_av": 34.95935,
+        "toughness": null,
+        "max_toughness": null,
+        "is_broken": false,
+        "alive": true,
+        "weaknesses": [
+          "quantum"
+        ],
+        "tags": [
+          "enemy"
+        ],
+        "stats": {
+          "defense": 0.0
+        },
+        "stat_base": {},
+        "stat_pct": {},
+        "stat_flat": {},
+        "res": {
+          "quantum": 0.0
+        },
+        "statuses": [],
+        "status_defs": [],
+        "flags": {}
+      }
+    },
+    "trigger_usage": {
+      "seele_novaflare_auto_skill_trigger:owner_turn:seele": 1
+    },
+    "queued_actions": {
+      "ultimate_queue": [],
+      "immediate_queue": [],
+      "interrupt_queue": []
+    }
+  },
+  "scene": {
+    "global": {
+      "av": 65.04065,
+      "cycle": 0,
+      "skill_points": 2,
+      "skill_point_cap": 5,
+      "_sp": 2,
+      "_sp_cap": 5,
+      "wave_index": 0,
+      "flags": {
+        "_turn_token": 1,
+        "_active_turn_token": 1,
+        "_active_turn_actor_id": "seele",
+        "_active_turn_kind": "regular"
+      }
+    },
+    "action_axis": [
+      {
+        "id": "e3",
+        "name": "Dummy 3",
+        "side": "enemy",
+        "alive": true,
+        "speed": 100.0,
+        "action_interval": 100.0,
+        "remaining_av": 34.95935,
+        "absolute_av": 100.0,
+        "tags": [
+          "enemy"
+        ]
+      },
+      {
+        "id": "e4",
+        "name": "Dummy 4",
+        "side": "enemy",
+        "alive": true,
+        "speed": 100.0,
+        "action_interval": 100.0,
+        "remaining_av": 34.95935,
+        "absolute_av": 100.0,
+        "tags": [
+          "enemy"
+        ]
+      },
+      {
+        "id": "e5",
+        "name": "Dummy 5",
+        "side": "enemy",
+        "alive": true,
+        "speed": 100.0,
+        "action_interval": 100.0,
+        "remaining_av": 34.95935,
+        "absolute_av": 100.0,
+        "tags": [
+          "enemy"
+        ]
+      },
+      {
+        "id": "seele",
+        "name": "Seele",
+        "side": "ally",
+        "alive": true,
+        "speed": 184.5,
+        "action_interval": 54.200542,
+        "remaining_av": 54.200542,
+        "absolute_av": 119.241192,
+        "tags": [
+          "ally",
+          "on_timeline"
+        ]
+      },
+      {
+        "id": "e2",
+        "name": "Dummy 2",
+        "side": "enemy",
+        "alive": false,
+        "speed": 100.0,
+        "action_interval": null,
+        "remaining_av": 34.95935,
+        "absolute_av": 100.0,
+        "tags": [
+          "enemy"
+        ]
+      },
+      {
+        "id": "e1",
+        "name": "Dummy 1",
+        "side": "enemy",
+        "alive": false,
+        "speed": 100.0,
+        "action_interval": null,
+        "remaining_av": 100.0,
+        "absolute_av": 165.04065,
+        "tags": [
+          "enemy"
+        ]
+      }
+    ],
+    "allies": [
+      {
+        "id": "seele",
+        "name": "Seele",
+        "side": "ally",
+        "alive": true,
+        "tags": [
+          "ally",
+          "on_timeline"
+        ],
+        "resources": {
+          "hp": 3021.0,
+          "max_hp": 3021.0,
+          "hp_percent": 1.0,
+          "shield": 0.0,
+          "energy": 119.7,
+          "max_energy": 120.0,
+          "toughness": null,
+          "max_toughness": null,
+          "is_broken": false,
+          "hp_bars_total": 1,
+          "hp_bars_remaining": 1,
+          "hp_model_type": "normal_hp",
+          "hp_carry_over_damage": null
+        },
+        "action_axis": {
+          "remaining_av": 54.200542,
+          "absolute_av": 119.241192,
+          "speed": 184.5,
+          "action_interval": 54.200542
+        },
+        "panel": {
+          "hp": 3021.0,
+          "max_hp": 3021.0,
+          "atk": 2788.0,
+          "speed": 184.5,
+          "crit_rate": 0.711,
+          "crit_dmg": 2.249,
+          "energy_regeneration_rate": 1.194,
+          "quantum_dmg_bonus": 0.488
+        },
+        "stat_parts": {
+          "base": {},
+          "pct": {},
+          "flat": {},
+          "legacy_stats": {
+            "atk": 2788.0,
+            "speed": 123.0,
+            "crit_rate": 0.711,
+            "crit_dmg": 2.249,
+            "quantum_dmg_bonus": 0.488,
+            "energy_regeneration_rate": 1.194
+          }
+        },
+        "resistance": {},
+        "weaknesses": [],
+        "statuses": [
+          {
+            "id": "seele_buffed_state",
+            "source_id": "seele",
+            "stacks": 1,
+            "max_stacks": 1,
+            "duration": {
+              "type": null,
+              "value": null,
+              "extra_turn_consumes": false,
+              "refresh_duration": true
+            },
+            "tags": [
+              "buff",
+              "dmg_bonus"
+            ],
+            "modifier_keys": [
+              "_sim_aliases_normalized",
+              "dmg_bonus_add"
+            ],
+            "modifiers": {
+              "dmg_bonus_add": 0.8,
+              "_sim_aliases_normalized": true
+            }
+          },
+          {
+            "id": "seele_skill_spd_buff",
+            "source_id": "seele",
+            "stacks": 2,
+            "max_stacks": 2,
+            "duration": {
+              "type": null,
+              "value": null,
+              "extra_turn_consumes": false,
+              "refresh_duration": true
+            },
+            "tags": [
+              "buff",
+              "speed"
+            ],
+            "modifier_keys": [
+              "_created_turn_actor_id",
+              "_created_turn_kind",
+              "_created_turn_token",
+              "_sim_aliases_normalized",
+              "speed_pct"
+            ],
+            "modifiers": {
+              "speed_pct": 0.25,
+              "_sim_aliases_normalized": true,
+              "_created_turn_token": 1,
+              "_created_turn_actor_id": "seele",
+              "_created_turn_kind": "regular"
+            }
+          }
+        ],
+        "special_mechanics": {},
+        "flags": {}
+      }
+    ],
+    "summons": [],
+    "enemies": [
+      {
+        "id": "e1",
+        "name": "Dummy 1",
+        "side": "enemy",
+        "alive": false,
+        "tags": [
+          "enemy"
+        ],
+        "resources": {
+          "hp": 0.0,
+          "max_hp": 100000.0,
+          "hp_percent": 0.0,
+          "shield": 0.0,
+          "energy": 0.0,
+          "max_energy": 0.0,
+          "toughness": null,
+          "max_toughness": null,
+          "is_broken": false,
+          "hp_bars_total": 1,
+          "hp_bars_remaining": 1,
+          "hp_model_type": "normal_hp",
+          "hp_carry_over_damage": null
+        },
+        "action_axis": {
+          "remaining_av": 100.0,
+          "absolute_av": 165.04065,
+          "speed": 100.0,
+          "action_interval": null
+        },
+        "panel": {
+          "max_hp": 100000.0
+        },
+        "stat_parts": {
+          "base": {},
+          "pct": {},
+          "flat": {},
+          "legacy_stats": {
+            "defense": 0.0
+          }
+        },
+        "resistance": {
+          "quantum": 0.0
+        },
+        "weaknesses": [
+          "quantum"
+        ],
+        "statuses": [],
+        "special_mechanics": {
+          "inferred_next_action": null
+        },
+        "flags": {}
+      },
+      {
+        "id": "e2",
+        "name": "Dummy 2",
+        "side": "enemy",
+        "alive": false,
+        "tags": [
+          "enemy"
+        ],
+        "resources": {
+          "hp": 0.0,
+          "max_hp": 100000.0,
+          "hp_percent": 0.0,
+          "shield": 0.0,
+          "energy": 0.0,
+          "max_energy": 0.0,
+          "toughness": null,
+          "max_toughness": null,
+          "is_broken": false,
+          "hp_bars_total": 1,
+          "hp_bars_remaining": 1,
+          "hp_model_type": "normal_hp",
+          "hp_carry_over_damage": null
+        },
+        "action_axis": {
+          "remaining_av": 34.95935,
+          "absolute_av": 100.0,
+          "speed": 100.0,
+          "action_interval": null
+        },
+        "panel": {
+          "max_hp": 100000.0
+        },
+        "stat_parts": {
+          "base": {},
+          "pct": {},
+          "flat": {},
+          "legacy_stats": {
+            "defense": 0.0
+          }
+        },
+        "resistance": {
+          "quantum": 0.0
+        },
+        "weaknesses": [
+          "quantum"
+        ],
+        "statuses": [],
+        "special_mechanics": {
+          "inferred_next_action": null
+        },
+        "flags": {}
+      },
+      {
+        "id": "e3",
+        "name": "Dummy 3",
+        "side": "enemy",
+        "alive": true,
+        "tags": [
+          "enemy"
+        ],
+        "resources": {
+          "hp": 100000.0,
+          "max_hp": 100000.0,
+          "hp_percent": 1.0,
+          "shield": 0.0,
+          "energy": 0.0,
+          "max_energy": 0.0,
+          "toughness": null,
+          "max_toughness": null,
+          "is_broken": false,
+          "hp_bars_total": 1,
+          "hp_bars_remaining": 1,
+          "hp_model_type": "normal_hp",
+          "hp_carry_over_damage": null
+        },
+        "action_axis": {
+          "remaining_av": 34.95935,
+          "absolute_av": 100.0,
+          "speed": 100.0,
+          "action_interval": 100.0
+        },
+        "panel": {
+          "hp": 100000.0,
+          "max_hp": 100000.0
+        },
+        "stat_parts": {
+          "base": {},
+          "pct": {},
+          "flat": {},
+          "legacy_stats": {
+            "defense": 0.0
+          }
+        },
+        "resistance": {
+          "quantum": 0.0
+        },
+        "weaknesses": [
+          "quantum"
+        ],
+        "statuses": [],
+        "special_mechanics": {
+          "inferred_next_action": null
+        },
+        "flags": {}
+      },
+      {
+        "id": "e4",
+        "name": "Dummy 4",
+        "side": "enemy",
+        "alive": true,
+        "tags": [
+          "enemy"
+        ],
+        "resources": {
+          "hp": 100000.0,
+          "max_hp": 100000.0,
+          "hp_percent": 1.0,
+          "shield": 0.0,
+          "energy": 0.0,
+          "max_energy": 0.0,
+          "toughness": null,
+          "max_toughness": null,
+          "is_broken": false,
+          "hp_bars_total": 1,
+          "hp_bars_remaining": 1,
+          "hp_model_type": "normal_hp",
+          "hp_carry_over_damage": null
+        },
+        "action_axis": {
+          "remaining_av": 34.95935,
+          "absolute_av": 100.0,
+          "speed": 100.0,
+          "action_interval": 100.0
+        },
+        "panel": {
+          "hp": 100000.0,
+          "max_hp": 100000.0
+        },
+        "stat_parts": {
+          "base": {},
+          "pct": {},
+          "flat": {},
+          "legacy_stats": {
+            "defense": 0.0
+          }
+        },
+        "resistance": {
+          "quantum": 0.0
+        },
+        "weaknesses": [
+          "quantum"
+        ],
+        "statuses": [],
+        "special_mechanics": {
+          "inferred_next_action": null
+        },
+        "flags": {}
+      },
+      {
+        "id": "e5",
+        "name": "Dummy 5",
+        "side": "enemy",
+        "alive": true,
+        "tags": [
+          "enemy"
+        ],
+        "resources": {
+          "hp": 100000.0,
+          "max_hp": 100000.0,
+          "hp_percent": 1.0,
+          "shield": 0.0,
+          "energy": 0.0,
+          "max_energy": 0.0,
+          "toughness": null,
+          "max_toughness": null,
+          "is_broken": false,
+          "hp_bars_total": 1,
+          "hp_bars_remaining": 1,
+          "hp_model_type": "normal_hp",
+          "hp_carry_over_damage": null
+        },
+        "action_axis": {
+          "remaining_av": 34.95935,
+          "absolute_av": 100.0,
+          "speed": 100.0,
+          "action_interval": 100.0
+        },
+        "panel": {
+          "hp": 100000.0,
+          "max_hp": 100000.0
+        },
+        "stat_parts": {
+          "base": {},
+          "pct": {},
+          "flat": {},
+          "legacy_stats": {
+            "defense": 0.0
+          }
+        },
+        "resistance": {
+          "quantum": 0.0
+        },
+        "weaknesses": [
+          "quantum"
+        ],
+        "statuses": [],
+        "special_mechanics": {
+          "inferred_next_action": null
+        },
+        "flags": {}
+      }
+    ],
+    "others": [],
+    "queues": {
+      "ultimate_queue": [],
+      "immediate_queue": [],
+      "interrupt_queue": []
+    },
+    "trigger_usage": {
+      "seele_novaflare_auto_skill_trigger:owner_turn:seele": 1
+    }
+  },
+  "log": [
+    {
+      "av": 0.0,
+      "event_type": "route",
+      "message": "Route step 1: {'actor': 'seele', 'action': 'technique_entry', 'timing': 'manual', 'targets': ['e1'], 'events': {'__crit_mode__': 'crit'}}",
+      "data": {}
+    },
+    {
+      "av": 0.0,
+      "event_type": "action_start",
+      "message": "seele uses technique_entry on ['e1']",
+      "data": {
+        "tags": [
+          "attack",
+          "can_trigger_novaflare_auto_skill",
+          "technique_damage",
+          "technique_use"
+        ],
+        "turn_kind": null
+      }
+    },
+    {
+      "av": 0.0,
+      "event_type": "effect",
+      "message": "Add status seele_buffed_state to seele",
+      "data": {
+        "status": {
+          "id": "seele_buffed_state",
+          "tags": [
+            "buff",
+            "dmg_bonus"
+          ],
+          "modifiers": {
+            "dmg_bonus_add": 0.8,
+            "_sim_aliases_normalized": true
+          },
+          "stacks": 1,
+          "max_stacks": 1,
+          "duration_type": null,
+          "duration_value": null,
+          "source_id": "seele",
+          "duration_extra_turn_consumes": false,
+          "refresh_duration": true
+        },
+        "was_present": false,
+        "old_stacks": 0,
+        "new_stacks": 1
+      }
+    },
+    {
+      "av": 0.0,
+      "event_type": "damage",
+      "message": "seele deals 74610.681 quantum damage to e1",
+      "data": {
+        "old_hp": 100000.0,
+        "new_hp": 25389.31939839998,
+        "old_shield": 0.0,
+        "new_shield": 0.0,
+        "actor_id": "seele",
+        "target_id": "e1",
+        "packet_id": "technique_hit",
+        "element": "quantum",
+        "base_damage": 10036.800000000001,
+        "crit": {
+          "is_crit": true,
+          "multiplier": 3.249,
+          "source": "forced",
+          "crit_rate": 0.711,
+          "crit_dmg": 2.249
+        },
+        "multipliers": {
+          "dmg_bonus": 2.2880000000000003,
+          "defense": 1.0,
+          "res": 1.0,
+          "damage_taken": 1.0,
+          "universal_reduction": 1.0,
+          "toughness_state": 1.0,
+          "other": 1.0
+        },
+        "formula_ledger": {
+          "formula_type": "direct_damage",
+          "actor_id": "seele",
+          "target_id": "e1",
+          "action_id": "technique_entry",
+          "packet_id": "technique_hit",
+          "tags": [
+            "attack",
+            "can_trigger_novaflare_auto_skill",
+            "technique_damage",
+            "technique_use"
+          ],
+          "scaling": {
+            "stat": "atk",
+            "scaling_value": 2788.0,
+            "multiplier": 3.6,
+            "flat_damage": 0.0,
+            "base_damage": 10036.8
+          },
+          "crit": {
+            "is_crit": true,
+            "multiplier": 3.249,
+            "source": "forced",
+            "crit_rate": 0.711,
+            "crit_dmg": 2.249
+          },
+          "buckets": {
+            "dmg_bonus": {
+              "multiplier": 2.288,
+              "terms": [
+                {
+                  "source_type": "actor.stats",
+                  "source_id": "seele",
+                  "key": "quantum_dmg_bonus",
+                  "value": 0.488,
+                  "stacks": 1,
+                  "applied_value": 0.488
+                },
+                {
+                  "source_type": "actor.status",
+                  "source_id": "seele_buffed_state",
+                  "key": "dmg_bonus_add",
+                  "value": 0.8,
+                  "stacks": 1,
+                  "applied_value": 0.8,
+                  "note": "source=seele"
+                }
+              ]
+            },
+            "defense": {
+              "multiplier": 1.0,
+              "raw_target_def": 0.0,
+              "effective_target_def": 0.0,
+              "ignore_defense_multiplier": false,
+              "terms": []
+            },
+            "res": {
+              "multiplier": 1.0,
+              "base_target_res": 0.0,
+              "target_res_after_delta": 0.0,
+              "res_pen_total": 0,
+              "terms": []
+            },
+            "damage_taken": {
+              "multiplier": 1.0,
+              "terms": []
+            },
+            "universal_reduction": {
+              "multiplier": 1.0,
+              "terms": []
+            },
+            "toughness_state": {
+              "multiplier": 1.0,
+              "target_toughness_before_packet": null,
+              "target_is_broken_before_packet": false,
+              "ignore_toughness_state_multiplier": false
+            },
+            "other": {
+              "multiplier": 1.0,
+              "source": "packet.other_multiplier"
+            }
+          },
+          "formula": "base * crit * dmg_bonus * defense * res * damage_taken * universal_reduction * toughness_state * other",
+          "final_damage": 74610.6806016
+        },
+        "damage": 74610.68060160002,
+        "toughness_reduction": 0.0,
+        "target_defeated": false,
+        "hp_bar_depleted": false,
+        "bars_depleted": 0,
+        "hp_bars_remaining": 1,
+        "depleted_bar_events": [],
+        "phase_damage_locked_until_action_end": false
+      }
+    },
+    {
+      "av": 0.0,
+      "event_type": "trigger",
+      "message": "Trigger seele_novaflare_auto_skill_trigger fired",
+      "data": {
+        "timing": "after_damage"
+      }
+    },
+    {
+      "av": 0.0,
+      "event_type": "effect",
+      "message": "Queued action seele.novaflare_auto_skill in immediate_queue",
+      "data": {
+        "actor": "seele",
+        "action": "novaflare_auto_skill",
+        "targets": null,
+        "defer_target_policy": "original_target_or_lowest_hp_percent_enemy",
+        "context_target_id": "e1",
+        "events": {},
+        "turn_kind": null,
+        "extra_turn_type": null,
+        "queued_wave_index": 0,
+        "carry_across_wave": true,
+        "queued_actor_phase": null,
+        "carry_across_phase": false
+      }
+    },
+    {
+      "av": 0.0,
+      "event_type": "action_end",
+      "message": "seele finished technique_entry",
+      "data": {}
+    },
+    {
+      "av": 0.0,
+      "event_type": "queue",
+      "message": "Resolve queued action from immediate_queue: seele.novaflare_auto_skill",
+      "data": {}
+    },
+    {
+      "av": 0.0,
+      "event_type": "action_start",
+      "message": "seele uses novaflare_auto_skill on ['e1']",
+      "data": {
+        "tags": [
+          "attack",
+          "auto_skill_use",
+          "can_trigger_kill_energy",
+          "can_trigger_resurgence",
+          "does_not_consume_skill_point",
+          "does_not_grant_base_energy",
+          "skill_damage",
+          "triggers_skill_spd_buff"
+        ],
+        "turn_kind": null
+      }
+    },
+    {
+      "av": 0.0,
+      "event_type": "damage",
+      "message": "seele deals 74610.681 quantum damage to e1",
+      "data": {
+        "old_hp": 25389.31939839998,
+        "new_hp": 0.0,
+        "old_shield": 0.0,
+        "new_shield": 0.0,
+        "actor_id": "seele",
+        "target_id": "e1",
+        "packet_id": "auto_skill_hit",
+        "element": "quantum",
+        "base_damage": 10036.800000000001,
+        "crit": {
+          "event_id": "seele.novaflare_auto_skill.auto_skill_hit.crit",
+          "is_crit": true,
+          "multiplier": 3.249,
+          "source": "crit",
+          "crit_rate": 0.711,
+          "crit_dmg": 2.249
+        },
+        "multipliers": {
+          "dmg_bonus": 2.2880000000000003,
+          "defense": 1.0,
+          "res": 1.0,
+          "damage_taken": 1.0,
+          "universal_reduction": 1.0,
+          "toughness_state": 1.0,
+          "other": 1.0
+        },
+        "formula_ledger": {
+          "formula_type": "direct_damage",
+          "actor_id": "seele",
+          "target_id": "e1",
+          "action_id": "novaflare_auto_skill",
+          "packet_id": "auto_skill_hit",
+          "tags": [
+            "attack",
+            "auto_skill_use",
+            "can_trigger_kill_energy",
+            "can_trigger_resurgence",
+            "does_not_consume_skill_point",
+            "does_not_grant_base_energy",
+            "skill_damage",
+            "triggers_skill_spd_buff"
+          ],
+          "scaling": {
+            "stat": "atk",
+            "scaling_value": 2788.0,
+            "multiplier": 3.6,
+            "flat_damage": 0.0,
+            "base_damage": 10036.8
+          },
+          "crit": {
+            "event_id": "seele.novaflare_auto_skill.auto_skill_hit.crit",
+            "is_crit": true,
+            "multiplier": 3.249,
+            "source": "crit",
+            "crit_rate": 0.711,
+            "crit_dmg": 2.249
+          },
+          "buckets": {
+            "dmg_bonus": {
+              "multiplier": 2.288,
+              "terms": [
+                {
+                  "source_type": "actor.stats",
+                  "source_id": "seele",
+                  "key": "quantum_dmg_bonus",
+                  "value": 0.488,
+                  "stacks": 1,
+                  "applied_value": 0.488
+                },
+                {
+                  "source_type": "actor.status",
+                  "source_id": "seele_buffed_state",
+                  "key": "dmg_bonus_add",
+                  "value": 0.8,
+                  "stacks": 1,
+                  "applied_value": 0.8,
+                  "note": "source=seele"
+                }
+              ]
+            },
+            "defense": {
+              "multiplier": 1.0,
+              "raw_target_def": 0.0,
+              "effective_target_def": 0.0,
+              "ignore_defense_multiplier": false,
+              "terms": []
+            },
+            "res": {
+              "multiplier": 1.0,
+              "base_target_res": 0.0,
+              "target_res_after_delta": 0.0,
+              "res_pen_total": 0,
+              "terms": []
+            },
+            "damage_taken": {
+              "multiplier": 1.0,
+              "terms": []
+            },
+            "universal_reduction": {
+              "multiplier": 1.0,
+              "terms": []
+            },
+            "toughness_state": {
+              "multiplier": 1.0,
+              "target_toughness_before_packet": null,
+              "target_is_broken_before_packet": false,
+              "ignore_toughness_state_multiplier": false
+            },
+            "other": {
+              "multiplier": 1.0,
+              "source": "packet.other_multiplier"
+            }
+          },
+          "formula": "base * crit * dmg_bonus * defense * res * damage_taken * universal_reduction * toughness_state * other",
+          "final_damage": 74610.6806016
+        },
+        "damage": 74610.68060160002,
+        "toughness_reduction": 30.0,
+        "target_defeated": true,
+        "hp_bar_depleted": true,
+        "bars_depleted": 1,
+        "hp_bars_remaining": 1,
+        "depleted_bar_events": [],
+        "phase_damage_locked_until_action_end": false
+      }
+    },
+    {
+      "av": 0.0,
+      "event_type": "resource",
+      "message": "seele gains 11.940 energy from kill:e1",
+      "data": {
+        "old": 60.0,
+        "new": 71.94,
+        "gain": 11.94,
+        "source": {
+          "base": 10.0,
+          "affected_by_err": true
+        }
+      }
+    },
+    {
+      "av": 0.0,
+      "event_type": "speed_change",
+      "message": "seele speed 123.000 -> 153.750",
+      "data": {
+        "old_remaining_av": 81.300813,
+        "new_remaining_av": 65.0406504,
+        "reason": "add_status"
+      }
+    },
+    {
+      "av": 0.0,
+      "event_type": "effect",
+      "message": "Add status seele_skill_spd_buff to seele",
+      "data": {
+        "status": {
+          "id": "seele_skill_spd_buff",
+          "tags": [
+            "buff",
+            "speed"
+          ],
+          "modifiers": {
+            "speed_pct": 0.25,
+            "_sim_aliases_normalized": true
+          },
+          "stacks": 1,
+          "max_stacks": 2,
+          "duration_type": null,
+          "duration_value": null,
+          "source_id": "seele",
+          "duration_extra_turn_consumes": false,
+          "refresh_duration": true
+        },
+        "was_present": false,
+        "old_stacks": 0,
+        "new_stacks": 1
+      }
+    },
+    {
+      "av": 0.0,
+      "event_type": "action_end",
+      "message": "seele finished novaflare_auto_skill",
+      "data": {}
+    },
+    {
+      "av": 0.0,
+      "event_type": "route",
+      "message": "Route step 2: {'actor': 'seele', 'action': 'skill', 'timing': 'regular_turn', 'targets': ['e2'], 'events': {'__crit_mode__': 'crit'}}",
+      "data": {}
+    },
+    {
+      "av": 65.04065,
+      "event_type": "timeline",
+      "message": "Regular timeline advanced by 65.040650 AV; next actor seele",
+      "data": {
+        "delta": 65.0406504
+      }
+    },
+    {
+      "av": 65.04065,
+      "event_type": "turn_start",
+      "message": "seele begins regular turn",
+      "data": {}
+    },
+    {
+      "av": 65.04065,
+      "event_type": "trigger_reset",
+      "message": "Reset owner_turn trigger usage for seele",
+      "data": {
+        "removed": [
+          "seele_novaflare_auto_skill_trigger:owner_turn:seele"
+        ]
+      }
+    },
+    {
+      "av": 65.04065,
+      "event_type": "action_start",
+      "message": "seele uses skill on ['e2']",
+      "data": {
+        "tags": [
+          "attack",
+          "can_trigger_kill_energy",
+          "can_trigger_novaflare_auto_skill",
+          "can_trigger_resurgence",
+          "consumes_regular_action",
+          "consumes_skill_point",
+          "grants_base_energy",
+          "skill_damage",
+          "skill_use"
+        ],
+        "turn_kind": "regular"
+      }
+    },
+    {
+      "av": 65.04065,
+      "event_type": "resource",
+      "message": "Skill points 3 -> 2",
+      "data": {
+        "delta": -1.0,
+        "applied": -1,
+        "overflow": 0.0,
+        "overflow_recorded": 0.0,
+        "reserve_after": 0.0,
+        "reason": "action_cost:seele.skill"
+      }
+    },
+    {
+      "av": 65.04065,
+      "event_type": "damage",
+      "message": "seele deals 74610.681 quantum damage to e2",
+      "data": {
+        "old_hp": 100000.0,
+        "new_hp": 25389.31939839998,
+        "old_shield": 0.0,
+        "new_shield": 0.0,
+        "actor_id": "seele",
+        "target_id": "e2",
+        "packet_id": "skill_hit",
+        "element": "quantum",
+        "base_damage": 10036.800000000001,
+        "crit": {
+          "event_id": "seele.skill.skill_hit.crit",
+          "is_crit": true,
+          "multiplier": 3.249,
+          "source": "crit",
+          "crit_rate": 0.711,
+          "crit_dmg": 2.249
+        },
+        "multipliers": {
+          "dmg_bonus": 2.2880000000000003,
+          "defense": 1.0,
+          "res": 1.0,
+          "damage_taken": 1.0,
+          "universal_reduction": 1.0,
+          "toughness_state": 1.0,
+          "other": 1.0
+        },
+        "formula_ledger": {
+          "formula_type": "direct_damage",
+          "actor_id": "seele",
+          "target_id": "e2",
+          "action_id": "skill",
+          "packet_id": "skill_hit",
+          "tags": [
+            "attack",
+            "can_trigger_kill_energy",
+            "can_trigger_novaflare_auto_skill",
+            "can_trigger_resurgence",
+            "consumes_regular_action",
+            "consumes_skill_point",
+            "grants_base_energy",
+            "skill_damage",
+            "skill_use"
+          ],
+          "scaling": {
+            "stat": "atk",
+            "scaling_value": 2788.0,
+            "multiplier": 3.6,
+            "flat_damage": 0.0,
+            "base_damage": 10036.8
+          },
+          "crit": {
+            "event_id": "seele.skill.skill_hit.crit",
+            "is_crit": true,
+            "multiplier": 3.249,
+            "source": "crit",
+            "crit_rate": 0.711,
+            "crit_dmg": 2.249
+          },
+          "buckets": {
+            "dmg_bonus": {
+              "multiplier": 2.288,
+              "terms": [
+                {
+                  "source_type": "actor.stats",
+                  "source_id": "seele",
+                  "key": "quantum_dmg_bonus",
+                  "value": 0.488,
+                  "stacks": 1,
+                  "applied_value": 0.488
+                },
+                {
+                  "source_type": "actor.status",
+                  "source_id": "seele_buffed_state",
+                  "key": "dmg_bonus_add",
+                  "value": 0.8,
+                  "stacks": 1,
+                  "applied_value": 0.8,
+                  "note": "source=seele"
+                }
+              ]
+            },
+            "defense": {
+              "multiplier": 1.0,
+              "raw_target_def": 0.0,
+              "effective_target_def": 0.0,
+              "ignore_defense_multiplier": false,
+              "terms": []
+            },
+            "res": {
+              "multiplier": 1.0,
+              "base_target_res": 0.0,
+              "target_res_after_delta": 0.0,
+              "res_pen_total": 0,
+              "terms": []
+            },
+            "damage_taken": {
+              "multiplier": 1.0,
+              "terms": []
+            },
+            "universal_reduction": {
+              "multiplier": 1.0,
+              "terms": []
+            },
+            "toughness_state": {
+              "multiplier": 1.0,
+              "target_toughness_before_packet": null,
+              "target_is_broken_before_packet": false,
+              "ignore_toughness_state_multiplier": false
+            },
+            "other": {
+              "multiplier": 1.0,
+              "source": "packet.other_multiplier"
+            }
+          },
+          "formula": "base * crit * dmg_bonus * defense * res * damage_taken * universal_reduction * toughness_state * other",
+          "final_damage": 74610.6806016
+        },
+        "damage": 74610.68060160002,
+        "toughness_reduction": 30.0,
+        "target_defeated": false,
+        "hp_bar_depleted": false,
+        "bars_depleted": 0,
+        "hp_bars_remaining": 1,
+        "depleted_bar_events": [],
+        "phase_damage_locked_until_action_end": false
+      }
+    },
+    {
+      "av": 65.04065,
+      "event_type": "trigger",
+      "message": "Trigger seele_novaflare_auto_skill_trigger fired",
+      "data": {
+        "timing": "after_damage"
+      }
+    },
+    {
+      "av": 65.04065,
+      "event_type": "effect",
+      "message": "Queued action seele.novaflare_auto_skill in immediate_queue",
+      "data": {
+        "actor": "seele",
+        "action": "novaflare_auto_skill",
+        "targets": null,
+        "defer_target_policy": "original_target_or_lowest_hp_percent_enemy",
+        "context_target_id": "e2",
+        "events": {},
+        "turn_kind": null,
+        "extra_turn_type": null,
+        "queued_wave_index": 0,
+        "carry_across_wave": true,
+        "queued_actor_phase": null,
+        "carry_across_phase": false
+      }
+    },
+    {
+      "av": 65.04065,
+      "event_type": "speed_change",
+      "message": "seele speed 153.750 -> 184.500",
+      "data": {
+        "old_remaining_av": 0.0,
+        "new_remaining_av": 0.0,
+        "reason": "add_status"
+      }
+    },
+    {
+      "av": 65.04065,
+      "event_type": "effect",
+      "message": "Add status seele_skill_spd_buff to seele",
+      "data": {
+        "status": {
+          "id": "seele_skill_spd_buff",
+          "tags": [
+            "buff",
+            "speed"
+          ],
+          "modifiers": {
+            "speed_pct": 0.25,
+            "_sim_aliases_normalized": true,
+            "_created_turn_token": 1,
+            "_created_turn_actor_id": "seele",
+            "_created_turn_kind": "regular"
+          },
+          "stacks": 2,
+          "max_stacks": 2,
+          "duration_type": null,
+          "duration_value": null,
+          "source_id": "seele",
+          "duration_extra_turn_consumes": false,
+          "refresh_duration": true
+        },
+        "was_present": true,
+        "old_stacks": 1,
+        "new_stacks": 2
+      }
+    },
+    {
+      "av": 65.04065,
+      "event_type": "resource",
+      "message": "seele gains 35.820 energy from action:skill",
+      "data": {
+        "old": 71.94,
+        "new": 107.75999999999999,
+        "gain": 35.82,
+        "source": {
+          "base": 30,
+          "affected_by_err": true
+        }
+      }
+    },
+    {
+      "av": 65.04065,
+      "event_type": "timeline",
+      "message": "seele regular action interval added",
+      "data": {
+        "remaining_av": 54.200542005420054
+      }
+    },
+    {
+      "av": 65.04065,
+      "event_type": "turn_end",
+      "message": "seele ends regular turn",
+      "data": {}
+    },
+    {
+      "av": 65.04065,
+      "event_type": "action_end",
+      "message": "seele finished skill",
+      "data": {}
+    },
+    {
+      "av": 65.04065,
+      "event_type": "queue",
+      "message": "Resolve queued action from immediate_queue: seele.novaflare_auto_skill",
+      "data": {}
+    },
+    {
+      "av": 65.04065,
+      "event_type": "action_start",
+      "message": "seele uses novaflare_auto_skill on ['e2']",
+      "data": {
+        "tags": [
+          "attack",
+          "auto_skill_use",
+          "can_trigger_kill_energy",
+          "can_trigger_resurgence",
+          "does_not_consume_skill_point",
+          "does_not_grant_base_energy",
+          "skill_damage",
+          "triggers_skill_spd_buff"
+        ],
+        "turn_kind": null
+      }
+    },
+    {
+      "av": 65.04065,
+      "event_type": "damage",
+      "message": "seele deals 74610.681 quantum damage to e2",
+      "data": {
+        "old_hp": 25389.31939839998,
+        "new_hp": 0.0,
+        "old_shield": 0.0,
+        "new_shield": 0.0,
+        "actor_id": "seele",
+        "target_id": "e2",
+        "packet_id": "auto_skill_hit",
+        "element": "quantum",
+        "base_damage": 10036.800000000001,
+        "crit": {
+          "event_id": "seele.novaflare_auto_skill.auto_skill_hit.crit",
+          "is_crit": true,
+          "multiplier": 3.249,
+          "source": "crit",
+          "crit_rate": 0.711,
+          "crit_dmg": 2.249
+        },
+        "multipliers": {
+          "dmg_bonus": 2.2880000000000003,
+          "defense": 1.0,
+          "res": 1.0,
+          "damage_taken": 1.0,
+          "universal_reduction": 1.0,
+          "toughness_state": 1.0,
+          "other": 1.0
+        },
+        "formula_ledger": {
+          "formula_type": "direct_damage",
+          "actor_id": "seele",
+          "target_id": "e2",
+          "action_id": "novaflare_auto_skill",
+          "packet_id": "auto_skill_hit",
+          "tags": [
+            "attack",
+            "auto_skill_use",
+            "can_trigger_kill_energy",
+            "can_trigger_resurgence",
+            "does_not_consume_skill_point",
+            "does_not_grant_base_energy",
+            "skill_damage",
+            "triggers_skill_spd_buff"
+          ],
+          "scaling": {
+            "stat": "atk",
+            "scaling_value": 2788.0,
+            "multiplier": 3.6,
+            "flat_damage": 0.0,
+            "base_damage": 10036.8
+          },
+          "crit": {
+            "event_id": "seele.novaflare_auto_skill.auto_skill_hit.crit",
+            "is_crit": true,
+            "multiplier": 3.249,
+            "source": "crit",
+            "crit_rate": 0.711,
+            "crit_dmg": 2.249
+          },
+          "buckets": {
+            "dmg_bonus": {
+              "multiplier": 2.288,
+              "terms": [
+                {
+                  "source_type": "actor.stats",
+                  "source_id": "seele",
+                  "key": "quantum_dmg_bonus",
+                  "value": 0.488,
+                  "stacks": 1,
+                  "applied_value": 0.488
+                },
+                {
+                  "source_type": "actor.status",
+                  "source_id": "seele_buffed_state",
+                  "key": "dmg_bonus_add",
+                  "value": 0.8,
+                  "stacks": 1,
+                  "applied_value": 0.8,
+                  "note": "source=seele"
+                }
+              ]
+            },
+            "defense": {
+              "multiplier": 1.0,
+              "raw_target_def": 0.0,
+              "effective_target_def": 0.0,
+              "ignore_defense_multiplier": false,
+              "terms": []
+            },
+            "res": {
+              "multiplier": 1.0,
+              "base_target_res": 0.0,
+              "target_res_after_delta": 0.0,
+              "res_pen_total": 0,
+              "terms": []
+            },
+            "damage_taken": {
+              "multiplier": 1.0,
+              "terms": []
+            },
+            "universal_reduction": {
+              "multiplier": 1.0,
+              "terms": []
+            },
+            "toughness_state": {
+              "multiplier": 1.0,
+              "target_toughness_before_packet": null,
+              "target_is_broken_before_packet": false,
+              "ignore_toughness_state_multiplier": false
+            },
+            "other": {
+              "multiplier": 1.0,
+              "source": "packet.other_multiplier"
+            }
+          },
+          "formula": "base * crit * dmg_bonus * defense * res * damage_taken * universal_reduction * toughness_state * other",
+          "final_damage": 74610.6806016
+        },
+        "damage": 74610.68060160002,
+        "toughness_reduction": 30.0,
+        "target_defeated": true,
+        "hp_bar_depleted": true,
+        "bars_depleted": 1,
+        "hp_bars_remaining": 1,
+        "depleted_bar_events": [],
+        "phase_damage_locked_until_action_end": false
+      }
+    },
+    {
+      "av": 65.04065,
+      "event_type": "resource",
+      "message": "seele gains 11.940 energy from kill:e2",
+      "data": {
+        "old": 107.75999999999999,
+        "new": 119.69999999999999,
+        "gain": 11.94,
+        "source": {
+          "base": 10.0,
+          "affected_by_err": true
+        }
+      }
+    },
+    {
+      "av": 65.04065,
+      "event_type": "effect",
+      "message": "Add status seele_skill_spd_buff to seele",
+      "data": {
+        "status": {
+          "id": "seele_skill_spd_buff",
+          "tags": [
+            "buff",
+            "speed"
+          ],
+          "modifiers": {
+            "speed_pct": 0.25,
+            "_sim_aliases_normalized": true,
+            "_created_turn_token": 1,
+            "_created_turn_actor_id": "seele",
+            "_created_turn_kind": "regular"
+          },
+          "stacks": 2,
+          "max_stacks": 2,
+          "duration_type": null,
+          "duration_value": null,
+          "source_id": "seele",
+          "duration_extra_turn_consumes": false,
+          "refresh_duration": true
+        },
+        "was_present": true,
+        "old_stacks": 2,
+        "new_stacks": 2
+      }
+    },
+    {
+      "av": 65.04065,
+      "event_type": "action_end",
+      "message": "seele finished novaflare_auto_skill",
+      "data": {}
+    }
+  ],
+  "runtime_audit": {
+    "property_hint_applications": {
+      "applied_count": 0,
+      "skipped_count": 0,
+      "by_property": {},
+      "skipped_reason_counts": {},
+      "records": []
+    },
+    "symbolic_formula_applications": {
+      "applied_count": 0,
+      "skipped_count": 0,
+      "skipped_reason_counts": {},
+      "records": []
+    },
+    "engine_property_reads": {
+      "attempted_count": 0,
+      "resolved_count": 0,
+      "unresolved_count": 0,
+      "by_property": {},
+      "records": []
+    }
+  },
+  "metadata": {
+    "route_executed_step_count": 2,
+    "route_action_trace": [
+      {
+        "step": 1,
+        "step_type": "action",
+        "actor": "seele",
+        "action": "technique_entry",
+        "timing": "manual",
+        "targets": [
+          "e1"
+        ],
+        "before": {
+          "av": 0.0,
+          "skill_points": 3,
+          "skill_point_cap": 5,
+          "_sp": 3,
+          "_sp_cap": 5,
+          "allies": [
+            {
+              "id": "seele",
+              "alive": true,
+              "hp": 3021.0,
+              "max_hp": 3021.0,
+              "energy": 60.0,
+              "max_energy": 120.0,
+              "remaining_av": 81.300813,
+              "toughness": null,
+              "max_toughness": null,
+              "hp_bars_remaining": 1,
+              "status_count": 0
+            }
+          ],
+          "enemies": [
+            {
+              "id": "e1",
+              "alive": true,
+              "hp": 100000.0,
+              "max_hp": 100000.0,
+              "energy": 0.0,
+              "max_energy": 0.0,
+              "remaining_av": 100.0,
+              "toughness": null,
+              "max_toughness": null,
+              "hp_bars_remaining": 1,
+              "status_count": 0
+            },
+            {
+              "id": "e2",
+              "alive": true,
+              "hp": 100000.0,
+              "max_hp": 100000.0,
+              "energy": 0.0,
+              "max_energy": 0.0,
+              "remaining_av": 100.0,
+              "toughness": null,
+              "max_toughness": null,
+              "hp_bars_remaining": 1,
+              "status_count": 0
+            },
+            {
+              "id": "e3",
+              "alive": true,
+              "hp": 100000.0,
+              "max_hp": 100000.0,
+              "energy": 0.0,
+              "max_energy": 0.0,
+              "remaining_av": 100.0,
+              "toughness": null,
+              "max_toughness": null,
+              "hp_bars_remaining": 1,
+              "status_count": 0
+            },
+            {
+              "id": "e4",
+              "alive": true,
+              "hp": 100000.0,
+              "max_hp": 100000.0,
+              "energy": 0.0,
+              "max_energy": 0.0,
+              "remaining_av": 100.0,
+              "toughness": null,
+              "max_toughness": null,
+              "hp_bars_remaining": 1,
+              "status_count": 0
+            },
+            {
+              "id": "e5",
+              "alive": true,
+              "hp": 100000.0,
+              "max_hp": 100000.0,
+              "energy": 0.0,
+              "max_energy": 0.0,
+              "remaining_av": 100.0,
+              "toughness": null,
+              "max_toughness": null,
+              "hp_bars_remaining": 1,
+              "status_count": 0
+            }
+          ],
+          "queue_size": 0
+        },
+        "before_scene": {
+          "global": {
+            "av": 0.0,
+            "cycle": 0,
+            "skill_points": 3,
+            "skill_point_cap": 5,
+            "_sp": 3,
+            "_sp_cap": 5,
+            "wave_index": 0,
+            "flags": {}
+          },
+          "action_axis": [
+            {
+              "id": "seele",
+              "name": "Seele",
+              "side": "ally",
+              "alive": true,
+              "speed": 123.0,
+              "action_interval": 81.300813,
+              "remaining_av": 81.300813,
+              "absolute_av": 81.300813,
+              "tags": [
+                "ally",
+                "on_timeline"
+              ]
+            },
+            {
+              "id": "e1",
+              "name": "Dummy 1",
+              "side": "enemy",
+              "alive": true,
+              "speed": 100.0,
+              "action_interval": 100.0,
+              "remaining_av": 100.0,
+              "absolute_av": 100.0,
+              "tags": [
+                "enemy"
+              ]
+            },
+            {
+              "id": "e2",
+              "name": "Dummy 2",
+              "side": "enemy",
+              "alive": true,
+              "speed": 100.0,
+              "action_interval": 100.0,
+              "remaining_av": 100.0,
+              "absolute_av": 100.0,
+              "tags": [
+                "enemy"
+              ]
+            },
+            {
+              "id": "e3",
+              "name": "Dummy 3",
+              "side": "enemy",
+              "alive": true,
+              "speed": 100.0,
+              "action_interval": 100.0,
+              "remaining_av": 100.0,
+              "absolute_av": 100.0,
+              "tags": [
+                "enemy"
+              ]
+            },
+            {
+              "id": "e4",
+              "name": "Dummy 4",
+              "side": "enemy",
+              "alive": true,
+              "speed": 100.0,
+              "action_interval": 100.0,
+              "remaining_av": 100.0,
+              "absolute_av": 100.0,
+              "tags": [
+                "enemy"
+              ]
+            },
+            {
+              "id": "e5",
+              "name": "Dummy 5",
+              "side": "enemy",
+              "alive": true,
+              "speed": 100.0,
+              "action_interval": 100.0,
+              "remaining_av": 100.0,
+              "absolute_av": 100.0,
+              "tags": [
+                "enemy"
+              ]
+            }
+          ],
+          "allies": [
+            {
+              "id": "seele",
+              "name": "Seele",
+              "side": "ally",
+              "alive": true,
+              "tags": [
+                "ally",
+                "on_timeline"
+              ],
+              "resources": {
+                "hp": 3021.0,
+                "max_hp": 3021.0,
+                "hp_percent": 1.0,
+                "shield": 0.0,
+                "energy": 60.0,
+                "max_energy": 120.0,
+                "toughness": null,
+                "max_toughness": null,
+                "is_broken": false,
+                "hp_bars_total": 1,
+                "hp_bars_remaining": 1,
+                "hp_model_type": "normal_hp",
+                "hp_carry_over_damage": null
+              },
+              "action_axis": {
+                "remaining_av": 81.300813,
+                "absolute_av": 81.300813,
+                "speed": 123.0,
+                "action_interval": 81.300813
+              },
+              "panel": {
+                "hp": 3021.0,
+                "max_hp": 3021.0,
+                "atk": 2788.0,
+                "speed": 123.0,
+                "crit_rate": 0.711,
+                "crit_dmg": 2.249,
+                "energy_regeneration_rate": 1.194,
+                "quantum_dmg_bonus": 0.488
+              },
+              "stat_parts": {
+                "base": {},
+                "pct": {},
+                "flat": {},
+                "legacy_stats": {
+                  "atk": 2788.0,
+                  "speed": 123.0,
+                  "crit_rate": 0.711,
+                  "crit_dmg": 2.249,
+                  "quantum_dmg_bonus": 0.488,
+                  "energy_regeneration_rate": 1.194
+                }
+              },
+              "resistance": {},
+              "weaknesses": [],
+              "statuses": [],
+              "special_mechanics": {},
+              "flags": {}
+            }
+          ],
+          "summons": [],
+          "enemies": [
+            {
+              "id": "e1",
+              "name": "Dummy 1",
+              "side": "enemy",
+              "alive": true,
+              "tags": [
+                "enemy"
+              ],
+              "resources": {
+                "hp": 100000.0,
+                "max_hp": 100000.0,
+                "hp_percent": 1.0,
+                "shield": 0.0,
+                "energy": 0.0,
+                "max_energy": 0.0,
+                "toughness": null,
+                "max_toughness": null,
+                "is_broken": false,
+                "hp_bars_total": 1,
+                "hp_bars_remaining": 1,
+                "hp_model_type": "normal_hp",
+                "hp_carry_over_damage": null
+              },
+              "action_axis": {
+                "remaining_av": 100.0,
+                "absolute_av": 100.0,
+                "speed": 100.0,
+                "action_interval": 100.0
+              },
+              "panel": {
+                "hp": 100000.0,
+                "max_hp": 100000.0
+              },
+              "stat_parts": {
+                "base": {},
+                "pct": {},
+                "flat": {},
+                "legacy_stats": {
+                  "defense": 0.0
+                }
+              },
+              "resistance": {
+                "quantum": 0.0
+              },
+              "weaknesses": [
+                "quantum"
+              ],
+              "statuses": [],
+              "special_mechanics": {
+                "inferred_next_action": null
+              },
+              "flags": {}
+            },
+            {
+              "id": "e2",
+              "name": "Dummy 2",
+              "side": "enemy",
+              "alive": true,
+              "tags": [
+                "enemy"
+              ],
+              "resources": {
+                "hp": 100000.0,
+                "max_hp": 100000.0,
+                "hp_percent": 1.0,
+                "shield": 0.0,
+                "energy": 0.0,
+                "max_energy": 0.0,
+                "toughness": null,
+                "max_toughness": null,
+                "is_broken": false,
+                "hp_bars_total": 1,
+                "hp_bars_remaining": 1,
+                "hp_model_type": "normal_hp",
+                "hp_carry_over_damage": null
+              },
+              "action_axis": {
+                "remaining_av": 100.0,
+                "absolute_av": 100.0,
+                "speed": 100.0,
+                "action_interval": 100.0
+              },
+              "panel": {
+                "hp": 100000.0,
+                "max_hp": 100000.0
+              },
+              "stat_parts": {
+                "base": {},
+                "pct": {},
+                "flat": {},
+                "legacy_stats": {
+                  "defense": 0.0
+                }
+              },
+              "resistance": {
+                "quantum": 0.0
+              },
+              "weaknesses": [
+                "quantum"
+              ],
+              "statuses": [],
+              "special_mechanics": {
+                "inferred_next_action": null
+              },
+              "flags": {}
+            },
+            {
+              "id": "e3",
+              "name": "Dummy 3",
+              "side": "enemy",
+              "alive": true,
+              "tags": [
+                "enemy"
+              ],
+              "resources": {
+                "hp": 100000.0,
+                "max_hp": 100000.0,
+                "hp_percent": 1.0,
+                "shield": 0.0,
+                "energy": 0.0,
+                "max_energy": 0.0,
+                "toughness": null,
+                "max_toughness": null,
+                "is_broken": false,
+                "hp_bars_total": 1,
+                "hp_bars_remaining": 1,
+                "hp_model_type": "normal_hp",
+                "hp_carry_over_damage": null
+              },
+              "action_axis": {
+                "remaining_av": 100.0,
+                "absolute_av": 100.0,
+                "speed": 100.0,
+                "action_interval": 100.0
+              },
+              "panel": {
+                "hp": 100000.0,
+                "max_hp": 100000.0
+              },
+              "stat_parts": {
+                "base": {},
+                "pct": {},
+                "flat": {},
+                "legacy_stats": {
+                  "defense": 0.0
+                }
+              },
+              "resistance": {
+                "quantum": 0.0
+              },
+              "weaknesses": [
+                "quantum"
+              ],
+              "statuses": [],
+              "special_mechanics": {
+                "inferred_next_action": null
+              },
+              "flags": {}
+            },
+            {
+              "id": "e4",
+              "name": "Dummy 4",
+              "side": "enemy",
+              "alive": true,
+              "tags": [
+                "enemy"
+              ],
+              "resources": {
+                "hp": 100000.0,
+                "max_hp": 100000.0,
+                "hp_percent": 1.0,
+                "shield": 0.0,
+                "energy": 0.0,
+                "max_energy": 0.0,
+                "toughness": null,
+                "max_toughness": null,
+                "is_broken": false,
+                "hp_bars_total": 1,
+                "hp_bars_remaining": 1,
+                "hp_model_type": "normal_hp",
+                "hp_carry_over_damage": null
+              },
+              "action_axis": {
+                "remaining_av": 100.0,
+                "absolute_av": 100.0,
+                "speed": 100.0,
+                "action_interval": 100.0
+              },
+              "panel": {
+                "hp": 100000.0,
+                "max_hp": 100000.0
+              },
+              "stat_parts": {
+                "base": {},
+                "pct": {},
+                "flat": {},
+                "legacy_stats": {
+                  "defense": 0.0
+                }
+              },
+              "resistance": {
+                "quantum": 0.0
+              },
+              "weaknesses": [
+                "quantum"
+              ],
+              "statuses": [],
+              "special_mechanics": {
+                "inferred_next_action": null
+              },
+              "flags": {}
+            },
+            {
+              "id": "e5",
+              "name": "Dummy 5",
+              "side": "enemy",
+              "alive": true,
+              "tags": [
+                "enemy"
+              ],
+              "resources": {
+                "hp": 100000.0,
+                "max_hp": 100000.0,
+                "hp_percent": 1.0,
+                "shield": 0.0,
+                "energy": 0.0,
+                "max_energy": 0.0,
+                "toughness": null,
+                "max_toughness": null,
+                "is_broken": false,
+                "hp_bars_total": 1,
+                "hp_bars_remaining": 1,
+                "hp_model_type": "normal_hp",
+                "hp_carry_over_damage": null
+              },
+              "action_axis": {
+                "remaining_av": 100.0,
+                "absolute_av": 100.0,
+                "speed": 100.0,
+                "action_interval": 100.0
+              },
+              "panel": {
+                "hp": 100000.0,
+                "max_hp": 100000.0
+              },
+              "stat_parts": {
+                "base": {},
+                "pct": {},
+                "flat": {},
+                "legacy_stats": {
+                  "defense": 0.0
+                }
+              },
+              "resistance": {
+                "quantum": 0.0
+              },
+              "weaknesses": [
+                "quantum"
+              ],
+              "statuses": [],
+              "special_mechanics": {
+                "inferred_next_action": null
+              },
+              "flags": {}
+            }
+          ],
+          "others": [],
+          "queues": {
+            "ultimate_queue": [],
+            "immediate_queue": [],
+            "interrupt_queue": []
+          },
+          "trigger_usage": {}
+        },
+        "event_summary": {
+          "event_count": 13,
+          "event_counts": {
+            "action_start": 2,
+            "effect": 3,
+            "damage": 2,
+            "trigger": 1,
+            "action_end": 2,
+            "queue": 1,
+            "resource": 1,
+            "speed_change": 1
+          },
+          "damage_total": 149221.361203,
+          "toughness_damage_total": 0.0,
+          "defeated_units": [],
+          "queued_event_count": 1
+        },
+        "action_resolution": {
+          "requested": {
+            "step_type": "action",
+            "actor": "seele",
+            "action": "technique_entry",
+            "timing": "manual",
+            "targets": [
+              "e1"
+            ]
+          },
+          "damage_events": [
+            {
+              "av": 0.0,
+              "event_type": "damage",
+              "message": "seele deals 74610.681 quantum damage to e1",
+              "data": {
+                "old_hp": 100000.0,
+                "new_hp": 25389.31939839998,
+                "old_shield": 0.0,
+                "new_shield": 0.0,
+                "actor_id": "seele",
+                "target_id": "e1",
+                "packet_id": "technique_hit",
+                "element": "quantum",
+                "base_damage": 10036.800000000001,
+                "crit": {
+                  "is_crit": true,
+                  "multiplier": 3.249,
+                  "source": "forced",
+                  "crit_rate": 0.711,
+                  "crit_dmg": 2.249
+                },
+                "multipliers": {
+                  "dmg_bonus": 2.2880000000000003,
+                  "defense": 1.0,
+                  "res": 1.0,
+                  "damage_taken": 1.0,
+                  "universal_reduction": 1.0,
+                  "toughness_state": 1.0,
+                  "other": 1.0
+                },
+                "formula_ledger": {
+                  "formula_type": "direct_damage",
+                  "actor_id": "seele",
+                  "target_id": "e1",
+                  "action_id": "technique_entry",
+                  "packet_id": "technique_hit",
+                  "tags": [
+                    "attack",
+                    "can_trigger_novaflare_auto_skill",
+                    "technique_damage",
+                    "technique_use"
+                  ],
+                  "scaling": {
+                    "stat": "atk",
+                    "scaling_value": 2788.0,
+                    "multiplier": 3.6,
+                    "flat_damage": 0.0,
+                    "base_damage": 10036.8
+                  },
+                  "crit": {
+                    "is_crit": true,
+                    "multiplier": 3.249,
+                    "source": "forced",
+                    "crit_rate": 0.711,
+                    "crit_dmg": 2.249
+                  },
+                  "buckets": {
+                    "dmg_bonus": {
+                      "multiplier": 2.288,
+                      "terms": [
+                        {
+                          "source_type": "actor.stats",
+                          "source_id": "seele",
+                          "key": "quantum_dmg_bonus",
+                          "value": 0.488,
+                          "stacks": 1,
+                          "applied_value": 0.488
+                        },
+                        {
+                          "source_type": "actor.status",
+                          "source_id": "seele_buffed_state",
+                          "key": "dmg_bonus_add",
+                          "value": 0.8,
+                          "stacks": 1,
+                          "applied_value": 0.8,
+                          "note": "source=seele"
+                        }
+                      ]
+                    },
+                    "defense": {
+                      "multiplier": 1.0,
+                      "raw_target_def": 0.0,
+                      "effective_target_def": 0.0,
+                      "ignore_defense_multiplier": false,
+                      "terms": []
+                    },
+                    "res": {
+                      "multiplier": 1.0,
+                      "base_target_res": 0.0,
+                      "target_res_after_delta": 0.0,
+                      "res_pen_total": 0,
+                      "terms": []
+                    },
+                    "damage_taken": {
+                      "multiplier": 1.0,
+                      "terms": []
+                    },
+                    "universal_reduction": {
+                      "multiplier": 1.0,
+                      "terms": []
+                    },
+                    "toughness_state": {
+                      "multiplier": 1.0,
+                      "target_toughness_before_packet": null,
+                      "target_is_broken_before_packet": false,
+                      "ignore_toughness_state_multiplier": false
+                    },
+                    "other": {
+                      "multiplier": 1.0,
+                      "source": "packet.other_multiplier"
+                    }
+                  },
+                  "formula": "base * crit * dmg_bonus * defense * res * damage_taken * universal_reduction * toughness_state * other",
+                  "final_damage": 74610.6806016
+                },
+                "damage": 74610.68060160002,
+                "toughness_reduction": 0.0,
+                "target_defeated": false,
+                "hp_bar_depleted": false,
+                "bars_depleted": 0,
+                "hp_bars_remaining": 1,
+                "depleted_bar_events": [],
+                "phase_damage_locked_until_action_end": false
+              },
+              "index": 2
+            },
+            {
+              "av": 0.0,
+              "event_type": "damage",
+              "message": "seele deals 74610.681 quantum damage to e1",
+              "data": {
+                "old_hp": 25389.31939839998,
+                "new_hp": 0.0,
+                "old_shield": 0.0,
+                "new_shield": 0.0,
+                "actor_id": "seele",
+                "target_id": "e1",
+                "packet_id": "auto_skill_hit",
+                "element": "quantum",
+                "base_damage": 10036.800000000001,
+                "crit": {
+                  "event_id": "seele.novaflare_auto_skill.auto_skill_hit.crit",
+                  "is_crit": true,
+                  "multiplier": 3.249,
+                  "source": "crit",
+                  "crit_rate": 0.711,
+                  "crit_dmg": 2.249
+                },
+                "multipliers": {
+                  "dmg_bonus": 2.2880000000000003,
+                  "defense": 1.0,
+                  "res": 1.0,
+                  "damage_taken": 1.0,
+                  "universal_reduction": 1.0,
+                  "toughness_state": 1.0,
+                  "other": 1.0
+                },
+                "formula_ledger": {
+                  "formula_type": "direct_damage",
+                  "actor_id": "seele",
+                  "target_id": "e1",
+                  "action_id": "novaflare_auto_skill",
+                  "packet_id": "auto_skill_hit",
+                  "tags": [
+                    "attack",
+                    "auto_skill_use",
+                    "can_trigger_kill_energy",
+                    "can_trigger_resurgence",
+                    "does_not_consume_skill_point",
+                    "does_not_grant_base_energy",
+                    "skill_damage",
+                    "triggers_skill_spd_buff"
+                  ],
+                  "scaling": {
+                    "stat": "atk",
+                    "scaling_value": 2788.0,
+                    "multiplier": 3.6,
+                    "flat_damage": 0.0,
+                    "base_damage": 10036.8
+                  },
+                  "crit": {
+                    "event_id": "seele.novaflare_auto_skill.auto_skill_hit.crit",
+                    "is_crit": true,
+                    "multiplier": 3.249,
+                    "source": "crit",
+                    "crit_rate": 0.711,
+                    "crit_dmg": 2.249
+                  },
+                  "buckets": {
+                    "dmg_bonus": {
+                      "multiplier": 2.288,
+                      "terms": [
+                        {
+                          "source_type": "actor.stats",
+                          "source_id": "seele",
+                          "key": "quantum_dmg_bonus",
+                          "value": 0.488,
+                          "stacks": 1,
+                          "applied_value": 0.488
+                        },
+                        {
+                          "source_type": "actor.status",
+                          "source_id": "seele_buffed_state",
+                          "key": "dmg_bonus_add",
+                          "value": 0.8,
+                          "stacks": 1,
+                          "applied_value": 0.8,
+                          "note": "source=seele"
+                        }
+                      ]
+                    },
+                    "defense": {
+                      "multiplier": 1.0,
+                      "raw_target_def": 0.0,
+                      "effective_target_def": 0.0,
+                      "ignore_defense_multiplier": false,
+                      "terms": []
+                    },
+                    "res": {
+                      "multiplier": 1.0,
+                      "base_target_res": 0.0,
+                      "target_res_after_delta": 0.0,
+                      "res_pen_total": 0,
+                      "terms": []
+                    },
+                    "damage_taken": {
+                      "multiplier": 1.0,
+                      "terms": []
+                    },
+                    "universal_reduction": {
+                      "multiplier": 1.0,
+                      "terms": []
+                    },
+                    "toughness_state": {
+                      "multiplier": 1.0,
+                      "target_toughness_before_packet": null,
+                      "target_is_broken_before_packet": false,
+                      "ignore_toughness_state_multiplier": false
+                    },
+                    "other": {
+                      "multiplier": 1.0,
+                      "source": "packet.other_multiplier"
+                    }
+                  },
+                  "formula": "base * crit * dmg_bonus * defense * res * damage_taken * universal_reduction * toughness_state * other",
+                  "final_damage": 74610.6806016
+                },
+                "damage": 74610.68060160002,
+                "toughness_reduction": 30.0,
+                "target_defeated": true,
+                "hp_bar_depleted": true,
+                "bars_depleted": 1,
+                "hp_bars_remaining": 1,
+                "depleted_bar_events": [],
+                "phase_damage_locked_until_action_end": false
+              },
+              "index": 8
+            }
+          ],
+          "status_events": [
+            {
+              "av": 0.0,
+              "event_type": "effect",
+              "message": "Add status seele_buffed_state to seele",
+              "data": {
+                "status": {
+                  "id": "seele_buffed_state",
+                  "tags": [
+                    "buff",
+                    "dmg_bonus"
+                  ],
+                  "modifiers": {
+                    "dmg_bonus_add": 0.8,
+                    "_sim_aliases_normalized": true
+                  },
+                  "stacks": 1,
+                  "max_stacks": 1,
+                  "duration_type": null,
+                  "duration_value": null,
+                  "source_id": "seele",
+                  "duration_extra_turn_consumes": false,
+                  "refresh_duration": true
+                },
+                "was_present": false,
+                "old_stacks": 0,
+                "new_stacks": 1
+              },
+              "index": 1
+            },
+            {
+              "av": 0.0,
+              "event_type": "effect",
+              "message": "Queued action seele.novaflare_auto_skill in immediate_queue",
+              "data": {
+                "actor": "seele",
+                "action": "novaflare_auto_skill",
+                "targets": null,
+                "defer_target_policy": "original_target_or_lowest_hp_percent_enemy",
+                "context_target_id": "e1",
+                "events": {},
+                "turn_kind": null,
+                "extra_turn_type": null,
+                "queued_wave_index": 0,
+                "carry_across_wave": true,
+                "queued_actor_phase": null,
+                "carry_across_phase": false
+              },
+              "index": 4
+            },
+            {
+              "av": 0.0,
+              "event_type": "effect",
+              "message": "Add status seele_skill_spd_buff to seele",
+              "data": {
+                "status": {
+                  "id": "seele_skill_spd_buff",
+                  "tags": [
+                    "buff",
+                    "speed"
+                  ],
+                  "modifiers": {
+                    "speed_pct": 0.25,
+                    "_sim_aliases_normalized": true
+                  },
+                  "stacks": 1,
+                  "max_stacks": 2,
+                  "duration_type": null,
+                  "duration_value": null,
+                  "source_id": "seele",
+                  "duration_extra_turn_consumes": false,
+                  "refresh_duration": true
+                },
+                "was_present": false,
+                "old_stacks": 0,
+                "new_stacks": 1
+              },
+              "index": 11
+            }
+          ],
+          "resource_events": [
+            {
+              "av": 0.0,
+              "event_type": "resource",
+              "message": "seele gains 11.940 energy from kill:e1",
+              "data": {
+                "old": 60.0,
+                "new": 71.94,
+                "gain": 11.94,
+                "source": {
+                  "base": 10.0,
+                  "affected_by_err": true
+                }
+              },
+              "index": 9
+            },
+            {
+              "av": 0.0,
+              "event_type": "effect",
+              "message": "Queued action seele.novaflare_auto_skill in immediate_queue",
+              "data": {
+                "actor": "seele",
+                "action": "novaflare_auto_skill",
+                "targets": null,
+                "defer_target_policy": "original_target_or_lowest_hp_percent_enemy",
+                "context_target_id": "e1",
+                "events": {},
+                "turn_kind": null,
+                "extra_turn_type": null,
+                "queued_wave_index": 0,
+                "carry_across_wave": true,
+                "queued_actor_phase": null,
+                "carry_across_phase": false
+              },
+              "index": 4
+            },
+            {
+              "av": 0.0,
+              "event_type": "effect",
+              "message": "Add status seele_skill_spd_buff to seele",
+              "data": {
+                "status": {
+                  "id": "seele_skill_spd_buff",
+                  "tags": [
+                    "buff",
+                    "speed"
+                  ],
+                  "modifiers": {
+                    "speed_pct": 0.25,
+                    "_sim_aliases_normalized": true
+                  },
+                  "stacks": 1,
+                  "max_stacks": 2,
+                  "duration_type": null,
+                  "duration_value": null,
+                  "source_id": "seele",
+                  "duration_extra_turn_consumes": false,
+                  "refresh_duration": true
+                },
+                "was_present": false,
+                "old_stacks": 0,
+                "new_stacks": 1
+              },
+              "index": 11
+            }
+          ],
+          "av_events": [
+            {
+              "av": 0.0,
+              "event_type": "queue",
+              "message": "Resolve queued action from immediate_queue: seele.novaflare_auto_skill",
+              "data": {},
+              "index": 6
+            }
+          ],
+          "mechanism_events": [
+            {
+              "av": 0.0,
+              "event_type": "trigger",
+              "message": "Trigger seele_novaflare_auto_skill_trigger fired",
+              "data": {
+                "timing": "after_damage"
+              },
+              "index": 3
+            }
+          ],
+          "all_events": [
+            {
+              "av": 0.0,
+              "event_type": "action_start",
+              "message": "seele uses technique_entry on ['e1']",
+              "data": {
+                "tags": [
+                  "attack",
+                  "can_trigger_novaflare_auto_skill",
+                  "technique_damage",
+                  "technique_use"
+                ],
+                "turn_kind": null
+              },
+              "index": 0
+            },
+            {
+              "av": 0.0,
+              "event_type": "effect",
+              "message": "Add status seele_buffed_state to seele",
+              "data": {
+                "status": {
+                  "id": "seele_buffed_state",
+                  "tags": [
+                    "buff",
+                    "dmg_bonus"
+                  ],
+                  "modifiers": {
+                    "dmg_bonus_add": 0.8,
+                    "_sim_aliases_normalized": true
+                  },
+                  "stacks": 1,
+                  "max_stacks": 1,
+                  "duration_type": null,
+                  "duration_value": null,
+                  "source_id": "seele",
+                  "duration_extra_turn_consumes": false,
+                  "refresh_duration": true
+                },
+                "was_present": false,
+                "old_stacks": 0,
+                "new_stacks": 1
+              },
+              "index": 1
+            },
+            {
+              "av": 0.0,
+              "event_type": "damage",
+              "message": "seele deals 74610.681 quantum damage to e1",
+              "data": {
+                "old_hp": 100000.0,
+                "new_hp": 25389.31939839998,
+                "old_shield": 0.0,
+                "new_shield": 0.0,
+                "actor_id": "seele",
+                "target_id": "e1",
+                "packet_id": "technique_hit",
+                "element": "quantum",
+                "base_damage": 10036.800000000001,
+                "crit": {
+                  "is_crit": true,
+                  "multiplier": 3.249,
+                  "source": "forced",
+                  "crit_rate": 0.711,
+                  "crit_dmg": 2.249
+                },
+                "multipliers": {
+                  "dmg_bonus": 2.2880000000000003,
+                  "defense": 1.0,
+                  "res": 1.0,
+                  "damage_taken": 1.0,
+                  "universal_reduction": 1.0,
+                  "toughness_state": 1.0,
+                  "other": 1.0
+                },
+                "formula_ledger": {
+                  "formula_type": "direct_damage",
+                  "actor_id": "seele",
+                  "target_id": "e1",
+                  "action_id": "technique_entry",
+                  "packet_id": "technique_hit",
+                  "tags": [
+                    "attack",
+                    "can_trigger_novaflare_auto_skill",
+                    "technique_damage",
+                    "technique_use"
+                  ],
+                  "scaling": {
+                    "stat": "atk",
+                    "scaling_value": 2788.0,
+                    "multiplier": 3.6,
+                    "flat_damage": 0.0,
+                    "base_damage": 10036.8
+                  },
+                  "crit": {
+                    "is_crit": true,
+                    "multiplier": 3.249,
+                    "source": "forced",
+                    "crit_rate": 0.711,
+                    "crit_dmg": 2.249
+                  },
+                  "buckets": {
+                    "dmg_bonus": {
+                      "multiplier": 2.288,
+                      "terms": [
+                        {
+                          "source_type": "actor.stats",
+                          "source_id": "seele",
+                          "key": "quantum_dmg_bonus",
+                          "value": 0.488,
+                          "stacks": 1,
+                          "applied_value": 0.488
+                        },
+                        {
+                          "source_type": "actor.status",
+                          "source_id": "seele_buffed_state",
+                          "key": "dmg_bonus_add",
+                          "value": 0.8,
+                          "stacks": 1,
+                          "applied_value": 0.8,
+                          "note": "source=seele"
+                        }
+                      ]
+                    },
+                    "defense": {
+                      "multiplier": 1.0,
+                      "raw_target_def": 0.0,
+                      "effective_target_def": 0.0,
+                      "ignore_defense_multiplier": false,
+                      "terms": []
+                    },
+                    "res": {
+                      "multiplier": 1.0,
+                      "base_target_res": 0.0,
+                      "target_res_after_delta": 0.0,
+                      "res_pen_total": 0,
+                      "terms": []
+                    },
+                    "damage_taken": {
+                      "multiplier": 1.0,
+                      "terms": []
+                    },
+                    "universal_reduction": {
+                      "multiplier": 1.0,
+                      "terms": []
+                    },
+                    "toughness_state": {
+                      "multiplier": 1.0,
+                      "target_toughness_before_packet": null,
+                      "target_is_broken_before_packet": false,
+                      "ignore_toughness_state_multiplier": false
+                    },
+                    "other": {
+                      "multiplier": 1.0,
+                      "source": "packet.other_multiplier"
+                    }
+                  },
+                  "formula": "base * crit * dmg_bonus * defense * res * damage_taken * universal_reduction * toughness_state * other",
+                  "final_damage": 74610.6806016
+                },
+                "damage": 74610.68060160002,
+                "toughness_reduction": 0.0,
+                "target_defeated": false,
+                "hp_bar_depleted": false,
+                "bars_depleted": 0,
+                "hp_bars_remaining": 1,
+                "depleted_bar_events": [],
+                "phase_damage_locked_until_action_end": false
+              },
+              "index": 2
+            },
+            {
+              "av": 0.0,
+              "event_type": "trigger",
+              "message": "Trigger seele_novaflare_auto_skill_trigger fired",
+              "data": {
+                "timing": "after_damage"
+              },
+              "index": 3
+            },
+            {
+              "av": 0.0,
+              "event_type": "effect",
+              "message": "Queued action seele.novaflare_auto_skill in immediate_queue",
+              "data": {
+                "actor": "seele",
+                "action": "novaflare_auto_skill",
+                "targets": null,
+                "defer_target_policy": "original_target_or_lowest_hp_percent_enemy",
+                "context_target_id": "e1",
+                "events": {},
+                "turn_kind": null,
+                "extra_turn_type": null,
+                "queued_wave_index": 0,
+                "carry_across_wave": true,
+                "queued_actor_phase": null,
+                "carry_across_phase": false
+              },
+              "index": 4
+            },
+            {
+              "av": 0.0,
+              "event_type": "action_end",
+              "message": "seele finished technique_entry",
+              "data": {},
+              "index": 5
+            },
+            {
+              "av": 0.0,
+              "event_type": "queue",
+              "message": "Resolve queued action from immediate_queue: seele.novaflare_auto_skill",
+              "data": {},
+              "index": 6
+            },
+            {
+              "av": 0.0,
+              "event_type": "action_start",
+              "message": "seele uses novaflare_auto_skill on ['e1']",
+              "data": {
+                "tags": [
+                  "attack",
+                  "auto_skill_use",
+                  "can_trigger_kill_energy",
+                  "can_trigger_resurgence",
+                  "does_not_consume_skill_point",
+                  "does_not_grant_base_energy",
+                  "skill_damage",
+                  "triggers_skill_spd_buff"
+                ],
+                "turn_kind": null
+              },
+              "index": 7
+            },
+            {
+              "av": 0.0,
+              "event_type": "damage",
+              "message": "seele deals 74610.681 quantum damage to e1",
+              "data": {
+                "old_hp": 25389.31939839998,
+                "new_hp": 0.0,
+                "old_shield": 0.0,
+                "new_shield": 0.0,
+                "actor_id": "seele",
+                "target_id": "e1",
+                "packet_id": "auto_skill_hit",
+                "element": "quantum",
+                "base_damage": 10036.800000000001,
+                "crit": {
+                  "event_id": "seele.novaflare_auto_skill.auto_skill_hit.crit",
+                  "is_crit": true,
+                  "multiplier": 3.249,
+                  "source": "crit",
+                  "crit_rate": 0.711,
+                  "crit_dmg": 2.249
+                },
+                "multipliers": {
+                  "dmg_bonus": 2.2880000000000003,
+                  "defense": 1.0,
+                  "res": 1.0,
+                  "damage_taken": 1.0,
+                  "universal_reduction": 1.0,
+                  "toughness_state": 1.0,
+                  "other": 1.0
+                },
+                "formula_ledger": {
+                  "formula_type": "direct_damage",
+                  "actor_id": "seele",
+                  "target_id": "e1",
+                  "action_id": "novaflare_auto_skill",
+                  "packet_id": "auto_skill_hit",
+                  "tags": [
+                    "attack",
+                    "auto_skill_use",
+                    "can_trigger_kill_energy",
+                    "can_trigger_resurgence",
+                    "does_not_consume_skill_point",
+                    "does_not_grant_base_energy",
+                    "skill_damage",
+                    "triggers_skill_spd_buff"
+                  ],
+                  "scaling": {
+                    "stat": "atk",
+                    "scaling_value": 2788.0,
+                    "multiplier": 3.6,
+                    "flat_damage": 0.0,
+                    "base_damage": 10036.8
+                  },
+                  "crit": {
+                    "event_id": "seele.novaflare_auto_skill.auto_skill_hit.crit",
+                    "is_crit": true,
+                    "multiplier": 3.249,
+                    "source": "crit",
+                    "crit_rate": 0.711,
+                    "crit_dmg": 2.249
+                  },
+                  "buckets": {
+                    "dmg_bonus": {
+                      "multiplier": 2.288,
+                      "terms": [
+                        {
+                          "source_type": "actor.stats",
+                          "source_id": "seele",
+                          "key": "quantum_dmg_bonus",
+                          "value": 0.488,
+                          "stacks": 1,
+                          "applied_value": 0.488
+                        },
+                        {
+                          "source_type": "actor.status",
+                          "source_id": "seele_buffed_state",
+                          "key": "dmg_bonus_add",
+                          "value": 0.8,
+                          "stacks": 1,
+                          "applied_value": 0.8,
+                          "note": "source=seele"
+                        }
+                      ]
+                    },
+                    "defense": {
+                      "multiplier": 1.0,
+                      "raw_target_def": 0.0,
+                      "effective_target_def": 0.0,
+                      "ignore_defense_multiplier": false,
+                      "terms": []
+                    },
+                    "res": {
+                      "multiplier": 1.0,
+                      "base_target_res": 0.0,
+                      "target_res_after_delta": 0.0,
+                      "res_pen_total": 0,
+                      "terms": []
+                    },
+                    "damage_taken": {
+                      "multiplier": 1.0,
+                      "terms": []
+                    },
+                    "universal_reduction": {
+                      "multiplier": 1.0,
+                      "terms": []
+                    },
+                    "toughness_state": {
+                      "multiplier": 1.0,
+                      "target_toughness_before_packet": null,
+                      "target_is_broken_before_packet": false,
+                      "ignore_toughness_state_multiplier": false
+                    },
+                    "other": {
+                      "multiplier": 1.0,
+                      "source": "packet.other_multiplier"
+                    }
+                  },
+                  "formula": "base * crit * dmg_bonus * defense * res * damage_taken * universal_reduction * toughness_state * other",
+                  "final_damage": 74610.6806016
+                },
+                "damage": 74610.68060160002,
+                "toughness_reduction": 30.0,
+                "target_defeated": true,
+                "hp_bar_depleted": true,
+                "bars_depleted": 1,
+                "hp_bars_remaining": 1,
+                "depleted_bar_events": [],
+                "phase_damage_locked_until_action_end": false
+              },
+              "index": 8
+            },
+            {
+              "av": 0.0,
+              "event_type": "resource",
+              "message": "seele gains 11.940 energy from kill:e1",
+              "data": {
+                "old": 60.0,
+                "new": 71.94,
+                "gain": 11.94,
+                "source": {
+                  "base": 10.0,
+                  "affected_by_err": true
+                }
+              },
+              "index": 9
+            },
+            {
+              "av": 0.0,
+              "event_type": "speed_change",
+              "message": "seele speed 123.000 -> 153.750",
+              "data": {
+                "old_remaining_av": 81.300813,
+                "new_remaining_av": 65.0406504,
+                "reason": "add_status"
+              },
+              "index": 10
+            },
+            {
+              "av": 0.0,
+              "event_type": "effect",
+              "message": "Add status seele_skill_spd_buff to seele",
+              "data": {
+                "status": {
+                  "id": "seele_skill_spd_buff",
+                  "tags": [
+                    "buff",
+                    "speed"
+                  ],
+                  "modifiers": {
+                    "speed_pct": 0.25,
+                    "_sim_aliases_normalized": true
+                  },
+                  "stacks": 1,
+                  "max_stacks": 2,
+                  "duration_type": null,
+                  "duration_value": null,
+                  "source_id": "seele",
+                  "duration_extra_turn_consumes": false,
+                  "refresh_duration": true
+                },
+                "was_present": false,
+                "old_stacks": 0,
+                "new_stacks": 1
+              },
+              "index": 11
+            },
+            {
+              "av": 0.0,
+              "event_type": "action_end",
+              "message": "seele finished novaflare_auto_skill",
+              "data": {},
+              "index": 12
+            }
+          ]
+        },
+        "settlement": {
+          "damage_records": [
+            {
+              "packet_index": 0,
+              "source_action_id": "technique_entry",
+              "actor_id": "seele",
+              "target_id": "e1",
+              "element": "quantum",
+              "damage_type": "technique_damage",
+              "base_damage": 10036.800000000001,
+              "crit": false,
+              "crit_dmg_mult": 3.249,
+              "dmg_bonus_mult": 2.2880000000000003,
+              "def_mult": 1.0,
+              "res_mult": 1.0,
+              "dmg_taken_mult": 1.0,
+              "toughness_mult": 1.0,
+              "final_damage": 74610.68060160002,
+              "damage_applied": 74610.68060160002,
+              "shield_absorbed": 0.0,
+              "hp_loss": 0.0,
+              "overkill": 0.0,
+              "is_overkill": false
+            }
+          ],
+          "shield_records": [],
+          "hp_records": [
+            {
+              "unit_id": "e1",
+              "old_hp": 100000.0,
+              "new_hp": 25389.31939839998,
+              "delta": -74610.68060160002,
+              "reason": "受到伤害: technique_entry",
+              "source_id": "",
+              "overkill": 0.0
+            }
+          ],
+          "energy_records": [],
+          "sp_records": [],
+          "status_records": [
+            {
+              "unit_id": "seele",
+              "status_id": "seele_buffed_state",
+              "status_name_cn": "",
+              "status_type": "",
+              "change_type": "add",
+              "old_stacks": 0,
+              "new_stacks": 1,
+              "max_stacks": 1,
+              "duration_type": "",
+              "duration_value": 0,
+              "source_id": "seele",
+              "reason": "effect:technique_entry"
+            }
+          ],
+          "av_records": [
+            {
+              "unit_id": "seele",
+              "old_remaining_av": 0.0,
+              "new_remaining_av": 81.300813,
+              "delta": 81.300813,
+              "reason": "regular_turn_end",
+              "source_id": ""
+            }
+          ],
+          "turn_records": [],
+          "mechanic_records": [],
+          "target_record": {
+            "action_id": "",
+            "actor_id": "",
+            "target_ids": [
+              "e1"
+            ],
+            "target_selection_reason": "explicit"
+          }
+        },
+        "after": {
+          "av": 0.0,
+          "skill_points": 3,
+          "skill_point_cap": 5,
+          "_sp": 3,
+          "_sp_cap": 5,
+          "allies": [
+            {
+              "id": "seele",
+              "alive": true,
+              "hp": 3021.0,
+              "max_hp": 3021.0,
+              "energy": 71.94,
+              "max_energy": 120.0,
+              "remaining_av": 65.04065,
+              "toughness": null,
+              "max_toughness": null,
+              "hp_bars_remaining": 1,
+              "status_count": 2
+            }
+          ],
+          "enemies": [
+            {
+              "id": "e1",
+              "alive": false,
+              "hp": 0.0,
+              "max_hp": 100000.0,
+              "energy": 0.0,
+              "max_energy": 0.0,
+              "remaining_av": 100.0,
+              "toughness": null,
+              "max_toughness": null,
+              "hp_bars_remaining": 1,
+              "status_count": 0
+            },
+            {
+              "id": "e2",
+              "alive": true,
+              "hp": 100000.0,
+              "max_hp": 100000.0,
+              "energy": 0.0,
+              "max_energy": 0.0,
+              "remaining_av": 100.0,
+              "toughness": null,
+              "max_toughness": null,
+              "hp_bars_remaining": 1,
+              "status_count": 0
+            },
+            {
+              "id": "e3",
+              "alive": true,
+              "hp": 100000.0,
+              "max_hp": 100000.0,
+              "energy": 0.0,
+              "max_energy": 0.0,
+              "remaining_av": 100.0,
+              "toughness": null,
+              "max_toughness": null,
+              "hp_bars_remaining": 1,
+              "status_count": 0
+            },
+            {
+              "id": "e4",
+              "alive": true,
+              "hp": 100000.0,
+              "max_hp": 100000.0,
+              "energy": 0.0,
+              "max_energy": 0.0,
+              "remaining_av": 100.0,
+              "toughness": null,
+              "max_toughness": null,
+              "hp_bars_remaining": 1,
+              "status_count": 0
+            },
+            {
+              "id": "e5",
+              "alive": true,
+              "hp": 100000.0,
+              "max_hp": 100000.0,
+              "energy": 0.0,
+              "max_energy": 0.0,
+              "remaining_av": 100.0,
+              "toughness": null,
+              "max_toughness": null,
+              "hp_bars_remaining": 1,
+              "status_count": 0
+            }
+          ],
+          "queue_size": 0
+        },
+        "after_scene": {
+          "global": {
+            "av": 0.0,
+            "cycle": 0,
+            "skill_points": 3,
+            "skill_point_cap": 5,
+            "_sp": 3,
+            "_sp_cap": 5,
+            "wave_index": 0,
+            "flags": {}
+          },
+          "action_axis": [
+            {
+              "id": "seele",
+              "name": "Seele",
+              "side": "ally",
+              "alive": true,
+              "speed": 153.75,
+              "action_interval": 65.04065,
+              "remaining_av": 65.04065,
+              "absolute_av": 65.04065,
+              "tags": [
+                "ally",
+                "on_timeline"
+              ]
+            },
+            {
+              "id": "e2",
+              "name": "Dummy 2",
+              "side": "enemy",
+              "alive": true,
+              "speed": 100.0,
+              "action_interval": 100.0,
+              "remaining_av": 100.0,
+              "absolute_av": 100.0,
+              "tags": [
+                "enemy"
+              ]
+            },
+            {
+              "id": "e3",
+              "name": "Dummy 3",
+              "side": "enemy",
+              "alive": true,
+              "speed": 100.0,
+              "action_interval": 100.0,
+              "remaining_av": 100.0,
+              "absolute_av": 100.0,
+              "tags": [
+                "enemy"
+              ]
+            },
+            {
+              "id": "e4",
+              "name": "Dummy 4",
+              "side": "enemy",
+              "alive": true,
+              "speed": 100.0,
+              "action_interval": 100.0,
+              "remaining_av": 100.0,
+              "absolute_av": 100.0,
+              "tags": [
+                "enemy"
+              ]
+            },
+            {
+              "id": "e5",
+              "name": "Dummy 5",
+              "side": "enemy",
+              "alive": true,
+              "speed": 100.0,
+              "action_interval": 100.0,
+              "remaining_av": 100.0,
+              "absolute_av": 100.0,
+              "tags": [
+                "enemy"
+              ]
+            },
+            {
+              "id": "e1",
+              "name": "Dummy 1",
+              "side": "enemy",
+              "alive": false,
+              "speed": 100.0,
+              "action_interval": null,
+              "remaining_av": 100.0,
+              "absolute_av": 100.0,
+              "tags": [
+                "enemy"
+              ]
+            }
+          ],
+          "allies": [
+            {
+              "id": "seele",
+              "name": "Seele",
+              "side": "ally",
+              "alive": true,
+              "tags": [
+                "ally",
+                "on_timeline"
+              ],
+              "resources": {
+                "hp": 3021.0,
+                "max_hp": 3021.0,
+                "hp_percent": 1.0,
+                "shield": 0.0,
+                "energy": 71.94,
+                "max_energy": 120.0,
+                "toughness": null,
+                "max_toughness": null,
+                "is_broken": false,
+                "hp_bars_total": 1,
+                "hp_bars_remaining": 1,
+                "hp_model_type": "normal_hp",
+                "hp_carry_over_damage": null
+              },
+              "action_axis": {
+                "remaining_av": 65.04065,
+                "absolute_av": 65.04065,
+                "speed": 153.75,
+                "action_interval": 65.04065
+              },
+              "panel": {
+                "hp": 3021.0,
+                "max_hp": 3021.0,
+                "atk": 2788.0,
+                "speed": 153.75,
+                "crit_rate": 0.711,
+                "crit_dmg": 2.249,
+                "energy_regeneration_rate": 1.194,
+                "quantum_dmg_bonus": 0.488
+              },
+              "stat_parts": {
+                "base": {},
+                "pct": {},
+                "flat": {},
+                "legacy_stats": {
+                  "atk": 2788.0,
+                  "speed": 123.0,
+                  "crit_rate": 0.711,
+                  "crit_dmg": 2.249,
+                  "quantum_dmg_bonus": 0.488,
+                  "energy_regeneration_rate": 1.194
+                }
+              },
+              "resistance": {},
+              "weaknesses": [],
+              "statuses": [
+                {
+                  "id": "seele_buffed_state",
+                  "source_id": "seele",
+                  "stacks": 1,
+                  "max_stacks": 1,
+                  "duration": {
+                    "type": null,
+                    "value": null,
+                    "extra_turn_consumes": false,
+                    "refresh_duration": true
+                  },
+                  "tags": [
+                    "buff",
+                    "dmg_bonus"
+                  ],
+                  "modifier_keys": [
+                    "_sim_aliases_normalized",
+                    "dmg_bonus_add"
+                  ],
+                  "modifiers": {
+                    "dmg_bonus_add": 0.8,
+                    "_sim_aliases_normalized": true
+                  }
+                },
+                {
+                  "id": "seele_skill_spd_buff",
+                  "source_id": "seele",
+                  "stacks": 1,
+                  "max_stacks": 2,
+                  "duration": {
+                    "type": null,
+                    "value": null,
+                    "extra_turn_consumes": false,
+                    "refresh_duration": true
+                  },
+                  "tags": [
+                    "buff",
+                    "speed"
+                  ],
+                  "modifier_keys": [
+                    "_sim_aliases_normalized",
+                    "speed_pct"
+                  ],
+                  "modifiers": {
+                    "speed_pct": 0.25,
+                    "_sim_aliases_normalized": true
+                  }
+                }
+              ],
+              "special_mechanics": {},
+              "flags": {}
+            }
+          ],
+          "summons": [],
+          "enemies": [
+            {
+              "id": "e1",
+              "name": "Dummy 1",
+              "side": "enemy",
+              "alive": false,
+              "tags": [
+                "enemy"
+              ],
+              "resources": {
+                "hp": 0.0,
+                "max_hp": 100000.0,
+                "hp_percent": 0.0,
+                "shield": 0.0,
+                "energy": 0.0,
+                "max_energy": 0.0,
+                "toughness": null,
+                "max_toughness": null,
+                "is_broken": false,
+                "hp_bars_total": 1,
+                "hp_bars_remaining": 1,
+                "hp_model_type": "normal_hp",
+                "hp_carry_over_damage": null
+              },
+              "action_axis": {
+                "remaining_av": 100.0,
+                "absolute_av": 100.0,
+                "speed": 100.0,
+                "action_interval": null
+              },
+              "panel": {
+                "max_hp": 100000.0
+              },
+              "stat_parts": {
+                "base": {},
+                "pct": {},
+                "flat": {},
+                "legacy_stats": {
+                  "defense": 0.0
+                }
+              },
+              "resistance": {
+                "quantum": 0.0
+              },
+              "weaknesses": [
+                "quantum"
+              ],
+              "statuses": [],
+              "special_mechanics": {
+                "inferred_next_action": null
+              },
+              "flags": {}
+            },
+            {
+              "id": "e2",
+              "name": "Dummy 2",
+              "side": "enemy",
+              "alive": true,
+              "tags": [
+                "enemy"
+              ],
+              "resources": {
+                "hp": 100000.0,
+                "max_hp": 100000.0,
+                "hp_percent": 1.0,
+                "shield": 0.0,
+                "energy": 0.0,
+                "max_energy": 0.0,
+                "toughness": null,
+                "max_toughness": null,
+                "is_broken": false,
+                "hp_bars_total": 1,
+                "hp_bars_remaining": 1,
+                "hp_model_type": "normal_hp",
+                "hp_carry_over_damage": null
+              },
+              "action_axis": {
+                "remaining_av": 100.0,
+                "absolute_av": 100.0,
+                "speed": 100.0,
+                "action_interval": 100.0
+              },
+              "panel": {
+                "hp": 100000.0,
+                "max_hp": 100000.0
+              },
+              "stat_parts": {
+                "base": {},
+                "pct": {},
+                "flat": {},
+                "legacy_stats": {
+                  "defense": 0.0
+                }
+              },
+              "resistance": {
+                "quantum": 0.0
+              },
+              "weaknesses": [
+                "quantum"
+              ],
+              "statuses": [],
+              "special_mechanics": {
+                "inferred_next_action": null
+              },
+              "flags": {}
+            },
+            {
+              "id": "e3",
+              "name": "Dummy 3",
+              "side": "enemy",
+              "alive": true,
+              "tags": [
+                "enemy"
+              ],
+              "resources": {
+                "hp": 100000.0,
+                "max_hp": 100000.0,
+                "hp_percent": 1.0,
+                "shield": 0.0,
+                "energy": 0.0,
+                "max_energy": 0.0,
+                "toughness": null,
+                "max_toughness": null,
+                "is_broken": false,
+                "hp_bars_total": 1,
+                "hp_bars_remaining": 1,
+                "hp_model_type": "normal_hp",
+                "hp_carry_over_damage": null
+              },
+              "action_axis": {
+                "remaining_av": 100.0,
+                "absolute_av": 100.0,
+                "speed": 100.0,
+                "action_interval": 100.0
+              },
+              "panel": {
+                "hp": 100000.0,
+                "max_hp": 100000.0
+              },
+              "stat_parts": {
+                "base": {},
+                "pct": {},
+                "flat": {},
+                "legacy_stats": {
+                  "defense": 0.0
+                }
+              },
+              "resistance": {
+                "quantum": 0.0
+              },
+              "weaknesses": [
+                "quantum"
+              ],
+              "statuses": [],
+              "special_mechanics": {
+                "inferred_next_action": null
+              },
+              "flags": {}
+            },
+            {
+              "id": "e4",
+              "name": "Dummy 4",
+              "side": "enemy",
+              "alive": true,
+              "tags": [
+                "enemy"
+              ],
+              "resources": {
+                "hp": 100000.0,
+                "max_hp": 100000.0,
+                "hp_percent": 1.0,
+                "shield": 0.0,
+                "energy": 0.0,
+                "max_energy": 0.0,
+                "toughness": null,
+                "max_toughness": null,
+                "is_broken": false,
+                "hp_bars_total": 1,
+                "hp_bars_remaining": 1,
+                "hp_model_type": "normal_hp",
+                "hp_carry_over_damage": null
+              },
+              "action_axis": {
+                "remaining_av": 100.0,
+                "absolute_av": 100.0,
+                "speed": 100.0,
+                "action_interval": 100.0
+              },
+              "panel": {
+                "hp": 100000.0,
+                "max_hp": 100000.0
+              },
+              "stat_parts": {
+                "base": {},
+                "pct": {},
+                "flat": {},
+                "legacy_stats": {
+                  "defense": 0.0
+                }
+              },
+              "resistance": {
+                "quantum": 0.0
+              },
+              "weaknesses": [
+                "quantum"
+              ],
+              "statuses": [],
+              "special_mechanics": {
+                "inferred_next_action": null
+              },
+              "flags": {}
+            },
+            {
+              "id": "e5",
+              "name": "Dummy 5",
+              "side": "enemy",
+              "alive": true,
+              "tags": [
+                "enemy"
+              ],
+              "resources": {
+                "hp": 100000.0,
+                "max_hp": 100000.0,
+                "hp_percent": 1.0,
+                "shield": 0.0,
+                "energy": 0.0,
+                "max_energy": 0.0,
+                "toughness": null,
+                "max_toughness": null,
+                "is_broken": false,
+                "hp_bars_total": 1,
+                "hp_bars_remaining": 1,
+                "hp_model_type": "normal_hp",
+                "hp_carry_over_damage": null
+              },
+              "action_axis": {
+                "remaining_av": 100.0,
+                "absolute_av": 100.0,
+                "speed": 100.0,
+                "action_interval": 100.0
+              },
+              "panel": {
+                "hp": 100000.0,
+                "max_hp": 100000.0
+              },
+              "stat_parts": {
+                "base": {},
+                "pct": {},
+                "flat": {},
+                "legacy_stats": {
+                  "defense": 0.0
+                }
+              },
+              "resistance": {
+                "quantum": 0.0
+              },
+              "weaknesses": [
+                "quantum"
+              ],
+              "statuses": [],
+              "special_mechanics": {
+                "inferred_next_action": null
+              },
+              "flags": {}
+            }
+          ],
+          "others": [],
+          "queues": {
+            "ultimate_queue": [],
+            "immediate_queue": [],
+            "interrupt_queue": []
+          },
+          "trigger_usage": {
+            "seele_novaflare_auto_skill_trigger:owner_turn:seele": 1
+          }
+        }
+      },
+      {
+        "step": 2,
+        "step_type": "action",
+        "actor": "seele",
+        "action": "skill",
+        "timing": "regular_turn",
+        "targets": [
+          "e2"
+        ],
+        "before": {
+          "av": 0.0,
+          "skill_points": 3,
+          "skill_point_cap": 5,
+          "_sp": 3,
+          "_sp_cap": 5,
+          "allies": [
+            {
+              "id": "seele",
+              "alive": true,
+              "hp": 3021.0,
+              "max_hp": 3021.0,
+              "energy": 71.94,
+              "max_energy": 120.0,
+              "remaining_av": 65.04065,
+              "toughness": null,
+              "max_toughness": null,
+              "hp_bars_remaining": 1,
+              "status_count": 2
+            }
+          ],
+          "enemies": [
+            {
+              "id": "e1",
+              "alive": false,
+              "hp": 0.0,
+              "max_hp": 100000.0,
+              "energy": 0.0,
+              "max_energy": 0.0,
+              "remaining_av": 100.0,
+              "toughness": null,
+              "max_toughness": null,
+              "hp_bars_remaining": 1,
+              "status_count": 0
+            },
+            {
+              "id": "e2",
+              "alive": true,
+              "hp": 100000.0,
+              "max_hp": 100000.0,
+              "energy": 0.0,
+              "max_energy": 0.0,
+              "remaining_av": 100.0,
+              "toughness": null,
+              "max_toughness": null,
+              "hp_bars_remaining": 1,
+              "status_count": 0
+            },
+            {
+              "id": "e3",
+              "alive": true,
+              "hp": 100000.0,
+              "max_hp": 100000.0,
+              "energy": 0.0,
+              "max_energy": 0.0,
+              "remaining_av": 100.0,
+              "toughness": null,
+              "max_toughness": null,
+              "hp_bars_remaining": 1,
+              "status_count": 0
+            },
+            {
+              "id": "e4",
+              "alive": true,
+              "hp": 100000.0,
+              "max_hp": 100000.0,
+              "energy": 0.0,
+              "max_energy": 0.0,
+              "remaining_av": 100.0,
+              "toughness": null,
+              "max_toughness": null,
+              "hp_bars_remaining": 1,
+              "status_count": 0
+            },
+            {
+              "id": "e5",
+              "alive": true,
+              "hp": 100000.0,
+              "max_hp": 100000.0,
+              "energy": 0.0,
+              "max_energy": 0.0,
+              "remaining_av": 100.0,
+              "toughness": null,
+              "max_toughness": null,
+              "hp_bars_remaining": 1,
+              "status_count": 0
+            }
+          ],
+          "queue_size": 0
+        },
+        "before_scene": {
+          "global": {
+            "av": 0.0,
+            "cycle": 0,
+            "skill_points": 3,
+            "skill_point_cap": 5,
+            "_sp": 3,
+            "_sp_cap": 5,
+            "wave_index": 0,
+            "flags": {}
+          },
+          "action_axis": [
+            {
+              "id": "seele",
+              "name": "Seele",
+              "side": "ally",
+              "alive": true,
+              "speed": 153.75,
+              "action_interval": 65.04065,
+              "remaining_av": 65.04065,
+              "absolute_av": 65.04065,
+              "tags": [
+                "ally",
+                "on_timeline"
+              ]
+            },
+            {
+              "id": "e2",
+              "name": "Dummy 2",
+              "side": "enemy",
+              "alive": true,
+              "speed": 100.0,
+              "action_interval": 100.0,
+              "remaining_av": 100.0,
+              "absolute_av": 100.0,
+              "tags": [
+                "enemy"
+              ]
+            },
+            {
+              "id": "e3",
+              "name": "Dummy 3",
+              "side": "enemy",
+              "alive": true,
+              "speed": 100.0,
+              "action_interval": 100.0,
+              "remaining_av": 100.0,
+              "absolute_av": 100.0,
+              "tags": [
+                "enemy"
+              ]
+            },
+            {
+              "id": "e4",
+              "name": "Dummy 4",
+              "side": "enemy",
+              "alive": true,
+              "speed": 100.0,
+              "action_interval": 100.0,
+              "remaining_av": 100.0,
+              "absolute_av": 100.0,
+              "tags": [
+                "enemy"
+              ]
+            },
+            {
+              "id": "e5",
+              "name": "Dummy 5",
+              "side": "enemy",
+              "alive": true,
+              "speed": 100.0,
+              "action_interval": 100.0,
+              "remaining_av": 100.0,
+              "absolute_av": 100.0,
+              "tags": [
+                "enemy"
+              ]
+            },
+            {
+              "id": "e1",
+              "name": "Dummy 1",
+              "side": "enemy",
+              "alive": false,
+              "speed": 100.0,
+              "action_interval": null,
+              "remaining_av": 100.0,
+              "absolute_av": 100.0,
+              "tags": [
+                "enemy"
+              ]
+            }
+          ],
+          "allies": [
+            {
+              "id": "seele",
+              "name": "Seele",
+              "side": "ally",
+              "alive": true,
+              "tags": [
+                "ally",
+                "on_timeline"
+              ],
+              "resources": {
+                "hp": 3021.0,
+                "max_hp": 3021.0,
+                "hp_percent": 1.0,
+                "shield": 0.0,
+                "energy": 71.94,
+                "max_energy": 120.0,
+                "toughness": null,
+                "max_toughness": null,
+                "is_broken": false,
+                "hp_bars_total": 1,
+                "hp_bars_remaining": 1,
+                "hp_model_type": "normal_hp",
+                "hp_carry_over_damage": null
+              },
+              "action_axis": {
+                "remaining_av": 65.04065,
+                "absolute_av": 65.04065,
+                "speed": 153.75,
+                "action_interval": 65.04065
+              },
+              "panel": {
+                "hp": 3021.0,
+                "max_hp": 3021.0,
+                "atk": 2788.0,
+                "speed": 153.75,
+                "crit_rate": 0.711,
+                "crit_dmg": 2.249,
+                "energy_regeneration_rate": 1.194,
+                "quantum_dmg_bonus": 0.488
+              },
+              "stat_parts": {
+                "base": {},
+                "pct": {},
+                "flat": {},
+                "legacy_stats": {
+                  "atk": 2788.0,
+                  "speed": 123.0,
+                  "crit_rate": 0.711,
+                  "crit_dmg": 2.249,
+                  "quantum_dmg_bonus": 0.488,
+                  "energy_regeneration_rate": 1.194
+                }
+              },
+              "resistance": {},
+              "weaknesses": [],
+              "statuses": [
+                {
+                  "id": "seele_buffed_state",
+                  "source_id": "seele",
+                  "stacks": 1,
+                  "max_stacks": 1,
+                  "duration": {
+                    "type": null,
+                    "value": null,
+                    "extra_turn_consumes": false,
+                    "refresh_duration": true
+                  },
+                  "tags": [
+                    "buff",
+                    "dmg_bonus"
+                  ],
+                  "modifier_keys": [
+                    "_sim_aliases_normalized",
+                    "dmg_bonus_add"
+                  ],
+                  "modifiers": {
+                    "dmg_bonus_add": 0.8,
+                    "_sim_aliases_normalized": true
+                  }
+                },
+                {
+                  "id": "seele_skill_spd_buff",
+                  "source_id": "seele",
+                  "stacks": 1,
+                  "max_stacks": 2,
+                  "duration": {
+                    "type": null,
+                    "value": null,
+                    "extra_turn_consumes": false,
+                    "refresh_duration": true
+                  },
+                  "tags": [
+                    "buff",
+                    "speed"
+                  ],
+                  "modifier_keys": [
+                    "_sim_aliases_normalized",
+                    "speed_pct"
+                  ],
+                  "modifiers": {
+                    "speed_pct": 0.25,
+                    "_sim_aliases_normalized": true
+                  }
+                }
+              ],
+              "special_mechanics": {},
+              "flags": {}
+            }
+          ],
+          "summons": [],
+          "enemies": [
+            {
+              "id": "e1",
+              "name": "Dummy 1",
+              "side": "enemy",
+              "alive": false,
+              "tags": [
+                "enemy"
+              ],
+              "resources": {
+                "hp": 0.0,
+                "max_hp": 100000.0,
+                "hp_percent": 0.0,
+                "shield": 0.0,
+                "energy": 0.0,
+                "max_energy": 0.0,
+                "toughness": null,
+                "max_toughness": null,
+                "is_broken": false,
+                "hp_bars_total": 1,
+                "hp_bars_remaining": 1,
+                "hp_model_type": "normal_hp",
+                "hp_carry_over_damage": null
+              },
+              "action_axis": {
+                "remaining_av": 100.0,
+                "absolute_av": 100.0,
+                "speed": 100.0,
+                "action_interval": null
+              },
+              "panel": {
+                "max_hp": 100000.0
+              },
+              "stat_parts": {
+                "base": {},
+                "pct": {},
+                "flat": {},
+                "legacy_stats": {
+                  "defense": 0.0
+                }
+              },
+              "resistance": {
+                "quantum": 0.0
+              },
+              "weaknesses": [
+                "quantum"
+              ],
+              "statuses": [],
+              "special_mechanics": {
+                "inferred_next_action": null
+              },
+              "flags": {}
+            },
+            {
+              "id": "e2",
+              "name": "Dummy 2",
+              "side": "enemy",
+              "alive": true,
+              "tags": [
+                "enemy"
+              ],
+              "resources": {
+                "hp": 100000.0,
+                "max_hp": 100000.0,
+                "hp_percent": 1.0,
+                "shield": 0.0,
+                "energy": 0.0,
+                "max_energy": 0.0,
+                "toughness": null,
+                "max_toughness": null,
+                "is_broken": false,
+                "hp_bars_total": 1,
+                "hp_bars_remaining": 1,
+                "hp_model_type": "normal_hp",
+                "hp_carry_over_damage": null
+              },
+              "action_axis": {
+                "remaining_av": 100.0,
+                "absolute_av": 100.0,
+                "speed": 100.0,
+                "action_interval": 100.0
+              },
+              "panel": {
+                "hp": 100000.0,
+                "max_hp": 100000.0
+              },
+              "stat_parts": {
+                "base": {},
+                "pct": {},
+                "flat": {},
+                "legacy_stats": {
+                  "defense": 0.0
+                }
+              },
+              "resistance": {
+                "quantum": 0.0
+              },
+              "weaknesses": [
+                "quantum"
+              ],
+              "statuses": [],
+              "special_mechanics": {
+                "inferred_next_action": null
+              },
+              "flags": {}
+            },
+            {
+              "id": "e3",
+              "name": "Dummy 3",
+              "side": "enemy",
+              "alive": true,
+              "tags": [
+                "enemy"
+              ],
+              "resources": {
+                "hp": 100000.0,
+                "max_hp": 100000.0,
+                "hp_percent": 1.0,
+                "shield": 0.0,
+                "energy": 0.0,
+                "max_energy": 0.0,
+                "toughness": null,
+                "max_toughness": null,
+                "is_broken": false,
+                "hp_bars_total": 1,
+                "hp_bars_remaining": 1,
+                "hp_model_type": "normal_hp",
+                "hp_carry_over_damage": null
+              },
+              "action_axis": {
+                "remaining_av": 100.0,
+                "absolute_av": 100.0,
+                "speed": 100.0,
+                "action_interval": 100.0
+              },
+              "panel": {
+                "hp": 100000.0,
+                "max_hp": 100000.0
+              },
+              "stat_parts": {
+                "base": {},
+                "pct": {},
+                "flat": {},
+                "legacy_stats": {
+                  "defense": 0.0
+                }
+              },
+              "resistance": {
+                "quantum": 0.0
+              },
+              "weaknesses": [
+                "quantum"
+              ],
+              "statuses": [],
+              "special_mechanics": {
+                "inferred_next_action": null
+              },
+              "flags": {}
+            },
+            {
+              "id": "e4",
+              "name": "Dummy 4",
+              "side": "enemy",
+              "alive": true,
+              "tags": [
+                "enemy"
+              ],
+              "resources": {
+                "hp": 100000.0,
+                "max_hp": 100000.0,
+                "hp_percent": 1.0,
+                "shield": 0.0,
+                "energy": 0.0,
+                "max_energy": 0.0,
+                "toughness": null,
+                "max_toughness": null,
+                "is_broken": false,
+                "hp_bars_total": 1,
+                "hp_bars_remaining": 1,
+                "hp_model_type": "normal_hp",
+                "hp_carry_over_damage": null
+              },
+              "action_axis": {
+                "remaining_av": 100.0,
+                "absolute_av": 100.0,
+                "speed": 100.0,
+                "action_interval": 100.0
+              },
+              "panel": {
+                "hp": 100000.0,
+                "max_hp": 100000.0
+              },
+              "stat_parts": {
+                "base": {},
+                "pct": {},
+                "flat": {},
+                "legacy_stats": {
+                  "defense": 0.0
+                }
+              },
+              "resistance": {
+                "quantum": 0.0
+              },
+              "weaknesses": [
+                "quantum"
+              ],
+              "statuses": [],
+              "special_mechanics": {
+                "inferred_next_action": null
+              },
+              "flags": {}
+            },
+            {
+              "id": "e5",
+              "name": "Dummy 5",
+              "side": "enemy",
+              "alive": true,
+              "tags": [
+                "enemy"
+              ],
+              "resources": {
+                "hp": 100000.0,
+                "max_hp": 100000.0,
+                "hp_percent": 1.0,
+                "shield": 0.0,
+                "energy": 0.0,
+                "max_energy": 0.0,
+                "toughness": null,
+                "max_toughness": null,
+                "is_broken": false,
+                "hp_bars_total": 1,
+                "hp_bars_remaining": 1,
+                "hp_model_type": "normal_hp",
+                "hp_carry_over_damage": null
+              },
+              "action_axis": {
+                "remaining_av": 100.0,
+                "absolute_av": 100.0,
+                "speed": 100.0,
+                "action_interval": 100.0
+              },
+              "panel": {
+                "hp": 100000.0,
+                "max_hp": 100000.0
+              },
+              "stat_parts": {
+                "base": {},
+                "pct": {},
+                "flat": {},
+                "legacy_stats": {
+                  "defense": 0.0
+                }
+              },
+              "resistance": {
+                "quantum": 0.0
+              },
+              "weaknesses": [
+                "quantum"
+              ],
+              "statuses": [],
+              "special_mechanics": {
+                "inferred_next_action": null
+              },
+              "flags": {}
+            }
+          ],
+          "others": [],
+          "queues": {
+            "ultimate_queue": [],
+            "immediate_queue": [],
+            "interrupt_queue": []
+          },
+          "trigger_usage": {
+            "seele_novaflare_auto_skill_trigger:owner_turn:seele": 1
+          }
+        },
+        "event_summary": {
+          "event_count": 20,
+          "event_counts": {
+            "timeline": 2,
+            "turn_start": 1,
+            "trigger_reset": 1,
+            "action_start": 2,
+            "resource": 3,
+            "damage": 2,
+            "trigger": 1,
+            "effect": 3,
+            "speed_change": 1,
+            "turn_end": 1,
+            "action_end": 2,
+            "queue": 1
+          },
+          "damage_total": 149221.361203,
+          "toughness_damage_total": 0.0,
+          "defeated_units": [],
+          "queued_event_count": 1
+        },
+        "action_resolution": {
+          "requested": {
+            "step_type": "action",
+            "actor": "seele",
+            "action": "skill",
+            "timing": "regular_turn",
+            "targets": [
+              "e2"
+            ]
+          },
+          "damage_events": [
+            {
+              "av": 65.04065,
+              "event_type": "damage",
+              "message": "seele deals 74610.681 quantum damage to e2",
+              "data": {
+                "old_hp": 100000.0,
+                "new_hp": 25389.31939839998,
+                "old_shield": 0.0,
+                "new_shield": 0.0,
+                "actor_id": "seele",
+                "target_id": "e2",
+                "packet_id": "skill_hit",
+                "element": "quantum",
+                "base_damage": 10036.800000000001,
+                "crit": {
+                  "event_id": "seele.skill.skill_hit.crit",
+                  "is_crit": true,
+                  "multiplier": 3.249,
+                  "source": "crit",
+                  "crit_rate": 0.711,
+                  "crit_dmg": 2.249
+                },
+                "multipliers": {
+                  "dmg_bonus": 2.2880000000000003,
+                  "defense": 1.0,
+                  "res": 1.0,
+                  "damage_taken": 1.0,
+                  "universal_reduction": 1.0,
+                  "toughness_state": 1.0,
+                  "other": 1.0
+                },
+                "formula_ledger": {
+                  "formula_type": "direct_damage",
+                  "actor_id": "seele",
+                  "target_id": "e2",
+                  "action_id": "skill",
+                  "packet_id": "skill_hit",
+                  "tags": [
+                    "attack",
+                    "can_trigger_kill_energy",
+                    "can_trigger_novaflare_auto_skill",
+                    "can_trigger_resurgence",
+                    "consumes_regular_action",
+                    "consumes_skill_point",
+                    "grants_base_energy",
+                    "skill_damage",
+                    "skill_use"
+                  ],
+                  "scaling": {
+                    "stat": "atk",
+                    "scaling_value": 2788.0,
+                    "multiplier": 3.6,
+                    "flat_damage": 0.0,
+                    "base_damage": 10036.8
+                  },
+                  "crit": {
+                    "event_id": "seele.skill.skill_hit.crit",
+                    "is_crit": true,
+                    "multiplier": 3.249,
+                    "source": "crit",
+                    "crit_rate": 0.711,
+                    "crit_dmg": 2.249
+                  },
+                  "buckets": {
+                    "dmg_bonus": {
+                      "multiplier": 2.288,
+                      "terms": [
+                        {
+                          "source_type": "actor.stats",
+                          "source_id": "seele",
+                          "key": "quantum_dmg_bonus",
+                          "value": 0.488,
+                          "stacks": 1,
+                          "applied_value": 0.488
+                        },
+                        {
+                          "source_type": "actor.status",
+                          "source_id": "seele_buffed_state",
+                          "key": "dmg_bonus_add",
+                          "value": 0.8,
+                          "stacks": 1,
+                          "applied_value": 0.8,
+                          "note": "source=seele"
+                        }
+                      ]
+                    },
+                    "defense": {
+                      "multiplier": 1.0,
+                      "raw_target_def": 0.0,
+                      "effective_target_def": 0.0,
+                      "ignore_defense_multiplier": false,
+                      "terms": []
+                    },
+                    "res": {
+                      "multiplier": 1.0,
+                      "base_target_res": 0.0,
+                      "target_res_after_delta": 0.0,
+                      "res_pen_total": 0,
+                      "terms": []
+                    },
+                    "damage_taken": {
+                      "multiplier": 1.0,
+                      "terms": []
+                    },
+                    "universal_reduction": {
+                      "multiplier": 1.0,
+                      "terms": []
+                    },
+                    "toughness_state": {
+                      "multiplier": 1.0,
+                      "target_toughness_before_packet": null,
+                      "target_is_broken_before_packet": false,
+                      "ignore_toughness_state_multiplier": false
+                    },
+                    "other": {
+                      "multiplier": 1.0,
+                      "source": "packet.other_multiplier"
+                    }
+                  },
+                  "formula": "base * crit * dmg_bonus * defense * res * damage_taken * universal_reduction * toughness_state * other",
+                  "final_damage": 74610.6806016
+                },
+                "damage": 74610.68060160002,
+                "toughness_reduction": 30.0,
+                "target_defeated": false,
+                "hp_bar_depleted": false,
+                "bars_depleted": 0,
+                "hp_bars_remaining": 1,
+                "depleted_bar_events": [],
+                "phase_damage_locked_until_action_end": false
+              },
+              "index": 5
+            },
+            {
+              "av": 65.04065,
+              "event_type": "damage",
+              "message": "seele deals 74610.681 quantum damage to e2",
+              "data": {
+                "old_hp": 25389.31939839998,
+                "new_hp": 0.0,
+                "old_shield": 0.0,
+                "new_shield": 0.0,
+                "actor_id": "seele",
+                "target_id": "e2",
+                "packet_id": "auto_skill_hit",
+                "element": "quantum",
+                "base_damage": 10036.800000000001,
+                "crit": {
+                  "event_id": "seele.novaflare_auto_skill.auto_skill_hit.crit",
+                  "is_crit": true,
+                  "multiplier": 3.249,
+                  "source": "crit",
+                  "crit_rate": 0.711,
+                  "crit_dmg": 2.249
+                },
+                "multipliers": {
+                  "dmg_bonus": 2.2880000000000003,
+                  "defense": 1.0,
+                  "res": 1.0,
+                  "damage_taken": 1.0,
+                  "universal_reduction": 1.0,
+                  "toughness_state": 1.0,
+                  "other": 1.0
+                },
+                "formula_ledger": {
+                  "formula_type": "direct_damage",
+                  "actor_id": "seele",
+                  "target_id": "e2",
+                  "action_id": "novaflare_auto_skill",
+                  "packet_id": "auto_skill_hit",
+                  "tags": [
+                    "attack",
+                    "auto_skill_use",
+                    "can_trigger_kill_energy",
+                    "can_trigger_resurgence",
+                    "does_not_consume_skill_point",
+                    "does_not_grant_base_energy",
+                    "skill_damage",
+                    "triggers_skill_spd_buff"
+                  ],
+                  "scaling": {
+                    "stat": "atk",
+                    "scaling_value": 2788.0,
+                    "multiplier": 3.6,
+                    "flat_damage": 0.0,
+                    "base_damage": 10036.8
+                  },
+                  "crit": {
+                    "event_id": "seele.novaflare_auto_skill.auto_skill_hit.crit",
+                    "is_crit": true,
+                    "multiplier": 3.249,
+                    "source": "crit",
+                    "crit_rate": 0.711,
+                    "crit_dmg": 2.249
+                  },
+                  "buckets": {
+                    "dmg_bonus": {
+                      "multiplier": 2.288,
+                      "terms": [
+                        {
+                          "source_type": "actor.stats",
+                          "source_id": "seele",
+                          "key": "quantum_dmg_bonus",
+                          "value": 0.488,
+                          "stacks": 1,
+                          "applied_value": 0.488
+                        },
+                        {
+                          "source_type": "actor.status",
+                          "source_id": "seele_buffed_state",
+                          "key": "dmg_bonus_add",
+                          "value": 0.8,
+                          "stacks": 1,
+                          "applied_value": 0.8,
+                          "note": "source=seele"
+                        }
+                      ]
+                    },
+                    "defense": {
+                      "multiplier": 1.0,
+                      "raw_target_def": 0.0,
+                      "effective_target_def": 0.0,
+                      "ignore_defense_multiplier": false,
+                      "terms": []
+                    },
+                    "res": {
+                      "multiplier": 1.0,
+                      "base_target_res": 0.0,
+                      "target_res_after_delta": 0.0,
+                      "res_pen_total": 0,
+                      "terms": []
+                    },
+                    "damage_taken": {
+                      "multiplier": 1.0,
+                      "terms": []
+                    },
+                    "universal_reduction": {
+                      "multiplier": 1.0,
+                      "terms": []
+                    },
+                    "toughness_state": {
+                      "multiplier": 1.0,
+                      "target_toughness_before_packet": null,
+                      "target_is_broken_before_packet": false,
+                      "ignore_toughness_state_multiplier": false
+                    },
+                    "other": {
+                      "multiplier": 1.0,
+                      "source": "packet.other_multiplier"
+                    }
+                  },
+                  "formula": "base * crit * dmg_bonus * defense * res * damage_taken * universal_reduction * toughness_state * other",
+                  "final_damage": 74610.6806016
+                },
+                "damage": 74610.68060160002,
+                "toughness_reduction": 30.0,
+                "target_defeated": true,
+                "hp_bar_depleted": true,
+                "bars_depleted": 1,
+                "hp_bars_remaining": 1,
+                "depleted_bar_events": [],
+                "phase_damage_locked_until_action_end": false
+              },
+              "index": 16
+            }
+          ],
+          "status_events": [
+            {
+              "av": 65.04065,
+              "event_type": "effect",
+              "message": "Queued action seele.novaflare_auto_skill in immediate_queue",
+              "data": {
+                "actor": "seele",
+                "action": "novaflare_auto_skill",
+                "targets": null,
+                "defer_target_policy": "original_target_or_lowest_hp_percent_enemy",
+                "context_target_id": "e2",
+                "events": {},
+                "turn_kind": null,
+                "extra_turn_type": null,
+                "queued_wave_index": 0,
+                "carry_across_wave": true,
+                "queued_actor_phase": null,
+                "carry_across_phase": false
+              },
+              "index": 7
+            },
+            {
+              "av": 65.04065,
+              "event_type": "effect",
+              "message": "Add status seele_skill_spd_buff to seele",
+              "data": {
+                "status": {
+                  "id": "seele_skill_spd_buff",
+                  "tags": [
+                    "buff",
+                    "speed"
+                  ],
+                  "modifiers": {
+                    "speed_pct": 0.25,
+                    "_sim_aliases_normalized": true,
+                    "_created_turn_token": 1,
+                    "_created_turn_actor_id": "seele",
+                    "_created_turn_kind": "regular"
+                  },
+                  "stacks": 2,
+                  "max_stacks": 2,
+                  "duration_type": null,
+                  "duration_value": null,
+                  "source_id": "seele",
+                  "duration_extra_turn_consumes": false,
+                  "refresh_duration": true
+                },
+                "was_present": true,
+                "old_stacks": 1,
+                "new_stacks": 2
+              },
+              "index": 9
+            },
+            {
+              "av": 65.04065,
+              "event_type": "effect",
+              "message": "Add status seele_skill_spd_buff to seele",
+              "data": {
+                "status": {
+                  "id": "seele_skill_spd_buff",
+                  "tags": [
+                    "buff",
+                    "speed"
+                  ],
+                  "modifiers": {
+                    "speed_pct": 0.25,
+                    "_sim_aliases_normalized": true,
+                    "_created_turn_token": 1,
+                    "_created_turn_actor_id": "seele",
+                    "_created_turn_kind": "regular"
+                  },
+                  "stacks": 2,
+                  "max_stacks": 2,
+                  "duration_type": null,
+                  "duration_value": null,
+                  "source_id": "seele",
+                  "duration_extra_turn_consumes": false,
+                  "refresh_duration": true
+                },
+                "was_present": true,
+                "old_stacks": 2,
+                "new_stacks": 2
+              },
+              "index": 18
+            }
+          ],
+          "resource_events": [
+            {
+              "av": 65.04065,
+              "event_type": "resource",
+              "message": "Skill points 3 -> 2",
+              "data": {
+                "delta": -1.0,
+                "applied": -1,
+                "overflow": 0.0,
+                "overflow_recorded": 0.0,
+                "reserve_after": 0.0,
+                "reason": "action_cost:seele.skill"
+              },
+              "index": 4
+            },
+            {
+              "av": 65.04065,
+              "event_type": "resource",
+              "message": "seele gains 35.820 energy from action:skill",
+              "data": {
+                "old": 71.94,
+                "new": 107.75999999999999,
+                "gain": 35.82,
+                "source": {
+                  "base": 30,
+                  "affected_by_err": true
+                }
+              },
+              "index": 10
+            },
+            {
+              "av": 65.04065,
+              "event_type": "resource",
+              "message": "seele gains 11.940 energy from kill:e2",
+              "data": {
+                "old": 107.75999999999999,
+                "new": 119.69999999999999,
+                "gain": 11.94,
+                "source": {
+                  "base": 10.0,
+                  "affected_by_err": true
+                }
+              },
+              "index": 17
+            },
+            {
+              "av": 65.04065,
+              "event_type": "effect",
+              "message": "Queued action seele.novaflare_auto_skill in immediate_queue",
+              "data": {
+                "actor": "seele",
+                "action": "novaflare_auto_skill",
+                "targets": null,
+                "defer_target_policy": "original_target_or_lowest_hp_percent_enemy",
+                "context_target_id": "e2",
+                "events": {},
+                "turn_kind": null,
+                "extra_turn_type": null,
+                "queued_wave_index": 0,
+                "carry_across_wave": true,
+                "queued_actor_phase": null,
+                "carry_across_phase": false
+              },
+              "index": 7
+            },
+            {
+              "av": 65.04065,
+              "event_type": "effect",
+              "message": "Add status seele_skill_spd_buff to seele",
+              "data": {
+                "status": {
+                  "id": "seele_skill_spd_buff",
+                  "tags": [
+                    "buff",
+                    "speed"
+                  ],
+                  "modifiers": {
+                    "speed_pct": 0.25,
+                    "_sim_aliases_normalized": true,
+                    "_created_turn_token": 1,
+                    "_created_turn_actor_id": "seele",
+                    "_created_turn_kind": "regular"
+                  },
+                  "stacks": 2,
+                  "max_stacks": 2,
+                  "duration_type": null,
+                  "duration_value": null,
+                  "source_id": "seele",
+                  "duration_extra_turn_consumes": false,
+                  "refresh_duration": true
+                },
+                "was_present": true,
+                "old_stacks": 1,
+                "new_stacks": 2
+              },
+              "index": 9
+            },
+            {
+              "av": 65.04065,
+              "event_type": "effect",
+              "message": "Add status seele_skill_spd_buff to seele",
+              "data": {
+                "status": {
+                  "id": "seele_skill_spd_buff",
+                  "tags": [
+                    "buff",
+                    "speed"
+                  ],
+                  "modifiers": {
+                    "speed_pct": 0.25,
+                    "_sim_aliases_normalized": true,
+                    "_created_turn_token": 1,
+                    "_created_turn_actor_id": "seele",
+                    "_created_turn_kind": "regular"
+                  },
+                  "stacks": 2,
+                  "max_stacks": 2,
+                  "duration_type": null,
+                  "duration_value": null,
+                  "source_id": "seele",
+                  "duration_extra_turn_consumes": false,
+                  "refresh_duration": true
+                },
+                "was_present": true,
+                "old_stacks": 2,
+                "new_stacks": 2
+              },
+              "index": 18
+            }
+          ],
+          "av_events": [
+            {
+              "av": 65.04065,
+              "event_type": "timeline",
+              "message": "Regular timeline advanced by 65.040650 AV; next actor seele",
+              "data": {
+                "delta": 65.0406504
+              },
+              "index": 0
+            },
+            {
+              "av": 65.04065,
+              "event_type": "turn_start",
+              "message": "seele begins regular turn",
+              "data": {},
+              "index": 1
+            },
+            {
+              "av": 65.04065,
+              "event_type": "timeline",
+              "message": "seele regular action interval added",
+              "data": {
+                "remaining_av": 54.200542005420054
+              },
+              "index": 11
+            },
+            {
+              "av": 65.04065,
+              "event_type": "turn_end",
+              "message": "seele ends regular turn",
+              "data": {},
+              "index": 12
+            },
+            {
+              "av": 65.04065,
+              "event_type": "queue",
+              "message": "Resolve queued action from immediate_queue: seele.novaflare_auto_skill",
+              "data": {},
+              "index": 14
+            }
+          ],
+          "mechanism_events": [
+            {
+              "av": 65.04065,
+              "event_type": "trigger",
+              "message": "Trigger seele_novaflare_auto_skill_trigger fired",
+              "data": {
+                "timing": "after_damage"
+              },
+              "index": 6
+            }
+          ],
+          "all_events": [
+            {
+              "av": 65.04065,
+              "event_type": "timeline",
+              "message": "Regular timeline advanced by 65.040650 AV; next actor seele",
+              "data": {
+                "delta": 65.0406504
+              },
+              "index": 0
+            },
+            {
+              "av": 65.04065,
+              "event_type": "turn_start",
+              "message": "seele begins regular turn",
+              "data": {},
+              "index": 1
+            },
+            {
+              "av": 65.04065,
+              "event_type": "trigger_reset",
+              "message": "Reset owner_turn trigger usage for seele",
+              "data": {
+                "removed": [
+                  "seele_novaflare_auto_skill_trigger:owner_turn:seele"
+                ]
+              },
+              "index": 2
+            },
+            {
+              "av": 65.04065,
+              "event_type": "action_start",
+              "message": "seele uses skill on ['e2']",
+              "data": {
+                "tags": [
+                  "attack",
+                  "can_trigger_kill_energy",
+                  "can_trigger_novaflare_auto_skill",
+                  "can_trigger_resurgence",
+                  "consumes_regular_action",
+                  "consumes_skill_point",
+                  "grants_base_energy",
+                  "skill_damage",
+                  "skill_use"
+                ],
+                "turn_kind": "regular"
+              },
+              "index": 3
+            },
+            {
+              "av": 65.04065,
+              "event_type": "resource",
+              "message": "Skill points 3 -> 2",
+              "data": {
+                "delta": -1.0,
+                "applied": -1,
+                "overflow": 0.0,
+                "overflow_recorded": 0.0,
+                "reserve_after": 0.0,
+                "reason": "action_cost:seele.skill"
+              },
+              "index": 4
+            },
+            {
+              "av": 65.04065,
+              "event_type": "damage",
+              "message": "seele deals 74610.681 quantum damage to e2",
+              "data": {
+                "old_hp": 100000.0,
+                "new_hp": 25389.31939839998,
+                "old_shield": 0.0,
+                "new_shield": 0.0,
+                "actor_id": "seele",
+                "target_id": "e2",
+                "packet_id": "skill_hit",
+                "element": "quantum",
+                "base_damage": 10036.800000000001,
+                "crit": {
+                  "event_id": "seele.skill.skill_hit.crit",
+                  "is_crit": true,
+                  "multiplier": 3.249,
+                  "source": "crit",
+                  "crit_rate": 0.711,
+                  "crit_dmg": 2.249
+                },
+                "multipliers": {
+                  "dmg_bonus": 2.2880000000000003,
+                  "defense": 1.0,
+                  "res": 1.0,
+                  "damage_taken": 1.0,
+                  "universal_reduction": 1.0,
+                  "toughness_state": 1.0,
+                  "other": 1.0
+                },
+                "formula_ledger": {
+                  "formula_type": "direct_damage",
+                  "actor_id": "seele",
+                  "target_id": "e2",
+                  "action_id": "skill",
+                  "packet_id": "skill_hit",
+                  "tags": [
+                    "attack",
+                    "can_trigger_kill_energy",
+                    "can_trigger_novaflare_auto_skill",
+                    "can_trigger_resurgence",
+                    "consumes_regular_action",
+                    "consumes_skill_point",
+                    "grants_base_energy",
+                    "skill_damage",
+                    "skill_use"
+                  ],
+                  "scaling": {
+                    "stat": "atk",
+                    "scaling_value": 2788.0,
+                    "multiplier": 3.6,
+                    "flat_damage": 0.0,
+                    "base_damage": 10036.8
+                  },
+                  "crit": {
+                    "event_id": "seele.skill.skill_hit.crit",
+                    "is_crit": true,
+                    "multiplier": 3.249,
+                    "source": "crit",
+                    "crit_rate": 0.711,
+                    "crit_dmg": 2.249
+                  },
+                  "buckets": {
+                    "dmg_bonus": {
+                      "multiplier": 2.288,
+                      "terms": [
+                        {
+                          "source_type": "actor.stats",
+                          "source_id": "seele",
+                          "key": "quantum_dmg_bonus",
+                          "value": 0.488,
+                          "stacks": 1,
+                          "applied_value": 0.488
+                        },
+                        {
+                          "source_type": "actor.status",
+                          "source_id": "seele_buffed_state",
+                          "key": "dmg_bonus_add",
+                          "value": 0.8,
+                          "stacks": 1,
+                          "applied_value": 0.8,
+                          "note": "source=seele"
+                        }
+                      ]
+                    },
+                    "defense": {
+                      "multiplier": 1.0,
+                      "raw_target_def": 0.0,
+                      "effective_target_def": 0.0,
+                      "ignore_defense_multiplier": false,
+                      "terms": []
+                    },
+                    "res": {
+                      "multiplier": 1.0,
+                      "base_target_res": 0.0,
+                      "target_res_after_delta": 0.0,
+                      "res_pen_total": 0,
+                      "terms": []
+                    },
+                    "damage_taken": {
+                      "multiplier": 1.0,
+                      "terms": []
+                    },
+                    "universal_reduction": {
+                      "multiplier": 1.0,
+                      "terms": []
+                    },
+                    "toughness_state": {
+                      "multiplier": 1.0,
+                      "target_toughness_before_packet": null,
+                      "target_is_broken_before_packet": false,
+                      "ignore_toughness_state_multiplier": false
+                    },
+                    "other": {
+                      "multiplier": 1.0,
+                      "source": "packet.other_multiplier"
+                    }
+                  },
+                  "formula": "base * crit * dmg_bonus * defense * res * damage_taken * universal_reduction * toughness_state * other",
+                  "final_damage": 74610.6806016
+                },
+                "damage": 74610.68060160002,
+                "toughness_reduction": 30.0,
+                "target_defeated": false,
+                "hp_bar_depleted": false,
+                "bars_depleted": 0,
+                "hp_bars_remaining": 1,
+                "depleted_bar_events": [],
+                "phase_damage_locked_until_action_end": false
+              },
+              "index": 5
+            },
+            {
+              "av": 65.04065,
+              "event_type": "trigger",
+              "message": "Trigger seele_novaflare_auto_skill_trigger fired",
+              "data": {
+                "timing": "after_damage"
+              },
+              "index": 6
+            },
+            {
+              "av": 65.04065,
+              "event_type": "effect",
+              "message": "Queued action seele.novaflare_auto_skill in immediate_queue",
+              "data": {
+                "actor": "seele",
+                "action": "novaflare_auto_skill",
+                "targets": null,
+                "defer_target_policy": "original_target_or_lowest_hp_percent_enemy",
+                "context_target_id": "e2",
+                "events": {},
+                "turn_kind": null,
+                "extra_turn_type": null,
+                "queued_wave_index": 0,
+                "carry_across_wave": true,
+                "queued_actor_phase": null,
+                "carry_across_phase": false
+              },
+              "index": 7
+            },
+            {
+              "av": 65.04065,
+              "event_type": "speed_change",
+              "message": "seele speed 153.750 -> 184.500",
+              "data": {
+                "old_remaining_av": 0.0,
+                "new_remaining_av": 0.0,
+                "reason": "add_status"
+              },
+              "index": 8
+            },
+            {
+              "av": 65.04065,
+              "event_type": "effect",
+              "message": "Add status seele_skill_spd_buff to seele",
+              "data": {
+                "status": {
+                  "id": "seele_skill_spd_buff",
+                  "tags": [
+                    "buff",
+                    "speed"
+                  ],
+                  "modifiers": {
+                    "speed_pct": 0.25,
+                    "_sim_aliases_normalized": true,
+                    "_created_turn_token": 1,
+                    "_created_turn_actor_id": "seele",
+                    "_created_turn_kind": "regular"
+                  },
+                  "stacks": 2,
+                  "max_stacks": 2,
+                  "duration_type": null,
+                  "duration_value": null,
+                  "source_id": "seele",
+                  "duration_extra_turn_consumes": false,
+                  "refresh_duration": true
+                },
+                "was_present": true,
+                "old_stacks": 1,
+                "new_stacks": 2
+              },
+              "index": 9
+            },
+            {
+              "av": 65.04065,
+              "event_type": "resource",
+              "message": "seele gains 35.820 energy from action:skill",
+              "data": {
+                "old": 71.94,
+                "new": 107.75999999999999,
+                "gain": 35.82,
+                "source": {
+                  "base": 30,
+                  "affected_by_err": true
+                }
+              },
+              "index": 10
+            },
+            {
+              "av": 65.04065,
+              "event_type": "timeline",
+              "message": "seele regular action interval added",
+              "data": {
+                "remaining_av": 54.200542005420054
+              },
+              "index": 11
+            },
+            {
+              "av": 65.04065,
+              "event_type": "turn_end",
+              "message": "seele ends regular turn",
+              "data": {},
+              "index": 12
+            },
+            {
+              "av": 65.04065,
+              "event_type": "action_end",
+              "message": "seele finished skill",
+              "data": {},
+              "index": 13
+            },
+            {
+              "av": 65.04065,
+              "event_type": "queue",
+              "message": "Resolve queued action from immediate_queue: seele.novaflare_auto_skill",
+              "data": {},
+              "index": 14
+            },
+            {
+              "av": 65.04065,
+              "event_type": "action_start",
+              "message": "seele uses novaflare_auto_skill on ['e2']",
+              "data": {
+                "tags": [
+                  "attack",
+                  "auto_skill_use",
+                  "can_trigger_kill_energy",
+                  "can_trigger_resurgence",
+                  "does_not_consume_skill_point",
+                  "does_not_grant_base_energy",
+                  "skill_damage",
+                  "triggers_skill_spd_buff"
+                ],
+                "turn_kind": null
+              },
+              "index": 15
+            },
+            {
+              "av": 65.04065,
+              "event_type": "damage",
+              "message": "seele deals 74610.681 quantum damage to e2",
+              "data": {
+                "old_hp": 25389.31939839998,
+                "new_hp": 0.0,
+                "old_shield": 0.0,
+                "new_shield": 0.0,
+                "actor_id": "seele",
+                "target_id": "e2",
+                "packet_id": "auto_skill_hit",
+                "element": "quantum",
+                "base_damage": 10036.800000000001,
+                "crit": {
+                  "event_id": "seele.novaflare_auto_skill.auto_skill_hit.crit",
+                  "is_crit": true,
+                  "multiplier": 3.249,
+                  "source": "crit",
+                  "crit_rate": 0.711,
+                  "crit_dmg": 2.249
+                },
+                "multipliers": {
+                  "dmg_bonus": 2.2880000000000003,
+                  "defense": 1.0,
+                  "res": 1.0,
+                  "damage_taken": 1.0,
+                  "universal_reduction": 1.0,
+                  "toughness_state": 1.0,
+                  "other": 1.0
+                },
+                "formula_ledger": {
+                  "formula_type": "direct_damage",
+                  "actor_id": "seele",
+                  "target_id": "e2",
+                  "action_id": "novaflare_auto_skill",
+                  "packet_id": "auto_skill_hit",
+                  "tags": [
+                    "attack",
+                    "auto_skill_use",
+                    "can_trigger_kill_energy",
+                    "can_trigger_resurgence",
+                    "does_not_consume_skill_point",
+                    "does_not_grant_base_energy",
+                    "skill_damage",
+                    "triggers_skill_spd_buff"
+                  ],
+                  "scaling": {
+                    "stat": "atk",
+                    "scaling_value": 2788.0,
+                    "multiplier": 3.6,
+                    "flat_damage": 0.0,
+                    "base_damage": 10036.8
+                  },
+                  "crit": {
+                    "event_id": "seele.novaflare_auto_skill.auto_skill_hit.crit",
+                    "is_crit": true,
+                    "multiplier": 3.249,
+                    "source": "crit",
+                    "crit_rate": 0.711,
+                    "crit_dmg": 2.249
+                  },
+                  "buckets": {
+                    "dmg_bonus": {
+                      "multiplier": 2.288,
+                      "terms": [
+                        {
+                          "source_type": "actor.stats",
+                          "source_id": "seele",
+                          "key": "quantum_dmg_bonus",
+                          "value": 0.488,
+                          "stacks": 1,
+                          "applied_value": 0.488
+                        },
+                        {
+                          "source_type": "actor.status",
+                          "source_id": "seele_buffed_state",
+                          "key": "dmg_bonus_add",
+                          "value": 0.8,
+                          "stacks": 1,
+                          "applied_value": 0.8,
+                          "note": "source=seele"
+                        }
+                      ]
+                    },
+                    "defense": {
+                      "multiplier": 1.0,
+                      "raw_target_def": 0.0,
+                      "effective_target_def": 0.0,
+                      "ignore_defense_multiplier": false,
+                      "terms": []
+                    },
+                    "res": {
+                      "multiplier": 1.0,
+                      "base_target_res": 0.0,
+                      "target_res_after_delta": 0.0,
+                      "res_pen_total": 0,
+                      "terms": []
+                    },
+                    "damage_taken": {
+                      "multiplier": 1.0,
+                      "terms": []
+                    },
+                    "universal_reduction": {
+                      "multiplier": 1.0,
+                      "terms": []
+                    },
+                    "toughness_state": {
+                      "multiplier": 1.0,
+                      "target_toughness_before_packet": null,
+                      "target_is_broken_before_packet": false,
+                      "ignore_toughness_state_multiplier": false
+                    },
+                    "other": {
+                      "multiplier": 1.0,
+                      "source": "packet.other_multiplier"
+                    }
+                  },
+                  "formula": "base * crit * dmg_bonus * defense * res * damage_taken * universal_reduction * toughness_state * other",
+                  "final_damage": 74610.6806016
+                },
+                "damage": 74610.68060160002,
+                "toughness_reduction": 30.0,
+                "target_defeated": true,
+                "hp_bar_depleted": true,
+                "bars_depleted": 1,
+                "hp_bars_remaining": 1,
+                "depleted_bar_events": [],
+                "phase_damage_locked_until_action_end": false
+              },
+              "index": 16
+            },
+            {
+              "av": 65.04065,
+              "event_type": "resource",
+              "message": "seele gains 11.940 energy from kill:e2",
+              "data": {
+                "old": 107.75999999999999,
+                "new": 119.69999999999999,
+                "gain": 11.94,
+                "source": {
+                  "base": 10.0,
+                  "affected_by_err": true
+                }
+              },
+              "index": 17
+            },
+            {
+              "av": 65.04065,
+              "event_type": "effect",
+              "message": "Add status seele_skill_spd_buff to seele",
+              "data": {
+                "status": {
+                  "id": "seele_skill_spd_buff",
+                  "tags": [
+                    "buff",
+                    "speed"
+                  ],
+                  "modifiers": {
+                    "speed_pct": 0.25,
+                    "_sim_aliases_normalized": true,
+                    "_created_turn_token": 1,
+                    "_created_turn_actor_id": "seele",
+                    "_created_turn_kind": "regular"
+                  },
+                  "stacks": 2,
+                  "max_stacks": 2,
+                  "duration_type": null,
+                  "duration_value": null,
+                  "source_id": "seele",
+                  "duration_extra_turn_consumes": false,
+                  "refresh_duration": true
+                },
+                "was_present": true,
+                "old_stacks": 2,
+                "new_stacks": 2
+              },
+              "index": 18
+            },
+            {
+              "av": 65.04065,
+              "event_type": "action_end",
+              "message": "seele finished novaflare_auto_skill",
+              "data": {},
+              "index": 19
+            }
+          ]
+        },
+        "settlement": {
+          "damage_records": [
+            {
+              "packet_index": 0,
+              "source_action_id": "skill",
+              "actor_id": "seele",
+              "target_id": "e2",
+              "element": "quantum",
+              "damage_type": "skill_damage",
+              "base_damage": 10036.800000000001,
+              "crit": false,
+              "crit_dmg_mult": 3.249,
+              "dmg_bonus_mult": 2.2880000000000003,
+              "def_mult": 1.0,
+              "res_mult": 1.0,
+              "dmg_taken_mult": 1.0,
+              "toughness_mult": 1.0,
+              "final_damage": 74610.68060160002,
+              "damage_applied": 74610.68060160002,
+              "shield_absorbed": 0.0,
+              "hp_loss": 0.0,
+              "overkill": 0.0,
+              "is_overkill": false
+            }
+          ],
+          "shield_records": [],
+          "hp_records": [
+            {
+              "unit_id": "e2",
+              "old_hp": 100000.0,
+              "new_hp": 25389.31939839998,
+              "delta": -74610.68060160002,
+              "reason": "受到伤害: skill",
+              "source_id": "",
+              "overkill": 0.0
+            }
+          ],
+          "energy_records": [
+            {
+              "unit_id": "seele",
+              "old_energy": 71.94,
+              "new_energy": 107.75999999999999,
+              "delta": 35.82,
+              "max_energy": 120.0,
+              "source_type": "action_energy",
+              "source_id": "",
+              "label": "action:skill"
+            }
+          ],
+          "sp_records": [
+            {
+              "old_sp": 3,
+              "new_sp": 2,
+              "delta": -1,
+              "sp_cap": 5,
+              "reason": "action_cost: seele 使用 skill",
+              "source_id": "seele"
+            }
+          ],
+          "status_records": [
+            {
+              "unit_id": "seele",
+              "status_id": "seele_skill_spd_buff",
+              "status_name_cn": "",
+              "status_type": "",
+              "change_type": "refresh",
+              "old_stacks": 1,
+              "new_stacks": 2,
+              "max_stacks": 2,
+              "duration_type": "",
+              "duration_value": 0,
+              "source_id": "seele",
+              "reason": "effect:skill"
+            }
+          ],
+          "av_records": [
+            {
+              "unit_id": "seele",
+              "old_remaining_av": 0.0,
+              "new_remaining_av": 54.200542005420054,
+              "delta": 54.200542005420054,
+              "reason": "regular_turn_end",
+              "source_id": ""
+            }
+          ],
+          "turn_records": [
+            {
+              "unit_id": "seele",
+              "turn_kind": "regular",
+              "event_type": "begin",
+              "action_id": ""
+            },
+            {
+              "unit_id": "seele",
+              "turn_kind": "regular",
+              "event_type": "end",
+              "action_id": ""
+            }
+          ],
+          "mechanic_records": [],
+          "target_record": {
+            "action_id": "",
+            "actor_id": "",
+            "target_ids": [
+              "e2"
+            ],
+            "target_selection_reason": "explicit"
+          }
+        },
+        "after": {
+          "av": 65.04065,
+          "skill_points": 2,
+          "skill_point_cap": 5,
+          "_sp": 2,
+          "_sp_cap": 5,
+          "allies": [
+            {
+              "id": "seele",
+              "alive": true,
+              "hp": 3021.0,
+              "max_hp": 3021.0,
+              "energy": 119.7,
+              "max_energy": 120.0,
+              "remaining_av": 54.200542,
+              "toughness": null,
+              "max_toughness": null,
+              "hp_bars_remaining": 1,
+              "status_count": 2
+            }
+          ],
+          "enemies": [
+            {
+              "id": "e1",
+              "alive": false,
+              "hp": 0.0,
+              "max_hp": 100000.0,
+              "energy": 0.0,
+              "max_energy": 0.0,
+              "remaining_av": 100.0,
+              "toughness": null,
+              "max_toughness": null,
+              "hp_bars_remaining": 1,
+              "status_count": 0
+            },
+            {
+              "id": "e2",
+              "alive": false,
+              "hp": 0.0,
+              "max_hp": 100000.0,
+              "energy": 0.0,
+              "max_energy": 0.0,
+              "remaining_av": 34.95935,
+              "toughness": null,
+              "max_toughness": null,
+              "hp_bars_remaining": 1,
+              "status_count": 0
+            },
+            {
+              "id": "e3",
+              "alive": true,
+              "hp": 100000.0,
+              "max_hp": 100000.0,
+              "energy": 0.0,
+              "max_energy": 0.0,
+              "remaining_av": 34.95935,
+              "toughness": null,
+              "max_toughness": null,
+              "hp_bars_remaining": 1,
+              "status_count": 0
+            },
+            {
+              "id": "e4",
+              "alive": true,
+              "hp": 100000.0,
+              "max_hp": 100000.0,
+              "energy": 0.0,
+              "max_energy": 0.0,
+              "remaining_av": 34.95935,
+              "toughness": null,
+              "max_toughness": null,
+              "hp_bars_remaining": 1,
+              "status_count": 0
+            },
+            {
+              "id": "e5",
+              "alive": true,
+              "hp": 100000.0,
+              "max_hp": 100000.0,
+              "energy": 0.0,
+              "max_energy": 0.0,
+              "remaining_av": 34.95935,
+              "toughness": null,
+              "max_toughness": null,
+              "hp_bars_remaining": 1,
+              "status_count": 0
+            }
+          ],
+          "queue_size": 0
+        },
+        "after_scene": {
+          "global": {
+            "av": 65.04065,
+            "cycle": 0,
+            "skill_points": 2,
+            "skill_point_cap": 5,
+            "_sp": 2,
+            "_sp_cap": 5,
+            "wave_index": 0,
+            "flags": {
+              "_turn_token": 1,
+              "_active_turn_token": 1,
+              "_active_turn_actor_id": "seele",
+              "_active_turn_kind": "regular"
+            }
+          },
+          "action_axis": [
+            {
+              "id": "e3",
+              "name": "Dummy 3",
+              "side": "enemy",
+              "alive": true,
+              "speed": 100.0,
+              "action_interval": 100.0,
+              "remaining_av": 34.95935,
+              "absolute_av": 100.0,
+              "tags": [
+                "enemy"
+              ]
+            },
+            {
+              "id": "e4",
+              "name": "Dummy 4",
+              "side": "enemy",
+              "alive": true,
+              "speed": 100.0,
+              "action_interval": 100.0,
+              "remaining_av": 34.95935,
+              "absolute_av": 100.0,
+              "tags": [
+                "enemy"
+              ]
+            },
+            {
+              "id": "e5",
+              "name": "Dummy 5",
+              "side": "enemy",
+              "alive": true,
+              "speed": 100.0,
+              "action_interval": 100.0,
+              "remaining_av": 34.95935,
+              "absolute_av": 100.0,
+              "tags": [
+                "enemy"
+              ]
+            },
+            {
+              "id": "seele",
+              "name": "Seele",
+              "side": "ally",
+              "alive": true,
+              "speed": 184.5,
+              "action_interval": 54.200542,
+              "remaining_av": 54.200542,
+              "absolute_av": 119.241192,
+              "tags": [
+                "ally",
+                "on_timeline"
+              ]
+            },
+            {
+              "id": "e2",
+              "name": "Dummy 2",
+              "side": "enemy",
+              "alive": false,
+              "speed": 100.0,
+              "action_interval": null,
+              "remaining_av": 34.95935,
+              "absolute_av": 100.0,
+              "tags": [
+                "enemy"
+              ]
+            },
+            {
+              "id": "e1",
+              "name": "Dummy 1",
+              "side": "enemy",
+              "alive": false,
+              "speed": 100.0,
+              "action_interval": null,
+              "remaining_av": 100.0,
+              "absolute_av": 165.04065,
+              "tags": [
+                "enemy"
+              ]
+            }
+          ],
+          "allies": [
+            {
+              "id": "seele",
+              "name": "Seele",
+              "side": "ally",
+              "alive": true,
+              "tags": [
+                "ally",
+                "on_timeline"
+              ],
+              "resources": {
+                "hp": 3021.0,
+                "max_hp": 3021.0,
+                "hp_percent": 1.0,
+                "shield": 0.0,
+                "energy": 119.7,
+                "max_energy": 120.0,
+                "toughness": null,
+                "max_toughness": null,
+                "is_broken": false,
+                "hp_bars_total": 1,
+                "hp_bars_remaining": 1,
+                "hp_model_type": "normal_hp",
+                "hp_carry_over_damage": null
+              },
+              "action_axis": {
+                "remaining_av": 54.200542,
+                "absolute_av": 119.241192,
+                "speed": 184.5,
+                "action_interval": 54.200542
+              },
+              "panel": {
+                "hp": 3021.0,
+                "max_hp": 3021.0,
+                "atk": 2788.0,
+                "speed": 184.5,
+                "crit_rate": 0.711,
+                "crit_dmg": 2.249,
+                "energy_regeneration_rate": 1.194,
+                "quantum_dmg_bonus": 0.488
+              },
+              "stat_parts": {
+                "base": {},
+                "pct": {},
+                "flat": {},
+                "legacy_stats": {
+                  "atk": 2788.0,
+                  "speed": 123.0,
+                  "crit_rate": 0.711,
+                  "crit_dmg": 2.249,
+                  "quantum_dmg_bonus": 0.488,
+                  "energy_regeneration_rate": 1.194
+                }
+              },
+              "resistance": {},
+              "weaknesses": [],
+              "statuses": [
+                {
+                  "id": "seele_buffed_state",
+                  "source_id": "seele",
+                  "stacks": 1,
+                  "max_stacks": 1,
+                  "duration": {
+                    "type": null,
+                    "value": null,
+                    "extra_turn_consumes": false,
+                    "refresh_duration": true
+                  },
+                  "tags": [
+                    "buff",
+                    "dmg_bonus"
+                  ],
+                  "modifier_keys": [
+                    "_sim_aliases_normalized",
+                    "dmg_bonus_add"
+                  ],
+                  "modifiers": {
+                    "dmg_bonus_add": 0.8,
+                    "_sim_aliases_normalized": true
+                  }
+                },
+                {
+                  "id": "seele_skill_spd_buff",
+                  "source_id": "seele",
+                  "stacks": 2,
+                  "max_stacks": 2,
+                  "duration": {
+                    "type": null,
+                    "value": null,
+                    "extra_turn_consumes": false,
+                    "refresh_duration": true
+                  },
+                  "tags": [
+                    "buff",
+                    "speed"
+                  ],
+                  "modifier_keys": [
+                    "_created_turn_actor_id",
+                    "_created_turn_kind",
+                    "_created_turn_token",
+                    "_sim_aliases_normalized",
+                    "speed_pct"
+                  ],
+                  "modifiers": {
+                    "speed_pct": 0.25,
+                    "_sim_aliases_normalized": true,
+                    "_created_turn_token": 1,
+                    "_created_turn_actor_id": "seele",
+                    "_created_turn_kind": "regular"
+                  }
+                }
+              ],
+              "special_mechanics": {},
+              "flags": {}
+            }
+          ],
+          "summons": [],
+          "enemies": [
+            {
+              "id": "e1",
+              "name": "Dummy 1",
+              "side": "enemy",
+              "alive": false,
+              "tags": [
+                "enemy"
+              ],
+              "resources": {
+                "hp": 0.0,
+                "max_hp": 100000.0,
+                "hp_percent": 0.0,
+                "shield": 0.0,
+                "energy": 0.0,
+                "max_energy": 0.0,
+                "toughness": null,
+                "max_toughness": null,
+                "is_broken": false,
+                "hp_bars_total": 1,
+                "hp_bars_remaining": 1,
+                "hp_model_type": "normal_hp",
+                "hp_carry_over_damage": null
+              },
+              "action_axis": {
+                "remaining_av": 100.0,
+                "absolute_av": 165.04065,
+                "speed": 100.0,
+                "action_interval": null
+              },
+              "panel": {
+                "max_hp": 100000.0
+              },
+              "stat_parts": {
+                "base": {},
+                "pct": {},
+                "flat": {},
+                "legacy_stats": {
+                  "defense": 0.0
+                }
+              },
+              "resistance": {
+                "quantum": 0.0
+              },
+              "weaknesses": [
+                "quantum"
+              ],
+              "statuses": [],
+              "special_mechanics": {
+                "inferred_next_action": null
+              },
+              "flags": {}
+            },
+            {
+              "id": "e2",
+              "name": "Dummy 2",
+              "side": "enemy",
+              "alive": false,
+              "tags": [
+                "enemy"
+              ],
+              "resources": {
+                "hp": 0.0,
+                "max_hp": 100000.0,
+                "hp_percent": 0.0,
+                "shield": 0.0,
+                "energy": 0.0,
+                "max_energy": 0.0,
+                "toughness": null,
+                "max_toughness": null,
+                "is_broken": false,
+                "hp_bars_total": 1,
+                "hp_bars_remaining": 1,
+                "hp_model_type": "normal_hp",
+                "hp_carry_over_damage": null
+              },
+              "action_axis": {
+                "remaining_av": 34.95935,
+                "absolute_av": 100.0,
+                "speed": 100.0,
+                "action_interval": null
+              },
+              "panel": {
+                "max_hp": 100000.0
+              },
+              "stat_parts": {
+                "base": {},
+                "pct": {},
+                "flat": {},
+                "legacy_stats": {
+                  "defense": 0.0
+                }
+              },
+              "resistance": {
+                "quantum": 0.0
+              },
+              "weaknesses": [
+                "quantum"
+              ],
+              "statuses": [],
+              "special_mechanics": {
+                "inferred_next_action": null
+              },
+              "flags": {}
+            },
+            {
+              "id": "e3",
+              "name": "Dummy 3",
+              "side": "enemy",
+              "alive": true,
+              "tags": [
+                "enemy"
+              ],
+              "resources": {
+                "hp": 100000.0,
+                "max_hp": 100000.0,
+                "hp_percent": 1.0,
+                "shield": 0.0,
+                "energy": 0.0,
+                "max_energy": 0.0,
+                "toughness": null,
+                "max_toughness": null,
+                "is_broken": false,
+                "hp_bars_total": 1,
+                "hp_bars_remaining": 1,
+                "hp_model_type": "normal_hp",
+                "hp_carry_over_damage": null
+              },
+              "action_axis": {
+                "remaining_av": 34.95935,
+                "absolute_av": 100.0,
+                "speed": 100.0,
+                "action_interval": 100.0
+              },
+              "panel": {
+                "hp": 100000.0,
+                "max_hp": 100000.0
+              },
+              "stat_parts": {
+                "base": {},
+                "pct": {},
+                "flat": {},
+                "legacy_stats": {
+                  "defense": 0.0
+                }
+              },
+              "resistance": {
+                "quantum": 0.0
+              },
+              "weaknesses": [
+                "quantum"
+              ],
+              "statuses": [],
+              "special_mechanics": {
+                "inferred_next_action": null
+              },
+              "flags": {}
+            },
+            {
+              "id": "e4",
+              "name": "Dummy 4",
+              "side": "enemy",
+              "alive": true,
+              "tags": [
+                "enemy"
+              ],
+              "resources": {
+                "hp": 100000.0,
+                "max_hp": 100000.0,
+                "hp_percent": 1.0,
+                "shield": 0.0,
+                "energy": 0.0,
+                "max_energy": 0.0,
+                "toughness": null,
+                "max_toughness": null,
+                "is_broken": false,
+                "hp_bars_total": 1,
+                "hp_bars_remaining": 1,
+                "hp_model_type": "normal_hp",
+                "hp_carry_over_damage": null
+              },
+              "action_axis": {
+                "remaining_av": 34.95935,
+                "absolute_av": 100.0,
+                "speed": 100.0,
+                "action_interval": 100.0
+              },
+              "panel": {
+                "hp": 100000.0,
+                "max_hp": 100000.0
+              },
+              "stat_parts": {
+                "base": {},
+                "pct": {},
+                "flat": {},
+                "legacy_stats": {
+                  "defense": 0.0
+                }
+              },
+              "resistance": {
+                "quantum": 0.0
+              },
+              "weaknesses": [
+                "quantum"
+              ],
+              "statuses": [],
+              "special_mechanics": {
+                "inferred_next_action": null
+              },
+              "flags": {}
+            },
+            {
+              "id": "e5",
+              "name": "Dummy 5",
+              "side": "enemy",
+              "alive": true,
+              "tags": [
+                "enemy"
+              ],
+              "resources": {
+                "hp": 100000.0,
+                "max_hp": 100000.0,
+                "hp_percent": 1.0,
+                "shield": 0.0,
+                "energy": 0.0,
+                "max_energy": 0.0,
+                "toughness": null,
+                "max_toughness": null,
+                "is_broken": false,
+                "hp_bars_total": 1,
+                "hp_bars_remaining": 1,
+                "hp_model_type": "normal_hp",
+                "hp_carry_over_damage": null
+              },
+              "action_axis": {
+                "remaining_av": 34.95935,
+                "absolute_av": 100.0,
+                "speed": 100.0,
+                "action_interval": 100.0
+              },
+              "panel": {
+                "hp": 100000.0,
+                "max_hp": 100000.0
+              },
+              "stat_parts": {
+                "base": {},
+                "pct": {},
+                "flat": {},
+                "legacy_stats": {
+                  "defense": 0.0
+                }
+              },
+              "resistance": {
+                "quantum": 0.0
+              },
+              "weaknesses": [
+                "quantum"
+              ],
+              "statuses": [],
+              "special_mechanics": {
+                "inferred_next_action": null
+              },
+              "flags": {}
+            }
+          ],
+          "others": [],
+          "queues": {
+            "ultimate_queue": [],
+            "immediate_queue": [],
+            "interrupt_queue": []
+          },
+          "trigger_usage": {
+            "seele_novaflare_auto_skill_trigger:owner_turn:seele": 1
+          }
+        }
+      }
+    ],
+    "route_assertions": {
+      "ok": true,
+      "check_count": 7,
+      "checks": {
+        "skill_points_in_bounds": true,
+        "av_monotonic": true,
+        "unit_resources_non_negative": true,
+        "unit_resources_not_above_known_caps": true,
+        "executed_actions_have_after_snapshot": true,
+        "executed_actions_emit_events": true,
+        "expected_action_prefix_match": true
+      },
+      "failure_count": 0,
+      "failures": [],
+      "expectations": {
+        "ok": true,
+        "step_count_with_expectations": 0,
+        "failure_count": 0,
+        "failures": []
+      }
+    }
+  }
+}

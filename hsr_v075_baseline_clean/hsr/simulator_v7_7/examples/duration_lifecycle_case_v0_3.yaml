@@ -1,0 +1,56 @@
+settings:
+  default_crit_mode: expected
+  kill_energy_base: 10
+
+global:
+  av: 0
+  cycle: 0
+  skill_points: 3
+  skill_point_cap: 5
+
+units:
+  actor:
+    name: Actor
+    side: ally
+    level: 80
+    hp: 1000
+    max_hp: 1000
+    energy: 0
+    max_energy: 100
+    speed: 100
+    remaining_av: 0
+    stats:
+      atk: 100
+      speed: 100
+      crit_rate: 0
+      crit_dmg: 0.5
+    statuses:
+      - id: regular_turn_buff
+        tags: [buff]
+        duration:
+          type: target_turns
+          value: 1
+          extra_turn_consumes: false
+        modifiers:
+          atk_pct: 1.0
+    actions:
+      extra_ping:
+        tags: [extra_action]
+        target_policy: self
+        cost: {skill_points: 0, energy: 0}
+        energy_gain: {base: 0, affected_by_err: false}
+      regular_ping:
+        tags: [consumes_regular_action]
+        target_policy: self
+        cost: {skill_points: 0, energy: 0}
+        energy_gain: {base: 0, affected_by_err: false}
+
+route:
+  - actor: actor
+    action: extra_ping
+    timing: extra_turn
+    targets: [actor]
+  - actor: actor
+    action: regular_ping
+    timing: regular_turn
+    targets: [actor]

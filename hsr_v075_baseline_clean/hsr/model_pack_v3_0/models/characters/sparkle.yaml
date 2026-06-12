@@ -1,0 +1,350 @@
+kind: character_template
+schema_version: '3.0'
+id: sparkle
+name: Sparkle
+cn_name: 花火
+source_file: character_sparkle_template_v1_6.yaml
+unit:
+  side: ally
+  level: 80
+  element: quantum
+  path: harmony
+  rarity: 5
+  tags:
+  - character
+  - harmony
+  - quantum
+  base_stats_by_level: {}
+  trace_level_defaults:
+    basic: 6
+    skill: 10
+    ultimate: 10
+    talent: 10
+    note: user_confirmed_all_trace_levels_max_v1_6
+  minor_traces_total: {}
+  status_effects:
+    dreamdiver_crit_dmg_boost:
+      type: buff
+      target: ally
+      modifiers:
+        crit_dmg_formula_at_skill_10: 0.24 * sparkle.current_crit_dmg + 0.45
+        all_type_res_pen: 0.1
+      duration:
+        type: target_turns
+        value: 2.0
+        extra_turn_consumes_duration: false
+      notes:
+      - Current wiki/enhanced data describes Dreamdiver as 50% action advance and a CRIT DMG buff.
+      - If using legacy Sparkle rules, adjust duration and scaling variant.
+      - 'v0_43: current public kit uses 2 full target turns and Sparkle A6 adds 10% All-Type RES PEN to Dreamdiver holder.'
+      id: dreamdiver_crit_dmg_boost
+      tags: []
+    cipher:
+      type: buff
+      target: all_allies
+      source: sparkle_ultimate
+      duration:
+        type: ally_turns_or_owner_turns
+        value: 3.0
+      modifiers:
+        talent_stack_bonus_extra_vulnerability_per_stack_at_ult_10: 0.06
+      id: cipher
+      tags: []
+    figment:
+      type: enemy_unremovable_debuff_or_global_vulnerability_state
+      stack_rule:
+        max_stacks: 3.0
+        refresh_duration: true
+      modifiers:
+        dmg_taken_multiplier_delta_per_stack_at_talent_10: 0.04
+      trigger_source: ally_consumes_skill_point
+      duration:
+        type: turns
+        value: 2.0
+      id: figment
+      tags: []
+    eidolon_1_cipher_atk_buff:
+      type: buff
+      target: ally_with_cipher
+      modifiers:
+        atk_pct: 0.4
+      id: eidolon_1_cipher_atk_buff
+      tags: []
+    eidolon_1_spd_buff:
+      type: buff
+      target: sparkle
+      triggers:
+      - battle_start
+      - sparkle_uses_skill
+      modifiers:
+        speed_pct: 0.15
+      duration:
+        type: owner_turns
+        value: 2.0
+      id: eidolon_1_spd_buff
+      tags: []
+    sparkle_nocturne_team_atk_buff:
+      type: buff
+      target: all_allies
+      source: sparkle_bonus_ability_nocturne
+      modifiers:
+        atk_pct: 0.45
+      duration:
+        type: permanent
+      id: sparkle_nocturne_team_atk_buff
+      tags:
+      - bonus_ability
+      - team_buff
+    sparkle_next_skill_free:
+      type: buff
+      target: sparkle
+      source: sparkle_bonus_ability_artificial_flower
+      modifiers:
+        next_skill_cost_delta: 1
+        skill_point_cost_override: 0
+      duration:
+        type: until_next_skill_use
+      id: sparkle_next_skill_free
+      tags:
+      - cost_override
+      - runtime_cost_hook_supported_v0_44
+  actions:
+    basic:
+      id: sparkle_basic_monodrama
+      actor: sparkle
+      action_type: basic
+      tags:
+      - attack
+      - basic_use
+      - basic_damage
+      - consumes_regular_action
+      - grants_base_energy
+      - can_trigger_kill_energy
+      skill_point_delta: 1
+      energy_gain:
+        base_energy_gain: 30
+        affected_by_err: true
+        fixed_energy_gain_not_affected_by_err: 0
+        trace_extra_energy: 10
+      damage_packets:
+      - id: sparkle_basic_damage
+        element: quantum
+        damage_type: basic_damage
+        scaling:
+          stat: atk
+          multiplier_by_level:
+            6: 1.0
+            7: 1.1
+          flat_damage: 0
+        crit:
+          can_crit: true
+        toughness:
+          toughness_reduction: 10
+        scaling_stat: atk
+        multiplier: 1.1
+        can_crit: true
+        forced_crit: false
+        toughness_reduction: 10.0
+      cost:
+        skill_points: 1
+      notes:
+      - 'v0_43: Sparkle A2 Almanac makes Basic ATK regenerate 10 additional Energy; model uses base_energy_gain=30 for max-trace
+        user case.'
+    skill:
+      id: sparkle_skill_dreamdiver
+      actor: sparkle
+      action_type: skill
+      tags:
+      - skill_use
+      - support
+      - consumes_regular_action
+      - consumes_skill_point
+      - grants_base_energy
+      - action_advance
+      cost:
+        skill_points: -1
+        energy: 0
+      energy_gain:
+        base_energy_gain: 30
+        affected_by_err: true
+        fixed_energy_gain_not_affected_by_err: 0
+      target_policy: selected_ally
+      effects:
+      - type: add_buff
+        buff_id: dreamdiver_crit_dmg_boost
+        target: selected_ally
+        status_id: dreamdiver_crit_dmg_boost
+      - type: advance_action
+        target: selected_ally
+        advance_percent: 0.5
+        condition: target != sparkle
+      - type: add_buff
+        buff_id: eidolon_1_spd_buff
+        target: sparkle
+        status_id: eidolon_1_spd_buff
+      damage_packets: []
+    ultimate:
+      id: sparkle_ultimate_the_hero_with_a_thousand_faces
+      actor: sparkle
+      action_type: ultimate
+      tags:
+      - ultimate_use
+      - support
+      - does_not_consume_regular_action
+      - consumes_energy
+      - recovers_skill_points
+      cost:
+        energy: 110
+      energy_gain:
+        base_energy_gain: 5
+        affected_by_err: true
+        fixed_energy_gain_not_affected_by_err: 0
+      effects:
+      - type: gain_skill_point
+        amount: 6.0
+        overflow_record:
+          enabled: true
+          max_recorded_overflow: 10
+      - type: add_buff
+        buff_id: cipher
+        target: all_allies
+        status_id: cipher
+      - type: add_buff
+        buff_id: eidolon_1_cipher_atk_buff
+        target: all_allies_with_cipher
+        status_id: eidolon_1_cipher_atk_buff
+      damage_packets: []
+    technique:
+      id: sparkle_technique_unreliable_narrator
+      actor: sparkle
+      action_type: technique
+      tags:
+      - technique_use
+      - prebattle
+      - support
+      effects:
+      - type: add_prebattle_status
+        status_id: misdirect
+        target: all_allies
+        duration_seconds: 20
+      - type: gain_skill_point_on_battle_start
+        amount: 3.0
+      - type: gain_energy
+        target: sparkle
+        amount: 20.0
+        affected_by_err: false
+        note: wiki_current_variant_lists_sparkle_energy_gain
+      damage_packets: []
+  triggers:
+  - id: sparkle_talent_figment_on_sp_consumption
+    owner: sparkle
+    source: character
+    timing: after_skill_point_consumed
+    condition:
+      all:
+      - sparkle_is_on_field == true
+      - consumed_skill_points >= 1
+    effects:
+    - type: add_or_refresh_stack
+      target: enemies_or_global_enemy_side
+      status_id: figment
+      stacks: consumed_skill_points
+      max_stacks: 3
+  - reference: light_cone_earthly_escapade_template_v1_6.yaml
+    id: light_cone_earthly_escapade_radiant_flame_listener
+  - id: sparkle_nocturne_battle_start_team_atk
+    owner: sparkle
+    source: bonus_ability
+    timing: battle_start
+    condition: always
+    effects:
+    - type: add_buff
+      buff_id: sparkle_nocturne_team_atk_buff
+      target: all_allies
+      status_id: sparkle_nocturne_team_atk_buff
+  - id: sparkle_almanac_dreamdiver_holder_sp_energy
+    owner: sparkle
+    source: bonus_ability
+    timing: after_skill_point_consumed
+    condition: actor has dreamdiver_crit_dmg_boost
+    effects:
+    - type: gain_energy
+      target: sparkle
+      amount: 1
+      affected_by_err: true
+  - id: sparkle_artificial_flower_after_3_sp_consumed
+    owner: sparkle
+    source: bonus_ability
+    timing: after_skill_point_consumed
+    condition: consumed_skill_points >= 3
+    effects:
+    - type: add_buff
+      buff_id: sparkle_next_skill_free
+      target: sparkle
+      status_id: sparkle_next_skill_free
+  - id: sparkle_e1_battle_start_spd_buff
+    owner: sparkle
+    source: eidolon_1
+    timing: battle_start
+    condition: always
+    effects:
+    - type: add_buff
+      buff_id: eidolon_1_spd_buff
+      target: sparkle
+      status_id: eidolon_1_spd_buff
+  passive_modifiers: {}
+  eidolons:
+    active_for_user_case: 1
+    e1:
+      effects:
+      - eidolon_1_cipher_atk_buff
+      - eidolon_1_spd_buff
+  current_panel_snapshot:
+    source: user_screenshot_2026_06_10_sparkle
+    hp:
+      base_display: 2561
+      added_display: 1709
+      total_display: 4270
+    atk:
+      base_display: 1053
+      added_display: 429
+      total_display: 1482
+    def:
+      base_display: 948
+      added_display: 741
+      total_display: 1689
+    speed:
+      base_display: 101
+      added_display: 49
+      total_display: 150
+    crit_rate: 0.05
+    crit_dmg: 2.634
+    break_effect: 0.187
+    outgoing_healing_boost: 0
+    max_energy: 110
+    energy_regeneration_rate: 1.244
+    effect_hit_rate: 0.082
+    effect_res: 0.259
+    wind_dmg_bonus: 0.1
+    quantum_dmg_bonus: 0
+source_detail:
+  character:
+    id: sparkle
+    name: Sparkle
+    cn_name: 花火
+    element: quantum
+    path: harmony
+    rarity: 5
+    eidolons: 1
+    template_version: 1.6
+    schema: hsr_trigger_effect_schema_v1_6
+    foundation_model: hsr_foundation_model_v1_6
+    data_policy:
+      patch_policy: enhanced_current_version_v1_6
+      final_panel_snapshot_from_user_screenshot: true
+      trace_levels_default: user_confirmed_max_v1_6
+      note: 'This template uses the user''s displayed attribute panel as the current build snapshot. Static relic/light-cone
+        stats that are already reflected in the panel should not be added again when starting from this snapshot. Dynamic
+        effects are represented as triggers/effects below.
+
+        '

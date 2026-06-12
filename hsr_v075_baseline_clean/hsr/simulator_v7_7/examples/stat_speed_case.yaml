@@ -1,0 +1,54 @@
+settings:
+  default_crit_mode: noncrit
+
+global:
+  av: 0
+  skill_points: 3
+  skill_point_cap: 5
+
+units:
+  seele:
+    name: Seele
+    side: ally
+    level: 80
+    hp: 3000
+    max_hp: 3000
+    energy: 0
+    max_energy: 120
+    speed: 123
+    remaining_av: 81.3008130081
+    stat_base:
+      speed: 115
+    stat_flat:
+      speed: 8
+    stats:
+      atk: 1000
+      crit_rate: 0
+      crit_dmg: 0.5
+    actions:
+      add_skill_speed_buff:
+        tags: [buff_action]
+        target_policy: self
+        cost: {}
+        effects:
+          - type: add_status
+            target: actor
+            status:
+              id: skill_speed_buff
+              tags: [buff, speed]
+              modifiers:
+                speed_pct: 0.25
+  enemy:
+    name: Enemy
+    side: enemy
+    hp: 1
+    max_hp: 1
+    speed: 100
+    remaining_av: 100
+    stats: {defense: 0}
+
+route:
+  - actor: seele
+    action: add_skill_speed_buff
+    timing: manual
+    targets: [seele]

@@ -1,0 +1,142 @@
+kind: team_template
+schema_version: '3.0'
+id: seele_sparkle_tribbie_dan_heng_pt
+lineup_order:
+- seele
+- sparkle
+- tribbie
+- dan_heng_permansor_terrae
+members:
+  seele:
+    character_template: character_seele_template_v1_6.yaml
+    light_cone_template: light_cone_in_the_night_template_v1_6.yaml
+    relic_template: relic_seele_user_current_build_v1_6.yaml
+    role: primary_dps
+    character_ref: models/characters/seele.yaml
+    light_cone_ref: models/light_cones/in_the_night.yaml
+    relic_build_ref: models/relic_builds/seele_user_current_build.yaml
+  sparkle:
+    character_template: character_sparkle_template_v1_6.yaml
+    light_cone_template: light_cone_earthly_escapade_template_v1_6.yaml
+    relic_template: relic_sparkle_user_current_build_v1_6.yaml
+    eidolons: 1
+    light_cone_superimposition: 1
+    role: action_advance_crit_dmg_sp_support
+    character_ref: models/characters/sparkle.yaml
+    light_cone_ref: models/light_cones/earthly_escapade.yaml
+    relic_build_ref: models/relic_builds/sparkle_user_current_build.yaml
+  tribbie:
+    character_template: character_tribbie_template_v1_6.yaml
+    light_cone_template: light_cone_dance_dance_dance_template_v1_6.yaml
+    relic_template: relic_tribbie_user_current_build_v1_6.yaml
+    eidolons: 1
+    light_cone_superimposition: 5
+    role: zone_vulnerability_res_pen_additional_damage_support
+    character_ref: models/characters/tribbie.yaml
+    light_cone_ref: models/light_cones/dance_dance_dance.yaml
+    relic_build_ref: models/relic_builds/tribbie_user_current_build.yaml
+  dan_heng_permansor_terrae:
+    character_template: character_dan_heng_perm_terrae_template_v1_6.yaml
+    light_cone_template: light_cone_journey_forever_peaceful_template_v1_6.yaml
+    relic_template: relic_dan_heng_user_current_build_v1_6.yaml
+    eidolons: 0
+    light_cone_superimposition: 1
+    role: shield_sustain_bondmate_support
+    character_ref: models/characters/dan_heng_permansor_terrae.yaml
+    light_cone_ref: models/light_cones/journey_forever_peaceful.yaml
+    relic_build_ref: models/relic_builds/dan_heng_user_current_build.yaml
+confirmed_assumptions:
+  all_trace_levels_max: true
+  patch_policy: enhanced_current_version_for_all_characters
+  lushaka_multiple_wearers_stack: true
+  lushaka_total_atk_pct_to_position_1: 0.24
+  dan_heng_bondmate_target_policy:
+    default_target: seele
+    can_be_overridden_by_battle_case: true
+  user_panel_alignment_version: v0.61
+initial_team_level_effects:
+  sparkle_talent_skill_point_cap:
+    source: sparkle
+    effect: increase_skill_point_cap
+    value: 2
+  lushaka_buffs_to_position_1:
+    sources:
+    - tribbie
+    - dan_heng_permansor_terrae
+    target: seele
+    atk_pct_each: 0.12
+    confirmed_total: 0.24
+  earthly_escapade_mask:
+    source: sparkle_light_cone
+    wearer: sparkle
+    target: sparkle_teammates
+    starting_state: active_at_battle_start
+    modifiers:
+      crit_rate: 0.1
+      crit_dmg: 0.28
+snapshot_panels:
+  seele:
+    hp: 3082
+    atk: 3254
+    def: 1057
+    speed: 117
+    crit_rate: 0.762
+    crit_dmg: 2.087
+    break_effect: 0.0
+    max_energy: 120
+    energy_regeneration_rate: 1.0
+    effect_hit_rate: 0.077
+    effect_res: 0.082
+    quantum_dmg_bonus: 0.488
+    relic_sets: 繁星璀璨的天才4 + 无主荒星茨冈尼亚2
+  sparkle:
+    hp: 4270
+    atk: 1482
+    def: 1689
+    speed: 150
+    crit_rate: 0.05
+    crit_dmg: 2.634
+    break_effect: 0.187
+    max_energy: 110
+    energy_regeneration_rate: 1.244
+    effect_hit_rate: 0.082
+    effect_res: 0.259
+    wind_dmg_bonus: 0.1
+    relic_sets: 晨昏交界的翔鹰4 + 生命的翁瓦克2
+  tribbie:
+    hp: 5236
+    atk: 1408
+    def: 1292
+    speed: 95
+    crit_rate: 0.575
+    crit_dmg: 2.097
+    err: 1.244
+  dan_heng_permansor_terrae:
+    hp: 3460
+    atk: 2726
+    def: 2004
+    speed: 141
+    crit_rate: 0.05
+    crit_dmg: 0.558
+    err: 1.244
+technique_strategy:
+  schema: technique_strategy_schema_v2_6.yaml
+  fixed_all_on: false
+  enumerate:
+    seele:
+    - false
+    - true
+    sparkle:
+    - false
+    - true
+    tribbie:
+    - false
+    - true
+    dan_heng_permansor_terrae:
+    - false
+    - true
+  total_combinations: 16
+  note: 'All four Techniques are non-conflicting, but this does not mean all four should be assumed. The battle calculation
+    should evaluate technique usage as part of the route.
+
+    '

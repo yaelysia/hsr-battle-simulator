@@ -1,0 +1,50 @@
+kind: model_pack_manifest
+schema_version: '3.0'
+id: hsr_model_pack_v3_0
+description: Canonical structured HSR battle model pack. v3.0 reorganizes v2.8 files
+  into stable simulator-facing model data.
+entrypoints:
+  default_battle: battles/arbitration_4_3_knight_3_full_combat.yaml
+  default_compiled_case: compiled_cases/arbitration_4_3_knight_3_opening.yaml
+  live_calibration_checkpoint: compiled_cases/arbitration_4_3_knight_3_live_c0.yaml
+  live_calibration_c0_to_c8: compiled_cases/arbitration_4_3_knight_3_live_c0_to_c8.yaml
+  live_calibration_c0_to_c8_natural: compiled_cases/arbitration_4_3_knight_3_live_c0_to_c8_natural.yaml
+directories:
+  schema: schema/
+  rules: rules/
+  characters: models/characters/
+  light_cones: models/light_cones/
+  relic_builds: models/relic_builds/
+  enemies: models/enemies/
+  teams: teams/
+  stages: stages/
+  battles: battles/
+  compiled_cases: compiled_cases/
+  legacy_sources: legacy_sources/
+models:
+  characters:
+  - seele
+  - sparkle
+  - tribbie
+  - dan_heng_permansor_terrae
+  light_cones:
+  - in_the_night
+  - earthly_escapade
+  - dance_dance_dance
+  - journey_forever_peaceful
+  relic_builds:
+  - seele_user_current_build
+  - sparkle_user_current_build
+  - tribbie_user_current_build
+  - dan_heng_user_current_build
+  stages:
+  - arbitration_4_3_knight_3
+  teams:
+  - seele_sparkle_tribbie_dan_heng_pt
+  battles:
+  - arbitration_4_3_knight_3_full_combat
+  compiled_cases:
+  - arbitration_4_3_knight_3_live_c0
+  - arbitration_4_3_knight_3_live_c0_to_c8
+  - arbitration_4_3_knight_3_live_c0_to_c8_natural
+

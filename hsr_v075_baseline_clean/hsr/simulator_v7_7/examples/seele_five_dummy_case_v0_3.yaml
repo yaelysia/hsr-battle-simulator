@@ -1,0 +1,162 @@
+# Minimal route-verification example.
+# It is intentionally simplified; real Knight-3 data can be mapped into the same structures.
+settings:
+  default_crit_mode: expected      # per-packet default: expected | crit | noncrit
+  kill_energy_base: 10
+  kill_energy_affected_by_err: true
+
+global:
+  av: 0
+  cycle: 0
+  skill_points: 3
+  skill_point_cap: 5
+
+units:
+  seele:
+    name: Seele
+    side: ally
+    level: 80
+    hp: 3021
+    max_hp: 3021
+    energy: 60
+    max_energy: 120
+    speed: 123
+    remaining_av: 81.300813
+    stats:
+      atk: 2788
+      speed: 123
+      crit_rate: 0.711
+      crit_dmg: 2.249
+      quantum_dmg_bonus: 0.488
+      energy_regeneration_rate: 1.194
+    tags: [ally, on_timeline]
+    statuses: []
+    actions:
+      technique_entry:
+        tags: [attack, technique_use, technique_damage, can_trigger_novaflare_auto_skill]
+        target_policy: manual
+        cost: {skill_points: 0, energy: 0}
+        energy_gain: {base: 0, affected_by_err: false}
+        effects_before_damage:
+          - type: add_status
+            target: actor
+            status:
+              id: seele_buffed_state
+              tags: [buff, dmg_bonus]
+              modifiers:
+                dmg_bonus_add: 0.80
+        damage_packets:
+          - id: technique_hit
+            element: quantum
+            damage_type: technique_damage
+            scaling_stat: atk
+            multiplier: 3.60
+            forced_crit: true
+            can_crit: true
+            toughness_reduction: 0
+            tags: [technique_damage]
+      skill:
+        tags: [attack, skill_use, skill_damage, consumes_regular_action, consumes_skill_point, grants_base_energy, can_trigger_kill_energy, can_trigger_resurgence, can_trigger_novaflare_auto_skill]
+        target_policy: manual
+        cost: {skill_points: -1, energy: 0}
+        energy_gain: {base: 30, affected_by_err: true}
+        effects:
+          - type: add_status
+            target: actor
+            status:
+              id: seele_skill_spd_buff
+              tags: [buff, speed]
+              max_stacks: 2
+              modifiers:
+                speed_pct: 0.25
+        damage_packets:
+          - id: skill_hit
+            element: quantum
+            damage_type: skill_damage
+            scaling_stat: atk
+            multiplier: 3.60
+            can_crit: true
+            toughness_reduction: 30
+            tags: [skill_damage]
+      novaflare_auto_skill:
+        tags: [attack, auto_skill_use, skill_damage, does_not_consume_skill_point, does_not_grant_base_energy, can_trigger_kill_energy, can_trigger_resurgence, triggers_skill_spd_buff]
+        target_policy: original_target_or_lowest_hp_percent_enemy
+        cost: {skill_points: 0, energy: 0}
+        energy_gain: {base: 0, affected_by_err: false}
+        effects:
+          - type: add_status
+            target: actor
+            status:
+              id: seele_skill_spd_buff
+              tags: [buff, speed]
+              max_stacks: 2
+              modifiers:
+                speed_pct: 0.25
+        damage_packets:
+          - id: auto_skill_hit
+            element: quantum
+            damage_type: skill_damage
+            scaling_stat: atk
+            multiplier: 3.60
+            can_crit: true
+            toughness_reduction: 30
+            tags: [skill_damage]
+  e1: &dummy
+    name: Dummy 1
+    side: enemy
+    level: 95
+    hp: 100000
+    max_hp: 100000
+    speed: 100
+    remaining_av: 100
+    stats: {defense: 0}
+    res: {quantum: 0}
+    toughness: null
+    weaknesses: [quantum]
+    tags: [enemy]
+  e2:
+    <<: *dummy
+    name: Dummy 2
+  e3:
+    <<: *dummy
+    name: Dummy 3
+  e4:
+    <<: *dummy
+    name: Dummy 4
+  e5:
+    <<: *dummy
+    name: Dummy 5
+
+triggers:
+  - id: seele_novaflare_auto_skill_trigger
+    owner_id: seele
+    timing: after_damage
+    condition:
+      all:
+        - {unit: target, field: hp_percent, op: <=, value: 0.5}
+        - {unit: target, field: alive, op: ==, value: true}
+        - {action_has_tag: attack, op: ==, value: true}
+        - {action_has_tag: can_trigger_novaflare_auto_skill, op: ==, value: true}
+    usage_limit:
+      scope: owner_turn
+      max_times: 1
+    effects:
+      - type: launch_action
+        actor: seele
+        action: novaflare_auto_skill
+        target_policy: original_target_or_lowest_hp_percent_enemy
+        queue: immediate_queue
+
+route:
+  - actor: seele
+    action: technique_entry
+    timing: manual
+    targets: [e1]
+    events:
+      __crit_mode__: crit
+  - actor: seele
+    action: skill
+    timing: regular_turn
+    targets: [e2]
+    events:
+      __crit_mode__: crit

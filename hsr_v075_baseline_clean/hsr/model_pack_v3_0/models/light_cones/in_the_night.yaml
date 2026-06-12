@@ -1,0 +1,81 @@
+kind: equipment_template
+schema_version: '3.0'
+slot: light_cone
+id: in_the_night
+name: In the Night
+cn_name: 于夜色中
+source_file: light_cone_in_the_night_template_v1_6.yaml
+equip_requirement:
+  passive_active_if_wearer_path_matches: true
+  required_path: hunt
+base_stats:
+  level_80:
+    hp: 1058
+    atk: 582
+    def: 463
+superimposition_effects:
+  s1:
+    crit_rate_add: 0.18
+    basic_skill_dmg_bonus_per_stack: 0.06
+    ultimate_crit_dmg_bonus_per_stack: 0.12
+  s2:
+    crit_rate_add: 0.21
+    basic_skill_dmg_bonus_per_stack: 0.07
+    ultimate_crit_dmg_bonus_per_stack: 0.14
+  s3:
+    crit_rate_add: 0.24
+    basic_skill_dmg_bonus_per_stack: 0.08
+    ultimate_crit_dmg_bonus_per_stack: 0.16
+  s4:
+    crit_rate_add: 0.27
+    basic_skill_dmg_bonus_per_stack: 0.09
+    ultimate_crit_dmg_bonus_per_stack: 0.18
+  s5:
+    crit_rate_add: 0.3
+    basic_skill_dmg_bonus_per_stack: 0.1
+    ultimate_crit_dmg_bonus_per_stack: 0.2
+stack_model:
+  stack_id: in_the_night_speed_stack
+  formula: clamp(floor(max(0, wearer.final_speed_in_battle - 100) / 10), 0, 6)
+  max_stacks: 6
+  uses_current_battle_speed: true
+status_effects: {}
+triggers:
+- id: in_the_night_passive_crit_rate
+  owner: in_the_night
+  source: light_cone
+  timing: stat_recalculation
+  condition: wearer.path == hunt
+  effects:
+  - type: modify_stat
+    target: wearer
+    stat: crit_rate
+    add_by_superimposition_field: crit_rate_add
+- id: in_the_night_basic_skill_damage_bonus
+  owner: in_the_night
+  source: light_cone
+  timing: before_damage
+  condition:
+    all:
+    - wearer.path == hunt
+    - damage_packet.damage_type in [basic_damage, skill_damage]
+  effects:
+  - type: modify_damage_packet
+    field: dmg_bonus_multiplier
+    add_expression: stack_count(in_the_night_speed_stack) * basic_skill_dmg_bonus_per_stack
+- id: in_the_night_ultimate_crit_dmg_bonus
+  owner: in_the_night
+  source: light_cone
+  timing: before_damage
+  condition:
+    all:
+    - wearer.path == hunt
+    - damage_packet.damage_type == ultimate_damage
+  effects:
+  - type: modify_damage_packet
+    field: crit_dmg
+    add_expression: stack_count(in_the_night_speed_stack) * ultimate_crit_dmg_bonus_per_stack
+raw_user_case:
+  wearer: seele
+  level: 80
+  superimposition: 1

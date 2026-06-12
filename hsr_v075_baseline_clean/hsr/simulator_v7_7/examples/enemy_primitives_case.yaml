@@ -1,0 +1,74 @@
+settings:
+  default_crit_mode: noncrit
+
+global:
+  av: 0
+  skill_points: 3
+  skill_point_cap: 5
+
+units:
+  hero:
+    name: Hero
+    side: ally
+    hp: 1000
+    max_hp: 1000
+    speed: 100
+    remaining_av: 100
+    stats: {atk: 1000, crit_rate: 0, crit_dmg: 0}
+    actions:
+      hit:
+        tags: [attack]
+        target_policy: manual
+        damage_packets:
+          - id: hit
+            element: quantum
+            scaling_stat: atk
+            multiplier: 0.1
+            can_crit: false
+  armored_enemy:
+    name: Armored Enemy
+    side: enemy
+    hp: 1000
+    max_hp: 1000
+    speed: 100
+    remaining_av: 100
+    stats: {defense: 0}
+    res: {quantum: 0}
+    flags:
+      armor: 1
+
+triggers:
+  - id: armor_hit_counter
+    timing: after_damage
+    condition:
+      all:
+        - {left: unit:target:flags.armor, op: '>', right: 0}
+    effects:
+      - type: modify_unit_counter
+        target: target
+        key: armor
+        amount: -1
+        min: 0
+  - id: armor_break_self_damage
+    timing: after_damage
+    condition:
+      all:
+        - {left: unit:target:flags.armor, op: '<=', right: 0}
+        - {left: unit:target:flags.armor_broken, op: '!=', right: true}
+    effects:
+      - type: set_unit_flag
+        target: target
+        key: armor_broken
+        value: true
+      - type: damage_unit
+        target: target
+        target_max_hp_pct: 0.10
+      - type: delay_action
+        target: target
+        percent: 0.20
+
+route:
+  - actor: hero
+    action: hit
+    timing: manual
+    targets: [armored_enemy]

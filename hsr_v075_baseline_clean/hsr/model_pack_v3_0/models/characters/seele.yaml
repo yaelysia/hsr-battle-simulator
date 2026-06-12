@@ -1,0 +1,472 @@
+kind: character_template
+schema_version: '3.0'
+id: seele
+name: Seele
+cn_name: 希儿
+source_file: character_seele_template_v1_6.yaml
+unit:
+  side: ally
+  level: 80
+  element: quantum
+  path: hunt
+  rarity: 5
+  tags:
+  - character
+  - hunt
+  - quantum
+  base_stats_by_level:
+    level_80:
+      hp: 931
+      atk: 640
+      def: 363
+      speed: 115
+      max_energy: 120
+  trace_level_defaults:
+    eidolons: 3
+    basic: 6
+    skill: 12
+    ultimate: 10
+    talent: 12
+  minor_traces_total:
+    atk_pct: 0.28
+    crit_dmg: 0.24
+    def_pct: 0.125
+  status_effects:
+    seele_amplification:
+      type: buff
+      owner: seele
+      modifiers:
+        dmg_bonus_multiplier_delta_by_talent_level:
+          10: 0.8
+          12: 0.88
+      duration:
+        type: owner_turns
+        value: 3.0
+        extra_turn_consumes_duration: false
+      id: seele_amplification
+      tags: []
+    seele_skill_spd_buff:
+      type: buff
+      owner: seele
+      modifiers:
+        speed_pct_delta: 0.25
+      stack_rule:
+        max_stacks_at_e0: 1
+        max_stacks_at_e2_or_above: 2
+        refresh_duration: true
+      duration:
+        type: owner_turns
+        value: 3.0
+        extra_turn_consumes_duration: false
+      id: seele_skill_spd_buff
+      tags: []
+    seele_nightshade_dmg_bonus:
+      type: buff
+      source: bonus_ability_nightshade
+      modifiers:
+        dmg_bonus_multiplier_delta_per_stack: 0.5
+      stack_rule:
+        max_stacks: 3.0
+        refresh_duration: true
+      duration:
+        type: owner_turns
+        value: 3.0
+        extra_turn_consumes_duration: false
+      id: seele_nightshade_dmg_bonus
+      tags: []
+  actions:
+    basic:
+      id: seele_basic_thwack
+      actor: seele
+      source: character
+      action_type: basic
+      tags:
+      - attack
+      - basic_use
+      - basic_damage
+      - consumes_regular_action
+      - consumes_skill_point_negative_zero
+      - grants_base_energy
+      - can_trigger_kill_energy
+      - can_trigger_resurgence
+      - can_trigger_novaflare_auto_skill
+      cost:
+        skill_points: 0
+        energy: 0
+      skill_point_delta: 1
+      energy_gain:
+        base_energy_gain: 20
+        affected_by_err: true
+        fixed_energy_gain_not_affected_by_err: 0
+      damage_packets:
+      - id: seele_basic_damage
+        element: quantum
+        damage_type: basic_damage
+        tags:
+        - basic_damage
+        - attack
+        scaling:
+          stat: atk
+          multiplier_by_level:
+            6: 1.0
+            7: 1.1
+          flat_damage: 0
+        crit:
+          can_crit: true
+          forced_crit: false
+        toughness:
+          toughness_reduction: 10
+          ignore_weakness_for_toughness: false
+        scaling_stat: atk
+        multiplier: 1.1
+        can_crit: true
+        forced_crit: false
+        toughness_reduction: 10.0
+        ignore_weakness_for_toughness: false
+    skill:
+      id: seele_skill_sheathed_blade
+      actor: seele
+      source: character
+      action_type: skill
+      tags:
+      - attack
+      - skill_use
+      - skill_damage
+      - consumes_regular_action
+      - consumes_skill_point
+      - grants_base_energy
+      - can_trigger_kill_energy
+      - can_trigger_resurgence
+      - can_trigger_novaflare_auto_skill
+      - triggers_skill_spd_buff
+      cost:
+        skill_points: -1
+        energy: 0
+      skill_point_delta: -1
+      energy_gain:
+        base_energy_gain: 30
+        affected_by_err: true
+        fixed_energy_gain_not_affected_by_err: 0
+      damage_packets:
+      - id: seele_skill_damage
+        element: quantum
+        damage_type: skill_damage
+        tags:
+        - skill_damage
+        - attack
+        scaling:
+          stat: atk
+          multiplier_by_level:
+            10: 3.6
+            12: 3.96
+          flat_damage: 0
+        crit:
+          can_crit: true
+          forced_crit: false
+        toughness:
+          toughness_reduction: 20
+          ignore_weakness_for_toughness: false
+        scaling_stat: atk
+        multiplier: 3.96
+        can_crit: true
+        forced_crit: false
+        toughness_reduction: 20.0
+        ignore_weakness_for_toughness: false
+      effects_after_action_start:
+      - type: add_buff
+        buff_id: seele_skill_spd_buff
+        status_id: seele_skill_spd_buff
+    ultimate:
+      id: seele_ultimate_butterfly_flurry
+      actor: seele
+      source: character
+      action_type: ultimate
+      tags:
+      - attack
+      - ultimate_use
+      - ultimate_damage
+      - does_not_consume_action
+      - consumes_energy
+      - grants_base_energy
+      - can_trigger_kill_energy
+      - can_trigger_resurgence
+      - can_trigger_novaflare_auto_skill
+      cost:
+        skill_points: 0
+        energy: 120
+      skill_point_delta: 0
+      energy_gain:
+        base_energy_gain: 5
+        affected_by_err: true
+        fixed_energy_gain_not_affected_by_err: 0
+      effects_before_damage:
+      - type: add_buff
+        buff_id: seele_amplification
+        status_id: seele_amplification
+      damage_packets:
+      - id: seele_ultimate_damage
+        element: quantum
+        damage_type: ultimate_damage
+        tags:
+        - ultimate_damage
+        - attack
+        scaling:
+          stat: atk
+          multiplier_by_level:
+            10: 7.2
+          flat_damage: 0
+        crit:
+          can_crit: true
+          forced_crit: false
+        toughness:
+          toughness_reduction: 30
+          ignore_weakness_for_toughness: false
+        scaling_stat: atk
+        multiplier: 7.2
+        can_crit: true
+        forced_crit: false
+        toughness_reduction: 30.0
+        ignore_weakness_for_toughness: false
+    technique_entry_damage:
+      id: seele_technique_phantom_illusion_entry_damage
+      actor: seele
+      source: character
+      action_type: technique
+      tags:
+      - attack
+      - technique_use
+      - technique_damage
+      - does_not_count_as_skill_use
+      - does_not_count_as_skill_damage
+      - does_not_consume_action
+      - does_not_consume_skill_point
+      - does_not_grant_base_energy
+      - can_trigger_novaflare_auto_skill
+      - cannot_trigger_resurgence
+      cost:
+        skill_points: 0
+        energy: 0
+      skill_point_delta: 0
+      energy_gain:
+        base_energy_gain: 0
+        affected_by_err: false
+        fixed_energy_gain_not_affected_by_err: 0
+      target_policy: random_enemy
+      effects_before_damage:
+      - type: add_buff
+        buff_id: seele_amplification
+        status_id: seele_amplification
+      damage_packets:
+      - id: seele_technique_damage
+        element: quantum
+        damage_type: technique_damage
+        tags:
+        - technique_damage
+        - attack
+        scaling:
+          stat: atk
+          uses_skill_multiplier: true
+          multiplier_by_reference: &id001
+            action_id: seele_skill_sheathed_blade
+            level: skill
+          flat_damage: 0
+        crit:
+          can_crit: true
+          forced_crit: true
+        toughness:
+          toughness_reduction: 20
+          ignore_weakness_for_toughness: false
+        scaling_stat: atk
+        flat_damage: 0.0
+        multiplier_by_reference: *id001
+        can_crit: true
+        forced_crit: true
+        toughness_reduction: 20.0
+        ignore_weakness_for_toughness: false
+    novaflare_auto_skill:
+      id: seele_novaflare_auto_skill
+      actor: seele
+      source: character
+      action_type: auto_skill
+      tags:
+      - attack
+      - auto_skill_use
+      - skill_damage
+      - resolves_skill_effects
+      - does_not_consume_action
+      - does_not_consume_skill_point
+      - does_not_grant_base_energy
+      - can_trigger_kill_energy
+      - can_trigger_resurgence
+      - can_trigger_novaflare_auto_skill
+      - triggers_skill_spd_buff
+      cost:
+        skill_points: 0
+        energy: 0
+      skill_point_delta: 0
+      energy_gain:
+        base_energy_gain: 0
+        affected_by_err: false
+        fixed_energy_gain_not_affected_by_err: 0
+      target_policy: original_target_or_lowest_hp_percent_enemy
+      effects_after_action_start:
+      - type: add_buff
+        buff_id: seele_skill_spd_buff
+        status_id: seele_skill_spd_buff
+      damage_packets:
+      - id: seele_novaflare_auto_skill_damage
+        element: quantum
+        damage_type: skill_damage
+        tags:
+        - skill_damage
+        - attack
+        scaling:
+          stat: atk
+          multiplier_by_level:
+            10: 3.6
+            12: 3.96
+          flat_damage: 0
+        crit:
+          can_crit: true
+          forced_crit: false
+        toughness:
+          toughness_reduction: 20
+          ignore_weakness_for_toughness: false
+        scaling_stat: atk
+        multiplier: 3.96
+        can_crit: true
+        forced_crit: false
+        toughness_reduction: 20.0
+        ignore_weakness_for_toughness: false
+  triggers:
+  - id: seele_novaflare_auto_skill_trigger
+    owner: seele
+    source: character
+    timing: after_damage
+    priority: 100
+    condition:
+      all:
+      - action.tags contains attack
+      - action.actor_is_ally == true
+      - target.is_alive == true or target.invalid_after_damage == true
+      - target.hp_percent <= 0.5 or target.invalid_after_damage == true
+      - usage_limit.not_used_this_owner_turn == true
+    effects:
+    - type: launch_action
+      action_id: seele_novaflare_auto_skill
+      target_policy: original_target_or_lowest_hp_percent_enemy
+      queue: immediate_queue
+    usage_limit:
+      scope: per_owner_turn
+      max_times: 1
+    reset:
+      timing: owner_turn_start
+    user_validated:
+      technique_can_trigger_this: true
+      auto_skill_triggers_skill_spd_buff: true
+      auto_skill_does_not_grant_base_energy: true
+      auto_skill_kill_energy_is_enabled: true
+      auto_skill_can_trigger_resurgence: true
+  - id: seele_resurgence_trigger
+    owner: seele
+    source: character
+    timing: after_defeat_enemy
+    priority: 90
+    condition:
+      all:
+      - defeated_by.owner == seele
+      - action.tags contains can_trigger_resurgence
+      - context.extra_turn_type != resurgence
+    effects:
+    - type: add_buff
+      buff_id: seele_amplification
+    - type: enqueue_extra_turn
+      actor: seele
+      extra_turn_type: resurgence
+      queue: extra_turn_queue
+      restrictions:
+        ultimate_allowed_during_extra_turn: false
+        extra_turn_consumes_buff_turn_duration: false
+        extra_turn_changes_regular_remaining_av: false
+    usage_limit:
+      scope: action_resolution
+      max_times: 1
+    user_validated:
+      kills_during_resurgence_extra_turn_do_not_trigger_another_resurgence: true
+  - id: seele_nightshade_trigger
+    owner: seele
+    source: bonus_ability
+    timing: after_defeat_enemy
+    condition:
+      all:
+      - defeated_by.owner == seele
+    effects:
+    - type: add_buff
+      buff_id: seele_nightshade_dmg_bonus
+  - id: seele_rippling_waves_trigger
+    owner: seele
+    source: bonus_ability
+    timing: action_end
+    condition:
+      all:
+      - action.id == seele_basic_thwack
+    effects:
+    - type: advance_action
+      actor: seele
+      advance_percent: 0.2
+  passive_modifiers:
+    lacerate:
+      condition: seele has seele_amplification
+      effect:
+        quantum_res_pen: 0.25
+  eidolons:
+    active_for_user_case: 3
+    e1:
+      trigger:
+        timing: before_damage
+        condition: target.hp_percent <= 0.80 and action.actor == seele
+      effects:
+      - type: modify_stat
+        stat: crit_rate
+        add: 0.15
+      - type: modify_damage_packet
+        def_ignore_add: 0.2
+    e2:
+      effect:
+        skill_spd_buff_max_stacks: 2
+    e3:
+      effect:
+        skill_level_add: 2
+        talent_level_add: 2
+  current_panel_snapshot:
+    source: user_screenshot_2026_06_10_seele
+    hp:
+      total_display: 3082
+    atk:
+      total_display: 3254
+    def:
+      total_display: 1057
+    speed:
+      total_display: 117
+    crit_rate: 0.762
+    crit_dmg: 2.087
+    break_effect: 0.0
+    max_energy: 120
+    energy_regeneration_rate: 1.0
+    effect_hit_rate: 0.077
+    effect_res: 0.082
+    quantum_dmg_bonus: 0.488
+source_detail:
+  character:
+    id: seele
+    name: Seele
+    cn_name: 希儿
+    element: quantum
+    path: hunt
+    rarity: 5
+    template_version: 1.6
+    patch_basis: 4.2 Novaflare
+    schema: hsr_trigger_effect_schema_v1_6
+    foundation_model: hsr_foundation_model_v1_6
+    data_policy:
+      final_panel_snapshot_from_user_screenshot: true

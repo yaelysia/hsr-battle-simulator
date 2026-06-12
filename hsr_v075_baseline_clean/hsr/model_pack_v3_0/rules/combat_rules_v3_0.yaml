@@ -1,0 +1,21 @@
+ruleset_id: hsr_combat_rules_v3_0
+purpose: Shared combat settlement rules used by model pack and simulator.
+damage_formula_pipeline:
+- base_damage = contextual_scaling_stat * multiplier + flat_damage
+- crit_multiplier = 1 + crit_rate * crit_dmg in expected mode, or 1 + crit_dmg when forced/actual crit
+- dmg_bonus_multiplier = 1 + element/typed/general damage bonuses + packet modifiers
+- def_multiplier, res_multiplier, damage_taken_multiplier, toughness_state_multiplier are independent multiplicative stages
+- final_damage = base * crit * dmg_bonus * def * res * damage_taken * toughness_state
+action_value_rules:
+  base_interval: 10000 / current_speed
+  advance_action: remaining_av *= (1 - advance_percent)
+  delay_action: remaining_av *= (1 + delay_percent)
+  regular_action_end: refresh next AV before action_end advance/decrement effects
+resource_rules:
+  energy_gain: base energy is multiplied by ERR; fixed energy is not
+  per_packet_energy: allowed only when action energy_gain.timing == per_packet; total action gain remains unchanged
+  kill_energy: applied before after_defeat_enemy triggers
+queue_rules:
+  ultimate_queue_priority: ultimate_queue > immediate_queue > interrupt_queue
+  queued_action_policy: carry_across_wave and turn_kind belong to action definition when possible
+  phase_hp_boundary: non-carry phase boundary locks later damage to same target from same action

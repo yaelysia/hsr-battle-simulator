@@ -1,0 +1,754 @@
+kind: stage_template
+schema_version: '3.0'
+id: arbitration_4_3_knight_3
+source_file: enemy_complete_arbitration_4_3_knight_3_v2_5.yaml
+stage:
+  stage_id: 30507013
+  challenge_peak_config_id: 703
+  title_chs: 骑士（三）
+  level: 95
+  hard_level_group: 3
+  stage_type: Challenge
+  recommended_damage_types:
+  - Ice
+  - Quantum
+  max_cycles: 6
+  stage_config_data:
+  - BFLIFKBEOPJ: _Wave
+    MNDFOPKBHKP: '2'
+  - BFLIFKBEOPJ: _IsEliteBattle
+    MNDFOPKBHKP: '1'
+  - BFLIFKBEOPJ: _StageInfiniteGroup
+    MNDFOPKBHKP: '30507013'
+  - BFLIFKBEOPJ: _CreateBattleEvent
+    MNDFOPKBHKP: '30502'
+  battle_event_30502:
+    ability_list:
+    - BattleEventAbility_SummonMonsterInfinite
+    - BattleEventAbility_ChallengePeakBattle_CountDown
+    description_chs: 从第3轮起，每个轮次开始时，我方全体进入【中盘激战】状态，造成的最终伤害大幅提高，该效果可以叠加。
+    params:
+    - 0.5
+    - 7
+    - 4
+    - 0.5
+  stage_buffs_from_challenge_peak_tag_list:
+  - id: 3033058
+    name_chs: 血嗜
+    desc_chs: 我方目标回合开始时损失<color=#f29e38ff><unbreak>#1[i]</unbreak></color>点生命值，该效果可致命。
+    param_list:
+    - 500
+    modifier_name: ADV_StageAbility_3033058
+    in_battle_binding_key: ChallengePeakBattle_BaseAbility_0018
+scaling:
+  hard_level_group:
+    AttackRatio: 34.75065
+    DefenceRatio: 5.47619
+    HPRatio: 375.4385
+    SpeedRatio: 1.32
+    StanceRatio: 1
+  infinite_elite_group_370:
+    AttackRatio: 1.1
+    DefenceRatio: 1
+    HPRatio: 8.6
+    SpeedRatio: 1
+    StanceRatio: 1
+waves:
+- wave_index: 0
+  source_wave: 1
+  units:
+    wave1_daybreak_squadron_blazeweaver:
+      id: wave1_daybreak_squadron_blazeweaver
+      template_id: 5013050
+      name: 'Daybreak Squadron: Blazeweaver'
+      cn_name: 破晓战队•赤焰
+      side: enemy
+      level: 95
+      hp: 4504135.6844999995
+      max_hp: 4504135.6844999995
+      speed: 158.4
+      toughness: 480
+      max_toughness: 480
+      stats:
+        atk: 688.0628700000001
+        def: 1149.9999
+      weaknesses: &id001
+      - Physical
+      - Quantum
+      - Imaginary
+      res: &id002
+        Fire: 0.8
+        Ice: 0.2
+        Thunder: 0.2
+        Wind: 0.2
+      core_mechanics: &id003
+        daybreak_force_field:
+          source_skill_id: 501305003
+          source_param_list:
+          - 7
+          - 1
+          rules:
+          - control_immunity_while_active
+          - toughness_cannot_be_reduced_while_active
+          - if_hit_by_fire_damage_then_immediate_action
+          - while_active_continuously_uses_shadow_dance
+          - after_7_hits_uses_daybreak_dispersal
+        despondent:
+          source_skill_id: 501305005
+          source_param_list:
+          - 0.3
+          - 0.4
+          - 2
+          rules:
+          - remove_force_field
+          - apply_despondent
+          - damage_taken_increased_30_percent
+          - fire_resistance_reduced_40_percent
+          - duration_param_2
+      skills: &id004
+      - skill_id: 501305001
+        trigger_key: Skill01
+        name_chs: 破晓战刃
+        name_en: Daybreak Blade
+        type_chs: 技能
+        tag_chs: 单攻
+        damage_type: Fire
+        attack_type: Normal
+        toughness_damage_display_basic_atk_10_scale: 3.3333333333333335
+        delay_ratio: 1
+        phase_list:
+        - 1
+        params:
+        - 4
+        extra_effects: []
+        description_chs: 对指定我方单体造成火属性伤害。
+      - skill_id: 501305002
+        trigger_key: Skill02
+        name_chs: 破晓飞轮
+        name_en: Daybreak Flywheel
+        type_chs: 技能
+        tag_chs: 扩散
+        damage_type: Fire
+        attack_type: Normal
+        toughness_damage_display_basic_atk_10_scale: 1.6666666666666667
+        delay_ratio: 1
+        phase_list:
+        - 1
+        params:
+        - 6
+        - 3
+        - 0.15
+        - 60
+        - 1
+        extra_effects: []
+        description_chs: 对指定我方单体及其相邻目标造成火属性伤害。
+      - skill_id: 501305003
+        trigger_key: Skill03
+        name_chs: 破晓意志
+        name_en: Daybreak Will
+        type_chs: 技能
+        tag_chs: 强化
+        damage_type: null
+        attack_type: Normal
+        toughness_damage_display_basic_atk_10_scale: null
+        delay_ratio: 1
+        phase_list:
+        - 1
+        params:
+        - 7
+        - 1
+        extra_effects: []
+        description_chs: 为自身附加【破晓力场】。此状态下，破晓战队会持续施放【破晓剑影舞】，且免疫控制类负面状态，自身的韧性无法被削减，若自身受到火属性攻击时则会立即行动。当破晓战队处于【破晓力场】状态时，受到一定次数攻击后会施放【破晓退散】。
+      - skill_id: 501305004
+        trigger_key: Skill04
+        name_chs: 破晓剑影舞
+        name_en: Shadow Dance of the Daybreak Blade
+        type_chs: 技能
+        tag_chs: 单攻
+        damage_type: Fire
+        attack_type: Normal
+        toughness_damage_display_basic_atk_10_scale: 3.3333333333333335
+        delay_ratio: 1
+        phase_list:
+        - 1
+        params:
+        - 8
+        extra_effects: []
+        description_chs: 对指定我方单体造成大量火属性伤害。
+      - skill_id: 501305005
+        trigger_key: Skill05
+        name_chs: 破晓退散
+        name_en: Daybreak Dispersal
+        type_chs: 技能
+        tag_chs: 其他
+        damage_type: null
+        attack_type: Normal
+        toughness_damage_display_basic_atk_10_scale: 3.3333333333333335
+        delay_ratio: 1
+        phase_list:
+        - 1
+        params:
+        - 0.3
+        - 0.4
+        - 2
+        extra_effects: []
+        description_chs: 解除【破晓力场】并为自身附加【失意】，受到的伤害提高，且自身火属性抗性降低。
+      raw:
+        identity:
+          monster_id: 5013050
+          monster_template_id: 5013050
+          name_chs: 破晓战队•赤焰
+          name_en: 'Daybreak Squadron: Blazeweaver'
+          role_in_stage: wave_1_enemy
+          rank: Elite
+        stage_scaled_stats:
+          level: 95
+          hp_raw: 4504135.6844999995
+          hp_display_rounded: 4504136
+          attack_raw: 688.0628700000001
+          defence_raw: 1149.9999
+          speed_raw: 158.4
+          speed_display: 158.4
+          toughness_internal: 480
+          toughness_display_basic_atk_10_scale: 160.0
+        weaknesses: *id001
+        damage_type_resistance: *id002
+        debuff_resistance: {}
+        summon_id_list: []
+        core_mechanics: *id003
+        skills: *id004
+        ai:
+          ai_path: Config/ConfigAI/Monster_W5_Ranger_00_AI.json
+          available: true
+          decision_count: 1
+          skill_trigger_references:
+          - path: /DecisionList[0]/DecisionList[0]/RootTask/TaskList[1]/SkillName
+            skill_trigger_key: Skill01
+          - path: /DecisionList[0]/DecisionList[1]/RootTask/TaskList[1]/SkillName
+            skill_trigger_key: Skill02
+          - path: /DecisionList[0]/DecisionList[2]/RootTask/TaskList[1]/SkillName
+            skill_trigger_key: Skill03
+          - path: /DecisionList[0]/DecisionList[3]/RootTask/TaskList[1]/SkillName
+            skill_trigger_key: Skill02
+          - path: /DecisionList[0]/DecisionList[4]/RootTask/TaskList[1]/SkillName
+            skill_trigger_key: Skill05
+          - path: /DecisionList[0]/DecisionList[5]/RootTask/TaskList[1]/SkillName
+            skill_trigger_key: Skill04
+        raw_source_trace:
+          excel_rows:
+          - StageConfig[StageID=30507013]
+          - MonsterConfig[MonsterID=5013050]
+          - MonsterTemplateConfig[MonsterTemplateID=5013050]
+          - HardLevelGroup[HardLevelGroup=3,Level=95]
+          - InfiniteEliteGroup[EliteGroup=370]
+          config_paths:
+          - Config/ConfigAI/Monster_W5_Ranger_00_AI.json
+          - Config/ConfigCharacter/Monster/Monster_W5_Ranger_01_Config.json
+        combat_role_in_case: wave_1_enemy_slot_1
+        template_base_stats:
+          attack_base: 18
+          defence_base: 210
+          hp_base: 1395
+          speed_base: 120
+          stance_base_internal: 480
+          status_resistance_base: 0.2
+          initial_delay_ratio: 1
+        stage_overrides_and_modifiers:
+          monster_modify_ratios:
+            attack: 1
+            defence: 1
+            hp: 1
+            speed: 1
+            toughness: 1
+          hard_level_group_row:
+            HardLevelGroup: 3
+            Level: 95
+            AttackRatio: 34.75065
+            DefenceRatio: 5.47619
+            HPRatio: 375.4385
+            SpeedRatio: 1.32
+            StanceRatio: 1
+          infinite_elite_group_row:
+            EliteGroup: 370
+            AttackRatio: 1.1
+            DefenceRatio: 1
+            HPRatio: 8.6
+            SpeedRatio: 1
+            StanceRatio: 1
+        custom_values:
+        - BFLIFKBEOPJ: CurrentRanger
+          MNDFOPKBHKP: 1
+        dynamic_values: []
+    wave1_furiae_praetor:
+      id: wave1_furiae_praetor
+      template_id: 4013010
+      name: Furiae Praetor
+      cn_name: 天谴先锋
+      side: enemy
+      level: 95
+      hp: 5404962.8214
+      max_hp: 5404962.8214
+      speed: 174.24
+      toughness: 480
+      max_toughness: 480
+      stats:
+        atk: 688.0628700000001
+        def: 1149.9999
+      weaknesses: &id005
+      - Ice
+      - Thunder
+      - Quantum
+      res: &id006
+        Physical: 0.2
+        Fire: 0.2
+        Wind: 0.2
+        Imaginary: 0.2
+      core_mechanics: &id007
+        armor_polis_protector:
+          source_skill_id: 401301006
+          source_param_list:
+          - 6
+          - 0.2
+          - 0.1
+          - 0.03
+          - 0.15
+          - 0.15
+          layers: 6
+          damage_reduction_per_layer: 0.2
+          on_hit_lose_layers: 1
+          on_break_self_imaginary_damage_max_hp_ratio: 0.1
+          on_break_action_delay_ratio: 0.15
+          on_break_energy_restore_max_energy_ratio_to_breaker: 0.15
+          post_break_extra_imaginary_damage_max_hp_ratio_when_hit: 0.03
+          restore_full_layers_at_own_turn_end: true
+        summon_furiae_warrior:
+          source_skill_id: 401301005
+          summon_monster_id: 4012010
+        charge_then_split_attack:
+          charge_skill_id: 401301003
+          followup_skill_id: 401301004
+          extra_effect_even_distribution_id: 401301001
+      skills: &id008
+      - skill_id: 401301001
+        trigger_key: Skill01
+        name_chs: 从天帷斩向黎明
+        name_en: From Skyveil to Dawn
+        type_chs: 技能
+        tag_chs: 横扫
+        damage_type: Imaginary
+        attack_type: Normal
+        toughness_damage_display_basic_atk_10_scale: 3.3333333333333335
+        delay_ratio: 1
+        phase_list:
+        - 1
+        params:
+        - 2.8
+        extra_effects: []
+        description_chs: 从我方队伍左侧起横扫攻击我方3个连续目标，造成少量虚数属性伤害。
+      - skill_id: 401301002
+        trigger_key: Skill02
+        name_chs: 从黎明杀往天帷
+        name_en: From Dawn to Skyveil
+        type_chs: 技能
+        tag_chs: 横扫
+        damage_type: Imaginary
+        attack_type: Normal
+        toughness_damage_display_basic_atk_10_scale: 3.3333333333333335
+        delay_ratio: 1
+        phase_list:
+        - 1
+        params:
+        - 2.8
+        extra_effects: []
+        description_chs: 从我方队伍右侧起横扫攻击我方3个连续目标，造成少量虚数属性伤害。
+      - skill_id: 401301003
+        trigger_key: Skill03
+        name_chs: 像威猛暴怒的雄狮
+        name_en: Resembling Furious Lion
+        type_chs: 技能
+        tag_chs: 蓄力
+        damage_type: null
+        attack_type: Normal
+        toughness_damage_display_basic_atk_10_scale: null
+        delay_ratio: 1
+        phase_list:
+        - 1
+        params: []
+        extra_effects: []
+        description_chs: 进入蓄力状态，下回合使用【在滔滔血海中沉溺】。
+      - skill_id: 401301004
+        trigger_key: Skill04
+        name_chs: 在滔滔血海中沉溺
+        name_en: Drowned in the Crimson Sea
+        type_chs: 技能
+        tag_chs: 分摊
+        damage_type: Imaginary
+        attack_type: Normal
+        toughness_damage_display_basic_atk_10_scale: 6.666666666666667
+        delay_ratio: 1
+        phase_list:
+        - 1
+        params:
+        - 12
+        - 1.2
+        - 4
+        - 2
+        extra_effects:
+        - id: 401301001
+          name_chs: 平均分摊
+          name_en: Even Distribution
+          desc_chs: 本次攻击结算前的伤害和负面效果由所有受击目标平均承受。
+          desc_en: The DMG and debuff before this attack's finalization is received evenly by all targets that are hit.
+        description_chs: 吸收【天谴斗士】，随后对我方全体造成大量虚数属性伤害并施加【易伤】效果，伤害和【易伤】效果由目标<u>平均分摊</u>，吸收的【天谴斗士】数量越多，造成的伤害越高。
+      - skill_id: 401301005
+        trigger_key: Skill05
+        name_chs: 快从坟墓中苏生
+        name_en: Rise from the Grave
+        type_chs: 技能
+        tag_chs: 召唤
+        damage_type: null
+        attack_type: Normal
+        toughness_damage_display_basic_atk_10_scale: null
+        delay_ratio: 1
+        phase_list:
+        - 1
+        params: []
+        extra_effects: []
+        description_chs: 召唤【天谴斗士】。
+      - skill_id: 401301006
+        trigger_key: PassiveSkillInitiate
+        name_chs: 城邦守护者
+        name_en: Polis Protector
+        type_chs: 天赋
+        tag_chs: 天赋
+        damage_type: null
+        attack_type: Normal
+        toughness_damage_display_basic_atk_10_scale: 5.0
+        delay_ratio: 1
+        phase_list:
+        - 1
+        params:
+        - 6
+        - 0.2
+        - 0.1
+        - 0.03
+        - 0.15
+        - 0.15
+        extra_effects: []
+        description_chs: 拥有一定层数的【战甲】，使自身受到的伤害降低。受到攻击后减少自身1层【战甲】，减少到0层时，【战甲】被破坏，对自身造成大量虚数属性伤害，并使自身行动延后，使破坏【战甲】的我方单位恢复能量。【战甲】被破坏后，自身受到攻击时额外再受到少量虚数属性伤害。【战甲】在自身回合结束时恢复到最大层数。
+      raw:
+        identity:
+          monster_id: 4013010
+          monster_template_id: 4013010
+          name_chs: 天谴先锋
+          name_en: Furiae Praetor
+          role_in_stage: wave_1_enemy
+          rank: Elite
+        stage_scaled_stats:
+          level: 95
+          hp_raw: 5404962.8214
+          hp_display_rounded: 5404963
+          attack_raw: 688.0628700000001
+          defence_raw: 1149.9999
+          speed_raw: 174.24
+          speed_display: 174.24
+          toughness_internal: 480
+          toughness_display_basic_atk_10_scale: 160.0
+        weaknesses: *id005
+        damage_type_resistance: *id006
+        debuff_resistance: {}
+        summon_id_list:
+        - 4012010
+        core_mechanics: *id007
+        skills: *id008
+        ai:
+          ai_path: Config/ConfigAI/Monster_W4_Claymore_00_AI.json
+          available: true
+          decision_count: 5
+          skill_trigger_references:
+          - path: /DecisionList[0]/RootTask/TaskList[1]/SuccessTaskList[0]/SkillName
+            skill_trigger_key: Skill01
+          - path: /DecisionList[0]/RootTask/TaskList[1]/FailedTaskList[0]/SkillName
+            skill_trigger_key: Skill02
+          - path: /DecisionList[1]/RootTask/TaskList[1]/SkillName
+            skill_trigger_key: Skill05
+          - path: /DecisionList[2]/RootTask/TaskList[1]/SuccessTaskList[0]/SkillName
+            skill_trigger_key: Skill02
+          - path: /DecisionList[2]/RootTask/TaskList[1]/FailedTaskList[0]/SkillName
+            skill_trigger_key: Skill01
+          - path: /DecisionList[3]/RootTask/TaskList[0]/SuccessTaskList[0]/SuccessTaskList[0]/SkillName
+            skill_trigger_key: Skill01
+          - path: /DecisionList[3]/RootTask/TaskList[0]/SuccessTaskList[0]/FailedTaskList[0]/SkillName
+            skill_trigger_key: Skill02
+          - path: /DecisionList[3]/RootTask/TaskList[0]/FailedTaskList[3]/SkillName
+            skill_trigger_key: Skill03
+          - path: /DecisionList[4]/RootTask/TaskList[1]/SkillName
+            skill_trigger_key: Skill04
+        raw_source_trace:
+          excel_rows:
+          - StageConfig[StageID=30507013]
+          - MonsterConfig[MonsterID=4013010]
+          - MonsterTemplateConfig[MonsterTemplateID=4013010]
+          - HardLevelGroup[HardLevelGroup=3,Level=95]
+          - InfiniteEliteGroup[EliteGroup=370]
+          config_paths:
+          - Config/ConfigAI/Monster_W4_Claymore_00_AI.json
+          - Config/ConfigCharacter/Monster/Monster_W4_Claymore_00_Config.json
+        combat_role_in_case: wave_1_enemy_slot_2
+        template_base_stats:
+          attack_base: 18
+          defence_base: 210
+          hp_base: 1674
+          speed_base: 132
+          stance_base_internal: 480
+          status_resistance_base: 0.2
+          initial_delay_ratio: 1
+        stage_overrides_and_modifiers:
+          monster_modify_ratios:
+            attack: 1
+            defence: 1
+            hp: 1
+            speed: 1
+            toughness: 1
+          hard_level_group_row:
+            HardLevelGroup: 3
+            Level: 95
+            AttackRatio: 34.75065
+            DefenceRatio: 5.47619
+            HPRatio: 375.4385
+            SpeedRatio: 1.32
+            StanceRatio: 1
+          infinite_elite_group_row:
+            EliteGroup: 370
+            AttackRatio: 1.1
+            DefenceRatio: 1
+            HPRatio: 8.6
+            SpeedRatio: 1
+            StanceRatio: 1
+        custom_values: []
+        dynamic_values: []
+- wave_index: 1
+  source_wave: 2
+  units:
+    wave2_the_giver__master_of_legions__lance_of_fury:
+      id: wave2_the_giver__master_of_legions__lance_of_fury
+      template_id: 4014020
+      name: The Giver, Master of Legions, Lance of Fury
+      cn_name: 颁赐者，千军首，天谴之矛
+      side: enemy
+      level: 95
+      hp: 18016542.737999998
+      max_hp: 18016542.737999998
+      speed: 79.2
+      toughness: 0
+      max_toughness: 0
+      stats:
+        atk: 688.0628700000001
+        def: 1149.9999
+      weaknesses: &id009 []
+      res: &id010
+        Physical: 0.2
+        Fire: 0.2
+        Ice: 0.2
+        Thunder: 0.2
+        Wind: 0.2
+        Quantum: 0.2
+        Imaginary: 0.2
+      core_mechanics: &id011
+        shared_hp_with_savage_god:
+          shared_with_monster_id: 4014012
+          source: MonsterConfig summons + template equal HP
+        phase_two_extra_action:
+          source: skill/description phase behavior from data text, preserved from prior audit; verify in action runtime if
+            needed
+        phase_transition:
+          trigger: first_hp_bar_depleted
+          effect: immediate_action
+          user_confirmed: true
+        summon_conquer_or_be_conquered:
+          source_skill_id: 401402001
+          summon_monster_id: 4012060
+          count: one per ally character
+          applies_status: 受征服
+          max_restorable_hp_reduction_ratio: 0.5
+        fear_bestowed_by_strife:
+          source_skill_id: 401402002
+          damage_taken_increase: 0.1
+          removed_when_corresponding_conquered_status_removed: true
+        savage_god_hp_based_aoe:
+          source_skill_id: 401402003
+          params:
+          - 0.9
+          - 1.5
+          - 0.3
+          - 0.15
+          - 0.3
+          rules:
+          - commands Savage God to deal Imaginary damage based on allies max HP
+          - ignores target defence
+          - high chance to imprison conquered targets
+        absorb_remaining_conquer_or_be_conquered:
+          source_skill_id: 401402004
+          rules:
+          - absorbs remaining Conquer or Be Conquered
+          - enhances Savage God
+          - adds toughness protection
+          - removes control debuffs and weakness break from Savage God
+      skills: &id012
+      - skill_id: 401402001
+        trigger_key: Skill01
+        name_chs: 受征伐者皆见灾殃
+        name_en: The Vanquished Behold Woe
+        type_chs: 技能
+        tag_chs: 妨害
+        damage_type: Imaginary
+        attack_type: Normal
+        toughness_damage_display_basic_atk_10_scale: 3.3333333333333335
+        delay_ratio: 1
+        phase_list:
+        - 1
+        - 2
+        params:
+        - 0.5
+        extra_effects: []
+        description_chs: 每个我方角色生成1个对应的【征服或被征服】，并使对应角色进入【受征服】状态。【受征服】会降低角色可回复的生命上限，降低对应【征服或被征服】的生命值可恢复对应比例的可回复生命上限。
+      - skill_id: 401402002
+        trigger_key: Skill02
+        name_chs: 殊死御侮皆临荣光
+        name_en: Glory to All Honorable Dead
+        type_chs: 技能
+        tag_chs: 妨害
+        damage_type: null
+        attack_type: Normal
+        toughness_damage_display_basic_atk_10_scale: null
+        delay_ratio: 1
+        phase_list:
+        - 2
+        params:
+        - 0.1
+        extra_effects: []
+        description_chs: 对所有我方角色施加【纷争赐的畏怖】，【受征服】状态解除时对应【纷争赐的畏怖】一同解除。
+      - skill_id: 401402003
+        trigger_key: Skill03
+        name_chs: 天谴降，皆奠纷争昂藏
+        name_en: Fury Falls, and All Bows to Strife
+        type_chs: 技能
+        tag_chs: 群攻
+        damage_type: Imaginary
+        attack_type: Normal
+        toughness_damage_display_basic_atk_10_scale: 6.666666666666667
+        delay_ratio: 1
+        phase_list:
+        - 2
+        params:
+        - 0.9
+        - 1.5
+        - 0.3
+        - 0.15
+        - 0.3
+        extra_effects: []
+        description_chs: 控制【蛮神，疯王，纷争的化身】对我方全体角色造成基于其生命上限百分比的虚数属性伤害，该伤害无视目标的防御力并大概率对处于【受征服】状态的目标附加禁锢。
+      - skill_id: 401402004
+        trigger_key: Skill04
+        name_chs: 畏怖溃军皆成铠仗
+        name_en: The Fallen Feeds My Might
+        type_chs: 技能
+        tag_chs: 强化
+        damage_type: null
+        attack_type: Normal
+        toughness_damage_display_basic_atk_10_scale: null
+        delay_ratio: 1
+        phase_list:
+        - 2
+        params: []
+        extra_effects: []
+        description_chs: 吸收剩余的【征服或被征服】强化【蛮神，疯王，纷争的化身】，同时添加韧性保护并解除【蛮神，疯王，纷争的化身】身上的控制类负面状态与弱点击破状态。
+      raw:
+        identity:
+          monster_id: 4014020
+          monster_template_id: 4014020
+          name_chs: 颁赐者，千军首，天谴之矛
+          name_en: The Giver, Master of Legions, Lance of Fury
+          role_in_stage: wave_2_boss_controller
+          rank: LittleBoss
+        stage_scaled_stats:
+          level: 95
+          hp_raw: 18016542.737999998
+          hp_display_rounded: 18016543
+          attack_raw: 688.0628700000001
+          defence_raw: 1149.9999
+          speed_raw: 79.2
+          speed_display: 79.2
+          toughness_internal: 0
+          toughness_display_basic_atk_10_scale: 0
+        weaknesses: *id009
+        damage_type_resistance: *id010
+        debuff_resistance:
+          STAT_CTRL: 0.5
+        summon_id_list:
+        - 4014012
+        - 4012060
+        core_mechanics: *id011
+        skills: *id012
+        ai:
+          ai_path: Config/ConfigAI/Monster_W4_Hearse_00_AI.json
+          available: true
+          decision_count: 5
+          skill_trigger_references:
+          - path: /DecisionList[0]/RootTask/TaskList[1]/SkillName
+            skill_trigger_key: Skill01
+          - path: /DecisionList[1]/RootTask/TaskList[1]/SkillName
+            skill_trigger_key: Skill01
+          - path: /DecisionList[2]/RootTask/TaskList[1]/SkillName
+            skill_trigger_key: Skill02
+          - path: /DecisionList[3]/RootTask/TaskList[1]/SkillName
+            skill_trigger_key: Skill04
+          - path: /DecisionList[4]/RootTask/TaskList[1]/SkillName
+            skill_trigger_key: Skill03
+        raw_source_trace:
+          excel_rows:
+          - StageConfig[StageID=30507013]
+          - MonsterConfig[MonsterID=4014020]
+          - MonsterTemplateConfig[MonsterTemplateID=4014020]
+          - HardLevelGroup[HardLevelGroup=3,Level=95]
+          - InfiniteEliteGroup[EliteGroup=370]
+          config_paths:
+          - Config/ConfigAI/Monster_W4_Hearse_00_AI.json
+          - Config/ConfigCharacter/Monster/Monster_W4_Hearse_00_Config.json
+        combat_role_in_case: wave_2_boss_controller
+        template_base_stats:
+          attack_base: 18
+          defence_base: 210
+          hp_base: 5580
+          speed_base: 60
+          stance_base_internal: null
+          status_resistance_base: 0.3
+          initial_delay_ratio: 0.5
+        stage_overrides_and_modifiers:
+          monster_modify_ratios:
+            attack: 1
+            defence: 1
+            hp: 1
+            speed: 1
+            toughness: 1
+          hard_level_group_row:
+            HardLevelGroup: 3
+            Level: 95
+            AttackRatio: 34.75065
+            DefenceRatio: 5.47619
+            HPRatio: 375.4385
+            SpeedRatio: 1.32
+            StanceRatio: 1
+          infinite_elite_group_row:
+            EliteGroup: 370
+            AttackRatio: 1.1
+            DefenceRatio: 1
+            HPRatio: 8.6
+            SpeedRatio: 1
+            StanceRatio: 1
+        custom_values:
+        - BFLIFKBEOPJ: SummonID0
+          MNDFOPKBHKP: 4014012
+        - BFLIFKBEOPJ: SummonID1
+          MNDFOPKBHKP: 4012060
+        dynamic_values: []

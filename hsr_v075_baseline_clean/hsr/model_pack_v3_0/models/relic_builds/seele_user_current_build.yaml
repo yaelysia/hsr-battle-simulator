@@ -1,0 +1,173 @@
+kind: relic_build
+schema_version: '3.0'
+id: seele_user_current_build
+source_file: relic_seele_user_current_build_v1_7.yaml
+raw:
+  relic_build:
+    id: seele_user_current_relic_build
+    template_version: '1.7'
+    owner: seele
+    schema: hsr_trigger_effect_schema_v1_6
+    source: user_screenshot_2026_06_10_seele
+    note: Updated from 星穹铁道小助手 screenshot. Displayed values are rounded by game UI; current panel snapshot is authoritative
+      for simulation alignment.
+  sets:
+    outer:
+      id: genius_of_brilliant_stars
+      cn_name: 繁星璀璨的天才
+      pieces: 4
+    planar:
+      id: sigonia_the_unclaimed_desolation
+      cn_name: 无主荒星茨冈尼亚
+      pieces: 2
+  pieces:
+    head:
+      name: 天才头部件
+      slot: head
+      level: 15
+      main_stat:
+        hp_flat: 705
+      substats:
+        def_flat: 21
+        atk_pct: 0.116
+        crit_rate: 0.032
+        crit_dmg: 0.233
+    hands:
+      name: 天才手部件
+      slot: hands
+      level: 15
+      main_stat:
+        atk_flat: 352
+      substats:
+        hp_pct: 0.038
+        atk_pct: 0.082
+        crit_rate: 0.093
+        crit_dmg: 0.129
+    body:
+      name: 天才躯干部件
+      slot: body
+      level: 15
+      main_stat:
+        crit_dmg: 0.648
+      substats:
+        def_pct: 0.054
+        crit_rate: 0.113
+        effect_hit_rate: 0.077
+        effect_res: 0.082
+    feet:
+      name: 天才脚部件
+      slot: feet
+      level: 15
+      main_stat:
+        atk_pct: 0.431
+      substats:
+        hp_pct: 0.082
+        speed_flat: 2
+        crit_rate: 0.084
+        crit_dmg: 0.103
+    planar_sphere:
+      name: 茨冈尼亚位面球
+      slot: planar_sphere
+      level: 15
+      main_stat:
+        quantum_dmg_bonus: 0.388
+      substats:
+        def_flat: 21
+        hp_pct: 0.073
+        crit_rate: 0.084
+        crit_dmg: 0.11
+    link_rope:
+      name: 茨冈尼亚连结绳
+      slot: link_rope
+      level: 15
+      main_stat:
+        atk_pct: 0.431
+      substats:
+        atk_flat: 38
+        def_pct: 0.048
+        crit_rate: 0.084
+        crit_dmg: 0.123
+  stat_summary_from_relics_only:
+    hp_flat: 705
+    atk_flat: 390
+    def_flat: 42
+    hp_pct: 0.193
+    atk_pct: 1.06
+    def_pct: 0.102
+    speed_flat: 2
+    crit_rate: 0.49
+    crit_dmg: 1.346
+    quantum_dmg_bonus: 0.388
+    energy_regeneration_rate_bonus: 0.0
+    effect_hit_rate: 0.077
+    effect_res: 0.082
+  set_effects_as_triggers:
+    genius_2pc_quantum_bonus:
+      id: genius_2pc_quantum_bonus
+      owner: genius_of_brilliant_stars
+      source: relic
+      timing: stat_recalculation
+      condition: wearer has 2 pieces of genius_of_brilliant_stars
+      effects:
+      - type: modify_stat
+        target: wearer
+        stat: quantum_dmg_bonus
+        add: 0.1
+    genius_4pc_def_ignore:
+      id: genius_4pc_def_ignore
+      owner: genius_of_brilliant_stars
+      source: relic
+      timing: before_damage
+      condition:
+        all:
+        - wearer has 4 pieces of genius_of_brilliant_stars
+        - damage_packet.actor == wearer
+        - damage_packet.deals_damage == true
+      effects:
+      - type: modify_damage_packet
+        field: def_ignore
+        add: 0.1
+      - type: conditional_branch
+        condition: target.weaknesses contains quantum
+        effects_if_true:
+        - type: modify_damage_packet
+          field: def_ignore
+          add: 0.1
+    sigonia_2pc_crit_rate:
+      id: sigonia_2pc_crit_rate
+      owner: sigonia_the_unclaimed_desolation
+      source: relic
+      timing: stat_recalculation
+      condition: wearer has 2 pieces of sigonia_the_unclaimed_desolation
+      effects:
+      - type: modify_stat
+        target: wearer
+        stat: crit_rate
+        add: 0.04
+    sigonia_2pc_crit_dmg_on_enemy_defeat:
+      id: sigonia_2pc_crit_dmg_on_enemy_defeat
+      owner: sigonia_the_unclaimed_desolation
+      source: relic
+      timing: after_enemy_defeated
+      condition: wearer has 2 pieces of sigonia_the_unclaimed_desolation
+      stack_rule:
+        max_stacks: 10
+        crit_dmg_per_stack: 0.04
+        refresh_duration: false
+      effects:
+      - type: add_buff
+        target: wearer
+        status_id: sigonia_crit_dmg_stack
+  validated_total_panel_from_user_screenshot:
+    hp: 3082
+    atk: 3254
+    def: 1057
+    speed: 117
+    crit_rate: 0.762
+    crit_dmg: 2.087
+    break_effect: 0.0
+    max_energy: 120
+    energy_regeneration_rate: 1.0
+    effect_hit_rate: 0.077
+    effect_res: 0.082
+    quantum_dmg_bonus: 0.488

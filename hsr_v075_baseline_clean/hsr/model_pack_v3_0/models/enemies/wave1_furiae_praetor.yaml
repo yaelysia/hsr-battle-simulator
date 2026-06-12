@@ -1,0 +1,252 @@
+kind: enemy_template
+schema_version: '3.0'
+id: wave1_furiae_praetor
+unit:
+  id: wave1_furiae_praetor
+  template_id: 4013010
+  name: Furiae Praetor
+  cn_name: 天谴先锋
+  side: enemy
+  level: 95
+  hp: 5404962.8214
+  max_hp: 5404962.8214
+  speed: 174.24
+  toughness: 480
+  max_toughness: 480
+  stats:
+    atk: 688.0628700000001
+    def: 1149.9999
+  weaknesses: &id001
+  - Ice
+  - Thunder
+  - Quantum
+  res: &id002
+    Physical: 0.2
+    Fire: 0.2
+    Wind: 0.2
+    Imaginary: 0.2
+  core_mechanics: &id003
+    armor_polis_protector:
+      source_skill_id: 401301006
+      source_param_list:
+      - 6
+      - 0.2
+      - 0.1
+      - 0.03
+      - 0.15
+      - 0.15
+      layers: 6
+      damage_reduction_while_active: 0.1
+      on_hit_lose_layers: 1
+      on_break_self_imaginary_damage_max_hp_ratio: 0.1
+      on_break_action_delay_ratio: 0.15
+      on_break_energy_restore_max_energy_ratio_to_breaker: 0.15
+      post_break_extra_imaginary_damage_max_hp_ratio_when_hit: 0.03
+      restore_full_layers_at_own_turn_end: true
+    summon_furiae_warrior:
+      source_skill_id: 401301005
+      summon_monster_id: 4012010
+    charge_then_split_attack:
+      charge_skill_id: 401301003
+      followup_skill_id: 401301004
+      extra_effect_even_distribution_id: 401301001
+  skills: &id004
+  - skill_id: 401301001
+    trigger_key: Skill01
+    name_chs: 从天帷斩向黎明
+    name_en: From Skyveil to Dawn
+    type_chs: 技能
+    tag_chs: 横扫
+    damage_type: Imaginary
+    attack_type: Normal
+    toughness_damage_display_basic_atk_10_scale: 3.3333333333333335
+    delay_ratio: 1
+    phase_list:
+    - 1
+    params:
+    - 2.8
+    extra_effects: []
+    description_chs: 从我方队伍左侧起横扫攻击我方3个连续目标，造成少量虚数属性伤害。
+  - skill_id: 401301002
+    trigger_key: Skill02
+    name_chs: 从黎明杀往天帷
+    name_en: From Dawn to Skyveil
+    type_chs: 技能
+    tag_chs: 横扫
+    damage_type: Imaginary
+    attack_type: Normal
+    toughness_damage_display_basic_atk_10_scale: 3.3333333333333335
+    delay_ratio: 1
+    phase_list:
+    - 1
+    params:
+    - 2.8
+    extra_effects: []
+    description_chs: 从我方队伍右侧起横扫攻击我方3个连续目标，造成少量虚数属性伤害。
+  - skill_id: 401301003
+    trigger_key: Skill03
+    name_chs: 像威猛暴怒的雄狮
+    name_en: Resembling Furious Lion
+    type_chs: 技能
+    tag_chs: 蓄力
+    damage_type: null
+    attack_type: Normal
+    toughness_damage_display_basic_atk_10_scale: null
+    delay_ratio: 1
+    phase_list:
+    - 1
+    params: []
+    extra_effects: []
+    description_chs: 进入蓄力状态，下回合使用【在滔滔血海中沉溺】。
+  - skill_id: 401301004
+    trigger_key: Skill04
+    name_chs: 在滔滔血海中沉溺
+    name_en: Drowned in the Crimson Sea
+    type_chs: 技能
+    tag_chs: 分摊
+    damage_type: Imaginary
+    attack_type: Normal
+    toughness_damage_display_basic_atk_10_scale: 6.666666666666667
+    delay_ratio: 1
+    phase_list:
+    - 1
+    params:
+    - 12
+    - 1.2
+    - 4
+    - 2
+    extra_effects:
+    - id: 401301001
+      name_chs: 平均分摊
+      name_en: Even Distribution
+      desc_chs: 本次攻击结算前的伤害和负面效果由所有受击目标平均承受。
+      desc_en: The DMG and debuff before this attack's finalization is received evenly by all targets that are hit.
+    description_chs: 吸收【天谴斗士】，随后对我方全体造成大量虚数属性伤害并施加【易伤】效果，伤害和【易伤】效果由目标<u>平均分摊</u>，吸收的【天谴斗士】数量越多，造成的伤害越高。
+  - skill_id: 401301005
+    trigger_key: Skill05
+    name_chs: 快从坟墓中苏生
+    name_en: Rise from the Grave
+    type_chs: 技能
+    tag_chs: 召唤
+    damage_type: null
+    attack_type: Normal
+    toughness_damage_display_basic_atk_10_scale: null
+    delay_ratio: 1
+    phase_list:
+    - 1
+    params: []
+    extra_effects: []
+    description_chs: 召唤【天谴斗士】。
+  - skill_id: 401301006
+    trigger_key: PassiveSkillInitiate
+    name_chs: 城邦守护者
+    name_en: Polis Protector
+    type_chs: 天赋
+    tag_chs: 天赋
+    damage_type: null
+    attack_type: Normal
+    toughness_damage_display_basic_atk_10_scale: 5.0
+    delay_ratio: 1
+    phase_list:
+    - 1
+    params:
+    - 6
+    - 0.2
+    - 0.1
+    - 0.03
+    - 0.15
+    - 0.15
+    extra_effects: []
+    description_chs: 拥有一定层数的【战甲】，使自身受到的伤害降低。受到攻击后减少自身1层【战甲】，减少到0层时，【战甲】被破坏，对自身造成大量虚数属性伤害，并使自身行动延后，使破坏【战甲】的我方单位恢复能量。【战甲】被破坏后，自身受到攻击时额外再受到少量虚数属性伤害。【战甲】在自身回合结束时恢复到最大层数。
+  raw:
+    identity:
+      monster_id: 4013010
+      monster_template_id: 4013010
+      name_chs: 天谴先锋
+      name_en: Furiae Praetor
+      role_in_stage: wave_1_enemy
+      rank: Elite
+    stage_scaled_stats:
+      level: 95
+      hp_raw: 5404962.8214
+      hp_display_rounded: 5404963
+      attack_raw: 688.0628700000001
+      defence_raw: 1149.9999
+      speed_raw: 174.24
+      speed_display: 174.24
+      toughness_internal: 480
+      toughness_display_basic_atk_10_scale: 160.0
+    weaknesses: *id001
+    damage_type_resistance: *id002
+    debuff_resistance: {}
+    summon_id_list:
+    - 4012010
+    core_mechanics: *id003
+    skills: *id004
+    ai:
+      ai_path: Config/ConfigAI/Monster_W4_Claymore_00_AI.json
+      available: true
+      decision_count: 5
+      skill_trigger_references:
+      - path: /DecisionList[0]/RootTask/TaskList[1]/SuccessTaskList[0]/SkillName
+        skill_trigger_key: Skill01
+      - path: /DecisionList[0]/RootTask/TaskList[1]/FailedTaskList[0]/SkillName
+        skill_trigger_key: Skill02
+      - path: /DecisionList[1]/RootTask/TaskList[1]/SkillName
+        skill_trigger_key: Skill05
+      - path: /DecisionList[2]/RootTask/TaskList[1]/SuccessTaskList[0]/SkillName
+        skill_trigger_key: Skill02
+      - path: /DecisionList[2]/RootTask/TaskList[1]/FailedTaskList[0]/SkillName
+        skill_trigger_key: Skill01
+      - path: /DecisionList[3]/RootTask/TaskList[0]/SuccessTaskList[0]/SuccessTaskList[0]/SkillName
+        skill_trigger_key: Skill01
+      - path: /DecisionList[3]/RootTask/TaskList[0]/SuccessTaskList[0]/FailedTaskList[0]/SkillName
+        skill_trigger_key: Skill02
+      - path: /DecisionList[3]/RootTask/TaskList[0]/FailedTaskList[3]/SkillName
+        skill_trigger_key: Skill03
+      - path: /DecisionList[4]/RootTask/TaskList[1]/SkillName
+        skill_trigger_key: Skill04
+    raw_source_trace:
+      excel_rows:
+      - StageConfig[StageID=30507013]
+      - MonsterConfig[MonsterID=4013010]
+      - MonsterTemplateConfig[MonsterTemplateID=4013010]
+      - HardLevelGroup[HardLevelGroup=3,Level=95]
+      - InfiniteEliteGroup[EliteGroup=370]
+      config_paths:
+      - Config/ConfigAI/Monster_W4_Claymore_00_AI.json
+      - Config/ConfigCharacter/Monster/Monster_W4_Claymore_00_Config.json
+    combat_role_in_case: wave_1_enemy_slot_2
+    template_base_stats:
+      attack_base: 18
+      defence_base: 210
+      hp_base: 1674
+      speed_base: 132
+      stance_base_internal: 480
+      status_resistance_base: 0.2
+      initial_delay_ratio: 1
+    stage_overrides_and_modifiers:
+      monster_modify_ratios:
+        attack: 1
+        defence: 1
+        hp: 1
+        speed: 1
+        toughness: 1
+      hard_level_group_row:
+        HardLevelGroup: 3
+        Level: 95
+        AttackRatio: 34.75065
+        DefenceRatio: 5.47619
+        HPRatio: 375.4385
+        SpeedRatio: 1.32
+        StanceRatio: 1
+      infinite_elite_group_row:
+        EliteGroup: 370
+        AttackRatio: 1.1
+        DefenceRatio: 1
+        HPRatio: 8.6
+        SpeedRatio: 1
+        StanceRatio: 1
+    custom_values: []
+    dynamic_values: []
+source_stage: arbitration_4_3_knight_3
