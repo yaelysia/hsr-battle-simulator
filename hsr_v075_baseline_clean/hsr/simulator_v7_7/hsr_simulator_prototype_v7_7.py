@@ -775,6 +775,7 @@ class BattleSimulator:
         self.raw_case = deepcopy(case)
         self.state = BattleState.from_case(case)
         self.settings = case.get("settings", {})
+        self._queued_action_transitions: list[dict[str, Any]] = []
         # Phase 1+2: 可选的数据注册表（中文名增强）
         self._text_map: TextMapRegistry | None = None
         self._status_registry: StatusRegistry | None = None
@@ -807,6 +808,67 @@ class BattleSimulator:
             if method is not None:
                 method(**kwargs)
 
+    def begin_route_control_settlement(self, step: dict[str, Any]) -> SettlementCollector:
+        settlement = SettlementCollector(
+            text_map=self._text_map,
+            status_registry=self._status_registry,
+            skill_registry=self._skill_registry,
+        )
+        settlement.begin_action(ActionRequest.from_route_control_step(step))
+        settlement.capture_before_snapshot(self.full_scene_snapshot())
+        step["_settlement"] = settlement
+        return settlement
+
+    def begin_queued_action_settlement(
+        self,
+        item: dict[str, Any],
+        queue_name: str,
+        queue_index: int,
+        targets: list[str],
+        *,
+        target_source: str,
+    ) -> SettlementCollector:
+        settlement = SettlementCollector(
+            text_map=self._text_map,
+            status_registry=self._status_registry,
+            skill_registry=self._skill_registry,
+        )
+        request = ActionRequest.from_queued_action(
+            item,
+            targets or [],
+            queue_name=queue_name,
+            queue_index=queue_index,
+            target_source=target_source,
+        )
+        settlement.begin_action(request)
+        settlement.capture_before_snapshot(self.full_scene_snapshot())
+        settlement.record_target(targets or [], method=target_source)
+        return settlement
+
+    def record_queued_action_transition(
+        self,
+        item: dict[str, Any],
+        queue_name: str,
+        queue_index: int,
+        settlement: SettlementCollector,
+        *,
+        skipped: bool = False,
+        skip_reason: str = "",
+    ) -> None:
+        self._queued_action_transitions.append(
+            {
+                "queue_name": queue_name,
+                "queue_index": queue_index,
+                "actor": item.get("actor"),
+                "action": item.get("action"),
+                "turn_kind": item.get("turn_kind"),
+                "extra_turn_type": item.get("extra_turn_type"),
+                "skipped": bool(skipped),
+                "skip_reason": str(skip_reason or ""),
+                "settlement": settlement.to_dict(),
+            }
+        )
+
     def kernel_source_from_context(self, ctx: Optional[dict[str, Any]], reason: str = "") -> SourceRef:
         ctx = ctx or {}
         action = ctx.get("action") if isinstance(ctx.get("action"), dict) else {}
@@ -816,7 +878,10 @@ class BattleSimulator:
         origin_path = ""
         stl = self._settlement(ctx)
         if stl is not None:
-            origin_path = stl.transition.request.source.origin_path
+            request_source = stl.transition.request.source
+            origin_path = request_source.origin_path
+            if source_type == "action" and request_source.source_type != "action":
+                source_type = request_source.source_type
         return SourceRef(source_type=source_type, source_id=action_id, owner_id=actor_id, origin_path=origin_path)
 
     def record_committed_state_change(self, ctx: Optional[dict[str, Any]], change: StateChange) -> None:
@@ -830,9 +895,19 @@ class BattleSimulator:
             self.state.skill_points = int(change.new_value)
         elif change.scope == "global" and change.field_path == "global.skill_point_cap":
             self.state.skill_point_cap = int(change.new_value)
+        elif change.scope == "global" and change.field_path == "global.av":
+            self.state.av = float(change.new_value)
         elif change.scope == "global" and change.field_path.startswith("global.flags."):
             key = change.field_path[len("global.flags."):]
-            self.state.global_flags[key] = deepcopy(change.new_value)
+            if change.delta == "remove":
+                self.state.global_flags.pop(key, None)
+            else:
+                self.state.global_flags[key] = deepcopy(change.new_value)
+        elif change.scope == "battle" and change.field_path.startswith("battle.queues."):
+            queue_name = change.field_path[len("battle.queues."):]
+            queue = self.battle_queue(queue_name)
+            queue.clear()
+            queue.extend(deepcopy(change.new_value or []))
         elif change.scope == "unit" and change.field_path == "unit.energy":
             self.state.unit(change.subject_id).energy = float(change.new_value)
         elif change.scope == "unit" and change.field_path == "unit.hp":
@@ -845,9 +920,73 @@ class BattleSimulator:
             self.state.unit(change.subject_id).hp_bars_remaining = int(change.new_value)
         elif change.scope == "unit" and change.field_path == "unit.alive":
             self.state.unit(change.subject_id).alive = bool(change.new_value)
+        elif change.scope == "unit" and change.field_path == "unit.toughness":
+            unit = self.state.unit(change.subject_id)
+            unit.toughness = None if change.new_value is None else float(change.new_value)
+        elif change.scope == "unit" and change.field_path == "unit.max_toughness":
+            unit = self.state.unit(change.subject_id)
+            unit.max_toughness = None if change.new_value is None else float(change.new_value)
+        elif change.scope == "unit" and change.field_path == "unit.is_broken":
+            self.state.unit(change.subject_id).is_broken = bool(change.new_value)
+        elif change.scope == "unit" and change.field_path == "unit.remaining_av":
+            self.state.unit(change.subject_id).remaining_av = float(change.new_value)
         elif change.scope == "unit" and change.field_path.startswith("unit.flags."):
             key = change.field_path[len("unit.flags."):]
-            self.state.unit(change.subject_id).flags[key] = deepcopy(change.new_value)
+            if change.delta == "remove":
+                self.state.unit(change.subject_id).flags.pop(key, None)
+            else:
+                self.state.unit(change.subject_id).flags[key] = deepcopy(change.new_value)
+        elif change.scope == "unit" and change.field_path.startswith("unit.statuses."):
+            path = change.field_path[len("unit.statuses."):]
+            unit = self.state.unit(change.subject_id)
+            if "." not in path:
+                status_id = path
+                if not status_id:
+                    raise SimulatorError(f"Unsupported status StateChange path: {change.field_path}")
+                if change.new_value is None:
+                    unit.statuses = [row for row in unit.statuses if row.id != status_id]
+                else:
+                    raw = deepcopy(change.new_value)
+                    if isinstance(raw, StatusEffect):
+                        raw = raw.to_json()
+                    if not isinstance(raw, dict):
+                        raise SimulatorError(f"Status StateChange new_value must be a dict: {change.field_path}")
+                    if str(raw.get("id", status_id)) != status_id:
+                        raise SimulatorError(f"Status StateChange id mismatch: {status_id} != {raw.get('id')}")
+                    raw["id"] = status_id
+                    replacement = StatusEffect.from_dict(raw)
+                    for idx, row in enumerate(unit.statuses):
+                        if row.id == status_id:
+                            unit.statuses[idx] = replacement
+                            break
+                    else:
+                        unit.statuses.append(replacement)
+            else:
+                status = None
+                status_field_path = ""
+                for row in sorted(unit.statuses, key=lambda item: len(item.id), reverse=True):
+                    prefix = f"{row.id}."
+                    if path.startswith(prefix):
+                        status = row
+                        status_field_path = path[len(prefix):]
+                        break
+                if status is None or not status_field_path:
+                    raise SimulatorError(f"Unsupported status StateChange path: {change.field_path}")
+                if status_field_path in {"stacks", "max_stacks"}:
+                    setattr(status, status_field_path, int(change.new_value))
+                elif status_field_path == "duration_value":
+                    status.duration_value = None if change.new_value is None else int(change.new_value)
+                elif status_field_path == "duration_type":
+                    status.duration_type = None if change.new_value is None else str(change.new_value)
+                elif status_field_path == "duration_extra_turn_consumes":
+                    status.duration_extra_turn_consumes = bool(change.new_value)
+                elif status_field_path.startswith("modifiers."):
+                    key = status_field_path[len("modifiers."):]
+                    if not key:
+                        raise SimulatorError(f"Unsupported status modifier StateChange path: {change.field_path}")
+                    status.modifiers[key] = deepcopy(change.new_value)
+                else:
+                    raise SimulatorError(f"Unsupported status StateChange field: {status_field_path}")
         else:
             raise SimulatorError(f"Unsupported StateChange commit path: {change.scope}:{change.field_path}")
         self.record_committed_state_change(ctx, change)
@@ -925,6 +1064,62 @@ class BattleSimulator:
         )
         return self.commit_state_change(change, ctx)
 
+    def commit_unit_toughness(self, unit: UnitState, new_value: Optional[float], *, reason: str, ctx: Optional[dict[str, Any]] = None, payload: Optional[dict[str, Any]] = None) -> StateChange:
+        old = unit.toughness
+        if new_value is None:
+            new_toughness = None
+        else:
+            new_toughness = max(0.0, coerce_float(new_value, coerce_float(old, 0.0)))
+        change = StateChange(
+            change_type="toughness",
+            scope="unit",
+            subject_id=unit.id,
+            field_path="unit.toughness",
+            old_value=old,
+            new_value=new_toughness,
+            delta=None if old is None or new_toughness is None else new_toughness - old,
+            source=self.kernel_source_from_context(ctx, reason),
+            reason=reason,
+            payload=payload or {},
+        )
+        return self.commit_state_change(change, ctx)
+
+    def commit_unit_max_toughness(self, unit: UnitState, new_value: Optional[float], *, reason: str, ctx: Optional[dict[str, Any]] = None, payload: Optional[dict[str, Any]] = None) -> StateChange:
+        old = unit.max_toughness
+        if new_value is None:
+            new_max_toughness = None
+        else:
+            new_max_toughness = max(0.0, coerce_float(new_value, coerce_float(old, 0.0)))
+        change = StateChange(
+            change_type="toughness",
+            scope="unit",
+            subject_id=unit.id,
+            field_path="unit.max_toughness",
+            old_value=old,
+            new_value=new_max_toughness,
+            delta=None if old is None or new_max_toughness is None else new_max_toughness - old,
+            source=self.kernel_source_from_context(ctx, reason),
+            reason=reason,
+            payload=payload or {},
+        )
+        return self.commit_state_change(change, ctx)
+
+    def commit_unit_is_broken(self, unit: UnitState, is_broken: bool, *, reason: str, ctx: Optional[dict[str, Any]] = None, payload: Optional[dict[str, Any]] = None) -> StateChange:
+        old = unit.is_broken
+        new_broken = bool(is_broken)
+        change = StateChange(
+            change_type="toughness",
+            scope="unit",
+            subject_id=unit.id,
+            field_path="unit.is_broken",
+            old_value=old,
+            new_value=new_broken,
+            source=self.kernel_source_from_context(ctx, reason),
+            reason=reason,
+            payload=payload or {},
+        )
+        return self.commit_state_change(change, ctx)
+
     def commit_unit_flag(self, unit: UnitState, key: str, value: Any, *, reason: str, ctx: Optional[dict[str, Any]] = None, payload: Optional[dict[str, Any]] = None) -> StateChange:
         key = str(key)
         old = deepcopy(unit.flags.get(key))
@@ -936,6 +1131,142 @@ class BattleSimulator:
             old_value=old,
             new_value=deepcopy(value),
             source=self.kernel_source_from_context(ctx, reason),
+            reason=reason,
+            payload=payload or {},
+        )
+        return self.commit_state_change(change, ctx)
+
+    def commit_unit_flag_remove(self, unit: UnitState, key: str, *, reason: str, ctx: Optional[dict[str, Any]] = None, payload: Optional[dict[str, Any]] = None) -> Optional[StateChange]:
+        key = str(key)
+        if key not in unit.flags:
+            return None
+        old = deepcopy(unit.flags.get(key))
+        change = StateChange(
+            change_type="flag",
+            scope="unit",
+            subject_id=unit.id,
+            field_path=f"unit.flags.{key}",
+            old_value=old,
+            new_value=None,
+            delta="remove",
+            source=self.kernel_source_from_context(ctx, reason),
+            reason=reason,
+            payload=payload or {},
+        )
+        return self.commit_state_change(change, ctx)
+
+    def merged_status_for_add(self, existing: Optional[StatusEffect], incoming: StatusEffect) -> StatusEffect:
+        if existing is None:
+            return deepcopy(incoming)
+        merged = deepcopy(existing)
+        if incoming.modifiers.get("__replace_existing_modifiers"):
+            merged.modifiers = deepcopy(incoming.modifiers)
+            merged.stacks = incoming.stacks
+        else:
+            merged.stacks = min(merged.max_stacks, merged.stacks + incoming.stacks)
+        if incoming.duration_value is not None and incoming.refresh_duration:
+            merged.duration_value = incoming.duration_value
+            merged.duration_type = incoming.duration_type or merged.duration_type
+            merged.duration_extra_turn_consumes = incoming.duration_extra_turn_consumes
+        if incoming.source_id is not None:
+            merged.source_id = incoming.source_id
+        return merged
+
+    def commit_status_entry(self, unit: UnitState, status: StatusEffect, *, reason: str, ctx: Optional[dict[str, Any]] = None, payload: Optional[dict[str, Any]] = None, change_kind: str = "set") -> StateChange:
+        existing = next((row for row in unit.statuses if row.id == status.id), None)
+        old_value = existing.to_json() if existing is not None else None
+        new_value = status.to_json()
+        origin = self.kernel_source_from_context(ctx, reason).origin_path
+        change = StateChange(
+            change_type="status",
+            scope="unit",
+            subject_id=unit.id,
+            field_path=f"unit.statuses.{status.id}",
+            old_value=old_value,
+            new_value=new_value,
+            delta=change_kind,
+            source=SourceRef.status(owner_id=status.source_id or unit.id, status_id=status.id, origin_path=origin),
+            reason=reason,
+            payload=payload or {},
+        )
+        return self.commit_state_change(change, ctx)
+
+    def commit_status_remove(self, unit: UnitState, status: StatusEffect | str, *, reason: str, ctx: Optional[dict[str, Any]] = None, payload: Optional[dict[str, Any]] = None) -> Optional[StateChange]:
+        status_id = status.id if isinstance(status, StatusEffect) else str(status)
+        existing = next((row for row in unit.statuses if row.id == status_id), None)
+        if existing is None:
+            return None
+        origin = self.kernel_source_from_context(ctx, reason).origin_path
+        change = StateChange(
+            change_type="status",
+            scope="unit",
+            subject_id=unit.id,
+            field_path=f"unit.statuses.{status_id}",
+            old_value=existing.to_json(),
+            new_value=None,
+            delta="remove",
+            source=SourceRef.status(owner_id=existing.source_id or unit.id, status_id=status_id, origin_path=origin),
+            reason=reason,
+            payload=payload or {},
+        )
+        return self.commit_state_change(change, ctx)
+
+    def commit_status_field(self, unit: UnitState, status: StatusEffect, field_name: str, value: Any, *, reason: str, ctx: Optional[dict[str, Any]] = None, payload: Optional[dict[str, Any]] = None) -> StateChange:
+        field_name = str(field_name)
+        if field_name not in {"stacks", "max_stacks", "duration_value", "duration_type", "duration_extra_turn_consumes"}:
+            raise SimulatorError(f"Unsupported status field commit: {field_name}")
+        old = deepcopy(getattr(status, field_name))
+        if field_name == "stacks":
+            new_value = max(0, coerce_int(value, int(old or 0)))
+            delta = new_value - int(old or 0)
+        elif field_name == "max_stacks":
+            new_value = max(0, coerce_int(value, int(old or 0)))
+            delta = new_value - int(old or 0)
+        elif field_name == "duration_value":
+            new_value = None if value is None else coerce_int(value, int(old or 0))
+            delta = None if old is None or new_value is None else new_value - int(old)
+        elif field_name == "duration_type":
+            new_value = None if value is None else str(value)
+            delta = None
+        elif field_name == "duration_extra_turn_consumes":
+            new_value = bool(value)
+            delta = None
+        origin = self.kernel_source_from_context(ctx, reason).origin_path
+        change = StateChange(
+            change_type="status",
+            scope="unit",
+            subject_id=unit.id,
+            field_path=f"unit.statuses.{status.id}.{field_name}",
+            old_value=old,
+            new_value=new_value,
+            delta=delta,
+            source=SourceRef.status(owner_id=status.source_id or unit.id, status_id=status.id, origin_path=origin),
+            reason=reason,
+            payload=payload or {},
+        )
+        return self.commit_state_change(change, ctx)
+
+    def commit_status_stacks(self, unit: UnitState, status: StatusEffect, value: Any, *, reason: str, ctx: Optional[dict[str, Any]] = None, payload: Optional[dict[str, Any]] = None) -> StateChange:
+        return self.commit_status_field(unit, status, "stacks", value, reason=reason, ctx=ctx, payload=payload)
+
+    def commit_status_duration_value(self, unit: UnitState, status: StatusEffect, value: Any, *, reason: str, ctx: Optional[dict[str, Any]] = None, payload: Optional[dict[str, Any]] = None) -> StateChange:
+        return self.commit_status_field(unit, status, "duration_value", value, reason=reason, ctx=ctx, payload=payload)
+
+    def commit_status_modifier(self, unit: UnitState, status: StatusEffect, key: str, value: Any, *, reason: str, ctx: Optional[dict[str, Any]] = None, payload: Optional[dict[str, Any]] = None) -> StateChange:
+        key = str(key)
+        if not key:
+            raise SimulatorError("Status modifier key cannot be empty")
+        old = deepcopy(status.modifiers.get(key))
+        new_value = deepcopy(value)
+        origin = self.kernel_source_from_context(ctx, reason).origin_path
+        change = StateChange(
+            change_type="status",
+            scope="unit",
+            subject_id=unit.id,
+            field_path=f"unit.statuses.{status.id}.modifiers.{key}",
+            old_value=old,
+            new_value=new_value,
+            source=SourceRef.status(owner_id=status.source_id or unit.id, status_id=status.id, origin_path=origin),
             reason=reason,
             payload=payload or {},
         )
@@ -992,6 +1323,40 @@ class BattleSimulator:
         )
         return self.commit_state_change(change, ctx)
 
+    def commit_global_av(self, new_value: float, *, reason: str, ctx: Optional[dict[str, Any]] = None, payload: Optional[dict[str, Any]] = None) -> StateChange:
+        old = self.state.av
+        new_av = max(0.0, coerce_float(new_value, old))
+        change = StateChange(
+            change_type="timeline",
+            scope="global",
+            subject_id="battle",
+            field_path="global.av",
+            old_value=old,
+            new_value=new_av,
+            delta=new_av - old,
+            source=self.kernel_source_from_context(ctx, reason),
+            reason=reason,
+            payload=payload or {},
+        )
+        return self.commit_state_change(change, ctx)
+
+    def commit_unit_remaining_av(self, unit: UnitState, new_value: float, *, reason: str, ctx: Optional[dict[str, Any]] = None, payload: Optional[dict[str, Any]] = None) -> StateChange:
+        old = unit.remaining_av
+        new_remaining = max(0.0, coerce_float(new_value, old))
+        change = StateChange(
+            change_type="av",
+            scope="unit",
+            subject_id=unit.id,
+            field_path="unit.remaining_av",
+            old_value=old,
+            new_value=new_remaining,
+            delta=new_remaining - old,
+            source=self.kernel_source_from_context(ctx, reason),
+            reason=reason,
+            payload=payload or {},
+        )
+        return self.commit_state_change(change, ctx)
+
     def commit_skill_point_cap(self, new_cap: float, *, reason: str, ctx: Optional[dict[str, Any]] = None, payload: Optional[dict[str, Any]] = None) -> StateChange:
         old = self.state.skill_point_cap
         cap = int(max(0, coerce_float(new_cap, old)))
@@ -1024,6 +1389,68 @@ class BattleSimulator:
             payload=payload or {},
         )
         return self.commit_state_change(change, ctx)
+
+    def normalized_queue_name(self, queue_name: str) -> str:
+        queue_name = str(queue_name or "immediate_queue")
+        if queue_name == "extra_turn_queue":
+            return "interrupt_queue"
+        if queue_name not in {"ultimate_queue", "immediate_queue", "interrupt_queue"}:
+            raise SimulatorError(f"Unknown queue {queue_name}")
+        return queue_name
+
+    def battle_queue(self, queue_name: str):
+        queue_name = self.normalized_queue_name(queue_name)
+        if queue_name == "ultimate_queue":
+            return self.state.ultimate_queue
+        if queue_name == "immediate_queue":
+            return self.state.immediate_queue
+        if queue_name == "interrupt_queue":
+            return self.state.interrupt_queue
+        raise SimulatorError(f"Unknown queue {queue_name}")
+
+    def commit_queue_append(self, queue_name: str, item: dict[str, Any], *, reason: str, ctx: Optional[dict[str, Any]] = None, payload: Optional[dict[str, Any]] = None) -> StateChange:
+        requested_queue = str(queue_name or "immediate_queue")
+        actual_queue = self.normalized_queue_name(requested_queue)
+        queue = self.battle_queue(actual_queue)
+        old = list(queue)
+        item_copy = deepcopy(item)
+        new_queue = old + [item_copy]
+        change = StateChange(
+            change_type="queue",
+            scope="battle",
+            subject_id=actual_queue,
+            field_path=f"battle.queues.{actual_queue}",
+            old_value=deepcopy(old),
+            new_value=deepcopy(new_queue),
+            delta={"op": "append", "index": len(old), "item": item_copy, "requested_queue": requested_queue},
+            source=self.kernel_source_from_context(ctx, reason),
+            reason=reason,
+            payload=payload or {},
+        )
+        return self.commit_state_change(change, ctx)
+
+    def commit_queue_popleft(self, queue_name: str, *, reason: str, ctx: Optional[dict[str, Any]] = None, payload: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        actual_queue = self.normalized_queue_name(queue_name)
+        queue = self.battle_queue(actual_queue)
+        old = list(queue)
+        if not old:
+            raise SimulatorError(f"Cannot pop empty queue {actual_queue}")
+        item = deepcopy(old[0])
+        new_queue = old[1:]
+        change = StateChange(
+            change_type="queue",
+            scope="battle",
+            subject_id=actual_queue,
+            field_path=f"battle.queues.{actual_queue}",
+            old_value=deepcopy(old),
+            new_value=deepcopy(new_queue),
+            delta={"op": "popleft", "item": item},
+            source=self.kernel_source_from_context(ctx, reason),
+            reason=reason,
+            payload=payload or {},
+        )
+        self.commit_state_change(change, ctx)
+        return item
 
     def snapshot(self) -> dict[str, Any]:
         """Return a compact debug snapshot for assertions and diagnostics."""
@@ -1148,7 +1575,7 @@ class BattleSimulator:
             return base * coerce_float(eff.get("shield_cap_multiplier", 1.0), 1.0)
         return None
 
-    def refresh_shield_status_after_stack(self, unit: UnitState, eff: dict[str, Any], added: float, cap: float | None) -> None:
+    def refresh_shield_status_after_stack(self, unit: UnitState, eff: dict[str, Any], added: float, cap: float | None, ctx: Optional[dict[str, Any]] = None) -> None:
         """Refresh shield duration and tracked expiry amount after stacking.
 
         HSR shield application is modeled as stackable shield value with duration
@@ -1165,12 +1592,27 @@ class BattleSimulator:
             return
         duration_value = eff.get("duration_value", eff.get("duration_turns", eff.get("shield_duration_turns")))
         if duration_value is not None:
-            st.duration_value = coerce_int(duration_value, st.duration_value or 0)
+            self.commit_status_duration_value(
+                unit,
+                st,
+                coerce_int(duration_value, st.duration_value or 0),
+                reason="shield:refresh_status_duration",
+                ctx=ctx,
+                payload={"effect": deepcopy(eff), "added": added, "cap": cap},
+            )
         old_remove = coerce_float(st.modifiers.get("shield_expire_remove_amount", 0.0), 0.0)
         new_remove = old_remove + max(0.0, added)
         if cap is not None:
             new_remove = min(new_remove, cap)
-        st.modifiers["shield_expire_remove_amount"] = new_remove
+        self.commit_status_modifier(
+            unit,
+            st,
+            "shield_expire_remove_amount",
+            new_remove,
+            reason="shield:refresh_expire_remove_amount",
+            ctx=ctx,
+            payload={"effect": deepcopy(eff), "added": added, "cap": cap},
+        )
         self.state.log_event("shield", f"{unit.id}.{st.id} shield duration refreshed", {"duration_value": st.duration_value, "old_expire_remove_amount": old_remove, "new_expire_remove_amount": new_remove, "added": added, "cap": cap})
 
     def apply_stackable_shield(self, target_id: str, amount: float, eff: dict[str, Any], ctx: dict[str, Any], *, reason: str = "modify_shield") -> None:
@@ -1188,7 +1630,7 @@ class BattleSimulator:
             payload={"amount": amount, "cap": cap, "effect": deepcopy(eff)},
         )
         added = max(0.0, new_shield - old)
-        self.refresh_shield_status_after_stack(unit, eff, added, cap)
+        self.refresh_shield_status_after_stack(unit, eff, added, cap, ctx=ctx)
         self.state.log_event("effect", f"{target_id} shield stacked by {amount:.3f}", {"old": old, "new": unit.shield, "effective_added": added, "cap": cap, "source_effect": eff, "reason": reason})
 
     def unit_initial_av(self, unit: UnitState, raw: dict[str, Any]) -> float:
@@ -1289,7 +1731,7 @@ class BattleSimulator:
         out.source_id = str(owner_id)
         return out
 
-    def clear_bondmate_runtime_state(self, keep_target: str | None = None) -> None:
+    def clear_bondmate_runtime_state(self, keep_target: str | None = None, ctx: dict[str, Any] | None = None) -> None:
         """Remove previous bondmate marks and AttackConvert from old targets.
 
         中文语义：丹恒战技会先移除全队旧【同袍】/攻击转换，再给
@@ -1299,19 +1741,30 @@ class BattleSimulator:
         for uid, unit in self.state.units.items():
             if unit.side != "ally":
                 continue
-            kept: list[StatusEffect] = []
-            for st in unit.statuses:
+            for st in list(unit.statuses):
                 is_bondmate_mark = st.id == "bondmate" or "bondmate" in {str(t).lower() for t in st.tags}
                 is_attack_convert = self.is_attack_convert_status(st)
                 if uid != keep_target and (is_bondmate_mark or is_attack_convert):
                     removed.append({"unit": uid, "status_id": st.id})
+                    self.commit_status_remove(
+                        unit,
+                        st,
+                        reason="bondmate:clear_runtime_state",
+                        ctx=ctx,
+                        payload={"keep_target": keep_target, "removed_status": st.to_json()},
+                    )
                     continue
                 # Even on the new target, remove old dynamic/static AttackConvert; it will be re-added below.
                 if uid == keep_target and is_attack_convert:
                     removed.append({"unit": uid, "status_id": st.id})
+                    self.commit_status_remove(
+                        unit,
+                        st,
+                        reason="bondmate:clear_attack_convert",
+                        ctx=ctx,
+                        payload={"keep_target": keep_target, "removed_status": st.to_json()},
+                    )
                     continue
-                kept.append(st)
-            unit.statuses = kept
         if removed:
             self.state.log_event("bondmate_state", "Cleared previous bondmate/AttackConvert runtime state", {"removed": removed, "keep_target": keep_target})
 
@@ -1327,7 +1780,15 @@ class BattleSimulator:
         status = StatusEffect.from_dict(raw)
         status.source_id = str(source_id)
         before = next((s for s in unit.statuses if s.id == status.id), None)
-        unit.add_status(status)
+        after_status = self.merged_status_for_add(before, status)
+        self.commit_status_entry(
+            unit,
+            after_status,
+            reason="bondmate:apply_attack_convert",
+            ctx=ctx,
+            payload={"incoming_status": status.to_json()},
+            change_kind="add" if before is None else "refresh",
+        )
         current_source_atk = self.contextual_stat(self.state.unit(str(source_id)), "atk", {**ctx, "actor_id": source_id}) if str(source_id) in self.state.units else 0.0
         value = current_source_atk * self.attack_convert_scale()
         self.state.log_event("bondmate_state", "Applied live AttackConvert to bondmate", {"target": target_id, "source": source_id, "scale": self.attack_convert_scale(), "current_value": value, "was_present": before is not None})
@@ -1485,18 +1946,22 @@ class BattleSimulator:
             return True
         return False
 
-    def cleanse_debuffs_from_unit(self, unit: UnitState, count: int, source: str = "") -> list[str]:
+    def cleanse_debuffs_from_unit(self, unit: UnitState, count: int, source: str = "", ctx: Optional[dict[str, Any]] = None) -> list[str]:
         removed: list[str] = []
         if count <= 0:
             return removed
-        kept: list[StatusEffect] = []
-        for st in unit.statuses:
+        for st in list(unit.statuses):
             if len(removed) < count and self.is_cleansable_debuff_status(st):
                 removed.append(st.id)
+                self.commit_status_remove(
+                    unit,
+                    st,
+                    reason="cleanse_debuffs",
+                    ctx=ctx,
+                    payload={"source": source, "removed_status": st.to_json()},
+                )
                 continue
-            kept.append(st)
         if removed:
-            unit.statuses = kept
             self.state.log_event("cleanse", f"{unit.id} cleansed {removed}", {"unit": unit.id, "removed": removed, "source": source})
         return removed
 
@@ -1527,10 +1992,10 @@ class BattleSimulator:
             self.apply_energy_source(self.state.unit(owner_id), {"fixed": amount, "affected_by_err": True}, "souldragon_bondmate_attack", default_affected_by_err=True)
         if dragon_id in self.state.units and not dragon_advance_logged:
             percent = self.souldragon_template_value("bondmate_attack_souldragon_advance", 0.15)
-            self.apply_action_advance(self.state.unit(dragon_id), percent)
+            self.apply_action_advance(self.state.unit(dragon_id), percent, ctx=action_ctx, reason="souldragon:bondmate_attack_advance")
             self.state.log_event("souldragon_semantic", "Bondmate attack advances Souldragon", {"bondmate": action_ctx.get("actor_id"), "advance_percent": percent})
 
-    def ensure_souldragon_unit_defaults(self, unit: UnitState) -> None:
+    def ensure_souldragon_unit_defaults(self, unit: UnitState, ctx: Optional[dict[str, Any]] = None) -> None:
         """Attach a conservative default action kit to Dan Heng PT's Souldragon.
 
         Exact generated content may provide its own actions.  When only the
@@ -1541,10 +2006,14 @@ class BattleSimulator:
         if not is_dragon:
             return
         unit.tags.add("souldragon")
-        unit.flags.setdefault("souldragon_template_version", str((self.SOULDRAGON_TEMPLATE or {}).get("version", "v0.1")))
-        unit.flags.setdefault("summon_action_ir", True)
-        unit.flags.setdefault("summoned", True)
-        unit.flags.setdefault("attached_unit", True)
+        if "souldragon_template_version" not in unit.flags:
+            self.commit_unit_flag(unit, "souldragon_template_version", str((self.SOULDRAGON_TEMPLATE or {}).get("version", "v0.1")), reason="souldragon:default_template_version", ctx=ctx)
+        if "summon_action_ir" not in unit.flags:
+            self.commit_unit_flag(unit, "summon_action_ir", True, reason="souldragon:default_summon_action_ir", ctx=ctx)
+        if "summoned" not in unit.flags:
+            self.commit_unit_flag(unit, "summoned", True, reason="souldragon:default_summoned", ctx=ctx)
+        if "attached_unit" not in unit.flags:
+            self.commit_unit_flag(unit, "attached_unit", True, reason="souldragon:default_attached_unit", ctx=ctx)
         if "owner_id" not in unit.flags:
             owner = "dan_heng_permansor_terrae"
             if owner not in self.state.units:
@@ -1555,17 +2024,17 @@ class BattleSimulator:
                     for candidate in self.state.units:
                         if "dan_heng" in str(candidate):
                             owner = str(candidate); break
-            unit.flags["owner_id"] = owner
+            self.commit_unit_flag(unit, "owner_id", owner, reason="souldragon:default_owner", ctx=ctx)
         if "attached_to" not in unit.flags:
             bondmate = self.state.global_flags.get("bondmate") or self.state.global_flags.get("bondmate_target")
             if bondmate:
-                unit.flags["attached_to"] = str(bondmate)
+                self.commit_unit_flag(unit, "attached_to", str(bondmate), reason="souldragon:default_attached_to", ctx=ctx)
         if not unit.action_defs:
             unit.action_defs = {}
         template_actions = ((self.SOULDRAGON_TEMPLATE or {}).get("summon_action_ir") or {}).get("actions") or (self.SOULDRAGON_TEMPLATE or {}).get("derived_actions") or {}
         for action_id, action_def in template_actions.items():
             unit.action_defs.setdefault(str(action_id), deepcopy(action_def))
-        self.apply_pending_souldragon_enhancement(unit)
+        self.apply_pending_souldragon_enhancement(unit, ctx=ctx)
         # Failsafe for malformed template data: keep the unit actionable even if
         # the generated template file is missing/corrupt.
         if "normal" not in unit.action_defs:
@@ -1578,7 +2047,7 @@ class BattleSimulator:
                 "effects": [{"type": "modify_shield", "target": "all_allies", "source": "owner", "source_stat": "atk", "source_stat_pct": 0.10, "amount": 200}],
             }
 
-    def apply_pending_souldragon_enhancement(self, dragon: UnitState) -> None:
+    def apply_pending_souldragon_enhancement(self, dragon: UnitState, ctx: Optional[dict[str, Any]] = None) -> None:
         """Apply global pending enhanced-action count to a newly created dragon.
 
         中文语义：如果终结技先记录了龙灵强化，但龙灵单位随后才因
@@ -1590,9 +2059,9 @@ class BattleSimulator:
         old = coerce_int(dragon.flags.get("remaining_enhanced_actions", 0), 0)
         if old >= pending:
             return
-        dragon.flags["remaining_enhanced_actions"] = pending
-        dragon.flags["is_enhanced"] = True
-        dragon.flags["souldragon_enhanced"] = True
+        self.commit_unit_flag(dragon, "remaining_enhanced_actions", pending, reason="souldragon:inherit_pending_enhancement", ctx=ctx)
+        self.commit_unit_flag(dragon, "is_enhanced", True, reason="souldragon:inherit_pending_enhancement", ctx=ctx)
+        self.commit_unit_flag(dragon, "souldragon_enhanced", True, reason="souldragon:inherit_pending_enhancement", ctx=ctx)
         self.state.log_event("summon_lifecycle", "souldragon inherited pending enhanced actions", {"unit": dragon.id, "old": old, "new": pending})
 
     def default_souldragon_owner_id(self) -> str:
@@ -1617,11 +2086,11 @@ class BattleSimulator:
         if "souldragon" in self.state.units:
             dragon = self.state.unit("souldragon")
             old_attached = dragon.flags.get("attached_to")
-            dragon.flags["owner_id"] = owner_id
-            dragon.flags["attached_to"] = str(bondmate_id)
-            dragon.flags["attached_unit"] = True
-            dragon.flags["summoned"] = True
-            self.ensure_souldragon_unit_defaults(dragon)
+            self.commit_unit_flag(dragon, "owner_id", owner_id, reason="souldragon:attach_bondmate", ctx=ctx)
+            self.commit_unit_flag(dragon, "attached_to", str(bondmate_id), reason="souldragon:attach_bondmate", ctx=ctx)
+            self.commit_unit_flag(dragon, "attached_unit", True, reason="souldragon:attach_bondmate", ctx=ctx)
+            self.commit_unit_flag(dragon, "summoned", True, reason="souldragon:attach_bondmate", ctx=ctx)
+            self.ensure_souldragon_unit_defaults(dragon, ctx=ctx)
             if old_attached != bondmate_id:
                 self.state.log_event("summon_lifecycle", f"souldragon attached target {old_attached}->{bondmate_id}", {"unit": "souldragon", "owner_id": owner_id, "attached_to": bondmate_id})
             return
@@ -1644,7 +2113,7 @@ class BattleSimulator:
             },
         }
         dragon = UnitState.from_dict("souldragon", raw)
-        self.ensure_souldragon_unit_defaults(dragon)
+        self.ensure_souldragon_unit_defaults(dragon, ctx=ctx)
         self.state.units["souldragon"] = dragon
         self.state.log_event("summon_lifecycle", "souldragon summoned for bondmate", {"unit": "souldragon", "owner_id": owner_id, "attached_to": bondmate_id, "speed": dragon.speed})
 
@@ -1929,7 +2398,7 @@ class BattleSimulator:
     def action_interval(self, unit: UnitState) -> float:
         return 10000.0 / self.effective_speed(unit)
 
-    def advance_until_regular_actor(self, actor_id: str) -> None:
+    def advance_until_regular_actor(self, actor_id: str, ctx: Optional[dict[str, Any]] = None) -> None:
         """Advance regular timeline until actor_id is the next actor.
 
         This is for route validation. If another unit acts before the requested actor,
@@ -1947,28 +2416,36 @@ class BattleSimulator:
                 f"in {next_unit.remaining_av:.6f} AV. Resolve that action or use an interrupt action."
             )
         delta = next_unit.remaining_av
-        self.state.av += delta
+        payload = {"delta": delta, "next_actor_id": actor_id}
+        self.commit_global_av(self.state.av + delta, reason="timeline:advance_until_regular_actor", ctx=ctx, payload=payload)
         self.state.update_cycle_index(coerce_float(self.settings.get("first_cycle_av", 150.0)), coerce_float(self.settings.get("later_cycle_av", 100.0)))
         for u in alive:
-            u.remaining_av = max(0.0, u.remaining_av - delta)
+            self.commit_unit_remaining_av(u, u.remaining_av - delta, reason="timeline:advance_until_regular_actor", ctx=ctx, payload=payload)
         self.state.log_event("timeline", f"Regular timeline advanced by {delta:.6f} AV; next actor {actor_id}", {"delta": delta})
 
-    def advance_to_next_regular_actor(self) -> str:
+    def advance_to_next_regular_actor(self, ctx: Optional[dict[str, Any]] = None) -> str:
         alive = self.state.active_units()
         if not alive:
             raise SimulatorError("No active units on regular timeline")
         next_unit = min(alive, key=lambda u: u.remaining_av)
         delta = next_unit.remaining_av
-        self.state.av += delta
+        payload = {"delta": delta, "next_actor_id": next_unit.id}
+        self.commit_global_av(self.state.av + delta, reason="timeline:advance_to_next_regular_actor", ctx=ctx, payload=payload)
         self.state.update_cycle_index(coerce_float(self.settings.get("first_cycle_av", 150.0)), coerce_float(self.settings.get("later_cycle_av", 100.0)))
         for u in alive:
-            u.remaining_av = max(0.0, u.remaining_av - delta)
+            self.commit_unit_remaining_av(u, u.remaining_av - delta, reason="timeline:advance_to_next_regular_actor", ctx=ctx, payload=payload)
         self.state.log_event("timeline", f"Regular timeline advanced by {delta:.6f} AV; next actor {next_unit.id}", {"delta": delta})
         return next_unit.id
 
-    def finish_regular_action(self, actor: UnitState, action: dict[str, Any]) -> None:
+    def finish_regular_action(self, actor: UnitState, action: dict[str, Any], ctx: Optional[dict[str, Any]] = None) -> None:
         if "consumes_regular_action" in set(normalize_str_list(action.get("tags", []))):
-            actor.remaining_av += self.action_interval(actor)
+            self.commit_unit_remaining_av(
+                actor,
+                actor.remaining_av + self.action_interval(actor),
+                reason="timeline:regular_action_interval",
+                ctx=ctx,
+                payload={"action_id": action.get("id"), "action_interval": self.action_interval(actor)},
+            )
             self.state.log_event("timeline", f"{actor.id} regular action interval added", {"remaining_av": actor.remaining_av})
 
     def remove_unit_from_timeline(self, unit_id: str, reason: str) -> None:
@@ -1977,7 +2454,7 @@ class BattleSimulator:
         unit = self.state.units.pop(unit_id)
         self.state.log_event("unit_removed", f"Remove unit {unit_id}: {reason}", {"unit": unit.to_json(), "reason": reason})
 
-    def tick_summon_lifecycle(self, actor: UnitState, action: dict[str, Any]) -> None:
+    def tick_summon_lifecycle(self, actor: UnitState, action: dict[str, Any], ctx: Optional[dict[str, Any]] = None) -> None:
         # Attached/summoned units can declare a simple action lifespan.  This is a
         # generic lifecycle skeleton; character-specific summon behavior still
         # lives in generated statuses/actions.
@@ -1985,15 +2462,15 @@ class BattleSimulator:
             if "remaining_enhanced_actions" in actor.flags:
                 old_enh = coerce_int(actor.flags.get("remaining_enhanced_actions"), 0)
                 if old_enh > 0:
-                    actor.flags["remaining_enhanced_actions"] = old_enh - 1
+                    self.commit_unit_flag(actor, "remaining_enhanced_actions", old_enh - 1, reason="summon_lifecycle:remaining_enhanced_actions", ctx=ctx, payload={"action": action.get("id")})
                     self.state.log_event("summon_lifecycle", f"{actor.id} remaining_enhanced_actions {old_enh}->{old_enh-1}", {"unit": actor.id})
                     if old_enh - 1 <= 0:
-                        actor.flags["is_enhanced"] = False
-                        actor.flags["souldragon_enhanced"] = False
+                        self.commit_unit_flag(actor, "is_enhanced", False, reason="summon_lifecycle:enhanced_expired", ctx=ctx, payload={"action": action.get("id")})
+                        self.commit_unit_flag(actor, "souldragon_enhanced", False, reason="summon_lifecycle:enhanced_expired", ctx=ctx, payload={"action": action.get("id")})
                         self.state.log_event("summon_lifecycle", f"{actor.id} enhanced state expired", {"unit": actor.id})
             if "lifespan_actions" in actor.flags:
                 old = coerce_int(actor.flags.get("lifespan_actions"), 0)
-                actor.flags["lifespan_actions"] = old - 1
+                self.commit_unit_flag(actor, "lifespan_actions", old - 1, reason="summon_lifecycle:lifespan_actions", ctx=ctx, payload={"action": action.get("id")})
                 self.state.log_event("summon_lifecycle", f"{actor.id} lifespan_actions {old}->{old-1}", {"unit": actor.id})
                 if old - 1 <= 0:
                     self.remove_unit_from_timeline(actor.id, "lifespan_actions_expired")
@@ -2012,43 +2489,60 @@ class BattleSimulator:
         for unit_id, reason in to_remove:
             self.remove_unit_from_timeline(unit_id, reason)
 
-    def apply_action_advance(self, unit: UnitState, percent: float) -> None:
+    def apply_action_advance(self, unit: UnitState, percent: float, ctx: Optional[dict[str, Any]] = None, reason: str = "av:advance_action") -> None:
         old = unit.remaining_av
         pct = coerce_float(percent, 0.0)
         if pct >= 1.0 - EPS:
-            unit.remaining_av = 0.0
+            new_remaining = 0.0
         else:
             # HSR action advance reduces remaining AV by a percentage of the
             # unit's full action interval (10000 / current SPD), not by a
             # percentage of the currently remaining AV.
-            unit.remaining_av = max(0.0, unit.remaining_av - self.action_interval(unit) * pct)
+            new_remaining = max(0.0, unit.remaining_av - self.action_interval(unit) * pct)
+        self.commit_unit_remaining_av(
+            unit,
+            new_remaining,
+            reason=reason,
+            ctx=ctx,
+            payload={"percent": pct, "action_interval": self.action_interval(unit), "old_remaining_av": old},
+        )
         self.state.log_event("av_change", f"{unit.id} action advanced by {pct:.1%}", {"old": old, "new": unit.remaining_av, "action_interval": self.action_interval(unit)})
 
-    def apply_action_delay(self, unit: UnitState, percent: float) -> None:
+    def apply_action_delay(self, unit: UnitState, percent: float, ctx: Optional[dict[str, Any]] = None, reason: str = "av:delay_action") -> None:
         old = unit.remaining_av
-        unit.remaining_av += self.action_interval(unit) * percent
+        pct = coerce_float(percent, 0.0)
+        self.commit_unit_remaining_av(
+            unit,
+            unit.remaining_av + self.action_interval(unit) * pct,
+            reason=reason,
+            ctx=ctx,
+            payload={"percent": pct, "action_interval": self.action_interval(unit), "old_remaining_av": old},
+        )
         self.state.log_event("av_change", f"{unit.id} action delayed by {percent:.1%}", {"old": old, "new": unit.remaining_av})
 
     def zone_active(self) -> bool:
         return any(bool(v) for k, v in self.state.global_flags.items() if "zone" in str(k).lower() and str(k) != "zone_active") or coerce_bool(self.state.global_flags.get("zone_active", False))
 
-    def expire_statuses_if_zone_inactive(self, reason: str = "zone_inactive") -> None:
+    def expire_statuses_if_zone_inactive(self, reason: str = "zone_inactive", ctx: Optional[dict[str, Any]] = None) -> None:
         if self.zone_active():
             return
         for unit in list(self.state.units.values()):
             old_speed = self.effective_speed(unit)
-            kept: list[StatusEffect] = []
             expired: list[StatusEffect] = []
-            for st in unit.statuses:
+            for st in list(unit.statuses):
                 if str(st.duration_type or "") == "while_zone_active":
                     expired.append(st)
-                else:
-                    kept.append(st)
             if expired:
-                unit.statuses = kept
                 for st in expired:
-                    self.expire_status_effect(unit, st, reason=reason)
-                self.recalculate_remaining_av_for_speed_change(unit, old_speed, reason=reason)
+                    self.commit_status_remove(
+                        unit,
+                        st,
+                        reason=reason,
+                        ctx=ctx,
+                        payload={"duration_type": st.duration_type, "removed_status": st.to_json()},
+                    )
+                    self.expire_status_effect(unit, st, reason=reason, ctx=ctx)
+                self.recalculate_remaining_av_for_speed_change(unit, old_speed, reason=reason, ctx=ctx)
 
     # ---------- turn lifecycle / durations ----------
     def reset_owner_turn_usage(self, owner_id: str) -> None:
@@ -2073,10 +2567,10 @@ class BattleSimulator:
         # boundary should not immediately lose one turn at that same turn-end; it
         # has not experienced a full start->end lifecycle yet.
         token = coerce_int(self.state.global_flags.get("_turn_token", 0), 0) + 1
-        self.state.global_flags["_turn_token"] = token
-        self.state.global_flags["_active_turn_token"] = token
-        self.state.global_flags["_active_turn_actor_id"] = actor.id
-        self.state.global_flags["_active_turn_kind"] = turn_kind
+        self.commit_global_flag("_turn_token", token, reason="turn_start:turn_token", ctx=ctx)
+        self.commit_global_flag("_active_turn_token", token, reason="turn_start:active_turn_token", ctx=ctx)
+        self.commit_global_flag("_active_turn_actor_id", actor.id, reason="turn_start:active_turn_actor_id", ctx=ctx)
+        self.commit_global_flag("_active_turn_kind", turn_kind, reason="turn_start:active_turn_kind", ctx=ctx)
         self.state.log_event("turn_start", f"{actor.id} begins {turn_kind} turn")
         # Phase 2: 回合开始记录
         self._settle(context or {}, "turn", unit_id=actor.id, turn_kind=turn_kind, event="begin")
@@ -2086,7 +2580,7 @@ class BattleSimulator:
         # Some character texts decrement specific buffs at the owner's turn start
         # rather than at turn end. Tick those before start triggers/actions so a
         # buff that expires at this boundary is no longer active during the turn.
-        self.tick_status_durations(event="turn_start", actor=actor, turn_kind=turn_kind, action=action or {})
+        self.tick_status_durations(event="turn_start", actor=actor, turn_kind=turn_kind, action=action or {}, ctx=ctx)
         if turn_kind == "regular":
             self.reset_owner_turn_usage(actor.id)
             self.run_triggers("owner_turn_start", ctx)
@@ -2100,6 +2594,8 @@ class BattleSimulator:
 
     def end_turn(self, actor: UnitState, turn_kind: str, action: Optional[dict[str, Any]] = None, context: Optional[dict[str, Any]] = None) -> None:
         ctx = {"actor_id": actor.id, "actor": actor, "action": action or {}, "turn_kind": turn_kind}
+        if isinstance(context, dict) and "_settlement" in context:
+            ctx["_settlement"] = context["_settlement"]
         if turn_kind == "regular":
             self.run_triggers("regular_turn_end", ctx)
             self.run_triggers("owner_turn_end", ctx)
@@ -2109,7 +2605,7 @@ class BattleSimulator:
             self.run_triggers("ultimate_turn_end", ctx)
         else:
             self.run_triggers(f"{turn_kind}_turn_end", ctx)
-        self.tick_status_durations(event="turn_end", actor=actor, turn_kind=turn_kind, action=action or {})
+        self.tick_status_durations(event="turn_end", actor=actor, turn_kind=turn_kind, action=action or {}, ctx=ctx)
         self.consume_skill_point_overflow_reserve_at_turn_end(actor, turn_kind, context=context)
         self.state.log_event("turn_end", f"{actor.id} ends {turn_kind} turn")
         # Phase 2: 回合结束记录
@@ -2144,18 +2640,25 @@ class BattleSimulator:
         self.run_triggers("ability_property_change", {**lifecycle_ctx, "context": {**lifecycle_ctx.get("context", {}), "phase": "ability_property_change", "reason": reason}})
         self.run_triggers("status_dynamic_value_change", {**lifecycle_ctx, "context": {**lifecycle_ctx.get("context", {}), "phase": "status_dynamic_value_change", "reason": reason}})
 
-    def tick_status_durations(self, event: str, actor: UnitState, turn_kind: Optional[str] = None, action: Optional[dict[str, Any]] = None) -> None:
+    def tick_status_durations(self, event: str, actor: UnitState, turn_kind: Optional[str] = None, action: Optional[dict[str, Any]] = None, ctx: Optional[dict[str, Any]] = None) -> None:
         """Tick generic status durations and recalculate AV when speed modifiers expire."""
-        expired: list[tuple[UnitState, StatusEffect]] = []
+        duration_ctx = {**(ctx or {}), "actor_id": actor.id, "actor": actor, "action": action or {}, "turn_kind": turn_kind}
         for unit in self.state.units.values():
             old_speed = self.effective_speed(unit)
-            kept: list[StatusEffect] = []
+            expired: list[StatusEffect] = []
             changed = False
-            for st in unit.statuses:
+            for st in list(unit.statuses):
                 if self.should_tick_status(st, unit, actor, event, turn_kind, action or {}):
                     if st.duration_value is not None:
                         old = int(st.duration_value)
-                        st.duration_value = old - 1
+                        self.commit_status_duration_value(
+                            unit,
+                            st,
+                            old - 1,
+                            reason="status_duration_tick",
+                            ctx=duration_ctx,
+                            payload={"duration_type": st.duration_type, "event": event, "turn_kind": turn_kind},
+                        )
                         changed = True
                         self.state.log_event(
                             "duration_tick",
@@ -2163,16 +2666,21 @@ class BattleSimulator:
                             {"unit": unit.id, "status": st.id, "duration_type": st.duration_type, "event": event, "turn_kind": turn_kind},
                         )
                         if st.duration_value <= 0:
-                            expired.append((unit, st))
+                            expired.append(st)
                             continue
-                kept.append(st)
-            unit.statuses = kept
-            for expired_unit, expired_status in [row for row in expired if row[0].id == unit.id]:
-                self.expire_status_effect(expired_unit, expired_status, reason="status_duration_tick", ctx={"actor_id": actor.id, "actor": actor, "action": action or {}, "turn_kind": turn_kind})
+            for expired_status in expired:
+                self.commit_status_remove(
+                    unit,
+                    expired_status,
+                    reason="status_duration_expire",
+                    ctx=duration_ctx,
+                    payload={"duration_type": expired_status.duration_type, "event": event, "turn_kind": turn_kind},
+                )
+                self.expire_status_effect(unit, expired_status, reason="status_duration_tick", ctx=duration_ctx)
             if changed:
-                self.recalculate_remaining_av_for_speed_change(unit, old_speed, reason="status_duration_tick")
+                self.recalculate_remaining_av_for_speed_change(unit, old_speed, reason="status_duration_tick", ctx=duration_ctx)
 
-    def recalculate_remaining_av_for_speed_change(self, unit: UnitState, old_speed: float, reason: str = "speed_change") -> None:
+    def recalculate_remaining_av_for_speed_change(self, unit: UnitState, old_speed: float, reason: str = "speed_change", ctx: Optional[dict[str, Any]] = None) -> None:
         """Recalculate remaining AV after speed-affecting status changes.
 
         HSR action value already accumulated should be preserved; remaining AV scales
@@ -2181,7 +2689,13 @@ class BattleSimulator:
         new_speed = self.effective_speed(unit)
         if unit.alive and abs(new_speed - old_speed) > EPS:
             old_av = unit.remaining_av
-            unit.remaining_av = unit.remaining_av * old_speed / new_speed
+            self.commit_unit_remaining_av(
+                unit,
+                unit.remaining_av * old_speed / new_speed,
+                reason=f"speed_change:{reason}",
+                ctx=ctx,
+                payload={"old_speed": old_speed, "new_speed": new_speed, "old_remaining_av": old_av},
+            )
             self.state.log_event(
                 "speed_change",
                 f"{unit.id} speed {old_speed:.3f} -> {new_speed:.3f}",
@@ -2229,7 +2743,7 @@ class BattleSimulator:
                 return st.source_id == actor.id
         return False
 
-    def tick_hit_durations(self, actor: UnitState, target: UnitState, action: dict[str, Any]) -> None:
+    def tick_hit_durations(self, actor: UnitState, target: UnitState, action: dict[str, Any], ctx: Optional[dict[str, Any]] = None) -> None:
         """Tick per-hit statuses after one damage packet is fully resolved.
 
         v0.9 separates per-hit duration types from per-attack duration types. A
@@ -2239,28 +2753,40 @@ class BattleSimulator:
         action_tags = set(normalize_str_list(action.get("tags", [])))
         if "attack" not in action_tags:
             return
-        self._tick_specific_unit_hit_statuses(actor, {"hits_dealt"})
-        self._tick_specific_unit_hit_statuses(target, {"hits_taken", "hits"})
+        self._tick_specific_unit_hit_statuses(actor, {"hits_dealt"}, actor=actor, action=action, ctx=ctx)
+        self._tick_specific_unit_hit_statuses(target, {"hits_taken", "hits"}, actor=actor, action=action, ctx=ctx)
 
-    def tick_attack_durations(self, actor: UnitState, target_ids: list[str], action: dict[str, Any]) -> None:
+    def tick_attack_durations(self, actor: UnitState, target_ids: list[str], action: dict[str, Any], ctx: Optional[dict[str, Any]] = None) -> None:
         """Tick once-per-attack duration types after all packets of an action."""
         action_tags = set(normalize_str_list(action.get("tags", [])))
         if "attack" not in action_tags:
             return
-        self._tick_specific_unit_hit_statuses(actor, {"attacks_dealt"})
+        self._tick_specific_unit_hit_statuses(actor, {"attacks_dealt"}, actor=actor, action=action, ctx=ctx)
         for target_id in target_ids:
             if target_id in self.state.units:
-                self._tick_specific_unit_hit_statuses(self.state.unit(target_id), {"attacks_taken"})
+                self._tick_specific_unit_hit_statuses(self.state.unit(target_id), {"attacks_taken"}, actor=actor, action=action, ctx=ctx)
 
-    def _tick_specific_unit_hit_statuses(self, unit: UnitState, duration_types: set[str]) -> None:
+    def _tick_specific_unit_hit_statuses(self, unit: UnitState, duration_types: set[str], actor: Optional[UnitState] = None, action: Optional[dict[str, Any]] = None, ctx: Optional[dict[str, Any]] = None) -> None:
+        duration_ctx = dict(ctx or {})
+        if actor is not None:
+            duration_ctx.setdefault("actor_id", actor.id)
+            duration_ctx.setdefault("actor", actor)
+        if action is not None:
+            duration_ctx.setdefault("action", action)
         old_speed = self.effective_speed(unit)
-        kept: list[StatusEffect] = []
         changed = False
         expired: list[StatusEffect] = []
-        for st in unit.statuses:
+        for st in list(unit.statuses):
             if st.duration_type in duration_types and st.duration_value is not None:
                 old = int(st.duration_value)
-                st.duration_value = old - 1
+                self.commit_status_duration_value(
+                    unit,
+                    st,
+                    old - 1,
+                    reason="hit_duration_tick",
+                    ctx=duration_ctx,
+                    payload={"duration_type": st.duration_type, "event": "hit", "duration_types": sorted(duration_types)},
+                )
                 changed = True
                 self.state.log_event(
                     "duration_tick",
@@ -2270,12 +2796,17 @@ class BattleSimulator:
                 if st.duration_value <= 0:
                     expired.append(st)
                     continue
-            kept.append(st)
-        unit.statuses = kept
         for st in expired:
-            self.expire_status_effect(unit, st, reason="hit_duration_tick")
+            self.commit_status_remove(
+                unit,
+                st,
+                reason="hit_duration_expire",
+                ctx=duration_ctx,
+                payload={"duration_type": st.duration_type, "event": "hit", "duration_types": sorted(duration_types)},
+            )
+            self.expire_status_effect(unit, st, reason="hit_duration_tick", ctx=duration_ctx)
         if changed:
-            self.recalculate_remaining_av_for_speed_change(unit, old_speed, reason="hit_duration_tick")
+            self.recalculate_remaining_av_for_speed_change(unit, old_speed, reason="hit_duration_tick", ctx=duration_ctx)
 
     # ---------- actions ----------
     def get_action_def(self, actor_id: str, action_id: str) -> dict[str, Any]:
@@ -2329,49 +2860,36 @@ class BattleSimulator:
             self.drain_queues(default_events=step.get("events", {}))
 
         if step.get("type") == "advance_to_next_regular":
-            actor_id = self.advance_to_next_regular_actor()
+            collector = self.begin_route_control_settlement(step)
+            actor_id = self.advance_to_next_regular_actor(ctx={"_settlement": collector})
+            collector.transition.request.metadata["next_actor_id"] = actor_id
             # Enter and end an empty regular turn only if explicitly requested.
             if coerce_bool(step.get("resolve_empty_turn", False), default=False):
                 actor = self.state.unit(actor_id)
-                # Phase 3: 创建 settlement collector 以记录 DoT tick
-                collector = SettlementCollector(
-                    text_map=self._text_map,
-                    status_registry=self._status_registry,
-                    skill_registry=self._skill_registry,
-                )
-                step["_settlement"] = collector
                 turn_ctx = {"_settlement": collector}
                 self.begin_turn(actor, "regular", None, context=turn_ctx)
                 self.end_turn(actor, "regular", None, context=turn_ctx)
+            collector.capture_after_snapshot(self.full_scene_snapshot())
             return
 
         if step.get("type") in ("apply_effects", "battle_start_effects", "setup_effects"):
-            ctx = {"events": step.get("events", {}), "context": {"route_step": step}, "phase_locked_targets": set()}
+            settlement = self.begin_route_control_settlement(step)
+            ctx = {
+                "events": step.get("events", {}),
+                "context": {"route_step": step},
+                "phase_locked_targets": set(),
+                "_settlement": settlement,
+            }
             self.state.log_event("route_effects", f"Apply route effects: {step.get('type')}")
             for eff in step.get("effects", []) or []:
                 self.apply_effect(eff, ctx)
+            settlement.capture_after_snapshot(self.full_scene_snapshot())
             return
 
         actor_id = step["actor"]
         action_id = step["action"]
         mode = step.get("timing", "manual")
         turn_kind = step.get("turn_kind")
-        if mode == "regular_turn":
-            self.advance_until_regular_actor(actor_id)
-            turn_kind = turn_kind or "regular"
-        elif mode == "next_regular_turn":
-            next_actor = self.advance_to_next_regular_actor()
-            if next_actor != actor_id:
-                raise SimulatorError(f"Expected {actor_id}, got next regular actor {next_actor}")
-            turn_kind = turn_kind or "regular"
-        elif mode in ("extra_turn", "ultimate"):
-            turn_kind = turn_kind or mode
-        elif mode in ("interrupt", "manual", "immediate"):
-            # Manual/interrupt actions do not tick regular-turn durations unless caller sets turn_kind.
-            pass
-        else:
-            raise SimulatorError(f"Unknown timing mode: {mode}")
-
         action = self.get_action_def(actor_id, action_id)
         targets = self.normalize_targets(step["targets"]) if "targets" in step else self.select_targets(action, None)
         step_context = {"route_step": step, "turn_kind": turn_kind}
@@ -2385,13 +2903,30 @@ class BattleSimulator:
         )
         action_request = ActionRequest.from_route_step(step, targets or [])
         action_request.timing = mode
-        action_request.turn_kind = turn_kind
         settlement.begin_action(action_request)
         settlement.capture_before_snapshot(self.full_scene_snapshot())
         settlement.record_target(targets or [], method="explicit" if "targets" in step else "auto")
         step_context["_settlement"] = settlement
         # 让 run_route 能取出结算数据
         step["_settlement"] = settlement
+
+        if mode == "regular_turn":
+            self.advance_until_regular_actor(actor_id, ctx=step_context)
+            turn_kind = turn_kind or "regular"
+        elif mode == "next_regular_turn":
+            next_actor = self.advance_to_next_regular_actor(ctx=step_context)
+            if next_actor != actor_id:
+                raise SimulatorError(f"Expected {actor_id}, got next regular actor {next_actor}")
+            turn_kind = turn_kind or "regular"
+        elif mode in ("extra_turn", "ultimate"):
+            turn_kind = turn_kind or mode
+        elif mode in ("interrupt", "manual", "immediate"):
+            # Manual/interrupt actions do not tick regular-turn durations unless caller sets turn_kind.
+            pass
+        else:
+            raise SimulatorError(f"Unknown timing mode: {mode}")
+        step_context["turn_kind"] = turn_kind
+        settlement.transition.request.turn_kind = turn_kind
         self.resolve_action(action, targets or [], step.get("events", {}), context=step_context)
         settlement.capture_after_snapshot(self.full_scene_snapshot())
 
@@ -2443,8 +2978,8 @@ class BattleSimulator:
             if isinstance(pending, dict) and (not pending_action or str(pending_action) == str(action.get("id"))):
                 picked = self.select_targets_from_enemy_ai_selector(actor, pending, action, context or {})
                 if picked:
-                    actor.flags.pop("enemy_ai_pending_target_selector", None)
-                    actor.flags.pop("enemy_ai_pending_target_action", None)
+                    self.commit_unit_flag_remove(actor, "enemy_ai_pending_target_selector", reason="enemy_ai:consume_pending_target_selector", ctx=context, payload={"action": action.get("id"), "targets": picked})
+                    self.commit_unit_flag_remove(actor, "enemy_ai_pending_target_action", reason="enemy_ai:consume_pending_target_action", ctx=context, payload={"action": action.get("id"), "targets": picked})
                     self.state.log_event("enemy_ai", f"{actor.id} selected targets via ConfigAI selector", {"action": action.get("id"), "targets": picked, "selector": pending})
                     return picked
         if policy == "manual":
@@ -2623,16 +3158,17 @@ class BattleSimulator:
             blockers = self.action_block_statuses(actor) if turn_kind == "regular" else []
             if blockers:
                 self.state.log_event("action_block", f"{actor.id} action blocked by {blockers[0].id}", {"actor": actor.id, "statuses": [st.id for st in blockers], "turn_kind": turn_kind})
-                self.finish_regular_action(actor, action)
+                self.finish_regular_action(actor, action, ctx=context)
                 if any(st.modifiers.get("frozen") for st in blockers if isinstance(st.modifiers, dict)):
                     old_rem = actor.remaining_av
-                    self.apply_action_advance(actor, 0.50)
+                    self.apply_action_advance(actor, 0.50, ctx=context, reason="control:frozen_auto_advance")
                     # Phase 2: 冰冻拉条记录
                     self._settle(context, "av",
                         unit_id=actor.id, old_remaining_av=old_rem, new_remaining_av=actor.remaining_av,
                         old_absolute_av=self.state.av + old_rem, new_absolute_av=self.state.av + actor.remaining_av,
                         speed=actor.speed, action_interval=self.action_interval(actor),
                         change_type=AV_ADVANCE, change_detail="冰冻自动拉条 50%",
+                        record_state_change=False,
                     )
                 self.end_turn(actor, turn_kind, action, context=context)
                 return
@@ -2665,7 +3201,14 @@ class BattleSimulator:
             for st in actor.statuses:
                 if st.id == "savage_god_glory" or "glory" in {str(t).lower() for t in st.tags}:
                     old = st.stacks
-                    st.stacks = min(st.max_stacks, st.stacks + 1)
+                    self.commit_status_stacks(
+                        actor,
+                        st,
+                        min(st.max_stacks, st.stacks + 1),
+                        reason="savage_glory:ally_action_stack",
+                        ctx=action_ctx,
+                        payload={"action": action.get("id"), "action_tags": sorted(action_tags)},
+                    )
                     if st.stacks != old:
                         self.state.log_event("enemy_mechanic", f"{actor.id} Glory stacks {old}->{st.stacks}", {"unit": actor.id, "status": st.id})
 
@@ -2752,7 +3295,7 @@ class BattleSimulator:
                 )
                 total_attack_damage += coerce_float(result.get("final_damage", result.get("damage", 0.0)))
                 if target_id in self.state.units:
-                    self.apply_entanglement_hit_stack(self.state.unit(target_id), result)
+                    self.apply_entanglement_hit_stack(self.state.unit(target_id), result, ctx=packet_ctx)
                 packet_ctx["damage_result"] = result
                 if result.get("hp_bar_depleted"):
                     self.apply_hp_bar_depleted_effects(result, packet_ctx)
@@ -2776,13 +3319,13 @@ class BattleSimulator:
                     self.run_triggers("after_defeat_enemy", packet_ctx)
                 if result.get("phase_damage_locked_until_action_end"):
                     phase_locked_targets.add(target_id)
-                self.tick_hit_durations(actor, self.state.unit(target_id), action)
+                self.tick_hit_durations(actor, self.state.unit(target_id), action, ctx=action_ctx)
                 if "attack" in action_tags:
                     any_packet_hit = True
                     attack_targets_hit.add(target_id)
 
         if any_packet_hit:
-            self.tick_attack_durations(actor, sorted(attack_targets_hit), action)
+            self.tick_attack_durations(actor, sorted(attack_targets_hit), action, ctx=action_ctx)
         action_ctx["attacked_targets"] = sorted(attack_targets_hit)
         action_ctx["hit_target_count"] = len(attack_targets_hit)
         action_ctx["total_attack_damage"] = total_attack_damage
@@ -2802,13 +3345,14 @@ class BattleSimulator:
         # actor are applied to the just-spent 0 AV and then lost when the regular
         # action refreshes the timeline.  Speed/status changes still recalculate
         # the refreshed AV through their normal helpers.
-        self.finish_regular_action(actor, action)
+        self.finish_regular_action(actor, action, ctx=action_ctx)
         # Phase 2: 常规行动 AV 记录
         self._settle(action_ctx, "av",
             unit_id=actor.id, old_remaining_av=0.0, new_remaining_av=actor.remaining_av,
             old_absolute_av=self.state.av, new_absolute_av=self.state.av + actor.remaining_av,
             speed=actor.speed, action_interval=self.action_interval(actor),
             change_type=AV_REGULAR_TURN, change_detail="行动结束, 恢复行动间隔",
+            record_state_change=False,
         )
 
         # Model-pack semantic timings that depend on the fully resolved action,
@@ -2835,28 +3379,28 @@ class BattleSimulator:
             enemy_chain_context = coerce_bool(context.get("enemy_action_chain", False), default=False)
             record_chain_use = coerce_bool(context.get("chain_record_skill_use", action.get("chain_record_skill_use", True)), default=True)
             if (not enemy_chain_context) or record_chain_use:
-                self.record_enemy_skill_use_after_action(actor, str(action.get("id")))
+                self.record_enemy_skill_use_after_action(actor, str(action.get("id")), ctx=action_ctx)
             else:
                 self.state.log_event("enemy_ai", f"{actor.id} does not record chained skill use {action.get('id')}", {"action": action.get("id"), "chain_id": context.get("chain_id")})
         if actor.side == "enemy" and isinstance(actor.flags.get("enemy_ai_sequence"), list):
             enemy_chain_context = coerce_bool(context.get("enemy_action_chain", False), default=False)
             advance_chain = coerce_bool(context.get("chain_advances_enemy_sequence", action.get("chain_advances_enemy_sequence", False)), default=False)
             if (not enemy_chain_context) or advance_chain:
-                self.advance_enemy_ai_sequence_after_action(actor, str(action.get("id")))
+                self.advance_enemy_ai_sequence_after_action(actor, str(action.get("id")), ctx=action_ctx)
             else:
                 self.state.log_event("enemy_ai", f"{actor.id} holds AI cursor after chained continuation {action.get('id')}", {"action": action.get("id"), "sequence_index": actor.flags.get("enemy_ai_sequence_index"), "chain_id": context.get("chain_id")})
         if actor.side == "enemy" and str(actor.flags.get("clear_glory_after_next_savage_action", "")).lower() == "ready":
             self.clear_savage_god_glory_after_action(actor, action_ctx)
-            actor.flags["clear_glory_after_next_savage_action"] = False
+            self.commit_unit_flag(actor, "clear_glory_after_next_savage_action", False, reason="savage_glory:clear_flag_consumed", ctx=action_ctx, payload={"action": action.get("id")})
         elif actor.side == "enemy" and str(actor.flags.get("clear_glory_after_next_savage_action", "")).lower() == "armed":
-            actor.flags["clear_glory_after_next_savage_action"] = "ready"
+            self.commit_unit_flag(actor, "clear_glory_after_next_savage_action", "ready", reason="savage_glory:arm_clear_after_next_action", ctx=action_ctx, payload={"action": action.get("id")})
             self.state.log_event("enemy_mechanic", f"{actor.id} arms Glory clear after next action", {"flag": "clear_glory_after_next_savage_action"})
 
         self.run_triggers("action_end", action_ctx)
         # Summon lifecycle ticks after semantic/action_end triggers so triggers such
         # as after_souldragon_action can still observe the just-used enhanced state.
-        self.tick_summon_lifecycle(actor, action)
-        self.tick_status_durations(event="action_end", actor=actor, turn_kind=turn_kind, action=action)
+        self.tick_summon_lifecycle(actor, action, ctx=action_ctx)
+        self.tick_status_durations(event="action_end", actor=actor, turn_kind=turn_kind, action=action, ctx=action_ctx)
         if turn_kind:
             self.end_turn(actor, turn_kind, action, context=action_ctx)
         self.check_wave_transition()
@@ -2900,7 +3444,7 @@ class BattleSimulator:
         audit["effective_delta"] = effective
         return effective, audit
 
-    def consume_next_skill_cost_override_statuses(self, actor: UnitState, action: dict[str, Any], audit: dict[str, Any]) -> None:
+    def consume_next_skill_cost_override_statuses(self, actor: UnitState, action: dict[str, Any], audit: dict[str, Any], ctx: Optional[dict[str, Any]] = None) -> None:
         """Remove one-shot cost override statuses after the matching Skill cost is resolved."""
         if not audit.get("overrides"):
             return
@@ -2912,10 +3456,16 @@ class BattleSimulator:
             if st.id not in override_ids:
                 continue
             old_speed = self.effective_speed(actor)
-            lifecycle_ctx = {"actor_id": actor.id, "actor": actor, "action": action, "status_id": st.id, "status": st, "removed_status": st, "trigger": {"status_id": st.id}, "status_owner_id": actor.id}
+            lifecycle_ctx = {**(ctx or {}), "actor_id": actor.id, "actor": actor, "action": action, "status_id": st.id, "status": st, "removed_status": st, "trigger": {"status_id": st.id}, "status_owner_id": actor.id}
             self.remove_status_resource_side_effects(actor, st, ctx=lifecycle_ctx)
-            actor.remove_status(st.id)
-            self.recalculate_remaining_av_for_speed_change(actor, old_speed, reason="consume_next_skill_cost_override")
+            self.commit_status_remove(
+                actor,
+                st,
+                reason="consume_next_skill_cost_override",
+                ctx=lifecycle_ctx,
+                payload={"action": action.get("id"), "removed_status": st.to_json()},
+            )
+            self.recalculate_remaining_av_for_speed_change(actor, old_speed, reason="consume_next_skill_cost_override", ctx=lifecycle_ctx)
             self.state.log_event("resource", f"{actor.id}.{st.id} consumed by next Skill cost override", {"action": action.get("id"), "status": st.to_json()})
             self.run_triggers("status_destroy", lifecycle_ctx)
 
@@ -2970,7 +3520,7 @@ class BattleSimulator:
                 self.run_triggers("after_skill_point_consumed", sp_ctx)
         elif sp_audit.get("overrides"):
             self.state.log_event("resource", f"Skill point cost for {actor.id}.{action['id']} overridden to 0", {"skill_point_cost_audit": sp_audit, "skill_points": self.state.skill_points})
-        self.consume_next_skill_cost_override_statuses(actor, action, sp_audit)
+        self.consume_next_skill_cost_override_statuses(actor, action, sp_audit, ctx=action_ctx)
         cost = action.get("cost", {}) if isinstance(action.get("cost", {}), dict) else {}
         energy_cost = coerce_float(cost.get("energy", 0))
         if energy_cost > 0:
@@ -3585,7 +4135,15 @@ class BattleSimulator:
                 if any(st.id == "savage_god_glory" for st in ally.statuses):
                     self.apply_effect({"type": "remove_status", "target": ally.id, "status_id": "savage_god_glory"}, ctx)
                 else:
-                    ally.statuses = [st for st in ally.statuses if "glory" not in {str(t).lower() for t in st.tags}]
+                    for st in list(ally.statuses):
+                        if "glory" in {str(t).lower() for t in st.tags}:
+                            self.commit_status_remove(
+                                ally,
+                                st,
+                                reason="savage_glory:clear_after_action",
+                                ctx=ctx,
+                                payload={"actor": actor.id, "removed_status": st.to_json()},
+                            )
                     self.state.log_event("enemy_mechanic", f"{actor.id} clears Glory from {ally.id}", {"ally": ally.id, "reason": "savage_god_after_action"})
                 removed.append(ally.id)
         if removed:
@@ -3599,7 +4157,14 @@ class BattleSimulator:
             if not isinstance(payload, dict) or st.stacks <= 0:
                 continue
             old = st.stacks
-            st.stacks = max(0, old - glory)
+            self.commit_status_stacks(
+                target,
+                st,
+                max(0, old - glory),
+                reason="titanic_corpus:glory_hit",
+                ctx=ctx,
+                payload={"actor": actor.id, "glory_stacks": glory},
+            )
             self.state.log_event("enemy_mechanic", f"{actor.id} Glory removes {target.id} Titanic Corpus {old}->{st.stacks}", {"actor": actor.id, "target": target.id, "glory_stacks": glory, "old": old, "new": st.stacks})
             if old > 0 and st.stacks <= 0:
                 hp_ratio = coerce_float(payload.get("on_layers_zero_self_damage_max_hp_ratio", 0.0))
@@ -3647,7 +4212,14 @@ class BattleSimulator:
                         lose = coerce_int(payload.get("on_hit_lose_layers", 0), 0)
                         if lose > 0 and st.stacks > 0:
                             old = st.stacks
-                            st.stacks = max(0, st.stacks - lose)
+                            self.commit_status_stacks(
+                                target,
+                                st,
+                                max(0, st.stacks - lose),
+                                reason="armor_layers:on_attack_hit",
+                                ctx=ctx,
+                                payload={"packet_id": packet.get("id"), "lose": lose},
+                            )
                             did_consume = True
                             self.state.log_event("enemy_mechanic", f"{target.id}.{st.id} armor layers {old}->{st.stacks}", {"unit": target.id, "status": st.id, "old": old, "new": st.stacks, "reason": "on_attack_hit_once_per_action"})
                     if did_consume and action_obj is not None:
@@ -3659,7 +4231,7 @@ class BattleSimulator:
                 old_ratio = coerce_float(ally.flags.get("max_restorable_hp_ratio", 1.0), 1.0)
                 restored_ratio = max(0.0, result.get("damage", 0.0)) / target.max_hp
                 new_ratio = min(1.0, old_ratio + restored_ratio)
-                ally.flags["max_restorable_hp_ratio"] = new_ratio
+                self.commit_unit_flag(ally, "max_restorable_hp_ratio", new_ratio, reason="summon:restore_recoverable_hp_cap", ctx=ctx, payload={"summon": target.id, "old_ratio": old_ratio, "restored_ratio": restored_ratio})
                 self.state.log_event("enemy_mechanic", f"{ally.id} recoverable HP cap restores via {target.id} {old_ratio}->{new_ratio}", {"ally": ally.id, "summon": target.id, "old_ratio": old_ratio, "new_ratio": new_ratio, "restored_ratio": restored_ratio})
             self.apply_titanic_corpus_glory_hit(actor, target, ctx)
         if result.get("target_defeated") and target.flags.get("owner_hp_consumption_ratio_on_fatal") and target.flags.get("owner_id") in self.state.units:
@@ -3673,12 +4245,32 @@ class BattleSimulator:
             if not isinstance(payload, dict) or result.get("damage", 0.0) <= EPS:
                 continue
             old_count = coerce_int(payload.get("count", 0), 0)
-            payload["count"] = old_count + 1
-            threshold = coerce_int(payload.get("threshold", 0), 0)
-            self.state.log_event("enemy_mechanic", f"{target.id}.{st.id} attack count {old_count}->{payload['count']}", {"unit": target.id, "status": st.id, "threshold": threshold})
-            if threshold and payload["count"] >= threshold and payload.get("action"):
-                payload["count"] = 0
-                self.apply_effect({"type": "immediate_action", "actor": target.id, "action": payload.get("action"), "target_policy": payload.get("target_policy", "first_ally")}, ctx)
+            next_payload = deepcopy(payload)
+            next_payload["count"] = old_count + 1
+            self.commit_status_modifier(
+                target,
+                st,
+                "count_attacks_taken",
+                next_payload,
+                reason="count_attacks_taken:on_damage",
+                ctx=ctx,
+                payload={"damage": result.get("damage"), "old_count": old_count},
+            )
+            threshold = coerce_int(next_payload.get("threshold", 0), 0)
+            self.state.log_event("enemy_mechanic", f"{target.id}.{st.id} attack count {old_count}->{next_payload['count']}", {"unit": target.id, "status": st.id, "threshold": threshold})
+            if threshold and next_payload["count"] >= threshold and next_payload.get("action"):
+                reset_payload = deepcopy(next_payload)
+                reset_payload["count"] = 0
+                self.commit_status_modifier(
+                    target,
+                    st,
+                    "count_attacks_taken",
+                    reset_payload,
+                    reason="count_attacks_taken:threshold_reset",
+                    ctx=ctx,
+                    payload={"threshold": threshold},
+                )
+                self.apply_effect({"type": "immediate_action", "actor": target.id, "action": next_payload.get("action"), "target_policy": next_payload.get("target_policy", "first_ally")}, ctx)
         for _st, payload in list(self.iter_status_modifier_payloads(target, "immediate_action_on_hit_by_element")):
             if not isinstance(payload, dict):
                 continue
@@ -4102,7 +4694,7 @@ class BattleSimulator:
                 out.append(st)
         return out
 
-    def apply_entanglement_hit_stack(self, target: UnitState, result: dict[str, Any]) -> None:
+    def apply_entanglement_hit_stack(self, target: UnitState, result: dict[str, Any], ctx: Optional[dict[str, Any]] = None) -> None:
         if result.get("damage_type") == "break_delayed_damage" or result.get("damage", 0.0) <= EPS:
             return
         for st in target.statuses:
@@ -4110,8 +4702,25 @@ class BattleSimulator:
             delayed = mods.get("break_delayed_damage") if isinstance(mods.get("break_delayed_damage"), dict) else None
             if delayed and delayed.get("kind") == "entanglement":
                 old = int(st.stacks)
-                st.stacks = min(int(st.max_stacks or 5), old + 1)
-                delayed["stacks"] = st.stacks
+                self.commit_status_stacks(
+                    target,
+                    st,
+                    min(int(st.max_stacks or 5), old + 1),
+                    reason="break_aftermath:entanglement_hit_stack",
+                    ctx=ctx,
+                    payload={"damage_type": result.get("damage_type"), "damage": result.get("damage")},
+                )
+                delayed_payload = deepcopy(delayed)
+                delayed_payload["stacks"] = st.stacks
+                self.commit_status_modifier(
+                    target,
+                    st,
+                    "break_delayed_damage",
+                    delayed_payload,
+                    reason="break_aftermath:entanglement_hit_stack_payload",
+                    ctx=ctx,
+                    payload={"old_break_delayed_damage": deepcopy(delayed)},
+                )
                 if st.stacks != old:
                     self.state.log_event("break_aftermath_stack", f"{target.id}.{st.id} entanglement stacks {old}->{st.stacks}", {"unit": target.id, "status": st.id, "old": old, "new": st.stacks})
 
@@ -4163,20 +4772,34 @@ class BattleSimulator:
             return
         old_speed = self.effective_speed(target)
         before = next((s for s in target.statuses if s.id == status.id), None)
-        target.add_status(status)
-        after = next((s for s in target.statuses if s.id == status.id), status)
+        after_status = self.merged_status_for_add(before, status)
+        self.commit_status_entry(
+            target,
+            after_status,
+            reason="weakness_break_aftermath",
+            ctx=ctx,
+            payload={"element": str(element).lower(), "incoming_status": status.to_json()},
+            change_kind="add" if before is None else "refresh",
+        )
+        after = next((s for s in target.statuses if s.id == status.id), after_status)
         # Phase 3: settlement 记录 aftermath 状态添加
         self._settle(ctx, "status",
             unit_id=target.id, status_id=status.id, source_id=actor.id,
             action="add", status_type="break_aftermath",
             reason=f"{element} weakness break aftermath",
+            record_state_change=False,
         )
-        self.recalculate_remaining_av_for_speed_change(target, old_speed, reason="weakness_break_aftermath")
+        self.recalculate_remaining_av_for_speed_change(target, old_speed, reason="weakness_break_aftermath", ctx=ctx)
         if str(element).lower() == "quantum":
             # Entanglement delays by 20% * (1 + Break Effect).
-            self.apply_action_delay(target, 0.20 * (1.0 + self.get_break_effect_value(actor, {"actor_id": actor.id, "target_id": target.id, "target": target})))
+            self.apply_action_delay(
+                target,
+                0.20 * (1.0 + self.get_break_effect_value(actor, {"actor_id": actor.id, "target_id": target.id, "target": target})),
+                ctx=ctx,
+                reason="weakness_break_aftermath:quantum_delay",
+            )
         elif str(element).lower() == "imaginary":
-            self.apply_action_delay(target, 0.30)
+            self.apply_action_delay(target, 0.30, ctx=ctx, reason="weakness_break_aftermath:imaginary_delay")
         self.state.log_event(
             "break_aftermath",
             f"Apply {after.id} to {target.id} from {element} weakness break",
@@ -4461,10 +5084,22 @@ class BattleSimulator:
                     self.state.log_event("toughness_lock", f"{target.id} toughness reduction blocked", {"attempted_delta": -tr, "element": packet.get("element")})
                 else:
                     old_t = target.toughness
-                    target.toughness = max(0.0, target.toughness - tr)
+                    self.commit_unit_toughness(
+                        target,
+                        target.toughness - tr,
+                        reason="damage:toughness_reduction",
+                        ctx=ctx,
+                        payload={"element": packet.get("element"), "toughness_reduction": tr, "packet_id": packet.get("id")},
+                    )
                     self.state.log_event("toughness", f"{target.id} toughness {old_t:.3f} -> {target.toughness:.3f}", {"delta": -tr})
                     if old_t > 0 and target.toughness <= 0:
-                        target.is_broken = True
+                        self.commit_unit_is_broken(
+                            target,
+                            True,
+                            reason="damage:weakness_break",
+                            ctx=ctx,
+                            payload={"actor_id": result.get("actor_id"), "element": packet.get("element")},
+                        )
                         self.state.log_event("break", f"{target.id} is weakness broken", {"actor_id": result.get("actor_id"), "target_id": target.id, "element": packet.get("element")})
                         # Phase 3: 击破伤害计算与应用
                         break_element = str(packet.get("element", "none") or "none").lower()
@@ -4518,6 +5153,7 @@ class BattleSimulator:
                             unit_id=target.id, old_value=old_t, new_value=target.toughness,
                             delta=-tr, is_break=True, element=break_element,
                             reason=f"破韧: {result.get('actor_id','?')} {break_element}",
+                            record_state_change=False,
                         )
                         self.handle_armor_break_mechanics(actor if actor else None, target, packet, result, ctx)
                         if break_actor is not None:
@@ -4528,6 +5164,7 @@ class BattleSimulator:
                             unit_id=target.id, old_value=old_t, new_value=target.toughness,
                             delta=-tr, is_break=False,
                             element=str(packet.get("element", "") or ""),
+                            record_state_change=False,
                         )
 
         if actor is not None:
@@ -5862,7 +6499,14 @@ class BattleSimulator:
         for st, payload in list(self.iter_status_modifier_payloads(target, "armor_layers")):
             if not isinstance(payload, dict):
                 continue
-            st.stacks = 0
+            self.commit_status_stacks(
+                target,
+                st,
+                0,
+                reason="armor_layers:weakness_break",
+                ctx=ctx,
+                payload={"packet_id": packet.get("id"), "actor_id": actor.id if actor is not None else None},
+            )
             self.state.log_event("enemy_mechanic", f"{target.id}.{st.id} armor broken", {"unit": target.id, "status": st.id})
             hp_ratio = coerce_float(payload.get("on_break_self_imaginary_damage_max_hp_ratio", 0.0))
             if hp_ratio > EPS:
@@ -6198,8 +6842,24 @@ class BattleSimulator:
                 ctx=ctx,
                 payload={"status_id": status.id, "hp_delta": hp_delta, "property": "HPAddedRatio/max_hp_from_team_hp_pct"},
             )
-            mods["__hp_added_ratio_applied"] = True
-            mods["__applied_max_hp_delta"] = hp_delta
+            self.commit_status_modifier(
+                unit,
+                status,
+                "__hp_added_ratio_applied",
+                True,
+                reason=f"status:{status.id}:max_hp_side_effect_marker",
+                ctx=ctx,
+                payload={"hp_delta": hp_delta},
+            )
+            self.commit_status_modifier(
+                unit,
+                status,
+                "__applied_max_hp_delta",
+                hp_delta,
+                reason=f"status:{status.id}:max_hp_side_effect_marker",
+                ctx=ctx,
+                payload={"hp_delta": hp_delta},
+            )
             self.state.log_event("resource", f"{unit.id} max_hp {old_max:.3f}->{unit.max_hp:.3f}, hp {old_hp:.3f}->{unit.hp:.3f}", {"status_id": status.id, "hp_delta": hp_delta, "property": "HPAddedRatio/max_hp_from_team_hp_pct", "modifiers": deepcopy(mods)})
         sp_delta = coerce_int(mods.get("skill_point_cap_add", 0), 0)
         if sp_delta and not mods.get("__skill_point_cap_applied"):
@@ -6217,8 +6877,24 @@ class BattleSimulator:
                     ctx=ctx,
                     payload={"status_id": status.id, "old_skill_points": old_sp},
                 )
-            mods["__skill_point_cap_applied"] = True
-            mods["__applied_skill_point_cap_delta"] = sp_delta
+            self.commit_status_modifier(
+                unit,
+                status,
+                "__skill_point_cap_applied",
+                True,
+                reason=f"status:{status.id}:skill_point_cap_marker",
+                ctx=ctx,
+                payload={"sp_delta": sp_delta},
+            )
+            self.commit_status_modifier(
+                unit,
+                status,
+                "__applied_skill_point_cap_delta",
+                sp_delta,
+                reason=f"status:{status.id}:skill_point_cap_marker",
+                ctx=ctx,
+                payload={"sp_delta": sp_delta},
+            )
             self.state.log_event("resource", f"skill point cap {old_cap}->{self.state.skill_point_cap}", {"status_id": status.id, "old_skill_points": old_sp, "new_skill_points": self.state.skill_points, "property": "MaxSP"})
 
     def remove_status_resource_side_effects(self, unit: UnitState, status: StatusEffect, ctx: Optional[dict[str, Any]] = None) -> None:
@@ -6344,12 +7020,13 @@ class BattleSimulator:
                     "carry_across_wave": self.queued_action_carry_across_wave(eff, {}, default=False),
                     "events": eff.get("events", {}),
                 }
-                if queue_name == "ultimate_queue":
-                    self.state.ultimate_queue.append(queued)
-                elif queue_name == "immediate_queue":
-                    self.state.immediate_queue.append(queued)
-                else:
-                    self.state.interrupt_queue.append(queued)
+                self.commit_queue_append(
+                    queue_name if queue_name in {"ultimate_queue", "immediate_queue", "interrupt_queue", "extra_turn_queue"} else "interrupt_queue",
+                    queued,
+                    reason="effect:enqueue_extra_turn",
+                    ctx=ctx,
+                    payload={"effect": deepcopy(eff), "requested_queue": queue_name},
+                )
                 self.state.log_event("effect", f"Extra turn grant queued for {actor_id}", queued)
                 return
             action_id = explicit_action or eff.get("extra_turn_type")
@@ -6394,15 +7071,23 @@ class BattleSimulator:
                 status = self.normalize_attack_convert_status_for_target(status, target_id, ctx)
                 before = next((s for s in unit.statuses if s.id == status.id), None)
                 before_stacks = before.stacks if before else 0
-                unit.add_status(status)
-                after = next((s for s in unit.statuses if s.id == status.id), status)
+                after_status = self.merged_status_for_add(before, status)
                 if self.state.global_flags.get("_active_turn_token") is not None:
-                    after.modifiers.setdefault("_created_turn_token", self.state.global_flags.get("_active_turn_token"))
-                    after.modifiers.setdefault("_created_turn_actor_id", self.state.global_flags.get("_active_turn_actor_id"))
-                    after.modifiers.setdefault("_created_turn_kind", self.state.global_flags.get("_active_turn_kind"))
+                    after_status.modifiers.setdefault("_created_turn_token", self.state.global_flags.get("_active_turn_token"))
+                    after_status.modifiers.setdefault("_created_turn_actor_id", self.state.global_flags.get("_active_turn_actor_id"))
+                    after_status.modifiers.setdefault("_created_turn_kind", self.state.global_flags.get("_active_turn_kind"))
+                self.commit_status_entry(
+                    unit,
+                    after_status,
+                    reason="effect:add_status" if before is None else "effect:refresh_status",
+                    ctx=ctx,
+                    payload={"effect": deepcopy(eff), "incoming_status": status.to_json()},
+                    change_kind="add" if before is None else "refresh",
+                )
+                after = next((s for s in unit.statuses if s.id == status.id), after_status)
                 if before is None:
                     self.apply_status_resource_side_effects(unit, after, ctx=ctx)
-                self.recalculate_remaining_av_for_speed_change(unit, old_speed, reason="add_status")
+                self.recalculate_remaining_av_for_speed_change(unit, old_speed, reason="add_status", ctx=ctx)
                 self.state.log_event("effect", f"Add status {status.id} to {target_id}", {"status": after.to_json(), "was_present": before is not None, "old_stacks": before_stacks, "new_stacks": after.stacks})
                 # Phase 2: 状态记录
                 self._settle(ctx, "status",
@@ -6413,6 +7098,7 @@ class BattleSimulator:
                     duration_value=after.duration_value or 0,
                     modifier_keys=sorted(after.modifiers.keys()) if after.modifiers else [],
                     trigger_reason=f"effect:{ctx.get('action', {}).get('id', ctx.get('actor_id', '?'))}",
+                    record_state_change=False,
                 )
                 lifecycle_ctx = {**ctx, "target_id": target_id, "target": unit, "status_id": after.id, "status": after, "trigger": {"status_id": after.id}, "status_owner_id": target_id}
                 self.run_triggers("status_stack" if before is not None else "status_create", lifecycle_ctx)
@@ -6427,8 +7113,14 @@ class BattleSimulator:
                 removed = next((s for s in unit.statuses if s.id == status_id), None)
                 if removed is not None:
                     self.remove_status_resource_side_effects(unit, removed, ctx=ctx)
-                unit.remove_status(status_id)
-                self.recalculate_remaining_av_for_speed_change(unit, old_speed, reason="remove_status")
+                    self.commit_status_remove(
+                        unit,
+                        removed,
+                        reason="effect:remove_status",
+                        ctx=ctx,
+                        payload={"effect": deepcopy(eff), "removed_status": removed.to_json()},
+                    )
+                self.recalculate_remaining_av_for_speed_change(unit, old_speed, reason="remove_status", ctx=ctx)
                 self.state.log_event("effect", f"Remove status {status_id} from {target_id}")
                 # Phase 2: 状态移除记录
                 if removed is not None:
@@ -6438,6 +7130,7 @@ class BattleSimulator:
                         max_stacks=removed.max_stacks, duration_type=str(removed.duration_type or ""),
                         duration_value=0, modifier_keys=sorted(removed.modifiers.keys()) if removed.modifiers else [],
                         trigger_reason=f"effect_remove:{ctx.get('action', {}).get('id', ctx.get('actor_id', '?'))}",
+                        record_state_change=False,
                     )
                 if removed is not None:
                     lifecycle_ctx = {**ctx, "target_id": target_id, "target": unit, "status_id": status_id, "status": removed, "removed_status": removed, "trigger": {"status_id": status_id}, "status_owner_id": target_id}
@@ -6474,6 +7167,11 @@ class BattleSimulator:
                             self.commit_unit_energy(unit, val, reason="effect:set_resources:energy", ctx=ctx, payload={"effect": deepcopy(eff)})
                             audit[key] = {"old": old, "new": unit.energy}
                             continue
+                        if key == "remaining_av":
+                            val = max(0.0, val)
+                            self.commit_unit_remaining_av(unit, val, reason="effect:set_resources:remaining_av", ctx=ctx, payload={"effect": deepcopy(eff)})
+                            audit[key] = {"old": old, "new": unit.remaining_av}
+                            continue
                         if key in {"shield", "remaining_av", "toughness", "max_toughness", "max_hp", "max_energy"}:
                             val = max(0.0, val)
                         setattr(unit, key, val)
@@ -6494,11 +7192,34 @@ class BattleSimulator:
                         self.state.log_event("effect_skip", f"set_status_stacks skipped missing {target_id}.{status_id}", {"effect": eff})
                         continue
                     old = st.stacks
-                    st.stacks = max(0, coerce_int(eff.get("stacks", old), old))
+                    old_duration = st.duration_value
+                    self.commit_status_stacks(
+                        unit,
+                        st,
+                        max(0, coerce_int(eff.get("stacks", old), old)),
+                        reason="effect:set_status_stacks:stacks",
+                        ctx=ctx,
+                        payload={"effect": deepcopy(eff)},
+                    )
                     if "max_stacks" in eff:
-                        st.max_stacks = max(st.stacks, coerce_int(eff.get("max_stacks", st.max_stacks), st.max_stacks))
+                        self.commit_status_field(
+                            unit,
+                            st,
+                            "max_stacks",
+                            max(st.stacks, coerce_int(eff.get("max_stacks", st.max_stacks), st.max_stacks)),
+                            reason="effect:set_status_stacks:max_stacks",
+                            ctx=ctx,
+                            payload={"effect": deepcopy(eff)},
+                        )
                     if "duration_value" in eff:
-                        st.duration_value = coerce_int(eff.get("duration_value"), st.duration_value or 0)
+                        self.commit_status_duration_value(
+                            unit,
+                            st,
+                            coerce_int(eff.get("duration_value"), st.duration_value or 0),
+                            reason="effect:set_status_stacks:duration_value",
+                            ctx=ctx,
+                            payload={"effect": deepcopy(eff), "old_duration_value": old_duration},
+                        )
                     self.state.log_event("effect", f"Set {target_id}.{status_id} stacks {old}->{st.stacks}", {"old": old, "new": st.stacks, "duration_value": st.duration_value})
         elif etype == "set_global_resource":
             if "skill_points" in eff:
@@ -6528,7 +7249,12 @@ class BattleSimulator:
                 self.state.log_event("effect", "Set global skill_point_cap", {"old": old, "new": self.state.skill_point_cap})
             if "av" in eff:
                 old = self.state.av
-                self.state.av = coerce_float(eff.get("av"), old)
+                self.commit_global_av(
+                    coerce_float(eff.get("av"), old),
+                    reason="effect:set_global_resource:av",
+                    ctx=ctx,
+                    payload={"effect": deepcopy(eff)},
+                )
                 self.state.log_event("effect", "Set global av", {"old": old, "new": self.state.av})
         elif etype == "modify_energy":
             for target_id in self.resolve_effect_targets(eff, ctx, default="actor"):
@@ -6676,13 +7402,14 @@ class BattleSimulator:
                 unit = self.state.unit(target_id)
                 old_rem = unit.remaining_av
                 old_abs = self.state.av + old_rem
-                self.apply_action_advance(unit, coerce_float(percent))
+                self.apply_action_advance(unit, coerce_float(percent), ctx=ctx, reason="effect:advance_action")
                 # Phase 2: AV 提前记录
                 self._settle(ctx, "av",
                     unit_id=target_id, old_remaining_av=old_rem, new_remaining_av=unit.remaining_av,
                     old_absolute_av=old_abs, new_absolute_av=self.state.av + unit.remaining_av,
                     speed=unit.speed, action_interval=self.action_interval(unit),
                     change_type=AV_ADVANCE, change_detail=f"拉条 {coerce_float(percent):.1%}",
+                    record_state_change=False,
                 )
         elif etype == "delay_action":
             # Accept both simulator-native `percent` and model-pack aliases such
@@ -6694,13 +7421,14 @@ class BattleSimulator:
                 unit = self.state.unit(target_id)
                 old_rem = unit.remaining_av
                 old_abs = self.state.av + old_rem
-                self.apply_action_delay(unit, coerce_float(percent))
+                self.apply_action_delay(unit, coerce_float(percent), ctx=ctx, reason="effect:delay_action")
                 # Phase 2: AV 延迟记录
                 self._settle(ctx, "av",
                     unit_id=target_id, old_remaining_av=old_rem, new_remaining_av=unit.remaining_av,
                     old_absolute_av=old_abs, new_absolute_av=self.state.av + unit.remaining_av,
                     speed=unit.speed, action_interval=self.action_interval(unit),
                     change_type=AV_DELAY, change_detail=f"推条 {coerce_float(percent):.1%}",
+                    record_state_change=False,
                 )
         elif etype == "set_action_delay":
             # TBGD SetActionDelay uses a normalized delay ratio: 1.0 means the
@@ -6713,7 +7441,13 @@ class BattleSimulator:
                 unit = self.state.unit(target_id)
                 old = unit.remaining_av
                 old_abs = self.state.av + old
-                unit.remaining_av = max(0.0, self.action_interval(unit) * coerce_float(percent))
+                self.commit_unit_remaining_av(
+                    unit,
+                    self.action_interval(unit) * coerce_float(percent),
+                    reason="effect:set_action_delay",
+                    ctx=ctx,
+                    payload={"percent": coerce_float(percent), "action_interval": self.action_interval(unit), "effect": deepcopy(eff)},
+                )
                 self.state.log_event("av_change", f"{target_id} action delay set to {coerce_float(percent):.1%}", {"old": old, "new": unit.remaining_av})
                 # Phase 2: AV 置位记录
                 self._settle(ctx, "av",
@@ -6721,6 +7455,7 @@ class BattleSimulator:
                     old_absolute_av=old_abs, new_absolute_av=self.state.av + unit.remaining_av,
                     speed=unit.speed, action_interval=self.action_interval(unit),
                     change_type=AV_DELAY, change_detail=f"AV 置位 {coerce_float(percent):.1%}",
+                    record_state_change=False,
                 )
         elif etype in {"delay_self_action", "delay_next_action"}:
             aliased = deepcopy(eff)
@@ -6733,11 +7468,11 @@ class BattleSimulator:
             targets = self.resolve_effect_targets(eff, ctx, default="target")
             if targets:
                 chosen = targets[0]
-                self.state.global_flags[str(status_id)] = chosen
+                self.commit_global_flag(str(status_id), chosen, reason="effect:set_target", ctx=ctx, payload={"effect": deepcopy(eff)})
                 # Bondmate is a special character-model alias used by Dan Heng.
                 if str(status_id) == "bondmate":
-                    self.clear_bondmate_runtime_state(keep_target=chosen)
-                    self.state.global_flags["bondmate_target"] = chosen
+                    self.clear_bondmate_runtime_state(keep_target=chosen, ctx=ctx)
+                    self.commit_global_flag("bondmate_target", chosen, reason="effect:set_target:bondmate_target", ctx=ctx, payload={"effect": deepcopy(eff)})
                     self.ensure_bondmate_souldragon(chosen, ctx)
                 status = self.materialize_status(status_id, {**ctx, "target_id": chosen}, eff)
                 self.apply_effect({"type": "add_status", "status": status, "target": chosen}, ctx)
@@ -6784,20 +7519,26 @@ class BattleSimulator:
                     self.apply_effect({"type": "add_status", "status": status, "target": target_id}, ctx)
         elif etype == "add_zone":
             zone_id = eff.get("zone_id") or eff.get("id") or "zone_active"
-            self.state.global_flags[str(zone_id)] = True
-            self.state.global_flags["zone_active"] = True
+            self.commit_global_flag(str(zone_id), True, reason="effect:add_zone", ctx=ctx, payload={"effect": deepcopy(eff)})
+            self.commit_global_flag("zone_active", True, reason="effect:add_zone:zone_active", ctx=ctx, payload={"effect": deepcopy(eff)})
             self.state.log_event("effect", f"Zone {zone_id} active")
         elif etype in {"remove_zone", "clear_zone", "end_zone"}:
             zone_id = eff.get("zone_id") or eff.get("id")
             if zone_id:
-                self.state.global_flags[str(zone_id)] = False
+                self.commit_global_flag(str(zone_id), False, reason="effect:remove_zone", ctx=ctx, payload={"effect": deepcopy(eff)})
             else:
                 for key in list(self.state.global_flags):
                     if "zone" in str(key).lower():
-                        self.state.global_flags[key] = False
-            self.state.global_flags["zone_active"] = any(bool(v) for k, v in self.state.global_flags.items() if "zone" in str(k).lower() and str(k) != "zone_active")
+                        self.commit_global_flag(key, False, reason="effect:remove_zone:clear_all", ctx=ctx, payload={"effect": deepcopy(eff)})
+            self.commit_global_flag(
+                "zone_active",
+                any(bool(v) for k, v in self.state.global_flags.items() if "zone" in str(k).lower() and str(k) != "zone_active"),
+                reason="effect:remove_zone:zone_active",
+                ctx=ctx,
+                payload={"effect": deepcopy(eff)},
+            )
             self.state.log_event("effect", f"Zone {zone_id or 'all'} inactive", {"zone_active": self.state.global_flags.get("zone_active")})
-            self.expire_statuses_if_zone_inactive(reason="zone_inactive")
+            self.expire_statuses_if_zone_inactive(reason="zone_inactive", ctx=ctx)
         elif etype == "gain_skill_point_on_battle_start":
             return self.apply_effect({"type": "gain_skill_point", "amount": eff.get("amount", 0)}, ctx)
         elif etype == "deal_damage":
@@ -6872,31 +7613,40 @@ class BattleSimulator:
         elif etype == "enhance_souldragon":
             # Generic Souldragon enhancement lifecycle: store both a global audit
             # flag and unit-local counters when the attached unit exists.
-            self.state.global_flags[str(etype)] = True
+            self.commit_global_flag(str(etype), True, reason="effect:enhance_souldragon", ctx=ctx, payload={"effect": deepcopy(eff)})
             added = coerce_int(eff.get("remaining_actions_added", eff.get("remaining_souldragon_actions", self.souldragon_template_value("enhanced_action_count", 2.0))), 0)
             dragon_id = str(eff.get("target") or eff.get("unit_id") or "souldragon")
             if added:
-                self.state.global_flags["souldragon_enhanced_actions"] = coerce_float(self.state.global_flags.get("souldragon_enhanced_actions", 0.0)) + added
+                self.commit_global_flag(
+                    "souldragon_enhanced_actions",
+                    coerce_float(self.state.global_flags.get("souldragon_enhanced_actions", 0.0)) + added,
+                    reason="effect:enhance_souldragon:pending_actions",
+                    ctx=ctx,
+                    payload={"effect": deepcopy(eff), "added": added},
+                )
             if dragon_id in self.state.units:
                 dragon = self.state.unit(dragon_id)
                 old = coerce_int(dragon.flags.get("remaining_enhanced_actions", 0), 0)
-                dragon.flags["is_enhanced"] = True
-                dragon.flags["souldragon_enhanced"] = True
-                dragon.flags["remaining_enhanced_actions"] = old + added
+                self.commit_unit_flag(dragon, "is_enhanced", True, reason="effect:enhance_souldragon", ctx=ctx, payload={"effect": deepcopy(eff)})
+                self.commit_unit_flag(dragon, "souldragon_enhanced", True, reason="effect:enhance_souldragon", ctx=ctx, payload={"effect": deepcopy(eff)})
+                self.commit_unit_flag(dragon, "remaining_enhanced_actions", old + added, reason="effect:enhance_souldragon:remaining_actions", ctx=ctx, payload={"effect": deepcopy(eff), "old": old, "added": added})
                 self.state.log_event("summon_lifecycle", f"{dragon_id} enhanced actions {old}->{old+added}", {"unit": dragon_id, "added": added})
             else:
                 self.state.log_event("effect", f"Recorded model-pack effect {etype}", {"effect": eff, "unit_missing": dragon_id})
         elif etype in {"apply_enemy_field_status", "auto_use_skill_on_battle_start"}:
             # Minimal model-pack support: these are represented as flags so route
             # cases can branch on them, while exact action execution remains route-driven.
-            self.state.global_flags[str(etype)] = True
+            self.commit_global_flag(str(etype), True, reason=f"effect:{etype}", ctx=ctx, payload={"effect": deepcopy(eff)})
             self.state.log_event("effect", f"Recorded model-pack effect {etype}", {"effect": eff})
         elif etype == "record_skill_property_modifier":
             for target_id in self.resolve_effect_targets(eff, ctx, default="actor"):
                 unit = self.state.unit(target_id)
-                mods = unit.flags.setdefault("skill_property_modifiers", [])
+                mods = deepcopy(unit.flags.get("skill_property_modifiers", []))
+                if not isinstance(mods, list):
+                    mods = []
                 record = {"skill_name": eff.get("skill_name"), "property": eff.get("property"), "value": eff.get("value")}
                 mods.append(record)
+                self.commit_unit_flag(unit, "skill_property_modifiers", mods, reason="effect:record_skill_property_modifier", ctx=ctx, payload={"effect": deepcopy(eff), "record": deepcopy(record)})
                 self.state.log_event("effect", f"Recorded skill property modifier for {target_id}", record)
         elif etype == "enqueue_extra_turn_by_skill_type":
             actor_id = eff.get("actor") or eff.get("actor_id") or ctx.get("actor_id")
@@ -6908,7 +7658,7 @@ class BattleSimulator:
                     launch_eff["target_policy"] = eff.get("target_policy")
                 return self.apply_effect(launch_eff, ctx)
             key = f"pending_extra_turn_by_skill_type:{actor_id}:{skill_type}"
-            self.state.global_flags[key] = coerce_float(self.state.global_flags.get(key, 0)) + 1
+            self.commit_global_flag(key, coerce_float(self.state.global_flags.get(key, 0)) + 1, reason="effect:pending_extra_turn_by_skill_type", ctx=ctx, payload={"actor": actor_id, "skill_type": skill_type})
             self.state.log_event("effect", f"Recorded pending extra turn by skill type {skill_type}", {"actor": actor_id, "skill_type": skill_type})
         elif etype == "launch_action":
             actor_id = eff.get("actor") or eff.get("actor_id") or ctx.get("actor_id")
@@ -6949,14 +7699,13 @@ class BattleSimulator:
                     queued[meta_key] = deepcopy(action.get(meta_key))
             if eff.get("queue") == "immediate_queue" and ctx.get("actor") is not None and getattr(ctx.get("actor"), "side", None) == "enemy":
                 queued.setdefault("enemy_action_chain", coerce_bool(eff.get("enemy_action_chain", action.get("enemy_action_chain", False) if isinstance(action, dict) else False), default=False))
-            if queue_name == "ultimate_queue":
-                self.state.ultimate_queue.append(queued)
-            elif queue_name == "immediate_queue":
-                self.state.immediate_queue.append(queued)
-            elif queue_name in ("interrupt_queue", "extra_turn_queue"):
-                self.state.interrupt_queue.append(queued)
-            else:
-                raise SimulatorError(f"Unknown queue {queue_name}")
+            self.commit_queue_append(
+                queue_name,
+                queued,
+                reason="effect:launch_action",
+                ctx=ctx,
+                payload={"effect": deepcopy(eff), "requested_queue": queue_name},
+            )
             self.state.log_event("effect", f"Queued action {actor_id}.{action_id} in {queue_name}", queued)
         elif etype == "modify_damage_packet":
             self.apply_modify_damage_packet(eff, ctx)
@@ -6980,7 +7729,7 @@ class BattleSimulator:
                 if idx is None:
                     idx = 0
                 value = values[idx]
-                self.state.global_flags[eff["key"]] = coerce_comparison_value(value)
+                self.commit_global_flag(str(eff["key"]), coerce_comparison_value(value), reason="effect:random_select_flag", ctx=ctx, payload={"event_id": event_id, "index": idx, "values": values})
                 self.state.log_event("random_select", f"Random selected {eff['key']}={value}", {"event_id": event_id, "index": idx, "values": values})
         elif etype == "set_dynamic_entity_param":
             targets = self.resolve_effect_targets({"target": eff.get("target")}, ctx, default="actor")
@@ -6989,14 +7738,14 @@ class BattleSimulator:
             if not eff.get("key") or value is None:
                 self.state.log_event("effect_skip", "set_dynamic_entity_param skipped without key/value", {"effect": eff, "targets": targets, "params": params})
             else:
-                self.state.global_flags[eff["key"]] = str(value)
+                self.commit_global_flag(str(eff["key"]), str(value), reason="effect:set_dynamic_entity_param", ctx=ctx, payload={"effect": deepcopy(eff), "targets": targets, "params": params})
                 self.state.log_event("effect", f"Set dynamic entity {eff['key']}={value}", {"targets": targets, "params": params})
         elif etype == "trigger_custom_string":
             value = eff.get("custom_string")
             if value is None:
                 self.state.log_event("effect_skip", "trigger_custom_string skipped without value", {"effect": eff})
             else:
-                self.state.global_flags["last_custom_string"] = str(value)
+                self.commit_global_flag("last_custom_string", str(value), reason="effect:trigger_custom_string", ctx=ctx, payload={"effect": deepcopy(eff)})
                 self.state.log_event("custom_string", f"Trigger custom string {value}", {"custom_string": value})
         elif etype == "random_choice":
             choices = list(eff.get("choices") or [])
@@ -7059,7 +7808,7 @@ class BattleSimulator:
                     new_used = sorted(used_indices.union(set(selected_indices)))
                     if coerce_bool(eff.get("auto_reset_random_mask", False), default=False) and len(new_used) >= len(available_indices):
                         new_used = []
-                    self.state.global_flags[str(mask_key)] = new_used
+                    self.commit_global_flag(str(mask_key), new_used, reason="effect:random_choice:mask", ctx=ctx, payload={"event_id": event_id, "selected_indices": selected_indices})
                 self.state.log_event("random_choice", f"RandomConfig chose branches {selected_indices}", {"event_id": event_id, "indices": selected_indices, "index": selected_indices[0] if selected_indices else None, "random_count": random_count, "random_unique": random_unique, "random_mask_key": mask_key, "choice_count": len(choices), "odds": eff.get("odds")})
                 for row in selected_rows:
                     idx = int(row.get("index", 0))
@@ -7087,7 +7836,7 @@ class BattleSimulator:
         elif etype == "consume_skill_point":
             self.apply_effect({"type": "modify_skill_points", "amount": -coerce_int(eff.get("amount", 1), 1)}, ctx)
         elif etype == "set_flag":
-            self.state.global_flags[eff["key"]] = coerce_comparison_value(eff.get("value", True))
+            self.commit_global_flag(str(eff["key"]), coerce_comparison_value(eff.get("value", True)), reason="effect:set_flag", ctx=ctx, payload={"effect": deepcopy(eff)})
             self.state.log_event("effect", f"Set flag {eff['key']}={self.state.global_flags[eff['key']]}")
         elif etype == "set_flag_from_context_value":
             kind = str(eff.get("context_value_type") or eff.get("variate_type") or "")
@@ -7099,7 +7848,7 @@ class BattleSimulator:
                     value = abs(value)
             else:
                 value = ctx.get("value", ctx.get("param_value", 0))
-            self.state.global_flags[eff["key"]] = coerce_comparison_value(value)
+            self.commit_global_flag(str(eff["key"]), coerce_comparison_value(value), reason="effect:set_flag_from_context_value", ctx=ctx, payload={"effect": deepcopy(eff)})
             self.state.log_event("effect", f"Set flag {eff['key']} from context={self.state.global_flags[eff['key']]}", {"context_value_type": eff.get("context_value_type"), "variate_type": eff.get("variate_type")})
         elif etype == "set_flag_from_property":
             targets = self.resolve_effect_targets(eff, ctx, default="actor")
@@ -7113,16 +7862,16 @@ class BattleSimulator:
                 model = describe_engine_property(eff.get("property")).to_dict()
                 self.state.log_event("effect_skip", f"Set flag {eff['key']} from unresolved property skipped", {"property": eff.get("property"), "targets": targets, "engine_property_model": model})
             else:
-                self.state.global_flags[eff["key"]] = coerce_comparison_value(value)
+                self.commit_global_flag(str(eff["key"]), coerce_comparison_value(value), reason="effect:set_flag_from_property", ctx=ctx, payload={"effect": deepcopy(eff), "property": eff.get("property")})
                 self.state.log_event("effect", f"Set flag {eff['key']} from property={self.state.global_flags[eff['key']]}", {"property": eff.get("property")})
         elif etype == "set_flag_from_status_value":
             targets = self.resolve_effect_targets(eff, ctx, default="actor")
             value = self.read_status_value(self.state.unit(targets[0]), eff.get("status_id"), eff.get("value_type"), eff.get("key")) if targets else 0
-            self.state.global_flags[eff["key"]] = coerce_comparison_value(value)
+            self.commit_global_flag(str(eff["key"]), coerce_comparison_value(value), reason="effect:set_flag_from_status_value", ctx=ctx, payload={"effect": deepcopy(eff), "targets": targets})
             self.state.log_event("effect", f"Set flag {eff['key']} from status={self.state.global_flags[eff['key']]}", {"status_id": eff.get("status_id"), "value_type": eff.get("value_type")})
         elif etype == "copy_flag":
             value = self.read_flag_or_status_value(eff, ctx)
-            self.state.global_flags[eff["key"]] = coerce_comparison_value(value)
+            self.commit_global_flag(str(eff["key"]), coerce_comparison_value(value), reason="effect:copy_flag", ctx=ctx, payload={"effect": deepcopy(eff)})
             self.state.log_event("effect", f"Copied flag {eff.get('source_key')} -> {eff['key']}={self.state.global_flags[eff['key']]}", {"source_status_id": eff.get("source_status_id")})
         elif etype == "trigger_custom_event":
             event_id = str(eff.get("custom_event_id") or eff.get("event_id") or "")
@@ -7143,7 +7892,7 @@ class BattleSimulator:
         elif etype == "set_unit_flag":
             for target_id in self.resolve_effect_targets(eff, ctx, default="actor"):
                 unit = self.state.unit(target_id)
-                unit.flags[eff["key"]] = coerce_comparison_value(eff.get("value", True))
+                self.commit_unit_flag(unit, str(eff["key"]), coerce_comparison_value(eff.get("value", True)), reason="effect:set_unit_flag", ctx=ctx, payload={"effect": deepcopy(eff)})
                 self.state.log_event("effect", f"Set {target_id}.{eff['key']}={unit.flags[eff['key']]}")
         elif etype == "copy_unit_flag":
             source_targets = self.resolve_effect_targets({"target": eff.get("source_target", eff.get("target", "actor"))}, ctx, default="actor")
@@ -7154,7 +7903,7 @@ class BattleSimulator:
                 value = src.flags.get(source_key, 0)
             for target_id in self.resolve_effect_targets(eff, ctx, default="actor"):
                 unit = self.state.unit(target_id)
-                unit.flags[eff["key"]] = coerce_comparison_value(value)
+                self.commit_unit_flag(unit, str(eff["key"]), coerce_comparison_value(value), reason="effect:copy_unit_flag", ctx=ctx, payload={"effect": deepcopy(eff), "source_targets": source_targets})
                 self.state.log_event("effect", f"Copy unit flag {source_key} -> {target_id}.{eff['key']}={unit.flags[eff['key']]}", {"source_targets": source_targets})
         elif etype == "set_unit_flag_from_target_count":
             actor = self.state.unit(ctx.get("actor_id")) if ctx.get("actor_id") in self.state.units else None
@@ -7168,7 +7917,7 @@ class BattleSimulator:
                 count = len(units)
             for target_id in self.resolve_effect_targets(eff, ctx, default="actor"):
                 unit = self.state.unit(target_id)
-                unit.flags[eff["key"]] = count
+                self.commit_unit_flag(unit, str(eff["key"]), count, reason="effect:set_unit_flag_from_target_count", ctx=ctx, payload={"target_spec": spec, "filters": filters})
                 self.state.log_event("effect", f"Set {target_id}.{eff['key']} from target count={count}", {"target_spec": spec, "filters": filters})
         elif etype == "modify_unit_counter":
             for target_id in self.resolve_effect_targets(eff, ctx, default="actor"):
@@ -7178,7 +7927,7 @@ class BattleSimulator:
                 new = old + coerce_float(eff.get("amount", 0))
                 if "min" in eff: new = max(coerce_float(eff["min"]), new)
                 if "max" in eff: new = min(coerce_float(eff["max"]), new)
-                unit.flags[key] = new
+                self.commit_unit_flag(unit, str(key), new, reason="effect:modify_unit_counter", ctx=ctx, payload={"effect": deepcopy(eff), "old": old})
                 self.state.log_event("effect", f"{target_id}.{key} {old} -> {new}")
         elif etype == "hp_loss":
             aliased = deepcopy(eff)
@@ -7319,7 +8068,7 @@ class BattleSimulator:
             source = str(eff.get("source_template") or eff.get("source") or etype)
             for target_id in self.resolve_effect_targets(eff, ctx, default="actor"):
                 if target_id in self.state.units:
-                    self.cleanse_debuffs_from_unit(self.state.unit(target_id), count, source=source)
+                    self.cleanse_debuffs_from_unit(self.state.unit(target_id), count, source=source, ctx=ctx)
         elif etype == "summon_unit":
             unit_id = eff["unit_id"]
             raw = deepcopy(eff["unit"])
@@ -7344,7 +8093,7 @@ class BattleSimulator:
                 unit = self.state.unit(target_id)
                 if unit.toughness is not None:
                     old = unit.toughness
-                    unit.toughness = max(0.0, unit.toughness + coerce_float(eff.get("amount", 0.0)))
+                    self.commit_unit_toughness(unit, unit.toughness + coerce_float(eff.get("amount", 0.0)), reason="effect:modify_toughness", ctx=ctx, payload={"effect": deepcopy(eff)})
                     self.state.log_event("toughness", f"{target_id} toughness {old} -> {unit.toughness}")
         elif etype == "modify_shield":
             for target_id in self.resolve_effect_targets(eff, ctx, default="actor"):
@@ -7385,14 +8134,13 @@ class BattleSimulator:
                 "queued_actor_phase": self.effective_unit_phase(ctx.get("actor") if ctx.get("actor") is not None else (self.state.unit(actor_id) if actor_id in self.state.units else None)),
                 "carry_across_phase": coerce_bool(eff.get("carry_across_phase", action.get("carry_across_phase", False) if isinstance(action, dict) else False), default=False),
             }
-            if queue_name == "ultimate_queue":
-                self.state.ultimate_queue.append(queued)
-            elif queue_name == "immediate_queue":
-                self.state.immediate_queue.append(queued)
-            elif queue_name in ("interrupt_queue", "extra_turn_queue"):
-                self.state.interrupt_queue.append(queued)
-            else:
-                raise SimulatorError(f"Unknown queue {queue_name}")
+            self.commit_queue_append(
+                queue_name,
+                queued,
+                reason="effect:immediate_action",
+                ctx=ctx,
+                payload={"effect": deepcopy(eff), "requested_queue": queue_name},
+            )
             self.state.log_event("effect", f"Immediate action queued {actor_id}.{action_id} in {queue_name}", queued)
         elif etype == "reset_trigger_usage":
             prefix = eff.get("prefix") or eff.get("trigger_id")
@@ -7529,7 +8277,14 @@ class BattleSimulator:
         elif etype == "phase_transition_immediate_action":
             target_id = eff.get("target") or ctx.get("actor_id")
             if target_id in self.state.units:
-                self.state.unit(target_id).flags["phase_transition_immediate_action"] = eff.get("action") or eff.get("action_id") or True
+                self.commit_unit_flag(
+                    self.state.unit(target_id),
+                    "phase_transition_immediate_action",
+                    eff.get("action") or eff.get("action_id") or True,
+                    reason="effect:phase_transition_immediate_action",
+                    ctx=ctx,
+                    payload={"effect": deepcopy(eff)},
+                )
                 self.state.log_event("enemy_mechanic", f"{target_id} phase transition immediate action armed", {"action": self.state.unit(target_id).flags["phase_transition_immediate_action"]})
         elif etype == "hp_based_damage":
             amount_key = eff.get("target_max_hp_pct", eff.get("max_hp_pct", eff.get("ratio", 0.0)))
@@ -7571,17 +8326,20 @@ class BattleSimulator:
                 if target_id not in self.state.units:
                     continue
                 unit = self.state.unit(target_id)
-                kept = []
                 removed = []
-                for st in unit.statuses:
+                for st in list(unit.statuses):
                     st_tags = {str(t).lower() for t in st.tags}
                     if categories and (categories & st_tags or str(st.id).lower() in categories):
                         removed.append(st.id)
-                    else:
-                        kept.append(st)
-                unit.statuses = kept
+                        self.commit_status_remove(
+                            unit,
+                            st,
+                            reason="effect:dispel_status_categories",
+                            ctx=ctx,
+                            payload={"categories": sorted(categories), "removed_status": st.to_json()},
+                        )
                 if "weakness_break" in categories or "break" in categories:
-                    unit.is_broken = False
+                    self.commit_unit_is_broken(unit, False, reason="effect:dispel_status_categories:is_broken", ctx=ctx, payload={"categories": sorted(categories)})
                 self.state.log_event("enemy_mechanic", f"{target_id} dispels status categories", {"categories": sorted(categories), "removed": removed})
         elif etype == "reduce_recoverable_hp_cap":
             ratio = self.resolve_numeric_expr(eff.get("ratio", eff.get("amount", eff.get("value", 0.5))), ctx, default=0.5)
@@ -7590,7 +8348,7 @@ class BattleSimulator:
                 if target_id in self.state.units:
                     unit = self.state.unit(target_id)
                     old = coerce_float(unit.flags.get("max_restorable_hp_ratio", 1.0), 1.0)
-                    unit.flags["max_restorable_hp_ratio"] = min(old, cap_ratio)
+                    self.commit_unit_flag(unit, "max_restorable_hp_ratio", min(old, cap_ratio), reason="effect:reduce_recoverable_hp_cap", ctx=ctx, payload={"ratio": ratio, "cap_ratio": cap_ratio})
                     self.state.log_event("enemy_mechanic", f"{target_id} max restorable HP ratio {old}->{unit.flags['max_restorable_hp_ratio']}", {"ratio": ratio, "cap_ratio": cap_ratio})
         elif etype == "restore_recoverable_hp_cap_by_damaging_corresponding_summon":
             # Runtime restoration is handled in handle_enemy_on_hit_mechanics when
@@ -7754,43 +8512,87 @@ class BattleSimulator:
             if guard > 100:
                 raise SimulatorError("Queue drain guard exceeded; possible infinite trigger loop")
             if self.state.ultimate_queue:
-                item = self.state.ultimate_queue.popleft()
                 qname = "ultimate_queue"
+                item = deepcopy(self.state.ultimate_queue[0])
             elif self.state.immediate_queue:
-                item = self.state.immediate_queue.popleft()
                 qname = "immediate_queue"
+                item = deepcopy(self.state.immediate_queue[0])
             else:
-                item = self.state.interrupt_queue.popleft()
                 qname = "interrupt_queue"
+                item = deepcopy(self.state.interrupt_queue[0])
             self.state.log_event("queue", f"Resolve queued action from {qname}: {item['actor']}.{item.get('action')}")
             if item.get("carry_across_wave") is False and item.get("queued_wave_index") != self.state.wave_index:
+                settlement = self.begin_queued_action_settlement(item, qname, guard, [], target_source="none")
+                self.commit_queue_popleft(
+                    qname,
+                    reason="queue:popleft:skip_wave",
+                    ctx={"_settlement": settlement},
+                    payload={"guard": guard, "item": deepcopy(item), "current_wave_index": self.state.wave_index},
+                )
                 self.state.log_event(
                     "queue_skip",
                     f"Skip queued action {item['actor']}.{item['action']}: cannot carry across wave",
                     {"item": item, "current_wave_index": self.state.wave_index},
                 )
+                settlement.capture_after_snapshot(self.full_scene_snapshot())
+                self.record_queued_action_transition(item, qname, guard, settlement, skipped=True, skip_reason="cannot_carry_across_wave")
                 continue
             if not item.get("action"):
                 key = f"pending_extra_turn:{item['actor']}:{item.get('extra_turn_type', 'extra_turn')}"
-                self.state.global_flags[key] = coerce_float(self.state.global_flags.get(key, 0)) + 1
+                grant_item = {**item, "action": "extra_turn_grant"}
+                settlement = self.begin_queued_action_settlement(grant_item, qname, guard, [], target_source="none")
+                settlement_ctx = {"_settlement": settlement}
+                self.commit_queue_popleft(
+                    qname,
+                    reason="queue:popleft:extra_turn_grant",
+                    ctx=settlement_ctx,
+                    payload={"guard": guard, "item": deepcopy(item)},
+                )
+                self.commit_global_flag(
+                    key,
+                    coerce_float(self.state.global_flags.get(key, 0)) + 1,
+                    reason="queue:extra_turn_grant",
+                    ctx=settlement_ctx,
+                    payload={"item": deepcopy(item)},
+                )
                 self.state.log_event("extra_turn_grant", f"Queued extra turn grant available for {item['actor']}", {"item": item, "flag": key})
+                settlement.capture_after_snapshot(self.full_scene_snapshot())
+                self.record_queued_action_transition(grant_item, qname, guard, settlement)
                 continue
             if item["actor"] not in self.state.units or (not self.state.unit(item["actor"]).alive):
+                settlement = self.begin_queued_action_settlement(item, qname, guard, [], target_source="none")
+                self.commit_queue_popleft(
+                    qname,
+                    reason="queue:popleft:skip_dead_actor",
+                    ctx={"_settlement": settlement},
+                    payload={"guard": guard, "item": deepcopy(item)},
+                )
                 self.state.log_event(
                     "queue_skip",
                     f"Skip queued action {item['actor']}.{item['action']}: queued actor is dead or missing",
                     {"item": item},
                 )
+                settlement.capture_after_snapshot(self.full_scene_snapshot())
+                self.record_queued_action_transition(item, qname, guard, settlement, skipped=True, skip_reason="queued_actor_dead_or_missing")
                 continue
             action = self.get_action_def(item["actor"], item["action"])
             actor_for_queue = self.state.unit(item["actor"])
             interrupt_reason = self.queued_enemy_chain_interrupt_reason(actor_for_queue, item, action)
             if interrupt_reason:
+                settlement = self.begin_queued_action_settlement(item, qname, guard, [], target_source="none")
+                self.commit_queue_popleft(
+                    qname,
+                    reason="queue:popleft:skip_enemy_chain_interrupt",
+                    ctx={"_settlement": settlement},
+                    payload={"guard": guard, "item": deepcopy(item), "interrupt_reason": interrupt_reason},
+                )
                 self.state.log_event(
                     "queue_skip",
                     f"Skip queued enemy chain action {item['actor']}.{item['action']}: interrupted by {interrupt_reason}",
                     {"item": item, "reason": interrupt_reason, "actor_statuses": [st.id for st in actor_for_queue.statuses], "is_broken": actor_for_queue.is_broken},
                 )
+                settlement.capture_after_snapshot(self.full_scene_snapshot())
+                self.record_queued_action_transition(item, qname, guard, settlement, skipped=True, skip_reason=f"enemy_chain_interrupted:{interrupt_reason}")
                 continue
             targets = self.normalize_targets(item.get("targets"))
             resolved_from_deferred_policy = targets is None
@@ -7802,21 +8604,47 @@ class BattleSimulator:
                 # target.  Only skip empty-target queued actions when their action
                 # actually contains offensive damage that needs a live target.
                 if not self.queued_action_has_valid_damage_target(action, []):
+                    settlement = self.begin_queued_action_settlement(item, qname, guard, [], target_source="deferred_policy")
+                    self.commit_queue_popleft(
+                        qname,
+                        reason="queue:popleft:skip_no_deferred_targets",
+                        ctx={"_settlement": settlement},
+                        payload={"guard": guard, "item": deepcopy(item)},
+                    )
                     self.state.log_event(
                         "queue_skip",
                         f"Skip queued action {item['actor']}.{item['action']}: deferred target policy found no valid targets",
                         {"item": item},
                     )
+                    settlement.capture_after_snapshot(self.full_scene_snapshot())
+                    self.record_queued_action_transition(item, qname, guard, settlement, skipped=True, skip_reason="deferred_target_policy_no_valid_targets")
                     continue
             if not self.queued_action_has_valid_damage_target(action, targets or []):
+                settlement = self.begin_queued_action_settlement(item, qname, guard, targets or [], target_source="deferred_policy" if resolved_from_deferred_policy else "queued_item")
+                self.commit_queue_popleft(
+                    qname,
+                    reason="queue:popleft:skip_no_live_damage_targets",
+                    ctx={"_settlement": settlement},
+                    payload={"guard": guard, "item": deepcopy(item), "targets": targets},
+                )
                 self.state.log_event(
                     "queue_skip",
                     f"Skip queued action {item['actor']}.{item['action']}: no live damage targets remain",
                     {"item": item, "targets": targets},
                 )
+                settlement.capture_after_snapshot(self.full_scene_snapshot())
+                self.record_queued_action_transition(item, qname, guard, settlement, skipped=True, skip_reason="no_live_damage_targets")
                 continue
             events = {**default_events, **item.get("events", {})}
-            q_context = {"queued": True, "turn_kind": item.get("turn_kind")}
+            target_source = "deferred_policy" if resolved_from_deferred_policy else "queued_item"
+            settlement = self.begin_queued_action_settlement(item, qname, guard, targets or [], target_source=target_source)
+            q_context = {"queued": True, "turn_kind": item.get("turn_kind"), "_settlement": settlement}
+            self.commit_queue_popleft(
+                qname,
+                reason="queue:popleft:resolve_action",
+                ctx=q_context,
+                payload={"guard": guard, "item": deepcopy(item), "targets": targets or []},
+            )
             if self.queued_action_is_enemy_chain(item, action):
                 q_context["enemy_action_chain"] = True
                 q_context["chain_id"] = item.get("chain_id") or item.get("enemy_chain_id") or action.get("chain_id") or action.get("enemy_chain_id")
@@ -7825,6 +8653,8 @@ class BattleSimulator:
             if item.get("extra_turn_type") is not None:
                 q_context["extra_turn_type"] = item.get("extra_turn_type")
             self.resolve_action(action, targets or [], events, context=q_context)
+            settlement.capture_after_snapshot(self.full_scene_snapshot())
+            self.record_queued_action_transition(item, qname, guard, settlement)
 
     def validate_route_step_expectation(self, expect: Any, trace_entry: dict[str, Any]) -> dict[str, Any]:
         """Validate optional exact-route step expectations.
@@ -7934,11 +8764,15 @@ class BattleSimulator:
                 "before_scene": before_full_scene,
             }
             before_log_len = len(self.state.log)
+            queued_transition_start = len(self._queued_action_transitions)
             step["_route_step_index"] = i
             self.resolve_route_step(step)
             new_events = self.state.log[before_log_len:]
             trace_entry["event_summary"] = self.summarize_auto_probe_events(new_events)
             trace_entry["action_resolution"] = self.summarize_action_resolution(step, new_events)
+            new_queue_transitions = self._queued_action_transitions[queued_transition_start:]
+            if new_queue_transitions:
+                trace_entry["queued_action_transitions"] = deepcopy(new_queue_transitions)
             # Phase 2: 合并结算数据
             if "_settlement" in step:
                 trace_entry["settlement"] = step["_settlement"].to_dict()
@@ -7947,10 +8781,14 @@ class BattleSimulator:
             if isinstance(step.get("expect"), dict):
                 trace_entry["expectation"] = self.validate_route_step_expectation(step.get("expect"), trace_entry)
             route_trace.append(trace_entry)
+        post_route_queue_start = len(self._queued_action_transitions)
         self.drain_queues()
+        post_route_queue_transitions = self._queued_action_transitions[post_route_queue_start:]
         result = self.result()
         result.setdefault("metadata", {})["route_executed_step_count"] = len(route_trace)
         result["metadata"]["route_action_trace"] = route_trace
+        if post_route_queue_transitions:
+            result["metadata"]["post_route_queued_action_transitions"] = deepcopy(post_route_queue_transitions)
         generic_assertions = self.validate_auto_probe_trace(route_trace)
         expectation_assertions = self.summarize_route_expectations(route_trace)
         result["metadata"]["route_assertions"] = {**generic_assertions, "expectations": expectation_assertions, "ok": generic_assertions.get("ok", True) and expectation_assertions.get("ok", True)}
@@ -7977,7 +8815,7 @@ class BattleSimulator:
         return not allowed or phase in allowed
 
 
-    def tick_enemy_skill_cooldowns_after_action(self, actor: UnitState, used_action_id: str) -> None:
+    def tick_enemy_skill_cooldowns_after_action(self, actor: UnitState, used_action_id: str, ctx: Optional[dict[str, Any]] = None) -> None:
         if actor.side != "enemy":
             return
         cooldowns = actor.flags.get("enemy_skill_cooldowns")
@@ -7991,30 +8829,30 @@ class BattleSimulator:
                 cd = coerce_int(cfg.get("cd", 0), 0)
                 if cd > 0:
                     cooldowns[str(used_action_id)] = cd
-        actor.flags["enemy_skill_cooldowns"] = cooldowns
+        self.commit_unit_flag(actor, "enemy_skill_cooldowns", cooldowns, reason="enemy_ai:tick_skill_cooldowns", ctx=ctx, payload={"used_action_id": used_action_id})
 
-    def record_enemy_skill_use_after_action(self, actor: UnitState, action_id: str) -> None:
+    def record_enemy_skill_use_after_action(self, actor: UnitState, action_id: str, ctx: Optional[dict[str, Any]] = None) -> None:
         if actor.side != "enemy" or not action_id:
             return
         counter = coerce_int(actor.flags.get("enemy_action_counter", 0), 0) + 1
-        actor.flags["enemy_action_counter"] = counter
+        self.commit_unit_flag(actor, "enemy_action_counter", counter, reason="enemy_ai:record_skill_use:counter", ctx=ctx, payload={"action_id": action_id})
         counts = actor.flags.get("enemy_skill_use_counts")
         if not isinstance(counts, dict):
             counts = {}
         counts[str(action_id)] = coerce_int(counts.get(str(action_id), 0), 0) + 1
-        actor.flags["enemy_skill_use_counts"] = counts
+        self.commit_unit_flag(actor, "enemy_skill_use_counts", counts, reason="enemy_ai:record_skill_use:counts", ctx=ctx, payload={"action_id": action_id})
         record = actor.flags.get("enemy_skill_use_record")
         if not isinstance(record, dict):
             record = {}
         record[str(action_id)] = {"action_counter": counter, "count": counts[str(action_id)]}
-        actor.flags["enemy_skill_use_record"] = record
+        self.commit_unit_flag(actor, "enemy_skill_use_record", record, reason="enemy_ai:record_skill_use:record", ctx=ctx, payload={"action_id": action_id})
         if str(actor.flags.get("enemy_ai_pending_target_action") or "") == str(action_id):
-            actor.flags.pop("enemy_ai_pending_target_selector", None)
-            actor.flags.pop("enemy_ai_pending_target_action", None)
-        self.tick_enemy_skill_cooldowns_after_action(actor, str(action_id))
+            self.commit_unit_flag_remove(actor, "enemy_ai_pending_target_selector", reason="enemy_ai:record_skill_use:clear_pending_selector", ctx=ctx, payload={"action_id": action_id})
+            self.commit_unit_flag_remove(actor, "enemy_ai_pending_target_action", reason="enemy_ai:record_skill_use:clear_pending_action", ctx=ctx, payload={"action_id": action_id})
+        self.tick_enemy_skill_cooldowns_after_action(actor, str(action_id), ctx=ctx)
         self.state.log_event("enemy_ai", f"{actor.id} records skill use {action_id}", {"action_counter": counter, "counts": counts, "cooldowns": actor.flags.get("enemy_skill_cooldowns", {})})
 
-    def advance_enemy_ai_sequence_after_action(self, actor: UnitState, action_id: str) -> None:
+    def advance_enemy_ai_sequence_after_action(self, actor: UnitState, action_id: str, ctx: Optional[dict[str, Any]] = None) -> None:
         """Advance AI cursor using the current cursor, not `seq.index`.
 
         ConfigAI-derived sequences may legitimately contain duplicate action ids
@@ -8032,7 +8870,7 @@ class BattleSimulator:
         else:
             matches = [i for i, x in enumerate(seq) if x == action_id_s]
             new_idx = ((matches[0] + 1) % len(seq)) if matches else old_idx
-        actor.flags["enemy_ai_sequence_index"] = new_idx
+        self.commit_unit_flag(actor, "enemy_ai_sequence_index", new_idx, reason="enemy_ai:advance_sequence", ctx=ctx, payload={"sequence": seq, "used_action": action_id_s, "old_index": old_idx})
         self.state.log_event("enemy_ai", f"{actor.id} AI sequence {old_idx}->{new_idx}", {"sequence": seq, "used_action": action_id_s})
 
     def apply_enemy_ai_decision_effects(self, actor: UnitState, decision: dict[str, Any]) -> None:
@@ -8096,12 +8934,12 @@ class BattleSimulator:
         score, idx, action_id, decision = sorted(candidates, key=lambda row: (-row[0], row[1]))[0]
         self.apply_enemy_ai_decision_effects(actor, decision)
         if isinstance(decision.get("target_selector"), dict):
-            actor.flags["enemy_ai_pending_target_selector"] = deepcopy(decision.get("target_selector"))
-            actor.flags["enemy_ai_pending_target_action"] = action_id
-        actor.flags["enemy_ai_last_decision_index"] = idx
-        actor.flags["enemy_ai_last_action"] = action_id
-        actor.flags["enemy_ai_last_decision_score"] = score
-        actor.flags["enemy_ai_last_selection_reason"] = reason
+            self.commit_unit_flag(actor, "enemy_ai_pending_target_selector", deepcopy(decision.get("target_selector")), reason="enemy_ai:select_decision:pending_target_selector", payload={"action_id": action_id, "decision_index": idx})
+            self.commit_unit_flag(actor, "enemy_ai_pending_target_action", action_id, reason="enemy_ai:select_decision:pending_target_action", payload={"decision_index": idx})
+        self.commit_unit_flag(actor, "enemy_ai_last_decision_index", idx, reason="enemy_ai:select_decision:last_decision_index", payload={"action_id": action_id, "reason": reason})
+        self.commit_unit_flag(actor, "enemy_ai_last_action", action_id, reason="enemy_ai:select_decision:last_action", payload={"decision_index": idx, "reason": reason})
+        self.commit_unit_flag(actor, "enemy_ai_last_decision_score", score, reason="enemy_ai:select_decision:last_score", payload={"action_id": action_id, "decision_index": idx})
+        self.commit_unit_flag(actor, "enemy_ai_last_selection_reason", reason, reason="enemy_ai:select_decision:last_reason", payload={"action_id": action_id, "decision_index": idx})
         self.state.log_event("enemy_ai", f"{actor.id} selects {action_id} via {reason} decision {idx}", {"decision": decision, "score": score, "candidate_count": len(candidates), "restricted_action": restrict_s})
         return action_id
 
@@ -8135,7 +8973,7 @@ class BattleSimulator:
             return None
         ok, reason = self.enemy_action_available_now(actor, action_id)
         if not ok:
-            actor.flags["enemy_ai_last_scripted_block_reason"] = {"action": action_id, "reason": reason}
+            self.commit_unit_flag(actor, "enemy_ai_last_scripted_block_reason", {"action": action_id, "reason": reason}, reason="enemy_ai:scripted_block", payload={"action_id": action_id})
             self.state.log_event("enemy_ai", f"{actor.id} scripted action {action_id} blocked: {reason}", {"action": action_id, "reason": reason})
             return None
         # Apply decision side-effects/target selectors only for the current
@@ -8156,11 +8994,11 @@ class BattleSimulator:
         if decided_current:
             return decided_current
         if has_decision_for_current:
-            actor.flags["enemy_ai_last_scripted_block_reason"] = {"action": action_id, "reason": "scripted_decision_condition"}
+            self.commit_unit_flag(actor, "enemy_ai_last_scripted_block_reason", {"action": action_id, "reason": "scripted_decision_condition"}, reason="enemy_ai:scripted_decision_condition", payload={"action_id": action_id})
             self.state.log_event("enemy_ai", f"{actor.id} scripted action {action_id} waits for a matching decision", {"sequence_index": actor.flags.get("enemy_ai_sequence_index")})
             return None
-        actor.flags["enemy_ai_last_action"] = action_id
-        actor.flags["enemy_ai_last_selection_reason"] = "scripted_sequence_current"
+        self.commit_unit_flag(actor, "enemy_ai_last_action", action_id, reason="enemy_ai:scripted_sequence_current:last_action", payload={"sequence_index": actor.flags.get("enemy_ai_sequence_index")})
+        self.commit_unit_flag(actor, "enemy_ai_last_selection_reason", "scripted_sequence_current", reason="enemy_ai:scripted_sequence_current:last_reason", payload={"action_id": action_id})
         self.state.log_event("enemy_ai", f"{actor.id} selects {action_id} via scripted sequence", {"sequence_index": actor.flags.get("enemy_ai_sequence_index")})
         return action_id
 
@@ -8171,7 +9009,7 @@ class BattleSimulator:
             if forced and str(forced) in actor.action_defs:
                 action = actor.action_defs.get(str(forced), {})
                 if self.enemy_action_phase_allowed(actor, action):
-                    actor.flags.pop("forced_next_enemy_action", None)
+                    self.commit_unit_flag_remove(actor, "forced_next_enemy_action", reason="enemy_ai:consume_forced_next_action", payload={"action": str(forced)})
                     self.apply_effect({"type": "remove_status", "target": actor.id, "status_id": "charging"}, {"actor_id": actor.id, "actor": actor, "context": {"phase": "forced_next_enemy_action"}, "phase_locked_targets": set()})
                     self.state.log_event("enemy_ai", f"{actor.id} uses forced next enemy action {forced}", {"action": str(forced)})
                     return str(forced)
@@ -8794,6 +9632,9 @@ class BattleSimulator:
             "state": self.state.to_json(),
             "scene": self.full_scene_snapshot(),
             "log": [asdict(e) for e in self.state.log],
+            "metadata": {
+                "queued_action_transitions": deepcopy(self._queued_action_transitions),
+            },
             "runtime_audit": {
                 "property_hint_applications": self.summarize_property_hint_applications(),
                 "symbolic_formula_applications": self.summarize_symbolic_formula_applications(),

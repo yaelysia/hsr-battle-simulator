@@ -321,18 +321,19 @@ class SettlementCollector:
             except (ValueError, TypeError):
                 pass
         self.status_records.append(rec)
-        self._record_change(
-            "status",
-            scope="unit",
-            subject_id=rec.unit_id,
-            field_path=f"unit.statuses.{rec.status_id}",
-            old_value=rec.old_stacks,
-            new_value=rec.new_stacks,
-            delta=rec.new_stacks - rec.old_stacks,
-            source=SourceRef.status(owner_id=rec.source_id or rec.unit_id, status_id=rec.status_id),
-            reason=rec.change_type or rec.reason,
-            payload=asdict(rec),
-        )
+        if kwargs.get("record_state_change", True):
+            self._record_change(
+                "status",
+                scope="unit",
+                subject_id=rec.unit_id,
+                field_path=f"unit.statuses.{rec.status_id}",
+                old_value=rec.old_stacks,
+                new_value=rec.new_stacks,
+                delta=rec.new_stacks - rec.old_stacks,
+                source=SourceRef.status(owner_id=rec.source_id or rec.unit_id, status_id=rec.status_id),
+                reason=rec.change_type or rec.reason,
+                payload=asdict(rec),
+            )
 
     def record_av(self, **kwargs: Any) -> None:
         mapped = {}
@@ -354,18 +355,19 @@ class SettlementCollector:
                 mapped[k] = v
         rec = AVRecord(**mapped)
         self.av_records.append(rec)
-        self._record_change(
-            "av",
-            scope="unit",
-            subject_id=rec.unit_id,
-            field_path="unit.remaining_av",
-            old_value=rec.old_remaining_av,
-            new_value=rec.new_remaining_av,
-            delta=rec.delta,
-            source=self._action_source(source_id=rec.source_id),
-            reason=rec.reason,
-            payload=asdict(rec),
-        )
+        if kwargs.get("record_state_change", True):
+            self._record_change(
+                "av",
+                scope="unit",
+                subject_id=rec.unit_id,
+                field_path="unit.remaining_av",
+                old_value=rec.old_remaining_av,
+                new_value=rec.new_remaining_av,
+                delta=rec.delta,
+                source=self._action_source(source_id=rec.source_id),
+                reason=rec.reason,
+                payload=asdict(rec),
+            )
 
     def record_turn(self, **kwargs: Any) -> None:
         mapped = {}
@@ -439,18 +441,19 @@ class SettlementCollector:
                 mapped[k] = v
         rec = ToughnessRecord(**mapped)
         self.toughness_records.append(rec)
-        self._record_change(
-            "toughness",
-            scope="unit",
-            subject_id=rec.unit_id,
-            field_path="unit.toughness",
-            old_value=rec.old_toughness,
-            new_value=rec.new_toughness,
-            delta=rec.delta,
-            source=self._action_source(source_id=rec.source_id),
-            reason=rec.reason,
-            payload=asdict(rec),
-        )
+        if kwargs.get("record_state_change", True):
+            self._record_change(
+                "toughness",
+                scope="unit",
+                subject_id=rec.unit_id,
+                field_path="unit.toughness",
+                old_value=rec.old_toughness,
+                new_value=rec.new_toughness,
+                delta=rec.delta,
+                source=self._action_source(source_id=rec.source_id),
+                reason=rec.reason,
+                payload=asdict(rec),
+            )
 
     def record_dot(self, **kwargs: Any) -> None:
         mapped = {}

@@ -41,6 +41,14 @@ class SourceRef:
             origin_path=str(origin_path or ""),
         )
 
+    @classmethod
+    def route_step(cls, step_type: str = "", origin_path: str = "") -> "SourceRef":
+        return cls(
+            source_type="route_step",
+            source_id=str(step_type or ""),
+            origin_path=str(origin_path or ""),
+        )
+
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
@@ -81,6 +89,63 @@ class ActionRequest:
             metadata={
                 "step_type": step.get("type", "action"),
                 "target_source": "explicit" if "targets" in step else "auto",
+            },
+        )
+
+    @classmethod
+    def from_route_control_step(cls, step: dict[str, Any]) -> "ActionRequest":
+        route_step_index = step.get("_route_step_index")
+        try:
+            route_step_index = int(route_step_index) if route_step_index is not None else None
+        except (TypeError, ValueError):
+            route_step_index = None
+        step_type = str(step.get("type") or "route_control")
+        origin_path = f"route[{route_step_index}]" if route_step_index is not None else "route[]"
+        effects = step.get("effects", [])
+        effect_count = len(effects) if isinstance(effects, list) else 0
+        return cls(
+            actor_id=str(step.get("actor") or ""),
+            action_id=step_type,
+            timing=step_type,
+            turn_kind=step.get("turn_kind"),
+            target_ids=[],
+            route_step_index=route_step_index,
+            extra_turn_type=step.get("extra_turn_type"),
+            source=SourceRef.route_step(step_type=step_type, origin_path=origin_path),
+            metadata={
+                "step_type": step_type,
+                "effect_count": effect_count,
+                "target_source": "effect_targets",
+            },
+        )
+
+    @classmethod
+    def from_queued_action(
+        cls,
+        item: dict[str, Any],
+        target_ids: list[str],
+        *,
+        queue_name: str,
+        queue_index: int,
+        target_source: str = "explicit",
+    ) -> "ActionRequest":
+        actor_id = str(item.get("actor") or "")
+        action_id = str(item.get("action") or "")
+        origin_path = f"{queue_name}[{queue_index}]"
+        return cls(
+            actor_id=actor_id,
+            action_id=action_id,
+            timing="queued",
+            turn_kind=item.get("turn_kind"),
+            target_ids=list(target_ids or []),
+            extra_turn_type=item.get("extra_turn_type"),
+            source=SourceRef.action(actor_id=actor_id, action_id=action_id, origin_path=origin_path),
+            metadata={
+                "step_type": "queued_action",
+                "queue_name": str(queue_name or ""),
+                "queue_index": int(queue_index),
+                "target_source": str(target_source or ""),
+                "queued": True,
             },
         )
 
