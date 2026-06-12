@@ -165,6 +165,7 @@ class TargetResolution:
     method: str = ""
     reason: str = ""
     source: SourceRef = field(default_factory=SourceRef)
+    decision_trace: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -196,6 +197,28 @@ class StateChange:
 
 
 @dataclass
+class RNGEvent:
+    """A deterministic record of a random/probabilistic branch decision."""
+
+    sequence: int = 0
+    event_type: str = ""
+    event_id: str = ""
+    mode: Any = None
+    outcome: Any = None
+    probability: dict[str, Any] = field(default_factory=dict)
+    source: SourceRef = field(default_factory=SourceRef)
+    payload: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        data = asdict(self)
+        data["mode"] = _copy_json_value(self.mode)
+        data["outcome"] = _copy_json_value(self.outcome)
+        data["probability"] = _copy_json_value(self.probability)
+        data["payload"] = _copy_json_value(self.payload)
+        return data
+
+
+@dataclass
 class ActionTransition:
     """Canonical transition record for one action request."""
 
@@ -206,6 +229,7 @@ class ActionTransition:
     before_snapshot: dict[str, Any] | None = None
     after_snapshot: dict[str, Any] | None = None
     state_changes: list[StateChange] = field(default_factory=list)
+    rng_events: list[RNGEvent] = field(default_factory=list)
 
     def capture_before(self, snapshot: dict[str, Any]) -> None:
         self.before_snapshot = _copy_json_value(snapshot)
@@ -217,6 +241,10 @@ class ActionTransition:
         change.sequence = len(self.state_changes) + 1
         self.state_changes.append(change)
 
+    def append_rng_event(self, event: RNGEvent) -> None:
+        event.sequence = len(self.rng_events) + 1
+        self.rng_events.append(event)
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "encoding": self.encoding,
@@ -226,4 +254,5 @@ class ActionTransition:
             "before_snapshot": _copy_json_value(self.before_snapshot),
             "after_snapshot": _copy_json_value(self.after_snapshot),
             "state_changes": [change.to_dict() for change in self.state_changes],
+            "rng_events": [event.to_dict() for event in self.rng_events],
         }

@@ -108,6 +108,7 @@ from hsr_engine.enemy_ability_graph_lowerer import write_monster_ability_graph_l
 from hsr_engine.character_mechanism_auditor import write_character_mechanism_audit
 from hsr_engine.settlement import (
     ActionRequest,
+    RNGEvent,
     SettlementCollector,
     SourceRef,
     StateChange,
@@ -776,6 +777,7 @@ class BattleSimulator:
         self.state = BattleState.from_case(case)
         self.settings = case.get("settings", {})
         self._queued_action_transitions: list[dict[str, Any]] = []
+        self._action_resolution_counter = 0
         # Phase 1+2: 可选的数据注册表（中文名增强）
         self._text_map: TextMapRegistry | None = None
         self._status_registry: StatusRegistry | None = None
@@ -807,6 +809,37 @@ class BattleSimulator:
             method = getattr(stl, f"record_{record_type}", None)
             if method is not None:
                 method(**kwargs)
+
+    def record_target_decision(self, ctx: Optional[dict[str, Any]], decision: dict[str, Any]) -> None:
+        stl = self._settlement(ctx or {})
+        if stl is not None:
+            stl.record_target_decision(decision)
+
+    def record_rng_event(
+        self,
+        ctx: Optional[dict[str, Any]],
+        *,
+        event_type: str,
+        event_id: str = "",
+        mode: Any = None,
+        outcome: Any = None,
+        probability: Optional[dict[str, Any]] = None,
+        payload: Optional[dict[str, Any]] = None,
+        reason: str = "rng_event",
+    ) -> None:
+        stl = self._settlement(ctx or {})
+        if stl is not None:
+            stl.record_rng_event(
+                RNGEvent(
+                    event_type=str(event_type or ""),
+                    event_id=str(event_id or ""),
+                    mode=deepcopy(mode),
+                    outcome=deepcopy(outcome),
+                    probability=deepcopy(probability or {}),
+                    source=self.kernel_source_from_context(ctx, reason),
+                    payload=deepcopy(payload or {}),
+                )
+            )
 
     def begin_route_control_settlement(self, step: dict[str, Any]) -> SettlementCollector:
         settlement = SettlementCollector(
@@ -897,6 +930,8 @@ class BattleSimulator:
             self.state.skill_point_cap = int(change.new_value)
         elif change.scope == "global" and change.field_path == "global.av":
             self.state.av = float(change.new_value)
+        elif change.scope == "global" and change.field_path == "global.wave_index":
+            self.state.wave_index = int(change.new_value)
         elif change.scope == "global" and change.field_path.startswith("global.flags."):
             key = change.field_path[len("global.flags."):]
             if change.delta == "remove":
@@ -908,6 +943,25 @@ class BattleSimulator:
             queue = self.battle_queue(queue_name)
             queue.clear()
             queue.extend(deepcopy(change.new_value or []))
+        elif change.scope == "battle" and change.field_path.startswith("battle.trigger_usage."):
+            key = change.field_path[len("battle.trigger_usage."):]
+            if change.delta == "remove":
+                self.state.trigger_usage.pop(key, None)
+            else:
+                self.state.trigger_usage[key] = int(change.new_value)
+        elif change.scope == "battle" and change.field_path.startswith("battle.units."):
+            unit_id = change.field_path[len("battle.units."):]
+            if change.new_value is None:
+                self.state.units.pop(unit_id, None)
+            else:
+                raw = deepcopy(change.new_value)
+                if isinstance(raw, UnitState):
+                    unit = raw
+                elif isinstance(raw, dict):
+                    unit = UnitState.from_dict(unit_id, raw)
+                else:
+                    raise SimulatorError(f"Unit StateChange new_value must be a dict: {change.field_path}")
+                self.state.units[unit_id] = unit
         elif change.scope == "unit" and change.field_path == "unit.energy":
             self.state.unit(change.subject_id).energy = float(change.new_value)
         elif change.scope == "unit" and change.field_path == "unit.hp":
@@ -991,6 +1045,66 @@ class BattleSimulator:
             raise SimulatorError(f"Unsupported StateChange commit path: {change.scope}:{change.field_path}")
         self.record_committed_state_change(ctx, change)
         return change
+
+    def unit_state_payload(self, unit: UnitState) -> dict[str, Any]:
+        payload = unit.to_json()
+        payload["actions"] = deepcopy(unit.action_defs)
+        payload["status_effects"] = deepcopy(unit.status_defs)
+        return payload
+
+    def commit_unit_add(self, unit: UnitState, *, reason: str, ctx: Optional[dict[str, Any]] = None, payload: Optional[dict[str, Any]] = None) -> StateChange:
+        old_unit = self.state.units.get(unit.id)
+        old_value = self.unit_state_payload(old_unit) if old_unit is not None else None
+        new_value = self.unit_state_payload(unit)
+        change = StateChange(
+            change_type="unit",
+            scope="battle",
+            subject_id=unit.id,
+            field_path=f"battle.units.{unit.id}",
+            old_value=old_value,
+            new_value=new_value,
+            delta="add" if old_unit is None else "replace",
+            source=self.kernel_source_from_context(ctx, reason),
+            reason=reason,
+            payload=payload or {},
+        )
+        return self.commit_state_change(change, ctx)
+
+    def commit_unit_remove(self, unit_id: str, *, reason: str, ctx: Optional[dict[str, Any]] = None, payload: Optional[dict[str, Any]] = None) -> Optional[StateChange]:
+        unit_id = str(unit_id)
+        old_unit = self.state.units.get(unit_id)
+        if old_unit is None:
+            return None
+        change = StateChange(
+            change_type="unit",
+            scope="battle",
+            subject_id=unit_id,
+            field_path=f"battle.units.{unit_id}",
+            old_value=self.unit_state_payload(old_unit),
+            new_value=None,
+            delta="remove",
+            source=self.kernel_source_from_context(ctx, reason),
+            reason=reason,
+            payload=payload or {},
+        )
+        return self.commit_state_change(change, ctx)
+
+    def commit_wave_index(self, wave_index: int, *, reason: str, ctx: Optional[dict[str, Any]] = None, payload: Optional[dict[str, Any]] = None) -> StateChange:
+        old = self.state.wave_index
+        new_index = max(0, coerce_int(wave_index, old))
+        change = StateChange(
+            change_type="wave",
+            scope="global",
+            subject_id="battle",
+            field_path="global.wave_index",
+            old_value=old,
+            new_value=new_index,
+            delta=new_index - old,
+            source=self.kernel_source_from_context(ctx, reason),
+            reason=reason,
+            payload=payload or {},
+        )
+        return self.commit_state_change(change, ctx)
 
     def commit_skill_points(self, new_value: float, *, reason: str, ctx: Optional[dict[str, Any]] = None, payload: Optional[dict[str, Any]] = None) -> StateChange:
         old = self.state.skill_points
@@ -1451,6 +1565,43 @@ class BattleSimulator:
         )
         self.commit_state_change(change, ctx)
         return item
+
+    def commit_trigger_usage(self, key: str, value: int, *, reason: str, ctx: Optional[dict[str, Any]] = None, payload: Optional[dict[str, Any]] = None) -> StateChange:
+        key = str(key)
+        old = coerce_int(self.state.trigger_usage.get(key, 0), 0)
+        new_value = max(0, coerce_int(value, old))
+        change = StateChange(
+            change_type="trigger_usage",
+            scope="battle",
+            subject_id=key,
+            field_path=f"battle.trigger_usage.{key}",
+            old_value=old,
+            new_value=new_value,
+            delta=new_value - old,
+            source=self.kernel_source_from_context(ctx, reason),
+            reason=reason,
+            payload=payload or {},
+        )
+        return self.commit_state_change(change, ctx)
+
+    def commit_trigger_usage_remove(self, key: str, *, reason: str, ctx: Optional[dict[str, Any]] = None, payload: Optional[dict[str, Any]] = None) -> Optional[StateChange]:
+        key = str(key)
+        if key not in self.state.trigger_usage:
+            return None
+        old = coerce_int(self.state.trigger_usage.get(key, 0), 0)
+        change = StateChange(
+            change_type="trigger_usage",
+            scope="battle",
+            subject_id=key,
+            field_path=f"battle.trigger_usage.{key}",
+            old_value=old,
+            new_value=None,
+            delta="remove",
+            source=self.kernel_source_from_context(ctx, reason),
+            reason=reason,
+            payload=payload or {},
+        )
+        return self.commit_state_change(change, ctx)
 
     def snapshot(self) -> dict[str, Any]:
         """Return a compact debug snapshot for assertions and diagnostics."""
@@ -2114,7 +2265,12 @@ class BattleSimulator:
         }
         dragon = UnitState.from_dict("souldragon", raw)
         self.ensure_souldragon_unit_defaults(dragon, ctx=ctx)
-        self.state.units["souldragon"] = dragon
+        self.commit_unit_add(
+            dragon,
+            reason="souldragon:summon_bondmate",
+            ctx=ctx,
+            payload={"owner_id": owner_id, "attached_to": str(bondmate_id)},
+        )
         self.state.log_event("summon_lifecycle", "souldragon summoned for bondmate", {"unit": "souldragon", "owner_id": owner_id, "attached_to": bondmate_id, "speed": dragon.speed})
 
     def resolve_dynamic_element(self, element: Any, ctx: dict[str, Any]) -> str:
@@ -2356,10 +2512,10 @@ class BattleSimulator:
             self.apply_effect(eff, ctx)
         if coerce_bool(self.raw_case.get("resolve_initial_queues", True), default=True):
             self.drain_queues(default_events=self.raw_case.get("initial_events", {}))
-        self.check_wave_transition()
+        self.check_wave_transition(ctx=ctx)
 
     # ---------- wave manager ----------
-    def spawn_wave(self, wave_index: int) -> None:
+    def spawn_wave(self, wave_index: int, ctx: Optional[dict[str, Any]] = None) -> None:
         if wave_index >= len(self.state.waves):
             self.state.log_event("battle_end", "No more waves to spawn")
             return
@@ -2370,13 +2526,21 @@ class BattleSimulator:
             # If not explicitly set, honor initial_delay_ratio / initial_delay /
             # delay_ratio aliases; default remains one full action interval.
             unit.remaining_av = self.unit_initial_av(unit, raw)
-            self.state.units[uid] = unit
+            self.commit_unit_add(
+                unit,
+                reason="wave:spawn_unit",
+                ctx=ctx,
+                payload={"wave_index": wave_index, "wave_number": wave_index + 1},
+            )
             spawned.append(uid)
-        self.state.wave_index = wave_index
+        self.commit_wave_index(wave_index, reason="wave:spawn_index", ctx=ctx, payload={"spawned": spawned})
         self.state.log_event("wave_start", f"Spawn wave {wave_index + 1}", {"spawned": spawned})
-        self.run_triggers("wave_start", {"wave_index": wave_index, "wave_number": wave_index + 1, "spawned": spawned, "context": {"phase": "wave_start"}, "phase_locked_targets": set()})
+        wave_ctx = {"wave_index": wave_index, "wave_number": wave_index + 1, "spawned": spawned, "context": {"phase": "wave_start"}, "phase_locked_targets": set()}
+        if isinstance(ctx, dict) and "_settlement" in ctx:
+            wave_ctx["_settlement"] = ctx["_settlement"]
+        self.run_triggers("wave_start", wave_ctx)
 
-    def check_wave_transition(self) -> None:
+    def check_wave_transition(self, ctx: Optional[dict[str, Any]] = None) -> None:
         if self.state.enemies_alive():
             return
         if not self.state.waves:
@@ -2384,7 +2548,7 @@ class BattleSimulator:
             return
         next_idx = self.state.wave_index + 1
         if next_idx < len(self.state.waves):
-            self.spawn_wave(next_idx)
+            self.spawn_wave(next_idx, ctx=ctx)
         else:
             self.state.log_event("battle_end", "All waves cleared")
 
@@ -2448,10 +2612,11 @@ class BattleSimulator:
             )
             self.state.log_event("timeline", f"{actor.id} regular action interval added", {"remaining_av": actor.remaining_av})
 
-    def remove_unit_from_timeline(self, unit_id: str, reason: str) -> None:
+    def remove_unit_from_timeline(self, unit_id: str, reason: str, ctx: Optional[dict[str, Any]] = None) -> None:
         if unit_id not in self.state.units:
             return
-        unit = self.state.units.pop(unit_id)
+        unit = self.state.unit(unit_id)
+        self.commit_unit_remove(unit_id, reason=f"unit_remove:{reason}", ctx=ctx, payload={"remove_reason": reason})
         self.state.log_event("unit_removed", f"Remove unit {unit_id}: {reason}", {"unit": unit.to_json(), "reason": reason})
 
     def tick_summon_lifecycle(self, actor: UnitState, action: dict[str, Any], ctx: Optional[dict[str, Any]] = None) -> None:
@@ -2473,7 +2638,7 @@ class BattleSimulator:
                 self.commit_unit_flag(actor, "lifespan_actions", old - 1, reason="summon_lifecycle:lifespan_actions", ctx=ctx, payload={"action": action.get("id")})
                 self.state.log_event("summon_lifecycle", f"{actor.id} lifespan_actions {old}->{old-1}", {"unit": actor.id})
                 if old - 1 <= 0:
-                    self.remove_unit_from_timeline(actor.id, "lifespan_actions_expired")
+                    self.remove_unit_from_timeline(actor.id, "lifespan_actions_expired", ctx=ctx)
                     return
         to_remove = []
         for unit_id, unit in self.state.units.items():
@@ -2487,7 +2652,7 @@ class BattleSimulator:
                 if attached_to not in self.state.units or not self.state.unit(str(attached_to)).alive:
                     to_remove.append((unit_id, f"attached_target_defeated:{attached_to}"))
         for unit_id, reason in to_remove:
-            self.remove_unit_from_timeline(unit_id, reason)
+            self.remove_unit_from_timeline(unit_id, reason, ctx=ctx)
 
     def apply_action_advance(self, unit: UnitState, percent: float, ctx: Optional[dict[str, Any]] = None, reason: str = "av:advance_action") -> None:
         old = unit.remaining_av
@@ -2545,7 +2710,7 @@ class BattleSimulator:
                 self.recalculate_remaining_av_for_speed_change(unit, old_speed, reason=reason, ctx=ctx)
 
     # ---------- turn lifecycle / durations ----------
-    def reset_owner_turn_usage(self, owner_id: str) -> None:
+    def reset_owner_turn_usage(self, owner_id: str, ctx: Optional[dict[str, Any]] = None) -> None:
         """Reset all usage-limit counters scoped to this unit's owner_turn.
 
         Example key shape from trigger_usage_key():
@@ -2554,12 +2719,24 @@ class BattleSimulator:
         suffix = f":owner_turn:{owner_id}"
         removed = [k for k in self.state.trigger_usage if k.endswith(suffix)]
         for k in removed:
-            del self.state.trigger_usage[k]
+            self.commit_trigger_usage_remove(
+                k,
+                reason="trigger_usage:reset_owner_turn",
+                ctx=ctx,
+                payload={"owner_id": owner_id},
+            )
         if removed:
             self.state.log_event("trigger_reset", f"Reset owner_turn trigger usage for {owner_id}", {"removed": removed})
 
     def begin_turn(self, actor: UnitState, turn_kind: str, action: Optional[dict[str, Any]] = None, context: Optional[dict[str, Any]] = None) -> None:
-        ctx = {"actor_id": actor.id, "actor": actor, "action": action or {}, "turn_kind": turn_kind, "context": context or {}}
+        ctx = {
+            "actor_id": actor.id,
+            "actor": actor,
+            "action": action or {},
+            "turn_kind": turn_kind,
+            "context": context or {},
+            "action_resolution_id": (context or {}).get("action_resolution_id"),
+        }
         # Phase 3: 从 context 中提取 settlement collector（若有）
         if isinstance(context, dict) and "_settlement" in context:
             ctx["_settlement"] = context["_settlement"]
@@ -2582,7 +2759,7 @@ class BattleSimulator:
         # buff that expires at this boundary is no longer active during the turn.
         self.tick_status_durations(event="turn_start", actor=actor, turn_kind=turn_kind, action=action or {}, ctx=ctx)
         if turn_kind == "regular":
-            self.reset_owner_turn_usage(actor.id)
+            self.reset_owner_turn_usage(actor.id, ctx=ctx)
             self.run_triggers("owner_turn_start", ctx)
             self.run_triggers("regular_turn_start", ctx)
         elif turn_kind == "extra_turn":
@@ -2891,7 +3068,6 @@ class BattleSimulator:
         mode = step.get("timing", "manual")
         turn_kind = step.get("turn_kind")
         action = self.get_action_def(actor_id, action_id)
-        targets = self.normalize_targets(step["targets"]) if "targets" in step else self.select_targets(action, None)
         step_context = {"route_step": step, "turn_kind": turn_kind}
         if step.get("extra_turn_type") is not None:
             step_context["extra_turn_type"] = step.get("extra_turn_type")
@@ -2901,14 +3077,17 @@ class BattleSimulator:
             status_registry=self._status_registry,
             skill_registry=self._skill_registry,
         )
-        action_request = ActionRequest.from_route_step(step, targets or [])
+        action_request = ActionRequest.from_route_step(step, [])
         action_request.timing = mode
         settlement.begin_action(action_request)
         settlement.capture_before_snapshot(self.full_scene_snapshot())
-        settlement.record_target(targets or [], method="explicit" if "targets" in step else "auto")
         step_context["_settlement"] = settlement
         # 让 run_route 能取出结算数据
         step["_settlement"] = settlement
+
+        targets = self.normalize_targets(step["targets"]) if "targets" in step else self.select_targets(action, step_context)
+        settlement.transition.request.target_ids = list(targets or [])
+        settlement.record_target(targets or [], method="explicit" if "targets" in step else "auto")
 
         if mode == "regular_turn":
             self.advance_until_regular_actor(actor_id, ctx=step_context)
@@ -2972,89 +3151,114 @@ class BattleSimulator:
     def select_targets(self, action: dict[str, Any], context: Optional[dict[str, Any]]) -> list[str]:
         policy = action.get("target_policy", "manual")
         actor = self.state.unit(action["actor_id"])
+        context = context or {}
+
+        def finish(resolved: list[str], reason: str, candidates: Optional[list[UnitState]] = None, extra: Optional[dict[str, Any]] = None) -> list[str]:
+            resolved_ids = [str(t) for t in (resolved or [])]
+            self.record_target_decision(
+                context,
+                {
+                    "stage": "select_targets",
+                    "actor_id": actor.id,
+                    "action_id": action.get("id"),
+                    "policy": str(policy or ""),
+                    "reason": reason,
+                    "context_target_id": context.get("target_id"),
+                    "context_targets": self.normalize_targets(context.get("targets")) or [],
+                    "candidate_target_ids": [u.id for u in (candidates or [])],
+                    "resolved_target_ids": resolved_ids,
+                    **(extra or {}),
+                },
+            )
+            return resolved_ids
+
         if actor.side == "enemy":
             pending = actor.flags.get("enemy_ai_pending_target_selector")
             pending_action = actor.flags.get("enemy_ai_pending_target_action")
             if isinstance(pending, dict) and (not pending_action or str(pending_action) == str(action.get("id"))):
-                picked = self.select_targets_from_enemy_ai_selector(actor, pending, action, context or {})
+                picked = self.select_targets_from_enemy_ai_selector(actor, pending, action, context)
                 if picked:
                     self.commit_unit_flag_remove(actor, "enemy_ai_pending_target_selector", reason="enemy_ai:consume_pending_target_selector", ctx=context, payload={"action": action.get("id"), "targets": picked})
                     self.commit_unit_flag_remove(actor, "enemy_ai_pending_target_action", reason="enemy_ai:consume_pending_target_action", ctx=context, payload={"action": action.get("id"), "targets": picked})
                     self.state.log_event("enemy_ai", f"{actor.id} selected targets via ConfigAI selector", {"action": action.get("id"), "targets": picked, "selector": pending})
-                    return picked
+                    return finish(picked, "enemy_ai_pending_target_selector", extra={"selector": deepcopy(pending)})
         if policy == "manual":
             if not action.get("damage_packets") and not action.get("damage_packet"):
-                return []
+                return finish([], "manual_no_damage")
             raise SimulatorError(f"Action {action['id']} requires explicit targets")
         if policy in {"lowest_hp_percent_enemy", "lowest_hp_enemy"}:
             candidates = self.state.enemies_alive()
             if not candidates:
-                return []
-            return [min(candidates, key=lambda u: u.hp_percent).id]
+                return finish([], "no_alive_enemies", candidates)
+            return finish([min(candidates, key=lambda u: u.hp_percent).id], "lowest_hp_percent_enemy", candidates)
         if policy in {"random_enemy", "random_alive_enemy", "first_enemy"}:
             candidates = self.state.enemies_alive()
             if not candidates:
-                return []
+                return finish([], "no_alive_enemies", candidates)
             # Deterministic route validation: random choices must be supplied via
             # explicit targets/events for exact replay; the alias defaults to the
             # first currently alive enemy so template actions remain runnable.
-            return [candidates[0].id]
+            return finish([candidates[0].id], "first_alive_enemy_fallback", candidates)
         if policy in {"random_ally", "random_alive_ally", "first_ally"}:
             candidates = self.ordered_alive_side_units("ally")
             if not candidates:
-                return []
-            return [candidates[0].id]
+                return finish([], "no_alive_allies", candidates)
+            return finish([candidates[0].id], "first_alive_ally_fallback", candidates)
         if policy in {"three_consecutive_allies_from_left", "sweep_three_allies_from_left"}:
-            return [u.id for u in self.ordered_alive_side_units("ally")[:3]]
+            candidates = self.ordered_alive_side_units("ally")
+            return finish([u.id for u in candidates[:3]], "leftmost_three_allies", candidates)
         if policy in {"three_consecutive_allies_from_right", "sweep_three_allies_from_right"}:
-            return [u.id for u in self.ordered_alive_side_units("ally")[-3:]]
+            candidates = self.ordered_alive_side_units("ally")
+            return finish([u.id for u in candidates[-3:]], "rightmost_three_allies", candidates)
         if policy in {"selected_ally_and_adjacent", "selected_single_ally_and_adjacent", "splash_selected_ally_and_adjacent"}:
             selected = None
-            if context:
-                ctx_targets = self.normalize_targets(context.get("targets")) or []
-                selected = context.get("target_id") or (ctx_targets[0] if ctx_targets else None)
-            return self.adjacent_units_from_order(self.ordered_alive_side_units("ally"), selected, include_selected=True)
+            ctx_targets = self.normalize_targets(context.get("targets")) or []
+            selected = context.get("target_id") or (ctx_targets[0] if ctx_targets else None)
+            candidates = self.ordered_alive_side_units("ally")
+            return finish(self.adjacent_units_from_order(candidates, selected, include_selected=True), "selected_ally_and_adjacent", candidates, {"selected_target_id": selected})
         if policy in {"all_allies_split", "split_all_allies", "even_distribution_all_allies"}:
-            return [u.id for u in self.ordered_alive_side_units("ally")]
+            candidates = self.ordered_alive_side_units("ally")
+            return finish([u.id for u in candidates], "all_allies_split", candidates)
         if policy == "same_target":
             target_id = None
-            if context:
-                target_id = context.get("target_id")
-                if not target_id:
-                    context_targets = self.normalize_targets(context.get("targets")) or []
-                    if len(context_targets) == 1:
-                        target_id = context_targets[0]
+            target_id = context.get("target_id")
+            if not target_id:
+                context_targets = self.normalize_targets(context.get("targets")) or []
+                if len(context_targets) == 1:
+                    target_id = context_targets[0]
             if target_id:
                 # A deferred same-target queued action should not pay costs or
                 # resolve into a dead/missing target after the source hit has
                 # defeated it. Returning [] lets drain_queues skip it cleanly.
                 if target_id in self.state.units and self.state.unit(target_id).alive:
-                    return [target_id]
-                return []
+                    return finish([target_id], "same_live_target")
+                return finish([], "same_target_dead_or_missing", extra={"selected_target_id": target_id})
             raise SimulatorError("same_target policy needs context.target_id or one selected action target")
         if policy == "original_target_or_lowest_hp_percent_enemy":
             if context and context.get("target_id") and context["target_id"] in self.state.units and self.state.unit(context["target_id"]).alive:
-                return [context["target_id"]]
+                return finish([context["target_id"]], "original_target_alive")
             candidates = self.state.enemies_alive()
             if not candidates:
-                return []
-            return [min(candidates, key=lambda u: u.hp_percent).id]
+                return finish([], "no_alive_enemies", candidates)
+            return finish([min(candidates, key=lambda u: u.hp_percent).id], "fallback_lowest_hp_percent_enemy", candidates)
         if policy in {"all_enemies", "enemy_side", "enemies_or_global_enemy_side"}:
-            return [u.id for u in self.state.enemies_alive()]
+            candidates = self.state.enemies_alive()
+            return finish([u.id for u in candidates], "all_alive_enemies", candidates)
         if policy in {"all_allies", "all_player_characters", "ally_side", "all_ally_characters", "all_ally_targets", "ally_characters"}:
-            return [u.id for u in self.ordered_alive_side_units("ally")]
+            candidates = self.ordered_alive_side_units("ally")
+            return finish([u.id for u in candidates], "all_alive_allies", candidates)
         if policy in {"highest_hp_enemy", "enemy_highest_current_hp", "highest_hp_among_hit_targets"}:
             candidates = self.state.enemies_alive()
             if not candidates:
-                return []
-            return [max(candidates, key=lambda u: u.hp).id]
+                return finish([], "no_alive_enemies", candidates)
+            return finish([max(candidates, key=lambda u: u.hp).id], "highest_hp_enemy", candidates)
         if policy in {"selected_ally", "selected_single_ally", "selected_enemy", "manual_selected"}:
             if context:
                 ctx_targets = self.normalize_targets(context.get("targets")) or []
-                return [t for t in ctx_targets if t in self.state.units and self.state.unit(t).alive]
+                return finish([t for t in ctx_targets if t in self.state.units and self.state.unit(t).alive], "manual_selected")
             raise SimulatorError(f"Action {action['id']} with target_policy {policy} requires explicit targets")
         if policy in {"self", "actor"}:
-            return [actor.id]
+            return finish([actor.id], "self")
         raise SimulatorError(f"Unknown target policy: {policy}")
 
     def normalize_damage_packet_schema(self, packet: dict[str, Any]) -> dict[str, Any]:
@@ -3107,16 +3311,37 @@ class BattleSimulator:
         return packet
 
     def resolve_packet_targets(self, packet: dict[str, Any], action: dict[str, Any], action_ctx: dict[str, Any], default_targets: list[str]) -> list[str]:
+        packet_id = packet.get("id") or packet.get("packet_id") or ""
+
+        def finish(resolved: list[str], reason: str, extra: Optional[dict[str, Any]] = None) -> list[str]:
+            resolved_ids = [str(t) for t in (resolved or [])]
+            self.record_target_decision(
+                action_ctx,
+                {
+                    "stage": "packet_targets",
+                    "actor_id": action.get("actor_id"),
+                    "action_id": action.get("id"),
+                    "packet_id": packet_id,
+                    "policy": str(packet.get("target_policy") or action.get("target_policy") or ""),
+                    "reason": reason,
+                    "default_target_ids": list(default_targets or []),
+                    "resolved_target_ids": resolved_ids,
+                    **(extra or {}),
+                },
+            )
+            return resolved_ids
+
         if "targets" in packet:
-            return self.normalize_targets(packet.get("targets")) or []
+            return finish(self.normalize_targets(packet.get("targets")) or [], "packet_explicit_targets", {"packet_targets": deepcopy(packet.get("targets"))})
         if "target" in packet:
             raw_target = packet.get("target")
             if isinstance(raw_target, str) and raw_target in self.state.units:
-                return [raw_target]
-            return self.resolve_effect_targets({"target": raw_target}, action_ctx, default="target")
+                return finish([raw_target], "packet_explicit_target", {"packet_target": raw_target})
+            return finish(self.resolve_effect_targets({"target": raw_target}, action_ctx, default="target"), "packet_resolved_target_ref", {"packet_target": deepcopy(raw_target)})
         if packet.get("target_policy"):
-            return self.select_targets({**action, **packet}, action_ctx)
-        return list(default_targets or [])
+            targets = self.select_targets({**action, **packet}, action_ctx)
+            return finish(targets, "packet_target_policy")
+        return finish(list(default_targets or []), "action_targets")
 
     def expand_damage_packets(self, packets: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Expand model-pack hit_model.hits into per-hit packets.
@@ -3145,6 +3370,9 @@ class BattleSimulator:
 
     def resolve_action(self, action: dict[str, Any], targets: list[str], events: dict[str, Any], context: Optional[dict[str, Any]] = None) -> None:
         context = context or {}
+        if not context.get("action_resolution_id"):
+            self._action_resolution_counter += 1
+            context["action_resolution_id"] = f"action_{self._action_resolution_counter}"
         targets = self.normalize_targets(targets) or []
         actor = self.state.unit(action["actor_id"])
         if "owner_id" not in context and actor.flags.get("owner_id"):
@@ -3180,6 +3408,7 @@ class BattleSimulator:
             "events": events,
             "context": context,
             "turn_kind": turn_kind,
+            "action_resolution_id": context.get("action_resolution_id"),
             "owner_id": context.get("owner_id"),
             # Phase 2: 结算收集器通过 action_ctx 传给所有下游函数
             "_settlement": context.get("_settlement"),
@@ -3268,7 +3497,7 @@ class BattleSimulator:
                     )
                 packet_ctx = {**action_ctx, "packet": packet_for_targets, "target_id": target_id, "target": target_unit_for_packet}
                 self.run_triggers("before_damage", packet_ctx)
-                result = self.resolve_damage_packet(packet_for_targets, actor, self.state.unit(target_id), action, events)
+                result = self.resolve_damage_packet(packet_for_targets, actor, self.state.unit(target_id), action, events, packet_ctx)
                 self.apply_damage_result(result, packet_ctx)
                 # Phase 2: 伤害记录
                 self._settle(action_ctx, "damage",
@@ -3403,7 +3632,7 @@ class BattleSimulator:
         self.tick_status_durations(event="action_end", actor=actor, turn_kind=turn_kind, action=action, ctx=action_ctx)
         if turn_kind:
             self.end_turn(actor, turn_kind, action, context=action_ctx)
-        self.check_wave_transition()
+        self.check_wave_transition(ctx=action_ctx)
         self.state.log_event("action_end", f"{actor.id} finished {action['id']}")
 
     def action_skill_point_delta(self, actor: UnitState, action: dict[str, Any]) -> tuple[int, dict[str, Any]]:
@@ -3872,13 +4101,14 @@ class BattleSimulator:
         ledger["formula"] = "base * crit * dmg_bonus * defense * res * damage_taken * universal_reduction * toughness_state * other"
         return ledger
 
-    def resolve_damage_packet(self, packet: dict[str, Any], actor: UnitState, target: UnitState, action: dict[str, Any], events: dict[str, Any]) -> dict[str, Any]:
+    def resolve_damage_packet(self, packet: dict[str, Any], actor: UnitState, target: UnitState, action: dict[str, Any], events: dict[str, Any], ctx: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         packet = self.normalize_damage_packet_schema(packet)
         if "multiplier" not in packet or coerce_float(packet.get("multiplier", 0.0)) == 0.0:
             ref_mult = self.resolve_packet_multiplier_reference(packet, actor)
             if ref_mult is not None:
                 packet["multiplier"] = ref_mult
-        dmg_ctx_for_element = {"action": action, "packet": packet, "actor_id": actor.id, "actor": actor, "owner_id": actor.flags.get("owner_id"), "target_id": target.id, "target": target}
+        base_ctx = dict(ctx or {})
+        dmg_ctx_for_element = {**base_ctx, "action": action, "packet": packet, "actor_id": actor.id, "actor": actor, "owner_id": actor.flags.get("owner_id"), "target_id": target.id, "target": target}
         element = self.resolve_dynamic_element(packet.get("element", "none"), dmg_ctx_for_element)
         packet["element"] = element
         damage_type = str(packet.get("damage_type", packet.get("type", "direct_damage")) or "direct_damage").lower()
@@ -3889,7 +4119,7 @@ class BattleSimulator:
         scaling_stat = packet.get("scaling_stat", "atk")
         multiplier = coerce_float(packet.get("multiplier", 0.0))
         flat_damage = coerce_float(packet.get("flat_damage", 0.0))
-        dmg_ctx = {"action": action, "packet": packet, "actor_id": actor.id, "actor": actor, "owner_id": actor.flags.get("owner_id"), "target_id": target.id, "target": target}
+        dmg_ctx = {**base_ctx, "action": action, "packet": packet, "actor_id": actor.id, "actor": actor, "owner_id": actor.flags.get("owner_id"), "target_id": target.id, "target": target}
         # Use contextual_stat for the scaling stat, not only for Crit stats.
         # Otherwise conditional ATK/HP/DEF bonuses attached to a specific action or
         # packet are silently ignored in damage resolution.
@@ -4013,9 +4243,31 @@ class BattleSimulator:
         crit_rate = self.contextual_stat(actor, "crit_rate", ctx)
         crit_dmg = self.contextual_stat(actor, "crit_dmg", ctx)
         if coerce_bool(packet.get("forced_crit", False), default=False):
-            return {"is_crit": True, "multiplier": 1 + crit_dmg, "source": "forced", "crit_rate": crit_rate, "crit_dmg": crit_dmg}
+            result = {"is_crit": True, "multiplier": 1 + crit_dmg, "source": "forced", "crit_rate": crit_rate, "crit_dmg": crit_dmg}
+            self.record_rng_event(
+                ctx,
+                event_type="crit",
+                event_id=str(packet.get("crit_event_id") or f"{action['actor_id']}.{action['id']}.{packet.get('id','damage')}.crit"),
+                mode="forced",
+                outcome=True,
+                probability={"crit_rate": crit_rate, "crit_dmg": crit_dmg},
+                payload={"actor_id": actor.id, "action_id": action.get("id"), "packet_id": packet.get("id"), "multiplier": result["multiplier"]},
+                reason="rng:crit",
+            )
+            return result
         if not coerce_bool(packet.get("can_crit", True), default=True):
-            return {"is_crit": False, "multiplier": 1.0, "source": "cannot_crit", "crit_rate": crit_rate, "crit_dmg": crit_dmg}
+            result = {"is_crit": False, "multiplier": 1.0, "source": "cannot_crit", "crit_rate": crit_rate, "crit_dmg": crit_dmg}
+            self.record_rng_event(
+                ctx,
+                event_type="crit",
+                event_id=str(packet.get("crit_event_id") or f"{action['actor_id']}.{action['id']}.{packet.get('id','damage')}.crit"),
+                mode="cannot_crit",
+                outcome=False,
+                probability={"crit_rate": crit_rate, "crit_dmg": crit_dmg},
+                payload={"actor_id": actor.id, "action_id": action.get("id"), "packet_id": packet.get("id"), "multiplier": result["multiplier"]},
+                reason="rng:crit",
+            )
+            return result
         key = packet.get("crit_event_id") or f"{action['actor_id']}.{action['id']}.{packet.get('id','damage')}.crit"
         mode = events.get(key, events.get("__crit_mode__", self.settings.get("default_crit_mode", "expected")))
         mode_norm = coerce_comparison_value(mode)
@@ -4030,7 +4282,18 @@ class BattleSimulator:
             mult = 1 + clamp(crit_rate, 0.0, 1.0) * crit_dmg
         else:
             raise SimulatorError(f"Unknown crit event mode for {key}: {mode}")
-        return {"event_id": key, "is_crit": is_crit, "multiplier": mult, "source": mode, "crit_rate": crit_rate, "crit_dmg": crit_dmg}
+        result = {"event_id": key, "is_crit": is_crit, "multiplier": mult, "source": mode, "crit_rate": crit_rate, "crit_dmg": crit_dmg}
+        self.record_rng_event(
+            ctx,
+            event_type="crit",
+            event_id=str(key),
+            mode=mode,
+            outcome=is_crit,
+            probability={"crit_rate": crit_rate, "crit_dmg": crit_dmg},
+            payload={"actor_id": actor.id, "action_id": action.get("id"), "packet_id": packet.get("id"), "multiplier": mult},
+            reason="rng:crit",
+        )
+        return result
 
 
     def applicable_status_modifiers(self, unit: UnitState, ctx: dict[str, Any]) -> list[tuple[StatusEffect, dict[str, Any]]]:
@@ -5575,7 +5838,11 @@ class BattleSimulator:
             # Automatically reset at that owner's regular turn start in v0.2.
             return f"{trig.get('id')}:owner_turn:{owner}"
         if scope == "action_resolution":
-            return f"{trig.get('id')}:action:{id(ctx.get('action'))}"
+            action_resolution_id = ctx.get("action_resolution_id") or (ctx.get("context") or {}).get("action_resolution_id")
+            if not action_resolution_id:
+                action = ctx.get("action") if isinstance(ctx.get("action"), dict) else {}
+                action_resolution_id = f"{ctx.get('actor_id', 'unknown')}.{action.get('id', action.get('action_id', 'unknown'))}"
+            return f"{trig.get('id')}:action:{action_resolution_id}"
         if scope in {"per_trigger_actor", "trigger_actor", "per_source_actor", "source_actor"}:
             # Generic support for mechanics such as "once per other ally".
             # The trigger owner remains the listener; ctx.actor_id is the unit
@@ -5596,7 +5863,13 @@ class BattleSimulator:
         if not trig.get("usage_limit") or not isinstance(trig.get("usage_limit"), dict):
             return
         key = self.trigger_usage_key(trig, ctx)
-        self.state.trigger_usage[key] = self.state.trigger_usage.get(key, 0) + 1
+        self.commit_trigger_usage(
+            key,
+            self.state.trigger_usage.get(key, 0) + 1,
+            reason="trigger_usage:increment",
+            ctx=ctx,
+            payload={"trigger_id": trig.get("id"), "usage_limit": deepcopy(trig.get("usage_limit", {}))},
+        )
 
     def eval_condition_string(self, cond: str, ctx: dict[str, Any]) -> bool:
         """Evaluate common model-pack string predicates.
@@ -6394,6 +6667,23 @@ class BattleSimulator:
         for uid in out:
             if uid and uid in self.state.units and uid not in seen:
                 seen.add(uid); result.append(uid)
+        if "type" in eff:
+            self.record_target_decision(
+                ctx,
+                {
+                    "stage": "effect_targets",
+                    "actor_id": ctx.get("actor_id"),
+                    "action_id": (ctx.get("action") or {}).get("id") if isinstance(ctx.get("action"), dict) else "",
+                    "effect_type": eff.get("type"),
+                    "effect_id": eff.get("id") or eff.get("status_id") or eff.get("buff_id") or "",
+                    "raw_target": deepcopy(raw),
+                    "target_specs": deepcopy(specs),
+                    "default": default,
+                    "context_target_id": ctx.get("target_id"),
+                    "context_targets": self.normalize_targets(ctx.get("targets")) or [],
+                    "resolved_target_ids": list(result),
+                },
+            )
         return result
 
     def eval_target_lists_intersect(self, spec: dict[str, Any], ctx: dict[str, Any]) -> bool:
@@ -6778,36 +7068,76 @@ class BattleSimulator:
             prob = {"base_chance": base, "final_chance": clamp(base, 0.0, 1.0), "raw_chance": base, "actor_id": ctx.get("actor_id"), "target_id": target_id}
             audit_type = "plain_chance_gate"
         mode_norm = str(mode).strip().lower() if isinstance(mode, str) else mode
+
+        def finish(allowed: bool) -> tuple[bool, dict[str, Any]]:
+            audit = {"event_id": event_id, "mode": mode, "gate_type": audit_type, **prob}
+            self.record_rng_event(
+                ctx,
+                event_type="chance_gate",
+                event_id=str(event_id),
+                mode=mode,
+                outcome=allowed,
+                probability=prob,
+                payload={"gate_type": audit_type, "target_id": target_id},
+                reason="rng:chance_gate",
+            )
+            return allowed, audit
+
         if mode in (False,) or mode_norm in {"false", "fail", "resisted", "miss", "no", "0", "off"}:
-            return False, {"event_id": event_id, "mode": mode, "gate_type": audit_type, **prob}
+            return finish(False)
         if mode in (True,) or mode_norm in {"true", "success", "hit", "yes", "1", "on", "guaranteed", "always"}:
-            return True, {"event_id": event_id, "mode": mode, "gate_type": audit_type, **prob}
+            return finish(True)
         if mode_norm in {"threshold", "needs_100", "require_100"}:
-            return prob.get("final_chance", 1.0) >= 1.0 - EPS, {"event_id": event_id, "mode": mode, "gate_type": audit_type, **prob}
-        return True, {"event_id": event_id, "mode": mode, "gate_type": audit_type, **prob}
+            return finish(prob.get("final_chance", 1.0) >= 1.0 - EPS)
+        return finish(True)
 
     def effect_hit_gate_allows(self, gate: Any, eff: dict[str, Any], ctx: dict[str, Any], target_id: str) -> tuple[bool, dict[str, Any]]:
         if gate is None:
             return True, {}
         if not isinstance(gate, dict):
             allowed = coerce_bool(gate, default=True)
+            self.record_rng_event(
+                ctx,
+                event_type="effect_hit",
+                event_id=str(eff.get("event_id") or f"{ctx.get('actor_id')}.{eff.get('status',{}).get('id','status')}.{target_id}.effect_hit"),
+                mode=gate,
+                outcome=allowed,
+                probability={},
+                payload={"target_id": target_id, "effect_type": eff.get("type"), "effect_id": eff.get("id") or eff.get("status_id") or eff.get("buff_id") or ""},
+                reason="rng:effect_hit",
+            )
             return allowed, {"mode": gate, "allowed": allowed}
         event_id = gate.get("event_id") or eff.get("event_id") or f"{ctx.get('actor_id')}.{eff.get('status',{}).get('id','status')}.{target_id}.effect_hit"
         default_mode = gate.get("mode", gate.get("default", self.settings.get("default_effect_hit_mode", "success")))
         mode = (ctx.get("events") or {}).get(event_id, (self.raw_case.get("events") or {}).get(event_id, default_mode))
         prob = self.effect_hit_probability(gate, ctx, target_id) if any(k in gate for k in ("base_chance", "base", "chance", "probability")) else {}
         mode_norm = str(mode).strip().lower() if isinstance(mode, str) else mode
+
+        def finish_effect_hit(allowed: bool) -> tuple[bool, dict[str, Any]]:
+            audit = {"event_id": event_id, "mode": mode, **prob}
+            self.record_rng_event(
+                ctx,
+                event_type="effect_hit",
+                event_id=str(event_id),
+                mode=mode,
+                outcome=allowed,
+                probability=prob,
+                payload={"target_id": target_id, "effect_type": eff.get("type"), "effect_id": eff.get("id") or eff.get("status_id") or eff.get("buff_id") or ""},
+                reason="rng:effect_hit",
+            )
+            return allowed, audit
+
         if mode in (False,) or mode_norm in {"false", "fail", "resisted", "miss", "no", "0", "off"}:
-            return False, {"event_id": event_id, "mode": mode, **prob}
+            return finish_effect_hit(False)
         if mode in (True,) or mode_norm in {"true", "success", "hit", "yes", "1", "on"}:
-            return True, {"event_id": event_id, "mode": mode, **prob}
+            return finish_effect_hit(True)
         if mode_norm in {"guaranteed", "always"}:
-            return True, {"event_id": event_id, "mode": mode, **prob}
+            return finish_effect_hit(True)
         if mode_norm in {"threshold", "needs_100", "require_100"}:
-            return prob.get("final_chance", 1.0) >= 1.0 - EPS, {"event_id": event_id, "mode": mode, **prob}
+            return finish_effect_hit(prob.get("final_chance", 1.0) >= 1.0 - EPS)
         # Deterministic route validation defaults to applying the status and
         # logging the probability.  Stochastic/search modes can override via events.
-        return True, {"event_id": event_id, "mode": mode, **prob}
+        return finish_effect_hit(True)
 
     def apply_status_resource_side_effects(self, unit: UnitState, status: StatusEffect, ctx: Optional[dict[str, Any]] = None) -> None:
         """Apply non-stat resource side effects carried by formula-bucket hints.
@@ -7559,7 +7889,7 @@ class BattleSimulator:
                         continue
                     packet_ctx = {**ctx, "action": action, "packet": packet, "target_id": target_id, "target": self.state.unit(target_id)}
                     self.run_triggers("before_damage", packet_ctx)
-                    result = self.resolve_damage_packet(packet, actor, self.state.unit(target_id), action, ctx.get("events", {}))
+                    result = self.resolve_damage_packet(packet, actor, self.state.unit(target_id), action, ctx.get("events", {}), packet_ctx)
                     self.apply_damage_result(result, packet_ctx)
                     packet_ctx["damage_result"] = result
                     self.run_triggers("after_damage", packet_ctx)
@@ -7729,6 +8059,16 @@ class BattleSimulator:
                 if idx is None:
                     idx = 0
                 value = values[idx]
+                self.record_rng_event(
+                    ctx,
+                    event_type="random_select_flag",
+                    event_id=str(event_id),
+                    mode="forced" if forced is not None else "deterministic_first",
+                    outcome={"index": idx, "value": value},
+                    probability={"choice_count": len(values)},
+                    payload={"key": eff.get("key"), "values": deepcopy(values), "forced": deepcopy(forced)},
+                    reason="rng:random_select_flag",
+                )
                 self.commit_global_flag(str(eff["key"]), coerce_comparison_value(value), reason="effect:random_select_flag", ctx=ctx, payload={"event_id": event_id, "index": idx, "values": values})
                 self.state.log_event("random_select", f"Random selected {eff['key']}={value}", {"event_id": event_id, "index": idx, "values": values})
         elif etype == "set_dynamic_entity_param":
@@ -7804,6 +8144,23 @@ class BattleSimulator:
                 selected_rows = [row for row in choices if int(row.get("index", -1)) in selected_indices]
                 if not selected_rows:
                     selected_rows = [choices[0]]; selected_indices = [int(choices[0].get("index", 0))]
+                self.record_rng_event(
+                    ctx,
+                    event_type="random_choice",
+                    event_id=str(event_id),
+                    mode="forced" if forced is not None else "deterministic_order",
+                    outcome={"indices": list(selected_indices), "index": selected_indices[0] if selected_indices else None},
+                    probability={"choice_count": len(choices), "odds": deepcopy(eff.get("odds"))},
+                    payload={
+                        "forced": deepcopy(forced),
+                        "available_indices": list(available_indices),
+                        "random_count": random_count,
+                        "random_unique": random_unique,
+                        "random_mask_key": mask_key,
+                        "used_indices_before": sorted(used_indices),
+                    },
+                    reason="rng:random_choice",
+                )
                 if random_unique and mask_key:
                     new_used = sorted(used_indices.union(set(selected_indices)))
                     if coerce_bool(eff.get("auto_reset_random_mask", False), default=False) and len(new_used) >= len(available_indices):
@@ -7973,7 +8330,7 @@ class BattleSimulator:
                 if result.get("target_defeated"):
                     self.run_triggers("after_defeat_enemy", nested_ctx)
             if not ctx.get("action"):
-                self.check_wave_transition()
+                self.check_wave_transition(ctx=ctx)
         elif etype == "damage_unit":
             raw_targets = self.resolve_effect_targets(eff, ctx, default="target")
             for target_id in self.derived_damage_live_targets(raw_targets, ctx, effect_name=str(eff.get("id") or "damage_unit")):
@@ -8033,7 +8390,7 @@ class BattleSimulator:
             # consistent with normal damage packets and prevents later packets in
             # the same action from hitting a newly spawned wave.
             if not ctx.get("action"):
-                self.check_wave_transition()
+                self.check_wave_transition(ctx=ctx)
         elif etype == "heal_unit":
             for target_id in self.resolve_effect_targets(eff, ctx, default="actor"):
                 unit = self.state.unit(target_id)
@@ -8086,7 +8443,12 @@ class BattleSimulator:
             unit = UnitState.from_dict(unit_id, raw)
             self.ensure_souldragon_unit_defaults(unit)
             unit.remaining_av = self.unit_initial_av(unit, raw)
-            self.state.units[unit_id] = unit
+            self.commit_unit_add(
+                unit,
+                reason="effect:summon_unit",
+                ctx=ctx,
+                payload={"effect": deepcopy(eff)},
+            )
             self.state.log_event("summon", f"Summon unit {unit_id}", {"unit": unit.to_json()})
         elif etype == "modify_toughness":
             for target_id in self.resolve_effect_targets(eff, ctx, default="target"):
@@ -8145,10 +8507,17 @@ class BattleSimulator:
         elif etype == "reset_trigger_usage":
             prefix = eff.get("prefix") or eff.get("trigger_id")
             if prefix:
+                removed = []
                 for k in list(self.state.trigger_usage):
                     if k.startswith(str(prefix)):
-                        del self.state.trigger_usage[k]
-                self.state.log_event("effect", f"Reset trigger usage prefix {prefix}")
+                        removed.append(k)
+                        self.commit_trigger_usage_remove(
+                            k,
+                            reason="effect:reset_trigger_usage",
+                            ctx=ctx,
+                            payload={"effect": deepcopy(eff), "prefix": prefix},
+                        )
+                self.state.log_event("effect", f"Reset trigger usage prefix {prefix}", {"removed": removed})
         elif etype == "zone_additional_damage":
             source_id = eff.get("source") or eff.get("actor") or eff.get("owner") or ctx.get("owner_id") or ctx.get("actor_id")
             if source_id not in self.state.units:
@@ -8194,7 +8563,7 @@ class BattleSimulator:
                     break
                 packet_ctx = {**ctx, "actor_id": source_id, "actor": source, "action": synthetic_action, "packet": packet, "target_id": target_id, "target": self.state.unit(target_id)}
                 self.run_triggers("before_damage", packet_ctx)
-                result = self.resolve_damage_packet(packet, source, self.state.unit(target_id), synthetic_action, [])
+                result = self.resolve_damage_packet(packet, source, self.state.unit(target_id), synthetic_action, [], packet_ctx)
                 self.apply_damage_result(result, packet_ctx)
                 dealt_total += coerce_float(result.get("final_damage", result.get("damage", 0.0)))
                 dealt_targets.append(target_id)
@@ -8596,15 +8965,25 @@ class BattleSimulator:
                 continue
             targets = self.normalize_targets(item.get("targets"))
             resolved_from_deferred_policy = targets is None
+            settlement: Optional[SettlementCollector] = None
             if targets is None:
                 action["target_policy"] = item.get("defer_target_policy", action.get("target_policy", "manual"))
-                targets = self.select_targets(action, {"target_id": item.get("context_target_id")})
+                settlement = self.begin_queued_action_settlement(item, qname, guard, [], target_source="deferred_policy")
+                selector_context = {
+                    "target_id": item.get("context_target_id"),
+                    "queued": True,
+                    "turn_kind": item.get("turn_kind"),
+                    "_settlement": settlement,
+                }
+                targets = self.select_targets(action, selector_context)
+                settlement.record_target(targets or [], method="deferred_policy")
             if resolved_from_deferred_policy and not targets:
                 # Support/utility queued actions may intentionally have no explicit
                 # target.  Only skip empty-target queued actions when their action
                 # actually contains offensive damage that needs a live target.
                 if not self.queued_action_has_valid_damage_target(action, []):
-                    settlement = self.begin_queued_action_settlement(item, qname, guard, [], target_source="deferred_policy")
+                    if settlement is None:
+                        settlement = self.begin_queued_action_settlement(item, qname, guard, [], target_source="deferred_policy")
                     self.commit_queue_popleft(
                         qname,
                         reason="queue:popleft:skip_no_deferred_targets",
@@ -8620,7 +8999,8 @@ class BattleSimulator:
                     self.record_queued_action_transition(item, qname, guard, settlement, skipped=True, skip_reason="deferred_target_policy_no_valid_targets")
                     continue
             if not self.queued_action_has_valid_damage_target(action, targets or []):
-                settlement = self.begin_queued_action_settlement(item, qname, guard, targets or [], target_source="deferred_policy" if resolved_from_deferred_policy else "queued_item")
+                if settlement is None:
+                    settlement = self.begin_queued_action_settlement(item, qname, guard, targets or [], target_source="deferred_policy" if resolved_from_deferred_policy else "queued_item")
                 self.commit_queue_popleft(
                     qname,
                     reason="queue:popleft:skip_no_live_damage_targets",
@@ -8637,7 +9017,8 @@ class BattleSimulator:
                 continue
             events = {**default_events, **item.get("events", {})}
             target_source = "deferred_policy" if resolved_from_deferred_policy else "queued_item"
-            settlement = self.begin_queued_action_settlement(item, qname, guard, targets or [], target_source=target_source)
+            if settlement is None:
+                settlement = self.begin_queued_action_settlement(item, qname, guard, targets or [], target_source=target_source)
             q_context = {"queued": True, "turn_kind": item.get("turn_kind"), "_settlement": settlement}
             self.commit_queue_popleft(
                 qname,

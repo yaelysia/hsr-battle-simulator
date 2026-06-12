@@ -5,10 +5,11 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass, field, asdict
 from typing import Any
 
-from hsr_engine.kernel import ActionRequest, ActionTransition, SourceRef, StateChange, TargetResolution
+from hsr_engine.kernel import ActionRequest, ActionTransition, RNGEvent, SourceRef, StateChange, TargetResolution
 
 from .records import (
     DamageRecord,
@@ -92,6 +93,9 @@ class SettlementCollector:
     def record_state_change(self, change: StateChange) -> None:
         self.transition.append_change(change)
 
+    def record_rng_event(self, event: RNGEvent) -> None:
+        self.transition.append_rng_event(event)
+
     def _action_source(self, *, source_id: str = "", owner_id: str = "") -> SourceRef:
         request = self.transition.request
         return SourceRef.action(
@@ -131,6 +135,9 @@ class SettlementCollector:
 
     def record_target(self, target_ids: list[str], method: str = "explicit") -> None:
         request = self.transition.request
+        decision_trace = []
+        if self.transition.target_resolution is not None:
+            decision_trace = deepcopy(self.transition.target_resolution.decision_trace)
         self.target_record = TargetRecord(
             action_id=request.action_id, actor_id=request.actor_id,
             target_ids=list(target_ids), target_selection_reason=method,
@@ -143,7 +150,19 @@ class SettlementCollector:
             method=str(method or ""),
             reason=str(method or ""),
             source=request.source,
+            decision_trace=decision_trace,
         )
+
+    def record_target_decision(self, decision: dict[str, Any]) -> None:
+        request = self.transition.request
+        if self.transition.target_resolution is None:
+            self.transition.target_resolution = TargetResolution(
+                actor_id=request.actor_id,
+                action_id=request.action_id,
+                requested_target_ids=list(request.target_ids or []),
+                source=request.source,
+            )
+        self.transition.target_resolution.decision_trace.append(deepcopy(decision))
 
     def record_damage(self, **kwargs: Any) -> None:
         """kwargs 映射到 DamageRecord 字段名不匹配时做转换。"""
