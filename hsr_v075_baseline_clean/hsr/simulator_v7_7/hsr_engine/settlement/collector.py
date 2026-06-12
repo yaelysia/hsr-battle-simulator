@@ -10,6 +10,7 @@ from dataclasses import dataclass, field, asdict
 from typing import Any
 
 from hsr_engine.kernel import ActionRequest, ActionTransition, ProcessEvent, RNGEvent, SourceRef, StateChange, TargetResolution
+from hsr_engine.transition_reducer import validate_transition_replay
 
 from .records import (
     DamageRecord,
@@ -525,6 +526,8 @@ class SettlementCollector:
 
     def to_dict(self) -> dict[str, Any]:
         """转换为 JSON 兼容字典，供 run_route 写入 trace_entry。"""
+        transition = self.transition.to_dict()
+        transition["replay_validation"] = validate_transition_replay(transition)
         return {
             "damage_records": [asdict(r) for r in self.damage_records],
             "shield_records": [asdict(r) for r in self.shield_records],
@@ -540,5 +543,5 @@ class SettlementCollector:
             "dot_records": [asdict(r) for r in self.dot_records],
             "super_break_records": [asdict(r) for r in self.super_break_records],
             "target_record": asdict(self.target_record) if self.target_record else None,
-            "transition": self.transition.to_dict(),
+            "transition": transition,
         }
