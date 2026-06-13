@@ -2646,6 +2646,71 @@ class BattleSimulator:
     def action_interval(self, unit: UnitState) -> float:
         return 10000.0 / self.effective_speed(unit)
 
+    def advance_regular_timeline(
+        self,
+        *,
+        alive_units: list[UnitState],
+        delta: float,
+        next_actor_id: str,
+        reason: str,
+        ctx: Optional[dict[str, Any]] = None,
+    ) -> None:
+        old_global_av = self.state.av
+        old_cycle = self.state.cycle
+        new_global_av = normalize_av(old_global_av + delta, old_global_av)
+        unit_changes = []
+        for unit in alive_units:
+            old_remaining = unit.remaining_av
+            new_remaining = normalize_av(old_remaining - delta, old_remaining)
+            unit_changes.append(
+                {
+                    "unit_id": unit.id,
+                    "side": unit.side,
+                    "old_remaining_av": old_remaining,
+                    "new_remaining_av": new_remaining,
+                    "delta": new_remaining - old_remaining,
+                    "old_absolute_av": absolute_av(old_global_av, old_remaining),
+                    "new_absolute_av": absolute_av(new_global_av, new_remaining),
+                    "speed": self.effective_speed(unit),
+                    "action_interval": self.action_interval(unit),
+                }
+            )
+
+        payload = {"delta": delta, "next_actor_id": next_actor_id}
+        global_change = self.commit_global_av(new_global_av, reason=reason, ctx=ctx, payload=payload)
+        self.state.update_cycle_index(
+            coerce_float(self.settings.get("first_cycle_av", 150.0)),
+            coerce_float(self.settings.get("later_cycle_av", 100.0)),
+        )
+        for unit, row in zip(alive_units, unit_changes):
+            change = self.commit_unit_remaining_av(
+                unit,
+                row["new_remaining_av"],
+                reason=reason,
+                ctx=ctx,
+                payload=payload,
+                av_reason=AV_TIMELINE_TICK,
+                av_detail=f"advance regular timeline by {delta:.6f} AV",
+            )
+            row["state_change_sequence"] = change.sequence
+
+        self.record_process_event(
+            ctx,
+            event_type="timeline_tick",
+            subject_id=next_actor_id,
+            reason=reason,
+            payload={
+                "old_global_av": old_global_av,
+                "new_global_av": self.state.av,
+                "delta": self.state.av - old_global_av,
+                "next_actor_id": next_actor_id,
+                "old_cycle": old_cycle,
+                "new_cycle": self.state.cycle,
+                "global_state_change_sequence": global_change.sequence,
+                "unit_av_changes": unit_changes,
+            },
+        )
+
     def advance_until_regular_actor(self, actor_id: str, ctx: Optional[dict[str, Any]] = None) -> None:
         """Advance regular timeline until actor_id is the next actor.
 
@@ -2664,19 +2729,13 @@ class BattleSimulator:
                 f"in {next_unit.remaining_av:.6f} AV. Resolve that action or use an interrupt action."
             )
         delta = next_unit.remaining_av
-        payload = {"delta": delta, "next_actor_id": actor_id}
-        self.commit_global_av(self.state.av + delta, reason="timeline:advance_until_regular_actor", ctx=ctx, payload=payload)
-        self.state.update_cycle_index(coerce_float(self.settings.get("first_cycle_av", 150.0)), coerce_float(self.settings.get("later_cycle_av", 100.0)))
-        for u in alive:
-            self.commit_unit_remaining_av(
-                u,
-                u.remaining_av - delta,
-                reason="timeline:advance_until_regular_actor",
-                ctx=ctx,
-                payload=payload,
-                av_reason=AV_TIMELINE_TICK,
-                av_detail=f"advance regular timeline by {delta:.6f} AV",
-            )
+        self.advance_regular_timeline(
+            alive_units=alive,
+            delta=delta,
+            next_actor_id=actor_id,
+            reason="timeline:advance_until_regular_actor",
+            ctx=ctx,
+        )
         self.state.log_event("timeline", f"Regular timeline advanced by {delta:.6f} AV; next actor {actor_id}", {"delta": delta})
 
     def advance_to_next_regular_actor(self, ctx: Optional[dict[str, Any]] = None) -> str:
@@ -2685,19 +2744,13 @@ class BattleSimulator:
             raise SimulatorError("No active units on regular timeline")
         next_unit = min(alive, key=lambda u: u.remaining_av)
         delta = next_unit.remaining_av
-        payload = {"delta": delta, "next_actor_id": next_unit.id}
-        self.commit_global_av(self.state.av + delta, reason="timeline:advance_to_next_regular_actor", ctx=ctx, payload=payload)
-        self.state.update_cycle_index(coerce_float(self.settings.get("first_cycle_av", 150.0)), coerce_float(self.settings.get("later_cycle_av", 100.0)))
-        for u in alive:
-            self.commit_unit_remaining_av(
-                u,
-                u.remaining_av - delta,
-                reason="timeline:advance_to_next_regular_actor",
-                ctx=ctx,
-                payload=payload,
-                av_reason=AV_TIMELINE_TICK,
-                av_detail=f"advance regular timeline by {delta:.6f} AV",
-            )
+        self.advance_regular_timeline(
+            alive_units=alive,
+            delta=delta,
+            next_actor_id=next_unit.id,
+            reason="timeline:advance_to_next_regular_actor",
+            ctx=ctx,
+        )
         self.state.log_event("timeline", f"Regular timeline advanced by {delta:.6f} AV; next actor {next_unit.id}", {"delta": delta})
         return next_unit.id
 
