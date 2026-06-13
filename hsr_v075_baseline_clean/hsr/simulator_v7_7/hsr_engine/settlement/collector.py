@@ -48,6 +48,7 @@ def _validate_resource_record_consistency(
     energy_records: list[dict[str, Any]],
     status_records: list[dict[str, Any]],
     av_records: list[dict[str, Any]],
+    turn_records: list[dict[str, Any]],
     damage_records: list[dict[str, Any]],
     break_records: list[dict[str, Any]],
     toughness_records: list[dict[str, Any]],
@@ -64,6 +65,7 @@ def _validate_resource_record_consistency(
     energy_record_valid_count = 0
     status_record_valid_count = 0
     av_record_valid_count = 0
+    turn_record_valid_count = 0
     damage_record_valid_count = 0
     break_record_valid_count = 0
     toughness_record_valid_count = 0
@@ -75,6 +77,7 @@ def _validate_resource_record_consistency(
     consumed_energy_changes: set[int] = set()
     consumed_status_changes: set[int] = set()
     consumed_av_changes: set[int] = set()
+    consumed_turn_changes: set[int] = set()
     consumed_damage_changes: set[int] = set()
     consumed_break_changes: set[int] = set()
     consumed_toughness_changes: set[int] = set()
@@ -351,6 +354,30 @@ def _validate_resource_record_consistency(
         if issue_count == before_issue_count:
             status_record_valid_count += 1
 
+    for record_index, rec in enumerate(turn_records):
+        before_issue_count = issue_count
+        prefix = f"turn_records[{record_index}]"
+        unit_id = str(rec.get("unit_id") or "")
+        change_index, change = matching_payload_change(
+            consumed=consumed_turn_changes,
+            change_type="turn",
+            field_path="unit.turn",
+            subject_id=unit_id,
+            payload=rec,
+        )
+        if change is None or change_index is None:
+            add_issue(
+                f"{prefix}.state_change",
+                "missing_matching_turn_state_change",
+                actual=None,
+                expected={"unit_id": unit_id, "payload": rec},
+            )
+            continue
+        consumed_turn_changes.add(change_index)
+        compare(f"{prefix}.state_change.reason", change.get("reason"), rec.get("event_type"))
+        if issue_count == before_issue_count:
+            turn_record_valid_count += 1
+
     for record_index, rec in enumerate(damage_records):
         before_issue_count = issue_count
         prefix = f"damage_records[{record_index}]"
@@ -476,8 +503,8 @@ def _validate_resource_record_consistency(
     resource_record_valid_count = hp_record_valid_count + shield_record_valid_count + sp_record_valid_count + energy_record_valid_count
     audit_record_count = len(damage_records) + len(break_records) + len(toughness_records) + len(dot_records) + len(super_break_records)
     audit_record_valid_count = damage_record_valid_count + break_record_valid_count + toughness_record_valid_count + dot_record_valid_count + super_break_record_valid_count
-    settlement_checked_record_count = resource_record_count + len(status_records) + len(av_records) + audit_record_count
-    settlement_checked_record_valid_count = resource_record_valid_count + status_record_valid_count + av_record_valid_count + audit_record_valid_count
+    settlement_checked_record_count = resource_record_count + len(status_records) + len(av_records) + len(turn_records) + audit_record_count
+    settlement_checked_record_valid_count = resource_record_valid_count + status_record_valid_count + av_record_valid_count + turn_record_valid_count + audit_record_valid_count
     return {
         "settlement_checked_record_count": settlement_checked_record_count,
         "settlement_checked_record_valid_count": settlement_checked_record_valid_count,
@@ -495,6 +522,8 @@ def _validate_resource_record_consistency(
         "status_record_valid_count": status_record_valid_count,
         "av_record_count": len(av_records),
         "av_record_valid_count": av_record_valid_count,
+        "turn_record_count": len(turn_records),
+        "turn_record_valid_count": turn_record_valid_count,
         "audit_record_count": audit_record_count,
         "audit_record_valid_count": audit_record_valid_count,
         "damage_settlement_record_count": len(damage_records),
@@ -1072,6 +1101,7 @@ class SettlementCollector:
             energy_records=energy_records,
             status_records=status_records,
             av_records=av_records,
+            turn_records=turn_records,
             damage_records=damage_records,
             break_records=break_records,
             toughness_records=toughness_records,
