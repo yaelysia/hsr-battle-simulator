@@ -42,17 +42,26 @@ def _settlement_equal(left: Any, right: Any) -> bool:
 def _validate_resource_record_consistency(
     transition: dict[str, Any],
     *,
+    hp_records: list[dict[str, Any]],
+    shield_records: list[dict[str, Any]],
     sp_records: list[dict[str, Any]],
     energy_records: list[dict[str, Any]],
+    av_records: list[dict[str, Any]],
     diff_limit: int = 20,
 ) -> dict[str, Any]:
     changes = [row for row in (transition.get("state_changes") or []) if isinstance(row, dict)]
     issues: list[dict[str, Any]] = []
     issue_count = 0
+    hp_record_valid_count = 0
+    shield_record_valid_count = 0
     sp_record_valid_count = 0
     energy_record_valid_count = 0
+    av_record_valid_count = 0
+    consumed_hp_changes: set[int] = set()
+    consumed_shield_changes: set[int] = set()
     consumed_sp_changes: set[int] = set()
     consumed_energy_changes: set[int] = set()
+    consumed_av_changes: set[int] = set()
 
     def add_issue(path: str, message: str, *, actual: Any = None, expected: Any = None) -> None:
         nonlocal issue_count
@@ -70,18 +79,19 @@ def _validate_resource_record_consistency(
         add_issue(path, "value_mismatch", actual=actual, expected=expected)
         return False
 
-    def matching_resource_change(
+    def matching_state_change(
         *,
         consumed: set[int],
         field_path: str,
         subject_id: str,
         old_value: Any,
         new_value: Any,
+        change_type: str | None = None,
     ) -> tuple[int | None, dict[str, Any] | None]:
         for change_index, change in enumerate(changes):
             if change_index in consumed:
                 continue
-            if change.get("change_type") != "resource":
+            if change_type is not None and change.get("change_type") != change_type:
                 continue
             if change.get("field_path") != field_path or change.get("subject_id") != subject_id:
                 continue
@@ -91,6 +101,9 @@ def _validate_resource_record_consistency(
                 continue
             return change_index, change
         return None, None
+
+    def matching_resource_change(**kwargs: Any) -> tuple[int | None, dict[str, Any] | None]:
+        return matching_state_change(change_type="resource", **kwargs)
 
     for record_index, rec in enumerate(sp_records):
         before_issue_count = issue_count
@@ -158,15 +171,100 @@ def _validate_resource_record_consistency(
         if issue_count == before_issue_count:
             energy_record_valid_count += 1
 
-    resource_record_count = len(sp_records) + len(energy_records)
-    resource_record_valid_count = sp_record_valid_count + energy_record_valid_count
+    for record_index, rec in enumerate(hp_records):
+        before_issue_count = issue_count
+        prefix = f"hp_records[{record_index}]"
+        unit_id = str(rec.get("unit_id") or "")
+        change_index, change = matching_resource_change(
+            consumed=consumed_hp_changes,
+            field_path="unit.hp",
+            subject_id=unit_id,
+            old_value=rec.get("old_hp"),
+            new_value=rec.get("new_hp"),
+        )
+        if change is None or change_index is None:
+            add_issue(
+                f"{prefix}.state_change",
+                "missing_matching_hp_state_change",
+                actual=None,
+                expected={"unit_id": unit_id, "old_value": rec.get("old_hp"), "new_value": rec.get("new_hp")},
+            )
+            continue
+        consumed_hp_changes.add(change_index)
+        compare(f"{prefix}.state_change.delta", change.get("delta"), rec.get("delta"))
+        if issue_count == before_issue_count:
+            hp_record_valid_count += 1
+
+    for record_index, rec in enumerate(shield_records):
+        before_issue_count = issue_count
+        prefix = f"shield_records[{record_index}]"
+        unit_id = str(rec.get("unit_id") or "")
+        change_index, change = matching_resource_change(
+            consumed=consumed_shield_changes,
+            field_path="unit.shield",
+            subject_id=unit_id,
+            old_value=rec.get("old_shield"),
+            new_value=rec.get("new_shield"),
+        )
+        if change is None or change_index is None:
+            add_issue(
+                f"{prefix}.state_change",
+                "missing_matching_shield_state_change",
+                actual=None,
+                expected={"unit_id": unit_id, "old_value": rec.get("old_shield"), "new_value": rec.get("new_shield")},
+            )
+            continue
+        consumed_shield_changes.add(change_index)
+        compare(f"{prefix}.state_change.delta", change.get("delta"), rec.get("delta"))
+        if issue_count == before_issue_count:
+            shield_record_valid_count += 1
+
+    for record_index, rec in enumerate(av_records):
+        before_issue_count = issue_count
+        prefix = f"av_records[{record_index}]"
+        unit_id = str(rec.get("unit_id") or "")
+        change_index, change = matching_state_change(
+            consumed=consumed_av_changes,
+            field_path="unit.remaining_av",
+            subject_id=unit_id,
+            old_value=rec.get("old_remaining_av"),
+            new_value=rec.get("new_remaining_av"),
+            change_type="av",
+        )
+        if change is None or change_index is None:
+            add_issue(
+                f"{prefix}.state_change",
+                "missing_matching_av_state_change",
+                actual=None,
+                expected={"unit_id": unit_id, "old_value": rec.get("old_remaining_av"), "new_value": rec.get("new_remaining_av")},
+            )
+            continue
+        consumed_av_changes.add(change_index)
+        compare(f"{prefix}.state_change.delta", change.get("delta"), rec.get("delta"))
+        if rec.get("source_id"):
+            compare(f"{prefix}.state_change.source.source_id", (change.get("source") or {}).get("source_id"), rec.get("source_id"))
+        if issue_count == before_issue_count:
+            av_record_valid_count += 1
+
+    resource_record_count = len(hp_records) + len(shield_records) + len(sp_records) + len(energy_records)
+    resource_record_valid_count = hp_record_valid_count + shield_record_valid_count + sp_record_valid_count + energy_record_valid_count
+    settlement_checked_record_count = resource_record_count + len(av_records)
+    settlement_checked_record_valid_count = resource_record_valid_count + av_record_valid_count
     return {
+        "settlement_checked_record_count": settlement_checked_record_count,
+        "settlement_checked_record_valid_count": settlement_checked_record_valid_count,
         "resource_record_count": resource_record_count,
         "resource_record_valid_count": resource_record_valid_count,
+        "hp_record_count": len(hp_records),
+        "hp_record_valid_count": hp_record_valid_count,
+        "shield_record_count": len(shield_records),
+        "shield_record_valid_count": shield_record_valid_count,
         "sp_record_count": len(sp_records),
         "sp_record_valid_count": sp_record_valid_count,
         "energy_record_count": len(energy_records),
         "energy_record_valid_count": energy_record_valid_count,
+        "av_record_count": len(av_records),
+        "av_record_valid_count": av_record_valid_count,
         "settlement_record_match": issue_count == 0,
         "settlement_record_mismatch_count": issue_count,
         "settlement_record_mismatches": issues,
@@ -726,8 +824,11 @@ class SettlementCollector:
         replay_validation = validate_transition_replay(transition)
         settlement_validation = _validate_resource_record_consistency(
             transition,
+            hp_records=hp_records,
+            shield_records=shield_records,
             sp_records=sp_records,
             energy_records=energy_records,
+            av_records=av_records,
         )
         replay_validation.update(settlement_validation)
         replay_validation["ok"] = replay_validation.get("ok", False) and settlement_validation["settlement_record_match"]
