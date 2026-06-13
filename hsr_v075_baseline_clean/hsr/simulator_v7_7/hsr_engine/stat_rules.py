@@ -150,6 +150,39 @@ def runtime_contextual_stat(
     return value * (1.0 + cond_pct) + cond_add + dynamic_add
 
 
+def runtime_derived_stat_add(
+    unit: Any,
+    name: str,
+    ctx: dict[str, Any],
+    *,
+    unit_by_id: Any,
+    resolve_unit: Any,
+    contextual_stat_fn: Any,
+) -> float:
+    total = 0.0
+    for status in getattr(unit, "statuses", []) or []:
+        mods = _status_modifiers(status)
+        for entry in _derived_stat_entries(mods):
+            if str(entry.get("stat")) != str(name):
+                continue
+            source_spec = entry.get("source", entry.get("source_id", "actor"))
+            try:
+                source_id = resolve_unit(source_spec, ctx)
+            except Exception:
+                source_id = str(source_spec)
+            source_unit = unit_by_id(source_id)
+            if source_unit is None:
+                continue
+            source_stat = str(entry.get("source_stat", name))
+            if source_id == getattr(unit, "id", None) and source_stat == name:
+                continue
+            source_ctx = {**ctx, "actor_id": source_id, "source_owner_id": source_id}
+            source_value = contextual_stat_fn(source_unit, source_stat, source_ctx)
+            scale = coerce_float(entry.get("scale", entry.get("ratio", 1.0)), 1.0)
+            total += source_value * scale + coerce_float(entry.get("flat", 0.0), 0.0)
+    return total
+
+
 def conditional_stat_modifiers(
     unit: Any,
     name: str,

@@ -81,7 +81,7 @@ from hsr_engine.core_rules import (
     coerce_comparison_value,
     deep_get,
 )
-from hsr_engine.stat_rules import runtime_contextual_stat, unit_stat_value
+from hsr_engine.stat_rules import runtime_contextual_stat, runtime_derived_stat_add, unit_stat_value
 from hsr_engine.schema_normalizer import canonicalize_case
 from hsr_engine.model_pack_loader import load_model_pack_case, ModelPack
 from hsr_engine.tbgd_loader import TBGDSource, write_catalog_bundle
@@ -1983,32 +1983,14 @@ class BattleSimulator:
         self.state.log_event("bondmate_state", "Applied live AttackConvert to bondmate", {"target": target_id, "source": source_id, "scale": self.attack_convert_scale(), "current_value": value, "was_present": before is not None})
 
     def derived_status_add_for_stat(self, unit: UnitState, name: str, ctx: dict[str, Any]) -> float:
-        total = 0.0
-        for st in unit.statuses:
-            mods = st.modifiers if isinstance(st.modifiers, dict) else {}
-            entries = mods.get("derived_stat_add")
-            if isinstance(entries, dict):
-                entries = [entries]
-            if not isinstance(entries, list):
-                continue
-            for ent in entries:
-                if not isinstance(ent, dict) or str(ent.get("stat")) != str(name):
-                    continue
-                src_spec = ent.get("source", ent.get("source_id", "actor"))
-                try:
-                    src_id = self.resolve_special_unit(src_spec, ctx)
-                except Exception:
-                    src_id = str(src_spec)
-                if src_id not in self.state.units:
-                    continue
-                src_stat = str(ent.get("source_stat", name))
-                # Avoid self-recursive definitions such as atk from own atk.
-                if src_id == unit.id and src_stat == name:
-                    continue
-                source_ctx = {**ctx, "actor_id": src_id, "source_owner_id": src_id}
-                source_value = self.contextual_stat(self.state.unit(src_id), src_stat, source_ctx)
-                total += source_value * coerce_float(ent.get("scale", ent.get("ratio", 1.0)), 1.0) + coerce_float(ent.get("flat", 0.0))
-        return total
+        return runtime_derived_stat_add(
+            unit,
+            name,
+            ctx,
+            unit_by_id=lambda unit_id: self.state.units.get(unit_id),
+            resolve_unit=self.resolve_special_unit,
+            contextual_stat_fn=self.contextual_stat,
+        )
 
     def is_danheng_pt_unit(self, unit: UnitState) -> bool:
         uid = str(unit.id).lower()
