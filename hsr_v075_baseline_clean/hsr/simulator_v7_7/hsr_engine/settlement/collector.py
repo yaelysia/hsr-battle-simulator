@@ -184,7 +184,26 @@ class SettlementCollector:
                 requested_target_ids=list(request.target_ids or []),
                 source=request.source,
             )
-        self.transition.target_resolution.decision_trace.append(deepcopy(decision))
+        decision_payload = deepcopy(decision)
+        decision_index = len(self.transition.target_resolution.decision_trace) + 1
+        self.transition.target_resolution.decision_trace.append(decision_payload)
+        resolved_target_ids = decision_payload.get("resolved_target_ids")
+        self.transition.append_process_event(
+            ProcessEvent(
+                event_type="target_decision",
+                subject_id=str(decision_payload.get("actor_id") or request.actor_id or ""),
+                source=request.source,
+                reason="target:decision",
+                payload={
+                    "decision_index": decision_index,
+                    "stage": str(decision_payload.get("stage") or ""),
+                    "actor_id": str(decision_payload.get("actor_id") or request.actor_id or ""),
+                    "action_id": str(decision_payload.get("action_id") or request.action_id or ""),
+                    "resolved_target_ids": list(resolved_target_ids or []) if isinstance(resolved_target_ids, list) else [],
+                    "decision": decision_payload,
+                },
+            )
+        )
 
     def record_damage(self, **kwargs: Any) -> None:
         """kwargs 映射到 DamageRecord 字段名不匹配时做转换。"""

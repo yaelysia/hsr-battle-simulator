@@ -672,6 +672,8 @@ def _validate_process_events(transition: dict[str, Any], *, diff_limit: int = 20
     supported_event_count = 0
     target_resolution_count = 0
     target_resolution_valid_count = 0
+    target_decision_count = 0
+    target_decision_valid_count = 0
     timeline_tick_count = 0
     timeline_tick_valid_count = 0
     action_defeat_credit_count = 0
@@ -683,6 +685,7 @@ def _validate_process_events(transition: dict[str, Any], *, diff_limit: int = 20
     phase_damage_skip_count = 0
     phase_damage_skip_valid_count = 0
     latest_target_resolution_payload: dict[str, Any] | None = None
+    target_decision_payloads_by_index: dict[int, dict[str, Any]] = {}
     defeat_credit_targets: set[str] = set()
     phase_locked_targets: set[str] = set()
 
@@ -731,6 +734,8 @@ def _validate_process_events(transition: dict[str, Any], *, diff_limit: int = 20
         if event_type == "timeline_tick":
             supported_event_count += 1
         elif event_type == "target_resolution":
+            supported_event_count += 1
+        elif event_type == "target_decision":
             supported_event_count += 1
         elif event_type == "action_defeat_credit":
             supported_event_count += 1
@@ -781,6 +786,51 @@ def _validate_process_events(transition: dict[str, Any], *, diff_limit: int = 20
             if issue_count == before_issue_count:
                 target_resolution_valid_count += 1
                 latest_target_resolution_payload = deepcopy(payload)
+            continue
+
+        if event_type == "target_decision":
+            target_decision_count += 1
+            before_issue_count = issue_count
+            prefix = f"process_events[{event_index}]"
+            payload = validate_payload_dict(prefix, event)
+            if payload is None:
+                continue
+            request = transition.get("request")
+            if not isinstance(request, dict):
+                add_issue(f"{prefix}.request", "missing_action_request", actual=request, expected="dict")
+                request = {}
+            decision_index = _sequence_id(payload.get("decision_index"))
+            if decision_index is None:
+                add_issue(f"{prefix}.payload.decision_index", "missing_decision_index", actual=payload.get("decision_index"), expected="positive int")
+            elif decision_index in target_decision_payloads_by_index:
+                add_issue(f"{prefix}.payload.decision_index", "duplicate_decision_index", actual=decision_index, expected="unique target decision index")
+            stage = payload.get("stage")
+            if not isinstance(stage, str) or not stage:
+                add_issue(f"{prefix}.payload.stage", "missing_target_decision_stage", actual=stage, expected="non-empty string")
+            actor_id = str(payload.get("actor_id") or "")
+            action_id = str(payload.get("action_id") or "")
+            compare(f"{prefix}.subject_id", event.get("subject_id"), actor_id)
+            compare(f"{prefix}.reason", event.get("reason"), "target:decision")
+            compare(f"{prefix}.payload.actor_id", actor_id, request.get("actor_id") or "")
+            compare(f"{prefix}.payload.action_id", action_id, request.get("action_id") or "")
+            request_source = request.get("source") if isinstance(request.get("source"), dict) else {}
+            compare(f"{prefix}.source", event.get("source"), request_source)
+
+            resolved_targets = payload.get("resolved_target_ids")
+            if not isinstance(resolved_targets, list):
+                add_issue(f"{prefix}.payload.resolved_target_ids", "missing_resolved_target_ids_list", actual=resolved_targets, expected="list")
+            decision = payload.get("decision")
+            if not isinstance(decision, dict):
+                add_issue(f"{prefix}.payload.decision", "missing_decision_dict", actual=decision, expected="dict")
+            else:
+                compare(f"{prefix}.payload.decision.stage", decision.get("stage"), stage)
+                if isinstance(decision.get("resolved_target_ids"), list):
+                    compare(f"{prefix}.payload.decision.resolved_target_ids", decision.get("resolved_target_ids"), resolved_targets)
+
+            if issue_count == before_issue_count:
+                target_decision_valid_count += 1
+                if decision_index is not None:
+                    target_decision_payloads_by_index[decision_index] = deepcopy(payload)
             continue
 
         if event_type == "action_defeat_credit":
@@ -1007,6 +1057,28 @@ def _validate_process_events(transition: dict[str, Any], *, diff_limit: int = 20
             compare("target_resolution.reason", target_resolution.get("reason"), latest_target_resolution_payload.get("reason"))
             compare("target_resolution.source", target_resolution.get("source"), latest_target_resolution_payload.get("source"))
 
+    if target_decision_count:
+        target_resolution = transition.get("target_resolution")
+        if not isinstance(target_resolution, dict):
+            add_issue("target_resolution", "missing_target_resolution", actual=target_resolution, expected="dict")
+        else:
+            decision_trace = target_resolution.get("decision_trace")
+            if not isinstance(decision_trace, list):
+                add_issue("target_resolution.decision_trace", "missing_decision_trace_list", actual=decision_trace, expected="list")
+            else:
+                compare("target_resolution.decision_trace_count", len(decision_trace), target_decision_count)
+                for decision_index, payload in sorted(target_decision_payloads_by_index.items()):
+                    trace_index = decision_index - 1
+                    if trace_index < 0 or trace_index >= len(decision_trace):
+                        add_issue(
+                            f"target_resolution.decision_trace[{trace_index}]",
+                            "missing_matching_target_decision_trace",
+                            actual=None,
+                            expected=payload.get("decision"),
+                        )
+                        continue
+                    compare(f"target_resolution.decision_trace[{trace_index}]", decision_trace[trace_index], payload.get("decision"))
+
     return {
         "process_event_count": len(events),
         "process_event_supported_count": supported_event_count,
@@ -1014,6 +1086,8 @@ def _validate_process_events(transition: dict[str, Any], *, diff_limit: int = 20
         "process_event_unsupported_types": sorted(unsupported_types),
         "target_resolution_count": target_resolution_count,
         "target_resolution_valid_count": target_resolution_valid_count,
+        "target_decision_count": target_decision_count,
+        "target_decision_valid_count": target_decision_valid_count,
         "timeline_tick_count": timeline_tick_count,
         "timeline_tick_valid_count": timeline_tick_valid_count,
         "action_defeat_credit_count": action_defeat_credit_count,
