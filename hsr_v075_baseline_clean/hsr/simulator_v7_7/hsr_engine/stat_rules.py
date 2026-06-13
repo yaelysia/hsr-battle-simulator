@@ -96,6 +96,38 @@ def unit_stat_value(unit: Any, name: str) -> float:
     )
 
 
+def panel_from_unit_payload(
+    raw: dict[str, Any],
+    *,
+    panel_keys: tuple[str, ...] = PANEL_KEYS,
+    numeric_tolerance: float = 1e-5,
+) -> dict[str, Any]:
+    panel: dict[str, Any] = {}
+    stats = raw.get("stats") if isinstance(raw.get("stats"), dict) else {}
+    stat_base = raw.get("stat_base") if isinstance(raw.get("stat_base"), dict) else {}
+    stat_pct = raw.get("stat_pct") if isinstance(raw.get("stat_pct"), dict) else {}
+    stat_flat = raw.get("stat_flat") if isinstance(raw.get("stat_flat"), dict) else {}
+    statuses = raw.get("statuses") if isinstance(raw.get("statuses"), list) else []
+
+    for key in panel_keys:
+        if key == "hp":
+            value = raw.get("hp")
+        elif key == "max_hp":
+            value = raw.get("max_hp")
+        else:
+            value = stat_value_from_parts(
+                name=key,
+                stat_base=stat_base,
+                stat_pct=stat_pct,
+                stat_flat=stat_flat,
+                stats=stats,
+                statuses=statuses,
+            )
+        if isinstance(value, (int, float)) and abs(float(value)) > numeric_tolerance:
+            panel[key] = round(float(value), 6)
+    return panel
+
+
 def runtime_contextual_stat(
     unit: Any,
     name: str,

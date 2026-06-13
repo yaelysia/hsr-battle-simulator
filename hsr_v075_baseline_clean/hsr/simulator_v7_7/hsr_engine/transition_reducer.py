@@ -15,6 +15,7 @@ from hsr_engine.stat_rules import (
     contextual_entity_stat,
     iter_snapshot_entities,
     modifier_affected_stats,
+    panel_from_unit_payload,
     propagate_dirty_stats,
     status_affected_stats,
 )
@@ -198,44 +199,6 @@ def _sync_special_flag(entity: dict[str, Any], key: str, value: Any, *, remove: 
         mechanics[key] = _copy(value)
 
 
-def _panel_from_unit_payload(raw: dict[str, Any]) -> dict[str, Any]:
-    panel: dict[str, Any] = {}
-    stats = raw.get("stats") if isinstance(raw.get("stats"), dict) else {}
-    stat_base = raw.get("stat_base") if isinstance(raw.get("stat_base"), dict) else {}
-    stat_pct = raw.get("stat_pct") if isinstance(raw.get("stat_pct"), dict) else {}
-    stat_flat = raw.get("stat_flat") if isinstance(raw.get("stat_flat"), dict) else {}
-    statuses = raw.get("statuses") if isinstance(raw.get("statuses"), list) else []
-
-    def stat_value(name: str) -> float:
-        add = 0.0
-        pct = 0.0
-        for status in statuses:
-            if not isinstance(status, dict):
-                continue
-            mods = status.get("modifiers") if isinstance(status.get("modifiers"), dict) else {}
-            stacks = int(status.get("stacks", 1) or 1)
-            add += float(mods.get(f"{name}_add", 0.0) or 0.0) * stacks
-            pct += float(mods.get(f"{name}_pct", 0.0) or 0.0) * stacks
-        if name in stat_base or name in stat_pct or name in stat_flat:
-            base = float(stat_base.get(name, 0.0) or 0.0)
-            flat = float(stat_flat.get(name, 0.0) or 0.0)
-            base_pct = float(stat_pct.get(name, 0.0) or 0.0)
-            return base * (1.0 + base_pct + pct) + flat + add
-        base = float(stats.get(name, 0.0) or 0.0)
-        return base * (1.0 + pct) + add
-
-    for key in PANEL_KEYS:
-        if key == "hp":
-            value = raw.get("hp")
-        elif key == "max_hp":
-            value = raw.get("max_hp")
-        else:
-            value = stat_value(key)
-        if isinstance(value, (int, float)) and abs(float(value)) > NUMERIC_TOLERANCE:
-            panel[key] = round(float(value), 6)
-    return panel
-
-
 def _mark_dirty_stats(entity: dict[str, Any], stats: set[str]) -> None:
     stats = {s for s in stats if s in PANEL_KEYS}
     if not stats:
@@ -338,7 +301,7 @@ def _entity_from_unit_payload(snapshot: dict[str, Any], raw: dict[str, Any], uni
             "speed": speed,
             "action_interval": action_interval,
         },
-        "panel": _panel_from_unit_payload(raw),
+        "panel": panel_from_unit_payload(raw, numeric_tolerance=NUMERIC_TOLERANCE),
         "stat_parts": {
             "base": _copy(raw.get("stat_base") or {}),
             "pct": _copy(raw.get("stat_pct") or {}),
