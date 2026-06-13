@@ -30,6 +30,149 @@ from .records import (
 )
 
 
+NUMERIC_TOLERANCE = 1e-5
+
+
+def _settlement_equal(left: Any, right: Any) -> bool:
+    if isinstance(left, (int, float)) and isinstance(right, (int, float)):
+        return abs(float(left) - float(right)) <= NUMERIC_TOLERANCE
+    return left == right
+
+
+def _validate_resource_record_consistency(
+    transition: dict[str, Any],
+    *,
+    sp_records: list[dict[str, Any]],
+    energy_records: list[dict[str, Any]],
+    diff_limit: int = 20,
+) -> dict[str, Any]:
+    changes = [row for row in (transition.get("state_changes") or []) if isinstance(row, dict)]
+    issues: list[dict[str, Any]] = []
+    issue_count = 0
+    sp_record_valid_count = 0
+    energy_record_valid_count = 0
+    consumed_sp_changes: set[int] = set()
+    consumed_energy_changes: set[int] = set()
+
+    def add_issue(path: str, message: str, *, actual: Any = None, expected: Any = None) -> None:
+        nonlocal issue_count
+        issue_count += 1
+        if len(issues) < diff_limit:
+            issue = {"path": path, "message": message}
+            if actual is not None or expected is not None:
+                issue["actual"] = actual
+                issue["expected"] = expected
+            issues.append(issue)
+
+    def compare(path: str, actual: Any, expected: Any) -> bool:
+        if _settlement_equal(actual, expected):
+            return True
+        add_issue(path, "value_mismatch", actual=actual, expected=expected)
+        return False
+
+    def matching_resource_change(
+        *,
+        consumed: set[int],
+        field_path: str,
+        subject_id: str,
+        old_value: Any,
+        new_value: Any,
+    ) -> tuple[int | None, dict[str, Any] | None]:
+        for change_index, change in enumerate(changes):
+            if change_index in consumed:
+                continue
+            if change.get("change_type") != "resource":
+                continue
+            if change.get("field_path") != field_path or change.get("subject_id") != subject_id:
+                continue
+            if not _settlement_equal(change.get("old_value"), old_value):
+                continue
+            if not _settlement_equal(change.get("new_value"), new_value):
+                continue
+            return change_index, change
+        return None, None
+
+    for record_index, rec in enumerate(sp_records):
+        before_issue_count = issue_count
+        prefix = f"sp_records[{record_index}]"
+        change_index, change = matching_resource_change(
+            consumed=consumed_sp_changes,
+            field_path="global.skill_points",
+            subject_id="team",
+            old_value=rec.get("old_sp"),
+            new_value=rec.get("new_sp"),
+        )
+        if change is None or change_index is None:
+            add_issue(
+                f"{prefix}.state_change",
+                "missing_matching_skill_point_state_change",
+                actual=None,
+                expected={"old_value": rec.get("old_sp"), "new_value": rec.get("new_sp")},
+            )
+            continue
+        consumed_sp_changes.add(change_index)
+        compare(f"{prefix}.state_change.delta", change.get("delta"), rec.get("new_sp") - rec.get("old_sp"))
+        payload = change.get("payload") if isinstance(change.get("payload"), dict) else {}
+        compare(f"{prefix}.state_change.payload.requested_delta", payload.get("requested_delta"), rec.get("delta"))
+        if rec.get("source_id"):
+            compare(f"{prefix}.state_change.source.owner_id", (change.get("source") or {}).get("owner_id"), rec.get("source_id"))
+        if issue_count == before_issue_count:
+            sp_record_valid_count += 1
+
+    for record_index, rec in enumerate(energy_records):
+        before_issue_count = issue_count
+        prefix = f"energy_records[{record_index}]"
+        unit_id = str(rec.get("unit_id") or "")
+        change_index, change = matching_resource_change(
+            consumed=consumed_energy_changes,
+            field_path="unit.energy",
+            subject_id=unit_id,
+            old_value=rec.get("old_energy"),
+            new_value=rec.get("new_energy"),
+        )
+        if change is None or change_index is None:
+            add_issue(
+                f"{prefix}.state_change",
+                "missing_matching_energy_state_change",
+                actual=None,
+                expected={"unit_id": unit_id, "old_value": rec.get("old_energy"), "new_value": rec.get("new_energy")},
+            )
+            continue
+        consumed_energy_changes.add(change_index)
+        compare(f"{prefix}.state_change.delta", change.get("delta"), rec.get("new_energy") - rec.get("old_energy"))
+        payload = change.get("payload") if isinstance(change.get("payload"), dict) else {}
+        source_type = str(rec.get("source_type") or "")
+        requested_delta = rec.get("delta")
+        if source_type == "energy_cost":
+            compare(f"{prefix}.state_change.payload.energy_cost", payload.get("energy_cost"), abs(float(requested_delta or 0.0)))
+        elif source_type == "action_energy":
+            compare(f"{prefix}.state_change.reason", change.get("reason"), f"energy:{rec.get('label')}")
+            compare(f"{prefix}.state_change.payload.gain", payload.get("gain"), requested_delta)
+        elif source_type == "effect_energy":
+            compare(f"{prefix}.state_change.reason", change.get("reason"), "effect:modify_energy")
+        else:
+            add_issue(f"{prefix}.source_type", "unsupported_energy_record_source_type", actual=source_type, expected="energy_cost/action_energy/effect_energy")
+        if rec.get("max_energy") is not None and isinstance(rec.get("new_energy"), (int, float)):
+            if float(rec.get("new_energy")) - float(rec.get("max_energy") or 0.0) > NUMERIC_TOLERANCE:
+                add_issue(f"{prefix}.new_energy", "new_energy_above_max_energy", actual=rec.get("new_energy"), expected=f"<= {rec.get('max_energy')}")
+        if issue_count == before_issue_count:
+            energy_record_valid_count += 1
+
+    resource_record_count = len(sp_records) + len(energy_records)
+    resource_record_valid_count = sp_record_valid_count + energy_record_valid_count
+    return {
+        "resource_record_count": resource_record_count,
+        "resource_record_valid_count": resource_record_valid_count,
+        "sp_record_count": len(sp_records),
+        "sp_record_valid_count": sp_record_valid_count,
+        "energy_record_count": len(energy_records),
+        "energy_record_valid_count": energy_record_valid_count,
+        "settlement_record_match": issue_count == 0,
+        "settlement_record_mismatch_count": issue_count,
+        "settlement_record_mismatches": issues,
+    }
+
+
 @dataclass
 class SettlementCollector:
     """结算收集器——在 resolve_route_step 中创建，通过 action_ctx 传递。
@@ -567,21 +710,43 @@ class SettlementCollector:
     def to_dict(self) -> dict[str, Any]:
         """转换为 JSON 兼容字典，供 run_route 写入 trace_entry。"""
         transition = self.transition.to_dict()
-        transition["replay_validation"] = validate_transition_replay(transition)
+        damage_records = [asdict(r) for r in self.damage_records]
+        shield_records = [asdict(r) for r in self.shield_records]
+        hp_records = [asdict(r) for r in self.hp_records]
+        energy_records = [asdict(r) for r in self.energy_records]
+        sp_records = [asdict(r) for r in self.sp_records]
+        status_records = [asdict(r) for r in self.status_records]
+        av_records = [asdict(r) for r in self.av_records]
+        turn_records = [asdict(r) for r in self.turn_records]
+        mechanic_records = [asdict(r) for r in self.mechanic_records]
+        break_records = [asdict(r) for r in self.break_records]
+        toughness_records = [asdict(r) for r in self.toughness_records]
+        dot_records = [asdict(r) for r in self.dot_records]
+        super_break_records = [asdict(r) for r in self.super_break_records]
+        replay_validation = validate_transition_replay(transition)
+        settlement_validation = _validate_resource_record_consistency(
+            transition,
+            sp_records=sp_records,
+            energy_records=energy_records,
+        )
+        replay_validation.update(settlement_validation)
+        replay_validation["ok"] = replay_validation.get("ok", False) and settlement_validation["settlement_record_match"]
+        transition["replay_validation"] = replay_validation
         return {
-            "damage_records": [asdict(r) for r in self.damage_records],
-            "shield_records": [asdict(r) for r in self.shield_records],
-            "hp_records": [asdict(r) for r in self.hp_records],
-            "energy_records": [asdict(r) for r in self.energy_records],
-            "sp_records": [asdict(r) for r in self.sp_records],
-            "status_records": [asdict(r) for r in self.status_records],
-            "av_records": [asdict(r) for r in self.av_records],
-            "turn_records": [asdict(r) for r in self.turn_records],
-            "mechanic_records": [asdict(r) for r in self.mechanic_records],
-            "break_records": [asdict(r) for r in self.break_records],
-            "toughness_records": [asdict(r) for r in self.toughness_records],
-            "dot_records": [asdict(r) for r in self.dot_records],
-            "super_break_records": [asdict(r) for r in self.super_break_records],
+            "damage_records": damage_records,
+            "shield_records": shield_records,
+            "hp_records": hp_records,
+            "energy_records": energy_records,
+            "sp_records": sp_records,
+            "status_records": status_records,
+            "av_records": av_records,
+            "turn_records": turn_records,
+            "mechanic_records": mechanic_records,
+            "break_records": break_records,
+            "toughness_records": toughness_records,
+            "dot_records": dot_records,
+            "super_break_records": super_break_records,
             "target_record": asdict(self.target_record) if self.target_record else None,
+            "settlement_record_validation": settlement_validation,
             "transition": transition,
         }
