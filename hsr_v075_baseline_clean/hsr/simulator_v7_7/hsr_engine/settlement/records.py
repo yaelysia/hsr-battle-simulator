@@ -20,6 +20,7 @@ from typing import Any
 class DamageRecord:
     """一段直接伤害的完整结算记录。"""
     packet_index: int = 0
+    packet_id: str = ""
     source_action_id: str = ""
     actor_id: str = ""
     target_id: str = ""
@@ -39,6 +40,7 @@ class DamageRecord:
     hp_loss: float = 0.0
     overkill: float = 0.0
     is_overkill: bool = False
+    formula_ledger: dict[str, Any] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------

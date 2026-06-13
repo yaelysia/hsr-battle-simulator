@@ -3677,6 +3677,7 @@ class BattleSimulator:
                 # Phase 2: 伤害记录
                 self._settle(action_ctx, "damage",
                     packet_index=packet_idx,
+                    packet_id=str(packet.get("id", "")),
                     source_action_id=action.get("id", ""),
                     actor_id=actor.id,
                     target_id=target_id,

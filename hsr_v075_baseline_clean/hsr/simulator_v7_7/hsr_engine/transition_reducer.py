@@ -1104,6 +1104,95 @@ def _validate_process_events(transition: dict[str, Any], *, diff_limit: int = 20
     }
 
 
+def _validate_damage_state_changes(transition: dict[str, Any], *, diff_limit: int = 20) -> dict[str, Any]:
+    issues: list[dict[str, Any]] = []
+    issue_count = 0
+    direct_damage_change_count = 0
+    direct_damage_change_valid_count = 0
+    direct_damage_formula_ledger_count = 0
+
+    def add_issue(path: str, message: str, *, actual: Any = None, expected: Any = None) -> None:
+        nonlocal issue_count
+        issue_count += 1
+        if len(issues) < diff_limit:
+            issue = {"path": path, "message": message}
+            if actual is not None or expected is not None:
+                issue["actual"] = actual
+                issue["expected"] = expected
+            issues.append(issue)
+
+    def compare(path: str, actual: Any, expected: Any) -> None:
+        if not _json_equal(actual, expected):
+            add_issue(path, "value_mismatch", actual=actual, expected=expected)
+
+    for change_index, change in enumerate(transition.get("state_changes") or []):
+        if not isinstance(change, dict):
+            continue
+        if change.get("change_type") != "damage" or change.get("field_path") != "unit.hp_or_shield":
+            continue
+        direct_damage_change_count += 1
+        before_issue_count = issue_count
+        prefix = f"state_changes[{change_index}]"
+        payload = change.get("payload")
+        if not isinstance(payload, dict):
+            add_issue(f"{prefix}.payload", "missing_damage_payload_dict", actual=payload, expected="dict")
+            continue
+
+        target_id = str(payload.get("target_id") or "")
+        actor_id = str(payload.get("actor_id") or "")
+        source_action_id = str(payload.get("source_action_id") or "")
+        damage_type = str(payload.get("damage_type") or "")
+        if not target_id:
+            add_issue(f"{prefix}.payload.target_id", "missing_target_id", actual=payload.get("target_id"), expected="non-empty string")
+        if not actor_id:
+            add_issue(f"{prefix}.payload.actor_id", "missing_actor_id", actual=payload.get("actor_id"), expected="non-empty string")
+        if not source_action_id:
+            add_issue(f"{prefix}.payload.source_action_id", "missing_source_action_id", actual=payload.get("source_action_id"), expected="non-empty string")
+        if not damage_type:
+            add_issue(f"{prefix}.payload.damage_type", "missing_damage_type", actual=payload.get("damage_type"), expected="non-empty string")
+        compare(f"{prefix}.subject_id", change.get("subject_id"), target_id)
+        compare(f"{prefix}.reason", change.get("reason"), damage_type)
+        compare(f"{prefix}.source.owner_id", (change.get("source") or {}).get("owner_id"), actor_id)
+        compare(f"{prefix}.source.source_id", (change.get("source") or {}).get("source_id"), source_action_id)
+
+        damage_applied = payload.get("damage_applied")
+        if not isinstance(damage_applied, (int, float)):
+            add_issue(f"{prefix}.payload.damage_applied", "missing_numeric_damage_applied", actual=damage_applied, expected="number")
+        else:
+            compare(f"{prefix}.delta", change.get("delta"), -float(damage_applied))
+
+        final_damage = payload.get("final_damage")
+        if not isinstance(final_damage, (int, float)):
+            add_issue(f"{prefix}.payload.final_damage", "missing_numeric_final_damage", actual=final_damage, expected="number")
+
+        ledger = payload.get("formula_ledger")
+        if not isinstance(ledger, dict) or not ledger:
+            add_issue(f"{prefix}.payload.formula_ledger", "missing_formula_ledger_dict", actual=ledger, expected="non-empty dict")
+        else:
+            direct_damage_formula_ledger_count += 1
+            compare(f"{prefix}.payload.formula_ledger.actor_id", ledger.get("actor_id"), actor_id)
+            compare(f"{prefix}.payload.formula_ledger.target_id", ledger.get("target_id"), target_id)
+            compare(f"{prefix}.payload.formula_ledger.action_id", ledger.get("action_id"), source_action_id)
+            if payload.get("packet_id") or ledger.get("packet_id"):
+                compare(f"{prefix}.payload.formula_ledger.packet_id", ledger.get("packet_id"), payload.get("packet_id"))
+            if isinstance(final_damage, (int, float)) and isinstance(ledger.get("final_damage"), (int, float)):
+                compare(f"{prefix}.payload.formula_ledger.final_damage", ledger.get("final_damage"), final_damage)
+            if isinstance(payload.get("base_damage"), (int, float)) and isinstance(ledger.get("scaling"), dict):
+                compare(f"{prefix}.payload.formula_ledger.scaling.base_damage", ledger.get("scaling", {}).get("base_damage"), payload.get("base_damage"))
+
+        if issue_count == before_issue_count:
+            direct_damage_change_valid_count += 1
+
+    return {
+        "direct_damage_change_count": direct_damage_change_count,
+        "direct_damage_change_valid_count": direct_damage_change_valid_count,
+        "direct_damage_formula_ledger_count": direct_damage_formula_ledger_count,
+        "damage_record_match": issue_count == 0,
+        "damage_record_mismatch_count": issue_count,
+        "damage_record_mismatches": issues,
+    }
+
+
 def validate_transition_replay(transition: dict[str, Any], *, diff_limit: int = 20) -> dict[str, Any]:
     reduced = reduce_transition_snapshot(transition)
     if not reduced.get("ok"):
@@ -1134,5 +1223,12 @@ def validate_transition_replay(transition: dict[str, Any], *, diff_limit: int = 
     )
     process_validation = _validate_process_events(transition, diff_limit=diff_limit)
     result.update(process_validation)
-    result["ok"] = result["direct_match"] and result["unsupported_count"] == 0 and result["process_event_match"]
+    damage_validation = _validate_damage_state_changes(transition, diff_limit=diff_limit)
+    result.update(damage_validation)
+    result["ok"] = (
+        result["direct_match"]
+        and result["unsupported_count"] == 0
+        and result["process_event_match"]
+        and result["damage_record_match"]
+    )
     return result
