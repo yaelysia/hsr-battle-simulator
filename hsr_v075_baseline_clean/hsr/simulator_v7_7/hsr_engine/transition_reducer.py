@@ -1106,6 +1106,8 @@ def _validate_process_events(transition: dict[str, Any], *, diff_limit: int = 20
 
 
 def _validate_damage_state_changes(transition: dict[str, Any], *, diff_limit: int = 20) -> dict[str, Any]:
+    changes = [row for row in (transition.get("state_changes") or []) if isinstance(row, dict)]
+    consumed_effect_change_indexes: set[int] = set()
     issues: list[dict[str, Any]] = []
     issue_count = 0
     direct_damage_change_count = 0
@@ -1130,20 +1132,116 @@ def _validate_damage_state_changes(transition: dict[str, Any], *, diff_limit: in
         if not _json_equal(actual, expected):
             add_issue(path, "value_mismatch", actual=actual, expected=expected)
 
-    def validate_common_damage_amounts(prefix: str, change: dict[str, Any], payload: dict[str, Any]) -> None:
+    def numeric_payload(prefix: str, payload: dict[str, Any], key: str) -> float | None:
+        value = payload.get(key)
+        if not isinstance(value, (int, float)):
+            add_issue(f"{prefix}.payload.{key}", f"missing_numeric_{key}", actual=value, expected="number")
+            return None
+        return float(value)
+
+    def validate_common_damage_amounts(prefix: str, change: dict[str, Any], payload: dict[str, Any]) -> float | None:
         damage_applied = payload.get("damage_applied")
         if not isinstance(damage_applied, (int, float)):
             add_issue(f"{prefix}.payload.damage_applied", "missing_numeric_damage_applied", actual=damage_applied, expected="number")
+            damage_applied_value = None
         else:
-            compare(f"{prefix}.delta", change.get("delta"), -float(damage_applied))
+            damage_applied_value = float(damage_applied)
+            compare(f"{prefix}.delta", change.get("delta"), -damage_applied_value)
 
         final_damage = payload.get("final_damage")
         if not isinstance(final_damage, (int, float)):
             add_issue(f"{prefix}.payload.final_damage", "missing_numeric_final_damage", actual=final_damage, expected="number")
+        return damage_applied_value
 
-    for change_index, change in enumerate(transition.get("state_changes") or []):
-        if not isinstance(change, dict):
-            continue
+    def match_effect_amount(
+        prefix: str,
+        change_index: int,
+        target_id: str,
+        *,
+        field_path: str,
+        amount: float | None,
+        amount_key: str,
+        reason_matches: Any,
+        payload_matches: Any | None = None,
+    ) -> None:
+        if amount is None or amount <= NUMERIC_TOLERANCE:
+            return
+        matched_indexes: list[int] = []
+        matched_amount = 0.0
+        for concrete_index in range(change_index - 1, -1, -1):
+            if concrete_index in consumed_effect_change_indexes:
+                continue
+            row = changes[concrete_index]
+            if row.get("subject_id") != target_id or row.get("field_path") != field_path:
+                continue
+            if not reason_matches(str(row.get("reason") or "")):
+                continue
+            row_payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+            if payload_matches is not None and not payload_matches(row_payload):
+                continue
+            delta = row.get("delta")
+            if not isinstance(delta, (int, float)):
+                add_issue(f"{prefix}.state_changes[{concrete_index}].delta", "missing_numeric_effect_delta", actual=delta, expected="number")
+                continue
+            effect_amount = -float(delta)
+            if effect_amount <= NUMERIC_TOLERANCE:
+                continue
+            matched_indexes.append(concrete_index)
+            matched_amount += effect_amount
+            if matched_amount + NUMERIC_TOLERANCE >= amount:
+                break
+        if not _json_equal(matched_amount, amount):
+            add_issue(
+                f"{prefix}.state_changes.{field_path}",
+                f"missing_matching_{amount_key}_state_change",
+                actual={"matched_amount": matched_amount, "matched_indexes": matched_indexes},
+                expected={"amount": amount, "target_id": target_id, "field_path": field_path},
+            )
+            return
+        consumed_effect_change_indexes.update(matched_indexes)
+
+    def validate_hp_shield_effects(
+        prefix: str,
+        change_index: int,
+        target_id: str,
+        payload: dict[str, Any],
+        *,
+        hp_reason_matches: Any,
+        shield_reason_matches: Any,
+        hp_payload_matches: Any | None = None,
+        shield_payload_matches: Any | None = None,
+    ) -> None:
+        hp_loss = numeric_payload(prefix, payload, "hp_loss")
+        shield_absorbed = numeric_payload(prefix, payload, "shield_absorbed")
+        if hp_loss is not None and hp_loss < -NUMERIC_TOLERANCE:
+            add_issue(f"{prefix}.payload.hp_loss", "negative_hp_loss", actual=hp_loss, expected="non-negative number")
+        if shield_absorbed is not None and shield_absorbed < -NUMERIC_TOLERANCE:
+            add_issue(f"{prefix}.payload.shield_absorbed", "negative_shield_absorbed", actual=shield_absorbed, expected="non-negative number")
+        damage_applied = payload.get("damage_applied")
+        if isinstance(damage_applied, (int, float)) and hp_loss is not None and shield_absorbed is not None:
+            compare(f"{prefix}.payload.damage_applied_components", float(damage_applied), hp_loss + shield_absorbed)
+        match_effect_amount(
+            prefix,
+            change_index,
+            target_id,
+            field_path="unit.shield",
+            amount=shield_absorbed,
+            amount_key="shield_absorbed",
+            reason_matches=shield_reason_matches,
+            payload_matches=shield_payload_matches,
+        )
+        match_effect_amount(
+            prefix,
+            change_index,
+            target_id,
+            field_path="unit.hp",
+            amount=hp_loss,
+            amount_key="hp_loss",
+            reason_matches=hp_reason_matches,
+            payload_matches=hp_payload_matches,
+        )
+
+    for change_index, change in enumerate(changes):
         if change.get("field_path") != "unit.hp_or_shield":
             continue
         change_type = str(change.get("change_type") or "")
@@ -1175,6 +1273,14 @@ def _validate_damage_state_changes(transition: dict[str, Any], *, diff_limit: in
             compare(f"{prefix}.source.owner_id", (change.get("source") or {}).get("owner_id"), actor_id)
             compare(f"{prefix}.source.source_id", (change.get("source") or {}).get("source_id"), source_action_id)
             validate_common_damage_amounts(prefix, change, payload)
+            validate_hp_shield_effects(
+                prefix,
+                change_index,
+                target_id,
+                payload,
+                hp_reason_matches=lambda reason: reason in {"damage:hp_damage", "damage:hp_bar_depleted"},
+                shield_reason_matches=lambda reason: reason == "damage:shield_absorb",
+            )
 
             ledger = payload.get("formula_ledger")
             if not isinstance(ledger, dict) or not ledger:
@@ -1212,6 +1318,17 @@ def _validate_damage_state_changes(transition: dict[str, Any], *, diff_limit: in
             compare(f"{prefix}.source.owner_id", (change.get("source") or {}).get("owner_id"), unit_id)
             compare(f"{prefix}.source.source_id", (change.get("source") or {}).get("source_id"), source_status_id)
             validate_common_damage_amounts(prefix, change, payload)
+            status_payload_matches = lambda row_payload: row_payload.get("status_id") == source_status_id
+            validate_hp_shield_effects(
+                prefix,
+                change_index,
+                unit_id,
+                payload,
+                hp_reason_matches=lambda reason, kind=kind: reason == f"dot:{kind}:hp_loss",
+                shield_reason_matches=lambda reason, kind=kind: reason == f"dot:{kind}:shield_absorb",
+                hp_payload_matches=status_payload_matches,
+                shield_payload_matches=status_payload_matches,
+            )
             stacks = payload.get("stacks")
             if not isinstance(stacks, int) or stacks < 0:
                 add_issue(f"{prefix}.payload.stacks", "invalid_dot_stacks", actual=stacks, expected="non-negative int")
@@ -1231,6 +1348,14 @@ def _validate_damage_state_changes(transition: dict[str, Any], *, diff_limit: in
             compare(f"{prefix}.reason", change.get("reason"), "super_break")
             compare(f"{prefix}.source.owner_id", (change.get("source") or {}).get("owner_id"), actor_id)
             validate_common_damage_amounts(prefix, change, payload)
+            validate_hp_shield_effects(
+                prefix,
+                change_index,
+                target_id,
+                payload,
+                hp_reason_matches=lambda reason: reason == "super_break:hp_loss",
+                shield_reason_matches=lambda reason: reason == "super_break:shield_absorb",
+            )
             toughness_reduction = payload.get("toughness_reduction")
             if not isinstance(toughness_reduction, (int, float)):
                 add_issue(f"{prefix}.payload.toughness_reduction", "missing_numeric_toughness_reduction", actual=toughness_reduction, expected="number")

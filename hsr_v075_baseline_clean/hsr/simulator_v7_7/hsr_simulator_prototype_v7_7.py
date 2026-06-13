@@ -3693,8 +3693,11 @@ class BattleSimulator:
                     universal_reduction_multiplier=float(result.get("multipliers", {}).get("universal_reduction", 1.0)),
                     toughness_state_multiplier=float(result.get("multipliers", {}).get("toughness_state", 1.0)),
                     final_damage=float(result.get("damage", 0.0)),
-                    applied_damage=float(result.get("damage", 0.0)),
-                    shield_absorbed=0.0,
+                    applied_damage=float(result.get("damage_applied", result.get("damage", 0.0))),
+                    shield_absorbed=float(result.get("shield_absorbed", 0.0)),
+                    hp_loss=float(result.get("hp_loss", 0.0)),
+                    overkill=float(result.get("overkill", 0.0)),
+                    is_overkill=bool(result.get("is_overkill", False)),
                     formula_ledger=result.get("formula_ledger", {}),
                     skip_reason="",
                 )
@@ -4760,10 +4763,12 @@ class BattleSimulator:
         bars_depleted = 0
         phase_damage_locked_until_action_end = False
         old_hp_initial = target.hp
+        hp_loss_applied = 0.0
         depleted_bar_events: list[dict[str, Any]] = []
 
         while remaining > EPS and target.alive:
             if remaining + EPS < target.hp:
+                hp_loss_applied += remaining
                 self.commit_unit_hp(
                     target,
                     target.hp - remaining,
@@ -4786,6 +4791,7 @@ class BattleSimulator:
                 })
 
             overflow = max(0.0, remaining - target.hp)
+            hp_loss_applied += target.hp
             self.commit_unit_hp(
                 target,
                 0.0,
@@ -4876,6 +4882,7 @@ class BattleSimulator:
             "bars_depleted": bars_depleted,
             "old_hp": old_hp_initial,
             "new_hp": target.hp,
+            "hp_loss": hp_loss_applied,
             "hp_bars_remaining": target.hp_bars_remaining,
             "depleted_bar_events": depleted_bar_events,
             "phase_damage_locked_until_action_end": phase_damage_locked_until_action_end,
@@ -5429,6 +5436,16 @@ class BattleSimulator:
         result["hp_bars_remaining"] = target.hp_bars_remaining
         result["depleted_bar_events"] = bar_result.get("depleted_bar_events", [])
         result["phase_damage_locked_until_action_end"] = bar_result.get("phase_damage_locked_until_action_end", False)
+        hp_loss = coerce_float(bar_result.get("hp_loss", 0.0), 0.0)
+        damage_applied = max(0.0, shield_absorbed + hp_loss)
+        final_damage = max(0.0, coerce_float(result.get("damage", 0.0), 0.0))
+        overkill = max(0.0, final_damage - damage_applied)
+        result["shield_absorbed"] = shield_absorbed
+        result["hp_loss"] = hp_loss
+        result["damage_applied"] = damage_applied
+        result["applied_damage"] = damage_applied
+        result["overkill"] = overkill
+        result["is_overkill"] = overkill > EPS
         if bar_result.get("bars_depleted") and target.alive and target.hp_model_type == "phase_hp":
             old_phase = coerce_int(target.flags.get("current_phase", target.flags.get("monster_phase", 1)), 1)
             new_phase = min(target.hp_bars_total, old_phase + coerce_int(bar_result.get("bars_depleted", 1), 1))
@@ -5450,12 +5467,6 @@ class BattleSimulator:
                 reason=f"受到伤害: {ctx.get('action', {}).get('id', ctx.get('actor_id', '?'))}",
                 record_state_change=False,
             )
-        # 回填伤害记录的 shield_absorbed 和 applied_damage
-        stl = self._settlement(ctx)
-        if stl is not None and stl.damage_records:
-            last = stl.damage_records[-1]
-            last.shield_absorbed = shield_absorbed
-            last.applied_damage = max(0.0, abs(hp_delta))
         if result.get("bars_depleted") and target.alive and target.flags.get("phase_transition_immediate_action"):
             action_id = target.flags.get("phase_transition_immediate_action")
             if action_id is True:
