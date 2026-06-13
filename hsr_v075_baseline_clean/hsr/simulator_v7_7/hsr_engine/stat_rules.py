@@ -96,15 +96,86 @@ def unit_stat_value(unit: Any, name: str) -> float:
     )
 
 
-def stat_value_from_parts(
-    *,
+def runtime_contextual_stat(
+    unit: Any,
     name: str,
-    stat_base: dict[str, Any],
-    stat_pct: dict[str, Any],
-    stat_flat: dict[str, Any],
-    stats: dict[str, Any],
-    statuses: Any,
+    ctx: dict[str, Any],
+    *,
+    unit_by_id: Any,
+    resolve_unit: Any,
+    condition_fn: Any,
+    dynamic_add_fn: Any,
 ) -> float:
+    if name in {"hp", "max_hp"}:
+        return coerce_float(getattr(unit, "max_hp", 0.0), 0.0)
+    if name in {"current_hp", "currenthp"}:
+        return coerce_float(getattr(unit, "hp", 0.0), 0.0)
+    if isinstance(name, str) and "." in name:
+        unit_spec, stat_name = name.split(".", 1)
+        try:
+            unit_id = resolve_unit(unit_spec, ctx)
+        except Exception:
+            unit_id = unit_spec
+        target_unit = unit_by_id(str(unit_id))
+        if target_unit is not None:
+            if stat_name in {"max_hp", "hp", "shield", "energy", "max_energy"}:
+                return coerce_float(getattr(target_unit, stat_name, 0.0), 0.0)
+            target_ctx = {**ctx, "actor_id": str(unit_id), "target_id": ctx.get("target_id")}
+            return runtime_contextual_stat(
+                target_unit,
+                stat_name,
+                target_ctx,
+                unit_by_id=unit_by_id,
+                resolve_unit=resolve_unit,
+                condition_fn=condition_fn,
+                dynamic_add_fn=dynamic_add_fn,
+            )
+
+    cond_add, cond_pct = conditional_stat_modifiers(unit, name, ctx, condition_fn)
+    packet = ctx.get("packet", {}) or {}
+    if isinstance(packet, dict):
+        cond_add += coerce_float(packet.get(f"{name}_add", 0.0), 0.0)
+        cond_pct += coerce_float(packet.get(f"{name}_pct", 0.0), 0.0)
+
+    dynamic_add = coerce_float(dynamic_add_fn(unit, name, ctx), 0.0)
+    has_split = _has_split_stat(unit, name)
+    if has_split:
+        base = coerce_float(getattr(unit, "stat_base", {}).get(name, 0.0), 0.0)
+        flat = coerce_float(getattr(unit, "stat_flat", {}).get(name, 0.0), 0.0)
+        base_pct = coerce_float(getattr(unit, "stat_pct", {}).get(name, 0.0), 0.0)
+        status_add, status_pct = status_stat_modifiers(getattr(unit, "statuses", []), name)
+        return base * (1.0 + base_pct + status_pct + cond_pct) + flat + status_add + cond_add + dynamic_add
+
+    value = unit_stat_value(unit, name)
+    return value * (1.0 + cond_pct) + cond_add + dynamic_add
+
+
+def conditional_stat_modifiers(
+    unit: Any,
+    name: str,
+    ctx: dict[str, Any],
+    condition_fn: Any,
+) -> tuple[float, float]:
+    cond_add = 0.0
+    cond_pct = 0.0
+    for status in getattr(unit, "statuses", []) or []:
+        mods = _status_modifiers(status)
+        cms = mods.get("conditional_modifiers", [])
+        if not isinstance(cms, list):
+            continue
+        stacks = int(coerce_float(_status_stacks(status), 1.0))
+        for cm in cms:
+            if not isinstance(cm, dict) or not condition_fn(cm.get("condition", {}), ctx):
+                continue
+            cm_mods = cm.get("modifiers", {}) or {}
+            if not isinstance(cm_mods, dict):
+                continue
+            cond_add += coerce_float(cm_mods.get(f"{name}_add", 0.0), 0.0) * stacks
+            cond_pct += coerce_float(cm_mods.get(f"{name}_pct", 0.0), 0.0) * stacks
+    return cond_add, cond_pct
+
+
+def status_stat_modifiers(statuses: Any, name: str) -> tuple[float, float]:
     add = 0.0
     pct = 0.0
     for status in statuses or []:
@@ -114,6 +185,19 @@ def stat_value_from_parts(
         stacks = int(coerce_float(_status_stacks(status), 1.0))
         add += coerce_float(mods.get(f"{name}_add", 0.0), 0.0) * stacks
         pct += coerce_float(mods.get(f"{name}_pct", 0.0), 0.0) * stacks
+    return add, pct
+
+
+def stat_value_from_parts(
+    *,
+    name: str,
+    stat_base: dict[str, Any],
+    stat_pct: dict[str, Any],
+    stat_flat: dict[str, Any],
+    stats: dict[str, Any],
+    statuses: Any,
+) -> float:
+    add, pct = status_stat_modifiers(statuses, name)
     if name in stat_base or name in stat_pct or name in stat_flat:
         base = coerce_float(stat_base.get(name, 0.0), 0.0)
         flat = coerce_float(stat_flat.get(name, 0.0), 0.0)
@@ -252,3 +336,11 @@ def _status_stacks(status: Any) -> Any:
     if isinstance(status, dict):
         return status.get("stacks", 1) or 1
     return getattr(status, "stacks", 1) or 1
+
+
+def _has_split_stat(unit: Any, name: str) -> bool:
+    return (
+        name in getattr(unit, "stat_base", {})
+        or name in getattr(unit, "stat_pct", {})
+        or name in getattr(unit, "stat_flat", {})
+    )

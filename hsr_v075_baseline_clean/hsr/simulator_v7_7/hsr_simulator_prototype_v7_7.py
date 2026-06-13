@@ -81,7 +81,7 @@ from hsr_engine.core_rules import (
     coerce_comparison_value,
     deep_get,
 )
-from hsr_engine.stat_rules import unit_stat_value
+from hsr_engine.stat_rules import runtime_contextual_stat, unit_stat_value
 from hsr_engine.schema_normalizer import canonicalize_case
 from hsr_engine.model_pack_loader import load_model_pack_case, ModelPack
 from hsr_engine.tbgd_loader import TBGDSource, write_catalog_bundle
@@ -4264,70 +4264,15 @@ class BattleSimulator:
         }
 
     def contextual_stat(self, unit: UnitState, name: str, ctx: dict[str, Any]) -> float:
-        # Damage scaling by HP in HSR uses max HP, not the runtime remaining HP
-        # resource. Several model-pack packets use scaling_stat: hp; previously
-        # that fell through to stats["hp"] and became 0 for units whose HP is
-        # stored as max_hp/hp resources. This made HP-scaling attacks such as
-        # Tribbie follow-up calculate as zero.
-        if name in {"hp", "max_hp"}:
-            return coerce_float(unit.max_hp)
-        if name in {"current_hp", "currenthp"}:
-            return coerce_float(unit.hp)
-        if isinstance(name, str) and "." in name:
-            unit_spec, stat_name = name.split(".", 1)
-            try:
-                uid = self.resolve_special_unit(unit_spec, ctx)
-            except Exception:
-                uid = unit_spec
-            if uid in self.state.units:
-                target_unit = self.state.unit(uid)
-                if stat_name in {"max_hp", "hp", "shield", "energy", "max_energy"}:
-                    return coerce_float(getattr(target_unit, stat_name, 0.0))
-                return self.contextual_stat(target_unit, stat_name, {**ctx, "actor_id": uid, "target_id": ctx.get("target_id")})
-        """Return a stat with context-specific conditional modifiers.
-
-        This mirrors ``UnitState.get_stat`` for split HSR stats:
-          final = base * (1 + pct + contextual_pct) + flat + contextual_add
-
-        Earlier versions applied contextual ``*_pct`` to the already-final stat,
-        which over-counted flat stats for split models such as ATK/SPD/HP.
-        """
-        cond_add = 0.0
-        cond_pct = 0.0
-        for st in unit.statuses:
-            # Unconditional status modifiers are needed here only when we recompute
-            # split stats from base/pct/flat below. For non-split stats, unit.get_stat
-            # already includes them.
-            mods = st.modifiers if isinstance(st.modifiers, dict) else {}
-            cms = mods.get("conditional_modifiers", [])
-            if not isinstance(cms, list):
-                continue
-            for cm in cms:
-                if self.eval_condition(cm.get("condition", {}), ctx):
-                    cm_mods = cm.get("modifiers", {}) or {}
-                    cond_add += coerce_float(cm_mods.get(f"{name}_add", 0.0)) * st.stacks
-                    cond_pct += coerce_float(cm_mods.get(f"{name}_pct", 0.0)) * st.stacks
-        packet = ctx.get("packet", {}) or {}
-        cond_add += coerce_float(packet.get(f"{name}_add", 0.0))
-        cond_pct += coerce_float(packet.get(f"{name}_pct", 0.0))
-
-        has_split = name in unit.stat_base or name in unit.stat_pct or name in unit.stat_flat
-        if has_split:
-            base = coerce_float(unit.stat_base.get(name, 0.0))
-            flat = coerce_float(unit.stat_flat.get(name, 0.0))
-            base_pct = coerce_float(unit.stat_pct.get(name, 0.0))
-            status_add = 0.0
-            status_pct = 0.0
-            for st in unit.statuses:
-                mods = st.modifiers if isinstance(st.modifiers, dict) else {}
-                status_add += coerce_float(mods.get(f"{name}_add", 0.0)) * st.stacks
-                status_pct += coerce_float(mods.get(f"{name}_pct", 0.0)) * st.stacks
-            dynamic_add = self.derived_status_add_for_stat(unit, name, ctx)
-            return base * (1.0 + base_pct + status_pct + cond_pct) + flat + status_add + cond_add + dynamic_add
-
-        value = unit.get_stat(name)
-        dynamic_add = self.derived_status_add_for_stat(unit, name, ctx)
-        return value * (1.0 + cond_pct) + cond_add + dynamic_add
+        return runtime_contextual_stat(
+            unit,
+            name,
+            ctx,
+            unit_by_id=lambda unit_id: self.state.units.get(str(unit_id)),
+            resolve_unit=self.resolve_special_unit,
+            condition_fn=self.eval_condition,
+            dynamic_add_fn=self.derived_status_add_for_stat,
+        )
 
     def resolve_crit(self, packet: dict[str, Any], actor: UnitState, action: dict[str, Any], events: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
         crit_rate = self.contextual_stat(actor, "crit_rate", ctx)
