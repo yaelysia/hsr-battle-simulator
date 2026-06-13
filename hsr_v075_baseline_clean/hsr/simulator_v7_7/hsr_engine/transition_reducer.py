@@ -10,6 +10,15 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
+from hsr_engine.stat_rules import (
+    PANEL_KEYS,
+    contextual_entity_stat,
+    iter_snapshot_entities,
+    modifier_affected_stats,
+    propagate_dirty_stats,
+    status_affected_stats,
+)
+
 
 ENTITY_GROUPS = ("allies", "summons", "enemies", "others")
 QUEUE_NAMES = {"ultimate_queue", "immediate_queue", "interrupt_queue"}
@@ -46,43 +55,6 @@ STATUS_PAYLOAD_KEYS = (
     "souldragon",
     "shield_expire_remove_amount",
 )
-PANEL_KEYS = (
-    "hp",
-    "max_hp",
-    "atk",
-    "attack",
-    "def",
-    "defense",
-    "speed",
-    "crit_rate",
-    "crit_dmg",
-    "break_effect",
-    "effect_hit_rate",
-    "effect_res",
-    "energy_regeneration_rate",
-    "err_bonus",
-    "err",
-    "all_dmg_bonus",
-    "physical_dmg_bonus",
-    "fire_dmg_bonus",
-    "ice_dmg_bonus",
-    "thunder_dmg_bonus",
-    "wind_dmg_bonus",
-    "quantum_dmg_bonus",
-    "imaginary_dmg_bonus",
-    "all_res_pen",
-    "physical_res_pen",
-    "fire_res_pen",
-    "ice_res_pen",
-    "thunder_res_pen",
-    "wind_res_pen",
-    "quantum_res_pen",
-    "imaginary_res_pen",
-    "healing_bonus",
-    "outgoing_healing_bonus",
-    "damage_taken",
-    "damage_reduction",
-)
 NUMERIC_TOLERANCE = 1e-5
 
 
@@ -108,13 +80,6 @@ def _entity_record(snapshot: dict[str, Any], unit_id: str) -> dict[str, Any] | N
             if str(rec.get("id")) == str(unit_id):
                 return rec
     return None
-
-
-def _iter_entities(snapshot: dict[str, Any]):
-    for group in ENTITY_GROUPS:
-        for entity in snapshot.get(group, []) or []:
-            if isinstance(entity, dict):
-                yield entity
 
 
 def _axis_record(snapshot: dict[str, Any], unit_id: str) -> dict[str, Any] | None:
@@ -271,129 +236,6 @@ def _panel_from_unit_payload(raw: dict[str, Any]) -> dict[str, Any]:
     return panel
 
 
-def _entity_stat_value(entity: dict[str, Any], name: str) -> float:
-    stat_parts = entity.get("stat_parts") if isinstance(entity.get("stat_parts"), dict) else {}
-    stat_base = stat_parts.get("base") if isinstance(stat_parts.get("base"), dict) else {}
-    stat_pct = stat_parts.get("pct") if isinstance(stat_parts.get("pct"), dict) else {}
-    stat_flat = stat_parts.get("flat") if isinstance(stat_parts.get("flat"), dict) else {}
-    stats = stat_parts.get("legacy_stats") if isinstance(stat_parts.get("legacy_stats"), dict) else {}
-    add = 0.0
-    pct = 0.0
-    for status in entity.get("statuses", []) or []:
-        if not isinstance(status, dict):
-            continue
-        mods = status.get("modifiers") if isinstance(status.get("modifiers"), dict) else {}
-        stacks = int(status.get("stacks", 1) or 1)
-        add += float(mods.get(f"{name}_add", 0.0) or 0.0) * stacks
-        pct += float(mods.get(f"{name}_pct", 0.0) or 0.0) * stacks
-    if name in stat_base or name in stat_pct or name in stat_flat:
-        base = float(stat_base.get(name, 0.0) or 0.0)
-        flat = float(stat_flat.get(name, 0.0) or 0.0)
-        base_pct = float(stat_pct.get(name, 0.0) or 0.0)
-        return base * (1.0 + base_pct + pct) + flat + add
-    base = float(stats.get(name, 0.0) or 0.0)
-    return base * (1.0 + pct) + add
-
-
-def _entity_by_id(snapshot: dict[str, Any], unit_id: str) -> dict[str, Any] | None:
-    return _entity_record(snapshot, unit_id)
-
-
-def _contextual_entity_stat(
-    snapshot: dict[str, Any],
-    entity: dict[str, Any],
-    name: str,
-    seen: set[tuple[str, str]] | None = None,
-) -> float:
-    if name in {"hp", "max_hp"}:
-        return float((entity.get("resources") or {}).get("max_hp") or 0.0)
-    if name in {"current_hp", "currenthp"}:
-        return float((entity.get("resources") or {}).get("hp") or 0.0)
-    unit_id = str(entity.get("id") or "")
-    seen = set(seen or set())
-    key_seen = (unit_id, str(name))
-    if key_seen in seen:
-        return _entity_stat_value(entity, name)
-    seen.add(key_seen)
-
-    value = _entity_stat_value(entity, name)
-    for status in entity.get("statuses", []) or []:
-        if not isinstance(status, dict):
-            continue
-        mods = status.get("modifiers") if isinstance(status.get("modifiers"), dict) else {}
-        entries = mods.get("derived_stat_add")
-        if isinstance(entries, dict):
-            entries = [entries]
-        if not isinstance(entries, list):
-            continue
-        for entry in entries:
-            if not isinstance(entry, dict) or str(entry.get("stat")) != str(name):
-                continue
-            source_id = str(entry.get("source", entry.get("source_id", status.get("source_id", ""))) or "")
-            source = _entity_by_id(snapshot, source_id)
-            source_stat = str(entry.get("source_stat", name))
-            if source is None:
-                continue
-            if str(source.get("id")) == unit_id and source_stat == name:
-                continue
-            source_value = _contextual_entity_stat(snapshot, source, source_stat, seen)
-            scale = float(entry.get("scale", entry.get("ratio", 1.0)) or 1.0)
-            value += source_value * scale + float(entry.get("flat", 0.0) or 0.0)
-    return value
-
-
-def _derived_stat_dependencies(entity: dict[str, Any]) -> list[tuple[str, str, str]]:
-    out: list[tuple[str, str, str]] = []
-    for status in entity.get("statuses", []) or []:
-        if not isinstance(status, dict):
-            continue
-        mods = status.get("modifiers") if isinstance(status.get("modifiers"), dict) else {}
-        entries = mods.get("derived_stat_add")
-        if isinstance(entries, dict):
-            entries = [entries]
-        if not isinstance(entries, list):
-            continue
-        for entry in entries:
-            if not isinstance(entry, dict):
-                continue
-            target_stat = str(entry.get("stat") or "")
-            source_stat = str(entry.get("source_stat", target_stat) or "")
-            source_id = str(entry.get("source", entry.get("source_id", status.get("source_id", ""))) or "")
-            if target_stat in PANEL_KEYS and source_stat and source_id:
-                out.append((target_stat, source_id, source_stat))
-    return out
-
-
-def _modifier_affected_stats(mods: Any) -> set[str]:
-    if not isinstance(mods, dict):
-        return set()
-    out: set[str] = set()
-    for key in mods:
-        key_s = str(key)
-        if key_s.endswith("_add"):
-            stat = key_s[:-4]
-            if stat in PANEL_KEYS:
-                out.add(stat)
-        elif key_s.endswith("_pct"):
-            stat = key_s[:-4]
-            if stat in PANEL_KEYS:
-                out.add(stat)
-    entries = mods.get("derived_stat_add")
-    if isinstance(entries, dict):
-        entries = [entries]
-    if isinstance(entries, list):
-        for entry in entries:
-            if isinstance(entry, dict) and str(entry.get("stat") or "") in PANEL_KEYS:
-                out.add(str(entry.get("stat")))
-    return out
-
-
-def _status_affected_stats(status: Any) -> set[str]:
-    if not isinstance(status, dict):
-        return set()
-    return _modifier_affected_stats(status.get("modifiers"))
-
-
 def _mark_dirty_stats(entity: dict[str, Any], stats: set[str]) -> None:
     stats = {s for s in stats if s in PANEL_KEYS}
     if not stats:
@@ -404,7 +246,7 @@ def _mark_dirty_stats(entity: dict[str, Any], stats: set[str]) -> None:
 
 
 def _flush_dirty_derived(snapshot: dict[str, Any]) -> None:
-    entities = list(_iter_entities(snapshot))
+    entities = list(iter_snapshot_entities(snapshot))
     dirty_by_id: dict[str, set[str]] = {}
     for entity in entities:
         unit_id = str(entity.get("id") or "")
@@ -412,18 +254,7 @@ def _flush_dirty_derived(snapshot: dict[str, Any]) -> None:
         if unit_id and stats:
             dirty_by_id[unit_id] = set(stats)
 
-    changed = True
-    while changed:
-        changed = False
-        for entity in entities:
-            unit_id = str(entity.get("id") or "")
-            if not unit_id:
-                continue
-            target_dirty = dirty_by_id.setdefault(unit_id, set())
-            for target_stat, source_id, source_stat in _derived_stat_dependencies(entity):
-                if source_stat in dirty_by_id.get(source_id, set()) and target_stat not in target_dirty:
-                    target_dirty.add(target_stat)
-                    changed = True
+    dirty_by_id = propagate_dirty_stats(entities, dirty_by_id)
 
     for entity in entities:
         unit_id = str(entity.get("id") or "")
@@ -436,13 +267,13 @@ def _flush_dirty_derived(snapshot: dict[str, Any]) -> None:
 def _recompute_entity_derived(snapshot: dict[str, Any], entity: dict[str, Any], affected_stats: set[str]) -> None:
     panel = entity.setdefault("panel", {})
     for stat in sorted(s for s in affected_stats if s in PANEL_KEYS):
-        value = _contextual_entity_stat(snapshot, entity, stat)
+        value = contextual_entity_stat(snapshot, entity, stat)
         if abs(value) <= NUMERIC_TOLERANCE:
             panel.pop(stat, None)
         else:
             panel[stat] = round(value, 6)
 
-    speed = _contextual_entity_stat(snapshot, entity, "speed") if "speed" in affected_stats else 0.0
+    speed = contextual_entity_stat(snapshot, entity, "speed") if "speed" in affected_stats else 0.0
     if abs(speed) <= NUMERIC_TOLERANCE:
         speed = float((entity.get("action_axis") or {}).get("speed") or 0.0)
     if "speed" in affected_stats and speed > NUMERIC_TOLERANCE:
@@ -766,8 +597,8 @@ def _apply_change(snapshot: dict[str, Any], change: dict[str, Any]) -> tuple[str
         status = _status_record(entity, status_id)
         if not rest:
             affected_stats = (
-                _status_affected_stats(change.get("old_value"))
-                | _status_affected_stats(change.get("new_value"))
+                status_affected_stats(change.get("old_value"))
+                | status_affected_stats(change.get("new_value"))
             )
             if new_value is None:
                 entity["statuses"] = [row for row in statuses if str(row.get("id")) != status_id]
@@ -784,7 +615,7 @@ def _apply_change(snapshot: dict[str, Any], change: dict[str, Any]) -> tuple[str
             return "applied", field_path
         if status is None:
             return "unsupported", field_path
-        affected_stats = _status_affected_stats(status)
+        affected_stats = status_affected_stats(status)
         if rest in {"stacks", "max_stacks"}:
             status[rest] = int(new_value)
         elif rest == "duration_value":
@@ -797,10 +628,10 @@ def _apply_change(snapshot: dict[str, Any], change: dict[str, Any]) -> tuple[str
             key = rest[len("modifiers."):]
             status.setdefault("modifiers", {})[key] = new_value
             _sync_status_modifier_keys(status)
-            affected_stats |= _modifier_affected_stats({key: new_value})
+            affected_stats |= modifier_affected_stats({key: new_value})
         else:
             return "unsupported", field_path
-        affected_stats |= _status_affected_stats(status)
+        affected_stats |= status_affected_stats(status)
         _sync_status_payloads(entity)
         _mark_dirty_stats(entity, affected_stats)
         return "applied", field_path

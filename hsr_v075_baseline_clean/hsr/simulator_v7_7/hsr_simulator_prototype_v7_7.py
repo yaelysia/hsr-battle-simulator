@@ -81,6 +81,7 @@ from hsr_engine.core_rules import (
     coerce_comparison_value,
     deep_get,
 )
+from hsr_engine.stat_rules import unit_stat_value
 from hsr_engine.schema_normalizer import canonicalize_case
 from hsr_engine.model_pack_loader import load_model_pack_case, ModelPack
 from hsr_engine.tbgd_loader import TBGDSource, write_catalog_bundle
@@ -599,20 +600,7 @@ class UnitState:
         If no split stat model is provided, fall back to legacy `stats[name]` as a
         precomputed final value, with status modifiers applied multiplicatively/additively.
         """
-        has_split = name in self.stat_base or name in self.stat_pct or name in self.stat_flat
-        add = 0.0
-        pct = 0.0
-        for st in self.statuses:
-            mods = st.modifiers
-            add += coerce_float(mods.get(f"{name}_add", 0.0)) * st.stacks
-            pct += coerce_float(mods.get(f"{name}_pct", 0.0)) * st.stacks
-        if has_split:
-            base = coerce_float(self.stat_base.get(name, 0.0))
-            flat = coerce_float(self.stat_flat.get(name, 0.0))
-            base_pct = coerce_float(self.stat_pct.get(name, 0.0))
-            return base * (1.0 + base_pct + pct) + flat + add
-        base = coerce_float(self.stats.get(name, 0.0))
-        return base * (1.0 + pct) + add
+        return unit_stat_value(self, name)
 
     def add_status(self, status: StatusEffect) -> None:
         for existing in self.statuses:
