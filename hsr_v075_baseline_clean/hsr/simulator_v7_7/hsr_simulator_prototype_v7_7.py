@@ -81,6 +81,14 @@ from hsr_engine.core_rules import (
     coerce_comparison_value,
     deep_get,
 )
+from hsr_engine.resource_rules import (
+    normalize_energy,
+    normalize_hp,
+    normalize_hp_bars_remaining,
+    normalize_max_hp,
+    normalize_nonnegative,
+    normalize_optional_nonnegative,
+)
 from hsr_engine.stat_rules import runtime_contextual_stat, runtime_derived_stat_add, unit_stat_value
 from hsr_engine.schema_normalizer import canonicalize_case
 from hsr_engine.model_pack_loader import load_model_pack_case, ModelPack
@@ -1179,7 +1187,7 @@ class BattleSimulator:
 
     def commit_unit_max_hp(self, unit: UnitState, new_value: float, *, reason: str, ctx: Optional[dict[str, Any]] = None, payload: Optional[dict[str, Any]] = None) -> StateChange:
         old = unit.max_hp
-        new_max_hp = max(1.0, coerce_float(new_value, old))
+        new_max_hp = normalize_max_hp(new_value, old)
         change = StateChange(
             change_type="resource",
             scope="unit",
@@ -1196,12 +1204,7 @@ class BattleSimulator:
 
     def commit_unit_hp_bars_remaining(self, unit: UnitState, new_value: int, *, reason: str, ctx: Optional[dict[str, Any]] = None, payload: Optional[dict[str, Any]] = None) -> StateChange:
         old = unit.hp_bars_remaining
-        total = max(0, int(unit.hp_bars_total or old or 0))
-        new_bars = coerce_int(new_value, old)
-        if total > 0:
-            new_bars = max(0, min(total, new_bars))
-        else:
-            new_bars = max(0, new_bars)
+        new_bars = normalize_hp_bars_remaining(new_value, old, unit.hp_bars_total or old or 0)
         change = StateChange(
             change_type="mechanic",
             scope="unit",
@@ -1218,10 +1221,7 @@ class BattleSimulator:
 
     def commit_unit_toughness(self, unit: UnitState, new_value: Optional[float], *, reason: str, ctx: Optional[dict[str, Any]] = None, payload: Optional[dict[str, Any]] = None) -> StateChange:
         old = unit.toughness
-        if new_value is None:
-            new_toughness = None
-        else:
-            new_toughness = max(0.0, coerce_float(new_value, coerce_float(old, 0.0)))
+        new_toughness = normalize_optional_nonnegative(new_value, old)
         change = StateChange(
             change_type="toughness",
             scope="unit",
@@ -1238,10 +1238,7 @@ class BattleSimulator:
 
     def commit_unit_max_toughness(self, unit: UnitState, new_value: Optional[float], *, reason: str, ctx: Optional[dict[str, Any]] = None, payload: Optional[dict[str, Any]] = None) -> StateChange:
         old = unit.max_toughness
-        if new_value is None:
-            new_max_toughness = None
-        else:
-            new_max_toughness = max(0.0, coerce_float(new_value, coerce_float(old, 0.0)))
+        new_max_toughness = normalize_optional_nonnegative(new_value, old)
         change = StateChange(
             change_type="toughness",
             scope="unit",
@@ -1426,7 +1423,7 @@ class BattleSimulator:
 
     def commit_unit_hp(self, unit: UnitState, new_value: float, *, reason: str, ctx: Optional[dict[str, Any]] = None, payload: Optional[dict[str, Any]] = None) -> StateChange:
         old = unit.hp
-        new_hp = clamp(coerce_float(new_value, old), 0.0, unit.max_hp)
+        new_hp = normalize_hp(new_value, old, unit.max_hp)
         change = StateChange(
             change_type="resource",
             scope="unit",
@@ -1443,7 +1440,7 @@ class BattleSimulator:
 
     def commit_unit_shield(self, unit: UnitState, new_value: float, *, reason: str, ctx: Optional[dict[str, Any]] = None, payload: Optional[dict[str, Any]] = None) -> StateChange:
         old = unit.shield
-        new_shield = max(0.0, coerce_float(new_value, old))
+        new_shield = normalize_nonnegative(new_value, old)
         change = StateChange(
             change_type="resource",
             scope="unit",
@@ -1460,7 +1457,7 @@ class BattleSimulator:
 
     def commit_unit_energy(self, unit: UnitState, new_value: float, *, reason: str, ctx: Optional[dict[str, Any]] = None, payload: Optional[dict[str, Any]] = None) -> StateChange:
         old = unit.energy
-        new_energy = clamp(coerce_float(new_value, old), 0.0, unit.max_energy)
+        new_energy = normalize_energy(new_value, old, unit.max_energy)
         change = StateChange(
             change_type="resource",
             scope="unit",

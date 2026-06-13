@@ -10,6 +10,7 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
+from hsr_engine.resource_rules import apply_snapshot_resource_change
 from hsr_engine.stat_rules import (
     PANEL_KEYS,
     contextual_entity_stat,
@@ -146,21 +147,6 @@ def _sync_status_payloads(entity: dict[str, Any]) -> None:
         mechanics["status_payloads"] = payloads
     else:
         mechanics.pop("status_payloads", None)
-
-
-def _sync_hp_percent(entity: dict[str, Any]) -> None:
-    resources = entity.setdefault("resources", {})
-    max_hp = float(resources.get("max_hp") or 0.0)
-    hp = float(resources.get("hp") or 0.0)
-    resources["hp_percent"] = 0.0 if max_hp <= 0 else round(hp / max_hp, 6)
-
-
-def _set_panel_number(entity: dict[str, Any], key: str, value: Any) -> None:
-    panel = entity.setdefault("panel", {})
-    if value is None or abs(float(value)) <= NUMERIC_TOLERANCE:
-        panel.pop(key, None)
-    else:
-        panel[key] = round(float(value), 6)
 
 
 def _sync_absolute_av(snapshot: dict[str, Any]) -> None:
@@ -503,19 +489,7 @@ def _apply_change(snapshot: dict[str, Any], change: dict[str, Any]) -> tuple[str
 
     if field_path in {"unit.hp", "unit.max_hp", "unit.shield", "unit.energy", "unit.toughness", "unit.max_toughness", "unit.is_broken", "unit.hp_bars_remaining"}:
         key = field_path.split(".", 1)[1]
-        resources = entity.setdefault("resources", {})
-        if key in {"hp", "max_hp", "shield", "energy", "toughness", "max_toughness"} and new_value is not None:
-            value = round(float(new_value), 6)
-        elif key in {"is_broken"}:
-            value = bool(new_value)
-        elif key in {"hp_bars_remaining"}:
-            value = int(new_value)
-        else:
-            value = new_value
-        resources[key] = value
-        if key in {"hp", "max_hp"}:
-            _set_panel_number(entity, key, value)
-            _sync_hp_percent(entity)
+        apply_snapshot_resource_change(entity, key, new_value, numeric_tolerance=NUMERIC_TOLERANCE)
         return "applied", field_path
 
     if field_path == "unit.alive":
