@@ -81,6 +81,7 @@ from hsr_engine.core_rules import (
     coerce_comparison_value,
     deep_get,
 )
+from hsr_engine.action_axis_rules import absolute_av, axis_sort_key, normalize_av
 from hsr_engine.resource_rules import (
     normalize_energy,
     normalize_hp,
@@ -1474,7 +1475,7 @@ class BattleSimulator:
 
     def commit_global_av(self, new_value: float, *, reason: str, ctx: Optional[dict[str, Any]] = None, payload: Optional[dict[str, Any]] = None) -> StateChange:
         old = self.state.av
-        new_av = max(0.0, coerce_float(new_value, old))
+        new_av = normalize_av(new_value, old)
         change = StateChange(
             change_type="timeline",
             scope="global",
@@ -1491,7 +1492,7 @@ class BattleSimulator:
 
     def commit_unit_remaining_av(self, unit: UnitState, new_value: float, *, reason: str, ctx: Optional[dict[str, Any]] = None, payload: Optional[dict[str, Any]] = None) -> StateChange:
         old = unit.remaining_av
-        new_remaining = max(0.0, coerce_float(new_value, old))
+        new_remaining = normalize_av(new_value, old)
         change = StateChange(
             change_type="av",
             scope="unit",
@@ -9628,10 +9629,10 @@ class BattleSimulator:
                 "speed": round(self.effective_speed(unit), 6),
                 "action_interval": None if interval is None else round(interval, 6),
                 "remaining_av": round(unit.remaining_av, 6),
-                "absolute_av": round(self.state.av + unit.remaining_av, 6),
+                "absolute_av": absolute_av(self.state.av, unit.remaining_av),
                 "tags": sorted(unit.tags),
             })
-        axis.sort(key=lambda r: (not r["alive"], r["remaining_av"], r["side"], r["id"]))
+        axis.sort(key=axis_sort_key)
 
         def entity_record(unit: UnitState) -> dict[str, Any]:
             rec = {
@@ -9657,7 +9658,7 @@ class BattleSimulator:
                 },
                 "action_axis": {
                     "remaining_av": round(unit.remaining_av, 6),
-                    "absolute_av": round(self.state.av + unit.remaining_av, 6),
+                    "absolute_av": absolute_av(self.state.av, unit.remaining_av),
                     "speed": round(self.effective_speed(unit), 6),
                     "action_interval": None if not unit.alive else round(self.action_interval(unit), 6),
                 },

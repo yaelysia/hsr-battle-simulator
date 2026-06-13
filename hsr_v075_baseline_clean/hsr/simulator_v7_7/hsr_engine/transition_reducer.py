@@ -10,6 +10,14 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
+from hsr_engine.action_axis_rules import (
+    action_interval_for_speed,
+    axis_sort_key,
+    absolute_av,
+    set_snapshot_axis_speed,
+    set_snapshot_remaining_av,
+    sync_snapshot_absolute_av,
+)
 from hsr_engine.resource_rules import apply_snapshot_resource_change
 from hsr_engine.stat_rules import (
     PANEL_KEYS,
@@ -150,21 +158,13 @@ def _sync_status_payloads(entity: dict[str, Any]) -> None:
 
 
 def _sync_absolute_av(snapshot: dict[str, Any]) -> None:
-    av = float((snapshot.get("global") or {}).get("av", 0.0))
-    for rec in snapshot.get("action_axis", []) or []:
-        if rec.get("remaining_av") is not None:
-            rec["absolute_av"] = round(av + float(rec.get("remaining_av", 0.0)), 6)
-    for group in ENTITY_GROUPS:
-        for entity in snapshot.get(group, []) or []:
-            axis = entity.get("action_axis")
-            if isinstance(axis, dict) and axis.get("remaining_av") is not None:
-                axis["absolute_av"] = round(av + float(axis.get("remaining_av", 0.0)), 6)
+    sync_snapshot_absolute_av(snapshot, entity_groups=ENTITY_GROUPS)
 
 
 def _sort_axis(snapshot: dict[str, Any]) -> None:
     axis = snapshot.get("action_axis")
     if isinstance(axis, list):
-        axis.sort(key=lambda r: (not bool(r.get("alive")), float(r.get("remaining_av") or 0.0), str(r.get("side") or ""), str(r.get("id") or "")))
+        axis.sort(key=axis_sort_key)
 
 
 def _sync_global_aliases(snapshot: dict[str, Any]) -> None:
@@ -226,15 +226,13 @@ def _recompute_entity_derived(snapshot: dict[str, Any], entity: dict[str, Any], 
     if abs(speed) <= NUMERIC_TOLERANCE:
         speed = float((entity.get("action_axis") or {}).get("speed") or 0.0)
     if "speed" in affected_stats and speed > NUMERIC_TOLERANCE:
-        if "speed" in entity.setdefault("panel", {}):
-            entity["panel"]["speed"] = round(speed, 6)
-        axis = entity.setdefault("action_axis", {})
-        axis["speed"] = round(speed, 6)
-        axis["action_interval"] = None if not entity.get("alive") else round(10000.0 / speed, 6)
         axis_rec = _axis_record(snapshot, str(entity.get("id") or ""))
-        if axis_rec is not None:
-            axis_rec["speed"] = axis["speed"]
-            axis_rec["action_interval"] = axis["action_interval"]
+        set_snapshot_axis_speed(
+            entity,
+            speed,
+            axis_record=axis_rec,
+            numeric_tolerance=NUMERIC_TOLERANCE,
+        )
     _sync_status_payloads(entity)
 
 
@@ -259,7 +257,7 @@ def _entity_from_unit_payload(snapshot: dict[str, Any], raw: dict[str, Any], uni
     remaining_av = round(float(raw.get("remaining_av", 0.0) or 0.0), 6)
     av = float((snapshot.get("global") or {}).get("av", 0.0) or 0.0)
     alive = bool(raw.get("alive", hp > 0))
-    action_interval = None if not alive or speed <= NUMERIC_TOLERANCE else round(10000.0 / speed, 6)
+    action_interval = action_interval_for_speed(speed, alive=alive, numeric_tolerance=NUMERIC_TOLERANCE)
     entity = {
         "id": str(raw.get("id") or unit_id),
         "name": raw.get("name", unit_id),
@@ -283,7 +281,7 @@ def _entity_from_unit_payload(snapshot: dict[str, Any], raw: dict[str, Any], uni
         },
         "action_axis": {
             "remaining_av": remaining_av,
-            "absolute_av": round(av + remaining_av, 6),
+            "absolute_av": absolute_av(av, remaining_av),
             "speed": speed,
             "action_interval": action_interval,
         },
@@ -506,11 +504,8 @@ def _apply_change(snapshot: dict[str, Any], change: dict[str, Any]) -> tuple[str
         return "applied", field_path
 
     if field_path == "unit.remaining_av":
-        value = round(float(new_value), 6)
-        entity.setdefault("action_axis", {})["remaining_av"] = value
         axis = _axis_record(snapshot, subject_id)
-        if axis is not None:
-            axis["remaining_av"] = value
+        set_snapshot_remaining_av(entity, new_value, axis_record=axis)
         return "applied", field_path
 
     if field_path.startswith("unit.flags."):
