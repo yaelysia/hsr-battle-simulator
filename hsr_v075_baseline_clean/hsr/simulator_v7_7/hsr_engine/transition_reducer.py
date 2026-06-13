@@ -670,6 +670,8 @@ def _validate_process_events(transition: dict[str, Any], *, diff_limit: int = 20
     issue_count = 0
     unsupported_types: set[str] = set()
     supported_event_count = 0
+    target_resolution_count = 0
+    target_resolution_valid_count = 0
     timeline_tick_count = 0
     timeline_tick_valid_count = 0
     action_defeat_credit_count = 0
@@ -680,6 +682,7 @@ def _validate_process_events(transition: dict[str, Any], *, diff_limit: int = 20
     phase_damage_lock_valid_count = 0
     phase_damage_skip_count = 0
     phase_damage_skip_valid_count = 0
+    latest_target_resolution_payload: dict[str, Any] | None = None
     defeat_credit_targets: set[str] = set()
     phase_locked_targets: set[str] = set()
 
@@ -727,6 +730,8 @@ def _validate_process_events(transition: dict[str, Any], *, diff_limit: int = 20
         event_type = str(event.get("event_type") or "")
         if event_type == "timeline_tick":
             supported_event_count += 1
+        elif event_type == "target_resolution":
+            supported_event_count += 1
         elif event_type == "action_defeat_credit":
             supported_event_count += 1
         elif event_type == "derived_damage_target_skip":
@@ -735,6 +740,47 @@ def _validate_process_events(transition: dict[str, Any], *, diff_limit: int = 20
             supported_event_count += 1
         else:
             unsupported_types.add(event_type or "<empty>")
+            continue
+
+        if event_type == "target_resolution":
+            target_resolution_count += 1
+            before_issue_count = issue_count
+            prefix = f"process_events[{event_index}]"
+            payload = validate_payload_dict(prefix, event)
+            if payload is None:
+                continue
+            request = transition.get("request")
+            if not isinstance(request, dict):
+                add_issue(f"{prefix}.request", "missing_action_request", actual=request, expected="dict")
+                request = {}
+            actor_id = str(payload.get("actor_id") or "")
+            action_id = str(payload.get("action_id") or "")
+            if not actor_id:
+                add_issue(f"{prefix}.payload.actor_id", "missing_actor_id", actual=payload.get("actor_id"), expected="non-empty string")
+            if not action_id:
+                add_issue(f"{prefix}.payload.action_id", "missing_action_id", actual=payload.get("action_id"), expected="non-empty string")
+            compare(f"{prefix}.subject_id", event.get("subject_id"), actor_id)
+            compare(f"{prefix}.reason", event.get("reason"), "target:resolution")
+            compare(f"{prefix}.payload.actor_id", actor_id, request.get("actor_id"))
+            compare(f"{prefix}.payload.action_id", action_id, request.get("action_id"))
+            requested_targets = payload.get("requested_target_ids")
+            resolved_targets = payload.get("resolved_target_ids")
+            if not isinstance(requested_targets, list):
+                add_issue(f"{prefix}.payload.requested_target_ids", "missing_requested_target_ids_list", actual=requested_targets, expected="list")
+            else:
+                compare(f"{prefix}.payload.requested_target_ids", requested_targets, request.get("target_ids") or [])
+            if not isinstance(resolved_targets, list):
+                add_issue(f"{prefix}.payload.resolved_target_ids", "missing_resolved_target_ids_list", actual=resolved_targets, expected="list")
+            method = payload.get("method")
+            if not isinstance(method, str) or not method:
+                add_issue(f"{prefix}.payload.method", "missing_target_resolution_method", actual=method, expected="non-empty string")
+            compare(f"{prefix}.payload.reason", payload.get("reason"), method)
+            request_source = request.get("source") if isinstance(request.get("source"), dict) else {}
+            compare(f"{prefix}.source", event.get("source"), request_source)
+            compare(f"{prefix}.payload.source", payload.get("source"), request_source)
+            if issue_count == before_issue_count:
+                target_resolution_valid_count += 1
+                latest_target_resolution_payload = deepcopy(payload)
             continue
 
         if event_type == "action_defeat_credit":
@@ -948,11 +994,26 @@ def _validate_process_events(transition: dict[str, Any], *, diff_limit: int = 20
         if issue_count == before_issue_count:
             timeline_tick_valid_count += 1
 
+    if latest_target_resolution_payload is not None:
+        target_resolution = transition.get("target_resolution")
+        if not isinstance(target_resolution, dict):
+            add_issue("target_resolution", "missing_target_resolution", actual=target_resolution, expected="dict")
+        else:
+            compare("target_resolution.actor_id", target_resolution.get("actor_id"), latest_target_resolution_payload.get("actor_id"))
+            compare("target_resolution.action_id", target_resolution.get("action_id"), latest_target_resolution_payload.get("action_id"))
+            compare("target_resolution.requested_target_ids", target_resolution.get("requested_target_ids") or [], latest_target_resolution_payload.get("requested_target_ids") or [])
+            compare("target_resolution.resolved_target_ids", target_resolution.get("resolved_target_ids") or [], latest_target_resolution_payload.get("resolved_target_ids") or [])
+            compare("target_resolution.method", target_resolution.get("method"), latest_target_resolution_payload.get("method"))
+            compare("target_resolution.reason", target_resolution.get("reason"), latest_target_resolution_payload.get("reason"))
+            compare("target_resolution.source", target_resolution.get("source"), latest_target_resolution_payload.get("source"))
+
     return {
         "process_event_count": len(events),
         "process_event_supported_count": supported_event_count,
         "process_event_unsupported_count": len(events) - supported_event_count,
         "process_event_unsupported_types": sorted(unsupported_types),
+        "target_resolution_count": target_resolution_count,
+        "target_resolution_valid_count": target_resolution_valid_count,
         "timeline_tick_count": timeline_tick_count,
         "timeline_tick_valid_count": timeline_tick_valid_count,
         "action_defeat_credit_count": action_defeat_credit_count,

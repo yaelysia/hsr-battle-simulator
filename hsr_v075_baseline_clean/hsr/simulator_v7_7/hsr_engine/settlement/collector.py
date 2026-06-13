@@ -146,7 +146,7 @@ class SettlementCollector:
             action_id=request.action_id, actor_id=request.actor_id,
             target_ids=list(target_ids), target_selection_reason=method,
         )
-        self.transition.target_resolution = TargetResolution(
+        resolution = TargetResolution(
             actor_id=request.actor_id,
             action_id=request.action_id,
             requested_target_ids=list(request.target_ids or []),
@@ -155,6 +155,24 @@ class SettlementCollector:
             reason=str(method or ""),
             source=request.source,
             decision_trace=decision_trace,
+        )
+        self.transition.target_resolution = resolution
+        self.transition.append_process_event(
+            ProcessEvent(
+                event_type="target_resolution",
+                subject_id=request.actor_id,
+                source=request.source,
+                reason="target:resolution",
+                payload={
+                    "actor_id": resolution.actor_id,
+                    "action_id": resolution.action_id,
+                    "requested_target_ids": list(resolution.requested_target_ids or []),
+                    "resolved_target_ids": list(resolution.resolved_target_ids or []),
+                    "method": resolution.method,
+                    "reason": resolution.reason,
+                    "source": resolution.source.to_dict(),
+                },
+            )
         )
 
     def record_target_decision(self, decision: dict[str, Any]) -> None:
