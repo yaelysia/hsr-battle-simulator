@@ -34,6 +34,7 @@ ENTITY_GROUPS = ("allies", "summons", "enemies", "others")
 QUEUE_NAMES = {"ultimate_queue", "immediate_queue", "interrupt_queue"}
 AUDIT_ONLY_FIELD_PATHS = {
     "unit.hp_or_shield",
+    "unit.toughness.break",
     "unit.turn",
 }
 SPECIAL_MECHANIC_FLAG_KEYS = {
@@ -1251,6 +1252,124 @@ def _validate_damage_state_changes(transition: dict[str, Any], *, diff_limit: in
     }
 
 
+def _validate_break_state_changes(transition: dict[str, Any], *, diff_limit: int = 20) -> dict[str, Any]:
+    changes = [row for row in (transition.get("state_changes") or []) if isinstance(row, dict)]
+    issues: list[dict[str, Any]] = []
+    issue_count = 0
+    break_change_count = 0
+    break_change_valid_count = 0
+
+    def add_issue(path: str, message: str, *, actual: Any = None, expected: Any = None) -> None:
+        nonlocal issue_count
+        issue_count += 1
+        if len(issues) < diff_limit:
+            issue = {"path": path, "message": message}
+            if actual is not None or expected is not None:
+                issue["actual"] = actual
+                issue["expected"] = expected
+            issues.append(issue)
+
+    def compare(path: str, actual: Any, expected: Any) -> None:
+        if not _json_equal(actual, expected):
+            add_issue(path, "value_mismatch", actual=actual, expected=expected)
+
+    def numeric_payload(prefix: str, payload: dict[str, Any], key: str) -> float | None:
+        value = payload.get(key)
+        if not isinstance(value, (int, float)):
+            add_issue(f"{prefix}.payload.{key}", f"missing_numeric_{key}", actual=value, expected="number")
+            return None
+        return float(value)
+
+    for change_index, change in enumerate(changes):
+        if change.get("change_type") != "break" or change.get("field_path") != "unit.toughness.break":
+            continue
+        break_change_count += 1
+        before_issue_count = issue_count
+        prefix = f"state_changes[{change_index}]"
+        payload = change.get("payload")
+        if not isinstance(payload, dict):
+            add_issue(f"{prefix}.payload", "missing_break_payload_dict", actual=payload, expected="dict")
+            continue
+
+        target_id = str(payload.get("target_id") or "")
+        actor_id = str(payload.get("actor_id") or "")
+        element = str(payload.get("element") or "")
+        if not target_id:
+            add_issue(f"{prefix}.payload.target_id", "missing_target_id", actual=payload.get("target_id"), expected="non-empty string")
+        if not actor_id:
+            add_issue(f"{prefix}.payload.actor_id", "missing_actor_id", actual=payload.get("actor_id"), expected="non-empty string")
+        if not element:
+            add_issue(f"{prefix}.payload.element", "missing_break_element", actual=payload.get("element"), expected="non-empty string")
+        compare(f"{prefix}.subject_id", change.get("subject_id"), target_id)
+        compare(f"{prefix}.reason", change.get("reason"), "weakness_break")
+        compare(f"{prefix}.source.owner_id", (change.get("source") or {}).get("owner_id"), actor_id)
+
+        damage_applied = numeric_payload(prefix, payload, "damage_applied")
+        final_break_damage = numeric_payload(prefix, payload, "final_break_damage")
+        numeric_payload(prefix, payload, "base_break_damage")
+        hp_loss = numeric_payload(prefix, payload, "hp_loss")
+        shield_absorbed = numeric_payload(prefix, payload, "shield_absorbed")
+        if damage_applied is not None:
+            compare(f"{prefix}.delta", change.get("delta"), -damage_applied)
+        if damage_applied is not None and final_break_damage is not None:
+            compare(f"{prefix}.payload.final_break_damage", final_break_damage, damage_applied)
+
+        matching_toughness_changes = [
+            row for row in changes
+            if row.get("subject_id") == target_id
+            and row.get("field_path") == "unit.toughness"
+            and isinstance(row.get("old_value"), (int, float))
+            and isinstance(row.get("new_value"), (int, float))
+            and float(row.get("old_value")) > 0
+            and float(row.get("new_value")) <= NUMERIC_TOLERANCE
+        ]
+        if not matching_toughness_changes:
+            add_issue(f"{prefix}.state_changes.unit.toughness", "missing_breaking_toughness_state_change", actual=None, expected=f"{target_id} toughness >0 -> <=0")
+
+        matching_is_broken_changes = [
+            row for row in changes
+            if row.get("subject_id") == target_id
+            and row.get("field_path") == "unit.is_broken"
+            and row.get("new_value") is True
+            and row.get("reason") == "damage:weakness_break"
+        ]
+        if not matching_is_broken_changes:
+            add_issue(f"{prefix}.state_changes.unit.is_broken", "missing_is_broken_state_change", actual=None, expected=f"{target_id} unit.is_broken True")
+
+        if hp_loss is not None and hp_loss > NUMERIC_TOLERANCE:
+            matching_hp_changes = [
+                row for row in changes
+                if row.get("subject_id") == target_id
+                and row.get("field_path") == "unit.hp"
+                and row.get("reason") == "break_damage:hp_loss"
+                and _json_equal(row.get("delta"), -hp_loss)
+            ]
+            if not matching_hp_changes:
+                add_issue(f"{prefix}.state_changes.unit.hp", "missing_break_hp_loss_state_change", actual=None, expected=f"{target_id} hp delta {-hp_loss}")
+
+        if shield_absorbed is not None and shield_absorbed > NUMERIC_TOLERANCE:
+            matching_shield_changes = [
+                row for row in changes
+                if row.get("subject_id") == target_id
+                and row.get("field_path") == "unit.shield"
+                and row.get("reason") == "break_damage:shield_absorb"
+                and _json_equal(row.get("delta"), -shield_absorbed)
+            ]
+            if not matching_shield_changes:
+                add_issue(f"{prefix}.state_changes.unit.shield", "missing_break_shield_absorb_state_change", actual=None, expected=f"{target_id} shield delta {-shield_absorbed}")
+
+        if issue_count == before_issue_count:
+            break_change_valid_count += 1
+
+    return {
+        "break_change_count": break_change_count,
+        "break_change_valid_count": break_change_valid_count,
+        "break_record_match": issue_count == 0,
+        "break_record_mismatch_count": issue_count,
+        "break_record_mismatches": issues,
+    }
+
+
 def validate_transition_replay(transition: dict[str, Any], *, diff_limit: int = 20) -> dict[str, Any]:
     reduced = reduce_transition_snapshot(transition)
     if not reduced.get("ok"):
@@ -1283,10 +1402,13 @@ def validate_transition_replay(transition: dict[str, Any], *, diff_limit: int = 
     result.update(process_validation)
     damage_validation = _validate_damage_state_changes(transition, diff_limit=diff_limit)
     result.update(damage_validation)
+    break_validation = _validate_break_state_changes(transition, diff_limit=diff_limit)
+    result.update(break_validation)
     result["ok"] = (
         result["direct_match"]
         and result["unsupported_count"] == 0
         and result["process_event_match"]
         and result["damage_record_match"]
+        and result["break_record_match"]
     )
     return result
