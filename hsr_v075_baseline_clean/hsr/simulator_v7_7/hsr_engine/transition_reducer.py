@@ -644,6 +644,123 @@ def _first_diffs(left: Any, right: Any, *, prefix: str = "", limit: int = 20) ->
     return []
 
 
+def _sequence_id(value: Any) -> int | None:
+    try:
+        seq = int(value)
+    except (TypeError, ValueError):
+        return None
+    return seq if seq > 0 else None
+
+
+def _state_changes_by_sequence(transition: dict[str, Any]) -> dict[int, dict[str, Any]]:
+    out: dict[int, dict[str, Any]] = {}
+    for change in transition.get("state_changes") or []:
+        if not isinstance(change, dict):
+            continue
+        seq = _sequence_id(change.get("sequence"))
+        if seq is not None:
+            out[seq] = change
+    return out
+
+
+def _validate_process_events(transition: dict[str, Any], *, diff_limit: int = 20) -> dict[str, Any]:
+    changes_by_sequence = _state_changes_by_sequence(transition)
+    events = [row for row in (transition.get("process_events") or []) if isinstance(row, dict)]
+    issues: list[dict[str, Any]] = []
+    issue_count = 0
+    unsupported_types: set[str] = set()
+    timeline_tick_count = 0
+    timeline_tick_valid_count = 0
+
+    def add_issue(path: str, message: str, *, actual: Any = None, expected: Any = None) -> None:
+        nonlocal issue_count
+        issue_count += 1
+        if len(issues) < diff_limit:
+            issue = {"path": path, "message": message}
+            if actual is not None or expected is not None:
+                issue["actual"] = actual
+                issue["expected"] = expected
+            issues.append(issue)
+
+    def compare(path: str, actual: Any, expected: Any) -> None:
+        if not _json_equal(actual, expected):
+            add_issue(path, "value_mismatch", actual=actual, expected=expected)
+
+    for event_index, event in enumerate(events):
+        event_type = str(event.get("event_type") or "")
+        if event_type != "timeline_tick":
+            unsupported_types.add(event_type or "<empty>")
+            continue
+        timeline_tick_count += 1
+        before_issue_count = issue_count
+        prefix = f"process_events[{event_index}]"
+        payload = event.get("payload")
+        if not isinstance(payload, dict):
+            add_issue(f"{prefix}.payload", "missing_payload_dict", actual=payload, expected="dict")
+            continue
+
+        global_seq = _sequence_id(payload.get("global_state_change_sequence"))
+        global_change = changes_by_sequence.get(global_seq or -1)
+        if global_change is None:
+            add_issue(
+                f"{prefix}.payload.global_state_change_sequence",
+                "missing_global_state_change",
+                actual=payload.get("global_state_change_sequence"),
+                expected="existing global.av state change sequence",
+            )
+        else:
+            compare(f"{prefix}.payload.global.field_path", global_change.get("field_path"), "global.av")
+            compare(f"{prefix}.payload.global.old_value", payload.get("old_global_av"), global_change.get("old_value"))
+            compare(f"{prefix}.payload.global.new_value", payload.get("new_global_av"), global_change.get("new_value"))
+            compare(f"{prefix}.payload.global.delta", payload.get("delta"), global_change.get("delta"))
+            compare(f"{prefix}.reason", event.get("reason"), global_change.get("reason"))
+
+        unit_rows = payload.get("unit_av_changes")
+        if not isinstance(unit_rows, list):
+            add_issue(f"{prefix}.payload.unit_av_changes", "missing_unit_av_changes_list", actual=unit_rows, expected="list")
+            continue
+
+        seen_unit_sequences: set[int] = set()
+        for row_index, row in enumerate(unit_rows):
+            row_prefix = f"{prefix}.payload.unit_av_changes[{row_index}]"
+            if not isinstance(row, dict):
+                add_issue(row_prefix, "non_dict_unit_av_change", actual=row, expected="dict")
+                continue
+            seq = _sequence_id(row.get("state_change_sequence"))
+            if seq is None:
+                add_issue(f"{row_prefix}.state_change_sequence", "missing_unit_state_change_sequence", actual=row.get("state_change_sequence"), expected="positive int")
+                continue
+            if seq in seen_unit_sequences:
+                add_issue(f"{row_prefix}.state_change_sequence", "duplicate_unit_state_change_sequence", actual=seq, expected="unique sequence")
+            seen_unit_sequences.add(seq)
+            change = changes_by_sequence.get(seq)
+            if change is None:
+                add_issue(f"{row_prefix}.state_change_sequence", "missing_unit_state_change", actual=seq, expected="existing unit.remaining_av state change")
+                continue
+            compare(f"{row_prefix}.field_path", change.get("field_path"), "unit.remaining_av")
+            compare(f"{row_prefix}.subject_id", row.get("unit_id"), change.get("subject_id"))
+            compare(f"{row_prefix}.old_remaining_av", row.get("old_remaining_av"), change.get("old_value"))
+            compare(f"{row_prefix}.new_remaining_av", row.get("new_remaining_av"), change.get("new_value"))
+            compare(f"{row_prefix}.delta", row.get("delta"), change.get("delta"))
+            compare(f"{row_prefix}.old_absolute_av", row.get("old_absolute_av"), absolute_av(payload.get("old_global_av"), row.get("old_remaining_av")))
+            compare(f"{row_prefix}.new_absolute_av", row.get("new_absolute_av"), absolute_av(payload.get("new_global_av"), row.get("new_remaining_av")))
+
+        if issue_count == before_issue_count:
+            timeline_tick_valid_count += 1
+
+    return {
+        "process_event_count": len(events),
+        "process_event_supported_count": timeline_tick_count,
+        "process_event_unsupported_count": len(events) - timeline_tick_count,
+        "process_event_unsupported_types": sorted(unsupported_types),
+        "timeline_tick_count": timeline_tick_count,
+        "timeline_tick_valid_count": timeline_tick_valid_count,
+        "process_event_match": issue_count == 0,
+        "process_event_mismatch_count": issue_count,
+        "process_event_mismatches": issues,
+    }
+
+
 def validate_transition_replay(transition: dict[str, Any], *, diff_limit: int = 20) -> dict[str, Any]:
     reduced = reduce_transition_snapshot(transition)
     if not reduced.get("ok"):
@@ -672,5 +789,7 @@ def validate_transition_replay(transition: dict[str, Any], *, diff_limit: int = 
             "full_diffs_sample": full_diffs[:diff_limit],
         }
     )
-    result["ok"] = result["direct_match"] and result["unsupported_count"] == 0
+    process_validation = _validate_process_events(transition, diff_limit=diff_limit)
+    result.update(process_validation)
+    result["ok"] = result["direct_match"] and result["unsupported_count"] == 0 and result["process_event_match"]
     return result
