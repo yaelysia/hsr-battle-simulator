@@ -44,6 +44,7 @@ def _settlement_equal(left: Any, right: Any) -> bool:
 def _validate_resource_record_consistency(
     transition: dict[str, Any],
     *,
+    target_record: dict[str, Any] | None,
     hp_records: list[dict[str, Any]],
     shield_records: list[dict[str, Any]],
     sp_records: list[dict[str, Any]],
@@ -63,6 +64,7 @@ def _validate_resource_record_consistency(
     changes = [row for row in (transition.get("state_changes") or []) if isinstance(row, dict)]
     issues: list[dict[str, Any]] = []
     issue_count = 0
+    target_record_valid_count = 0
     hp_record_valid_count = 0
     shield_record_valid_count = 0
     sp_record_valid_count = 0
@@ -181,6 +183,25 @@ def _validate_resource_record_consistency(
             if isinstance(raw, (int, float)):
                 return float(raw)
         return 0.0
+
+    if target_record is not None:
+        before_issue_count = issue_count
+        request = transition.get("request")
+        if not isinstance(request, dict):
+            request = {}
+            add_issue("target_record.request", "missing_action_request", actual=transition.get("request"), expected="dict")
+        resolution = transition.get("target_resolution")
+        if not isinstance(resolution, dict):
+            resolution = {}
+            add_issue("target_record.target_resolution", "missing_target_resolution", actual=transition.get("target_resolution"), expected="dict")
+        compare("target_record.actor_id", target_record.get("actor_id"), request.get("actor_id"))
+        compare("target_record.action_id", target_record.get("action_id"), request.get("action_id"))
+        compare("target_record.target_ids", target_record.get("target_ids") or [], resolution.get("resolved_target_ids") or [])
+        compare("target_record.target_selection_reason", target_record.get("target_selection_reason"), resolution.get("method"))
+        compare("target_record.target_resolution.actor_id", target_record.get("actor_id"), resolution.get("actor_id"))
+        compare("target_record.target_resolution.action_id", target_record.get("action_id"), resolution.get("action_id"))
+        if issue_count == before_issue_count:
+            target_record_valid_count = 1
 
     for record_index, rec in enumerate(sp_records):
         before_issue_count = issue_count
@@ -573,11 +594,14 @@ def _validate_resource_record_consistency(
     control_record_valid_count = queue_record_valid_count + trigger_usage_record_valid_count
     audit_record_count = len(damage_records) + len(break_records) + len(toughness_records) + len(dot_records) + len(super_break_records)
     audit_record_valid_count = damage_record_valid_count + break_record_valid_count + toughness_record_valid_count + dot_record_valid_count + super_break_record_valid_count
-    settlement_checked_record_count = resource_record_count + len(status_records) + len(av_records) + len(turn_records) + control_record_count + audit_record_count
-    settlement_checked_record_valid_count = resource_record_valid_count + status_record_valid_count + av_record_valid_count + turn_record_valid_count + control_record_valid_count + audit_record_valid_count
+    target_record_count = 1 if target_record is not None else 0
+    settlement_checked_record_count = target_record_count + resource_record_count + len(status_records) + len(av_records) + len(turn_records) + control_record_count + audit_record_count
+    settlement_checked_record_valid_count = target_record_valid_count + resource_record_valid_count + status_record_valid_count + av_record_valid_count + turn_record_valid_count + control_record_valid_count + audit_record_valid_count
     return {
         "settlement_checked_record_count": settlement_checked_record_count,
         "settlement_checked_record_valid_count": settlement_checked_record_valid_count,
+        "target_record_count": target_record_count,
+        "target_record_valid_count": target_record_valid_count,
         "resource_record_count": resource_record_count,
         "resource_record_valid_count": resource_record_valid_count,
         "hp_record_count": len(hp_records),
@@ -1231,6 +1255,7 @@ class SettlementCollector:
         replay_validation = validate_transition_replay(transition)
         settlement_validation = _validate_resource_record_consistency(
             transition,
+            target_record=asdict(self.target_record) if self.target_record else None,
             hp_records=hp_records,
             shield_records=shield_records,
             sp_records=sp_records,
