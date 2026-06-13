@@ -669,8 +669,11 @@ def _validate_process_events(transition: dict[str, Any], *, diff_limit: int = 20
     issues: list[dict[str, Any]] = []
     issue_count = 0
     unsupported_types: set[str] = set()
+    supported_event_count = 0
     timeline_tick_count = 0
     timeline_tick_valid_count = 0
+    action_defeat_credit_count = 0
+    action_defeat_credit_valid_count = 0
 
     def add_issue(path: str, message: str, *, actual: Any = None, expected: Any = None) -> None:
         nonlocal issue_count
@@ -686,17 +689,83 @@ def _validate_process_events(transition: dict[str, Any], *, diff_limit: int = 20
         if not _json_equal(actual, expected):
             add_issue(path, "value_mismatch", actual=actual, expected=expected)
 
-    for event_index, event in enumerate(events):
-        event_type = str(event.get("event_type") or "")
-        if event_type != "timeline_tick":
-            unsupported_types.add(event_type or "<empty>")
-            continue
-        timeline_tick_count += 1
-        before_issue_count = issue_count
-        prefix = f"process_events[{event_index}]"
+    def validate_payload_dict(prefix: str, event: dict[str, Any]) -> dict[str, Any] | None:
         payload = event.get("payload")
         if not isinstance(payload, dict):
             add_issue(f"{prefix}.payload", "missing_payload_dict", actual=payload, expected="dict")
+            return None
+        return payload
+
+    for event_index, event in enumerate(events):
+        event_type = str(event.get("event_type") or "")
+        if event_type == "timeline_tick":
+            supported_event_count += 1
+        elif event_type == "action_defeat_credit":
+            supported_event_count += 1
+        else:
+            unsupported_types.add(event_type or "<empty>")
+            continue
+
+        if event_type == "action_defeat_credit":
+            action_defeat_credit_count += 1
+            before_issue_count = issue_count
+            prefix = f"process_events[{event_index}]"
+            payload = validate_payload_dict(prefix, event)
+            if payload is None:
+                continue
+            target_id = str(payload.get("target_id") or "")
+            source_id = payload.get("source_id")
+            damage_kind = payload.get("damage_kind")
+            if not target_id:
+                add_issue(f"{prefix}.payload.target_id", "missing_target_id", actual=payload.get("target_id"), expected="non-empty string")
+            compare(f"{prefix}.subject_id", event.get("subject_id"), target_id)
+            compare(f"{prefix}.reason", event.get("reason"), "action:defeat_credit")
+            if source_id is not None:
+                compare(f"{prefix}.source.owner_id", (event.get("source") or {}).get("owner_id"), source_id)
+
+            defeated_targets = payload.get("defeated_targets_this_action")
+            if not isinstance(defeated_targets, list):
+                add_issue(f"{prefix}.payload.defeated_targets_this_action", "missing_defeated_targets_list", actual=defeated_targets, expected="list")
+            elif target_id and target_id not in {str(x) for x in defeated_targets}:
+                add_issue(f"{prefix}.payload.defeated_targets_this_action", "target_missing_from_defeated_targets", actual=defeated_targets, expected=target_id)
+
+            credits = payload.get("defeat_credits_this_action")
+            if not isinstance(credits, dict):
+                add_issue(f"{prefix}.payload.defeat_credits_this_action", "missing_defeat_credits_dict", actual=credits, expected="dict")
+            else:
+                credit = credits.get(target_id)
+                if not isinstance(credit, dict):
+                    add_issue(f"{prefix}.payload.defeat_credits_this_action.{target_id}", "missing_target_credit", actual=credit, expected="dict")
+                else:
+                    compare(f"{prefix}.payload.defeat_credits_this_action.{target_id}.source_id", credit.get("source_id"), source_id)
+                    compare(f"{prefix}.payload.defeat_credits_this_action.{target_id}.damage_kind", credit.get("damage_kind"), damage_kind)
+
+            alive_changes = [
+                change for change in changes_by_sequence.values()
+                if change.get("subject_id") == target_id
+                and change.get("field_path") == "unit.alive"
+                and change.get("old_value") is True
+                and change.get("new_value") is False
+            ]
+            if not alive_changes:
+                add_issue(f"{prefix}.state_changes.unit.alive", "missing_target_defeated_state_change", actual=None, expected=f"{target_id} unit.alive True->False")
+            damage_changes = [
+                change for change in changes_by_sequence.values()
+                if change.get("subject_id") == target_id
+                and change.get("field_path") == "unit.hp_or_shield"
+            ]
+            if not damage_changes:
+                add_issue(f"{prefix}.state_changes.unit.hp_or_shield", "missing_target_damage_state_change", actual=None, expected=f"{target_id} damage state change")
+
+            if issue_count == before_issue_count:
+                action_defeat_credit_valid_count += 1
+            continue
+
+        timeline_tick_count += 1
+        before_issue_count = issue_count
+        prefix = f"process_events[{event_index}]"
+        payload = validate_payload_dict(prefix, event)
+        if payload is None:
             continue
 
         global_seq = _sequence_id(payload.get("global_state_change_sequence"))
@@ -750,11 +819,13 @@ def _validate_process_events(transition: dict[str, Any], *, diff_limit: int = 20
 
     return {
         "process_event_count": len(events),
-        "process_event_supported_count": timeline_tick_count,
-        "process_event_unsupported_count": len(events) - timeline_tick_count,
+        "process_event_supported_count": supported_event_count,
+        "process_event_unsupported_count": len(events) - supported_event_count,
         "process_event_unsupported_types": sorted(unsupported_types),
         "timeline_tick_count": timeline_tick_count,
         "timeline_tick_valid_count": timeline_tick_valid_count,
+        "action_defeat_credit_count": action_defeat_credit_count,
+        "action_defeat_credit_valid_count": action_defeat_credit_valid_count,
         "process_event_match": issue_count == 0,
         "process_event_mismatch_count": issue_count,
         "process_event_mismatches": issues,
