@@ -1370,6 +1370,113 @@ def _validate_break_state_changes(transition: dict[str, Any], *, diff_limit: int
     }
 
 
+def _validate_turn_state_changes(transition: dict[str, Any], *, diff_limit: int = 20) -> dict[str, Any]:
+    changes = [row for row in (transition.get("state_changes") or []) if isinstance(row, dict)]
+    request = transition.get("request")
+    if not isinstance(request, dict):
+        request = {}
+    request_action_id = str(request.get("action_id") or "")
+    issues: list[dict[str, Any]] = []
+    issue_count = 0
+    turn_change_count = 0
+    turn_begin_count = 0
+    turn_end_count = 0
+    valid_change_indexes: set[int] = set()
+    open_turns: dict[tuple[str, str], list[tuple[int, str]]] = {}
+    matched_pairs: list[tuple[int, int]] = []
+
+    def add_issue(path: str, message: str, *, actual: Any = None, expected: Any = None) -> None:
+        nonlocal issue_count
+        issue_count += 1
+        if len(issues) < diff_limit:
+            issue = {"path": path, "message": message}
+            if actual is not None or expected is not None:
+                issue["actual"] = actual
+                issue["expected"] = expected
+            issues.append(issue)
+
+    def compare(path: str, actual: Any, expected: Any) -> None:
+        if not _json_equal(actual, expected):
+            add_issue(path, "value_mismatch", actual=actual, expected=expected)
+
+    for change_index, change in enumerate(changes):
+        if change.get("field_path") != "unit.turn":
+            continue
+        turn_change_count += 1
+        before_issue_count = issue_count
+        prefix = f"state_changes[{change_index}]"
+        payload = change.get("payload")
+        if not isinstance(payload, dict):
+            add_issue(f"{prefix}.payload", "missing_turn_payload_dict", actual=payload, expected="dict")
+            continue
+
+        unit_id = str(payload.get("unit_id") or "")
+        turn_kind = str(payload.get("turn_kind") or "")
+        event_type = str(payload.get("event_type") or "")
+        payload_action_id = str(payload.get("action_id") or "")
+        source = change.get("source")
+        if not isinstance(source, dict):
+            add_issue(f"{prefix}.source", "missing_source_dict", actual=source, expected="dict")
+            source = {}
+
+        if not unit_id:
+            add_issue(f"{prefix}.payload.unit_id", "missing_unit_id", actual=payload.get("unit_id"), expected="non-empty string")
+        if not turn_kind:
+            add_issue(f"{prefix}.payload.turn_kind", "missing_turn_kind", actual=payload.get("turn_kind"), expected="non-empty string")
+        if event_type not in {"begin", "end"}:
+            add_issue(f"{prefix}.payload.event_type", "unexpected_turn_event_type", actual=event_type, expected="begin or end")
+
+        compare(f"{prefix}.change_type", change.get("change_type"), "turn")
+        compare(f"{prefix}.scope", change.get("scope"), "unit")
+        compare(f"{prefix}.subject_id", change.get("subject_id"), unit_id)
+        compare(f"{prefix}.reason", change.get("reason"), event_type)
+        compare(f"{prefix}.old_value", change.get("old_value"), None)
+        compare(f"{prefix}.new_value", change.get("new_value"), None)
+        compare(f"{prefix}.delta", change.get("delta"), None)
+        compare(f"{prefix}.source.source_type", source.get("source_type"), "action")
+        compare(f"{prefix}.source.owner_id", source.get("owner_id"), unit_id)
+        compare(f"{prefix}.source.source_id", source.get("source_id"), payload_action_id or request_action_id)
+
+        if event_type == "begin":
+            turn_begin_count += 1
+            if unit_id and turn_kind:
+                open_turns.setdefault((unit_id, turn_kind), []).append((change_index, prefix))
+        elif event_type == "end":
+            turn_end_count += 1
+            if unit_id and turn_kind:
+                stack = open_turns.get((unit_id, turn_kind)) or []
+                if not stack:
+                    add_issue(f"{prefix}.lifecycle", "turn_end_without_begin", actual={"unit_id": unit_id, "turn_kind": turn_kind}, expected="prior begin in same transition")
+                else:
+                    begin_index, _begin_prefix = stack.pop()
+                    matched_pairs.append((begin_index, change_index))
+
+        if issue_count == before_issue_count:
+            valid_change_indexes.add(change_index)
+
+    for (unit_id, turn_kind), stack in sorted(open_turns.items()):
+        for begin_index, begin_prefix in stack:
+            valid_change_indexes.discard(begin_index)
+            add_issue(f"{begin_prefix}.lifecycle", "turn_begin_without_end", actual={"unit_id": unit_id, "turn_kind": turn_kind}, expected="matching end in same transition")
+
+    turn_pair_valid_count = sum(
+        1
+        for begin_index, end_index in matched_pairs
+        if begin_index in valid_change_indexes and end_index in valid_change_indexes
+    )
+    return {
+        "turn_change_count": turn_change_count,
+        "turn_change_valid_count": len(valid_change_indexes),
+        "turn_begin_count": turn_begin_count,
+        "turn_end_count": turn_end_count,
+        "turn_pair_count": len(matched_pairs),
+        "turn_pair_valid_count": turn_pair_valid_count,
+        "turn_record_match": issue_count == 0,
+        "turn_record_mismatch_count": issue_count,
+        "turn_record_mismatches": issues,
+    }
+
+
 def validate_transition_replay(transition: dict[str, Any], *, diff_limit: int = 20) -> dict[str, Any]:
     reduced = reduce_transition_snapshot(transition)
     if not reduced.get("ok"):
@@ -1404,11 +1511,14 @@ def validate_transition_replay(transition: dict[str, Any], *, diff_limit: int = 
     result.update(damage_validation)
     break_validation = _validate_break_state_changes(transition, diff_limit=diff_limit)
     result.update(break_validation)
+    turn_validation = _validate_turn_state_changes(transition, diff_limit=diff_limit)
+    result.update(turn_validation)
     result["ok"] = (
         result["direct_match"]
         and result["unsupported_count"] == 0
         and result["process_event_match"]
         and result["damage_record_match"]
         and result["break_record_match"]
+        and result["turn_record_match"]
     )
     return result
