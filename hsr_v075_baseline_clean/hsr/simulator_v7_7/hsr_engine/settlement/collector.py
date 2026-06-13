@@ -48,6 +48,11 @@ def _validate_resource_record_consistency(
     energy_records: list[dict[str, Any]],
     status_records: list[dict[str, Any]],
     av_records: list[dict[str, Any]],
+    damage_records: list[dict[str, Any]],
+    break_records: list[dict[str, Any]],
+    toughness_records: list[dict[str, Any]],
+    dot_records: list[dict[str, Any]],
+    super_break_records: list[dict[str, Any]],
     diff_limit: int = 20,
 ) -> dict[str, Any]:
     changes = [row for row in (transition.get("state_changes") or []) if isinstance(row, dict)]
@@ -59,12 +64,22 @@ def _validate_resource_record_consistency(
     energy_record_valid_count = 0
     status_record_valid_count = 0
     av_record_valid_count = 0
+    damage_record_valid_count = 0
+    break_record_valid_count = 0
+    toughness_record_valid_count = 0
+    dot_record_valid_count = 0
+    super_break_record_valid_count = 0
     consumed_hp_changes: set[int] = set()
     consumed_shield_changes: set[int] = set()
     consumed_sp_changes: set[int] = set()
     consumed_energy_changes: set[int] = set()
     consumed_status_changes: set[int] = set()
     consumed_av_changes: set[int] = set()
+    consumed_damage_changes: set[int] = set()
+    consumed_break_changes: set[int] = set()
+    consumed_toughness_changes: set[int] = set()
+    consumed_dot_changes: set[int] = set()
+    consumed_super_break_changes: set[int] = set()
 
     def add_issue(path: str, message: str, *, actual: Any = None, expected: Any = None) -> None:
         nonlocal issue_count
@@ -107,6 +122,26 @@ def _validate_resource_record_consistency(
 
     def matching_resource_change(**kwargs: Any) -> tuple[int | None, dict[str, Any] | None]:
         return matching_state_change(change_type="resource", **kwargs)
+
+    def matching_payload_change(
+        *,
+        consumed: set[int],
+        change_type: str,
+        field_path: str,
+        subject_id: str,
+        payload: dict[str, Any],
+    ) -> tuple[int | None, dict[str, Any] | None]:
+        for change_index, change in enumerate(changes):
+            if change_index in consumed:
+                continue
+            if change.get("change_type") != change_type:
+                continue
+            if change.get("field_path") != field_path or change.get("subject_id") != subject_id:
+                continue
+            if not _settlement_equal(change.get("payload"), payload):
+                continue
+            return change_index, change
+        return None, None
 
     def status_stacks(value: Any) -> int:
         if isinstance(value, dict):
@@ -316,10 +351,133 @@ def _validate_resource_record_consistency(
         if issue_count == before_issue_count:
             status_record_valid_count += 1
 
+    for record_index, rec in enumerate(damage_records):
+        before_issue_count = issue_count
+        prefix = f"damage_records[{record_index}]"
+        target_id = str(rec.get("target_id") or "")
+        change_index, change = matching_payload_change(
+            consumed=consumed_damage_changes,
+            change_type="damage",
+            field_path="unit.hp_or_shield",
+            subject_id=target_id,
+            payload=rec,
+        )
+        if change is None or change_index is None:
+            add_issue(
+                f"{prefix}.state_change",
+                "missing_matching_damage_audit_state_change",
+                actual=None,
+                expected={"target_id": target_id, "payload": rec},
+            )
+            continue
+        consumed_damage_changes.add(change_index)
+        compare(f"{prefix}.state_change.delta", change.get("delta"), -float(rec.get("damage_applied") or 0.0))
+        if issue_count == before_issue_count:
+            damage_record_valid_count += 1
+
+    for record_index, rec in enumerate(break_records):
+        before_issue_count = issue_count
+        prefix = f"break_records[{record_index}]"
+        target_id = str(rec.get("target_id") or "")
+        change_index, change = matching_payload_change(
+            consumed=consumed_break_changes,
+            change_type="break",
+            field_path="unit.toughness.break",
+            subject_id=target_id,
+            payload=rec,
+        )
+        if change is None or change_index is None:
+            add_issue(
+                f"{prefix}.state_change",
+                "missing_matching_break_audit_state_change",
+                actual=None,
+                expected={"target_id": target_id, "payload": rec},
+            )
+            continue
+        consumed_break_changes.add(change_index)
+        compare(f"{prefix}.state_change.delta", change.get("delta"), -float(rec.get("damage_applied") or 0.0))
+        if issue_count == before_issue_count:
+            break_record_valid_count += 1
+
+    for record_index, rec in enumerate(dot_records):
+        before_issue_count = issue_count
+        prefix = f"dot_records[{record_index}]"
+        unit_id = str(rec.get("unit_id") or "")
+        change_index, change = matching_payload_change(
+            consumed=consumed_dot_changes,
+            change_type="dot",
+            field_path="unit.hp_or_shield",
+            subject_id=unit_id,
+            payload=rec,
+        )
+        if change is None or change_index is None:
+            add_issue(
+                f"{prefix}.state_change",
+                "missing_matching_dot_audit_state_change",
+                actual=None,
+                expected={"unit_id": unit_id, "payload": rec},
+            )
+            continue
+        consumed_dot_changes.add(change_index)
+        compare(f"{prefix}.state_change.delta", change.get("delta"), -float(rec.get("damage_applied") or 0.0))
+        if issue_count == before_issue_count:
+            dot_record_valid_count += 1
+
+    for record_index, rec in enumerate(super_break_records):
+        before_issue_count = issue_count
+        prefix = f"super_break_records[{record_index}]"
+        target_id = str(rec.get("target_id") or "")
+        change_index, change = matching_payload_change(
+            consumed=consumed_super_break_changes,
+            change_type="super_break",
+            field_path="unit.hp_or_shield",
+            subject_id=target_id,
+            payload=rec,
+        )
+        if change is None or change_index is None:
+            add_issue(
+                f"{prefix}.state_change",
+                "missing_matching_super_break_audit_state_change",
+                actual=None,
+                expected={"target_id": target_id, "payload": rec},
+            )
+            continue
+        consumed_super_break_changes.add(change_index)
+        compare(f"{prefix}.state_change.delta", change.get("delta"), -float(rec.get("damage_applied") or 0.0))
+        if issue_count == before_issue_count:
+            super_break_record_valid_count += 1
+
+    for record_index, rec in enumerate(toughness_records):
+        before_issue_count = issue_count
+        prefix = f"toughness_records[{record_index}]"
+        unit_id = str(rec.get("unit_id") or "")
+        change_index, change = matching_state_change(
+            consumed=consumed_toughness_changes,
+            field_path="unit.toughness",
+            subject_id=unit_id,
+            old_value=rec.get("old_toughness"),
+            new_value=rec.get("new_toughness"),
+            change_type="toughness",
+        )
+        if change is None or change_index is None:
+            add_issue(
+                f"{prefix}.state_change",
+                "missing_matching_toughness_state_change",
+                actual=None,
+                expected={"unit_id": unit_id, "old_value": rec.get("old_toughness"), "new_value": rec.get("new_toughness")},
+            )
+            continue
+        consumed_toughness_changes.add(change_index)
+        compare(f"{prefix}.state_change.delta", change.get("delta"), rec.get("delta"))
+        if issue_count == before_issue_count:
+            toughness_record_valid_count += 1
+
     resource_record_count = len(hp_records) + len(shield_records) + len(sp_records) + len(energy_records)
     resource_record_valid_count = hp_record_valid_count + shield_record_valid_count + sp_record_valid_count + energy_record_valid_count
-    settlement_checked_record_count = resource_record_count + len(status_records) + len(av_records)
-    settlement_checked_record_valid_count = resource_record_valid_count + status_record_valid_count + av_record_valid_count
+    audit_record_count = len(damage_records) + len(break_records) + len(toughness_records) + len(dot_records) + len(super_break_records)
+    audit_record_valid_count = damage_record_valid_count + break_record_valid_count + toughness_record_valid_count + dot_record_valid_count + super_break_record_valid_count
+    settlement_checked_record_count = resource_record_count + len(status_records) + len(av_records) + audit_record_count
+    settlement_checked_record_valid_count = resource_record_valid_count + status_record_valid_count + av_record_valid_count + audit_record_valid_count
     return {
         "settlement_checked_record_count": settlement_checked_record_count,
         "settlement_checked_record_valid_count": settlement_checked_record_valid_count,
@@ -337,6 +495,18 @@ def _validate_resource_record_consistency(
         "status_record_valid_count": status_record_valid_count,
         "av_record_count": len(av_records),
         "av_record_valid_count": av_record_valid_count,
+        "audit_record_count": audit_record_count,
+        "audit_record_valid_count": audit_record_valid_count,
+        "damage_settlement_record_count": len(damage_records),
+        "damage_settlement_record_valid_count": damage_record_valid_count,
+        "break_settlement_record_count": len(break_records),
+        "break_settlement_record_valid_count": break_record_valid_count,
+        "toughness_settlement_record_count": len(toughness_records),
+        "toughness_settlement_record_valid_count": toughness_record_valid_count,
+        "dot_settlement_record_count": len(dot_records),
+        "dot_settlement_record_valid_count": dot_record_valid_count,
+        "super_break_settlement_record_count": len(super_break_records),
+        "super_break_settlement_record_valid_count": super_break_record_valid_count,
         "settlement_record_match": issue_count == 0,
         "settlement_record_mismatch_count": issue_count,
         "settlement_record_mismatches": issues,
@@ -902,6 +1072,11 @@ class SettlementCollector:
             energy_records=energy_records,
             status_records=status_records,
             av_records=av_records,
+            damage_records=damage_records,
+            break_records=break_records,
+            toughness_records=toughness_records,
+            dot_records=dot_records,
+            super_break_records=super_break_records,
         )
         replay_validation.update(settlement_validation)
         replay_validation["ok"] = replay_validation.get("ok", False) and settlement_validation["settlement_record_match"]
