@@ -674,10 +674,13 @@ def _validate_process_events(transition: dict[str, Any], *, diff_limit: int = 20
     timeline_tick_valid_count = 0
     action_defeat_credit_count = 0
     action_defeat_credit_valid_count = 0
+    derived_damage_skip_count = 0
+    derived_damage_skip_valid_count = 0
     phase_damage_lock_count = 0
     phase_damage_lock_valid_count = 0
     phase_damage_skip_count = 0
     phase_damage_skip_valid_count = 0
+    defeat_credit_targets: set[str] = set()
     phase_locked_targets: set[str] = set()
 
     def add_issue(path: str, message: str, *, actual: Any = None, expected: Any = None) -> None:
@@ -701,6 +704,13 @@ def _validate_process_events(transition: dict[str, Any], *, diff_limit: int = 20
             return None
         return payload
 
+    def validate_basic_target_payload(prefix: str, event: dict[str, Any], payload: dict[str, Any]) -> str:
+        target_id = str(payload.get("target_id") or "")
+        if not target_id:
+            add_issue(f"{prefix}.payload.target_id", "missing_target_id", actual=payload.get("target_id"), expected="non-empty string")
+        compare(f"{prefix}.subject_id", event.get("subject_id"), target_id)
+        return target_id
+
     def validate_target_payload(prefix: str, event: dict[str, Any], payload: dict[str, Any]) -> str:
         target_id = str(payload.get("target_id") or "")
         if not target_id:
@@ -718,6 +728,8 @@ def _validate_process_events(transition: dict[str, Any], *, diff_limit: int = 20
         if event_type == "timeline_tick":
             supported_event_count += 1
         elif event_type == "action_defeat_credit":
+            supported_event_count += 1
+        elif event_type == "derived_damage_target_skip":
             supported_event_count += 1
         elif event_type in {"phase_damage_lock", "damage_target_skip", "effect_damage_target_skip"}:
             supported_event_count += 1
@@ -778,6 +790,49 @@ def _validate_process_events(transition: dict[str, Any], *, diff_limit: int = 20
 
             if issue_count == before_issue_count:
                 action_defeat_credit_valid_count += 1
+                if target_id:
+                    defeat_credit_targets.add(target_id)
+            continue
+
+        if event_type == "derived_damage_target_skip":
+            derived_damage_skip_count += 1
+            before_issue_count = issue_count
+            prefix = f"process_events[{event_index}]"
+            payload = validate_payload_dict(prefix, event)
+            if payload is None:
+                continue
+            target_id = validate_basic_target_payload(prefix, event, payload)
+            reason = event.get("reason")
+            if reason not in {"derived_damage:already_defeated_this_action", "derived_damage:not_alive"}:
+                add_issue(f"{prefix}.reason", "unexpected_derived_damage_skip_reason", actual=reason, expected="derived damage skip reason")
+            effect = payload.get("effect")
+            if not isinstance(effect, str) or not effect:
+                add_issue(f"{prefix}.payload.effect", "missing_effect_name", actual=effect, expected="non-empty string")
+
+            if reason == "derived_damage:already_defeated_this_action":
+                defeated_targets = payload.get("defeated_targets_this_action")
+                if not isinstance(defeated_targets, list):
+                    add_issue(f"{prefix}.payload.defeated_targets_this_action", "missing_defeated_targets_list", actual=defeated_targets, expected="list")
+                elif target_id and target_id not in {str(x) for x in defeated_targets}:
+                    add_issue(f"{prefix}.payload.defeated_targets_this_action", "target_missing_from_defeated_targets", actual=defeated_targets, expected=target_id)
+                if target_id and target_id not in defeat_credit_targets:
+                    add_issue(f"{prefix}.defeat_credit_order", "missing_prior_action_defeat_credit", actual=target_id, expected="prior valid action_defeat_credit in same transition")
+                alive_changes = [
+                    change for change in changes_by_sequence.values()
+                    if change.get("subject_id") == target_id
+                    and change.get("field_path") == "unit.alive"
+                    and change.get("old_value") is True
+                    and change.get("new_value") is False
+                ]
+                if not alive_changes:
+                    add_issue(f"{prefix}.state_changes.unit.alive", "missing_target_defeated_state_change", actual=None, expected=f"{target_id} unit.alive True->False")
+            elif reason == "derived_damage:not_alive":
+                target_exists = payload.get("target_exists")
+                if not isinstance(target_exists, bool):
+                    add_issue(f"{prefix}.payload.target_exists", "missing_target_exists_bool", actual=target_exists, expected="bool")
+
+            if issue_count == before_issue_count:
+                derived_damage_skip_valid_count += 1
             continue
 
         if event_type == "phase_damage_lock":
@@ -902,6 +957,8 @@ def _validate_process_events(transition: dict[str, Any], *, diff_limit: int = 20
         "timeline_tick_valid_count": timeline_tick_valid_count,
         "action_defeat_credit_count": action_defeat_credit_count,
         "action_defeat_credit_valid_count": action_defeat_credit_valid_count,
+        "derived_damage_skip_count": derived_damage_skip_count,
+        "derived_damage_skip_valid_count": derived_damage_skip_valid_count,
         "phase_damage_lock_count": phase_damage_lock_count,
         "phase_damage_lock_valid_count": phase_damage_lock_valid_count,
         "phase_damage_skip_count": phase_damage_skip_count,

@@ -1,0 +1,48 @@
+settings:
+  default_crit_mode: noncrit
+
+global:
+  av: 0
+  skill_points: 3
+  skill_point_cap: 5
+
+units:
+  hero:
+    name: Hero
+    side: ally
+    hp: 1000
+    max_hp: 1000
+    speed: 100
+    remaining_av: 100
+    stats: {atk: 1000, crit_rate: 0, crit_dmg: 0}
+    actions:
+      strike_then_extra:
+        tags: [attack]
+        target_policy: manual
+        damage_packets:
+          - id: lethal_hit
+            element: quantum
+            scaling_stat: atk
+            multiplier: 0.10
+            can_crit: false
+        effects_after_damage:
+          - id: afterkill_ping
+            type: damage_unit
+            target: target
+            amount: 10
+            ignore_shield: true
+  target:
+    name: Target
+    side: enemy
+    hp: 50
+    max_hp: 50
+    speed: 100
+    remaining_av: 100
+    stats: {defense: 0}
+    res: {quantum: 0}
+
+route:
+  - actor: hero
+    action: strike_then_extra
+    timing: manual
+    targets: [target]
