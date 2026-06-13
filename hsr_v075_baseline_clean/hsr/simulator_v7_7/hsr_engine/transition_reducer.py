@@ -674,6 +674,11 @@ def _validate_process_events(transition: dict[str, Any], *, diff_limit: int = 20
     timeline_tick_valid_count = 0
     action_defeat_credit_count = 0
     action_defeat_credit_valid_count = 0
+    phase_damage_lock_count = 0
+    phase_damage_lock_valid_count = 0
+    phase_damage_skip_count = 0
+    phase_damage_skip_valid_count = 0
+    phase_locked_targets: set[str] = set()
 
     def add_issue(path: str, message: str, *, actual: Any = None, expected: Any = None) -> None:
         nonlocal issue_count
@@ -696,11 +701,25 @@ def _validate_process_events(transition: dict[str, Any], *, diff_limit: int = 20
             return None
         return payload
 
+    def validate_target_payload(prefix: str, event: dict[str, Any], payload: dict[str, Any]) -> str:
+        target_id = str(payload.get("target_id") or "")
+        if not target_id:
+            add_issue(f"{prefix}.payload.target_id", "missing_target_id", actual=payload.get("target_id"), expected="non-empty string")
+        compare(f"{prefix}.subject_id", event.get("subject_id"), target_id)
+        locked_targets = payload.get("phase_locked_targets")
+        if not isinstance(locked_targets, list):
+            add_issue(f"{prefix}.payload.phase_locked_targets", "missing_phase_locked_targets_list", actual=locked_targets, expected="list")
+        elif target_id and target_id not in {str(x) for x in locked_targets}:
+            add_issue(f"{prefix}.payload.phase_locked_targets", "target_missing_from_phase_locked_targets", actual=locked_targets, expected=target_id)
+        return target_id
+
     for event_index, event in enumerate(events):
         event_type = str(event.get("event_type") or "")
         if event_type == "timeline_tick":
             supported_event_count += 1
         elif event_type == "action_defeat_credit":
+            supported_event_count += 1
+        elif event_type in {"phase_damage_lock", "damage_target_skip", "effect_damage_target_skip"}:
             supported_event_count += 1
         else:
             unsupported_types.add(event_type or "<empty>")
@@ -759,6 +778,63 @@ def _validate_process_events(transition: dict[str, Any], *, diff_limit: int = 20
 
             if issue_count == before_issue_count:
                 action_defeat_credit_valid_count += 1
+            continue
+
+        if event_type == "phase_damage_lock":
+            phase_damage_lock_count += 1
+            before_issue_count = issue_count
+            prefix = f"process_events[{event_index}]"
+            payload = validate_payload_dict(prefix, event)
+            if payload is None:
+                continue
+            target_id = validate_target_payload(prefix, event, payload)
+            if event.get("reason") not in {"damage:phase_boundary_lock", "effect_damage:phase_boundary_lock"}:
+                add_issue(f"{prefix}.reason", "unexpected_phase_damage_lock_reason", actual=event.get("reason"), expected="phase boundary lock reason")
+            bars_depleted = payload.get("bars_depleted")
+            if not isinstance(bars_depleted, int) or bars_depleted <= 0:
+                add_issue(f"{prefix}.payload.bars_depleted", "invalid_bars_depleted", actual=bars_depleted, expected="positive int")
+            hp_bars_remaining = payload.get("hp_bars_remaining")
+            hp_bar_changes = [
+                change for change in changes_by_sequence.values()
+                if change.get("subject_id") == target_id
+                and change.get("field_path") == "unit.hp_bars_remaining"
+            ]
+            matching_hp_bar_changes = [change for change in hp_bar_changes if _json_equal(change.get("new_value"), hp_bars_remaining)]
+            if not matching_hp_bar_changes:
+                add_issue(
+                    f"{prefix}.state_changes.unit.hp_bars_remaining",
+                    "missing_matching_hp_bar_state_change",
+                    actual=hp_bars_remaining,
+                    expected=f"{target_id} hp_bars_remaining new_value",
+                )
+            if issue_count == before_issue_count:
+                phase_damage_lock_valid_count += 1
+                if target_id:
+                    phase_locked_targets.add(target_id)
+            continue
+
+        if event_type in {"damage_target_skip", "effect_damage_target_skip"}:
+            phase_damage_skip_count += 1
+            before_issue_count = issue_count
+            prefix = f"process_events[{event_index}]"
+            payload = validate_payload_dict(prefix, event)
+            if payload is None:
+                continue
+            target_id = validate_target_payload(prefix, event, payload)
+            expected_reason = "damage:phase_boundary_locked" if event_type == "damage_target_skip" else "effect_damage:phase_boundary_locked"
+            compare(f"{prefix}.reason", event.get("reason"), expected_reason)
+            if target_id and target_id not in phase_locked_targets:
+                add_issue(f"{prefix}.phase_lock_order", "missing_prior_phase_damage_lock", actual=target_id, expected="prior phase_damage_lock in same transition")
+            if event_type == "damage_target_skip" and not payload.get("packet_id"):
+                add_issue(f"{prefix}.payload.packet_id", "missing_packet_id", actual=payload.get("packet_id"), expected="non-empty packet id")
+            if event_type == "effect_damage_target_skip":
+                effect = payload.get("effect")
+                if not isinstance(effect, dict):
+                    add_issue(f"{prefix}.payload.effect", "missing_effect_dict", actual=effect, expected="dict")
+                else:
+                    compare(f"{prefix}.payload.effect.type", effect.get("type"), "damage_unit")
+            if issue_count == before_issue_count:
+                phase_damage_skip_valid_count += 1
             continue
 
         timeline_tick_count += 1
@@ -826,6 +902,10 @@ def _validate_process_events(transition: dict[str, Any], *, diff_limit: int = 20
         "timeline_tick_valid_count": timeline_tick_valid_count,
         "action_defeat_credit_count": action_defeat_credit_count,
         "action_defeat_credit_valid_count": action_defeat_credit_valid_count,
+        "phase_damage_lock_count": phase_damage_lock_count,
+        "phase_damage_lock_valid_count": phase_damage_lock_valid_count,
+        "phase_damage_skip_count": phase_damage_skip_count,
+        "phase_damage_skip_valid_count": phase_damage_skip_valid_count,
         "process_event_match": issue_count == 0,
         "process_event_mismatch_count": issue_count,
         "process_event_mismatches": issues,
