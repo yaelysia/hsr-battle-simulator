@@ -5181,8 +5181,14 @@ class BattleSimulator:
         after = next((s for s in target.statuses if s.id == status.id), after_status)
         # Phase 3: settlement 记录 aftermath 状态添加
         self._settle(ctx, "status",
-            unit_id=target.id, status_id=status.id, source_id=actor.id,
-            action="add", status_type="break_aftermath",
+            unit_id=target.id, status_id=status.id, source_id=after.source_id or actor.id,
+            change_type="add" if before is None else "refresh",
+            stacks_before=before.stacks if before is not None else 0,
+            stacks_after=after.stacks,
+            max_stacks=after.max_stacks,
+            duration_type=str(after.duration_type or ""),
+            duration_value=after.duration_value or 0,
+            status_type="break_aftermath",
             reason=f"{element} weakness break aftermath",
             record_state_change=False,
         )

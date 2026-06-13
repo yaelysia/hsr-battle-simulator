@@ -46,6 +46,7 @@ def _validate_resource_record_consistency(
     shield_records: list[dict[str, Any]],
     sp_records: list[dict[str, Any]],
     energy_records: list[dict[str, Any]],
+    status_records: list[dict[str, Any]],
     av_records: list[dict[str, Any]],
     diff_limit: int = 20,
 ) -> dict[str, Any]:
@@ -56,11 +57,13 @@ def _validate_resource_record_consistency(
     shield_record_valid_count = 0
     sp_record_valid_count = 0
     energy_record_valid_count = 0
+    status_record_valid_count = 0
     av_record_valid_count = 0
     consumed_hp_changes: set[int] = set()
     consumed_shield_changes: set[int] = set()
     consumed_sp_changes: set[int] = set()
     consumed_energy_changes: set[int] = set()
+    consumed_status_changes: set[int] = set()
     consumed_av_changes: set[int] = set()
 
     def add_issue(path: str, message: str, *, actual: Any = None, expected: Any = None) -> None:
@@ -104,6 +107,34 @@ def _validate_resource_record_consistency(
 
     def matching_resource_change(**kwargs: Any) -> tuple[int | None, dict[str, Any] | None]:
         return matching_state_change(change_type="resource", **kwargs)
+
+    def status_stacks(value: Any) -> int:
+        if isinstance(value, dict):
+            try:
+                return int(value.get("stacks") or 0)
+            except (TypeError, ValueError):
+                return 0
+        return 0
+
+    def status_max_stacks(value: Any) -> int:
+        if isinstance(value, dict):
+            try:
+                return int(value.get("max_stacks") or 0)
+            except (TypeError, ValueError):
+                return 0
+        return 0
+
+    def status_duration_type(value: Any) -> str:
+        if isinstance(value, dict):
+            return str(value.get("duration_type") or "")
+        return ""
+
+    def status_duration_value(value: Any) -> float:
+        if isinstance(value, dict):
+            raw = value.get("duration_value")
+            if isinstance(raw, (int, float)):
+                return float(raw)
+        return 0.0
 
     for record_index, rec in enumerate(sp_records):
         before_issue_count = issue_count
@@ -246,10 +277,49 @@ def _validate_resource_record_consistency(
         if issue_count == before_issue_count:
             av_record_valid_count += 1
 
+    for record_index, rec in enumerate(status_records):
+        before_issue_count = issue_count
+        prefix = f"status_records[{record_index}]"
+        unit_id = str(rec.get("unit_id") or "")
+        status_id = str(rec.get("status_id") or "")
+        change_type = str(rec.get("change_type") or "")
+        change_index = None
+        change = None
+        for candidate_index, candidate in enumerate(changes):
+            if candidate_index in consumed_status_changes:
+                continue
+            if candidate.get("change_type") != "status":
+                continue
+            if candidate.get("field_path") == f"unit.statuses.{status_id}" and candidate.get("subject_id") == unit_id:
+                change_index, change = candidate_index, candidate
+                break
+        if change is None or change_index is None:
+            add_issue(
+                f"{prefix}.state_change",
+                "missing_matching_status_state_change",
+                actual=None,
+                expected={"unit_id": unit_id, "status_id": status_id},
+            )
+            continue
+        consumed_status_changes.add(change_index)
+        old_value = change.get("old_value")
+        new_value = change.get("new_value")
+        expected_value = old_value if change_type == "remove" else new_value
+        compare(f"{prefix}.state_change.delta", change.get("delta"), change_type)
+        compare(f"{prefix}.old_stacks", rec.get("old_stacks"), status_stacks(old_value))
+        compare(f"{prefix}.new_stacks", rec.get("new_stacks"), status_stacks(new_value))
+        compare(f"{prefix}.max_stacks", rec.get("max_stacks"), status_max_stacks(expected_value))
+        compare(f"{prefix}.duration_type", str(rec.get("duration_type") or ""), status_duration_type(expected_value))
+        compare(f"{prefix}.duration_value", rec.get("duration_value"), status_duration_value(expected_value))
+        if rec.get("source_id"):
+            compare(f"{prefix}.state_change.source.owner_id", (change.get("source") or {}).get("owner_id"), rec.get("source_id"))
+        if issue_count == before_issue_count:
+            status_record_valid_count += 1
+
     resource_record_count = len(hp_records) + len(shield_records) + len(sp_records) + len(energy_records)
     resource_record_valid_count = hp_record_valid_count + shield_record_valid_count + sp_record_valid_count + energy_record_valid_count
-    settlement_checked_record_count = resource_record_count + len(av_records)
-    settlement_checked_record_valid_count = resource_record_valid_count + av_record_valid_count
+    settlement_checked_record_count = resource_record_count + len(status_records) + len(av_records)
+    settlement_checked_record_valid_count = resource_record_valid_count + status_record_valid_count + av_record_valid_count
     return {
         "settlement_checked_record_count": settlement_checked_record_count,
         "settlement_checked_record_valid_count": settlement_checked_record_valid_count,
@@ -263,6 +333,8 @@ def _validate_resource_record_consistency(
         "sp_record_valid_count": sp_record_valid_count,
         "energy_record_count": len(energy_records),
         "energy_record_valid_count": energy_record_valid_count,
+        "status_record_count": len(status_records),
+        "status_record_valid_count": status_record_valid_count,
         "av_record_count": len(av_records),
         "av_record_valid_count": av_record_valid_count,
         "settlement_record_match": issue_count == 0,
@@ -828,6 +900,7 @@ class SettlementCollector:
             shield_records=shield_records,
             sp_records=sp_records,
             energy_records=energy_records,
+            status_records=status_records,
             av_records=av_records,
         )
         replay_validation.update(settlement_validation)
