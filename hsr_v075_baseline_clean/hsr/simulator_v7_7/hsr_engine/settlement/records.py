@@ -145,6 +145,37 @@ class TurnRecord:
 
 
 # ---------------------------------------------------------------------------
+# 队列 / 触发次数记录
+# ---------------------------------------------------------------------------
+
+@dataclass
+class QueueRecord:
+    """队列变化：入队、出队或替换队列内容。"""
+    queue_name: str = ""
+    operation: str = ""
+    old_queue: list[dict[str, Any]] = field(default_factory=list)
+    new_queue: list[dict[str, Any]] = field(default_factory=list)
+    delta: dict[str, Any] = field(default_factory=dict)
+    item: dict[str, Any] = field(default_factory=dict)
+    requested_queue: str = ""
+    reason: str = ""
+    source_id: str = ""
+    payload: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class TriggerUsageRecord:
+    """触发器使用次数变化。"""
+    key: str = ""
+    old_count: int = 0
+    new_count: int | None = 0
+    delta: int | str = 0
+    reason: str = ""
+    source_id: str = ""
+    payload: dict[str, Any] = field(default_factory=dict)
+
+
+# ---------------------------------------------------------------------------
 # 机制事件
 # ---------------------------------------------------------------------------
 

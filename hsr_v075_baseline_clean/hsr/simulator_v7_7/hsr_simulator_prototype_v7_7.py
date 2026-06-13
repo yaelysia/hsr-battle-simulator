@@ -1627,7 +1627,23 @@ class BattleSimulator:
             reason=reason,
             payload=payload or {},
         )
-        return self.commit_state_change(change, ctx)
+        committed = self.commit_state_change(change, ctx)
+        self._settle(
+            ctx or {},
+            "queue",
+            queue_name=actual_queue,
+            operation="append",
+            old_queue=old,
+            new_queue=new_queue,
+            delta=deepcopy(committed.delta),
+            item=item_copy,
+            requested_queue=requested_queue,
+            reason=reason,
+            source_id=committed.source.source_id,
+            payload=deepcopy(committed.payload),
+            record_state_change=False,
+        )
+        return committed
 
     def commit_queue_popleft(self, queue_name: str, *, reason: str, ctx: Optional[dict[str, Any]] = None, payload: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         actual_queue = self.normalized_queue_name(queue_name)
@@ -1649,7 +1665,22 @@ class BattleSimulator:
             reason=reason,
             payload=payload or {},
         )
-        self.commit_state_change(change, ctx)
+        committed = self.commit_state_change(change, ctx)
+        self._settle(
+            ctx or {},
+            "queue",
+            queue_name=actual_queue,
+            operation="popleft",
+            old_queue=old,
+            new_queue=new_queue,
+            delta=deepcopy(committed.delta),
+            item=item,
+            requested_queue=actual_queue,
+            reason=reason,
+            source_id=committed.source.source_id,
+            payload=deepcopy(committed.payload),
+            record_state_change=False,
+        )
         return item
 
     def commit_trigger_usage(self, key: str, value: int, *, reason: str, ctx: Optional[dict[str, Any]] = None, payload: Optional[dict[str, Any]] = None) -> StateChange:
@@ -1668,7 +1699,20 @@ class BattleSimulator:
             reason=reason,
             payload=payload or {},
         )
-        return self.commit_state_change(change, ctx)
+        committed = self.commit_state_change(change, ctx)
+        self._settle(
+            ctx or {},
+            "trigger_usage",
+            key=key,
+            old_count=old,
+            new_count=new_value,
+            delta=committed.delta,
+            reason=reason,
+            source_id=committed.source.source_id,
+            payload=deepcopy(committed.payload),
+            record_state_change=False,
+        )
+        return committed
 
     def commit_trigger_usage_remove(self, key: str, *, reason: str, ctx: Optional[dict[str, Any]] = None, payload: Optional[dict[str, Any]] = None) -> Optional[StateChange]:
         key = str(key)
@@ -1687,7 +1731,20 @@ class BattleSimulator:
             reason=reason,
             payload=payload or {},
         )
-        return self.commit_state_change(change, ctx)
+        committed = self.commit_state_change(change, ctx)
+        self._settle(
+            ctx or {},
+            "trigger_usage",
+            key=key,
+            old_count=old,
+            new_count=None,
+            delta=committed.delta,
+            reason=reason,
+            source_id=committed.source.source_id,
+            payload=deepcopy(committed.payload),
+            record_state_change=False,
+        )
+        return committed
 
     def snapshot(self) -> dict[str, Any]:
         """Return a compact debug snapshot for assertions and diagnostics."""

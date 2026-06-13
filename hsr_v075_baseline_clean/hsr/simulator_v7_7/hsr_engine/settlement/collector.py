@@ -21,6 +21,8 @@ from .records import (
     StatusRecord,
     AVRecord,
     TurnRecord,
+    QueueRecord,
+    TriggerUsageRecord,
     MechanicRecord,
     TargetRecord,
     BreakRecord,
@@ -49,6 +51,8 @@ def _validate_resource_record_consistency(
     status_records: list[dict[str, Any]],
     av_records: list[dict[str, Any]],
     turn_records: list[dict[str, Any]],
+    queue_records: list[dict[str, Any]],
+    trigger_usage_records: list[dict[str, Any]],
     damage_records: list[dict[str, Any]],
     break_records: list[dict[str, Any]],
     toughness_records: list[dict[str, Any]],
@@ -66,6 +70,8 @@ def _validate_resource_record_consistency(
     status_record_valid_count = 0
     av_record_valid_count = 0
     turn_record_valid_count = 0
+    queue_record_valid_count = 0
+    trigger_usage_record_valid_count = 0
     damage_record_valid_count = 0
     break_record_valid_count = 0
     toughness_record_valid_count = 0
@@ -78,6 +84,8 @@ def _validate_resource_record_consistency(
     consumed_status_changes: set[int] = set()
     consumed_av_changes: set[int] = set()
     consumed_turn_changes: set[int] = set()
+    consumed_queue_changes: set[int] = set()
+    consumed_trigger_usage_changes: set[int] = set()
     consumed_damage_changes: set[int] = set()
     consumed_break_changes: set[int] = set()
     consumed_toughness_changes: set[int] = set()
@@ -378,6 +386,66 @@ def _validate_resource_record_consistency(
         if issue_count == before_issue_count:
             turn_record_valid_count += 1
 
+    for record_index, rec in enumerate(queue_records):
+        before_issue_count = issue_count
+        prefix = f"queue_records[{record_index}]"
+        queue_name = str(rec.get("queue_name") or "")
+        change_index, change = matching_state_change(
+            consumed=consumed_queue_changes,
+            field_path=f"battle.queues.{queue_name}",
+            subject_id=queue_name,
+            old_value=rec.get("old_queue") or [],
+            new_value=rec.get("new_queue") or [],
+            change_type="queue",
+        )
+        if change is None or change_index is None:
+            add_issue(
+                f"{prefix}.state_change",
+                "missing_matching_queue_state_change",
+                actual=None,
+                expected={"queue_name": queue_name, "old_value": rec.get("old_queue"), "new_value": rec.get("new_queue")},
+            )
+            continue
+        consumed_queue_changes.add(change_index)
+        delta = change.get("delta") if isinstance(change.get("delta"), dict) else {}
+        compare(f"{prefix}.state_change.delta", change.get("delta"), rec.get("delta"))
+        compare(f"{prefix}.operation", rec.get("operation"), delta.get("op") or "")
+        compare(f"{prefix}.reason", change.get("reason"), rec.get("reason"))
+        compare(f"{prefix}.payload", change.get("payload") or {}, rec.get("payload") or {})
+        if rec.get("source_id"):
+            compare(f"{prefix}.state_change.source.source_id", (change.get("source") or {}).get("source_id"), rec.get("source_id"))
+        if issue_count == before_issue_count:
+            queue_record_valid_count += 1
+
+    for record_index, rec in enumerate(trigger_usage_records):
+        before_issue_count = issue_count
+        prefix = f"trigger_usage_records[{record_index}]"
+        key = str(rec.get("key") or "")
+        change_index, change = matching_state_change(
+            consumed=consumed_trigger_usage_changes,
+            field_path=f"battle.trigger_usage.{key}",
+            subject_id=key,
+            old_value=rec.get("old_count"),
+            new_value=rec.get("new_count"),
+            change_type="trigger_usage",
+        )
+        if change is None or change_index is None:
+            add_issue(
+                f"{prefix}.state_change",
+                "missing_matching_trigger_usage_state_change",
+                actual=None,
+                expected={"key": key, "old_value": rec.get("old_count"), "new_value": rec.get("new_count")},
+            )
+            continue
+        consumed_trigger_usage_changes.add(change_index)
+        compare(f"{prefix}.state_change.delta", change.get("delta"), rec.get("delta"))
+        compare(f"{prefix}.reason", change.get("reason"), rec.get("reason"))
+        compare(f"{prefix}.payload", change.get("payload") or {}, rec.get("payload") or {})
+        if rec.get("source_id"):
+            compare(f"{prefix}.state_change.source.source_id", (change.get("source") or {}).get("source_id"), rec.get("source_id"))
+        if issue_count == before_issue_count:
+            trigger_usage_record_valid_count += 1
+
     for record_index, rec in enumerate(damage_records):
         before_issue_count = issue_count
         prefix = f"damage_records[{record_index}]"
@@ -501,10 +569,12 @@ def _validate_resource_record_consistency(
 
     resource_record_count = len(hp_records) + len(shield_records) + len(sp_records) + len(energy_records)
     resource_record_valid_count = hp_record_valid_count + shield_record_valid_count + sp_record_valid_count + energy_record_valid_count
+    control_record_count = len(queue_records) + len(trigger_usage_records)
+    control_record_valid_count = queue_record_valid_count + trigger_usage_record_valid_count
     audit_record_count = len(damage_records) + len(break_records) + len(toughness_records) + len(dot_records) + len(super_break_records)
     audit_record_valid_count = damage_record_valid_count + break_record_valid_count + toughness_record_valid_count + dot_record_valid_count + super_break_record_valid_count
-    settlement_checked_record_count = resource_record_count + len(status_records) + len(av_records) + len(turn_records) + audit_record_count
-    settlement_checked_record_valid_count = resource_record_valid_count + status_record_valid_count + av_record_valid_count + turn_record_valid_count + audit_record_valid_count
+    settlement_checked_record_count = resource_record_count + len(status_records) + len(av_records) + len(turn_records) + control_record_count + audit_record_count
+    settlement_checked_record_valid_count = resource_record_valid_count + status_record_valid_count + av_record_valid_count + turn_record_valid_count + control_record_valid_count + audit_record_valid_count
     return {
         "settlement_checked_record_count": settlement_checked_record_count,
         "settlement_checked_record_valid_count": settlement_checked_record_valid_count,
@@ -524,6 +594,12 @@ def _validate_resource_record_consistency(
         "av_record_valid_count": av_record_valid_count,
         "turn_record_count": len(turn_records),
         "turn_record_valid_count": turn_record_valid_count,
+        "control_record_count": control_record_count,
+        "control_record_valid_count": control_record_valid_count,
+        "queue_record_count": len(queue_records),
+        "queue_record_valid_count": queue_record_valid_count,
+        "trigger_usage_record_count": len(trigger_usage_records),
+        "trigger_usage_record_valid_count": trigger_usage_record_valid_count,
         "audit_record_count": audit_record_count,
         "audit_record_valid_count": audit_record_valid_count,
         "damage_settlement_record_count": len(damage_records),
@@ -559,6 +635,8 @@ class SettlementCollector:
     status_records: list[StatusRecord] = field(default_factory=list)
     av_records: list[AVRecord] = field(default_factory=list)
     turn_records: list[TurnRecord] = field(default_factory=list)
+    queue_records: list[QueueRecord] = field(default_factory=list)
+    trigger_usage_records: list[TriggerUsageRecord] = field(default_factory=list)
     mechanic_records: list[MechanicRecord] = field(default_factory=list)
     break_records: list[BreakRecord] = field(default_factory=list)
     toughness_records: list[ToughnessRecord] = field(default_factory=list)
@@ -581,6 +659,8 @@ class SettlementCollector:
         self.status_records = []
         self.av_records = []
         self.turn_records = []
+        self.queue_records = []
+        self.trigger_usage_records = []
         self.mechanic_records = []
         self.break_records = []
         self.toughness_records = []
@@ -963,6 +1043,60 @@ class SettlementCollector:
             payload=asdict(rec),
         )
 
+    def record_queue(self, **kwargs: Any) -> None:
+        mapped = {}
+        for k, v in kwargs.items():
+            if k == "old_value":
+                mapped["old_queue"] = list(v or [])
+            elif k == "new_value":
+                mapped["new_queue"] = list(v or [])
+            elif k in {"delta", "item", "payload"}:
+                mapped[k] = deepcopy(v) if isinstance(v, dict) else {}
+            elif k in QueueRecord.__dataclass_fields__:
+                mapped[k] = v
+        rec = QueueRecord(**mapped)
+        self.queue_records.append(rec)
+        if kwargs.get("record_state_change", True):
+            self._record_change(
+                "queue",
+                scope="battle",
+                subject_id=rec.queue_name,
+                field_path=f"battle.queues.{rec.queue_name}",
+                old_value=deepcopy(rec.old_queue),
+                new_value=deepcopy(rec.new_queue),
+                delta=deepcopy(rec.delta),
+                source=self._action_source(source_id=rec.source_id),
+                reason=rec.reason,
+                payload=deepcopy(rec.payload),
+            )
+
+    def record_trigger_usage(self, **kwargs: Any) -> None:
+        mapped = {}
+        for k, v in kwargs.items():
+            if k == "old_value":
+                mapped["old_count"] = int(v or 0)
+            elif k == "new_value":
+                mapped["new_count"] = None if v is None else int(v)
+            elif k == "payload":
+                mapped[k] = deepcopy(v) if isinstance(v, dict) else {}
+            elif k in TriggerUsageRecord.__dataclass_fields__:
+                mapped[k] = v
+        rec = TriggerUsageRecord(**mapped)
+        self.trigger_usage_records.append(rec)
+        if kwargs.get("record_state_change", True):
+            self._record_change(
+                "trigger_usage",
+                scope="battle",
+                subject_id=rec.key,
+                field_path=f"battle.trigger_usage.{rec.key}",
+                old_value=rec.old_count,
+                new_value=rec.new_count,
+                delta=rec.delta,
+                source=self._action_source(source_id=rec.source_id),
+                reason=rec.reason,
+                payload=deepcopy(rec.payload),
+            )
+
     def record_mechanic(self, **kwargs: Any) -> None:
         mapped = {}
         for k, v in kwargs.items():
@@ -1087,6 +1221,8 @@ class SettlementCollector:
         status_records = [asdict(r) for r in self.status_records]
         av_records = [asdict(r) for r in self.av_records]
         turn_records = [asdict(r) for r in self.turn_records]
+        queue_records = [asdict(r) for r in self.queue_records]
+        trigger_usage_records = [asdict(r) for r in self.trigger_usage_records]
         mechanic_records = [asdict(r) for r in self.mechanic_records]
         break_records = [asdict(r) for r in self.break_records]
         toughness_records = [asdict(r) for r in self.toughness_records]
@@ -1102,6 +1238,8 @@ class SettlementCollector:
             status_records=status_records,
             av_records=av_records,
             turn_records=turn_records,
+            queue_records=queue_records,
+            trigger_usage_records=trigger_usage_records,
             damage_records=damage_records,
             break_records=break_records,
             toughness_records=toughness_records,
@@ -1120,6 +1258,8 @@ class SettlementCollector:
             "status_records": status_records,
             "av_records": av_records,
             "turn_records": turn_records,
+            "queue_records": queue_records,
+            "trigger_usage_records": trigger_usage_records,
             "mechanic_records": mechanic_records,
             "break_records": break_records,
             "toughness_records": toughness_records,
