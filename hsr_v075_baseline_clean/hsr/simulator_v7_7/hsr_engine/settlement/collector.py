@@ -361,11 +361,14 @@ class SettlementCollector:
     def record_av(self, **kwargs: Any) -> None:
         mapped = {}
         for k, v in kwargs.items():
-            if k in ("old_absolute_av", "new_absolute_av", "speed", "action_interval"):
-                pass  # 可从 remaining_av 推导
+            if k in {"old_absolute_av", "new_absolute_av", "speed"}:
+                mapped[k] = float(v)
+            elif k == "action_interval":
+                mapped[k] = None if v is None else float(v)
             elif k == "change_type":
                 mapped["reason"] = str(v)
             elif k == "change_detail":
+                mapped["detail"] = str(v)
                 if "reason" not in mapped:
                     mapped["reason"] = str(v)
             elif k == "old_remaining_av":

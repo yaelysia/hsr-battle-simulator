@@ -1490,7 +1490,47 @@ class BattleSimulator:
         )
         return self.commit_state_change(change, ctx)
 
-    def commit_unit_remaining_av(self, unit: UnitState, new_value: float, *, reason: str, ctx: Optional[dict[str, Any]] = None, payload: Optional[dict[str, Any]] = None) -> StateChange:
+    def record_committed_av_change(
+        self,
+        ctx: Optional[dict[str, Any]],
+        unit: UnitState,
+        *,
+        old_remaining_av: float,
+        new_remaining_av: float,
+        reason: str,
+        detail: str = "",
+        source_id: str = "",
+    ) -> None:
+        if self._settlement(ctx or {}) is None:
+            return
+        speed = self.effective_speed(unit)
+        self._settle(
+            ctx or {},
+            "av",
+            unit_id=unit.id,
+            old_remaining_av=old_remaining_av,
+            new_remaining_av=new_remaining_av,
+            old_absolute_av=absolute_av(self.state.av, old_remaining_av),
+            new_absolute_av=absolute_av(self.state.av, new_remaining_av),
+            speed=speed,
+            action_interval=None if not unit.alive else self.action_interval(unit),
+            change_type=reason,
+            change_detail=detail or reason,
+            source_id=source_id,
+            record_state_change=False,
+        )
+
+    def commit_unit_remaining_av(
+        self,
+        unit: UnitState,
+        new_value: float,
+        *,
+        reason: str,
+        ctx: Optional[dict[str, Any]] = None,
+        payload: Optional[dict[str, Any]] = None,
+        av_reason: str = "",
+        av_detail: str = "",
+    ) -> StateChange:
         old = unit.remaining_av
         new_remaining = normalize_av(new_value, old)
         change = StateChange(
@@ -1505,7 +1545,17 @@ class BattleSimulator:
             reason=reason,
             payload=payload or {},
         )
-        return self.commit_state_change(change, ctx)
+        committed = self.commit_state_change(change, ctx)
+        self.record_committed_av_change(
+            ctx,
+            unit,
+            old_remaining_av=old,
+            new_remaining_av=new_remaining,
+            reason=av_reason or reason,
+            detail=av_detail,
+            source_id=committed.source.source_id,
+        )
+        return committed
 
     def commit_skill_point_cap(self, new_cap: float, *, reason: str, ctx: Optional[dict[str, Any]] = None, payload: Optional[dict[str, Any]] = None) -> StateChange:
         old = self.state.skill_point_cap
@@ -2618,7 +2668,15 @@ class BattleSimulator:
         self.commit_global_av(self.state.av + delta, reason="timeline:advance_until_regular_actor", ctx=ctx, payload=payload)
         self.state.update_cycle_index(coerce_float(self.settings.get("first_cycle_av", 150.0)), coerce_float(self.settings.get("later_cycle_av", 100.0)))
         for u in alive:
-            self.commit_unit_remaining_av(u, u.remaining_av - delta, reason="timeline:advance_until_regular_actor", ctx=ctx, payload=payload)
+            self.commit_unit_remaining_av(
+                u,
+                u.remaining_av - delta,
+                reason="timeline:advance_until_regular_actor",
+                ctx=ctx,
+                payload=payload,
+                av_reason=AV_TIMELINE_TICK,
+                av_detail=f"advance regular timeline by {delta:.6f} AV",
+            )
         self.state.log_event("timeline", f"Regular timeline advanced by {delta:.6f} AV; next actor {actor_id}", {"delta": delta})
 
     def advance_to_next_regular_actor(self, ctx: Optional[dict[str, Any]] = None) -> str:
@@ -2631,18 +2689,29 @@ class BattleSimulator:
         self.commit_global_av(self.state.av + delta, reason="timeline:advance_to_next_regular_actor", ctx=ctx, payload=payload)
         self.state.update_cycle_index(coerce_float(self.settings.get("first_cycle_av", 150.0)), coerce_float(self.settings.get("later_cycle_av", 100.0)))
         for u in alive:
-            self.commit_unit_remaining_av(u, u.remaining_av - delta, reason="timeline:advance_to_next_regular_actor", ctx=ctx, payload=payload)
+            self.commit_unit_remaining_av(
+                u,
+                u.remaining_av - delta,
+                reason="timeline:advance_to_next_regular_actor",
+                ctx=ctx,
+                payload=payload,
+                av_reason=AV_TIMELINE_TICK,
+                av_detail=f"advance regular timeline by {delta:.6f} AV",
+            )
         self.state.log_event("timeline", f"Regular timeline advanced by {delta:.6f} AV; next actor {next_unit.id}", {"delta": delta})
         return next_unit.id
 
     def finish_regular_action(self, actor: UnitState, action: dict[str, Any], ctx: Optional[dict[str, Any]] = None) -> None:
         if "consumes_regular_action" in set(normalize_str_list(action.get("tags", []))):
+            interval = self.action_interval(actor)
             self.commit_unit_remaining_av(
                 actor,
-                actor.remaining_av + self.action_interval(actor),
+                actor.remaining_av + interval,
                 reason="timeline:regular_action_interval",
                 ctx=ctx,
-                payload={"action_id": action.get("id"), "action_interval": self.action_interval(actor)},
+                payload={"action_id": action.get("id"), "action_interval": interval},
+                av_reason=AV_REGULAR_TURN,
+                av_detail="regular action interval",
             )
             self.state.log_event("timeline", f"{actor.id} regular action interval added", {"remaining_av": actor.remaining_av})
 
@@ -2704,6 +2773,8 @@ class BattleSimulator:
             reason=reason,
             ctx=ctx,
             payload={"percent": pct, "action_interval": self.action_interval(unit), "old_remaining_av": old},
+            av_reason=AV_ADVANCE,
+            av_detail=f"action advance {pct:.1%}",
         )
         self.state.log_event("av_change", f"{unit.id} action advanced by {pct:.1%}", {"old": old, "new": unit.remaining_av, "action_interval": self.action_interval(unit)})
 
@@ -2716,6 +2787,8 @@ class BattleSimulator:
             reason=reason,
             ctx=ctx,
             payload={"percent": pct, "action_interval": self.action_interval(unit), "old_remaining_av": old},
+            av_reason=AV_DELAY,
+            av_detail=f"action delay {pct:.1%}",
         )
         self.state.log_event("av_change", f"{unit.id} action delayed by {percent:.1%}", {"old": old, "new": unit.remaining_av})
 
@@ -2906,6 +2979,8 @@ class BattleSimulator:
                 reason=f"speed_change:{reason}",
                 ctx=ctx,
                 payload={"old_speed": old_speed, "new_speed": new_speed, "old_remaining_av": old_av},
+                av_reason="speed_change",
+                av_detail=reason,
             )
             self.state.log_event(
                 "speed_change",
@@ -3422,16 +3497,7 @@ class BattleSimulator:
                 self.state.log_event("action_block", f"{actor.id} action blocked by {blockers[0].id}", {"actor": actor.id, "statuses": [st.id for st in blockers], "turn_kind": turn_kind})
                 self.finish_regular_action(actor, action, ctx=context)
                 if any(st.modifiers.get("frozen") for st in blockers if isinstance(st.modifiers, dict)):
-                    old_rem = actor.remaining_av
                     self.apply_action_advance(actor, 0.50, ctx=context, reason="control:frozen_auto_advance")
-                    # Phase 2: 冰冻拉条记录
-                    self._settle(context, "av",
-                        unit_id=actor.id, old_remaining_av=old_rem, new_remaining_av=actor.remaining_av,
-                        old_absolute_av=self.state.av + old_rem, new_absolute_av=self.state.av + actor.remaining_av,
-                        speed=actor.speed, action_interval=self.action_interval(actor),
-                        change_type=AV_ADVANCE, change_detail="冰冻自动拉条 50%",
-                        record_state_change=False,
-                    )
                 self.end_turn(actor, turn_kind, action, context=context)
                 return
         action_ctx = {
@@ -3645,14 +3711,6 @@ class BattleSimulator:
         # action refreshes the timeline.  Speed/status changes still recalculate
         # the refreshed AV through their normal helpers.
         self.finish_regular_action(actor, action, ctx=action_ctx)
-        # Phase 2: 常规行动 AV 记录
-        self._settle(action_ctx, "av",
-            unit_id=actor.id, old_remaining_av=0.0, new_remaining_av=actor.remaining_av,
-            old_absolute_av=self.state.av, new_absolute_av=self.state.av + actor.remaining_av,
-            speed=actor.speed, action_interval=self.action_interval(actor),
-            change_type=AV_REGULAR_TURN, change_detail="行动结束, 恢复行动间隔",
-            record_state_change=False,
-        )
 
         # Model-pack semantic timings that depend on the fully resolved action,
         # not merely the raw action_start/action_end lifecycle.  These are needed
@@ -7772,17 +7830,7 @@ class BattleSimulator:
                 raise SimulatorError("advance_action requires percent, advance_percent, amount, or advance_percent_by_superimposition")
             for target_id in self.resolve_effect_targets(eff, ctx, default="actor"):
                 unit = self.state.unit(target_id)
-                old_rem = unit.remaining_av
-                old_abs = self.state.av + old_rem
                 self.apply_action_advance(unit, coerce_float(percent), ctx=ctx, reason="effect:advance_action")
-                # Phase 2: AV 提前记录
-                self._settle(ctx, "av",
-                    unit_id=target_id, old_remaining_av=old_rem, new_remaining_av=unit.remaining_av,
-                    old_absolute_av=old_abs, new_absolute_av=self.state.av + unit.remaining_av,
-                    speed=unit.speed, action_interval=self.action_interval(unit),
-                    change_type=AV_ADVANCE, change_detail=f"拉条 {coerce_float(percent):.1%}",
-                    record_state_change=False,
-                )
         elif etype == "delay_action":
             # Accept both simulator-native `percent` and model-pack aliases such
             # as `delay_percent`.
@@ -7791,17 +7839,7 @@ class BattleSimulator:
                 raise SimulatorError("delay_action requires percent or delay_percent")
             for target_id in self.resolve_effect_targets(eff, ctx, default="actor"):
                 unit = self.state.unit(target_id)
-                old_rem = unit.remaining_av
-                old_abs = self.state.av + old_rem
                 self.apply_action_delay(unit, coerce_float(percent), ctx=ctx, reason="effect:delay_action")
-                # Phase 2: AV 延迟记录
-                self._settle(ctx, "av",
-                    unit_id=target_id, old_remaining_av=old_rem, new_remaining_av=unit.remaining_av,
-                    old_absolute_av=old_abs, new_absolute_av=self.state.av + unit.remaining_av,
-                    speed=unit.speed, action_interval=self.action_interval(unit),
-                    change_type=AV_DELAY, change_detail=f"推条 {coerce_float(percent):.1%}",
-                    record_state_change=False,
-                )
         elif etype == "set_action_delay":
             # TBGD SetActionDelay uses a normalized delay ratio: 1.0 means the
             # target's remaining AV is set to one full action interval at its
@@ -7812,23 +7850,16 @@ class BattleSimulator:
             for target_id in self.resolve_effect_targets(eff, ctx, default="actor"):
                 unit = self.state.unit(target_id)
                 old = unit.remaining_av
-                old_abs = self.state.av + old
                 self.commit_unit_remaining_av(
                     unit,
                     self.action_interval(unit) * coerce_float(percent),
                     reason="effect:set_action_delay",
                     ctx=ctx,
                     payload={"percent": coerce_float(percent), "action_interval": self.action_interval(unit), "effect": deepcopy(eff)},
+                    av_reason=AV_DELAY,
+                    av_detail=f"set action delay {coerce_float(percent):.1%}",
                 )
                 self.state.log_event("av_change", f"{target_id} action delay set to {coerce_float(percent):.1%}", {"old": old, "new": unit.remaining_av})
-                # Phase 2: AV 置位记录
-                self._settle(ctx, "av",
-                    unit_id=target_id, old_remaining_av=old, new_remaining_av=unit.remaining_av,
-                    old_absolute_av=old_abs, new_absolute_av=self.state.av + unit.remaining_av,
-                    speed=unit.speed, action_interval=self.action_interval(unit),
-                    change_type=AV_DELAY, change_detail=f"AV 置位 {coerce_float(percent):.1%}",
-                    record_state_change=False,
-                )
         elif etype in {"delay_self_action", "delay_next_action"}:
             aliased = deepcopy(eff)
             aliased["type"] = "delay_action"

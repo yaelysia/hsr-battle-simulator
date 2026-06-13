@@ -126,6 +126,11 @@ class AVRecord:
     delta: float = 0.0
     reason: str = ""
     source_id: str = ""
+    old_absolute_av: float = 0.0
+    new_absolute_av: float = 0.0
+    speed: float = 0.0
+    action_interval: float | None = None
+    detail: str = ""
 
 
 @dataclass
