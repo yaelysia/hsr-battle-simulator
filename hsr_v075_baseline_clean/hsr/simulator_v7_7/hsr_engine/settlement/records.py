@@ -14,9 +14,13 @@ from typing import Any
 
 
 ACTION_SETTLEMENT_ENCODING = "hsr.settlement.action.v1"
+DAMAGE_SETTLEMENT_ENCODING = "hsr.settlement.damage.v1"
 
 
 def _record_to_dict(record: Any) -> dict[str, Any]:
+    to_dict = getattr(record, "to_dict", None)
+    if callable(to_dict) and not isinstance(record, dict):
+        return to_dict()
     if is_dataclass(record) and not isinstance(record, type):
         return asdict(record)
     if isinstance(record, dict):
@@ -28,9 +32,56 @@ def _record_list_to_dicts(records: list[Any]) -> list[dict[str, Any]]:
     return [_record_to_dict(record) for record in records]
 
 
+def _sum_record_amount(records: list[dict[str, Any]], field_name: str) -> float:
+    total = 0.0
+    for record in records:
+        value = record.get(field_name)
+        if isinstance(value, (int, float)):
+            total += float(value)
+    return total
+
+
+@dataclass
+class DamageSettlement:
+    """一次动作内伤害族结算的结构化结果。"""
+    damage_records: list[DamageRecord | dict[str, Any]] = field(default_factory=list)
+    break_records: list[BreakRecord | dict[str, Any]] = field(default_factory=list)
+    toughness_records: list[ToughnessRecord | dict[str, Any]] = field(default_factory=list)
+    dot_records: list[DotRecord | dict[str, Any]] = field(default_factory=list)
+    super_break_records: list[SuperBreakRecord | dict[str, Any]] = field(default_factory=list)
+    encoding: str = DAMAGE_SETTLEMENT_ENCODING
+
+    def to_dict(self) -> dict[str, Any]:
+        damage_records = _record_list_to_dicts(self.damage_records)
+        break_records = _record_list_to_dicts(self.break_records)
+        toughness_records = _record_list_to_dicts(self.toughness_records)
+        dot_records = _record_list_to_dicts(self.dot_records)
+        super_break_records = _record_list_to_dicts(self.super_break_records)
+        damage_bearing_records = damage_records + break_records + dot_records + super_break_records
+        return {
+            "encoding": self.encoding,
+            "damage_records": damage_records,
+            "break_records": break_records,
+            "toughness_records": toughness_records,
+            "dot_records": dot_records,
+            "super_break_records": super_break_records,
+            "summary": {
+                "damage_record_count": len(damage_records),
+                "break_record_count": len(break_records),
+                "toughness_record_count": len(toughness_records),
+                "dot_record_count": len(dot_records),
+                "super_break_record_count": len(super_break_records),
+                "damage_applied_total": _sum_record_amount(damage_bearing_records, "damage_applied"),
+                "hp_loss_total": _sum_record_amount(damage_bearing_records, "hp_loss"),
+                "shield_absorbed_total": _sum_record_amount(damage_bearing_records, "shield_absorbed"),
+            },
+        }
+
+
 @dataclass
 class ActionSettlement:
     """一次动作输入产生的完整结算结果。"""
+    damage_settlement: DamageSettlement | dict[str, Any] | None = None
     damage_records: list[DamageRecord | dict[str, Any]] = field(default_factory=list)
     shield_records: list[ShieldRecord | dict[str, Any]] = field(default_factory=list)
     hp_records: list[HPRecord | dict[str, Any]] = field(default_factory=list)
@@ -52,10 +103,21 @@ class ActionSettlement:
     encoding: str = ACTION_SETTLEMENT_ENCODING
 
     def to_dict(self) -> dict[str, Any]:
+        damage_settlement = self.damage_settlement
+        if damage_settlement is None:
+            damage_settlement = DamageSettlement(
+                damage_records=self.damage_records,
+                break_records=self.break_records,
+                toughness_records=self.toughness_records,
+                dot_records=self.dot_records,
+                super_break_records=self.super_break_records,
+            )
+        damage_settlement_dict = _record_to_dict(damage_settlement)
         target_record = _record_to_dict(self.target_record) if self.target_record is not None else None
         return {
             "encoding": self.encoding,
-            "damage_records": _record_list_to_dicts(self.damage_records),
+            "damage_settlement": deepcopy(damage_settlement_dict),
+            "damage_records": deepcopy(damage_settlement_dict.get("damage_records") or []),
             "shield_records": _record_list_to_dicts(self.shield_records),
             "hp_records": _record_list_to_dicts(self.hp_records),
             "energy_records": _record_list_to_dicts(self.energy_records),
@@ -66,10 +128,10 @@ class ActionSettlement:
             "queue_records": _record_list_to_dicts(self.queue_records),
             "trigger_usage_records": _record_list_to_dicts(self.trigger_usage_records),
             "mechanic_records": _record_list_to_dicts(self.mechanic_records),
-            "break_records": _record_list_to_dicts(self.break_records),
-            "toughness_records": _record_list_to_dicts(self.toughness_records),
-            "dot_records": _record_list_to_dicts(self.dot_records),
-            "super_break_records": _record_list_to_dicts(self.super_break_records),
+            "break_records": deepcopy(damage_settlement_dict.get("break_records") or []),
+            "toughness_records": deepcopy(damage_settlement_dict.get("toughness_records") or []),
+            "dot_records": deepcopy(damage_settlement_dict.get("dot_records") or []),
+            "super_break_records": deepcopy(damage_settlement_dict.get("super_break_records") or []),
             "target_record": target_record,
             "settlement_record_validation": deepcopy(self.settlement_record_validation),
             "transition": deepcopy(self.transition),

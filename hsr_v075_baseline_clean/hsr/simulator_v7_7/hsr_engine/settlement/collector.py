@@ -14,6 +14,7 @@ from hsr_engine.transition_reducer import validate_transition_replay
 
 from .records import (
     ActionSettlement,
+    DamageSettlement,
     DamageRecord,
     ShieldRecord,
     HPRecord,
@@ -1374,7 +1375,13 @@ class SettlementCollector:
         replay_validation["ok"] = replay_validation.get("ok", False) and settlement_validation["settlement_record_match"]
         transition["replay_validation"] = replay_validation
         return ActionSettlement(
-            damage_records=self.damage_records,
+            damage_settlement=DamageSettlement(
+                damage_records=self.damage_records,
+                break_records=self.break_records,
+                toughness_records=self.toughness_records,
+                dot_records=self.dot_records,
+                super_break_records=self.super_break_records,
+            ),
             shield_records=self.shield_records,
             hp_records=self.hp_records,
             energy_records=self.energy_records,
@@ -1385,10 +1392,6 @@ class SettlementCollector:
             queue_records=self.queue_records,
             trigger_usage_records=self.trigger_usage_records,
             mechanic_records=self.mechanic_records,
-            break_records=self.break_records,
-            toughness_records=self.toughness_records,
-            dot_records=self.dot_records,
-            super_break_records=self.super_break_records,
             target_record=self.target_record,
             settlement_record_validation=settlement_validation,
             transition=transition,
