@@ -1,0 +1,6773 @@
+{
+  "discovery_summary": {
+    "by_domain": {
+      "ability": 2844,
+      "ai": 1040,
+      "character_config": 2618,
+      "excel": 2065,
+      "global_modifier": 30,
+      "summon_config": 70
+    },
+    "by_shape": {
+      "ability_config": 2769,
+      "layout": 2088,
+      "list": 2065,
+      "modifier_map": 15,
+      "object": 1730
+    },
+    "error_count": 0,
+    "event_counts": {
+      "CheckParamFlagCallBack": 7,
+      "Ev_global_set_vo_combat_unmute": 1,
+      "OnActionDelayEffect": 1,
+      "OnActionDelayEffectAll": 9,
+      "OnActionEnd": 61,
+      "OnActionPhaseBegin": 36,
+      "OnActivityElationPowerChange": 2,
+      "OnAddModifierSuc": 21,
+      "OnAfterAction": 21,
+      "OnAfterAttack": 262,
+      "OnAfterAttackEnd": 34,
+      "OnAfterBeingAttacked": 206,
+      "OnAfterBeingAttackedAdv": 9,
+      "OnAfterBeingAttackedEnd": 36,
+      "OnAfterBeingHeal": 26,
+      "OnAfterBeingHit": 63,
+      "OnAfterBeingHitAll": 103,
+      "OnAfterCharmAction": 3,
+      "OnAfterDealHeal": 25,
+      "OnAfterHit": 70,
+      "OnAfterHitAll": 51,
+      "OnAfterMagicScepterTrigger": 4,
+      "OnAfterSkillUse": 243,
+      "OnAimAtTargetsRefresh_CL": 44,
+      "OnAllowAction": 86,
+      "OnAttackerPrepareAttackData": 2,
+      "OnAttackerPrepareDamageData": 6,
+      "OnBattleEventCreate": 1,
+      "OnBeforeAction": 15,
+      "OnBeforeAttack": 109,
+      "OnBeforeBeingAttacked": 122,
+      "OnBeforeBeingBreak": 9,
+      "OnBeforeBeingHeal": 8,
+      "OnBeforeBeingHit": 25,
+      "OnBeforeBeingHitAll": 161,
+      "OnBeforeBeingLoseHP": 3,
+      "OnBeforeBeingStanceDamage": 7,
+      "OnBeforeDealHeal": 12,
+      "OnBeforeDeathrattle": 3,
+      "OnBeforeDying": 175,
+      "OnBeforeEnergyPointChange": 2,
+      "OnBeforeEscape": 7,
+      "OnBeforeHit": 97,
+      "OnBeforeHitAll": 217,
+      "OnBeforeInsertActionPrepare": 14,
+      "OnBeforeMagicScepterTrigger": 2,
+      "OnBeforeMortallyWonded": 6,
+      "OnBeforeSkillCost": 1,
+      "OnBeforeSkillUse": 188,
+      "OnBeforeUltraSkillPrepare": 2,
+      "OnBeforeWaveMonster": 37,
+      "OnBeingBreak": 227,
+      "OnBeingLimbo": 89,
+      "OnBeingRevived": 26,
+      "OnBeingStackWeakness": 7,
+      "OnBeingStanceCountDown": 5,
+      "OnBeingStanceDamage": 9,
+      "OnBreakExtendAnim": 2,
+      "OnCharmAction": 2,
+      "OnCreate": 584,
+      "OnCriticalChanceChange": 7,
+      "OnCustomEvent": 118,
+      "OnDeathrattle": 81,
+      "OnDefenderPrepareAttackData": 4,
+      "OnDepartedEnd": 2,
+      "OnDepartedStart": 6,
+      "OnDestroy": 470,
+      "OnDispel": 4,
+      "OnEndBreak": 120,
+      "OnEnergyPointChange": 1,
+      "OnEnterBattle": 436,
+      "OnEnterRedStance": 2,
+      "OnEvolveBuildExpStepUp": 5,
+      "OnEvolveBuildForge": 1,
+      "OnEvolveBuildGetKillScore": 3,
+      "OnEvolveBuildLostGear": 1,
+      "OnHPChange": 147,
+      "OnHPOverflow": 4,
+      "OnImmuneDebuff": 20,
+      "OnInsertAbilityAbort": 9,
+      "OnInsertAbilityFinish": 43,
+      "OnInsertAbilityStart": 17,
+      "OnInsertActionFinish": 11,
+      "OnInsertActionStart": 25,
+      "OnLeaveBattle": 58,
+      "OnLimboWaitHeal": 127,
+      "OnListenActionCountActive": 4,
+      "OnListenActionCountDown": 1,
+      "OnListenActionEnd": 17,
+      "OnListenActionPhaseBegin": 33,
+      "OnListenAfterAction": 34,
+      "OnListenAfterAttack": 129,
+      "OnListenAfterAttackEnd": 28,
+      "OnListenAfterBeingHit": 4,
+      "OnListenAfterBeingHitAll": 18,
+      "OnListenAfterHit": 3,
+      "OnListenAfterHitAll": 15,
+      "OnListenAfterMagicScepterTrigger": 3,
+      "OnListenAfterSkillUse": 151,
+      "OnListenAimAtTargetsRefresh_CL": 57,
+      "OnListenAllowAction": 96,
+      "OnListenAnySkillExecution": 1,
+      "OnListenAvatarBaseTypeChange": 8,
+      "OnListenBattleEventCreate": 52,
+      "OnListenBattleEventDie": 6,
+      "OnListenBeforeAction": 22,
+      "OnListenBeforeAttack": 43,
+      "OnListenBeforeBeingHit": 2,
+      "OnListenBeforeBeingHitAll": 2,
+      "OnListenBeforeElationEchoPointBuffAdd": 3,
+      "OnListenBeforeHit": 2,
+      "OnListenBeforeHitAll": 11,
+      "OnListenBeforeMagicScepterTrigger": 1,
+      "OnListenBeforeSkillUse": 130,
+      "OnListenBeforeTriggerBreak": 1,
+      "OnListenBeforeTurnPhase1End": 7,
+      "OnListenBpChange": 58,
+      "OnListenBreak": 57,
+      "OnListenChangeTargetViewMode_CL": 2,
+      "OnListenCharacterCreate": 390,
+      "OnListenCharacterDie": 197,
+      "OnListenCharacterEscape": 22,
+      "OnListenCharacterLimbo": 15,
+      "OnListenCharmDamagePerformFinish": 6,
+      "OnListenCharmMakeDamage": 11,
+      "OnListenDepartedEnd": 10,
+      "OnListenDepartedStart": 12,
+      "OnListenElationTimeEnd": 16,
+      "OnListenElationTimeStart": 17,
+      "OnListenElationTimeWaitEnd": 1,
+      "OnListenEndBreak": 17,
+      "OnListenEnterLimboRevivable": 1,
+      "OnListenEnterRedStance": 1,
+      "OnListenEnterViewMode_CL": 19,
+      "OnListenExitViewMode_CL": 19,
+      "OnListenForceProcessModifierLifeStep": 1,
+      "OnListenGlobalActionDelayChanged": 20,
+      "OnListenHPChange": 45,
+      "OnListenInitShield": 10,
+      "OnListenInsertAbilityAbort": 18,
+      "OnListenInsertAbilityCheck": 2,
+      "OnListenInsertAbilityFinish": 89,
+      "OnListenInsertAbilityStart": 66,
+      "OnListenInsertActionFinish": 5,
+      "OnListenInsertActionStart": 26,
+      "OnListenInsertUltraSkill": 5,
+      "OnListenLastKill": 2,
+      "OnListenModifierAdd": 88,
+      "OnListenModifierDispel": 18,
+      "OnListenModifierOnStack": 55,
+      "OnListenModifierRemove": 108,
+      "OnListenModifierResist": 2,
+      "OnListenOwnerChanged": 3,
+      "OnListenPreviewBreak_CL": 3,
+      "OnListenRedStanceBreak": 3,
+      "OnListenRedirectSkillTarget": 1,
+      "OnListenRevive": 20,
+      "OnListenSetActiveSkill_CL": 18,
+      "OnListenShieldChange": 7,
+      "OnListenStanceCountDown": 3,
+      "OnListenTurnBegin": 51,
+      "OnListenTurnEnd": 116,
+      "OnListenTurnPhase1Begin": 20,
+      "OnListenTurnPhase2Begin": 11,
+      "OnListenUltraSkillPrepare": 34,
+      "OnLockHPThresholdReached": 57,
+      "OnModifierAdd": 201,
+      "OnModifierDotAdd": 5,
+      "OnModifierOnStack": 105,
+      "OnModifierRemove": 162,
+      "OnMonsterPhaseChanged": 10,
+      "OnOwnerChanged": 3,
+      "OnPhase1": 369,
+      "OnPhase2": 137,
+      "OnRedStanceBeingBreak": 2,
+      "OnRedirectSkillTarget": 1,
+      "OnResistModifier": 2,
+      "OnSPChange": 30,
+      "OnShieldChange": 8,
+      "OnShieldModifierConvert": 1,
+      "OnSnapshotCreate": 7,
+      "OnSoundEndOfEvent_CL": 2,
+      "OnStack": 769,
+      "OnStackWeakness": 1,
+      "OnStage": 1,
+      "OnStanceReset": 14,
+      "OnTeamMemberAdd": 2,
+      "OnTeamMemberRemove": 3,
+      "OnTriggerBreak": 60,
+      "OnTriggerDeath": 84,
+      "OnTriggerDeathrattle": 22,
+      "OnTriggerLimbo": 8,
+      "OnTriggerRedStanceBreak": 1,
+      "OnTriggerSoundEvent_CL": 2,
+      "OnTriggerStanceCountDown": 3,
+      "OnUltraSkillPrepare": 51,
+      "OnUnselectableEnd": 5,
+      "OnUnselectableStart": 12,
+      "OnUnstage": 1,
+      "OnVersusBarFever": 4,
+      "OnWaveMonster": 131
+    },
+    "file_count": 8667,
+    "formula_files": 1011,
+    "gamecore_type_counts": {
+      "AIBehaviorFlagSelector": 1,
+      "AIComplexSkillAISelector": 1,
+      "AIComposeSelector": 22,
+      "AICustomStringTagSelector": 1,
+      "AIDecisionConfig": 436,
+      "AIModifierNameSelector": 118,
+      "AIMonsterIDSelector": 5,
+      "AIMonsterRankSelector": 2,
+      "AIPropertySelector": 5,
+      "AIStepperDecisionGroupConfig": 51,
+      "AITaskTargetTypeSelector": 31,
+      "AITryInsertUltra": 2,
+      "AIVariableBool": 365,
+      "AIVariableFloat": 24,
+      "AIVariableInt": 1,
+      "AIVariableString": 251,
+      "AbortInsertAbility": 4,
+      "AbortModifierPhasePerform": 8,
+      "ActionCountDownPreview": 1,
+      "ActivityElationHideCutIn": 1,
+      "ActivityElationShowCutIn": 6,
+      "AdaptEntityPosition": 6,
+      "AddAdventureModifier": 9,
+      "AddBattleExtraPropertyAddition": 5,
+      "AddBehaviorFlagForModifier": 11,
+      "AddBuffPerform": 36,
+      "AddChallengeBossInfoPanelState": 15,
+      "AddDynamicEntityParam": 1,
+      "AddEntityToTeamFormation": 15,
+      "AddGlobalDynamicOffset": 16,
+      "AddGlobalDynamicOffsetIgnoreEntity": 8,
+      "AddGridFightDropData": 5,
+      "AddGridFightTargetEquip": 1,
+      "AddMazeBuff": 23,
+      "AddModifier": 923,
+      "AddRegardAsAttackType": 32,
+      "AddStageAbilityByName": 28,
+      "AddTargetStancePreshowConfig": 8,
+      "AddWeakByTeamAttackType": 10,
+      "AddWeakness": 10,
+      "AdvAINavigateTo": 2,
+      "AdvAIRemeberGobackPosition": 1,
+      "AdvAddAIHangUpInfo": 6,
+      "AdvByInCustomZone": 1,
+      "AdvByIsEliteMonster": 2,
+      "AdvByPerceiveValueReachMax": 2,
+      "AdvByPlayerInVisionZone": 2,
+      "AdvFireStimulus": 1,
+      "AdvForceSetNpcAlertValue": 11,
+      "AdvMarkAsTauntProxy": 4,
+      "AdvNPCAttack": 12,
+      "AdvNPCChase": 12,
+      "AdvNPCGoback": 12,
+      "AdvNPCGuarding": 13,
+      "AdvNPCIdle": 70,
+      "AdvNPCPatrol": 30,
+      "AdvNPCRunAwayPlayer": 2,
+      "AdvNPCUseMazeSkill": 3,
+      "AdvNpcFaceToPlayer": 1,
+      "AdvNpcFollowByPlayer": 38,
+      "AdvNpcFollowPlayer": 39,
+      "AdvNpcGuardAlertDeviceActive": 1,
+      "AdvNpcGuardAlertDeviceInactive": 1,
+      "AdvNpcPetSearch": 4,
+      "AdvPlayerEnableIdleShow": 2,
+      "AdvRemoveAIHangUpInfo": 6,
+      "AdvSetMinimapAlertVisionState": 1,
+      "AdvSetNpcAlertConfig": 27,
+      "AdvSetNpcVisionsConfig": 18,
+      "AdvSetTargetAlertValue": 1,
+      "AdventureByInAnimZone": 3,
+      "AdventureByMazeSkillUseCheck": 1,
+      "AdventureByNpcMazeSkillCooldown": 2,
+      "AdventureTriggerAnimStateWithMove": 1,
+      "AdventureTriggerTargetAbility": 1,
+      "AlignTargetToTeamCenter": 148,
+      "AnimSetParameter": 79,
+      "ApplyMonsterPhaseOverrideConfig": 2,
+      "ApplyOperation": 4,
+      "AttachAvatarChange": 2,
+      "AttachEntityDeparted": 5,
+      "AttachEntityUnselectable": 88,
+      "AttachGlobalShield": 1,
+      "AttachPreshowDamageTypeForSkill": 1,
+      "AttachSkillTypeDisable": 86,
+      "AttackData": 688,
+      "AudienceGroupMemberInfo": 1,
+      "AudioSetRTPCValue": 2,
+      "AudioSetRTPCValueByRatio": 4,
+      "AutoMappingAttachPoint": 4,
+      "AutoUseUltraSkill": 66,
+      "AvatarIntensityEffect": 5,
+      "BattleAudioSwitch": 5,
+      "BattleCollegeAimShow": 1,
+      "BattleEventConfig": 194,
+      "BattleExtraPropertyAdditionPair": 5,
+      "BattlePlayVideo": 3,
+      "BattleSingleClickQTEConfig": 2,
+      "BattleVersusClickQTEConfig": 1,
+      "BlockCameraDitherUpdate": 3,
+      "ByAlertValueInRange": 18,
+      "ByAllowInstantKill": 6,
+      "ByAnd": 913,
+      "ByAngle": 9,
+      "ByAnimStateLogicType": 2,
+      "ByAnimatorParam": 9,
+      "ByAny": 586,
+      "ByAnyNpcMonsterInRange": 3,
+      "ByAttackSkillEffect": 3,
+      "ByAttackType": 204,
+      "ByAvatarBaseType": 31,
+      "ByBattleHasCertainResult": 1,
+      "ByBattleMissionTalkFinish": 2,
+      "ByCasterAliveOrLimbo": 3,
+      "ByCharacterDamageType": 47,
+      "ByCharacterSomatoWidthType": 8,
+      "ByCheckActionDelayEffectType": 5,
+      "ByCheckBloodLinkDead": 1,
+      "ByCheckCharacterFly": 1,
+      "ByCheckCustomValueBool": 116,
+      "ByCheckDarkTeamDestroy": 5,
+      "ByCheckFightFinish": 4,
+      "ByCheckIsLimboRevivable": 1,
+      "ByCheckModifierCallBackBehaviorFlag": 102,
+      "ByCheckModifierCallBackIsInfected": 2,
+      "ByCheckModifierCallBackIsSelf": 1,
+      "ByCheckModifierCallBackModifierValue": 7,
+      "ByCheckModifierCallBackName": 246,
+      "ByCheckModifierCallBackStatusType": 28,
+      "ByCheckTargetHPCanBeDamage": 1,
+      "ByCompareAIVariableInt": 1,
+      "ByCompareAbilityProperty": 107,
+      "ByCompareAliveEnemyNumber": 9,
+      "ByCompareAngleBetweenVCameraAndDir": 1,
+      "ByCompareBP": 13,
+      "ByCompareBattleEventID": 109,
+      "ByCompareCarryMazebuff": 2,
+      "ByCompareChallengeLeft": 7,
+      "ByCompareChangeValue": 13,
+      "ByCompareCharacterID": 115,
+      "ByCompareCharacterNumber": 224,
+      "ByCompareControlSkillEffectIsDamaging": 1,
+      "ByCompareCurrentModifierStatusType": 9,
+      "ByCompareCurrentSkillEffectIsDamaging": 3,
+      "ByCompareDamageCustomName": 30,
+      "ByCompareDamageTag": 40,
+      "ByCompareDynamicValue": 1027,
+      "ByCompareEvolveBuildGearLevel": 3,
+      "ByCompareEvolveBuildProperty": 3,
+      "ByCompareGridFightProperty": 16,
+      "ByCompareHP": 98,
+      "ByCompareHPRatio": 212,
+      "ByCompareInfiniteWaveSummonProgress": 1,
+      "ByCompareLastKillType": 1,
+      "ByCompareModifierCallBackDynamicValue": 4,
+      "ByCompareModifierCustomEvent": 1,
+      "ByCompareModifierValue": 139,
+      "ByCompareMonsterID": 168,
+      "ByCompareMonsterPhase": 210,
+      "ByCompareMonsterRank": 140,
+      "ByCompareMonsterTemplateID": 33,
+      "ByCompareMonsterUniqueID": 37,
+      "ByCompareNextUnusedInsertAction": 1,
+      "ByCompareParamString": 25,
+      "ByCompareParamValue": 88,
+      "ByComparePreShowStanceBreakMonsterRank": 1,
+      "ByComparePropType": 2,
+      "ByCompareResistChance": 4,
+      "ByCompareSPChangeTag": 1,
+      "ByCompareSPRatio": 12,
+      "ByCompareScepterFuncType": 2,
+      "ByCompareScepterMainUnitEffectTag": 1,
+      "ByCompareSelectSkillEffect": 2,
+      "ByCompareSkillBPChangePreview": 1,
+      "ByCompareSkillUsageLimit": 3,
+      "ByCompareSomatoType": 20,
+      "ByCompareSpecialAvatarType": 2,
+      "ByCompareSpecialSPRatio": 5,
+      "ByCompareStageID": 18,
+      "ByCompareStageType": 35,
+      "ByCompareStance": 14,
+      "ByCompareStanceCount": 3,
+      "ByCompareStanceRatio": 3,
+      "ByCompareTarget": 259,
+      "ByCompareTargetCount": 102,
+      "ByCompareTargetCountClientOnly": 2,
+      "ByCompareTeamFormationRowIndex": 3,
+      "ByCompareTeamFormationWidth": 2,
+      "ByCompareTurnActionEntityTeamType": 24,
+      "ByCompareUnusedInsertAbilityCount": 2,
+      "ByCompareUnusedUltraSkillCount": 4,
+      "ByCompareWaveCount": 208,
+      "ByContainBehaviorFlag": 371,
+      "ByContainCustomString": 40,
+      "ByContainsParamFlag": 32,
+      "ByContainsRedStance": 1,
+      "ByCurrentSkillEffect": 9,
+      "ByCurrentSkillName": 81,
+      "ByCurrentSkillTargetType": 4,
+      "ByCurrentSkillType": 253,
+      "ByCurrentTurnState": 9,
+      "ByCurrentVCameraConfigCaster": 1,
+      "ByDamageSourceContainBehaviorFlag": 3,
+      "ByDieAnimFinished": 52,
+      "ByDistance": 28,
+      "ByDynamicValueDefined": 1,
+      "ByGridFightCompareRoleExtInfo": 2,
+      "ByGridFightHasSameTrait": 6,
+      "ByGridFightHasTrait": 21,
+      "ByGridFightTraitSelectedCharacter": 1,
+      "ByHasInsertAbilityPending": 1,
+      "ByHasInsertActionByTarget": 3,
+      "ByHasPausedElationTime": 1,
+      "ByHasSkillTag": 3,
+      "ByHasSkillType": 1,
+      "ByHasStanceWeak": 54,
+      "ByHasStanceWeakPreview": 1,
+      "ByHasSummonRelation": 33,
+      "ByHaveEnemyAlive": 93,
+      "ByHaveInsertUltraWait": 6,
+      "ByHaveObstacle": 8,
+      "ByHaveUniqueNameEffect": 4,
+      "ByHeroGender": 6,
+      "ByInAttackRange": 5,
+      "ByInTimelinePerform": 8,
+      "ByInTurnBasedGameModeState": 35,
+      "ByInfiniteMonsterWaveLeft": 5,
+      "ByIsAutoBattle": 14,
+      "ByIsBattleEventEntity": 57,
+      "ByIsBodyPart": 2,
+      "ByIsBodyPartClientOnly": 1,
+      "ByIsBodyPartOwner": 2,
+      "ByIsCharacterChangeTarget": 2,
+      "ByIsCharacterWeaknessActivated": 1,
+      "ByIsContainAdventureModifier": 2,
+      "ByIsContainModifier": 848,
+      "ByIsControlSkillDisable": 1,
+      "ByIsConvertDamage": 4,
+      "ByIsCurrentModifierAlive": 3,
+      "ByIsCurrentSkillActive": 3,
+      "ByIsCurrentSkillAllowMultiTarget": 1,
+      "ByIsDamageCritical": 9,
+      "ByIsDamageLuckCritical": 1,
+      "ByIsDamageType": 32,
+      "ByIsEnableNegativeHP": 1,
+      "ByIsEnemy": 5,
+      "ByIsEntityActionState": 2,
+      "ByIsFirstChallengeBattle": 1,
+      "ByIsFirstInsertAbilityInQueue": 1,
+      "ByIsGenderType": 4,
+      "ByIsHitAllCallBackStack": 4,
+      "ByIsInAnimZone": 1,
+      "ByIsInCharacterIDGroup": 2,
+      "ByIsInCharmAction": 2,
+      "ByIsInCustomTeamFormation": 1,
+      "ByIsInElationTime": 12,
+      "ByIsIndirectDamage": 1,
+      "ByIsInsertAction": 6,
+      "ByIsMatchTeammateCount": 3,
+      "ByIsMazeSkillAffectCurrentWave": 51,
+      "ByIsPropLockable": 10,
+      "ByIsPropertyValueMinOrMax": 56,
+      "ByIsScepter": 2,
+      "ByIsSkillTypeDisable": 1,
+      "ByIsSplitDamage": 38,
+      "ByIsStageFirstWave": 8,
+      "ByIsSubTargetOfHpSharedGroup": 5,
+      "ByIsTargetAbleToAction": 4,
+      "ByIsTargetUnselectable": 29,
+      "ByIsTargetValid": 92,
+      "ByIsTeamLocationIndexType": 57,
+      "ByIsTeammate": 25,
+      "ByIsTopActionDelayTarget": 6,
+      "ByIsTriggeredBlockDamage": 19,
+      "ByIsTurnActionEntity": 53,
+      "ByIsTurnOwnerEntity": 66,
+      "ByLocalWin": 22,
+      "ByNPCStatus": 52,
+      "ByNot": 138,
+      "ByPamAnchorContinous": 1,
+      "ByPamCurrentActionAnyDirection": 1,
+      "ByPamMovePhaseTalk": 1,
+      "ByPamNormalAction": 1,
+      "ByPamNormalActionSwitch": 1,
+      "ByPamOnlineFirst": 1,
+      "ByPreShowStanceBreak": 17,
+      "ByRandomChance": 110,
+      "ByRankActivated": 170,
+      "BySimulateSpeedUp": 24,
+      "BySkillPointActivated": 126,
+      "ByStatusCount": 6,
+      "ByTargetAliveState": 106,
+      "ByTargetEntityType": 128,
+      "ByTargetHitBoxActive": 5,
+      "ByTargetIsStanceWeak": 5,
+      "ByTargetIsStanceWeakForCurrentHit": 3,
+      "ByTargetIsStanceWeakForCurrentSkill": 1,
+      "ByTargetListAll": 2,
+      "ByTargetListAny": 49,
+      "ByTargetListIntersects": 168,
+      "ByTargetLockHP": 3,
+      "ByTargetTeam": 500,
+      "ByTurnOwnerActionPhaseEnd": 3,
+      "ByTurnOwnerHasActionInTurn": 4,
+      "ByTurnOwnerHasPendingOneMore": 4,
+      "CameraFollowEntityTimeScale": 9,
+      "ChangeActionEntityToObserveState": 2,
+      "ChangeAnimEventConfig": 1,
+      "ChangeBattleEventOwner": 2,
+      "ChangeCharacterConfigParam": 9,
+      "ChangeCharacterConfigParamClientOnly": 2,
+      "ChangeCharacterRowData": 5,
+      "ChangeCharacterUIDisplay": 25,
+      "ChangeIncomingActionCountDown": 1,
+      "ChangeMechanismBarValue": 2,
+      "ChangeMonsterHeadIcon": 2,
+      "ChangeMonsterName": 2,
+      "ChangeSkillUIDisplay": 2,
+      "ChangeTargetModifierEffectState": 19,
+      "CharacterChangeModel": 5,
+      "CharacterChangePhase": 155,
+      "CharacterConfig": 629,
+      "CharacterDisableLookAt": 3,
+      "CharacterEnableEmptyModel": 1,
+      "CharacterLeaveStage": 9,
+      "CharacterOverrideConfig": 141,
+      "CharacterPlayVO": 17,
+      "CharacterReactionAnimConfig": 41,
+      "CharacterReenterStage": 2,
+      "CharacterReplaceAnimatorController": 2,
+      "CharacterReplaceOriginMaterial": 6,
+      "CharacterStopFreeStyle": 9,
+      "CharacterTriggerAnimState": 8,
+      "CharacterTriggerFreeStyle": 8,
+      "CharacterTriggerFreeStyleGraph": 1,
+      "CharmUseSkill": 2,
+      "CheckPredicateAxis": 407,
+      "CheckSkillBPAxis": 1,
+      "CheckSkillUsabilityAxis": 40,
+      "CheckTeamEntityNumberAxis": 1,
+      "CheckTurnStateAxis": 1,
+      "ChoseSequencedSkillAxis": 2,
+      "CirclePointGeneratorConfig": 1,
+      "ClearActionBarHighlightEntity": 2,
+      "ClearEntityDamageText": 12,
+      "ClearEntityFloatMessage": 1,
+      "ClearEntityFollowAttachPoint": 29,
+      "ClearFormationFaceDeltaRecord": 1,
+      "ClearHPSharedGroup": 9,
+      "ClearPropagateBeingAttackInTeam": 2,
+      "ClearRecordEntityFormation": 6,
+      "ClearRegardAsAttackType": 25,
+      "ClearTargetTimeSlow": 26,
+      "ClearTrigger": 2,
+      "ClearWeakness": 8,
+      "CloneWeakness": 1,
+      "ComplexSkillAIAllAdjoinCombine": 2,
+      "ComplexSkillAIAllTargetCombine": 13,
+      "ComplexSkillAIAllTeamMemberCombine": 12,
+      "ComplexSkillAIAxis": 1,
+      "ComplexSkillAIBattleGlobalData": 33,
+      "ComplexSkillAIContainModifier": 37,
+      "ComplexSkillAIFactorGroupWeight": 241,
+      "ComplexSkillAIGetAvatarBaseType": 3,
+      "ComplexSkillAIGetStrengthLevel": 15,
+      "ComplexSkillAIMapperMultiRange": 76,
+      "ComplexSkillAIModifierTypeNumber": 4,
+      "ComplexSkillAIPostProcessBreak": 18,
+      "ComplexSkillAIPostProcessClamp": 2,
+      "ComplexSkillAIPostProcessPreCheckFail": 7,
+      "ComplexSkillAIPostProcessUpperGroup": 4,
+      "ComplexSkillAISourceAITag": 19,
+      "ComplexSkillAISourceCharacterID": 1,
+      "ComplexSkillAISourceContainBehaviorFlag": 16,
+      "ComplexSkillAISourceDynamicValue": 14,
+      "ComplexSkillAISourceIsCombatPowerWeightedRandomTarget": 6,
+      "ComplexSkillAISourceMaxSkillTagWeight": 1,
+      "ComplexSkillAISourceMaxTeamBPCost": 3,
+      "ComplexSkillAISourceModifierValue": 2,
+      "ComplexSkillAISourceNeedChaosTargeting": 1,
+      "ComplexSkillAISourcePropertyCompare": 4,
+      "ComplexSkillAISourcePropertyCompareRatio": 25,
+      "ComplexSkillAISourcePropertyFormation": 3,
+      "ComplexSkillAISourceRandom01": 3,
+      "ComplexSkillAISourceRetarget": 4,
+      "ComplexSkillAISourceSPNeedRatio": 3,
+      "ComplexSkillAISourceTargetIsActor": 5,
+      "ComplexSkillAISourceValue": 1,
+      "ComplexSkillAISourceValueInTeamRatio": 10,
+      "ComplexSkillAISourceWeaknessCompare": 7,
+      "ConditionLoopExecuteTaskList": 28,
+      "ConditionLoopExecuteTaskListWithInterval": 10,
+      "ConicalVisionConfig": 1,
+      "ConstructBodyPart": 7,
+      "ConsumeActionCountDown": 2,
+      "CreateAttachPoint": 1,
+      "CreateBattleEvent": 148,
+      "CreateBattleEventFromGridFightBackend": 91,
+      "CreateBattleEventQTEUI": 4,
+      "CreateBattleEventServant": 1,
+      "CreateBattleTarget": 6,
+      "CreateServant": 7,
+      "CreateTeamFormationSnapshot": 1,
+      "CustomMonsterWaveInfo": 7,
+      "DamageByAttackProperty": 688,
+      "DamagePerformFinish": 596,
+      "DamagePerformFinishOnScepter": 1,
+      "DamageStance": 42,
+      "DawnsEyeDisasterUIConfig": 1,
+      "DawnsEyeSunnyUIConfig": 1,
+      "DawnsEyeThunderChargingUIConfig": 1,
+      "DawnsEyeThunderFightUIConfig": 1,
+      "DebugLog": 162,
+      "DecoupleParentTransform": 2,
+      "DeferCreateTrialPlayer": 1,
+      "DefineDynamicValue": 634,
+      "DefineHPSharedGroup": 23,
+      "DestroyBattleCharacter": 30,
+      "DetachAvatarChange": 2,
+      "DisableBattleTarget": 2,
+      "DisableCharacterVO": 8,
+      "DisableHeadLookAtOverride": 9,
+      "DisableMazeLockTarget": 2,
+      "DisableRogueTitanBless": 1,
+      "DispelStatus": 288,
+      "DynamicValueRoundToInt": 1,
+      "ElationActivityActionBarAbilityChange": 7,
+      "EnableEmotion": 9,
+      "EnableFieldEffectSoftZOffset": 3,
+      "EnableHugeMonsterHalfDither": 1,
+      "EnableNegativeHP": 3,
+      "EnableSpecificModifierSpecialMark": 5,
+      "EnableStoryWin": 1,
+      "EscapeFromBattle": 5,
+      "ExitBreakState": 107,
+      "FateBattleArcherProgressReachLimit": 1,
+      "FateBattleShowArcherUI": 1,
+      "FateBattleShowRiderUI": 1,
+      "FightFestShowCutIn": 6,
+      "FindClosestAttachPoint": 2,
+      "FireMultiProjectiles": 4,
+      "FireProjectile": 120,
+      "FireWaveProjectile": 3,
+      "ForbidBattleConditionOnStart": 2,
+      "ForceAutoBattle": 4,
+      "ForceKill": 178,
+      "ForceSyncActionDelayLink": 5,
+      "FrameCaptureIfNeed": 4,
+      "GetGapSecondsForSyncWithBgm": 2,
+      "GlobalMainIntensityEffect": 284,
+      "GlobalMainIntensityEffectAutoRevert": 4,
+      "GlobalModifyInsertAbilityPriority": 1,
+      "GlobalTimeSlow": 22,
+      "GoNextTargetInList": 10,
+      "GridFightShowBattleEventHint": 3,
+      "GridFightShowFullScreenCutIn": 4,
+      "GridFightShowRightCutIn": 50,
+      "GridFightShowTraitEffect": 5,
+      "HeadLookAt": 123,
+      "HealHP": 208,
+      "HideCharacterFilteredEffect": 10,
+      "HideEffectByCharacterType": 9,
+      "HideEntityForCurrentCamera": 4,
+      "HideEntityInActionBarByDelay": 4,
+      "HideFieldEffect": 8,
+      "HideLevelStage": 247,
+      "HideModifierEffect": 14,
+      "HideMonsterSkillInViewMode": 1,
+      "HideSkillDisplayInfo": 7,
+      "HideWaypoint": 5,
+      "HighlightEntityActionBar": 2,
+      "HitDamageSplit": 28,
+      "IncludeGlobalTaskListTemplate": 13,
+      "IncludeTaskListTemplate": 358,
+      "InfectModifier": 9,
+      "InfiniteWaveAddCurWaveMaxCount": 11,
+      "InfiniteWaveInsertMonster": 2,
+      "InfiniteWaveModifySummonProgress": 2,
+      "InfiniteWaveNextMonsterId": 1,
+      "InfiniteWaveSkipTo": 3,
+      "InfiniteWaveSortByActivity340": 1,
+      "InitActivityTelevisionBuffInfo": 2,
+      "InitBattleItemProgressInfo": 5,
+      "InitGridFightStatisticsBinding": 2,
+      "InitShield": 46,
+      "InsertBattlePerform": 1,
+      "LensDistortionCurveEffect": 1,
+      "LevelAudioState": 58,
+      "LevelAudioSwitch": 14,
+      "LevelAudioTrigger": 1,
+      "LevelChallengeTurnAcc": 7,
+      "LevelUpEvolveBuildGear": 2,
+      "LinearProjectileData": 3,
+      "LoadSwordTrainingProperty": 1,
+      "LockActionDelayChange": 41,
+      "LockAnimatorSpeed": 4,
+      "LockBattleOperation": 1,
+      "LockHP": 135,
+      "LockStance": 5,
+      "LockTargetActionDelay": 5,
+      "LockTargetHP": 39,
+      "LockTargetShield": 1,
+      "LockUISkillOperation": 2,
+      "LockVersusBar": 3,
+      "LookAt": 560,
+      "LoopExecuteTaskList": 213,
+      "LoopExecuteTaskListWithInterval": 98,
+      "LoopTargetList": 10,
+      "LoseHP": 11,
+      "LoseHPByRatio": 112,
+      "MakeCharacterHUDVisible": 115,
+      "MakeSuccess": 3,
+      "MappingAttachPoint": 6,
+      "MarkTargetForFutureReviveAbility": 2,
+      "ModifierAttachEffect": 260,
+      "ModifierDetachEffect": 7,
+      "ModifierOverrideOnHitEffect": 47,
+      "ModifyAIVariableInt": 1,
+      "ModifyActionDelay": 262,
+      "ModifyActivityElationPower": 7,
+      "ModifyAddModifierBindValue": 1,
+      "ModifyAudienceGroupAnimType": 1,
+      "ModifyCharacterOutlineTargetRender": 2,
+      "ModifyCurrentSkillDelayCost": 93,
+      "ModifyDamageData": 302,
+      "ModifyDefaultTeamFormation": 48,
+      "ModifyEntityBoostPoint": 4,
+      "ModifyEvolveBuildProperty": 12,
+      "ModifyFateContentParam": 2,
+      "ModifyGridFightCustomProperty": 11,
+      "ModifyHealData": 14,
+      "ModifyLoseHPData": 2,
+      "ModifyProperty": 6,
+      "ModifySP": 44,
+      "ModifySPNew": 377,
+      "ModifyShield": 12,
+      "ModifyShieldMax": 7,
+      "ModifyShieldValueByNewShieldModifier": 5,
+      "ModifySkillPropertyByName": 23,
+      "ModifySkillPropertyBySlot": 5,
+      "ModifySkillPropertyByType": 2,
+      "ModifySpecialSP": 49,
+      "ModifyStance": 2,
+      "ModifyTeamBoostPoint": 147,
+      "ModifyTeamBoostPointMax": 9,
+      "ModifyVersusBarProperty": 4,
+      "MoveStageOnTargetForward": 32,
+      "MoveTeam": 12,
+      "MoveToTargetList": 129,
+      "MoveToTargetPosition": 188,
+      "MuteEntitySound": 3,
+      "MuteMonsterLastKill": 4,
+      "NewFireProjectile": 6,
+      "NotifyDeadPartSelected": 1,
+      "NotifyFeverTimeInfoChange": 9,
+      "NotifyRougeGoalFinish": 1,
+      "NotifyVersusBarQuestChange": 3,
+      "Obsolete": 1,
+      "OverrideEntityModifierPhaseCamera": 3,
+      "OverrideModifierName": 25,
+      "OverrideMonsterRankScore": 2,
+      "OverrideSelectDarkTeamEntityCamera": 12,
+      "OverrideSkillReadyCamera": 5,
+      "OverrideSkillReadyState": 1,
+      "OverrideSkillTargetInfo": 1,
+      "OwnerEntityAddAbility": 161,
+      "PPFilterStackEffect": 1,
+      "ParabolaProjectileData": 2,
+      "ParallelConfig": 5,
+      "PauseEntityFollowAttach": 4,
+      "PauseTimeRewindTarget": 3,
+      "PerformDelayExecute": 24,
+      "PlayCrossHairPreviewFadeIn": 6,
+      "PlayMonsterHPBarTween": 5,
+      "PlayScreenTransfer": 19,
+      "PlayTimeline": 126,
+      "PointGeneratorMergeConfig": 1,
+      "PointNavPathLengthEvaluator": 1,
+      "PredicateTaskList": 1102,
+      "PreloadBattleEvent": 1,
+      "PreloadBattleEventByID": 52,
+      "ProcessModifierLifeStep": 2,
+      "PropDestructReset": 11,
+      "RA_ByAlertLevel": 1,
+      "RA_ByCompareVariableBool": 1,
+      "RA_SetAIVariableBool": 1,
+      "RA_SetStimulusInfo": 1,
+      "RA_TriggerInstantAbility": 1,
+      "RPGColorGradingCurveEffect": 4,
+      "RadialBlurCurveEffect": 48,
+      "RadialBlurEffect": 235,
+      "RandomConfig": 80,
+      "RandomSelectDynamicValue": 2,
+      "RandomSelectInTargetList": 4,
+      "RandomSelectMonsterIDFromPool": 1,
+      "RandomTraceProjectileData": 2,
+      "RecordEntityFormationIndex": 20,
+      "RecordUseAvatarGlobalBuff": 1,
+      "RedirectActionDelayChange": 1,
+      "ReduceStanceRatio": 11,
+      "RefreshChangePhaseUI": 13,
+      "RefreshMazeBuffTime": 10,
+      "RefreshQingQueEnergyBarState": 3,
+      "RefreshWeaknessUI": 7,
+      "ReinitProperty": 2,
+      "ReleaseCharacterHUDVisibleControl": 35,
+      "ReleaseEnvProfile": 8,
+      "ReleaseTargetUniqueName": 1,
+      "Remodifier": 37,
+      "RemoveAdventureModifier": 7,
+      "RemoveBehaviorFlagForModifier": 5,
+      "RemoveBpFeature": 2,
+      "RemoveChallengeBossInfoPanelState": 16,
+      "RemoveEffect": 427,
+      "RemoveEntityFromRelationGroup": 7,
+      "RemoveEntityFromTeamFormation": 45,
+      "RemoveGlobalTimeSlow": 10,
+      "RemoveMazeBuff": 15,
+      "RemoveModifier": 695,
+      "RemoveModifierByBehaviorFlag": 57,
+      "RemoveSelfModifier": 445,
+      "RemoveShield": 49,
+      "RemoveStageAbilityByName": 2,
+      "ResetAbilityStartTimeStamp": 1,
+      "ResetActionDelay": 2,
+      "ResetBattleBGMToStage": 28,
+      "ResetCharacterCustomTeamFormation": 8,
+      "ResetHeadLookAt": 75,
+      "ResetStance": 62,
+      "ResetTeammateAttackPerform": 3,
+      "RestoreTeamFormationSnapshot": 1,
+      "Retarget": 656,
+      "RetargetList": 33,
+      "RetargetPerSequence": 6,
+      "RevertActionEntityToObserveState": 2,
+      "RogueMagicShowScepterActiveEffect": 1,
+      "RuanMadeCakeFeature_BodyColor": 1,
+      "RuanMadeCakeFeature_BodyDecal": 1,
+      "RuanMadeCakeFeature_EyeDecal": 1,
+      "RuanMadeCakeFeature_HatColor": 1,
+      "RuanMadeCakeFeature_HatDecal": 1,
+      "RuanMadeCakeFeature_TailDecal": 1,
+      "ST_ByAIHangUp": 12,
+      "ST_ByAlertLevel": 9,
+      "ST_ByCompareVariableBool": 7,
+      "ST_ByCompareVariableFloat": 6,
+      "ST_ByContainAbnormalState": 1,
+      "ST_ByDistToGuardPosition": 6,
+      "ST_ByDistanceToEnchantTarget": 1,
+      "ST_ByDistanceToTarget": 10,
+      "ST_ByEnterCombat": 2,
+      "ST_ByExitCombat": 6,
+      "ST_ByForceExitCombat": 2,
+      "ST_ByHasAbnormalState": 15,
+      "ST_ByHasBornSmartObject": 5,
+      "ST_ByHasPatrolPath": 6,
+      "ST_ByHasTarget": 8,
+      "ST_ByInAIStatus": 11,
+      "ST_ByInAttackAngle": 12,
+      "ST_ByInAttackDistance": 11,
+      "ST_ByOnHit": 10,
+      "ST_BySkillInCD": 12,
+      "ST_Main_DoSkill": 16,
+      "ST_Main_Escape": 2,
+      "ST_Main_FearEscape": 1,
+      "ST_Main_FollowTarget": 4,
+      "ST_Main_HangUpByLevel": 8,
+      "ST_Main_MoveAlongPath": 1,
+      "ST_Main_MoveToPosition": 10,
+      "ST_Main_MoveToTarget": 16,
+      "ST_Main_Patrol": 4,
+      "ST_Main_PlayFreeStyle": 3,
+      "ST_Main_PlayInteract": 1,
+      "ST_Main_PlaySmartObject": 7,
+      "ST_Main_TeleportToPosition": 2,
+      "ST_Main_Wait": 34,
+      "ST_Side_AttachAIStatus": 14,
+      "ST_Side_CommitCD": 1,
+      "ST_Side_DetectAward": 1,
+      "ST_Side_DisablePlayerLock": 1,
+      "ST_Side_EnableDialogue": 2,
+      "ST_Side_HaltCD": 2,
+      "ST_Side_ListenFindTreasureState": 1,
+      "ST_Side_ListenFindTrotterState": 1,
+      "ST_Side_LookAtTarget": 1,
+      "ST_Side_MuteAlertValueDecline": 3,
+      "ST_Side_MuteVision": 5,
+      "ST_Side_NotifySpecialEvent": 1,
+      "ST_Side_OverrideStandByStance": 8,
+      "ST_Side_OverrideVision": 24,
+      "ST_Side_PlayBubbleTalk": 1,
+      "ST_Side_RecordGuardPosition": 2,
+      "ST_Side_RemoveEffect": 1,
+      "ST_Side_ResetForceExitCombat": 1,
+      "ST_Side_SetAlertLevel": 6,
+      "ST_Side_SteerToTarget": 6,
+      "ST_Side_Timer": 2,
+      "ST_Side_TriggerEffect": 1,
+      "ST_Side_TriggerInstantAbility": 5,
+      "SaveModelWhenDead": 8,
+      "ScaleCharacterModel": 121,
+      "SelectAISkillTarget": 135,
+      "SequenceConfig": 418,
+      "ServantConfig": 8,
+      "ServantOverrideConfig": 4,
+      "SetActionBarItemAnimatorTrigger": 5,
+      "SetActionBarRightDownMiniIcon": 1,
+      "SetActionDelay": 202,
+      "SetActionDelayNearTarget": 14,
+      "SetActivityTelevisionBuffInfo": 2,
+      "SetAdvAchievement": 1,
+      "SetAttachEffectTimeSlow": 5,
+      "SetAttachmentScale": 67,
+      "SetAttachmentVisibility": 46,
+      "SetAvatarGlobalBuffState": 2,
+      "SetBattleAchievement": 98,
+      "SetBattleBGMState": 47,
+      "SetBattleEndReason": 2,
+      "SetBattleEventUltraSkillCutin": 22,
+      "SetBattleItemProgressInfo": 6,
+      "SetBattleResultAsWin": 2,
+      "SetBattleRougeGoalProgress": 3,
+      "SetBattleScoringItem": 17,
+      "SetBattleTargetDialogOffset": 3,
+      "SetBattleTargetMultiTargetSwitch": 1,
+      "SetBattleTargetProgress": 22,
+      "SetBattleUIPanelState": 27,
+      "SetBattleUIPauseEnvironmentInfo": 4,
+      "SetBossHPStanceChangeType": 1,
+      "SetBossPluralityHP": 2,
+      "SetBpFeature": 1,
+      "SetBtnBattleHintInfo": 4,
+      "SetCameraRootFollow": 16,
+      "SetCharacterAlwaysIdleState": 6,
+      "SetCharacterAnimFollow": 21,
+      "SetCharacterAtlasFaceEmotion": 1,
+      "SetCharacterCustomTeamFormation": 9,
+      "SetCharacterEffectMaterialBlock": 7,
+      "SetCharacterEnhancedState": 1,
+      "SetCharacterFormation": 15,
+      "SetCharacterMaterialEffectEnable": 1,
+      "SetCharacterPartsVisibility": 25,
+      "SetCharacterScaleFollow": 2,
+      "SetCharacterShaderSpeedEnable": 1,
+      "SetCharacterShowSummonUI": 4,
+      "SetCharacterVisibilityFollow": 8,
+      "SetCharacterVisible": 1,
+      "SetCharacterVisibleInViewMode": 6,
+      "SetColliderCenterFollowAttachPoint": 1,
+      "SetComfortZoneWidthOverride": 16,
+      "SetComponentAssetLoadState": 7,
+      "SetControlSkillMapping": 60,
+      "SetCountDownWarning": 6,
+      "SetCurrentTurnActionEntity": 1,
+      "SetCustomLocationConfig": 6,
+      "SetDamageTextStyle": 2,
+      "SetDawnsEyeWeatherUI": 2,
+      "SetDeathDragonLinjian": 1,
+      "SetDeathDragonSkillButtonState": 1,
+      "SetDieImmediately": 125,
+      "SetDynamicAttachPointEffectAdaptionConfig": 1,
+      "SetDynamicEntityParam": 14,
+      "SetDynamicString": 1,
+      "SetDynamicValue": 730,
+      "SetDynamicValueByActionCountDown": 2,
+      "SetDynamicValueByActivityElation": 7,
+      "SetDynamicValueByAddValue": 263,
+      "SetDynamicValueByAdsorption": 4,
+      "SetDynamicValueByAttackDamageData": 5,
+      "SetDynamicValueByAttackTargetCount": 26,
+      "SetDynamicValueByBPChange": 27,
+      "SetDynamicValueByBattleTargetID": 12,
+      "SetDynamicValueByBattleTargetParam": 3,
+      "SetDynamicValueByBehaviorFlagCount": 8,
+      "SetDynamicValueByBossLeftHP": 1,
+      "SetDynamicValueByBossTotalHP": 1,
+      "SetDynamicValueByBreakBaseDamage": 15,
+      "SetDynamicValueByChangeValue": 58,
+      "SetDynamicValueByCharacterCount": 127,
+      "SetDynamicValueByCopying": 162,
+      "SetDynamicValueByCountOfBaseType": 10,
+      "SetDynamicValueByCurrentBP": 17,
+      "SetDynamicValueByDamageDataProperty": 71,
+      "SetDynamicValueByDelayCumulate": 4,
+      "SetDynamicValueByElationTimeSkillCount": 1,
+      "SetDynamicValueByEvolveBuild": 13,
+      "SetDynamicValueByFateContent": 2,
+      "SetDynamicValueByFateContentCount": 3,
+      "SetDynamicValueByFateLevel": 2,
+      "SetDynamicValueByFormationIndex": 2,
+      "SetDynamicValueByGridFightCustomProperty": 13,
+      "SetDynamicValueByGridFightDropCount": 1,
+      "SetDynamicValueByGridFightProperty": 19,
+      "SetDynamicValueByGridFightTraitBonus": 1,
+      "SetDynamicValueByGridFightTraitBonusCurrentLayer": 2,
+      "SetDynamicValueByHPRatio": 70,
+      "SetDynamicValueByHPSharedGroup": 1,
+      "SetDynamicValueByHardLevelProperty": 60,
+      "SetDynamicValueByHealDataProperty": 31,
+      "SetDynamicValueByInfiniteWaveData": 1,
+      "SetDynamicValueByMagicUnitCounter": 1,
+      "SetDynamicValueByMaxBP": 11,
+      "SetDynamicValueByMazeBuffConfig": 33,
+      "SetDynamicValueByModifierValue": 355,
+      "SetDynamicValueByMultiModifierValueSum": 11,
+      "SetDynamicValueByPreCalcHPDamage": 1,
+      "SetDynamicValueByPreCalcStanceDamage": 1,
+      "SetDynamicValueByProperty": 428,
+      "SetDynamicValueByPropertyClientOnly": 20,
+      "SetDynamicValueByRaidTargetProgress": 2,
+      "SetDynamicValueByRandom": 24,
+      "SetDynamicValueByScepterProperty": 5,
+      "SetDynamicValueByScoringID": 1,
+      "SetDynamicValueByShield": 13,
+      "SetDynamicValueBySkillMaxHitSplitCount": 2,
+      "SetDynamicValueBySkillProperty": 9,
+      "SetDynamicValueByStanceCount": 2,
+      "SetDynamicValueByStatusCount": 35,
+      "SetDynamicValueByStatusResistance": 1,
+      "SetDynamicValueByTargetToTeamCenterDistance": 2,
+      "SetDynamicValueByTotalHPFromMonsterID": 1,
+      "SetDynamicValueByTournFloorType": 1,
+      "SetDynamicValueByVariateType": 126,
+      "SetDynamicValueByVersusBar": 3,
+      "SetDynamicValueByWaitUltraCount": 1,
+      "SetDynamicValueByWaveStageCount": 1,
+      "SetDynamicValueByWeaknessCount": 7,
+      "SetDynamicValueByWorldLevel": 14,
+      "SetDynamicValueClientOnly": 10,
+      "SetDynamicValueInRange": 5,
+      "SetEffectAnimSpeed": 3,
+      "SetEffectAnimatorParameter": 18,
+      "SetEffectAnimatorState": 3,
+      "SetEffectAnimatorTrigger": 14,
+      "SetEffectAutoLayoutScale": 1,
+      "SetEffectFrameCaptureMatTex": 1,
+      "SetEffectProgress": 1,
+      "SetEnergyBarState": 117,
+      "SetEntityActionState": 47,
+      "SetEntityArtRotation": 4,
+      "SetEntityFollowAttachPoint": 35,
+      "SetEntityForbidCameraDither": 7,
+      "SetEntityForceVisible": 11,
+      "SetEntityPosition": 87,
+      "SetEntityRelationGroup": 8,
+      "SetEntityVisible": 306,
+      "SetExcludeInMultiCharacterFormation": 2,
+      "SetFaceDirectionLocked": 11,
+      "SetGlobalShaderProperty": 1,
+      "SetHP": 55,
+      "SetHeadButtonEff": 6,
+      "SetHpBreakHint": 2,
+      "SetIronTombInfinityHPUI": 2,
+      "SetIronTombProgress": 2,
+      "SetLayerWeight": 2,
+      "SetLevel": 2,
+      "SetLevelChallengeTurnLimit": 21,
+      "SetLocalOffsetAsMoveTarget": 3,
+      "SetModifierDynamicValue": 108,
+      "SetModifierEffectVisible": 4,
+      "SetModifierOverrideNameForStatus": 31,
+      "SetModifierValue": 114,
+      "SetModifierValueByBehaviorFlag": 3,
+      "SetMonsterEnergyBarState": 83,
+      "SetMonsterHPTotalSeg": 4,
+      "SetMonsterHUDType": 1,
+      "SetMonsterHUDVisibleType": 1,
+      "SetMonsterHitCountEnergyBarState": 1,
+      "SetMonsterNameBoardMaxBuffCount": 2,
+      "SetMonsterPhase": 89,
+      "SetMonsterPhasePointPrefab": 1,
+      "SetMonsterStanceVulnerable": 1,
+      "SetMonsterViewPhase": 1,
+      "SetNoShadowCaster": 5,
+      "SetNpcStatus": 2,
+      "SetNpcWaypath": 2,
+      "SetPhainonActionCount": 1,
+      "SetPhainonChargePoint": 1,
+      "SetPhainonChargePointPreshow": 1,
+      "SetRaidTargetProgress": 2,
+      "SetReportCustomValue": 5,
+      "SetResilience": 80,
+      "SetRogueTournFloorType": 1,
+      "SetShenJunActionBar": 2,
+      "SetSignedAngleByTarget": 3,
+      "SetSimulationSpeedEnable": 50,
+      "SetSkillButtonAdditionalStatus": 4,
+      "SetSkillTargetFormationByPos": 170,
+      "SetSkillTextDialogType": 1,
+      "SetStageBattleEvents": 1,
+      "SetStanceCount": 5,
+      "SetStanceHintEffect": 2,
+      "SetSummonUnitTriggerEnable": 4,
+      "SetSummonerEnergyBarState": 11,
+      "SetTargetAlwaysAutoBattle": 6,
+      "SetTargetAnimSpeedScale": 2,
+      "SetTargetAssetPreloadState": 4,
+      "SetTargetCrossHairVisible": 3,
+      "SetTargetCustomAssetPreloadState": 8,
+      "SetTargetDamageTextVisible": 20,
+      "SetTargetDirMove": 1,
+      "SetTargetModelDynamicLoadPriority": 2,
+      "SetTargetTeamLocation": 9,
+      "SetTargetUniqueName": 56,
+      "SetTeamFormation": 522,
+      "SetTeamLockTarget": 3,
+      "SetTeamRootOffset": 74,
+      "SetTeammateAttackFormation": 2,
+      "SetTrashSummonHUDState": 5,
+      "SetTriggeredFormationAssetAutoCenter": 3,
+      "SetUltraSkillAssetPreload": 4,
+      "SetUseTemporaryLockTarget": 1,
+      "SetVersusBar": 5,
+      "SetViewModeEnabled": 2,
+      "SetupActionDelayLink": 8,
+      "SetupPropagateBeingAttackInTeam": 2,
+      "ShowActionBarEffect": 17,
+      "ShowArcherProjectionSelectInBattle": 1,
+      "ShowAttackTime": 17,
+      "ShowAvatarHUDSpecialEffect": 4,
+      "ShowBattleAlert": 16,
+      "ShowBattleAvatarPanel": 7,
+      "ShowBattleConditionUI": 1,
+      "ShowBattleEventButton": 60,
+      "ShowBattleEventTips": 1,
+      "ShowBattleFeverTimeScreenFire": 3,
+      "ShowBattleQTEUI": 2,
+      "ShowBattleScreenEffect": 15,
+      "ShowBattleSkillEnhanced": 41,
+      "ShowBattleTalkBGUI": 3,
+      "ShowBattleUI": 238,
+      "ShowBattleUIInTimeline": 1,
+      "ShowBattleVersusBarCountDownEffect": 1,
+      "ShowBattleWhiteboxText": 1,
+      "ShowBonusUIEffect": 90,
+      "ShowBossHPValue": 1,
+      "ShowBossInfoBar": 93,
+      "ShowChallegeStoryWavePanel": 4,
+      "ShowEntityFloatMessage": 129,
+      "ShowEvolveBuildCardSelectInBattle": 2,
+      "ShowEvolveBuildGearSelectInBattle": 3,
+      "ShowEvolveBuildProgressInBattle": 1,
+      "ShowEvolveBuildTreasureInBattle": 3,
+      "ShowEvolveBuildTreasureInBattleForTrial": 1,
+      "ShowExpandElationItem": 1,
+      "ShowFrameCaptureUI": 1,
+      "ShowSkillCutIn": 28,
+      "ShowSkillReadyCamera": 1,
+      "ShowSkillTextDialog": 122,
+      "ShowTargetHPBar": 1,
+      "ShowUI": 17,
+      "ShowUIPage": 278,
+      "ShowUltraSkillAlternative": 2,
+      "SkillExecutionStart": 261,
+      "SkillPerformFinish": 595,
+      "SkipPopupUIOffset": 1,
+      "SortByModifierDynamicFloat": 5,
+      "SortTargets": 5,
+      "StackAIUpperGroup": 2,
+      "StackAIUpperGroupForSpecified": 1,
+      "StackAdditionalTeamBoostPoint": 2,
+      "StackBoostPointCallbackDecorate": 4,
+      "StackBoostPointDirty": 2,
+      "StackCrazyAIBehavior": 3,
+      "StackCustomUnselectable": 4,
+      "StackExtraStance": 2,
+      "StackProperty": 618,
+      "StackRedStance": 2,
+      "StackRedirectSkillTarget": 6,
+      "StackScepterProperty": 4,
+      "StackShield": 4,
+      "StackSkillDesc": 6,
+      "StackStatusDesc": 55,
+      "StackStatusProbability": 1,
+      "StackStatusResistance": 57,
+      "StackWeakResistance": 7,
+      "StackWeakness": 98,
+      "StartAim": 31,
+      "StartBattleQTE": 2,
+      "StartEffectAim": 2,
+      "StateTreeStateConfig": 38,
+      "StateTreeSubTreeConfig": 16,
+      "StopAim": 33,
+      "StopEffectFollow": 6,
+      "StopTimeline": 30,
+      "SummonMonster": 121,
+      "SummonPartner": 15,
+      "SwitchBattleArea": 6,
+      "SwitchBossHeadEffType": 4,
+      "SwitchByCommandType": 11,
+      "SwitchCase": 3,
+      "SwitchCaseByAttackDamageType": 6,
+      "SwitchCaseByDynamicValue": 65,
+      "SwitchCaseByTeammateCount": 2,
+      "SwitchChallengeBossInfoPanelState": 4,
+      "SwitchOverrideController": 3,
+      "SwordTrainingSetDynamicValueByAllyRank": 1,
+      "SwordTrainingSetDynamicValueByEnemyRank": 1,
+      "SwordTrainingSetDynamicValueByHPMultiplier": 1,
+      "SyncBattleEventPropertyValues": 1,
+      "SyncCharLightAndCameraDir": 103,
+      "SyncMonsterLightByCameraDir": 2,
+      "TargetAlias": 1888,
+      "TargetCompute": 10,
+      "TargetConcat": 91,
+      "TargetFetchAbilityTarget": 1,
+      "TargetFetchActualOwner": 1,
+      "TargetFetchAdvAITarget": 1,
+      "TargetFetchAdvLocalPlayer": 1,
+      "TargetFetchAdvNpcEx": 30,
+      "TargetFetchAllUnselectable": 1,
+      "TargetFetchAvatarByID": 2,
+      "TargetFetchCaster": 372,
+      "TargetFetchCurrentInsertTurnSource": 3,
+      "TargetFetchElationTimeAllTargets": 1,
+      "TargetFetchLastSearchEntity": 2,
+      "TargetFetchLevelEntity": 3,
+      "TargetFetchModifierOwner": 1,
+      "TargetFetchMonsterByID": 7,
+      "TargetFetchOwnerEntity": 1,
+      "TargetFetchParamEntityByIndex": 3,
+      "TargetFetchParamEntityList": 1,
+      "TargetFetchPartner": 15,
+      "TargetFetchUniqueNameEntity": 47,
+      "TargetFetchUnstageTarget": 2,
+      "TargetFilter": 223,
+      "TargetFilterAliveState": 17,
+      "TargetFilterTargetType": 2,
+      "TargetIndex": 24,
+      "TargetMapActionBarAdjoinEntityList": 2,
+      "TargetMapAdjoinEntity": 7,
+      "TargetMapAllTeamMember": 4,
+      "TargetMapAttackTargetList": 2,
+      "TargetMapCreatedBattleEvent": 2,
+      "TargetMapDynamicEntityParam": 6,
+      "TargetMapPartEntity": 1,
+      "TargetMapPartOwnerEntity": 1,
+      "TargetMapSkillPointEntity": 4,
+      "TargetMapSkillSubTarget": 2,
+      "TargetMapSkillTarget": 3,
+      "TargetMapTeamFormation": 7,
+      "TargetQuery": 5,
+      "TargetSelector": 3,
+      "TargetSequence": 281,
+      "TargetShuffle": 17,
+      "TargetSortByAITag": 1,
+      "TargetSortByActionOrder": 2,
+      "TargetSortByCustomFormationIndexClientOnly": 1,
+      "TargetSortByElationPriority": 3,
+      "TargetSortByFormation": 29,
+      "TargetSortByGridFightPower": 1,
+      "TargetSortByGridFightRoleTotalDamage": 1,
+      "TargetSortByModifierStatusCount": 2,
+      "TargetSortByModifierValue": 8,
+      "TargetSortByMultiModifierValueSum": 1,
+      "TargetSortByProperty": 29,
+      "TargetSortByWeaknessMatch": 1,
+      "TargetSortMonsterRank": 7,
+      "TargetSortSequence": 1,
+      "TargetTake": 52,
+      "TargetTimeSlow": 132,
+      "TaskConfig": 80,
+      "TaskTemplateFetchParamSequence": 1,
+      "TeamAction": 13,
+      "TeamLookAt": 15,
+      "ToastPile": 4,
+      "ToggleHitCountUITop": 1,
+      "ToggleScoreCounterShow": 5,
+      "ToggleSkillPreShow": 26,
+      "ToggleSpecialSkillMark": 46,
+      "ToggleTotalDamageFinishNotify": 1,
+      "ToggleUITop": 27,
+      "TransitEnvProfile": 7,
+      "TriggerAbility": 676,
+      "TriggerAdditiveAnimState": 4,
+      "TriggerAnimState": 646,
+      "TriggerAnimStateOnModifierCustomEvent": 3,
+      "TriggerAnimStateWithMove": 226,
+      "TriggerAutoLayoutTransferPerform": 4,
+      "TriggerBattleStatisticEvent": 4,
+      "TriggerBreak": 12,
+      "TriggerCustomString": 161,
+      "TriggerEffect": 731,
+      "TriggerEffectList": 11,
+      "TriggerEnergyBarEffect": 39,
+      "TriggerEvolveBuildFeature": 1,
+      "TriggerGridFightWaveSettle": 1,
+      "TriggerHitProp": 11,
+      "TriggerHitTarget": 6,
+      "TriggerMagicUnitOnScepter": 2,
+      "TriggerMazeSkillDrop": 1,
+      "TriggerModelShake": 2,
+      "TriggerModifierCustomEvent": 60,
+      "TriggerPamActionPhaseAction": 1,
+      "TriggerPamActionPhaseDone": 1,
+      "TriggerPamActionPhaseMove": 1,
+      "TriggerPamActionPhaseSettle": 1,
+      "TriggerPamMovePhaseTalk": 1,
+      "TriggerPamMovePhaseTalkWait": 1,
+      "TriggerPamOnlineFirst": 1,
+      "TriggerParallelAbility": 17,
+      "TriggerParallelTaskListTemplate": 30,
+      "TriggerParamModifierCustomEvent": 1,
+      "TriggerSkipDeadHandler": 101,
+      "TriggerSound": 136,
+      "TriggerSoundInAnim": 15,
+      "TriggerStanceCountDown": 11,
+      "TriggerUINotify": 55,
+      "TriggerUINotifyWithTarget": 2,
+      "TriggerUITopEffect": 10,
+      "TryStartConnectUltraSkillFrameCapture": 58,
+      "TurnInsertAbility": 434,
+      "TurnInsertAbilityCondition": 145,
+      "TurnInsertAbilityConditionBase": 1,
+      "TurnInsertAction": 67,
+      "TurnInsertAssistantAbility": 1,
+      "TutorialForbidAutoBattle": 1,
+      "TutorialTaskUnlock": 12,
+      "UnloadBattleEvent": 1,
+      "UnlockTargetHP": 35,
+      "UnlockTargetShield": 1,
+      "UpdateMonsterFootIKMode": 2,
+      "UseSequencedSkill": 1,
+      "UseSkill": 364,
+      "UseSkillByComplexSkillAI": 1,
+      "UseSkillOneMore": 7,
+      "VCameraConfigChange": 977,
+      "VCameraNoiseChange": 33,
+      "VisionConfig": 24,
+      "WaitAbilityStartTimeStamp": 10,
+      "WaitAllProjectileFinish": 5,
+      "WaitAnimEvent": 1,
+      "WaitAnimState": 941,
+      "WaitCustomString": 10,
+      "WaitDialogueBegin": 1,
+      "WaitFor": 62,
+      "WaitFrame": 9,
+      "WaitFrameForBattleServer": 2,
+      "WaitMissionTalkFinish": 3,
+      "WaitParallelTimeStamp": 47,
+      "WaitRandomSecond": 11,
+      "WaitSecond": 689,
+      "WaitSkillPerformAbilityFinish": 14,
+      "WaitTimelineFinish": 249,
+      "WriteCustomValueToStatistic": 7
+    }
+  },
+  "event_status": {
+    "CheckParamFlagCallBack": {
+      "count": 7,
+      "status": "audit_only"
+    },
+    "Ev_global_set_vo_combat_unmute": {
+      "count": 1,
+      "status": "audit_only"
+    },
+    "OnActionDelayEffect": {
+      "count": 1,
+      "status": "audit_only"
+    },
+    "OnActionDelayEffectAll": {
+      "count": 9,
+      "status": "audit_only"
+    },
+    "OnActionEnd": {
+      "count": 61,
+      "status": "audit_only"
+    },
+    "OnActionPhaseBegin": {
+      "count": 36,
+      "status": "audit_only"
+    },
+    "OnActivityElationPowerChange": {
+      "count": 2,
+      "status": "audit_only"
+    },
+    "OnAddModifierSuc": {
+      "count": 21,
+      "status": "audit_only"
+    },
+    "OnAfterAction": {
+      "count": 21,
+      "status": "audit_only"
+    },
+    "OnAfterAttack": {
+      "count": 262,
+      "status": "audit_only"
+    },
+    "OnAfterAttackEnd": {
+      "count": 34,
+      "status": "audit_only"
+    },
+    "OnAfterBeingAttacked": {
+      "count": 206,
+      "status": "audit_only"
+    },
+    "OnAfterBeingAttackedAdv": {
+      "count": 9,
+      "status": "audit_only"
+    },
+    "OnAfterBeingAttackedEnd": {
+      "count": 36,
+      "status": "audit_only"
+    },
+    "OnAfterBeingHeal": {
+      "count": 26,
+      "status": "audit_only"
+    },
+    "OnAfterBeingHit": {
+      "count": 63,
+      "status": "audit_only"
+    },
+    "OnAfterBeingHitAll": {
+      "count": 103,
+      "status": "audit_only"
+    },
+    "OnAfterCharmAction": {
+      "count": 3,
+      "status": "audit_only"
+    },
+    "OnAfterDealHeal": {
+      "count": 25,
+      "status": "audit_only"
+    },
+    "OnAfterHit": {
+      "count": 70,
+      "status": "audit_only"
+    },
+    "OnAfterHitAll": {
+      "count": 51,
+      "status": "audit_only"
+    },
+    "OnAfterMagicScepterTrigger": {
+      "count": 4,
+      "status": "audit_only"
+    },
+    "OnAfterSkillUse": {
+      "count": 243,
+      "status": "audit_only"
+    },
+    "OnAimAtTargetsRefresh_CL": {
+      "count": 44,
+      "status": "audit_only"
+    },
+    "OnAllowAction": {
+      "count": 86,
+      "status": "audit_only"
+    },
+    "OnAttackerPrepareAttackData": {
+      "count": 2,
+      "status": "audit_only"
+    },
+    "OnAttackerPrepareDamageData": {
+      "count": 6,
+      "status": "audit_only"
+    },
+    "OnBattleEventCreate": {
+      "count": 1,
+      "status": "audit_only"
+    },
+    "OnBeforeAction": {
+      "count": 15,
+      "status": "audit_only"
+    },
+    "OnBeforeAttack": {
+      "count": 109,
+      "status": "audit_only"
+    },
+    "OnBeforeBeingAttacked": {
+      "count": 122,
+      "status": "audit_only"
+    },
+    "OnBeforeBeingBreak": {
+      "count": 9,
+      "status": "audit_only"
+    },
+    "OnBeforeBeingHeal": {
+      "count": 8,
+      "status": "audit_only"
+    },
+    "OnBeforeBeingHit": {
+      "count": 25,
+      "status": "audit_only"
+    },
+    "OnBeforeBeingHitAll": {
+      "count": 161,
+      "status": "audit_only"
+    },
+    "OnBeforeBeingLoseHP": {
+      "count": 3,
+      "status": "audit_only"
+    },
+    "OnBeforeBeingStanceDamage": {
+      "count": 7,
+      "status": "audit_only"
+    },
+    "OnBeforeDealHeal": {
+      "count": 12,
+      "status": "audit_only"
+    },
+    "OnBeforeDeathrattle": {
+      "count": 3,
+      "status": "audit_only"
+    },
+    "OnBeforeDying": {
+      "count": 175,
+      "status": "audit_only"
+    },
+    "OnBeforeEnergyPointChange": {
+      "count": 2,
+      "status": "audit_only"
+    },
+    "OnBeforeEscape": {
+      "count": 7,
+      "status": "audit_only"
+    },
+    "OnBeforeHit": {
+      "count": 97,
+      "status": "audit_only"
+    },
+    "OnBeforeHitAll": {
+      "count": 217,
+      "status": "audit_only"
+    },
+    "OnBeforeInsertActionPrepare": {
+      "count": 14,
+      "status": "audit_only"
+    },
+    "OnBeforeMagicScepterTrigger": {
+      "count": 2,
+      "status": "audit_only"
+    },
+    "OnBeforeMortallyWonded": {
+      "count": 6,
+      "status": "audit_only"
+    },
+    "OnBeforeSkillCost": {
+      "count": 1,
+      "status": "audit_only"
+    },
+    "OnBeforeSkillUse": {
+      "count": 188,
+      "status": "audit_only"
+    },
+    "OnBeforeUltraSkillPrepare": {
+      "count": 2,
+      "status": "audit_only"
+    },
+    "OnBeforeWaveMonster": {
+      "count": 37,
+      "status": "audit_only"
+    },
+    "OnBeingBreak": {
+      "count": 227,
+      "status": "audit_only"
+    },
+    "OnBeingLimbo": {
+      "count": 89,
+      "status": "audit_only"
+    },
+    "OnBeingRevived": {
+      "count": 26,
+      "status": "audit_only"
+    },
+    "OnBeingStackWeakness": {
+      "count": 7,
+      "status": "audit_only"
+    },
+    "OnBeingStanceCountDown": {
+      "count": 5,
+      "status": "audit_only"
+    },
+    "OnBeingStanceDamage": {
+      "count": 9,
+      "status": "audit_only"
+    },
+    "OnBreakExtendAnim": {
+      "count": 2,
+      "status": "audit_only"
+    },
+    "OnCharmAction": {
+      "count": 2,
+      "status": "audit_only"
+    },
+    "OnCreate": {
+      "count": 584,
+      "status": "audit_only"
+    },
+    "OnCriticalChanceChange": {
+      "count": 7,
+      "status": "audit_only"
+    },
+    "OnCustomEvent": {
+      "count": 118,
+      "status": "audit_only"
+    },
+    "OnDeathrattle": {
+      "count": 81,
+      "status": "audit_only"
+    },
+    "OnDefenderPrepareAttackData": {
+      "count": 4,
+      "status": "audit_only"
+    },
+    "OnDepartedEnd": {
+      "count": 2,
+      "status": "audit_only"
+    },
+    "OnDepartedStart": {
+      "count": 6,
+      "status": "audit_only"
+    },
+    "OnDestroy": {
+      "count": 470,
+      "status": "audit_only"
+    },
+    "OnDispel": {
+      "count": 4,
+      "status": "audit_only"
+    },
+    "OnEndBreak": {
+      "count": 120,
+      "status": "audit_only"
+    },
+    "OnEnergyPointChange": {
+      "count": 1,
+      "status": "audit_only"
+    },
+    "OnEnterBattle": {
+      "count": 436,
+      "status": "audit_only"
+    },
+    "OnEnterRedStance": {
+      "count": 2,
+      "status": "audit_only"
+    },
+    "OnEvolveBuildExpStepUp": {
+      "count": 5,
+      "status": "audit_only"
+    },
+    "OnEvolveBuildForge": {
+      "count": 1,
+      "status": "audit_only"
+    },
+    "OnEvolveBuildGetKillScore": {
+      "count": 3,
+      "status": "audit_only"
+    },
+    "OnEvolveBuildLostGear": {
+      "count": 1,
+      "status": "audit_only"
+    },
+    "OnHPChange": {
+      "count": 147,
+      "status": "audit_only"
+    },
+    "OnHPOverflow": {
+      "count": 4,
+      "status": "audit_only"
+    },
+    "OnImmuneDebuff": {
+      "count": 20,
+      "status": "audit_only"
+    },
+    "OnInsertAbilityAbort": {
+      "count": 9,
+      "status": "audit_only"
+    },
+    "OnInsertAbilityFinish": {
+      "count": 43,
+      "status": "audit_only"
+    },
+    "OnInsertAbilityStart": {
+      "count": 17,
+      "status": "audit_only"
+    },
+    "OnInsertActionFinish": {
+      "count": 11,
+      "status": "audit_only"
+    },
+    "OnInsertActionStart": {
+      "count": 25,
+      "status": "audit_only"
+    },
+    "OnLeaveBattle": {
+      "count": 58,
+      "status": "audit_only"
+    },
+    "OnLimboWaitHeal": {
+      "count": 127,
+      "status": "audit_only"
+    },
+    "OnListenActionCountActive": {
+      "count": 4,
+      "status": "audit_only"
+    },
+    "OnListenActionCountDown": {
+      "count": 1,
+      "status": "audit_only"
+    },
+    "OnListenActionEnd": {
+      "count": 17,
+      "status": "audit_only"
+    },
+    "OnListenActionPhaseBegin": {
+      "count": 33,
+      "status": "audit_only"
+    },
+    "OnListenAfterAction": {
+      "count": 34,
+      "status": "audit_only"
+    },
+    "OnListenAfterAttack": {
+      "count": 129,
+      "status": "audit_only"
+    },
+    "OnListenAfterAttackEnd": {
+      "count": 28,
+      "status": "audit_only"
+    },
+    "OnListenAfterBeingHit": {
+      "count": 4,
+      "status": "audit_only"
+    },
+    "OnListenAfterBeingHitAll": {
+      "count": 18,
+      "status": "audit_only"
+    },
+    "OnListenAfterHit": {
+      "count": 3,
+      "status": "audit_only"
+    },
+    "OnListenAfterHitAll": {
+      "count": 15,
+      "status": "audit_only"
+    },
+    "OnListenAfterMagicScepterTrigger": {
+      "count": 3,
+      "status": "audit_only"
+    },
+    "OnListenAfterSkillUse": {
+      "count": 151,
+      "status": "audit_only"
+    },
+    "OnListenAimAtTargetsRefresh_CL": {
+      "count": 57,
+      "status": "audit_only"
+    },
+    "OnListenAllowAction": {
+      "count": 96,
+      "status": "audit_only"
+    },
+    "OnListenAnySkillExecution": {
+      "count": 1,
+      "status": "audit_only"
+    },
+    "OnListenAvatarBaseTypeChange": {
+      "count": 8,
+      "status": "audit_only"
+    },
+    "OnListenBattleEventCreate": {
+      "count": 52,
+      "status": "audit_only"
+    },
+    "OnListenBattleEventDie": {
+      "count": 6,
+      "status": "audit_only"
+    },
+    "OnListenBeforeAction": {
+      "count": 22,
+      "status": "audit_only"
+    },
+    "OnListenBeforeAttack": {
+      "count": 43,
+      "status": "audit_only"
+    },
+    "OnListenBeforeBeingHit": {
+      "count": 2,
+      "status": "audit_only"
+    },
+    "OnListenBeforeBeingHitAll": {
+      "count": 2,
+      "status": "audit_only"
+    },
+    "OnListenBeforeElationEchoPointBuffAdd": {
+      "count": 3,
+      "status": "audit_only"
+    },
+    "OnListenBeforeHit": {
+      "count": 2,
+      "status": "audit_only"
+    },
+    "OnListenBeforeHitAll": {
+      "count": 11,
+      "status": "audit_only"
+    },
+    "OnListenBeforeMagicScepterTrigger": {
+      "count": 1,
+      "status": "audit_only"
+    },
+    "OnListenBeforeSkillUse": {
+      "count": 130,
+      "status": "audit_only"
+    },
+    "OnListenBeforeTriggerBreak": {
+      "count": 1,
+      "status": "audit_only"
+    },
+    "OnListenBeforeTurnPhase1End": {
+      "count": 7,
+      "status": "audit_only"
+    },
+    "OnListenBpChange": {
+      "count": 58,
+      "status": "audit_only"
+    },
+    "OnListenBreak": {
+      "count": 57,
+      "status": "audit_only"
+    },
+    "OnListenChangeTargetViewMode_CL": {
+      "count": 2,
+      "status": "audit_only"
+    },
+    "OnListenCharacterCreate": {
+      "count": 390,
+      "status": "audit_only"
+    },
+    "OnListenCharacterDie": {
+      "count": 197,
+      "status": "audit_only"
+    },
+    "OnListenCharacterEscape": {
+      "count": 22,
+      "status": "audit_only"
+    },
+    "OnListenCharacterLimbo": {
+      "count": 15,
+      "status": "audit_only"
+    },
+    "OnListenCharmDamagePerformFinish": {
+      "count": 6,
+      "status": "audit_only"
+    },
+    "OnListenCharmMakeDamage": {
+      "count": 11,
+      "status": "audit_only"
+    },
+    "OnListenDepartedEnd": {
+      "count": 10,
+      "status": "audit_only"
+    },
+    "OnListenDepartedStart": {
+      "count": 12,
+      "status": "audit_only"
+    },
+    "OnListenElationTimeEnd": {
+      "count": 16,
+      "status": "audit_only"
+    },
+    "OnListenElationTimeStart": {
+      "count": 17,
+      "status": "audit_only"
+    },
+    "OnListenElationTimeWaitEnd": {
+      "count": 1,
+      "status": "audit_only"
+    },
+    "OnListenEndBreak": {
+      "count": 17,
+      "status": "audit_only"
+    },
+    "OnListenEnterLimboRevivable": {
+      "count": 1,
+      "status": "audit_only"
+    },
+    "OnListenEnterRedStance": {
+      "count": 1,
+      "status": "audit_only"
+    },
+    "OnListenEnterViewMode_CL": {
+      "count": 19,
+      "status": "audit_only"
+    },
+    "OnListenExitViewMode_CL": {
+      "count": 19,
+      "status": "audit_only"
+    },
+    "OnListenForceProcessModifierLifeStep": {
+      "count": 1,
+      "status": "audit_only"
+    },
+    "OnListenGlobalActionDelayChanged": {
+      "count": 20,
+      "status": "audit_only"
+    },
+    "OnListenHPChange": {
+      "count": 45,
+      "status": "audit_only"
+    },
+    "OnListenInitShield": {
+      "count": 10,
+      "status": "audit_only"
+    },
+    "OnListenInsertAbilityAbort": {
+      "count": 18,
+      "status": "audit_only"
+    },
+    "OnListenInsertAbilityCheck": {
+      "count": 2,
+      "status": "audit_only"
+    },
+    "OnListenInsertAbilityFinish": {
+      "count": 89,
+      "status": "audit_only"
+    },
+    "OnListenInsertAbilityStart": {
+      "count": 66,
+      "status": "audit_only"
+    },
+    "OnListenInsertActionFinish": {
+      "count": 5,
+      "status": "audit_only"
+    },
+    "OnListenInsertActionStart": {
+      "count": 26,
+      "status": "audit_only"
+    },
+    "OnListenInsertUltraSkill": {
+      "count": 5,
+      "status": "audit_only"
+    },
+    "OnListenLastKill": {
+      "count": 2,
+      "status": "audit_only"
+    },
+    "OnListenModifierAdd": {
+      "count": 88,
+      "status": "audit_only"
+    },
+    "OnListenModifierDispel": {
+      "count": 18,
+      "status": "audit_only"
+    },
+    "OnListenModifierOnStack": {
+      "count": 55,
+      "status": "audit_only"
+    },
+    "OnListenModifierRemove": {
+      "count": 108,
+      "status": "audit_only"
+    },
+    "OnListenModifierResist": {
+      "count": 2,
+      "status": "audit_only"
+    },
+    "OnListenOwnerChanged": {
+      "count": 3,
+      "status": "audit_only"
+    },
+    "OnListenPreviewBreak_CL": {
+      "count": 3,
+      "status": "audit_only"
+    },
+    "OnListenRedStanceBreak": {
+      "count": 3,
+      "status": "audit_only"
+    },
+    "OnListenRedirectSkillTarget": {
+      "count": 1,
+      "status": "audit_only"
+    },
+    "OnListenRevive": {
+      "count": 20,
+      "status": "audit_only"
+    },
+    "OnListenSetActiveSkill_CL": {
+      "count": 18,
+      "status": "audit_only"
+    },
+    "OnListenShieldChange": {
+      "count": 7,
+      "status": "audit_only"
+    },
+    "OnListenStanceCountDown": {
+      "count": 3,
+      "status": "audit_only"
+    },
+    "OnListenTurnBegin": {
+      "count": 51,
+      "status": "audit_only"
+    },
+    "OnListenTurnEnd": {
+      "count": 116,
+      "status": "audit_only"
+    },
+    "OnListenTurnPhase1Begin": {
+      "count": 20,
+      "status": "audit_only"
+    },
+    "OnListenTurnPhase2Begin": {
+      "count": 11,
+      "status": "audit_only"
+    },
+    "OnListenUltraSkillPrepare": {
+      "count": 34,
+      "status": "audit_only"
+    },
+    "OnLockHPThresholdReached": {
+      "count": 57,
+      "status": "audit_only"
+    },
+    "OnModifierAdd": {
+      "count": 201,
+      "status": "audit_only"
+    },
+    "OnModifierDotAdd": {
+      "count": 5,
+      "status": "audit_only"
+    },
+    "OnModifierOnStack": {
+      "count": 105,
+      "status": "audit_only"
+    },
+    "OnModifierRemove": {
+      "count": 162,
+      "status": "audit_only"
+    },
+    "OnMonsterPhaseChanged": {
+      "count": 10,
+      "status": "audit_only"
+    },
+    "OnOwnerChanged": {
+      "count": 3,
+      "status": "audit_only"
+    },
+    "OnPhase1": {
+      "count": 369,
+      "status": "audit_only"
+    },
+    "OnPhase2": {
+      "count": 137,
+      "status": "audit_only"
+    },
+    "OnRedStanceBeingBreak": {
+      "count": 2,
+      "status": "audit_only"
+    },
+    "OnRedirectSkillTarget": {
+      "count": 1,
+      "status": "audit_only"
+    },
+    "OnResistModifier": {
+      "count": 2,
+      "status": "audit_only"
+    },
+    "OnSPChange": {
+      "count": 30,
+      "status": "audit_only"
+    },
+    "OnShieldChange": {
+      "count": 8,
+      "status": "audit_only"
+    },
+    "OnShieldModifierConvert": {
+      "count": 1,
+      "status": "audit_only"
+    },
+    "OnSnapshotCreate": {
+      "count": 7,
+      "status": "audit_only"
+    },
+    "OnSoundEndOfEvent_CL": {
+      "count": 2,
+      "status": "audit_only"
+    },
+    "OnStack": {
+      "count": 769,
+      "status": "audit_only"
+    },
+    "OnStackWeakness": {
+      "count": 1,
+      "status": "audit_only"
+    },
+    "OnStage": {
+      "count": 1,
+      "status": "audit_only"
+    },
+    "OnStanceReset": {
+      "count": 14,
+      "status": "audit_only"
+    },
+    "OnTeamMemberAdd": {
+      "count": 2,
+      "status": "audit_only"
+    },
+    "OnTeamMemberRemove": {
+      "count": 3,
+      "status": "audit_only"
+    },
+    "OnTriggerBreak": {
+      "count": 60,
+      "status": "audit_only"
+    },
+    "OnTriggerDeath": {
+      "count": 84,
+      "status": "audit_only"
+    },
+    "OnTriggerDeathrattle": {
+      "count": 22,
+      "status": "audit_only"
+    },
+    "OnTriggerLimbo": {
+      "count": 8,
+      "status": "audit_only"
+    },
+    "OnTriggerRedStanceBreak": {
+      "count": 1,
+      "status": "audit_only"
+    },
+    "OnTriggerSoundEvent_CL": {
+      "count": 2,
+      "status": "audit_only"
+    },
+    "OnTriggerStanceCountDown": {
+      "count": 3,
+      "status": "audit_only"
+    },
+    "OnUltraSkillPrepare": {
+      "count": 51,
+      "status": "audit_only"
+    },
+    "OnUnselectableEnd": {
+      "count": 5,
+      "status": "audit_only"
+    },
+    "OnUnselectableStart": {
+      "count": 12,
+      "status": "audit_only"
+    },
+    "OnUnstage": {
+      "count": 1,
+      "status": "audit_only"
+    },
+    "OnVersusBarFever": {
+      "count": 4,
+      "status": "audit_only"
+    },
+    "OnWaveMonster": {
+      "count": 131,
+      "status": "audit_only"
+    }
+  },
+  "ir_summary": {
+    "conditions": 1309,
+    "coverage_status_counts": {
+      "audit_only": 6261,
+      "executable": 1075,
+      "supported_alias": 5,
+      "unsupported": 2702
+    },
+    "effects": 3503,
+    "entities": 415,
+    "formulas": 3151,
+    "triggers": 1665
+  },
+  "opcode_status": {
+    "AIBehaviorFlagSelector": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "AIComplexSkillAISelector": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "AIComposeSelector": {
+      "count": 22,
+      "status": "unsupported"
+    },
+    "AICustomStringTagSelector": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "AIDecisionConfig": {
+      "count": 436,
+      "status": "unsupported"
+    },
+    "AIModifierNameSelector": {
+      "count": 118,
+      "status": "unsupported"
+    },
+    "AIMonsterIDSelector": {
+      "count": 5,
+      "status": "unsupported"
+    },
+    "AIMonsterRankSelector": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "AIPropertySelector": {
+      "count": 5,
+      "status": "unsupported"
+    },
+    "AIStepperDecisionGroupConfig": {
+      "count": 51,
+      "status": "unsupported"
+    },
+    "AITaskTargetTypeSelector": {
+      "count": 31,
+      "status": "unsupported"
+    },
+    "AITryInsertUltra": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "AIVariableBool": {
+      "count": 365,
+      "status": "unsupported"
+    },
+    "AIVariableFloat": {
+      "count": 24,
+      "status": "unsupported"
+    },
+    "AIVariableInt": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "AIVariableString": {
+      "count": 251,
+      "status": "unsupported"
+    },
+    "AbortInsertAbility": {
+      "count": 4,
+      "status": "unsupported"
+    },
+    "AbortModifierPhasePerform": {
+      "count": 8,
+      "status": "unsupported"
+    },
+    "ActionCountDownPreview": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ActivityElationHideCutIn": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ActivityElationShowCutIn": {
+      "count": 6,
+      "status": "unsupported"
+    },
+    "AdaptEntityPosition": {
+      "count": 6,
+      "status": "unsupported"
+    },
+    "AddAdventureModifier": {
+      "count": 9,
+      "status": "unsupported"
+    },
+    "AddBattleExtraPropertyAddition": {
+      "count": 5,
+      "status": "unsupported"
+    },
+    "AddBehaviorFlagForModifier": {
+      "count": 11,
+      "status": "unsupported"
+    },
+    "AddBuffPerform": {
+      "count": 36,
+      "status": "unsupported"
+    },
+    "AddChallengeBossInfoPanelState": {
+      "count": 15,
+      "status": "unsupported"
+    },
+    "AddDynamicEntityParam": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "AddEntityToTeamFormation": {
+      "count": 15,
+      "status": "unsupported"
+    },
+    "AddGlobalDynamicOffset": {
+      "count": 16,
+      "status": "unsupported"
+    },
+    "AddGlobalDynamicOffsetIgnoreEntity": {
+      "count": 8,
+      "status": "unsupported"
+    },
+    "AddGridFightDropData": {
+      "count": 5,
+      "status": "unsupported"
+    },
+    "AddGridFightTargetEquip": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "AddMazeBuff": {
+      "count": 23,
+      "status": "unsupported"
+    },
+    "AddModifier": {
+      "count": 923,
+      "status": "audit_only"
+    },
+    "AddRegardAsAttackType": {
+      "count": 32,
+      "status": "unsupported"
+    },
+    "AddStageAbilityByName": {
+      "count": 28,
+      "status": "unsupported"
+    },
+    "AddTargetStancePreshowConfig": {
+      "count": 8,
+      "status": "unsupported"
+    },
+    "AddWeakByTeamAttackType": {
+      "count": 10,
+      "status": "unsupported"
+    },
+    "AddWeakness": {
+      "count": 10,
+      "status": "unsupported"
+    },
+    "AdvAINavigateTo": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "AdvAIRemeberGobackPosition": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "AdvAddAIHangUpInfo": {
+      "count": 6,
+      "status": "unsupported"
+    },
+    "AdvByInCustomZone": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "AdvByIsEliteMonster": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "AdvByPerceiveValueReachMax": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "AdvByPlayerInVisionZone": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "AdvFireStimulus": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "AdvForceSetNpcAlertValue": {
+      "count": 11,
+      "status": "unsupported"
+    },
+    "AdvMarkAsTauntProxy": {
+      "count": 4,
+      "status": "unsupported"
+    },
+    "AdvNPCAttack": {
+      "count": 12,
+      "status": "unsupported"
+    },
+    "AdvNPCChase": {
+      "count": 12,
+      "status": "unsupported"
+    },
+    "AdvNPCGoback": {
+      "count": 12,
+      "status": "unsupported"
+    },
+    "AdvNPCGuarding": {
+      "count": 13,
+      "status": "unsupported"
+    },
+    "AdvNPCIdle": {
+      "count": 70,
+      "status": "unsupported"
+    },
+    "AdvNPCPatrol": {
+      "count": 30,
+      "status": "unsupported"
+    },
+    "AdvNPCRunAwayPlayer": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "AdvNPCUseMazeSkill": {
+      "count": 3,
+      "status": "unsupported"
+    },
+    "AdvNpcFaceToPlayer": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "AdvNpcFollowByPlayer": {
+      "count": 38,
+      "status": "unsupported"
+    },
+    "AdvNpcFollowPlayer": {
+      "count": 39,
+      "status": "unsupported"
+    },
+    "AdvNpcGuardAlertDeviceActive": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "AdvNpcGuardAlertDeviceInactive": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "AdvNpcPetSearch": {
+      "count": 4,
+      "status": "unsupported"
+    },
+    "AdvPlayerEnableIdleShow": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "AdvRemoveAIHangUpInfo": {
+      "count": 6,
+      "status": "unsupported"
+    },
+    "AdvSetMinimapAlertVisionState": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "AdvSetNpcAlertConfig": {
+      "count": 27,
+      "status": "unsupported"
+    },
+    "AdvSetNpcVisionsConfig": {
+      "count": 18,
+      "status": "unsupported"
+    },
+    "AdvSetTargetAlertValue": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "AdventureByInAnimZone": {
+      "count": 3,
+      "status": "unsupported"
+    },
+    "AdventureByMazeSkillUseCheck": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "AdventureByNpcMazeSkillCooldown": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "AdventureTriggerAnimStateWithMove": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "AdventureTriggerTargetAbility": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "AlignTargetToTeamCenter": {
+      "count": 148,
+      "status": "unsupported"
+    },
+    "AnimSetParameter": {
+      "count": 79,
+      "status": "unsupported"
+    },
+    "ApplyMonsterPhaseOverrideConfig": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "ApplyOperation": {
+      "count": 4,
+      "status": "unsupported"
+    },
+    "AttachAvatarChange": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "AttachEntityDeparted": {
+      "count": 5,
+      "status": "unsupported"
+    },
+    "AttachEntityUnselectable": {
+      "count": 88,
+      "status": "unsupported"
+    },
+    "AttachGlobalShield": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "AttachPreshowDamageTypeForSkill": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "AttachSkillTypeDisable": {
+      "count": 86,
+      "status": "unsupported"
+    },
+    "AttackData": {
+      "count": 688,
+      "status": "unsupported"
+    },
+    "AudienceGroupMemberInfo": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "AudioSetRTPCValue": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "AudioSetRTPCValueByRatio": {
+      "count": 4,
+      "status": "unsupported"
+    },
+    "AutoMappingAttachPoint": {
+      "count": 4,
+      "status": "unsupported"
+    },
+    "AutoUseUltraSkill": {
+      "count": 66,
+      "status": "unsupported"
+    },
+    "AvatarIntensityEffect": {
+      "count": 5,
+      "status": "unsupported"
+    },
+    "BattleAudioSwitch": {
+      "count": 5,
+      "status": "unsupported"
+    },
+    "BattleCollegeAimShow": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "BattleEventConfig": {
+      "count": 194,
+      "status": "unsupported"
+    },
+    "BattleExtraPropertyAdditionPair": {
+      "count": 5,
+      "status": "unsupported"
+    },
+    "BattlePlayVideo": {
+      "count": 3,
+      "status": "unsupported"
+    },
+    "BattleSingleClickQTEConfig": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "BattleVersusClickQTEConfig": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "BlockCameraDitherUpdate": {
+      "count": 3,
+      "status": "unsupported"
+    },
+    "ByAlertValueInRange": {
+      "count": 18,
+      "status": "unsupported"
+    },
+    "ByAllowInstantKill": {
+      "count": 6,
+      "status": "unsupported"
+    },
+    "ByAnd": {
+      "count": 913,
+      "status": "unsupported"
+    },
+    "ByAngle": {
+      "count": 9,
+      "status": "unsupported"
+    },
+    "ByAnimStateLogicType": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "ByAnimatorParam": {
+      "count": 9,
+      "status": "unsupported"
+    },
+    "ByAny": {
+      "count": 586,
+      "status": "unsupported"
+    },
+    "ByAnyNpcMonsterInRange": {
+      "count": 3,
+      "status": "unsupported"
+    },
+    "ByAttackSkillEffect": {
+      "count": 3,
+      "status": "unsupported"
+    },
+    "ByAttackType": {
+      "count": 204,
+      "status": "unsupported"
+    },
+    "ByAvatarBaseType": {
+      "count": 31,
+      "status": "unsupported"
+    },
+    "ByBattleHasCertainResult": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ByBattleMissionTalkFinish": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "ByCasterAliveOrLimbo": {
+      "count": 3,
+      "status": "unsupported"
+    },
+    "ByCharacterDamageType": {
+      "count": 47,
+      "status": "unsupported"
+    },
+    "ByCharacterSomatoWidthType": {
+      "count": 8,
+      "status": "unsupported"
+    },
+    "ByCheckActionDelayEffectType": {
+      "count": 5,
+      "status": "unsupported"
+    },
+    "ByCheckBloodLinkDead": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ByCheckCharacterFly": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ByCheckCustomValueBool": {
+      "count": 116,
+      "status": "unsupported"
+    },
+    "ByCheckDarkTeamDestroy": {
+      "count": 5,
+      "status": "unsupported"
+    },
+    "ByCheckFightFinish": {
+      "count": 4,
+      "status": "unsupported"
+    },
+    "ByCheckIsLimboRevivable": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ByCheckModifierCallBackBehaviorFlag": {
+      "count": 102,
+      "status": "unsupported"
+    },
+    "ByCheckModifierCallBackIsInfected": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "ByCheckModifierCallBackIsSelf": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ByCheckModifierCallBackModifierValue": {
+      "count": 7,
+      "status": "unsupported"
+    },
+    "ByCheckModifierCallBackName": {
+      "count": 246,
+      "status": "unsupported"
+    },
+    "ByCheckModifierCallBackStatusType": {
+      "count": 28,
+      "status": "unsupported"
+    },
+    "ByCheckTargetHPCanBeDamage": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ByCompareAIVariableInt": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ByCompareAbilityProperty": {
+      "count": 107,
+      "status": "unsupported"
+    },
+    "ByCompareAliveEnemyNumber": {
+      "count": 9,
+      "status": "unsupported"
+    },
+    "ByCompareAngleBetweenVCameraAndDir": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ByCompareBP": {
+      "count": 13,
+      "status": "unsupported"
+    },
+    "ByCompareBattleEventID": {
+      "count": 109,
+      "status": "unsupported"
+    },
+    "ByCompareCarryMazebuff": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "ByCompareChallengeLeft": {
+      "count": 7,
+      "status": "unsupported"
+    },
+    "ByCompareChangeValue": {
+      "count": 13,
+      "status": "unsupported"
+    },
+    "ByCompareCharacterID": {
+      "count": 115,
+      "status": "unsupported"
+    },
+    "ByCompareCharacterNumber": {
+      "count": 224,
+      "status": "unsupported"
+    },
+    "ByCompareControlSkillEffectIsDamaging": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ByCompareCurrentModifierStatusType": {
+      "count": 9,
+      "status": "unsupported"
+    },
+    "ByCompareCurrentSkillEffectIsDamaging": {
+      "count": 3,
+      "status": "unsupported"
+    },
+    "ByCompareDamageCustomName": {
+      "count": 30,
+      "status": "unsupported"
+    },
+    "ByCompareDamageTag": {
+      "count": 40,
+      "status": "unsupported"
+    },
+    "ByCompareDynamicValue": {
+      "count": 1027,
+      "status": "unsupported"
+    },
+    "ByCompareEvolveBuildGearLevel": {
+      "count": 3,
+      "status": "unsupported"
+    },
+    "ByCompareEvolveBuildProperty": {
+      "count": 3,
+      "status": "unsupported"
+    },
+    "ByCompareGridFightProperty": {
+      "count": 16,
+      "status": "unsupported"
+    },
+    "ByCompareHP": {
+      "count": 98,
+      "status": "unsupported"
+    },
+    "ByCompareHPRatio": {
+      "count": 212,
+      "status": "audit_only"
+    },
+    "ByCompareInfiniteWaveSummonProgress": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ByCompareLastKillType": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ByCompareModifierCallBackDynamicValue": {
+      "count": 4,
+      "status": "unsupported"
+    },
+    "ByCompareModifierCustomEvent": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ByCompareModifierValue": {
+      "count": 139,
+      "status": "unsupported"
+    },
+    "ByCompareMonsterID": {
+      "count": 168,
+      "status": "unsupported"
+    },
+    "ByCompareMonsterPhase": {
+      "count": 210,
+      "status": "unsupported"
+    },
+    "ByCompareMonsterRank": {
+      "count": 140,
+      "status": "unsupported"
+    },
+    "ByCompareMonsterTemplateID": {
+      "count": 33,
+      "status": "unsupported"
+    },
+    "ByCompareMonsterUniqueID": {
+      "count": 37,
+      "status": "unsupported"
+    },
+    "ByCompareNextUnusedInsertAction": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ByCompareParamString": {
+      "count": 25,
+      "status": "unsupported"
+    },
+    "ByCompareParamValue": {
+      "count": 88,
+      "status": "unsupported"
+    },
+    "ByComparePreShowStanceBreakMonsterRank": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ByComparePropType": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "ByCompareResistChance": {
+      "count": 4,
+      "status": "unsupported"
+    },
+    "ByCompareSPChangeTag": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ByCompareSPRatio": {
+      "count": 12,
+      "status": "unsupported"
+    },
+    "ByCompareScepterFuncType": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "ByCompareScepterMainUnitEffectTag": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ByCompareSelectSkillEffect": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "ByCompareSkillBPChangePreview": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ByCompareSkillUsageLimit": {
+      "count": 3,
+      "status": "unsupported"
+    },
+    "ByCompareSomatoType": {
+      "count": 20,
+      "status": "unsupported"
+    },
+    "ByCompareSpecialAvatarType": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "ByCompareSpecialSPRatio": {
+      "count": 5,
+      "status": "unsupported"
+    },
+    "ByCompareStageID": {
+      "count": 18,
+      "status": "unsupported"
+    },
+    "ByCompareStageType": {
+      "count": 35,
+      "status": "unsupported"
+    },
+    "ByCompareStance": {
+      "count": 14,
+      "status": "unsupported"
+    },
+    "ByCompareStanceCount": {
+      "count": 3,
+      "status": "unsupported"
+    },
+    "ByCompareStanceRatio": {
+      "count": 3,
+      "status": "unsupported"
+    },
+    "ByCompareTarget": {
+      "count": 259,
+      "status": "unsupported"
+    },
+    "ByCompareTargetCount": {
+      "count": 102,
+      "status": "unsupported"
+    },
+    "ByCompareTargetCountClientOnly": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "ByCompareTeamFormationRowIndex": {
+      "count": 3,
+      "status": "unsupported"
+    },
+    "ByCompareTeamFormationWidth": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "ByCompareTurnActionEntityTeamType": {
+      "count": 24,
+      "status": "unsupported"
+    },
+    "ByCompareUnusedInsertAbilityCount": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "ByCompareUnusedUltraSkillCount": {
+      "count": 4,
+      "status": "unsupported"
+    },
+    "ByCompareWaveCount": {
+      "count": 208,
+      "status": "unsupported"
+    },
+    "ByContainBehaviorFlag": {
+      "count": 371,
+      "status": "unsupported"
+    },
+    "ByContainCustomString": {
+      "count": 40,
+      "status": "unsupported"
+    },
+    "ByContainsParamFlag": {
+      "count": 32,
+      "status": "unsupported"
+    },
+    "ByContainsRedStance": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ByCurrentSkillEffect": {
+      "count": 9,
+      "status": "unsupported"
+    },
+    "ByCurrentSkillName": {
+      "count": 81,
+      "status": "unsupported"
+    },
+    "ByCurrentSkillTargetType": {
+      "count": 4,
+      "status": "unsupported"
+    },
+    "ByCurrentSkillType": {
+      "count": 253,
+      "status": "audit_only"
+    },
+    "ByCurrentTurnState": {
+      "count": 9,
+      "status": "unsupported"
+    },
+    "ByCurrentVCameraConfigCaster": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ByDamageSourceContainBehaviorFlag": {
+      "count": 3,
+      "status": "unsupported"
+    },
+    "ByDieAnimFinished": {
+      "count": 52,
+      "status": "unsupported"
+    },
+    "ByDistance": {
+      "count": 28,
+      "status": "unsupported"
+    },
+    "ByDynamicValueDefined": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ByGridFightCompareRoleExtInfo": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "ByGridFightHasSameTrait": {
+      "count": 6,
+      "status": "unsupported"
+    },
+    "ByGridFightHasTrait": {
+      "count": 21,
+      "status": "unsupported"
+    },
+    "ByGridFightTraitSelectedCharacter": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ByHasInsertAbilityPending": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ByHasInsertActionByTarget": {
+      "count": 3,
+      "status": "unsupported"
+    },
+    "ByHasPausedElationTime": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ByHasSkillTag": {
+      "count": 3,
+      "status": "unsupported"
+    },
+    "ByHasSkillType": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ByHasStanceWeak": {
+      "count": 54,
+      "status": "unsupported"
+    },
+    "ByHasStanceWeakPreview": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ByHasSummonRelation": {
+      "count": 33,
+      "status": "unsupported"
+    },
+    "ByHaveEnemyAlive": {
+      "count": 93,
+      "status": "unsupported"
+    },
+    "ByHaveInsertUltraWait": {
+      "count": 6,
+      "status": "unsupported"
+    },
+    "ByHaveObstacle": {
+      "count": 8,
+      "status": "unsupported"
+    },
+    "ByHaveUniqueNameEffect": {
+      "count": 4,
+      "status": "unsupported"
+    },
+    "ByHeroGender": {
+      "count": 6,
+      "status": "unsupported"
+    },
+    "ByInAttackRange": {
+      "count": 5,
+      "status": "unsupported"
+    },
+    "ByInTimelinePerform": {
+      "count": 8,
+      "status": "unsupported"
+    },
+    "ByInTurnBasedGameModeState": {
+      "count": 35,
+      "status": "unsupported"
+    },
+    "ByInfiniteMonsterWaveLeft": {
+      "count": 5,
+      "status": "unsupported"
+    },
+    "ByIsAutoBattle": {
+      "count": 14,
+      "status": "unsupported"
+    },
+    "ByIsBattleEventEntity": {
+      "count": 57,
+      "status": "unsupported"
+    },
+    "ByIsBodyPart": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "ByIsBodyPartClientOnly": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ByIsBodyPartOwner": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "ByIsCharacterChangeTarget": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "ByIsCharacterWeaknessActivated": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ByIsContainAdventureModifier": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "ByIsContainModifier": {
+      "count": 848,
+      "status": "unsupported"
+    },
+    "ByIsControlSkillDisable": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ByIsConvertDamage": {
+      "count": 4,
+      "status": "unsupported"
+    },
+    "ByIsCurrentModifierAlive": {
+      "count": 3,
+      "status": "unsupported"
+    },
+    "ByIsCurrentSkillActive": {
+      "count": 3,
+      "status": "unsupported"
+    },
+    "ByIsCurrentSkillAllowMultiTarget": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ByIsDamageCritical": {
+      "count": 9,
+      "status": "unsupported"
+    },
+    "ByIsDamageLuckCritical": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ByIsDamageType": {
+      "count": 32,
+      "status": "unsupported"
+    },
+    "ByIsEnableNegativeHP": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ByIsEnemy": {
+      "count": 5,
+      "status": "unsupported"
+    },
+    "ByIsEntityActionState": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "ByIsFirstChallengeBattle": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ByIsFirstInsertAbilityInQueue": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ByIsGenderType": {
+      "count": 4,
+      "status": "unsupported"
+    },
+    "ByIsHitAllCallBackStack": {
+      "count": 4,
+      "status": "unsupported"
+    },
+    "ByIsInAnimZone": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ByIsInCharacterIDGroup": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "ByIsInCharmAction": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "ByIsInCustomTeamFormation": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ByIsInElationTime": {
+      "count": 12,
+      "status": "unsupported"
+    },
+    "ByIsIndirectDamage": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ByIsInsertAction": {
+      "count": 6,
+      "status": "unsupported"
+    },
+    "ByIsMatchTeammateCount": {
+      "count": 3,
+      "status": "unsupported"
+    },
+    "ByIsMazeSkillAffectCurrentWave": {
+      "count": 51,
+      "status": "unsupported"
+    },
+    "ByIsPropLockable": {
+      "count": 10,
+      "status": "unsupported"
+    },
+    "ByIsPropertyValueMinOrMax": {
+      "count": 56,
+      "status": "unsupported"
+    },
+    "ByIsScepter": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "ByIsSkillTypeDisable": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ByIsSplitDamage": {
+      "count": 38,
+      "status": "unsupported"
+    },
+    "ByIsStageFirstWave": {
+      "count": 8,
+      "status": "unsupported"
+    },
+    "ByIsSubTargetOfHpSharedGroup": {
+      "count": 5,
+      "status": "unsupported"
+    },
+    "ByIsTargetAbleToAction": {
+      "count": 4,
+      "status": "unsupported"
+    },
+    "ByIsTargetUnselectable": {
+      "count": 29,
+      "status": "unsupported"
+    },
+    "ByIsTargetValid": {
+      "count": 92,
+      "status": "unsupported"
+    },
+    "ByIsTeamLocationIndexType": {
+      "count": 57,
+      "status": "unsupported"
+    },
+    "ByIsTeammate": {
+      "count": 25,
+      "status": "unsupported"
+    },
+    "ByIsTopActionDelayTarget": {
+      "count": 6,
+      "status": "unsupported"
+    },
+    "ByIsTriggeredBlockDamage": {
+      "count": 19,
+      "status": "unsupported"
+    },
+    "ByIsTurnActionEntity": {
+      "count": 53,
+      "status": "unsupported"
+    },
+    "ByIsTurnOwnerEntity": {
+      "count": 66,
+      "status": "unsupported"
+    },
+    "ByLocalWin": {
+      "count": 22,
+      "status": "unsupported"
+    },
+    "ByNPCStatus": {
+      "count": 52,
+      "status": "unsupported"
+    },
+    "ByNot": {
+      "count": 138,
+      "status": "unsupported"
+    },
+    "ByPamAnchorContinous": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ByPamCurrentActionAnyDirection": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ByPamMovePhaseTalk": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ByPamNormalAction": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ByPamNormalActionSwitch": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ByPamOnlineFirst": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ByPreShowStanceBreak": {
+      "count": 17,
+      "status": "unsupported"
+    },
+    "ByRandomChance": {
+      "count": 110,
+      "status": "unsupported"
+    },
+    "ByRankActivated": {
+      "count": 170,
+      "status": "unsupported"
+    },
+    "BySimulateSpeedUp": {
+      "count": 24,
+      "status": "unsupported"
+    },
+    "BySkillPointActivated": {
+      "count": 126,
+      "status": "unsupported"
+    },
+    "ByStatusCount": {
+      "count": 6,
+      "status": "unsupported"
+    },
+    "ByTargetAliveState": {
+      "count": 106,
+      "status": "unsupported"
+    },
+    "ByTargetEntityType": {
+      "count": 128,
+      "status": "unsupported"
+    },
+    "ByTargetHitBoxActive": {
+      "count": 5,
+      "status": "unsupported"
+    },
+    "ByTargetIsStanceWeak": {
+      "count": 5,
+      "status": "unsupported"
+    },
+    "ByTargetIsStanceWeakForCurrentHit": {
+      "count": 3,
+      "status": "unsupported"
+    },
+    "ByTargetIsStanceWeakForCurrentSkill": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ByTargetListAll": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "ByTargetListAny": {
+      "count": 49,
+      "status": "unsupported"
+    },
+    "ByTargetListIntersects": {
+      "count": 168,
+      "status": "unsupported"
+    },
+    "ByTargetLockHP": {
+      "count": 3,
+      "status": "unsupported"
+    },
+    "ByTargetTeam": {
+      "count": 500,
+      "status": "unsupported"
+    },
+    "ByTurnOwnerActionPhaseEnd": {
+      "count": 3,
+      "status": "unsupported"
+    },
+    "ByTurnOwnerHasActionInTurn": {
+      "count": 4,
+      "status": "unsupported"
+    },
+    "ByTurnOwnerHasPendingOneMore": {
+      "count": 4,
+      "status": "unsupported"
+    },
+    "CameraFollowEntityTimeScale": {
+      "count": 9,
+      "status": "unsupported"
+    },
+    "ChangeActionEntityToObserveState": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "ChangeAnimEventConfig": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ChangeBattleEventOwner": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "ChangeCharacterConfigParam": {
+      "count": 9,
+      "status": "unsupported"
+    },
+    "ChangeCharacterConfigParamClientOnly": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "ChangeCharacterRowData": {
+      "count": 5,
+      "status": "unsupported"
+    },
+    "ChangeCharacterUIDisplay": {
+      "count": 25,
+      "status": "unsupported"
+    },
+    "ChangeIncomingActionCountDown": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ChangeMechanismBarValue": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "ChangeMonsterHeadIcon": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "ChangeMonsterName": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "ChangeSkillUIDisplay": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "ChangeTargetModifierEffectState": {
+      "count": 19,
+      "status": "unsupported"
+    },
+    "CharacterChangeModel": {
+      "count": 5,
+      "status": "unsupported"
+    },
+    "CharacterChangePhase": {
+      "count": 155,
+      "status": "unsupported"
+    },
+    "CharacterConfig": {
+      "count": 629,
+      "status": "unsupported"
+    },
+    "CharacterDisableLookAt": {
+      "count": 3,
+      "status": "unsupported"
+    },
+    "CharacterEnableEmptyModel": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "CharacterLeaveStage": {
+      "count": 9,
+      "status": "unsupported"
+    },
+    "CharacterOverrideConfig": {
+      "count": 141,
+      "status": "unsupported"
+    },
+    "CharacterPlayVO": {
+      "count": 17,
+      "status": "unsupported"
+    },
+    "CharacterReactionAnimConfig": {
+      "count": 41,
+      "status": "unsupported"
+    },
+    "CharacterReenterStage": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "CharacterReplaceAnimatorController": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "CharacterReplaceOriginMaterial": {
+      "count": 6,
+      "status": "unsupported"
+    },
+    "CharacterStopFreeStyle": {
+      "count": 9,
+      "status": "unsupported"
+    },
+    "CharacterTriggerAnimState": {
+      "count": 8,
+      "status": "unsupported"
+    },
+    "CharacterTriggerFreeStyle": {
+      "count": 8,
+      "status": "unsupported"
+    },
+    "CharacterTriggerFreeStyleGraph": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "CharmUseSkill": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "CheckPredicateAxis": {
+      "count": 407,
+      "status": "unsupported"
+    },
+    "CheckSkillBPAxis": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "CheckSkillUsabilityAxis": {
+      "count": 40,
+      "status": "unsupported"
+    },
+    "CheckTeamEntityNumberAxis": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "CheckTurnStateAxis": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ChoseSequencedSkillAxis": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "CirclePointGeneratorConfig": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ClearActionBarHighlightEntity": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "ClearEntityDamageText": {
+      "count": 12,
+      "status": "unsupported"
+    },
+    "ClearEntityFloatMessage": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ClearEntityFollowAttachPoint": {
+      "count": 29,
+      "status": "unsupported"
+    },
+    "ClearFormationFaceDeltaRecord": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ClearHPSharedGroup": {
+      "count": 9,
+      "status": "unsupported"
+    },
+    "ClearPropagateBeingAttackInTeam": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "ClearRecordEntityFormation": {
+      "count": 6,
+      "status": "unsupported"
+    },
+    "ClearRegardAsAttackType": {
+      "count": 25,
+      "status": "unsupported"
+    },
+    "ClearTargetTimeSlow": {
+      "count": 26,
+      "status": "unsupported"
+    },
+    "ClearTrigger": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "ClearWeakness": {
+      "count": 8,
+      "status": "unsupported"
+    },
+    "CloneWeakness": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ComplexSkillAIAllAdjoinCombine": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "ComplexSkillAIAllTargetCombine": {
+      "count": 13,
+      "status": "unsupported"
+    },
+    "ComplexSkillAIAllTeamMemberCombine": {
+      "count": 12,
+      "status": "unsupported"
+    },
+    "ComplexSkillAIAxis": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ComplexSkillAIBattleGlobalData": {
+      "count": 33,
+      "status": "unsupported"
+    },
+    "ComplexSkillAIContainModifier": {
+      "count": 37,
+      "status": "unsupported"
+    },
+    "ComplexSkillAIFactorGroupWeight": {
+      "count": 241,
+      "status": "unsupported"
+    },
+    "ComplexSkillAIGetAvatarBaseType": {
+      "count": 3,
+      "status": "unsupported"
+    },
+    "ComplexSkillAIGetStrengthLevel": {
+      "count": 15,
+      "status": "unsupported"
+    },
+    "ComplexSkillAIMapperMultiRange": {
+      "count": 76,
+      "status": "unsupported"
+    },
+    "ComplexSkillAIModifierTypeNumber": {
+      "count": 4,
+      "status": "unsupported"
+    },
+    "ComplexSkillAIPostProcessBreak": {
+      "count": 18,
+      "status": "unsupported"
+    },
+    "ComplexSkillAIPostProcessClamp": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "ComplexSkillAIPostProcessPreCheckFail": {
+      "count": 7,
+      "status": "unsupported"
+    },
+    "ComplexSkillAIPostProcessUpperGroup": {
+      "count": 4,
+      "status": "unsupported"
+    },
+    "ComplexSkillAISourceAITag": {
+      "count": 19,
+      "status": "unsupported"
+    },
+    "ComplexSkillAISourceCharacterID": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ComplexSkillAISourceContainBehaviorFlag": {
+      "count": 16,
+      "status": "unsupported"
+    },
+    "ComplexSkillAISourceDynamicValue": {
+      "count": 14,
+      "status": "unsupported"
+    },
+    "ComplexSkillAISourceIsCombatPowerWeightedRandomTarget": {
+      "count": 6,
+      "status": "unsupported"
+    },
+    "ComplexSkillAISourceMaxSkillTagWeight": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ComplexSkillAISourceMaxTeamBPCost": {
+      "count": 3,
+      "status": "unsupported"
+    },
+    "ComplexSkillAISourceModifierValue": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "ComplexSkillAISourceNeedChaosTargeting": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ComplexSkillAISourcePropertyCompare": {
+      "count": 4,
+      "status": "unsupported"
+    },
+    "ComplexSkillAISourcePropertyCompareRatio": {
+      "count": 25,
+      "status": "unsupported"
+    },
+    "ComplexSkillAISourcePropertyFormation": {
+      "count": 3,
+      "status": "unsupported"
+    },
+    "ComplexSkillAISourceRandom01": {
+      "count": 3,
+      "status": "unsupported"
+    },
+    "ComplexSkillAISourceRetarget": {
+      "count": 4,
+      "status": "unsupported"
+    },
+    "ComplexSkillAISourceSPNeedRatio": {
+      "count": 3,
+      "status": "unsupported"
+    },
+    "ComplexSkillAISourceTargetIsActor": {
+      "count": 5,
+      "status": "unsupported"
+    },
+    "ComplexSkillAISourceValue": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ComplexSkillAISourceValueInTeamRatio": {
+      "count": 10,
+      "status": "unsupported"
+    },
+    "ComplexSkillAISourceWeaknessCompare": {
+      "count": 7,
+      "status": "unsupported"
+    },
+    "ConditionLoopExecuteTaskList": {
+      "count": 28,
+      "status": "unsupported"
+    },
+    "ConditionLoopExecuteTaskListWithInterval": {
+      "count": 10,
+      "status": "unsupported"
+    },
+    "ConicalVisionConfig": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ConstructBodyPart": {
+      "count": 7,
+      "status": "unsupported"
+    },
+    "ConsumeActionCountDown": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "CreateAttachPoint": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "CreateBattleEvent": {
+      "count": 148,
+      "status": "unsupported"
+    },
+    "CreateBattleEventFromGridFightBackend": {
+      "count": 91,
+      "status": "unsupported"
+    },
+    "CreateBattleEventQTEUI": {
+      "count": 4,
+      "status": "unsupported"
+    },
+    "CreateBattleEventServant": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "CreateBattleTarget": {
+      "count": 6,
+      "status": "unsupported"
+    },
+    "CreateServant": {
+      "count": 7,
+      "status": "unsupported"
+    },
+    "CreateTeamFormationSnapshot": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "CustomMonsterWaveInfo": {
+      "count": 7,
+      "status": "unsupported"
+    },
+    "DamageByAttackProperty": {
+      "count": 688,
+      "status": "audit_only"
+    },
+    "DamagePerformFinish": {
+      "count": 596,
+      "status": "unsupported"
+    },
+    "DamagePerformFinishOnScepter": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "DamageStance": {
+      "count": 42,
+      "status": "unsupported"
+    },
+    "DawnsEyeDisasterUIConfig": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "DawnsEyeSunnyUIConfig": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "DawnsEyeThunderChargingUIConfig": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "DawnsEyeThunderFightUIConfig": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "DebugLog": {
+      "count": 162,
+      "status": "unsupported"
+    },
+    "DecoupleParentTransform": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "DeferCreateTrialPlayer": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "DefineDynamicValue": {
+      "count": 634,
+      "status": "unsupported"
+    },
+    "DefineHPSharedGroup": {
+      "count": 23,
+      "status": "unsupported"
+    },
+    "DestroyBattleCharacter": {
+      "count": 30,
+      "status": "unsupported"
+    },
+    "DetachAvatarChange": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "DisableBattleTarget": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "DisableCharacterVO": {
+      "count": 8,
+      "status": "unsupported"
+    },
+    "DisableHeadLookAtOverride": {
+      "count": 9,
+      "status": "unsupported"
+    },
+    "DisableMazeLockTarget": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "DisableRogueTitanBless": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "DispelStatus": {
+      "count": 288,
+      "status": "audit_only"
+    },
+    "DynamicValueRoundToInt": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ElationActivityActionBarAbilityChange": {
+      "count": 7,
+      "status": "unsupported"
+    },
+    "EnableEmotion": {
+      "count": 9,
+      "status": "unsupported"
+    },
+    "EnableFieldEffectSoftZOffset": {
+      "count": 3,
+      "status": "unsupported"
+    },
+    "EnableHugeMonsterHalfDither": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "EnableNegativeHP": {
+      "count": 3,
+      "status": "unsupported"
+    },
+    "EnableSpecificModifierSpecialMark": {
+      "count": 5,
+      "status": "unsupported"
+    },
+    "EnableStoryWin": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "EscapeFromBattle": {
+      "count": 5,
+      "status": "unsupported"
+    },
+    "ExitBreakState": {
+      "count": 107,
+      "status": "unsupported"
+    },
+    "FateBattleArcherProgressReachLimit": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "FateBattleShowArcherUI": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "FateBattleShowRiderUI": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "FightFestShowCutIn": {
+      "count": 6,
+      "status": "unsupported"
+    },
+    "FindClosestAttachPoint": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "FireMultiProjectiles": {
+      "count": 4,
+      "status": "unsupported"
+    },
+    "FireProjectile": {
+      "count": 120,
+      "status": "unsupported"
+    },
+    "FireWaveProjectile": {
+      "count": 3,
+      "status": "unsupported"
+    },
+    "ForbidBattleConditionOnStart": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "ForceAutoBattle": {
+      "count": 4,
+      "status": "unsupported"
+    },
+    "ForceKill": {
+      "count": 178,
+      "status": "audit_only"
+    },
+    "ForceSyncActionDelayLink": {
+      "count": 5,
+      "status": "unsupported"
+    },
+    "FrameCaptureIfNeed": {
+      "count": 4,
+      "status": "unsupported"
+    },
+    "GetGapSecondsForSyncWithBgm": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "GlobalMainIntensityEffect": {
+      "count": 284,
+      "status": "unsupported"
+    },
+    "GlobalMainIntensityEffectAutoRevert": {
+      "count": 4,
+      "status": "unsupported"
+    },
+    "GlobalModifyInsertAbilityPriority": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "GlobalTimeSlow": {
+      "count": 22,
+      "status": "unsupported"
+    },
+    "GoNextTargetInList": {
+      "count": 10,
+      "status": "unsupported"
+    },
+    "GridFightShowBattleEventHint": {
+      "count": 3,
+      "status": "unsupported"
+    },
+    "GridFightShowFullScreenCutIn": {
+      "count": 4,
+      "status": "unsupported"
+    },
+    "GridFightShowRightCutIn": {
+      "count": 50,
+      "status": "unsupported"
+    },
+    "GridFightShowTraitEffect": {
+      "count": 5,
+      "status": "unsupported"
+    },
+    "HeadLookAt": {
+      "count": 123,
+      "status": "unsupported"
+    },
+    "HealHP": {
+      "count": 208,
+      "status": "audit_only"
+    },
+    "HideCharacterFilteredEffect": {
+      "count": 10,
+      "status": "unsupported"
+    },
+    "HideEffectByCharacterType": {
+      "count": 9,
+      "status": "unsupported"
+    },
+    "HideEntityForCurrentCamera": {
+      "count": 4,
+      "status": "unsupported"
+    },
+    "HideEntityInActionBarByDelay": {
+      "count": 4,
+      "status": "unsupported"
+    },
+    "HideFieldEffect": {
+      "count": 8,
+      "status": "unsupported"
+    },
+    "HideLevelStage": {
+      "count": 247,
+      "status": "unsupported"
+    },
+    "HideModifierEffect": {
+      "count": 14,
+      "status": "unsupported"
+    },
+    "HideMonsterSkillInViewMode": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "HideSkillDisplayInfo": {
+      "count": 7,
+      "status": "unsupported"
+    },
+    "HideWaypoint": {
+      "count": 5,
+      "status": "unsupported"
+    },
+    "HighlightEntityActionBar": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "HitDamageSplit": {
+      "count": 28,
+      "status": "unsupported"
+    },
+    "IncludeGlobalTaskListTemplate": {
+      "count": 13,
+      "status": "unsupported"
+    },
+    "IncludeTaskListTemplate": {
+      "count": 358,
+      "status": "unsupported"
+    },
+    "InfectModifier": {
+      "count": 9,
+      "status": "unsupported"
+    },
+    "InfiniteWaveAddCurWaveMaxCount": {
+      "count": 11,
+      "status": "unsupported"
+    },
+    "InfiniteWaveInsertMonster": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "InfiniteWaveModifySummonProgress": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "InfiniteWaveNextMonsterId": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "InfiniteWaveSkipTo": {
+      "count": 3,
+      "status": "unsupported"
+    },
+    "InfiniteWaveSortByActivity340": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "InitActivityTelevisionBuffInfo": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "InitBattleItemProgressInfo": {
+      "count": 5,
+      "status": "unsupported"
+    },
+    "InitGridFightStatisticsBinding": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "InitShield": {
+      "count": 46,
+      "status": "unsupported"
+    },
+    "InsertBattlePerform": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "LensDistortionCurveEffect": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "LevelAudioState": {
+      "count": 58,
+      "status": "unsupported"
+    },
+    "LevelAudioSwitch": {
+      "count": 14,
+      "status": "unsupported"
+    },
+    "LevelAudioTrigger": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "LevelChallengeTurnAcc": {
+      "count": 7,
+      "status": "unsupported"
+    },
+    "LevelUpEvolveBuildGear": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "LinearProjectileData": {
+      "count": 3,
+      "status": "unsupported"
+    },
+    "LoadSwordTrainingProperty": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "LockActionDelayChange": {
+      "count": 41,
+      "status": "unsupported"
+    },
+    "LockAnimatorSpeed": {
+      "count": 4,
+      "status": "unsupported"
+    },
+    "LockBattleOperation": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "LockHP": {
+      "count": 135,
+      "status": "unsupported"
+    },
+    "LockStance": {
+      "count": 5,
+      "status": "unsupported"
+    },
+    "LockTargetActionDelay": {
+      "count": 5,
+      "status": "unsupported"
+    },
+    "LockTargetHP": {
+      "count": 39,
+      "status": "unsupported"
+    },
+    "LockTargetShield": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "LockUISkillOperation": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "LockVersusBar": {
+      "count": 3,
+      "status": "unsupported"
+    },
+    "LookAt": {
+      "count": 560,
+      "status": "unsupported"
+    },
+    "LoopExecuteTaskList": {
+      "count": 213,
+      "status": "unsupported"
+    },
+    "LoopExecuteTaskListWithInterval": {
+      "count": 98,
+      "status": "unsupported"
+    },
+    "LoopTargetList": {
+      "count": 10,
+      "status": "unsupported"
+    },
+    "LoseHP": {
+      "count": 11,
+      "status": "unsupported"
+    },
+    "LoseHPByRatio": {
+      "count": 112,
+      "status": "unsupported"
+    },
+    "MakeCharacterHUDVisible": {
+      "count": 115,
+      "status": "unsupported"
+    },
+    "MakeSuccess": {
+      "count": 3,
+      "status": "unsupported"
+    },
+    "MappingAttachPoint": {
+      "count": 6,
+      "status": "unsupported"
+    },
+    "MarkTargetForFutureReviveAbility": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "ModifierAttachEffect": {
+      "count": 260,
+      "status": "unsupported"
+    },
+    "ModifierDetachEffect": {
+      "count": 7,
+      "status": "unsupported"
+    },
+    "ModifierOverrideOnHitEffect": {
+      "count": 47,
+      "status": "unsupported"
+    },
+    "ModifyAIVariableInt": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ModifyActionDelay": {
+      "count": 262,
+      "status": "audit_only"
+    },
+    "ModifyActivityElationPower": {
+      "count": 7,
+      "status": "unsupported"
+    },
+    "ModifyAddModifierBindValue": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ModifyAudienceGroupAnimType": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ModifyCharacterOutlineTargetRender": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "ModifyCurrentSkillDelayCost": {
+      "count": 93,
+      "status": "unsupported"
+    },
+    "ModifyDamageData": {
+      "count": 302,
+      "status": "audit_only"
+    },
+    "ModifyDefaultTeamFormation": {
+      "count": 48,
+      "status": "unsupported"
+    },
+    "ModifyEntityBoostPoint": {
+      "count": 4,
+      "status": "unsupported"
+    },
+    "ModifyEvolveBuildProperty": {
+      "count": 12,
+      "status": "unsupported"
+    },
+    "ModifyFateContentParam": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "ModifyGridFightCustomProperty": {
+      "count": 11,
+      "status": "unsupported"
+    },
+    "ModifyHealData": {
+      "count": 14,
+      "status": "unsupported"
+    },
+    "ModifyLoseHPData": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "ModifyProperty": {
+      "count": 6,
+      "status": "unsupported"
+    },
+    "ModifySP": {
+      "count": 44,
+      "status": "unsupported"
+    },
+    "ModifySPNew": {
+      "count": 377,
+      "status": "audit_only"
+    },
+    "ModifyShield": {
+      "count": 12,
+      "status": "unsupported"
+    },
+    "ModifyShieldMax": {
+      "count": 7,
+      "status": "unsupported"
+    },
+    "ModifyShieldValueByNewShieldModifier": {
+      "count": 5,
+      "status": "unsupported"
+    },
+    "ModifySkillPropertyByName": {
+      "count": 23,
+      "status": "unsupported"
+    },
+    "ModifySkillPropertyBySlot": {
+      "count": 5,
+      "status": "unsupported"
+    },
+    "ModifySkillPropertyByType": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "ModifySpecialSP": {
+      "count": 49,
+      "status": "unsupported"
+    },
+    "ModifyStance": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "ModifyTeamBoostPoint": {
+      "count": 147,
+      "status": "unsupported"
+    },
+    "ModifyTeamBoostPointMax": {
+      "count": 9,
+      "status": "unsupported"
+    },
+    "ModifyVersusBarProperty": {
+      "count": 4,
+      "status": "unsupported"
+    },
+    "MoveStageOnTargetForward": {
+      "count": 32,
+      "status": "unsupported"
+    },
+    "MoveTeam": {
+      "count": 12,
+      "status": "unsupported"
+    },
+    "MoveToTargetList": {
+      "count": 129,
+      "status": "unsupported"
+    },
+    "MoveToTargetPosition": {
+      "count": 188,
+      "status": "unsupported"
+    },
+    "MuteEntitySound": {
+      "count": 3,
+      "status": "unsupported"
+    },
+    "MuteMonsterLastKill": {
+      "count": 4,
+      "status": "unsupported"
+    },
+    "NewFireProjectile": {
+      "count": 6,
+      "status": "unsupported"
+    },
+    "NotifyDeadPartSelected": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "NotifyFeverTimeInfoChange": {
+      "count": 9,
+      "status": "unsupported"
+    },
+    "NotifyRougeGoalFinish": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "NotifyVersusBarQuestChange": {
+      "count": 3,
+      "status": "unsupported"
+    },
+    "Obsolete": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "OverrideEntityModifierPhaseCamera": {
+      "count": 3,
+      "status": "unsupported"
+    },
+    "OverrideModifierName": {
+      "count": 25,
+      "status": "unsupported"
+    },
+    "OverrideMonsterRankScore": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "OverrideSelectDarkTeamEntityCamera": {
+      "count": 12,
+      "status": "unsupported"
+    },
+    "OverrideSkillReadyCamera": {
+      "count": 5,
+      "status": "unsupported"
+    },
+    "OverrideSkillReadyState": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "OverrideSkillTargetInfo": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "OwnerEntityAddAbility": {
+      "count": 161,
+      "status": "unsupported"
+    },
+    "PPFilterStackEffect": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ParabolaProjectileData": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "ParallelConfig": {
+      "count": 5,
+      "status": "unsupported"
+    },
+    "PauseEntityFollowAttach": {
+      "count": 4,
+      "status": "unsupported"
+    },
+    "PauseTimeRewindTarget": {
+      "count": 3,
+      "status": "unsupported"
+    },
+    "PerformDelayExecute": {
+      "count": 24,
+      "status": "unsupported"
+    },
+    "PlayCrossHairPreviewFadeIn": {
+      "count": 6,
+      "status": "unsupported"
+    },
+    "PlayMonsterHPBarTween": {
+      "count": 5,
+      "status": "unsupported"
+    },
+    "PlayScreenTransfer": {
+      "count": 19,
+      "status": "unsupported"
+    },
+    "PlayTimeline": {
+      "count": 126,
+      "status": "unsupported"
+    },
+    "PointGeneratorMergeConfig": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "PointNavPathLengthEvaluator": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "PredicateTaskList": {
+      "count": 1102,
+      "status": "audit_only"
+    },
+    "PreloadBattleEvent": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "PreloadBattleEventByID": {
+      "count": 52,
+      "status": "unsupported"
+    },
+    "ProcessModifierLifeStep": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "PropDestructReset": {
+      "count": 11,
+      "status": "unsupported"
+    },
+    "RA_ByAlertLevel": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "RA_ByCompareVariableBool": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "RA_SetAIVariableBool": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "RA_SetStimulusInfo": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "RA_TriggerInstantAbility": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "RPGColorGradingCurveEffect": {
+      "count": 4,
+      "status": "unsupported"
+    },
+    "RadialBlurCurveEffect": {
+      "count": 48,
+      "status": "unsupported"
+    },
+    "RadialBlurEffect": {
+      "count": 235,
+      "status": "unsupported"
+    },
+    "RandomConfig": {
+      "count": 80,
+      "status": "unsupported"
+    },
+    "RandomSelectDynamicValue": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "RandomSelectInTargetList": {
+      "count": 4,
+      "status": "unsupported"
+    },
+    "RandomSelectMonsterIDFromPool": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "RandomTraceProjectileData": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "RecordEntityFormationIndex": {
+      "count": 20,
+      "status": "unsupported"
+    },
+    "RecordUseAvatarGlobalBuff": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "RedirectActionDelayChange": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ReduceStanceRatio": {
+      "count": 11,
+      "status": "unsupported"
+    },
+    "RefreshChangePhaseUI": {
+      "count": 13,
+      "status": "unsupported"
+    },
+    "RefreshMazeBuffTime": {
+      "count": 10,
+      "status": "unsupported"
+    },
+    "RefreshQingQueEnergyBarState": {
+      "count": 3,
+      "status": "unsupported"
+    },
+    "RefreshWeaknessUI": {
+      "count": 7,
+      "status": "unsupported"
+    },
+    "ReinitProperty": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "ReleaseCharacterHUDVisibleControl": {
+      "count": 35,
+      "status": "unsupported"
+    },
+    "ReleaseEnvProfile": {
+      "count": 8,
+      "status": "unsupported"
+    },
+    "ReleaseTargetUniqueName": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "Remodifier": {
+      "count": 37,
+      "status": "unsupported"
+    },
+    "RemoveAdventureModifier": {
+      "count": 7,
+      "status": "unsupported"
+    },
+    "RemoveBehaviorFlagForModifier": {
+      "count": 5,
+      "status": "unsupported"
+    },
+    "RemoveBpFeature": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "RemoveChallengeBossInfoPanelState": {
+      "count": 16,
+      "status": "unsupported"
+    },
+    "RemoveEffect": {
+      "count": 427,
+      "status": "unsupported"
+    },
+    "RemoveEntityFromRelationGroup": {
+      "count": 7,
+      "status": "unsupported"
+    },
+    "RemoveEntityFromTeamFormation": {
+      "count": 45,
+      "status": "unsupported"
+    },
+    "RemoveGlobalTimeSlow": {
+      "count": 10,
+      "status": "unsupported"
+    },
+    "RemoveMazeBuff": {
+      "count": 15,
+      "status": "unsupported"
+    },
+    "RemoveModifier": {
+      "count": 695,
+      "status": "audit_only"
+    },
+    "RemoveModifierByBehaviorFlag": {
+      "count": 57,
+      "status": "unsupported"
+    },
+    "RemoveSelfModifier": {
+      "count": 445,
+      "status": "unsupported"
+    },
+    "RemoveShield": {
+      "count": 49,
+      "status": "unsupported"
+    },
+    "RemoveStageAbilityByName": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "ResetAbilityStartTimeStamp": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ResetActionDelay": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "ResetBattleBGMToStage": {
+      "count": 28,
+      "status": "unsupported"
+    },
+    "ResetCharacterCustomTeamFormation": {
+      "count": 8,
+      "status": "unsupported"
+    },
+    "ResetHeadLookAt": {
+      "count": 75,
+      "status": "unsupported"
+    },
+    "ResetStance": {
+      "count": 62,
+      "status": "unsupported"
+    },
+    "ResetTeammateAttackPerform": {
+      "count": 3,
+      "status": "unsupported"
+    },
+    "RestoreTeamFormationSnapshot": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "Retarget": {
+      "count": 656,
+      "status": "unsupported"
+    },
+    "RetargetList": {
+      "count": 33,
+      "status": "unsupported"
+    },
+    "RetargetPerSequence": {
+      "count": 6,
+      "status": "unsupported"
+    },
+    "RevertActionEntityToObserveState": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "RogueMagicShowScepterActiveEffect": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "RuanMadeCakeFeature_BodyColor": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "RuanMadeCakeFeature_BodyDecal": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "RuanMadeCakeFeature_EyeDecal": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "RuanMadeCakeFeature_HatColor": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "RuanMadeCakeFeature_HatDecal": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "RuanMadeCakeFeature_TailDecal": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ST_ByAIHangUp": {
+      "count": 12,
+      "status": "unsupported"
+    },
+    "ST_ByAlertLevel": {
+      "count": 9,
+      "status": "unsupported"
+    },
+    "ST_ByCompareVariableBool": {
+      "count": 7,
+      "status": "unsupported"
+    },
+    "ST_ByCompareVariableFloat": {
+      "count": 6,
+      "status": "unsupported"
+    },
+    "ST_ByContainAbnormalState": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ST_ByDistToGuardPosition": {
+      "count": 6,
+      "status": "unsupported"
+    },
+    "ST_ByDistanceToEnchantTarget": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ST_ByDistanceToTarget": {
+      "count": 10,
+      "status": "unsupported"
+    },
+    "ST_ByEnterCombat": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "ST_ByExitCombat": {
+      "count": 6,
+      "status": "unsupported"
+    },
+    "ST_ByForceExitCombat": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "ST_ByHasAbnormalState": {
+      "count": 15,
+      "status": "unsupported"
+    },
+    "ST_ByHasBornSmartObject": {
+      "count": 5,
+      "status": "unsupported"
+    },
+    "ST_ByHasPatrolPath": {
+      "count": 6,
+      "status": "unsupported"
+    },
+    "ST_ByHasTarget": {
+      "count": 8,
+      "status": "unsupported"
+    },
+    "ST_ByInAIStatus": {
+      "count": 11,
+      "status": "unsupported"
+    },
+    "ST_ByInAttackAngle": {
+      "count": 12,
+      "status": "unsupported"
+    },
+    "ST_ByInAttackDistance": {
+      "count": 11,
+      "status": "unsupported"
+    },
+    "ST_ByOnHit": {
+      "count": 10,
+      "status": "unsupported"
+    },
+    "ST_BySkillInCD": {
+      "count": 12,
+      "status": "unsupported"
+    },
+    "ST_Main_DoSkill": {
+      "count": 16,
+      "status": "unsupported"
+    },
+    "ST_Main_Escape": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "ST_Main_FearEscape": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ST_Main_FollowTarget": {
+      "count": 4,
+      "status": "unsupported"
+    },
+    "ST_Main_HangUpByLevel": {
+      "count": 8,
+      "status": "unsupported"
+    },
+    "ST_Main_MoveAlongPath": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ST_Main_MoveToPosition": {
+      "count": 10,
+      "status": "unsupported"
+    },
+    "ST_Main_MoveToTarget": {
+      "count": 16,
+      "status": "unsupported"
+    },
+    "ST_Main_Patrol": {
+      "count": 4,
+      "status": "unsupported"
+    },
+    "ST_Main_PlayFreeStyle": {
+      "count": 3,
+      "status": "unsupported"
+    },
+    "ST_Main_PlayInteract": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ST_Main_PlaySmartObject": {
+      "count": 7,
+      "status": "unsupported"
+    },
+    "ST_Main_TeleportToPosition": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "ST_Main_Wait": {
+      "count": 34,
+      "status": "unsupported"
+    },
+    "ST_Side_AttachAIStatus": {
+      "count": 14,
+      "status": "unsupported"
+    },
+    "ST_Side_CommitCD": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ST_Side_DetectAward": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ST_Side_DisablePlayerLock": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ST_Side_EnableDialogue": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "ST_Side_HaltCD": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "ST_Side_ListenFindTreasureState": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ST_Side_ListenFindTrotterState": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ST_Side_LookAtTarget": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ST_Side_MuteAlertValueDecline": {
+      "count": 3,
+      "status": "unsupported"
+    },
+    "ST_Side_MuteVision": {
+      "count": 5,
+      "status": "unsupported"
+    },
+    "ST_Side_NotifySpecialEvent": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ST_Side_OverrideStandByStance": {
+      "count": 8,
+      "status": "unsupported"
+    },
+    "ST_Side_OverrideVision": {
+      "count": 24,
+      "status": "unsupported"
+    },
+    "ST_Side_PlayBubbleTalk": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ST_Side_RecordGuardPosition": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "ST_Side_RemoveEffect": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ST_Side_ResetForceExitCombat": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ST_Side_SetAlertLevel": {
+      "count": 6,
+      "status": "unsupported"
+    },
+    "ST_Side_SteerToTarget": {
+      "count": 6,
+      "status": "unsupported"
+    },
+    "ST_Side_Timer": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "ST_Side_TriggerEffect": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ST_Side_TriggerInstantAbility": {
+      "count": 5,
+      "status": "unsupported"
+    },
+    "SaveModelWhenDead": {
+      "count": 8,
+      "status": "unsupported"
+    },
+    "ScaleCharacterModel": {
+      "count": 121,
+      "status": "unsupported"
+    },
+    "SelectAISkillTarget": {
+      "count": 135,
+      "status": "unsupported"
+    },
+    "SequenceConfig": {
+      "count": 418,
+      "status": "unsupported"
+    },
+    "ServantConfig": {
+      "count": 8,
+      "status": "unsupported"
+    },
+    "ServantOverrideConfig": {
+      "count": 4,
+      "status": "unsupported"
+    },
+    "SetActionBarItemAnimatorTrigger": {
+      "count": 5,
+      "status": "unsupported"
+    },
+    "SetActionBarRightDownMiniIcon": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "SetActionDelay": {
+      "count": 202,
+      "status": "audit_only"
+    },
+    "SetActionDelayNearTarget": {
+      "count": 14,
+      "status": "unsupported"
+    },
+    "SetActivityTelevisionBuffInfo": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "SetAdvAchievement": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "SetAttachEffectTimeSlow": {
+      "count": 5,
+      "status": "unsupported"
+    },
+    "SetAttachmentScale": {
+      "count": 67,
+      "status": "unsupported"
+    },
+    "SetAttachmentVisibility": {
+      "count": 46,
+      "status": "unsupported"
+    },
+    "SetAvatarGlobalBuffState": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "SetBattleAchievement": {
+      "count": 98,
+      "status": "unsupported"
+    },
+    "SetBattleBGMState": {
+      "count": 47,
+      "status": "unsupported"
+    },
+    "SetBattleEndReason": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "SetBattleEventUltraSkillCutin": {
+      "count": 22,
+      "status": "unsupported"
+    },
+    "SetBattleItemProgressInfo": {
+      "count": 6,
+      "status": "unsupported"
+    },
+    "SetBattleResultAsWin": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "SetBattleRougeGoalProgress": {
+      "count": 3,
+      "status": "unsupported"
+    },
+    "SetBattleScoringItem": {
+      "count": 17,
+      "status": "unsupported"
+    },
+    "SetBattleTargetDialogOffset": {
+      "count": 3,
+      "status": "unsupported"
+    },
+    "SetBattleTargetMultiTargetSwitch": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "SetBattleTargetProgress": {
+      "count": 22,
+      "status": "unsupported"
+    },
+    "SetBattleUIPanelState": {
+      "count": 27,
+      "status": "unsupported"
+    },
+    "SetBattleUIPauseEnvironmentInfo": {
+      "count": 4,
+      "status": "unsupported"
+    },
+    "SetBossHPStanceChangeType": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "SetBossPluralityHP": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "SetBpFeature": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "SetBtnBattleHintInfo": {
+      "count": 4,
+      "status": "unsupported"
+    },
+    "SetCameraRootFollow": {
+      "count": 16,
+      "status": "unsupported"
+    },
+    "SetCharacterAlwaysIdleState": {
+      "count": 6,
+      "status": "unsupported"
+    },
+    "SetCharacterAnimFollow": {
+      "count": 21,
+      "status": "unsupported"
+    },
+    "SetCharacterAtlasFaceEmotion": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "SetCharacterCustomTeamFormation": {
+      "count": 9,
+      "status": "unsupported"
+    },
+    "SetCharacterEffectMaterialBlock": {
+      "count": 7,
+      "status": "unsupported"
+    },
+    "SetCharacterEnhancedState": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "SetCharacterFormation": {
+      "count": 15,
+      "status": "unsupported"
+    },
+    "SetCharacterMaterialEffectEnable": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "SetCharacterPartsVisibility": {
+      "count": 25,
+      "status": "unsupported"
+    },
+    "SetCharacterScaleFollow": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "SetCharacterShaderSpeedEnable": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "SetCharacterShowSummonUI": {
+      "count": 4,
+      "status": "unsupported"
+    },
+    "SetCharacterVisibilityFollow": {
+      "count": 8,
+      "status": "unsupported"
+    },
+    "SetCharacterVisible": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "SetCharacterVisibleInViewMode": {
+      "count": 6,
+      "status": "unsupported"
+    },
+    "SetColliderCenterFollowAttachPoint": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "SetComfortZoneWidthOverride": {
+      "count": 16,
+      "status": "unsupported"
+    },
+    "SetComponentAssetLoadState": {
+      "count": 7,
+      "status": "unsupported"
+    },
+    "SetControlSkillMapping": {
+      "count": 60,
+      "status": "unsupported"
+    },
+    "SetCountDownWarning": {
+      "count": 6,
+      "status": "unsupported"
+    },
+    "SetCurrentTurnActionEntity": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "SetCustomLocationConfig": {
+      "count": 6,
+      "status": "unsupported"
+    },
+    "SetDamageTextStyle": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "SetDawnsEyeWeatherUI": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "SetDeathDragonLinjian": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "SetDeathDragonSkillButtonState": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "SetDieImmediately": {
+      "count": 125,
+      "status": "unsupported"
+    },
+    "SetDynamicAttachPointEffectAdaptionConfig": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "SetDynamicEntityParam": {
+      "count": 14,
+      "status": "unsupported"
+    },
+    "SetDynamicString": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "SetDynamicValue": {
+      "count": 730,
+      "status": "audit_only"
+    },
+    "SetDynamicValueByActionCountDown": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "SetDynamicValueByActivityElation": {
+      "count": 7,
+      "status": "unsupported"
+    },
+    "SetDynamicValueByAddValue": {
+      "count": 263,
+      "status": "unsupported"
+    },
+    "SetDynamicValueByAdsorption": {
+      "count": 4,
+      "status": "unsupported"
+    },
+    "SetDynamicValueByAttackDamageData": {
+      "count": 5,
+      "status": "unsupported"
+    },
+    "SetDynamicValueByAttackTargetCount": {
+      "count": 26,
+      "status": "unsupported"
+    },
+    "SetDynamicValueByBPChange": {
+      "count": 27,
+      "status": "unsupported"
+    },
+    "SetDynamicValueByBattleTargetID": {
+      "count": 12,
+      "status": "unsupported"
+    },
+    "SetDynamicValueByBattleTargetParam": {
+      "count": 3,
+      "status": "unsupported"
+    },
+    "SetDynamicValueByBehaviorFlagCount": {
+      "count": 8,
+      "status": "unsupported"
+    },
+    "SetDynamicValueByBossLeftHP": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "SetDynamicValueByBossTotalHP": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "SetDynamicValueByBreakBaseDamage": {
+      "count": 15,
+      "status": "unsupported"
+    },
+    "SetDynamicValueByChangeValue": {
+      "count": 58,
+      "status": "unsupported"
+    },
+    "SetDynamicValueByCharacterCount": {
+      "count": 127,
+      "status": "unsupported"
+    },
+    "SetDynamicValueByCopying": {
+      "count": 162,
+      "status": "unsupported"
+    },
+    "SetDynamicValueByCountOfBaseType": {
+      "count": 10,
+      "status": "unsupported"
+    },
+    "SetDynamicValueByCurrentBP": {
+      "count": 17,
+      "status": "unsupported"
+    },
+    "SetDynamicValueByDamageDataProperty": {
+      "count": 71,
+      "status": "unsupported"
+    },
+    "SetDynamicValueByDelayCumulate": {
+      "count": 4,
+      "status": "unsupported"
+    },
+    "SetDynamicValueByElationTimeSkillCount": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "SetDynamicValueByEvolveBuild": {
+      "count": 13,
+      "status": "unsupported"
+    },
+    "SetDynamicValueByFateContent": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "SetDynamicValueByFateContentCount": {
+      "count": 3,
+      "status": "unsupported"
+    },
+    "SetDynamicValueByFateLevel": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "SetDynamicValueByFormationIndex": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "SetDynamicValueByGridFightCustomProperty": {
+      "count": 13,
+      "status": "unsupported"
+    },
+    "SetDynamicValueByGridFightDropCount": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "SetDynamicValueByGridFightProperty": {
+      "count": 19,
+      "status": "unsupported"
+    },
+    "SetDynamicValueByGridFightTraitBonus": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "SetDynamicValueByGridFightTraitBonusCurrentLayer": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "SetDynamicValueByHPRatio": {
+      "count": 70,
+      "status": "unsupported"
+    },
+    "SetDynamicValueByHPSharedGroup": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "SetDynamicValueByHardLevelProperty": {
+      "count": 60,
+      "status": "unsupported"
+    },
+    "SetDynamicValueByHealDataProperty": {
+      "count": 31,
+      "status": "unsupported"
+    },
+    "SetDynamicValueByInfiniteWaveData": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "SetDynamicValueByMagicUnitCounter": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "SetDynamicValueByMaxBP": {
+      "count": 11,
+      "status": "unsupported"
+    },
+    "SetDynamicValueByMazeBuffConfig": {
+      "count": 33,
+      "status": "unsupported"
+    },
+    "SetDynamicValueByModifierValue": {
+      "count": 355,
+      "status": "audit_only"
+    },
+    "SetDynamicValueByMultiModifierValueSum": {
+      "count": 11,
+      "status": "unsupported"
+    },
+    "SetDynamicValueByPreCalcHPDamage": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "SetDynamicValueByPreCalcStanceDamage": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "SetDynamicValueByProperty": {
+      "count": 428,
+      "status": "unsupported"
+    },
+    "SetDynamicValueByPropertyClientOnly": {
+      "count": 20,
+      "status": "unsupported"
+    },
+    "SetDynamicValueByRaidTargetProgress": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "SetDynamicValueByRandom": {
+      "count": 24,
+      "status": "unsupported"
+    },
+    "SetDynamicValueByScepterProperty": {
+      "count": 5,
+      "status": "unsupported"
+    },
+    "SetDynamicValueByScoringID": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "SetDynamicValueByShield": {
+      "count": 13,
+      "status": "unsupported"
+    },
+    "SetDynamicValueBySkillMaxHitSplitCount": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "SetDynamicValueBySkillProperty": {
+      "count": 9,
+      "status": "unsupported"
+    },
+    "SetDynamicValueByStanceCount": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "SetDynamicValueByStatusCount": {
+      "count": 35,
+      "status": "unsupported"
+    },
+    "SetDynamicValueByStatusResistance": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "SetDynamicValueByTargetToTeamCenterDistance": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "SetDynamicValueByTotalHPFromMonsterID": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "SetDynamicValueByTournFloorType": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "SetDynamicValueByVariateType": {
+      "count": 126,
+      "status": "unsupported"
+    },
+    "SetDynamicValueByVersusBar": {
+      "count": 3,
+      "status": "unsupported"
+    },
+    "SetDynamicValueByWaitUltraCount": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "SetDynamicValueByWaveStageCount": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "SetDynamicValueByWeaknessCount": {
+      "count": 7,
+      "status": "unsupported"
+    },
+    "SetDynamicValueByWorldLevel": {
+      "count": 14,
+      "status": "unsupported"
+    },
+    "SetDynamicValueClientOnly": {
+      "count": 10,
+      "status": "unsupported"
+    },
+    "SetDynamicValueInRange": {
+      "count": 5,
+      "status": "unsupported"
+    },
+    "SetEffectAnimSpeed": {
+      "count": 3,
+      "status": "unsupported"
+    },
+    "SetEffectAnimatorParameter": {
+      "count": 18,
+      "status": "unsupported"
+    },
+    "SetEffectAnimatorState": {
+      "count": 3,
+      "status": "unsupported"
+    },
+    "SetEffectAnimatorTrigger": {
+      "count": 14,
+      "status": "unsupported"
+    },
+    "SetEffectAutoLayoutScale": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "SetEffectFrameCaptureMatTex": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "SetEffectProgress": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "SetEnergyBarState": {
+      "count": 117,
+      "status": "audit_only"
+    },
+    "SetEntityActionState": {
+      "count": 47,
+      "status": "unsupported"
+    },
+    "SetEntityArtRotation": {
+      "count": 4,
+      "status": "unsupported"
+    },
+    "SetEntityFollowAttachPoint": {
+      "count": 35,
+      "status": "unsupported"
+    },
+    "SetEntityForbidCameraDither": {
+      "count": 7,
+      "status": "unsupported"
+    },
+    "SetEntityForceVisible": {
+      "count": 11,
+      "status": "unsupported"
+    },
+    "SetEntityPosition": {
+      "count": 87,
+      "status": "unsupported"
+    },
+    "SetEntityRelationGroup": {
+      "count": 8,
+      "status": "unsupported"
+    },
+    "SetEntityVisible": {
+      "count": 306,
+      "status": "unsupported"
+    },
+    "SetExcludeInMultiCharacterFormation": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "SetFaceDirectionLocked": {
+      "count": 11,
+      "status": "unsupported"
+    },
+    "SetGlobalShaderProperty": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "SetHP": {
+      "count": 55,
+      "status": "unsupported"
+    },
+    "SetHeadButtonEff": {
+      "count": 6,
+      "status": "unsupported"
+    },
+    "SetHpBreakHint": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "SetIronTombInfinityHPUI": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "SetIronTombProgress": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "SetLayerWeight": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "SetLevel": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "SetLevelChallengeTurnLimit": {
+      "count": 21,
+      "status": "unsupported"
+    },
+    "SetLocalOffsetAsMoveTarget": {
+      "count": 3,
+      "status": "unsupported"
+    },
+    "SetModifierDynamicValue": {
+      "count": 108,
+      "status": "unsupported"
+    },
+    "SetModifierEffectVisible": {
+      "count": 4,
+      "status": "unsupported"
+    },
+    "SetModifierOverrideNameForStatus": {
+      "count": 31,
+      "status": "unsupported"
+    },
+    "SetModifierValue": {
+      "count": 114,
+      "status": "unsupported"
+    },
+    "SetModifierValueByBehaviorFlag": {
+      "count": 3,
+      "status": "unsupported"
+    },
+    "SetMonsterEnergyBarState": {
+      "count": 83,
+      "status": "unsupported"
+    },
+    "SetMonsterHPTotalSeg": {
+      "count": 4,
+      "status": "unsupported"
+    },
+    "SetMonsterHUDType": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "SetMonsterHUDVisibleType": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "SetMonsterHitCountEnergyBarState": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "SetMonsterNameBoardMaxBuffCount": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "SetMonsterPhase": {
+      "count": 89,
+      "status": "unsupported"
+    },
+    "SetMonsterPhasePointPrefab": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "SetMonsterStanceVulnerable": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "SetMonsterViewPhase": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "SetNoShadowCaster": {
+      "count": 5,
+      "status": "unsupported"
+    },
+    "SetNpcStatus": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "SetNpcWaypath": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "SetPhainonActionCount": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "SetPhainonChargePoint": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "SetPhainonChargePointPreshow": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "SetRaidTargetProgress": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "SetReportCustomValue": {
+      "count": 5,
+      "status": "unsupported"
+    },
+    "SetResilience": {
+      "count": 80,
+      "status": "unsupported"
+    },
+    "SetRogueTournFloorType": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "SetShenJunActionBar": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "SetSignedAngleByTarget": {
+      "count": 3,
+      "status": "unsupported"
+    },
+    "SetSimulationSpeedEnable": {
+      "count": 50,
+      "status": "unsupported"
+    },
+    "SetSkillButtonAdditionalStatus": {
+      "count": 4,
+      "status": "unsupported"
+    },
+    "SetSkillTargetFormationByPos": {
+      "count": 170,
+      "status": "unsupported"
+    },
+    "SetSkillTextDialogType": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "SetStageBattleEvents": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "SetStanceCount": {
+      "count": 5,
+      "status": "unsupported"
+    },
+    "SetStanceHintEffect": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "SetSummonUnitTriggerEnable": {
+      "count": 4,
+      "status": "unsupported"
+    },
+    "SetSummonerEnergyBarState": {
+      "count": 11,
+      "status": "unsupported"
+    },
+    "SetTargetAlwaysAutoBattle": {
+      "count": 6,
+      "status": "unsupported"
+    },
+    "SetTargetAnimSpeedScale": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "SetTargetAssetPreloadState": {
+      "count": 4,
+      "status": "unsupported"
+    },
+    "SetTargetCrossHairVisible": {
+      "count": 3,
+      "status": "unsupported"
+    },
+    "SetTargetCustomAssetPreloadState": {
+      "count": 8,
+      "status": "unsupported"
+    },
+    "SetTargetDamageTextVisible": {
+      "count": 20,
+      "status": "unsupported"
+    },
+    "SetTargetDirMove": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "SetTargetModelDynamicLoadPriority": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "SetTargetTeamLocation": {
+      "count": 9,
+      "status": "unsupported"
+    },
+    "SetTargetUniqueName": {
+      "count": 56,
+      "status": "unsupported"
+    },
+    "SetTeamFormation": {
+      "count": 522,
+      "status": "unsupported"
+    },
+    "SetTeamLockTarget": {
+      "count": 3,
+      "status": "unsupported"
+    },
+    "SetTeamRootOffset": {
+      "count": 74,
+      "status": "unsupported"
+    },
+    "SetTeammateAttackFormation": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "SetTrashSummonHUDState": {
+      "count": 5,
+      "status": "unsupported"
+    },
+    "SetTriggeredFormationAssetAutoCenter": {
+      "count": 3,
+      "status": "unsupported"
+    },
+    "SetUltraSkillAssetPreload": {
+      "count": 4,
+      "status": "unsupported"
+    },
+    "SetUseTemporaryLockTarget": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "SetVersusBar": {
+      "count": 5,
+      "status": "unsupported"
+    },
+    "SetViewModeEnabled": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "SetupActionDelayLink": {
+      "count": 8,
+      "status": "unsupported"
+    },
+    "SetupPropagateBeingAttackInTeam": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "ShowActionBarEffect": {
+      "count": 17,
+      "status": "unsupported"
+    },
+    "ShowArcherProjectionSelectInBattle": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ShowAttackTime": {
+      "count": 17,
+      "status": "unsupported"
+    },
+    "ShowAvatarHUDSpecialEffect": {
+      "count": 4,
+      "status": "unsupported"
+    },
+    "ShowBattleAlert": {
+      "count": 16,
+      "status": "unsupported"
+    },
+    "ShowBattleAvatarPanel": {
+      "count": 7,
+      "status": "unsupported"
+    },
+    "ShowBattleConditionUI": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ShowBattleEventButton": {
+      "count": 60,
+      "status": "unsupported"
+    },
+    "ShowBattleEventTips": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ShowBattleFeverTimeScreenFire": {
+      "count": 3,
+      "status": "unsupported"
+    },
+    "ShowBattleQTEUI": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "ShowBattleScreenEffect": {
+      "count": 15,
+      "status": "unsupported"
+    },
+    "ShowBattleSkillEnhanced": {
+      "count": 41,
+      "status": "unsupported"
+    },
+    "ShowBattleTalkBGUI": {
+      "count": 3,
+      "status": "unsupported"
+    },
+    "ShowBattleUI": {
+      "count": 238,
+      "status": "unsupported"
+    },
+    "ShowBattleUIInTimeline": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ShowBattleVersusBarCountDownEffect": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ShowBattleWhiteboxText": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ShowBonusUIEffect": {
+      "count": 90,
+      "status": "unsupported"
+    },
+    "ShowBossHPValue": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ShowBossInfoBar": {
+      "count": 93,
+      "status": "unsupported"
+    },
+    "ShowChallegeStoryWavePanel": {
+      "count": 4,
+      "status": "unsupported"
+    },
+    "ShowEntityFloatMessage": {
+      "count": 129,
+      "status": "unsupported"
+    },
+    "ShowEvolveBuildCardSelectInBattle": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "ShowEvolveBuildGearSelectInBattle": {
+      "count": 3,
+      "status": "unsupported"
+    },
+    "ShowEvolveBuildProgressInBattle": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ShowEvolveBuildTreasureInBattle": {
+      "count": 3,
+      "status": "unsupported"
+    },
+    "ShowEvolveBuildTreasureInBattleForTrial": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ShowExpandElationItem": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ShowFrameCaptureUI": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ShowSkillCutIn": {
+      "count": 28,
+      "status": "unsupported"
+    },
+    "ShowSkillReadyCamera": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ShowSkillTextDialog": {
+      "count": 122,
+      "status": "unsupported"
+    },
+    "ShowTargetHPBar": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ShowUI": {
+      "count": 17,
+      "status": "unsupported"
+    },
+    "ShowUIPage": {
+      "count": 278,
+      "status": "unsupported"
+    },
+    "ShowUltraSkillAlternative": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "SkillExecutionStart": {
+      "count": 261,
+      "status": "unsupported"
+    },
+    "SkillPerformFinish": {
+      "count": 595,
+      "status": "unsupported"
+    },
+    "SkipPopupUIOffset": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "SortByModifierDynamicFloat": {
+      "count": 5,
+      "status": "unsupported"
+    },
+    "SortTargets": {
+      "count": 5,
+      "status": "unsupported"
+    },
+    "StackAIUpperGroup": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "StackAIUpperGroupForSpecified": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "StackAdditionalTeamBoostPoint": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "StackBoostPointCallbackDecorate": {
+      "count": 4,
+      "status": "unsupported"
+    },
+    "StackBoostPointDirty": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "StackCrazyAIBehavior": {
+      "count": 3,
+      "status": "unsupported"
+    },
+    "StackCustomUnselectable": {
+      "count": 4,
+      "status": "unsupported"
+    },
+    "StackExtraStance": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "StackProperty": {
+      "count": 618,
+      "status": "audit_only"
+    },
+    "StackRedStance": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "StackRedirectSkillTarget": {
+      "count": 6,
+      "status": "unsupported"
+    },
+    "StackScepterProperty": {
+      "count": 4,
+      "status": "unsupported"
+    },
+    "StackShield": {
+      "count": 4,
+      "status": "unsupported"
+    },
+    "StackSkillDesc": {
+      "count": 6,
+      "status": "unsupported"
+    },
+    "StackStatusDesc": {
+      "count": 55,
+      "status": "unsupported"
+    },
+    "StackStatusProbability": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "StackStatusResistance": {
+      "count": 57,
+      "status": "unsupported"
+    },
+    "StackWeakResistance": {
+      "count": 7,
+      "status": "unsupported"
+    },
+    "StackWeakness": {
+      "count": 98,
+      "status": "unsupported"
+    },
+    "StartAim": {
+      "count": 31,
+      "status": "unsupported"
+    },
+    "StartBattleQTE": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "StartEffectAim": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "StateTreeStateConfig": {
+      "count": 38,
+      "status": "unsupported"
+    },
+    "StateTreeSubTreeConfig": {
+      "count": 16,
+      "status": "unsupported"
+    },
+    "StopAim": {
+      "count": 33,
+      "status": "unsupported"
+    },
+    "StopEffectFollow": {
+      "count": 6,
+      "status": "unsupported"
+    },
+    "StopTimeline": {
+      "count": 30,
+      "status": "unsupported"
+    },
+    "SummonMonster": {
+      "count": 121,
+      "status": "audit_only"
+    },
+    "SummonPartner": {
+      "count": 15,
+      "status": "unsupported"
+    },
+    "SwitchBattleArea": {
+      "count": 6,
+      "status": "unsupported"
+    },
+    "SwitchBossHeadEffType": {
+      "count": 4,
+      "status": "unsupported"
+    },
+    "SwitchByCommandType": {
+      "count": 11,
+      "status": "unsupported"
+    },
+    "SwitchCase": {
+      "count": 3,
+      "status": "unsupported"
+    },
+    "SwitchCaseByAttackDamageType": {
+      "count": 6,
+      "status": "unsupported"
+    },
+    "SwitchCaseByDynamicValue": {
+      "count": 65,
+      "status": "unsupported"
+    },
+    "SwitchCaseByTeammateCount": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "SwitchChallengeBossInfoPanelState": {
+      "count": 4,
+      "status": "unsupported"
+    },
+    "SwitchOverrideController": {
+      "count": 3,
+      "status": "unsupported"
+    },
+    "SwordTrainingSetDynamicValueByAllyRank": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "SwordTrainingSetDynamicValueByEnemyRank": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "SwordTrainingSetDynamicValueByHPMultiplier": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "SyncBattleEventPropertyValues": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "SyncCharLightAndCameraDir": {
+      "count": 103,
+      "status": "unsupported"
+    },
+    "SyncMonsterLightByCameraDir": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "TargetAlias": {
+      "count": 1888,
+      "status": "supported_alias"
+    },
+    "TargetCompute": {
+      "count": 10,
+      "status": "supported_alias"
+    },
+    "TargetConcat": {
+      "count": 91,
+      "status": "supported_alias"
+    },
+    "TargetFetchAbilityTarget": {
+      "count": 1,
+      "status": "supported_alias"
+    },
+    "TargetFetchActualOwner": {
+      "count": 1,
+      "status": "supported_alias"
+    },
+    "TargetFetchAdvAITarget": {
+      "count": 1,
+      "status": "supported_alias"
+    },
+    "TargetFetchAdvLocalPlayer": {
+      "count": 1,
+      "status": "supported_alias"
+    },
+    "TargetFetchAdvNpcEx": {
+      "count": 30,
+      "status": "supported_alias"
+    },
+    "TargetFetchAllUnselectable": {
+      "count": 1,
+      "status": "supported_alias"
+    },
+    "TargetFetchAvatarByID": {
+      "count": 2,
+      "status": "supported_alias"
+    },
+    "TargetFetchCaster": {
+      "count": 372,
+      "status": "supported_alias"
+    },
+    "TargetFetchCurrentInsertTurnSource": {
+      "count": 3,
+      "status": "supported_alias"
+    },
+    "TargetFetchElationTimeAllTargets": {
+      "count": 1,
+      "status": "supported_alias"
+    },
+    "TargetFetchLastSearchEntity": {
+      "count": 2,
+      "status": "supported_alias"
+    },
+    "TargetFetchLevelEntity": {
+      "count": 3,
+      "status": "supported_alias"
+    },
+    "TargetFetchModifierOwner": {
+      "count": 1,
+      "status": "supported_alias"
+    },
+    "TargetFetchMonsterByID": {
+      "count": 7,
+      "status": "supported_alias"
+    },
+    "TargetFetchOwnerEntity": {
+      "count": 1,
+      "status": "supported_alias"
+    },
+    "TargetFetchParamEntityByIndex": {
+      "count": 3,
+      "status": "supported_alias"
+    },
+    "TargetFetchParamEntityList": {
+      "count": 1,
+      "status": "supported_alias"
+    },
+    "TargetFetchPartner": {
+      "count": 15,
+      "status": "supported_alias"
+    },
+    "TargetFetchUniqueNameEntity": {
+      "count": 47,
+      "status": "supported_alias"
+    },
+    "TargetFetchUnstageTarget": {
+      "count": 2,
+      "status": "supported_alias"
+    },
+    "TargetFilter": {
+      "count": 223,
+      "status": "supported_alias"
+    },
+    "TargetFilterAliveState": {
+      "count": 17,
+      "status": "supported_alias"
+    },
+    "TargetFilterTargetType": {
+      "count": 2,
+      "status": "supported_alias"
+    },
+    "TargetIndex": {
+      "count": 24,
+      "status": "supported_alias"
+    },
+    "TargetMapActionBarAdjoinEntityList": {
+      "count": 2,
+      "status": "supported_alias"
+    },
+    "TargetMapAdjoinEntity": {
+      "count": 7,
+      "status": "supported_alias"
+    },
+    "TargetMapAllTeamMember": {
+      "count": 4,
+      "status": "supported_alias"
+    },
+    "TargetMapAttackTargetList": {
+      "count": 2,
+      "status": "supported_alias"
+    },
+    "TargetMapCreatedBattleEvent": {
+      "count": 2,
+      "status": "supported_alias"
+    },
+    "TargetMapDynamicEntityParam": {
+      "count": 6,
+      "status": "supported_alias"
+    },
+    "TargetMapPartEntity": {
+      "count": 1,
+      "status": "supported_alias"
+    },
+    "TargetMapPartOwnerEntity": {
+      "count": 1,
+      "status": "supported_alias"
+    },
+    "TargetMapSkillPointEntity": {
+      "count": 4,
+      "status": "supported_alias"
+    },
+    "TargetMapSkillSubTarget": {
+      "count": 2,
+      "status": "supported_alias"
+    },
+    "TargetMapSkillTarget": {
+      "count": 3,
+      "status": "supported_alias"
+    },
+    "TargetMapTeamFormation": {
+      "count": 7,
+      "status": "supported_alias"
+    },
+    "TargetQuery": {
+      "count": 5,
+      "status": "supported_alias"
+    },
+    "TargetSelector": {
+      "count": 3,
+      "status": "supported_alias"
+    },
+    "TargetSequence": {
+      "count": 281,
+      "status": "supported_alias"
+    },
+    "TargetShuffle": {
+      "count": 17,
+      "status": "supported_alias"
+    },
+    "TargetSortByAITag": {
+      "count": 1,
+      "status": "supported_alias"
+    },
+    "TargetSortByActionOrder": {
+      "count": 2,
+      "status": "supported_alias"
+    },
+    "TargetSortByCustomFormationIndexClientOnly": {
+      "count": 1,
+      "status": "supported_alias"
+    },
+    "TargetSortByElationPriority": {
+      "count": 3,
+      "status": "supported_alias"
+    },
+    "TargetSortByFormation": {
+      "count": 29,
+      "status": "supported_alias"
+    },
+    "TargetSortByGridFightPower": {
+      "count": 1,
+      "status": "supported_alias"
+    },
+    "TargetSortByGridFightRoleTotalDamage": {
+      "count": 1,
+      "status": "supported_alias"
+    },
+    "TargetSortByModifierStatusCount": {
+      "count": 2,
+      "status": "supported_alias"
+    },
+    "TargetSortByModifierValue": {
+      "count": 8,
+      "status": "supported_alias"
+    },
+    "TargetSortByMultiModifierValueSum": {
+      "count": 1,
+      "status": "supported_alias"
+    },
+    "TargetSortByProperty": {
+      "count": 29,
+      "status": "supported_alias"
+    },
+    "TargetSortByWeaknessMatch": {
+      "count": 1,
+      "status": "supported_alias"
+    },
+    "TargetSortMonsterRank": {
+      "count": 7,
+      "status": "supported_alias"
+    },
+    "TargetSortSequence": {
+      "count": 1,
+      "status": "supported_alias"
+    },
+    "TargetTake": {
+      "count": 52,
+      "status": "supported_alias"
+    },
+    "TargetTimeSlow": {
+      "count": 132,
+      "status": "supported_alias"
+    },
+    "TaskConfig": {
+      "count": 80,
+      "status": "unsupported"
+    },
+    "TaskTemplateFetchParamSequence": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "TeamAction": {
+      "count": 13,
+      "status": "unsupported"
+    },
+    "TeamLookAt": {
+      "count": 15,
+      "status": "unsupported"
+    },
+    "ToastPile": {
+      "count": 4,
+      "status": "unsupported"
+    },
+    "ToggleHitCountUITop": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ToggleScoreCounterShow": {
+      "count": 5,
+      "status": "unsupported"
+    },
+    "ToggleSkillPreShow": {
+      "count": 26,
+      "status": "unsupported"
+    },
+    "ToggleSpecialSkillMark": {
+      "count": 46,
+      "status": "unsupported"
+    },
+    "ToggleTotalDamageFinishNotify": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "ToggleUITop": {
+      "count": 27,
+      "status": "unsupported"
+    },
+    "TransitEnvProfile": {
+      "count": 7,
+      "status": "unsupported"
+    },
+    "TriggerAbility": {
+      "count": 676,
+      "status": "unsupported"
+    },
+    "TriggerAdditiveAnimState": {
+      "count": 4,
+      "status": "unsupported"
+    },
+    "TriggerAnimState": {
+      "count": 646,
+      "status": "unsupported"
+    },
+    "TriggerAnimStateOnModifierCustomEvent": {
+      "count": 3,
+      "status": "unsupported"
+    },
+    "TriggerAnimStateWithMove": {
+      "count": 226,
+      "status": "unsupported"
+    },
+    "TriggerAutoLayoutTransferPerform": {
+      "count": 4,
+      "status": "unsupported"
+    },
+    "TriggerBattleStatisticEvent": {
+      "count": 4,
+      "status": "unsupported"
+    },
+    "TriggerBreak": {
+      "count": 12,
+      "status": "unsupported"
+    },
+    "TriggerCustomString": {
+      "count": 161,
+      "status": "unsupported"
+    },
+    "TriggerEffect": {
+      "count": 731,
+      "status": "unsupported"
+    },
+    "TriggerEffectList": {
+      "count": 11,
+      "status": "unsupported"
+    },
+    "TriggerEnergyBarEffect": {
+      "count": 39,
+      "status": "unsupported"
+    },
+    "TriggerEvolveBuildFeature": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "TriggerGridFightWaveSettle": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "TriggerHitProp": {
+      "count": 11,
+      "status": "unsupported"
+    },
+    "TriggerHitTarget": {
+      "count": 6,
+      "status": "unsupported"
+    },
+    "TriggerMagicUnitOnScepter": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "TriggerMazeSkillDrop": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "TriggerModelShake": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "TriggerModifierCustomEvent": {
+      "count": 60,
+      "status": "unsupported"
+    },
+    "TriggerPamActionPhaseAction": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "TriggerPamActionPhaseDone": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "TriggerPamActionPhaseMove": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "TriggerPamActionPhaseSettle": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "TriggerPamMovePhaseTalk": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "TriggerPamMovePhaseTalkWait": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "TriggerPamOnlineFirst": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "TriggerParallelAbility": {
+      "count": 17,
+      "status": "unsupported"
+    },
+    "TriggerParallelTaskListTemplate": {
+      "count": 30,
+      "status": "unsupported"
+    },
+    "TriggerParamModifierCustomEvent": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "TriggerSkipDeadHandler": {
+      "count": 101,
+      "status": "unsupported"
+    },
+    "TriggerSound": {
+      "count": 136,
+      "status": "unsupported"
+    },
+    "TriggerSoundInAnim": {
+      "count": 15,
+      "status": "unsupported"
+    },
+    "TriggerStanceCountDown": {
+      "count": 11,
+      "status": "unsupported"
+    },
+    "TriggerUINotify": {
+      "count": 55,
+      "status": "unsupported"
+    },
+    "TriggerUINotifyWithTarget": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "TriggerUITopEffect": {
+      "count": 10,
+      "status": "unsupported"
+    },
+    "TryStartConnectUltraSkillFrameCapture": {
+      "count": 58,
+      "status": "unsupported"
+    },
+    "TurnInsertAbility": {
+      "count": 434,
+      "status": "unsupported"
+    },
+    "TurnInsertAbilityCondition": {
+      "count": 145,
+      "status": "unsupported"
+    },
+    "TurnInsertAbilityConditionBase": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "TurnInsertAction": {
+      "count": 67,
+      "status": "unsupported"
+    },
+    "TurnInsertAssistantAbility": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "TutorialForbidAutoBattle": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "TutorialTaskUnlock": {
+      "count": 12,
+      "status": "unsupported"
+    },
+    "UnloadBattleEvent": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "UnlockTargetHP": {
+      "count": 35,
+      "status": "unsupported"
+    },
+    "UnlockTargetShield": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "UpdateMonsterFootIKMode": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "UseSequencedSkill": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "UseSkill": {
+      "count": 364,
+      "status": "unsupported"
+    },
+    "UseSkillByComplexSkillAI": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "UseSkillOneMore": {
+      "count": 7,
+      "status": "unsupported"
+    },
+    "VCameraConfigChange": {
+      "count": 977,
+      "status": "unsupported"
+    },
+    "VCameraNoiseChange": {
+      "count": 33,
+      "status": "unsupported"
+    },
+    "VisionConfig": {
+      "count": 24,
+      "status": "unsupported"
+    },
+    "WaitAbilityStartTimeStamp": {
+      "count": 10,
+      "status": "unsupported"
+    },
+    "WaitAllProjectileFinish": {
+      "count": 5,
+      "status": "unsupported"
+    },
+    "WaitAnimEvent": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "WaitAnimState": {
+      "count": 941,
+      "status": "unsupported"
+    },
+    "WaitCustomString": {
+      "count": 10,
+      "status": "unsupported"
+    },
+    "WaitDialogueBegin": {
+      "count": 1,
+      "status": "unsupported"
+    },
+    "WaitFor": {
+      "count": 62,
+      "status": "unsupported"
+    },
+    "WaitFrame": {
+      "count": 9,
+      "status": "unsupported"
+    },
+    "WaitFrameForBattleServer": {
+      "count": 2,
+      "status": "unsupported"
+    },
+    "WaitMissionTalkFinish": {
+      "count": 3,
+      "status": "unsupported"
+    },
+    "WaitParallelTimeStamp": {
+      "count": 47,
+      "status": "unsupported"
+    },
+    "WaitRandomSecond": {
+      "count": 11,
+      "status": "unsupported"
+    },
+    "WaitSecond": {
+      "count": 689,
+      "status": "unsupported"
+    },
+    "WaitSkillPerformAbilityFinish": {
+      "count": 14,
+      "status": "unsupported"
+    },
+    "WaitTimelineFinish": {
+      "count": 249,
+      "status": "unsupported"
+    },
+    "WriteCustomValueToStatistic": {
+      "count": 7,
+      "status": "unsupported"
+    }
+  }
+}
