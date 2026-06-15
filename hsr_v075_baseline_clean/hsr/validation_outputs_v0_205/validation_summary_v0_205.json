@@ -28,45 +28,71 @@
     }
   },
   "negative_checks": {
-    "missing_entity_ref": {
-      "errors": [
-        "unit ally:saber: unknown entity_ref 'avatar:missing_for_v0_204'"
-      ],
-      "ok": false,
-      "source_traces": [
+    "insufficient_skill_points_executor": {
+      "after_skill_points": 0,
+      "before_skill_points": 0,
+      "coverage": {
+        "executor": "v0_205_action_prelude",
+        "resource_mutation_count": 0,
+        "resource_ok": false,
+        "target_ok": true,
+        "timeline_mutation_count": 4
+      },
+      "ok": true,
+      "resource_errors": [
         {
-          "coverage_status": "audit_only",
-          "entity_id": "monster:1002011",
-          "entity_type": "monster",
-          "source": {
-            "evidence": {
-              "id_key": "MonsterID",
-              "row_index": 0
-            },
-            "raw_id": "1002011",
-            "raw_type": "MonsterConfig",
-            "source_path": "ExcelOutput/MonsterConfig.json"
-          }
-        },
-        {
-          "coverage_status": "audit_only",
-          "entity_id": "avatar_skill:101401",
-          "entity_type": "avatar_skill",
-          "source": {
-            "evidence": {
-              "id_key": "SkillID",
-              "row_index": 65
-            },
-            "raw_id": "101401",
-            "raw_type": "AvatarSkillConfigLD",
-            "source_path": "ExcelOutput/AvatarSkillConfigLD.json"
-          }
+          "mutation_id": null,
+          "payload": {
+            "errors": [
+              "insufficient skill points: current=0, delta=-1"
+            ]
+          },
+          "process_only": true,
+          "record_type": "resource_error",
+          "source": "resource_system",
+          "trace": {}
         }
-      ]
+      ],
+      "skill_point_mutations": []
     },
-    "wrong_action_type": {
+    "insufficient_skill_points_resource_system": {
       "errors": [
-        "route[0]: action_ref 'monster:1002011' has type 'monster', expected one of ['active_skill', 'avatar_skill', 'monster_skill']"
+        "insufficient skill points: current=0, delta=-1"
+      ],
+      "mutation_count": 0,
+      "ok": true
+    },
+    "unknown_target_executor": {
+      "after_skill_points": 3,
+      "coverage": {
+        "executor": "v0_205_action_prelude",
+        "resource_mutation_count": 1,
+        "resource_ok": true,
+        "target_ok": false,
+        "timeline_mutation_count": 4
+      },
+      "ok": true,
+      "target_resolution": {
+        "legal": [],
+        "metadata": {
+          "errors": [
+            "unknown:enemy:missing"
+          ]
+        },
+        "reason": "explicit_targets_rejected",
+        "rejected": [
+          "enemy:missing"
+        ],
+        "requested": [
+          "enemy:missing"
+        ],
+        "selected": [],
+        "source": "target_system"
+      }
+    },
+    "unknown_target_identity": {
+      "errors": [
+        "route[0]: unknown target_id 'enemy:missing'"
       ],
       "ok": false,
       "source_traces": [
@@ -100,30 +126,62 @@
         },
         {
           "coverage_status": "audit_only",
-          "entity_id": "monster:1002011",
-          "entity_type": "monster",
+          "entity_id": "avatar_skill:101401",
+          "entity_type": "avatar_skill",
           "source": {
             "evidence": {
-              "id_key": "MonsterID",
-              "row_index": 0
+              "id_key": "SkillID",
+              "row_index": 65
             },
-            "raw_id": "1002011",
-            "raw_type": "MonsterConfig",
-            "source_path": "ExcelOutput/MonsterConfig.json"
+            "raw_id": "101401",
+            "raw_type": "AvatarSkillConfigLD",
+            "source_path": "ExcelOutput/AvatarSkillConfigLD.json"
           }
         }
       ]
     }
   },
   "ok": true,
-  "replay": {
+  "prelude": {
+    "checks": {
+      "av_reset_mutation": true,
+      "energy_mutation": true,
+      "event_index_mutation": true,
+      "resource_linked_records": true,
+      "target_record_process_only": true,
+      "target_selected": true,
+      "timeline_linked_records": true,
+      "turn_owner_mutation": true,
+      "window_mutation": true
+    },
+    "mutation_count": 5,
     "ok": true,
-    "results": [
-      {
-        "errors": [],
-        "ok": true
-      }
-    ]
+    "record_counts": {
+      "resource": 1,
+      "target": 1,
+      "timeline": 4,
+      "total": 7
+    },
+    "target_resolution": {
+      "legal": [
+        "enemy:target"
+      ],
+      "metadata": {},
+      "reason": "explicit_targets_resolved",
+      "rejected": [],
+      "requested": [
+        "enemy:target"
+      ],
+      "selected": [
+        "enemy:target"
+      ],
+      "source": "target_system"
+    }
+  },
+  "replay": {
+    "errors": [],
+    "mutation_count": 5,
+    "ok": true
   },
   "scenario": {
     "identity": {
@@ -175,9 +233,7 @@
       ]
     },
     "route_count": 1,
-    "scenario_id": "identity_smoke_v0_204",
-    "source_trace_count": 3,
-    "unit_count": 2
+    "scenario_id": "identity_smoke_v0_204"
   },
   "snapshot_completeness": {
     "errors": [],
@@ -210,5 +266,5 @@
       "ok": true
     }
   },
-  "version": "v0_204"
+  "version": "v0_205"
 }

@@ -56,9 +56,11 @@
       ],
       "source": "manual",
       "metadata": {
-        "label": "Saber normal attack identity smoke"
+        "label": "Saber normal attack identity smoke",
+        "skill_point_delta": 0,
+        "energy_gain": 20,
+        "reset_actor_av": true
       }
     }
   ]
 }
-

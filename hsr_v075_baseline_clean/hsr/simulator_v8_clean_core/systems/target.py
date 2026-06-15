@@ -1,13 +1,83 @@
 from __future__ import annotations
 
-from ..core.model import BattleState
+from dataclasses import dataclass
+
+from ..core.model import BattleState, JSONValue, TargetResolution
+
+
+@dataclass(frozen=True)
+class TargetingResult:
+    resolution: TargetResolution
+    ok: bool
+    errors: tuple[str, ...] = ()
 
 
 class TargetSystem:
-    def resolve_explicit_targets(self, state: BattleState, target_ids: tuple[str, ...]) -> tuple[str, ...]:
-        return tuple(unit_id for unit_id in target_ids if unit_id in state.units)
+    def resolve_explicit_targets(
+        self,
+        state: BattleState,
+        actor_id: str,
+        target_ids: tuple[str, ...],
+    ) -> TargetingResult:
+        errors: list[str] = []
+        legal: list[str] = []
+        rejected: list[str] = []
+        metadata: dict[str, JSONValue] = {}
+
+        actor = state.units.get(actor_id)
+        if actor is None:
+            errors.append(f"unknown actor_id: {actor_id}")
+            rejected.extend(target_ids)
+            return TargetingResult(
+                resolution=TargetResolution(
+                    requested=target_ids,
+                    legal=(),
+                    selected=(),
+                    rejected=tuple(rejected),
+                    reason="unknown_actor",
+                    source="target_system",
+                    metadata={"errors": list(errors)},
+                ),
+                ok=False,
+                errors=tuple(errors),
+            )
+
+        for target_id in target_ids:
+            target = state.units.get(target_id)
+            if target is None:
+                reason = f"unknown:{target_id}"
+                errors.append(reason)
+                rejected.append(target_id)
+                continue
+            if target.hp <= 0:
+                reason = f"defeated:{target_id}"
+                errors.append(reason)
+                rejected.append(target_id)
+                continue
+            if target.side == actor.side and target_id != actor_id:
+                reason = f"same_side:{target_id}"
+                errors.append(reason)
+                rejected.append(target_id)
+                continue
+            legal.append(target_id)
+
+        ok = not errors
+        if errors:
+            metadata["errors"] = list(errors)
+        return TargetingResult(
+            resolution=TargetResolution(
+                requested=target_ids,
+                legal=tuple(legal),
+                selected=tuple(legal),
+                rejected=tuple(rejected),
+                reason="explicit_targets_resolved" if ok else "explicit_targets_rejected",
+                source="target_system",
+                metadata=metadata,
+            ),
+            ok=ok,
+            errors=tuple(errors),
+        )
 
     def enemies_of(self, state: BattleState, actor_id: str) -> tuple[str, ...]:
         actor = state.units[actor_id]
         return tuple(unit_id for unit_id, unit in state.units.items() if unit.side != actor.side)
-

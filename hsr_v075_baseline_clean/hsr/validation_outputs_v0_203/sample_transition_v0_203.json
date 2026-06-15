@@ -2,7 +2,7 @@
   "after": {
     "battle": {
       "action_index": 1,
-      "current_window": "idle",
+      "current_window": "action",
       "phase": "validation",
       "turn_owner_id": "ally:seele",
       "wave_index": 0
@@ -10,7 +10,7 @@
     "coverage": {},
     "event_index": 1,
     "global_flags": {
-      "current_window": "idle",
+      "current_window": "action",
       "phase": "validation",
       "turn_owner_id": "ally:seele"
     },
@@ -345,7 +345,11 @@
   },
   "contract_validation": {},
   "coverage": {
-    "executor": "v0_200_transaction_contract"
+    "executor": "v0_205_action_prelude",
+    "resource_mutation_count": 0,
+    "resource_ok": true,
+    "target_ok": true,
+    "timeline_mutation_count": 3
   },
   "events": [
     {
@@ -359,6 +363,17 @@
       "source_id": "ally:seele",
       "target_id": null,
       "window": "action_request"
+    },
+    {
+      "event_id": "event:1:action_window_opened",
+      "event_type": "timeline.action_window_opened",
+      "payload": {
+        "previous_window": "idle"
+      },
+      "process_only": true,
+      "source_id": "ally:seele",
+      "target_id": null,
+      "window": "action"
     }
   ],
   "mutations": [
@@ -366,13 +381,39 @@
       "after": 1,
       "before": 0,
       "metadata": {},
-      "mutation_id": "mutation:1:event_index",
+      "mutation_id": "mutation:timeline:event_index:1",
       "op": "set",
       "path": [
         "event_index"
       ],
       "reason": "action transaction opened",
-      "source": "combat_executor"
+      "source": "combat_executor.timeline"
+    },
+    {
+      "after": "action",
+      "before": "idle",
+      "metadata": {},
+      "mutation_id": "mutation:timeline:current_window:1",
+      "op": "set",
+      "path": [
+        "global_flags",
+        "current_window"
+      ],
+      "reason": "open action window",
+      "source": "combat_executor.timeline"
+    },
+    {
+      "after": "ally:seele",
+      "before": "ally:seele",
+      "metadata": {},
+      "mutation_id": "mutation:timeline:turn_owner:1",
+      "op": "set",
+      "path": [
+        "global_flags",
+        "turn_owner_id"
+      ],
+      "reason": "set action owner",
+      "source": "combat_executor.timeline"
     }
   ],
   "rng_events": [],
@@ -392,6 +433,80 @@
         "trace": {
           "event_id": "event:1:action_requested"
         }
+      },
+      {
+        "mutation_id": null,
+        "payload": {
+          "legal": [
+            "enemy:dummy"
+          ],
+          "metadata": {},
+          "reason": "explicit_targets_resolved",
+          "rejected": [],
+          "requested": [
+            "enemy:dummy"
+          ],
+          "selected": [
+            "enemy:dummy"
+          ],
+          "source": "target_system"
+        },
+        "process_only": true,
+        "record_type": "target_resolution",
+        "source": "target_system",
+        "trace": {
+          "errors": []
+        }
+      },
+      {
+        "mutation_id": "mutation:timeline:event_index:1",
+        "payload": {
+          "after": 1,
+          "before": 0,
+          "metadata": {},
+          "path": [
+            "event_index"
+          ],
+          "reason": "action transaction opened"
+        },
+        "process_only": false,
+        "record_type": "timeline",
+        "source": "combat_executor.timeline",
+        "trace": {}
+      },
+      {
+        "mutation_id": "mutation:timeline:current_window:1",
+        "payload": {
+          "after": "action",
+          "before": "idle",
+          "metadata": {},
+          "path": [
+            "global_flags",
+            "current_window"
+          ],
+          "reason": "open action window"
+        },
+        "process_only": false,
+        "record_type": "timeline",
+        "source": "combat_executor.timeline",
+        "trace": {}
+      },
+      {
+        "mutation_id": "mutation:timeline:turn_owner:1",
+        "payload": {
+          "after": "ally:seele",
+          "before": "ally:seele",
+          "metadata": {},
+          "path": [
+            "global_flags",
+            "turn_owner_id"
+          ],
+          "reason": "set action owner"
+        },
+        "process_only": false,
+        "record_type": "timeline",
+        "source": "combat_executor.timeline",
+        "trace": {}
       }
     ],
     "target_ids": [
@@ -403,7 +518,7 @@
       "enemy:dummy"
     ],
     "metadata": {},
-    "reason": "explicit_targets_checked",
+    "reason": "explicit_targets_resolved",
     "rejected": [],
     "requested": [
       "enemy:dummy"
@@ -411,6 +526,6 @@
     "selected": [
       "enemy:dummy"
     ],
-    "source": "combat_executor"
+    "source": "target_system"
   }
 }

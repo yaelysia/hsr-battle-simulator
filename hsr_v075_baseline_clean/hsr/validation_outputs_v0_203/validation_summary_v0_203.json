@@ -35,15 +35,15 @@
   "ok": true,
   "replay": {
     "errors": [],
-    "mutation_count": 1,
+    "mutation_count": 3,
     "ok": true
   },
   "settlement_traceability": {
-    "checked_records": 1,
+    "checked_records": 5,
     "errors": [],
-    "mutation_linked_records": 0,
+    "mutation_linked_records": 3,
     "ok": true,
-    "process_only_records": 1
+    "process_only_records": 2
   },
   "snapshot_completeness": {
     "after": {
@@ -73,11 +73,11 @@
     "missing_keys": [],
     "ok": true,
     "settlement_traceability": {
-      "checked_records": 1,
+      "checked_records": 5,
       "errors": [],
-      "mutation_linked_records": 0,
+      "mutation_linked_records": 3,
       "ok": true,
-      "process_only_records": 1
+      "process_only_records": 2
     },
     "snapshot_after": {
       "errors": [],
