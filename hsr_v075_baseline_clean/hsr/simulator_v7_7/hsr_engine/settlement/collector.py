@@ -41,7 +41,7 @@ def _settlement_equal(left: Any, right: Any) -> bool:
     return left == right
 
 
-def _validate_resource_record_consistency(
+def _validate_settlement_record_consistency(
     transition: dict[str, Any],
     *,
     target_record: dict[str, Any] | None,
@@ -54,6 +54,7 @@ def _validate_resource_record_consistency(
     turn_records: list[dict[str, Any]],
     queue_records: list[dict[str, Any]],
     trigger_usage_records: list[dict[str, Any]],
+    mechanic_records: list[dict[str, Any]],
     damage_records: list[dict[str, Any]],
     break_records: list[dict[str, Any]],
     toughness_records: list[dict[str, Any]],
@@ -74,6 +75,7 @@ def _validate_resource_record_consistency(
     turn_record_valid_count = 0
     queue_record_valid_count = 0
     trigger_usage_record_valid_count = 0
+    mechanic_record_valid_count = 0
     damage_record_valid_count = 0
     break_record_valid_count = 0
     toughness_record_valid_count = 0
@@ -88,6 +90,7 @@ def _validate_resource_record_consistency(
     consumed_turn_changes: set[int] = set()
     consumed_queue_changes: set[int] = set()
     consumed_trigger_usage_changes: set[int] = set()
+    consumed_mechanic_changes: set[int] = set()
     consumed_damage_changes: set[int] = set()
     consumed_break_changes: set[int] = set()
     consumed_toughness_changes: set[int] = set()
@@ -467,6 +470,72 @@ def _validate_resource_record_consistency(
         if issue_count == before_issue_count:
             trigger_usage_record_valid_count += 1
 
+    for record_index, rec in enumerate(mechanic_records):
+        before_issue_count = issue_count
+        prefix = f"mechanic_records[{record_index}]"
+        data = rec.get("data") if isinstance(rec.get("data"), dict) else {}
+        change_index = None
+        change = None
+        if data.get("scope") or data.get("field_path"):
+            expected_scope = str(data.get("scope") or "")
+            expected_subject_id = str(data.get("subject_id") or rec.get("unit_id") or "")
+            expected_field_path = str(data.get("field_path") or "")
+            for candidate_index, candidate in enumerate(changes):
+                if candidate_index in consumed_mechanic_changes:
+                    continue
+                if candidate.get("change_type") != "mechanic":
+                    continue
+                if candidate.get("scope") != expected_scope:
+                    continue
+                if candidate.get("field_path") != expected_field_path or candidate.get("subject_id") != expected_subject_id:
+                    continue
+                if not _settlement_equal(candidate.get("old_value"), data.get("old_value")):
+                    continue
+                if not _settlement_equal(candidate.get("new_value"), data.get("new_value")):
+                    continue
+                change_index, change = candidate_index, candidate
+                break
+            if change is None or change_index is None:
+                add_issue(
+                    f"{prefix}.state_change",
+                    "missing_matching_mechanic_state_change",
+                    actual=None,
+                    expected={
+                        "scope": expected_scope,
+                        "subject_id": expected_subject_id,
+                        "field_path": expected_field_path,
+                        "old_value": data.get("old_value"),
+                        "new_value": data.get("new_value"),
+                    },
+                )
+                continue
+            consumed_mechanic_changes.add(change_index)
+            compare(f"{prefix}.state_change.delta", change.get("delta"), data.get("delta"))
+            compare(f"{prefix}.state_change.reason", change.get("reason"), data.get("reason"))
+            compare(f"{prefix}.state_change.payload", change.get("payload") or {}, data.get("payload") or {})
+            compare(f"{prefix}.state_change.source", change.get("source") or {}, data.get("source") or {})
+        else:
+            unit_id = str(rec.get("unit_id") or "")
+            change_index, change = matching_payload_change(
+                consumed=consumed_mechanic_changes,
+                change_type="mechanic",
+                field_path="mechanic",
+                subject_id=unit_id,
+                payload=rec,
+            )
+            if change is None or change_index is None:
+                add_issue(
+                    f"{prefix}.state_change",
+                    "missing_matching_mechanic_state_change",
+                    actual=None,
+                    expected={"unit_id": unit_id, "payload": rec},
+                )
+                continue
+            consumed_mechanic_changes.add(change_index)
+            compare(f"{prefix}.state_change.reason", change.get("reason"), rec.get("event_type"))
+        if issue_count == before_issue_count:
+            mechanic_record_valid_count += 1
+
     for record_index, rec in enumerate(damage_records):
         before_issue_count = issue_count
         prefix = f"damage_records[{record_index}]"
@@ -592,11 +661,12 @@ def _validate_resource_record_consistency(
     resource_record_valid_count = hp_record_valid_count + shield_record_valid_count + sp_record_valid_count + energy_record_valid_count
     control_record_count = len(queue_records) + len(trigger_usage_records)
     control_record_valid_count = queue_record_valid_count + trigger_usage_record_valid_count
+    mechanic_record_count = len(mechanic_records)
     audit_record_count = len(damage_records) + len(break_records) + len(toughness_records) + len(dot_records) + len(super_break_records)
     audit_record_valid_count = damage_record_valid_count + break_record_valid_count + toughness_record_valid_count + dot_record_valid_count + super_break_record_valid_count
     target_record_count = 1 if target_record is not None else 0
-    settlement_checked_record_count = target_record_count + resource_record_count + len(status_records) + len(av_records) + len(turn_records) + control_record_count + audit_record_count
-    settlement_checked_record_valid_count = target_record_valid_count + resource_record_valid_count + status_record_valid_count + av_record_valid_count + turn_record_valid_count + control_record_valid_count + audit_record_valid_count
+    settlement_checked_record_count = target_record_count + resource_record_count + len(status_records) + len(av_records) + len(turn_records) + control_record_count + mechanic_record_count + audit_record_count
+    settlement_checked_record_valid_count = target_record_valid_count + resource_record_valid_count + status_record_valid_count + av_record_valid_count + turn_record_valid_count + control_record_valid_count + mechanic_record_valid_count + audit_record_valid_count
     return {
         "settlement_checked_record_count": settlement_checked_record_count,
         "settlement_checked_record_valid_count": settlement_checked_record_valid_count,
@@ -624,6 +694,8 @@ def _validate_resource_record_consistency(
         "queue_record_valid_count": queue_record_valid_count,
         "trigger_usage_record_count": len(trigger_usage_records),
         "trigger_usage_record_valid_count": trigger_usage_record_valid_count,
+        "mechanic_record_count": mechanic_record_count,
+        "mechanic_record_valid_count": mechanic_record_valid_count,
         "audit_record_count": audit_record_count,
         "audit_record_valid_count": audit_record_valid_count,
         "damage_settlement_record_count": len(damage_records),
@@ -640,6 +712,9 @@ def _validate_resource_record_consistency(
         "settlement_record_mismatch_count": issue_count,
         "settlement_record_mismatches": issues,
     }
+
+
+_validate_resource_record_consistency = _validate_settlement_record_consistency
 
 
 @dataclass
@@ -1121,6 +1196,27 @@ class SettlementCollector:
                 payload=deepcopy(rec.payload),
             )
 
+    def record_committed_mechanic_change(self, change: StateChange) -> None:
+        data = {
+            "scope": str(change.scope or ""),
+            "subject_id": str(change.subject_id or ""),
+            "field_path": str(change.field_path or ""),
+            "old_value": deepcopy(change.old_value),
+            "new_value": deepcopy(change.new_value),
+            "delta": deepcopy(change.delta),
+            "reason": str(change.reason or ""),
+            "payload": deepcopy(change.payload or {}),
+            "source": change.source.to_dict(),
+        }
+        self.mechanic_records.append(
+            MechanicRecord(
+                event_type=str(change.reason or change.field_path or ""),
+                unit_id=str(change.subject_id or "") if change.scope == "unit" else "",
+                description=str(change.reason or ""),
+                data=data,
+            )
+        )
+
     def record_mechanic(self, **kwargs: Any) -> None:
         mapped = {}
         for k, v in kwargs.items():
@@ -1253,7 +1349,7 @@ class SettlementCollector:
         dot_records = [asdict(r) for r in self.dot_records]
         super_break_records = [asdict(r) for r in self.super_break_records]
         replay_validation = validate_transition_replay(transition)
-        settlement_validation = _validate_resource_record_consistency(
+        settlement_validation = _validate_settlement_record_consistency(
             transition,
             target_record=asdict(self.target_record) if self.target_record else None,
             hp_records=hp_records,
@@ -1265,6 +1361,7 @@ class SettlementCollector:
             turn_records=turn_records,
             queue_records=queue_records,
             trigger_usage_records=trigger_usage_records,
+            mechanic_records=mechanic_records,
             damage_records=damage_records,
             break_records=break_records,
             toughness_records=toughness_records,

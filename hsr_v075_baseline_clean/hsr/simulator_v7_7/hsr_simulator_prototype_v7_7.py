@@ -940,6 +940,8 @@ class BattleSimulator:
         stl = self._settlement(ctx or {})
         if stl is not None:
             stl.record_state_change(change)
+            if change.change_type == "mechanic":
+                stl.record_committed_mechanic_change(change)
 
     def commit_state_change(self, change: StateChange, ctx: Optional[dict[str, Any]] = None) -> StateChange:
         """Apply a normalized state change to BattleState and attach it to the current transition."""
