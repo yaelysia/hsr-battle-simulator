@@ -15,6 +15,7 @@ from typing import Any
 
 ACTION_SETTLEMENT_ENCODING = "hsr.settlement.action.v1"
 DAMAGE_SETTLEMENT_ENCODING = "hsr.settlement.damage.v1"
+MODIFIER_LEDGER_ENCODING = "hsr.settlement.modifier_ledger.v1"
 
 
 def _record_to_dict(record: Any) -> dict[str, Any]:
@@ -41,6 +42,137 @@ def _sum_record_amount(records: list[dict[str, Any]], field_name: str) -> float:
     return total
 
 
+def _modifier_scope(source_type: str) -> str:
+    if source_type.startswith("actor."):
+        return "actor"
+    if source_type.startswith("target."):
+        return "target"
+    if source_type == "packet":
+        return "packet"
+    return source_type or "unknown"
+
+
+@dataclass
+class ModifierTerm:
+    """伤害公式中一个规范化的修饰项。"""
+    bucket: str = ""
+    term_index: int = 0
+    source_type: str = ""
+    source_id: str = ""
+    key: str = ""
+    scope: str = ""
+    condition: str = ""
+    value: float | None = None
+    stacks: int | float | str | None = None
+    applied_value: float | None = None
+    applied: bool = True
+    applied_reason: str = "included_in_formula_bucket"
+    skipped_reason: str = ""
+    raw_path: str = ""
+    raw: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class ModifierLedger:
+    """一次直接伤害记录的规范化修饰项账本。"""
+    damage_record_index: int = 0
+    formula_type: str = ""
+    actor_id: str = ""
+    target_id: str = ""
+    action_id: str = ""
+    packet_id: str = ""
+    formula: str = ""
+    final_damage: float | None = None
+    bucket_multipliers: dict[str, Any] = field(default_factory=dict)
+    scaling: dict[str, Any] = field(default_factory=dict)
+    crit: dict[str, Any] = field(default_factory=dict)
+    terms: list[ModifierTerm | dict[str, Any]] = field(default_factory=list)
+    skipped_terms: list[ModifierTerm | dict[str, Any]] = field(default_factory=list)
+    encoding: str = MODIFIER_LEDGER_ENCODING
+
+    @classmethod
+    def from_formula_ledger(
+        cls,
+        formula_ledger: dict[str, Any],
+        *,
+        damage_record_index: int = 0,
+    ) -> "ModifierLedger":
+        buckets = formula_ledger.get("buckets") if isinstance(formula_ledger.get("buckets"), dict) else {}
+        bucket_multipliers: dict[str, Any] = {}
+        terms: list[ModifierTerm] = []
+        for bucket_name, bucket_data in buckets.items():
+            if not isinstance(bucket_data, dict):
+                continue
+            if "multiplier" in bucket_data:
+                bucket_multipliers[str(bucket_name)] = bucket_data.get("multiplier")
+            raw_terms = bucket_data.get("terms")
+            if not isinstance(raw_terms, list):
+                continue
+            for term_index, term in enumerate(raw_terms):
+                if not isinstance(term, dict):
+                    continue
+                source_type = str(term.get("source_type") or "")
+                note = str(term.get("note") or "")
+                terms.append(
+                    ModifierTerm(
+                        bucket=str(bucket_name),
+                        term_index=term_index,
+                        source_type=source_type,
+                        source_id=str(term.get("source_id") or ""),
+                        key=str(term.get("key") or ""),
+                        scope=_modifier_scope(source_type),
+                        condition=note,
+                        value=term.get("value") if isinstance(term.get("value"), (int, float)) else None,
+                        stacks=term.get("stacks"),
+                        applied_value=(
+                            term.get("applied_value")
+                            if isinstance(term.get("applied_value"), (int, float))
+                            else None
+                        ),
+                        applied=True,
+                        applied_reason="present_in_formula_ledger",
+                        raw_path=f"formula_ledger.buckets.{bucket_name}.terms[{term_index}]",
+                        raw=deepcopy(term),
+                    )
+                )
+        return cls(
+            damage_record_index=damage_record_index,
+            formula_type=str(formula_ledger.get("formula_type") or ""),
+            actor_id=str(formula_ledger.get("actor_id") or ""),
+            target_id=str(formula_ledger.get("target_id") or ""),
+            action_id=str(formula_ledger.get("action_id") or ""),
+            packet_id=str(formula_ledger.get("packet_id") or ""),
+            formula=str(formula_ledger.get("formula") or ""),
+            final_damage=(
+                formula_ledger.get("final_damage")
+                if isinstance(formula_ledger.get("final_damage"), (int, float))
+                else None
+            ),
+            bucket_multipliers=bucket_multipliers,
+            scaling=deepcopy(formula_ledger.get("scaling")) if isinstance(formula_ledger.get("scaling"), dict) else {},
+            crit=deepcopy(formula_ledger.get("crit")) if isinstance(formula_ledger.get("crit"), dict) else {},
+            terms=terms,
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "encoding": self.encoding,
+            "damage_record_index": self.damage_record_index,
+            "formula_type": self.formula_type,
+            "actor_id": self.actor_id,
+            "target_id": self.target_id,
+            "action_id": self.action_id,
+            "packet_id": self.packet_id,
+            "formula": self.formula,
+            "final_damage": self.final_damage,
+            "bucket_multipliers": deepcopy(self.bucket_multipliers),
+            "scaling": deepcopy(self.scaling),
+            "crit": deepcopy(self.crit),
+            "terms": _record_list_to_dicts(self.terms),
+            "skipped_terms": _record_list_to_dicts(self.skipped_terms),
+        }
+
+
 @dataclass
 class DamageSettlement:
     """一次动作内伤害族结算的结构化结果。"""
@@ -57,6 +189,16 @@ class DamageSettlement:
         toughness_records = _record_list_to_dicts(self.toughness_records)
         dot_records = _record_list_to_dicts(self.dot_records)
         super_break_records = _record_list_to_dicts(self.super_break_records)
+        modifier_ledgers = []
+        for record_index, damage_record in enumerate(damage_records):
+            formula_ledger = damage_record.get("formula_ledger")
+            if isinstance(formula_ledger, dict) and formula_ledger:
+                modifier_ledgers.append(
+                    ModifierLedger.from_formula_ledger(
+                        formula_ledger,
+                        damage_record_index=record_index,
+                    ).to_dict()
+                )
         damage_bearing_records = damage_records + break_records + dot_records + super_break_records
         return {
             "encoding": self.encoding,
@@ -65,12 +207,16 @@ class DamageSettlement:
             "toughness_records": toughness_records,
             "dot_records": dot_records,
             "super_break_records": super_break_records,
+            "modifier_ledgers": modifier_ledgers,
             "summary": {
                 "damage_record_count": len(damage_records),
                 "break_record_count": len(break_records),
                 "toughness_record_count": len(toughness_records),
                 "dot_record_count": len(dot_records),
                 "super_break_record_count": len(super_break_records),
+                "modifier_ledger_count": len(modifier_ledgers),
+                "modifier_term_count": sum(len(ledger.get("terms") or []) for ledger in modifier_ledgers),
+                "skipped_modifier_term_count": sum(len(ledger.get("skipped_terms") or []) for ledger in modifier_ledgers),
                 "damage_applied_total": _sum_record_amount(damage_bearing_records, "damage_applied"),
                 "hp_loss_total": _sum_record_amount(damage_bearing_records, "hp_loss"),
                 "shield_absorbed_total": _sum_record_amount(damage_bearing_records, "shield_absorbed"),
