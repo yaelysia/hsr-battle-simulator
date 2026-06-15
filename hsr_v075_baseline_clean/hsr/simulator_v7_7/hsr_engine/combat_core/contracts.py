@@ -3,7 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from hsr_engine.kernel import ActionRequest, ActionTransition, SourceRef, StateChange
+from copy import deepcopy
+
+from hsr_engine.kernel import ActionRequest, ActionTransition, ProcessEvent, RNGEvent, SourceRef, StateChange
 from hsr_engine.settlement import ActionSettlement, SettlementCollector
 
 
@@ -39,26 +41,96 @@ class ActionTransaction:
     action_input: ActionInput = field(default_factory=ActionInput)
     transition: ActionTransition = field(default_factory=ActionTransition)
     settlement: SettlementCollector = field(default_factory=SettlementCollector)
+    action: dict[str, Any] = field(default_factory=dict)
+    actor: Any = None
+    events: dict[str, Any] = field(default_factory=dict)
+    requested_target_ids: list[str] = field(default_factory=list)
+    resolved_target_ids: list[str] = field(default_factory=list)
+    phase_locked_targets: set[str] = field(default_factory=set)
+    state_changes: list[StateChange] = field(default_factory=list)
+    rng_events: list[RNGEvent] = field(default_factory=list)
+    process_events: list[ProcessEvent] = field(default_factory=list)
+    settlement_payload: dict[str, Any] = field(default_factory=dict)
     legacy_context: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def begin(cls, action_input: ActionInput, legacy_context: dict[str, Any] | None = None) -> "ActionTransaction":
-        settlement = SettlementCollector()
-        settlement.begin_action(action_input.to_request())
+    def begin(
+        cls,
+        action_input: ActionInput,
+        legacy_context: dict[str, Any] | None = None,
+        *,
+        settlement: SettlementCollector | None = None,
+        action: dict[str, Any] | None = None,
+        actor: Any = None,
+        events: dict[str, Any] | None = None,
+    ) -> "ActionTransaction":
+        settlement = settlement or SettlementCollector()
+        if not settlement.transition.request.action_id:
+            settlement.begin_action(action_input.to_request())
         return cls(
             action_input=action_input,
             transition=settlement.transition,
             settlement=settlement,
+            action=deepcopy(action or action_input.action or {}),
+            actor=actor,
+            events=deepcopy(events or {}),
+            requested_target_ids=list(action_input.target_ids or []),
+            resolved_target_ids=list(action_input.target_ids or []),
             legacy_context=dict(legacy_context or {}),
+        )
+
+    @classmethod
+    def from_legacy_action(
+        cls,
+        *,
+        action: dict[str, Any],
+        targets: list[str],
+        events: dict[str, Any],
+        legacy_context: dict[str, Any],
+        actor: Any = None,
+    ) -> "ActionTransaction":
+        settlement = legacy_context.get("_settlement") if isinstance(legacy_context, dict) else None
+        if not isinstance(settlement, SettlementCollector):
+            settlement = None
+        action_input = ActionInput(
+            actor_id=str(action.get("actor_id") or getattr(actor, "id", "") or ""),
+            action_id=str(action.get("id") or ""),
+            target_ids=list(targets or []),
+            action=deepcopy(action or {}),
+            timing=str(legacy_context.get("timing") or legacy_context.get("queued") and "queued" or "manual"),
+            turn_kind=legacy_context.get("turn_kind"),
+            metadata=deepcopy(legacy_context.get("metadata") or {}),
+        )
+        return cls.begin(
+            action_input,
+            legacy_context=legacy_context,
+            settlement=settlement,
+            action=action,
+            actor=actor,
+            events=events,
         )
 
     def to_legacy_context(self) -> dict[str, Any]:
         ctx = dict(self.legacy_context)
         ctx.setdefault("_settlement", self.settlement)
+        ctx.setdefault("_transaction", self)
         ctx.setdefault("actor_id", self.action_input.actor_id)
         ctx.setdefault("target_id", self.action_input.target_ids[0] if self.action_input.target_ids else "")
+        ctx.setdefault("targets", list(self.resolved_target_ids or self.action_input.target_ids))
         ctx.setdefault("action", self.action_input.action)
+        ctx.setdefault("events", deepcopy(self.events))
+        ctx.setdefault("phase_locked_targets", self.phase_locked_targets)
         return ctx
+
+    def bind_targets(self, target_ids: list[str]) -> None:
+        self.resolved_target_ids = list(target_ids or [])
+        self.action_input.target_ids = list(target_ids or [])
+        self.transition.request.target_ids = list(target_ids or [])
+
+    def sync_from_transition(self) -> None:
+        self.state_changes = list(self.transition.state_changes)
+        self.rng_events = list(self.transition.rng_events)
+        self.process_events = list(self.transition.process_events)
 
 
 class StateView(Protocol):

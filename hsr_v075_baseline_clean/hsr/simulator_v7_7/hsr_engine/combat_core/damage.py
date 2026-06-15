@@ -53,6 +53,15 @@ class DamageResolver:
     def __init__(self, rules: Any) -> None:
         self.rules = rules
 
+    def resolve_break_packet(self, packet: dict[str, Any], actor: Any, target: Any, action: dict[str, Any], events: dict[str, Any]) -> dict[str, Any]:
+        return self.rules._resolve_break_damage_packet_legacy(packet, actor, target, action, events)
+
+    def resolve_super_break_packet(self, packet: dict[str, Any], actor: Any, target: Any, action: dict[str, Any], events: dict[str, Any]) -> dict[str, Any]:
+        return self.rules._resolve_super_break_damage_packet_legacy(packet, actor, target, action, events)
+
+    def resolve_dot_tick(self, unit: Any, ctx: dict[str, Any]) -> None:
+        return self.rules._resolve_dot_tick_legacy(unit, ctx)
+
     def resolve_packet(
         self,
         packet: dict[str, Any],
@@ -82,9 +91,9 @@ class DamageResolver:
         packet["element"] = element
         damage_type = str(packet.get("damage_type", packet.get("type", "direct_damage")) or "direct_damage").lower()
         if damage_type in {"break", "break_damage", "weakness_break"}:
-            return self.rules.resolve_break_damage_packet(packet, actor, target, action, events)
+            return self.resolve_break_packet(packet, actor, target, action, events)
         if damage_type in {"super_break", "superbreak", "super_break_damage"}:
-            return self.rules.resolve_super_break_damage_packet(packet, actor, target, action, events)
+            return self.resolve_super_break_packet(packet, actor, target, action, events)
 
         scaling_stat = packet.get("scaling_stat", "atk")
         multiplier = coerce_float(packet.get("multiplier", 0.0))
@@ -446,6 +455,24 @@ class DamageApplier:
 
     def __init__(self, mutator: Any) -> None:
         self.mutator = mutator
+
+    def apply_hp_loss(
+        self,
+        target: Any,
+        amount: float,
+        ctx: dict[str, Any],
+        label: str = "hp_loss",
+        ignore_shield: bool = False,
+        carry_over_hp_bar_damage: Any | None = None,
+    ) -> dict[str, Any]:
+        return self.mutator._apply_hp_loss_legacy(
+            target,
+            amount,
+            ctx,
+            label=label,
+            ignore_shield=ignore_shield,
+            carry_over_hp_bar_damage=carry_over_hp_bar_damage,
+        )
 
     def apply_direct_damage_result(self, result: dict[str, Any], ctx: dict[str, Any]) -> DamageApplication:
         target = self.mutator.state.unit(result["target_id"])
