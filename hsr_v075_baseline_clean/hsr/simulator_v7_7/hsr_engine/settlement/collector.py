@@ -13,6 +13,7 @@ from hsr_engine.kernel import ActionRequest, ActionTransition, ProcessEvent, RNG
 from hsr_engine.transition_reducer import validate_transition_replay
 
 from .records import (
+    ActionSettlement,
     DamageRecord,
     ShieldRecord,
     HPRecord,
@@ -1333,6 +1334,7 @@ class SettlementCollector:
     def to_dict(self) -> dict[str, Any]:
         """转换为 JSON 兼容字典，供 run_route 写入 trace_entry。"""
         transition = self.transition.to_dict()
+        target_record = asdict(self.target_record) if self.target_record else None
         damage_records = [asdict(r) for r in self.damage_records]
         shield_records = [asdict(r) for r in self.shield_records]
         hp_records = [asdict(r) for r in self.hp_records]
@@ -1351,7 +1353,7 @@ class SettlementCollector:
         replay_validation = validate_transition_replay(transition)
         settlement_validation = _validate_settlement_record_consistency(
             transition,
-            target_record=asdict(self.target_record) if self.target_record else None,
+            target_record=target_record,
             hp_records=hp_records,
             shield_records=shield_records,
             sp_records=sp_records,
@@ -1371,23 +1373,23 @@ class SettlementCollector:
         replay_validation.update(settlement_validation)
         replay_validation["ok"] = replay_validation.get("ok", False) and settlement_validation["settlement_record_match"]
         transition["replay_validation"] = replay_validation
-        return {
-            "damage_records": damage_records,
-            "shield_records": shield_records,
-            "hp_records": hp_records,
-            "energy_records": energy_records,
-            "sp_records": sp_records,
-            "status_records": status_records,
-            "av_records": av_records,
-            "turn_records": turn_records,
-            "queue_records": queue_records,
-            "trigger_usage_records": trigger_usage_records,
-            "mechanic_records": mechanic_records,
-            "break_records": break_records,
-            "toughness_records": toughness_records,
-            "dot_records": dot_records,
-            "super_break_records": super_break_records,
-            "target_record": asdict(self.target_record) if self.target_record else None,
-            "settlement_record_validation": settlement_validation,
-            "transition": transition,
-        }
+        return ActionSettlement(
+            damage_records=self.damage_records,
+            shield_records=self.shield_records,
+            hp_records=self.hp_records,
+            energy_records=self.energy_records,
+            sp_records=self.sp_records,
+            status_records=self.status_records,
+            av_records=self.av_records,
+            turn_records=self.turn_records,
+            queue_records=self.queue_records,
+            trigger_usage_records=self.trigger_usage_records,
+            mechanic_records=self.mechanic_records,
+            break_records=self.break_records,
+            toughness_records=self.toughness_records,
+            dot_records=self.dot_records,
+            super_break_records=self.super_break_records,
+            target_record=self.target_record,
+            settlement_record_validation=settlement_validation,
+            transition=transition,
+        ).to_dict()

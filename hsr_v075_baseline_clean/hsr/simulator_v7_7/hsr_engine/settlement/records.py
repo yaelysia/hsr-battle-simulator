@@ -8,8 +8,72 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, asdict
+from copy import deepcopy
+from dataclasses import dataclass, field, asdict, is_dataclass
 from typing import Any
+
+
+ACTION_SETTLEMENT_ENCODING = "hsr.settlement.action.v1"
+
+
+def _record_to_dict(record: Any) -> dict[str, Any]:
+    if is_dataclass(record) and not isinstance(record, type):
+        return asdict(record)
+    if isinstance(record, dict):
+        return deepcopy(record)
+    raise TypeError(f"unsupported settlement record type: {type(record).__name__}")
+
+
+def _record_list_to_dicts(records: list[Any]) -> list[dict[str, Any]]:
+    return [_record_to_dict(record) for record in records]
+
+
+@dataclass
+class ActionSettlement:
+    """一次动作输入产生的完整结算结果。"""
+    damage_records: list[DamageRecord | dict[str, Any]] = field(default_factory=list)
+    shield_records: list[ShieldRecord | dict[str, Any]] = field(default_factory=list)
+    hp_records: list[HPRecord | dict[str, Any]] = field(default_factory=list)
+    energy_records: list[EnergyRecord | dict[str, Any]] = field(default_factory=list)
+    sp_records: list[SPRecord | dict[str, Any]] = field(default_factory=list)
+    status_records: list[StatusRecord | dict[str, Any]] = field(default_factory=list)
+    av_records: list[AVRecord | dict[str, Any]] = field(default_factory=list)
+    turn_records: list[TurnRecord | dict[str, Any]] = field(default_factory=list)
+    queue_records: list[QueueRecord | dict[str, Any]] = field(default_factory=list)
+    trigger_usage_records: list[TriggerUsageRecord | dict[str, Any]] = field(default_factory=list)
+    mechanic_records: list[MechanicRecord | dict[str, Any]] = field(default_factory=list)
+    break_records: list[BreakRecord | dict[str, Any]] = field(default_factory=list)
+    toughness_records: list[ToughnessRecord | dict[str, Any]] = field(default_factory=list)
+    dot_records: list[DotRecord | dict[str, Any]] = field(default_factory=list)
+    super_break_records: list[SuperBreakRecord | dict[str, Any]] = field(default_factory=list)
+    target_record: TargetRecord | dict[str, Any] | None = None
+    settlement_record_validation: dict[str, Any] = field(default_factory=dict)
+    transition: dict[str, Any] = field(default_factory=dict)
+    encoding: str = ACTION_SETTLEMENT_ENCODING
+
+    def to_dict(self) -> dict[str, Any]:
+        target_record = _record_to_dict(self.target_record) if self.target_record is not None else None
+        return {
+            "encoding": self.encoding,
+            "damage_records": _record_list_to_dicts(self.damage_records),
+            "shield_records": _record_list_to_dicts(self.shield_records),
+            "hp_records": _record_list_to_dicts(self.hp_records),
+            "energy_records": _record_list_to_dicts(self.energy_records),
+            "sp_records": _record_list_to_dicts(self.sp_records),
+            "status_records": _record_list_to_dicts(self.status_records),
+            "av_records": _record_list_to_dicts(self.av_records),
+            "turn_records": _record_list_to_dicts(self.turn_records),
+            "queue_records": _record_list_to_dicts(self.queue_records),
+            "trigger_usage_records": _record_list_to_dicts(self.trigger_usage_records),
+            "mechanic_records": _record_list_to_dicts(self.mechanic_records),
+            "break_records": _record_list_to_dicts(self.break_records),
+            "toughness_records": _record_list_to_dicts(self.toughness_records),
+            "dot_records": _record_list_to_dicts(self.dot_records),
+            "super_break_records": _record_list_to_dicts(self.super_break_records),
+            "target_record": target_record,
+            "settlement_record_validation": deepcopy(self.settlement_record_validation),
+            "transition": deepcopy(self.transition),
+        }
 
 
 # ---------------------------------------------------------------------------

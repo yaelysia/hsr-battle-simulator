@@ -13,6 +13,8 @@ from hsr_engine.kernel import (
 )
 
 from .records import (
+    ACTION_SETTLEMENT_ENCODING,
+    ActionSettlement,
     DamageRecord,
     ShieldRecord,
     HPRecord,
@@ -47,6 +49,8 @@ from .records import (
 from .collector import SettlementCollector
 
 __all__ = [
+    "ACTION_SETTLEMENT_ENCODING",
+    "ActionSettlement",
     "DamageRecord",
     "ShieldRecord",
     "HPRecord",
