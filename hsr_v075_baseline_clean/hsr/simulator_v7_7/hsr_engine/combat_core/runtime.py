@@ -27,6 +27,12 @@ class CombatRuntime(SimulatorRuntimeAdapter):
     def drain_queues(self, default_events: Optional[dict[str, Any]] = None) -> None:
         return self.queues.drain_queues(default_events=default_events)
 
+    def coverage_matrix(self) -> dict[str, Any]:
+        return {
+            "encoding": "hsr.clean_core.runtime_coverage.v1",
+            "effects": self.effects.coverage_matrix(),
+        }
+
     def resolve_route_step(self, step: dict[str, Any]) -> None:
         # Drain queued actions before route step unless explicitly suppressed.
         if coerce_bool(step.get("auto_resolve_queues_before", True), default=True):

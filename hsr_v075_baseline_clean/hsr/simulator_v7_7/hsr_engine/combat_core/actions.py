@@ -24,8 +24,17 @@ class ActionRuntime(SimulatorRuntimeAdapter):
                 events=events,
                 legacy_context=context,
                 actor=actor,
+                state_store=getattr(self.sim, "_state_store", None),
+                state_mutator=getattr(self.sim, "_state_mutator", None),
+                rule_evaluator=getattr(self.sim, "_rule_evaluator", None),
+                effect_registry=getattr(self.sim._combat_runtime.effects, "registry", None),
             )
             context["_transaction"] = transaction
+        else:
+            transaction.state_store = transaction.state_store or getattr(self.sim, "_state_store", None)
+            transaction.state_mutator = transaction.state_mutator or getattr(self.sim, "_state_mutator", None)
+            transaction.rule_evaluator = transaction.rule_evaluator or getattr(self.sim, "_rule_evaluator", None)
+            transaction.effect_registry = transaction.effect_registry or getattr(self.sim._combat_runtime.effects, "registry", None)
         transaction.bind_targets(targets)
         if "owner_id" not in context and actor.flags.get("owner_id"):
             context["owner_id"] = actor.flags.get("owner_id")
@@ -55,6 +64,10 @@ class ActionRuntime(SimulatorRuntimeAdapter):
             "action_resolution_id": context.get("action_resolution_id"),
             "owner_id": context.get("owner_id"),
             "_transaction": transaction,
+            "_state_store": transaction.state_store,
+            "_state_mutator": transaction.state_mutator,
+            "_rule_evaluator": transaction.rule_evaluator,
+            "_effect_registry": transaction.effect_registry,
             # Phase 2: 结算收集器通过 action_ctx 传给所有下游函数
             "_settlement": context.get("_settlement"),
             # Shared within a single action. Non-carry phase_hp boundaries

@@ -133,7 +133,18 @@ from hsr_engine.settlement import (
     AV_DELAY,
     AV_TIMELINE_TICK,
 )
-from hsr_engine.combat_core import CombatExecutor, CombatRuntime, DamageApplier, DamageResolver
+from hsr_engine.combat_core import (
+    CombatExecutor,
+    CombatRuntime,
+    DamageApplier,
+    DamageResolver,
+    RuleBook,
+    RuleEvaluator,
+    StateMutatorImpl,
+    StateStore,
+    build_canonical_ir_coverage_matrix,
+    run_clean_core_static_checks,
+)
 from hsr_engine.data import TextMapRegistry, StatusRegistry, SkillRegistry
 
 
@@ -774,6 +785,27 @@ class BattleSimulator:
         case = canonicalize_case(case)
         self.raw_case = deepcopy(case)
         self.state = BattleState.from_case(case)
+        self._rule_book = RuleBook.from_case(case)
+        self._rule_evaluator = RuleEvaluator(
+            self._rule_book,
+            callbacks={
+                "eval_condition": self.eval_condition,
+                "resolve_numeric_expr": self.resolve_numeric_expr,
+                "resolve_dynamic_element": self.resolve_dynamic_element,
+                "contextual_stat": self.contextual_stat,
+                "applicable_status_modifiers": self.applicable_status_modifiers,
+                "resolve_effect_targets": self.resolve_effect_targets,
+            },
+        )
+        self._state_store = StateStore(self.state)
+        self._state_mutator = StateMutatorImpl(
+            self._state_store,
+            unit_factory=UnitState.from_dict,
+            status_factory=StatusEffect.from_dict,
+            record_change=self.record_committed_state_change,
+            queue_normalizer=self.normalized_queue_name,
+            error_type=SimulatorError,
+        )
         self.settings = case.get("settings", {})
         self._queued_action_transitions: list[dict[str, Any]] = []
         self._action_resolution_counter = 0
@@ -958,135 +990,8 @@ class BattleSimulator:
                 sync()
 
     def commit_state_change(self, change: StateChange, ctx: Optional[dict[str, Any]] = None) -> StateChange:
-        """Apply a normalized state change to BattleState and attach it to the current transition."""
-        if change.scope == "global" and change.field_path == "global.skill_points":
-            self.state.skill_points = int(change.new_value)
-        elif change.scope == "global" and change.field_path == "global.skill_point_cap":
-            self.state.skill_point_cap = int(change.new_value)
-        elif change.scope == "global" and change.field_path == "global.av":
-            self.state.av = float(change.new_value)
-        elif change.scope == "global" and change.field_path == "global.wave_index":
-            self.state.wave_index = int(change.new_value)
-        elif change.scope == "global" and change.field_path.startswith("global.flags."):
-            key = change.field_path[len("global.flags."):]
-            if change.delta == "remove":
-                self.state.global_flags.pop(key, None)
-            else:
-                self.state.global_flags[key] = deepcopy(change.new_value)
-        elif change.scope == "battle" and change.field_path.startswith("battle.queues."):
-            queue_name = change.field_path[len("battle.queues."):]
-            queue = self.battle_queue(queue_name)
-            queue.clear()
-            queue.extend(deepcopy(change.new_value or []))
-        elif change.scope == "battle" and change.field_path.startswith("battle.trigger_usage."):
-            key = change.field_path[len("battle.trigger_usage."):]
-            if change.delta == "remove":
-                self.state.trigger_usage.pop(key, None)
-            else:
-                self.state.trigger_usage[key] = int(change.new_value)
-        elif change.scope == "battle" and change.field_path.startswith("battle.units."):
-            unit_id = change.field_path[len("battle.units."):]
-            if change.new_value is None:
-                self.state.units.pop(unit_id, None)
-            else:
-                raw = deepcopy(change.new_value)
-                if isinstance(raw, UnitState):
-                    unit = raw
-                elif isinstance(raw, dict):
-                    unit = UnitState.from_dict(unit_id, raw)
-                else:
-                    raise SimulatorError(f"Unit StateChange new_value must be a dict: {change.field_path}")
-                self.state.units[unit_id] = unit
-        elif change.scope == "unit" and change.field_path == "unit.energy":
-            self.state.unit(change.subject_id).energy = float(change.new_value)
-        elif change.scope == "unit" and change.field_path == "unit.hp":
-            self.state.unit(change.subject_id).hp = float(change.new_value)
-        elif change.scope == "unit" and change.field_path == "unit.shield":
-            self.state.unit(change.subject_id).shield = float(change.new_value)
-        elif change.scope == "unit" and change.field_path == "unit.max_hp":
-            self.state.unit(change.subject_id).max_hp = float(change.new_value)
-        elif change.scope == "unit" and change.field_path == "unit.hp_bars_remaining":
-            self.state.unit(change.subject_id).hp_bars_remaining = int(change.new_value)
-        elif change.scope == "unit" and change.field_path == "unit.alive":
-            self.state.unit(change.subject_id).alive = bool(change.new_value)
-        elif change.scope == "unit" and change.field_path == "unit.toughness":
-            unit = self.state.unit(change.subject_id)
-            unit.toughness = None if change.new_value is None else float(change.new_value)
-        elif change.scope == "unit" and change.field_path == "unit.max_toughness":
-            unit = self.state.unit(change.subject_id)
-            unit.max_toughness = None if change.new_value is None else float(change.new_value)
-        elif change.scope == "unit" and change.field_path == "unit.is_broken":
-            self.state.unit(change.subject_id).is_broken = bool(change.new_value)
-        elif change.scope == "unit" and change.field_path == "unit.remaining_av":
-            self.state.unit(change.subject_id).remaining_av = float(change.new_value)
-        elif change.scope == "unit" and change.field_path.startswith("unit.flags."):
-            key = change.field_path[len("unit.flags."):]
-            if change.delta == "remove":
-                self.state.unit(change.subject_id).flags.pop(key, None)
-            else:
-                self.state.unit(change.subject_id).flags[key] = deepcopy(change.new_value)
-        elif change.scope == "unit" and change.field_path.startswith("unit.actions."):
-            action_id = change.field_path[len("unit.actions."):]
-            unit = self.state.unit(change.subject_id)
-            if change.delta == "remove":
-                unit.action_defs.pop(action_id, None)
-            else:
-                unit.action_defs[action_id] = deepcopy(change.new_value)
-        elif change.scope == "unit" and change.field_path.startswith("unit.statuses."):
-            path = change.field_path[len("unit.statuses."):]
-            unit = self.state.unit(change.subject_id)
-            if "." not in path:
-                status_id = path
-                if not status_id:
-                    raise SimulatorError(f"Unsupported status StateChange path: {change.field_path}")
-                if change.new_value is None:
-                    unit.statuses = [row for row in unit.statuses if row.id != status_id]
-                else:
-                    raw = deepcopy(change.new_value)
-                    if isinstance(raw, StatusEffect):
-                        raw = raw.to_json()
-                    if not isinstance(raw, dict):
-                        raise SimulatorError(f"Status StateChange new_value must be a dict: {change.field_path}")
-                    if str(raw.get("id", status_id)) != status_id:
-                        raise SimulatorError(f"Status StateChange id mismatch: {status_id} != {raw.get('id')}")
-                    raw["id"] = status_id
-                    replacement = StatusEffect.from_dict(raw)
-                    for idx, row in enumerate(unit.statuses):
-                        if row.id == status_id:
-                            unit.statuses[idx] = replacement
-                            break
-                    else:
-                        unit.statuses.append(replacement)
-            else:
-                status = None
-                status_field_path = ""
-                for row in sorted(unit.statuses, key=lambda item: len(item.id), reverse=True):
-                    prefix = f"{row.id}."
-                    if path.startswith(prefix):
-                        status = row
-                        status_field_path = path[len(prefix):]
-                        break
-                if status is None or not status_field_path:
-                    raise SimulatorError(f"Unsupported status StateChange path: {change.field_path}")
-                if status_field_path in {"stacks", "max_stacks"}:
-                    setattr(status, status_field_path, int(change.new_value))
-                elif status_field_path == "duration_value":
-                    status.duration_value = None if change.new_value is None else int(change.new_value)
-                elif status_field_path == "duration_type":
-                    status.duration_type = None if change.new_value is None else str(change.new_value)
-                elif status_field_path == "duration_extra_turn_consumes":
-                    status.duration_extra_turn_consumes = bool(change.new_value)
-                elif status_field_path.startswith("modifiers."):
-                    key = status_field_path[len("modifiers."):]
-                    if not key:
-                        raise SimulatorError(f"Unsupported status modifier StateChange path: {change.field_path}")
-                    status.modifiers[key] = deepcopy(change.new_value)
-                else:
-                    raise SimulatorError(f"Unsupported status StateChange field: {status_field_path}")
-        else:
-            raise SimulatorError(f"Unsupported StateChange commit path: {change.scope}:{change.field_path}")
-        self.record_committed_state_change(ctx, change)
-        return change
+        """Apply a normalized state change through the clean-core mutator."""
+        return self._state_mutator.commit_state_change(change, ctx)
 
     def unit_state_payload(self, unit: UnitState) -> dict[str, Any]:
         payload = unit.to_json()
@@ -8135,6 +8040,10 @@ class BattleSimulator:
         return {"attempted_count": attempted, "resolved_count": resolved, "unresolved_count": unresolved, "by_property": by_property, "records": records}
 
     def result(self) -> dict[str, Any]:
+        clean_core_coverage = self._combat_runtime.coverage_matrix()
+        clean_core_coverage["rules"] = self._rule_evaluator.coverage_matrix()
+        clean_core_coverage["canonical_ir"] = build_canonical_ir_coverage_matrix(self.raw_case, self._combat_runtime.effects.registry)
+        clean_core_coverage["static_checks"] = run_clean_core_static_checks(Path(__file__).parent / "hsr_engine" / "combat_core")
         return {
             "state": self.state.to_json(),
             "scene": self.full_scene_snapshot(),
@@ -8146,6 +8055,7 @@ class BattleSimulator:
                 "property_hint_applications": self.summarize_property_hint_applications(),
                 "symbolic_formula_applications": self.summarize_symbolic_formula_applications(),
                 "engine_property_reads": self.summarize_engine_property_reads(),
+                "clean_core_coverage": clean_core_coverage,
             },
         }
 

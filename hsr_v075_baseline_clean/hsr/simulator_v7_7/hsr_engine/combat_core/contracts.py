@@ -51,6 +51,10 @@ class ActionTransaction:
     rng_events: list[RNGEvent] = field(default_factory=list)
     process_events: list[ProcessEvent] = field(default_factory=list)
     settlement_payload: dict[str, Any] = field(default_factory=dict)
+    state_store: Any = None
+    state_mutator: Any = None
+    rule_evaluator: Any = None
+    effect_registry: Any = None
     legacy_context: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
@@ -63,6 +67,10 @@ class ActionTransaction:
         action: dict[str, Any] | None = None,
         actor: Any = None,
         events: dict[str, Any] | None = None,
+        state_store: Any = None,
+        state_mutator: Any = None,
+        rule_evaluator: Any = None,
+        effect_registry: Any = None,
     ) -> "ActionTransaction":
         settlement = settlement or SettlementCollector()
         if not settlement.transition.request.action_id:
@@ -76,6 +84,10 @@ class ActionTransaction:
             events=deepcopy(events or {}),
             requested_target_ids=list(action_input.target_ids or []),
             resolved_target_ids=list(action_input.target_ids or []),
+            state_store=state_store,
+            state_mutator=state_mutator,
+            rule_evaluator=rule_evaluator,
+            effect_registry=effect_registry,
             legacy_context=dict(legacy_context or {}),
         )
 
@@ -88,6 +100,10 @@ class ActionTransaction:
         events: dict[str, Any],
         legacy_context: dict[str, Any],
         actor: Any = None,
+        state_store: Any = None,
+        state_mutator: Any = None,
+        rule_evaluator: Any = None,
+        effect_registry: Any = None,
     ) -> "ActionTransaction":
         settlement = legacy_context.get("_settlement") if isinstance(legacy_context, dict) else None
         if not isinstance(settlement, SettlementCollector):
@@ -108,6 +124,10 @@ class ActionTransaction:
             action=action,
             actor=actor,
             events=events,
+            state_store=state_store,
+            state_mutator=state_mutator,
+            rule_evaluator=rule_evaluator,
+            effect_registry=effect_registry,
         )
 
     def to_legacy_context(self) -> dict[str, Any]:
@@ -120,6 +140,10 @@ class ActionTransaction:
         ctx.setdefault("action", self.action_input.action)
         ctx.setdefault("events", deepcopy(self.events))
         ctx.setdefault("phase_locked_targets", self.phase_locked_targets)
+        ctx.setdefault("_state_store", self.state_store)
+        ctx.setdefault("_state_mutator", self.state_mutator)
+        ctx.setdefault("_rule_evaluator", self.rule_evaluator)
+        ctx.setdefault("_effect_registry", self.effect_registry)
         return ctx
 
     def bind_targets(self, target_ids: list[str]) -> None:
