@@ -56,13 +56,46 @@ class CoverageMatrix:
 
 
 def build_coverage_matrix(report: DiscoveryReport, ir: CanonicalIR) -> CoverageMatrix:
+    lowered_opcodes: Counter[str] = Counter()
+    executable_opcodes: Counter[str] = Counter()
+    for effect in ir.effects:
+        lowered_opcodes[effect.opcode] += 1
+        if effect.coverage_status == "executable":
+            executable_opcodes[effect.opcode] += 1
+    for condition in ir.conditions:
+        lowered_opcodes[condition.opcode] += 1
+        if condition.coverage_status == "executable":
+            executable_opcodes[condition.opcode] += 1
+
     opcode_status: dict[str, dict[str, Any]] = {}
     for opcode, count in sorted(report.gamecore_type_counts.items()):
         status = classify_opcode(opcode)
-        opcode_status[opcode] = {"count": count, "status": status}
+        fidelity_status = _fidelity_status(
+            support_status=status,
+            lowered=lowered_opcodes[opcode],
+            executable=executable_opcodes[opcode],
+        )
+        opcode_status[opcode] = {
+            "count": count,
+            "status": status,
+            "fidelity_status": fidelity_status,
+            "lowered": lowered_opcodes[opcode],
+            "executable": executable_opcodes[opcode],
+            "validated": 0,
+            "reason": explain_opcode_status(opcode, status, fidelity_status),
+        }
 
+    lowered_events = Counter(trigger.event for trigger in ir.triggers)
     event_status = {
-        event: {"count": count, "status": "audit_only"}
+        event: {
+            "count": count,
+            "status": "audit_only",
+            "fidelity_status": "lowered" if lowered_events[event] else "discovered_only",
+            "lowered": lowered_events[event],
+            "executable": 0,
+            "validated": 0,
+            "reason": "event window discovered; execution order is not validated in this baseline",
+        }
         for event, count in sorted(report.event_counts.items())
     }
 
@@ -93,3 +126,24 @@ def classify_opcode(opcode: str) -> str:
         return "supported_alias"
     return "unsupported"
 
+
+def explain_opcode_status(opcode: str, support_status: str, fidelity_status: str) -> str:
+    if fidelity_status == "executable":
+        return "opcode has at least one executable Canonical IR path"
+    if fidelity_status == "lowered":
+        return "opcode is lowered to Canonical IR but runtime semantics are not executable yet"
+    if support_status == "supported_alias":
+        return "target alias is recognized but not validated as a complete runtime mechanic"
+    if support_status == "audit_only":
+        return "opcode is recognized as combat-relevant but intentionally audit-only in this baseline"
+    return f"opcode {opcode!r} has no v8 semantic mapping yet"
+
+
+def _fidelity_status(support_status: str, lowered: int, executable: int) -> str:
+    if executable:
+        return "executable"
+    if lowered:
+        return "lowered"
+    if support_status == "unsupported":
+        return "blocked"
+    return "discovered_only"

@@ -1,0 +1,94 @@
+{
+  "baseline_version": "v0_200",
+  "build": {
+    "outputs": {
+      "canonical_ir": "validation_outputs_v0_203/canonical_ir_v0_203.json",
+      "coverage_matrix": "validation_outputs_v0_203/coverage_matrix_v0_203.json",
+      "discovery": "validation_outputs_v0_203/tbgd_discovery_v0_203.json",
+      "fidelity_matrix": "validation_outputs_v0_203/fidelity_matrix_v0_203.json"
+    },
+    "summary": {
+      "coverage_opcode_count": 1145,
+      "discovery_files": 8667,
+      "ir_conditions": 1309,
+      "ir_effects": 3503,
+      "ir_entities": 415,
+      "ir_formulas": 3151,
+      "ir_triggers": 1665
+    },
+    "tbgd_root": "/home/zhangjinhao/code/hsr/turnbasedgamedata-main"
+  },
+  "fidelity": {
+    "event_count": 201,
+    "event_lifecycle_counts": {
+      "discovered_only": 91,
+      "lowered": 110
+    },
+    "opcode_count": 1145,
+    "opcode_lifecycle_counts": {
+      "blocked": 861,
+      "discovered_only": 60,
+      "executable": 1,
+      "lowered": 223
+    }
+  },
+  "ok": true,
+  "replay": {
+    "errors": [],
+    "mutation_count": 1,
+    "ok": true
+  },
+  "settlement_traceability": {
+    "checked_records": 1,
+    "errors": [],
+    "mutation_linked_records": 0,
+    "ok": true,
+    "process_only_records": 1
+  },
+  "snapshot_completeness": {
+    "after": {
+      "errors": [],
+      "missing_paths": [],
+      "ok": true
+    },
+    "before": {
+      "errors": [],
+      "missing_paths": [],
+      "ok": true
+    },
+    "negative_missing_field_check": {
+      "errors": [],
+      "missing_paths": [
+        "timeline"
+      ],
+      "ok": false
+    }
+  },
+  "static_checks": {
+    "ok": true,
+    "violations": []
+  },
+  "transition_contract": {
+    "errors": [],
+    "missing_keys": [],
+    "ok": true,
+    "settlement_traceability": {
+      "checked_records": 1,
+      "errors": [],
+      "mutation_linked_records": 0,
+      "ok": true,
+      "process_only_records": 1
+    },
+    "snapshot_after": {
+      "errors": [],
+      "missing_paths": [],
+      "ok": true
+    },
+    "snapshot_before": {
+      "errors": [],
+      "missing_paths": [],
+      "ok": true
+    }
+  },
+  "version": "v0_203"
+}

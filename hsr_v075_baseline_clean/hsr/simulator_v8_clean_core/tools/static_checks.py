@@ -11,6 +11,9 @@ BANNED_TOKENS = (
     "SimulatorRuntimeAdapter",
     "_legacy_effects",
     "action_ctx",
+    "turnbasedgamedata-main",
+    "json.load",
+    "json.loads",
 )
 
 
@@ -43,4 +46,3 @@ def run_static_checks(package_root: Path) -> StaticCheckResult:
                             }
                         )
     return StaticCheckResult(ok=not violations, violations=tuple(violations))
-

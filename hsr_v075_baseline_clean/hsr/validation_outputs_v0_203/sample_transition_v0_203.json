@@ -1,0 +1,416 @@
+{
+  "after": {
+    "battle": {
+      "action_index": 1,
+      "current_window": "idle",
+      "phase": "validation",
+      "turn_owner_id": "ally:seele",
+      "wave_index": 0
+    },
+    "coverage": {},
+    "event_index": 1,
+    "global_flags": {
+      "current_window": "idle",
+      "phase": "validation",
+      "turn_owner_id": "ally:seele"
+    },
+    "max_skill_points": 5,
+    "metadata": {
+      "rng_state": "deterministic",
+      "snapshot_contract": "v0_203"
+    },
+    "pending_events": [],
+    "queues": {},
+    "resources": {
+      "max_skill_points": 5,
+      "skill_points": 3
+    },
+    "rng_events": [],
+    "rng_state": "deterministic",
+    "settlement": {},
+    "skill_points": 3,
+    "targeting": {},
+    "teams": {
+      "ally": [
+        "ally:seele"
+      ],
+      "enemy": [
+        "enemy:dummy"
+      ],
+      "summon": []
+    },
+    "timeline": {
+      "action_values": {
+        "ally:seele": 0.0,
+        "enemy:dummy": 0.0
+      },
+      "queues": {},
+      "turn_owner_id": "ally:seele"
+    },
+    "units": {
+      "ally:seele": {
+        "action_value": 0.0,
+        "attack": 3200.0,
+        "base_stats": {
+          "attack": 3200.0,
+          "defense": 900.0,
+          "max_hp": 3000.0,
+          "speed": 143.0
+        },
+        "defense": 900.0,
+        "derived_stats": {
+          "break_damage_added_ratio": 0.0,
+          "critical_chance": 0.0,
+          "critical_damage": 0.0,
+          "damage_added_ratio": 0.0,
+          "effect_hit_rate": 0.0,
+          "effect_resistance": 0.0
+        },
+        "energy": 60.0,
+        "flags": {
+          "position": 1,
+          "weaknesses": [
+            "Quantum"
+          ]
+        },
+        "hp": 3000.0,
+        "level": 80,
+        "max_energy": 120.0,
+        "max_hp": 3000.0,
+        "max_toughness": 0.0,
+        "modifiers": [],
+        "position": 1,
+        "recoverable_hp": 0.0,
+        "resources": {},
+        "shield": 0.0,
+        "side": "ally",
+        "speed": 143.0,
+        "status_details": [],
+        "statuses": [],
+        "template_id": "avatar:1102",
+        "template_source": {
+          "id": "avatar:1102",
+          "kind": "avatar"
+        },
+        "toughness": 0.0,
+        "toughness_state": {
+          "break_delay": 0.0,
+          "broken": false,
+          "current": 0.0,
+          "maximum": 0.0,
+          "weakness_locked": false,
+          "weaknesses": [
+            "Quantum"
+          ]
+        },
+        "unit_id": "ally:seele"
+      },
+      "enemy:dummy": {
+        "action_value": 0.0,
+        "attack": 1000.0,
+        "base_stats": {
+          "attack": 1000.0,
+          "defense": 1000.0,
+          "max_hp": 10000.0,
+          "speed": 100.0
+        },
+        "defense": 1000.0,
+        "derived_stats": {
+          "break_damage_added_ratio": 0.0,
+          "critical_chance": 0.0,
+          "critical_damage": 0.0,
+          "damage_added_ratio": 0.0,
+          "effect_hit_rate": 0.0,
+          "effect_resistance": 0.0
+        },
+        "energy": 0.0,
+        "flags": {
+          "position": 1,
+          "weaknesses": [
+            "Quantum"
+          ]
+        },
+        "hp": 10000.0,
+        "level": 80,
+        "max_energy": 0.0,
+        "max_hp": 10000.0,
+        "max_toughness": 90.0,
+        "modifiers": [],
+        "position": 1,
+        "recoverable_hp": 0.0,
+        "resources": {},
+        "shield": 0.0,
+        "side": "enemy",
+        "speed": 100.0,
+        "status_details": [],
+        "statuses": [],
+        "template_id": "monster:dummy",
+        "template_source": {
+          "id": "monster:dummy",
+          "kind": "monster"
+        },
+        "toughness": 90.0,
+        "toughness_state": {
+          "break_delay": 0.0,
+          "broken": false,
+          "current": 90.0,
+          "maximum": 90.0,
+          "weakness_locked": false,
+          "weaknesses": [
+            "Quantum"
+          ]
+        },
+        "unit_id": "enemy:dummy"
+      }
+    },
+    "wave_index": 0
+  },
+  "before": {
+    "battle": {
+      "action_index": 0,
+      "current_window": "idle",
+      "phase": "validation",
+      "turn_owner_id": "ally:seele",
+      "wave_index": 0
+    },
+    "coverage": {},
+    "event_index": 0,
+    "global_flags": {
+      "current_window": "idle",
+      "phase": "validation",
+      "turn_owner_id": "ally:seele"
+    },
+    "max_skill_points": 5,
+    "metadata": {
+      "rng_state": "deterministic",
+      "snapshot_contract": "v0_203"
+    },
+    "pending_events": [],
+    "queues": {},
+    "resources": {
+      "max_skill_points": 5,
+      "skill_points": 3
+    },
+    "rng_events": [],
+    "rng_state": "deterministic",
+    "settlement": {},
+    "skill_points": 3,
+    "targeting": {},
+    "teams": {
+      "ally": [
+        "ally:seele"
+      ],
+      "enemy": [
+        "enemy:dummy"
+      ],
+      "summon": []
+    },
+    "timeline": {
+      "action_values": {
+        "ally:seele": 0.0,
+        "enemy:dummy": 0.0
+      },
+      "queues": {},
+      "turn_owner_id": "ally:seele"
+    },
+    "units": {
+      "ally:seele": {
+        "action_value": 0.0,
+        "attack": 3200.0,
+        "base_stats": {
+          "attack": 3200.0,
+          "defense": 900.0,
+          "max_hp": 3000.0,
+          "speed": 143.0
+        },
+        "defense": 900.0,
+        "derived_stats": {
+          "break_damage_added_ratio": 0.0,
+          "critical_chance": 0.0,
+          "critical_damage": 0.0,
+          "damage_added_ratio": 0.0,
+          "effect_hit_rate": 0.0,
+          "effect_resistance": 0.0
+        },
+        "energy": 60.0,
+        "flags": {
+          "position": 1,
+          "weaknesses": [
+            "Quantum"
+          ]
+        },
+        "hp": 3000.0,
+        "level": 80,
+        "max_energy": 120.0,
+        "max_hp": 3000.0,
+        "max_toughness": 0.0,
+        "modifiers": [],
+        "position": 1,
+        "recoverable_hp": 0.0,
+        "resources": {},
+        "shield": 0.0,
+        "side": "ally",
+        "speed": 143.0,
+        "status_details": [],
+        "statuses": [],
+        "template_id": "avatar:1102",
+        "template_source": {
+          "id": "avatar:1102",
+          "kind": "avatar"
+        },
+        "toughness": 0.0,
+        "toughness_state": {
+          "break_delay": 0.0,
+          "broken": false,
+          "current": 0.0,
+          "maximum": 0.0,
+          "weakness_locked": false,
+          "weaknesses": [
+            "Quantum"
+          ]
+        },
+        "unit_id": "ally:seele"
+      },
+      "enemy:dummy": {
+        "action_value": 0.0,
+        "attack": 1000.0,
+        "base_stats": {
+          "attack": 1000.0,
+          "defense": 1000.0,
+          "max_hp": 10000.0,
+          "speed": 100.0
+        },
+        "defense": 1000.0,
+        "derived_stats": {
+          "break_damage_added_ratio": 0.0,
+          "critical_chance": 0.0,
+          "critical_damage": 0.0,
+          "damage_added_ratio": 0.0,
+          "effect_hit_rate": 0.0,
+          "effect_resistance": 0.0
+        },
+        "energy": 0.0,
+        "flags": {
+          "position": 1,
+          "weaknesses": [
+            "Quantum"
+          ]
+        },
+        "hp": 10000.0,
+        "level": 80,
+        "max_energy": 0.0,
+        "max_hp": 10000.0,
+        "max_toughness": 90.0,
+        "modifiers": [],
+        "position": 1,
+        "recoverable_hp": 0.0,
+        "resources": {},
+        "shield": 0.0,
+        "side": "enemy",
+        "speed": 100.0,
+        "status_details": [],
+        "statuses": [],
+        "template_id": "monster:dummy",
+        "template_source": {
+          "id": "monster:dummy",
+          "kind": "monster"
+        },
+        "toughness": 90.0,
+        "toughness_state": {
+          "break_delay": 0.0,
+          "broken": false,
+          "current": 90.0,
+          "maximum": 90.0,
+          "weakness_locked": false,
+          "weaknesses": [
+            "Quantum"
+          ]
+        },
+        "unit_id": "enemy:dummy"
+      }
+    },
+    "wave_index": 0
+  },
+  "command": {
+    "action_id": "avatar_skill:110201",
+    "actor_id": "ally:seele",
+    "metadata": {
+      "validation": "v0_203"
+    },
+    "queue_name": null,
+    "source": "manual",
+    "target_ids": [
+      "enemy:dummy"
+    ]
+  },
+  "contract_validation": {},
+  "coverage": {
+    "executor": "v0_200_transaction_contract"
+  },
+  "events": [
+    {
+      "event_id": "event:1:action_requested",
+      "event_type": "action.requested",
+      "payload": {
+        "action_id": "avatar_skill:110201",
+        "source": "manual"
+      },
+      "process_only": true,
+      "source_id": "ally:seele",
+      "target_id": null,
+      "window": "action_request"
+    }
+  ],
+  "mutations": [
+    {
+      "after": 1,
+      "before": 0,
+      "metadata": {},
+      "mutation_id": "mutation:1:event_index",
+      "op": "set",
+      "path": [
+        "event_index"
+      ],
+      "reason": "action transaction opened",
+      "source": "combat_executor"
+    }
+  ],
+  "rng_events": [],
+  "settlement": {
+    "action_id": "avatar_skill:110201",
+    "actor_id": "ally:seele",
+    "records": [
+      {
+        "mutation_id": null,
+        "payload": {
+          "event": "action.requested",
+          "rule_known": false
+        },
+        "process_only": true,
+        "record_type": "process",
+        "source": "combat_executor",
+        "trace": {
+          "event_id": "event:1:action_requested"
+        }
+      }
+    ],
+    "target_ids": [
+      "enemy:dummy"
+    ]
+  },
+  "target_resolution": {
+    "legal": [
+      "enemy:dummy"
+    ],
+    "metadata": {},
+    "reason": "explicit_targets_checked",
+    "rejected": [],
+    "requested": [
+      "enemy:dummy"
+    ],
+    "selected": [
+      "enemy:dummy"
+    ],
+    "source": "combat_executor"
+  }
+}

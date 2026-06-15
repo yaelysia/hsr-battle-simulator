@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Literal
 
 
 JSONValue = None | bool | int | float | str | list["JSONValue"] | dict[str, "JSONValue"]
@@ -35,22 +37,52 @@ class UnitState:
     resources: dict[str, float] = field(default_factory=dict)
 
     def to_snapshot(self) -> dict[str, JSONValue]:
+        shield = float(self.resources.get("shield", 0.0))
+        recoverable_hp = float(self.resources.get("recoverable_hp", 0.0))
         return {
             "unit_id": self.unit_id,
             "side": self.side,
             "template_id": self.template_id,
+            "template_source": {"kind": self.template_id.split(":", 1)[0], "id": self.template_id},
+            "position": self.flags.get("position"),
             "level": self.level,
             "max_hp": self.max_hp,
             "hp": self.hp,
             "attack": self.attack,
             "defense": self.defense,
             "speed": self.speed,
+            "base_stats": {
+                "max_hp": self.max_hp,
+                "attack": self.attack,
+                "defense": self.defense,
+                "speed": self.speed,
+            },
+            "derived_stats": {
+                "critical_chance": float(self.resources.get("critical_chance", 0.0)),
+                "critical_damage": float(self.resources.get("critical_damage", 0.0)),
+                "damage_added_ratio": float(self.resources.get("damage_added_ratio", 0.0)),
+                "break_damage_added_ratio": float(self.resources.get("break_damage_added_ratio", 0.0)),
+                "effect_hit_rate": float(self.resources.get("effect_hit_rate", 0.0)),
+                "effect_resistance": float(self.resources.get("effect_resistance", 0.0)),
+            },
             "energy": self.energy,
             "max_energy": self.max_energy,
+            "shield": shield,
+            "recoverable_hp": recoverable_hp,
             "toughness": self.toughness,
             "max_toughness": self.max_toughness,
+            "toughness_state": {
+                "current": self.toughness,
+                "maximum": self.max_toughness,
+                "weaknesses": list(self.flags.get("weaknesses", ())),
+                "weakness_locked": bool(self.flags.get("weakness_locked", False)),
+                "broken": bool(self.flags.get("broken", False)),
+                "break_delay": float(self.resources.get("break_delay", 0.0)),
+            },
             "action_value": self.action_value,
             "statuses": list(self.statuses),
+            "status_details": list(self.flags.get("status_details", ())),
+            "modifiers": list(self.flags.get("modifiers", ())),
             "flags": dict(sorted(self.flags.items())),
             "resources": dict(sorted(self.resources.items())),
         }
@@ -71,16 +103,49 @@ class BattleState:
 
     def snapshot(self) -> "Snapshot":
         units = {unit_id: unit.to_snapshot() for unit_id, unit in sorted(self.units.items())}
+        teams = {
+            "ally": [unit_id for unit_id, unit in sorted(self.units.items()) if unit.side == "ally"],
+            "enemy": [unit_id for unit_id, unit in sorted(self.units.items()) if unit.side == "enemy"],
+            "summon": [unit_id for unit_id, unit in sorted(self.units.items()) if unit.side == "summon"],
+        }
         return Snapshot(
             {
+                "battle": {
+                    "wave_index": self.wave_index,
+                    "phase": str(self.global_flags.get("phase", "setup")),
+                    "current_window": str(self.global_flags.get("current_window", "idle")),
+                    "action_index": self.event_index,
+                    "turn_owner_id": self.global_flags.get("turn_owner_id"),
+                },
                 "event_index": self.event_index,
                 "global_flags": dict(sorted(self.global_flags.items())),
                 "max_skill_points": self.max_skill_points,
+                "metadata": {
+                    "snapshot_contract": "v0_203",
+                    "rng_state": self.rng_state,
+                },
+                "pending_events": list(self.global_flags.get("pending_events", ())),
                 "queues": {key: list(value) for key, value in sorted(self.queues.items())},
+                "resources": {
+                    "skill_points": self.skill_points,
+                    "max_skill_points": self.max_skill_points,
+                },
                 "rng_state": self.rng_state,
+                "rng_events": list(self.global_flags.get("rng_events", ())),
                 "skill_points": self.skill_points,
+                "targeting": dict(self.global_flags.get("targeting", {})),
+                "teams": teams,
+                "timeline": {
+                    "turn_owner_id": self.global_flags.get("turn_owner_id"),
+                    "action_values": {
+                        unit_id: unit.action_value for unit_id, unit in sorted(self.units.items())
+                    },
+                    "queues": {key: list(value) for key, value in sorted(self.queues.items())},
+                },
                 "units": units,
                 "wave_index": self.wave_index,
+                "settlement": dict(self.global_flags.get("settlement", {})),
+                "coverage": dict(self.global_flags.get("coverage", {})),
             }
         )
 
@@ -110,7 +175,86 @@ class GameEvent:
     event_type: str
     source_id: str | None = None
     target_id: str | None = None
+    event_id: str = ""
+    window: str = "unspecified"
+    process_only: bool = True
     payload: dict[str, JSONValue] = field(default_factory=dict)
+
+    def to_json(self) -> dict[str, JSONValue]:
+        event_id = self.event_id or _stable_id(
+            "event",
+            {
+                "event_type": self.event_type,
+                "source_id": self.source_id,
+                "target_id": self.target_id,
+                "window": self.window,
+                "payload": self.payload,
+            },
+        )
+        return {
+            "event_id": event_id,
+            "event_type": self.event_type,
+            "source_id": self.source_id,
+            "target_id": self.target_id,
+            "window": self.window,
+            "process_only": self.process_only,
+            "payload": self.payload,
+        }
+
+
+@dataclass(frozen=True)
+class RNGEvent:
+    rng_type: str
+    source: str
+    result: JSONValue
+    event_id: str = ""
+    before_state: str | None = None
+    after_state: str | None = None
+    metadata: dict[str, JSONValue] = field(default_factory=dict)
+
+    def to_json(self) -> dict[str, JSONValue]:
+        event_id = self.event_id or _stable_id(
+            "rng",
+            {
+                "rng_type": self.rng_type,
+                "source": self.source,
+                "result": self.result,
+                "before_state": self.before_state,
+                "after_state": self.after_state,
+                "metadata": self.metadata,
+            },
+        )
+        return {
+            "event_id": event_id,
+            "rng_type": self.rng_type,
+            "source": self.source,
+            "before_state": self.before_state,
+            "after_state": self.after_state,
+            "result": self.result,
+            "metadata": self.metadata,
+        }
+
+
+@dataclass(frozen=True)
+class TargetResolution:
+    requested: tuple[str, ...] = ()
+    legal: tuple[str, ...] = ()
+    selected: tuple[str, ...] = ()
+    rejected: tuple[str, ...] = ()
+    reason: str = "not_resolved"
+    source: str = "target_system"
+    metadata: dict[str, JSONValue] = field(default_factory=dict)
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "requested": list(self.requested),
+            "legal": list(self.legal),
+            "selected": list(self.selected),
+            "rejected": list(self.rejected),
+            "reason": self.reason,
+            "source": self.source,
+            "metadata": self.metadata,
+        }
 
 
 @dataclass(frozen=True)
@@ -128,9 +272,25 @@ class Mutation:
     reason: str
     source: str
     metadata: dict[str, JSONValue] = field(default_factory=dict)
+    mutation_id: str = ""
+
+    def stable_id(self) -> str:
+        return self.mutation_id or _stable_id(
+            "mutation",
+            {
+                "op": self.op,
+                "path": list(self.path),
+                "before": self.before,
+                "after": self.after,
+                "reason": self.reason,
+                "source": self.source,
+                "metadata": self.metadata,
+            },
+        )
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
+            "mutation_id": self.stable_id(),
             "op": self.op,
             "path": list(self.path),
             "before": self.before,
@@ -170,7 +330,10 @@ class ActionTransaction:
 class BattleTransition:
     transaction: ActionTransaction
     after: Snapshot
+    target_resolution: TargetResolution = field(default_factory=TargetResolution)
+    rng_events: tuple[RNGEvent, ...] = ()
     coverage: dict[str, JSONValue] = field(default_factory=dict)
+    contract_validation: dict[str, JSONValue] = field(default_factory=dict)
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -184,19 +347,19 @@ class BattleTransition:
                 "queue_name": self.transaction.command.queue_name,
                 "metadata": self.transaction.command.metadata,
             },
-            "events": [
-                {
-                    "event_type": event.event_type,
-                    "source_id": event.source_id,
-                    "target_id": event.target_id,
-                    "payload": event.payload,
-                }
-                for event in self.transaction.events
-            ],
+            "target_resolution": self.target_resolution.to_json(),
+            "events": [event.to_json() for event in self.transaction.events],
+            "rng_events": [event.to_json() for event in self.rng_events],
             "mutations": [mutation.to_json() for mutation in self.transaction.mutations],
             "settlement": self.transaction.settlement.to_json()
             if self.transaction.settlement
             else None,
             "coverage": self.coverage,
+            "contract_validation": self.contract_validation,
         }
 
+
+def _stable_id(prefix: str, payload: dict[str, JSONValue]) -> str:
+    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
+    return f"{prefix}:{digest}"
