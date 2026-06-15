@@ -3183,13 +3183,13 @@
   "ir_summary": {
     "conditions": 1309,
     "coverage_status_counts": {
-      "audit_only": 6261,
+      "audit_only": 8489,
       "executable": 1075,
       "supported_alias": 5,
       "unsupported": 2702
     },
     "effects": 3503,
-    "entities": 415,
+    "entities": 2643,
     "formulas": 3151,
     "triggers": 1665
   },

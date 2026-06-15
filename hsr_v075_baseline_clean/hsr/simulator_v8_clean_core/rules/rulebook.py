@@ -21,6 +21,35 @@ class RuleBook:
     def entity(self, entity_id: str) -> RuleEntity | None:
         return self._entities.get(entity_id)
 
+    def require_entity(self, entity_id: str, expected_types: set[str] | tuple[str, ...] | None = None) -> RuleEntity:
+        entity = self.entity(entity_id)
+        if entity is None:
+            raise KeyError(f"unknown rule entity {entity_id!r}")
+        if expected_types is not None and entity.entity_type not in set(expected_types):
+            raise TypeError(
+                f"rule entity {entity_id!r} has type {entity.entity_type!r}, "
+                f"expected one of {sorted(set(expected_types))}"
+            )
+        return entity
+
+    def entities_by_type(self, entity_type: str) -> tuple[RuleEntity, ...]:
+        return tuple(entity for entity in self.ir.entities if entity.entity_type == entity_type)
+
+    def is_entity_type(self, entity_id: str, expected_types: set[str] | tuple[str, ...]) -> bool:
+        entity = self.entity(entity_id)
+        return bool(entity and entity.entity_type in set(expected_types))
+
+    def source_trace(self, entity_id: str) -> dict[str, object] | None:
+        entity = self.entity(entity_id)
+        if not entity:
+            return None
+        return {
+            "entity_id": entity.entity_id,
+            "entity_type": entity.entity_type,
+            "coverage_status": entity.coverage_status,
+            "source": entity.source.to_json(),
+        }
+
     def effect(self, effect_id: str) -> EffectIR | None:
         return self._effects.get(effect_id)
 
@@ -39,4 +68,3 @@ class RuleBook:
 
     def triggers_for_event(self, event: str) -> tuple[TriggerIR, ...]:
         return tuple(trigger for trigger in self.ir.triggers if trigger.event == event)
-

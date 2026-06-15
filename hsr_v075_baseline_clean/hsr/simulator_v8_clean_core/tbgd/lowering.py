@@ -12,7 +12,28 @@ from ..rules.ir import CanonicalIR, ConditionIR, EffectIR, FormulaIR, IRSource, 
 
 
 ENTITY_TABLES: dict[str, tuple[str, str, tuple[str, ...]]] = {
+    "ExcelOutput/AvatarConfig.json": ("avatar", "AvatarID", ("DamageType", "SPNeed", "SkillList", "AvatarBaseType", "Rarity")),
     "ExcelOutput/AvatarConfigLD.json": ("avatar", "AvatarID", ("DamageType", "SPNeed", "SkillList", "AvatarBaseType", "Rarity")),
+    "ExcelOutput/AvatarSkillConfig.json": (
+        "avatar_skill",
+        "SkillID",
+        ("SkillTriggerKey", "SkillEffect", "BPNeed", "BPAdd", "SPMultipleRatio", "ParamList", "ShowStanceList", "ShowDamageList"),
+    ),
+    "ExcelOutput/AvatarSkillConfigLD.json": (
+        "avatar_skill",
+        "SkillID",
+        ("SkillTriggerKey", "SkillEffect", "BPNeed", "BPAdd", "SPMultipleRatio", "ParamList", "ShowStanceList", "ShowDamageList"),
+    ),
+    "ExcelOutput/AvatarPromotionConfig.json": (
+        "avatar_promotion",
+        "AvatarID",
+        ("Promotion", "MaxLevel", "AttackBase", "AttackAdd", "DefenceBase", "DefenceAdd", "HPBase", "HPAdd", "SpeedBase", "CriticalChance", "CriticalDamage", "BaseAggro"),
+    ),
+    "ExcelOutput/AvatarPromotionConfigLD.json": (
+        "avatar_promotion",
+        "AvatarID",
+        ("Promotion", "MaxLevel", "AttackBase", "AttackAdd", "DefenceBase", "DefenceAdd", "HPBase", "HPAdd", "SpeedBase", "CriticalChance", "CriticalDamage", "BaseAggro"),
+    ),
     "ExcelOutput/CommonAvatarSkillConfig.json": (
         "avatar_skill",
         "SkillID",
@@ -32,6 +53,16 @@ ENTITY_TABLES: dict[str, tuple[str, str, tuple[str, ...]]] = {
         "monster_skill",
         "ID",
         ("SkillTriggerKey", "AttackType", "InitialCD", "CoolDown", "ParamList"),
+    ),
+    "ExcelOutput/MonsterConfig.json": (
+        "monster",
+        "MonsterID",
+        ("MonsterTemplateID", "HardLevelGroup", "AttackModifyRatio", "DefenceModifyRatio", "HPModifyRatio", "SpeedModifyRatio", "StanceModifyRatio", "StanceWeakList", "DamageTypeResistance", "SkillList"),
+    ),
+    "ExcelOutput/MonsterTemplateConfig.json": (
+        "monster_template",
+        "MonsterTemplateID",
+        ("Rank", "AttackBase", "DefenceBase", "HPBase", "SpeedBase", "StanceBase", "CriticalDamageBase", "StatusResistanceBase", "StanceType", "AIPath", "AISkillSequence"),
     ),
     "ExcelOutput/SummonUnitData.json": (
         "summon_unit",
@@ -117,7 +148,7 @@ class TBGDLowering:
         for index, row in enumerate(data[: self.limits.max_records_per_table]):
             if not isinstance(row, dict) or id_key not in row:
                 continue
-            raw_id = str(row[id_key])
+            raw_id = _entity_raw_id(entity_type, id_key, row)
             fields = {key: _json_safe(row.get(key)) for key in field_keys if key in row}
             source = IRSource(
                 source_path=relative_path,
@@ -348,6 +379,13 @@ def _short_gamecore_type(raw_type: Any) -> str:
     return raw_type.removeprefix("RPG.GameCore.")
 
 
+def _entity_raw_id(entity_type: str, id_key: str, row: dict[str, Any]) -> str:
+    if entity_type == "avatar_promotion":
+        promotion = row.get("Promotion", 0)
+        return f"{row[id_key]}:{promotion}"
+    return str(row[id_key])
+
+
 def _compact_payload(value: dict[str, Any]) -> dict[str, Any]:
     ignored = {"SuccessTaskList", "FailedTaskList", "CallbackConfig"}
     return {key: _json_safe(item) for key, item in value.items() if key not in ignored and key != "$type"}
@@ -389,4 +427,3 @@ def _iter_fixed_values(value: Any) -> list[dict[str, Any]]:
         for nested in value:
             found.extend(_iter_fixed_values(nested))
     return found
-
