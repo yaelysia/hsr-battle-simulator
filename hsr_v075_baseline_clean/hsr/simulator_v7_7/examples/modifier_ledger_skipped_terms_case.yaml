@@ -1,0 +1,61 @@
+settings:
+  default_crit_mode: noncrit
+
+global:
+  av: 0
+  skill_points: 3
+  skill_point_cap: 5
+
+units:
+  attacker:
+    name: Modifier Ledger Attacker
+    side: ally
+    level: 80
+    hp: 1000
+    max_hp: 1000
+    energy: 0
+    max_energy: 100
+    speed: 100
+    remaining_av: 100
+    stats:
+      atk: 1000
+      crit_rate: 0
+      crit_dmg: 0.5
+    statuses:
+      - id: mixed_damage_bonus
+        source_id: attacker
+        stacks: 1
+        modifiers:
+          dmg_bonus:
+            all: 0.10
+            fire: 0.30
+    actions:
+      quantum_hit:
+        tags: [attack, skill_damage]
+        target_policy: manual
+        cost: {}
+        damage_packets:
+          - id: quantum_hit
+            element: quantum
+            damage_type: skill_damage
+            scaling_stat: atk
+            multiplier: 1.0
+            can_crit: false
+            toughness_reduction: 0
+            tags: [skill_damage]
+
+  target:
+    name: Modifier Ledger Target
+    side: enemy
+    hp: 5000
+    max_hp: 5000
+    speed: 100
+    remaining_av: 100
+    stats: {defense: 0}
+    res: {quantum: 0}
+
+route:
+  - actor: attacker
+    action: quantum_hit
+    timing: manual
+    targets: [target]

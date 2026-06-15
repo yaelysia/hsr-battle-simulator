@@ -133,6 +133,7 @@ from hsr_engine.settlement import (
     AV_DELAY,
     AV_TIMELINE_TICK,
 )
+from hsr_engine.combat_core import CombatExecutor, DamageApplier, DamageResolver
 from hsr_engine.data import TextMapRegistry, StatusRegistry, SkillRegistry
 
 
@@ -776,6 +777,9 @@ class BattleSimulator:
         self.settings = case.get("settings", {})
         self._queued_action_transitions: list[dict[str, Any]] = []
         self._action_resolution_counter = 0
+        self._combat_executor = CombatExecutor()
+        self._damage_resolver = DamageResolver(self)
+        self._damage_applier = DamageApplier(self)
         # Phase 1+2: 可选的数据注册表（中文名增强）
         self._text_map: TextMapRegistry | None = None
         self._status_registry: StatusRegistry | None = None
@@ -3758,6 +3762,7 @@ class BattleSimulator:
                     overkill=float(result.get("overkill", 0.0)),
                     is_overkill=bool(result.get("is_overkill", False)),
                     formula_ledger=result.get("formula_ledger", {}),
+                    modifier_ledger=result.get("modifier_ledger", {}),
                     skip_reason="",
                 )
                 total_attack_damage += coerce_float(result.get("final_damage", result.get("damage", 0.0)))
@@ -4346,76 +4351,7 @@ class BattleSimulator:
         return ledger
 
     def resolve_damage_packet(self, packet: dict[str, Any], actor: UnitState, target: UnitState, action: dict[str, Any], events: dict[str, Any], ctx: Optional[dict[str, Any]] = None) -> dict[str, Any]:
-        packet = self.normalize_damage_packet_schema(packet)
-        if "multiplier" not in packet or coerce_float(packet.get("multiplier", 0.0)) == 0.0:
-            ref_mult = self.resolve_packet_multiplier_reference(packet, actor)
-            if ref_mult is not None:
-                packet["multiplier"] = ref_mult
-        base_ctx = dict(ctx or {})
-        dmg_ctx_for_element = {**base_ctx, "action": action, "packet": packet, "actor_id": actor.id, "actor": actor, "owner_id": actor.flags.get("owner_id"), "target_id": target.id, "target": target}
-        element = self.resolve_dynamic_element(packet.get("element", "none"), dmg_ctx_for_element)
-        packet["element"] = element
-        damage_type = str(packet.get("damage_type", packet.get("type", "direct_damage")) or "direct_damage").lower()
-        if damage_type in {"break", "break_damage", "weakness_break"}:
-            return self.resolve_break_damage_packet(packet, actor, target, action, events)
-        if damage_type in {"super_break", "superbreak", "super_break_damage"}:
-            return self.resolve_super_break_damage_packet(packet, actor, target, action, events)
-        scaling_stat = packet.get("scaling_stat", "atk")
-        multiplier = coerce_float(packet.get("multiplier", 0.0))
-        flat_damage = coerce_float(packet.get("flat_damage", 0.0))
-        dmg_ctx = {**base_ctx, "action": action, "packet": packet, "actor_id": actor.id, "actor": actor, "owner_id": actor.flags.get("owner_id"), "target_id": target.id, "target": target}
-        # Use contextual_stat for the scaling stat, not only for Crit stats.
-        # Otherwise conditional ATK/HP/DEF bonuses attached to a specific action or
-        # packet are silently ignored in damage resolution.
-        scaling_value = self.contextual_stat(actor, scaling_stat, dmg_ctx)
-        base = scaling_value * multiplier + flat_damage
-
-        crit_info = self.resolve_crit(packet, actor, action, events, dmg_ctx)
-        dmg_bonus = self.get_dmg_bonus_multiplier(actor, packet, action, dmg_ctx)
-        defense = self.get_def_multiplier(actor, target, packet, dmg_ctx)
-        res = self.get_res_multiplier(actor, target, element, dmg_ctx)
-        taken = self.get_damage_taken_multiplier(target, packet, action, dmg_ctx)
-        reduction = self.get_universal_reduction_multiplier(target, packet, action, dmg_ctx)
-        toughness = self.get_toughness_state_multiplier(target, packet)
-        other = coerce_float(packet.get("other_multiplier", 1.0))
-        multipliers = {
-            "dmg_bonus": dmg_bonus,
-            "defense": defense,
-            "res": res,
-            "damage_taken": taken,
-            "universal_reduction": reduction,
-            "toughness_state": toughness,
-            "other": other,
-        }
-        final = base * crit_info["multiplier"] * dmg_bonus * defense * res * taken * reduction * toughness * other
-        final = max(0.0, final)
-        toughness_reduction = coerce_float(packet.get("toughness_reduction", 0.0))
-        formula_ledger = self.collect_damage_formula_ledger(
-            actor,
-            target,
-            packet,
-            action,
-            dmg_ctx,
-            scaling_stat=str(scaling_stat),
-            scaling_value=scaling_value,
-            base_damage=base,
-            crit_info=crit_info,
-            multipliers=multipliers,
-        )
-        formula_ledger["final_damage"] = round(final, 9)
-        return {
-            "actor_id": actor.id,
-            "target_id": target.id,
-            "packet_id": packet.get("id"),
-            "element": element,
-            "base_damage": base,
-            "crit": crit_info,
-            "multipliers": multipliers,
-            "formula_ledger": formula_ledger,
-            "damage": final,
-            "toughness_reduction": toughness_reduction,
-            "target_defeated": False,
-        }
+        return self._damage_resolver.resolve_packet(packet, actor, target, action, events, ctx)
 
     def contextual_stat(self, unit: UnitState, name: str, ctx: dict[str, Any]) -> float:
         return runtime_contextual_stat(
@@ -5444,94 +5380,10 @@ class BattleSimulator:
         return 1.0 - target_res
 
     def apply_damage_result(self, result: dict[str, Any], ctx: dict[str, Any]) -> None:
-        target = self.state.unit(result["target_id"])
-        actor = self.state.units.get(str(result.get("actor_id"))) if result.get("actor_id") is not None else None
-        was_alive_before_damage = bool(target.alive)
-        old_hp = target.hp
-        old_shield = target.shield
-        shield_absorbed = 0.0
-        incoming = max(0.0, result["damage"])
-        if not was_alive_before_damage:
-            result["target_already_defeated_before_packet"] = True
-            # Primary multi-hit actions in HSR still finish their own hit window:
-            # later hits are logged at full numeric damage and can be counted for
-            # action-local damage totals, but they must not create a second defeat,
-            # hit-taken energy, toughness break, or downstream derived-damage window.
-
-        # Simple shield layer: shield absorbs HP damage before HP unless explicitly ignored.
-        if was_alive_before_damage and target.shield > EPS and not coerce_bool(ctx.get("packet", {}).get("ignore_shield", False), default=False):
-            absorbed = min(target.shield, incoming)
-            self.commit_unit_shield(
-                target,
-                target.shield - absorbed,
-                reason="damage:shield_absorb",
-                ctx=ctx,
-                payload={"absorbed": absorbed, "incoming_before": incoming},
-            )
-            incoming -= absorbed
-            shield_absorbed = absorbed
-            self.state.log_event(
-                "shield",
-                f"{target.id} shield absorbs {absorbed:.3f}",
-                {"old_shield": old_shield, "new_shield": target.shield, "remaining_damage": incoming},
-            )
-            # Phase 2: 护盾吸收记录
-            self._settle(ctx, "shield",
-                unit_id=target.id, delta=-absorbed,
-                old_value=old_shield, new_value=target.shield,
-                reason=f"伤害吸收: {ctx.get('action', {}).get('id', ctx.get('actor_id', '?'))}",
-                record_state_change=False,
-            )
-
-        packet = ctx.get("packet", {})
-        carry = packet.get("carry_over_hp_bar_damage", packet.get("carry_over_damage", None))
-        bar_result = self._apply_hp_damage_to_bars(target, incoming, carry, "damage", ctx=ctx) if was_alive_before_damage else {
-            "hp_bar_depleted": False,
-            "target_defeated": False,
-            "bars_depleted": 0,
-            "old_hp": old_hp,
-            "new_hp": target.hp,
-            "hp_bars_remaining": target.hp_bars_remaining,
-            "depleted_bar_events": [],
-            "phase_damage_locked_until_action_end": False,
-        }
-        result["hp_bar_depleted"] = bar_result["hp_bar_depleted"]
-        result["target_defeated"] = bar_result["target_defeated"]
-        result["bars_depleted"] = bar_result["bars_depleted"]
-        result["hp_bars_remaining"] = target.hp_bars_remaining
-        result["depleted_bar_events"] = bar_result.get("depleted_bar_events", [])
-        result["phase_damage_locked_until_action_end"] = bar_result.get("phase_damage_locked_until_action_end", False)
-        hp_loss = coerce_float(bar_result.get("hp_loss", 0.0), 0.0)
-        damage_applied = max(0.0, shield_absorbed + hp_loss)
-        final_damage = max(0.0, coerce_float(result.get("damage", 0.0), 0.0))
-        overkill = max(0.0, final_damage - damage_applied)
-        result["shield_absorbed"] = shield_absorbed
-        result["hp_loss"] = hp_loss
-        result["damage_applied"] = damage_applied
-        result["applied_damage"] = damage_applied
-        result["overkill"] = overkill
-        result["is_overkill"] = overkill > EPS
-        if bar_result.get("bars_depleted") and target.alive and target.hp_model_type == "phase_hp":
-            old_phase = coerce_int(target.flags.get("current_phase", target.flags.get("monster_phase", 1)), 1)
-            new_phase = min(target.hp_bars_total, old_phase + coerce_int(bar_result.get("bars_depleted", 1), 1))
-            self.commit_unit_flag(target, "current_phase", new_phase, reason="damage:phase_transition:current_phase", ctx=ctx, payload={"old_phase": old_phase, "bars_depleted": bar_result.get("bars_depleted")})
-            self.commit_unit_flag(target, "monster_phase", new_phase, reason="damage:phase_transition:monster_phase", ctx=ctx, payload={"old_phase": old_phase, "bars_depleted": bar_result.get("bars_depleted")})
-            self.state.log_event("phase_transition", f"{target.id} phase {old_phase}->{new_phase}", {"unit": target.id, "old_phase": old_phase, "new_phase": new_phase, "bars_depleted": bar_result.get("bars_depleted")})
-
-        self.state.log_event(
-            "damage",
-            f"{result['actor_id']} deals {result['damage']:.3f} {result['element']} damage to {target.id}",
-            {"old_hp": old_hp, "new_hp": target.hp, "old_shield": old_shield, "new_shield": target.shield, **result},
-        )
-        # Phase 2: HP 变化记录 + 修复伤害记录的吸收值
-        hp_delta = target.hp - old_hp
-        if abs(hp_delta) > EPS and was_alive_before_damage:
-            self._settle(ctx, "hp",
-                unit_id=target.id, delta=hp_delta,
-                old_value=old_hp, new_value=target.hp, max_hp=target.max_hp,
-                reason=f"受到伤害: {ctx.get('action', {}).get('id', ctx.get('actor_id', '?'))}",
-                record_state_change=False,
-            )
+        application = self._damage_applier.apply_direct_damage_result(result, ctx)
+        target = application.target
+        actor = application.actor
+        was_alive_before_damage = application.was_alive_before_damage
         if result.get("bars_depleted") and target.alive and target.flags.get("phase_transition_immediate_action"):
             action_id = target.flags.get("phase_transition_immediate_action")
             if action_id is True:

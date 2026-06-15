@@ -191,6 +191,12 @@ class DamageSettlement:
         super_break_records = _record_list_to_dicts(self.super_break_records)
         modifier_ledgers = []
         for record_index, damage_record in enumerate(damage_records):
+            native_ledger = damage_record.get("modifier_ledger")
+            if isinstance(native_ledger, dict) and native_ledger:
+                ledger = deepcopy(native_ledger)
+                ledger["damage_record_index"] = record_index
+                modifier_ledgers.append(ledger)
+                continue
             formula_ledger = damage_record.get("formula_ledger")
             if isinstance(formula_ledger, dict) and formula_ledger:
                 modifier_ledgers.append(
@@ -313,6 +319,7 @@ class DamageRecord:
     overkill: float = 0.0
     is_overkill: bool = False
     formula_ledger: dict[str, Any] = field(default_factory=dict)
+    modifier_ledger: dict[str, Any] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
