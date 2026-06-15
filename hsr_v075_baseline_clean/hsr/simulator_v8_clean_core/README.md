@@ -23,3 +23,8 @@ python3 -m compileall -q simulator_v8_clean_core
 python3 -m simulator_v8_clean_core.tools.validate_v0_200 --output-dir validation_outputs_v0_200
 ```
 
+Design documents:
+
+- `ARCHITECTURE.md`: v8 clean-core boundaries, invariants, and action lifecycle.
+- `MECHANIC_WORKFLOW.md`: required workflow for adding any HSR mechanic.
+- `WORK_PLAN.md`: staged implementation plan from workflow freeze to C0-C8 replay.
