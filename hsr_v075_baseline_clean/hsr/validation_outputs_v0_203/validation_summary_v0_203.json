@@ -8,12 +8,12 @@
       "fidelity_matrix": "validation_outputs_v0_203/fidelity_matrix_v0_203.json"
     },
     "summary": {
-      "coverage_opcode_count": 1145,
-      "discovery_files": 8667,
+      "coverage_opcode_count": 1212,
+      "discovery_files": 8683,
       "ir_conditions": 1309,
       "ir_effects": 3503,
       "ir_entities": 2060,
-      "ir_formulas": 3151,
+      "ir_formulas": 3170,
       "ir_triggers": 1665
     },
     "tbgd_root": "/home/zhangjinhao/code/hsr/turnbasedgamedata-main"
@@ -24,10 +24,10 @@
       "discovered_only": 91,
       "lowered": 110
     },
-    "opcode_count": 1145,
+    "opcode_count": 1212,
     "opcode_lifecycle_counts": {
-      "blocked": 861,
-      "discovered_only": 60,
+      "blocked": 864,
+      "discovered_only": 124,
       "executable": 1,
       "lowered": 223
     }

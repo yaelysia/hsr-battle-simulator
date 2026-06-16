@@ -5,7 +5,17 @@ from typing import Any, Literal
 
 
 JSONValue = None | bool | int | float | str | list["JSONValue"] | dict[str, "JSONValue"]
-CoverageStatus = Literal["executable", "supported_alias", "audit_only", "unsupported", "skipped_with_reason"]
+CoverageStatus = Literal[
+    "discovered_only",
+    "lowered",
+    "executable",
+    "validated",
+    "blocked",
+    "supported_alias",
+    "audit_only",
+    "unsupported",
+    "skipped_with_reason",
+]
 
 
 @dataclass(frozen=True)
@@ -134,6 +144,10 @@ class ActionDefinitionIR:
     stance_damage_type: str | None
     source: IRSource
     coverage_status: CoverageStatus = "audit_only"
+    damage_kind: str = "hp_damage"
+    damage_formula_family: str = "direct"
+    element_type: str | None = None
+    source_mode: str = "mainline"
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -151,6 +165,10 @@ class ActionDefinitionIR:
             "show_stance_list": list(self.show_stance_list),
             "show_damage_list": list(self.show_damage_list),
             "stance_damage_type": self.stance_damage_type,
+            "damage_kind": self.damage_kind,
+            "damage_formula_family": self.damage_formula_family,
+            "element_type": self.element_type,
+            "source_mode": self.source_mode,
             "source": self.source.to_json(),
             "coverage_status": self.coverage_status,
         }

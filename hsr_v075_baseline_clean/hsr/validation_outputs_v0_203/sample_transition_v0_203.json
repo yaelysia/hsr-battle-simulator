@@ -441,7 +441,12 @@
                 "BPNeed": "skill_point_cost_if_positive",
                 "SPBase": "energy_gain"
               },
-              "row_index": 65
+              "row_index": 65,
+              "taxonomy": {
+                "attack_type": "raw TBGD AttackType; follow-up is an attack type axis",
+                "damage_formula_family": "formula family axis; follow-up is not a damage family",
+                "element_type": "raw TBGD StanceDamageType when present"
+              }
             },
             "raw_id": "101401",
             "raw_type": "AvatarSkillConfigLD",
@@ -479,7 +484,12 @@
                 "BPNeed": "skill_point_cost_if_positive",
                 "SPBase": "energy_gain"
               },
-              "row_index": 65
+              "row_index": 65,
+              "taxonomy": {
+                "attack_type": "raw TBGD AttackType; follow-up is an attack type axis",
+                "damage_formula_family": "formula family axis; follow-up is not a damage family",
+                "element_type": "raw TBGD StanceDamageType when present"
+              }
             },
             "raw_id": "101401",
             "raw_type": "AvatarSkillConfigLD",
@@ -525,7 +535,10 @@
           "bp_add": 1.0,
           "bp_need": -1.0,
           "coverage_status": "executable",
+          "damage_formula_family": "direct",
+          "damage_kind": "hp_damage",
           "definition_id": "action_def:avatar_skill:101401:10",
+          "element_type": "Wind",
           "level": 10,
           "param_list": [
             {
@@ -554,12 +567,18 @@
                 "BPNeed": "skill_point_cost_if_positive",
                 "SPBase": "energy_gain"
               },
-              "row_index": 65
+              "row_index": 65,
+              "taxonomy": {
+                "attack_type": "raw TBGD AttackType; follow-up is an attack type axis",
+                "damage_formula_family": "formula family axis; follow-up is not a damage family",
+                "element_type": "raw TBGD StanceDamageType when present"
+              }
             },
             "raw_id": "101401",
             "raw_type": "AvatarSkillConfigLD",
             "source_path": "ExcelOutput/AvatarSkillConfigLD.json"
           },
+          "source_mode": "mainline",
           "sp_base": 20.0,
           "sp_multiple_ratio": 0.5,
           "stance_damage_type": "Wind",
@@ -582,7 +601,12 @@
                 "BPNeed": "skill_point_cost_if_positive",
                 "SPBase": "energy_gain"
               },
-              "row_index": 65
+              "row_index": 65,
+              "taxonomy": {
+                "attack_type": "raw TBGD AttackType; follow-up is an attack type axis",
+                "damage_formula_family": "formula family axis; follow-up is not a damage family",
+                "element_type": "raw TBGD StanceDamageType when present"
+              }
             },
             "raw_id": "101401",
             "raw_type": "AvatarSkillConfigLD",
@@ -688,7 +712,12 @@
                     "BPNeed": "skill_point_cost_if_positive",
                     "SPBase": "energy_gain"
                   },
-                  "row_index": 65
+                  "row_index": 65,
+                  "taxonomy": {
+                    "attack_type": "raw TBGD AttackType; follow-up is an attack type axis",
+                    "damage_formula_family": "formula family axis; follow-up is not a damage family",
+                    "element_type": "raw TBGD StanceDamageType when present"
+                  }
                 },
                 "raw_id": "101401",
                 "raw_type": "AvatarSkillConfigLD",
@@ -730,7 +759,12 @@
                     "BPNeed": "skill_point_cost_if_positive",
                     "SPBase": "energy_gain"
                   },
-                  "row_index": 65
+                  "row_index": 65,
+                  "taxonomy": {
+                    "attack_type": "raw TBGD AttackType; follow-up is an attack type axis",
+                    "damage_formula_family": "formula family axis; follow-up is not a damage family",
+                    "element_type": "raw TBGD StanceDamageType when present"
+                  }
                 },
                 "raw_id": "101401",
                 "raw_type": "AvatarSkillConfigLD",

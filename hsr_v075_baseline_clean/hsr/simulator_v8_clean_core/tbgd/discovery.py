@@ -13,6 +13,7 @@ DEFAULT_DOMAINS: tuple[tuple[str, str], ...] = (
     ("excel", "ExcelOutput"),
     ("ability", "Config/ConfigAbility"),
     ("global_modifier", "Config/ConfigGlobalModifier"),
+    ("global_config", "Config/GlobalConfig"),
     ("summon_config", "Config/ConfigSummonUnit"),
     ("character_config", "Config/ConfigCharacter"),
     ("ai", "Config/ConfigAI"),
@@ -204,4 +205,3 @@ class _DiscoveryVisitor:
         elif isinstance(value, list):
             for nested in value:
                 self.visit(nested)
-

@@ -5,15 +5,16 @@
       "ai": 1040,
       "character_config": 2618,
       "excel": 2065,
+      "global_config": 16,
       "global_modifier": 30,
       "summon_config": 70
     },
     "by_shape": {
       "ability_config": 2769,
-      "layout": 2088,
+      "layout": 2093,
       "list": 2065,
       "modifier_map": 15,
-      "object": 1730
+      "object": 1741
     },
     "error_count": 0,
     "event_counts": {
@@ -219,22 +220,24 @@
       "OnVersusBarFever": 4,
       "OnWaveMonster": 131
     },
-    "file_count": 8667,
+    "file_count": 8683,
     "formula_files": 1011,
     "gamecore_type_counts": {
       "AIBehaviorFlagSelector": 1,
       "AIComplexSkillAISelector": 1,
-      "AIComposeSelector": 22,
+      "AIComposeSelector": 23,
       "AICustomStringTagSelector": 1,
       "AIDecisionConfig": 436,
-      "AIModifierNameSelector": 118,
+      "AIModifierNameSelector": 119,
       "AIMonsterIDSelector": 5,
       "AIMonsterRankSelector": 2,
-      "AIPropertySelector": 5,
+      "AIPropertySelector": 6,
       "AIStepperDecisionGroupConfig": 51,
       "AITaskTargetTypeSelector": 31,
       "AITryInsertUltra": 2,
       "AIVariableBool": 365,
+      "AIVariableDefaultSelectorConfigList": 1,
+      "AIVariableFixPoint": 1,
       "AIVariableFloat": 24,
       "AIVariableInt": 1,
       "AIVariableString": 251,
@@ -324,11 +327,11 @@
       "BlockCameraDitherUpdate": 3,
       "ByAlertValueInRange": 18,
       "ByAllowInstantKill": 6,
-      "ByAnd": 913,
+      "ByAnd": 916,
       "ByAngle": 9,
       "ByAnimStateLogicType": 2,
       "ByAnimatorParam": 9,
-      "ByAny": 586,
+      "ByAny": 587,
       "ByAnyNpcMonsterInRange": 3,
       "ByAttackSkillEffect": 3,
       "ByAttackType": 204,
@@ -361,7 +364,7 @@
       "ByCompareCarryMazebuff": 2,
       "ByCompareChallengeLeft": 7,
       "ByCompareChangeValue": 13,
-      "ByCompareCharacterID": 115,
+      "ByCompareCharacterID": 116,
       "ByCompareCharacterNumber": 224,
       "ByCompareControlSkillEffectIsDamaging": 1,
       "ByCompareCurrentModifierStatusType": 9,
@@ -371,7 +374,7 @@
       "ByCompareDynamicValue": 1027,
       "ByCompareEvolveBuildGearLevel": 3,
       "ByCompareEvolveBuildProperty": 3,
-      "ByCompareGridFightProperty": 16,
+      "ByCompareGridFightProperty": 17,
       "ByCompareHP": 98,
       "ByCompareHPRatio": 212,
       "ByCompareInfiniteWaveSummonProgress": 1,
@@ -405,7 +408,7 @@
       "ByCompareStance": 14,
       "ByCompareStanceCount": 3,
       "ByCompareStanceRatio": 3,
-      "ByCompareTarget": 259,
+      "ByCompareTarget": 261,
       "ByCompareTargetCount": 102,
       "ByCompareTargetCountClientOnly": 2,
       "ByCompareTeamFormationRowIndex": 3,
@@ -414,7 +417,7 @@
       "ByCompareUnusedInsertAbilityCount": 2,
       "ByCompareUnusedUltraSkillCount": 4,
       "ByCompareWaveCount": 208,
-      "ByContainBehaviorFlag": 371,
+      "ByContainBehaviorFlag": 373,
       "ByContainCustomString": 40,
       "ByContainsParamFlag": 32,
       "ByContainsRedStance": 1,
@@ -450,14 +453,14 @@
       "ByInTurnBasedGameModeState": 35,
       "ByInfiniteMonsterWaveLeft": 5,
       "ByIsAutoBattle": 14,
-      "ByIsBattleEventEntity": 57,
+      "ByIsBattleEventEntity": 59,
       "ByIsBodyPart": 2,
       "ByIsBodyPartClientOnly": 1,
       "ByIsBodyPartOwner": 2,
-      "ByIsCharacterChangeTarget": 2,
+      "ByIsCharacterChangeTarget": 3,
       "ByIsCharacterWeaknessActivated": 1,
       "ByIsContainAdventureModifier": 2,
-      "ByIsContainModifier": 848,
+      "ByIsContainModifier": 849,
       "ByIsControlSkillDisable": 1,
       "ByIsConvertDamage": 4,
       "ByIsCurrentModifierAlive": 3,
@@ -467,7 +470,7 @@
       "ByIsDamageLuckCritical": 1,
       "ByIsDamageType": 32,
       "ByIsEnableNegativeHP": 1,
-      "ByIsEnemy": 5,
+      "ByIsEnemy": 6,
       "ByIsEntityActionState": 2,
       "ByIsFirstChallengeBattle": 1,
       "ByIsFirstInsertAbilityInQueue": 1,
@@ -490,17 +493,18 @@
       "ByIsStageFirstWave": 8,
       "ByIsSubTargetOfHpSharedGroup": 5,
       "ByIsTargetAbleToAction": 4,
-      "ByIsTargetUnselectable": 29,
+      "ByIsTargetCustomUnselectable": 1,
+      "ByIsTargetUnselectable": 30,
       "ByIsTargetValid": 92,
       "ByIsTeamLocationIndexType": 57,
-      "ByIsTeammate": 25,
+      "ByIsTeammate": 26,
       "ByIsTopActionDelayTarget": 6,
       "ByIsTriggeredBlockDamage": 19,
       "ByIsTurnActionEntity": 53,
       "ByIsTurnOwnerEntity": 66,
       "ByLocalWin": 22,
       "ByNPCStatus": 52,
-      "ByNot": 138,
+      "ByNot": 139,
       "ByPamAnchorContinous": 1,
       "ByPamCurrentActionAnyDirection": 1,
       "ByPamMovePhaseTalk": 1,
@@ -513,17 +517,17 @@
       "BySimulateSpeedUp": 24,
       "BySkillPointActivated": 126,
       "ByStatusCount": 6,
-      "ByTargetAliveState": 106,
-      "ByTargetEntityType": 128,
+      "ByTargetAliveState": 108,
+      "ByTargetEntityType": 129,
       "ByTargetHitBoxActive": 5,
       "ByTargetIsStanceWeak": 5,
       "ByTargetIsStanceWeakForCurrentHit": 3,
       "ByTargetIsStanceWeakForCurrentSkill": 1,
       "ByTargetListAll": 2,
       "ByTargetListAny": 49,
-      "ByTargetListIntersects": 168,
+      "ByTargetListIntersects": 169,
       "ByTargetLockHP": 3,
-      "ByTargetTeam": 500,
+      "ByTargetTeam": 502,
       "ByTurnOwnerActionPhaseEnd": 3,
       "ByTurnOwnerHasActionInTurn": 4,
       "ByTurnOwnerHasPendingOneMore": 4,
@@ -549,7 +553,7 @@
       "CharacterLeaveStage": 9,
       "CharacterOverrideConfig": 141,
       "CharacterPlayVO": 17,
-      "CharacterReactionAnimConfig": 41,
+      "CharacterReactionAnimConfig": 42,
       "CharacterReenterStage": 2,
       "CharacterReplaceAnimatorController": 2,
       "CharacterReplaceOriginMaterial": 6,
@@ -646,7 +650,7 @@
       "DisableHeadLookAtOverride": 9,
       "DisableMazeLockTarget": 2,
       "DisableRogueTitanBless": 1,
-      "DispelStatus": 288,
+      "DispelStatus": 289,
       "DynamicValueRoundToInt": 1,
       "ElationActivityActionBarAbilityChange": 7,
       "EnableEmotion": 9,
@@ -1224,64 +1228,128 @@
       "SyncBattleEventPropertyValues": 1,
       "SyncCharLightAndCameraDir": 103,
       "SyncMonsterLightByCameraDir": 2,
-      "TargetAlias": 1888,
+      "TargetAlias": 1891,
       "TargetCompute": 10,
-      "TargetConcat": 91,
-      "TargetFetchAbilityTarget": 1,
-      "TargetFetchActualOwner": 1,
+      "TargetConcat": 92,
+      "TargetFetchAbilityGroup": 1,
+      "TargetFetchAbilityTarget": 2,
+      "TargetFetchAbilityTargetLeader": 1,
+      "TargetFetchActionDelayExceed": 1,
+      "TargetFetchActualOwner": 3,
       "TargetFetchAdvAITarget": 1,
-      "TargetFetchAdvLocalPlayer": 1,
+      "TargetFetchAdvAllNPCMonsters": 1,
+      "TargetFetchAdvLineup": 1,
+      "TargetFetchAdvLocalPlayer": 2,
       "TargetFetchAdvNpcEx": 30,
-      "TargetFetchAllUnselectable": 1,
+      "TargetFetchAdvSkillTargetEntityList": 1,
+      "TargetFetchAdvTeamLeader": 1,
+      "TargetFetchAdvTeamMembers": 1,
+      "TargetFetchAidDefender": 1,
+      "TargetFetchAidProtector": 1,
+      "TargetFetchAimAtTargetList": 1,
+      "TargetFetchAliveSourceEntity": 1,
+      "TargetFetchAllCustomUnselectable": 1,
+      "TargetFetchAllStanceBreakEntity": 1,
+      "TargetFetchAllUnselectable": 3,
+      "TargetFetchAvatarAssistant": 1,
       "TargetFetchAvatarByID": 2,
-      "TargetFetchCaster": 372,
+      "TargetFetchBattleEventCaster": 1,
+      "TargetFetchBattleEventEntityList": 1,
+      "TargetFetchBloodLinkTargets": 1,
+      "TargetFetchByTauntAndAggro": 1,
+      "TargetFetchCallBackModifierCaster": 1,
+      "TargetFetchCameraAimTargetList": 1,
+      "TargetFetchCameraAnchorTargetList": 1,
+      "TargetFetchCaster": 373,
+      "TargetFetchCurrentGroupNPCMonsters": 1,
       "TargetFetchCurrentInsertTurnSource": 3,
+      "TargetFetchDataViewUISelectEnter": 1,
+      "TargetFetchDataViewUISelectLeave": 1,
       "TargetFetchElationTimeAllTargets": 1,
+      "TargetFetchFightMVPEntity": 1,
       "TargetFetchLastSearchEntity": 2,
-      "TargetFetchLevelEntity": 3,
-      "TargetFetchModifierOwner": 1,
+      "TargetFetchLatestEnterStageAvatar": 1,
+      "TargetFetchLevelEntity": 4,
+      "TargetFetchLockTarget": 1,
+      "TargetFetchMainMonster": 1,
+      "TargetFetchModifierOwner": 2,
       "TargetFetchMonsterByID": 7,
+      "TargetFetchNextSkillCaster": 1,
+      "TargetFetchNextTurnOwnerEntity": 1,
+      "TargetFetchNone": 1,
       "TargetFetchOwnerEntity": 1,
-      "TargetFetchParamEntityByIndex": 3,
-      "TargetFetchParamEntityList": 1,
-      "TargetFetchPartner": 15,
-      "TargetFetchUniqueNameEntity": 47,
-      "TargetFetchUnstageTarget": 2,
-      "TargetFilter": 223,
+      "TargetFetchParamEntity": 1,
+      "TargetFetchParamEntityByIndex": 4,
+      "TargetFetchParamEntityList": 2,
+      "TargetFetchPartner": 16,
+      "TargetFetchPassiveEntity": 1,
+      "TargetFetchProjectileHitEntity": 1,
+      "TargetFetchProjectileHitPos": 1,
+      "TargetFetchRogueMagicScepterList": 1,
+      "TargetFetchSnapshotEntityList": 1,
+      "TargetFetchStanceBreakTargetEntity": 1,
+      "TargetFetchSummonMonsters": 1,
+      "TargetFetchTaskActionTarget": 1,
+      "TargetFetchTeamEntity": 1,
+      "TargetFetchTemplateEntityList": 1,
+      "TargetFetchTrailblazer": 1,
+      "TargetFetchTurnActionEntity": 1,
+      "TargetFetchTurnOwnerEntity": 1,
+      "TargetFetchUniqueNameEntity": 48,
+      "TargetFetchUnstageTarget": 3,
+      "TargetFilter": 225,
       "TargetFilterAliveState": 17,
       "TargetFilterTargetType": 2,
-      "TargetIndex": 24,
+      "TargetIndex": 26,
       "TargetMapActionBarAdjoinEntityList": 2,
-      "TargetMapAdjoinEntity": 7,
-      "TargetMapAllTeamMember": 4,
-      "TargetMapAttackTargetList": 2,
-      "TargetMapCreatedBattleEvent": 2,
+      "TargetMapAdjoinEntity": 9,
+      "TargetMapAllTeamMember": 6,
+      "TargetMapAllTeamMemberFromFirstEntity": 2,
+      "TargetMapAttackTargetList": 4,
+      "TargetMapCharacterChangeSource": 1,
+      "TargetMapCharacterChangeTarget": 1,
+      "TargetMapCreatedBattleEvent": 4,
+      "TargetMapCreator": 1,
+      "TargetMapDamageAttacker": 2,
+      "TargetMapDamageDefender": 2,
+      "TargetMapDummyEntity": 1,
       "TargetMapDynamicEntityParam": 6,
-      "TargetMapPartEntity": 1,
+      "TargetMapEnemyTeamEntity": 1,
+      "TargetMapPartEntity": 2,
       "TargetMapPartOwnerEntity": 1,
-      "TargetMapSkillPointEntity": 4,
-      "TargetMapSkillSubTarget": 2,
-      "TargetMapSkillTarget": 3,
+      "TargetMapPartToOwner": 1,
+      "TargetMapSkillActualAttacker": 1,
+      "TargetMapSkillIndicatorTarget": 1,
+      "TargetMapSkillPointEntity": 5,
+      "TargetMapSkillSubTarget": 4,
+      "TargetMapSkillTarget": 5,
+      "TargetMapSnapshotEntity": 1,
+      "TargetMapSummonedMinions": 2,
+      "TargetMapSummoner": 2,
+      "TargetMapTeamEntity": 1,
       "TargetMapTeamFormation": 7,
-      "TargetQuery": 5,
+      "TargetQuery": 6,
+      "TargetRemoveUnselectable": 1,
+      "TargetReverse": 1,
       "TargetSelector": 3,
-      "TargetSequence": 281,
-      "TargetShuffle": 17,
+      "TargetSequence": 283,
+      "TargetShuffle": 18,
       "TargetSortByAITag": 1,
-      "TargetSortByActionOrder": 2,
+      "TargetSortByActionOrder": 4,
       "TargetSortByCustomFormationIndexClientOnly": 1,
       "TargetSortByElationPriority": 3,
-      "TargetSortByFormation": 29,
+      "TargetSortByFormation": 31,
       "TargetSortByGridFightPower": 1,
       "TargetSortByGridFightRoleTotalDamage": 1,
-      "TargetSortByModifierStatusCount": 2,
+      "TargetSortByModifierStatusCount": 3,
       "TargetSortByModifierValue": 8,
       "TargetSortByMultiModifierValueSum": 1,
-      "TargetSortByProperty": 29,
+      "TargetSortByProperty": 30,
+      "TargetSortByPropertyRatio": 1,
       "TargetSortByWeaknessMatch": 1,
-      "TargetSortMonsterRank": 7,
+      "TargetSortMonsterRank": 8,
       "TargetSortSequence": 1,
-      "TargetTake": 52,
+      "TargetTake": 53,
       "TargetTimeSlow": 132,
       "TaskConfig": 80,
       "TaskTemplateFetchParamSequence": 1,
@@ -3180,18 +3248,51 @@
       "validated": 0
     }
   },
+  "formula_status": {
+    "elation_damage": {
+      "executable": 0,
+      "fidelity_status": "blocked",
+      "lowered": 1,
+      "properties": [
+        "DuringElationTime_MonsterBuffOthers_Elation",
+        "DuringElationTime_MonsterBuffSelf_Elation",
+        "DuringElationTime_MonsterDeathRattle",
+        "DuringElationTime_MonsterDeathRattleByLevel",
+        "DuringElationTime_MonsterHealOthers",
+        "DuringElationTime_MonsterHealSelf",
+        "DuringElationTime_MonsterReviveOthers",
+        "DuringElationTime_MonsterReviveSelf",
+        "DuringElationTime_MonsterSummon",
+        "DuringElationTime_UseElationSkill",
+        "ElationConstKeys",
+        "ElationDamageAddedRatio",
+        "ElationEchoPoint",
+        "ElationPointMax",
+        "ElationTime",
+        "OnListenElationTimeEnd",
+        "OnListenElationTimeStart",
+        "RestartElationTime",
+        "StartElationTime"
+      ],
+      "reason": "ElationDamageAddedRatio is discovered as a 4.0 mainline damage property, but the complete damage formula is not executable in v0_207",
+      "status": "blocked",
+      "validated": 0
+    }
+  },
   "ir_summary": {
     "action_definitions": 792,
     "conditions": 1309,
     "coverage_status_counts": {
       "audit_only": 7906,
+      "blocked": 1,
+      "discovered_only": 18,
       "executable": 1867,
       "supported_alias": 5,
       "unsupported": 2702
     },
     "effects": 3503,
     "entities": 2060,
-    "formulas": 3151,
+    "formulas": 3170,
     "triggers": 1665
   },
   "opcode_status": {
@@ -3214,7 +3315,7 @@
       "validated": 0
     },
     "AIComposeSelector": {
-      "count": 22,
+      "count": 23,
       "executable": 0,
       "fidelity_status": "blocked",
       "lowered": 0,
@@ -3241,7 +3342,7 @@
       "validated": 0
     },
     "AIModifierNameSelector": {
-      "count": 118,
+      "count": 119,
       "executable": 0,
       "fidelity_status": "blocked",
       "lowered": 0,
@@ -3268,7 +3369,7 @@
       "validated": 0
     },
     "AIPropertySelector": {
-      "count": 5,
+      "count": 6,
       "executable": 0,
       "fidelity_status": "blocked",
       "lowered": 0,
@@ -3309,6 +3410,24 @@
       "fidelity_status": "blocked",
       "lowered": 0,
       "reason": "opcode 'AIVariableBool' has no v8 semantic mapping yet",
+      "status": "unsupported",
+      "validated": 0
+    },
+    "AIVariableDefaultSelectorConfigList": {
+      "count": 1,
+      "executable": 0,
+      "fidelity_status": "blocked",
+      "lowered": 0,
+      "reason": "opcode 'AIVariableDefaultSelectorConfigList' has no v8 semantic mapping yet",
+      "status": "unsupported",
+      "validated": 0
+    },
+    "AIVariableFixPoint": {
+      "count": 1,
+      "executable": 0,
+      "fidelity_status": "blocked",
+      "lowered": 0,
+      "reason": "opcode 'AIVariableFixPoint' has no v8 semantic mapping yet",
       "status": "unsupported",
       "validated": 0
     },
@@ -4114,7 +4233,7 @@
       "validated": 0
     },
     "ByAnd": {
-      "count": 913,
+      "count": 916,
       "executable": 0,
       "fidelity_status": "lowered",
       "lowered": 283,
@@ -4150,7 +4269,7 @@
       "validated": 0
     },
     "ByAny": {
-      "count": 586,
+      "count": 587,
       "executable": 0,
       "fidelity_status": "lowered",
       "lowered": 24,
@@ -4447,7 +4566,7 @@
       "validated": 0
     },
     "ByCompareCharacterID": {
-      "count": 115,
+      "count": 116,
       "executable": 0,
       "fidelity_status": "lowered",
       "lowered": 5,
@@ -4537,7 +4656,7 @@
       "validated": 0
     },
     "ByCompareGridFightProperty": {
-      "count": 16,
+      "count": 17,
       "executable": 0,
       "fidelity_status": "blocked",
       "lowered": 0,
@@ -4843,7 +4962,7 @@
       "validated": 0
     },
     "ByCompareTarget": {
-      "count": 259,
+      "count": 261,
       "executable": 0,
       "fidelity_status": "lowered",
       "lowered": 34,
@@ -4924,7 +5043,7 @@
       "validated": 0
     },
     "ByContainBehaviorFlag": {
-      "count": 371,
+      "count": 373,
       "executable": 0,
       "fidelity_status": "lowered",
       "lowered": 29,
@@ -5248,7 +5367,7 @@
       "validated": 0
     },
     "ByIsBattleEventEntity": {
-      "count": 57,
+      "count": 59,
       "executable": 0,
       "fidelity_status": "lowered",
       "lowered": 2,
@@ -5284,7 +5403,7 @@
       "validated": 0
     },
     "ByIsCharacterChangeTarget": {
-      "count": 2,
+      "count": 3,
       "executable": 0,
       "fidelity_status": "blocked",
       "lowered": 0,
@@ -5311,7 +5430,7 @@
       "validated": 0
     },
     "ByIsContainModifier": {
-      "count": 848,
+      "count": 849,
       "executable": 0,
       "fidelity_status": "lowered",
       "lowered": 124,
@@ -5401,7 +5520,7 @@
       "validated": 0
     },
     "ByIsEnemy": {
-      "count": 5,
+      "count": 6,
       "executable": 0,
       "fidelity_status": "lowered",
       "lowered": 1,
@@ -5607,8 +5726,17 @@
       "status": "unsupported",
       "validated": 0
     },
+    "ByIsTargetCustomUnselectable": {
+      "count": 1,
+      "executable": 0,
+      "fidelity_status": "blocked",
+      "lowered": 0,
+      "reason": "opcode 'ByIsTargetCustomUnselectable' has no v8 semantic mapping yet",
+      "status": "unsupported",
+      "validated": 0
+    },
     "ByIsTargetUnselectable": {
-      "count": 29,
+      "count": 30,
       "executable": 0,
       "fidelity_status": "blocked",
       "lowered": 0,
@@ -5635,7 +5763,7 @@
       "validated": 0
     },
     "ByIsTeammate": {
-      "count": 25,
+      "count": 26,
       "executable": 0,
       "fidelity_status": "lowered",
       "lowered": 8,
@@ -5698,7 +5826,7 @@
       "validated": 0
     },
     "ByNot": {
-      "count": 138,
+      "count": 139,
       "executable": 0,
       "fidelity_status": "lowered",
       "lowered": 9,
@@ -5815,7 +5943,7 @@
       "validated": 0
     },
     "ByTargetAliveState": {
-      "count": 106,
+      "count": 108,
       "executable": 0,
       "fidelity_status": "lowered",
       "lowered": 4,
@@ -5824,7 +5952,7 @@
       "validated": 0
     },
     "ByTargetEntityType": {
-      "count": 128,
+      "count": 129,
       "executable": 0,
       "fidelity_status": "lowered",
       "lowered": 10,
@@ -5887,7 +6015,7 @@
       "validated": 0
     },
     "ByTargetListIntersects": {
-      "count": 168,
+      "count": 169,
       "executable": 0,
       "fidelity_status": "lowered",
       "lowered": 7,
@@ -5905,7 +6033,7 @@
       "validated": 0
     },
     "ByTargetTeam": {
-      "count": 500,
+      "count": 502,
       "executable": 0,
       "fidelity_status": "lowered",
       "lowered": 199,
@@ -6139,7 +6267,7 @@
       "validated": 0
     },
     "CharacterReactionAnimConfig": {
-      "count": 41,
+      "count": 42,
       "executable": 0,
       "fidelity_status": "blocked",
       "lowered": 0,
@@ -7012,7 +7140,7 @@
       "validated": 0
     },
     "DispelStatus": {
-      "count": 288,
+      "count": 289,
       "executable": 0,
       "fidelity_status": "lowered",
       "lowered": 14,
@@ -12214,7 +12342,7 @@
       "validated": 0
     },
     "TargetAlias": {
-      "count": 1888,
+      "count": 1891,
       "executable": 0,
       "fidelity_status": "discovered_only",
       "lowered": 0,
@@ -12232,7 +12360,16 @@
       "validated": 0
     },
     "TargetConcat": {
-      "count": 91,
+      "count": 92,
+      "executable": 0,
+      "fidelity_status": "discovered_only",
+      "lowered": 0,
+      "reason": "target alias is recognized but not validated as a complete runtime mechanic",
+      "status": "supported_alias",
+      "validated": 0
+    },
+    "TargetFetchAbilityGroup": {
+      "count": 1,
       "executable": 0,
       "fidelity_status": "discovered_only",
       "lowered": 0,
@@ -12241,6 +12378,24 @@
       "validated": 0
     },
     "TargetFetchAbilityTarget": {
+      "count": 2,
+      "executable": 0,
+      "fidelity_status": "discovered_only",
+      "lowered": 0,
+      "reason": "target alias is recognized but not validated as a complete runtime mechanic",
+      "status": "supported_alias",
+      "validated": 0
+    },
+    "TargetFetchAbilityTargetLeader": {
+      "count": 1,
+      "executable": 0,
+      "fidelity_status": "discovered_only",
+      "lowered": 0,
+      "reason": "target alias is recognized but not validated as a complete runtime mechanic",
+      "status": "supported_alias",
+      "validated": 0
+    },
+    "TargetFetchActionDelayExceed": {
       "count": 1,
       "executable": 0,
       "fidelity_status": "discovered_only",
@@ -12250,7 +12405,7 @@
       "validated": 0
     },
     "TargetFetchActualOwner": {
-      "count": 1,
+      "count": 3,
       "executable": 0,
       "fidelity_status": "discovered_only",
       "lowered": 0,
@@ -12267,8 +12422,26 @@
       "status": "supported_alias",
       "validated": 0
     },
-    "TargetFetchAdvLocalPlayer": {
+    "TargetFetchAdvAllNPCMonsters": {
       "count": 1,
+      "executable": 0,
+      "fidelity_status": "discovered_only",
+      "lowered": 0,
+      "reason": "target alias is recognized but not validated as a complete runtime mechanic",
+      "status": "supported_alias",
+      "validated": 0
+    },
+    "TargetFetchAdvLineup": {
+      "count": 1,
+      "executable": 0,
+      "fidelity_status": "discovered_only",
+      "lowered": 0,
+      "reason": "target alias is recognized but not validated as a complete runtime mechanic",
+      "status": "supported_alias",
+      "validated": 0
+    },
+    "TargetFetchAdvLocalPlayer": {
+      "count": 2,
       "executable": 0,
       "fidelity_status": "discovered_only",
       "lowered": 0,
@@ -12285,7 +12458,97 @@
       "status": "supported_alias",
       "validated": 0
     },
+    "TargetFetchAdvSkillTargetEntityList": {
+      "count": 1,
+      "executable": 0,
+      "fidelity_status": "discovered_only",
+      "lowered": 0,
+      "reason": "target alias is recognized but not validated as a complete runtime mechanic",
+      "status": "supported_alias",
+      "validated": 0
+    },
+    "TargetFetchAdvTeamLeader": {
+      "count": 1,
+      "executable": 0,
+      "fidelity_status": "discovered_only",
+      "lowered": 0,
+      "reason": "target alias is recognized but not validated as a complete runtime mechanic",
+      "status": "supported_alias",
+      "validated": 0
+    },
+    "TargetFetchAdvTeamMembers": {
+      "count": 1,
+      "executable": 0,
+      "fidelity_status": "discovered_only",
+      "lowered": 0,
+      "reason": "target alias is recognized but not validated as a complete runtime mechanic",
+      "status": "supported_alias",
+      "validated": 0
+    },
+    "TargetFetchAidDefender": {
+      "count": 1,
+      "executable": 0,
+      "fidelity_status": "discovered_only",
+      "lowered": 0,
+      "reason": "target alias is recognized but not validated as a complete runtime mechanic",
+      "status": "supported_alias",
+      "validated": 0
+    },
+    "TargetFetchAidProtector": {
+      "count": 1,
+      "executable": 0,
+      "fidelity_status": "discovered_only",
+      "lowered": 0,
+      "reason": "target alias is recognized but not validated as a complete runtime mechanic",
+      "status": "supported_alias",
+      "validated": 0
+    },
+    "TargetFetchAimAtTargetList": {
+      "count": 1,
+      "executable": 0,
+      "fidelity_status": "discovered_only",
+      "lowered": 0,
+      "reason": "target alias is recognized but not validated as a complete runtime mechanic",
+      "status": "supported_alias",
+      "validated": 0
+    },
+    "TargetFetchAliveSourceEntity": {
+      "count": 1,
+      "executable": 0,
+      "fidelity_status": "discovered_only",
+      "lowered": 0,
+      "reason": "target alias is recognized but not validated as a complete runtime mechanic",
+      "status": "supported_alias",
+      "validated": 0
+    },
+    "TargetFetchAllCustomUnselectable": {
+      "count": 1,
+      "executable": 0,
+      "fidelity_status": "discovered_only",
+      "lowered": 0,
+      "reason": "target alias is recognized but not validated as a complete runtime mechanic",
+      "status": "supported_alias",
+      "validated": 0
+    },
+    "TargetFetchAllStanceBreakEntity": {
+      "count": 1,
+      "executable": 0,
+      "fidelity_status": "discovered_only",
+      "lowered": 0,
+      "reason": "target alias is recognized but not validated as a complete runtime mechanic",
+      "status": "supported_alias",
+      "validated": 0
+    },
     "TargetFetchAllUnselectable": {
+      "count": 3,
+      "executable": 0,
+      "fidelity_status": "discovered_only",
+      "lowered": 0,
+      "reason": "target alias is recognized but not validated as a complete runtime mechanic",
+      "status": "supported_alias",
+      "validated": 0
+    },
+    "TargetFetchAvatarAssistant": {
       "count": 1,
       "executable": 0,
       "fidelity_status": "discovered_only",
@@ -12303,8 +12566,80 @@
       "status": "supported_alias",
       "validated": 0
     },
+    "TargetFetchBattleEventCaster": {
+      "count": 1,
+      "executable": 0,
+      "fidelity_status": "discovered_only",
+      "lowered": 0,
+      "reason": "target alias is recognized but not validated as a complete runtime mechanic",
+      "status": "supported_alias",
+      "validated": 0
+    },
+    "TargetFetchBattleEventEntityList": {
+      "count": 1,
+      "executable": 0,
+      "fidelity_status": "discovered_only",
+      "lowered": 0,
+      "reason": "target alias is recognized but not validated as a complete runtime mechanic",
+      "status": "supported_alias",
+      "validated": 0
+    },
+    "TargetFetchBloodLinkTargets": {
+      "count": 1,
+      "executable": 0,
+      "fidelity_status": "discovered_only",
+      "lowered": 0,
+      "reason": "target alias is recognized but not validated as a complete runtime mechanic",
+      "status": "supported_alias",
+      "validated": 0
+    },
+    "TargetFetchByTauntAndAggro": {
+      "count": 1,
+      "executable": 0,
+      "fidelity_status": "discovered_only",
+      "lowered": 0,
+      "reason": "target alias is recognized but not validated as a complete runtime mechanic",
+      "status": "supported_alias",
+      "validated": 0
+    },
+    "TargetFetchCallBackModifierCaster": {
+      "count": 1,
+      "executable": 0,
+      "fidelity_status": "discovered_only",
+      "lowered": 0,
+      "reason": "target alias is recognized but not validated as a complete runtime mechanic",
+      "status": "supported_alias",
+      "validated": 0
+    },
+    "TargetFetchCameraAimTargetList": {
+      "count": 1,
+      "executable": 0,
+      "fidelity_status": "discovered_only",
+      "lowered": 0,
+      "reason": "target alias is recognized but not validated as a complete runtime mechanic",
+      "status": "supported_alias",
+      "validated": 0
+    },
+    "TargetFetchCameraAnchorTargetList": {
+      "count": 1,
+      "executable": 0,
+      "fidelity_status": "discovered_only",
+      "lowered": 0,
+      "reason": "target alias is recognized but not validated as a complete runtime mechanic",
+      "status": "supported_alias",
+      "validated": 0
+    },
     "TargetFetchCaster": {
-      "count": 372,
+      "count": 373,
+      "executable": 0,
+      "fidelity_status": "discovered_only",
+      "lowered": 0,
+      "reason": "target alias is recognized but not validated as a complete runtime mechanic",
+      "status": "supported_alias",
+      "validated": 0
+    },
+    "TargetFetchCurrentGroupNPCMonsters": {
+      "count": 1,
       "executable": 0,
       "fidelity_status": "discovered_only",
       "lowered": 0,
@@ -12321,7 +12656,34 @@
       "status": "supported_alias",
       "validated": 0
     },
+    "TargetFetchDataViewUISelectEnter": {
+      "count": 1,
+      "executable": 0,
+      "fidelity_status": "discovered_only",
+      "lowered": 0,
+      "reason": "target alias is recognized but not validated as a complete runtime mechanic",
+      "status": "supported_alias",
+      "validated": 0
+    },
+    "TargetFetchDataViewUISelectLeave": {
+      "count": 1,
+      "executable": 0,
+      "fidelity_status": "discovered_only",
+      "lowered": 0,
+      "reason": "target alias is recognized but not validated as a complete runtime mechanic",
+      "status": "supported_alias",
+      "validated": 0
+    },
     "TargetFetchElationTimeAllTargets": {
+      "count": 1,
+      "executable": 0,
+      "fidelity_status": "discovered_only",
+      "lowered": 0,
+      "reason": "target alias is recognized but not validated as a complete runtime mechanic",
+      "status": "supported_alias",
+      "validated": 0
+    },
+    "TargetFetchFightMVPEntity": {
       "count": 1,
       "executable": 0,
       "fidelity_status": "discovered_only",
@@ -12339,8 +12701,35 @@
       "status": "supported_alias",
       "validated": 0
     },
+    "TargetFetchLatestEnterStageAvatar": {
+      "count": 1,
+      "executable": 0,
+      "fidelity_status": "discovered_only",
+      "lowered": 0,
+      "reason": "target alias is recognized but not validated as a complete runtime mechanic",
+      "status": "supported_alias",
+      "validated": 0
+    },
     "TargetFetchLevelEntity": {
-      "count": 3,
+      "count": 4,
+      "executable": 0,
+      "fidelity_status": "discovered_only",
+      "lowered": 0,
+      "reason": "target alias is recognized but not validated as a complete runtime mechanic",
+      "status": "supported_alias",
+      "validated": 0
+    },
+    "TargetFetchLockTarget": {
+      "count": 1,
+      "executable": 0,
+      "fidelity_status": "discovered_only",
+      "lowered": 0,
+      "reason": "target alias is recognized but not validated as a complete runtime mechanic",
+      "status": "supported_alias",
+      "validated": 0
+    },
+    "TargetFetchMainMonster": {
+      "count": 1,
       "executable": 0,
       "fidelity_status": "discovered_only",
       "lowered": 0,
@@ -12349,7 +12738,7 @@
       "validated": 0
     },
     "TargetFetchModifierOwner": {
-      "count": 1,
+      "count": 2,
       "executable": 0,
       "fidelity_status": "discovered_only",
       "lowered": 0,
@@ -12366,6 +12755,33 @@
       "status": "supported_alias",
       "validated": 0
     },
+    "TargetFetchNextSkillCaster": {
+      "count": 1,
+      "executable": 0,
+      "fidelity_status": "discovered_only",
+      "lowered": 0,
+      "reason": "target alias is recognized but not validated as a complete runtime mechanic",
+      "status": "supported_alias",
+      "validated": 0
+    },
+    "TargetFetchNextTurnOwnerEntity": {
+      "count": 1,
+      "executable": 0,
+      "fidelity_status": "discovered_only",
+      "lowered": 0,
+      "reason": "target alias is recognized but not validated as a complete runtime mechanic",
+      "status": "supported_alias",
+      "validated": 0
+    },
+    "TargetFetchNone": {
+      "count": 1,
+      "executable": 0,
+      "fidelity_status": "discovered_only",
+      "lowered": 0,
+      "reason": "target alias is recognized but not validated as a complete runtime mechanic",
+      "status": "supported_alias",
+      "validated": 0
+    },
     "TargetFetchOwnerEntity": {
       "count": 1,
       "executable": 0,
@@ -12375,16 +12791,7 @@
       "status": "supported_alias",
       "validated": 0
     },
-    "TargetFetchParamEntityByIndex": {
-      "count": 3,
-      "executable": 0,
-      "fidelity_status": "discovered_only",
-      "lowered": 0,
-      "reason": "target alias is recognized but not validated as a complete runtime mechanic",
-      "status": "supported_alias",
-      "validated": 0
-    },
-    "TargetFetchParamEntityList": {
+    "TargetFetchParamEntity": {
       "count": 1,
       "executable": 0,
       "fidelity_status": "discovered_only",
@@ -12393,8 +12800,8 @@
       "status": "supported_alias",
       "validated": 0
     },
-    "TargetFetchPartner": {
-      "count": 15,
+    "TargetFetchParamEntityByIndex": {
+      "count": 4,
       "executable": 0,
       "fidelity_status": "discovered_only",
       "lowered": 0,
@@ -12402,16 +12809,7 @@
       "status": "supported_alias",
       "validated": 0
     },
-    "TargetFetchUniqueNameEntity": {
-      "count": 47,
-      "executable": 0,
-      "fidelity_status": "discovered_only",
-      "lowered": 0,
-      "reason": "target alias is recognized but not validated as a complete runtime mechanic",
-      "status": "supported_alias",
-      "validated": 0
-    },
-    "TargetFetchUnstageTarget": {
+    "TargetFetchParamEntityList": {
       "count": 2,
       "executable": 0,
       "fidelity_status": "discovered_only",
@@ -12420,8 +12818,152 @@
       "status": "supported_alias",
       "validated": 0
     },
+    "TargetFetchPartner": {
+      "count": 16,
+      "executable": 0,
+      "fidelity_status": "discovered_only",
+      "lowered": 0,
+      "reason": "target alias is recognized but not validated as a complete runtime mechanic",
+      "status": "supported_alias",
+      "validated": 0
+    },
+    "TargetFetchPassiveEntity": {
+      "count": 1,
+      "executable": 0,
+      "fidelity_status": "discovered_only",
+      "lowered": 0,
+      "reason": "target alias is recognized but not validated as a complete runtime mechanic",
+      "status": "supported_alias",
+      "validated": 0
+    },
+    "TargetFetchProjectileHitEntity": {
+      "count": 1,
+      "executable": 0,
+      "fidelity_status": "discovered_only",
+      "lowered": 0,
+      "reason": "target alias is recognized but not validated as a complete runtime mechanic",
+      "status": "supported_alias",
+      "validated": 0
+    },
+    "TargetFetchProjectileHitPos": {
+      "count": 1,
+      "executable": 0,
+      "fidelity_status": "discovered_only",
+      "lowered": 0,
+      "reason": "target alias is recognized but not validated as a complete runtime mechanic",
+      "status": "supported_alias",
+      "validated": 0
+    },
+    "TargetFetchRogueMagicScepterList": {
+      "count": 1,
+      "executable": 0,
+      "fidelity_status": "discovered_only",
+      "lowered": 0,
+      "reason": "target alias is recognized but not validated as a complete runtime mechanic",
+      "status": "supported_alias",
+      "validated": 0
+    },
+    "TargetFetchSnapshotEntityList": {
+      "count": 1,
+      "executable": 0,
+      "fidelity_status": "discovered_only",
+      "lowered": 0,
+      "reason": "target alias is recognized but not validated as a complete runtime mechanic",
+      "status": "supported_alias",
+      "validated": 0
+    },
+    "TargetFetchStanceBreakTargetEntity": {
+      "count": 1,
+      "executable": 0,
+      "fidelity_status": "discovered_only",
+      "lowered": 0,
+      "reason": "target alias is recognized but not validated as a complete runtime mechanic",
+      "status": "supported_alias",
+      "validated": 0
+    },
+    "TargetFetchSummonMonsters": {
+      "count": 1,
+      "executable": 0,
+      "fidelity_status": "discovered_only",
+      "lowered": 0,
+      "reason": "target alias is recognized but not validated as a complete runtime mechanic",
+      "status": "supported_alias",
+      "validated": 0
+    },
+    "TargetFetchTaskActionTarget": {
+      "count": 1,
+      "executable": 0,
+      "fidelity_status": "discovered_only",
+      "lowered": 0,
+      "reason": "target alias is recognized but not validated as a complete runtime mechanic",
+      "status": "supported_alias",
+      "validated": 0
+    },
+    "TargetFetchTeamEntity": {
+      "count": 1,
+      "executable": 0,
+      "fidelity_status": "discovered_only",
+      "lowered": 0,
+      "reason": "target alias is recognized but not validated as a complete runtime mechanic",
+      "status": "supported_alias",
+      "validated": 0
+    },
+    "TargetFetchTemplateEntityList": {
+      "count": 1,
+      "executable": 0,
+      "fidelity_status": "discovered_only",
+      "lowered": 0,
+      "reason": "target alias is recognized but not validated as a complete runtime mechanic",
+      "status": "supported_alias",
+      "validated": 0
+    },
+    "TargetFetchTrailblazer": {
+      "count": 1,
+      "executable": 0,
+      "fidelity_status": "discovered_only",
+      "lowered": 0,
+      "reason": "target alias is recognized but not validated as a complete runtime mechanic",
+      "status": "supported_alias",
+      "validated": 0
+    },
+    "TargetFetchTurnActionEntity": {
+      "count": 1,
+      "executable": 0,
+      "fidelity_status": "discovered_only",
+      "lowered": 0,
+      "reason": "target alias is recognized but not validated as a complete runtime mechanic",
+      "status": "supported_alias",
+      "validated": 0
+    },
+    "TargetFetchTurnOwnerEntity": {
+      "count": 1,
+      "executable": 0,
+      "fidelity_status": "discovered_only",
+      "lowered": 0,
+      "reason": "target alias is recognized but not validated as a complete runtime mechanic",
+      "status": "supported_alias",
+      "validated": 0
+    },
+    "TargetFetchUniqueNameEntity": {
+      "count": 48,
+      "executable": 0,
+      "fidelity_status": "discovered_only",
+      "lowered": 0,
+      "reason": "target alias is recognized but not validated as a complete runtime mechanic",
+      "status": "supported_alias",
+      "validated": 0
+    },
+    "TargetFetchUnstageTarget": {
+      "count": 3,
+      "executable": 0,
+      "fidelity_status": "discovered_only",
+      "lowered": 0,
+      "reason": "target alias is recognized but not validated as a complete runtime mechanic",
+      "status": "supported_alias",
+      "validated": 0
+    },
     "TargetFilter": {
-      "count": 223,
+      "count": 225,
       "executable": 0,
       "fidelity_status": "discovered_only",
       "lowered": 0,
@@ -12448,7 +12990,7 @@
       "validated": 0
     },
     "TargetIndex": {
-      "count": 24,
+      "count": 26,
       "executable": 0,
       "fidelity_status": "discovered_only",
       "lowered": 0,
@@ -12466,7 +13008,7 @@
       "validated": 0
     },
     "TargetMapAdjoinEntity": {
-      "count": 7,
+      "count": 9,
       "executable": 0,
       "fidelity_status": "discovered_only",
       "lowered": 0,
@@ -12475,7 +13017,16 @@
       "validated": 0
     },
     "TargetMapAllTeamMember": {
-      "count": 4,
+      "count": 6,
+      "executable": 0,
+      "fidelity_status": "discovered_only",
+      "lowered": 0,
+      "reason": "target alias is recognized but not validated as a complete runtime mechanic",
+      "status": "supported_alias",
+      "validated": 0
+    },
+    "TargetMapAllTeamMemberFromFirstEntity": {
+      "count": 2,
       "executable": 0,
       "fidelity_status": "discovered_only",
       "lowered": 0,
@@ -12484,7 +13035,25 @@
       "validated": 0
     },
     "TargetMapAttackTargetList": {
-      "count": 2,
+      "count": 4,
+      "executable": 0,
+      "fidelity_status": "discovered_only",
+      "lowered": 0,
+      "reason": "target alias is recognized but not validated as a complete runtime mechanic",
+      "status": "supported_alias",
+      "validated": 0
+    },
+    "TargetMapCharacterChangeSource": {
+      "count": 1,
+      "executable": 0,
+      "fidelity_status": "discovered_only",
+      "lowered": 0,
+      "reason": "target alias is recognized but not validated as a complete runtime mechanic",
+      "status": "supported_alias",
+      "validated": 0
+    },
+    "TargetMapCharacterChangeTarget": {
+      "count": 1,
       "executable": 0,
       "fidelity_status": "discovered_only",
       "lowered": 0,
@@ -12493,7 +13062,43 @@
       "validated": 0
     },
     "TargetMapCreatedBattleEvent": {
+      "count": 4,
+      "executable": 0,
+      "fidelity_status": "discovered_only",
+      "lowered": 0,
+      "reason": "target alias is recognized but not validated as a complete runtime mechanic",
+      "status": "supported_alias",
+      "validated": 0
+    },
+    "TargetMapCreator": {
+      "count": 1,
+      "executable": 0,
+      "fidelity_status": "discovered_only",
+      "lowered": 0,
+      "reason": "target alias is recognized but not validated as a complete runtime mechanic",
+      "status": "supported_alias",
+      "validated": 0
+    },
+    "TargetMapDamageAttacker": {
       "count": 2,
+      "executable": 0,
+      "fidelity_status": "discovered_only",
+      "lowered": 0,
+      "reason": "target alias is recognized but not validated as a complete runtime mechanic",
+      "status": "supported_alias",
+      "validated": 0
+    },
+    "TargetMapDamageDefender": {
+      "count": 2,
+      "executable": 0,
+      "fidelity_status": "discovered_only",
+      "lowered": 0,
+      "reason": "target alias is recognized but not validated as a complete runtime mechanic",
+      "status": "supported_alias",
+      "validated": 0
+    },
+    "TargetMapDummyEntity": {
+      "count": 1,
       "executable": 0,
       "fidelity_status": "discovered_only",
       "lowered": 0,
@@ -12510,8 +13115,17 @@
       "status": "supported_alias",
       "validated": 0
     },
-    "TargetMapPartEntity": {
+    "TargetMapEnemyTeamEntity": {
       "count": 1,
+      "executable": 0,
+      "fidelity_status": "discovered_only",
+      "lowered": 0,
+      "reason": "target alias is recognized but not validated as a complete runtime mechanic",
+      "status": "supported_alias",
+      "validated": 0
+    },
+    "TargetMapPartEntity": {
+      "count": 2,
       "executable": 0,
       "fidelity_status": "discovered_only",
       "lowered": 0,
@@ -12528,8 +13142,35 @@
       "status": "supported_alias",
       "validated": 0
     },
+    "TargetMapPartToOwner": {
+      "count": 1,
+      "executable": 0,
+      "fidelity_status": "discovered_only",
+      "lowered": 0,
+      "reason": "target alias is recognized but not validated as a complete runtime mechanic",
+      "status": "supported_alias",
+      "validated": 0
+    },
+    "TargetMapSkillActualAttacker": {
+      "count": 1,
+      "executable": 0,
+      "fidelity_status": "discovered_only",
+      "lowered": 0,
+      "reason": "target alias is recognized but not validated as a complete runtime mechanic",
+      "status": "supported_alias",
+      "validated": 0
+    },
+    "TargetMapSkillIndicatorTarget": {
+      "count": 1,
+      "executable": 0,
+      "fidelity_status": "discovered_only",
+      "lowered": 0,
+      "reason": "target alias is recognized but not validated as a complete runtime mechanic",
+      "status": "supported_alias",
+      "validated": 0
+    },
     "TargetMapSkillPointEntity": {
-      "count": 4,
+      "count": 5,
       "executable": 0,
       "fidelity_status": "discovered_only",
       "lowered": 0,
@@ -12538,7 +13179,7 @@
       "validated": 0
     },
     "TargetMapSkillSubTarget": {
-      "count": 2,
+      "count": 4,
       "executable": 0,
       "fidelity_status": "discovered_only",
       "lowered": 0,
@@ -12547,7 +13188,43 @@
       "validated": 0
     },
     "TargetMapSkillTarget": {
-      "count": 3,
+      "count": 5,
+      "executable": 0,
+      "fidelity_status": "discovered_only",
+      "lowered": 0,
+      "reason": "target alias is recognized but not validated as a complete runtime mechanic",
+      "status": "supported_alias",
+      "validated": 0
+    },
+    "TargetMapSnapshotEntity": {
+      "count": 1,
+      "executable": 0,
+      "fidelity_status": "discovered_only",
+      "lowered": 0,
+      "reason": "target alias is recognized but not validated as a complete runtime mechanic",
+      "status": "supported_alias",
+      "validated": 0
+    },
+    "TargetMapSummonedMinions": {
+      "count": 2,
+      "executable": 0,
+      "fidelity_status": "discovered_only",
+      "lowered": 0,
+      "reason": "target alias is recognized but not validated as a complete runtime mechanic",
+      "status": "supported_alias",
+      "validated": 0
+    },
+    "TargetMapSummoner": {
+      "count": 2,
+      "executable": 0,
+      "fidelity_status": "discovered_only",
+      "lowered": 0,
+      "reason": "target alias is recognized but not validated as a complete runtime mechanic",
+      "status": "supported_alias",
+      "validated": 0
+    },
+    "TargetMapTeamEntity": {
+      "count": 1,
       "executable": 0,
       "fidelity_status": "discovered_only",
       "lowered": 0,
@@ -12565,7 +13242,25 @@
       "validated": 0
     },
     "TargetQuery": {
-      "count": 5,
+      "count": 6,
+      "executable": 0,
+      "fidelity_status": "discovered_only",
+      "lowered": 0,
+      "reason": "target alias is recognized but not validated as a complete runtime mechanic",
+      "status": "supported_alias",
+      "validated": 0
+    },
+    "TargetRemoveUnselectable": {
+      "count": 1,
+      "executable": 0,
+      "fidelity_status": "discovered_only",
+      "lowered": 0,
+      "reason": "target alias is recognized but not validated as a complete runtime mechanic",
+      "status": "supported_alias",
+      "validated": 0
+    },
+    "TargetReverse": {
+      "count": 1,
       "executable": 0,
       "fidelity_status": "discovered_only",
       "lowered": 0,
@@ -12583,7 +13278,7 @@
       "validated": 0
     },
     "TargetSequence": {
-      "count": 281,
+      "count": 283,
       "executable": 0,
       "fidelity_status": "discovered_only",
       "lowered": 0,
@@ -12592,7 +13287,7 @@
       "validated": 0
     },
     "TargetShuffle": {
-      "count": 17,
+      "count": 18,
       "executable": 0,
       "fidelity_status": "discovered_only",
       "lowered": 0,
@@ -12610,7 +13305,7 @@
       "validated": 0
     },
     "TargetSortByActionOrder": {
-      "count": 2,
+      "count": 4,
       "executable": 0,
       "fidelity_status": "discovered_only",
       "lowered": 0,
@@ -12637,7 +13332,7 @@
       "validated": 0
     },
     "TargetSortByFormation": {
-      "count": 29,
+      "count": 31,
       "executable": 0,
       "fidelity_status": "discovered_only",
       "lowered": 0,
@@ -12664,7 +13359,7 @@
       "validated": 0
     },
     "TargetSortByModifierStatusCount": {
-      "count": 2,
+      "count": 3,
       "executable": 0,
       "fidelity_status": "discovered_only",
       "lowered": 0,
@@ -12691,7 +13386,16 @@
       "validated": 0
     },
     "TargetSortByProperty": {
-      "count": 29,
+      "count": 30,
+      "executable": 0,
+      "fidelity_status": "discovered_only",
+      "lowered": 0,
+      "reason": "target alias is recognized but not validated as a complete runtime mechanic",
+      "status": "supported_alias",
+      "validated": 0
+    },
+    "TargetSortByPropertyRatio": {
+      "count": 1,
       "executable": 0,
       "fidelity_status": "discovered_only",
       "lowered": 0,
@@ -12709,7 +13413,7 @@
       "validated": 0
     },
     "TargetSortMonsterRank": {
-      "count": 7,
+      "count": 8,
       "executable": 0,
       "fidelity_status": "discovered_only",
       "lowered": 0,
@@ -12727,7 +13431,7 @@
       "validated": 0
     },
     "TargetTake": {
-      "count": 52,
+      "count": 53,
       "executable": 0,
       "fidelity_status": "discovered_only",
       "lowered": 0,

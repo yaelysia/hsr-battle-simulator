@@ -1,0 +1,478 @@
+{
+  "after": {
+    "battle": {
+      "action_index": 0,
+      "current_window": "idle",
+      "phase": "scenario",
+      "turn_owner_id": "ally:saber",
+      "wave_index": 0
+    },
+    "coverage": {},
+    "event_index": 0,
+    "global_flags": {
+      "current_window": "idle",
+      "phase": "scenario",
+      "turn_owner_id": "ally:saber"
+    },
+    "max_skill_points": 5,
+    "metadata": {
+      "rng_state": "deterministic",
+      "snapshot_contract": "v0_203"
+    },
+    "pending_events": [],
+    "queues": {},
+    "resources": {
+      "max_skill_points": 5,
+      "skill_points": 3
+    },
+    "rng_events": [],
+    "rng_state": "deterministic",
+    "settlement": {},
+    "skill_points": 3,
+    "targeting": {},
+    "teams": {
+      "ally": [
+        "ally:saber"
+      ],
+      "enemy": [
+        "enemy:target"
+      ],
+      "summon": []
+    },
+    "timeline": {
+      "action_values": {
+        "ally:saber": 0.0,
+        "enemy:target": 0.0
+      },
+      "queues": {},
+      "turn_owner_id": "ally:saber"
+    },
+    "units": {
+      "ally:saber": {
+        "action_value": 0.0,
+        "attack": 3200.0,
+        "base_stats": {
+          "attack": 3200.0,
+          "defense": 900.0,
+          "max_hp": 3000.0,
+          "speed": 101.0
+        },
+        "defense": 900.0,
+        "derived_stats": {
+          "break_damage_added_ratio": 0.0,
+          "critical_chance": 0.05,
+          "critical_damage": 0.5,
+          "damage_added_ratio": 0.0,
+          "effect_hit_rate": 0.0,
+          "effect_resistance": 0.0
+        },
+        "energy": 60.0,
+        "flags": {
+          "position": 1
+        },
+        "hp": 3000.0,
+        "level": 80,
+        "max_energy": 120.0,
+        "max_hp": 3000.0,
+        "max_toughness": 0.0,
+        "modifiers": [],
+        "position": 1,
+        "recoverable_hp": 0.0,
+        "resources": {
+          "critical_chance": 0.05,
+          "critical_damage": 0.5
+        },
+        "shield": 0.0,
+        "side": "ally",
+        "speed": 101.0,
+        "status_details": [],
+        "statuses": [],
+        "template_id": "avatar:1014",
+        "template_source": {
+          "id": "avatar:1014",
+          "kind": "avatar"
+        },
+        "toughness": 0.0,
+        "toughness_state": {
+          "break_delay": 0.0,
+          "broken": false,
+          "current": 0.0,
+          "maximum": 0.0,
+          "weakness_locked": false,
+          "weaknesses": []
+        },
+        "unit_id": "ally:saber"
+      },
+      "enemy:target": {
+        "action_value": 0.0,
+        "attack": 1000.0,
+        "base_stats": {
+          "attack": 1000.0,
+          "defense": 1000.0,
+          "max_hp": 10000.0,
+          "speed": 100.0
+        },
+        "defense": 1000.0,
+        "derived_stats": {
+          "break_damage_added_ratio": 0.0,
+          "critical_chance": 0.0,
+          "critical_damage": 0.0,
+          "damage_added_ratio": 0.0,
+          "effect_hit_rate": 0.0,
+          "effect_resistance": 0.0
+        },
+        "energy": 0.0,
+        "flags": {
+          "position": 1,
+          "weaknesses": [
+            "Fire",
+            "Thunder"
+          ]
+        },
+        "hp": 9877.0,
+        "level": 80,
+        "max_energy": 0.0,
+        "max_hp": 10000.0,
+        "max_toughness": 60.0,
+        "modifiers": [],
+        "position": 1,
+        "recoverable_hp": 0.0,
+        "resources": {},
+        "shield": 0.0,
+        "side": "enemy",
+        "speed": 100.0,
+        "status_details": [],
+        "statuses": [],
+        "template_id": "monster:1002011",
+        "template_source": {
+          "id": "monster:1002011",
+          "kind": "monster"
+        },
+        "toughness": 60.0,
+        "toughness_state": {
+          "break_delay": 0.0,
+          "broken": false,
+          "current": 60.0,
+          "maximum": 60.0,
+          "weakness_locked": false,
+          "weaknesses": [
+            "Fire",
+            "Thunder"
+          ]
+        },
+        "unit_id": "enemy:target"
+      }
+    },
+    "wave_index": 0
+  },
+  "before": {
+    "battle": {
+      "action_index": 0,
+      "current_window": "idle",
+      "phase": "scenario",
+      "turn_owner_id": "ally:saber",
+      "wave_index": 0
+    },
+    "coverage": {},
+    "event_index": 0,
+    "global_flags": {
+      "current_window": "idle",
+      "phase": "scenario",
+      "turn_owner_id": "ally:saber"
+    },
+    "max_skill_points": 5,
+    "metadata": {
+      "rng_state": "deterministic",
+      "snapshot_contract": "v0_203"
+    },
+    "pending_events": [],
+    "queues": {},
+    "resources": {
+      "max_skill_points": 5,
+      "skill_points": 3
+    },
+    "rng_events": [],
+    "rng_state": "deterministic",
+    "settlement": {},
+    "skill_points": 3,
+    "targeting": {},
+    "teams": {
+      "ally": [
+        "ally:saber"
+      ],
+      "enemy": [
+        "enemy:target"
+      ],
+      "summon": []
+    },
+    "timeline": {
+      "action_values": {
+        "ally:saber": 0.0,
+        "enemy:target": 0.0
+      },
+      "queues": {},
+      "turn_owner_id": "ally:saber"
+    },
+    "units": {
+      "ally:saber": {
+        "action_value": 0.0,
+        "attack": 3200.0,
+        "base_stats": {
+          "attack": 3200.0,
+          "defense": 900.0,
+          "max_hp": 3000.0,
+          "speed": 101.0
+        },
+        "defense": 900.0,
+        "derived_stats": {
+          "break_damage_added_ratio": 0.0,
+          "critical_chance": 0.05,
+          "critical_damage": 0.5,
+          "damage_added_ratio": 0.0,
+          "effect_hit_rate": 0.0,
+          "effect_resistance": 0.0
+        },
+        "energy": 60.0,
+        "flags": {
+          "position": 1
+        },
+        "hp": 3000.0,
+        "level": 80,
+        "max_energy": 120.0,
+        "max_hp": 3000.0,
+        "max_toughness": 0.0,
+        "modifiers": [],
+        "position": 1,
+        "recoverable_hp": 0.0,
+        "resources": {
+          "critical_chance": 0.05,
+          "critical_damage": 0.5
+        },
+        "shield": 0.0,
+        "side": "ally",
+        "speed": 101.0,
+        "status_details": [],
+        "statuses": [],
+        "template_id": "avatar:1014",
+        "template_source": {
+          "id": "avatar:1014",
+          "kind": "avatar"
+        },
+        "toughness": 0.0,
+        "toughness_state": {
+          "break_delay": 0.0,
+          "broken": false,
+          "current": 0.0,
+          "maximum": 0.0,
+          "weakness_locked": false,
+          "weaknesses": []
+        },
+        "unit_id": "ally:saber"
+      },
+      "enemy:target": {
+        "action_value": 0.0,
+        "attack": 1000.0,
+        "base_stats": {
+          "attack": 1000.0,
+          "defense": 1000.0,
+          "max_hp": 10000.0,
+          "speed": 100.0
+        },
+        "defense": 1000.0,
+        "derived_stats": {
+          "break_damage_added_ratio": 0.0,
+          "critical_chance": 0.0,
+          "critical_damage": 0.0,
+          "damage_added_ratio": 0.0,
+          "effect_hit_rate": 0.0,
+          "effect_resistance": 0.0
+        },
+        "energy": 0.0,
+        "flags": {
+          "position": 1,
+          "weaknesses": [
+            "Fire",
+            "Thunder"
+          ]
+        },
+        "hp": 10000.0,
+        "level": 80,
+        "max_energy": 0.0,
+        "max_hp": 10000.0,
+        "max_toughness": 60.0,
+        "modifiers": [],
+        "position": 1,
+        "recoverable_hp": 0.0,
+        "resources": {},
+        "shield": 0.0,
+        "side": "enemy",
+        "speed": 100.0,
+        "status_details": [],
+        "statuses": [],
+        "template_id": "monster:1002011",
+        "template_source": {
+          "id": "monster:1002011",
+          "kind": "monster"
+        },
+        "toughness": 60.0,
+        "toughness_state": {
+          "break_delay": 0.0,
+          "broken": false,
+          "current": 60.0,
+          "maximum": 60.0,
+          "weakness_locked": false,
+          "weaknesses": [
+            "Fire",
+            "Thunder"
+          ]
+        },
+        "unit_id": "enemy:target"
+      }
+    },
+    "wave_index": 0
+  },
+  "command": {
+    "action_id": "avatar_skill:101401",
+    "action_level": 10,
+    "actor_id": "ally:saber",
+    "metadata": {
+      "label": "Saber normal attack identity smoke",
+      "reset_actor_av": true
+    },
+    "queue_name": null,
+    "source": "manual",
+    "target_ids": [
+      "enemy:target"
+    ]
+  },
+  "contract_validation": {},
+  "coverage": {
+    "attack_type": "follow_up",
+    "damage_formula_family": "direct",
+    "damage_ok": true,
+    "element_type": "Wind",
+    "executor": "v0_207_damage_taxonomy"
+  },
+  "events": [],
+  "mutations": [
+    {
+      "after": 9877.0,
+      "before": 10000.0,
+      "metadata": {
+        "amount": 123.0,
+        "attack_type": "follow_up",
+        "attacker_id": "ally:saber",
+        "damage_formula_family": "direct",
+        "damage_kind": "hp_damage",
+        "element_type": "Wind",
+        "metadata": {
+          "validation": "v0_207_follow_up_attack_type_direct_damage"
+        },
+        "source_trace": {
+          "action_id": "avatar_skill:101401",
+          "coverage_status": "executable",
+          "definition_id": "action_def:avatar_skill:101401:10",
+          "level": 10,
+          "source": {
+            "evidence": {
+              "id_key": "SkillID",
+              "level": 10,
+              "resource_mapping": {
+                "BPAdd": "skill_point_gain_if_positive",
+                "BPNeed": "skill_point_cost_if_positive",
+                "SPBase": "energy_gain"
+              },
+              "row_index": 65,
+              "taxonomy": {
+                "attack_type": "raw TBGD AttackType; follow-up is an attack type axis",
+                "damage_formula_family": "formula family axis; follow-up is not a damage family",
+                "element_type": "raw TBGD StanceDamageType when present"
+              }
+            },
+            "raw_id": "101401",
+            "raw_type": "AvatarSkillConfigLD",
+            "source_path": "ExcelOutput/AvatarSkillConfigLD.json"
+          }
+        },
+        "target_id": "enemy:target"
+      },
+      "mutation_id": "mutation:b7747d4ec6247a4c",
+      "op": "set",
+      "path": [
+        "units",
+        "enemy:target",
+        "hp"
+      ],
+      "reason": "apply damage packet",
+      "source": "damage_system"
+    }
+  ],
+  "rng_events": [],
+  "settlement": {
+    "action_id": "avatar_skill:101401",
+    "actor_id": "ally:saber",
+    "records": [
+      {
+        "mutation_id": "mutation:b7747d4ec6247a4c",
+        "payload": {
+          "amount": 123.0,
+          "attack_type": "follow_up",
+          "damage_formula_family": "direct",
+          "damage_kind": "hp_damage",
+          "element_type": "Wind",
+          "target_after_hp": 9877.0,
+          "target_before_hp": 10000.0
+        },
+        "process_only": false,
+        "record_type": "damage",
+        "source": "damage_system",
+        "trace": {
+          "action_id": "avatar_skill:101401",
+          "coverage_status": "executable",
+          "definition_id": "action_def:avatar_skill:101401:10",
+          "level": 10,
+          "source": {
+            "evidence": {
+              "id_key": "SkillID",
+              "level": 10,
+              "resource_mapping": {
+                "BPAdd": "skill_point_gain_if_positive",
+                "BPNeed": "skill_point_cost_if_positive",
+                "SPBase": "energy_gain"
+              },
+              "row_index": 65,
+              "taxonomy": {
+                "attack_type": "raw TBGD AttackType; follow-up is an attack type axis",
+                "damage_formula_family": "formula family axis; follow-up is not a damage family",
+                "element_type": "raw TBGD StanceDamageType when present"
+              }
+            },
+            "raw_id": "101401",
+            "raw_type": "AvatarSkillConfigLD",
+            "source_path": "ExcelOutput/AvatarSkillConfigLD.json"
+          }
+        }
+      }
+    ],
+    "target_ids": [
+      "enemy:target"
+    ]
+  },
+  "target_resolution": {
+    "legal": [
+      "enemy:target"
+    ],
+    "metadata": {
+      "validation": "v0_207"
+    },
+    "reason": "validation_damage_target",
+    "rejected": [],
+    "requested": [
+      "enemy:target"
+    ],
+    "selected": [
+      "enemy:target"
+    ],
+    "source": "target_system"
+  }
+}

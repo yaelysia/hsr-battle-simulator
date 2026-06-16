@@ -17,6 +17,9 @@ BANNED_TOKENS = (
 )
 
 
+FOLLOW_UP_DAMAGE_FAMILY_TOKEN = "follow_up_as_damage_formula_family"
+
+
 @dataclass(frozen=True)
 class StaticCheckResult:
     ok: bool
@@ -45,4 +48,20 @@ def run_static_checks(package_root: Path) -> StaticCheckResult:
                                 "token": token,
                             }
                         )
+                if _looks_like_follow_up_damage_family(line):
+                    violations.append(
+                        {
+                            "path": path.relative_to(package_root).as_posix(),
+                            "line": line_number,
+                            "token": FOLLOW_UP_DAMAGE_FAMILY_TOKEN,
+                        }
+                    )
     return StaticCheckResult(ok=not violations, violations=tuple(violations))
+
+
+def _looks_like_follow_up_damage_family(line: str) -> bool:
+    if "damage_formula_family" not in line or "follow_up" not in line:
+        return False
+    if "not a damage formula family" in line or "is an attack type" in line:
+        return False
+    return True

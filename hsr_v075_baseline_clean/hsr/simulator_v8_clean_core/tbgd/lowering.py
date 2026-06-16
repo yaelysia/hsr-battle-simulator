@@ -100,6 +100,12 @@ ACTION_DEFINITION_TABLES: tuple[tuple[str, str, str], ...] = (
 )
 
 
+ELATION_MECHANIC_FILES: tuple[str, ...] = (
+    "Config/GlobalConfig/GameCoreConstValue.json",
+    "Config/GlobalConfig/PriorityConfig.json",
+)
+
+
 @dataclass(frozen=True)
 class LoweringLimits:
     max_records_per_table: int = 500
@@ -134,6 +140,7 @@ class TBGDLowering:
             effects.extend(lowered.effects)
             conditions.extend(lowered.conditions)
             formulas.extend(lowered.formulas)
+        formulas.extend(self._lower_elation_mechanics())
 
         return CanonicalIR(
             version=BASELINE_VERSION,
@@ -369,6 +376,56 @@ class TBGDLowering:
             )
         return formulas
 
+    def _lower_elation_mechanics(self) -> list[FormulaIR]:
+        formulas: list[FormulaIR] = []
+        for relative_path in ELATION_MECHANIC_FILES:
+            path = self.tbgd_root / relative_path
+            if not path.exists():
+                continue
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            for index, (raw_path, key, value) in enumerate(_iter_elation_values(data)):
+                mechanic = "elation_damage" if key == "ElationDamageAddedRatio" else "elation_runtime"
+                coverage_status = "blocked" if key == "ElationDamageAddedRatio" else "discovered_only"
+                source = IRSource(
+                    source_path=relative_path,
+                    raw_type=Path(relative_path).stem,
+                    raw_id=raw_path,
+                    evidence={
+                        "raw_path": raw_path,
+                        "key": key,
+                        "mechanic": mechanic,
+                        "damage_formula_family": "elation",
+                    },
+                )
+                blocked_reason = (
+                    "Elation damage property is discovered in TBGD, "
+                    "but the complete 4.0 damage formula is not executable in v0_207"
+                )
+                formulas.append(
+                    FormulaIR(
+                        formula_id=f"mechanic:{mechanic}:{relative_path}:{index}",
+                        kind="mechanic_property",
+                        expression={
+                            "mechanic": mechanic,
+                            "property": key,
+                            "raw_path": raw_path,
+                            "value": _json_safe(value),
+                            "damage_formula_family": "elation",
+                            "source_mode": "mainline",
+                            "runtime_status": coverage_status,
+                            "blocked_reason": blocked_reason
+                            if key == "ElationDamageAddedRatio"
+                            else "Elation runtime property discovered for taxonomy evidence",
+                        },
+                        source=source,
+                        coverage_status=coverage_status,
+                    )
+                )
+        return formulas
+
     def _modifier_maps(self, data: Any) -> list[tuple[str, str, dict[str, Any]]]:
         maps: list[tuple[str, str, dict[str, Any]]] = []
         if not isinstance(data, dict):
@@ -443,6 +500,7 @@ def _action_definition_from_row(
     level = int(_number_value(row.get("Level"), 1.0))
     skill_effect = str(row.get("SkillEffect") or row.get("AttackType") or "Unknown")
     attack_type = str(row.get("AttackType") or "Unknown")
+    element_type = str(row["StanceDamageType"]) if row.get("StanceDamageType") is not None else None
     source = IRSource(
         source_path=relative_path,
         raw_type=Path(relative_path).stem,
@@ -455,6 +513,11 @@ def _action_definition_from_row(
                 "BPNeed": "skill_point_cost_if_positive",
                 "BPAdd": "skill_point_gain_if_positive",
                 "SPBase": "energy_gain",
+            },
+            "taxonomy": {
+                "attack_type": "raw TBGD AttackType; follow-up is an attack type axis",
+                "damage_formula_family": "formula family axis; follow-up is not a damage family",
+                "element_type": "raw TBGD StanceDamageType when present",
             },
         },
     )
@@ -472,9 +535,13 @@ def _action_definition_from_row(
         param_list=tuple(_list_json_values(row.get("ParamList"))),
         show_stance_list=tuple(_list_json_values(row.get("ShowStanceList"))),
         show_damage_list=tuple(_list_json_values(row.get("ShowDamageList"))),
-        stance_damage_type=str(row["StanceDamageType"]) if row.get("StanceDamageType") is not None else None,
+        stance_damage_type=element_type,
         source=source,
         coverage_status="executable",
+        damage_kind=_damage_kind(skill_effect),
+        damage_formula_family=_damage_formula_family(attack_type, skill_effect),
+        element_type=element_type,
+        source_mode=_source_mode(attack_type),
     )
 
 
@@ -491,6 +558,26 @@ def _target_mode(skill_effect: str) -> str:
     if normalized == "enhance":
         return "self_or_team"
     return "unknown"
+
+
+def _damage_kind(skill_effect: str) -> str:
+    return "hp_damage" if _target_mode(skill_effect) in {"single", "blast", "aoe", "bounce"} else "non_damage"
+
+
+def _damage_formula_family(attack_type: str, skill_effect: str) -> str:
+    normalized_attack = attack_type.lower()
+    normalized_effect = skill_effect.lower()
+    if normalized_attack == "dot" or normalized_effect == "dot":
+        return "dot"
+    if normalized_attack == "elementdamage":
+        return "direct"
+    if _target_mode(skill_effect) in {"single", "blast", "aoe", "bounce"}:
+        return "direct"
+    return "none"
+
+
+def _source_mode(attack_type: str) -> str:
+    return "maze" if attack_type.lower().startswith("maze") else "mainline"
 
 
 def _number_value(value: Any, default: float) -> float:
@@ -549,3 +636,21 @@ def _iter_fixed_values(value: Any) -> list[dict[str, Any]]:
         for nested in value:
             found.extend(_iter_fixed_values(nested))
     return found
+
+
+def _iter_elation_values(value: Any, path: tuple[str, ...] = ()) -> list[tuple[str, str, Any]]:
+    found: list[tuple[str, str, Any]] = []
+    if isinstance(value, dict):
+        for key, nested in value.items():
+            child_path = (*path, str(key))
+            if _is_elation_key(str(key)):
+                found.append((".".join(child_path), str(key), nested))
+            found.extend(_iter_elation_values(nested, child_path))
+    elif isinstance(value, list):
+        for index, nested in enumerate(value):
+            found.extend(_iter_elation_values(nested, (*path, str(index))))
+    return found
+
+
+def _is_elation_key(key: str) -> bool:
+    return key.startswith("Elation") or "ElationTime" in key

@@ -45,6 +45,7 @@ class CoverageMatrix:
     ir_summary: dict[str, Any]
     opcode_status: dict[str, dict[str, Any]]
     event_status: dict[str, dict[str, Any]]
+    formula_status: dict[str, dict[str, Any]]
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -52,6 +53,7 @@ class CoverageMatrix:
             "ir_summary": self.ir_summary,
             "opcode_status": self.opcode_status,
             "event_status": self.event_status,
+            "formula_status": self.formula_status,
         }
 
 
@@ -98,6 +100,7 @@ def build_coverage_matrix(report: DiscoveryReport, ir: CanonicalIR) -> CoverageM
         }
         for event, count in sorted(report.event_counts.items())
     }
+    formula_status = _formula_status(ir)
 
     ir_status_counts: Counter[str] = Counter()
     for collection in (ir.entities, ir.action_definitions, ir.triggers, ir.effects, ir.conditions, ir.formulas):
@@ -117,6 +120,7 @@ def build_coverage_matrix(report: DiscoveryReport, ir: CanonicalIR) -> CoverageM
         },
         opcode_status=opcode_status,
         event_status=event_status,
+        formula_status=formula_status,
     )
 
 
@@ -148,3 +152,31 @@ def _fidelity_status(support_status: str, lowered: int, executable: int) -> str:
     if support_status == "unsupported":
         return "blocked"
     return "discovered_only"
+
+
+def _formula_status(ir: CanonicalIR) -> dict[str, dict[str, Any]]:
+    elation_properties = [
+        formula.expression.get("property")
+        for formula in ir.formulas
+        if formula.expression.get("damage_formula_family") == "elation"
+    ]
+    elation_damage_lowered = sum(
+        1
+        for formula in ir.formulas
+        if formula.expression.get("mechanic") == "elation_damage"
+        and formula.expression.get("property") == "ElationDamageAddedRatio"
+    )
+    return {
+        "elation_damage": {
+            "status": "blocked",
+            "fidelity_status": "blocked" if elation_damage_lowered else "discovered_only",
+            "lowered": elation_damage_lowered,
+            "executable": 0,
+            "validated": 0,
+            "properties": sorted({str(item) for item in elation_properties if item}),
+            "reason": (
+                "ElationDamageAddedRatio is discovered as a 4.0 mainline damage property, "
+                "but the complete damage formula is not executable in v0_207"
+            ),
+        }
+    }
