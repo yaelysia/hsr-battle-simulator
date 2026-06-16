@@ -51,9 +51,18 @@ class IdentityResolver:
                     f"route[{index}]: action_ref {step.action_ref!r} has type "
                     f"{action.entity_type!r}, expected one of {sorted(ACTION_ENTITY_TYPES)}"
                 )
+            definition = self.rules.action_definition(step.action_ref, step.action_level)
+            if definition is None:
+                errors.append(
+                    f"route[{index}]: unknown action definition {step.action_ref!r} "
+                    f"level {step.action_level}; known levels: {list(self.rules.action_levels(step.action_ref))}"
+                )
             trace = self.rules.source_trace(step.action_ref)
             if trace:
                 traces.append(trace)
+            definition_trace = self.rules.action_definition_source_trace(step.action_ref, step.action_level)
+            if definition_trace:
+                traces.append(definition_trace)
 
         return ScenarioValidationResult(ok=not errors, errors=tuple(errors), source_traces=tuple(traces))
 
@@ -66,4 +75,3 @@ def _expected_unit_types(side: str) -> set[str]:
     if side == "summon":
         return set(SUMMON_ENTITY_TYPES)
     return set()
-

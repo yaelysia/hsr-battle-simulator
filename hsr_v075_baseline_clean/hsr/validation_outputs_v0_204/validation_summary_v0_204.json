@@ -7,7 +7,7 @@
       "discovery_files": 8667,
       "ir_conditions": 1309,
       "ir_effects": 3503,
-      "ir_entities": 2643,
+      "ir_entities": 2060,
       "ir_formulas": 3151,
       "ir_triggers": 1665
     },
@@ -61,12 +61,34 @@
             "raw_type": "AvatarSkillConfigLD",
             "source_path": "ExcelOutput/AvatarSkillConfigLD.json"
           }
+        },
+        {
+          "action_id": "avatar_skill:101401",
+          "coverage_status": "executable",
+          "definition_id": "action_def:avatar_skill:101401:10",
+          "level": 10,
+          "source": {
+            "evidence": {
+              "id_key": "SkillID",
+              "level": 10,
+              "resource_mapping": {
+                "BPAdd": "skill_point_gain_if_positive",
+                "BPNeed": "skill_point_cost_if_positive",
+                "SPBase": "energy_gain"
+              },
+              "row_index": 65
+            },
+            "raw_id": "101401",
+            "raw_type": "AvatarSkillConfigLD",
+            "source_path": "ExcelOutput/AvatarSkillConfigLD.json"
+          }
         }
       ]
     },
     "wrong_action_type": {
       "errors": [
-        "route[0]: action_ref 'monster:1002011' has type 'monster', expected one of ['active_skill', 'avatar_skill', 'monster_skill']"
+        "route[0]: action_ref 'monster:1002011' has type 'monster', expected one of ['active_skill', 'avatar_skill', 'monster_skill']",
+        "route[0]: unknown action definition 'monster:1002011' level 10; known levels: []"
       ],
       "ok": false,
       "source_traces": [
@@ -171,12 +193,33 @@
             "raw_type": "AvatarSkillConfigLD",
             "source_path": "ExcelOutput/AvatarSkillConfigLD.json"
           }
+        },
+        {
+          "action_id": "avatar_skill:101401",
+          "coverage_status": "executable",
+          "definition_id": "action_def:avatar_skill:101401:10",
+          "level": 10,
+          "source": {
+            "evidence": {
+              "id_key": "SkillID",
+              "level": 10,
+              "resource_mapping": {
+                "BPAdd": "skill_point_gain_if_positive",
+                "BPNeed": "skill_point_cost_if_positive",
+                "SPBase": "energy_gain"
+              },
+              "row_index": 65
+            },
+            "raw_id": "101401",
+            "raw_type": "AvatarSkillConfigLD",
+            "source_path": "ExcelOutput/AvatarSkillConfigLD.json"
+          }
         }
       ]
     },
     "route_count": 1,
     "scenario_id": "identity_smoke_v0_204",
-    "source_trace_count": 3,
+    "source_trace_count": 4,
     "unit_count": 2
   },
   "snapshot_completeness": {
@@ -193,11 +236,11 @@
     "missing_keys": [],
     "ok": true,
     "settlement_traceability": {
-      "checked_records": 7,
+      "checked_records": 9,
       "errors": [],
-      "mutation_linked_records": 5,
+      "mutation_linked_records": 6,
       "ok": true,
-      "process_only_records": 2
+      "process_only_records": 3
     },
     "snapshot_after": {
       "errors": [],

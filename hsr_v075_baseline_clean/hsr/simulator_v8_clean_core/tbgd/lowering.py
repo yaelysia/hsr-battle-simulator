@@ -8,7 +8,16 @@ from typing import Any
 from .coverage import classify_opcode
 from .paths import relative_source_path
 from .. import BASELINE_VERSION
-from ..rules.ir import CanonicalIR, ConditionIR, EffectIR, FormulaIR, IRSource, RuleEntity, TriggerIR
+from ..rules.ir import (
+    ActionDefinitionIR,
+    CanonicalIR,
+    ConditionIR,
+    EffectIR,
+    FormulaIR,
+    IRSource,
+    RuleEntity,
+    TriggerIR,
+)
 
 
 ENTITY_TABLES: dict[str, tuple[str, str, tuple[str, ...]]] = {
@@ -17,12 +26,12 @@ ENTITY_TABLES: dict[str, tuple[str, str, tuple[str, ...]]] = {
     "ExcelOutput/AvatarSkillConfig.json": (
         "avatar_skill",
         "SkillID",
-        ("SkillTriggerKey", "SkillEffect", "BPNeed", "BPAdd", "SPMultipleRatio", "ParamList", "ShowStanceList", "ShowDamageList"),
+        ("SkillTriggerKey", "SkillEffect", "AttackType", "MaxLevel", "SkillIcon", "UltraSkillIcon"),
     ),
     "ExcelOutput/AvatarSkillConfigLD.json": (
         "avatar_skill",
         "SkillID",
-        ("SkillTriggerKey", "SkillEffect", "BPNeed", "BPAdd", "SPMultipleRatio", "ParamList", "ShowStanceList", "ShowDamageList"),
+        ("SkillTriggerKey", "SkillEffect", "AttackType", "MaxLevel", "SkillIcon", "UltraSkillIcon"),
     ),
     "ExcelOutput/AvatarPromotionConfig.json": (
         "avatar_promotion",
@@ -37,12 +46,12 @@ ENTITY_TABLES: dict[str, tuple[str, str, tuple[str, ...]]] = {
     "ExcelOutput/CommonAvatarSkillConfig.json": (
         "avatar_skill",
         "SkillID",
-        ("SkillTriggerKey", "SkillEffect", "BPNeed", "BPAdd", "SPMultipleRatio", "ParamList"),
+        ("SkillTriggerKey", "SkillEffect", "AttackType", "MaxLevel"),
     ),
     "ExcelOutput/CommonActiveSkillConfig.json": (
         "active_skill",
         "SkillID",
-        ("SkillTriggerKey", "SkillEffect", "BPNeed", "BPAdd", "ParamList"),
+        ("SkillTriggerKey", "SkillEffect", "AttackType", "MaxLevel"),
     ),
     "ExcelOutput/AvatarStatusConfigLD.json": (
         "status",
@@ -82,6 +91,15 @@ ENTITY_TABLES: dict[str, tuple[str, str, tuple[str, ...]]] = {
 }
 
 
+ACTION_DEFINITION_TABLES: tuple[tuple[str, str, str], ...] = (
+    ("ExcelOutput/AvatarSkillConfig.json", "avatar_skill", "SkillID"),
+    ("ExcelOutput/AvatarSkillConfigLD.json", "avatar_skill", "SkillID"),
+    ("ExcelOutput/CommonAvatarSkillConfig.json", "avatar_skill", "SkillID"),
+    ("ExcelOutput/CommonActiveSkillConfig.json", "active_skill", "SkillID"),
+    ("ExcelOutput/ILBattleMonsterSkill.json", "monster_skill", "ID"),
+)
+
+
 @dataclass(frozen=True)
 class LoweringLimits:
     max_records_per_table: int = 500
@@ -98,6 +116,7 @@ class TBGDLowering:
 
     def build(self) -> CanonicalIR:
         entities: list[RuleEntity] = []
+        action_definitions: list[ActionDefinitionIR] = []
         triggers: list[TriggerIR] = []
         effects: list[EffectIR] = []
         conditions: list[ConditionIR] = []
@@ -105,6 +124,8 @@ class TBGDLowering:
 
         for relative_path, spec in ENTITY_TABLES.items():
             entities.extend(self._lower_entity_table(relative_path, spec))
+        entities = list(_dedupe_entities(entities).values())
+        action_definitions = list(self._lower_action_definitions().values())
 
         ability_files = self._ability_files()
         for path in ability_files[: self.limits.max_ability_files]:
@@ -117,6 +138,7 @@ class TBGDLowering:
         return CanonicalIR(
             version=BASELINE_VERSION,
             entities=tuple(entities),
+            action_definitions=tuple(action_definitions),
             triggers=tuple(triggers),
             effects=tuple(effects),
             conditions=tuple(conditions),
@@ -166,6 +188,22 @@ class TBGDLowering:
                 )
             )
         return entities
+
+    def _lower_action_definitions(self) -> dict[tuple[str, int], ActionDefinitionIR]:
+        definitions: dict[tuple[str, int], ActionDefinitionIR] = {}
+        for relative_path, entity_type, id_key in ACTION_DEFINITION_TABLES:
+            path = self.tbgd_root / relative_path
+            if not path.exists():
+                continue
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(data, list):
+                continue
+            for index, row in enumerate(data[: self.limits.max_records_per_table]):
+                if not isinstance(row, dict) or id_key not in row:
+                    continue
+                definition = _action_definition_from_row(relative_path, entity_type, id_key, index, row)
+                definitions[(definition.action_id, definition.level)] = definition
+        return definitions
 
     def _ability_files(self) -> list[Path]:
         roots = [self.tbgd_root / "Config/ConfigAbility", self.tbgd_root / "Config/ConfigGlobalModifier"]
@@ -384,6 +422,90 @@ def _entity_raw_id(entity_type: str, id_key: str, row: dict[str, Any]) -> str:
         promotion = row.get("Promotion", 0)
         return f"{row[id_key]}:{promotion}"
     return str(row[id_key])
+
+
+def _dedupe_entities(entities: list[RuleEntity]) -> dict[str, RuleEntity]:
+    deduped: dict[str, RuleEntity] = {}
+    for entity in entities:
+        deduped[entity.entity_id] = entity
+    return deduped
+
+
+def _action_definition_from_row(
+    relative_path: str,
+    entity_type: str,
+    id_key: str,
+    row_index: int,
+    row: dict[str, Any],
+) -> ActionDefinitionIR:
+    raw_id = str(row[id_key])
+    action_id = f"{entity_type}:{raw_id}"
+    level = int(_number_value(row.get("Level"), 1.0))
+    skill_effect = str(row.get("SkillEffect") or row.get("AttackType") or "Unknown")
+    attack_type = str(row.get("AttackType") or "Unknown")
+    source = IRSource(
+        source_path=relative_path,
+        raw_type=Path(relative_path).stem,
+        raw_id=raw_id,
+        evidence={
+            "row_index": row_index,
+            "id_key": id_key,
+            "level": level,
+            "resource_mapping": {
+                "BPNeed": "skill_point_cost_if_positive",
+                "BPAdd": "skill_point_gain_if_positive",
+                "SPBase": "energy_gain",
+            },
+        },
+    )
+    return ActionDefinitionIR(
+        definition_id=f"action_def:{action_id}:{level}",
+        action_id=action_id,
+        level=level,
+        attack_type=attack_type,
+        skill_effect=skill_effect,
+        target_mode=_target_mode(skill_effect),
+        bp_need=_number_value(row.get("BPNeed"), 0.0),
+        bp_add=_number_value(row.get("BPAdd"), 0.0),
+        sp_base=_number_value(row.get("SPBase"), 0.0),
+        sp_multiple_ratio=_number_value(row.get("SPMultipleRatio"), 0.0),
+        param_list=tuple(_list_json_values(row.get("ParamList"))),
+        show_stance_list=tuple(_list_json_values(row.get("ShowStanceList"))),
+        show_damage_list=tuple(_list_json_values(row.get("ShowDamageList"))),
+        stance_damage_type=str(row["StanceDamageType"]) if row.get("StanceDamageType") is not None else None,
+        source=source,
+        coverage_status="executable",
+    )
+
+
+def _target_mode(skill_effect: str) -> str:
+    normalized = skill_effect.lower()
+    if normalized in {"singleattack", "mazeattack"}:
+        return "single"
+    if normalized == "blast":
+        return "blast"
+    if normalized in {"aoeattack", "aoe"}:
+        return "aoe"
+    if normalized == "bounce":
+        return "bounce"
+    if normalized == "enhance":
+        return "self_or_team"
+    return "unknown"
+
+
+def _number_value(value: Any, default: float) -> float:
+    if isinstance(value, dict):
+        nested = value.get("Value")
+        return _number_value(nested, default)
+    if isinstance(value, (int, float)):
+        return float(value)
+    return default
+
+
+def _list_json_values(value: Any) -> list[Any]:
+    if not isinstance(value, list):
+        return []
+    return [_json_safe(item) for item in value]
 
 
 def _compact_payload(value: dict[str, Any]) -> dict[str, Any]:

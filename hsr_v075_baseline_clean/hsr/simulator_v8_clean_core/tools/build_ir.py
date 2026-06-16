@@ -34,6 +34,7 @@ def build_outputs(tbgd_root: Path, output_dir: Path, max_ability_files: int = 12
         "summary": {
             "discovery_files": len(discovery.files),
             "ir_entities": len(ir.entities),
+            "ir_action_definitions": len(ir.action_definitions),
             "ir_triggers": len(ir.triggers),
             "ir_effects": len(ir.effects),
             "ir_conditions": len(ir.conditions),
@@ -59,4 +60,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

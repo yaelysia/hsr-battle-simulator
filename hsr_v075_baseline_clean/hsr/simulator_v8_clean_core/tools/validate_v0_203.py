@@ -43,7 +43,8 @@ def run_validation(
     after_state, transition = executor.execute(
         ActionCommand(
             actor_id="ally:seele",
-            action_id="avatar_skill:110201",
+            action_id="avatar_skill:101401",
+            action_level=10,
             target_ids=("enemy:dummy",),
             metadata={"validation": VALIDATION_VERSION},
         ),
@@ -178,4 +179,3 @@ def _has_block_reasons(matrix: dict[str, object]) -> bool:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

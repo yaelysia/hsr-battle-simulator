@@ -37,6 +37,7 @@ class UnitSpec:
 class RouteStepSpec:
     actor_id: str
     action_ref: str
+    action_level: int
     target_ids: tuple[str, ...]
     source: Literal["manual", "ai", "queue"] = "manual"
     queue_name: str | None = None
@@ -68,4 +69,3 @@ class ScenarioValidationResult:
             "errors": list(self.errors),
             "source_traces": list(self.source_traces),
         }
-

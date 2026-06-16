@@ -51,14 +51,13 @@
     {
       "actor_id": "ally:saber",
       "action_ref": "avatar_skill:101401",
+      "action_level": 10,
       "target_ids": [
         "enemy:target"
       ],
       "source": "manual",
       "metadata": {
         "label": "Saber normal attack identity smoke",
-        "skill_point_delta": 0,
-        "energy_gain": 20,
         "reset_actor_av": true
       }
     }

@@ -164,6 +164,7 @@ class ActionCommand:
 
     actor_id: str
     action_id: str
+    action_level: int
     target_ids: tuple[str, ...] = ()
     source: Literal["manual", "ai", "queue"] = "manual"
     queue_name: str | None = None
@@ -342,6 +343,7 @@ class BattleTransition:
             "command": {
                 "actor_id": self.transaction.command.actor_id,
                 "action_id": self.transaction.command.action_id,
+                "action_level": self.transaction.command.action_level,
                 "target_ids": list(self.transaction.command.target_ids),
                 "source": self.transaction.command.source,
                 "queue_name": self.transaction.command.queue_name,

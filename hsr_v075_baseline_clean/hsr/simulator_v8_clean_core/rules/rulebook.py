@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .ir import CanonicalIR, ConditionIR, EffectIR, FormulaIR, RuleEntity, TriggerIR
+from .ir import ActionDefinitionIR, CanonicalIR, ConditionIR, EffectIR, FormulaIR, RuleEntity, TriggerIR
 
 
 @dataclass(frozen=True)
@@ -13,6 +13,11 @@ class RuleBook:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "_entities", {entity.entity_id: entity for entity in self.ir.entities})
+        object.__setattr__(
+            self,
+            "_action_definitions",
+            {(definition.action_id, definition.level): definition for definition in self.ir.action_definitions},
+        )
         object.__setattr__(self, "_effects", {effect.effect_id: effect for effect in self.ir.effects})
         object.__setattr__(self, "_conditions", {condition.condition_id: condition for condition in self.ir.conditions})
         object.__setattr__(self, "_triggers", {trigger.trigger_id: trigger for trigger in self.ir.triggers})
@@ -65,6 +70,35 @@ class RuleBook:
     def has_action(self, action_id: str) -> bool:
         entity = self._entities.get(action_id)
         return bool(entity and entity.entity_type in {"avatar_skill", "monster_skill", "active_skill"})
+
+    def action_definition(self, action_id: str, level: int) -> ActionDefinitionIR | None:
+        return self._action_definitions.get((action_id, level))
+
+    def require_action_definition(self, action_id: str, level: int) -> ActionDefinitionIR:
+        definition = self.action_definition(action_id, level)
+        if definition is None:
+            levels = self.action_levels(action_id)
+            if levels:
+                raise KeyError(f"unknown action definition {action_id!r} level {level}; known levels: {list(levels)}")
+            raise KeyError(f"unknown action definition {action_id!r} level {level}")
+        return definition
+
+    def action_levels(self, action_id: str) -> tuple[int, ...]:
+        return tuple(
+            sorted(definition.level for definition in self.ir.action_definitions if definition.action_id == action_id)
+        )
+
+    def action_definition_source_trace(self, action_id: str, level: int) -> dict[str, object] | None:
+        definition = self.action_definition(action_id, level)
+        if not definition:
+            return None
+        return {
+            "definition_id": definition.definition_id,
+            "action_id": definition.action_id,
+            "level": definition.level,
+            "coverage_status": definition.coverage_status,
+            "source": definition.source.to_json(),
+        }
 
     def triggers_for_event(self, event: str) -> tuple[TriggerIR, ...]:
         return tuple(trigger for trigger in self.ir.triggers if trigger.event == event)

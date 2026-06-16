@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
-from ..core.model import BattleState, Mutation
+from ..core.model import BattleState, JSONValue, Mutation
 
 
 @dataclass(frozen=True)
@@ -10,6 +10,7 @@ class ResourcePlan:
     skill_point_delta: int = 0
     energy_gain: float = 0.0
     source: str = "resource_system"
+    metadata: dict[str, JSONValue] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -87,7 +88,7 @@ class ResourceSystem:
                     after=after,
                     reason="apply action skill point delta",
                     source=plan.source,
-                    metadata={"delta": plan.skill_point_delta},
+                    metadata={"delta": plan.skill_point_delta, **_plan_metadata(plan)},
                     mutation_id=f"mutation:{plan.source}:skill_points:{state.event_index}",
                 )
             )
@@ -101,5 +102,21 @@ class ResourceSystem:
                     plan.source,
                 )
             )
+            if plan.metadata:
+                energy_mutation = mutations[-1]
+                mutations[-1] = Mutation(
+                    op=energy_mutation.op,
+                    path=energy_mutation.path,
+                    before=energy_mutation.before,
+                    after=energy_mutation.after,
+                    reason=energy_mutation.reason,
+                    source=energy_mutation.source,
+                    metadata={**energy_mutation.metadata, **_plan_metadata(plan)},
+                    mutation_id=energy_mutation.mutation_id,
+                )
 
         return ResourcePlanResult(True, tuple(mutations), ())
+
+
+def _plan_metadata(plan: ResourcePlan) -> dict[str, JSONValue]:
+    return dict(plan.metadata or {})

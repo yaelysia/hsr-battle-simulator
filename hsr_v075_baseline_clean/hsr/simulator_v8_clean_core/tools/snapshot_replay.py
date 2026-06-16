@@ -3,7 +3,7 @@ from __future__ import annotations
 from ..core.executor import CombatExecutor
 from ..core.model import ActionCommand, BattleState, Mutation, UnitState
 from ..core.reducer import MutationReducer
-from ..rules.ir import CanonicalIR
+from ..rules.ir import ActionDefinitionIR, CanonicalIR, IRSource
 from ..rules.rulebook import RuleBook
 from ..systems.resource import ResourceSystem
 
@@ -42,11 +42,12 @@ def run_snapshot_replay_check() -> dict[str, object]:
     after = reducer.apply_all(state, mutations)
     replay = reducer.replay_snapshot(state, mutations, after.snapshot().to_json())
 
-    executor = CombatExecutor(RuleBook(CanonicalIR(version="v0_200")))
+    executor = CombatExecutor(RuleBook(_minimal_ir()))
     _, transition = executor.execute(
         ActionCommand(
             actor_id="ally:seele",
             action_id="avatar_skill:110201",
+            action_level=1,
             target_ids=("enemy:dummy",),
         ),
         state,
@@ -74,3 +75,34 @@ def run_snapshot_replay_check() -> dict[str, object]:
         "ok": replay.ok and transaction_replay.ok,
     }
 
+
+def _minimal_ir() -> CanonicalIR:
+    source = IRSource(
+        source_path="validation/snapshot_replay",
+        raw_type="ValidationActionDefinition",
+        raw_id="avatar_skill:110201",
+        evidence={"level": 1},
+    )
+    return CanonicalIR(
+        version="v0_200",
+        action_definitions=(
+            ActionDefinitionIR(
+                definition_id="action_def:avatar_skill:110201:1",
+                action_id="avatar_skill:110201",
+                level=1,
+                attack_type="Normal",
+                skill_effect="SingleAttack",
+                target_mode="single",
+                bp_need=0.0,
+                bp_add=0.0,
+                sp_base=0.0,
+                sp_multiple_ratio=0.0,
+                param_list=(),
+                show_stance_list=(),
+                show_damage_list=(),
+                stance_damage_type=None,
+                source=source,
+                coverage_status="executable",
+            ),
+        ),
+    )

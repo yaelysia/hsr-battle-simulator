@@ -73,6 +73,7 @@ def _route_step(data: Any, index: int) -> RouteStepSpec:
     return RouteStepSpec(
         actor_id=_required_str(data, "actor_id"),
         action_ref=_required_str(data, "action_ref"),
+        action_level=_required_int(data, "action_level"),
         target_ids=tuple(str(item) for item in _required_list(data, "target_ids")),
         source=str(data.get("source", "manual")),
         queue_name=str(data["queue_name"]) if data.get("queue_name") is not None else None,
@@ -93,3 +94,9 @@ def _required_list(data: dict[str, Any], key: str) -> list[Any]:
         raise ValueError(f"{key} must be a list")
     return value
 
+
+def _required_int(data: dict[str, Any], key: str) -> int:
+    value = data.get(key)
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{key} must be an integer")
+    return value

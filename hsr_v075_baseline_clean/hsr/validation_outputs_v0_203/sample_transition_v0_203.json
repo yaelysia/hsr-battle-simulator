@@ -23,12 +23,12 @@
     "queues": {},
     "resources": {
       "max_skill_points": 5,
-      "skill_points": 3
+      "skill_points": 4
     },
     "rng_events": [],
     "rng_state": "deterministic",
     "settlement": {},
-    "skill_points": 3,
+    "skill_points": 4,
     "targeting": {},
     "teams": {
       "ally": [
@@ -66,7 +66,7 @@
           "effect_hit_rate": 0.0,
           "effect_resistance": 0.0
         },
-        "energy": 60.0,
+        "energy": 80.0,
         "flags": {
           "position": 1,
           "weaknesses": [
@@ -332,7 +332,8 @@
     "wave_index": 0
   },
   "command": {
-    "action_id": "avatar_skill:110201",
+    "action_id": "avatar_skill:101401",
+    "action_level": 10,
     "actor_id": "ally:seele",
     "metadata": {
       "validation": "v0_203"
@@ -345,8 +346,9 @@
   },
   "contract_validation": {},
   "coverage": {
-    "executor": "v0_205_action_prelude",
-    "resource_mutation_count": 0,
+    "definition_id": "action_def:avatar_skill:101401:10",
+    "executor": "v0_206_action_definition_prelude",
+    "resource_mutation_count": 2,
     "resource_ok": true,
     "target_ok": true,
     "timeline_mutation_count": 3
@@ -356,7 +358,9 @@
       "event_id": "event:1:action_requested",
       "event_type": "action.requested",
       "payload": {
-        "action_id": "avatar_skill:110201",
+        "action_id": "avatar_skill:101401",
+        "action_level": 10,
+        "definition_id": "action_def:avatar_skill:101401:10",
         "source": "manual"
       },
       "process_only": true,
@@ -414,16 +418,95 @@
       ],
       "reason": "set action owner",
       "source": "combat_executor.timeline"
+    },
+    {
+      "after": 4,
+      "before": 3,
+      "metadata": {
+        "action_id": "avatar_skill:101401",
+        "action_level": 10,
+        "definition_id": "action_def:avatar_skill:101401:10",
+        "delta": 1,
+        "source_trace": {
+          "action_id": "avatar_skill:101401",
+          "coverage_status": "executable",
+          "definition_id": "action_def:avatar_skill:101401:10",
+          "level": 10,
+          "source": {
+            "evidence": {
+              "id_key": "SkillID",
+              "level": 10,
+              "resource_mapping": {
+                "BPAdd": "skill_point_gain_if_positive",
+                "BPNeed": "skill_point_cost_if_positive",
+                "SPBase": "energy_gain"
+              },
+              "row_index": 65
+            },
+            "raw_id": "101401",
+            "raw_type": "AvatarSkillConfigLD",
+            "source_path": "ExcelOutput/AvatarSkillConfigLD.json"
+          }
+        }
+      },
+      "mutation_id": "mutation:combat_executor.resources:skill_points:0",
+      "op": "set",
+      "path": [
+        "skill_points"
+      ],
+      "reason": "apply action skill point delta",
+      "source": "combat_executor.resources"
+    },
+    {
+      "after": 80.0,
+      "before": 60.0,
+      "metadata": {
+        "action_id": "avatar_skill:101401",
+        "action_level": 10,
+        "definition_id": "action_def:avatar_skill:101401:10",
+        "delta": 20.0,
+        "source_trace": {
+          "action_id": "avatar_skill:101401",
+          "coverage_status": "executable",
+          "definition_id": "action_def:avatar_skill:101401:10",
+          "level": 10,
+          "source": {
+            "evidence": {
+              "id_key": "SkillID",
+              "level": 10,
+              "resource_mapping": {
+                "BPAdd": "skill_point_gain_if_positive",
+                "BPNeed": "skill_point_cost_if_positive",
+                "SPBase": "energy_gain"
+              },
+              "row_index": 65
+            },
+            "raw_id": "101401",
+            "raw_type": "AvatarSkillConfigLD",
+            "source_path": "ExcelOutput/AvatarSkillConfigLD.json"
+          }
+        }
+      },
+      "mutation_id": "mutation:ally:seele:energy:0:20.0",
+      "op": "set",
+      "path": [
+        "units",
+        "ally:seele",
+        "energy"
+      ],
+      "reason": "change unit energy",
+      "source": "combat_executor.resources"
     }
   ],
   "rng_events": [],
   "settlement": {
-    "action_id": "avatar_skill:110201",
+    "action_id": "avatar_skill:101401",
     "actor_id": "ally:seele",
     "records": [
       {
         "mutation_id": null,
         "payload": {
+          "definition_known": true,
           "event": "action.requested",
           "rule_known": true
         },
@@ -432,6 +515,79 @@
         "source": "combat_executor",
         "trace": {
           "event_id": "event:1:action_requested"
+        }
+      },
+      {
+        "mutation_id": null,
+        "payload": {
+          "action_id": "avatar_skill:101401",
+          "attack_type": "Normal",
+          "bp_add": 1.0,
+          "bp_need": -1.0,
+          "coverage_status": "executable",
+          "definition_id": "action_def:avatar_skill:101401:10",
+          "level": 10,
+          "param_list": [
+            {
+              "Value": 1.4
+            }
+          ],
+          "show_damage_list": [],
+          "show_stance_list": [
+            {
+              "Value": 30
+            },
+            {
+              "Value": 0
+            },
+            {
+              "Value": 0
+            }
+          ],
+          "skill_effect": "SingleAttack",
+          "source": {
+            "evidence": {
+              "id_key": "SkillID",
+              "level": 10,
+              "resource_mapping": {
+                "BPAdd": "skill_point_gain_if_positive",
+                "BPNeed": "skill_point_cost_if_positive",
+                "SPBase": "energy_gain"
+              },
+              "row_index": 65
+            },
+            "raw_id": "101401",
+            "raw_type": "AvatarSkillConfigLD",
+            "source_path": "ExcelOutput/AvatarSkillConfigLD.json"
+          },
+          "sp_base": 20.0,
+          "sp_multiple_ratio": 0.5,
+          "stance_damage_type": "Wind",
+          "target_mode": "single"
+        },
+        "process_only": true,
+        "record_type": "action_definition",
+        "source": "rulebook",
+        "trace": {
+          "action_id": "avatar_skill:101401",
+          "coverage_status": "executable",
+          "definition_id": "action_def:avatar_skill:101401:10",
+          "level": 10,
+          "source": {
+            "evidence": {
+              "id_key": "SkillID",
+              "level": 10,
+              "resource_mapping": {
+                "BPAdd": "skill_point_gain_if_positive",
+                "BPNeed": "skill_point_cost_if_positive",
+                "SPBase": "energy_gain"
+              },
+              "row_index": 65
+            },
+            "raw_id": "101401",
+            "raw_type": "AvatarSkillConfigLD",
+            "source_path": "ExcelOutput/AvatarSkillConfigLD.json"
+          }
         }
       },
       {
@@ -506,6 +662,92 @@
         "process_only": false,
         "record_type": "timeline",
         "source": "combat_executor.timeline",
+        "trace": {}
+      },
+      {
+        "mutation_id": "mutation:combat_executor.resources:skill_points:0",
+        "payload": {
+          "after": 4,
+          "before": 3,
+          "metadata": {
+            "action_id": "avatar_skill:101401",
+            "action_level": 10,
+            "definition_id": "action_def:avatar_skill:101401:10",
+            "delta": 1,
+            "source_trace": {
+              "action_id": "avatar_skill:101401",
+              "coverage_status": "executable",
+              "definition_id": "action_def:avatar_skill:101401:10",
+              "level": 10,
+              "source": {
+                "evidence": {
+                  "id_key": "SkillID",
+                  "level": 10,
+                  "resource_mapping": {
+                    "BPAdd": "skill_point_gain_if_positive",
+                    "BPNeed": "skill_point_cost_if_positive",
+                    "SPBase": "energy_gain"
+                  },
+                  "row_index": 65
+                },
+                "raw_id": "101401",
+                "raw_type": "AvatarSkillConfigLD",
+                "source_path": "ExcelOutput/AvatarSkillConfigLD.json"
+              }
+            }
+          },
+          "path": [
+            "skill_points"
+          ],
+          "reason": "apply action skill point delta"
+        },
+        "process_only": false,
+        "record_type": "resource",
+        "source": "combat_executor.resources",
+        "trace": {}
+      },
+      {
+        "mutation_id": "mutation:ally:seele:energy:0:20.0",
+        "payload": {
+          "after": 80.0,
+          "before": 60.0,
+          "metadata": {
+            "action_id": "avatar_skill:101401",
+            "action_level": 10,
+            "definition_id": "action_def:avatar_skill:101401:10",
+            "delta": 20.0,
+            "source_trace": {
+              "action_id": "avatar_skill:101401",
+              "coverage_status": "executable",
+              "definition_id": "action_def:avatar_skill:101401:10",
+              "level": 10,
+              "source": {
+                "evidence": {
+                  "id_key": "SkillID",
+                  "level": 10,
+                  "resource_mapping": {
+                    "BPAdd": "skill_point_gain_if_positive",
+                    "BPNeed": "skill_point_cost_if_positive",
+                    "SPBase": "energy_gain"
+                  },
+                  "row_index": 65
+                },
+                "raw_id": "101401",
+                "raw_type": "AvatarSkillConfigLD",
+                "source_path": "ExcelOutput/AvatarSkillConfigLD.json"
+              }
+            }
+          },
+          "path": [
+            "units",
+            "ally:seele",
+            "energy"
+          ],
+          "reason": "change unit energy"
+        },
+        "process_only": false,
+        "record_type": "resource",
+        "source": "combat_executor.resources",
         "trace": {}
       }
     ],

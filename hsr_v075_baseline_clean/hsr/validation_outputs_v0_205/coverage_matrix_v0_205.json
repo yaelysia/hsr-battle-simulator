@@ -3181,15 +3181,16 @@
     }
   },
   "ir_summary": {
+    "action_definitions": 792,
     "conditions": 1309,
     "coverage_status_counts": {
-      "audit_only": 8489,
-      "executable": 1075,
+      "audit_only": 7906,
+      "executable": 1867,
       "supported_alias": 5,
       "unsupported": 2702
     },
     "effects": 3503,
-    "entities": 2643,
+    "entities": 2060,
     "formulas": 3151,
     "triggers": 1665
   },

@@ -100,7 +100,7 @@ def build_coverage_matrix(report: DiscoveryReport, ir: CanonicalIR) -> CoverageM
     }
 
     ir_status_counts: Counter[str] = Counter()
-    for collection in (ir.entities, ir.triggers, ir.effects, ir.conditions, ir.formulas):
+    for collection in (ir.entities, ir.action_definitions, ir.triggers, ir.effects, ir.conditions, ir.formulas):
         for item in collection:
             ir_status_counts[item.coverage_status] += 1
 
@@ -108,6 +108,7 @@ def build_coverage_matrix(report: DiscoveryReport, ir: CanonicalIR) -> CoverageM
         discovery_summary=report.to_json()["summary"],
         ir_summary={
             "entities": len(ir.entities),
+            "action_definitions": len(ir.action_definitions),
             "triggers": len(ir.triggers),
             "effects": len(ir.effects),
             "conditions": len(ir.conditions),

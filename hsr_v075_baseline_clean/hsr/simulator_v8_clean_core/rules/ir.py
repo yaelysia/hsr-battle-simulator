@@ -117,9 +117,50 @@ class RuleEntity:
 
 
 @dataclass(frozen=True)
+class ActionDefinitionIR:
+    definition_id: str
+    action_id: str
+    level: int
+    attack_type: str
+    skill_effect: str
+    target_mode: str
+    bp_need: float
+    bp_add: float
+    sp_base: float
+    sp_multiple_ratio: float
+    param_list: tuple[JSONValue, ...]
+    show_stance_list: tuple[JSONValue, ...]
+    show_damage_list: tuple[JSONValue, ...]
+    stance_damage_type: str | None
+    source: IRSource
+    coverage_status: CoverageStatus = "audit_only"
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "definition_id": self.definition_id,
+            "action_id": self.action_id,
+            "level": self.level,
+            "attack_type": self.attack_type,
+            "skill_effect": self.skill_effect,
+            "target_mode": self.target_mode,
+            "bp_need": self.bp_need,
+            "bp_add": self.bp_add,
+            "sp_base": self.sp_base,
+            "sp_multiple_ratio": self.sp_multiple_ratio,
+            "param_list": list(self.param_list),
+            "show_stance_list": list(self.show_stance_list),
+            "show_damage_list": list(self.show_damage_list),
+            "stance_damage_type": self.stance_damage_type,
+            "source": self.source.to_json(),
+            "coverage_status": self.coverage_status,
+        }
+
+
+@dataclass(frozen=True)
 class CanonicalIR:
     version: str
     entities: tuple[RuleEntity, ...] = ()
+    action_definitions: tuple[ActionDefinitionIR, ...] = ()
     triggers: tuple[TriggerIR, ...] = ()
     effects: tuple[EffectIR, ...] = ()
     conditions: tuple[ConditionIR, ...] = ()
@@ -131,9 +172,9 @@ class CanonicalIR:
             "version": self.version,
             "metadata": self.metadata,
             "entities": [entity.to_json() for entity in self.entities],
+            "action_definitions": [definition.to_json() for definition in self.action_definitions],
             "triggers": [trigger.to_json() for trigger in self.triggers],
             "effects": [effect.to_json() for effect in self.effects],
             "conditions": [condition.to_json() for condition in self.conditions],
             "formulas": [formula.to_json() for formula in self.formulas],
         }
-

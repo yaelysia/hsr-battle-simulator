@@ -30,13 +30,20 @@ class CombatExecutor:
 
     def execute(self, command: ActionCommand, state: BattleState) -> tuple[BattleState, BattleTransition]:
         before = state.snapshot()
+        action_definition = self.rules.require_action_definition(command.action_id, command.action_level)
+        action_definition_trace = self.rules.action_definition_source_trace(command.action_id, command.action_level) or {}
         action_event = GameEvent(
             "action.requested",
             source_id=command.actor_id,
             event_id=f"event:{state.event_index + 1}:action_requested",
             window="action_request",
             process_only=True,
-            payload={"action_id": command.action_id, "source": command.source},
+            payload={
+                "action_id": command.action_id,
+                "action_level": command.action_level,
+                "definition_id": action_definition.definition_id,
+                "source": command.source,
+            },
         )
         timeline_result = self.timeline.open_action(
             state,
@@ -51,9 +58,15 @@ class CombatExecutor:
             state,
             command.actor_id,
             ResourcePlan(
-                skill_point_delta=_metadata_int(command.metadata, "skill_point_delta", 0),
-                energy_gain=_metadata_float(command.metadata, "energy_gain", 0.0),
+                skill_point_delta=_skill_point_delta(action_definition.bp_need, action_definition.bp_add),
+                energy_gain=action_definition.sp_base,
                 source="combat_executor.resources",
+                metadata={
+                    "definition_id": action_definition.definition_id,
+                    "action_id": action_definition.action_id,
+                    "action_level": action_definition.level,
+                    "source_trace": action_definition_trace,
+                },
             ),
         )
         events = (action_event, *timeline_result.events)
@@ -70,8 +83,16 @@ class CombatExecutor:
                 payload={
                     "event": "action.requested",
                     "rule_known": self.rules.has_action(command.action_id),
+                    "definition_known": True,
                 },
                 trace={"event_id": action_event.event_id},
+            ).to_json(),
+            SettlementRecord(
+                record_type="action_definition",
+                source="rulebook",
+                process_only=True,
+                payload=action_definition.to_json(),
+                trace=action_definition_trace,
             ).to_json(),
             SettlementRecord(
                 record_type="target_resolution",
@@ -121,7 +142,8 @@ class CombatExecutor:
             target_resolution=target_result.resolution,
             rng_events=(),
             coverage={
-                "executor": "v0_205_action_prelude",
+                "executor": "v0_206_action_definition_prelude",
+                "definition_id": action_definition.definition_id,
                 "target_ok": target_result.ok,
                 "resource_ok": resource_result.ok,
                 "timeline_mutation_count": len(timeline_mutations),
@@ -156,19 +178,9 @@ def _metadata_bool(metadata: dict[str, JSONValue], key: str, default: bool) -> b
     return bool(value)
 
 
-def _metadata_int(metadata: dict[str, JSONValue], key: str, default: int) -> int:
-    value = metadata.get(key, default)
-    if isinstance(value, bool):
-        return int(value)
-    if isinstance(value, (int, float, str)):
-        return int(value)
-    return default
-
-
-def _metadata_float(metadata: dict[str, JSONValue], key: str, default: float) -> float:
-    value = metadata.get(key, default)
-    if isinstance(value, bool):
-        return float(value)
-    if isinstance(value, (int, float, str)):
-        return float(value)
-    return default
+def _skill_point_delta(bp_need: float, bp_add: float) -> int:
+    if bp_need > 0:
+        return -int(bp_need)
+    if bp_add > 0:
+        return int(bp_add)
+    return 0

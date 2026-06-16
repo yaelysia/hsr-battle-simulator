@@ -73,6 +73,7 @@ class ScenarioStateBuilder:
             ActionCommand(
                 actor_id=step.actor_id,
                 action_id=step.action_ref,
+                action_level=step.action_level,
                 target_ids=step.target_ids,
                 source=step.source,
                 queue_name=step.queue_name,
@@ -81,4 +82,3 @@ class ScenarioStateBuilder:
             for step in scenario.route
         )
         return ScenarioBuildResult(state=state, commands=commands, source_traces=validation.source_traces)
-
