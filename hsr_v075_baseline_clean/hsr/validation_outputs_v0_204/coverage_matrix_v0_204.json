@@ -3252,7 +3252,7 @@
     "elation_damage": {
       "executable": 0,
       "fidelity_status": "blocked",
-      "lowered": 1,
+      "lowered": 19,
       "properties": [
         "DuringElationTime_MonsterBuffOthers_Elation",
         "DuringElationTime_MonsterBuffSelf_Elation",
@@ -3274,25 +3274,50 @@
         "RestartElationTime",
         "StartElationTime"
       ],
-      "reason": "ElationDamageAddedRatio is discovered as a 4.0 mainline damage property, but the complete damage formula is not executable in v0_207",
+      "reason": "ElationDamage is discovered as a 4.0 mainline damage family, but the complete damage formula is not executable in v0_208",
       "status": "blocked",
+      "validated": 0
+    },
+    "hp_loss": {
+      "executable": 14,
+      "fidelity_status": "lowered",
+      "lowered": 14,
+      "properties": [
+        "DirectlyLoseHp",
+        "DirectlyLoseHpHit",
+        "LoseHPByRatio"
+      ],
+      "reason": "HP loss bypasses normal damage multipliers and is tracked separately from damage records",
+      "status": "lowered",
+      "validated": 0
+    },
+    "true_damage": {
+      "executable": 1,
+      "fidelity_status": "lowered",
+      "lowered": 1,
+      "properties": [
+        "TrueDamage"
+      ],
+      "reason": "True damage bypasses normal damage multipliers; event semantics are not fully validated yet",
+      "status": "lowered",
       "validated": 0
     }
   },
   "ir_summary": {
-    "action_definitions": 792,
+    "action_definitions": 6949,
     "conditions": 1309,
     "coverage_status_counts": {
-      "audit_only": 7906,
+      "audit_only": 10751,
       "blocked": 1,
       "discovered_only": 18,
-      "executable": 1867,
+      "executable": 8024,
+      "lowered": 15,
       "supported_alias": 5,
-      "unsupported": 2702
+      "unsupported": 2690
     },
     "effects": 3503,
-    "entities": 2060,
-    "formulas": 3170,
+    "entities": 4893,
+    "formulas": 3185,
     "triggers": 1665
   },
   "opcode_status": {
@@ -7910,7 +7935,7 @@
       "fidelity_status": "lowered",
       "lowered": 12,
       "reason": "opcode is lowered to Canonical IR but runtime semantics are not executable yet",
-      "status": "unsupported",
+      "status": "audit_only",
       "validated": 0
     },
     "MakeCharacterHUDVisible": {
@@ -14203,6 +14228,148 @@
       "reason": "opcode is lowered to Canonical IR but runtime semantics are not executable yet",
       "status": "unsupported",
       "validated": 0
+    }
+  },
+  "table_status": {
+    "ExcelOutput/AvatarBreakDamage.json": {
+      "id_key": "Level",
+      "lowered_count": 101,
+      "raw_count": 101,
+      "sampled": false,
+      "skipped_count": 0
+    },
+    "ExcelOutput/AvatarConfig.json": {
+      "id_key": "AvatarID",
+      "lowered_count": 90,
+      "raw_count": 90,
+      "sampled": false,
+      "skipped_count": 0
+    },
+    "ExcelOutput/AvatarConfigLD.json": {
+      "id_key": "AvatarID",
+      "lowered_count": 2,
+      "raw_count": 2,
+      "sampled": false,
+      "skipped_count": 0
+    },
+    "ExcelOutput/AvatarPromotionConfig.json": {
+      "id_key": "AvatarID",
+      "lowered_count": 630,
+      "raw_count": 630,
+      "sampled": false,
+      "skipped_count": 0
+    },
+    "ExcelOutput/AvatarPromotionConfigLD.json": {
+      "id_key": "AvatarID",
+      "lowered_count": 14,
+      "raw_count": 14,
+      "sampled": false,
+      "skipped_count": 0
+    },
+    "ExcelOutput/AvatarSkillConfig.json": {
+      "id_key": "SkillID",
+      "lowered_count": 6657,
+      "raw_count": 6657,
+      "sampled": false,
+      "skipped_count": 0
+    },
+    "ExcelOutput/AvatarSkillConfigLD.json": {
+      "id_key": "SkillID",
+      "lowered_count": 124,
+      "raw_count": 124,
+      "sampled": false,
+      "skipped_count": 0
+    },
+    "ExcelOutput/AvatarStatusConfigLD.json": {
+      "id_key": "StatusID",
+      "lowered_count": 18,
+      "raw_count": 18,
+      "sampled": false,
+      "skipped_count": 0
+    },
+    "ExcelOutput/CommonActiveSkillConfig.json": {
+      "id_key": "SkillID",
+      "lowered_count": 0,
+      "raw_count": 3,
+      "sampled": false,
+      "skipped_count": 0
+    },
+    "ExcelOutput/CommonAvatarSkillConfig.json": {
+      "id_key": "SkillID",
+      "lowered_count": 3,
+      "raw_count": 3,
+      "sampled": false,
+      "skipped_count": 0
+    },
+    "ExcelOutput/ILBattleMonsterSkill.json": {
+      "id_key": "ID",
+      "lowered_count": 165,
+      "raw_count": 165,
+      "sampled": false,
+      "skipped_count": 0
+    },
+    "ExcelOutput/MonsterConfig.json": {
+      "id_key": "MonsterID",
+      "lowered_count": 2509,
+      "raw_count": 2509,
+      "sampled": false,
+      "skipped_count": 0
+    },
+    "ExcelOutput/MonsterTemplateConfig.json": {
+      "id_key": "MonsterTemplateID",
+      "lowered_count": 577,
+      "raw_count": 577,
+      "sampled": false,
+      "skipped_count": 0
+    },
+    "ExcelOutput/RelicSetSkillConfig.json": {
+      "id_key": "SetID",
+      "lowered_count": 90,
+      "raw_count": 90,
+      "sampled": false,
+      "skipped_count": 0
+    },
+    "ExcelOutput/SummonUnitData.json": {
+      "id_key": "ID",
+      "lowered_count": 36,
+      "raw_count": 36,
+      "sampled": false,
+      "skipped_count": 0
+    },
+    "action_definitions:ExcelOutput/AvatarSkillConfig.json": {
+      "id_key": "SkillID",
+      "lowered_count": 6657,
+      "raw_count": 6657,
+      "sampled": false,
+      "skipped_count": 0
+    },
+    "action_definitions:ExcelOutput/AvatarSkillConfigLD.json": {
+      "id_key": "SkillID",
+      "lowered_count": 124,
+      "raw_count": 124,
+      "sampled": false,
+      "skipped_count": 0
+    },
+    "action_definitions:ExcelOutput/CommonActiveSkillConfig.json": {
+      "id_key": "SkillID",
+      "lowered_count": 0,
+      "raw_count": 3,
+      "sampled": false,
+      "skipped_count": 0
+    },
+    "action_definitions:ExcelOutput/CommonAvatarSkillConfig.json": {
+      "id_key": "SkillID",
+      "lowered_count": 3,
+      "raw_count": 3,
+      "sampled": false,
+      "skipped_count": 0
+    },
+    "action_definitions:ExcelOutput/ILBattleMonsterSkill.json": {
+      "id_key": "ID",
+      "lowered_count": 165,
+      "raw_count": 165,
+      "sampled": false,
+      "skipped_count": 0
     }
   }
 }

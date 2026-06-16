@@ -73,17 +73,6 @@ def build_fidelity_matrix(report: DiscoveryReport, ir: CanonicalIR) -> MechanicF
             "reason": "event window discovered; execution order not validated in v0_203",
         }
 
-    elation_damage_formulas = [
-        formula
-        for formula in ir.formulas
-        if formula.expression.get("mechanic") == "elation_damage"
-        and formula.expression.get("property") == "ElationDamageAddedRatio"
-    ]
-    elation_properties = [
-        formula.expression.get("property")
-        for formula in ir.formulas
-        if formula.expression.get("damage_formula_family") == "elation"
-    ]
     formula_status = {
         "postfix_expr": {
             "lowered": sum(1 for formula in ir.formulas if formula.kind == "postfix_expr"),
@@ -101,17 +90,27 @@ def build_fidelity_matrix(report: DiscoveryReport, ir: CanonicalIR) -> MechanicF
             "fidelity_status": "executable",
             "reason": "fixed literal values are executable but not yet tied to full combat formulas",
         },
-        "elation_damage": {
-            "lowered": len(elation_damage_formulas),
-            "executable": 0,
-            "validated": 0,
-            "fidelity_status": "blocked" if elation_damage_formulas else "discovered_only",
-            "properties": sorted({str(item) for item in elation_properties if item}),
-            "reason": (
-                "ElationDamageAddedRatio is a 4.0 mainline damage property; "
-                "the complete Elation damage formula is recorded as blocked in v0_207"
+        "elation_damage": _damage_formula_status(
+            ir,
+            family="elation",
+            blocked=True,
+            reason=(
+                "ElationDamage is a 4.0 mainline damage family; "
+                "the complete Elation damage formula is recorded as blocked in v0_208"
             ),
-        },
+        ),
+        "true_damage": _damage_formula_status(
+            ir,
+            family="true_damage",
+            blocked=False,
+            reason="True damage bypasses normal damage multipliers; event semantics are not fully validated yet",
+        ),
+        "hp_loss": _damage_formula_status(
+            ir,
+            family="hp_loss",
+            blocked=False,
+            reason="HP loss bypasses normal damage multipliers and is tracked separately from damage records",
+        ),
     }
 
     return MechanicFidelityMatrix(
@@ -149,3 +148,17 @@ def _reason(opcode: str, support_status: str, lifecycle: str) -> str:
     if support_status == "audit_only":
         return "opcode is recognized as combat-relevant but intentionally audit-only in v0_203"
     return f"opcode {opcode!r} has no v8 semantic mapping yet"
+
+
+def _damage_formula_status(ir: CanonicalIR, family: str, blocked: bool, reason: str) -> dict[str, Any]:
+    formulas = [formula for formula in ir.formulas if formula.expression.get("damage_formula_family") == family]
+    properties = sorted({str(formula.expression.get("property")) for formula in formulas if formula.expression.get("property")})
+    executable = sum(1 for formula in formulas if formula.expression.get("runtime_status") == "executable")
+    return {
+        "lowered": len(formulas),
+        "executable": executable,
+        "validated": 0,
+        "fidelity_status": "blocked" if formulas and blocked else "lowered" if formulas else "discovered_only",
+        "properties": properties,
+        "reason": reason,
+    }

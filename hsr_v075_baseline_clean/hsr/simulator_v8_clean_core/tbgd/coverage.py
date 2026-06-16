@@ -14,6 +14,7 @@ KNOWN_AUDIT_EFFECTS = {
     "ModifySPNew",
     "ModifyHP",
     "HealHP",
+    "LoseHPByRatio",
     "DamageByAttackProperty",
     "ModifyDamageData",
     "SetDynamicValue",
@@ -46,6 +47,7 @@ class CoverageMatrix:
     opcode_status: dict[str, dict[str, Any]]
     event_status: dict[str, dict[str, Any]]
     formula_status: dict[str, dict[str, Any]]
+    table_status: dict[str, dict[str, Any]]
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -54,6 +56,7 @@ class CoverageMatrix:
             "opcode_status": self.opcode_status,
             "event_status": self.event_status,
             "formula_status": self.formula_status,
+            "table_status": self.table_status,
         }
 
 
@@ -121,6 +124,7 @@ def build_coverage_matrix(report: DiscoveryReport, ir: CanonicalIR) -> CoverageM
         opcode_status=opcode_status,
         event_status=event_status,
         formula_status=formula_status,
+        table_status=dict(ir.metadata.get("table_status", {})),
     )
 
 
@@ -155,28 +159,44 @@ def _fidelity_status(support_status: str, lowered: int, executable: int) -> str:
 
 
 def _formula_status(ir: CanonicalIR) -> dict[str, dict[str, Any]]:
-    elation_properties = [
-        formula.expression.get("property")
-        for formula in ir.formulas
-        if formula.expression.get("damage_formula_family") == "elation"
-    ]
-    elation_damage_lowered = sum(
-        1
-        for formula in ir.formulas
-        if formula.expression.get("mechanic") == "elation_damage"
-        and formula.expression.get("property") == "ElationDamageAddedRatio"
-    )
     return {
-        "elation_damage": {
-            "status": "blocked",
-            "fidelity_status": "blocked" if elation_damage_lowered else "discovered_only",
-            "lowered": elation_damage_lowered,
-            "executable": 0,
-            "validated": 0,
-            "properties": sorted({str(item) for item in elation_properties if item}),
-            "reason": (
-                "ElationDamageAddedRatio is discovered as a 4.0 mainline damage property, "
-                "but the complete damage formula is not executable in v0_207"
+        "elation_damage": _damage_formula_status(
+            ir,
+            family="elation",
+            status="blocked",
+            reason=(
+                "ElationDamage is discovered as a 4.0 mainline damage family, "
+                "but the complete damage formula is not executable in v0_208"
             ),
-        }
+        ),
+        "true_damage": _damage_formula_status(
+            ir,
+            family="true_damage",
+            status="lowered",
+            reason="True damage bypasses normal damage multipliers; event semantics are not fully validated yet",
+        ),
+        "hp_loss": _damage_formula_status(
+            ir,
+            family="hp_loss",
+            status="lowered",
+            reason="HP loss bypasses normal damage multipliers and is tracked separately from damage records",
+        ),
+    }
+
+
+def _damage_formula_status(ir: CanonicalIR, family: str, status: str, reason: str) -> dict[str, Any]:
+    formulas = [formula for formula in ir.formulas if formula.expression.get("damage_formula_family") == family]
+    properties = sorted({str(formula.expression.get("property")) for formula in formulas if formula.expression.get("property")})
+    executable = sum(1 for formula in formulas if formula.expression.get("runtime_status") == "executable")
+    fidelity_status = "discovered_only"
+    if formulas:
+        fidelity_status = "blocked" if status == "blocked" else "lowered"
+    return {
+        "status": status,
+        "fidelity_status": fidelity_status,
+        "lowered": len(formulas),
+        "executable": executable,
+        "validated": 0,
+        "properties": properties,
+        "reason": reason,
     }

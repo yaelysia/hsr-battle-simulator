@@ -362,6 +362,7 @@
         "amount": 123.0,
         "attack_type": "follow_up",
         "attacker_id": "ally:saber",
+        "bypasses_normal_multipliers": false,
         "damage_formula_family": "direct",
         "damage_kind": "hp_damage",
         "element_type": "Wind",
@@ -396,7 +397,7 @@
         },
         "target_id": "enemy:target"
       },
-      "mutation_id": "mutation:b7747d4ec6247a4c",
+      "mutation_id": "mutation:91c2399e6acea50b",
       "op": "set",
       "path": [
         "units",
@@ -413,13 +414,15 @@
     "actor_id": "ally:saber",
     "records": [
       {
-        "mutation_id": "mutation:b7747d4ec6247a4c",
+        "mutation_id": "mutation:91c2399e6acea50b",
         "payload": {
           "amount": 123.0,
           "attack_type": "follow_up",
+          "bypasses_normal_multipliers": false,
           "damage_formula_family": "direct",
           "damage_kind": "hp_damage",
           "element_type": "Wind",
+          "normal_multiplier_terms": [],
           "target_after_hp": 9877.0,
           "target_before_hp": 10000.0
         },

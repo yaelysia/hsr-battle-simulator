@@ -7,8 +7,8 @@
       "discovery_files": 8683,
       "ir_conditions": 1309,
       "ir_effects": 3503,
-      "ir_entities": 2060,
-      "ir_formulas": 3170,
+      "ir_entities": 4893,
+      "ir_formulas": 3185,
       "ir_triggers": 1665
     },
     "tbgd_root": "/home/zhangjinhao/code/hsr/turnbasedgamedata-main"
@@ -32,8 +32,11 @@
       "after_skill_points": 0,
       "before_skill_points": 0,
       "coverage": {
+        "damage_formula_family": "direct",
+        "damage_mutation_count": 0,
+        "damage_ok": null,
         "definition_id": "action_def:avatar_skill:101402:10",
-        "executor": "v0_206_action_definition_prelude",
+        "executor": "v0_208_action_executor_damage_smoke",
         "resource_mutation_count": 0,
         "resource_ok": false,
         "target_ok": true,
@@ -66,8 +69,11 @@
     "unknown_target_executor": {
       "after_skill_points": 4,
       "coverage": {
+        "damage_formula_family": "direct",
+        "damage_mutation_count": 0,
+        "damage_ok": null,
         "definition_id": "action_def:avatar_skill:101401:10",
-        "executor": "v0_206_action_definition_prelude",
+        "executor": "v0_208_action_executor_damage_smoke",
         "resource_mutation_count": 2,
         "resource_ok": true,
         "target_ok": false,
@@ -79,7 +85,14 @@
         "metadata": {
           "errors": [
             "unknown:enemy:missing"
-          ]
+          ],
+          "policy": {
+            "allow_ally": false,
+            "allow_defeated": false,
+            "allow_enemy": true,
+            "allow_self": false,
+            "policy_id": "enemy_damage"
+          }
         },
         "reason": "explicit_targets_rejected",
         "rejected": [
@@ -182,19 +195,27 @@
       "turn_owner_mutation": true,
       "window_mutation": true
     },
-    "mutation_count": 6,
+    "mutation_count": 7,
     "ok": true,
     "record_counts": {
       "resource": 2,
       "target": 1,
       "timeline": 4,
-      "total": 9
+      "total": 10
     },
     "target_resolution": {
       "legal": [
         "enemy:target"
       ],
-      "metadata": {},
+      "metadata": {
+        "policy": {
+          "allow_ally": false,
+          "allow_defeated": false,
+          "allow_enemy": true,
+          "allow_self": false,
+          "policy_id": "enemy_damage"
+        }
+      },
       "reason": "explicit_targets_resolved",
       "rejected": [],
       "requested": [
@@ -208,7 +229,7 @@
   },
   "replay": {
     "errors": [],
-    "mutation_count": 6,
+    "mutation_count": 7,
     "ok": true
   },
   "scenario": {
@@ -303,9 +324,9 @@
     "missing_keys": [],
     "ok": true,
     "settlement_traceability": {
-      "checked_records": 9,
+      "checked_records": 10,
       "errors": [],
-      "mutation_linked_records": 6,
+      "mutation_linked_records": 7,
       "ok": true,
       "process_only_records": 3
     },

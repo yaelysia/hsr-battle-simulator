@@ -8,11 +8,11 @@
     "summary": {
       "coverage_opcode_count": 1212,
       "discovery_files": 8683,
-      "ir_action_definitions": 792,
+      "ir_action_definitions": 6949,
       "ir_conditions": 1309,
       "ir_effects": 3503,
-      "ir_entities": 2060,
-      "ir_formulas": 3170,
+      "ir_entities": 4893,
+      "ir_formulas": 3185,
       "ir_triggers": 1665
     },
     "tbgd_root": "/home/zhangjinhao/code/hsr/turnbasedgamedata-main",

@@ -4,12 +4,14 @@
     "scenario_path": "/home/zhangjinhao/code/hsr/hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/scenarios/examples/identity_smoke_v0_204.json",
     "summary": {
       "coverage_formula_status": [
-        "elation_damage"
+        "elation_damage",
+        "hp_loss",
+        "true_damage"
       ],
       "discovery_files": 8683,
-      "ir_action_definitions": 792,
-      "ir_entities": 2060,
-      "ir_formulas": 3170
+      "ir_action_definitions": 6949,
+      "ir_entities": 4893,
+      "ir_formulas": 3185
     },
     "tbgd_root": "/home/zhangjinhao/code/hsr/turnbasedgamedata-main"
   },
@@ -32,6 +34,7 @@
         "amount": 1.0,
         "attack_type": "Normal",
         "attacker_id": "ally:saber",
+        "bypasses_normal_multipliers": false,
         "damage_formula_family": "elation",
         "damage_kind": "hp_damage",
         "element_type": null,
@@ -174,7 +177,7 @@
     "coverage_elation_damage": {
       "executable": 0,
       "fidelity_status": "blocked",
-      "lowered": 1,
+      "lowered": 19,
       "properties": [
         "DuringElationTime_MonsterBuffOthers_Elation",
         "DuringElationTime_MonsterBuffSelf_Elation",
@@ -196,14 +199,14 @@
         "RestartElationTime",
         "StartElationTime"
       ],
-      "reason": "ElationDamageAddedRatio is discovered as a 4.0 mainline damage property, but the complete damage formula is not executable in v0_207",
+      "reason": "ElationDamage is discovered as a 4.0 mainline damage family, but the complete damage formula is not executable in v0_208",
       "status": "blocked",
       "validated": 0
     },
     "fidelity_elation_damage": {
       "executable": 0,
       "fidelity_status": "blocked",
-      "lowered": 1,
+      "lowered": 19,
       "properties": [
         "DuringElationTime_MonsterBuffOthers_Elation",
         "DuringElationTime_MonsterBuffSelf_Elation",
@@ -225,7 +228,7 @@
         "RestartElationTime",
         "StartElationTime"
       ],
-      "reason": "ElationDamageAddedRatio is a 4.0 mainline damage property; the complete Elation damage formula is recorded as blocked in v0_207",
+      "reason": "ElationDamage is a 4.0 mainline damage family; the complete Elation damage formula is recorded as blocked in v0_208",
       "validated": 0
     },
     "ok": true
@@ -236,9 +239,9 @@
     "missing_keys": [],
     "ok": true,
     "settlement_traceability": {
-      "checked_records": 9,
+      "checked_records": 10,
       "errors": [],
-      "mutation_linked_records": 6,
+      "mutation_linked_records": 7,
       "ok": true,
       "process_only_records": 3
     },

@@ -12,9 +12,11 @@ from .model import (
 )
 from .reducer import MutationReducer
 from .settlement import SettlementRecord
+from ..rules.ir import ActionDefinitionIR
 from ..rules.rulebook import RuleBook
+from ..systems.damage import DamagePacket, DamageSystem
 from ..systems.resource import ResourcePlan, ResourceSystem
-from ..systems.target import TargetSystem
+from ..systems.target import TargetPolicy, TargetSystem
 from ..systems.timeline import TimelinePlan, TimelineSystem
 
 
@@ -27,6 +29,7 @@ class CombatExecutor:
         self.resources = ResourceSystem()
         self.targets = TargetSystem()
         self.timeline = TimelineSystem()
+        self.damage = DamageSystem()
 
     def execute(self, command: ActionCommand, state: BattleState) -> tuple[BattleState, BattleTransition]:
         before = state.snapshot()
@@ -53,7 +56,12 @@ class CombatExecutor:
                 source="combat_executor.timeline",
             ),
         )
-        target_result = self.targets.resolve_explicit_targets(state, command.actor_id, command.target_ids)
+        target_result = self.targets.resolve_explicit_targets(
+            state,
+            command.actor_id,
+            command.target_ids,
+            policy=_target_policy(action_definition),
+        )
         resource_result = self.resources.plan_action_resources(
             state,
             command.actor_id,
@@ -72,7 +80,16 @@ class CombatExecutor:
         events = (action_event, *timeline_result.events)
         timeline_mutations = timeline_result.mutations
         resource_mutations = resource_result.mutations
-        mutations = (*timeline_mutations, *resource_mutations)
+        pre_damage_mutations = (*timeline_mutations, *resource_mutations)
+        pre_damage_state = self.reducer.apply_all(state, pre_damage_mutations)
+        damage_result = None
+        damage_mutations: tuple[Mutation, ...] = ()
+        if target_result.ok and resource_result.ok and target_result.resolution.selected:
+            damage_packet = _damage_packet(command, action_definition, action_definition_trace, pre_damage_state)
+            if damage_packet:
+                damage_result = self.damage.apply_packet(pre_damage_state, damage_packet)
+                damage_mutations = damage_result.mutations
+        mutations = (*pre_damage_mutations, *damage_mutations)
         after_state = self.reducer.apply_all(state, mutations)
 
         records: list[dict[str, JSONValue]] = [
@@ -104,6 +121,8 @@ class CombatExecutor:
         ]
         records.extend(_mutation_record("timeline", mutation) for mutation in timeline_mutations)
         records.extend(_mutation_record("resource", mutation) for mutation in resource_mutations)
+        if damage_result:
+            records.extend(damage_result.records)
         if not target_result.ok:
             records.append(
                 SettlementRecord(
@@ -142,12 +161,15 @@ class CombatExecutor:
             target_resolution=target_result.resolution,
             rng_events=(),
             coverage={
-                "executor": "v0_206_action_definition_prelude",
+                "executor": "v0_208_action_executor_damage_smoke",
                 "definition_id": action_definition.definition_id,
                 "target_ok": target_result.ok,
                 "resource_ok": resource_result.ok,
                 "timeline_mutation_count": len(timeline_mutations),
                 "resource_mutation_count": len(resource_mutations),
+                "damage_mutation_count": len(damage_mutations),
+                "damage_ok": bool(damage_result.ok) if damage_result else None,
+                "damage_formula_family": action_definition.damage_formula_family,
             },
         )
         return after_state, transition
@@ -184,3 +206,54 @@ def _skill_point_delta(bp_need: float, bp_add: float) -> int:
     if bp_add > 0:
         return int(bp_add)
     return 0
+
+
+def _target_policy(action_definition: ActionDefinitionIR) -> TargetPolicy:
+    if action_definition.target_mode == "self_or_team":
+        return TargetPolicy(policy_id="self_or_team", allow_enemy=False, allow_ally=True, allow_self=True)
+    if action_definition.damage_kind == "hp_damage":
+        return TargetPolicy(policy_id="enemy_damage", allow_enemy=True, allow_ally=False, allow_self=False)
+    return TargetPolicy(policy_id="explicit_any", allow_enemy=True, allow_ally=True, allow_self=True)
+
+
+def _damage_packet(
+    command: ActionCommand,
+    action_definition: ActionDefinitionIR,
+    source_trace: dict[str, object],
+    state: BattleState,
+) -> DamagePacket | None:
+    if action_definition.damage_kind != "hp_damage":
+        return None
+    if action_definition.damage_formula_family not in {"direct", "true_damage", "hp_loss", "elation"}:
+        return None
+    actor = state.units[command.actor_id]
+    amount = _base_damage_amount(actor.attack, action_definition.param_list)
+    return DamagePacket(
+        attacker_id=command.actor_id,
+        target_id=command.target_ids[0],
+        amount=amount,
+        attack_type=action_definition.attack_type,
+        damage_formula_family=action_definition.damage_formula_family,
+        damage_kind=action_definition.damage_kind,
+        element_type=action_definition.element_type,
+        source_trace={
+            "definition_id": action_definition.definition_id,
+            "action_id": action_definition.action_id,
+            "action_level": action_definition.level,
+            "source": source_trace,
+        },
+        metadata={"calculation_mode": "v0_208_base_amount_only"},
+    )
+
+
+def _base_damage_amount(attack: float, param_list: tuple[JSONValue, ...]) -> float:
+    ratio = 0.0
+    if param_list:
+        first = param_list[0]
+        if isinstance(first, dict):
+            value = first.get("Value")
+            if isinstance(value, (int, float)):
+                ratio = float(value)
+        elif isinstance(first, (int, float)):
+            ratio = float(first)
+    return max(0.0, attack * ratio)

@@ -106,10 +106,13 @@ ELATION_MECHANIC_FILES: tuple[str, ...] = (
 )
 
 
+DAMAGE_BEHAVIOR_TEMPLATE_FILE = "Config/GlobalConfig/DamageBehaviorTemplateListConfig.json"
+
+
 @dataclass(frozen=True)
 class LoweringLimits:
-    max_records_per_table: int = 500
-    max_ability_files: int = 120
+    max_records_per_table: int | None = None
+    max_ability_files: int | None = 120
     max_callbacks_per_file: int = 200
 
 
@@ -128,19 +131,25 @@ class TBGDLowering:
         conditions: list[ConditionIR] = []
         formulas: list[FormulaIR] = []
 
+        table_stats: dict[str, dict[str, Any]] = {}
         for relative_path, spec in ENTITY_TABLES.items():
             entities.extend(self._lower_entity_table(relative_path, spec))
+            table_stats[relative_path] = self._table_stats(relative_path, spec[1])
         entities = list(_dedupe_entities(entities).values())
         action_definitions = list(self._lower_action_definitions().values())
+        for relative_path, _, id_key in ACTION_DEFINITION_TABLES:
+            table_stats[f"action_definitions:{relative_path}"] = self._table_stats(relative_path, id_key)
 
         ability_files = self._ability_files()
-        for path in ability_files[: self.limits.max_ability_files]:
+        selected_ability_files = _limit_sequence(ability_files, self.limits.max_ability_files)
+        for path in selected_ability_files:
             lowered = self._lower_ability_file(path)
             triggers.extend(lowered.triggers)
             effects.extend(lowered.effects)
             conditions.extend(lowered.conditions)
             formulas.extend(lowered.formulas)
         formulas.extend(self._lower_elation_mechanics())
+        formulas.extend(self._lower_damage_behavior_templates())
 
         return CanonicalIR(
             version=BASELINE_VERSION,
@@ -158,6 +167,17 @@ class TBGDLowering:
                     "max_ability_files": self.limits.max_ability_files,
                     "max_callbacks_per_file": self.limits.max_callbacks_per_file,
                 },
+                "sampled": {
+                    "entity_tables": self.limits.max_records_per_table is not None,
+                    "ability_files": self.limits.max_ability_files is not None
+                    and len(selected_ability_files) < len(ability_files),
+                },
+                "table_status": table_stats,
+                "ability_file_status": {
+                    "raw_count": len(ability_files),
+                    "lowered_count": len(selected_ability_files),
+                    "skipped_count": max(0, len(ability_files) - len(selected_ability_files)),
+                },
             },
         )
 
@@ -174,7 +194,7 @@ class TBGDLowering:
         if not isinstance(data, list):
             return []
         entities: list[RuleEntity] = []
-        for index, row in enumerate(data[: self.limits.max_records_per_table]):
+        for index, row in enumerate(_limit_sequence(data, self.limits.max_records_per_table)):
             if not isinstance(row, dict) or id_key not in row:
                 continue
             raw_id = _entity_raw_id(entity_type, id_key, row)
@@ -205,12 +225,29 @@ class TBGDLowering:
             data = json.loads(path.read_text(encoding="utf-8"))
             if not isinstance(data, list):
                 continue
-            for index, row in enumerate(data[: self.limits.max_records_per_table]):
+            for index, row in enumerate(_limit_sequence(data, self.limits.max_records_per_table)):
                 if not isinstance(row, dict) or id_key not in row:
                     continue
                 definition = _action_definition_from_row(relative_path, entity_type, id_key, index, row)
                 definitions[(definition.action_id, definition.level)] = definition
         return definitions
+
+    def _table_stats(self, relative_path: str, id_key: str) -> dict[str, Any]:
+        path = self.tbgd_root / relative_path
+        if not path.exists():
+            return {"raw_count": 0, "lowered_count": 0, "skipped_count": 0, "missing": True}
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, list):
+            return {"raw_count": 0, "lowered_count": 0, "skipped_count": 0, "shape": type(data).__name__}
+        selected = _limit_sequence(data, self.limits.max_records_per_table)
+        lowered_count = sum(1 for row in selected if isinstance(row, dict) and id_key in row)
+        return {
+            "raw_count": len(data),
+            "lowered_count": lowered_count,
+            "skipped_count": max(0, len(data) - len(selected)),
+            "sampled": len(selected) < len(data),
+            "id_key": id_key,
+        }
 
     def _ability_files(self) -> list[Path]:
         roots = [self.tbgd_root / "Config/ConfigAbility", self.tbgd_root / "Config/ConfigGlobalModifier"]
@@ -327,16 +364,18 @@ class TBGDLowering:
             return lowered
 
         effect_id = f"effect:{relative}:{modifier_name}:{callback_index}:{branch}:{task_index}:{opcode}"
+        payload = _effect_payload(task, opcode)
         lowered.effects.append(
             EffectIR(
                 effect_id=effect_id,
                 opcode=opcode,
-                payload=_compact_payload(task),
+                payload=payload,
                 source=source,
                 coverage_status=classify_opcode(opcode),
             )
         )
         lowered.formulas.extend(self._extract_formulas(task, source, effect_id))
+        lowered.formulas.extend(_damage_family_evidence(task, opcode, source, effect_id))
         return lowered
 
     def _lower_condition(self, predicate: Any, source: IRSource, task_index: int) -> ConditionIR | None:
@@ -424,6 +463,51 @@ class TBGDLowering:
                         coverage_status=coverage_status,
                     )
                 )
+        return formulas
+
+    def _lower_damage_behavior_templates(self) -> list[FormulaIR]:
+        path = self.tbgd_root / DAMAGE_BEHAVIOR_TEMPLATE_FILE
+        if not path.exists():
+            return []
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return []
+        config = data.get("ConfigList") if isinstance(data, dict) else None
+        if not isinstance(config, dict):
+            return []
+        formulas: list[FormulaIR] = []
+        for name, payload in sorted(config.items()):
+            family = _damage_behavior_family(str(name))
+            if family == "unknown":
+                continue
+            source = IRSource(
+                source_path=DAMAGE_BEHAVIOR_TEMPLATE_FILE,
+                raw_type=Path(DAMAGE_BEHAVIOR_TEMPLATE_FILE).stem,
+                raw_id=str(name),
+                evidence={
+                    "template_name": str(name),
+                    "damage_formula_family": family,
+                    "bypasses_normal_multipliers": family in {"true_damage", "hp_loss"},
+                },
+            )
+            formulas.append(
+                FormulaIR(
+                    formula_id=f"mechanic:{family}:{DAMAGE_BEHAVIOR_TEMPLATE_FILE}:{name}",
+                    kind="mechanic_property",
+                    expression={
+                        "mechanic": f"{family}_damage",
+                        "property": str(name),
+                        "value": _json_safe(payload),
+                        "damage_formula_family": family,
+                        "source_mode": "mainline",
+                        "runtime_status": "executable",
+                        "bypasses_normal_multipliers": True,
+                    },
+                    source=source,
+                    coverage_status="lowered",
+                )
+            )
         return formulas
 
     def _modifier_maps(self, data: Any) -> list[tuple[str, str, dict[str, Any]]]:
@@ -567,6 +651,10 @@ def _damage_kind(skill_effect: str) -> str:
 def _damage_formula_family(attack_type: str, skill_effect: str) -> str:
     normalized_attack = attack_type.lower()
     normalized_effect = skill_effect.lower()
+    if normalized_attack == "elationdamage" or normalized_effect == "byelationdamage":
+        return "elation"
+    if normalized_attack == "truedamage":
+        return "true_damage"
     if normalized_attack == "dot" or normalized_effect == "dot":
         return "dot"
     if normalized_attack == "elementdamage":
@@ -578,6 +666,12 @@ def _damage_formula_family(attack_type: str, skill_effect: str) -> str:
 
 def _source_mode(attack_type: str) -> str:
     return "maze" if attack_type.lower().startswith("maze") else "mainline"
+
+
+def _limit_sequence(items: list[Any], limit: int | None) -> list[Any]:
+    if limit is None:
+        return items
+    return items[:limit]
 
 
 def _number_value(value: Any, default: float) -> float:
@@ -598,6 +692,70 @@ def _list_json_values(value: Any) -> list[Any]:
 def _compact_payload(value: dict[str, Any]) -> dict[str, Any]:
     ignored = {"SuccessTaskList", "FailedTaskList", "CallbackConfig"}
     return {key: _json_safe(item) for key, item in value.items() if key not in ignored and key != "$type"}
+
+
+def _effect_payload(value: dict[str, Any], opcode: str) -> dict[str, Any]:
+    payload = _compact_payload(value)
+    family = _task_damage_family(value, opcode)
+    if family != "unknown":
+        payload["damage_formula_family"] = family
+        payload["bypasses_normal_multipliers"] = family in {"true_damage", "hp_loss"}
+    return payload
+
+
+def _task_damage_family(value: dict[str, Any], opcode: str) -> str:
+    attack_type = str(value.get("AttackType") or "")
+    formula_type = str(value.get("FormulaType") or "")
+    if attack_type == "ElationDamage" or formula_type == "ByElationDamage":
+        return "elation"
+    if attack_type == "TrueDamage":
+        return "true_damage"
+    if opcode in {"LoseHPByRatio", "DirectlyLoseHp", "DirectlyLoseHpHit"}:
+        return "hp_loss"
+    return "unknown"
+
+
+def _damage_behavior_family(template_name: str) -> str:
+    if template_name == "TrueDamage":
+        return "true_damage"
+    if template_name in {"DirectlyLoseHp", "DirectlyLoseHpHit"}:
+        return "hp_loss"
+    return "unknown"
+
+
+def _damage_family_evidence(
+    task: dict[str, Any],
+    opcode: str,
+    source: IRSource,
+    parent_id: str,
+) -> list[FormulaIR]:
+    family = _task_damage_family(task, opcode)
+    if family == "unknown":
+        return []
+    property_name = {
+        "elation": "ElationDamage",
+        "true_damage": "TrueDamage",
+        "hp_loss": opcode,
+    }[family]
+    return [
+        FormulaIR(
+            formula_id=f"formula:{parent_id}:damage_family:{family}",
+            kind="mechanic_property",
+            expression={
+                "mechanic": f"{family}_damage",
+                "property": property_name,
+                "damage_formula_family": family,
+                "source_mode": "mainline",
+                "bypasses_normal_multipliers": family in {"true_damage", "hp_loss"},
+                "runtime_status": "executable" if family in {"true_damage", "hp_loss"} else "blocked",
+                "blocked_reason": "Elation damage formula is not executable in v0_208"
+                if family == "elation"
+                else "",
+            },
+            source=source,
+            coverage_status="blocked" if family == "elation" else "lowered",
+        )
+    ]
 
 
 def _json_safe(value: Any) -> Any:

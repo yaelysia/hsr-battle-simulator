@@ -144,8 +144,8 @@ class ActionDefinitionIR:
     stance_damage_type: str | None
     source: IRSource
     coverage_status: CoverageStatus = "audit_only"
-    damage_kind: str = "hp_damage"
-    damage_formula_family: str = "direct"
+    damage_kind: str = "unknown"
+    damage_formula_family: str = "unknown"
     element_type: str | None = None
     source_mode: str = "mainline"
 

@@ -129,7 +129,7 @@
             "Thunder"
           ]
         },
-        "hp": 10000.0,
+        "hp": 5520.0,
         "level": 80,
         "max_energy": 0.0,
         "max_hp": 10000.0,
@@ -347,8 +347,11 @@
   },
   "contract_validation": {},
   "coverage": {
+    "damage_formula_family": "direct",
+    "damage_mutation_count": 1,
+    "damage_ok": true,
     "definition_id": "action_def:avatar_skill:101401:10",
-    "executor": "v0_206_action_definition_prelude",
+    "executor": "v0_208_action_executor_damage_smoke",
     "resource_mutation_count": 2,
     "resource_ok": true,
     "target_ok": true,
@@ -521,6 +524,63 @@
       ],
       "reason": "change unit energy",
       "source": "combat_executor.resources"
+    },
+    {
+      "after": 5520.0,
+      "before": 10000.0,
+      "metadata": {
+        "amount": 4480.0,
+        "attack_type": "Normal",
+        "attacker_id": "ally:saber",
+        "bypasses_normal_multipliers": false,
+        "damage_formula_family": "direct",
+        "damage_kind": "hp_damage",
+        "element_type": "Wind",
+        "metadata": {
+          "calculation_mode": "v0_208_base_amount_only"
+        },
+        "source_trace": {
+          "action_id": "avatar_skill:101401",
+          "action_level": 10,
+          "definition_id": "action_def:avatar_skill:101401:10",
+          "source": {
+            "action_id": "avatar_skill:101401",
+            "coverage_status": "executable",
+            "definition_id": "action_def:avatar_skill:101401:10",
+            "level": 10,
+            "source": {
+              "evidence": {
+                "id_key": "SkillID",
+                "level": 10,
+                "resource_mapping": {
+                  "BPAdd": "skill_point_gain_if_positive",
+                  "BPNeed": "skill_point_cost_if_positive",
+                  "SPBase": "energy_gain"
+                },
+                "row_index": 65,
+                "taxonomy": {
+                  "attack_type": "raw TBGD AttackType; follow-up is an attack type axis",
+                  "damage_formula_family": "formula family axis; follow-up is not a damage family",
+                  "element_type": "raw TBGD StanceDamageType when present"
+                }
+              },
+              "raw_id": "101401",
+              "raw_type": "AvatarSkillConfigLD",
+              "source_path": "ExcelOutput/AvatarSkillConfigLD.json"
+            }
+          }
+        },
+        "target_id": "enemy:target"
+      },
+      "mutation_id": "mutation:6c5660fcbde6e05c",
+      "op": "set",
+      "path": [
+        "units",
+        "enemy:target",
+        "hp"
+      ],
+      "reason": "apply damage packet",
+      "source": "damage_system"
     }
   ],
   "rng_events": [],
@@ -635,7 +695,15 @@
           "legal": [
             "enemy:target"
           ],
-          "metadata": {},
+          "metadata": {
+            "policy": {
+              "allow_ally": false,
+              "allow_defeated": false,
+              "allow_enemy": true,
+              "allow_self": false,
+              "policy_id": "enemy_damage"
+            }
+          },
           "reason": "explicit_targets_resolved",
           "rejected": [],
           "requested": [
@@ -816,6 +884,54 @@
         "record_type": "resource",
         "source": "combat_executor.resources",
         "trace": {}
+      },
+      {
+        "mutation_id": "mutation:6c5660fcbde6e05c",
+        "payload": {
+          "amount": 4480.0,
+          "attack_type": "Normal",
+          "bypasses_normal_multipliers": false,
+          "damage_formula_family": "direct",
+          "damage_kind": "hp_damage",
+          "element_type": "Wind",
+          "normal_multiplier_terms": [],
+          "target_after_hp": 5520.0,
+          "target_before_hp": 10000.0
+        },
+        "process_only": false,
+        "record_type": "damage",
+        "source": "damage_system",
+        "trace": {
+          "action_id": "avatar_skill:101401",
+          "action_level": 10,
+          "definition_id": "action_def:avatar_skill:101401:10",
+          "source": {
+            "action_id": "avatar_skill:101401",
+            "coverage_status": "executable",
+            "definition_id": "action_def:avatar_skill:101401:10",
+            "level": 10,
+            "source": {
+              "evidence": {
+                "id_key": "SkillID",
+                "level": 10,
+                "resource_mapping": {
+                  "BPAdd": "skill_point_gain_if_positive",
+                  "BPNeed": "skill_point_cost_if_positive",
+                  "SPBase": "energy_gain"
+                },
+                "row_index": 65,
+                "taxonomy": {
+                  "attack_type": "raw TBGD AttackType; follow-up is an attack type axis",
+                  "damage_formula_family": "formula family axis; follow-up is not a damage family",
+                  "element_type": "raw TBGD StanceDamageType when present"
+                }
+              },
+              "raw_id": "101401",
+              "raw_type": "AvatarSkillConfigLD",
+              "source_path": "ExcelOutput/AvatarSkillConfigLD.json"
+            }
+          }
+        }
       }
     ],
     "target_ids": [
@@ -826,7 +942,15 @@
     "legal": [
       "enemy:target"
     ],
-    "metadata": {},
+    "metadata": {
+      "policy": {
+        "allow_ally": false,
+        "allow_defeated": false,
+        "allow_enemy": true,
+        "allow_self": false,
+        "policy_id": "enemy_damage"
+      }
+    },
     "reason": "explicit_targets_resolved",
     "rejected": [],
     "requested": [

@@ -85,11 +85,11 @@
     "summary": {
       "coverage_opcode_count": 1212,
       "discovery_files": 8683,
-      "ir_action_definitions": 792,
+      "ir_action_definitions": 6949,
       "ir_conditions": 1309,
       "ir_effects": 3503,
-      "ir_entities": 2060,
-      "ir_formulas": 3170,
+      "ir_entities": 4893,
+      "ir_formulas": 3185,
       "ir_triggers": 1665
     },
     "tbgd_root": "/home/zhangjinhao/code/hsr/turnbasedgamedata-main"
@@ -113,8 +113,11 @@
       "after_skill_points": 0,
       "before_skill_points": 0,
       "coverage": {
+        "damage_formula_family": "direct",
+        "damage_mutation_count": 0,
+        "damage_ok": null,
         "definition_id": "action_def:avatar_skill:101402:10",
-        "executor": "v0_206_action_definition_prelude",
+        "executor": "v0_208_action_executor_damage_smoke",
         "resource_mutation_count": 0,
         "resource_ok": false,
         "target_ok": true,
@@ -203,8 +206,11 @@
       "skill_points_3_to_4": true
     },
     "coverage": {
+      "damage_formula_family": "direct",
+      "damage_mutation_count": 1,
+      "damage_ok": true,
       "definition_id": "action_def:avatar_skill:101401:10",
-      "executor": "v0_206_action_definition_prelude",
+      "executor": "v0_208_action_executor_damage_smoke",
       "resource_mutation_count": 2,
       "resource_ok": true,
       "target_ok": true,
@@ -214,7 +220,7 @@
     "record_counts": {
       "action_definition": 1,
       "resource": 2,
-      "total": 9
+      "total": 10
     },
     "resource_mutations": [
       {
@@ -309,7 +315,7 @@
   },
   "replay": {
     "errors": [],
-    "mutation_count": 6,
+    "mutation_count": 7,
     "ok": true
   },
   "scenario": {
@@ -412,9 +418,9 @@
     "missing_keys": [],
     "ok": true,
     "settlement_traceability": {
-      "checked_records": 9,
+      "checked_records": 10,
       "errors": [],
-      "mutation_linked_records": 6,
+      "mutation_linked_records": 7,
       "ok": true,
       "process_only_records": 3
     },

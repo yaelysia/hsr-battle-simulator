@@ -1613,7 +1613,7 @@
     "elation_damage": {
       "executable": 0,
       "fidelity_status": "blocked",
-      "lowered": 1,
+      "lowered": 19,
       "properties": [
         "DuringElationTime_MonsterBuffOthers_Elation",
         "DuringElationTime_MonsterBuffSelf_Elation",
@@ -1635,7 +1635,7 @@
         "RestartElationTime",
         "StartElationTime"
       ],
-      "reason": "ElationDamageAddedRatio is a 4.0 mainline damage property; the complete Elation damage formula is recorded as blocked in v0_207",
+      "reason": "ElationDamage is a 4.0 mainline damage family; the complete Elation damage formula is recorded as blocked in v0_208",
       "validated": 0
     },
     "fixed_value": {
@@ -1645,11 +1645,33 @@
       "reason": "fixed literal values are executable but not yet tied to full combat formulas",
       "validated": 0
     },
+    "hp_loss": {
+      "executable": 14,
+      "fidelity_status": "lowered",
+      "lowered": 14,
+      "properties": [
+        "DirectlyLoseHp",
+        "DirectlyLoseHpHit",
+        "LoseHPByRatio"
+      ],
+      "reason": "HP loss bypasses normal damage multipliers and is tracked separately from damage records",
+      "validated": 0
+    },
     "postfix_expr": {
       "executable": 0,
       "fidelity_status": "lowered",
       "lowered": 2107,
       "reason": "postfix expressions are recorded for audit but not executable in v0_203",
+      "validated": 0
+    },
+    "true_damage": {
+      "executable": 1,
+      "fidelity_status": "lowered",
+      "lowered": 1,
+      "properties": [
+        "TrueDamage"
+      ],
+      "reason": "True damage bypasses normal damage multipliers; event semantics are not fully validated yet",
       "validated": 0
     }
   },
@@ -6268,7 +6290,7 @@
       "fidelity_status": "lowered",
       "lowered": 12,
       "reason": "opcode is lowered to Canonical IR but runtime semantics are not executable yet",
-      "support_status": "unsupported",
+      "support_status": "audit_only",
       "validated": 0
     },
     "MakeCharacterHUDVisible": {

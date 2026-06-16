@@ -52,6 +52,7 @@ class DamagePacket:
             "element_type": self.element_type,
             "source_trace": self.source_trace,
             "metadata": self.metadata,
+            "bypasses_normal_multipliers": self.damage_formula_family in {"true_damage", "hp_loss"},
         }
 
 
@@ -111,13 +112,15 @@ class DamageSystem:
             source="damage_system",
             metadata=packet.to_json(),
         )
+        record_type = "hp_loss" if packet.damage_formula_family == "hp_loss" else "damage"
+        bypasses_normal_multipliers = packet.damage_formula_family in {"true_damage", "hp_loss"}
         return DamageApplicationResult(
             packet=packet,
             ok=True,
             mutations=(mutation,),
             records=(
                 SettlementRecord(
-                    record_type="damage",
+                    record_type=record_type,
                     source="damage_system",
                     mutation_id=mutation.stable_id(),
                     process_only=False,
@@ -127,6 +130,8 @@ class DamageSystem:
                         "damage_kind": packet.damage_kind,
                         "damage_formula_family": packet.damage_formula_family,
                         "element_type": packet.element_type,
+                        "bypasses_normal_multipliers": bypasses_normal_multipliers,
+                        "normal_multiplier_terms": [],
                         "target_before_hp": target.hp,
                         "target_after_hp": after,
                     },
