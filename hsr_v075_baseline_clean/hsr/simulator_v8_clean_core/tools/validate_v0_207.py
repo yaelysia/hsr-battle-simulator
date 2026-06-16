@@ -178,10 +178,10 @@ def _direct_damage_transition(rules: RuleBook, state, command) -> tuple[BattleTr
     packet = DamagePacket(
         attacker_id=command.actor_id,
         target_id=command.target_ids[0],
-        amount=123.0,
         attack_type="follow_up",
         damage_formula_family="direct",
         element_type=action_definition.element_type,
+        action_definition=action_definition,
         source_trace=source_trace,
         metadata={"validation": "v0_207_follow_up_attack_type_direct_damage"},
     )
@@ -209,7 +209,7 @@ def _direct_damage_transition(rules: RuleBook, state, command) -> tuple[BattleTr
             reason="validation_damage_target",
             metadata={"validation": "v0_207"},
         ),
-        rng_events=(),
+        rng_events=damage_result.rng_events,
         coverage={
             "executor": "v0_207_damage_taxonomy",
             "damage_formula_family": packet.damage_formula_family,

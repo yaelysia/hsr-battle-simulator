@@ -85,12 +85,13 @@ class CombatExecutor:
         damage_result = None
         damage_mutations: tuple[Mutation, ...] = ()
         if target_result.ok and resource_result.ok and target_result.resolution.selected:
-            damage_packet = _damage_packet(command, action_definition, action_definition_trace, pre_damage_state)
+            damage_packet = _damage_packet(command, action_definition, action_definition_trace)
             if damage_packet:
                 damage_result = self.damage.apply_packet(pre_damage_state, damage_packet)
                 damage_mutations = damage_result.mutations
         mutations = (*pre_damage_mutations, *damage_mutations)
         after_state = self.reducer.apply_all(state, mutations)
+        damage_rng_events = damage_result.rng_events if damage_result else ()
 
         records: list[dict[str, JSONValue]] = [
             SettlementRecord(
@@ -151,7 +152,7 @@ class CombatExecutor:
         transaction = ActionTransaction(
             command=command,
             before=before,
-            events=events,
+            events=(*events, *(damage_result.events if damage_result else ())),
             mutations=mutations,
             settlement=settlement,
         )
@@ -159,9 +160,9 @@ class CombatExecutor:
             transaction=transaction,
             after=after_state.snapshot(),
             target_resolution=target_result.resolution,
-            rng_events=(),
+            rng_events=damage_rng_events,
             coverage={
-                "executor": "v0_208_action_executor_damage_smoke",
+                "executor": "v0_209_direct_damage_formula",
                 "definition_id": action_definition.definition_id,
                 "target_ok": target_result.ok,
                 "resource_ok": resource_result.ok,
@@ -220,40 +221,32 @@ def _damage_packet(
     command: ActionCommand,
     action_definition: ActionDefinitionIR,
     source_trace: dict[str, object],
-    state: BattleState,
 ) -> DamagePacket | None:
     if action_definition.damage_kind != "hp_damage":
         return None
     if action_definition.damage_formula_family not in {"direct", "true_damage", "hp_loss", "elation"}:
         return None
-    actor = state.units[command.actor_id]
-    amount = _base_damage_amount(actor.attack, action_definition.param_list)
     return DamagePacket(
         attacker_id=command.actor_id,
         target_id=command.target_ids[0],
-        amount=amount,
         attack_type=action_definition.attack_type,
         damage_formula_family=action_definition.damage_formula_family,
         damage_kind=action_definition.damage_kind,
         element_type=action_definition.element_type,
+        action_definition=action_definition,
         source_trace={
             "definition_id": action_definition.definition_id,
             "action_id": action_definition.action_id,
             "action_level": action_definition.level,
             "source": source_trace,
         },
-        metadata={"calculation_mode": "v0_208_base_amount_only"},
+        metadata=_damage_metadata(command),
     )
 
 
-def _base_damage_amount(attack: float, param_list: tuple[JSONValue, ...]) -> float:
-    ratio = 0.0
-    if param_list:
-        first = param_list[0]
-        if isinstance(first, dict):
-            value = first.get("Value")
-            if isinstance(value, (int, float)):
-                ratio = float(value)
-        elif isinstance(first, (int, float)):
-            ratio = float(first)
-    return max(0.0, attack * ratio)
+def _damage_metadata(command: ActionCommand) -> dict[str, JSONValue]:
+    metadata: dict[str, JSONValue] = {}
+    crit_mode = command.metadata.get("crit_mode")
+    if isinstance(crit_mode, str):
+        metadata["crit_mode"] = crit_mode
+    return metadata

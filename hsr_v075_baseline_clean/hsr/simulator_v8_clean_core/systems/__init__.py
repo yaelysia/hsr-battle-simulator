@@ -1,4 +1,5 @@
 from .damage import DamageSystem
+from .damage_formula import DamageFormulaResult, DirectDamageFormula, ModifierLedger
 from .effect import EffectRegistry, EffectResult
 from .queue import QueueSystem
 from .resource import ResourcePlan, ResourcePlanResult, ResourceSystem
@@ -9,6 +10,9 @@ from .trigger import TriggerSystem
 
 __all__ = [
     "DamageSystem",
+    "DamageFormulaResult",
+    "DirectDamageFormula",
+    "ModifierLedger",
     "EffectRegistry",
     "EffectResult",
     "QueueSystem",

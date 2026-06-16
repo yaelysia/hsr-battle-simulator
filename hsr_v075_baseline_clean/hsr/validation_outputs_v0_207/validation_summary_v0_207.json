@@ -25,12 +25,13 @@
     },
     "elation_result": {
       "errors": [
-        "Elation damage is a mainline 4.0 damage formula family, but its complete formula is not executable in v0_207"
+        "Elation damage is a mainline 4.0 damage formula family, but its complete formula is not executable in v0_209"
       ],
       "events": [],
       "mutations": [],
       "ok": false,
       "packet": {
+        "action_definition": null,
         "amount": 1.0,
         "attack_type": "Normal",
         "attacker_id": "ally:saber",
@@ -73,7 +74,7 @@
           "payload": {
             "attack_type": "Normal",
             "damage_formula_family": "elation",
-            "reason": "Elation damage is a mainline 4.0 damage formula family, but its complete formula is not executable in v0_207"
+            "reason": "Elation damage is a mainline 4.0 damage formula family, but its complete formula is not executable in v0_209"
           },
           "process_only": true,
           "record_type": "damage_blocked",
@@ -105,7 +106,8 @@
             }
           }
         }
-      ]
+      ],
+      "rng_events": []
     },
     "invalid_follow_up_error": "follow_up is an attack type, not a damage formula family",
     "ok": true

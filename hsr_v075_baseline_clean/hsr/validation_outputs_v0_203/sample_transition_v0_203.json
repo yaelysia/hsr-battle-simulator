@@ -130,7 +130,7 @@
             "Quantum"
           ]
         },
-        "hp": 5520.0,
+        "hp": 7984.0,
         "level": 80,
         "max_energy": 0.0,
         "max_hp": 10000.0,
@@ -350,7 +350,7 @@
     "damage_mutation_count": 1,
     "damage_ok": true,
     "definition_id": "action_def:avatar_skill:101401:10",
-    "executor": "v0_208_action_executor_damage_smoke",
+    "executor": "v0_209_direct_damage_formula",
     "resource_mutation_count": 2,
     "resource_ok": true,
     "target_ok": true,
@@ -511,18 +511,1016 @@
       "source": "combat_executor.resources"
     },
     {
-      "after": 5520.0,
+      "after": 7984.0,
       "before": 10000.0,
       "metadata": {
-        "amount": 4480.0,
+        "action_definition": {
+          "action_id": "avatar_skill:101401",
+          "damage_formula_family": "direct",
+          "definition_id": "action_def:avatar_skill:101401:10",
+          "level": 10
+        },
+        "amount": null,
         "attack_type": "Normal",
         "attacker_id": "ally:seele",
         "bypasses_normal_multipliers": false,
+        "crit_resolution": {
+          "crit_damage": 0.0,
+          "crit_rate": 0.0,
+          "event_id": "rng:1:ally:seele:action_def:avatar_skill:101401:10:enemy:dummy:crit",
+          "is_crit": false,
+          "mode": "deterministic",
+          "multiplier": 1.0,
+          "reason": "deterministic_rng",
+          "rng_roll": 0.7751206084119602
+        },
         "damage_formula_family": "direct",
         "damage_kind": "hp_damage",
         "element_type": "Wind",
-        "metadata": {
-          "calculation_mode": "v0_208_base_amount_only"
+        "final_damage": 2016.0,
+        "formula_result": {
+          "action_definition_id": "action_def:avatar_skill:101401:10",
+          "attack_type": "Normal",
+          "attacker_id": "ally:seele",
+          "calculation_mode": "v0_209_direct_damage_formula",
+          "crit_resolution": {
+            "crit_damage": 0.0,
+            "crit_rate": 0.0,
+            "event_id": "rng:1:ally:seele:action_def:avatar_skill:101401:10:enemy:dummy:crit",
+            "is_crit": false,
+            "mode": "deterministic",
+            "multiplier": 1.0,
+            "reason": "deterministic_rng",
+            "rng_roll": 0.7751206084119602
+          },
+          "element_type": "Wind",
+          "final_damage": 2016.0,
+          "formula_family": "direct",
+          "modifier_ledger": {
+            "applied_count": 14,
+            "applied_terms": [
+              {
+                "applied_reason": "crit_rate_clamped",
+                "applied_value": 0.0,
+                "bucket": "crit",
+                "condition": "always",
+                "key": "critical_chance",
+                "raw_path": "resources.critical_chance",
+                "scope": "actor",
+                "skipped_reason": "",
+                "source_id": "ally:seele",
+                "source_type": "actor.resources"
+              },
+              {
+                "applied_reason": "crit_damage_available",
+                "applied_value": 0.0,
+                "bucket": "crit",
+                "condition": "not_crit",
+                "key": "critical_damage",
+                "raw_path": "resources.critical_damage",
+                "scope": "actor",
+                "skipped_reason": "",
+                "source_id": "ally:seele",
+                "source_type": "actor.resources"
+              },
+              {
+                "applied_reason": "neutral_default",
+                "applied_value": 0.0,
+                "bucket": "damage_bonus",
+                "condition": "always",
+                "key": "damage_added_ratio",
+                "raw_path": "resources.damage_added_ratio",
+                "scope": "actor",
+                "skipped_reason": "",
+                "source_id": "ally:seele",
+                "source_type": "actor.resources"
+              },
+              {
+                "applied_reason": "neutral_default",
+                "applied_value": 0.0,
+                "bucket": "damage_bonus",
+                "condition": "element=Wind",
+                "key": "Wind_damage_added_ratio",
+                "raw_path": "resources.Wind_damage_added_ratio",
+                "scope": "actor",
+                "skipped_reason": "",
+                "source_id": "ally:seele",
+                "source_type": "actor.resources"
+              },
+              {
+                "applied_reason": "base_target_defense",
+                "applied_value": 1000.0,
+                "bucket": "defense",
+                "condition": "always",
+                "key": "defense",
+                "raw_path": "unit.defense",
+                "scope": "target",
+                "skipped_reason": "",
+                "source_id": "enemy:dummy",
+                "source_type": "target.stats"
+              },
+              {
+                "applied_reason": "neutral_default",
+                "applied_value": 0.0,
+                "bucket": "defense",
+                "condition": "always",
+                "key": "def_reduction",
+                "raw_path": "resources.def_reduction",
+                "scope": "target",
+                "skipped_reason": "",
+                "source_id": "enemy:dummy",
+                "source_type": "target.resources"
+              },
+              {
+                "applied_reason": "neutral_default",
+                "applied_value": 0.0,
+                "bucket": "defense",
+                "condition": "always",
+                "key": "def_ignore",
+                "raw_path": "resources.def_ignore",
+                "scope": "actor",
+                "skipped_reason": "",
+                "source_id": "ally:seele",
+                "source_type": "actor.resources"
+              },
+              {
+                "applied_reason": "neutral_default",
+                "applied_value": 0.0,
+                "bucket": "resistance",
+                "condition": "fallback",
+                "key": "all_resistance",
+                "raw_path": "resources.all_resistance",
+                "scope": "target",
+                "skipped_reason": "",
+                "source_id": "enemy:dummy",
+                "source_type": "target.resources"
+              },
+              {
+                "applied_reason": "neutral_default",
+                "applied_value": 0.0,
+                "bucket": "resistance",
+                "condition": "element=Wind",
+                "key": "Wind_res_pen",
+                "raw_path": "resources.Wind_res_pen",
+                "scope": "actor",
+                "skipped_reason": "",
+                "source_id": "ally:seele",
+                "source_type": "actor.resources"
+              },
+              {
+                "applied_reason": "neutral_default",
+                "applied_value": 0.0,
+                "bucket": "resistance",
+                "condition": "always",
+                "key": "all_res_pen",
+                "raw_path": "resources.all_res_pen",
+                "scope": "actor",
+                "skipped_reason": "",
+                "source_id": "ally:seele",
+                "source_type": "actor.resources"
+              },
+              {
+                "applied_reason": "neutral_default",
+                "applied_value": 0.0,
+                "bucket": "damage_taken",
+                "condition": "always",
+                "key": "damage_taken_ratio",
+                "raw_path": "resources.damage_taken_ratio",
+                "scope": "target",
+                "skipped_reason": "",
+                "source_id": "enemy:dummy",
+                "source_type": "target.resources"
+              },
+              {
+                "applied_reason": "neutral_default",
+                "applied_value": 0.0,
+                "bucket": "damage_reduction",
+                "condition": "always",
+                "key": "damage_reduction",
+                "raw_path": "resources.damage_reduction",
+                "scope": "target",
+                "skipped_reason": "",
+                "source_id": "enemy:dummy",
+                "source_type": "target.resources"
+              },
+              {
+                "applied_reason": "positive_toughness_not_broken",
+                "applied_value": 90.0,
+                "bucket": "toughness_state",
+                "condition": "always",
+                "key": "current_toughness",
+                "raw_path": "unit.toughness",
+                "scope": "target",
+                "skipped_reason": "",
+                "source_id": "enemy:dummy",
+                "source_type": "target.state"
+              },
+              {
+                "applied_reason": "positive_toughness_not_broken",
+                "applied_value": 0.0,
+                "bucket": "toughness_state",
+                "condition": "always",
+                "key": "broken",
+                "raw_path": "flags.broken",
+                "scope": "target",
+                "skipped_reason": "",
+                "source_id": "enemy:dummy",
+                "source_type": "target.state"
+              }
+            ],
+            "buckets": [
+              {
+                "applied_terms": [
+                  {
+                    "applied_reason": "crit_rate_clamped",
+                    "applied_value": 0.0,
+                    "bucket": "crit",
+                    "condition": "always",
+                    "key": "critical_chance",
+                    "raw_path": "resources.critical_chance",
+                    "scope": "actor",
+                    "skipped_reason": "",
+                    "source_id": "ally:seele",
+                    "source_type": "actor.resources"
+                  },
+                  {
+                    "applied_reason": "crit_damage_available",
+                    "applied_value": 0.0,
+                    "bucket": "crit",
+                    "condition": "not_crit",
+                    "key": "critical_damage",
+                    "raw_path": "resources.critical_damage",
+                    "scope": "actor",
+                    "skipped_reason": "",
+                    "source_id": "ally:seele",
+                    "source_type": "actor.resources"
+                  }
+                ],
+                "bucket": "crit",
+                "metadata": {
+                  "crit_damage": 0.0,
+                  "crit_rate": 0.0,
+                  "event_id": "rng:1:ally:seele:action_def:avatar_skill:101401:10:enemy:dummy:crit",
+                  "is_crit": false,
+                  "mode": "deterministic",
+                  "multiplier": 1.0,
+                  "reason": "deterministic_rng",
+                  "rng_roll": 0.7751206084119602
+                },
+                "multiplier": 1.0,
+                "skipped_terms": []
+              },
+              {
+                "applied_terms": [
+                  {
+                    "applied_reason": "neutral_default",
+                    "applied_value": 0.0,
+                    "bucket": "damage_bonus",
+                    "condition": "always",
+                    "key": "damage_added_ratio",
+                    "raw_path": "resources.damage_added_ratio",
+                    "scope": "actor",
+                    "skipped_reason": "",
+                    "source_id": "ally:seele",
+                    "source_type": "actor.resources"
+                  },
+                  {
+                    "applied_reason": "neutral_default",
+                    "applied_value": 0.0,
+                    "bucket": "damage_bonus",
+                    "condition": "element=Wind",
+                    "key": "Wind_damage_added_ratio",
+                    "raw_path": "resources.Wind_damage_added_ratio",
+                    "scope": "actor",
+                    "skipped_reason": "",
+                    "source_id": "ally:seele",
+                    "source_type": "actor.resources"
+                  }
+                ],
+                "bucket": "damage_bonus",
+                "metadata": {},
+                "multiplier": 1.0,
+                "skipped_terms": []
+              },
+              {
+                "applied_terms": [
+                  {
+                    "applied_reason": "base_target_defense",
+                    "applied_value": 1000.0,
+                    "bucket": "defense",
+                    "condition": "always",
+                    "key": "defense",
+                    "raw_path": "unit.defense",
+                    "scope": "target",
+                    "skipped_reason": "",
+                    "source_id": "enemy:dummy",
+                    "source_type": "target.stats"
+                  },
+                  {
+                    "applied_reason": "neutral_default",
+                    "applied_value": 0.0,
+                    "bucket": "defense",
+                    "condition": "always",
+                    "key": "def_reduction",
+                    "raw_path": "resources.def_reduction",
+                    "scope": "target",
+                    "skipped_reason": "",
+                    "source_id": "enemy:dummy",
+                    "source_type": "target.resources"
+                  },
+                  {
+                    "applied_reason": "neutral_default",
+                    "applied_value": 0.0,
+                    "bucket": "defense",
+                    "condition": "always",
+                    "key": "def_ignore",
+                    "raw_path": "resources.def_ignore",
+                    "scope": "actor",
+                    "skipped_reason": "",
+                    "source_id": "ally:seele",
+                    "source_type": "actor.resources"
+                  }
+                ],
+                "bucket": "defense",
+                "metadata": {
+                  "actor_level": 80,
+                  "effective_defense": 1000.0
+                },
+                "multiplier": 0.5,
+                "skipped_terms": []
+              },
+              {
+                "applied_terms": [
+                  {
+                    "applied_reason": "neutral_default",
+                    "applied_value": 0.0,
+                    "bucket": "resistance",
+                    "condition": "fallback",
+                    "key": "all_resistance",
+                    "raw_path": "resources.all_resistance",
+                    "scope": "target",
+                    "skipped_reason": "",
+                    "source_id": "enemy:dummy",
+                    "source_type": "target.resources"
+                  },
+                  {
+                    "applied_reason": "neutral_default",
+                    "applied_value": 0.0,
+                    "bucket": "resistance",
+                    "condition": "element=Wind",
+                    "key": "Wind_res_pen",
+                    "raw_path": "resources.Wind_res_pen",
+                    "scope": "actor",
+                    "skipped_reason": "",
+                    "source_id": "ally:seele",
+                    "source_type": "actor.resources"
+                  },
+                  {
+                    "applied_reason": "neutral_default",
+                    "applied_value": 0.0,
+                    "bucket": "resistance",
+                    "condition": "always",
+                    "key": "all_res_pen",
+                    "raw_path": "resources.all_res_pen",
+                    "scope": "actor",
+                    "skipped_reason": "",
+                    "source_id": "ally:seele",
+                    "source_type": "actor.resources"
+                  }
+                ],
+                "bucket": "resistance",
+                "metadata": {
+                  "selected_resistance": 0.0
+                },
+                "multiplier": 1.0,
+                "skipped_terms": [
+                  {
+                    "applied_reason": "",
+                    "applied_value": null,
+                    "bucket": "resistance",
+                    "condition": "element=Wind",
+                    "key": "Wind_resistance",
+                    "raw_path": "resources.Wind_resistance",
+                    "scope": "target",
+                    "skipped_reason": "missing_element_resistance_uses_all_resistance",
+                    "source_id": "enemy:dummy",
+                    "source_type": "target.resources"
+                  }
+                ]
+              },
+              {
+                "applied_terms": [
+                  {
+                    "applied_reason": "neutral_default",
+                    "applied_value": 0.0,
+                    "bucket": "damage_taken",
+                    "condition": "always",
+                    "key": "damage_taken_ratio",
+                    "raw_path": "resources.damage_taken_ratio",
+                    "scope": "target",
+                    "skipped_reason": "",
+                    "source_id": "enemy:dummy",
+                    "source_type": "target.resources"
+                  }
+                ],
+                "bucket": "damage_taken",
+                "metadata": {},
+                "multiplier": 1.0,
+                "skipped_terms": []
+              },
+              {
+                "applied_terms": [
+                  {
+                    "applied_reason": "neutral_default",
+                    "applied_value": 0.0,
+                    "bucket": "damage_reduction",
+                    "condition": "always",
+                    "key": "damage_reduction",
+                    "raw_path": "resources.damage_reduction",
+                    "scope": "target",
+                    "skipped_reason": "",
+                    "source_id": "enemy:dummy",
+                    "source_type": "target.resources"
+                  }
+                ],
+                "bucket": "damage_reduction",
+                "metadata": {},
+                "multiplier": 1.0,
+                "skipped_terms": []
+              },
+              {
+                "applied_terms": [
+                  {
+                    "applied_reason": "positive_toughness_not_broken",
+                    "applied_value": 90.0,
+                    "bucket": "toughness_state",
+                    "condition": "always",
+                    "key": "current_toughness",
+                    "raw_path": "unit.toughness",
+                    "scope": "target",
+                    "skipped_reason": "",
+                    "source_id": "enemy:dummy",
+                    "source_type": "target.state"
+                  },
+                  {
+                    "applied_reason": "positive_toughness_not_broken",
+                    "applied_value": 0.0,
+                    "bucket": "toughness_state",
+                    "condition": "always",
+                    "key": "broken",
+                    "raw_path": "flags.broken",
+                    "scope": "target",
+                    "skipped_reason": "",
+                    "source_id": "enemy:dummy",
+                    "source_type": "target.state"
+                  }
+                ],
+                "bucket": "toughness_state",
+                "metadata": {
+                  "broken": false,
+                  "current_toughness": 90.0,
+                  "max_toughness": 90.0
+                },
+                "multiplier": 0.9,
+                "skipped_terms": []
+              }
+            ],
+            "formula_family": "direct",
+            "skipped_count": 1,
+            "skipped_terms": [
+              {
+                "applied_reason": "",
+                "applied_value": null,
+                "bucket": "resistance",
+                "condition": "element=Wind",
+                "key": "Wind_resistance",
+                "raw_path": "resources.Wind_resistance",
+                "scope": "target",
+                "skipped_reason": "missing_element_resistance_uses_all_resistance",
+                "source_id": "enemy:dummy",
+                "source_type": "target.resources"
+              }
+            ]
+          },
+          "multipliers": {
+            "crit": 1.0,
+            "damage_bonus": 1.0,
+            "damage_reduction": 1.0,
+            "damage_taken": 1.0,
+            "defense": 0.5,
+            "resistance": 1.0,
+            "toughness_state": 0.9
+          },
+          "rng_events": [
+            {
+              "after_state": "deterministic",
+              "before_state": "deterministic",
+              "event_id": "rng:1:ally:seele:action_def:avatar_skill:101401:10:enemy:dummy:crit",
+              "metadata": {
+                "action_definition_id": "action_def:avatar_skill:101401:10",
+                "actor_id": "ally:seele",
+                "source_trace": {
+                  "action_id": "avatar_skill:101401",
+                  "action_level": 10,
+                  "definition_id": "action_def:avatar_skill:101401:10",
+                  "source": {
+                    "action_id": "avatar_skill:101401",
+                    "coverage_status": "executable",
+                    "definition_id": "action_def:avatar_skill:101401:10",
+                    "level": 10,
+                    "source": {
+                      "evidence": {
+                        "id_key": "SkillID",
+                        "level": 10,
+                        "resource_mapping": {
+                          "BPAdd": "skill_point_gain_if_positive",
+                          "BPNeed": "skill_point_cost_if_positive",
+                          "SPBase": "energy_gain"
+                        },
+                        "row_index": 65,
+                        "taxonomy": {
+                          "attack_type": "raw TBGD AttackType; follow-up is an attack type axis",
+                          "damage_formula_family": "formula family axis; follow-up is not a damage family",
+                          "element_type": "raw TBGD StanceDamageType when present"
+                        }
+                      },
+                      "raw_id": "101401",
+                      "raw_type": "AvatarSkillConfigLD",
+                      "source_path": "ExcelOutput/AvatarSkillConfigLD.json"
+                    }
+                  }
+                },
+                "target_id": "enemy:dummy"
+              },
+              "result": {
+                "crit_damage": 0.0,
+                "crit_rate": 0.0,
+                "event_id": "rng:1:ally:seele:action_def:avatar_skill:101401:10:enemy:dummy:crit",
+                "is_crit": false,
+                "mode": "deterministic",
+                "multiplier": 1.0,
+                "reason": "deterministic_rng",
+                "rng_roll": 0.7751206084119602
+              },
+              "rng_type": "crit",
+              "source": "damage_formula"
+            }
+          ],
+          "scaling": {
+            "base_damage": 4480.0,
+            "flat_damage": 0.0,
+            "ratio": 1.4,
+            "stat": "attack",
+            "value": 3200.0
+          },
+          "target_id": "enemy:dummy"
+        },
+        "metadata": {},
+        "modifier_ledger": {
+          "applied_count": 14,
+          "applied_terms": [
+            {
+              "applied_reason": "crit_rate_clamped",
+              "applied_value": 0.0,
+              "bucket": "crit",
+              "condition": "always",
+              "key": "critical_chance",
+              "raw_path": "resources.critical_chance",
+              "scope": "actor",
+              "skipped_reason": "",
+              "source_id": "ally:seele",
+              "source_type": "actor.resources"
+            },
+            {
+              "applied_reason": "crit_damage_available",
+              "applied_value": 0.0,
+              "bucket": "crit",
+              "condition": "not_crit",
+              "key": "critical_damage",
+              "raw_path": "resources.critical_damage",
+              "scope": "actor",
+              "skipped_reason": "",
+              "source_id": "ally:seele",
+              "source_type": "actor.resources"
+            },
+            {
+              "applied_reason": "neutral_default",
+              "applied_value": 0.0,
+              "bucket": "damage_bonus",
+              "condition": "always",
+              "key": "damage_added_ratio",
+              "raw_path": "resources.damage_added_ratio",
+              "scope": "actor",
+              "skipped_reason": "",
+              "source_id": "ally:seele",
+              "source_type": "actor.resources"
+            },
+            {
+              "applied_reason": "neutral_default",
+              "applied_value": 0.0,
+              "bucket": "damage_bonus",
+              "condition": "element=Wind",
+              "key": "Wind_damage_added_ratio",
+              "raw_path": "resources.Wind_damage_added_ratio",
+              "scope": "actor",
+              "skipped_reason": "",
+              "source_id": "ally:seele",
+              "source_type": "actor.resources"
+            },
+            {
+              "applied_reason": "base_target_defense",
+              "applied_value": 1000.0,
+              "bucket": "defense",
+              "condition": "always",
+              "key": "defense",
+              "raw_path": "unit.defense",
+              "scope": "target",
+              "skipped_reason": "",
+              "source_id": "enemy:dummy",
+              "source_type": "target.stats"
+            },
+            {
+              "applied_reason": "neutral_default",
+              "applied_value": 0.0,
+              "bucket": "defense",
+              "condition": "always",
+              "key": "def_reduction",
+              "raw_path": "resources.def_reduction",
+              "scope": "target",
+              "skipped_reason": "",
+              "source_id": "enemy:dummy",
+              "source_type": "target.resources"
+            },
+            {
+              "applied_reason": "neutral_default",
+              "applied_value": 0.0,
+              "bucket": "defense",
+              "condition": "always",
+              "key": "def_ignore",
+              "raw_path": "resources.def_ignore",
+              "scope": "actor",
+              "skipped_reason": "",
+              "source_id": "ally:seele",
+              "source_type": "actor.resources"
+            },
+            {
+              "applied_reason": "neutral_default",
+              "applied_value": 0.0,
+              "bucket": "resistance",
+              "condition": "fallback",
+              "key": "all_resistance",
+              "raw_path": "resources.all_resistance",
+              "scope": "target",
+              "skipped_reason": "",
+              "source_id": "enemy:dummy",
+              "source_type": "target.resources"
+            },
+            {
+              "applied_reason": "neutral_default",
+              "applied_value": 0.0,
+              "bucket": "resistance",
+              "condition": "element=Wind",
+              "key": "Wind_res_pen",
+              "raw_path": "resources.Wind_res_pen",
+              "scope": "actor",
+              "skipped_reason": "",
+              "source_id": "ally:seele",
+              "source_type": "actor.resources"
+            },
+            {
+              "applied_reason": "neutral_default",
+              "applied_value": 0.0,
+              "bucket": "resistance",
+              "condition": "always",
+              "key": "all_res_pen",
+              "raw_path": "resources.all_res_pen",
+              "scope": "actor",
+              "skipped_reason": "",
+              "source_id": "ally:seele",
+              "source_type": "actor.resources"
+            },
+            {
+              "applied_reason": "neutral_default",
+              "applied_value": 0.0,
+              "bucket": "damage_taken",
+              "condition": "always",
+              "key": "damage_taken_ratio",
+              "raw_path": "resources.damage_taken_ratio",
+              "scope": "target",
+              "skipped_reason": "",
+              "source_id": "enemy:dummy",
+              "source_type": "target.resources"
+            },
+            {
+              "applied_reason": "neutral_default",
+              "applied_value": 0.0,
+              "bucket": "damage_reduction",
+              "condition": "always",
+              "key": "damage_reduction",
+              "raw_path": "resources.damage_reduction",
+              "scope": "target",
+              "skipped_reason": "",
+              "source_id": "enemy:dummy",
+              "source_type": "target.resources"
+            },
+            {
+              "applied_reason": "positive_toughness_not_broken",
+              "applied_value": 90.0,
+              "bucket": "toughness_state",
+              "condition": "always",
+              "key": "current_toughness",
+              "raw_path": "unit.toughness",
+              "scope": "target",
+              "skipped_reason": "",
+              "source_id": "enemy:dummy",
+              "source_type": "target.state"
+            },
+            {
+              "applied_reason": "positive_toughness_not_broken",
+              "applied_value": 0.0,
+              "bucket": "toughness_state",
+              "condition": "always",
+              "key": "broken",
+              "raw_path": "flags.broken",
+              "scope": "target",
+              "skipped_reason": "",
+              "source_id": "enemy:dummy",
+              "source_type": "target.state"
+            }
+          ],
+          "buckets": [
+            {
+              "applied_terms": [
+                {
+                  "applied_reason": "crit_rate_clamped",
+                  "applied_value": 0.0,
+                  "bucket": "crit",
+                  "condition": "always",
+                  "key": "critical_chance",
+                  "raw_path": "resources.critical_chance",
+                  "scope": "actor",
+                  "skipped_reason": "",
+                  "source_id": "ally:seele",
+                  "source_type": "actor.resources"
+                },
+                {
+                  "applied_reason": "crit_damage_available",
+                  "applied_value": 0.0,
+                  "bucket": "crit",
+                  "condition": "not_crit",
+                  "key": "critical_damage",
+                  "raw_path": "resources.critical_damage",
+                  "scope": "actor",
+                  "skipped_reason": "",
+                  "source_id": "ally:seele",
+                  "source_type": "actor.resources"
+                }
+              ],
+              "bucket": "crit",
+              "metadata": {
+                "crit_damage": 0.0,
+                "crit_rate": 0.0,
+                "event_id": "rng:1:ally:seele:action_def:avatar_skill:101401:10:enemy:dummy:crit",
+                "is_crit": false,
+                "mode": "deterministic",
+                "multiplier": 1.0,
+                "reason": "deterministic_rng",
+                "rng_roll": 0.7751206084119602
+              },
+              "multiplier": 1.0,
+              "skipped_terms": []
+            },
+            {
+              "applied_terms": [
+                {
+                  "applied_reason": "neutral_default",
+                  "applied_value": 0.0,
+                  "bucket": "damage_bonus",
+                  "condition": "always",
+                  "key": "damage_added_ratio",
+                  "raw_path": "resources.damage_added_ratio",
+                  "scope": "actor",
+                  "skipped_reason": "",
+                  "source_id": "ally:seele",
+                  "source_type": "actor.resources"
+                },
+                {
+                  "applied_reason": "neutral_default",
+                  "applied_value": 0.0,
+                  "bucket": "damage_bonus",
+                  "condition": "element=Wind",
+                  "key": "Wind_damage_added_ratio",
+                  "raw_path": "resources.Wind_damage_added_ratio",
+                  "scope": "actor",
+                  "skipped_reason": "",
+                  "source_id": "ally:seele",
+                  "source_type": "actor.resources"
+                }
+              ],
+              "bucket": "damage_bonus",
+              "metadata": {},
+              "multiplier": 1.0,
+              "skipped_terms": []
+            },
+            {
+              "applied_terms": [
+                {
+                  "applied_reason": "base_target_defense",
+                  "applied_value": 1000.0,
+                  "bucket": "defense",
+                  "condition": "always",
+                  "key": "defense",
+                  "raw_path": "unit.defense",
+                  "scope": "target",
+                  "skipped_reason": "",
+                  "source_id": "enemy:dummy",
+                  "source_type": "target.stats"
+                },
+                {
+                  "applied_reason": "neutral_default",
+                  "applied_value": 0.0,
+                  "bucket": "defense",
+                  "condition": "always",
+                  "key": "def_reduction",
+                  "raw_path": "resources.def_reduction",
+                  "scope": "target",
+                  "skipped_reason": "",
+                  "source_id": "enemy:dummy",
+                  "source_type": "target.resources"
+                },
+                {
+                  "applied_reason": "neutral_default",
+                  "applied_value": 0.0,
+                  "bucket": "defense",
+                  "condition": "always",
+                  "key": "def_ignore",
+                  "raw_path": "resources.def_ignore",
+                  "scope": "actor",
+                  "skipped_reason": "",
+                  "source_id": "ally:seele",
+                  "source_type": "actor.resources"
+                }
+              ],
+              "bucket": "defense",
+              "metadata": {
+                "actor_level": 80,
+                "effective_defense": 1000.0
+              },
+              "multiplier": 0.5,
+              "skipped_terms": []
+            },
+            {
+              "applied_terms": [
+                {
+                  "applied_reason": "neutral_default",
+                  "applied_value": 0.0,
+                  "bucket": "resistance",
+                  "condition": "fallback",
+                  "key": "all_resistance",
+                  "raw_path": "resources.all_resistance",
+                  "scope": "target",
+                  "skipped_reason": "",
+                  "source_id": "enemy:dummy",
+                  "source_type": "target.resources"
+                },
+                {
+                  "applied_reason": "neutral_default",
+                  "applied_value": 0.0,
+                  "bucket": "resistance",
+                  "condition": "element=Wind",
+                  "key": "Wind_res_pen",
+                  "raw_path": "resources.Wind_res_pen",
+                  "scope": "actor",
+                  "skipped_reason": "",
+                  "source_id": "ally:seele",
+                  "source_type": "actor.resources"
+                },
+                {
+                  "applied_reason": "neutral_default",
+                  "applied_value": 0.0,
+                  "bucket": "resistance",
+                  "condition": "always",
+                  "key": "all_res_pen",
+                  "raw_path": "resources.all_res_pen",
+                  "scope": "actor",
+                  "skipped_reason": "",
+                  "source_id": "ally:seele",
+                  "source_type": "actor.resources"
+                }
+              ],
+              "bucket": "resistance",
+              "metadata": {
+                "selected_resistance": 0.0
+              },
+              "multiplier": 1.0,
+              "skipped_terms": [
+                {
+                  "applied_reason": "",
+                  "applied_value": null,
+                  "bucket": "resistance",
+                  "condition": "element=Wind",
+                  "key": "Wind_resistance",
+                  "raw_path": "resources.Wind_resistance",
+                  "scope": "target",
+                  "skipped_reason": "missing_element_resistance_uses_all_resistance",
+                  "source_id": "enemy:dummy",
+                  "source_type": "target.resources"
+                }
+              ]
+            },
+            {
+              "applied_terms": [
+                {
+                  "applied_reason": "neutral_default",
+                  "applied_value": 0.0,
+                  "bucket": "damage_taken",
+                  "condition": "always",
+                  "key": "damage_taken_ratio",
+                  "raw_path": "resources.damage_taken_ratio",
+                  "scope": "target",
+                  "skipped_reason": "",
+                  "source_id": "enemy:dummy",
+                  "source_type": "target.resources"
+                }
+              ],
+              "bucket": "damage_taken",
+              "metadata": {},
+              "multiplier": 1.0,
+              "skipped_terms": []
+            },
+            {
+              "applied_terms": [
+                {
+                  "applied_reason": "neutral_default",
+                  "applied_value": 0.0,
+                  "bucket": "damage_reduction",
+                  "condition": "always",
+                  "key": "damage_reduction",
+                  "raw_path": "resources.damage_reduction",
+                  "scope": "target",
+                  "skipped_reason": "",
+                  "source_id": "enemy:dummy",
+                  "source_type": "target.resources"
+                }
+              ],
+              "bucket": "damage_reduction",
+              "metadata": {},
+              "multiplier": 1.0,
+              "skipped_terms": []
+            },
+            {
+              "applied_terms": [
+                {
+                  "applied_reason": "positive_toughness_not_broken",
+                  "applied_value": 90.0,
+                  "bucket": "toughness_state",
+                  "condition": "always",
+                  "key": "current_toughness",
+                  "raw_path": "unit.toughness",
+                  "scope": "target",
+                  "skipped_reason": "",
+                  "source_id": "enemy:dummy",
+                  "source_type": "target.state"
+                },
+                {
+                  "applied_reason": "positive_toughness_not_broken",
+                  "applied_value": 0.0,
+                  "bucket": "toughness_state",
+                  "condition": "always",
+                  "key": "broken",
+                  "raw_path": "flags.broken",
+                  "scope": "target",
+                  "skipped_reason": "",
+                  "source_id": "enemy:dummy",
+                  "source_type": "target.state"
+                }
+              ],
+              "bucket": "toughness_state",
+              "metadata": {
+                "broken": false,
+                "current_toughness": 90.0,
+                "max_toughness": 90.0
+              },
+              "multiplier": 0.9,
+              "skipped_terms": []
+            }
+          ],
+          "formula_family": "direct",
+          "skipped_count": 1,
+          "skipped_terms": [
+            {
+              "applied_reason": "",
+              "applied_value": null,
+              "bucket": "resistance",
+              "condition": "element=Wind",
+              "key": "Wind_resistance",
+              "raw_path": "resources.Wind_resistance",
+              "scope": "target",
+              "skipped_reason": "missing_element_resistance_uses_all_resistance",
+              "source_id": "enemy:dummy",
+              "source_type": "target.resources"
+            }
+          ]
         },
         "source_trace": {
           "action_id": "avatar_skill:101401",
@@ -557,18 +1555,72 @@
         },
         "target_id": "enemy:dummy"
       },
-      "mutation_id": "mutation:59a1d1e2612f04e3",
+      "mutation_id": "mutation:1cb9ef3b48891dbf",
       "op": "set",
       "path": [
         "units",
         "enemy:dummy",
         "hp"
       ],
-      "reason": "apply damage packet",
+      "reason": "apply direct damage formula",
       "source": "damage_system"
     }
   ],
-  "rng_events": [],
+  "rng_events": [
+    {
+      "after_state": "deterministic",
+      "before_state": "deterministic",
+      "event_id": "rng:1:ally:seele:action_def:avatar_skill:101401:10:enemy:dummy:crit",
+      "metadata": {
+        "action_definition_id": "action_def:avatar_skill:101401:10",
+        "actor_id": "ally:seele",
+        "source_trace": {
+          "action_id": "avatar_skill:101401",
+          "action_level": 10,
+          "definition_id": "action_def:avatar_skill:101401:10",
+          "source": {
+            "action_id": "avatar_skill:101401",
+            "coverage_status": "executable",
+            "definition_id": "action_def:avatar_skill:101401:10",
+            "level": 10,
+            "source": {
+              "evidence": {
+                "id_key": "SkillID",
+                "level": 10,
+                "resource_mapping": {
+                  "BPAdd": "skill_point_gain_if_positive",
+                  "BPNeed": "skill_point_cost_if_positive",
+                  "SPBase": "energy_gain"
+                },
+                "row_index": 65,
+                "taxonomy": {
+                  "attack_type": "raw TBGD AttackType; follow-up is an attack type axis",
+                  "damage_formula_family": "formula family axis; follow-up is not a damage family",
+                  "element_type": "raw TBGD StanceDamageType when present"
+                }
+              },
+              "raw_id": "101401",
+              "raw_type": "AvatarSkillConfigLD",
+              "source_path": "ExcelOutput/AvatarSkillConfigLD.json"
+            }
+          }
+        },
+        "target_id": "enemy:dummy"
+      },
+      "result": {
+        "crit_damage": 0.0,
+        "crit_rate": 0.0,
+        "event_id": "rng:1:ally:seele:action_def:avatar_skill:101401:10:enemy:dummy:crit",
+        "is_crit": false,
+        "mode": "deterministic",
+        "multiplier": 1.0,
+        "reason": "deterministic_rng",
+        "rng_roll": 0.7751206084119602
+      },
+      "rng_type": "crit",
+      "source": "damage_formula"
+    }
+  ],
   "settlement": {
     "action_id": "avatar_skill:101401",
     "actor_id": "ally:seele",
@@ -853,16 +1905,1179 @@
         "trace": {}
       },
       {
-        "mutation_id": "mutation:59a1d1e2612f04e3",
+        "mutation_id": "mutation:1cb9ef3b48891dbf",
         "payload": {
-          "amount": 4480.0,
+          "amount": 2016.0,
           "attack_type": "Normal",
           "bypasses_normal_multipliers": false,
+          "crit_resolution": {
+            "crit_damage": 0.0,
+            "crit_rate": 0.0,
+            "event_id": "rng:1:ally:seele:action_def:avatar_skill:101401:10:enemy:dummy:crit",
+            "is_crit": false,
+            "mode": "deterministic",
+            "multiplier": 1.0,
+            "reason": "deterministic_rng",
+            "rng_roll": 0.7751206084119602
+          },
           "damage_formula_family": "direct",
           "damage_kind": "hp_damage",
           "element_type": "Wind",
-          "normal_multiplier_terms": [],
-          "target_after_hp": 5520.0,
+          "final_damage": 2016.0,
+          "formula_result": {
+            "action_definition_id": "action_def:avatar_skill:101401:10",
+            "attack_type": "Normal",
+            "attacker_id": "ally:seele",
+            "calculation_mode": "v0_209_direct_damage_formula",
+            "crit_resolution": {
+              "crit_damage": 0.0,
+              "crit_rate": 0.0,
+              "event_id": "rng:1:ally:seele:action_def:avatar_skill:101401:10:enemy:dummy:crit",
+              "is_crit": false,
+              "mode": "deterministic",
+              "multiplier": 1.0,
+              "reason": "deterministic_rng",
+              "rng_roll": 0.7751206084119602
+            },
+            "element_type": "Wind",
+            "final_damage": 2016.0,
+            "formula_family": "direct",
+            "modifier_ledger": {
+              "applied_count": 14,
+              "applied_terms": [
+                {
+                  "applied_reason": "crit_rate_clamped",
+                  "applied_value": 0.0,
+                  "bucket": "crit",
+                  "condition": "always",
+                  "key": "critical_chance",
+                  "raw_path": "resources.critical_chance",
+                  "scope": "actor",
+                  "skipped_reason": "",
+                  "source_id": "ally:seele",
+                  "source_type": "actor.resources"
+                },
+                {
+                  "applied_reason": "crit_damage_available",
+                  "applied_value": 0.0,
+                  "bucket": "crit",
+                  "condition": "not_crit",
+                  "key": "critical_damage",
+                  "raw_path": "resources.critical_damage",
+                  "scope": "actor",
+                  "skipped_reason": "",
+                  "source_id": "ally:seele",
+                  "source_type": "actor.resources"
+                },
+                {
+                  "applied_reason": "neutral_default",
+                  "applied_value": 0.0,
+                  "bucket": "damage_bonus",
+                  "condition": "always",
+                  "key": "damage_added_ratio",
+                  "raw_path": "resources.damage_added_ratio",
+                  "scope": "actor",
+                  "skipped_reason": "",
+                  "source_id": "ally:seele",
+                  "source_type": "actor.resources"
+                },
+                {
+                  "applied_reason": "neutral_default",
+                  "applied_value": 0.0,
+                  "bucket": "damage_bonus",
+                  "condition": "element=Wind",
+                  "key": "Wind_damage_added_ratio",
+                  "raw_path": "resources.Wind_damage_added_ratio",
+                  "scope": "actor",
+                  "skipped_reason": "",
+                  "source_id": "ally:seele",
+                  "source_type": "actor.resources"
+                },
+                {
+                  "applied_reason": "base_target_defense",
+                  "applied_value": 1000.0,
+                  "bucket": "defense",
+                  "condition": "always",
+                  "key": "defense",
+                  "raw_path": "unit.defense",
+                  "scope": "target",
+                  "skipped_reason": "",
+                  "source_id": "enemy:dummy",
+                  "source_type": "target.stats"
+                },
+                {
+                  "applied_reason": "neutral_default",
+                  "applied_value": 0.0,
+                  "bucket": "defense",
+                  "condition": "always",
+                  "key": "def_reduction",
+                  "raw_path": "resources.def_reduction",
+                  "scope": "target",
+                  "skipped_reason": "",
+                  "source_id": "enemy:dummy",
+                  "source_type": "target.resources"
+                },
+                {
+                  "applied_reason": "neutral_default",
+                  "applied_value": 0.0,
+                  "bucket": "defense",
+                  "condition": "always",
+                  "key": "def_ignore",
+                  "raw_path": "resources.def_ignore",
+                  "scope": "actor",
+                  "skipped_reason": "",
+                  "source_id": "ally:seele",
+                  "source_type": "actor.resources"
+                },
+                {
+                  "applied_reason": "neutral_default",
+                  "applied_value": 0.0,
+                  "bucket": "resistance",
+                  "condition": "fallback",
+                  "key": "all_resistance",
+                  "raw_path": "resources.all_resistance",
+                  "scope": "target",
+                  "skipped_reason": "",
+                  "source_id": "enemy:dummy",
+                  "source_type": "target.resources"
+                },
+                {
+                  "applied_reason": "neutral_default",
+                  "applied_value": 0.0,
+                  "bucket": "resistance",
+                  "condition": "element=Wind",
+                  "key": "Wind_res_pen",
+                  "raw_path": "resources.Wind_res_pen",
+                  "scope": "actor",
+                  "skipped_reason": "",
+                  "source_id": "ally:seele",
+                  "source_type": "actor.resources"
+                },
+                {
+                  "applied_reason": "neutral_default",
+                  "applied_value": 0.0,
+                  "bucket": "resistance",
+                  "condition": "always",
+                  "key": "all_res_pen",
+                  "raw_path": "resources.all_res_pen",
+                  "scope": "actor",
+                  "skipped_reason": "",
+                  "source_id": "ally:seele",
+                  "source_type": "actor.resources"
+                },
+                {
+                  "applied_reason": "neutral_default",
+                  "applied_value": 0.0,
+                  "bucket": "damage_taken",
+                  "condition": "always",
+                  "key": "damage_taken_ratio",
+                  "raw_path": "resources.damage_taken_ratio",
+                  "scope": "target",
+                  "skipped_reason": "",
+                  "source_id": "enemy:dummy",
+                  "source_type": "target.resources"
+                },
+                {
+                  "applied_reason": "neutral_default",
+                  "applied_value": 0.0,
+                  "bucket": "damage_reduction",
+                  "condition": "always",
+                  "key": "damage_reduction",
+                  "raw_path": "resources.damage_reduction",
+                  "scope": "target",
+                  "skipped_reason": "",
+                  "source_id": "enemy:dummy",
+                  "source_type": "target.resources"
+                },
+                {
+                  "applied_reason": "positive_toughness_not_broken",
+                  "applied_value": 90.0,
+                  "bucket": "toughness_state",
+                  "condition": "always",
+                  "key": "current_toughness",
+                  "raw_path": "unit.toughness",
+                  "scope": "target",
+                  "skipped_reason": "",
+                  "source_id": "enemy:dummy",
+                  "source_type": "target.state"
+                },
+                {
+                  "applied_reason": "positive_toughness_not_broken",
+                  "applied_value": 0.0,
+                  "bucket": "toughness_state",
+                  "condition": "always",
+                  "key": "broken",
+                  "raw_path": "flags.broken",
+                  "scope": "target",
+                  "skipped_reason": "",
+                  "source_id": "enemy:dummy",
+                  "source_type": "target.state"
+                }
+              ],
+              "buckets": [
+                {
+                  "applied_terms": [
+                    {
+                      "applied_reason": "crit_rate_clamped",
+                      "applied_value": 0.0,
+                      "bucket": "crit",
+                      "condition": "always",
+                      "key": "critical_chance",
+                      "raw_path": "resources.critical_chance",
+                      "scope": "actor",
+                      "skipped_reason": "",
+                      "source_id": "ally:seele",
+                      "source_type": "actor.resources"
+                    },
+                    {
+                      "applied_reason": "crit_damage_available",
+                      "applied_value": 0.0,
+                      "bucket": "crit",
+                      "condition": "not_crit",
+                      "key": "critical_damage",
+                      "raw_path": "resources.critical_damage",
+                      "scope": "actor",
+                      "skipped_reason": "",
+                      "source_id": "ally:seele",
+                      "source_type": "actor.resources"
+                    }
+                  ],
+                  "bucket": "crit",
+                  "metadata": {
+                    "crit_damage": 0.0,
+                    "crit_rate": 0.0,
+                    "event_id": "rng:1:ally:seele:action_def:avatar_skill:101401:10:enemy:dummy:crit",
+                    "is_crit": false,
+                    "mode": "deterministic",
+                    "multiplier": 1.0,
+                    "reason": "deterministic_rng",
+                    "rng_roll": 0.7751206084119602
+                  },
+                  "multiplier": 1.0,
+                  "skipped_terms": []
+                },
+                {
+                  "applied_terms": [
+                    {
+                      "applied_reason": "neutral_default",
+                      "applied_value": 0.0,
+                      "bucket": "damage_bonus",
+                      "condition": "always",
+                      "key": "damage_added_ratio",
+                      "raw_path": "resources.damage_added_ratio",
+                      "scope": "actor",
+                      "skipped_reason": "",
+                      "source_id": "ally:seele",
+                      "source_type": "actor.resources"
+                    },
+                    {
+                      "applied_reason": "neutral_default",
+                      "applied_value": 0.0,
+                      "bucket": "damage_bonus",
+                      "condition": "element=Wind",
+                      "key": "Wind_damage_added_ratio",
+                      "raw_path": "resources.Wind_damage_added_ratio",
+                      "scope": "actor",
+                      "skipped_reason": "",
+                      "source_id": "ally:seele",
+                      "source_type": "actor.resources"
+                    }
+                  ],
+                  "bucket": "damage_bonus",
+                  "metadata": {},
+                  "multiplier": 1.0,
+                  "skipped_terms": []
+                },
+                {
+                  "applied_terms": [
+                    {
+                      "applied_reason": "base_target_defense",
+                      "applied_value": 1000.0,
+                      "bucket": "defense",
+                      "condition": "always",
+                      "key": "defense",
+                      "raw_path": "unit.defense",
+                      "scope": "target",
+                      "skipped_reason": "",
+                      "source_id": "enemy:dummy",
+                      "source_type": "target.stats"
+                    },
+                    {
+                      "applied_reason": "neutral_default",
+                      "applied_value": 0.0,
+                      "bucket": "defense",
+                      "condition": "always",
+                      "key": "def_reduction",
+                      "raw_path": "resources.def_reduction",
+                      "scope": "target",
+                      "skipped_reason": "",
+                      "source_id": "enemy:dummy",
+                      "source_type": "target.resources"
+                    },
+                    {
+                      "applied_reason": "neutral_default",
+                      "applied_value": 0.0,
+                      "bucket": "defense",
+                      "condition": "always",
+                      "key": "def_ignore",
+                      "raw_path": "resources.def_ignore",
+                      "scope": "actor",
+                      "skipped_reason": "",
+                      "source_id": "ally:seele",
+                      "source_type": "actor.resources"
+                    }
+                  ],
+                  "bucket": "defense",
+                  "metadata": {
+                    "actor_level": 80,
+                    "effective_defense": 1000.0
+                  },
+                  "multiplier": 0.5,
+                  "skipped_terms": []
+                },
+                {
+                  "applied_terms": [
+                    {
+                      "applied_reason": "neutral_default",
+                      "applied_value": 0.0,
+                      "bucket": "resistance",
+                      "condition": "fallback",
+                      "key": "all_resistance",
+                      "raw_path": "resources.all_resistance",
+                      "scope": "target",
+                      "skipped_reason": "",
+                      "source_id": "enemy:dummy",
+                      "source_type": "target.resources"
+                    },
+                    {
+                      "applied_reason": "neutral_default",
+                      "applied_value": 0.0,
+                      "bucket": "resistance",
+                      "condition": "element=Wind",
+                      "key": "Wind_res_pen",
+                      "raw_path": "resources.Wind_res_pen",
+                      "scope": "actor",
+                      "skipped_reason": "",
+                      "source_id": "ally:seele",
+                      "source_type": "actor.resources"
+                    },
+                    {
+                      "applied_reason": "neutral_default",
+                      "applied_value": 0.0,
+                      "bucket": "resistance",
+                      "condition": "always",
+                      "key": "all_res_pen",
+                      "raw_path": "resources.all_res_pen",
+                      "scope": "actor",
+                      "skipped_reason": "",
+                      "source_id": "ally:seele",
+                      "source_type": "actor.resources"
+                    }
+                  ],
+                  "bucket": "resistance",
+                  "metadata": {
+                    "selected_resistance": 0.0
+                  },
+                  "multiplier": 1.0,
+                  "skipped_terms": [
+                    {
+                      "applied_reason": "",
+                      "applied_value": null,
+                      "bucket": "resistance",
+                      "condition": "element=Wind",
+                      "key": "Wind_resistance",
+                      "raw_path": "resources.Wind_resistance",
+                      "scope": "target",
+                      "skipped_reason": "missing_element_resistance_uses_all_resistance",
+                      "source_id": "enemy:dummy",
+                      "source_type": "target.resources"
+                    }
+                  ]
+                },
+                {
+                  "applied_terms": [
+                    {
+                      "applied_reason": "neutral_default",
+                      "applied_value": 0.0,
+                      "bucket": "damage_taken",
+                      "condition": "always",
+                      "key": "damage_taken_ratio",
+                      "raw_path": "resources.damage_taken_ratio",
+                      "scope": "target",
+                      "skipped_reason": "",
+                      "source_id": "enemy:dummy",
+                      "source_type": "target.resources"
+                    }
+                  ],
+                  "bucket": "damage_taken",
+                  "metadata": {},
+                  "multiplier": 1.0,
+                  "skipped_terms": []
+                },
+                {
+                  "applied_terms": [
+                    {
+                      "applied_reason": "neutral_default",
+                      "applied_value": 0.0,
+                      "bucket": "damage_reduction",
+                      "condition": "always",
+                      "key": "damage_reduction",
+                      "raw_path": "resources.damage_reduction",
+                      "scope": "target",
+                      "skipped_reason": "",
+                      "source_id": "enemy:dummy",
+                      "source_type": "target.resources"
+                    }
+                  ],
+                  "bucket": "damage_reduction",
+                  "metadata": {},
+                  "multiplier": 1.0,
+                  "skipped_terms": []
+                },
+                {
+                  "applied_terms": [
+                    {
+                      "applied_reason": "positive_toughness_not_broken",
+                      "applied_value": 90.0,
+                      "bucket": "toughness_state",
+                      "condition": "always",
+                      "key": "current_toughness",
+                      "raw_path": "unit.toughness",
+                      "scope": "target",
+                      "skipped_reason": "",
+                      "source_id": "enemy:dummy",
+                      "source_type": "target.state"
+                    },
+                    {
+                      "applied_reason": "positive_toughness_not_broken",
+                      "applied_value": 0.0,
+                      "bucket": "toughness_state",
+                      "condition": "always",
+                      "key": "broken",
+                      "raw_path": "flags.broken",
+                      "scope": "target",
+                      "skipped_reason": "",
+                      "source_id": "enemy:dummy",
+                      "source_type": "target.state"
+                    }
+                  ],
+                  "bucket": "toughness_state",
+                  "metadata": {
+                    "broken": false,
+                    "current_toughness": 90.0,
+                    "max_toughness": 90.0
+                  },
+                  "multiplier": 0.9,
+                  "skipped_terms": []
+                }
+              ],
+              "formula_family": "direct",
+              "skipped_count": 1,
+              "skipped_terms": [
+                {
+                  "applied_reason": "",
+                  "applied_value": null,
+                  "bucket": "resistance",
+                  "condition": "element=Wind",
+                  "key": "Wind_resistance",
+                  "raw_path": "resources.Wind_resistance",
+                  "scope": "target",
+                  "skipped_reason": "missing_element_resistance_uses_all_resistance",
+                  "source_id": "enemy:dummy",
+                  "source_type": "target.resources"
+                }
+              ]
+            },
+            "multipliers": {
+              "crit": 1.0,
+              "damage_bonus": 1.0,
+              "damage_reduction": 1.0,
+              "damage_taken": 1.0,
+              "defense": 0.5,
+              "resistance": 1.0,
+              "toughness_state": 0.9
+            },
+            "rng_events": [
+              {
+                "after_state": "deterministic",
+                "before_state": "deterministic",
+                "event_id": "rng:1:ally:seele:action_def:avatar_skill:101401:10:enemy:dummy:crit",
+                "metadata": {
+                  "action_definition_id": "action_def:avatar_skill:101401:10",
+                  "actor_id": "ally:seele",
+                  "source_trace": {
+                    "action_id": "avatar_skill:101401",
+                    "action_level": 10,
+                    "definition_id": "action_def:avatar_skill:101401:10",
+                    "source": {
+                      "action_id": "avatar_skill:101401",
+                      "coverage_status": "executable",
+                      "definition_id": "action_def:avatar_skill:101401:10",
+                      "level": 10,
+                      "source": {
+                        "evidence": {
+                          "id_key": "SkillID",
+                          "level": 10,
+                          "resource_mapping": {
+                            "BPAdd": "skill_point_gain_if_positive",
+                            "BPNeed": "skill_point_cost_if_positive",
+                            "SPBase": "energy_gain"
+                          },
+                          "row_index": 65,
+                          "taxonomy": {
+                            "attack_type": "raw TBGD AttackType; follow-up is an attack type axis",
+                            "damage_formula_family": "formula family axis; follow-up is not a damage family",
+                            "element_type": "raw TBGD StanceDamageType when present"
+                          }
+                        },
+                        "raw_id": "101401",
+                        "raw_type": "AvatarSkillConfigLD",
+                        "source_path": "ExcelOutput/AvatarSkillConfigLD.json"
+                      }
+                    }
+                  },
+                  "target_id": "enemy:dummy"
+                },
+                "result": {
+                  "crit_damage": 0.0,
+                  "crit_rate": 0.0,
+                  "event_id": "rng:1:ally:seele:action_def:avatar_skill:101401:10:enemy:dummy:crit",
+                  "is_crit": false,
+                  "mode": "deterministic",
+                  "multiplier": 1.0,
+                  "reason": "deterministic_rng",
+                  "rng_roll": 0.7751206084119602
+                },
+                "rng_type": "crit",
+                "source": "damage_formula"
+              }
+            ],
+            "scaling": {
+              "base_damage": 4480.0,
+              "flat_damage": 0.0,
+              "ratio": 1.4,
+              "stat": "attack",
+              "value": 3200.0
+            },
+            "target_id": "enemy:dummy"
+          },
+          "modifier_ledger": {
+            "applied_count": 14,
+            "applied_terms": [
+              {
+                "applied_reason": "crit_rate_clamped",
+                "applied_value": 0.0,
+                "bucket": "crit",
+                "condition": "always",
+                "key": "critical_chance",
+                "raw_path": "resources.critical_chance",
+                "scope": "actor",
+                "skipped_reason": "",
+                "source_id": "ally:seele",
+                "source_type": "actor.resources"
+              },
+              {
+                "applied_reason": "crit_damage_available",
+                "applied_value": 0.0,
+                "bucket": "crit",
+                "condition": "not_crit",
+                "key": "critical_damage",
+                "raw_path": "resources.critical_damage",
+                "scope": "actor",
+                "skipped_reason": "",
+                "source_id": "ally:seele",
+                "source_type": "actor.resources"
+              },
+              {
+                "applied_reason": "neutral_default",
+                "applied_value": 0.0,
+                "bucket": "damage_bonus",
+                "condition": "always",
+                "key": "damage_added_ratio",
+                "raw_path": "resources.damage_added_ratio",
+                "scope": "actor",
+                "skipped_reason": "",
+                "source_id": "ally:seele",
+                "source_type": "actor.resources"
+              },
+              {
+                "applied_reason": "neutral_default",
+                "applied_value": 0.0,
+                "bucket": "damage_bonus",
+                "condition": "element=Wind",
+                "key": "Wind_damage_added_ratio",
+                "raw_path": "resources.Wind_damage_added_ratio",
+                "scope": "actor",
+                "skipped_reason": "",
+                "source_id": "ally:seele",
+                "source_type": "actor.resources"
+              },
+              {
+                "applied_reason": "base_target_defense",
+                "applied_value": 1000.0,
+                "bucket": "defense",
+                "condition": "always",
+                "key": "defense",
+                "raw_path": "unit.defense",
+                "scope": "target",
+                "skipped_reason": "",
+                "source_id": "enemy:dummy",
+                "source_type": "target.stats"
+              },
+              {
+                "applied_reason": "neutral_default",
+                "applied_value": 0.0,
+                "bucket": "defense",
+                "condition": "always",
+                "key": "def_reduction",
+                "raw_path": "resources.def_reduction",
+                "scope": "target",
+                "skipped_reason": "",
+                "source_id": "enemy:dummy",
+                "source_type": "target.resources"
+              },
+              {
+                "applied_reason": "neutral_default",
+                "applied_value": 0.0,
+                "bucket": "defense",
+                "condition": "always",
+                "key": "def_ignore",
+                "raw_path": "resources.def_ignore",
+                "scope": "actor",
+                "skipped_reason": "",
+                "source_id": "ally:seele",
+                "source_type": "actor.resources"
+              },
+              {
+                "applied_reason": "neutral_default",
+                "applied_value": 0.0,
+                "bucket": "resistance",
+                "condition": "fallback",
+                "key": "all_resistance",
+                "raw_path": "resources.all_resistance",
+                "scope": "target",
+                "skipped_reason": "",
+                "source_id": "enemy:dummy",
+                "source_type": "target.resources"
+              },
+              {
+                "applied_reason": "neutral_default",
+                "applied_value": 0.0,
+                "bucket": "resistance",
+                "condition": "element=Wind",
+                "key": "Wind_res_pen",
+                "raw_path": "resources.Wind_res_pen",
+                "scope": "actor",
+                "skipped_reason": "",
+                "source_id": "ally:seele",
+                "source_type": "actor.resources"
+              },
+              {
+                "applied_reason": "neutral_default",
+                "applied_value": 0.0,
+                "bucket": "resistance",
+                "condition": "always",
+                "key": "all_res_pen",
+                "raw_path": "resources.all_res_pen",
+                "scope": "actor",
+                "skipped_reason": "",
+                "source_id": "ally:seele",
+                "source_type": "actor.resources"
+              },
+              {
+                "applied_reason": "neutral_default",
+                "applied_value": 0.0,
+                "bucket": "damage_taken",
+                "condition": "always",
+                "key": "damage_taken_ratio",
+                "raw_path": "resources.damage_taken_ratio",
+                "scope": "target",
+                "skipped_reason": "",
+                "source_id": "enemy:dummy",
+                "source_type": "target.resources"
+              },
+              {
+                "applied_reason": "neutral_default",
+                "applied_value": 0.0,
+                "bucket": "damage_reduction",
+                "condition": "always",
+                "key": "damage_reduction",
+                "raw_path": "resources.damage_reduction",
+                "scope": "target",
+                "skipped_reason": "",
+                "source_id": "enemy:dummy",
+                "source_type": "target.resources"
+              },
+              {
+                "applied_reason": "positive_toughness_not_broken",
+                "applied_value": 90.0,
+                "bucket": "toughness_state",
+                "condition": "always",
+                "key": "current_toughness",
+                "raw_path": "unit.toughness",
+                "scope": "target",
+                "skipped_reason": "",
+                "source_id": "enemy:dummy",
+                "source_type": "target.state"
+              },
+              {
+                "applied_reason": "positive_toughness_not_broken",
+                "applied_value": 0.0,
+                "bucket": "toughness_state",
+                "condition": "always",
+                "key": "broken",
+                "raw_path": "flags.broken",
+                "scope": "target",
+                "skipped_reason": "",
+                "source_id": "enemy:dummy",
+                "source_type": "target.state"
+              }
+            ],
+            "buckets": [
+              {
+                "applied_terms": [
+                  {
+                    "applied_reason": "crit_rate_clamped",
+                    "applied_value": 0.0,
+                    "bucket": "crit",
+                    "condition": "always",
+                    "key": "critical_chance",
+                    "raw_path": "resources.critical_chance",
+                    "scope": "actor",
+                    "skipped_reason": "",
+                    "source_id": "ally:seele",
+                    "source_type": "actor.resources"
+                  },
+                  {
+                    "applied_reason": "crit_damage_available",
+                    "applied_value": 0.0,
+                    "bucket": "crit",
+                    "condition": "not_crit",
+                    "key": "critical_damage",
+                    "raw_path": "resources.critical_damage",
+                    "scope": "actor",
+                    "skipped_reason": "",
+                    "source_id": "ally:seele",
+                    "source_type": "actor.resources"
+                  }
+                ],
+                "bucket": "crit",
+                "metadata": {
+                  "crit_damage": 0.0,
+                  "crit_rate": 0.0,
+                  "event_id": "rng:1:ally:seele:action_def:avatar_skill:101401:10:enemy:dummy:crit",
+                  "is_crit": false,
+                  "mode": "deterministic",
+                  "multiplier": 1.0,
+                  "reason": "deterministic_rng",
+                  "rng_roll": 0.7751206084119602
+                },
+                "multiplier": 1.0,
+                "skipped_terms": []
+              },
+              {
+                "applied_terms": [
+                  {
+                    "applied_reason": "neutral_default",
+                    "applied_value": 0.0,
+                    "bucket": "damage_bonus",
+                    "condition": "always",
+                    "key": "damage_added_ratio",
+                    "raw_path": "resources.damage_added_ratio",
+                    "scope": "actor",
+                    "skipped_reason": "",
+                    "source_id": "ally:seele",
+                    "source_type": "actor.resources"
+                  },
+                  {
+                    "applied_reason": "neutral_default",
+                    "applied_value": 0.0,
+                    "bucket": "damage_bonus",
+                    "condition": "element=Wind",
+                    "key": "Wind_damage_added_ratio",
+                    "raw_path": "resources.Wind_damage_added_ratio",
+                    "scope": "actor",
+                    "skipped_reason": "",
+                    "source_id": "ally:seele",
+                    "source_type": "actor.resources"
+                  }
+                ],
+                "bucket": "damage_bonus",
+                "metadata": {},
+                "multiplier": 1.0,
+                "skipped_terms": []
+              },
+              {
+                "applied_terms": [
+                  {
+                    "applied_reason": "base_target_defense",
+                    "applied_value": 1000.0,
+                    "bucket": "defense",
+                    "condition": "always",
+                    "key": "defense",
+                    "raw_path": "unit.defense",
+                    "scope": "target",
+                    "skipped_reason": "",
+                    "source_id": "enemy:dummy",
+                    "source_type": "target.stats"
+                  },
+                  {
+                    "applied_reason": "neutral_default",
+                    "applied_value": 0.0,
+                    "bucket": "defense",
+                    "condition": "always",
+                    "key": "def_reduction",
+                    "raw_path": "resources.def_reduction",
+                    "scope": "target",
+                    "skipped_reason": "",
+                    "source_id": "enemy:dummy",
+                    "source_type": "target.resources"
+                  },
+                  {
+                    "applied_reason": "neutral_default",
+                    "applied_value": 0.0,
+                    "bucket": "defense",
+                    "condition": "always",
+                    "key": "def_ignore",
+                    "raw_path": "resources.def_ignore",
+                    "scope": "actor",
+                    "skipped_reason": "",
+                    "source_id": "ally:seele",
+                    "source_type": "actor.resources"
+                  }
+                ],
+                "bucket": "defense",
+                "metadata": {
+                  "actor_level": 80,
+                  "effective_defense": 1000.0
+                },
+                "multiplier": 0.5,
+                "skipped_terms": []
+              },
+              {
+                "applied_terms": [
+                  {
+                    "applied_reason": "neutral_default",
+                    "applied_value": 0.0,
+                    "bucket": "resistance",
+                    "condition": "fallback",
+                    "key": "all_resistance",
+                    "raw_path": "resources.all_resistance",
+                    "scope": "target",
+                    "skipped_reason": "",
+                    "source_id": "enemy:dummy",
+                    "source_type": "target.resources"
+                  },
+                  {
+                    "applied_reason": "neutral_default",
+                    "applied_value": 0.0,
+                    "bucket": "resistance",
+                    "condition": "element=Wind",
+                    "key": "Wind_res_pen",
+                    "raw_path": "resources.Wind_res_pen",
+                    "scope": "actor",
+                    "skipped_reason": "",
+                    "source_id": "ally:seele",
+                    "source_type": "actor.resources"
+                  },
+                  {
+                    "applied_reason": "neutral_default",
+                    "applied_value": 0.0,
+                    "bucket": "resistance",
+                    "condition": "always",
+                    "key": "all_res_pen",
+                    "raw_path": "resources.all_res_pen",
+                    "scope": "actor",
+                    "skipped_reason": "",
+                    "source_id": "ally:seele",
+                    "source_type": "actor.resources"
+                  }
+                ],
+                "bucket": "resistance",
+                "metadata": {
+                  "selected_resistance": 0.0
+                },
+                "multiplier": 1.0,
+                "skipped_terms": [
+                  {
+                    "applied_reason": "",
+                    "applied_value": null,
+                    "bucket": "resistance",
+                    "condition": "element=Wind",
+                    "key": "Wind_resistance",
+                    "raw_path": "resources.Wind_resistance",
+                    "scope": "target",
+                    "skipped_reason": "missing_element_resistance_uses_all_resistance",
+                    "source_id": "enemy:dummy",
+                    "source_type": "target.resources"
+                  }
+                ]
+              },
+              {
+                "applied_terms": [
+                  {
+                    "applied_reason": "neutral_default",
+                    "applied_value": 0.0,
+                    "bucket": "damage_taken",
+                    "condition": "always",
+                    "key": "damage_taken_ratio",
+                    "raw_path": "resources.damage_taken_ratio",
+                    "scope": "target",
+                    "skipped_reason": "",
+                    "source_id": "enemy:dummy",
+                    "source_type": "target.resources"
+                  }
+                ],
+                "bucket": "damage_taken",
+                "metadata": {},
+                "multiplier": 1.0,
+                "skipped_terms": []
+              },
+              {
+                "applied_terms": [
+                  {
+                    "applied_reason": "neutral_default",
+                    "applied_value": 0.0,
+                    "bucket": "damage_reduction",
+                    "condition": "always",
+                    "key": "damage_reduction",
+                    "raw_path": "resources.damage_reduction",
+                    "scope": "target",
+                    "skipped_reason": "",
+                    "source_id": "enemy:dummy",
+                    "source_type": "target.resources"
+                  }
+                ],
+                "bucket": "damage_reduction",
+                "metadata": {},
+                "multiplier": 1.0,
+                "skipped_terms": []
+              },
+              {
+                "applied_terms": [
+                  {
+                    "applied_reason": "positive_toughness_not_broken",
+                    "applied_value": 90.0,
+                    "bucket": "toughness_state",
+                    "condition": "always",
+                    "key": "current_toughness",
+                    "raw_path": "unit.toughness",
+                    "scope": "target",
+                    "skipped_reason": "",
+                    "source_id": "enemy:dummy",
+                    "source_type": "target.state"
+                  },
+                  {
+                    "applied_reason": "positive_toughness_not_broken",
+                    "applied_value": 0.0,
+                    "bucket": "toughness_state",
+                    "condition": "always",
+                    "key": "broken",
+                    "raw_path": "flags.broken",
+                    "scope": "target",
+                    "skipped_reason": "",
+                    "source_id": "enemy:dummy",
+                    "source_type": "target.state"
+                  }
+                ],
+                "bucket": "toughness_state",
+                "metadata": {
+                  "broken": false,
+                  "current_toughness": 90.0,
+                  "max_toughness": 90.0
+                },
+                "multiplier": 0.9,
+                "skipped_terms": []
+              }
+            ],
+            "formula_family": "direct",
+            "skipped_count": 1,
+            "skipped_terms": [
+              {
+                "applied_reason": "",
+                "applied_value": null,
+                "bucket": "resistance",
+                "condition": "element=Wind",
+                "key": "Wind_resistance",
+                "raw_path": "resources.Wind_resistance",
+                "scope": "target",
+                "skipped_reason": "missing_element_resistance_uses_all_resistance",
+                "source_id": "enemy:dummy",
+                "source_type": "target.resources"
+              }
+            ]
+          },
+          "normal_multiplier_terms": [
+            {
+              "applied_reason": "crit_rate_clamped",
+              "applied_value": 0.0,
+              "bucket": "crit",
+              "condition": "always",
+              "key": "critical_chance",
+              "raw_path": "resources.critical_chance",
+              "scope": "actor",
+              "skipped_reason": "",
+              "source_id": "ally:seele",
+              "source_type": "actor.resources"
+            },
+            {
+              "applied_reason": "crit_damage_available",
+              "applied_value": 0.0,
+              "bucket": "crit",
+              "condition": "not_crit",
+              "key": "critical_damage",
+              "raw_path": "resources.critical_damage",
+              "scope": "actor",
+              "skipped_reason": "",
+              "source_id": "ally:seele",
+              "source_type": "actor.resources"
+            },
+            {
+              "applied_reason": "neutral_default",
+              "applied_value": 0.0,
+              "bucket": "damage_bonus",
+              "condition": "always",
+              "key": "damage_added_ratio",
+              "raw_path": "resources.damage_added_ratio",
+              "scope": "actor",
+              "skipped_reason": "",
+              "source_id": "ally:seele",
+              "source_type": "actor.resources"
+            },
+            {
+              "applied_reason": "neutral_default",
+              "applied_value": 0.0,
+              "bucket": "damage_bonus",
+              "condition": "element=Wind",
+              "key": "Wind_damage_added_ratio",
+              "raw_path": "resources.Wind_damage_added_ratio",
+              "scope": "actor",
+              "skipped_reason": "",
+              "source_id": "ally:seele",
+              "source_type": "actor.resources"
+            },
+            {
+              "applied_reason": "base_target_defense",
+              "applied_value": 1000.0,
+              "bucket": "defense",
+              "condition": "always",
+              "key": "defense",
+              "raw_path": "unit.defense",
+              "scope": "target",
+              "skipped_reason": "",
+              "source_id": "enemy:dummy",
+              "source_type": "target.stats"
+            },
+            {
+              "applied_reason": "neutral_default",
+              "applied_value": 0.0,
+              "bucket": "defense",
+              "condition": "always",
+              "key": "def_reduction",
+              "raw_path": "resources.def_reduction",
+              "scope": "target",
+              "skipped_reason": "",
+              "source_id": "enemy:dummy",
+              "source_type": "target.resources"
+            },
+            {
+              "applied_reason": "neutral_default",
+              "applied_value": 0.0,
+              "bucket": "defense",
+              "condition": "always",
+              "key": "def_ignore",
+              "raw_path": "resources.def_ignore",
+              "scope": "actor",
+              "skipped_reason": "",
+              "source_id": "ally:seele",
+              "source_type": "actor.resources"
+            },
+            {
+              "applied_reason": "neutral_default",
+              "applied_value": 0.0,
+              "bucket": "resistance",
+              "condition": "fallback",
+              "key": "all_resistance",
+              "raw_path": "resources.all_resistance",
+              "scope": "target",
+              "skipped_reason": "",
+              "source_id": "enemy:dummy",
+              "source_type": "target.resources"
+            },
+            {
+              "applied_reason": "neutral_default",
+              "applied_value": 0.0,
+              "bucket": "resistance",
+              "condition": "element=Wind",
+              "key": "Wind_res_pen",
+              "raw_path": "resources.Wind_res_pen",
+              "scope": "actor",
+              "skipped_reason": "",
+              "source_id": "ally:seele",
+              "source_type": "actor.resources"
+            },
+            {
+              "applied_reason": "neutral_default",
+              "applied_value": 0.0,
+              "bucket": "resistance",
+              "condition": "always",
+              "key": "all_res_pen",
+              "raw_path": "resources.all_res_pen",
+              "scope": "actor",
+              "skipped_reason": "",
+              "source_id": "ally:seele",
+              "source_type": "actor.resources"
+            },
+            {
+              "applied_reason": "neutral_default",
+              "applied_value": 0.0,
+              "bucket": "damage_taken",
+              "condition": "always",
+              "key": "damage_taken_ratio",
+              "raw_path": "resources.damage_taken_ratio",
+              "scope": "target",
+              "skipped_reason": "",
+              "source_id": "enemy:dummy",
+              "source_type": "target.resources"
+            },
+            {
+              "applied_reason": "neutral_default",
+              "applied_value": 0.0,
+              "bucket": "damage_reduction",
+              "condition": "always",
+              "key": "damage_reduction",
+              "raw_path": "resources.damage_reduction",
+              "scope": "target",
+              "skipped_reason": "",
+              "source_id": "enemy:dummy",
+              "source_type": "target.resources"
+            },
+            {
+              "applied_reason": "positive_toughness_not_broken",
+              "applied_value": 90.0,
+              "bucket": "toughness_state",
+              "condition": "always",
+              "key": "current_toughness",
+              "raw_path": "unit.toughness",
+              "scope": "target",
+              "skipped_reason": "",
+              "source_id": "enemy:dummy",
+              "source_type": "target.state"
+            },
+            {
+              "applied_reason": "positive_toughness_not_broken",
+              "applied_value": 0.0,
+              "bucket": "toughness_state",
+              "condition": "always",
+              "key": "broken",
+              "raw_path": "flags.broken",
+              "scope": "target",
+              "skipped_reason": "",
+              "source_id": "enemy:dummy",
+              "source_type": "target.state"
+            }
+          ],
+          "target_after_hp": 7984.0,
           "target_before_hp": 10000.0
         },
         "process_only": false,

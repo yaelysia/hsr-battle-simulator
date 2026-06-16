@@ -170,10 +170,13 @@ def _full_key_table_checks(coverage_json: dict[str, Any]) -> dict[str, object]:
 def _damage_taxonomy_checks(ir: CanonicalIR) -> dict[str, object]:
     elation_actions = [definition for definition in ir.action_definitions if definition.attack_type == "ElationDamage"]
     true_actions = [definition for definition in ir.action_definitions if definition.attack_type == "TrueDamage"]
-    unknown_defaults = [
+    follow_up_defaults = [
+        definition for definition in ir.action_definitions if definition.damage_formula_family == "follow_up"
+    ]
+    executable_unknown = [
         definition
         for definition in ir.action_definitions
-        if definition.damage_formula_family in {"unknown", "follow_up"}
+        if definition.damage_formula_family == "unknown" and definition.coverage_status == "executable"
     ]
     checks = {
         "elation_actions_present": len(elation_actions) >= 100,
@@ -182,7 +185,8 @@ def _damage_taxonomy_checks(ir: CanonicalIR) -> dict[str, object]:
         "true_damage_actions_classified": all(
             definition.damage_formula_family == "true_damage" for definition in true_actions
         ),
-        "no_follow_up_or_unknown_family": not unknown_defaults,
+        "no_follow_up_family": not follow_up_defaults,
+        "unknown_family_not_executable": not executable_unknown,
     }
     return {
         "ok": all(checks.values()),
@@ -190,7 +194,8 @@ def _damage_taxonomy_checks(ir: CanonicalIR) -> dict[str, object]:
         "counts": {
             "elation_actions": len(elation_actions),
             "true_damage_actions": len(true_actions),
-            "unknown_or_follow_up": len(unknown_defaults),
+            "follow_up_family": len(follow_up_defaults),
+            "executable_unknown_family": len(executable_unknown),
         },
         "sample_elation_definition": elation_actions[0].to_json() if elation_actions else None,
     }
