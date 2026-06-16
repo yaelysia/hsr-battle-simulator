@@ -48,6 +48,7 @@ class CoverageMatrix:
     event_status: dict[str, dict[str, Any]]
     formula_status: dict[str, dict[str, Any]]
     table_status: dict[str, dict[str, Any]]
+    modifier_status: dict[str, Any]
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -57,6 +58,7 @@ class CoverageMatrix:
             "event_status": self.event_status,
             "formula_status": self.formula_status,
             "table_status": self.table_status,
+            "modifier_status": self.modifier_status,
         }
 
 
@@ -104,6 +106,7 @@ def build_coverage_matrix(report: DiscoveryReport, ir: CanonicalIR) -> CoverageM
         for event, count in sorted(report.event_counts.items())
     }
     formula_status = _formula_status(ir)
+    modifier_status = _modifier_status(ir, lowered_opcodes, executable_opcodes)
 
     ir_status_counts: Counter[str] = Counter()
     for collection in (ir.entities, ir.action_definitions, ir.triggers, ir.effects, ir.conditions, ir.formulas):
@@ -125,6 +128,7 @@ def build_coverage_matrix(report: DiscoveryReport, ir: CanonicalIR) -> CoverageM
         event_status=event_status,
         formula_status=formula_status,
         table_status=dict(ir.metadata.get("table_status", {})),
+        modifier_status=modifier_status,
     )
 
 
@@ -199,4 +203,28 @@ def _damage_formula_status(ir: CanonicalIR, family: str, status: str, reason: st
         "validated": 0,
         "properties": properties,
         "reason": reason,
+    }
+
+
+def _modifier_status(
+    ir: CanonicalIR,
+    lowered_opcodes: Counter[str],
+    executable_opcodes: Counter[str],
+) -> dict[str, Any]:
+    definitions = [entity for entity in ir.entities if entity.entity_type == "modifier_definition"]
+    global_definitions = [
+        entity for entity in definitions if entity.source.raw_type == "GlobalModifiers"
+    ]
+    with_stack_properties = [
+        entity for entity in definitions if entity.fields.get("stack_properties")
+    ]
+    return {
+        "modifier_definitions": len(definitions),
+        "global_modifier_definitions": len(global_definitions),
+        "definitions_with_stack_properties": len(with_stack_properties),
+        "add_modifier": {
+            "lowered": lowered_opcodes["AddModifier"],
+            "executable": executable_opcodes["AddModifier"],
+            "reason": "AddModifier payload is standardized; runtime execution is validated by v0_210",
+        },
     }

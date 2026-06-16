@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -144,10 +144,12 @@ class TBGDLowering:
         selected_ability_files = _limit_sequence(ability_files, self.limits.max_ability_files)
         for path in selected_ability_files:
             lowered = self._lower_ability_file(path)
+            entities.extend(lowered.entities)
             triggers.extend(lowered.triggers)
             effects.extend(lowered.effects)
             conditions.extend(lowered.conditions)
             formulas.extend(lowered.formulas)
+        entities = list(_dedupe_entities(entities).values())
         formulas.extend(self._lower_elation_mechanics())
         formulas.extend(self._lower_damage_behavior_templates())
 
@@ -268,6 +270,7 @@ class TBGDLowering:
         lowered = _LoweredAbility()
         callback_index = 0
         for map_name, modifier_name, modifier in modifier_maps:
+            lowered.entities.append(_modifier_definition_entity(relative, map_name, modifier_name, modifier))
             callbacks = modifier.get("_CallbackList") if isinstance(modifier, dict) else None
             if not isinstance(callbacks, list):
                 continue
@@ -365,13 +368,14 @@ class TBGDLowering:
 
         effect_id = f"effect:{relative}:{modifier_name}:{callback_index}:{branch}:{task_index}:{opcode}"
         payload = _effect_payload(task, opcode)
+        coverage_status = _effect_coverage_status(opcode, payload)
         lowered.effects.append(
             EffectIR(
                 effect_id=effect_id,
                 opcode=opcode,
                 payload=payload,
                 source=source,
-                coverage_status=classify_opcode(opcode),
+                coverage_status=coverage_status,
             )
         )
         lowered.formulas.extend(self._extract_formulas(task, source, effect_id))
@@ -525,27 +529,22 @@ class TBGDLowering:
         modifier_map = data.get("ModifierMap")
         if isinstance(modifier_map, dict):
             maps.extend(("ModifierMap", name, value) for name, value in modifier_map.items() if isinstance(value, dict))
+        global_modifiers = data.get("GlobalModifiers")
+        if isinstance(global_modifiers, dict):
+            maps.extend(("GlobalModifiers", name, value) for name, value in global_modifiers.items() if isinstance(value, dict))
         return maps
 
 
 @dataclass
 class _LoweredAbility:
-    triggers: list[TriggerIR] = None
-    effects: list[EffectIR] = None
-    conditions: list[ConditionIR] = None
-    formulas: list[FormulaIR] = None
-
-    def __post_init__(self) -> None:
-        if self.triggers is None:
-            self.triggers = []
-        if self.effects is None:
-            self.effects = []
-        if self.conditions is None:
-            self.conditions = []
-        if self.formulas is None:
-            self.formulas = []
+    entities: list[RuleEntity] = field(default_factory=list)
+    triggers: list[TriggerIR] = field(default_factory=list)
+    effects: list[EffectIR] = field(default_factory=list)
+    conditions: list[ConditionIR] = field(default_factory=list)
+    formulas: list[FormulaIR] = field(default_factory=list)
 
     def merge(self, other: "_LoweredAbility") -> None:
+        self.entities.extend(other.entities)
         self.triggers.extend(other.triggers)
         self.effects.extend(other.effects)
         self.conditions.extend(other.conditions)
@@ -570,6 +569,82 @@ def _dedupe_entities(entities: list[RuleEntity]) -> dict[str, RuleEntity]:
     for entity in entities:
         deduped[entity.entity_id] = entity
     return deduped
+
+
+def _modifier_definition_entity(
+    relative_path: str,
+    map_name: str,
+    modifier_name: str,
+    modifier: dict[str, Any],
+) -> RuleEntity:
+    source = IRSource(
+        source_path=relative_path,
+        raw_type=map_name,
+        raw_id=modifier_name,
+        evidence={
+            "modifier_name": modifier_name,
+            "map_name": map_name,
+            "definition_kind": "modifier_definition",
+        },
+    )
+    fields = {
+        "modifier_name": modifier_name,
+        "map_name": map_name,
+        "stacking": _json_safe(modifier.get("Stacking")),
+        "lifetime": _json_safe(modifier.get("LifeTime")),
+        "behavior_flags": _json_safe(modifier.get("BehaviorFlagList", [])),
+        "dynamic_values": _json_safe(modifier.get("DynamicValues", {})),
+        "callback_events": _callback_events(modifier),
+        "stack_properties": _stack_property_summaries(modifier),
+    }
+    return RuleEntity(
+        entity_id=f"modifier_definition:{modifier_name}",
+        entity_type="modifier_definition",
+        fields=fields,
+        source=source,
+        coverage_status="lowered",
+    )
+
+
+def _callback_events(modifier: dict[str, Any]) -> list[str]:
+    events: list[str] = []
+    callbacks = modifier.get("_CallbackList")
+    if not isinstance(callbacks, list):
+        return events
+    for callback in callbacks:
+        if isinstance(callback, dict):
+            events.append(str(callback.get("Event") or "UnknownEvent"))
+    return events
+
+
+def _stack_property_summaries(modifier: dict[str, Any]) -> list[dict[str, Any]]:
+    summaries: list[dict[str, Any]] = []
+    callbacks = modifier.get("_CallbackList")
+    if not isinstance(callbacks, list):
+        return summaries
+    for callback_index, callback in enumerate(callbacks):
+        if not isinstance(callback, dict):
+            continue
+        event = str(callback.get("Event") or "UnknownEvent")
+        tasks = callback.get("CallbackConfig")
+        if not isinstance(tasks, list):
+            continue
+        for task_index, task in enumerate(tasks):
+            if not isinstance(task, dict) or _short_gamecore_type(task.get("$type")) != "StackProperty":
+                continue
+            summaries.append(
+                {
+                    "event": event,
+                    "callback_index": callback_index,
+                    "task_index": task_index,
+                    "property": str(task.get("Property") or ""),
+                    "target_alias": _target_alias(task.get("TargetType")),
+                    "value_expr": _numeric_expr_summary(task.get("PropertyValue")),
+                    "is_refresh": bool(task.get("IsRefresh", False)),
+                    "raw_path": f"_CallbackList[{callback_index}].CallbackConfig[{task_index}]",
+                }
+            )
+    return summaries
 
 
 def _action_definition_from_row(
@@ -696,11 +771,94 @@ def _compact_payload(value: dict[str, Any]) -> dict[str, Any]:
 
 def _effect_payload(value: dict[str, Any], opcode: str) -> dict[str, Any]:
     payload = _compact_payload(value)
+    if opcode == "AddModifier":
+        payload["standard"] = _standard_add_modifier_payload(value)
     family = _task_damage_family(value, opcode)
     if family != "unknown":
         payload["damage_formula_family"] = family
         payload["bypasses_normal_multipliers"] = family in {"true_damage", "hp_loss"}
     return payload
+
+
+def _effect_coverage_status(opcode: str, payload: dict[str, Any]) -> str:
+    if opcode == "AddModifier":
+        standard = payload.get("standard")
+        if not isinstance(standard, dict):
+            return "blocked"
+        if not standard.get("modifier_name"):
+            return "blocked"
+        if standard.get("target_alias") in {"Caster", "ModifierOwnerEntity", "ParamEntity", "CurrentActionTarget"}:
+            return "executable"
+        return "blocked"
+    return classify_opcode(opcode)
+
+
+def _standard_add_modifier_payload(value: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "modifier_name": _value_field(value.get("ModifierName")),
+        "target_alias": _target_alias(value.get("TargetType")),
+        "dynamic_values": {
+            str(key): _numeric_expr_summary(item)
+            for key, item in (value.get("DynamicValues") or {}).items()
+            if isinstance(value.get("DynamicValues"), dict)
+        },
+        "lifetime": _numeric_expr_summary(value.get("LifeTime")),
+        "layer_add_when_stack": _numeric_expr_summary(value.get("LayerAddWhenStack")),
+        "max_layer": _numeric_expr_summary(value.get("MaxLayer")),
+        "chance": _numeric_expr_summary(value.get("Chance")),
+    }
+
+
+def _target_alias(value: Any) -> str | None:
+    if isinstance(value, dict):
+        alias = value.get("Alias")
+        if isinstance(alias, str):
+            return alias
+    return None
+
+
+def _value_field(value: Any) -> Any:
+    if isinstance(value, dict) and "Value" in value:
+        return _json_safe(value.get("Value"))
+    return _json_safe(value)
+
+
+def _numeric_expr_summary(value: Any) -> dict[str, Any]:
+    if value is None:
+        return {"kind": "missing", "value": None, "supported": False, "reason": "missing"}
+    if isinstance(value, (int, float)):
+        return {"kind": "fixed", "value": float(value), "supported": True}
+    if isinstance(value, dict):
+        fixed = value.get("FixedValue")
+        if isinstance(fixed, dict) and isinstance(fixed.get("Value"), (int, float)):
+            return {"kind": "fixed", "value": float(fixed["Value"]), "supported": True}
+        if isinstance(value.get("Value"), (int, float)):
+            return {"kind": "fixed", "value": float(value["Value"]), "supported": True}
+        postfix = value.get("PostfixExpr")
+        if isinstance(postfix, dict):
+            hashes = postfix.get("DynamicHashes")
+            fixed_values = postfix.get("FixedValues")
+            opcodes = postfix.get("OpCodes")
+            if (
+                opcodes == "AQAR"
+                and isinstance(hashes, list)
+                and len(hashes) == 1
+                and isinstance(hashes[0], int)
+                and (not fixed_values)
+            ):
+                return {
+                    "kind": "dynamic_hash",
+                    "hash": int(hashes[0]),
+                    "supported": True,
+                    "raw": _json_safe(value),
+                }
+            return {
+                "kind": "postfix_expr",
+                "supported": False,
+                "reason": "unsupported_postfix_expr",
+                "raw": _json_safe(value),
+            }
+    return {"kind": "unsupported", "supported": False, "reason": "unsupported_numeric_expression", "raw": _json_safe(value)}
 
 
 def _task_damage_family(value: dict[str, Any], opcode: str) -> str:

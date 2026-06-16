@@ -102,3 +102,9 @@ class RuleBook:
 
     def triggers_for_event(self, event: str) -> tuple[TriggerIR, ...]:
         return tuple(trigger for trigger in self.ir.triggers if trigger.event == event)
+
+    def modifier_definition(self, modifier_name: str) -> RuleEntity | None:
+        return self.entity(f"modifier_definition:{modifier_name}")
+
+    def require_modifier_definition(self, modifier_name: str) -> RuleEntity:
+        return self.require_entity(f"modifier_definition:{modifier_name}", {"modifier_definition"})

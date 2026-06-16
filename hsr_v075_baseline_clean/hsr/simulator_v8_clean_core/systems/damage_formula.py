@@ -314,29 +314,64 @@ def _damage_bonus_bucket(actor: UnitState, element: str | None) -> tuple[float, 
     all_bonus = _resource(actor, "damage_added_ratio")
     element_key = f"{element}_damage_added_ratio" if element else ""
     element_bonus = _resource(actor, element_key) if element_key else 0.0
-    multiplier = 1.0 + all_bonus + element_bonus
+    status_bonus, status_terms, skipped_terms = _status_modifier_terms(
+        actor,
+        source_type="actor.status",
+        bucket="damage_bonus",
+        keys=("damage_added_ratio", element_key) if element_key else ("damage_added_ratio",),
+    )
+    multiplier = 1.0 + all_bonus + element_bonus + status_bonus
     terms = (
         _applied_term("actor.resources", actor.unit_id, "damage_bonus", "damage_added_ratio", "actor", "always", all_bonus, _neutral_reason(all_bonus), "resources.damage_added_ratio"),
         _applied_term("actor.resources", actor.unit_id, "damage_bonus", element_key or "element_damage_added_ratio", "actor", f"element={element}", element_bonus, _neutral_reason(element_bonus), f"resources.{element_key}" if element_key else "resources.<element>_damage_added_ratio"),
+        *status_terms,
     )
-    return multiplier, DamageFormulaBucket(bucket="damage_bonus", multiplier=multiplier, applied_terms=terms)
+    return multiplier, DamageFormulaBucket(
+        bucket="damage_bonus",
+        multiplier=multiplier,
+        applied_terms=terms,
+        skipped_terms=skipped_terms,
+        metadata={"status_bonus": status_bonus},
+    )
 
 
 def _defense_bucket(actor: UnitState, target: UnitState) -> tuple[float, DamageFormulaBucket]:
-    def_reduction = _resource(target, "def_reduction")
-    def_ignore = _resource(actor, "def_ignore")
+    resource_def_reduction = _resource(target, "def_reduction")
+    resource_def_ignore = _resource(actor, "def_ignore")
+    status_def_reduction, target_status_terms, target_skipped_terms = _status_modifier_terms(
+        target,
+        source_type="target.status",
+        bucket="defense",
+        keys=("def_reduction",),
+    )
+    status_def_ignore, actor_status_terms, actor_skipped_terms = _status_modifier_terms(
+        actor,
+        source_type="actor.status",
+        bucket="defense",
+        keys=("def_ignore",),
+    )
+    def_reduction = resource_def_reduction + status_def_reduction
+    def_ignore = resource_def_ignore + status_def_ignore
     effective_def = max(0.0, target.defense * (1.0 - def_reduction - def_ignore))
     multiplier = 1.0 if effective_def <= 0 else 1.0 - effective_def / (effective_def + 200.0 + 10.0 * actor.level)
     terms = (
         _applied_term("target.stats", target.unit_id, "defense", "defense", "target", "always", target.defense, "base_target_defense", "unit.defense"),
-        _applied_term("target.resources", target.unit_id, "defense", "def_reduction", "target", "always", def_reduction, _neutral_reason(def_reduction), "resources.def_reduction"),
-        _applied_term("actor.resources", actor.unit_id, "defense", "def_ignore", "actor", "always", def_ignore, _neutral_reason(def_ignore), "resources.def_ignore"),
+        _applied_term("target.resources", target.unit_id, "defense", "def_reduction", "target", "always", resource_def_reduction, _neutral_reason(resource_def_reduction), "resources.def_reduction"),
+        _applied_term("actor.resources", actor.unit_id, "defense", "def_ignore", "actor", "always", resource_def_ignore, _neutral_reason(resource_def_ignore), "resources.def_ignore"),
+        *target_status_terms,
+        *actor_status_terms,
     )
     return multiplier, DamageFormulaBucket(
         bucket="defense",
         multiplier=multiplier,
         applied_terms=terms,
-        metadata={"effective_defense": effective_def, "actor_level": actor.level},
+        skipped_terms=(*target_skipped_terms, *actor_skipped_terms),
+        metadata={
+            "effective_defense": effective_def,
+            "actor_level": actor.level,
+            "status_def_reduction": status_def_reduction,
+            "status_def_ignore": status_def_ignore,
+        },
     )
 
 
@@ -346,7 +381,13 @@ def _resistance_bucket(actor: UnitState, target: UnitState, element: str | None)
     element_res = _resource(target, element_res_key) if element_res_key else 0.0
     all_res = _resource(target, "all_resistance")
     uses_element_res = bool(element_res_key and element_res_key in target.resources)
-    selected_res = element_res if uses_element_res else all_res
+    status_res_delta, status_terms, status_skipped_terms = _status_modifier_terms(
+        target,
+        source_type="target.status",
+        bucket="resistance",
+        keys=(f"{element}_resistance_delta", "all_resistance_delta") if element else ("all_resistance_delta",),
+    )
+    selected_res = (element_res if uses_element_res else all_res) + status_res_delta
     element_pen = _resource(actor, element_pen_key) if element_pen_key else 0.0
     all_pen = _resource(actor, "all_res_pen")
     multiplier = 1.0 - selected_res + element_pen + all_pen
@@ -359,6 +400,7 @@ def _resistance_bucket(actor: UnitState, target: UnitState, element: str | None)
         target_res_term,
         _applied_term("actor.resources", actor.unit_id, "resistance", element_pen_key or "element_res_pen", "actor", f"element={element}", element_pen, _neutral_reason(element_pen), f"resources.{element_pen_key}" if element_pen_key else "resources.<element>_res_pen"),
         _applied_term("actor.resources", actor.unit_id, "resistance", "all_res_pen", "actor", "always", all_pen, _neutral_reason(all_pen), "resources.all_res_pen"),
+        *status_terms,
     )
     skipped_terms = (
         (
@@ -368,25 +410,35 @@ def _resistance_bucket(actor: UnitState, target: UnitState, element: str | None)
         else (
             _skipped_term("target.resources", target.unit_id, "resistance", element_res_key or "element_resistance", "target", f"element={element}", "missing_element_resistance_uses_all_resistance", f"resources.{element_res_key}" if element_res_key else "resources.<element>_resistance"),
         )
-    )
+    ) + status_skipped_terms
     return multiplier, DamageFormulaBucket(
         bucket="resistance",
         multiplier=multiplier,
         applied_terms=applied_terms,
         skipped_terms=skipped_terms,
-        metadata={"selected_resistance": selected_res},
+        metadata={"selected_resistance": selected_res, "status_resistance_delta": status_res_delta},
     )
 
 
 def _damage_taken_bucket(target: UnitState) -> tuple[float, DamageFormulaBucket]:
-    value = _resource(target, "damage_taken_ratio")
+    resource_value = _resource(target, "damage_taken_ratio")
+    status_value, status_terms, status_skipped_terms = _status_modifier_terms(
+        target,
+        source_type="target.status",
+        bucket="damage_taken",
+        keys=("damage_taken_ratio",),
+    )
+    value = resource_value + status_value
     multiplier = 1.0 + value
     return multiplier, DamageFormulaBucket(
         bucket="damage_taken",
         multiplier=multiplier,
         applied_terms=(
-            _applied_term("target.resources", target.unit_id, "damage_taken", "damage_taken_ratio", "target", "always", value, _neutral_reason(value), "resources.damage_taken_ratio"),
+            _applied_term("target.resources", target.unit_id, "damage_taken", "damage_taken_ratio", "target", "always", resource_value, _neutral_reason(resource_value), "resources.damage_taken_ratio"),
+            *status_terms,
         ),
+        skipped_terms=status_skipped_terms,
+        metadata={"status_damage_taken_ratio": status_value},
     )
 
 
@@ -433,6 +485,86 @@ def _resource(unit: UnitState, key: str) -> float:
         return 0.0
     value = unit.resources.get(key, 0.0)
     return float(value) if isinstance(value, (int, float)) else 0.0
+
+
+def _status_modifier_terms(
+    unit: UnitState,
+    *,
+    source_type: str,
+    bucket: str,
+    keys: tuple[str, ...],
+) -> tuple[float, tuple[ModifierTerm, ...], tuple[ModifierTerm, ...]]:
+    allowed_keys = {key for key in keys if key}
+    applied: list[ModifierTerm] = []
+    skipped: list[ModifierTerm] = []
+    total = 0.0
+    for detail in _status_details(unit):
+        instance_id = str(detail.get("instance_id") or detail.get("status_id") or "unknown_status")
+        modifiers = detail.get("modifiers")
+        if not isinstance(modifiers, list):
+            continue
+        for index, modifier in enumerate(modifiers):
+            if not isinstance(modifier, dict):
+                continue
+            modifier_bucket = str(modifier.get("bucket") or "")
+            modifier_key = str(modifier.get("key") or "")
+            if modifier_bucket != bucket:
+                continue
+            raw_path = str(modifier.get("raw_path") or f"status_details.{instance_id}.modifiers[{index}]")
+            scope = str(modifier.get("scope") or source_type.split(".", 1)[0])
+            condition = str(modifier.get("condition") or "status_modifier")
+            if modifier_key not in allowed_keys:
+                skipped.append(
+                    _skipped_term(
+                        source_type,
+                        instance_id,
+                        bucket,
+                        modifier_key or "<missing>",
+                        scope,
+                        condition,
+                        "modifier_key_not_applicable_for_bucket_context",
+                        raw_path,
+                    )
+                )
+                continue
+            value = modifier.get("value")
+            if not isinstance(value, (int, float)):
+                skipped.append(
+                    _skipped_term(
+                        source_type,
+                        instance_id,
+                        bucket,
+                        modifier_key,
+                        scope,
+                        condition,
+                        "modifier_value_not_numeric",
+                        raw_path,
+                    )
+                )
+                continue
+            value_float = float(value)
+            total += value_float
+            applied.append(
+                _applied_term(
+                    source_type,
+                    instance_id,
+                    bucket,
+                    modifier_key,
+                    scope,
+                    condition,
+                    value_float,
+                    str(modifier.get("applied_reason") or _neutral_reason(value_float)),
+                    raw_path,
+                )
+            )
+    return total, tuple(applied), tuple(skipped)
+
+
+def _status_details(unit: UnitState) -> tuple[dict[str, JSONValue], ...]:
+    raw_details = unit.flags.get("status_details", ())
+    if not isinstance(raw_details, (list, tuple)):
+        return ()
+    return tuple(item for item in raw_details if isinstance(item, dict))
 
 
 def _deterministic_roll(
