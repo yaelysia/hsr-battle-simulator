@@ -64,6 +64,7 @@ class CoverageMatrix:
     formula_status: dict[str, dict[str, Any]]
     table_status: dict[str, dict[str, Any]]
     modifier_status: dict[str, Any]
+    action_execution_status: dict[str, Any]
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -74,6 +75,7 @@ class CoverageMatrix:
             "formula_status": self.formula_status,
             "table_status": self.table_status,
             "modifier_status": self.modifier_status,
+            "action_execution_status": self.action_execution_status,
         }
 
 
@@ -122,9 +124,19 @@ def build_coverage_matrix(report: DiscoveryReport, ir: CanonicalIR) -> CoverageM
     }
     formula_status = _formula_status(ir)
     modifier_status = _modifier_status(ir, lowered_opcodes, executable_opcodes)
+    action_execution_status = _action_execution_status(ir)
 
     ir_status_counts: Counter[str] = Counter()
-    for collection in (ir.entities, ir.action_definitions, ir.triggers, ir.effects, ir.conditions, ir.formulas):
+    for collection in (
+        ir.entities,
+        ir.action_definitions,
+        ir.action_events,
+        ir.hit_profiles,
+        ir.triggers,
+        ir.effects,
+        ir.conditions,
+        ir.formulas,
+    ):
         for item in collection:
             ir_status_counts[item.coverage_status] += 1
 
@@ -133,6 +145,8 @@ def build_coverage_matrix(report: DiscoveryReport, ir: CanonicalIR) -> CoverageM
         ir_summary={
             "entities": len(ir.entities),
             "action_definitions": len(ir.action_definitions),
+            "action_events": len(ir.action_events),
+            "hit_profiles": len(ir.hit_profiles),
             "triggers": len(ir.triggers),
             "effects": len(ir.effects),
             "conditions": len(ir.conditions),
@@ -144,6 +158,7 @@ def build_coverage_matrix(report: DiscoveryReport, ir: CanonicalIR) -> CoverageM
         formula_status=formula_status,
         table_status=dict(ir.metadata.get("table_status", {})),
         modifier_status=modifier_status,
+        action_execution_status=action_execution_status,
     )
 
 
@@ -259,5 +274,52 @@ def _modifier_status(
                 ),
                 "reason": "SetDynamicValueByModifierValue is standardized when source modifier, value type, target key, and multiplier are executable",
             },
+        },
+    }
+
+
+def _action_execution_status(ir: CanonicalIR) -> dict[str, Any]:
+    event_status = Counter(event.coverage_status for event in ir.action_events)
+    hit_status = Counter(profile.coverage_status for profile in ir.hit_profiles)
+    hit_reasons = Counter(
+        profile.blocked_reason
+        for profile in ir.hit_profiles
+        if profile.blocked_reason
+    )
+    fidelity_status = Counter(profile.numeric_fidelity_status for profile in ir.hit_profiles)
+    multi_param_profiles = [
+        profile
+        for profile in ir.hit_profiles
+        if isinstance(profile.multiplier_source, dict)
+        and profile.multiplier_source.get("multi_param_list_not_implemented") is True
+    ]
+    show_evidence_profiles = [
+        profile
+        for profile in ir.hit_profiles
+        if (
+            isinstance(profile.multiplier_source, dict)
+            and profile.multiplier_source.get("show_damage_audit_only") is True
+        )
+        or (
+            isinstance(profile.stance_source, dict)
+            and profile.stance_source.get("show_stance_audit_only") is True
+        )
+    ]
+    return {
+        "action_events": {
+            "lowered": len(ir.action_events),
+            "status_counts": dict(sorted(event_status.items())),
+            "reason": "ActionEventIR is lowered from action row fields and remains marked as derived until native TBGD event semantics are mapped",
+        },
+        "hit_profiles": {
+            "lowered": len(ir.hit_profiles),
+            "executable": hit_status["executable"],
+            "blocked": hit_status["blocked"],
+            "status_counts": dict(sorted(hit_status.items())),
+            "numeric_fidelity_status_counts": dict(sorted(fidelity_status.items())),
+            "blocked_reason_counts": dict(sorted(hit_reasons.items())),
+            "multi_param_profile_count": len(multi_param_profiles),
+            "show_damage_or_stance_evidence_count": len(show_evidence_profiles),
+            "reason": "HitProfileIR carries multiplier evidence; multi-hit and display stance/damage mappings are not treated as final runtime semantics",
         },
     }

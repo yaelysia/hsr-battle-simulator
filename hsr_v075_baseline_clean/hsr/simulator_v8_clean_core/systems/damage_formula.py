@@ -112,6 +112,7 @@ class DamageFormulaInput:
     action_definition: ActionDefinitionIR
     attack_type: str
     element_type: str | None
+    scaling_ratio: float
     source_trace: dict[str, JSONValue] = field(default_factory=dict)
     crit_mode: str | None = None
 
@@ -181,7 +182,7 @@ class DirectDamageFormula:
         action_definition = formula_input.action_definition
         element = formula_input.element_type
 
-        scaling_ratio = _first_param_value(action_definition.param_list)
+        scaling_ratio = formula_input.scaling_ratio
         flat_damage = 0.0
         scaling_value = actor.attack
         base_damage = max(0.0, scaling_value * scaling_ratio + flat_damage)
@@ -468,16 +469,6 @@ def _toughness_state_bucket(target: UnitState) -> tuple[float, DamageFormulaBuck
         ),
         metadata={"broken": broken, "current_toughness": target.toughness, "max_toughness": target.max_toughness},
     )
-
-
-def _first_param_value(param_list: tuple[JSONValue, ...]) -> float:
-    if not param_list:
-        return 0.0
-    first = param_list[0]
-    if isinstance(first, dict):
-        value = first.get("Value")
-        return float(value) if isinstance(value, (int, float)) else 0.0
-    return float(first) if isinstance(first, (int, float)) else 0.0
 
 
 def _resource(unit: UnitState, key: str) -> float:

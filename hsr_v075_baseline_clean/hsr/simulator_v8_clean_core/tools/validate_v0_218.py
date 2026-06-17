@@ -76,6 +76,8 @@ def run_validation(
     plan_cases = {
         mode: build_action_execution_plan(
             definition,
+            rules.require_action_event(definition.action_id, definition.level),
+            rules.hit_profiles_for_action(definition.action_id, definition.level),
             requested_target_ids=("enemy:target",),
             resolved_target_groups={},
             source_trace=definition.source.to_json(),
@@ -185,6 +187,8 @@ def _canonical_ir_summary(ir: CanonicalIR) -> dict[str, object]:
         "counts": {
             "entities": len(ir.entities),
             "action_definitions": len(ir.action_definitions),
+            "action_events": len(ir.action_events),
+            "hit_profiles": len(ir.hit_profiles),
             "triggers": len(ir.triggers),
             "effects": len(ir.effects),
             "conditions": len(ir.conditions),
@@ -205,6 +209,8 @@ def _select_definition(ir: CanonicalIR, target_mode: str) -> ActionDefinitionIR 
         if definition.damage_formula_family != "direct":
             continue
         if not definition.param_list:
+            continue
+        if not ir.hit_profiles:
             continue
         return definition
     return None

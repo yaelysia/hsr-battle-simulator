@@ -10,10 +10,13 @@ from .paths import relative_source_path
 from .. import BASELINE_VERSION
 from ..rules.ir import (
     ActionDefinitionIR,
+    ActionEventIR,
+    ActionPhaseStepIR,
     CanonicalIR,
     ConditionIR,
     EffectIR,
     FormulaIR,
+    HitProfileIR,
     IRSource,
     RuleEntity,
     TriggerIR,
@@ -137,6 +140,7 @@ class TBGDLowering:
             table_stats[relative_path] = self._table_stats(relative_path, spec[1])
         entities = list(_dedupe_entities(entities).values())
         action_definitions = list(self._lower_action_definitions().values())
+        action_events, hit_profiles = _lower_action_execution_ir(action_definitions)
         for relative_path, _, id_key in ACTION_DEFINITION_TABLES:
             table_stats[f"action_definitions:{relative_path}"] = self._table_stats(relative_path, id_key)
 
@@ -157,6 +161,8 @@ class TBGDLowering:
             version=BASELINE_VERSION,
             entities=tuple(entities),
             action_definitions=tuple(action_definitions),
+            action_events=tuple(action_events),
+            hit_profiles=tuple(hit_profiles),
             triggers=tuple(triggers),
             effects=tuple(effects),
             conditions=tuple(conditions),
@@ -704,6 +710,250 @@ def _action_definition_from_row(
         element_type=element_type,
         source_mode=_source_mode(attack_type),
     )
+
+
+def _lower_action_execution_ir(
+    definitions: list[ActionDefinitionIR],
+) -> tuple[list[ActionEventIR], list[HitProfileIR]]:
+    events: list[ActionEventIR] = []
+    profiles: list[HitProfileIR] = []
+    for definition in definitions:
+        action_profiles = _hit_profiles_from_definition(definition)
+        profiles.extend(action_profiles)
+        events.append(_action_event_from_definition(definition, action_profiles))
+    return events, profiles
+
+
+def _action_event_from_definition(
+    definition: ActionDefinitionIR,
+    hit_profiles: list[HitProfileIR],
+) -> ActionEventIR:
+    has_damage = definition.damage_kind == "hp_damage" and any(
+        profile.coverage_status != "blocked" for profile in hit_profiles
+    )
+    has_attack_windows = _action_definition_is_attack(definition)
+    blocked_reason = _target_blocked_reason(definition.target_mode)
+    status = "blocked" if blocked_reason else "lowered"
+    steps: list[ActionPhaseStepIR] = [
+        ActionPhaseStepIR(
+            kind="trigger_window",
+            phase="before_skill_use",
+            canonical_window="before_skill_use",
+            tbgd_event="OnBeforeSkillUse",
+            coverage_status=status,
+            blocked_reason=blocked_reason,
+            source=definition.source,
+        )
+    ]
+    if has_attack_windows and not blocked_reason:
+        steps.append(
+            ActionPhaseStepIR(
+                kind="trigger_window",
+                phase="before_attack",
+                canonical_window="before_attack",
+                tbgd_event="OnBeforeAttack",
+                coverage_status="lowered",
+                source=definition.source,
+            )
+        )
+    if has_damage and not blocked_reason:
+        steps.append(
+            ActionPhaseStepIR(
+                kind="damage",
+                phase="damage",
+                coverage_status="lowered",
+                source=definition.source,
+            )
+        )
+    if has_attack_windows and not blocked_reason:
+        steps.append(
+            ActionPhaseStepIR(
+                kind="trigger_window",
+                phase="after_attack",
+                canonical_window="after_attack",
+                tbgd_event="OnAfterAttack",
+                coverage_status="lowered",
+                source=definition.source,
+            )
+        )
+    steps.append(
+        ActionPhaseStepIR(
+            kind="trigger_window",
+            phase="after_skill_use",
+            canonical_window="after_skill_use",
+            tbgd_event="OnAfterSkillUse",
+            coverage_status=status,
+            blocked_reason=blocked_reason,
+            source=definition.source,
+        )
+    )
+    return ActionEventIR(
+        action_event_id=f"action_event:{definition.action_id}:{definition.level}",
+        action_id=definition.action_id,
+        level=definition.level,
+        target_mode=definition.target_mode,
+        selection_mode=_selection_mode(definition.target_mode),
+        phase_steps=tuple(steps),
+        hit_profile_ids=tuple(profile.hit_profile_id for profile in hit_profiles),
+        derived_status="derived_from_action_definition",
+        derived_reason=(
+            "phase steps are derived from SkillEffect/AttackType/damage_kind until TBGD action event schema is fully mapped"
+        ),
+        source=definition.source,
+        coverage_status=status,
+        blocked_reason=blocked_reason,
+    )
+
+
+def _hit_profiles_from_definition(definition: ActionDefinitionIR) -> list[HitProfileIR]:
+    if definition.damage_kind != "hp_damage":
+        return []
+    groups = _hit_target_groups(definition.target_mode)
+    if not groups:
+        groups = (definition.target_mode or "unknown",)
+    profiles: list[HitProfileIR] = []
+    for hit_index, target_group in enumerate(groups):
+        blocked_reason = _hit_profile_blocked_reason(definition, target_group)
+        profiles.append(
+            HitProfileIR(
+                hit_profile_id=f"hit_profile:{definition.action_id}:{definition.level}:{hit_index}:{target_group}",
+                action_id=definition.action_id,
+                level=definition.level,
+                hit_index=hit_index,
+                target_group=target_group,
+                multiplier_expr=_param_multiplier_expr(definition.param_list),
+                multiplier_source=_param_multiplier_source(definition),
+                stance_expr=_stance_expr(definition.show_stance_list),
+                stance_source=_stance_source(definition),
+                damage_formula_family=definition.damage_formula_family,
+                element_type=definition.element_type,
+                source=definition.source,
+                coverage_status="blocked" if blocked_reason else "executable",
+                blocked_reason=blocked_reason,
+                numeric_fidelity_status=_numeric_fidelity_status(definition, target_group),
+            )
+        )
+    return profiles
+
+
+def _hit_target_groups(target_mode: str) -> tuple[str, ...]:
+    if target_mode == "blast":
+        return ("primary", "adjacent")
+    if target_mode in {"single", "aoe"}:
+        return ("selected",)
+    if target_mode in {"bounce", "unknown"}:
+        return (target_mode,)
+    return ()
+
+
+def _hit_profile_blocked_reason(definition: ActionDefinitionIR, target_group: str) -> str:
+    target_reason = _target_blocked_reason(definition.target_mode)
+    if target_reason:
+        return target_reason
+    if definition.damage_formula_family not in {"direct", "true_damage", "hp_loss", "elation"}:
+        return f"damage_formula_family_not_executable:{definition.damage_formula_family}"
+    if not _param_multiplier_is_fixed(definition.param_list):
+        return "param_list_multiplier_not_fixed"
+    if target_group in {"adjacent", "selected"} and definition.target_mode in {"aoe", "blast"}:
+        return ""
+    return ""
+
+
+def _param_multiplier_expr(param_list: tuple[Any, ...]) -> dict[str, Any]:
+    if not param_list:
+        return {"kind": "missing", "blocked_reason": "missing_param_list"}
+    first = param_list[0]
+    value = _number_value(first, 0.0)
+    if _param_multiplier_is_fixed(param_list):
+        return {"kind": "fixed", "value": value}
+    return {"kind": "unsupported", "raw": _json_safe(first), "blocked_reason": "param_list_multiplier_not_fixed"}
+
+
+def _param_multiplier_source(definition: ActionDefinitionIR) -> dict[str, Any]:
+    first = definition.param_list[0] if definition.param_list else None
+    return {
+        "raw_path": "ParamList[0]",
+        "raw_value": _json_safe(first),
+        "param_list_count": len(definition.param_list),
+        "multi_param_list_not_implemented": len(definition.param_list) > 1,
+        "show_damage_count": len(definition.show_damage_list),
+        "show_damage_audit_only": bool(definition.show_damage_list),
+        "source": definition.source.to_json(),
+    }
+
+
+def _stance_expr(show_stance_list: tuple[Any, ...]) -> dict[str, Any]:
+    if not show_stance_list:
+        return {"kind": "missing", "blocked_reason": "show_stance_not_present"}
+    first = show_stance_list[0]
+    return {
+        "kind": "audit_only",
+        "raw": _json_safe(first),
+        "blocked_reason": "show_stance_semantics_not_confirmed",
+    }
+
+
+def _stance_source(definition: ActionDefinitionIR) -> dict[str, Any]:
+    first = definition.show_stance_list[0] if definition.show_stance_list else None
+    return {
+        "raw_path": "ShowStanceList[0]",
+        "raw_value": _json_safe(first),
+        "show_stance_count": len(definition.show_stance_list),
+        "show_stance_audit_only": bool(definition.show_stance_list),
+        "stance_damage_type": definition.stance_damage_type,
+        "source": definition.source.to_json(),
+    }
+
+
+def _param_multiplier_is_fixed(param_list: tuple[Any, ...]) -> bool:
+    if not param_list:
+        return False
+    first = param_list[0]
+    if isinstance(first, dict):
+        return isinstance(first.get("Value"), (int, float))
+    return isinstance(first, (int, float))
+
+
+def _numeric_fidelity_status(definition: ActionDefinitionIR, target_group: str) -> str:
+    if definition.target_mode in {"aoe", "blast"}:
+        return "structural_only"
+    if len(definition.param_list) > 1 or definition.show_damage_list or definition.show_stance_list:
+        return "structural_only"
+    if target_group in {"bounce", "unknown"}:
+        return "blocked"
+    return "single_hit_ratio"
+
+
+def _target_blocked_reason(target_mode: str) -> str:
+    if target_mode == "bounce":
+        return "bounce_not_executable"
+    if target_mode == "unknown":
+        return "unknown_target_mode_not_executable"
+    if target_mode not in {"single", "aoe", "blast", "self_or_team"}:
+        return f"unsupported_target_mode:{target_mode}"
+    return ""
+
+
+def _selection_mode(target_mode: str) -> str:
+    if target_mode == "single":
+        return "primary"
+    if target_mode == "aoe":
+        return "all_enemies"
+    if target_mode == "blast":
+        return "primary_plus_adjacent"
+    if target_mode == "bounce":
+        return "blocked_random_bounce"
+    if target_mode == "self_or_team":
+        return "explicit_ally_or_self"
+    return "unknown"
+
+
+def _action_definition_is_attack(definition: ActionDefinitionIR) -> bool:
+    skill_effect = definition.skill_effect.lower()
+    attack_type = definition.attack_type.lower()
+    if definition.target_mode in {"single", "blast", "aoe", "bounce"}:
+        return True
+    return "attack" in skill_effect or "attack" in attack_type
 
 
 def _target_mode(skill_effect: str) -> str:

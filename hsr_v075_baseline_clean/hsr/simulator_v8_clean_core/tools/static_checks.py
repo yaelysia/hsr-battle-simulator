@@ -30,6 +30,11 @@ RUNTIME_MAIN_BANNED_IMPORT_TOKENS = (
     "from ..tbgd",
     "import simulator_v8_clean_core.tbgd",
 )
+RUNTIME_MAIN_BANNED_ACTION_INFERENCE_TOKENS = (
+    "param_list[0]",
+    "show_damage_list[",
+    "show_stance_list[",
+)
 
 
 FOLLOW_UP_DAMAGE_FAMILY_TOKEN = "follow_up_as_damage_formula_family"
@@ -72,6 +77,15 @@ def run_static_checks(package_root: Path) -> StaticCheckResult:
                                     "path": relative_path,
                                     "line": line_number,
                                     "token": f"runtime_main_import:{token}",
+                                }
+                            )
+                    for token in RUNTIME_MAIN_BANNED_ACTION_INFERENCE_TOKENS:
+                        if token in line:
+                            violations.append(
+                                {
+                                    "path": relative_path,
+                                    "line": line_number,
+                                    "token": f"runtime_action_inference:{token}",
                                 }
                             )
                 if _looks_like_follow_up_damage_family(line):

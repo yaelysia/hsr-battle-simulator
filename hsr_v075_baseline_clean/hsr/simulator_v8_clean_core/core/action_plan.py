@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from ..rules.ir import ActionDefinitionIR
+from ..rules.ir import ActionDefinitionIR, ActionEventIR, HitProfileIR
 
 
 @dataclass(frozen=True)
@@ -69,38 +69,54 @@ class TargetPlan:
 
 @dataclass(frozen=True)
 class HitPlan:
+    hit_profile_id: str
     hit_index: int
     target_group: str
     multiplier_source: object
+    scaling_ratio: float | None = None
+    hit_source_trace: dict[str, object] | None = None
+    numeric_fidelity_status: str = "unknown"
     multi_hit_not_implemented: bool = True
 
     def to_json(self) -> dict[str, object]:
         return {
+            "hit_profile_id": self.hit_profile_id,
             "hit_index": self.hit_index,
             "target_group": self.target_group,
             "multiplier_source": self.multiplier_source,
+            "scaling_ratio": self.scaling_ratio,
+            "hit_source_trace": self.hit_source_trace or {},
+            "numeric_fidelity_status": self.numeric_fidelity_status,
             "multi_hit_not_implemented": self.multi_hit_not_implemented,
         }
 
 
 @dataclass(frozen=True)
 class DamagePlan:
+    hit_profile_id: str
     hit_index: int
     target_id: str
     target_group: str
     damage_formula_family: str
     multiplier_source: object
+    scaling_ratio: float
+    hit_source_trace: dict[str, object]
+    numeric_fidelity_status: str = "unknown"
     primary_action_target_id: str | None = None
     blocked_reason: str = ""
     target_group_multiplier_not_implemented: bool = False
 
     def to_json(self) -> dict[str, object]:
         return {
+            "hit_profile_id": self.hit_profile_id,
             "hit_index": self.hit_index,
             "target_id": self.target_id,
             "target_group": self.target_group,
             "damage_formula_family": self.damage_formula_family,
             "multiplier_source": self.multiplier_source,
+            "scaling_ratio": self.scaling_ratio,
+            "hit_source_trace": self.hit_source_trace,
+            "numeric_fidelity_status": self.numeric_fidelity_status,
             "primary_action_target_id": self.primary_action_target_id,
             "blocked_reason": self.blocked_reason,
             "target_group_multiplier_not_implemented": self.target_group_multiplier_not_implemented,
@@ -131,6 +147,7 @@ class ActionExecutionPlan:
             "source_trace": self.source_trace,
             "derived_reason": self.derived_reason,
             "derived_from_action_definition": True,
+            "plan_source": "action_event_ir_hit_profile_ir",
             "primary_action_target_id": self.primary_action_target_id,
             "per_hit_target_context_not_implemented": self.per_hit_target_context_not_implemented,
         }
@@ -190,56 +207,124 @@ def build_action_event_plan(action_definition: ActionDefinitionIR) -> ActionEven
 
 def build_action_execution_plan(
     action_definition: ActionDefinitionIR,
+    action_event: ActionEventIR,
+    hit_profiles: tuple[HitProfileIR, ...],
     *,
     requested_target_ids: tuple[str, ...],
     resolved_target_groups: dict[str, tuple[str, ...]] | None = None,
     source_trace: dict[str, object] | None = None,
 ) -> ActionExecutionPlan:
-    event_plan = build_action_event_plan(action_definition)
-    target_mode = action_definition.target_mode
+    target_mode = action_event.target_mode
     target_plan = TargetPlan(
         target_mode=target_mode,
-        selection_mode=_selection_mode(target_mode),
+        selection_mode=action_event.selection_mode or _selection_mode(target_mode),
         requested_target_ids=requested_target_ids,
+        source="action_event_ir",
         blocked_reason=_target_plan_blocked_reason(target_mode),
     )
-    multiplier_source = action_definition.param_list[0] if action_definition.param_list else None
     primary_action_target_id = _primary_action_target_id(resolved_target_groups or {})
-    hit_plan = (
-        HitPlan(
-            hit_index=0,
-            target_group="selected",
-            multiplier_source=multiplier_source,
-            multi_hit_not_implemented=True,
-        ),
-    )
-    damage_targets = _damage_targets(action_definition, resolved_target_groups or {})
-    damage_plan = tuple(
-        DamagePlan(
-            hit_index=0,
-            target_id=target_id,
-            target_group=group_name,
-            damage_formula_family=action_definition.damage_formula_family,
-            multiplier_source=multiplier_source,
-            primary_action_target_id=primary_action_target_id,
-            blocked_reason=target_plan.blocked_reason,
-            target_group_multiplier_not_implemented=action_definition.target_mode in {"aoe", "blast"},
-        )
-        for group_name, target_ids in damage_targets
-        for target_id in target_ids
+    hit_plan = tuple(_hit_plan(profile) for profile in hit_profiles)
+    damage_plan = _damage_plan_from_profiles(
+        action_definition,
+        hit_profiles,
+        resolved_target_groups or {},
+        primary_action_target_id,
+        target_plan.blocked_reason,
     )
     return ActionExecutionPlan(
         action_id=action_definition.action_id,
         action_level=action_definition.level,
-        event_steps=event_plan.steps,
+        event_steps=tuple(_event_step_from_ir(step) for step in action_event.phase_steps),
         target_plan=target_plan,
         hit_plan=hit_plan,
         damage_plan=damage_plan,
         source_trace=source_trace or {},
-        derived_reason="derived_from_action_definition_target_mode_and_damage_kind",
+        derived_reason=action_event.derived_reason,
         primary_action_target_id=primary_action_target_id,
         per_hit_target_context_not_implemented=True,
     )
+
+
+def _event_step_from_ir(step) -> ActionEventStep:
+    return ActionEventStep(
+        kind=step.kind,
+        phase=step.phase,
+        canonical_window=step.canonical_window,
+        tbgd_event=step.tbgd_event,
+        requires_action_enabled=step.requires_action_enabled,
+    )
+
+
+def _hit_plan(profile: HitProfileIR) -> HitPlan:
+    return HitPlan(
+        hit_profile_id=profile.hit_profile_id,
+        hit_index=profile.hit_index,
+        target_group=profile.target_group,
+        multiplier_source=profile.multiplier_source,
+        scaling_ratio=_hit_scaling_ratio(profile),
+        hit_source_trace=profile.source.to_json(),
+        numeric_fidelity_status=profile.numeric_fidelity_status,
+        multi_hit_not_implemented=True,
+    )
+
+
+def _damage_plan_from_profiles(
+    action_definition: ActionDefinitionIR,
+    hit_profiles: tuple[HitProfileIR, ...],
+    target_groups: dict[str, tuple[str, ...]],
+    primary_action_target_id: str | None,
+    plan_blocked_reason: str,
+) -> tuple[DamagePlan, ...]:
+    if action_definition.damage_kind != "hp_damage" or plan_blocked_reason:
+        return ()
+    plans: list[DamagePlan] = []
+    for profile in hit_profiles:
+        if profile.coverage_status == "blocked":
+            continue
+        scaling_ratio = _hit_scaling_ratio(profile)
+        if scaling_ratio is None:
+            continue
+        for target_id in _targets_for_hit_profile(profile, target_groups):
+            plans.append(
+                DamagePlan(
+                    hit_profile_id=profile.hit_profile_id,
+                    hit_index=profile.hit_index,
+                    target_id=target_id,
+                    target_group=profile.target_group,
+                    damage_formula_family=profile.damage_formula_family,
+                    multiplier_source=profile.multiplier_source,
+                    scaling_ratio=scaling_ratio,
+                    hit_source_trace=profile.source.to_json(),
+                    numeric_fidelity_status=profile.numeric_fidelity_status,
+                    primary_action_target_id=primary_action_target_id,
+                    blocked_reason=profile.blocked_reason,
+                    target_group_multiplier_not_implemented=action_definition.target_mode in {"aoe", "blast"},
+                )
+            )
+    return tuple(plans)
+
+
+def _targets_for_hit_profile(
+    profile: HitProfileIR,
+    target_groups: dict[str, tuple[str, ...]],
+) -> tuple[str, ...]:
+    if profile.target_group == "primary":
+        return target_groups.get("primary", ())
+    if profile.target_group == "adjacent":
+        return target_groups.get("adjacent", ())
+    if profile.target_group == "selected":
+        return target_groups.get("selected", ())
+    return ()
+
+
+def _hit_scaling_ratio(profile: HitProfileIR) -> float | None:
+    expr = profile.multiplier_expr
+    if expr.get("kind") != "fixed":
+        return None
+    value = expr.get("value")
+    if isinstance(value, (int, float)):
+        return float(value)
+    return None
 
 
 def _is_explicit_attack(action_definition: ActionDefinitionIR) -> bool:

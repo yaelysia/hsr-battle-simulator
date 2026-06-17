@@ -3,7 +3,7 @@ from __future__ import annotations
 from ..core.executor import CombatExecutor
 from ..core.model import ActionCommand, BattleState, Mutation, UnitState
 from ..core.reducer import MutationReducer
-from ..rules.ir import ActionDefinitionIR, CanonicalIR, IRSource
+from ..rules.ir import ActionDefinitionIR, ActionEventIR, ActionPhaseStepIR, CanonicalIR, IRSource
 from ..rules.rulebook import RuleBook
 from ..systems.resource import ResourceSystem
 
@@ -103,6 +103,36 @@ def _minimal_ir() -> CanonicalIR:
                 stance_damage_type=None,
                 source=source,
                 coverage_status="executable",
+            ),
+        ),
+        action_events=(
+            ActionEventIR(
+                action_event_id="action_event:avatar_skill:110201:1",
+                action_id="avatar_skill:110201",
+                level=1,
+                target_mode="single",
+                selection_mode="primary",
+                phase_steps=(
+                    ActionPhaseStepIR(
+                        kind="trigger_window",
+                        phase="before_skill_use",
+                        canonical_window="before_skill_use",
+                        tbgd_event="OnBeforeSkillUse",
+                        source=source,
+                    ),
+                    ActionPhaseStepIR(
+                        kind="trigger_window",
+                        phase="after_skill_use",
+                        canonical_window="after_skill_use",
+                        tbgd_event="OnAfterSkillUse",
+                        source=source,
+                    ),
+                ),
+                hit_profile_ids=(),
+                derived_status="validation_fixture",
+                derived_reason="minimal replay fixture has no damage hit profile",
+                source=source,
+                coverage_status="audit_only",
             ),
         ),
     )

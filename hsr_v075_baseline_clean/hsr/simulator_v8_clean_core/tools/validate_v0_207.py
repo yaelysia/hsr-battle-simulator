@@ -175,6 +175,8 @@ def main(argv: list[str] | None = None) -> int:
 def _direct_damage_transition(rules: RuleBook, state, command) -> tuple[BattleTransition, object]:
     action_definition = rules.require_action_definition(command.action_id, command.action_level)
     source_trace = rules.action_definition_source_trace(command.action_id, command.action_level) or {}
+    hit_profile = _first_executable_hit_profile(rules, command.action_id, command.action_level)
+    scaling_ratio = _hit_profile_scaling_ratio(hit_profile)
     packet = DamagePacket(
         attacker_id=command.actor_id,
         target_id=command.target_ids[0],
@@ -182,8 +184,16 @@ def _direct_damage_transition(rules: RuleBook, state, command) -> tuple[BattleTr
         damage_formula_family="direct",
         element_type=action_definition.element_type,
         action_definition=action_definition,
+        hit_profile_id=hit_profile.hit_profile_id if hit_profile is not None else "",
+        scaling_ratio=scaling_ratio,
+        hit_source_trace=hit_profile.source.to_json() if hit_profile is not None else {},
         source_trace=source_trace,
-        metadata={"validation": "v0_207_follow_up_attack_type_direct_damage"},
+        metadata={
+            "validation": "v0_207_follow_up_attack_type_direct_damage",
+            "hit_profile_id": hit_profile.hit_profile_id if hit_profile is not None else "",
+            "scaling_ratio": scaling_ratio,
+            "hit_source_trace": hit_profile.source.to_json() if hit_profile is not None else {},
+        },
     )
     damage_result = DamageSystem().apply_packet(state, packet)
     after_state = MutationReducer().apply_all(state, damage_result.mutations)
@@ -219,6 +229,23 @@ def _direct_damage_transition(rules: RuleBook, state, command) -> tuple[BattleTr
         },
     )
     return transition, after_state
+
+
+def _first_executable_hit_profile(rules: RuleBook, action_id: str, level: int):
+    for profile in rules.hit_profiles_for_action(action_id, level):
+        if profile.coverage_status == "executable":
+            return profile
+    return None
+
+
+def _hit_profile_scaling_ratio(profile) -> float | None:
+    if profile is None:
+        return None
+    expr = profile.multiplier_expr
+    if not isinstance(expr, dict) or expr.get("kind") != "fixed":
+        return None
+    value = expr.get("value")
+    return float(value) if isinstance(value, (int, float)) else None
 
 
 def _taxonomy_checks(action_definition, damage_transition: BattleTransition) -> dict[str, object]:

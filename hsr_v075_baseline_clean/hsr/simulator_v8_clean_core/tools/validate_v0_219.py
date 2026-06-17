@@ -103,10 +103,10 @@ def run_validation(
     static_result = run_static_checks(package_root)
     checks = {
         "definition_selection": _definition_selection_checks(definitions),
-        "action_execution_plan": _execution_plan_checks(execution_cases, _plan_cases(definitions)),
+        "action_execution_plan": _execution_plan_checks(execution_cases, _plan_cases(rules, definitions)),
         "target_modes": _target_mode_checks(execution_cases),
         "multi_target_damage": _multi_target_damage_checks(execution_cases),
-        "blocked_modes": _blocked_mode_checks(execution_cases, _plan_cases(definitions)),
+        "blocked_modes": _blocked_mode_checks(execution_cases, _plan_cases(rules, definitions)),
         "preflight_commit_gate": _preflight_commit_gate_checks(negative_cases),
         "multi_target_context": _multi_target_context_checks(execution_cases),
         "transition_quality": _transition_quality_checks({**execution_cases, **negative_cases}),
@@ -130,11 +130,13 @@ def run_validation(
         "build": {
             "tbgd_root": tbgd_root.as_posix(),
             "scenario_path": scenario_path.as_posix(),
-            "summary": {
-                "discovery_files": len(discovery.files),
-                "ir_action_definitions": len(ir.action_definitions),
-                "ir_effects": len(ir.effects),
-                "sampled": ir.metadata.get("sampled", {}),
+        "summary": {
+            "discovery_files": len(discovery.files),
+            "ir_action_definitions": len(ir.action_definitions),
+            "ir_action_events": len(ir.action_events),
+            "ir_hit_profiles": len(ir.hit_profiles),
+            "ir_effects": len(ir.effects),
+            "sampled": ir.metadata.get("sampled", {}),
             },
         },
         "scenario": {
@@ -192,12 +194,14 @@ def main(argv: list[str] | None = None) -> int:
     return 0 if result["ok"] else 1
 
 
-def _plan_cases(definitions: dict[str, ActionDefinitionIR | None]) -> dict[str, dict[str, object]]:
+def _plan_cases(rules: RuleBook, definitions: dict[str, ActionDefinitionIR | None]) -> dict[str, dict[str, object]]:
     from ..core.action_plan import build_action_execution_plan
 
     return {
         mode: build_action_execution_plan(
             definition,
+            rules.require_action_event(definition.action_id, definition.level),
+            rules.hit_profiles_for_action(definition.action_id, definition.level),
             requested_target_ids=("enemy:target",),
             resolved_target_groups={},
             source_trace=definition.source.to_json(),

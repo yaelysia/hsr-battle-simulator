@@ -35,6 +35,9 @@ class DamagePacket:
     damage_kind: str = "hp_damage"
     element_type: str | None = None
     action_definition: ActionDefinitionIR | None = None
+    hit_profile_id: str = ""
+    scaling_ratio: float | None = None
+    hit_source_trace: dict[str, JSONValue] = field(default_factory=dict)
     source_trace: dict[str, JSONValue] = field(default_factory=dict)
     metadata: dict[str, JSONValue] = field(default_factory=dict)
 
@@ -54,6 +57,9 @@ class DamagePacket:
             "damage_formula_family": self.damage_formula_family,
             "element_type": self.element_type,
             "action_definition": _action_definition_summary(self.action_definition),
+            "hit_profile_id": self.hit_profile_id,
+            "scaling_ratio": self.scaling_ratio,
+            "hit_source_trace": self.hit_source_trace,
             "source_trace": self.source_trace,
             "metadata": self.metadata,
             "bypasses_normal_multipliers": self.damage_formula_family in {"true_damage", "hp_loss"},
@@ -111,6 +117,8 @@ class DamageSystem:
     def _apply_direct_damage(self, state: BattleState, packet: DamagePacket) -> DamageApplicationResult:
         if packet.action_definition is None:
             return _damage_error(packet, "direct damage requires action_definition")
+        if packet.scaling_ratio is None:
+            return _damage_error(packet, "direct damage requires hit_profile scaling_ratio")
         try:
             formula_result = DirectDamageFormula().calculate(
                 DamageFormulaInput(
@@ -120,6 +128,7 @@ class DamageSystem:
                     action_definition=packet.action_definition,
                     attack_type=packet.attack_type,
                     element_type=packet.element_type,
+                    scaling_ratio=packet.scaling_ratio,
                     source_trace=packet.source_trace,
                     crit_mode=_metadata_str(packet.metadata, "crit_mode"),
                 )
@@ -164,6 +173,9 @@ class DamageSystem:
                         "damage_kind": packet.damage_kind,
                         "damage_formula_family": packet.damage_formula_family,
                         "element_type": packet.element_type,
+                        "hit_profile_id": packet.hit_profile_id,
+                        "scaling_ratio": packet.scaling_ratio,
+                        "hit_source_trace": packet.hit_source_trace,
                         "packet_metadata": packet.metadata,
                         "bypasses_normal_multipliers": False,
                         "normal_multiplier_terms": formula_json["modifier_ledger"]["applied_terms"],

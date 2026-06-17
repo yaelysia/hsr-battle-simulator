@@ -127,6 +127,100 @@ class RuleEntity:
 
 
 @dataclass(frozen=True)
+class ActionPhaseStepIR:
+    kind: str
+    phase: str
+    canonical_window: str = ""
+    tbgd_event: str = ""
+    requires_action_enabled: bool = True
+    coverage_status: CoverageStatus = "audit_only"
+    blocked_reason: str = ""
+    source: IRSource | None = None
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "kind": self.kind,
+            "phase": self.phase,
+            "canonical_window": self.canonical_window,
+            "tbgd_event": self.tbgd_event,
+            "requires_action_enabled": self.requires_action_enabled,
+            "coverage_status": self.coverage_status,
+            "blocked_reason": self.blocked_reason,
+            "source": self.source.to_json() if self.source else None,
+        }
+
+
+@dataclass(frozen=True)
+class HitProfileIR:
+    hit_profile_id: str
+    action_id: str
+    level: int
+    hit_index: int
+    target_group: str
+    multiplier_expr: dict[str, JSONValue]
+    multiplier_source: dict[str, JSONValue]
+    stance_expr: dict[str, JSONValue]
+    stance_source: dict[str, JSONValue]
+    damage_formula_family: str
+    element_type: str | None
+    source: IRSource
+    coverage_status: CoverageStatus = "audit_only"
+    blocked_reason: str = ""
+    numeric_fidelity_status: str = "structural_only"
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "hit_profile_id": self.hit_profile_id,
+            "action_id": self.action_id,
+            "level": self.level,
+            "hit_index": self.hit_index,
+            "target_group": self.target_group,
+            "multiplier_expr": self.multiplier_expr,
+            "multiplier_source": self.multiplier_source,
+            "stance_expr": self.stance_expr,
+            "stance_source": self.stance_source,
+            "damage_formula_family": self.damage_formula_family,
+            "element_type": self.element_type,
+            "source": self.source.to_json(),
+            "coverage_status": self.coverage_status,
+            "blocked_reason": self.blocked_reason,
+            "numeric_fidelity_status": self.numeric_fidelity_status,
+        }
+
+
+@dataclass(frozen=True)
+class ActionEventIR:
+    action_event_id: str
+    action_id: str
+    level: int
+    target_mode: str
+    selection_mode: str
+    phase_steps: tuple[ActionPhaseStepIR, ...]
+    hit_profile_ids: tuple[str, ...]
+    derived_status: str
+    derived_reason: str
+    source: IRSource
+    coverage_status: CoverageStatus = "audit_only"
+    blocked_reason: str = ""
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "action_event_id": self.action_event_id,
+            "action_id": self.action_id,
+            "level": self.level,
+            "target_mode": self.target_mode,
+            "selection_mode": self.selection_mode,
+            "phase_steps": [step.to_json() for step in self.phase_steps],
+            "hit_profile_ids": list(self.hit_profile_ids),
+            "derived_status": self.derived_status,
+            "derived_reason": self.derived_reason,
+            "source": self.source.to_json(),
+            "coverage_status": self.coverage_status,
+            "blocked_reason": self.blocked_reason,
+        }
+
+
+@dataclass(frozen=True)
 class ActionDefinitionIR:
     definition_id: str
     action_id: str
@@ -179,6 +273,8 @@ class CanonicalIR:
     version: str
     entities: tuple[RuleEntity, ...] = ()
     action_definitions: tuple[ActionDefinitionIR, ...] = ()
+    action_events: tuple[ActionEventIR, ...] = ()
+    hit_profiles: tuple[HitProfileIR, ...] = ()
     triggers: tuple[TriggerIR, ...] = ()
     effects: tuple[EffectIR, ...] = ()
     conditions: tuple[ConditionIR, ...] = ()
@@ -191,6 +287,8 @@ class CanonicalIR:
             "metadata": self.metadata,
             "entities": [entity.to_json() for entity in self.entities],
             "action_definitions": [definition.to_json() for definition in self.action_definitions],
+            "action_events": [event.to_json() for event in self.action_events],
+            "hit_profiles": [profile.to_json() for profile in self.hit_profiles],
             "triggers": [trigger.to_json() for trigger in self.triggers],
             "effects": [effect.to_json() for effect in self.effects],
             "conditions": [condition.to_json() for condition in self.conditions],

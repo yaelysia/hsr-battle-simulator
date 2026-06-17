@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .action_plan import DamagePlan, build_action_event_plan, build_action_execution_plan
+from .action_plan import DamagePlan, build_action_execution_plan
 from .model import (
     ActionCommand,
     ActionSettlement,
@@ -41,6 +41,8 @@ class CombatExecutor:
     def execute(self, command: ActionCommand, state: BattleState) -> tuple[BattleState, BattleTransition]:
         before = state.snapshot()
         action_definition = self.rules.require_action_definition(command.action_id, command.action_level)
+        action_event_ir = self.rules.require_action_event(command.action_id, command.action_level)
+        hit_profiles = self.rules.hit_profiles_for_action(command.action_id, command.action_level)
         action_definition_trace = self.rules.action_definition_source_trace(command.action_id, command.action_level) or {}
         action_event = GameEvent(
             "action.requested",
@@ -63,11 +65,17 @@ class CombatExecutor:
         )
         action_execution_plan = build_action_execution_plan(
             action_definition,
+            action_event_ir,
+            hit_profiles,
             requested_target_ids=command.target_ids,
             resolved_target_groups=_target_groups_from_resolution(target_result.resolution.metadata),
-            source_trace=action_definition_trace,
+            source_trace={
+                **action_definition_trace,
+                "action_event_id": action_event_ir.action_event_id,
+                "hit_profile_ids": [profile.hit_profile_id for profile in hit_profiles],
+            },
         )
-        action_event_plan = build_action_event_plan(action_definition)
+        action_event_plan_payload = _action_event_plan_compat_payload(action_definition, action_event_ir)
         resource_result = self.resources.plan_action_resources(
             state,
             command.actor_id,
@@ -195,10 +203,17 @@ class CombatExecutor:
                 trace=action_definition_trace,
             ).to_json(),
             SettlementRecord(
-                record_type="action_event_plan",
-                source="combat_executor",
+                record_type="action_event_ir",
+                source="rulebook",
                 process_only=True,
-                payload=action_event_plan.to_json(),
+                payload=action_event_ir.to_json(),
+                trace=action_event_ir.source.to_json(),
+            ).to_json(),
+            SettlementRecord(
+                record_type="hit_profiles",
+                source="rulebook",
+                process_only=True,
+                payload={"profiles": [profile.to_json() for profile in hit_profiles]},
                 trace={"definition_id": action_definition.definition_id},
             ).to_json(),
             SettlementRecord(
@@ -287,9 +302,12 @@ class CombatExecutor:
             target_resolution=target_result.resolution,
             rng_events=damage_rng_events,
             coverage={
-                "executor": "v0_212_trigger_action_foundation",
+                "executor": "v0_220_action_event_hit_profile",
                 "action_execution_plan": action_execution_plan.to_json(),
-                "action_event_plan": action_event_plan.to_json(),
+                "action_event_ir": action_event_ir.to_json(),
+                "action_event_id": action_event_ir.action_event_id,
+                "action_event_plan": action_event_plan_payload,
+                "hit_profile_ids": [profile.hit_profile_id for profile in hit_profiles],
                 "definition_id": action_definition.definition_id,
                 "target_ok": target_result.ok,
                 "resource_ok": resource_result.ok,
@@ -324,6 +342,29 @@ def _mutation_record(record_type: str, mutation: Mutation) -> dict[str, JSONValu
             "metadata": mutation.metadata,
         },
     ).to_json()
+
+
+def _action_event_plan_compat_payload(action_definition: ActionDefinitionIR, action_event_ir) -> dict[str, JSONValue]:
+    steps = [step.to_json() for step in action_event_ir.phase_steps]
+    has_attack_windows = any(
+        isinstance(step, dict) and step.get("canonical_window") in {"before_attack", "after_attack"}
+        for step in steps
+    )
+    has_damage_step = any(isinstance(step, dict) and step.get("kind") == "damage" for step in steps)
+    return {
+        "action_id": action_definition.action_id,
+        "action_level": action_definition.level,
+        "skill_type": action_definition.skill_effect,
+        "attack_type": action_definition.attack_type,
+        "damage_kind": action_definition.damage_kind,
+        "damage_formula_family": action_definition.damage_formula_family,
+        "has_attack_windows": has_attack_windows,
+        "has_damage_step": has_damage_step,
+        "steps": steps,
+        "plan_source": "action_event_ir_compat_projection",
+        "action_event_id": action_event_ir.action_event_id,
+    }
+
 
 def _action_blocked_reason(
     *,
@@ -417,12 +458,21 @@ def _damage_packet(
             "action_id": action_definition.action_id,
             "action_level": action_definition.level,
             "source": source_trace,
+            "hit_profile_id": damage_plan.hit_profile_id,
+            "hit_source_trace": damage_plan.hit_source_trace,
         },
+        hit_profile_id=damage_plan.hit_profile_id,
+        scaling_ratio=damage_plan.scaling_ratio,
+        hit_source_trace=damage_plan.hit_source_trace,
         metadata={
             **_damage_metadata(command),
             "hit_index": damage_plan.hit_index,
+            "hit_profile_id": damage_plan.hit_profile_id,
             "target_group": damage_plan.target_group,
             "multiplier_source": damage_plan.multiplier_source,
+            "scaling_ratio": damage_plan.scaling_ratio,
+            "hit_source_trace": damage_plan.hit_source_trace,
+            "numeric_fidelity_status": damage_plan.numeric_fidelity_status,
             "multi_hit_not_implemented": True,
             "primary_action_target_id": damage_plan.primary_action_target_id,
             "per_hit_target_context_not_implemented": True,

@@ -2,7 +2,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .ir import ActionDefinitionIR, CanonicalIR, ConditionIR, EffectIR, FormulaIR, RuleEntity, TriggerIR
+from .ir import (
+    ActionDefinitionIR,
+    ActionEventIR,
+    CanonicalIR,
+    ConditionIR,
+    EffectIR,
+    FormulaIR,
+    HitProfileIR,
+    RuleEntity,
+    TriggerIR,
+)
 
 
 @dataclass(frozen=True)
@@ -17,6 +27,22 @@ class RuleBook:
             self,
             "_action_definitions",
             {(definition.action_id, definition.level): definition for definition in self.ir.action_definitions},
+        )
+        object.__setattr__(
+            self,
+            "_action_events",
+            {(event.action_id, event.level): event for event in self.ir.action_events},
+        )
+        hit_profiles_by_action: dict[tuple[str, int], list[HitProfileIR]] = {}
+        for profile in self.ir.hit_profiles:
+            hit_profiles_by_action.setdefault((profile.action_id, profile.level), []).append(profile)
+        object.__setattr__(
+            self,
+            "_hit_profiles_by_action",
+            {
+                key: tuple(sorted(value, key=lambda item: (item.hit_index, item.target_group, item.hit_profile_id)))
+                for key, value in hit_profiles_by_action.items()
+            },
         )
         object.__setattr__(self, "_effects", {effect.effect_id: effect for effect in self.ir.effects})
         object.__setattr__(self, "_conditions", {condition.condition_id: condition for condition in self.ir.conditions})
@@ -115,6 +141,18 @@ class RuleBook:
             "coverage_status": definition.coverage_status,
             "source": definition.source.to_json(),
         }
+
+    def action_event(self, action_id: str, level: int) -> ActionEventIR | None:
+        return self._action_events.get((action_id, level))
+
+    def require_action_event(self, action_id: str, level: int) -> ActionEventIR:
+        event = self.action_event(action_id, level)
+        if event is None:
+            raise KeyError(f"unknown action event {action_id!r} level {level}")
+        return event
+
+    def hit_profiles_for_action(self, action_id: str, level: int) -> tuple[HitProfileIR, ...]:
+        return self._hit_profiles_by_action.get((action_id, level), ())
 
     def triggers_for_event(self, event: str) -> tuple[TriggerIR, ...]:
         return tuple(trigger for trigger in self.ir.triggers if trigger.event == event)
