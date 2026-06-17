@@ -39,11 +39,17 @@ class EffectRegistry:
         if status_system is not None:
             self.register("AddModifier", self._execute_add_modifier)
             self.register("RemoveModifier", self._execute_remove_modifier)
+            self.register("RemoveSelfModifier", self._execute_remove_modifier)
         self.register("Heal", self._execute_heal)
         self.register("HealHP", self._execute_heal)
         self.register("Shield", self._execute_shield)
         self.register("InitShield", self._execute_shield)
+        self.register("StackShield", self._execute_shield)
+        self.register("ModifyShield", self._execute_shield)
         self.register("ResourceDelta", self._execute_resource_delta)
+        self.register("SetEnergyBarState", self._execute_mechanism_bar_state)
+        self.register("SetMonsterEnergyBarState", self._execute_mechanism_bar_state)
+        self.register("SetSummonerEnergyBarState", self._execute_mechanism_bar_state)
 
     def register(self, opcode: str, handler: EffectHandler) -> None:
         self._handlers[opcode] = handler
@@ -61,9 +67,11 @@ class EffectRegistry:
             return effect.coverage_status
         if effect.opcode == "AddModifier" and not _add_modifier_payload_is_executable(effect):
             return "blocked"
-        if effect.opcode == "RemoveModifier" and not _remove_modifier_payload_is_executable(effect):
+        if effect.opcode in {"RemoveModifier", "RemoveSelfModifier"} and not _remove_modifier_payload_is_executable(effect):
             return "blocked"
-        if effect.opcode in {"Heal", "HealHP", "Shield", "InitShield", "ResourceDelta"} and not _fixed_payload_is_executable(effect):
+        if effect.opcode in {"Heal", "HealHP", "Shield", "InitShield", "StackShield", "ModifyShield", "ResourceDelta"} and not _fixed_payload_is_executable(effect):
+            return "blocked"
+        if effect.opcode in {"SetEnergyBarState", "SetMonsterEnergyBarState", "SetSummonerEnergyBarState"} and not _mechanism_bar_payload_is_executable(effect):
             return "blocked"
         return "executable"
 
@@ -124,6 +132,9 @@ class EffectRegistry:
     def _execute_resource_delta(self, effect: EffectIR, context: EffectExecutionContext | None) -> EffectResult:
         return _execute_fixed_unit_delta(effect, context, kind="resource_delta")
 
+    def _execute_mechanism_bar_state(self, effect: EffectIR, context: EffectExecutionContext | None) -> EffectResult:
+        return _execute_mechanism_bar_state(effect, context)
+
 
 def _add_modifier_payload_is_executable(effect: EffectIR) -> bool:
     standard = effect.payload.get("standard")
@@ -155,6 +166,18 @@ def _fixed_payload_is_executable(effect: EffectIR) -> bool:
     if effect.opcode == "ResourceDelta":
         return isinstance(standard.get("resource"), str) and bool(standard.get("resource"))
     return True
+
+
+def _mechanism_bar_payload_is_executable(effect: EffectIR) -> bool:
+    standard = effect.payload.get("standard")
+    if not isinstance(standard, dict):
+        return False
+    return (
+        standard.get("state") is not None
+        or standard.get("active") is not None
+        or _fixed_amount(standard.get("current_count")) is not None
+        or _fixed_amount(standard.get("max_count")) is not None
+    )
 
 
 def _execute_fixed_unit_delta(
@@ -249,6 +272,78 @@ def _execute_fixed_unit_delta(
         )
         return _mutation_effect_result(effect, kind, mutation, amount, target_id=target_id, resource=resource)
     return _unsupported_effect(effect, f"unsupported_resource_delta:{resource}")
+
+
+def _execute_mechanism_bar_state(effect: EffectIR, context: EffectExecutionContext | None) -> EffectResult:
+    if context is None:
+        return _unsupported_effect(effect, "mechanism_bar_state requires EffectExecutionContext")
+    standard = effect.payload.get("standard")
+    if not isinstance(standard, dict):
+        return _unsupported_effect(effect, "mechanism_bar_state effect has no standardized payload")
+    if not _mechanism_bar_payload_is_executable(effect):
+        return _unsupported_effect(effect, "unsupported_formula:fixed_mechanism_bar_state_or_count_required")
+
+    target_id = _resolve_target_alias(
+        standard.get("target_alias"),
+        caster_id=context.caster_id,
+        owner_id=context.owner_id,
+        param_entity_id=context.param_entity_id,
+        current_action_target_id=context.current_action_target_id,
+    )
+    target_id = target_id or context.owner_id or context.caster_id
+    state = context.state
+    if target_id not in state.units:
+        return _unsupported_effect(effect, f"target unit {target_id!r} is not in state")
+    unit = state.units[target_id]
+    before_bars = unit.flags.get("mechanism_bars", {})
+    if not isinstance(before_bars, dict):
+        before_bars = {}
+    before = {str(key): value for key, value in before_bars.items()}
+    bar_key = str(standard.get("bar_type") or effect.opcode)
+    bar_state = dict(before.get(bar_key, {})) if isinstance(before.get(bar_key), dict) else {}
+    for key in ("state", "active"):
+        if standard.get(key) is not None:
+            bar_state[key] = standard[key]
+    current_count = _fixed_amount(standard.get("current_count"))
+    max_count = _fixed_amount(standard.get("max_count"))
+    if current_count is not None:
+        bar_state["current_count"] = current_count
+    if max_count is not None:
+        bar_state["max_count"] = max_count
+    after = {**before, bar_key: bar_state}
+    mutation = Mutation(
+        op="set",
+        path=("units", target_id, "flags", "mechanism_bars"),
+        before=before,
+        after=after,
+        reason="apply fixed mechanism bar state effect",
+        source="effect_system",
+        metadata={
+            "effect_id": effect.effect_id,
+            "opcode": effect.opcode,
+            "source_id": context.source_id,
+            "caster_id": context.caster_id,
+            "standard": standard,
+            "effect_source": effect.source.to_json(),
+        },
+    )
+    record = SettlementRecord(
+        record_type="mechanism_bar_state",
+        source="effect_system",
+        mutation_id=mutation.stable_id(),
+        process_only=False,
+        payload={
+            "effect_id": effect.effect_id,
+            "opcode": effect.opcode,
+            "target_id": target_id,
+            "bar_key": bar_key,
+            "path": list(mutation.path),
+            "before": before,
+            "after": after,
+        },
+        trace={"effect_source": effect.source.to_json()},
+    ).to_json()
+    return EffectResult(mutations=(mutation,), records=(record,))
 
 
 def _mutation_effect_result(

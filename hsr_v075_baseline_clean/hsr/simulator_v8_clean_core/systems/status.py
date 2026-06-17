@@ -274,11 +274,11 @@ class StatusSystem:
         param_entity_id: str | None = None,
         current_action_target_id: str | None = None,
     ) -> StatusApplicationResult:
-        if effect.opcode != "RemoveModifier":
-            return _unsupported_result(effect, "effect is not RemoveModifier")
+        if effect.opcode not in {"RemoveModifier", "RemoveSelfModifier"}:
+            return _unsupported_result(effect, "effect is not RemoveModifier or RemoveSelfModifier")
         standard = effect.payload.get("standard")
         if not isinstance(standard, dict):
-            return _unsupported_result(effect, "RemoveModifier effect has no standardized payload")
+            return _unsupported_result(effect, f"{effect.opcode} effect has no standardized payload")
         target_id = _resolve_target_alias(
             standard.get("target_alias"),
             caster_id=caster_id,
@@ -298,7 +298,7 @@ class StatusSystem:
             status_id = status_id_value
             modifier_name = status_id.removeprefix("modifier:")
         else:
-            return _unsupported_result(effect, "RemoveModifier has no modifier_name or status_id")
+            return _unsupported_result(effect, f"{effect.opcode} has no modifier_name or status_id")
         before_details = _status_details(unit_flags=state.units[target_id].flags)
         existing_detail = _find_status_detail(before_details, status_id)
         plan = StatusLifecyclePlan(

@@ -367,7 +367,7 @@ class TBGDLowering:
             return lowered
 
         effect_id = f"effect:{relative}:{modifier_name}:{callback_index}:{branch}:{task_index}:{opcode}"
-        payload = _effect_payload(task, opcode)
+        payload = _effect_payload(task, opcode, modifier_name)
         coverage_status = _effect_coverage_status(opcode, payload)
         lowered.effects.append(
             EffectIR(
@@ -769,10 +769,25 @@ def _compact_payload(value: dict[str, Any]) -> dict[str, Any]:
     return {key: _json_safe(item) for key, item in value.items() if key not in ignored and key != "$type"}
 
 
-def _effect_payload(value: dict[str, Any], opcode: str) -> dict[str, Any]:
+REMOVE_MODIFIER_OPCODES = {"RemoveModifier", "RemoveSelfModifier"}
+HEAL_OPCODES = {"HealHP"}
+SHIELD_OPCODES = {"InitShield", "StackShield", "ModifyShield"}
+MECHANISM_BAR_OPCODES = {"SetEnergyBarState", "SetMonsterEnergyBarState", "SetSummonerEnergyBarState"}
+EXECUTABLE_TARGET_ALIASES = {"Caster", "ModifierOwnerEntity", "ParamEntity", "CurrentActionTarget"}
+
+
+def _effect_payload(value: dict[str, Any], opcode: str, source_modifier_name: str) -> dict[str, Any]:
     payload = _compact_payload(value)
     if opcode == "AddModifier":
         payload["standard"] = _standard_add_modifier_payload(value)
+    elif opcode in REMOVE_MODIFIER_OPCODES:
+        payload["standard"] = _standard_remove_modifier_payload(value, opcode, source_modifier_name)
+    elif opcode in HEAL_OPCODES:
+        payload["standard"] = _standard_heal_payload(value)
+    elif opcode in SHIELD_OPCODES:
+        payload["standard"] = _standard_shield_payload(value, opcode)
+    elif opcode in MECHANISM_BAR_OPCODES:
+        payload["standard"] = _standard_mechanism_bar_payload(value, opcode)
     family = _task_damage_family(value, opcode)
     if family != "unknown":
         payload["damage_formula_family"] = family
@@ -787,7 +802,32 @@ def _effect_coverage_status(opcode: str, payload: dict[str, Any]) -> str:
             return "blocked"
         if not standard.get("modifier_name"):
             return "blocked"
-        if standard.get("target_alias") in {"Caster", "ModifierOwnerEntity", "ParamEntity", "CurrentActionTarget"}:
+        if standard.get("target_alias") in EXECUTABLE_TARGET_ALIASES:
+            return "executable"
+        return "blocked"
+    if opcode in REMOVE_MODIFIER_OPCODES:
+        standard = payload.get("standard")
+        if not isinstance(standard, dict):
+            return "blocked"
+        has_modifier = isinstance(standard.get("modifier_name"), str) and bool(standard.get("modifier_name"))
+        has_status = isinstance(standard.get("status_id"), str) and bool(standard.get("status_id"))
+        if (has_modifier or has_status) and standard.get("target_alias") in EXECUTABLE_TARGET_ALIASES:
+            return "executable"
+        return "blocked"
+    if opcode in HEAL_OPCODES | SHIELD_OPCODES:
+        standard = payload.get("standard")
+        if not isinstance(standard, dict):
+            return "blocked"
+        if standard.get("target_alias") not in EXECUTABLE_TARGET_ALIASES:
+            return "blocked"
+        if _fixed_expr_value(standard.get("amount")) is None:
+            return "blocked"
+        return "executable"
+    if opcode in MECHANISM_BAR_OPCODES:
+        standard = payload.get("standard")
+        if not isinstance(standard, dict):
+            return "blocked"
+        if _mechanism_bar_has_fixed_payload(standard):
             return "executable"
         return "blocked"
     return classify_opcode(opcode)
@@ -807,6 +847,89 @@ def _standard_add_modifier_payload(value: dict[str, Any]) -> dict[str, Any]:
         "max_layer": _numeric_expr_summary(value.get("MaxLayer")),
         "chance": _numeric_expr_summary(value.get("Chance")),
     }
+
+
+def _standard_remove_modifier_payload(value: dict[str, Any], opcode: str, source_modifier_name: str) -> dict[str, Any]:
+    if opcode == "RemoveSelfModifier":
+        modifier_name = source_modifier_name
+        target_alias = "ModifierOwnerEntity"
+    else:
+        modifier_name = _value_field(value.get("ModifierName"))
+        target_alias = _target_alias(value.get("TargetType"))
+    status_id = f"modifier:{modifier_name}" if isinstance(modifier_name, str) and modifier_name else None
+    return {
+        "kind": "status_remove",
+        "target_alias": target_alias,
+        "modifier_name": modifier_name,
+        "status_id": status_id,
+    }
+
+
+def _standard_heal_payload(value: dict[str, Any]) -> dict[str, Any]:
+    amount = _numeric_expr_summary(value.get("ModifyValue"))
+    percentage = _numeric_expr_summary(value.get("HealPercentage"))
+    payload = {
+        "kind": "heal",
+        "target_alias": _target_alias(value.get("TargetType")),
+        "formula_type": _value_field(value.get("FormulaType")),
+        "amount": amount,
+        "percentage": percentage,
+        "raw_formula_fields": {
+            "ModifyValue": _json_safe(value.get("ModifyValue")),
+            "HealPercentage": _json_safe(value.get("HealPercentage")),
+            "FormulaType": _json_safe(value.get("FormulaType")),
+        },
+    }
+    if _fixed_expr_value(amount) is None:
+        payload["blocked_reason"] = "fixed_modify_value_required"
+    return payload
+
+
+def _standard_shield_payload(value: dict[str, Any], opcode: str) -> dict[str, Any]:
+    amount = _numeric_expr_summary(value.get("ShieldValue"))
+    percentage = _numeric_expr_summary(value.get("ShieldPercentage"))
+    payload = {
+        "kind": "shield",
+        "shield_opcode": opcode,
+        "target_alias": _target_alias(value.get("TargetType")),
+        "formula_type": _value_field(value.get("FormulaType")),
+        "amount": amount,
+        "percentage": percentage,
+        "raw_formula_fields": {
+            "ShieldValue": _json_safe(value.get("ShieldValue")),
+            "ShieldPercentage": _json_safe(value.get("ShieldPercentage")),
+            "FormulaType": _json_safe(value.get("FormulaType")),
+        },
+    }
+    if _fixed_expr_value(amount) is None:
+        payload["blocked_reason"] = "fixed_shield_value_required"
+    return payload
+
+
+def _standard_mechanism_bar_payload(value: dict[str, Any], opcode: str) -> dict[str, Any]:
+    current_count = _numeric_expr_summary(value.get("CurrentCount"))
+    max_count = _numeric_expr_summary(value.get("MaxCount"))
+    payload = {
+        "kind": "mechanism_bar_state",
+        "opcode": opcode,
+        "target_alias": _target_alias(value.get("TargetType")),
+        "bar_type": _value_field(value.get("BarType")),
+        "active": _value_field(value.get("Active")),
+        "state": _value_field(value.get("CurrentState", value.get("State"))),
+        "current_count": current_count,
+        "max_count": max_count,
+        "raw_formula_fields": {
+            "Active": _json_safe(value.get("Active")),
+            "BarType": _json_safe(value.get("BarType")),
+            "CurrentState": _json_safe(value.get("CurrentState")),
+            "State": _json_safe(value.get("State")),
+            "CurrentCount": _json_safe(value.get("CurrentCount")),
+            "MaxCount": _json_safe(value.get("MaxCount")),
+        },
+    }
+    if not _mechanism_bar_has_fixed_payload(payload):
+        payload["blocked_reason"] = "fixed_mechanism_bar_state_or_count_required"
+    return payload
 
 
 def _target_alias(value: Any) -> str | None:
@@ -859,6 +982,20 @@ def _numeric_expr_summary(value: Any) -> dict[str, Any]:
                 "raw": _json_safe(value),
             }
     return {"kind": "unsupported", "supported": False, "reason": "unsupported_numeric_expression", "raw": _json_safe(value)}
+
+
+def _fixed_expr_value(value: Any) -> float | None:
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, dict) and value.get("kind") == "fixed" and isinstance(value.get("value"), (int, float)):
+        return float(value["value"])
+    return None
+
+
+def _mechanism_bar_has_fixed_payload(standard: dict[str, Any]) -> bool:
+    if standard.get("state") is not None or standard.get("active") is not None:
+        return True
+    return _fixed_expr_value(standard.get("current_count")) is not None or _fixed_expr_value(standard.get("max_count")) is not None
 
 
 def _task_damage_family(value: dict[str, Any], opcode: str) -> str:

@@ -305,7 +305,7 @@ def _select_unsupported_effect_sample(ir: CanonicalIR, rules: RuleBook) -> dict[
                 continue
             for effect_id in trigger.effects:
                 effect = effects.get(effect_id)
-                if effect and effect.opcode != "AddModifier":
+                if effect and effect.opcode != "AddModifier" and effect.coverage_status != "executable":
                     return {"pre_effect": pre_effect, "trigger": trigger, "unsupported_effect": effect}
     return None
 
