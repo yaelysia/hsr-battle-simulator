@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 
 from ..core.model import BattleState, JSONValue, Mutation
 from ..core.settlement import SettlementRecord
+from ..rules.evaluator import NumericEvaluationContext, RuleEvaluator
 from ..rules.ir import EffectIR, RuleEntity
 from ..rules.rulebook import RuleBook
 
@@ -178,6 +179,7 @@ class StatusSystem:
         owner_id: str | None = None,
         param_entity_id: str | None = None,
         current_action_target_id: str | None = None,
+        dynamic_values: dict[str, float] | None = None,
     ) -> StatusApplicationResult:
         if effect.opcode != "AddModifier":
             return _unsupported_result(effect, "effect is not AddModifier")
@@ -207,8 +209,13 @@ class StatusSystem:
         if definition is None:
             return _unsupported_result(effect, f"unknown modifier definition {modifier_name!r}")
 
-        dynamic_values = _resolve_dynamic_values(standard)
-        modifiers, unsupported = _runtime_modifiers(definition, dynamic_values)
+        resolved_dynamic_values = _resolve_dynamic_values(
+            standard,
+            definition,
+            dynamic_values,
+            {"effect_id": effect.effect_id, "effect_source": effect.source.to_json()},
+        )
+        modifiers, unsupported = _runtime_modifiers(definition, resolved_dynamic_values)
         before_details = _status_details(unit_flags=state.units[target_id].flags)
         existing_detail = _matching_status_detail(before_details, target_id, modifier_name, effect.effect_id, source_id)
         application_operation, partial_reasons = _application_semantics(standard, existing_detail)
@@ -224,7 +231,7 @@ class StatusSystem:
             stacks=1,
             max_stacks=_optional_int(standard.get("max_layer")),
             duration=duration,
-            dynamic_values=dynamic_values,
+            dynamic_values=resolved_dynamic_values,
             source_trace={
                 "effect_id": effect.effect_id,
                 "effect_source": effect.source.to_json(),
@@ -539,15 +546,42 @@ def _resolve_target_alias(
     return None
 
 
-def _resolve_dynamic_values(standard: dict[str, JSONValue]) -> dict[str, JSONValue]:
-    values: dict[str, JSONValue] = {}
+def _resolve_dynamic_values(
+    standard: dict[str, JSONValue],
+    definition: RuleEntity,
+    runtime_bindings: dict[str, float] | None,
+    source_trace: dict[str, JSONValue],
+) -> dict[str, JSONValue]:
+    values: dict[str, JSONValue] = {
+        "__by_name": {},
+        "__by_hash": {},
+        "__evaluations": [],
+        "__definition_bindings": _json_safe(definition.fields.get("dynamic_value_bindings", {})),
+    }
     dynamic_values = standard.get("dynamic_values")
     if not isinstance(dynamic_values, dict):
         return values
+    bindings = _numeric_bindings(runtime_bindings)
+    by_name: dict[str, JSONValue] = {}
+    by_hash: dict[str, JSONValue] = {}
+    evaluations: list[JSONValue] = []
     for key, expr in dynamic_values.items():
-        value = _numeric_expr_value(expr)
-        if value is not None:
-            values[str(key)] = value
+        result = RuleEvaluator().evaluate_numeric(
+            expr,
+            NumericEvaluationContext(dynamic_values=bindings, source_trace=source_trace),
+        )
+        result_json = result.to_json()
+        evaluations.append({"name": str(key), "result": result_json})
+        if result.ok and result.value is not None:
+            by_name[str(key)] = result.value
+            values[str(key)] = result.value
+            hash_key = result.bindings.get("key")
+            if isinstance(hash_key, str):
+                by_hash[hash_key] = result.value
+                values[hash_key] = result.value
+    values["__by_name"] = by_name
+    values["__by_hash"] = by_hash
+    values["__evaluations"] = evaluations
     return values
 
 
@@ -594,20 +628,28 @@ def _resolve_stack_property_value(
     value_expr: object,
     dynamic_values: dict[str, JSONValue],
 ) -> tuple[float | None, str]:
-    value = _numeric_expr_value(value_expr)
-    if value is not None:
-        return value, "fixed"
-    if isinstance(value_expr, dict) and value_expr.get("kind") == "dynamic_hash":
-        # v0_210 intentionally does not guess TBGD string-hash bindings. Keep
-        # the evidence visible and require a later binder stage for these cases.
-        return None, f"dynamic_hash_unbound:{value_expr.get('hash')}"
-    return None, "unsupported_numeric_expression"
+    result = RuleEvaluator().evaluate_numeric(
+        value_expr,
+        NumericEvaluationContext(dynamic_values=_numeric_bindings(dynamic_values)),
+    )
+    if result.ok and result.value is not None:
+        return result.value, result.expression_kind
+    return None, result.blocked_reason or "unsupported_numeric_expression"
 
 
-def _numeric_expr_value(expr: object) -> float | None:
-    if isinstance(expr, dict) and expr.get("kind") == "fixed" and isinstance(expr.get("value"), (int, float)):
-        return float(expr["value"])
-    return None
+def _numeric_bindings(values: dict[str, JSONValue] | dict[str, float] | None) -> dict[str, float]:
+    if not isinstance(values, dict):
+        return {}
+    bindings: dict[str, float] = {}
+    for key, value in values.items():
+        if isinstance(value, (int, float)):
+            bindings[str(key)] = float(value)
+    by_hash = values.get("__by_hash")
+    if isinstance(by_hash, dict):
+        for key, value in by_hash.items():
+            if isinstance(value, (int, float)):
+                bindings[str(key)] = float(value)
+    return bindings
 
 
 def _map_stack_property(property_name: str) -> tuple[str, str, str] | None:
@@ -639,12 +681,12 @@ def _map_stack_property(property_name: str) -> tuple[str, str, str] | None:
 
 
 def _optional_float(expr: object) -> float | None:
-    value = _numeric_expr_value(expr)
-    return value if value is not None else None
+    result = RuleEvaluator().evaluate_numeric(expr, NumericEvaluationContext())
+    return result.value if result.ok and result.value is not None else None
 
 
 def _optional_int(expr: object) -> int | None:
-    value = _numeric_expr_value(expr)
+    value = _optional_float(expr)
     return int(value) if value is not None else None
 
 
@@ -722,6 +764,16 @@ def _application_semantics(
 
 def _is_missing_numeric_expr(expr: object) -> bool:
     return isinstance(expr, dict) and expr.get("kind") == "missing"
+
+
+def _json_safe(value: object) -> JSONValue:
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return str(value)
 
 
 def _trigger_ids_by_event(rules: RuleBook, modifier_name: str) -> dict[str, tuple[str, ...]]:

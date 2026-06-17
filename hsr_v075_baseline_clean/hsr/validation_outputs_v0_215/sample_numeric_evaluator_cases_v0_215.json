@@ -1,0 +1,45 @@
+{
+  "bound_dynamic_hash": {
+    "bindings": {
+      "hash": -295141034,
+      "key": "-295141034",
+      "value": 321.0
+    },
+    "blocked_reason": "",
+    "expression_kind": "dynamic_hash",
+    "ok": true,
+    "source_trace": {},
+    "value": 321.0
+  },
+  "fixed": {
+    "bindings": {},
+    "blocked_reason": "",
+    "expression_kind": "fixed",
+    "ok": true,
+    "source_trace": {},
+    "value": 12.5
+  },
+  "unbound_dynamic_hash": {
+    "bindings": {
+      "hash": -295141034,
+      "key": "-295141034"
+    },
+    "blocked_reason": "dynamic_hash_unbound:-295141034",
+    "expression_kind": "dynamic_hash",
+    "ok": false,
+    "source_trace": {},
+    "value": null
+  },
+  "unsupported_postfix": {
+    "bindings": {
+      "raw": {
+        "OpCodes": "AQABAQIR"
+      }
+    },
+    "blocked_reason": "unsupported_postfix_expr",
+    "expression_kind": "postfix_expr",
+    "ok": false,
+    "source_trace": {},
+    "value": null
+  }
+}

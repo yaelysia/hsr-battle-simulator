@@ -594,6 +594,7 @@ def _modifier_definition_entity(
         "lifetime": _json_safe(modifier.get("LifeTime")),
         "behavior_flags": _json_safe(modifier.get("BehaviorFlagList", [])),
         "dynamic_values": _json_safe(modifier.get("DynamicValues", {})),
+        "dynamic_value_bindings": _dynamic_value_bindings(modifier.get("DynamicValues")),
         "callback_events": _callback_events(modifier),
         "stack_properties": _stack_property_summaries(modifier),
     }
@@ -773,6 +774,7 @@ REMOVE_MODIFIER_OPCODES = {"RemoveModifier", "RemoveSelfModifier"}
 HEAL_OPCODES = {"HealHP"}
 SHIELD_OPCODES = {"InitShield", "StackShield", "ModifyShield"}
 MECHANISM_BAR_OPCODES = {"SetEnergyBarState", "SetMonsterEnergyBarState", "SetSummonerEnergyBarState"}
+RESOURCE_DELTA_OPCODES = {"ModifySPNew"}
 EXECUTABLE_TARGET_ALIASES = {"Caster", "ModifierOwnerEntity", "ParamEntity", "CurrentActionTarget"}
 
 
@@ -788,6 +790,8 @@ def _effect_payload(value: dict[str, Any], opcode: str, source_modifier_name: st
         payload["standard"] = _standard_shield_payload(value, opcode)
     elif opcode in MECHANISM_BAR_OPCODES:
         payload["standard"] = _standard_mechanism_bar_payload(value, opcode)
+    elif opcode in RESOURCE_DELTA_OPCODES:
+        payload["standard"] = _standard_resource_delta_payload(value, opcode)
     family = _task_damage_family(value, opcode)
     if family != "unknown":
         payload["damage_formula_family"] = family
@@ -830,18 +834,31 @@ def _effect_coverage_status(opcode: str, payload: dict[str, Any]) -> str:
         if _mechanism_bar_has_fixed_payload(standard):
             return "executable"
         return "blocked"
+    if opcode in RESOURCE_DELTA_OPCODES:
+        standard = payload.get("standard")
+        if not isinstance(standard, dict):
+            return "blocked"
+        if standard.get("target_alias") not in EXECUTABLE_TARGET_ALIASES:
+            return "blocked"
+        if not isinstance(standard.get("resource"), str):
+            return "blocked"
+        if _fixed_expr_value(standard.get("amount")) is None:
+            return "blocked"
+        return "executable"
     return classify_opcode(opcode)
 
 
 def _standard_add_modifier_payload(value: dict[str, Any]) -> dict[str, Any]:
+    dynamic_values = {
+        str(key): _numeric_expr_summary(item)
+        for key, item in (value.get("DynamicValues") or {}).items()
+        if isinstance(value.get("DynamicValues"), dict)
+    }
     return {
         "modifier_name": _value_field(value.get("ModifierName")),
         "target_alias": _target_alias(value.get("TargetType")),
-        "dynamic_values": {
-            str(key): _numeric_expr_summary(item)
-            for key, item in (value.get("DynamicValues") or {}).items()
-            if isinstance(value.get("DynamicValues"), dict)
-        },
+        "dynamic_values": dynamic_values,
+        "dynamic_value_requests": _dynamic_value_requests(dynamic_values),
         "lifetime": _numeric_expr_summary(value.get("LifeTime")),
         "layer_add_when_stack": _numeric_expr_summary(value.get("LayerAddWhenStack")),
         "max_layer": _numeric_expr_summary(value.get("MaxLayer")),
@@ -930,6 +947,49 @@ def _standard_mechanism_bar_payload(value: dict[str, Any], opcode: str) -> dict[
     if not _mechanism_bar_has_fixed_payload(payload):
         payload["blocked_reason"] = "fixed_mechanism_bar_state_or_count_required"
     return payload
+
+
+def _standard_resource_delta_payload(value: dict[str, Any], opcode: str) -> dict[str, Any]:
+    amount = _numeric_expr_summary(value.get("AddValue", value.get("ModifyValue")))
+    payload = {
+        "kind": "resource_delta",
+        "resource": "skill_points" if opcode == "ModifySPNew" else opcode,
+        "target_alias": _target_alias(value.get("TargetType")),
+        "amount": amount,
+        "raw_formula_fields": {
+            "AddValue": _json_safe(value.get("AddValue")),
+            "ModifyValue": _json_safe(value.get("ModifyValue")),
+        },
+    }
+    if _fixed_expr_value(amount) is None:
+        payload["blocked_reason"] = "fixed_or_bound_resource_delta_required"
+    return payload
+
+
+def _dynamic_value_bindings(value: Any) -> dict[str, Any]:
+    floats = value.get("Floats") if isinstance(value, dict) else None
+    if not isinstance(floats, dict):
+        return {"by_hash": {}, "raw": _json_safe(value)}
+    by_hash: dict[str, Any] = {}
+    for key, item in floats.items():
+        by_hash[str(key)] = {
+            "hash": str(key),
+            "value_type": "float",
+            "read_info": _json_safe(item.get("ReadInfo")) if isinstance(item, dict) else None,
+            "raw": _json_safe(item),
+            "raw_path": f"DynamicValues.Floats[{key}]",
+        }
+    return {"by_hash": by_hash, "raw": _json_safe(value)}
+
+
+def _dynamic_value_requests(dynamic_values: dict[str, Any]) -> dict[str, Any]:
+    requests: dict[str, Any] = {}
+    for key, expr in dynamic_values.items():
+        request: dict[str, Any] = {"name": key, "expr": _json_safe(expr)}
+        if isinstance(expr, dict) and expr.get("kind") == "dynamic_hash":
+            request["hash"] = expr.get("hash")
+        requests[key] = request
+    return requests
 
 
 def _target_alias(value: Any) -> str | None:

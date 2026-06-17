@@ -5,6 +5,7 @@ from typing import Callable
 
 from ..core.model import BattleState, GameEvent, JSONValue, Mutation
 from ..core.settlement import SettlementRecord
+from ..rules.evaluator import NumericEvaluationContext, NumericEvaluationResult, RuleEvaluator
 from ..rules.ir import EffectIR
 from .status import SUPPORTED_ADD_MODIFIER_ALIASES, StatusSystem
 
@@ -25,6 +26,7 @@ class EffectExecutionContext:
     owner_id: str | None = None
     param_entity_id: str | None = None
     current_action_target_id: str | None = None
+    dynamic_values: dict[str, float] | None = None
 
 
 EffectHandler = Callable[[EffectIR, EffectExecutionContext | None], EffectResult]
@@ -47,6 +49,7 @@ class EffectRegistry:
         self.register("StackShield", self._execute_shield)
         self.register("ModifyShield", self._execute_shield)
         self.register("ResourceDelta", self._execute_resource_delta)
+        self.register("ModifySPNew", self._execute_resource_delta)
         self.register("SetEnergyBarState", self._execute_mechanism_bar_state)
         self.register("SetMonsterEnergyBarState", self._execute_mechanism_bar_state)
         self.register("SetSummonerEnergyBarState", self._execute_mechanism_bar_state)
@@ -69,7 +72,7 @@ class EffectRegistry:
             return "blocked"
         if effect.opcode in {"RemoveModifier", "RemoveSelfModifier"} and not _remove_modifier_payload_is_executable(effect):
             return "blocked"
-        if effect.opcode in {"Heal", "HealHP", "Shield", "InitShield", "StackShield", "ModifyShield", "ResourceDelta"} and not _fixed_payload_is_executable(effect):
+        if effect.opcode in {"Heal", "HealHP", "Shield", "InitShield", "StackShield", "ModifyShield", "ResourceDelta", "ModifySPNew"} and not _fixed_payload_is_executable(effect):
             return "blocked"
         if effect.opcode in {"SetEnergyBarState", "SetMonsterEnergyBarState", "SetSummonerEnergyBarState"} and not _mechanism_bar_payload_is_executable(effect):
             return "blocked"
@@ -92,6 +95,7 @@ class EffectRegistry:
             owner_id=context.owner_id,
             param_entity_id=context.param_entity_id,
             current_action_target_id=context.current_action_target_id,
+            dynamic_values=context.dynamic_values,
         )
         return EffectResult(
             mutations=result.mutations,
@@ -163,7 +167,7 @@ def _fixed_payload_is_executable(effect: EffectIR) -> bool:
         return False
     if _fixed_amount(standard.get("amount", standard.get("delta"))) is None:
         return False
-    if effect.opcode == "ResourceDelta":
+    if effect.opcode in {"ResourceDelta", "ModifySPNew"}:
         return isinstance(standard.get("resource"), str) and bool(standard.get("resource"))
     return True
 
@@ -200,9 +204,17 @@ def _execute_fixed_unit_delta(
     )
     if target_id is None:
         return _unsupported_effect(effect, f"unsupported_or_missing_target_alias:{standard.get('target_alias')}")
-    amount = _fixed_amount(standard.get("amount", standard.get("delta")))
-    if amount is None:
-        return _unsupported_effect(effect, "unsupported_formula:fixed_amount_required")
+    formula_blocked = _formula_type_blocked(effect, standard, kind)
+    if formula_blocked:
+        return _unsupported_effect(effect, formula_blocked, {"standard": standard})
+    amount_result = _evaluate_numeric(effect, context, standard.get("amount", standard.get("delta")))
+    if not amount_result.ok or amount_result.value is None:
+        return _unsupported_effect(
+            effect,
+            f"unsupported_formula:{amount_result.blocked_reason or 'numeric_evaluation_failed'}",
+            {"numeric_evaluation": amount_result.to_json(), "standard": standard},
+        )
+    amount = amount_result.value
     state = context.state
     if kind == "resource_delta" and standard.get("resource") == "skill_points":
         after = max(0, min(state.max_skill_points, state.skill_points + int(amount)))
@@ -211,11 +223,11 @@ def _execute_fixed_unit_delta(
             path=("skill_points",),
             before=state.skill_points,
             after=after,
-            reason="apply fixed skill point delta effect",
+            reason="apply numeric skill point delta effect",
             source="effect_system",
-            metadata=_effect_metadata(effect, context, standard, amount),
+            metadata=_effect_metadata(effect, context, standard, amount, amount_result),
         )
-        return _mutation_effect_result(effect, kind, mutation, amount, target_id=None, resource="skill_points")
+        return _mutation_effect_result(effect, kind, mutation, amount, target_id=None, resource="skill_points", evaluation=amount_result)
     if target_id not in state.units:
         return _unsupported_effect(effect, f"target unit {target_id!r} is not in state")
     unit = state.units[target_id]
@@ -226,11 +238,11 @@ def _execute_fixed_unit_delta(
             path=("units", target_id, "hp"),
             before=unit.hp,
             after=after,
-            reason="apply fixed heal effect",
+            reason="apply numeric heal effect",
             source="effect_system",
-            metadata=_effect_metadata(effect, context, standard, amount),
+            metadata=_effect_metadata(effect, context, standard, amount, amount_result),
         )
-        return _mutation_effect_result(effect, kind, mutation, amount, target_id=target_id)
+        return _mutation_effect_result(effect, kind, mutation, amount, target_id=target_id, evaluation=amount_result)
     if kind == "shield":
         before = float(unit.resources.get("shield", 0.0))
         after = max(0.0, before + amount)
@@ -239,11 +251,11 @@ def _execute_fixed_unit_delta(
             path=("units", target_id, "resources", "shield"),
             before=before,
             after=after,
-            reason="apply fixed shield effect",
+            reason="apply numeric shield effect",
             source="effect_system",
-            metadata=_effect_metadata(effect, context, standard, amount),
+            metadata=_effect_metadata(effect, context, standard, amount, amount_result),
         )
-        return _mutation_effect_result(effect, kind, mutation, amount, target_id=target_id, resource="shield")
+        return _mutation_effect_result(effect, kind, mutation, amount, target_id=target_id, resource="shield", evaluation=amount_result)
     resource = standard.get("resource")
     if kind == "resource_delta" and resource == "energy":
         cap = unit.max_energy if unit.max_energy > 0 else unit.energy + amount
@@ -253,11 +265,11 @@ def _execute_fixed_unit_delta(
             path=("units", target_id, "energy"),
             before=unit.energy,
             after=after,
-            reason="apply fixed energy delta effect",
+            reason="apply numeric energy delta effect",
             source="effect_system",
-            metadata=_effect_metadata(effect, context, standard, amount),
+            metadata=_effect_metadata(effect, context, standard, amount, amount_result),
         )
-        return _mutation_effect_result(effect, kind, mutation, amount, target_id=target_id, resource="energy")
+        return _mutation_effect_result(effect, kind, mutation, amount, target_id=target_id, resource="energy", evaluation=amount_result)
     if kind == "resource_delta" and isinstance(resource, str) and resource:
         before = float(unit.resources.get(resource, 0.0))
         after = before + amount
@@ -266,11 +278,11 @@ def _execute_fixed_unit_delta(
             path=("units", target_id, "resources", resource),
             before=before,
             after=after,
-            reason=f"apply fixed {resource} delta effect",
+            reason=f"apply numeric {resource} delta effect",
             source="effect_system",
-            metadata=_effect_metadata(effect, context, standard, amount),
+            metadata=_effect_metadata(effect, context, standard, amount, amount_result),
         )
-        return _mutation_effect_result(effect, kind, mutation, amount, target_id=target_id, resource=resource)
+        return _mutation_effect_result(effect, kind, mutation, amount, target_id=target_id, resource=resource, evaluation=amount_result)
     return _unsupported_effect(effect, f"unsupported_resource_delta:{resource}")
 
 
@@ -280,8 +292,6 @@ def _execute_mechanism_bar_state(effect: EffectIR, context: EffectExecutionConte
     standard = effect.payload.get("standard")
     if not isinstance(standard, dict):
         return _unsupported_effect(effect, "mechanism_bar_state effect has no standardized payload")
-    if not _mechanism_bar_payload_is_executable(effect):
-        return _unsupported_effect(effect, "unsupported_formula:fixed_mechanism_bar_state_or_count_required")
 
     target_id = _resolve_target_alias(
         standard.get("target_alias"),
@@ -304,12 +314,18 @@ def _execute_mechanism_bar_state(effect: EffectIR, context: EffectExecutionConte
     for key in ("state", "active"):
         if standard.get(key) is not None:
             bar_state[key] = standard[key]
-    current_count = _fixed_amount(standard.get("current_count"))
-    max_count = _fixed_amount(standard.get("max_count"))
-    if current_count is not None:
-        bar_state["current_count"] = current_count
-    if max_count is not None:
-        bar_state["max_count"] = max_count
+    numeric_evaluations: dict[str, JSONValue] = {}
+    for key in ("current_count", "max_count"):
+        result = _evaluate_numeric(effect, context, standard.get(key))
+        numeric_evaluations[key] = result.to_json()
+        if result.ok and result.value is not None:
+            bar_state[key] = result.value
+    if not bar_state:
+        return _unsupported_effect(
+            effect,
+            "unsupported_formula:fixed_or_bound_mechanism_bar_state_or_count_required",
+            {"numeric_evaluations": numeric_evaluations, "standard": standard},
+        )
     after = {**before, bar_key: bar_state}
     mutation = Mutation(
         op="set",
@@ -324,6 +340,7 @@ def _execute_mechanism_bar_state(effect: EffectIR, context: EffectExecutionConte
             "source_id": context.source_id,
             "caster_id": context.caster_id,
             "standard": standard,
+            "numeric_evaluations": numeric_evaluations,
             "effect_source": effect.source.to_json(),
         },
     )
@@ -340,6 +357,7 @@ def _execute_mechanism_bar_state(effect: EffectIR, context: EffectExecutionConte
             "path": list(mutation.path),
             "before": before,
             "after": after,
+            "numeric_evaluations": numeric_evaluations,
         },
         trace={"effect_source": effect.source.to_json()},
     ).to_json()
@@ -354,35 +372,42 @@ def _mutation_effect_result(
     *,
     target_id: str | None,
     resource: str | None = None,
+    evaluation: NumericEvaluationResult | None = None,
 ) -> EffectResult:
+    payload: dict[str, JSONValue] = {
+        "effect_id": effect.effect_id,
+        "opcode": effect.opcode,
+        "amount": amount,
+        "target_id": target_id,
+        "resource": resource,
+        "path": list(mutation.path),
+        "before": mutation.before,
+        "after": mutation.after,
+    }
+    if evaluation is not None:
+        payload["numeric_evaluation"] = evaluation.to_json()
     record = SettlementRecord(
         record_type=kind,
         source="effect_system",
         mutation_id=mutation.stable_id(),
         process_only=False,
-        payload={
-            "effect_id": effect.effect_id,
-            "opcode": effect.opcode,
-            "amount": amount,
-            "target_id": target_id,
-            "resource": resource,
-            "path": list(mutation.path),
-            "before": mutation.before,
-            "after": mutation.after,
-        },
+        payload=payload,
         trace={"effect_source": effect.source.to_json()},
     ).to_json()
     return EffectResult(mutations=(mutation,), records=(record,))
 
 
-def _unsupported_effect(effect: EffectIR, reason: str) -> EffectResult:
+def _unsupported_effect(effect: EffectIR, reason: str, details: dict[str, JSONValue] | None = None) -> EffectResult:
+    payload: dict[str, JSONValue] = {"effect_id": effect.effect_id, "opcode": effect.opcode, "reason": reason}
+    if details:
+        payload.update(details)
     return EffectResult(
         records=(
             SettlementRecord(
                 record_type="effect_unsupported",
                 source="effect_system",
                 process_only=True,
-                payload={"effect_id": effect.effect_id, "opcode": effect.opcode, "reason": reason},
+                payload=payload,
                 trace={"effect_source": effect.source.to_json()},
             ).to_json(),
         ),
@@ -395,8 +420,9 @@ def _effect_metadata(
     context: EffectExecutionContext,
     standard: dict[str, JSONValue],
     amount: float,
+    evaluation: NumericEvaluationResult | None = None,
 ) -> dict[str, JSONValue]:
-    return {
+    metadata: dict[str, JSONValue] = {
         "effect_id": effect.effect_id,
         "opcode": effect.opcode,
         "source_id": context.source_id,
@@ -405,6 +431,46 @@ def _effect_metadata(
         "amount": amount,
         "effect_source": effect.source.to_json(),
     }
+    if evaluation is not None:
+        metadata["numeric_evaluation"] = evaluation.to_json()
+    return metadata
+
+
+def _evaluate_numeric(
+    effect: EffectIR,
+    context: EffectExecutionContext,
+    expression: object,
+) -> NumericEvaluationResult:
+    return RuleEvaluator().evaluate_numeric(
+        expression,
+        NumericEvaluationContext(
+            dynamic_values=_numeric_bindings(context.dynamic_values),
+            source_trace={"effect_id": effect.effect_id, "effect_source": effect.source.to_json()},
+        ),
+    )
+
+
+def _numeric_bindings(values: dict[str, float] | None) -> dict[str, float]:
+    if not isinstance(values, dict):
+        return {}
+    bindings: dict[str, float] = {}
+    for key, value in values.items():
+        if isinstance(value, (int, float)):
+            bindings[str(key)] = float(value)
+    return bindings
+
+
+def _formula_type_blocked(effect: EffectIR, standard: dict[str, JSONValue], kind: str) -> str:
+    formula_type = standard.get("formula_type")
+    if kind == "heal":
+        if formula_type in {None, "", "HealByBaseValue"}:
+            return ""
+        return f"unsupported_formula:formula_type_not_supported:{formula_type}"
+    if kind == "shield":
+        if formula_type in {None, "", "ShieldByBaseValue"}:
+            return ""
+        return f"unsupported_formula:formula_type_not_supported:{formula_type}"
+    return ""
 
 
 def _resolve_target_alias(
