@@ -1,0 +1,800 @@
+{
+  "action_replay": {
+    "errors": [],
+    "ok": true
+  },
+  "action_settlement_traceability": {
+    "checked_records": 17,
+    "errors": [],
+    "mutation_linked_records": 8,
+    "ok": true,
+    "process_only_records": 9
+  },
+  "action_transition_contract": {
+    "errors": [],
+    "missing_keys": [],
+    "ok": true,
+    "settlement_traceability": {
+      "checked_records": 17,
+      "errors": [],
+      "mutation_linked_records": 8,
+      "ok": true,
+      "process_only_records": 9
+    },
+    "snapshot_after": {
+      "errors": [],
+      "missing_paths": [],
+      "ok": true
+    },
+    "snapshot_before": {
+      "errors": [],
+      "missing_paths": [],
+      "ok": true
+    }
+  },
+  "baseline_version": "v0_200",
+  "build": {
+    "scenario_path": "/home/zhangjinhao/code/hsr/hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/scenarios/examples/identity_smoke_v0_204.json",
+    "summary": {
+      "discovery_files": 8683,
+      "ir_action_definitions": 6949,
+      "ir_effects": 62219,
+      "ir_entities": 22150,
+      "ir_formulas": 46475,
+      "ir_triggers": 27368,
+      "modifier_status": {
+        "add_modifier": {
+          "executable": 7708,
+          "lowered": 9633,
+          "reason": "AddModifier payload is standardized; runtime execution is validated by v0_210"
+        },
+        "definitions_with_stack_properties": 3137,
+        "global_modifier_definitions": 5619,
+        "modifier_definitions": 17257
+      },
+      "sampled": {
+        "ability_files": false,
+        "entity_tables": false
+      }
+    },
+    "tbgd_root": "/home/zhangjinhao/code/hsr/turnbasedgamedata-main"
+  },
+  "checks": {
+    "damage_semantics_regression": {
+      "checks": {
+        "direct_damage_has_ledger": true,
+        "direct_damage_not_bypassing": true,
+        "has_direct_damage": true,
+        "no_follow_up_family": true
+      },
+      "ok": true
+    },
+    "pre_status_application": {
+      "checks": {
+        "pre_status_applied": true,
+        "sample_trigger_bound_to_status": true,
+        "status_has_trigger_map": true,
+        "status_instance_present": true,
+        "unit_contains_status": true
+      },
+      "ok": true,
+      "status_instance": {
+        "caster_id": "ally:saber",
+        "duration": null,
+        "dynamic_values": {},
+        "instance_id": "status:50633683e453a0a0",
+        "max_stacks": null,
+        "modifier_name": "MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean",
+        "modifiers": [],
+        "owner_id": "ally:saber",
+        "source_id": "validation:v0_211:pre_status:effect:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json:MAvatar_Advanced_Seele_00_Skill02InsertMuteSp:39:success:1:AddModifier",
+        "source_trace": {
+          "effect_id": "effect:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json:MAvatar_Advanced_Seele_00_Skill02InsertMuteSp:39:success:1:AddModifier",
+          "effect_source": {
+            "evidence": {
+              "branch": "success",
+              "callback_index": 39,
+              "task_index": 1
+            },
+            "raw_id": "MAvatar_Advanced_Seele_00_Skill02InsertMuteSp",
+            "raw_type": "GlobalModifiers",
+            "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json"
+          },
+          "modifier_definition": {
+            "evidence": {
+              "definition_kind": "modifier_definition",
+              "map_name": "GlobalModifiers",
+              "modifier_name": "MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean"
+            },
+            "raw_id": "MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean",
+            "raw_type": "GlobalModifiers",
+            "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json"
+          }
+        },
+        "stacks": 1,
+        "status_id": "modifier:MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean",
+        "trigger_ids_by_event": {
+          "OnAfterSkillUse": [
+            "trigger:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json:MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean:40"
+          ],
+          "OnInsertActionFinish": [
+            "trigger:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json:MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean:41"
+          ]
+        },
+        "unsupported": []
+      }
+    },
+    "status_modifier_ledger_regression": {
+      "checks": {
+        "has_damage_bonus_status_term": true,
+        "has_status_ledger_transition": true,
+        "has_status_source_term": true
+      },
+      "ok": true,
+      "status_terms": [
+        {
+          "applied_reason": "status_stack_property",
+          "applied_value": 10.0,
+          "bucket": "damage_bonus",
+          "condition": "property=AllDamageTypeAddedRatio",
+          "key": "damage_added_ratio",
+          "raw_path": "_CallbackList[0].CallbackConfig[0]",
+          "scope": "actor",
+          "skipped_reason": "",
+          "source_id": "status:2a090453e2424047",
+          "source_type": "actor.status"
+        }
+      ]
+    },
+    "trigger_executes_add_modifier": {
+      "checks": {
+        "coverage_counts_trigger_mutations": true,
+        "trigger_created_status_mutation": true,
+        "trigger_effect_found": true,
+        "trigger_effect_ok": true,
+        "trigger_window_found": true
+      },
+      "matched_windows": [
+        {
+          "blocked_reason": "",
+          "canonical_window": "after_skill_use",
+          "condition_results": [],
+          "effect_results": [
+            {
+              "effect_id": "effect:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json:MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean:40:callback:0:RemoveModifier",
+              "mutation_count": 0,
+              "ok": false,
+              "opcode": "RemoveModifier",
+              "record_count": 0,
+              "unsupported": [
+                "RemoveModifier"
+              ]
+            },
+            {
+              "effect_id": "effect:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json:MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean:40:callback:1:AddModifier",
+              "mutation_count": 2,
+              "ok": true,
+              "opcode": "AddModifier",
+              "record_count": 1,
+              "unsupported": []
+            },
+            {
+              "effect_id": "effect:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json:MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean:40:callback:2:RemoveSelfModifier",
+              "mutation_count": 0,
+              "ok": false,
+              "opcode": "RemoveSelfModifier",
+              "record_count": 0,
+              "unsupported": [
+                "RemoveSelfModifier"
+              ]
+            }
+          ],
+          "metadata": {},
+          "modifier_name": "MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean",
+          "mutation_count": 2,
+          "owner_id": "ally:saber",
+          "skipped_reason": "",
+          "status_id": "modifier:MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean",
+          "status_instance_id": "status:50633683e453a0a0",
+          "tbgd_event": "OnAfterSkillUse",
+          "trigger_id": "trigger:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json:MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean:40"
+        }
+      ],
+      "ok": true,
+      "status_mutations": [
+        {
+          "after": [
+            "modifier:MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean",
+            "modifier:MAvatar_Advanced_Seele_00_Skill02InsertCD_ShowBuff"
+          ],
+          "before": [
+            "modifier:MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean"
+          ],
+          "metadata": {
+            "modifier_name": "MAvatar_Advanced_Seele_00_Skill02InsertCD_ShowBuff",
+            "status_id": "modifier:MAvatar_Advanced_Seele_00_Skill02InsertCD_ShowBuff"
+          },
+          "mutation_id": "mutation:ec04fb4705690ee2",
+          "op": "set",
+          "path": [
+            "units",
+            "ally:saber",
+            "statuses"
+          ],
+          "reason": "apply AddModifier status id",
+          "source": "status_system"
+        },
+        {
+          "after": [
+            {
+              "caster_id": "ally:saber",
+              "duration": null,
+              "dynamic_values": {},
+              "instance_id": "status:50633683e453a0a0",
+              "max_stacks": null,
+              "modifier_name": "MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean",
+              "modifiers": [],
+              "owner_id": "ally:saber",
+              "source_id": "validation:v0_211:pre_status:effect:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json:MAvatar_Advanced_Seele_00_Skill02InsertMuteSp:39:success:1:AddModifier",
+              "source_trace": {
+                "effect_id": "effect:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json:MAvatar_Advanced_Seele_00_Skill02InsertMuteSp:39:success:1:AddModifier",
+                "effect_source": {
+                  "evidence": {
+                    "branch": "success",
+                    "callback_index": 39,
+                    "task_index": 1
+                  },
+                  "raw_id": "MAvatar_Advanced_Seele_00_Skill02InsertMuteSp",
+                  "raw_type": "GlobalModifiers",
+                  "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json"
+                },
+                "modifier_definition": {
+                  "evidence": {
+                    "definition_kind": "modifier_definition",
+                    "map_name": "GlobalModifiers",
+                    "modifier_name": "MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean"
+                  },
+                  "raw_id": "MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean",
+                  "raw_type": "GlobalModifiers",
+                  "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json"
+                }
+              },
+              "stacks": 1,
+              "status_id": "modifier:MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean",
+              "trigger_ids_by_event": {
+                "OnAfterSkillUse": [
+                  "trigger:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json:MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean:40"
+                ],
+                "OnInsertActionFinish": [
+                  "trigger:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json:MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean:41"
+                ]
+              },
+              "unsupported": []
+            },
+            {
+              "caster_id": "ally:saber",
+              "duration": null,
+              "dynamic_values": {},
+              "instance_id": "status:da17c02b1c2eeb0e",
+              "max_stacks": null,
+              "modifier_name": "MAvatar_Advanced_Seele_00_Skill02InsertCD_ShowBuff",
+              "modifiers": [],
+              "owner_id": "ally:saber",
+              "source_id": "trigger:after_skill_use:trigger:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json:MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean:40:1",
+              "source_trace": {
+                "effect_id": "effect:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json:MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean:40:callback:1:AddModifier",
+                "effect_source": {
+                  "evidence": {
+                    "branch": "callback",
+                    "callback_index": 40,
+                    "task_index": 1
+                  },
+                  "raw_id": "MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean",
+                  "raw_type": "GlobalModifiers",
+                  "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json"
+                },
+                "modifier_definition": {
+                  "evidence": {
+                    "definition_kind": "modifier_definition",
+                    "map_name": "GlobalModifiers",
+                    "modifier_name": "MAvatar_Advanced_Seele_00_Skill02InsertCD_ShowBuff"
+                  },
+                  "raw_id": "MAvatar_Advanced_Seele_00_Skill02InsertCD_ShowBuff",
+                  "raw_type": "GlobalModifiers",
+                  "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json"
+                }
+              },
+              "stacks": 1,
+              "status_id": "modifier:MAvatar_Advanced_Seele_00_Skill02InsertCD_ShowBuff",
+              "trigger_ids_by_event": {
+                "OnPhase1": [
+                  "trigger:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json:MAvatar_Advanced_Seele_00_Skill02InsertCD_ShowBuff:36"
+                ],
+                "OnStack": [
+                  "trigger:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json:MAvatar_Advanced_Seele_00_Skill02InsertCD_ShowBuff:37"
+                ]
+              },
+              "unsupported": []
+            }
+          ],
+          "before": [
+            {
+              "caster_id": "ally:saber",
+              "duration": null,
+              "dynamic_values": {},
+              "instance_id": "status:50633683e453a0a0",
+              "max_stacks": null,
+              "modifier_name": "MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean",
+              "modifiers": [],
+              "owner_id": "ally:saber",
+              "source_id": "validation:v0_211:pre_status:effect:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json:MAvatar_Advanced_Seele_00_Skill02InsertMuteSp:39:success:1:AddModifier",
+              "source_trace": {
+                "effect_id": "effect:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json:MAvatar_Advanced_Seele_00_Skill02InsertMuteSp:39:success:1:AddModifier",
+                "effect_source": {
+                  "evidence": {
+                    "branch": "success",
+                    "callback_index": 39,
+                    "task_index": 1
+                  },
+                  "raw_id": "MAvatar_Advanced_Seele_00_Skill02InsertMuteSp",
+                  "raw_type": "GlobalModifiers",
+                  "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json"
+                },
+                "modifier_definition": {
+                  "evidence": {
+                    "definition_kind": "modifier_definition",
+                    "map_name": "GlobalModifiers",
+                    "modifier_name": "MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean"
+                  },
+                  "raw_id": "MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean",
+                  "raw_type": "GlobalModifiers",
+                  "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json"
+                }
+              },
+              "stacks": 1,
+              "status_id": "modifier:MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean",
+              "trigger_ids_by_event": {
+                "OnAfterSkillUse": [
+                  "trigger:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json:MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean:40"
+                ],
+                "OnInsertActionFinish": [
+                  "trigger:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json:MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean:41"
+                ]
+              },
+              "unsupported": []
+            }
+          ],
+          "metadata": {
+            "status_instance": {
+              "caster_id": "ally:saber",
+              "duration": null,
+              "dynamic_values": {},
+              "instance_id": "status:da17c02b1c2eeb0e",
+              "max_stacks": null,
+              "modifier_name": "MAvatar_Advanced_Seele_00_Skill02InsertCD_ShowBuff",
+              "modifiers": [],
+              "owner_id": "ally:saber",
+              "source_id": "trigger:after_skill_use:trigger:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json:MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean:40:1",
+              "source_trace": {
+                "effect_id": "effect:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json:MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean:40:callback:1:AddModifier",
+                "effect_source": {
+                  "evidence": {
+                    "branch": "callback",
+                    "callback_index": 40,
+                    "task_index": 1
+                  },
+                  "raw_id": "MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean",
+                  "raw_type": "GlobalModifiers",
+                  "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json"
+                },
+                "modifier_definition": {
+                  "evidence": {
+                    "definition_kind": "modifier_definition",
+                    "map_name": "GlobalModifiers",
+                    "modifier_name": "MAvatar_Advanced_Seele_00_Skill02InsertCD_ShowBuff"
+                  },
+                  "raw_id": "MAvatar_Advanced_Seele_00_Skill02InsertCD_ShowBuff",
+                  "raw_type": "GlobalModifiers",
+                  "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json"
+                }
+              },
+              "stacks": 1,
+              "status_id": "modifier:MAvatar_Advanced_Seele_00_Skill02InsertCD_ShowBuff",
+              "trigger_ids_by_event": {
+                "OnPhase1": [
+                  "trigger:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json:MAvatar_Advanced_Seele_00_Skill02InsertCD_ShowBuff:36"
+                ],
+                "OnStack": [
+                  "trigger:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json:MAvatar_Advanced_Seele_00_Skill02InsertCD_ShowBuff:37"
+                ]
+              },
+              "unsupported": []
+            }
+          },
+          "mutation_id": "mutation:da892431f59773f1",
+          "op": "set",
+          "path": [
+            "units",
+            "ally:saber",
+            "flags",
+            "status_details"
+          ],
+          "reason": "apply AddModifier status details",
+          "source": "status_system"
+        }
+      ]
+    },
+    "trigger_spine_selection": {
+      "checks": {
+        "found_pre_add_modifier": true,
+        "found_status_trigger": true,
+        "found_trigger_add_modifier_effect": true
+      },
+      "ok": true,
+      "sample": {
+        "pre_effect": {
+          "coverage_status": "executable",
+          "effect_id": "effect:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json:MAvatar_Advanced_Seele_00_Skill02InsertMuteSp:39:success:1:AddModifier",
+          "opcode": "AddModifier",
+          "payload": {
+            "ModifierName": {
+              "Value": "MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean"
+            },
+            "TargetType": {
+              "$type": "RPG.GameCore.TargetAlias",
+              "Alias": "ModifierOwnerEntity"
+            },
+            "standard": {
+              "chance": {
+                "kind": "missing",
+                "reason": "missing",
+                "supported": false,
+                "value": null
+              },
+              "dynamic_values": {},
+              "layer_add_when_stack": {
+                "kind": "missing",
+                "reason": "missing",
+                "supported": false,
+                "value": null
+              },
+              "lifetime": {
+                "kind": "missing",
+                "reason": "missing",
+                "supported": false,
+                "value": null
+              },
+              "max_layer": {
+                "kind": "missing",
+                "reason": "missing",
+                "supported": false,
+                "value": null
+              },
+              "modifier_name": "MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean",
+              "target_alias": "ModifierOwnerEntity"
+            }
+          },
+          "source": {
+            "evidence": {
+              "branch": "success",
+              "callback_index": 39,
+              "task_index": 1
+            },
+            "raw_id": "MAvatar_Advanced_Seele_00_Skill02InsertMuteSp",
+            "raw_type": "GlobalModifiers",
+            "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json"
+          }
+        },
+        "trigger": {
+          "conditions": [],
+          "coverage_status": "audit_only",
+          "effects": [
+            "effect:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json:MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean:40:callback:0:RemoveModifier",
+            "effect:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json:MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean:40:callback:1:AddModifier",
+            "effect:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json:MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean:40:callback:2:RemoveSelfModifier"
+          ],
+          "event": "OnAfterSkillUse",
+          "source": {
+            "evidence": {
+              "callback_index": 40,
+              "event": "OnAfterSkillUse"
+            },
+            "raw_id": "MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean",
+            "raw_type": "GlobalModifiers",
+            "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json"
+          },
+          "trigger_id": "trigger:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json:MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean:40"
+        },
+        "trigger_effect": {
+          "coverage_status": "executable",
+          "effect_id": "effect:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json:MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean:40:callback:1:AddModifier",
+          "opcode": "AddModifier",
+          "payload": {
+            "ModifierName": {
+              "Value": "MAvatar_Advanced_Seele_00_Skill02InsertCD_ShowBuff"
+            },
+            "TargetType": {
+              "$type": "RPG.GameCore.TargetAlias",
+              "Alias": "ModifierOwnerEntity"
+            },
+            "standard": {
+              "chance": {
+                "kind": "missing",
+                "reason": "missing",
+                "supported": false,
+                "value": null
+              },
+              "dynamic_values": {},
+              "layer_add_when_stack": {
+                "kind": "missing",
+                "reason": "missing",
+                "supported": false,
+                "value": null
+              },
+              "lifetime": {
+                "kind": "missing",
+                "reason": "missing",
+                "supported": false,
+                "value": null
+              },
+              "max_layer": {
+                "kind": "missing",
+                "reason": "missing",
+                "supported": false,
+                "value": null
+              },
+              "modifier_name": "MAvatar_Advanced_Seele_00_Skill02InsertCD_ShowBuff",
+              "target_alias": "ModifierOwnerEntity"
+            }
+          },
+          "source": {
+            "evidence": {
+              "branch": "callback",
+              "callback_index": 40,
+              "task_index": 1
+            },
+            "raw_id": "MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean",
+            "raw_type": "GlobalModifiers",
+            "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json"
+          }
+        }
+      }
+    },
+    "trigger_windows_contract": {
+      "checks": {
+        "all_required_windows_present": true,
+        "coverage_counts_trigger_windows": true,
+        "settlement_has_trigger_window_records": true,
+        "transition_has_trigger_windows": true
+      },
+      "ok": true,
+      "window_names": [
+        "before_skill_use",
+        "before_attack",
+        "after_attack",
+        "after_skill_use"
+      ]
+    },
+    "unsupported_paths": {
+      "blocked_condition_windows": [
+        {
+          "blocked_reason": "blocked_condition:condition:Config/ConfigGlobalModifier/GlobalModifier_Monster2.json:Monster_APShow_Base_Immediately:14:0:ByCompareDynamicValue:unsupported",
+          "canonical_window": "after_skill_use",
+          "condition_results": [
+            {
+              "condition_id": "condition:Config/ConfigGlobalModifier/GlobalModifier_Monster2.json:Monster_APShow_Base_Immediately:14:0:ByCompareDynamicValue",
+              "coverage_status": "unsupported",
+              "opcode": "ByCompareDynamicValue",
+              "reason": "condition_unsupported",
+              "result": null
+            }
+          ],
+          "effect_results": [],
+          "metadata": {},
+          "modifier_name": "Monster_APShow_Base_Immediately",
+          "mutation_count": 0,
+          "owner_id": "ally:saber",
+          "skipped_reason": "",
+          "status_id": "modifier:Monster_APShow_Base_Immediately",
+          "status_instance_id": "status:77b1a982ed13dc2f",
+          "tbgd_event": "OnAfterSkillUse",
+          "trigger_id": "trigger:Config/ConfigGlobalModifier/GlobalModifier_Monster2.json:Monster_APShow_Base_Immediately:14"
+        }
+      ],
+      "checks": {
+        "blocked_condition_recorded": true,
+        "found_blocked_condition_sample": true,
+        "found_unsupported_effect_sample": true,
+        "found_unsupported_target_alias": true,
+        "target_alias_has_reason": true,
+        "unsupported_effect_recorded": true
+      },
+      "ok": true,
+      "unsupported_alias": {
+        "effect": {
+          "coverage_status": "blocked",
+          "effect_id": "effect:Config/ConfigAbility/Activity/ActivitySummon/ActivitySummon_Junk_BattleEvent_02_Ability.json:Junk_BattleEvent_02_Status:2:callback:3:AddModifier",
+          "opcode": "AddModifier",
+          "payload": {
+            "ModifierName": {
+              "Value": "Junk_BattleEvent_02_ListenHitByInsert"
+            },
+            "TargetType": {
+              "$type": "RPG.GameCore.TargetAlias",
+              "Alias": "AllDarkTeam"
+            },
+            "standard": {
+              "chance": {
+                "kind": "missing",
+                "reason": "missing",
+                "supported": false,
+                "value": null
+              },
+              "dynamic_values": {},
+              "layer_add_when_stack": {
+                "kind": "missing",
+                "reason": "missing",
+                "supported": false,
+                "value": null
+              },
+              "lifetime": {
+                "kind": "missing",
+                "reason": "missing",
+                "supported": false,
+                "value": null
+              },
+              "max_layer": {
+                "kind": "missing",
+                "reason": "missing",
+                "supported": false,
+                "value": null
+              },
+              "modifier_name": "Junk_BattleEvent_02_ListenHitByInsert",
+              "target_alias": "AllDarkTeam"
+            }
+          },
+          "source": {
+            "evidence": {
+              "branch": "callback",
+              "callback_index": 2,
+              "task_index": 3
+            },
+            "raw_id": "Junk_BattleEvent_02_Status",
+            "raw_type": "Modifiers",
+            "source_path": "Config/ConfigAbility/Activity/ActivitySummon/ActivitySummon_Junk_BattleEvent_02_Ability.json"
+          }
+        },
+        "reasons": [
+          "unsupported_or_missing_target_alias:AllDarkTeam"
+        ]
+      },
+      "unsupported_effect_records": [
+        {
+          "mutation_id": null,
+          "payload": {
+            "effect_id": "effect:Config/ConfigAbility/Activity/Activity_FateChess_Ability.json:MActivity_FateChess_Saber_01_High_ExceedDamage:3:callback:1:SetDynamicValue",
+            "trigger_id": "trigger:Config/ConfigAbility/Activity/Activity_FateChess_Ability.json:MActivity_FateChess_Saber_01_High_ExceedDamage:3",
+            "unsupported": [
+              "SetDynamicValue"
+            ]
+          },
+          "process_only": true,
+          "record_type": "effect_unsupported",
+          "source": "trigger_system",
+          "trace": {
+            "trigger_id": "trigger:Config/ConfigAbility/Activity/Activity_FateChess_Ability.json:MActivity_FateChess_Saber_01_High_ExceedDamage:3"
+          }
+        }
+      ]
+    }
+  },
+  "fidelity": {
+    "event_count": 201,
+    "event_lifecycle_counts": {
+      "discovered_only": 3,
+      "lowered": 198
+    },
+    "opcode_count": 1212,
+    "opcode_lifecycle_counts": {
+      "blocked": 484,
+      "discovered_only": 123,
+      "executable": 2,
+      "lowered": 603
+    }
+  },
+  "ok": true,
+  "scenario": {
+    "command": {
+      "action_id": "avatar_skill:101401",
+      "action_level": 10,
+      "target_ids": [
+        "enemy:target"
+      ]
+    },
+    "identity": {
+      "errors": [],
+      "ok": true,
+      "source_traces": [
+        {
+          "coverage_status": "audit_only",
+          "entity_id": "avatar:1014",
+          "entity_type": "avatar",
+          "source": {
+            "evidence": {
+              "id_key": "AvatarID",
+              "row_index": 0
+            },
+            "raw_id": "1014",
+            "raw_type": "AvatarConfigLD",
+            "source_path": "ExcelOutput/AvatarConfigLD.json"
+          }
+        },
+        {
+          "coverage_status": "audit_only",
+          "entity_id": "monster:1002011",
+          "entity_type": "monster",
+          "source": {
+            "evidence": {
+              "id_key": "MonsterID",
+              "row_index": 0
+            },
+            "raw_id": "1002011",
+            "raw_type": "MonsterConfig",
+            "source_path": "ExcelOutput/MonsterConfig.json"
+          }
+        },
+        {
+          "coverage_status": "audit_only",
+          "entity_id": "avatar_skill:101401",
+          "entity_type": "avatar_skill",
+          "source": {
+            "evidence": {
+              "id_key": "SkillID",
+              "row_index": 65
+            },
+            "raw_id": "101401",
+            "raw_type": "AvatarSkillConfigLD",
+            "source_path": "ExcelOutput/AvatarSkillConfigLD.json"
+          }
+        },
+        {
+          "action_id": "avatar_skill:101401",
+          "coverage_status": "executable",
+          "definition_id": "action_def:avatar_skill:101401:10",
+          "level": 10,
+          "source": {
+            "evidence": {
+              "id_key": "SkillID",
+              "level": 10,
+              "resource_mapping": {
+                "BPAdd": "skill_point_gain_if_positive",
+                "BPNeed": "skill_point_cost_if_positive",
+                "SPBase": "energy_gain"
+              },
+              "row_index": 65,
+              "taxonomy": {
+                "attack_type": "raw TBGD AttackType; follow-up is an attack type axis",
+                "damage_formula_family": "formula family axis; follow-up is not a damage family",
+                "element_type": "raw TBGD StanceDamageType when present"
+              }
+            },
+            "raw_id": "101401",
+            "raw_type": "AvatarSkillConfigLD",
+            "source_path": "ExcelOutput/AvatarSkillConfigLD.json"
+          }
+        }
+      ]
+    },
+    "scenario_id": "identity_smoke_v0_204"
+  },
+  "snapshot_completeness": {
+    "errors": [],
+    "missing_paths": [],
+    "ok": true
+  },
+  "static_checks": {
+    "ok": true,
+    "violations": []
+  },
+  "version": "v0_211"
+}

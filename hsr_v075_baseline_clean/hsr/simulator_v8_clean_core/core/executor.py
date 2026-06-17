@@ -15,9 +15,12 @@ from .settlement import SettlementRecord
 from ..rules.ir import ActionDefinitionIR
 from ..rules.rulebook import RuleBook
 from ..systems.damage import DamagePacket, DamageSystem
+from ..systems.effect import EffectRegistry
 from ..systems.resource import ResourcePlan, ResourceSystem
+from ..systems.status import StatusSystem
 from ..systems.target import TargetPolicy, TargetSystem
 from ..systems.timeline import TimelinePlan, TimelineSystem
+from ..systems.trigger import TriggerSystem, TriggerWindowResult
 
 
 class CombatExecutor:
@@ -30,6 +33,9 @@ class CombatExecutor:
         self.targets = TargetSystem()
         self.timeline = TimelineSystem()
         self.damage = DamageSystem()
+        self.status = StatusSystem(rules)
+        self.effects = EffectRegistry(self.status)
+        self.triggers = TriggerSystem(rules, self.effects, reducer=self.reducer)
 
     def execute(self, command: ActionCommand, state: BattleState) -> tuple[BattleState, BattleTransition]:
         before = state.snapshot()
@@ -77,20 +83,64 @@ class CombatExecutor:
                 },
             ),
         )
-        events = (action_event, *timeline_result.events)
+        events: tuple[GameEvent, ...] = (action_event, *timeline_result.events)
         timeline_mutations = timeline_result.mutations
         resource_mutations = resource_result.mutations
         pre_damage_mutations = (*timeline_mutations, *resource_mutations)
-        pre_damage_state = self.reducer.apply_all(state, pre_damage_mutations)
+        current_state = self.reducer.apply_all(state, pre_damage_mutations)
+        action_enabled = target_result.ok and resource_result.ok and bool(target_result.resolution.selected)
+        skipped_reason = "" if action_enabled else _trigger_skip_reason(target_result.ok, resource_result.ok)
+        trigger_results: list[TriggerWindowResult] = []
+        for canonical_window, tbgd_event, needs_enabled in (
+            ("before_skill_use", "OnBeforeSkillUse", True),
+            ("before_attack", "OnBeforeAttack", True),
+        ):
+            trigger_result = self.triggers.execute_status_window(
+                current_state,
+                canonical_window=canonical_window,
+                tbgd_event=tbgd_event,
+                command=command,
+                target_resolution=target_result.resolution,
+                enabled=action_enabled if needs_enabled else True,
+                skipped_reason=skipped_reason,
+            )
+            current_state = trigger_result.after_state
+            trigger_results.append(trigger_result)
+
         damage_result = None
         damage_mutations: tuple[Mutation, ...] = ()
-        if target_result.ok and resource_result.ok and target_result.resolution.selected:
+        if action_enabled:
             damage_packet = _damage_packet(command, action_definition, action_definition_trace)
             if damage_packet:
-                damage_result = self.damage.apply_packet(pre_damage_state, damage_packet)
+                damage_result = self.damage.apply_packet(current_state, damage_packet)
                 damage_mutations = damage_result.mutations
-        mutations = (*pre_damage_mutations, *damage_mutations)
-        after_state = self.reducer.apply_all(state, mutations)
+                current_state = self.reducer.apply_all(current_state, damage_mutations)
+
+        for canonical_window, tbgd_event in (
+            ("after_attack", "OnAfterAttack"),
+            ("after_skill_use", "OnAfterSkillUse"),
+        ):
+            trigger_result = self.triggers.execute_status_window(
+                current_state,
+                canonical_window=canonical_window,
+                tbgd_event=tbgd_event,
+                command=command,
+                target_resolution=target_result.resolution,
+                enabled=action_enabled,
+                skipped_reason=skipped_reason,
+            )
+            current_state = trigger_result.after_state
+            trigger_results.append(trigger_result)
+
+        trigger_mutations = tuple(mutation for result in trigger_results for mutation in result.mutations)
+        trigger_events = tuple(event for result in trigger_results for event in result.events)
+        before_damage_trigger_records = tuple(record for result in trigger_results[:2] for record in result.records)
+        after_damage_trigger_records = tuple(record for result in trigger_results[2:] for record in result.records)
+        trigger_windows = tuple(window for result in trigger_results for window in result.trigger_windows)
+        # Trigger mutations before and after damage are already ordered in current_state,
+        # but the flat mutation list must preserve the real execution order for replay.
+        mutations = _ordered_action_mutations(pre_damage_mutations, trigger_results, damage_mutations)
+        after_state = current_state
         damage_rng_events = damage_result.rng_events if damage_result else ()
 
         records: list[dict[str, JSONValue]] = [
@@ -122,8 +172,10 @@ class CombatExecutor:
         ]
         records.extend(_mutation_record("timeline", mutation) for mutation in timeline_mutations)
         records.extend(_mutation_record("resource", mutation) for mutation in resource_mutations)
+        records.extend(before_damage_trigger_records)
         if damage_result:
             records.extend(damage_result.records)
+        records.extend(after_damage_trigger_records)
         if not target_result.ok:
             records.append(
                 SettlementRecord(
@@ -152,8 +204,9 @@ class CombatExecutor:
         transaction = ActionTransaction(
             command=command,
             before=before,
-            events=(*events, *(damage_result.events if damage_result else ())),
+            events=(*events, *trigger_events, *(damage_result.events if damage_result else ())),
             mutations=mutations,
+            trigger_windows=trigger_windows,
             settlement=settlement,
         )
         transition = BattleTransition(
@@ -162,12 +215,14 @@ class CombatExecutor:
             target_resolution=target_result.resolution,
             rng_events=damage_rng_events,
             coverage={
-                "executor": "v0_209_direct_damage_formula",
+                "executor": "v0_211_trigger_effect_spine",
                 "definition_id": action_definition.definition_id,
                 "target_ok": target_result.ok,
                 "resource_ok": resource_result.ok,
                 "timeline_mutation_count": len(timeline_mutations),
                 "resource_mutation_count": len(resource_mutations),
+                "trigger_window_count": len(trigger_windows),
+                "trigger_mutation_count": len(trigger_mutations),
                 "damage_mutation_count": len(damage_mutations),
                 "damage_ok": bool(damage_result.ok) if damage_result else None,
                 "damage_formula_family": action_definition.damage_formula_family,
@@ -190,6 +245,33 @@ def _mutation_record(record_type: str, mutation: Mutation) -> dict[str, JSONValu
             "metadata": mutation.metadata,
         },
     ).to_json()
+
+
+def _ordered_action_mutations(
+    pre_damage_mutations: tuple[Mutation, ...],
+    trigger_results: list[TriggerWindowResult],
+    damage_mutations: tuple[Mutation, ...],
+) -> tuple[Mutation, ...]:
+    before_damage = tuple(
+        mutation
+        for result in trigger_results[:2]
+        for mutation in result.mutations
+    )
+    after_damage = tuple(
+        mutation
+        for result in trigger_results[2:]
+        for mutation in result.mutations
+    )
+    return (*pre_damage_mutations, *before_damage, *damage_mutations, *after_damage)
+
+
+def _trigger_skip_reason(target_ok: bool, resource_ok: bool) -> str:
+    reasons: list[str] = []
+    if not target_ok:
+        reasons.append("target_resolution_failed")
+    if not resource_ok:
+        reasons.append("resource_plan_failed")
+    return ",".join(reasons) or "action_not_executable"
 
 
 def _metadata_bool(metadata: dict[str, JSONValue], key: str, default: bool) -> bool:

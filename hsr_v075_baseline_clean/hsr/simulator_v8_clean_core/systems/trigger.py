@@ -1,10 +1,387 @@
 from __future__ import annotations
 
-from ..core.model import GameEvent
+from dataclasses import dataclass, field
+
+from ..core.model import ActionCommand, BattleState, GameEvent, JSONValue, Mutation, TargetResolution
+from ..core.reducer import MutationReducer
+from ..core.settlement import SettlementRecord
+from ..rules.evaluator import EvaluationContext, RuleEvaluator
+from ..rules.ir import ConditionIR, TriggerIR
 from ..rules.rulebook import RuleBook
+from .effect import EffectExecutionContext, EffectRegistry, EffectResult
+
+
+@dataclass(frozen=True)
+class TriggerWindowRecord:
+    canonical_window: str
+    tbgd_event: str
+    status_instance_id: str | None = None
+    status_id: str | None = None
+    modifier_name: str | None = None
+    owner_id: str | None = None
+    trigger_id: str | None = None
+    condition_results: tuple[dict[str, JSONValue], ...] = ()
+    effect_results: tuple[dict[str, JSONValue], ...] = ()
+    skipped_reason: str = ""
+    blocked_reason: str = ""
+    mutation_count: int = 0
+    metadata: dict[str, JSONValue] = field(default_factory=dict)
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "canonical_window": self.canonical_window,
+            "tbgd_event": self.tbgd_event,
+            "status_instance_id": self.status_instance_id,
+            "status_id": self.status_id,
+            "modifier_name": self.modifier_name,
+            "owner_id": self.owner_id,
+            "trigger_id": self.trigger_id,
+            "condition_results": list(self.condition_results),
+            "effect_results": list(self.effect_results),
+            "skipped_reason": self.skipped_reason,
+            "blocked_reason": self.blocked_reason,
+            "mutation_count": self.mutation_count,
+            "metadata": self.metadata,
+        }
+
+
+@dataclass(frozen=True)
+class TriggerWindowResult:
+    after_state: BattleState
+    mutations: tuple[Mutation, ...] = ()
+    events: tuple[GameEvent, ...] = ()
+    records: tuple[dict[str, JSONValue], ...] = ()
+    trigger_windows: tuple[dict[str, JSONValue], ...] = ()
 
 
 class TriggerSystem:
+    def __init__(
+        self,
+        rules: RuleBook,
+        effect_registry: EffectRegistry,
+        evaluator: RuleEvaluator | None = None,
+        reducer: MutationReducer | None = None,
+    ) -> None:
+        self.rules = rules
+        self.effect_registry = effect_registry
+        self.evaluator = evaluator or RuleEvaluator()
+        self.reducer = reducer or MutationReducer()
+
     def match(self, rules: RuleBook, event: GameEvent) -> tuple[str, ...]:
         return tuple(trigger.trigger_id for trigger in rules.triggers_for_event(event.event_type))
 
+    def execute_status_window(
+        self,
+        state: BattleState,
+        *,
+        canonical_window: str,
+        tbgd_event: str,
+        command: ActionCommand,
+        target_resolution: TargetResolution,
+        enabled: bool,
+        skipped_reason: str = "",
+    ) -> TriggerWindowResult:
+        if not enabled:
+            return self._skipped_window(state, canonical_window, tbgd_event, skipped_reason or "window_disabled")
+
+        current = state
+        mutations: list[Mutation] = []
+        records: list[dict[str, JSONValue]] = []
+        window_records: list[dict[str, JSONValue]] = []
+        primary_target = target_resolution.selected[0] if target_resolution.selected else None
+        status_trigger_count = 0
+
+        for unit_id, detail in _iter_status_details(current):
+            owner_id = str(detail.get("owner_id") or unit_id)
+            modifier_name = str(detail.get("modifier_name") or "")
+            trigger_ids = _trigger_ids_for_event(detail, tbgd_event)
+            if not trigger_ids:
+                continue
+            for trigger_id in trigger_ids:
+                status_trigger_count += 1
+                trigger = self.rules.trigger(trigger_id)
+                if trigger is None:
+                    record = _window_record(
+                        canonical_window,
+                        tbgd_event,
+                        detail,
+                        trigger_id=trigger_id,
+                        blocked_reason="missing_trigger",
+                    )
+                    self._append_process_record(records, window_records, record)
+                    continue
+
+                condition_results, blocked_reason = self._evaluate_conditions(
+                    trigger,
+                    command=command,
+                    primary_target=primary_target,
+                    canonical_window=canonical_window,
+                    tbgd_event=tbgd_event,
+                )
+                if blocked_reason:
+                    record = _window_record(
+                        canonical_window,
+                        tbgd_event,
+                        detail,
+                        trigger_id=trigger.trigger_id,
+                        condition_results=tuple(condition_results),
+                        blocked_reason=blocked_reason,
+                    )
+                    self._append_process_record(records, window_records, record)
+                    continue
+
+                effect_results: list[dict[str, JSONValue]] = []
+                trigger_mutation_count = 0
+                for effect_index, effect_id in enumerate(trigger.effects):
+                    effect = self.rules.effect(effect_id)
+                    if effect is None:
+                        effect_result_json = {
+                            "effect_id": effect_id,
+                            "ok": False,
+                            "unsupported": ["missing_effect"],
+                            "mutation_count": 0,
+                        }
+                        effect_results.append(effect_result_json)
+                        records.append(
+                            SettlementRecord(
+                                record_type="effect_unsupported",
+                                source="trigger_system",
+                                process_only=True,
+                                payload=effect_result_json,
+                                trace={"trigger_id": trigger.trigger_id},
+                            ).to_json()
+                        )
+                        continue
+
+                    result = self.effect_registry.execute(
+                        effect,
+                        EffectExecutionContext(
+                            state=current,
+                            caster_id=command.actor_id,
+                            source_id=f"trigger:{canonical_window}:{trigger.trigger_id}:{effect_index}",
+                            owner_id=owner_id,
+                            param_entity_id=primary_target or command.actor_id,
+                            current_action_target_id=primary_target,
+                        ),
+                    )
+                    current = self.reducer.apply_all(current, result.mutations)
+                    mutations.extend(result.mutations)
+                    records.extend(result.records)
+                    if result.unsupported and not result.records:
+                        records.append(_unsupported_effect_record(trigger, effect.effect_id, result))
+                    trigger_mutation_count += len(result.mutations)
+                    effect_results.append(
+                        {
+                            "effect_id": effect.effect_id,
+                            "opcode": effect.opcode,
+                            "ok": not result.unsupported,
+                            "unsupported": list(result.unsupported),
+                            "mutation_count": len(result.mutations),
+                            "record_count": len(result.records),
+                        }
+                    )
+
+                record = _window_record(
+                    canonical_window,
+                    tbgd_event,
+                    detail,
+                    trigger_id=trigger.trigger_id,
+                    condition_results=tuple(condition_results),
+                    effect_results=tuple(effect_results),
+                    mutation_count=trigger_mutation_count,
+                )
+                self._append_process_record(records, window_records, record)
+
+        if status_trigger_count == 0:
+            record = TriggerWindowRecord(
+                canonical_window=canonical_window,
+                tbgd_event=tbgd_event,
+                skipped_reason="no_status_local_triggers",
+            )
+            self._append_process_record(records, window_records, record)
+
+        events = (
+            GameEvent(
+                event_type="trigger.window",
+                source_id=command.actor_id,
+                target_id=primary_target,
+                event_id=f"event:{state.event_index}:{canonical_window}",
+                window=canonical_window,
+                process_only=True,
+                payload={
+                    "canonical_window": canonical_window,
+                    "tbgd_event": tbgd_event,
+                    "trigger_count": status_trigger_count,
+                    "mutation_count": len(mutations),
+                },
+            ),
+        )
+        return TriggerWindowResult(
+            after_state=current,
+            mutations=tuple(mutations),
+            events=events,
+            records=tuple(records),
+            trigger_windows=tuple(window_records),
+        )
+
+    def _evaluate_conditions(
+        self,
+        trigger: TriggerIR,
+        *,
+        command: ActionCommand,
+        primary_target: str | None,
+        canonical_window: str,
+        tbgd_event: str,
+    ) -> tuple[list[dict[str, JSONValue]], str]:
+        results: list[dict[str, JSONValue]] = []
+        for condition_id in trigger.conditions:
+            condition = self.rules.condition(condition_id)
+            if condition is None:
+                results.append({"condition_id": condition_id, "result": None, "reason": "missing_condition"})
+                return results, f"blocked_condition:{condition_id}:missing"
+            result = self.evaluator.evaluate_condition(
+                condition,
+                EvaluationContext(
+                    actor_id=command.actor_id,
+                    target_id=primary_target,
+                    event_payload={
+                        "canonical_window": canonical_window,
+                        "tbgd_event": tbgd_event,
+                        "action_id": command.action_id,
+                        "action_level": command.action_level,
+                    },
+                ),
+            )
+            results.append(_condition_result_json(condition, result))
+            if result is True:
+                continue
+            if result is False:
+                return results, f"blocked_condition:{condition.condition_id}:false"
+            return results, f"blocked_condition:{condition.condition_id}:unsupported"
+        return results, ""
+
+    def _skipped_window(
+        self,
+        state: BattleState,
+        canonical_window: str,
+        tbgd_event: str,
+        skipped_reason: str,
+    ) -> TriggerWindowResult:
+        record = TriggerWindowRecord(
+            canonical_window=canonical_window,
+            tbgd_event=tbgd_event,
+            skipped_reason=skipped_reason,
+        )
+        record_json = record.to_json()
+        return TriggerWindowResult(
+            after_state=state,
+            records=(
+                SettlementRecord(
+                    record_type="trigger_window",
+                    source="trigger_system",
+                    process_only=True,
+                    payload=record_json,
+                ).to_json(),
+            ),
+            trigger_windows=(record_json,),
+        )
+
+    def _append_process_record(
+        self,
+        records: list[dict[str, JSONValue]],
+        window_records: list[dict[str, JSONValue]],
+        record: TriggerWindowRecord,
+    ) -> None:
+        record_json = record.to_json()
+        window_records.append(record_json)
+        records.append(
+            SettlementRecord(
+                record_type="trigger_window",
+                source="trigger_system",
+                process_only=True,
+                payload=record_json,
+                trace={"trigger_id": record.trigger_id} if record.trigger_id else {},
+            ).to_json()
+        )
+
+
+def _iter_status_details(state: BattleState) -> tuple[tuple[str, dict[str, JSONValue]], ...]:
+    pairs: list[tuple[str, dict[str, JSONValue]]] = []
+    for unit_id, unit in sorted(state.units.items()):
+        details = unit.flags.get("status_details", ())
+        if not isinstance(details, (list, tuple)):
+            continue
+        for detail in details:
+            if isinstance(detail, dict):
+                pairs.append((unit_id, detail))
+    return tuple(pairs)
+
+
+def _trigger_ids_for_event(detail: dict[str, JSONValue], tbgd_event: str) -> tuple[str, ...]:
+    trigger_ids_by_event = detail.get("trigger_ids_by_event")
+    if not isinstance(trigger_ids_by_event, dict):
+        return ()
+    trigger_ids = trigger_ids_by_event.get(tbgd_event, ())
+    if not isinstance(trigger_ids, (list, tuple)):
+        return ()
+    return tuple(str(trigger_id) for trigger_id in trigger_ids if isinstance(trigger_id, str))
+
+
+def _condition_result_json(condition: ConditionIR, result: bool | None) -> dict[str, JSONValue]:
+    if result is True:
+        reason = "condition_true"
+    elif result is False:
+        reason = "condition_false"
+    else:
+        reason = "condition_unsupported"
+    return {
+        "condition_id": condition.condition_id,
+        "opcode": condition.opcode,
+        "coverage_status": condition.coverage_status,
+        "result": result,
+        "reason": reason,
+    }
+
+
+def _window_record(
+    canonical_window: str,
+    tbgd_event: str,
+    detail: dict[str, JSONValue],
+    *,
+    trigger_id: str,
+    condition_results: tuple[dict[str, JSONValue], ...] = (),
+    effect_results: tuple[dict[str, JSONValue], ...] = (),
+    blocked_reason: str = "",
+    mutation_count: int = 0,
+) -> TriggerWindowRecord:
+    return TriggerWindowRecord(
+        canonical_window=canonical_window,
+        tbgd_event=tbgd_event,
+        status_instance_id=_optional_str(detail.get("instance_id")),
+        status_id=_optional_str(detail.get("status_id")),
+        modifier_name=_optional_str(detail.get("modifier_name")),
+        owner_id=_optional_str(detail.get("owner_id")),
+        trigger_id=trigger_id,
+        condition_results=condition_results,
+        effect_results=effect_results,
+        blocked_reason=blocked_reason,
+        mutation_count=mutation_count,
+    )
+
+
+def _unsupported_effect_record(trigger: TriggerIR, effect_id: str, result: EffectResult) -> dict[str, JSONValue]:
+    return SettlementRecord(
+        record_type="effect_unsupported",
+        source="trigger_system",
+        process_only=True,
+        payload={
+            "trigger_id": trigger.trigger_id,
+            "effect_id": effect_id,
+            "unsupported": list(result.unsupported),
+        },
+        trace={"trigger_id": trigger.trigger_id},
+    ).to_json()
+
+
+def _optional_str(value: object) -> str | None:
+    return value if isinstance(value, str) else None

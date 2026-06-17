@@ -22,6 +22,22 @@ class RuleBook:
         object.__setattr__(self, "_conditions", {condition.condition_id: condition for condition in self.ir.conditions})
         object.__setattr__(self, "_triggers", {trigger.trigger_id: trigger for trigger in self.ir.triggers})
         object.__setattr__(self, "_formulas", {formula.formula_id: formula for formula in self.ir.formulas})
+        triggers_by_modifier: dict[str, list[TriggerIR]] = {}
+        triggers_by_modifier_event: dict[tuple[str, str], list[TriggerIR]] = {}
+        for trigger in self.ir.triggers:
+            modifier_name = trigger.source.raw_id
+            triggers_by_modifier.setdefault(modifier_name, []).append(trigger)
+            triggers_by_modifier_event.setdefault((modifier_name, trigger.event), []).append(trigger)
+        object.__setattr__(
+            self,
+            "_triggers_by_modifier",
+            {key: tuple(value) for key, value in triggers_by_modifier.items()},
+        )
+        object.__setattr__(
+            self,
+            "_triggers_by_modifier_event",
+            {key: tuple(value) for key, value in triggers_by_modifier_event.items()},
+        )
 
     def entity(self, entity_id: str) -> RuleEntity | None:
         return self._entities.get(entity_id)
@@ -102,6 +118,12 @@ class RuleBook:
 
     def triggers_for_event(self, event: str) -> tuple[TriggerIR, ...]:
         return tuple(trigger for trigger in self.ir.triggers if trigger.event == event)
+
+    def triggers_for_modifier(self, modifier_name: str) -> tuple[TriggerIR, ...]:
+        return self._triggers_by_modifier.get(modifier_name, ())
+
+    def triggers_for_modifier_event(self, modifier_name: str, event: str) -> tuple[TriggerIR, ...]:
+        return self._triggers_by_modifier_event.get((modifier_name, event), ())
 
     def modifier_definition(self, modifier_name: str) -> RuleEntity | None:
         return self.entity(f"modifier_definition:{modifier_name}")

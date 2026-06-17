@@ -6,7 +6,7 @@ from .resource import ResourcePlan, ResourcePlanResult, ResourceSystem
 from .status import StatusApplicationResult, StatusInstance, StatusSystem
 from .target import TargetingResult, TargetSystem
 from .timeline import TimelinePlan, TimelinePlanResult, TimelineSystem
-from .trigger import TriggerSystem
+from .trigger import TriggerSystem, TriggerWindowRecord, TriggerWindowResult
 
 __all__ = [
     "DamageSystem",
@@ -29,4 +29,6 @@ __all__ = [
     "TimelinePlanResult",
     "TimelineSystem",
     "TriggerSystem",
+    "TriggerWindowRecord",
+    "TriggerWindowResult",
 ]

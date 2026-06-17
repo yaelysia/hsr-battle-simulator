@@ -324,6 +324,7 @@ class ActionTransaction:
     before: Snapshot
     events: tuple[GameEvent, ...] = ()
     mutations: tuple[Mutation, ...] = ()
+    trigger_windows: tuple[dict[str, JSONValue], ...] = ()
     settlement: ActionSettlement | None = None
 
 
@@ -353,6 +354,7 @@ class BattleTransition:
             "events": [event.to_json() for event in self.transaction.events],
             "rng_events": [event.to_json() for event in self.rng_events],
             "mutations": [mutation.to_json() for mutation in self.transaction.mutations],
+            "trigger_windows": list(self.transaction.trigger_windows),
             "settlement": self.transaction.settlement.to_json()
             if self.transaction.settlement
             else None,

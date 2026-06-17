@@ -15,6 +15,7 @@ REQUIRED_TRANSITION_KEYS = (
     "events",
     "rng_events",
     "mutations",
+    "trigger_windows",
     "settlement",
     "coverage",
 )
@@ -53,6 +54,8 @@ class TransitionContractValidator:
             errors.append("transition settlement is missing")
         if not transition_json.get("target_resolution"):
             errors.append("transition target_resolution is empty")
+        if not isinstance(transition_json.get("trigger_windows"), list):
+            errors.append("transition trigger_windows must be a list")
 
         before = self.snapshot_validator.validate(transition.transaction.before)
         after = self.snapshot_validator.validate(transition.after)
@@ -69,4 +72,3 @@ class TransitionContractValidator:
             snapshot_after=after.to_json(),
             settlement_traceability=settlement.to_json(),
         )
-

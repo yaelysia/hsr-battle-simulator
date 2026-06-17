@@ -27,6 +27,7 @@ class StatusInstance:
     dynamic_values: dict[str, JSONValue] = field(default_factory=dict)
     source_trace: dict[str, JSONValue] = field(default_factory=dict)
     modifiers: tuple[dict[str, JSONValue], ...] = ()
+    trigger_ids_by_event: dict[str, tuple[str, ...]] = field(default_factory=dict)
     unsupported: tuple[str, ...] = ()
 
     def to_json(self) -> dict[str, JSONValue]:
@@ -43,6 +44,10 @@ class StatusInstance:
             "dynamic_values": self.dynamic_values,
             "source_trace": self.source_trace,
             "modifiers": list(self.modifiers),
+            "trigger_ids_by_event": {
+                event: list(trigger_ids)
+                for event, trigger_ids in sorted(self.trigger_ids_by_event.items())
+            },
             "unsupported": list(self.unsupported),
         }
 
@@ -153,6 +158,7 @@ class StatusSystem:
                 "modifier_definition": definition.source.to_json(),
             },
             modifiers=tuple(modifiers),
+            trigger_ids_by_event=_trigger_ids_by_event(self.rules, modifier_name),
             unsupported=tuple(unsupported),
         )
         unit = state.units[target_id]
@@ -360,6 +366,13 @@ def _replace_status_detail(details: list[JSONValue], status_instance: StatusInst
         *(item for item in details if not (isinstance(item, dict) and item.get("instance_id") == status_instance.instance_id)),
         instance_json,
     ]
+
+
+def _trigger_ids_by_event(rules: RuleBook, modifier_name: str) -> dict[str, tuple[str, ...]]:
+    by_event: dict[str, list[str]] = {}
+    for trigger in rules.triggers_for_modifier(modifier_name):
+        by_event.setdefault(trigger.event, []).append(trigger.trigger_id)
+    return {event: tuple(trigger_ids) for event, trigger_ids in sorted(by_event.items())}
 
 
 def _status_instance_id(target_id: str, modifier_name: str, effect_id: str, source_id: str) -> str:
