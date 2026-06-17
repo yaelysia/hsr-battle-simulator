@@ -148,6 +148,9 @@ class ActionExecutionPlan:
             "derived_reason": self.derived_reason,
             "derived_from_action_definition": True,
             "plan_source": "action_event_ir_hit_profile_ir",
+            "event_source_status": self.source_trace.get("event_source_status", ""),
+            "binding_id": self.source_trace.get("binding_id", ""),
+            "phase_ids": list(self.source_trace.get("phase_ids", ())),
             "primary_action_target_id": self.primary_action_target_id,
             "per_hit_target_context_not_implemented": self.per_hit_target_context_not_implemented,
         }
@@ -220,7 +223,7 @@ def build_action_execution_plan(
         selection_mode=action_event.selection_mode or _selection_mode(target_mode),
         requested_target_ids=requested_target_ids,
         source="action_event_ir",
-        blocked_reason=_target_plan_blocked_reason(target_mode),
+        blocked_reason=_combined_blocked_reason(action_event.blocked_reason, _target_plan_blocked_reason(target_mode)),
     )
     primary_action_target_id = _primary_action_target_id(resolved_target_groups or {})
     hit_plan = tuple(_hit_plan(profile) for profile in hit_profiles)
@@ -356,6 +359,10 @@ def _target_plan_blocked_reason(target_mode: str) -> str:
     if target_mode == "unknown":
         return "unknown_target_mode_not_executable"
     return ""
+
+
+def _combined_blocked_reason(*reasons: str) -> str:
+    return ",".join(dict.fromkeys(reason for reason in reasons if reason))
 
 
 def _damage_targets(

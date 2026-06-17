@@ -130,6 +130,8 @@ def build_coverage_matrix(report: DiscoveryReport, ir: CanonicalIR) -> CoverageM
     for collection in (
         ir.entities,
         ir.action_definitions,
+        ir.action_ability_bindings,
+        ir.ability_phases,
         ir.action_events,
         ir.hit_profiles,
         ir.triggers,
@@ -145,6 +147,8 @@ def build_coverage_matrix(report: DiscoveryReport, ir: CanonicalIR) -> CoverageM
         ir_summary={
             "entities": len(ir.entities),
             "action_definitions": len(ir.action_definitions),
+            "action_ability_bindings": len(ir.action_ability_bindings),
+            "ability_phases": len(ir.ability_phases),
             "action_events": len(ir.action_events),
             "hit_profiles": len(ir.hit_profiles),
             "triggers": len(ir.triggers),
@@ -279,6 +283,14 @@ def _modifier_status(
 
 
 def _action_execution_status(ir: CanonicalIR) -> dict[str, Any]:
+    binding_status = Counter(binding.coverage_status for binding in ir.action_ability_bindings)
+    binding_reasons = Counter(
+        binding.blocked_reason
+        for binding in ir.action_ability_bindings
+        if binding.blocked_reason
+    )
+    phase_status = Counter(phase.coverage_status for phase in ir.ability_phases)
+    phase_reasons = Counter(phase.blocked_reason for phase in ir.ability_phases if phase.blocked_reason)
     event_status = Counter(event.coverage_status for event in ir.action_events)
     hit_status = Counter(profile.coverage_status for profile in ir.hit_profiles)
     hit_reasons = Counter(
@@ -306,10 +318,25 @@ def _action_execution_status(ir: CanonicalIR) -> dict[str, Any]:
         )
     ]
     return {
+        "action_ability_bindings": {
+            "lowered": len(ir.action_ability_bindings),
+            "executable": binding_status["executable"],
+            "blocked": binding_status["blocked"],
+            "audit_only": binding_status["audit_only"],
+            "status_counts": dict(sorted(binding_status.items())),
+            "blocked_reason_counts": dict(sorted(binding_reasons.items())),
+            "reason": "ActionAbilityBindingIR binds action definitions to mainline ConfigCharacter and ConfigAbility evidence where stable paths exist",
+        },
+        "ability_phases": {
+            "lowered": len(ir.ability_phases),
+            "status_counts": dict(sorted(phase_status.items())),
+            "blocked_reason_counts": dict(sorted(phase_reasons.items())),
+            "reason": "AbilityPhaseIR lowers AbilityList phase structure and opcode summaries; task semantics are not executed in this baseline",
+        },
         "action_events": {
             "lowered": len(ir.action_events),
             "status_counts": dict(sorted(event_status.items())),
-            "reason": "ActionEventIR is lowered from action row fields and remains marked as derived until native TBGD event semantics are mapped",
+            "reason": "ActionEventIR is driven by action ability binding/phase graph when available, with derived windows explicitly marked",
         },
         "hit_profiles": {
             "lowered": len(ir.hit_profiles),

@@ -189,6 +189,72 @@ class HitProfileIR:
 
 
 @dataclass(frozen=True)
+class AbilityPhaseIR:
+    phase_id: str
+    binding_id: str
+    action_id: str
+    level: int
+    ability_name: str
+    phase_index: int
+    target_info: dict[str, JSONValue]
+    opcode_summary: dict[str, JSONValue]
+    callback_summaries: dict[str, JSONValue]
+    source: IRSource
+    coverage_status: CoverageStatus = "audit_only"
+    blocked_reason: str = ""
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "phase_id": self.phase_id,
+            "binding_id": self.binding_id,
+            "action_id": self.action_id,
+            "level": self.level,
+            "ability_name": self.ability_name,
+            "phase_index": self.phase_index,
+            "target_info": self.target_info,
+            "opcode_summary": self.opcode_summary,
+            "callback_summaries": self.callback_summaries,
+            "source": self.source.to_json(),
+            "coverage_status": self.coverage_status,
+            "blocked_reason": self.blocked_reason,
+        }
+
+
+@dataclass(frozen=True)
+class ActionAbilityBindingIR:
+    binding_id: str
+    action_id: str
+    level: int
+    skill_trigger_key: str
+    skill_name: str
+    entry_ability: str
+    ability_names: tuple[str, ...]
+    config_source: dict[str, JSONValue]
+    phase_ids: tuple[str, ...]
+    source_mode: str
+    source: IRSource
+    coverage_status: CoverageStatus = "blocked"
+    blocked_reason: str = ""
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "binding_id": self.binding_id,
+            "action_id": self.action_id,
+            "level": self.level,
+            "skill_trigger_key": self.skill_trigger_key,
+            "skill_name": self.skill_name,
+            "entry_ability": self.entry_ability,
+            "ability_names": list(self.ability_names),
+            "config_source": self.config_source,
+            "phase_ids": list(self.phase_ids),
+            "source_mode": self.source_mode,
+            "source": self.source.to_json(),
+            "coverage_status": self.coverage_status,
+            "blocked_reason": self.blocked_reason,
+        }
+
+
+@dataclass(frozen=True)
 class ActionEventIR:
     action_event_id: str
     action_id: str
@@ -202,6 +268,10 @@ class ActionEventIR:
     source: IRSource
     coverage_status: CoverageStatus = "audit_only"
     blocked_reason: str = ""
+    binding_id: str = ""
+    phase_ids: tuple[str, ...] = ()
+    source_mode: str = "derived"
+    event_source_status: str = "derived_from_action_definition"
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -217,6 +287,10 @@ class ActionEventIR:
             "source": self.source.to_json(),
             "coverage_status": self.coverage_status,
             "blocked_reason": self.blocked_reason,
+            "binding_id": self.binding_id,
+            "phase_ids": list(self.phase_ids),
+            "source_mode": self.source_mode,
+            "event_source_status": self.event_source_status,
         }
 
 
@@ -273,6 +347,8 @@ class CanonicalIR:
     version: str
     entities: tuple[RuleEntity, ...] = ()
     action_definitions: tuple[ActionDefinitionIR, ...] = ()
+    action_ability_bindings: tuple[ActionAbilityBindingIR, ...] = ()
+    ability_phases: tuple[AbilityPhaseIR, ...] = ()
     action_events: tuple[ActionEventIR, ...] = ()
     hit_profiles: tuple[HitProfileIR, ...] = ()
     triggers: tuple[TriggerIR, ...] = ()
@@ -287,6 +363,8 @@ class CanonicalIR:
             "metadata": self.metadata,
             "entities": [entity.to_json() for entity in self.entities],
             "action_definitions": [definition.to_json() for definition in self.action_definitions],
+            "action_ability_bindings": [binding.to_json() for binding in self.action_ability_bindings],
+            "ability_phases": [phase.to_json() for phase in self.ability_phases],
             "action_events": [event.to_json() for event in self.action_events],
             "hit_profiles": [profile.to_json() for profile in self.hit_profiles],
             "triggers": [trigger.to_json() for trigger in self.triggers],

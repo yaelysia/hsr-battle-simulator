@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .ir import (
+    AbilityPhaseIR,
+    ActionAbilityBindingIR,
     ActionDefinitionIR,
     ActionEventIR,
     CanonicalIR,
@@ -32,6 +34,32 @@ class RuleBook:
             self,
             "_action_events",
             {(event.action_id, event.level): event for event in self.ir.action_events},
+        )
+        object.__setattr__(
+            self,
+            "_action_ability_bindings",
+            {(binding.action_id, binding.level): binding for binding in self.ir.action_ability_bindings},
+        )
+        ability_phases_by_binding: dict[str, list[AbilityPhaseIR]] = {}
+        ability_phases_by_action: dict[tuple[str, int], list[AbilityPhaseIR]] = {}
+        for phase in self.ir.ability_phases:
+            ability_phases_by_binding.setdefault(phase.binding_id, []).append(phase)
+            ability_phases_by_action.setdefault((phase.action_id, phase.level), []).append(phase)
+        object.__setattr__(
+            self,
+            "_ability_phases_by_binding",
+            {
+                key: tuple(sorted(value, key=lambda item: (item.phase_index, item.phase_id)))
+                for key, value in ability_phases_by_binding.items()
+            },
+        )
+        object.__setattr__(
+            self,
+            "_ability_phases_by_action",
+            {
+                key: tuple(sorted(value, key=lambda item: (item.phase_index, item.phase_id)))
+                for key, value in ability_phases_by_action.items()
+            },
         )
         hit_profiles_by_action: dict[tuple[str, int], list[HitProfileIR]] = {}
         for profile in self.ir.hit_profiles:
@@ -153,6 +181,15 @@ class RuleBook:
 
     def hit_profiles_for_action(self, action_id: str, level: int) -> tuple[HitProfileIR, ...]:
         return self._hit_profiles_by_action.get((action_id, level), ())
+
+    def action_ability_binding(self, action_id: str, level: int) -> ActionAbilityBindingIR | None:
+        return self._action_ability_bindings.get((action_id, level))
+
+    def ability_phases_for_action(self, action_id: str, level: int) -> tuple[AbilityPhaseIR, ...]:
+        return self._ability_phases_by_action.get((action_id, level), ())
+
+    def ability_phases_for_binding(self, binding_id: str) -> tuple[AbilityPhaseIR, ...]:
+        return self._ability_phases_by_binding.get(binding_id, ())
 
     def triggers_for_event(self, event: str) -> tuple[TriggerIR, ...]:
         return tuple(trigger for trigger in self.ir.triggers if trigger.event == event)

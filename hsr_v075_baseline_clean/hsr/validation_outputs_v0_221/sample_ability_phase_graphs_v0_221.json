@@ -1,0 +1,338 @@
+{
+  "aoe": [
+    {
+      "ability_name": "Avatar_Mar_7th_00_Skill03_Phase01",
+      "action_id": "avatar_skill:100103",
+      "binding_id": "action_binding:avatar_skill:100103:1",
+      "blocked_reason": "ability_task_execution_not_implemented",
+      "callback_summaries": {
+        "on_attack": {
+          "opcode_counts": {},
+          "task_count": 0
+        },
+        "on_end": {
+          "opcode_counts": {},
+          "task_count": 0
+        },
+        "on_hit": {
+          "opcode_counts": {},
+          "task_count": 0
+        },
+        "on_start": {
+          "opcode_counts": {
+            "AlignTargetToTeamCenter": 1,
+            "GlobalMainIntensityEffect": 2,
+            "LookAt": 1,
+            "MoveStageOnTargetForward": 2,
+            "MoveToTargetPosition": 1,
+            "SetTeamFormation": 1,
+            "ShowBattleUI": 2,
+            "TargetAlias": 7,
+            "TeamLookAt": 1,
+            "TriggerAbility": 2,
+            "TriggerAnimState": 1,
+            "WaitAnimState": 1,
+            "WaitTimelineFinish": 1
+          },
+          "task_count": 23
+        }
+      },
+      "coverage_status": "lowered",
+      "level": 1,
+      "opcode_summary": {
+        "opcode_counts": {
+          "AlignTargetToTeamCenter": 1,
+          "GlobalMainIntensityEffect": 2,
+          "LookAt": 1,
+          "MoveStageOnTargetForward": 2,
+          "MoveToTargetPosition": 1,
+          "SetTeamFormation": 1,
+          "ShowBattleUI": 2,
+          "TargetAlias": 7,
+          "TeamLookAt": 1,
+          "TriggerAbility": 2,
+          "TriggerAnimState": 1,
+          "WaitAnimState": 1,
+          "WaitTimelineFinish": 1
+        },
+        "raw_task_summary_only": true,
+        "task_count": 23
+      },
+      "phase_id": "ability_phase:avatar_skill:100103:1:0:Avatar_Mar_7th_00_Skill03_Phase01",
+      "phase_index": 0,
+      "source": {
+        "evidence": {
+          "action_id": "avatar_skill:100103",
+          "entry_ability": "Avatar_Mar_7th_00_Skill03_Phase01",
+          "level": 1,
+          "phase_index": 0,
+          "skill_trigger_key": "Skill03"
+        },
+        "raw_id": "Avatar_Mar_7th_00_Skill03_Phase01",
+        "raw_type": "AbilityList",
+        "source_path": "Config/ConfigAbility/Avatar/Avatar_Mar_7th_00_Ability.json"
+      },
+      "target_info": {
+        "TargetType": "AllEnemy"
+      }
+    }
+  ],
+  "blast": [
+    {
+      "ability_name": "Avatar_Himeko_Skill02_Phase01",
+      "action_id": "avatar_skill:100302",
+      "binding_id": "action_binding:avatar_skill:100302:1",
+      "blocked_reason": "ability_task_execution_not_implemented",
+      "callback_summaries": {
+        "on_attack": {
+          "opcode_counts": {},
+          "task_count": 0
+        },
+        "on_end": {
+          "opcode_counts": {},
+          "task_count": 0
+        },
+        "on_hit": {
+          "opcode_counts": {},
+          "task_count": 0
+        },
+        "on_start": {
+          "opcode_counts": {
+            "AnimSetParameter": 1,
+            "LookAt": 1,
+            "RadialBlurEffect": 2,
+            "TargetAlias": 10,
+            "TriggerAbility": 2,
+            "TriggerAnimStateWithMove": 1,
+            "WaitAnimState": 3
+          },
+          "task_count": 20
+        }
+      },
+      "coverage_status": "lowered",
+      "level": 1,
+      "opcode_summary": {
+        "opcode_counts": {
+          "AnimSetParameter": 1,
+          "LookAt": 1,
+          "RadialBlurEffect": 2,
+          "TargetAlias": 10,
+          "TriggerAbility": 2,
+          "TriggerAnimStateWithMove": 1,
+          "WaitAnimState": 3
+        },
+        "raw_task_summary_only": true,
+        "task_count": 20
+      },
+      "phase_id": "ability_phase:avatar_skill:100302:1:0:Avatar_Himeko_Skill02_Phase01",
+      "phase_index": 0,
+      "source": {
+        "evidence": {
+          "action_id": "avatar_skill:100302",
+          "entry_ability": "Avatar_Himeko_Skill02_Phase01",
+          "level": 1,
+          "phase_index": 0,
+          "skill_trigger_key": "Skill02"
+        },
+        "raw_id": "Avatar_Himeko_Skill02_Phase01",
+        "raw_type": "AbilityList",
+        "source_path": "Config/ConfigAbility/Avatar/Avatar_Himeko_00_Ability.json"
+      },
+      "target_info": {
+        "TargetType": "SkillTargetEntityList"
+      }
+    }
+  ],
+  "bounce": [
+    {
+      "ability_name": "Avatar_Welt_00_Skill02_Phase01",
+      "action_id": "avatar_skill:100402",
+      "binding_id": "action_binding:avatar_skill:100402:1",
+      "blocked_reason": "ability_task_execution_not_implemented",
+      "callback_summaries": {
+        "on_attack": {
+          "opcode_counts": {},
+          "task_count": 0
+        },
+        "on_end": {
+          "opcode_counts": {},
+          "task_count": 0
+        },
+        "on_hit": {
+          "opcode_counts": {},
+          "task_count": 0
+        },
+        "on_start": {
+          "opcode_counts": {
+            "GlobalMainIntensityEffect": 2,
+            "LookAt": 1,
+            "TargetAlias": 5,
+            "TriggerAbility": 2,
+            "TriggerAnimState": 1,
+            "WaitAnimState": 3
+          },
+          "task_count": 14
+        }
+      },
+      "coverage_status": "lowered",
+      "level": 1,
+      "opcode_summary": {
+        "opcode_counts": {
+          "GlobalMainIntensityEffect": 2,
+          "LookAt": 1,
+          "TargetAlias": 5,
+          "TriggerAbility": 2,
+          "TriggerAnimState": 1,
+          "WaitAnimState": 3
+        },
+        "raw_task_summary_only": true,
+        "task_count": 14
+      },
+      "phase_id": "ability_phase:avatar_skill:100402:1:0:Avatar_Welt_00_Skill02_Phase01",
+      "phase_index": 0,
+      "source": {
+        "evidence": {
+          "action_id": "avatar_skill:100402",
+          "entry_ability": "Avatar_Welt_00_Skill02_Phase01",
+          "level": 1,
+          "phase_index": 0,
+          "skill_trigger_key": "Skill02"
+        },
+        "raw_id": "Avatar_Welt_00_Skill02_Phase01",
+        "raw_type": "AbilityList",
+        "source_path": "Config/ConfigAbility/Avatar/Avatar_Welt_00_Ability.json"
+      },
+      "target_info": {
+        "TargetType": "SkillTargetEntityList"
+      }
+    }
+  ],
+  "single": [
+    {
+      "ability_name": "Avatar_Mar_7th_00_Skill01_Phase01",
+      "action_id": "avatar_skill:100101",
+      "binding_id": "action_binding:avatar_skill:100101:1",
+      "blocked_reason": "ability_task_execution_not_implemented",
+      "callback_summaries": {
+        "on_attack": {
+          "opcode_counts": {},
+          "task_count": 0
+        },
+        "on_end": {
+          "opcode_counts": {},
+          "task_count": 0
+        },
+        "on_hit": {
+          "opcode_counts": {},
+          "task_count": 0
+        },
+        "on_start": {
+          "opcode_counts": {
+            "LookAt": 1,
+            "TargetAlias": 2,
+            "TriggerAbility": 2,
+            "TriggerAnimState": 2
+          },
+          "task_count": 7
+        }
+      },
+      "coverage_status": "lowered",
+      "level": 1,
+      "opcode_summary": {
+        "opcode_counts": {
+          "LookAt": 1,
+          "TargetAlias": 2,
+          "TriggerAbility": 2,
+          "TriggerAnimState": 2
+        },
+        "raw_task_summary_only": true,
+        "task_count": 7
+      },
+      "phase_id": "ability_phase:avatar_skill:100101:1:0:Avatar_Mar_7th_00_Skill01_Phase01",
+      "phase_index": 0,
+      "source": {
+        "evidence": {
+          "action_id": "avatar_skill:100101",
+          "entry_ability": "Avatar_Mar_7th_00_Skill01_Phase01",
+          "level": 1,
+          "phase_index": 0,
+          "skill_trigger_key": "Skill01"
+        },
+        "raw_id": "Avatar_Mar_7th_00_Skill01_Phase01",
+        "raw_type": "AbilityList",
+        "source_path": "Config/ConfigAbility/Avatar/Avatar_Mar_7th_00_Ability.json"
+      },
+      "target_info": {
+        "TargetType": "SkillTargetEntityList"
+      }
+    }
+  ],
+  "unknown": [
+    {
+      "ability_name": "Avatar_Mar_7th_00_Skill02_Phase01",
+      "action_id": "avatar_skill:100102",
+      "binding_id": "action_binding:avatar_skill:100102:1",
+      "blocked_reason": "ability_task_execution_not_implemented",
+      "callback_summaries": {
+        "on_attack": {
+          "opcode_counts": {},
+          "task_count": 0
+        },
+        "on_end": {
+          "opcode_counts": {},
+          "task_count": 0
+        },
+        "on_hit": {
+          "opcode_counts": {},
+          "task_count": 0
+        },
+        "on_start": {
+          "opcode_counts": {
+            "ByIsTurnActionEntity": 1,
+            "MoveToTargetPosition": 1,
+            "PredicateTaskList": 1,
+            "SetCameraRootFollow": 1,
+            "SyncCharLightAndCameraDir": 2,
+            "TargetAlias": 6,
+            "TriggerAbility": 3,
+            "TriggerAnimState": 1
+          },
+          "task_count": 16
+        }
+      },
+      "coverage_status": "lowered",
+      "level": 1,
+      "opcode_summary": {
+        "opcode_counts": {
+          "ByIsTurnActionEntity": 1,
+          "MoveToTargetPosition": 1,
+          "PredicateTaskList": 1,
+          "SetCameraRootFollow": 1,
+          "SyncCharLightAndCameraDir": 2,
+          "TargetAlias": 6,
+          "TriggerAbility": 3,
+          "TriggerAnimState": 1
+        },
+        "raw_task_summary_only": true,
+        "task_count": 16
+      },
+      "phase_id": "ability_phase:avatar_skill:100102:1:0:Avatar_Mar_7th_00_Skill02_Phase01",
+      "phase_index": 0,
+      "source": {
+        "evidence": {
+          "action_id": "avatar_skill:100102",
+          "entry_ability": "Avatar_Mar_7th_00_Skill02_Phase01",
+          "level": 1,
+          "phase_index": 0,
+          "skill_trigger_key": "Skill02"
+        },
+        "raw_id": "Avatar_Mar_7th_00_Skill02_Phase01",
+        "raw_type": "AbilityList",
+        "source_path": "Config/ConfigAbility/Avatar/Avatar_Mar_7th_00_Ability.json"
+      },
+      "target_info": {
+        "TargetType": "SkillTargetEntityList"
+      }
+    }
+  ]
+}

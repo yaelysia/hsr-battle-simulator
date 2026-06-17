@@ -256,7 +256,19 @@ def _action_event_ir_checks(
     checks = {
         "action_event_count_matches_definitions": len(ir.action_events) == len(ir.action_definitions),
         "all_events_have_source_trace": all(event.source.source_path for event in ir.action_events),
-        "all_events_mark_derived": all(event.derived_status == "derived_from_action_definition" for event in ir.action_events),
+        "all_events_have_structured_source_status": all(
+            event.derived_status in {
+                "derived_from_action_definition",
+                "derived_from_ability_phase_graph",
+                "blocked_action_ability_binding",
+            }
+            and event.event_source_status in {
+                "derived_from_action_definition",
+                "ability_phase_graph_bound",
+                "blocked_missing_or_incomplete_ability_binding",
+            }
+            for event in ir.action_events
+        ),
     }
     details: dict[str, Any] = {}
     for mode, definition in definitions.items():

@@ -9,6 +9,8 @@ from .coverage import classify_opcode
 from .paths import relative_source_path
 from .. import BASELINE_VERSION
 from ..rules.ir import (
+    AbilityPhaseIR,
+    ActionAbilityBindingIR,
     ActionDefinitionIR,
     ActionEventIR,
     ActionPhaseStepIR,
@@ -24,8 +26,8 @@ from ..rules.ir import (
 
 
 ENTITY_TABLES: dict[str, tuple[str, str, tuple[str, ...]]] = {
-    "ExcelOutput/AvatarConfig.json": ("avatar", "AvatarID", ("DamageType", "SPNeed", "SkillList", "AvatarBaseType", "Rarity")),
-    "ExcelOutput/AvatarConfigLD.json": ("avatar", "AvatarID", ("DamageType", "SPNeed", "SkillList", "AvatarBaseType", "Rarity")),
+    "ExcelOutput/AvatarConfig.json": ("avatar", "AvatarID", ("DamageType", "SPNeed", "SkillList", "AvatarBaseType", "Rarity", "JsonPath")),
+    "ExcelOutput/AvatarConfigLD.json": ("avatar", "AvatarID", ("DamageType", "SPNeed", "SkillList", "AvatarBaseType", "Rarity", "JsonPath")),
     "ExcelOutput/AvatarSkillConfig.json": (
         "avatar_skill",
         "SkillID",
@@ -140,7 +142,12 @@ class TBGDLowering:
             table_stats[relative_path] = self._table_stats(relative_path, spec[1])
         entities = list(_dedupe_entities(entities).values())
         action_definitions = list(self._lower_action_definitions().values())
-        action_events, hit_profiles = _lower_action_execution_ir(action_definitions)
+        action_ability_bindings, ability_phases = self._lower_action_ability_bindings(action_definitions)
+        action_events, hit_profiles = _lower_action_execution_ir(
+            action_definitions,
+            action_ability_bindings,
+            ability_phases,
+        )
         for relative_path, _, id_key in ACTION_DEFINITION_TABLES:
             table_stats[f"action_definitions:{relative_path}"] = self._table_stats(relative_path, id_key)
 
@@ -161,6 +168,8 @@ class TBGDLowering:
             version=BASELINE_VERSION,
             entities=tuple(entities),
             action_definitions=tuple(action_definitions),
+            action_ability_bindings=tuple(action_ability_bindings),
+            ability_phases=tuple(ability_phases),
             action_events=tuple(action_events),
             hit_profiles=tuple(hit_profiles),
             triggers=tuple(triggers),
@@ -186,8 +195,192 @@ class TBGDLowering:
                     "lowered_count": len(selected_ability_files),
                     "skipped_count": max(0, len(ability_files) - len(selected_ability_files)),
                 },
+                "action_binding_status": {
+                    "lowered_count": len(action_ability_bindings),
+                    "ability_phase_count": len(ability_phases),
+                },
             },
         )
+
+    def _lower_action_ability_bindings(
+        self,
+        definitions: list[ActionDefinitionIR],
+    ) -> tuple[list[ActionAbilityBindingIR], list[AbilityPhaseIR]]:
+        avatar_skill_rows = self._avatar_skill_rows_by_skill_id()
+        avatar_configs = self._avatar_configs_by_skill_id()
+        ability_file_cache: dict[str, dict[str, Any] | None] = {}
+        bindings: list[ActionAbilityBindingIR] = []
+        phases: list[AbilityPhaseIR] = []
+        for definition in definitions:
+            if definition.action_id.startswith("avatar_skill:"):
+                binding, binding_phases = self._avatar_action_binding(
+                    definition,
+                    avatar_skill_rows.get(definition.source.raw_id, {}),
+                    avatar_configs.get(definition.source.raw_id, []),
+                    ability_file_cache,
+                )
+            else:
+                binding, binding_phases = _blocked_action_binding(definition, "non_avatar_ability_binding_not_executable")
+            bindings.append(binding)
+            phases.extend(binding_phases)
+        return bindings, phases
+
+    def _avatar_skill_rows_by_skill_id(self) -> dict[str, dict[str, Any]]:
+        rows: dict[str, dict[str, Any]] = {}
+        for relative_path, _, id_key in ACTION_DEFINITION_TABLES:
+            if "AvatarSkillConfig" not in relative_path and "CommonAvatarSkillConfig" not in relative_path:
+                continue
+            path = self.tbgd_root / relative_path
+            if not path.exists():
+                continue
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(data, list):
+                continue
+            for row in data:
+                if isinstance(row, dict) and id_key in row:
+                    rows[str(row[id_key])] = row
+        return rows
+
+    def _avatar_configs_by_skill_id(self) -> dict[str, list[dict[str, Any]]]:
+        result: dict[str, list[dict[str, Any]]] = {}
+        for relative_path in ("ExcelOutput/AvatarConfig.json", "ExcelOutput/AvatarConfigLD.json"):
+            path = self.tbgd_root / relative_path
+            if not path.exists():
+                continue
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(data, list):
+                continue
+            for index, row in enumerate(data):
+                if not isinstance(row, dict):
+                    continue
+                for skill_id in row.get("SkillList") or []:
+                    config = {
+                        "relative_path": relative_path,
+                        "row_index": index,
+                        "avatar_id": row.get("AvatarID"),
+                        "json_path": row.get("JsonPath"),
+                        "skill_list": row.get("SkillList"),
+                    }
+                    result.setdefault(str(skill_id), []).append(config)
+        return result
+
+    def _avatar_action_binding(
+        self,
+        definition: ActionDefinitionIR,
+        skill_row: dict[str, Any],
+        avatar_configs: list[dict[str, Any]],
+        ability_file_cache: dict[str, dict[str, Any] | None],
+    ) -> tuple[ActionAbilityBindingIR, list[AbilityPhaseIR]]:
+        skill_trigger_key = str(skill_row.get("SkillTriggerKey") or definition.source.evidence.get("skill_trigger_key") or "")
+        if not skill_trigger_key:
+            return _blocked_action_binding(definition, "missing_skill_trigger_key")
+        mainline_configs = [
+            config
+            for config in avatar_configs
+            if isinstance(config.get("json_path"), str)
+            and str(config.get("json_path", "")).startswith("Config/ConfigCharacter/Avatar/")
+        ]
+        if not mainline_configs:
+            return _blocked_action_binding(definition, "missing_mainline_avatar_config")
+        avatar_config = sorted(mainline_configs, key=lambda item: str(item.get("relative_path")))[0]
+        character_path = str(avatar_config.get("json_path") or "")
+        character_config = self._read_json_dict(character_path)
+        if character_config is None:
+            return _blocked_action_binding(definition, "avatar_character_config_not_readable", character_path)
+        skill_config = _skill_config_by_name(character_config, skill_trigger_key)
+        if not skill_config:
+            return _blocked_action_binding(definition, "skill_trigger_key_not_in_character_config", character_path)
+        entry_ability = str(skill_config.get("EntryAbility") or "")
+        ability_names = _ability_names_for_skill(character_config, skill_trigger_key, entry_ability)
+        if not entry_ability or not ability_names:
+            return _blocked_action_binding(definition, "missing_entry_ability_or_skill_ability_list", character_path)
+        ability_path = _avatar_ability_path_from_character_path(character_path)
+        ability_data = ability_file_cache.setdefault(ability_path, self._read_json_dict(ability_path))
+        if ability_data is None:
+            return _blocked_action_binding(definition, "avatar_ability_file_not_readable", ability_path)
+        ability_map = _ability_map(ability_data)
+        binding_id = f"action_binding:{definition.action_id}:{definition.level}"
+        binding_phases: list[AbilityPhaseIR] = []
+        missing_names = [name for name in ability_names if name not in ability_map]
+        for phase_index, ability_name in enumerate(ability_names):
+            ability = ability_map.get(ability_name)
+            if not isinstance(ability, dict):
+                continue
+            source = IRSource(
+                source_path=ability_path,
+                raw_type="AbilityList",
+                raw_id=ability_name,
+                evidence={
+                    "action_id": definition.action_id,
+                    "level": definition.level,
+                    "phase_index": phase_index,
+                    "skill_trigger_key": skill_trigger_key,
+                    "entry_ability": entry_ability,
+                },
+            )
+            binding_phases.append(
+                AbilityPhaseIR(
+                    phase_id=f"ability_phase:{definition.action_id}:{definition.level}:{phase_index}:{ability_name}",
+                    binding_id=binding_id,
+                    action_id=definition.action_id,
+                    level=definition.level,
+                    ability_name=ability_name,
+                    phase_index=phase_index,
+                    target_info=_json_safe(ability.get("TargetInfo")) if isinstance(ability.get("TargetInfo"), dict) else {},
+                    opcode_summary=_ability_opcode_summary(ability),
+                    callback_summaries=_ability_callback_summaries(ability),
+                    source=source,
+                    coverage_status="lowered",
+                    blocked_reason="ability_task_execution_not_implemented",
+                )
+            )
+        blocked_reason = "missing_ability_phase_in_ability_file" if missing_names else ""
+        coverage_status = "blocked" if blocked_reason or not binding_phases else "executable"
+        source = IRSource(
+            source_path=character_path,
+            raw_type="AvatarCharacterConfig",
+            raw_id=skill_trigger_key,
+            evidence={
+                "action_id": definition.action_id,
+                "level": definition.level,
+                "avatar_id": _json_safe(avatar_config.get("avatar_id")),
+                "avatar_config": _json_safe(avatar_config),
+                "ability_file": ability_path,
+                "missing_ability_names": missing_names,
+            },
+        )
+        return (
+            ActionAbilityBindingIR(
+                binding_id=binding_id,
+                action_id=definition.action_id,
+                level=definition.level,
+                skill_trigger_key=skill_trigger_key,
+                skill_name=str(skill_config.get("Name") or skill_trigger_key),
+                entry_ability=entry_ability,
+                ability_names=tuple(ability_names),
+                config_source={
+                    "avatar_config": _json_safe(avatar_config),
+                    "character_config_path": character_path,
+                    "ability_file_path": ability_path,
+                },
+                phase_ids=tuple(phase.phase_id for phase in binding_phases),
+                source_mode="mainline_avatar",
+                source=source,
+                coverage_status=coverage_status,
+                blocked_reason=blocked_reason,
+            ),
+            binding_phases,
+        )
+
+    def _read_json_dict(self, relative_path: str) -> dict[str, Any] | None:
+        path = self.tbgd_root / relative_path
+        if not path.exists():
+            return None
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+        return data if isinstance(data, dict) else None
 
     def _lower_entity_table(
         self,
@@ -676,6 +869,7 @@ def _action_definition_from_row(
             "row_index": row_index,
             "id_key": id_key,
             "level": level,
+            "skill_trigger_key": str(row.get("SkillTriggerKey") or ""),
             "resource_mapping": {
                 "BPNeed": "skill_point_cost_if_positive",
                 "BPAdd": "skill_point_gain_if_positive",
@@ -712,28 +906,236 @@ def _action_definition_from_row(
     )
 
 
+def _blocked_action_binding(
+    definition: ActionDefinitionIR,
+    reason: str,
+    source_path: str = "",
+) -> tuple[ActionAbilityBindingIR, list[AbilityPhaseIR]]:
+    source = IRSource(
+        source_path=source_path or definition.source.source_path,
+        raw_type="ActionAbilityBinding",
+        raw_id=f"{definition.action_id}:{definition.level}",
+        evidence={
+            "action_id": definition.action_id,
+            "level": definition.level,
+            "definition_source": definition.source.to_json(),
+            "blocked_reason": reason,
+        },
+    )
+    source_mode = "mainline_avatar_blocked" if definition.action_id.startswith("avatar_skill:") else "non_avatar_blocked"
+    return (
+        ActionAbilityBindingIR(
+            binding_id=f"action_binding:{definition.action_id}:{definition.level}",
+            action_id=definition.action_id,
+            level=definition.level,
+            skill_trigger_key=str(definition.source.evidence.get("skill_trigger_key") or ""),
+            skill_name="",
+            entry_ability="",
+            ability_names=(),
+            config_source={},
+            phase_ids=(),
+            source_mode=source_mode,
+            source=source,
+            coverage_status="blocked",
+            blocked_reason=reason,
+        ),
+        [],
+    )
+
+
+def _skill_config_by_name(character_config: dict[str, Any], skill_trigger_key: str) -> dict[str, Any] | None:
+    skill_list = character_config.get("SkillList")
+    if isinstance(skill_list, list):
+        for item in skill_list:
+            if not isinstance(item, dict):
+                continue
+            names = {
+                str(item.get("Name") or ""),
+                str(item.get("SkillName") or ""),
+                str(item.get("SkillTriggerKey") or ""),
+            }
+            if skill_trigger_key in names:
+                return item
+    if isinstance(skill_list, dict):
+        item = skill_list.get(skill_trigger_key)
+        if isinstance(item, dict):
+            return item
+        for key, value in skill_list.items():
+            if str(key) == skill_trigger_key and isinstance(value, dict):
+                return value
+    return None
+
+
+def _ability_names_for_skill(
+    character_config: dict[str, Any],
+    skill_trigger_key: str,
+    entry_ability: str,
+) -> list[str]:
+    ability_names: list[str] = []
+    if entry_ability:
+        ability_names.append(entry_ability)
+    skill_ability_list = character_config.get("SkillAbilityList")
+    matched: Any = None
+    if isinstance(skill_ability_list, dict):
+        matched = skill_ability_list.get(skill_trigger_key)
+        if matched is None:
+            for key, value in skill_ability_list.items():
+                if str(key) == skill_trigger_key:
+                    matched = value
+                    break
+    elif isinstance(skill_ability_list, list):
+        for item in skill_ability_list:
+            if not isinstance(item, dict):
+                continue
+            names = {str(item.get("Name") or ""), str(item.get("SkillName") or ""), str(item.get("SkillTriggerKey") or "")}
+            if skill_trigger_key in names:
+                matched = item
+                break
+    ability_names.extend(_ability_names_from_value(matched))
+    return list(dict.fromkeys(name for name in ability_names if name))
+
+
+def _ability_names_from_value(value: Any) -> list[str]:
+    names: list[str] = []
+    if isinstance(value, str):
+        names.append(value)
+    elif isinstance(value, list):
+        for item in value:
+            names.extend(_ability_names_from_value(item))
+    elif isinstance(value, dict):
+        for key in ("AbilityName", "Name", "PhaseAbility", "PhaseAbilityName", "EntryAbility"):
+            item = value.get(key)
+            if isinstance(item, str):
+                names.append(item)
+        for key in ("AbilityList", "AbilityNameList", "PhaseList", "PhaseAbilityList"):
+            names.extend(_ability_names_from_value(value.get(key)))
+        if not names:
+            for item in value.values():
+                names.extend(_ability_names_from_value(item))
+    return names
+
+
+def _avatar_ability_path_from_character_path(character_path: str) -> str:
+    path = Path(character_path)
+    name = path.name
+    if name.endswith("_Config.json"):
+        ability_name = name.replace("_Config.json", "_Ability.json")
+    else:
+        ability_name = f"{path.stem}_Ability.json"
+    return f"Config/ConfigAbility/Avatar/{ability_name}"
+
+
+def _ability_map(ability_data: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    ability_list = ability_data.get("AbilityList")
+    result: dict[str, dict[str, Any]] = {}
+    if not isinstance(ability_list, list):
+        return result
+    for ability in ability_list:
+        if not isinstance(ability, dict):
+            continue
+        name = ability.get("Name") or ability.get("AbilityName")
+        if isinstance(name, str) and name:
+            result[name] = ability
+    return result
+
+
+def _ability_opcode_summary(ability: dict[str, Any]) -> dict[str, Any]:
+    counts: dict[str, int] = {}
+    for opcode in _iter_gamecore_opcodes(ability):
+        counts[opcode] = counts.get(opcode, 0) + 1
+    return {
+        "opcode_counts": dict(sorted(counts.items())),
+        "task_count": sum(counts.values()),
+        "raw_task_summary_only": True,
+    }
+
+
+def _ability_callback_summaries(ability: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "on_start": _callback_summary(ability.get("OnStart")),
+        "on_attack": _callback_summary(ability.get("OnAttack")),
+        "on_hit": _callback_summary(ability.get("OnHit")),
+        "on_end": _callback_summary(ability.get("OnEnd")),
+    }
+
+
+def _callback_summary(value: Any) -> dict[str, Any]:
+    opcodes = _iter_gamecore_opcodes(value)
+    counts: dict[str, int] = {}
+    for opcode in opcodes:
+        counts[opcode] = counts.get(opcode, 0) + 1
+    return {"opcode_counts": dict(sorted(counts.items())), "task_count": len(opcodes)}
+
+
+def _iter_gamecore_opcodes(value: Any) -> list[str]:
+    found: list[str] = []
+    if isinstance(value, dict):
+        raw_type = value.get("$type")
+        if isinstance(raw_type, str):
+            found.append(_short_gamecore_type(raw_type))
+        for nested in value.values():
+            found.extend(_iter_gamecore_opcodes(nested))
+    elif isinstance(value, list):
+        for nested in value:
+            found.extend(_iter_gamecore_opcodes(nested))
+    return found
+
+
+def _binding_blocked_reason(
+    binding: ActionAbilityBindingIR | None,
+    phases: tuple[AbilityPhaseIR, ...],
+) -> str:
+    if binding is None:
+        return "action_ability_binding_missing"
+    if binding.coverage_status != "executable":
+        return binding.blocked_reason or f"action_ability_binding_{binding.coverage_status}"
+    if not phases:
+        return "ability_phase_graph_missing"
+    return ""
+
+
 def _lower_action_execution_ir(
     definitions: list[ActionDefinitionIR],
+    bindings: list[ActionAbilityBindingIR],
+    phases: list[AbilityPhaseIR],
 ) -> tuple[list[ActionEventIR], list[HitProfileIR]]:
+    binding_by_action = {(binding.action_id, binding.level): binding for binding in bindings}
+    phases_by_binding: dict[str, list[AbilityPhaseIR]] = {}
+    for phase in phases:
+        phases_by_binding.setdefault(phase.binding_id, []).append(phase)
     events: list[ActionEventIR] = []
     profiles: list[HitProfileIR] = []
     for definition in definitions:
         action_profiles = _hit_profiles_from_definition(definition)
         profiles.extend(action_profiles)
-        events.append(_action_event_from_definition(definition, action_profiles))
+        binding = binding_by_action.get((definition.action_id, definition.level))
+        binding_phases = tuple(sorted(
+            phases_by_binding.get(binding.binding_id if binding else "", []),
+            key=lambda phase: (phase.phase_index, phase.phase_id),
+        ))
+        events.append(_action_event_from_definition(definition, action_profiles, binding, binding_phases))
     return events, profiles
 
 
 def _action_event_from_definition(
     definition: ActionDefinitionIR,
     hit_profiles: list[HitProfileIR],
+    binding: ActionAbilityBindingIR | None,
+    phases: tuple[AbilityPhaseIR, ...],
 ) -> ActionEventIR:
     has_damage = definition.damage_kind == "hp_damage" and any(
         profile.coverage_status != "blocked" for profile in hit_profiles
     )
     has_attack_windows = _action_definition_is_attack(definition)
-    blocked_reason = _target_blocked_reason(definition.target_mode)
+    binding_blocked_reason = _binding_blocked_reason(binding, phases)
+    target_blocked_reason = _target_blocked_reason(definition.target_mode)
+    blocked_reason = ",".join(reason for reason in (binding_blocked_reason, target_blocked_reason) if reason)
     status = "blocked" if blocked_reason else "lowered"
+    source = binding.source if binding and binding.coverage_status == "executable" else definition.source
+    binding_id = binding.binding_id if binding else ""
+    phase_ids = tuple(phase.phase_id for phase in phases)
+    source_mode = binding.source_mode if binding else "missing_binding"
+    event_source_status = "ability_phase_graph_bound" if binding and binding.coverage_status == "executable" else "blocked_missing_or_incomplete_ability_binding"
     steps: list[ActionPhaseStepIR] = [
         ActionPhaseStepIR(
             kind="trigger_window",
@@ -742,7 +1144,7 @@ def _action_event_from_definition(
             tbgd_event="OnBeforeSkillUse",
             coverage_status=status,
             blocked_reason=blocked_reason,
-            source=definition.source,
+            source=source,
         )
     ]
     if has_attack_windows and not blocked_reason:
@@ -753,7 +1155,7 @@ def _action_event_from_definition(
                 canonical_window="before_attack",
                 tbgd_event="OnBeforeAttack",
                 coverage_status="lowered",
-                source=definition.source,
+                source=source,
             )
         )
     if has_damage and not blocked_reason:
@@ -762,7 +1164,7 @@ def _action_event_from_definition(
                 kind="damage",
                 phase="damage",
                 coverage_status="lowered",
-                source=definition.source,
+                source=source,
             )
         )
     if has_attack_windows and not blocked_reason:
@@ -773,7 +1175,7 @@ def _action_event_from_definition(
                 canonical_window="after_attack",
                 tbgd_event="OnAfterAttack",
                 coverage_status="lowered",
-                source=definition.source,
+                source=source,
             )
         )
     steps.append(
@@ -784,7 +1186,7 @@ def _action_event_from_definition(
             tbgd_event="OnAfterSkillUse",
             coverage_status=status,
             blocked_reason=blocked_reason,
-            source=definition.source,
+            source=source,
         )
     )
     return ActionEventIR(
@@ -795,13 +1197,18 @@ def _action_event_from_definition(
         selection_mode=_selection_mode(definition.target_mode),
         phase_steps=tuple(steps),
         hit_profile_ids=tuple(profile.hit_profile_id for profile in hit_profiles),
-        derived_status="derived_from_action_definition",
+        derived_status="derived_from_ability_phase_graph" if not blocked_reason else "blocked_action_ability_binding",
         derived_reason=(
-            "phase steps are derived from SkillEffect/AttackType/damage_kind until TBGD action event schema is fully mapped"
+            "phase windows are projected from ActionAbilityBindingIR/AbilityPhaseIR evidence; "
+            "individual Ability task execution is not implemented in v0_221"
         ),
-        source=definition.source,
+        source=source,
         coverage_status=status,
         blocked_reason=blocked_reason,
+        binding_id=binding_id,
+        phase_ids=phase_ids,
+        source_mode=source_mode,
+        event_source_status=event_source_status,
     )
 
 

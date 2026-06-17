@@ -3,7 +3,15 @@ from __future__ import annotations
 from ..core.executor import CombatExecutor
 from ..core.model import ActionCommand, BattleState, Mutation, UnitState
 from ..core.reducer import MutationReducer
-from ..rules.ir import ActionDefinitionIR, ActionEventIR, ActionPhaseStepIR, CanonicalIR, IRSource
+from ..rules.ir import (
+    AbilityPhaseIR,
+    ActionAbilityBindingIR,
+    ActionDefinitionIR,
+    ActionEventIR,
+    ActionPhaseStepIR,
+    CanonicalIR,
+    IRSource,
+)
 from ..rules.rulebook import RuleBook
 from ..systems.resource import ResourceSystem
 
@@ -105,6 +113,41 @@ def _minimal_ir() -> CanonicalIR:
                 coverage_status="executable",
             ),
         ),
+        action_ability_bindings=(
+            ActionAbilityBindingIR(
+                binding_id="action_binding:avatar_skill:110201:1",
+                action_id="avatar_skill:110201",
+                level=1,
+                skill_trigger_key="Skill01",
+                skill_name="Skill01",
+                entry_ability="ValidationSkill01Phase01",
+                ability_names=("ValidationSkill01Phase01",),
+                config_source={
+                    "character_config_path": "validation/snapshot_replay_character_config",
+                    "ability_file_path": "validation/snapshot_replay_ability",
+                },
+                phase_ids=("ability_phase:avatar_skill:110201:1:0:ValidationSkill01Phase01",),
+                source_mode="validation_fixture",
+                source=source,
+                coverage_status="executable",
+            ),
+        ),
+        ability_phases=(
+            AbilityPhaseIR(
+                phase_id="ability_phase:avatar_skill:110201:1:0:ValidationSkill01Phase01",
+                binding_id="action_binding:avatar_skill:110201:1",
+                action_id="avatar_skill:110201",
+                level=1,
+                ability_name="ValidationSkill01Phase01",
+                phase_index=0,
+                target_info={},
+                opcode_summary={"opcode_counts": {}, "task_count": 0, "raw_task_summary_only": True},
+                callback_summaries={},
+                source=source,
+                coverage_status="lowered",
+                blocked_reason="validation_fixture_no_ability_task_execution",
+            ),
+        ),
         action_events=(
             ActionEventIR(
                 action_event_id="action_event:avatar_skill:110201:1",
@@ -133,6 +176,10 @@ def _minimal_ir() -> CanonicalIR:
                 derived_reason="minimal replay fixture has no damage hit profile",
                 source=source,
                 coverage_status="audit_only",
+                binding_id="action_binding:avatar_skill:110201:1",
+                phase_ids=("ability_phase:avatar_skill:110201:1:0:ValidationSkill01Phase01",),
+                source_mode="validation_fixture",
+                event_source_status="ability_phase_graph_bound",
             ),
         ),
     )

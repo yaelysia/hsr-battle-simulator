@@ -42,6 +42,8 @@ class CombatExecutor:
         before = state.snapshot()
         action_definition = self.rules.require_action_definition(command.action_id, command.action_level)
         action_event_ir = self.rules.require_action_event(command.action_id, command.action_level)
+        action_binding = self.rules.action_ability_binding(command.action_id, command.action_level)
+        ability_phases = self.rules.ability_phases_for_action(command.action_id, command.action_level)
         hit_profiles = self.rules.hit_profiles_for_action(command.action_id, command.action_level)
         action_definition_trace = self.rules.action_definition_source_trace(command.action_id, command.action_level) or {}
         action_event = GameEvent(
@@ -72,6 +74,9 @@ class CombatExecutor:
             source_trace={
                 **action_definition_trace,
                 "action_event_id": action_event_ir.action_event_id,
+                "binding_id": action_binding.binding_id if action_binding else "",
+                "phase_ids": [phase.phase_id for phase in ability_phases],
+                "event_source_status": action_event_ir.event_source_status,
                 "hit_profile_ids": [profile.hit_profile_id for profile in hit_profiles],
             },
         )
@@ -203,6 +208,31 @@ class CombatExecutor:
                 trace=action_definition_trace,
             ).to_json(),
             SettlementRecord(
+                record_type="action_ability_binding",
+                source="rulebook",
+                process_only=True,
+                payload=action_binding.to_json()
+                if action_binding
+                else {
+                    "action_id": command.action_id,
+                    "action_level": command.action_level,
+                    "coverage_status": "blocked",
+                    "blocked_reason": "action_ability_binding_missing",
+                },
+                trace=action_binding.source.to_json() if action_binding else action_definition.source.to_json(),
+            ).to_json(),
+            SettlementRecord(
+                record_type="ability_phase_graph",
+                source="rulebook",
+                process_only=True,
+                payload={
+                    "binding_id": action_binding.binding_id if action_binding else "",
+                    "phase_count": len(ability_phases),
+                    "phases": [phase.to_json() for phase in ability_phases],
+                },
+                trace=action_binding.source.to_json() if action_binding else action_definition.source.to_json(),
+            ).to_json(),
+            SettlementRecord(
                 record_type="action_event_ir",
                 source="rulebook",
                 process_only=True,
@@ -232,6 +262,8 @@ class CombatExecutor:
                     "blocked_reason": blocked_reason,
                     "target_ok": target_result.ok,
                     "resource_ok": resource_result.ok,
+                    "binding_ok": bool(action_binding and action_binding.coverage_status == "executable"),
+                    "binding_blocked_reason": action_binding.blocked_reason if action_binding else "action_ability_binding_missing",
                     "has_selected_target": bool(target_result.resolution.selected),
                     "plan_blocked_reason": plan_blocked_reason,
                     "target_errors": list(target_result.errors),
@@ -302,10 +334,15 @@ class CombatExecutor:
             target_resolution=target_result.resolution,
             rng_events=damage_rng_events,
             coverage={
-                "executor": "v0_220_action_event_hit_profile",
+                "executor": "v0_221_action_ability_binding",
+                "action_ability_binding": action_binding.to_json() if action_binding else None,
+                "ability_phase_graph": [phase.to_json() for phase in ability_phases],
                 "action_execution_plan": action_execution_plan.to_json(),
                 "action_event_ir": action_event_ir.to_json(),
                 "action_event_id": action_event_ir.action_event_id,
+                "binding_id": action_binding.binding_id if action_binding else "",
+                "phase_ids": [phase.phase_id for phase in ability_phases],
+                "event_source_status": action_event_ir.event_source_status,
                 "action_event_plan": action_event_plan_payload,
                 "hit_profile_ids": [profile.hit_profile_id for profile in hit_profiles],
                 "definition_id": action_definition.definition_id,

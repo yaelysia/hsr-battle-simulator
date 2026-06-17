@@ -1,0 +1,704 @@
+{
+  "aoe": {
+    "action_id": "avatar_skill:100103",
+    "action_level": 1,
+    "binding_id": "action_binding:avatar_skill:100103:1",
+    "damage_plan": [],
+    "derived_from_action_definition": true,
+    "derived_reason": "phase windows are projected from ActionAbilityBindingIR/AbilityPhaseIR evidence; individual Ability task execution is not implemented in v0_221",
+    "event_source_status": "ability_phase_graph_bound",
+    "event_steps": [
+      {
+        "canonical_window": "before_skill_use",
+        "kind": "trigger_window",
+        "phase": "before_skill_use",
+        "requires_action_enabled": true,
+        "tbgd_event": "OnBeforeSkillUse"
+      },
+      {
+        "canonical_window": "before_attack",
+        "kind": "trigger_window",
+        "phase": "before_attack",
+        "requires_action_enabled": true,
+        "tbgd_event": "OnBeforeAttack"
+      },
+      {
+        "canonical_window": "",
+        "kind": "damage",
+        "phase": "damage",
+        "requires_action_enabled": true,
+        "tbgd_event": ""
+      },
+      {
+        "canonical_window": "after_attack",
+        "kind": "trigger_window",
+        "phase": "after_attack",
+        "requires_action_enabled": true,
+        "tbgd_event": "OnAfterAttack"
+      },
+      {
+        "canonical_window": "after_skill_use",
+        "kind": "trigger_window",
+        "phase": "after_skill_use",
+        "requires_action_enabled": true,
+        "tbgd_event": "OnAfterSkillUse"
+      }
+    ],
+    "hit_plan": [
+      {
+        "hit_index": 0,
+        "hit_profile_id": "hit_profile:avatar_skill:100103:1:0:selected",
+        "hit_source_trace": {
+          "evidence": {
+            "id_key": "SkillID",
+            "level": 1,
+            "resource_mapping": {
+              "BPAdd": "skill_point_gain_if_positive",
+              "BPNeed": "skill_point_cost_if_positive",
+              "SPBase": "energy_gain"
+            },
+            "row_index": 3992,
+            "skill_trigger_key": "Skill03",
+            "taxonomy": {
+              "attack_type": "raw TBGD AttackType; follow-up is an attack type axis",
+              "damage_formula_family": "formula family axis; follow-up is not a damage family",
+              "element_type": "raw TBGD StanceDamageType when present"
+            }
+          },
+          "raw_id": "100103",
+          "raw_type": "AvatarSkillConfig",
+          "source_path": "ExcelOutput/AvatarSkillConfig.json"
+        },
+        "multi_hit_not_implemented": true,
+        "multiplier_source": {
+          "multi_param_list_not_implemented": true,
+          "param_list_count": 4,
+          "raw_path": "ParamList[0]",
+          "raw_value": {
+            "Value": 0.9
+          },
+          "show_damage_audit_only": false,
+          "show_damage_count": 0,
+          "source": {
+            "evidence": {
+              "id_key": "SkillID",
+              "level": 1,
+              "resource_mapping": {
+                "BPAdd": "skill_point_gain_if_positive",
+                "BPNeed": "skill_point_cost_if_positive",
+                "SPBase": "energy_gain"
+              },
+              "row_index": 3992,
+              "skill_trigger_key": "Skill03",
+              "taxonomy": {
+                "attack_type": "raw TBGD AttackType; follow-up is an attack type axis",
+                "damage_formula_family": "formula family axis; follow-up is not a damage family",
+                "element_type": "raw TBGD StanceDamageType when present"
+              }
+            },
+            "raw_id": "100103",
+            "raw_type": "AvatarSkillConfig",
+            "source_path": "ExcelOutput/AvatarSkillConfig.json"
+          }
+        },
+        "numeric_fidelity_status": "structural_only",
+        "scaling_ratio": 0.9,
+        "target_group": "selected"
+      }
+    ],
+    "per_hit_target_context_not_implemented": true,
+    "phase_ids": [
+      "ability_phase:avatar_skill:100103:1:0:Avatar_Mar_7th_00_Skill03_Phase01"
+    ],
+    "plan_source": "action_event_ir_hit_profile_ir",
+    "primary_action_target_id": null,
+    "source_trace": {
+      "binding_id": "action_binding:avatar_skill:100103:1",
+      "event_source_status": "ability_phase_graph_bound",
+      "evidence": {
+        "id_key": "SkillID",
+        "level": 1,
+        "resource_mapping": {
+          "BPAdd": "skill_point_gain_if_positive",
+          "BPNeed": "skill_point_cost_if_positive",
+          "SPBase": "energy_gain"
+        },
+        "row_index": 3992,
+        "skill_trigger_key": "Skill03",
+        "taxonomy": {
+          "attack_type": "raw TBGD AttackType; follow-up is an attack type axis",
+          "damage_formula_family": "formula family axis; follow-up is not a damage family",
+          "element_type": "raw TBGD StanceDamageType when present"
+        }
+      },
+      "phase_ids": [
+        "ability_phase:avatar_skill:100103:1:0:Avatar_Mar_7th_00_Skill03_Phase01"
+      ],
+      "raw_id": "100103",
+      "raw_type": "AvatarSkillConfig",
+      "source_path": "ExcelOutput/AvatarSkillConfig.json"
+    },
+    "target_plan": {
+      "blocked_reason": "",
+      "requested_target_ids": [
+        "enemy:target"
+      ],
+      "selection_mode": "all_enemies",
+      "source": "action_event_ir",
+      "target_mode": "aoe"
+    }
+  },
+  "blast": {
+    "action_id": "avatar_skill:100302",
+    "action_level": 1,
+    "binding_id": "action_binding:avatar_skill:100302:1",
+    "damage_plan": [],
+    "derived_from_action_definition": true,
+    "derived_reason": "phase windows are projected from ActionAbilityBindingIR/AbilityPhaseIR evidence; individual Ability task execution is not implemented in v0_221",
+    "event_source_status": "ability_phase_graph_bound",
+    "event_steps": [
+      {
+        "canonical_window": "before_skill_use",
+        "kind": "trigger_window",
+        "phase": "before_skill_use",
+        "requires_action_enabled": true,
+        "tbgd_event": "OnBeforeSkillUse"
+      },
+      {
+        "canonical_window": "before_attack",
+        "kind": "trigger_window",
+        "phase": "before_attack",
+        "requires_action_enabled": true,
+        "tbgd_event": "OnBeforeAttack"
+      },
+      {
+        "canonical_window": "",
+        "kind": "damage",
+        "phase": "damage",
+        "requires_action_enabled": true,
+        "tbgd_event": ""
+      },
+      {
+        "canonical_window": "after_attack",
+        "kind": "trigger_window",
+        "phase": "after_attack",
+        "requires_action_enabled": true,
+        "tbgd_event": "OnAfterAttack"
+      },
+      {
+        "canonical_window": "after_skill_use",
+        "kind": "trigger_window",
+        "phase": "after_skill_use",
+        "requires_action_enabled": true,
+        "tbgd_event": "OnAfterSkillUse"
+      }
+    ],
+    "hit_plan": [
+      {
+        "hit_index": 0,
+        "hit_profile_id": "hit_profile:avatar_skill:100302:1:0:primary",
+        "hit_source_trace": {
+          "evidence": {
+            "id_key": "SkillID",
+            "level": 1,
+            "resource_mapping": {
+              "BPAdd": "skill_point_gain_if_positive",
+              "BPNeed": "skill_point_cost_if_positive",
+              "SPBase": "energy_gain"
+            },
+            "row_index": 52,
+            "skill_trigger_key": "Skill02",
+            "taxonomy": {
+              "attack_type": "raw TBGD AttackType; follow-up is an attack type axis",
+              "damage_formula_family": "formula family axis; follow-up is not a damage family",
+              "element_type": "raw TBGD StanceDamageType when present"
+            }
+          },
+          "raw_id": "100302",
+          "raw_type": "AvatarSkillConfig",
+          "source_path": "ExcelOutput/AvatarSkillConfig.json"
+        },
+        "multi_hit_not_implemented": true,
+        "multiplier_source": {
+          "multi_param_list_not_implemented": true,
+          "param_list_count": 2,
+          "raw_path": "ParamList[0]",
+          "raw_value": {
+            "Value": 1
+          },
+          "show_damage_audit_only": false,
+          "show_damage_count": 0,
+          "source": {
+            "evidence": {
+              "id_key": "SkillID",
+              "level": 1,
+              "resource_mapping": {
+                "BPAdd": "skill_point_gain_if_positive",
+                "BPNeed": "skill_point_cost_if_positive",
+                "SPBase": "energy_gain"
+              },
+              "row_index": 52,
+              "skill_trigger_key": "Skill02",
+              "taxonomy": {
+                "attack_type": "raw TBGD AttackType; follow-up is an attack type axis",
+                "damage_formula_family": "formula family axis; follow-up is not a damage family",
+                "element_type": "raw TBGD StanceDamageType when present"
+              }
+            },
+            "raw_id": "100302",
+            "raw_type": "AvatarSkillConfig",
+            "source_path": "ExcelOutput/AvatarSkillConfig.json"
+          }
+        },
+        "numeric_fidelity_status": "structural_only",
+        "scaling_ratio": 1.0,
+        "target_group": "primary"
+      },
+      {
+        "hit_index": 1,
+        "hit_profile_id": "hit_profile:avatar_skill:100302:1:1:adjacent",
+        "hit_source_trace": {
+          "evidence": {
+            "id_key": "SkillID",
+            "level": 1,
+            "resource_mapping": {
+              "BPAdd": "skill_point_gain_if_positive",
+              "BPNeed": "skill_point_cost_if_positive",
+              "SPBase": "energy_gain"
+            },
+            "row_index": 52,
+            "skill_trigger_key": "Skill02",
+            "taxonomy": {
+              "attack_type": "raw TBGD AttackType; follow-up is an attack type axis",
+              "damage_formula_family": "formula family axis; follow-up is not a damage family",
+              "element_type": "raw TBGD StanceDamageType when present"
+            }
+          },
+          "raw_id": "100302",
+          "raw_type": "AvatarSkillConfig",
+          "source_path": "ExcelOutput/AvatarSkillConfig.json"
+        },
+        "multi_hit_not_implemented": true,
+        "multiplier_source": {
+          "multi_param_list_not_implemented": true,
+          "param_list_count": 2,
+          "raw_path": "ParamList[0]",
+          "raw_value": {
+            "Value": 1
+          },
+          "show_damage_audit_only": false,
+          "show_damage_count": 0,
+          "source": {
+            "evidence": {
+              "id_key": "SkillID",
+              "level": 1,
+              "resource_mapping": {
+                "BPAdd": "skill_point_gain_if_positive",
+                "BPNeed": "skill_point_cost_if_positive",
+                "SPBase": "energy_gain"
+              },
+              "row_index": 52,
+              "skill_trigger_key": "Skill02",
+              "taxonomy": {
+                "attack_type": "raw TBGD AttackType; follow-up is an attack type axis",
+                "damage_formula_family": "formula family axis; follow-up is not a damage family",
+                "element_type": "raw TBGD StanceDamageType when present"
+              }
+            },
+            "raw_id": "100302",
+            "raw_type": "AvatarSkillConfig",
+            "source_path": "ExcelOutput/AvatarSkillConfig.json"
+          }
+        },
+        "numeric_fidelity_status": "structural_only",
+        "scaling_ratio": 1.0,
+        "target_group": "adjacent"
+      }
+    ],
+    "per_hit_target_context_not_implemented": true,
+    "phase_ids": [
+      "ability_phase:avatar_skill:100302:1:0:Avatar_Himeko_Skill02_Phase01"
+    ],
+    "plan_source": "action_event_ir_hit_profile_ir",
+    "primary_action_target_id": null,
+    "source_trace": {
+      "binding_id": "action_binding:avatar_skill:100302:1",
+      "event_source_status": "ability_phase_graph_bound",
+      "evidence": {
+        "id_key": "SkillID",
+        "level": 1,
+        "resource_mapping": {
+          "BPAdd": "skill_point_gain_if_positive",
+          "BPNeed": "skill_point_cost_if_positive",
+          "SPBase": "energy_gain"
+        },
+        "row_index": 52,
+        "skill_trigger_key": "Skill02",
+        "taxonomy": {
+          "attack_type": "raw TBGD AttackType; follow-up is an attack type axis",
+          "damage_formula_family": "formula family axis; follow-up is not a damage family",
+          "element_type": "raw TBGD StanceDamageType when present"
+        }
+      },
+      "phase_ids": [
+        "ability_phase:avatar_skill:100302:1:0:Avatar_Himeko_Skill02_Phase01"
+      ],
+      "raw_id": "100302",
+      "raw_type": "AvatarSkillConfig",
+      "source_path": "ExcelOutput/AvatarSkillConfig.json"
+    },
+    "target_plan": {
+      "blocked_reason": "",
+      "requested_target_ids": [
+        "enemy:target"
+      ],
+      "selection_mode": "primary_plus_adjacent",
+      "source": "action_event_ir",
+      "target_mode": "blast"
+    }
+  },
+  "bounce": {
+    "action_id": "avatar_skill:100402",
+    "action_level": 1,
+    "binding_id": "action_binding:avatar_skill:100402:1",
+    "damage_plan": [],
+    "derived_from_action_definition": true,
+    "derived_reason": "phase windows are projected from ActionAbilityBindingIR/AbilityPhaseIR evidence; individual Ability task execution is not implemented in v0_221",
+    "event_source_status": "ability_phase_graph_bound",
+    "event_steps": [
+      {
+        "canonical_window": "before_skill_use",
+        "kind": "trigger_window",
+        "phase": "before_skill_use",
+        "requires_action_enabled": true,
+        "tbgd_event": "OnBeforeSkillUse"
+      },
+      {
+        "canonical_window": "after_skill_use",
+        "kind": "trigger_window",
+        "phase": "after_skill_use",
+        "requires_action_enabled": true,
+        "tbgd_event": "OnAfterSkillUse"
+      }
+    ],
+    "hit_plan": [
+      {
+        "hit_index": 0,
+        "hit_profile_id": "hit_profile:avatar_skill:100402:1:0:bounce",
+        "hit_source_trace": {
+          "evidence": {
+            "id_key": "SkillID",
+            "level": 1,
+            "resource_mapping": {
+              "BPAdd": "skill_point_gain_if_positive",
+              "BPNeed": "skill_point_cost_if_positive",
+              "SPBase": "energy_gain"
+            },
+            "row_index": 108,
+            "skill_trigger_key": "Skill02",
+            "taxonomy": {
+              "attack_type": "raw TBGD AttackType; follow-up is an attack type axis",
+              "damage_formula_family": "formula family axis; follow-up is not a damage family",
+              "element_type": "raw TBGD StanceDamageType when present"
+            }
+          },
+          "raw_id": "100402",
+          "raw_type": "AvatarSkillConfig",
+          "source_path": "ExcelOutput/AvatarSkillConfig.json"
+        },
+        "multi_hit_not_implemented": true,
+        "multiplier_source": {
+          "multi_param_list_not_implemented": true,
+          "param_list_count": 4,
+          "raw_path": "ParamList[0]",
+          "raw_value": {
+            "Value": 0.36
+          },
+          "show_damage_audit_only": false,
+          "show_damage_count": 0,
+          "source": {
+            "evidence": {
+              "id_key": "SkillID",
+              "level": 1,
+              "resource_mapping": {
+                "BPAdd": "skill_point_gain_if_positive",
+                "BPNeed": "skill_point_cost_if_positive",
+                "SPBase": "energy_gain"
+              },
+              "row_index": 108,
+              "skill_trigger_key": "Skill02",
+              "taxonomy": {
+                "attack_type": "raw TBGD AttackType; follow-up is an attack type axis",
+                "damage_formula_family": "formula family axis; follow-up is not a damage family",
+                "element_type": "raw TBGD StanceDamageType when present"
+              }
+            },
+            "raw_id": "100402",
+            "raw_type": "AvatarSkillConfig",
+            "source_path": "ExcelOutput/AvatarSkillConfig.json"
+          }
+        },
+        "numeric_fidelity_status": "structural_only",
+        "scaling_ratio": 0.36,
+        "target_group": "bounce"
+      }
+    ],
+    "per_hit_target_context_not_implemented": true,
+    "phase_ids": [
+      "ability_phase:avatar_skill:100402:1:0:Avatar_Welt_00_Skill02_Phase01"
+    ],
+    "plan_source": "action_event_ir_hit_profile_ir",
+    "primary_action_target_id": null,
+    "source_trace": {
+      "binding_id": "action_binding:avatar_skill:100402:1",
+      "event_source_status": "ability_phase_graph_bound",
+      "evidence": {
+        "id_key": "SkillID",
+        "level": 1,
+        "resource_mapping": {
+          "BPAdd": "skill_point_gain_if_positive",
+          "BPNeed": "skill_point_cost_if_positive",
+          "SPBase": "energy_gain"
+        },
+        "row_index": 108,
+        "skill_trigger_key": "Skill02",
+        "taxonomy": {
+          "attack_type": "raw TBGD AttackType; follow-up is an attack type axis",
+          "damage_formula_family": "formula family axis; follow-up is not a damage family",
+          "element_type": "raw TBGD StanceDamageType when present"
+        }
+      },
+      "phase_ids": [
+        "ability_phase:avatar_skill:100402:1:0:Avatar_Welt_00_Skill02_Phase01"
+      ],
+      "raw_id": "100402",
+      "raw_type": "AvatarSkillConfig",
+      "source_path": "ExcelOutput/AvatarSkillConfig.json"
+    },
+    "target_plan": {
+      "blocked_reason": "bounce_not_executable",
+      "requested_target_ids": [
+        "enemy:target"
+      ],
+      "selection_mode": "blocked_random_bounce",
+      "source": "action_event_ir",
+      "target_mode": "bounce"
+    }
+  },
+  "single": {
+    "action_id": "avatar_skill:100101",
+    "action_level": 1,
+    "binding_id": "action_binding:avatar_skill:100101:1",
+    "damage_plan": [],
+    "derived_from_action_definition": true,
+    "derived_reason": "phase windows are projected from ActionAbilityBindingIR/AbilityPhaseIR evidence; individual Ability task execution is not implemented in v0_221",
+    "event_source_status": "ability_phase_graph_bound",
+    "event_steps": [
+      {
+        "canonical_window": "before_skill_use",
+        "kind": "trigger_window",
+        "phase": "before_skill_use",
+        "requires_action_enabled": true,
+        "tbgd_event": "OnBeforeSkillUse"
+      },
+      {
+        "canonical_window": "before_attack",
+        "kind": "trigger_window",
+        "phase": "before_attack",
+        "requires_action_enabled": true,
+        "tbgd_event": "OnBeforeAttack"
+      },
+      {
+        "canonical_window": "",
+        "kind": "damage",
+        "phase": "damage",
+        "requires_action_enabled": true,
+        "tbgd_event": ""
+      },
+      {
+        "canonical_window": "after_attack",
+        "kind": "trigger_window",
+        "phase": "after_attack",
+        "requires_action_enabled": true,
+        "tbgd_event": "OnAfterAttack"
+      },
+      {
+        "canonical_window": "after_skill_use",
+        "kind": "trigger_window",
+        "phase": "after_skill_use",
+        "requires_action_enabled": true,
+        "tbgd_event": "OnAfterSkillUse"
+      }
+    ],
+    "hit_plan": [
+      {
+        "hit_index": 0,
+        "hit_profile_id": "hit_profile:avatar_skill:100101:1:0:selected",
+        "hit_source_trace": {
+          "evidence": {
+            "id_key": "SkillID",
+            "level": 1,
+            "resource_mapping": {
+              "BPAdd": "skill_point_gain_if_positive",
+              "BPNeed": "skill_point_cost_if_positive",
+              "SPBase": "energy_gain"
+            },
+            "row_index": 3983,
+            "skill_trigger_key": "Skill01",
+            "taxonomy": {
+              "attack_type": "raw TBGD AttackType; follow-up is an attack type axis",
+              "damage_formula_family": "formula family axis; follow-up is not a damage family",
+              "element_type": "raw TBGD StanceDamageType when present"
+            }
+          },
+          "raw_id": "100101",
+          "raw_type": "AvatarSkillConfig",
+          "source_path": "ExcelOutput/AvatarSkillConfig.json"
+        },
+        "multi_hit_not_implemented": true,
+        "multiplier_source": {
+          "multi_param_list_not_implemented": false,
+          "param_list_count": 1,
+          "raw_path": "ParamList[0]",
+          "raw_value": {
+            "Value": 0.5
+          },
+          "show_damage_audit_only": false,
+          "show_damage_count": 0,
+          "source": {
+            "evidence": {
+              "id_key": "SkillID",
+              "level": 1,
+              "resource_mapping": {
+                "BPAdd": "skill_point_gain_if_positive",
+                "BPNeed": "skill_point_cost_if_positive",
+                "SPBase": "energy_gain"
+              },
+              "row_index": 3983,
+              "skill_trigger_key": "Skill01",
+              "taxonomy": {
+                "attack_type": "raw TBGD AttackType; follow-up is an attack type axis",
+                "damage_formula_family": "formula family axis; follow-up is not a damage family",
+                "element_type": "raw TBGD StanceDamageType when present"
+              }
+            },
+            "raw_id": "100101",
+            "raw_type": "AvatarSkillConfig",
+            "source_path": "ExcelOutput/AvatarSkillConfig.json"
+          }
+        },
+        "numeric_fidelity_status": "structural_only",
+        "scaling_ratio": 0.5,
+        "target_group": "selected"
+      }
+    ],
+    "per_hit_target_context_not_implemented": true,
+    "phase_ids": [
+      "ability_phase:avatar_skill:100101:1:0:Avatar_Mar_7th_00_Skill01_Phase01"
+    ],
+    "plan_source": "action_event_ir_hit_profile_ir",
+    "primary_action_target_id": null,
+    "source_trace": {
+      "binding_id": "action_binding:avatar_skill:100101:1",
+      "event_source_status": "ability_phase_graph_bound",
+      "evidence": {
+        "id_key": "SkillID",
+        "level": 1,
+        "resource_mapping": {
+          "BPAdd": "skill_point_gain_if_positive",
+          "BPNeed": "skill_point_cost_if_positive",
+          "SPBase": "energy_gain"
+        },
+        "row_index": 3983,
+        "skill_trigger_key": "Skill01",
+        "taxonomy": {
+          "attack_type": "raw TBGD AttackType; follow-up is an attack type axis",
+          "damage_formula_family": "formula family axis; follow-up is not a damage family",
+          "element_type": "raw TBGD StanceDamageType when present"
+        }
+      },
+      "phase_ids": [
+        "ability_phase:avatar_skill:100101:1:0:Avatar_Mar_7th_00_Skill01_Phase01"
+      ],
+      "raw_id": "100101",
+      "raw_type": "AvatarSkillConfig",
+      "source_path": "ExcelOutput/AvatarSkillConfig.json"
+    },
+    "target_plan": {
+      "blocked_reason": "",
+      "requested_target_ids": [
+        "enemy:target"
+      ],
+      "selection_mode": "primary",
+      "source": "action_event_ir",
+      "target_mode": "single"
+    }
+  },
+  "unknown": {
+    "action_id": "avatar_skill:100102",
+    "action_level": 1,
+    "binding_id": "action_binding:avatar_skill:100102:1",
+    "damage_plan": [],
+    "derived_from_action_definition": true,
+    "derived_reason": "phase windows are projected from ActionAbilityBindingIR/AbilityPhaseIR evidence; individual Ability task execution is not implemented in v0_221",
+    "event_source_status": "ability_phase_graph_bound",
+    "event_steps": [
+      {
+        "canonical_window": "before_skill_use",
+        "kind": "trigger_window",
+        "phase": "before_skill_use",
+        "requires_action_enabled": true,
+        "tbgd_event": "OnBeforeSkillUse"
+      },
+      {
+        "canonical_window": "after_skill_use",
+        "kind": "trigger_window",
+        "phase": "after_skill_use",
+        "requires_action_enabled": true,
+        "tbgd_event": "OnAfterSkillUse"
+      }
+    ],
+    "hit_plan": [],
+    "per_hit_target_context_not_implemented": true,
+    "phase_ids": [
+      "ability_phase:avatar_skill:100102:1:0:Avatar_Mar_7th_00_Skill02_Phase01"
+    ],
+    "plan_source": "action_event_ir_hit_profile_ir",
+    "primary_action_target_id": null,
+    "source_trace": {
+      "binding_id": "action_binding:avatar_skill:100102:1",
+      "event_source_status": "ability_phase_graph_bound",
+      "evidence": {
+        "id_key": "SkillID",
+        "level": 1,
+        "resource_mapping": {
+          "BPAdd": "skill_point_gain_if_positive",
+          "BPNeed": "skill_point_cost_if_positive",
+          "SPBase": "energy_gain"
+        },
+        "row_index": 2219,
+        "skill_trigger_key": "Skill02",
+        "taxonomy": {
+          "attack_type": "raw TBGD AttackType; follow-up is an attack type axis",
+          "damage_formula_family": "formula family axis; follow-up is not a damage family",
+          "element_type": "raw TBGD StanceDamageType when present"
+        }
+      },
+      "phase_ids": [
+        "ability_phase:avatar_skill:100102:1:0:Avatar_Mar_7th_00_Skill02_Phase01"
+      ],
+      "raw_id": "100102",
+      "raw_type": "AvatarSkillConfig",
+      "source_path": "ExcelOutput/AvatarSkillConfig.json"
+    },
+    "target_plan": {
+      "blocked_reason": "unknown_target_mode_not_executable",
+      "requested_target_ids": [
+        "enemy:target"
+      ],
+      "selection_mode": "unknown",
+      "source": "action_event_ir",
+      "target_mode": "unknown"
+    }
+  }
+}
