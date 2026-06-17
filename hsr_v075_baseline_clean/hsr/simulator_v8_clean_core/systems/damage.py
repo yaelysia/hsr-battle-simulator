@@ -164,6 +164,7 @@ class DamageSystem:
                         "damage_kind": packet.damage_kind,
                         "damage_formula_family": packet.damage_formula_family,
                         "element_type": packet.element_type,
+                        "packet_metadata": packet.metadata,
                         "bypasses_normal_multipliers": False,
                         "normal_multiplier_terms": formula_json["modifier_ledger"]["applied_terms"],
                         "formula_result": formula_json,

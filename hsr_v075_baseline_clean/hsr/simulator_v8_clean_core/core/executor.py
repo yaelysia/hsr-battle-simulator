@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .action_plan import build_action_event_plan
+from .action_plan import DamagePlan, build_action_event_plan, build_action_execution_plan
 from .model import (
     ActionCommand,
     ActionSettlement,
@@ -42,7 +42,6 @@ class CombatExecutor:
         before = state.snapshot()
         action_definition = self.rules.require_action_definition(command.action_id, command.action_level)
         action_definition_trace = self.rules.action_definition_source_trace(command.action_id, command.action_level) or {}
-        action_event_plan = build_action_event_plan(action_definition)
         action_event = GameEvent(
             "action.requested",
             source_id=command.actor_id,
@@ -64,12 +63,19 @@ class CombatExecutor:
                 source="combat_executor.timeline",
             ),
         )
-        target_result = self.targets.resolve_explicit_targets(
+        target_result = self.targets.resolve_action_targets(
             state,
             command.actor_id,
             command.target_ids,
             policy=_target_policy(action_definition),
         )
+        action_execution_plan = build_action_execution_plan(
+            action_definition,
+            requested_target_ids=command.target_ids,
+            resolved_target_groups=_target_groups_from_resolution(target_result.resolution.metadata),
+            source_trace=action_definition_trace,
+        )
+        action_event_plan = build_action_event_plan(action_definition)
         resource_result = self.resources.plan_action_resources(
             state,
             command.actor_id,
@@ -98,10 +104,10 @@ class CombatExecutor:
             *(_mutation_record("timeline", mutation) for mutation in timeline_mutations),
             *(_mutation_record("resource", mutation) for mutation in resource_mutations),
         ]
-        damage_result = None
+        damage_results = []
         damage_mutations: tuple[Mutation, ...] = ()
 
-        for step in action_event_plan.steps:
+        for step in action_execution_plan.event_steps:
             if step.kind == "trigger_window":
                 trigger_result = self.triggers.execute_status_window(
                     current_state,
@@ -119,25 +125,41 @@ class CombatExecutor:
                 runtime_records.extend(trigger_result.records)
                 continue
             if step.kind == "damage" and action_enabled:
-                damage_packet = _damage_packet(
-                    command,
-                    action_definition,
-                    action_definition_trace,
-                    target_result.resolution.selected,
-                )
-                if damage_packet:
+                for damage_plan in action_execution_plan.damage_plan:
+                    damage_packet = _damage_packet(
+                        command,
+                        action_definition,
+                        action_definition_trace,
+                        damage_plan,
+                    )
+                    if damage_packet is None:
+                        continue
                     damage_result = self.damage.apply_packet(current_state, damage_packet)
-                    damage_mutations = damage_result.mutations
-                    current_state = self.reducer.apply_all(current_state, damage_mutations)
-                    ordered_mutations.extend(damage_mutations)
+                    damage_results.append(damage_result)
+                    damage_mutations = (*damage_mutations, *damage_result.mutations)
+                    current_state = self.reducer.apply_all(current_state, damage_result.mutations)
+                    ordered_mutations.extend(damage_result.mutations)
                     runtime_records.extend(damage_result.records)
+            elif step.kind == "damage" and not action_enabled and action_execution_plan.target_plan.blocked_reason:
+                runtime_records.append(
+                    SettlementRecord(
+                        record_type="damage_blocked",
+                        source="combat_executor",
+                        process_only=True,
+                        payload={
+                            "reason": action_execution_plan.target_plan.blocked_reason,
+                            "action_execution_plan": action_execution_plan.to_json(),
+                        },
+                        trace=action_definition_trace,
+                    ).to_json()
+                )
 
         trigger_mutations = tuple(mutation for result in trigger_results for mutation in result.mutations)
         trigger_events = tuple(event for result in trigger_results for event in result.events)
         trigger_windows = tuple(window for result in trigger_results for window in result.trigger_windows)
         mutations = tuple(ordered_mutations)
         after_state = current_state
-        damage_rng_events = damage_result.rng_events if damage_result else ()
+        damage_rng_events = tuple(event for result in damage_results for event in result.rng_events)
 
         records: list[dict[str, JSONValue]] = [
             SettlementRecord(
@@ -163,6 +185,13 @@ class CombatExecutor:
                 source="combat_executor",
                 process_only=True,
                 payload=action_event_plan.to_json(),
+                trace={"definition_id": action_definition.definition_id},
+            ).to_json(),
+            SettlementRecord(
+                record_type="action_execution_plan",
+                source="combat_executor",
+                process_only=True,
+                payload=action_execution_plan.to_json(),
                 trace={"definition_id": action_definition.definition_id},
             ).to_json(),
             SettlementRecord(
@@ -196,13 +225,13 @@ class CombatExecutor:
         settlement = ActionSettlement(
             action_id=command.action_id,
             actor_id=command.actor_id,
-            target_ids=command.target_ids,
+            target_ids=target_result.resolution.selected or command.target_ids,
             records=tuple(records),
         )
         transaction = ActionTransaction(
             command=command,
             before=before,
-            events=(*events, *trigger_events, *(damage_result.events if damage_result else ())),
+            events=(*events, *trigger_events, *(event for result in damage_results for event in result.events)),
             mutations=mutations,
             trigger_windows=trigger_windows,
             settlement=settlement,
@@ -214,8 +243,9 @@ class CombatExecutor:
             rng_events=damage_rng_events,
             coverage={
                 "executor": "v0_212_trigger_action_foundation",
-                "definition_id": action_definition.definition_id,
+                "action_execution_plan": action_execution_plan.to_json(),
                 "action_event_plan": action_event_plan.to_json(),
+                "definition_id": action_definition.definition_id,
                 "target_ok": target_result.ok,
                 "resource_ok": resource_result.ok,
                 "timeline_mutation_count": len(timeline_mutations),
@@ -223,7 +253,7 @@ class CombatExecutor:
                 "trigger_window_count": len(trigger_windows),
                 "trigger_mutation_count": len(trigger_mutations),
                 "damage_mutation_count": len(damage_mutations),
-                "damage_ok": bool(damage_result.ok) if damage_result else None,
+                "damage_ok": all(result.ok for result in damage_results) if damage_results else None,
                 "damage_formula_family": action_definition.damage_formula_family,
             },
         )
@@ -273,27 +303,46 @@ def _skill_point_delta(bp_need: float, bp_add: float) -> int:
 
 def _target_policy(action_definition: ActionDefinitionIR) -> TargetPolicy:
     if action_definition.target_mode == "self_or_team":
-        return TargetPolicy(policy_id="self_or_team", allow_enemy=False, allow_ally=True, allow_self=True)
+        return TargetPolicy(
+            policy_id="self_or_team",
+            allow_enemy=False,
+            allow_ally=True,
+            allow_self=True,
+            target_mode=action_definition.target_mode,
+            selection_mode="explicit_ally_or_self",
+        )
     if action_definition.damage_kind == "hp_damage":
-        return TargetPolicy(policy_id="enemy_damage", allow_enemy=True, allow_ally=False, allow_self=False)
-    return TargetPolicy(policy_id="explicit_any", allow_enemy=True, allow_ally=True, allow_self=True)
+        return TargetPolicy(
+            policy_id="enemy_damage",
+            allow_enemy=True,
+            allow_ally=False,
+            allow_self=False,
+            target_mode=action_definition.target_mode,
+            selection_mode=action_definition.target_mode,
+        )
+    return TargetPolicy(
+        policy_id="explicit_any",
+        allow_enemy=True,
+        allow_ally=True,
+        allow_self=True,
+        target_mode=action_definition.target_mode,
+        selection_mode=action_definition.target_mode,
+    )
 
 
 def _damage_packet(
     command: ActionCommand,
     action_definition: ActionDefinitionIR,
     source_trace: dict[str, object],
-    selected_target_ids: tuple[str, ...],
+    damage_plan: DamagePlan,
 ) -> DamagePacket | None:
     if action_definition.damage_kind != "hp_damage":
         return None
     if action_definition.damage_formula_family not in {"direct", "true_damage", "hp_loss", "elation"}:
         return None
-    if not selected_target_ids:
-        return None
     return DamagePacket(
         attacker_id=command.actor_id,
-        target_id=selected_target_ids[0],
+        target_id=damage_plan.target_id,
         attack_type=action_definition.attack_type,
         damage_formula_family=action_definition.damage_formula_family,
         damage_kind=action_definition.damage_kind,
@@ -305,7 +354,13 @@ def _damage_packet(
             "action_level": action_definition.level,
             "source": source_trace,
         },
-        metadata=_damage_metadata(command),
+        metadata={
+            **_damage_metadata(command),
+            "hit_index": damage_plan.hit_index,
+            "target_group": damage_plan.target_group,
+            "multiplier_source": damage_plan.multiplier_source,
+            "multi_hit_not_implemented": True,
+        },
     )
 
 
@@ -315,3 +370,14 @@ def _damage_metadata(command: ActionCommand) -> dict[str, JSONValue]:
     if isinstance(crit_mode, str):
         metadata["crit_mode"] = crit_mode
     return metadata
+
+
+def _target_groups_from_resolution(metadata: dict[str, JSONValue]) -> dict[str, tuple[str, ...]]:
+    groups = metadata.get("target_groups")
+    if not isinstance(groups, dict):
+        return {}
+    result: dict[str, tuple[str, ...]] = {}
+    for key, value in groups.items():
+        if isinstance(value, (list, tuple)):
+            result[str(key)] = tuple(str(item) for item in value if isinstance(item, str))
+    return result
