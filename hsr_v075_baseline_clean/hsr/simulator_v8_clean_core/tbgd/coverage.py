@@ -233,4 +233,22 @@ def _modifier_status(
             "executable": executable_opcodes["AddModifier"],
             "reason": "AddModifier payload is standardized; runtime execution is validated by v0_210",
         },
+        "dynamic_value_store": {
+            "set_dynamic_value": {
+                "lowered": lowered_opcodes["SetDynamicValue"],
+                "executable": executable_opcodes["SetDynamicValue"],
+                "blocked": max(0, lowered_opcodes["SetDynamicValue"] - executable_opcodes["SetDynamicValue"]),
+                "reason": "SetDynamicValue is standardized into DynamicValueStore writes when target and numeric payload are executable",
+            },
+            "set_dynamic_value_by_modifier_value": {
+                "lowered": lowered_opcodes["SetDynamicValueByModifierValue"],
+                "executable": executable_opcodes["SetDynamicValueByModifierValue"],
+                "blocked": max(
+                    0,
+                    lowered_opcodes["SetDynamicValueByModifierValue"]
+                    - executable_opcodes["SetDynamicValueByModifierValue"],
+                ),
+                "reason": "SetDynamicValueByModifierValue is standardized when source modifier, value type, target key, and multiplier are executable",
+            },
+        },
     }

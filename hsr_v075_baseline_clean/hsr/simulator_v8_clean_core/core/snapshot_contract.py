@@ -22,6 +22,8 @@ REQUIRED_SNAPSHOT_PATHS: tuple[tuple[str, ...], ...] = (
     ("targeting",),
     ("settlement",),
     ("coverage",),
+    ("global_flags",),
+    ("global_flags", "dynamic_value_store"),
 )
 
 REQUIRED_UNIT_PATHS: tuple[tuple[str, ...], ...] = (
@@ -98,4 +100,3 @@ def _has_path(data: dict[str, JSONValue], path: tuple[str, ...]) -> bool:
 
 def _format_path(path: tuple[str, ...]) -> str:
     return ".".join(path)
-

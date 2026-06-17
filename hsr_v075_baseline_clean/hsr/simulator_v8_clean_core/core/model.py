@@ -103,6 +103,10 @@ class BattleState:
 
     def snapshot(self) -> "Snapshot":
         units = {unit_id: unit.to_snapshot() for unit_id, unit in sorted(self.units.items())}
+        global_flags = {
+            "dynamic_value_store": {"entries": {}, "by_hash": {}, "by_name": {}},
+            **self.global_flags,
+        }
         teams = {
             "ally": [unit_id for unit_id, unit in sorted(self.units.items()) if unit.side == "ally"],
             "enemy": [unit_id for unit_id, unit in sorted(self.units.items()) if unit.side == "enemy"],
@@ -112,31 +116,31 @@ class BattleState:
             {
                 "battle": {
                     "wave_index": self.wave_index,
-                    "phase": str(self.global_flags.get("phase", "setup")),
-                    "current_window": str(self.global_flags.get("current_window", "idle")),
+                    "phase": str(global_flags.get("phase", "setup")),
+                    "current_window": str(global_flags.get("current_window", "idle")),
                     "action_index": self.event_index,
-                    "turn_owner_id": self.global_flags.get("turn_owner_id"),
+                    "turn_owner_id": global_flags.get("turn_owner_id"),
                 },
                 "event_index": self.event_index,
-                "global_flags": dict(sorted(self.global_flags.items())),
+                "global_flags": dict(sorted(global_flags.items())),
                 "max_skill_points": self.max_skill_points,
                 "metadata": {
                     "snapshot_contract": "v0_203",
                     "rng_state": self.rng_state,
                 },
-                "pending_events": list(self.global_flags.get("pending_events", ())),
+                "pending_events": list(global_flags.get("pending_events", ())),
                 "queues": {key: list(value) for key, value in sorted(self.queues.items())},
                 "resources": {
                     "skill_points": self.skill_points,
                     "max_skill_points": self.max_skill_points,
                 },
                 "rng_state": self.rng_state,
-                "rng_events": list(self.global_flags.get("rng_events", ())),
+                "rng_events": list(global_flags.get("rng_events", ())),
                 "skill_points": self.skill_points,
-                "targeting": dict(self.global_flags.get("targeting", {})),
+                "targeting": dict(global_flags.get("targeting", {})),
                 "teams": teams,
                 "timeline": {
-                    "turn_owner_id": self.global_flags.get("turn_owner_id"),
+                    "turn_owner_id": global_flags.get("turn_owner_id"),
                     "action_values": {
                         unit_id: unit.action_value for unit_id, unit in sorted(self.units.items())
                     },
@@ -144,8 +148,8 @@ class BattleState:
                 },
                 "units": units,
                 "wave_index": self.wave_index,
-                "settlement": dict(self.global_flags.get("settlement", {})),
-                "coverage": dict(self.global_flags.get("coverage", {})),
+                "settlement": dict(global_flags.get("settlement", {})),
+                "coverage": dict(global_flags.get("coverage", {})),
             }
         )
 

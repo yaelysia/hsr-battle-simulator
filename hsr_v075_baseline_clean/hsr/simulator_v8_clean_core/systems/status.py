@@ -180,6 +180,7 @@ class StatusSystem:
         param_entity_id: str | None = None,
         current_action_target_id: str | None = None,
         dynamic_values: dict[str, float] | None = None,
+        binding_sources: tuple[dict[str, JSONValue], ...] = (),
     ) -> StatusApplicationResult:
         if effect.opcode != "AddModifier":
             return _unsupported_result(effect, "effect is not AddModifier")
@@ -213,6 +214,7 @@ class StatusSystem:
             standard,
             definition,
             dynamic_values,
+            binding_sources,
             {"effect_id": effect.effect_id, "effect_source": effect.source.to_json()},
         )
         modifiers, unsupported = _runtime_modifiers(definition, resolved_dynamic_values)
@@ -550,6 +552,7 @@ def _resolve_dynamic_values(
     standard: dict[str, JSONValue],
     definition: RuleEntity,
     runtime_bindings: dict[str, float] | None,
+    binding_sources: tuple[dict[str, JSONValue], ...],
     source_trace: dict[str, JSONValue],
 ) -> dict[str, JSONValue]:
     values: dict[str, JSONValue] = {
@@ -557,6 +560,7 @@ def _resolve_dynamic_values(
         "__by_hash": {},
         "__evaluations": [],
         "__definition_bindings": _json_safe(definition.fields.get("dynamic_value_bindings", {})),
+        "__dynamic_value_requests": _json_safe(standard.get("dynamic_value_requests", {})),
     }
     dynamic_values = standard.get("dynamic_values")
     if not isinstance(dynamic_values, dict):
@@ -568,7 +572,11 @@ def _resolve_dynamic_values(
     for key, expr in dynamic_values.items():
         result = RuleEvaluator().evaluate_numeric(
             expr,
-            NumericEvaluationContext(dynamic_values=bindings, source_trace=source_trace),
+            NumericEvaluationContext(
+                dynamic_values=bindings,
+                binding_sources=binding_sources,
+                source_trace=source_trace,
+            ),
         )
         result_json = result.to_json()
         evaluations.append({"name": str(key), "result": result_json})

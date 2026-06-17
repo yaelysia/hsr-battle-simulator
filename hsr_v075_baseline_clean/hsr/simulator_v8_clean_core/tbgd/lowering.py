@@ -775,7 +775,9 @@ HEAL_OPCODES = {"HealHP"}
 SHIELD_OPCODES = {"InitShield", "StackShield", "ModifyShield"}
 MECHANISM_BAR_OPCODES = {"SetEnergyBarState", "SetMonsterEnergyBarState", "SetSummonerEnergyBarState"}
 RESOURCE_DELTA_OPCODES = {"ModifySPNew"}
+DYNAMIC_VALUE_OPCODES = {"SetDynamicValue", "SetDynamicValueByModifierValue"}
 EXECUTABLE_TARGET_ALIASES = {"Caster", "ModifierOwnerEntity", "ParamEntity", "CurrentActionTarget"}
+SUPPORTED_MODIFIER_VALUE_TYPES = {"Layer", "LifeTime"}
 
 
 def _effect_payload(value: dict[str, Any], opcode: str, source_modifier_name: str) -> dict[str, Any]:
@@ -792,6 +794,10 @@ def _effect_payload(value: dict[str, Any], opcode: str, source_modifier_name: st
         payload["standard"] = _standard_mechanism_bar_payload(value, opcode)
     elif opcode in RESOURCE_DELTA_OPCODES:
         payload["standard"] = _standard_resource_delta_payload(value, opcode)
+    elif opcode == "SetDynamicValue":
+        payload["standard"] = _standard_set_dynamic_value_payload(value)
+    elif opcode == "SetDynamicValueByModifierValue":
+        payload["standard"] = _standard_set_dynamic_value_by_modifier_value_payload(value, source_modifier_name)
     family = _task_damage_family(value, opcode)
     if family != "unknown":
         payload["damage_formula_family"] = family
@@ -824,14 +830,14 @@ def _effect_coverage_status(opcode: str, payload: dict[str, Any]) -> str:
             return "blocked"
         if standard.get("target_alias") not in EXECUTABLE_TARGET_ALIASES:
             return "blocked"
-        if _fixed_expr_value(standard.get("amount")) is None:
+        if not _numeric_expr_can_be_runtime_bound(standard.get("amount")):
             return "blocked"
         return "executable"
     if opcode in MECHANISM_BAR_OPCODES:
         standard = payload.get("standard")
         if not isinstance(standard, dict):
             return "blocked"
-        if _mechanism_bar_has_fixed_payload(standard):
+        if _mechanism_bar_has_runtime_payload(standard):
             return "executable"
         return "blocked"
     if opcode in RESOURCE_DELTA_OPCODES:
@@ -842,7 +848,35 @@ def _effect_coverage_status(opcode: str, payload: dict[str, Any]) -> str:
             return "blocked"
         if not isinstance(standard.get("resource"), str):
             return "blocked"
-        if _fixed_expr_value(standard.get("amount")) is None:
+        if not _numeric_expr_can_be_runtime_bound(standard.get("amount")):
+            return "blocked"
+        return "executable"
+    if opcode == "SetDynamicValue":
+        standard = payload.get("standard")
+        if not isinstance(standard, dict):
+            return "blocked"
+        if standard.get("target_alias") not in EXECUTABLE_TARGET_ALIASES:
+            return "blocked"
+        if not isinstance(standard.get("value_name"), str) or not standard.get("value_name"):
+            return "blocked"
+        if not _numeric_expr_can_be_runtime_bound(standard.get("value_expr")):
+            return "blocked"
+        return "executable"
+    if opcode == "SetDynamicValueByModifierValue":
+        standard = payload.get("standard")
+        if not isinstance(standard, dict):
+            return "blocked"
+        if standard.get("target_alias") not in EXECUTABLE_TARGET_ALIASES:
+            return "blocked"
+        if standard.get("source_target_alias") not in EXECUTABLE_TARGET_ALIASES:
+            return "blocked"
+        if not isinstance(standard.get("source_modifier"), str) or not standard.get("source_modifier"):
+            return "blocked"
+        if not isinstance(standard.get("target_value_name"), str) or not standard.get("target_value_name"):
+            return "blocked"
+        if standard.get("source_value_name") not in SUPPORTED_MODIFIER_VALUE_TYPES:
+            return "blocked"
+        if not _numeric_expr_can_be_runtime_bound(standard.get("multiplier")):
             return "blocked"
         return "executable"
     return classify_opcode(opcode)
@@ -897,8 +931,8 @@ def _standard_heal_payload(value: dict[str, Any]) -> dict[str, Any]:
             "FormulaType": _json_safe(value.get("FormulaType")),
         },
     }
-    if _fixed_expr_value(amount) is None:
-        payload["blocked_reason"] = "fixed_modify_value_required"
+    if not _numeric_expr_can_be_runtime_bound(amount):
+        payload["blocked_reason"] = "fixed_or_bound_modify_value_required"
     return payload
 
 
@@ -918,8 +952,8 @@ def _standard_shield_payload(value: dict[str, Any], opcode: str) -> dict[str, An
             "FormulaType": _json_safe(value.get("FormulaType")),
         },
     }
-    if _fixed_expr_value(amount) is None:
-        payload["blocked_reason"] = "fixed_shield_value_required"
+    if not _numeric_expr_can_be_runtime_bound(amount):
+        payload["blocked_reason"] = "fixed_or_bound_shield_value_required"
     return payload
 
 
@@ -944,8 +978,8 @@ def _standard_mechanism_bar_payload(value: dict[str, Any], opcode: str) -> dict[
             "MaxCount": _json_safe(value.get("MaxCount")),
         },
     }
-    if not _mechanism_bar_has_fixed_payload(payload):
-        payload["blocked_reason"] = "fixed_mechanism_bar_state_or_count_required"
+    if not _mechanism_bar_has_runtime_payload(payload):
+        payload["blocked_reason"] = "fixed_or_bound_mechanism_bar_state_or_count_required"
     return payload
 
 
@@ -961,8 +995,82 @@ def _standard_resource_delta_payload(value: dict[str, Any], opcode: str) -> dict
             "ModifyValue": _json_safe(value.get("ModifyValue")),
         },
     }
-    if _fixed_expr_value(amount) is None:
+    if not _numeric_expr_can_be_runtime_bound(amount):
         payload["blocked_reason"] = "fixed_or_bound_resource_delta_required"
+    return payload
+
+
+def _standard_set_dynamic_value_payload(value: dict[str, Any]) -> dict[str, Any]:
+    value_expr = _numeric_expr_summary(value.get("Value"))
+    value_name = _value_field(value.get("DynamicKey"))
+    target_alias = _target_alias(value.get("TargetType")) or "ModifierOwnerEntity"
+    payload = {
+        "kind": "dynamic_value_store",
+        "opcode": "SetDynamicValue",
+        "target_alias": target_alias,
+        "status_scope": _value_field(value.get("ContextScope")) or "modifier_local",
+        "value_name": value_name,
+        "hash": None,
+        "value_expr": value_expr,
+        "raw_formula_fields": {
+            "DynamicKey": _json_safe(value.get("DynamicKey")),
+            "Value": _json_safe(value.get("Value")),
+            "TargetType": _json_safe(value.get("TargetType")),
+            "ContextScope": _json_safe(value.get("ContextScope")),
+        },
+    }
+    if not isinstance(value_name, str) or not value_name:
+        payload["blocked_reason"] = "dynamic_value_name_required"
+    elif target_alias not in EXECUTABLE_TARGET_ALIASES:
+        payload["blocked_reason"] = f"unsupported_target_alias:{target_alias}"
+    elif not _numeric_expr_can_be_runtime_bound(value_expr):
+        payload["blocked_reason"] = str(value_expr.get("reason") or "fixed_or_bound_dynamic_value_required")
+    return payload
+
+
+def _standard_set_dynamic_value_by_modifier_value_payload(
+    value: dict[str, Any],
+    source_modifier_name: str,
+) -> dict[str, Any]:
+    source_modifier = _value_field(value.get("ModifierName")) or source_modifier_name
+    source_value_name = _value_field(value.get("ValueType"))
+    target_value_name = _value_field(value.get("DynamicKey"))
+    multiplier = _numeric_expr_summary(value.get("Multiplier"))
+    source_target_alias = _target_alias(value.get("ReadTargetType")) or "ModifierOwnerEntity"
+    target_alias = _target_alias(value.get("TargetType")) or "ModifierOwnerEntity"
+    payload = {
+        "kind": "dynamic_value_store",
+        "opcode": "SetDynamicValueByModifierValue",
+        "source_modifier": source_modifier,
+        "source_value_name": source_value_name,
+        "source_hash": None,
+        "target_value_name": target_value_name,
+        "target_hash": None,
+        "target_alias": target_alias,
+        "source_target_alias": source_target_alias,
+        "multiplier": multiplier,
+        "raw_formula_fields": {
+            "ModifierName": _json_safe(value.get("ModifierName")),
+            "ValueType": _json_safe(value.get("ValueType")),
+            "Multiplier": _json_safe(value.get("Multiplier")),
+            "DynamicKey": _json_safe(value.get("DynamicKey")),
+            "ReadTargetType": _json_safe(value.get("ReadTargetType")),
+            "TargetType": _json_safe(value.get("TargetType")),
+            "ContextScope": _json_safe(value.get("ContextScope")),
+        },
+    }
+    if not isinstance(source_modifier, str) or not source_modifier:
+        payload["blocked_reason"] = "source_modifier_required"
+    elif source_target_alias not in EXECUTABLE_TARGET_ALIASES:
+        payload["blocked_reason"] = f"unsupported_source_target_alias:{source_target_alias}"
+    elif target_alias not in EXECUTABLE_TARGET_ALIASES:
+        payload["blocked_reason"] = f"unsupported_target_alias:{target_alias}"
+    elif source_value_name not in SUPPORTED_MODIFIER_VALUE_TYPES:
+        payload["blocked_reason"] = f"unsupported_modifier_value_type:{source_value_name}"
+    elif not isinstance(target_value_name, str) or not target_value_name:
+        payload["blocked_reason"] = "target_value_name_required"
+    elif not _numeric_expr_can_be_runtime_bound(multiplier):
+        payload["blocked_reason"] = str(multiplier.get("reason") or "fixed_or_bound_multiplier_required")
     return payload
 
 
@@ -1052,10 +1160,24 @@ def _fixed_expr_value(value: Any) -> float | None:
     return None
 
 
+def _numeric_expr_can_be_runtime_bound(value: Any) -> bool:
+    if _fixed_expr_value(value) is not None:
+        return True
+    if isinstance(value, dict) and value.get("kind") == "dynamic_hash" and value.get("hash") is not None:
+        return True
+    return False
+
+
 def _mechanism_bar_has_fixed_payload(standard: dict[str, Any]) -> bool:
     if standard.get("state") is not None or standard.get("active") is not None:
         return True
     return _fixed_expr_value(standard.get("current_count")) is not None or _fixed_expr_value(standard.get("max_count")) is not None
+
+
+def _mechanism_bar_has_runtime_payload(standard: dict[str, Any]) -> bool:
+    if standard.get("state") is not None or standard.get("active") is not None:
+        return True
+    return _numeric_expr_can_be_runtime_bound(standard.get("current_count")) or _numeric_expr_can_be_runtime_bound(standard.get("max_count"))
 
 
 def _task_damage_family(value: dict[str, Any], opcode: str) -> str:
