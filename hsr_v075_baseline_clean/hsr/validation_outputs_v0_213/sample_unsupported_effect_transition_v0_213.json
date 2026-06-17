@@ -1,0 +1,3929 @@
+{
+  "after": {
+    "battle": {
+      "action_index": 1,
+      "current_window": "action",
+      "phase": "scenario",
+      "turn_owner_id": "ally:saber",
+      "wave_index": 0
+    },
+    "coverage": {},
+    "event_index": 1,
+    "global_flags": {
+      "current_window": "action",
+      "phase": "scenario",
+      "turn_owner_id": "ally:saber"
+    },
+    "max_skill_points": 5,
+    "metadata": {
+      "rng_state": "deterministic",
+      "snapshot_contract": "v0_203"
+    },
+    "pending_events": [],
+    "queues": {},
+    "resources": {
+      "max_skill_points": 5,
+      "skill_points": 4
+    },
+    "rng_events": [],
+    "rng_state": "deterministic",
+    "settlement": {},
+    "skill_points": 4,
+    "targeting": {},
+    "teams": {
+      "ally": [
+        "ally:saber"
+      ],
+      "enemy": [
+        "enemy:target"
+      ],
+      "summon": []
+    },
+    "timeline": {
+      "action_values": {
+        "ally:saber": 0.0,
+        "enemy:target": 0.0
+      },
+      "queues": {},
+      "turn_owner_id": "ally:saber"
+    },
+    "units": {
+      "ally:saber": {
+        "action_value": 0.0,
+        "attack": 3200.0,
+        "base_stats": {
+          "attack": 3200.0,
+          "defense": 900.0,
+          "max_hp": 3000.0,
+          "speed": 101.0
+        },
+        "defense": 900.0,
+        "derived_stats": {
+          "break_damage_added_ratio": 0.0,
+          "critical_chance": 0.5,
+          "critical_damage": 1.0,
+          "damage_added_ratio": 0.2,
+          "effect_hit_rate": 0.0,
+          "effect_resistance": 0.0
+        },
+        "energy": 80.0,
+        "flags": {
+          "position": 1,
+          "status_details": [
+            {
+              "application_operation": "add",
+              "caster_id": "ally:saber",
+              "duration": null,
+              "duration_unit": "permanent_or_unknown",
+              "dynamic_values": {},
+              "instance_id": "status:5812d1c18d0cd94b",
+              "lifecycle_state": "active",
+              "max_stacks": null,
+              "modifier_name": "MAvatar_Advanced_Sam_00_Rank02_BuffCD_LuoJi",
+              "modifiers": [],
+              "owner_id": "ally:saber",
+              "partial": false,
+              "refresh_policy": "replace_partial",
+              "remaining_duration": null,
+              "source_id": "validation:v0_213:negative_pre_status:effect:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Sam_00_Ability.json:MAvatar_Advanced_Sam_00_PassiveSkill_RedMode:32:success:3:AddModifier",
+              "source_trace": {
+                "effect_id": "effect:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Sam_00_Ability.json:MAvatar_Advanced_Sam_00_PassiveSkill_RedMode:32:success:3:AddModifier",
+                "effect_source": {
+                  "evidence": {
+                    "branch": "success",
+                    "callback_index": 32,
+                    "task_index": 3
+                  },
+                  "raw_id": "MAvatar_Advanced_Sam_00_PassiveSkill_RedMode",
+                  "raw_type": "GlobalModifiers",
+                  "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Sam_00_Ability.json"
+                },
+                "modifier_definition": {
+                  "evidence": {
+                    "definition_kind": "modifier_definition",
+                    "map_name": "GlobalModifiers",
+                    "modifier_name": "MAvatar_Advanced_Sam_00_Rank02_BuffCD_LuoJi"
+                  },
+                  "raw_id": "MAvatar_Advanced_Sam_00_Rank02_BuffCD_LuoJi",
+                  "raw_type": "GlobalModifiers",
+                  "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Sam_00_Ability.json"
+                }
+              },
+              "stack_policy": "single_instance",
+              "stacks": 1,
+              "status_id": "modifier:MAvatar_Advanced_Sam_00_Rank02_BuffCD_LuoJi",
+              "trigger_ids_by_event": {
+                "OnBeforeSkillUse": [
+                  "trigger:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Sam_00_Ability.json:MAvatar_Advanced_Sam_00_Rank02_BuffCD_LuoJi:42"
+                ]
+              },
+              "unsupported": []
+            }
+          ]
+        },
+        "hp": 3000.0,
+        "level": 80,
+        "max_energy": 120.0,
+        "max_hp": 3000.0,
+        "max_toughness": 0.0,
+        "modifiers": [],
+        "position": 1,
+        "recoverable_hp": 0.0,
+        "resources": {
+          "Wind_damage_added_ratio": 0.1,
+          "Wind_res_pen": 0.05,
+          "all_res_pen": 0.02,
+          "critical_chance": 0.5,
+          "critical_damage": 1.0,
+          "damage_added_ratio": 0.2,
+          "def_ignore": 0.1
+        },
+        "shield": 0.0,
+        "side": "ally",
+        "speed": 101.0,
+        "status_details": [
+          {
+            "application_operation": "add",
+            "caster_id": "ally:saber",
+            "duration": null,
+            "duration_unit": "permanent_or_unknown",
+            "dynamic_values": {},
+            "instance_id": "status:5812d1c18d0cd94b",
+            "lifecycle_state": "active",
+            "max_stacks": null,
+            "modifier_name": "MAvatar_Advanced_Sam_00_Rank02_BuffCD_LuoJi",
+            "modifiers": [],
+            "owner_id": "ally:saber",
+            "partial": false,
+            "refresh_policy": "replace_partial",
+            "remaining_duration": null,
+            "source_id": "validation:v0_213:negative_pre_status:effect:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Sam_00_Ability.json:MAvatar_Advanced_Sam_00_PassiveSkill_RedMode:32:success:3:AddModifier",
+            "source_trace": {
+              "effect_id": "effect:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Sam_00_Ability.json:MAvatar_Advanced_Sam_00_PassiveSkill_RedMode:32:success:3:AddModifier",
+              "effect_source": {
+                "evidence": {
+                  "branch": "success",
+                  "callback_index": 32,
+                  "task_index": 3
+                },
+                "raw_id": "MAvatar_Advanced_Sam_00_PassiveSkill_RedMode",
+                "raw_type": "GlobalModifiers",
+                "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Sam_00_Ability.json"
+              },
+              "modifier_definition": {
+                "evidence": {
+                  "definition_kind": "modifier_definition",
+                  "map_name": "GlobalModifiers",
+                  "modifier_name": "MAvatar_Advanced_Sam_00_Rank02_BuffCD_LuoJi"
+                },
+                "raw_id": "MAvatar_Advanced_Sam_00_Rank02_BuffCD_LuoJi",
+                "raw_type": "GlobalModifiers",
+                "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Sam_00_Ability.json"
+              }
+            },
+            "stack_policy": "single_instance",
+            "stacks": 1,
+            "status_id": "modifier:MAvatar_Advanced_Sam_00_Rank02_BuffCD_LuoJi",
+            "trigger_ids_by_event": {
+              "OnBeforeSkillUse": [
+                "trigger:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Sam_00_Ability.json:MAvatar_Advanced_Sam_00_Rank02_BuffCD_LuoJi:42"
+              ]
+            },
+            "unsupported": []
+          }
+        ],
+        "statuses": [
+          "modifier:MAvatar_Advanced_Sam_00_Rank02_BuffCD_LuoJi"
+        ],
+        "template_id": "avatar:1014",
+        "template_source": {
+          "id": "avatar:1014",
+          "kind": "avatar"
+        },
+        "toughness": 0.0,
+        "toughness_state": {
+          "break_delay": 0.0,
+          "broken": false,
+          "current": 0.0,
+          "maximum": 0.0,
+          "weakness_locked": false,
+          "weaknesses": []
+        },
+        "unit_id": "ally:saber"
+      },
+      "enemy:target": {
+        "action_value": 0.0,
+        "attack": 1000.0,
+        "base_stats": {
+          "attack": 1000.0,
+          "defense": 1000.0,
+          "max_hp": 10000.0,
+          "speed": 100.0
+        },
+        "defense": 1000.0,
+        "derived_stats": {
+          "break_damage_added_ratio": 0.0,
+          "critical_chance": 0.0,
+          "critical_damage": 0.0,
+          "damage_added_ratio": 0.0,
+          "effect_hit_rate": 0.0,
+          "effect_resistance": 0.0
+        },
+        "energy": 0.0,
+        "flags": {
+          "broken": false,
+          "position": 1,
+          "weaknesses": [
+            "Fire",
+            "Thunder"
+          ]
+        },
+        "hp": 4447.295623529411,
+        "level": 80,
+        "max_energy": 0.0,
+        "max_hp": 10000.0,
+        "max_toughness": 60.0,
+        "modifiers": [],
+        "position": 1,
+        "recoverable_hp": 0.0,
+        "resources": {
+          "Wind_resistance": 0.2,
+          "damage_reduction": 0.1,
+          "damage_taken_ratio": 0.15,
+          "def_reduction": 0.2
+        },
+        "shield": 0.0,
+        "side": "enemy",
+        "speed": 100.0,
+        "status_details": [],
+        "statuses": [],
+        "template_id": "monster:1002011",
+        "template_source": {
+          "id": "monster:1002011",
+          "kind": "monster"
+        },
+        "toughness": 60.0,
+        "toughness_state": {
+          "break_delay": 0.0,
+          "broken": false,
+          "current": 60.0,
+          "maximum": 60.0,
+          "weakness_locked": false,
+          "weaknesses": [
+            "Fire",
+            "Thunder"
+          ]
+        },
+        "unit_id": "enemy:target"
+      }
+    },
+    "wave_index": 0
+  },
+  "before": {
+    "battle": {
+      "action_index": 0,
+      "current_window": "idle",
+      "phase": "scenario",
+      "turn_owner_id": "ally:saber",
+      "wave_index": 0
+    },
+    "coverage": {},
+    "event_index": 0,
+    "global_flags": {
+      "current_window": "idle",
+      "phase": "scenario",
+      "turn_owner_id": "ally:saber"
+    },
+    "max_skill_points": 5,
+    "metadata": {
+      "rng_state": "deterministic",
+      "snapshot_contract": "v0_203"
+    },
+    "pending_events": [],
+    "queues": {},
+    "resources": {
+      "max_skill_points": 5,
+      "skill_points": 3
+    },
+    "rng_events": [],
+    "rng_state": "deterministic",
+    "settlement": {},
+    "skill_points": 3,
+    "targeting": {},
+    "teams": {
+      "ally": [
+        "ally:saber"
+      ],
+      "enemy": [
+        "enemy:target"
+      ],
+      "summon": []
+    },
+    "timeline": {
+      "action_values": {
+        "ally:saber": 0.0,
+        "enemy:target": 0.0
+      },
+      "queues": {},
+      "turn_owner_id": "ally:saber"
+    },
+    "units": {
+      "ally:saber": {
+        "action_value": 0.0,
+        "attack": 3200.0,
+        "base_stats": {
+          "attack": 3200.0,
+          "defense": 900.0,
+          "max_hp": 3000.0,
+          "speed": 101.0
+        },
+        "defense": 900.0,
+        "derived_stats": {
+          "break_damage_added_ratio": 0.0,
+          "critical_chance": 0.5,
+          "critical_damage": 1.0,
+          "damage_added_ratio": 0.2,
+          "effect_hit_rate": 0.0,
+          "effect_resistance": 0.0
+        },
+        "energy": 60.0,
+        "flags": {
+          "position": 1,
+          "status_details": [
+            {
+              "application_operation": "add",
+              "caster_id": "ally:saber",
+              "duration": null,
+              "duration_unit": "permanent_or_unknown",
+              "dynamic_values": {},
+              "instance_id": "status:5812d1c18d0cd94b",
+              "lifecycle_state": "active",
+              "max_stacks": null,
+              "modifier_name": "MAvatar_Advanced_Sam_00_Rank02_BuffCD_LuoJi",
+              "modifiers": [],
+              "owner_id": "ally:saber",
+              "partial": false,
+              "refresh_policy": "replace_partial",
+              "remaining_duration": null,
+              "source_id": "validation:v0_213:negative_pre_status:effect:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Sam_00_Ability.json:MAvatar_Advanced_Sam_00_PassiveSkill_RedMode:32:success:3:AddModifier",
+              "source_trace": {
+                "effect_id": "effect:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Sam_00_Ability.json:MAvatar_Advanced_Sam_00_PassiveSkill_RedMode:32:success:3:AddModifier",
+                "effect_source": {
+                  "evidence": {
+                    "branch": "success",
+                    "callback_index": 32,
+                    "task_index": 3
+                  },
+                  "raw_id": "MAvatar_Advanced_Sam_00_PassiveSkill_RedMode",
+                  "raw_type": "GlobalModifiers",
+                  "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Sam_00_Ability.json"
+                },
+                "modifier_definition": {
+                  "evidence": {
+                    "definition_kind": "modifier_definition",
+                    "map_name": "GlobalModifiers",
+                    "modifier_name": "MAvatar_Advanced_Sam_00_Rank02_BuffCD_LuoJi"
+                  },
+                  "raw_id": "MAvatar_Advanced_Sam_00_Rank02_BuffCD_LuoJi",
+                  "raw_type": "GlobalModifiers",
+                  "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Sam_00_Ability.json"
+                }
+              },
+              "stack_policy": "single_instance",
+              "stacks": 1,
+              "status_id": "modifier:MAvatar_Advanced_Sam_00_Rank02_BuffCD_LuoJi",
+              "trigger_ids_by_event": {
+                "OnBeforeSkillUse": [
+                  "trigger:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Sam_00_Ability.json:MAvatar_Advanced_Sam_00_Rank02_BuffCD_LuoJi:42"
+                ]
+              },
+              "unsupported": []
+            }
+          ]
+        },
+        "hp": 3000.0,
+        "level": 80,
+        "max_energy": 120.0,
+        "max_hp": 3000.0,
+        "max_toughness": 0.0,
+        "modifiers": [],
+        "position": 1,
+        "recoverable_hp": 0.0,
+        "resources": {
+          "Wind_damage_added_ratio": 0.1,
+          "Wind_res_pen": 0.05,
+          "all_res_pen": 0.02,
+          "critical_chance": 0.5,
+          "critical_damage": 1.0,
+          "damage_added_ratio": 0.2,
+          "def_ignore": 0.1
+        },
+        "shield": 0.0,
+        "side": "ally",
+        "speed": 101.0,
+        "status_details": [
+          {
+            "application_operation": "add",
+            "caster_id": "ally:saber",
+            "duration": null,
+            "duration_unit": "permanent_or_unknown",
+            "dynamic_values": {},
+            "instance_id": "status:5812d1c18d0cd94b",
+            "lifecycle_state": "active",
+            "max_stacks": null,
+            "modifier_name": "MAvatar_Advanced_Sam_00_Rank02_BuffCD_LuoJi",
+            "modifiers": [],
+            "owner_id": "ally:saber",
+            "partial": false,
+            "refresh_policy": "replace_partial",
+            "remaining_duration": null,
+            "source_id": "validation:v0_213:negative_pre_status:effect:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Sam_00_Ability.json:MAvatar_Advanced_Sam_00_PassiveSkill_RedMode:32:success:3:AddModifier",
+            "source_trace": {
+              "effect_id": "effect:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Sam_00_Ability.json:MAvatar_Advanced_Sam_00_PassiveSkill_RedMode:32:success:3:AddModifier",
+              "effect_source": {
+                "evidence": {
+                  "branch": "success",
+                  "callback_index": 32,
+                  "task_index": 3
+                },
+                "raw_id": "MAvatar_Advanced_Sam_00_PassiveSkill_RedMode",
+                "raw_type": "GlobalModifiers",
+                "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Sam_00_Ability.json"
+              },
+              "modifier_definition": {
+                "evidence": {
+                  "definition_kind": "modifier_definition",
+                  "map_name": "GlobalModifiers",
+                  "modifier_name": "MAvatar_Advanced_Sam_00_Rank02_BuffCD_LuoJi"
+                },
+                "raw_id": "MAvatar_Advanced_Sam_00_Rank02_BuffCD_LuoJi",
+                "raw_type": "GlobalModifiers",
+                "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Sam_00_Ability.json"
+              }
+            },
+            "stack_policy": "single_instance",
+            "stacks": 1,
+            "status_id": "modifier:MAvatar_Advanced_Sam_00_Rank02_BuffCD_LuoJi",
+            "trigger_ids_by_event": {
+              "OnBeforeSkillUse": [
+                "trigger:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Sam_00_Ability.json:MAvatar_Advanced_Sam_00_Rank02_BuffCD_LuoJi:42"
+              ]
+            },
+            "unsupported": []
+          }
+        ],
+        "statuses": [
+          "modifier:MAvatar_Advanced_Sam_00_Rank02_BuffCD_LuoJi"
+        ],
+        "template_id": "avatar:1014",
+        "template_source": {
+          "id": "avatar:1014",
+          "kind": "avatar"
+        },
+        "toughness": 0.0,
+        "toughness_state": {
+          "break_delay": 0.0,
+          "broken": false,
+          "current": 0.0,
+          "maximum": 0.0,
+          "weakness_locked": false,
+          "weaknesses": []
+        },
+        "unit_id": "ally:saber"
+      },
+      "enemy:target": {
+        "action_value": 0.0,
+        "attack": 1000.0,
+        "base_stats": {
+          "attack": 1000.0,
+          "defense": 1000.0,
+          "max_hp": 10000.0,
+          "speed": 100.0
+        },
+        "defense": 1000.0,
+        "derived_stats": {
+          "break_damage_added_ratio": 0.0,
+          "critical_chance": 0.0,
+          "critical_damage": 0.0,
+          "damage_added_ratio": 0.0,
+          "effect_hit_rate": 0.0,
+          "effect_resistance": 0.0
+        },
+        "energy": 0.0,
+        "flags": {
+          "broken": false,
+          "position": 1,
+          "weaknesses": [
+            "Fire",
+            "Thunder"
+          ]
+        },
+        "hp": 10000.0,
+        "level": 80,
+        "max_energy": 0.0,
+        "max_hp": 10000.0,
+        "max_toughness": 60.0,
+        "modifiers": [],
+        "position": 1,
+        "recoverable_hp": 0.0,
+        "resources": {
+          "Wind_resistance": 0.2,
+          "damage_reduction": 0.1,
+          "damage_taken_ratio": 0.15,
+          "def_reduction": 0.2
+        },
+        "shield": 0.0,
+        "side": "enemy",
+        "speed": 100.0,
+        "status_details": [],
+        "statuses": [],
+        "template_id": "monster:1002011",
+        "template_source": {
+          "id": "monster:1002011",
+          "kind": "monster"
+        },
+        "toughness": 60.0,
+        "toughness_state": {
+          "break_delay": 0.0,
+          "broken": false,
+          "current": 60.0,
+          "maximum": 60.0,
+          "weakness_locked": false,
+          "weaknesses": [
+            "Fire",
+            "Thunder"
+          ]
+        },
+        "unit_id": "enemy:target"
+      }
+    },
+    "wave_index": 0
+  },
+  "command": {
+    "action_id": "avatar_skill:101401",
+    "action_level": 10,
+    "actor_id": "ally:saber",
+    "metadata": {
+      "crit_mode": "crit",
+      "label": "Saber normal attack identity smoke",
+      "reset_actor_av": true
+    },
+    "queue_name": null,
+    "source": "manual",
+    "target_ids": [
+      "enemy:target"
+    ]
+  },
+  "contract_validation": {},
+  "coverage": {
+    "action_event_plan": {
+      "action_id": "avatar_skill:101401",
+      "action_level": 10,
+      "attack_type": "Normal",
+      "damage_formula_family": "direct",
+      "damage_kind": "hp_damage",
+      "has_attack_windows": true,
+      "has_damage_step": true,
+      "skill_type": "SingleAttack",
+      "steps": [
+        {
+          "canonical_window": "before_skill_use",
+          "kind": "trigger_window",
+          "phase": "before_skill_use",
+          "requires_action_enabled": true,
+          "tbgd_event": "OnBeforeSkillUse"
+        },
+        {
+          "canonical_window": "before_attack",
+          "kind": "trigger_window",
+          "phase": "before_attack",
+          "requires_action_enabled": true,
+          "tbgd_event": "OnBeforeAttack"
+        },
+        {
+          "canonical_window": "",
+          "kind": "damage",
+          "phase": "damage",
+          "requires_action_enabled": true,
+          "tbgd_event": ""
+        },
+        {
+          "canonical_window": "after_attack",
+          "kind": "trigger_window",
+          "phase": "after_attack",
+          "requires_action_enabled": true,
+          "tbgd_event": "OnAfterAttack"
+        },
+        {
+          "canonical_window": "after_skill_use",
+          "kind": "trigger_window",
+          "phase": "after_skill_use",
+          "requires_action_enabled": true,
+          "tbgd_event": "OnAfterSkillUse"
+        }
+      ]
+    },
+    "damage_formula_family": "direct",
+    "damage_mutation_count": 1,
+    "damage_ok": true,
+    "definition_id": "action_def:avatar_skill:101401:10",
+    "executor": "v0_212_trigger_action_foundation",
+    "resource_mutation_count": 2,
+    "resource_ok": true,
+    "target_ok": true,
+    "timeline_mutation_count": 4,
+    "trigger_mutation_count": 0,
+    "trigger_window_count": 4
+  },
+  "events": [
+    {
+      "event_id": "event:1:action_requested",
+      "event_type": "action.requested",
+      "payload": {
+        "action_id": "avatar_skill:101401",
+        "action_level": 10,
+        "definition_id": "action_def:avatar_skill:101401:10",
+        "source": "manual"
+      },
+      "process_only": true,
+      "source_id": "ally:saber",
+      "target_id": null,
+      "window": "action_request"
+    },
+    {
+      "event_id": "event:1:action_window_opened",
+      "event_type": "timeline.action_window_opened",
+      "payload": {
+        "previous_window": "idle"
+      },
+      "process_only": true,
+      "source_id": "ally:saber",
+      "target_id": null,
+      "window": "action"
+    },
+    {
+      "event_id": "event:1:before_skill_use",
+      "event_type": "trigger.window",
+      "payload": {
+        "canonical_window": "before_skill_use",
+        "mutation_count": 0,
+        "tbgd_event": "OnBeforeSkillUse",
+        "trigger_count": 1
+      },
+      "process_only": true,
+      "source_id": "ally:saber",
+      "target_id": "enemy:target",
+      "window": "before_skill_use"
+    },
+    {
+      "event_id": "event:1:before_attack",
+      "event_type": "trigger.window",
+      "payload": {
+        "canonical_window": "before_attack",
+        "mutation_count": 0,
+        "tbgd_event": "OnBeforeAttack",
+        "trigger_count": 0
+      },
+      "process_only": true,
+      "source_id": "ally:saber",
+      "target_id": "enemy:target",
+      "window": "before_attack"
+    },
+    {
+      "event_id": "event:1:after_attack",
+      "event_type": "trigger.window",
+      "payload": {
+        "canonical_window": "after_attack",
+        "mutation_count": 0,
+        "tbgd_event": "OnAfterAttack",
+        "trigger_count": 0
+      },
+      "process_only": true,
+      "source_id": "ally:saber",
+      "target_id": "enemy:target",
+      "window": "after_attack"
+    },
+    {
+      "event_id": "event:1:after_skill_use",
+      "event_type": "trigger.window",
+      "payload": {
+        "canonical_window": "after_skill_use",
+        "mutation_count": 0,
+        "tbgd_event": "OnAfterSkillUse",
+        "trigger_count": 0
+      },
+      "process_only": true,
+      "source_id": "ally:saber",
+      "target_id": "enemy:target",
+      "window": "after_skill_use"
+    }
+  ],
+  "mutations": [
+    {
+      "after": 1,
+      "before": 0,
+      "metadata": {},
+      "mutation_id": "mutation:timeline:event_index:1",
+      "op": "set",
+      "path": [
+        "event_index"
+      ],
+      "reason": "action transaction opened",
+      "source": "combat_executor.timeline"
+    },
+    {
+      "after": "action",
+      "before": "idle",
+      "metadata": {},
+      "mutation_id": "mutation:timeline:current_window:1",
+      "op": "set",
+      "path": [
+        "global_flags",
+        "current_window"
+      ],
+      "reason": "open action window",
+      "source": "combat_executor.timeline"
+    },
+    {
+      "after": "ally:saber",
+      "before": "ally:saber",
+      "metadata": {},
+      "mutation_id": "mutation:timeline:turn_owner:1",
+      "op": "set",
+      "path": [
+        "global_flags",
+        "turn_owner_id"
+      ],
+      "reason": "set action owner",
+      "source": "combat_executor.timeline"
+    },
+    {
+      "after": 0.0,
+      "before": 0.0,
+      "metadata": {},
+      "mutation_id": "mutation:ally:saber:action_value:0:0.0",
+      "op": "set",
+      "path": [
+        "units",
+        "ally:saber",
+        "action_value"
+      ],
+      "reason": "set action value",
+      "source": "combat_executor.timeline"
+    },
+    {
+      "after": 4,
+      "before": 3,
+      "metadata": {
+        "action_id": "avatar_skill:101401",
+        "action_level": 10,
+        "definition_id": "action_def:avatar_skill:101401:10",
+        "delta": 1,
+        "source_trace": {
+          "action_id": "avatar_skill:101401",
+          "coverage_status": "executable",
+          "definition_id": "action_def:avatar_skill:101401:10",
+          "level": 10,
+          "source": {
+            "evidence": {
+              "id_key": "SkillID",
+              "level": 10,
+              "resource_mapping": {
+                "BPAdd": "skill_point_gain_if_positive",
+                "BPNeed": "skill_point_cost_if_positive",
+                "SPBase": "energy_gain"
+              },
+              "row_index": 65,
+              "taxonomy": {
+                "attack_type": "raw TBGD AttackType; follow-up is an attack type axis",
+                "damage_formula_family": "formula family axis; follow-up is not a damage family",
+                "element_type": "raw TBGD StanceDamageType when present"
+              }
+            },
+            "raw_id": "101401",
+            "raw_type": "AvatarSkillConfigLD",
+            "source_path": "ExcelOutput/AvatarSkillConfigLD.json"
+          }
+        }
+      },
+      "mutation_id": "mutation:combat_executor.resources:skill_points:0",
+      "op": "set",
+      "path": [
+        "skill_points"
+      ],
+      "reason": "apply action skill point delta",
+      "source": "combat_executor.resources"
+    },
+    {
+      "after": 80.0,
+      "before": 60.0,
+      "metadata": {
+        "action_id": "avatar_skill:101401",
+        "action_level": 10,
+        "definition_id": "action_def:avatar_skill:101401:10",
+        "delta": 20.0,
+        "source_trace": {
+          "action_id": "avatar_skill:101401",
+          "coverage_status": "executable",
+          "definition_id": "action_def:avatar_skill:101401:10",
+          "level": 10,
+          "source": {
+            "evidence": {
+              "id_key": "SkillID",
+              "level": 10,
+              "resource_mapping": {
+                "BPAdd": "skill_point_gain_if_positive",
+                "BPNeed": "skill_point_cost_if_positive",
+                "SPBase": "energy_gain"
+              },
+              "row_index": 65,
+              "taxonomy": {
+                "attack_type": "raw TBGD AttackType; follow-up is an attack type axis",
+                "damage_formula_family": "formula family axis; follow-up is not a damage family",
+                "element_type": "raw TBGD StanceDamageType when present"
+              }
+            },
+            "raw_id": "101401",
+            "raw_type": "AvatarSkillConfigLD",
+            "source_path": "ExcelOutput/AvatarSkillConfigLD.json"
+          }
+        }
+      },
+      "mutation_id": "mutation:ally:saber:energy:0:20.0",
+      "op": "set",
+      "path": [
+        "units",
+        "ally:saber",
+        "energy"
+      ],
+      "reason": "change unit energy",
+      "source": "combat_executor.resources"
+    },
+    {
+      "after": 4447.295623529411,
+      "before": 10000.0,
+      "metadata": {
+        "action_definition": {
+          "action_id": "avatar_skill:101401",
+          "damage_formula_family": "direct",
+          "definition_id": "action_def:avatar_skill:101401:10",
+          "level": 10
+        },
+        "amount": null,
+        "attack_type": "Normal",
+        "attacker_id": "ally:saber",
+        "bypasses_normal_multipliers": false,
+        "crit_resolution": {
+          "crit_damage": 1.0,
+          "crit_rate": 0.5,
+          "event_id": "rng:1:ally:saber:action_def:avatar_skill:101401:10:enemy:target:crit",
+          "is_crit": true,
+          "mode": "crit",
+          "multiplier": 2.0,
+          "reason": "forced_crit",
+          "rng_roll": null
+        },
+        "damage_formula_family": "direct",
+        "damage_kind": "hp_damage",
+        "element_type": "Wind",
+        "final_damage": 5552.704376470589,
+        "formula_result": {
+          "action_definition_id": "action_def:avatar_skill:101401:10",
+          "attack_type": "Normal",
+          "attacker_id": "ally:saber",
+          "calculation_mode": "v0_209_direct_damage_formula",
+          "crit_resolution": {
+            "crit_damage": 1.0,
+            "crit_rate": 0.5,
+            "event_id": "rng:1:ally:saber:action_def:avatar_skill:101401:10:enemy:target:crit",
+            "is_crit": true,
+            "mode": "crit",
+            "multiplier": 2.0,
+            "reason": "forced_crit",
+            "rng_roll": null
+          },
+          "element_type": "Wind",
+          "final_damage": 5552.704376470589,
+          "formula_family": "direct",
+          "modifier_ledger": {
+            "applied_count": 14,
+            "applied_terms": [
+              {
+                "applied_reason": "crit_rate_clamped",
+                "applied_value": 0.5,
+                "bucket": "crit",
+                "condition": "always",
+                "key": "critical_chance",
+                "raw_path": "resources.critical_chance",
+                "scope": "actor",
+                "skipped_reason": "",
+                "source_id": "ally:saber",
+                "source_type": "actor.resources"
+              },
+              {
+                "applied_reason": "crit_damage_available",
+                "applied_value": 1.0,
+                "bucket": "crit",
+                "condition": "is_crit",
+                "key": "critical_damage",
+                "raw_path": "resources.critical_damage",
+                "scope": "actor",
+                "skipped_reason": "",
+                "source_id": "ally:saber",
+                "source_type": "actor.resources"
+              },
+              {
+                "applied_reason": "applied",
+                "applied_value": 0.2,
+                "bucket": "damage_bonus",
+                "condition": "always",
+                "key": "damage_added_ratio",
+                "raw_path": "resources.damage_added_ratio",
+                "scope": "actor",
+                "skipped_reason": "",
+                "source_id": "ally:saber",
+                "source_type": "actor.resources"
+              },
+              {
+                "applied_reason": "applied",
+                "applied_value": 0.1,
+                "bucket": "damage_bonus",
+                "condition": "element=Wind",
+                "key": "Wind_damage_added_ratio",
+                "raw_path": "resources.Wind_damage_added_ratio",
+                "scope": "actor",
+                "skipped_reason": "",
+                "source_id": "ally:saber",
+                "source_type": "actor.resources"
+              },
+              {
+                "applied_reason": "base_target_defense",
+                "applied_value": 1000.0,
+                "bucket": "defense",
+                "condition": "always",
+                "key": "defense",
+                "raw_path": "unit.defense",
+                "scope": "target",
+                "skipped_reason": "",
+                "source_id": "enemy:target",
+                "source_type": "target.stats"
+              },
+              {
+                "applied_reason": "applied",
+                "applied_value": 0.2,
+                "bucket": "defense",
+                "condition": "always",
+                "key": "def_reduction",
+                "raw_path": "resources.def_reduction",
+                "scope": "target",
+                "skipped_reason": "",
+                "source_id": "enemy:target",
+                "source_type": "target.resources"
+              },
+              {
+                "applied_reason": "applied",
+                "applied_value": 0.1,
+                "bucket": "defense",
+                "condition": "always",
+                "key": "def_ignore",
+                "raw_path": "resources.def_ignore",
+                "scope": "actor",
+                "skipped_reason": "",
+                "source_id": "ally:saber",
+                "source_type": "actor.resources"
+              },
+              {
+                "applied_reason": "applied",
+                "applied_value": 0.2,
+                "bucket": "resistance",
+                "condition": "element=Wind",
+                "key": "Wind_resistance",
+                "raw_path": "resources.Wind_resistance",
+                "scope": "target",
+                "skipped_reason": "",
+                "source_id": "enemy:target",
+                "source_type": "target.resources"
+              },
+              {
+                "applied_reason": "applied",
+                "applied_value": 0.05,
+                "bucket": "resistance",
+                "condition": "element=Wind",
+                "key": "Wind_res_pen",
+                "raw_path": "resources.Wind_res_pen",
+                "scope": "actor",
+                "skipped_reason": "",
+                "source_id": "ally:saber",
+                "source_type": "actor.resources"
+              },
+              {
+                "applied_reason": "applied",
+                "applied_value": 0.02,
+                "bucket": "resistance",
+                "condition": "always",
+                "key": "all_res_pen",
+                "raw_path": "resources.all_res_pen",
+                "scope": "actor",
+                "skipped_reason": "",
+                "source_id": "ally:saber",
+                "source_type": "actor.resources"
+              },
+              {
+                "applied_reason": "applied",
+                "applied_value": 0.15,
+                "bucket": "damage_taken",
+                "condition": "always",
+                "key": "damage_taken_ratio",
+                "raw_path": "resources.damage_taken_ratio",
+                "scope": "target",
+                "skipped_reason": "",
+                "source_id": "enemy:target",
+                "source_type": "target.resources"
+              },
+              {
+                "applied_reason": "applied",
+                "applied_value": 0.1,
+                "bucket": "damage_reduction",
+                "condition": "always",
+                "key": "damage_reduction",
+                "raw_path": "resources.damage_reduction",
+                "scope": "target",
+                "skipped_reason": "",
+                "source_id": "enemy:target",
+                "source_type": "target.resources"
+              },
+              {
+                "applied_reason": "positive_toughness_not_broken",
+                "applied_value": 60.0,
+                "bucket": "toughness_state",
+                "condition": "always",
+                "key": "current_toughness",
+                "raw_path": "unit.toughness",
+                "scope": "target",
+                "skipped_reason": "",
+                "source_id": "enemy:target",
+                "source_type": "target.state"
+              },
+              {
+                "applied_reason": "positive_toughness_not_broken",
+                "applied_value": 0.0,
+                "bucket": "toughness_state",
+                "condition": "always",
+                "key": "broken",
+                "raw_path": "flags.broken",
+                "scope": "target",
+                "skipped_reason": "",
+                "source_id": "enemy:target",
+                "source_type": "target.state"
+              }
+            ],
+            "buckets": [
+              {
+                "applied_terms": [
+                  {
+                    "applied_reason": "crit_rate_clamped",
+                    "applied_value": 0.5,
+                    "bucket": "crit",
+                    "condition": "always",
+                    "key": "critical_chance",
+                    "raw_path": "resources.critical_chance",
+                    "scope": "actor",
+                    "skipped_reason": "",
+                    "source_id": "ally:saber",
+                    "source_type": "actor.resources"
+                  },
+                  {
+                    "applied_reason": "crit_damage_available",
+                    "applied_value": 1.0,
+                    "bucket": "crit",
+                    "condition": "is_crit",
+                    "key": "critical_damage",
+                    "raw_path": "resources.critical_damage",
+                    "scope": "actor",
+                    "skipped_reason": "",
+                    "source_id": "ally:saber",
+                    "source_type": "actor.resources"
+                  }
+                ],
+                "bucket": "crit",
+                "metadata": {
+                  "crit_damage": 1.0,
+                  "crit_rate": 0.5,
+                  "event_id": "rng:1:ally:saber:action_def:avatar_skill:101401:10:enemy:target:crit",
+                  "is_crit": true,
+                  "mode": "crit",
+                  "multiplier": 2.0,
+                  "reason": "forced_crit",
+                  "rng_roll": null
+                },
+                "multiplier": 2.0,
+                "skipped_terms": []
+              },
+              {
+                "applied_terms": [
+                  {
+                    "applied_reason": "applied",
+                    "applied_value": 0.2,
+                    "bucket": "damage_bonus",
+                    "condition": "always",
+                    "key": "damage_added_ratio",
+                    "raw_path": "resources.damage_added_ratio",
+                    "scope": "actor",
+                    "skipped_reason": "",
+                    "source_id": "ally:saber",
+                    "source_type": "actor.resources"
+                  },
+                  {
+                    "applied_reason": "applied",
+                    "applied_value": 0.1,
+                    "bucket": "damage_bonus",
+                    "condition": "element=Wind",
+                    "key": "Wind_damage_added_ratio",
+                    "raw_path": "resources.Wind_damage_added_ratio",
+                    "scope": "actor",
+                    "skipped_reason": "",
+                    "source_id": "ally:saber",
+                    "source_type": "actor.resources"
+                  }
+                ],
+                "bucket": "damage_bonus",
+                "metadata": {
+                  "status_bonus": 0.0
+                },
+                "multiplier": 1.3,
+                "skipped_terms": []
+              },
+              {
+                "applied_terms": [
+                  {
+                    "applied_reason": "base_target_defense",
+                    "applied_value": 1000.0,
+                    "bucket": "defense",
+                    "condition": "always",
+                    "key": "defense",
+                    "raw_path": "unit.defense",
+                    "scope": "target",
+                    "skipped_reason": "",
+                    "source_id": "enemy:target",
+                    "source_type": "target.stats"
+                  },
+                  {
+                    "applied_reason": "applied",
+                    "applied_value": 0.2,
+                    "bucket": "defense",
+                    "condition": "always",
+                    "key": "def_reduction",
+                    "raw_path": "resources.def_reduction",
+                    "scope": "target",
+                    "skipped_reason": "",
+                    "source_id": "enemy:target",
+                    "source_type": "target.resources"
+                  },
+                  {
+                    "applied_reason": "applied",
+                    "applied_value": 0.1,
+                    "bucket": "defense",
+                    "condition": "always",
+                    "key": "def_ignore",
+                    "raw_path": "resources.def_ignore",
+                    "scope": "actor",
+                    "skipped_reason": "",
+                    "source_id": "ally:saber",
+                    "source_type": "actor.resources"
+                  }
+                ],
+                "bucket": "defense",
+                "metadata": {
+                  "actor_level": 80,
+                  "effective_defense": 700.0000000000001,
+                  "status_def_ignore": 0.0,
+                  "status_def_reduction": 0.0
+                },
+                "multiplier": 0.588235294117647,
+                "skipped_terms": []
+              },
+              {
+                "applied_terms": [
+                  {
+                    "applied_reason": "applied",
+                    "applied_value": 0.2,
+                    "bucket": "resistance",
+                    "condition": "element=Wind",
+                    "key": "Wind_resistance",
+                    "raw_path": "resources.Wind_resistance",
+                    "scope": "target",
+                    "skipped_reason": "",
+                    "source_id": "enemy:target",
+                    "source_type": "target.resources"
+                  },
+                  {
+                    "applied_reason": "applied",
+                    "applied_value": 0.05,
+                    "bucket": "resistance",
+                    "condition": "element=Wind",
+                    "key": "Wind_res_pen",
+                    "raw_path": "resources.Wind_res_pen",
+                    "scope": "actor",
+                    "skipped_reason": "",
+                    "source_id": "ally:saber",
+                    "source_type": "actor.resources"
+                  },
+                  {
+                    "applied_reason": "applied",
+                    "applied_value": 0.02,
+                    "bucket": "resistance",
+                    "condition": "always",
+                    "key": "all_res_pen",
+                    "raw_path": "resources.all_res_pen",
+                    "scope": "actor",
+                    "skipped_reason": "",
+                    "source_id": "ally:saber",
+                    "source_type": "actor.resources"
+                  }
+                ],
+                "bucket": "resistance",
+                "metadata": {
+                  "selected_resistance": 0.2,
+                  "status_resistance_delta": 0.0
+                },
+                "multiplier": 0.8700000000000001,
+                "skipped_terms": [
+                  {
+                    "applied_reason": "",
+                    "applied_value": null,
+                    "bucket": "resistance",
+                    "condition": "element_resistance_present",
+                    "key": "all_resistance",
+                    "raw_path": "resources.all_resistance",
+                    "scope": "target",
+                    "skipped_reason": "element_specific_resistance_selected",
+                    "source_id": "enemy:target",
+                    "source_type": "target.resources"
+                  }
+                ]
+              },
+              {
+                "applied_terms": [
+                  {
+                    "applied_reason": "applied",
+                    "applied_value": 0.15,
+                    "bucket": "damage_taken",
+                    "condition": "always",
+                    "key": "damage_taken_ratio",
+                    "raw_path": "resources.damage_taken_ratio",
+                    "scope": "target",
+                    "skipped_reason": "",
+                    "source_id": "enemy:target",
+                    "source_type": "target.resources"
+                  }
+                ],
+                "bucket": "damage_taken",
+                "metadata": {
+                  "status_damage_taken_ratio": 0.0
+                },
+                "multiplier": 1.15,
+                "skipped_terms": []
+              },
+              {
+                "applied_terms": [
+                  {
+                    "applied_reason": "applied",
+                    "applied_value": 0.1,
+                    "bucket": "damage_reduction",
+                    "condition": "always",
+                    "key": "damage_reduction",
+                    "raw_path": "resources.damage_reduction",
+                    "scope": "target",
+                    "skipped_reason": "",
+                    "source_id": "enemy:target",
+                    "source_type": "target.resources"
+                  }
+                ],
+                "bucket": "damage_reduction",
+                "metadata": {},
+                "multiplier": 0.9,
+                "skipped_terms": []
+              },
+              {
+                "applied_terms": [
+                  {
+                    "applied_reason": "positive_toughness_not_broken",
+                    "applied_value": 60.0,
+                    "bucket": "toughness_state",
+                    "condition": "always",
+                    "key": "current_toughness",
+                    "raw_path": "unit.toughness",
+                    "scope": "target",
+                    "skipped_reason": "",
+                    "source_id": "enemy:target",
+                    "source_type": "target.state"
+                  },
+                  {
+                    "applied_reason": "positive_toughness_not_broken",
+                    "applied_value": 0.0,
+                    "bucket": "toughness_state",
+                    "condition": "always",
+                    "key": "broken",
+                    "raw_path": "flags.broken",
+                    "scope": "target",
+                    "skipped_reason": "",
+                    "source_id": "enemy:target",
+                    "source_type": "target.state"
+                  }
+                ],
+                "bucket": "toughness_state",
+                "metadata": {
+                  "broken": false,
+                  "current_toughness": 60.0,
+                  "max_toughness": 60.0
+                },
+                "multiplier": 0.9,
+                "skipped_terms": []
+              }
+            ],
+            "formula_family": "direct",
+            "skipped_count": 1,
+            "skipped_terms": [
+              {
+                "applied_reason": "",
+                "applied_value": null,
+                "bucket": "resistance",
+                "condition": "element_resistance_present",
+                "key": "all_resistance",
+                "raw_path": "resources.all_resistance",
+                "scope": "target",
+                "skipped_reason": "element_specific_resistance_selected",
+                "source_id": "enemy:target",
+                "source_type": "target.resources"
+              }
+            ]
+          },
+          "multipliers": {
+            "crit": 2.0,
+            "damage_bonus": 1.3,
+            "damage_reduction": 0.9,
+            "damage_taken": 1.15,
+            "defense": 0.588235294117647,
+            "resistance": 0.8700000000000001,
+            "toughness_state": 0.9
+          },
+          "rng_events": [
+            {
+              "after_state": "deterministic",
+              "before_state": "deterministic",
+              "event_id": "rng:1:ally:saber:action_def:avatar_skill:101401:10:enemy:target:crit",
+              "metadata": {
+                "action_definition_id": "action_def:avatar_skill:101401:10",
+                "actor_id": "ally:saber",
+                "source_trace": {
+                  "action_id": "avatar_skill:101401",
+                  "action_level": 10,
+                  "definition_id": "action_def:avatar_skill:101401:10",
+                  "source": {
+                    "action_id": "avatar_skill:101401",
+                    "coverage_status": "executable",
+                    "definition_id": "action_def:avatar_skill:101401:10",
+                    "level": 10,
+                    "source": {
+                      "evidence": {
+                        "id_key": "SkillID",
+                        "level": 10,
+                        "resource_mapping": {
+                          "BPAdd": "skill_point_gain_if_positive",
+                          "BPNeed": "skill_point_cost_if_positive",
+                          "SPBase": "energy_gain"
+                        },
+                        "row_index": 65,
+                        "taxonomy": {
+                          "attack_type": "raw TBGD AttackType; follow-up is an attack type axis",
+                          "damage_formula_family": "formula family axis; follow-up is not a damage family",
+                          "element_type": "raw TBGD StanceDamageType when present"
+                        }
+                      },
+                      "raw_id": "101401",
+                      "raw_type": "AvatarSkillConfigLD",
+                      "source_path": "ExcelOutput/AvatarSkillConfigLD.json"
+                    }
+                  }
+                },
+                "target_id": "enemy:target"
+              },
+              "result": {
+                "crit_damage": 1.0,
+                "crit_rate": 0.5,
+                "event_id": "rng:1:ally:saber:action_def:avatar_skill:101401:10:enemy:target:crit",
+                "is_crit": true,
+                "mode": "crit",
+                "multiplier": 2.0,
+                "reason": "forced_crit",
+                "rng_roll": null
+              },
+              "rng_type": "crit",
+              "source": "damage_formula"
+            }
+          ],
+          "scaling": {
+            "base_damage": 4480.0,
+            "flat_damage": 0.0,
+            "ratio": 1.4,
+            "stat": "attack",
+            "value": 3200.0
+          },
+          "target_id": "enemy:target"
+        },
+        "metadata": {
+          "crit_mode": "crit"
+        },
+        "modifier_ledger": {
+          "applied_count": 14,
+          "applied_terms": [
+            {
+              "applied_reason": "crit_rate_clamped",
+              "applied_value": 0.5,
+              "bucket": "crit",
+              "condition": "always",
+              "key": "critical_chance",
+              "raw_path": "resources.critical_chance",
+              "scope": "actor",
+              "skipped_reason": "",
+              "source_id": "ally:saber",
+              "source_type": "actor.resources"
+            },
+            {
+              "applied_reason": "crit_damage_available",
+              "applied_value": 1.0,
+              "bucket": "crit",
+              "condition": "is_crit",
+              "key": "critical_damage",
+              "raw_path": "resources.critical_damage",
+              "scope": "actor",
+              "skipped_reason": "",
+              "source_id": "ally:saber",
+              "source_type": "actor.resources"
+            },
+            {
+              "applied_reason": "applied",
+              "applied_value": 0.2,
+              "bucket": "damage_bonus",
+              "condition": "always",
+              "key": "damage_added_ratio",
+              "raw_path": "resources.damage_added_ratio",
+              "scope": "actor",
+              "skipped_reason": "",
+              "source_id": "ally:saber",
+              "source_type": "actor.resources"
+            },
+            {
+              "applied_reason": "applied",
+              "applied_value": 0.1,
+              "bucket": "damage_bonus",
+              "condition": "element=Wind",
+              "key": "Wind_damage_added_ratio",
+              "raw_path": "resources.Wind_damage_added_ratio",
+              "scope": "actor",
+              "skipped_reason": "",
+              "source_id": "ally:saber",
+              "source_type": "actor.resources"
+            },
+            {
+              "applied_reason": "base_target_defense",
+              "applied_value": 1000.0,
+              "bucket": "defense",
+              "condition": "always",
+              "key": "defense",
+              "raw_path": "unit.defense",
+              "scope": "target",
+              "skipped_reason": "",
+              "source_id": "enemy:target",
+              "source_type": "target.stats"
+            },
+            {
+              "applied_reason": "applied",
+              "applied_value": 0.2,
+              "bucket": "defense",
+              "condition": "always",
+              "key": "def_reduction",
+              "raw_path": "resources.def_reduction",
+              "scope": "target",
+              "skipped_reason": "",
+              "source_id": "enemy:target",
+              "source_type": "target.resources"
+            },
+            {
+              "applied_reason": "applied",
+              "applied_value": 0.1,
+              "bucket": "defense",
+              "condition": "always",
+              "key": "def_ignore",
+              "raw_path": "resources.def_ignore",
+              "scope": "actor",
+              "skipped_reason": "",
+              "source_id": "ally:saber",
+              "source_type": "actor.resources"
+            },
+            {
+              "applied_reason": "applied",
+              "applied_value": 0.2,
+              "bucket": "resistance",
+              "condition": "element=Wind",
+              "key": "Wind_resistance",
+              "raw_path": "resources.Wind_resistance",
+              "scope": "target",
+              "skipped_reason": "",
+              "source_id": "enemy:target",
+              "source_type": "target.resources"
+            },
+            {
+              "applied_reason": "applied",
+              "applied_value": 0.05,
+              "bucket": "resistance",
+              "condition": "element=Wind",
+              "key": "Wind_res_pen",
+              "raw_path": "resources.Wind_res_pen",
+              "scope": "actor",
+              "skipped_reason": "",
+              "source_id": "ally:saber",
+              "source_type": "actor.resources"
+            },
+            {
+              "applied_reason": "applied",
+              "applied_value": 0.02,
+              "bucket": "resistance",
+              "condition": "always",
+              "key": "all_res_pen",
+              "raw_path": "resources.all_res_pen",
+              "scope": "actor",
+              "skipped_reason": "",
+              "source_id": "ally:saber",
+              "source_type": "actor.resources"
+            },
+            {
+              "applied_reason": "applied",
+              "applied_value": 0.15,
+              "bucket": "damage_taken",
+              "condition": "always",
+              "key": "damage_taken_ratio",
+              "raw_path": "resources.damage_taken_ratio",
+              "scope": "target",
+              "skipped_reason": "",
+              "source_id": "enemy:target",
+              "source_type": "target.resources"
+            },
+            {
+              "applied_reason": "applied",
+              "applied_value": 0.1,
+              "bucket": "damage_reduction",
+              "condition": "always",
+              "key": "damage_reduction",
+              "raw_path": "resources.damage_reduction",
+              "scope": "target",
+              "skipped_reason": "",
+              "source_id": "enemy:target",
+              "source_type": "target.resources"
+            },
+            {
+              "applied_reason": "positive_toughness_not_broken",
+              "applied_value": 60.0,
+              "bucket": "toughness_state",
+              "condition": "always",
+              "key": "current_toughness",
+              "raw_path": "unit.toughness",
+              "scope": "target",
+              "skipped_reason": "",
+              "source_id": "enemy:target",
+              "source_type": "target.state"
+            },
+            {
+              "applied_reason": "positive_toughness_not_broken",
+              "applied_value": 0.0,
+              "bucket": "toughness_state",
+              "condition": "always",
+              "key": "broken",
+              "raw_path": "flags.broken",
+              "scope": "target",
+              "skipped_reason": "",
+              "source_id": "enemy:target",
+              "source_type": "target.state"
+            }
+          ],
+          "buckets": [
+            {
+              "applied_terms": [
+                {
+                  "applied_reason": "crit_rate_clamped",
+                  "applied_value": 0.5,
+                  "bucket": "crit",
+                  "condition": "always",
+                  "key": "critical_chance",
+                  "raw_path": "resources.critical_chance",
+                  "scope": "actor",
+                  "skipped_reason": "",
+                  "source_id": "ally:saber",
+                  "source_type": "actor.resources"
+                },
+                {
+                  "applied_reason": "crit_damage_available",
+                  "applied_value": 1.0,
+                  "bucket": "crit",
+                  "condition": "is_crit",
+                  "key": "critical_damage",
+                  "raw_path": "resources.critical_damage",
+                  "scope": "actor",
+                  "skipped_reason": "",
+                  "source_id": "ally:saber",
+                  "source_type": "actor.resources"
+                }
+              ],
+              "bucket": "crit",
+              "metadata": {
+                "crit_damage": 1.0,
+                "crit_rate": 0.5,
+                "event_id": "rng:1:ally:saber:action_def:avatar_skill:101401:10:enemy:target:crit",
+                "is_crit": true,
+                "mode": "crit",
+                "multiplier": 2.0,
+                "reason": "forced_crit",
+                "rng_roll": null
+              },
+              "multiplier": 2.0,
+              "skipped_terms": []
+            },
+            {
+              "applied_terms": [
+                {
+                  "applied_reason": "applied",
+                  "applied_value": 0.2,
+                  "bucket": "damage_bonus",
+                  "condition": "always",
+                  "key": "damage_added_ratio",
+                  "raw_path": "resources.damage_added_ratio",
+                  "scope": "actor",
+                  "skipped_reason": "",
+                  "source_id": "ally:saber",
+                  "source_type": "actor.resources"
+                },
+                {
+                  "applied_reason": "applied",
+                  "applied_value": 0.1,
+                  "bucket": "damage_bonus",
+                  "condition": "element=Wind",
+                  "key": "Wind_damage_added_ratio",
+                  "raw_path": "resources.Wind_damage_added_ratio",
+                  "scope": "actor",
+                  "skipped_reason": "",
+                  "source_id": "ally:saber",
+                  "source_type": "actor.resources"
+                }
+              ],
+              "bucket": "damage_bonus",
+              "metadata": {
+                "status_bonus": 0.0
+              },
+              "multiplier": 1.3,
+              "skipped_terms": []
+            },
+            {
+              "applied_terms": [
+                {
+                  "applied_reason": "base_target_defense",
+                  "applied_value": 1000.0,
+                  "bucket": "defense",
+                  "condition": "always",
+                  "key": "defense",
+                  "raw_path": "unit.defense",
+                  "scope": "target",
+                  "skipped_reason": "",
+                  "source_id": "enemy:target",
+                  "source_type": "target.stats"
+                },
+                {
+                  "applied_reason": "applied",
+                  "applied_value": 0.2,
+                  "bucket": "defense",
+                  "condition": "always",
+                  "key": "def_reduction",
+                  "raw_path": "resources.def_reduction",
+                  "scope": "target",
+                  "skipped_reason": "",
+                  "source_id": "enemy:target",
+                  "source_type": "target.resources"
+                },
+                {
+                  "applied_reason": "applied",
+                  "applied_value": 0.1,
+                  "bucket": "defense",
+                  "condition": "always",
+                  "key": "def_ignore",
+                  "raw_path": "resources.def_ignore",
+                  "scope": "actor",
+                  "skipped_reason": "",
+                  "source_id": "ally:saber",
+                  "source_type": "actor.resources"
+                }
+              ],
+              "bucket": "defense",
+              "metadata": {
+                "actor_level": 80,
+                "effective_defense": 700.0000000000001,
+                "status_def_ignore": 0.0,
+                "status_def_reduction": 0.0
+              },
+              "multiplier": 0.588235294117647,
+              "skipped_terms": []
+            },
+            {
+              "applied_terms": [
+                {
+                  "applied_reason": "applied",
+                  "applied_value": 0.2,
+                  "bucket": "resistance",
+                  "condition": "element=Wind",
+                  "key": "Wind_resistance",
+                  "raw_path": "resources.Wind_resistance",
+                  "scope": "target",
+                  "skipped_reason": "",
+                  "source_id": "enemy:target",
+                  "source_type": "target.resources"
+                },
+                {
+                  "applied_reason": "applied",
+                  "applied_value": 0.05,
+                  "bucket": "resistance",
+                  "condition": "element=Wind",
+                  "key": "Wind_res_pen",
+                  "raw_path": "resources.Wind_res_pen",
+                  "scope": "actor",
+                  "skipped_reason": "",
+                  "source_id": "ally:saber",
+                  "source_type": "actor.resources"
+                },
+                {
+                  "applied_reason": "applied",
+                  "applied_value": 0.02,
+                  "bucket": "resistance",
+                  "condition": "always",
+                  "key": "all_res_pen",
+                  "raw_path": "resources.all_res_pen",
+                  "scope": "actor",
+                  "skipped_reason": "",
+                  "source_id": "ally:saber",
+                  "source_type": "actor.resources"
+                }
+              ],
+              "bucket": "resistance",
+              "metadata": {
+                "selected_resistance": 0.2,
+                "status_resistance_delta": 0.0
+              },
+              "multiplier": 0.8700000000000001,
+              "skipped_terms": [
+                {
+                  "applied_reason": "",
+                  "applied_value": null,
+                  "bucket": "resistance",
+                  "condition": "element_resistance_present",
+                  "key": "all_resistance",
+                  "raw_path": "resources.all_resistance",
+                  "scope": "target",
+                  "skipped_reason": "element_specific_resistance_selected",
+                  "source_id": "enemy:target",
+                  "source_type": "target.resources"
+                }
+              ]
+            },
+            {
+              "applied_terms": [
+                {
+                  "applied_reason": "applied",
+                  "applied_value": 0.15,
+                  "bucket": "damage_taken",
+                  "condition": "always",
+                  "key": "damage_taken_ratio",
+                  "raw_path": "resources.damage_taken_ratio",
+                  "scope": "target",
+                  "skipped_reason": "",
+                  "source_id": "enemy:target",
+                  "source_type": "target.resources"
+                }
+              ],
+              "bucket": "damage_taken",
+              "metadata": {
+                "status_damage_taken_ratio": 0.0
+              },
+              "multiplier": 1.15,
+              "skipped_terms": []
+            },
+            {
+              "applied_terms": [
+                {
+                  "applied_reason": "applied",
+                  "applied_value": 0.1,
+                  "bucket": "damage_reduction",
+                  "condition": "always",
+                  "key": "damage_reduction",
+                  "raw_path": "resources.damage_reduction",
+                  "scope": "target",
+                  "skipped_reason": "",
+                  "source_id": "enemy:target",
+                  "source_type": "target.resources"
+                }
+              ],
+              "bucket": "damage_reduction",
+              "metadata": {},
+              "multiplier": 0.9,
+              "skipped_terms": []
+            },
+            {
+              "applied_terms": [
+                {
+                  "applied_reason": "positive_toughness_not_broken",
+                  "applied_value": 60.0,
+                  "bucket": "toughness_state",
+                  "condition": "always",
+                  "key": "current_toughness",
+                  "raw_path": "unit.toughness",
+                  "scope": "target",
+                  "skipped_reason": "",
+                  "source_id": "enemy:target",
+                  "source_type": "target.state"
+                },
+                {
+                  "applied_reason": "positive_toughness_not_broken",
+                  "applied_value": 0.0,
+                  "bucket": "toughness_state",
+                  "condition": "always",
+                  "key": "broken",
+                  "raw_path": "flags.broken",
+                  "scope": "target",
+                  "skipped_reason": "",
+                  "source_id": "enemy:target",
+                  "source_type": "target.state"
+                }
+              ],
+              "bucket": "toughness_state",
+              "metadata": {
+                "broken": false,
+                "current_toughness": 60.0,
+                "max_toughness": 60.0
+              },
+              "multiplier": 0.9,
+              "skipped_terms": []
+            }
+          ],
+          "formula_family": "direct",
+          "skipped_count": 1,
+          "skipped_terms": [
+            {
+              "applied_reason": "",
+              "applied_value": null,
+              "bucket": "resistance",
+              "condition": "element_resistance_present",
+              "key": "all_resistance",
+              "raw_path": "resources.all_resistance",
+              "scope": "target",
+              "skipped_reason": "element_specific_resistance_selected",
+              "source_id": "enemy:target",
+              "source_type": "target.resources"
+            }
+          ]
+        },
+        "source_trace": {
+          "action_id": "avatar_skill:101401",
+          "action_level": 10,
+          "definition_id": "action_def:avatar_skill:101401:10",
+          "source": {
+            "action_id": "avatar_skill:101401",
+            "coverage_status": "executable",
+            "definition_id": "action_def:avatar_skill:101401:10",
+            "level": 10,
+            "source": {
+              "evidence": {
+                "id_key": "SkillID",
+                "level": 10,
+                "resource_mapping": {
+                  "BPAdd": "skill_point_gain_if_positive",
+                  "BPNeed": "skill_point_cost_if_positive",
+                  "SPBase": "energy_gain"
+                },
+                "row_index": 65,
+                "taxonomy": {
+                  "attack_type": "raw TBGD AttackType; follow-up is an attack type axis",
+                  "damage_formula_family": "formula family axis; follow-up is not a damage family",
+                  "element_type": "raw TBGD StanceDamageType when present"
+                }
+              },
+              "raw_id": "101401",
+              "raw_type": "AvatarSkillConfigLD",
+              "source_path": "ExcelOutput/AvatarSkillConfigLD.json"
+            }
+          }
+        },
+        "target_id": "enemy:target"
+      },
+      "mutation_id": "mutation:56f5dd8774a05ccd",
+      "op": "set",
+      "path": [
+        "units",
+        "enemy:target",
+        "hp"
+      ],
+      "reason": "apply direct damage formula",
+      "source": "damage_system"
+    }
+  ],
+  "rng_events": [
+    {
+      "after_state": "deterministic",
+      "before_state": "deterministic",
+      "event_id": "rng:1:ally:saber:action_def:avatar_skill:101401:10:enemy:target:crit",
+      "metadata": {
+        "action_definition_id": "action_def:avatar_skill:101401:10",
+        "actor_id": "ally:saber",
+        "source_trace": {
+          "action_id": "avatar_skill:101401",
+          "action_level": 10,
+          "definition_id": "action_def:avatar_skill:101401:10",
+          "source": {
+            "action_id": "avatar_skill:101401",
+            "coverage_status": "executable",
+            "definition_id": "action_def:avatar_skill:101401:10",
+            "level": 10,
+            "source": {
+              "evidence": {
+                "id_key": "SkillID",
+                "level": 10,
+                "resource_mapping": {
+                  "BPAdd": "skill_point_gain_if_positive",
+                  "BPNeed": "skill_point_cost_if_positive",
+                  "SPBase": "energy_gain"
+                },
+                "row_index": 65,
+                "taxonomy": {
+                  "attack_type": "raw TBGD AttackType; follow-up is an attack type axis",
+                  "damage_formula_family": "formula family axis; follow-up is not a damage family",
+                  "element_type": "raw TBGD StanceDamageType when present"
+                }
+              },
+              "raw_id": "101401",
+              "raw_type": "AvatarSkillConfigLD",
+              "source_path": "ExcelOutput/AvatarSkillConfigLD.json"
+            }
+          }
+        },
+        "target_id": "enemy:target"
+      },
+      "result": {
+        "crit_damage": 1.0,
+        "crit_rate": 0.5,
+        "event_id": "rng:1:ally:saber:action_def:avatar_skill:101401:10:enemy:target:crit",
+        "is_crit": true,
+        "mode": "crit",
+        "multiplier": 2.0,
+        "reason": "forced_crit",
+        "rng_roll": null
+      },
+      "rng_type": "crit",
+      "source": "damage_formula"
+    }
+  ],
+  "settlement": {
+    "action_id": "avatar_skill:101401",
+    "actor_id": "ally:saber",
+    "records": [
+      {
+        "mutation_id": null,
+        "payload": {
+          "definition_known": true,
+          "event": "action.requested",
+          "rule_known": true
+        },
+        "process_only": true,
+        "record_type": "process",
+        "source": "combat_executor",
+        "trace": {
+          "event_id": "event:1:action_requested"
+        }
+      },
+      {
+        "mutation_id": null,
+        "payload": {
+          "action_id": "avatar_skill:101401",
+          "attack_type": "Normal",
+          "bp_add": 1.0,
+          "bp_need": -1.0,
+          "coverage_status": "executable",
+          "damage_formula_family": "direct",
+          "damage_kind": "hp_damage",
+          "definition_id": "action_def:avatar_skill:101401:10",
+          "element_type": "Wind",
+          "level": 10,
+          "param_list": [
+            {
+              "Value": 1.4
+            }
+          ],
+          "show_damage_list": [],
+          "show_stance_list": [
+            {
+              "Value": 30
+            },
+            {
+              "Value": 0
+            },
+            {
+              "Value": 0
+            }
+          ],
+          "skill_effect": "SingleAttack",
+          "source": {
+            "evidence": {
+              "id_key": "SkillID",
+              "level": 10,
+              "resource_mapping": {
+                "BPAdd": "skill_point_gain_if_positive",
+                "BPNeed": "skill_point_cost_if_positive",
+                "SPBase": "energy_gain"
+              },
+              "row_index": 65,
+              "taxonomy": {
+                "attack_type": "raw TBGD AttackType; follow-up is an attack type axis",
+                "damage_formula_family": "formula family axis; follow-up is not a damage family",
+                "element_type": "raw TBGD StanceDamageType when present"
+              }
+            },
+            "raw_id": "101401",
+            "raw_type": "AvatarSkillConfigLD",
+            "source_path": "ExcelOutput/AvatarSkillConfigLD.json"
+          },
+          "source_mode": "mainline",
+          "sp_base": 20.0,
+          "sp_multiple_ratio": 0.5,
+          "stance_damage_type": "Wind",
+          "target_mode": "single"
+        },
+        "process_only": true,
+        "record_type": "action_definition",
+        "source": "rulebook",
+        "trace": {
+          "action_id": "avatar_skill:101401",
+          "coverage_status": "executable",
+          "definition_id": "action_def:avatar_skill:101401:10",
+          "level": 10,
+          "source": {
+            "evidence": {
+              "id_key": "SkillID",
+              "level": 10,
+              "resource_mapping": {
+                "BPAdd": "skill_point_gain_if_positive",
+                "BPNeed": "skill_point_cost_if_positive",
+                "SPBase": "energy_gain"
+              },
+              "row_index": 65,
+              "taxonomy": {
+                "attack_type": "raw TBGD AttackType; follow-up is an attack type axis",
+                "damage_formula_family": "formula family axis; follow-up is not a damage family",
+                "element_type": "raw TBGD StanceDamageType when present"
+              }
+            },
+            "raw_id": "101401",
+            "raw_type": "AvatarSkillConfigLD",
+            "source_path": "ExcelOutput/AvatarSkillConfigLD.json"
+          }
+        }
+      },
+      {
+        "mutation_id": null,
+        "payload": {
+          "action_id": "avatar_skill:101401",
+          "action_level": 10,
+          "attack_type": "Normal",
+          "damage_formula_family": "direct",
+          "damage_kind": "hp_damage",
+          "has_attack_windows": true,
+          "has_damage_step": true,
+          "skill_type": "SingleAttack",
+          "steps": [
+            {
+              "canonical_window": "before_skill_use",
+              "kind": "trigger_window",
+              "phase": "before_skill_use",
+              "requires_action_enabled": true,
+              "tbgd_event": "OnBeforeSkillUse"
+            },
+            {
+              "canonical_window": "before_attack",
+              "kind": "trigger_window",
+              "phase": "before_attack",
+              "requires_action_enabled": true,
+              "tbgd_event": "OnBeforeAttack"
+            },
+            {
+              "canonical_window": "",
+              "kind": "damage",
+              "phase": "damage",
+              "requires_action_enabled": true,
+              "tbgd_event": ""
+            },
+            {
+              "canonical_window": "after_attack",
+              "kind": "trigger_window",
+              "phase": "after_attack",
+              "requires_action_enabled": true,
+              "tbgd_event": "OnAfterAttack"
+            },
+            {
+              "canonical_window": "after_skill_use",
+              "kind": "trigger_window",
+              "phase": "after_skill_use",
+              "requires_action_enabled": true,
+              "tbgd_event": "OnAfterSkillUse"
+            }
+          ]
+        },
+        "process_only": true,
+        "record_type": "action_event_plan",
+        "source": "combat_executor",
+        "trace": {
+          "definition_id": "action_def:avatar_skill:101401:10"
+        }
+      },
+      {
+        "mutation_id": null,
+        "payload": {
+          "legal": [
+            "enemy:target"
+          ],
+          "metadata": {
+            "policy": {
+              "allow_ally": false,
+              "allow_defeated": false,
+              "allow_enemy": true,
+              "allow_self": false,
+              "policy_id": "enemy_damage"
+            }
+          },
+          "reason": "explicit_targets_resolved",
+          "rejected": [],
+          "requested": [
+            "enemy:target"
+          ],
+          "selected": [
+            "enemy:target"
+          ],
+          "source": "target_system"
+        },
+        "process_only": true,
+        "record_type": "target_resolution",
+        "source": "target_system",
+        "trace": {
+          "errors": []
+        }
+      },
+      {
+        "mutation_id": "mutation:timeline:event_index:1",
+        "payload": {
+          "after": 1,
+          "before": 0,
+          "metadata": {},
+          "path": [
+            "event_index"
+          ],
+          "reason": "action transaction opened"
+        },
+        "process_only": false,
+        "record_type": "timeline",
+        "source": "combat_executor.timeline",
+        "trace": {}
+      },
+      {
+        "mutation_id": "mutation:timeline:current_window:1",
+        "payload": {
+          "after": "action",
+          "before": "idle",
+          "metadata": {},
+          "path": [
+            "global_flags",
+            "current_window"
+          ],
+          "reason": "open action window"
+        },
+        "process_only": false,
+        "record_type": "timeline",
+        "source": "combat_executor.timeline",
+        "trace": {}
+      },
+      {
+        "mutation_id": "mutation:timeline:turn_owner:1",
+        "payload": {
+          "after": "ally:saber",
+          "before": "ally:saber",
+          "metadata": {},
+          "path": [
+            "global_flags",
+            "turn_owner_id"
+          ],
+          "reason": "set action owner"
+        },
+        "process_only": false,
+        "record_type": "timeline",
+        "source": "combat_executor.timeline",
+        "trace": {}
+      },
+      {
+        "mutation_id": "mutation:ally:saber:action_value:0:0.0",
+        "payload": {
+          "after": 0.0,
+          "before": 0.0,
+          "metadata": {},
+          "path": [
+            "units",
+            "ally:saber",
+            "action_value"
+          ],
+          "reason": "set action value"
+        },
+        "process_only": false,
+        "record_type": "timeline",
+        "source": "combat_executor.timeline",
+        "trace": {}
+      },
+      {
+        "mutation_id": "mutation:combat_executor.resources:skill_points:0",
+        "payload": {
+          "after": 4,
+          "before": 3,
+          "metadata": {
+            "action_id": "avatar_skill:101401",
+            "action_level": 10,
+            "definition_id": "action_def:avatar_skill:101401:10",
+            "delta": 1,
+            "source_trace": {
+              "action_id": "avatar_skill:101401",
+              "coverage_status": "executable",
+              "definition_id": "action_def:avatar_skill:101401:10",
+              "level": 10,
+              "source": {
+                "evidence": {
+                  "id_key": "SkillID",
+                  "level": 10,
+                  "resource_mapping": {
+                    "BPAdd": "skill_point_gain_if_positive",
+                    "BPNeed": "skill_point_cost_if_positive",
+                    "SPBase": "energy_gain"
+                  },
+                  "row_index": 65,
+                  "taxonomy": {
+                    "attack_type": "raw TBGD AttackType; follow-up is an attack type axis",
+                    "damage_formula_family": "formula family axis; follow-up is not a damage family",
+                    "element_type": "raw TBGD StanceDamageType when present"
+                  }
+                },
+                "raw_id": "101401",
+                "raw_type": "AvatarSkillConfigLD",
+                "source_path": "ExcelOutput/AvatarSkillConfigLD.json"
+              }
+            }
+          },
+          "path": [
+            "skill_points"
+          ],
+          "reason": "apply action skill point delta"
+        },
+        "process_only": false,
+        "record_type": "resource",
+        "source": "combat_executor.resources",
+        "trace": {}
+      },
+      {
+        "mutation_id": "mutation:ally:saber:energy:0:20.0",
+        "payload": {
+          "after": 80.0,
+          "before": 60.0,
+          "metadata": {
+            "action_id": "avatar_skill:101401",
+            "action_level": 10,
+            "definition_id": "action_def:avatar_skill:101401:10",
+            "delta": 20.0,
+            "source_trace": {
+              "action_id": "avatar_skill:101401",
+              "coverage_status": "executable",
+              "definition_id": "action_def:avatar_skill:101401:10",
+              "level": 10,
+              "source": {
+                "evidence": {
+                  "id_key": "SkillID",
+                  "level": 10,
+                  "resource_mapping": {
+                    "BPAdd": "skill_point_gain_if_positive",
+                    "BPNeed": "skill_point_cost_if_positive",
+                    "SPBase": "energy_gain"
+                  },
+                  "row_index": 65,
+                  "taxonomy": {
+                    "attack_type": "raw TBGD AttackType; follow-up is an attack type axis",
+                    "damage_formula_family": "formula family axis; follow-up is not a damage family",
+                    "element_type": "raw TBGD StanceDamageType when present"
+                  }
+                },
+                "raw_id": "101401",
+                "raw_type": "AvatarSkillConfigLD",
+                "source_path": "ExcelOutput/AvatarSkillConfigLD.json"
+              }
+            }
+          },
+          "path": [
+            "units",
+            "ally:saber",
+            "energy"
+          ],
+          "reason": "change unit energy"
+        },
+        "process_only": false,
+        "record_type": "resource",
+        "source": "combat_executor.resources",
+        "trace": {}
+      },
+      {
+        "mutation_id": null,
+        "payload": {
+          "canonical_window": "before_skill_use",
+          "effect_id": "effect:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Sam_00_Ability.json:MAvatar_Advanced_Sam_00_Rank02_BuffCD_LuoJi:42:callback:0:SetEnergyBarState",
+          "modifier_name": "MAvatar_Advanced_Sam_00_Rank02_BuffCD_LuoJi",
+          "status_instance_id": "status:5812d1c18d0cd94b",
+          "tbgd_event": "OnBeforeSkillUse",
+          "trigger_id": "trigger:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Sam_00_Ability.json:MAvatar_Advanced_Sam_00_Rank02_BuffCD_LuoJi:42",
+          "unsupported": [
+            "SetEnergyBarState"
+          ]
+        },
+        "process_only": true,
+        "record_type": "effect_unsupported",
+        "source": "trigger_system",
+        "trace": {
+          "canonical_window": "before_skill_use",
+          "effect_id": "effect:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Sam_00_Ability.json:MAvatar_Advanced_Sam_00_Rank02_BuffCD_LuoJi:42:callback:0:SetEnergyBarState",
+          "modifier_name": "MAvatar_Advanced_Sam_00_Rank02_BuffCD_LuoJi",
+          "owner_id": "ally:saber",
+          "status_id": "modifier:MAvatar_Advanced_Sam_00_Rank02_BuffCD_LuoJi",
+          "status_instance_id": "status:5812d1c18d0cd94b",
+          "status_source_trace": {
+            "effect_id": "effect:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Sam_00_Ability.json:MAvatar_Advanced_Sam_00_PassiveSkill_RedMode:32:success:3:AddModifier",
+            "effect_source": {
+              "evidence": {
+                "branch": "success",
+                "callback_index": 32,
+                "task_index": 3
+              },
+              "raw_id": "MAvatar_Advanced_Sam_00_PassiveSkill_RedMode",
+              "raw_type": "GlobalModifiers",
+              "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Sam_00_Ability.json"
+            },
+            "modifier_definition": {
+              "evidence": {
+                "definition_kind": "modifier_definition",
+                "map_name": "GlobalModifiers",
+                "modifier_name": "MAvatar_Advanced_Sam_00_Rank02_BuffCD_LuoJi"
+              },
+              "raw_id": "MAvatar_Advanced_Sam_00_Rank02_BuffCD_LuoJi",
+              "raw_type": "GlobalModifiers",
+              "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Sam_00_Ability.json"
+            }
+          },
+          "tbgd_event": "OnBeforeSkillUse",
+          "trigger_id": "trigger:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Sam_00_Ability.json:MAvatar_Advanced_Sam_00_Rank02_BuffCD_LuoJi:42",
+          "trigger_source": {
+            "evidence": {
+              "callback_index": 42,
+              "event": "OnBeforeSkillUse"
+            },
+            "raw_id": "MAvatar_Advanced_Sam_00_Rank02_BuffCD_LuoJi",
+            "raw_type": "GlobalModifiers",
+            "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Sam_00_Ability.json"
+          }
+        }
+      },
+      {
+        "mutation_id": null,
+        "payload": {
+          "canonical_window": "before_skill_use",
+          "effect_id": "effect:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Sam_00_Ability.json:MAvatar_Advanced_Sam_00_Rank02_BuffCD_LuoJi:42:callback:1:RemoveSelfModifier",
+          "modifier_name": "MAvatar_Advanced_Sam_00_Rank02_BuffCD_LuoJi",
+          "status_instance_id": "status:5812d1c18d0cd94b",
+          "tbgd_event": "OnBeforeSkillUse",
+          "trigger_id": "trigger:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Sam_00_Ability.json:MAvatar_Advanced_Sam_00_Rank02_BuffCD_LuoJi:42",
+          "unsupported": [
+            "RemoveSelfModifier"
+          ]
+        },
+        "process_only": true,
+        "record_type": "effect_unsupported",
+        "source": "trigger_system",
+        "trace": {
+          "canonical_window": "before_skill_use",
+          "effect_id": "effect:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Sam_00_Ability.json:MAvatar_Advanced_Sam_00_Rank02_BuffCD_LuoJi:42:callback:1:RemoveSelfModifier",
+          "modifier_name": "MAvatar_Advanced_Sam_00_Rank02_BuffCD_LuoJi",
+          "owner_id": "ally:saber",
+          "status_id": "modifier:MAvatar_Advanced_Sam_00_Rank02_BuffCD_LuoJi",
+          "status_instance_id": "status:5812d1c18d0cd94b",
+          "status_source_trace": {
+            "effect_id": "effect:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Sam_00_Ability.json:MAvatar_Advanced_Sam_00_PassiveSkill_RedMode:32:success:3:AddModifier",
+            "effect_source": {
+              "evidence": {
+                "branch": "success",
+                "callback_index": 32,
+                "task_index": 3
+              },
+              "raw_id": "MAvatar_Advanced_Sam_00_PassiveSkill_RedMode",
+              "raw_type": "GlobalModifiers",
+              "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Sam_00_Ability.json"
+            },
+            "modifier_definition": {
+              "evidence": {
+                "definition_kind": "modifier_definition",
+                "map_name": "GlobalModifiers",
+                "modifier_name": "MAvatar_Advanced_Sam_00_Rank02_BuffCD_LuoJi"
+              },
+              "raw_id": "MAvatar_Advanced_Sam_00_Rank02_BuffCD_LuoJi",
+              "raw_type": "GlobalModifiers",
+              "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Sam_00_Ability.json"
+            }
+          },
+          "tbgd_event": "OnBeforeSkillUse",
+          "trigger_id": "trigger:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Sam_00_Ability.json:MAvatar_Advanced_Sam_00_Rank02_BuffCD_LuoJi:42",
+          "trigger_source": {
+            "evidence": {
+              "callback_index": 42,
+              "event": "OnBeforeSkillUse"
+            },
+            "raw_id": "MAvatar_Advanced_Sam_00_Rank02_BuffCD_LuoJi",
+            "raw_type": "GlobalModifiers",
+            "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Sam_00_Ability.json"
+          }
+        }
+      },
+      {
+        "mutation_id": null,
+        "payload": {
+          "blocked_reason": "",
+          "canonical_window": "before_skill_use",
+          "condition_results": [],
+          "effect_results": [
+            {
+              "effect_id": "effect:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Sam_00_Ability.json:MAvatar_Advanced_Sam_00_Rank02_BuffCD_LuoJi:42:callback:0:SetEnergyBarState",
+              "mutation_count": 0,
+              "ok": false,
+              "opcode": "SetEnergyBarState",
+              "record_count": 0,
+              "unsupported": [
+                "SetEnergyBarState"
+              ]
+            },
+            {
+              "effect_id": "effect:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Sam_00_Ability.json:MAvatar_Advanced_Sam_00_Rank02_BuffCD_LuoJi:42:callback:1:RemoveSelfModifier",
+              "mutation_count": 0,
+              "ok": false,
+              "opcode": "RemoveSelfModifier",
+              "record_count": 0,
+              "unsupported": [
+                "RemoveSelfModifier"
+              ]
+            }
+          ],
+          "metadata": {
+            "AttackType": "Normal",
+            "SkillType": "SingleAttack",
+            "action_id": "avatar_skill:101401",
+            "action_level": 10,
+            "actor_id": "ally:saber",
+            "damage_formula_family": "direct",
+            "damage_kind": "hp_damage",
+            "primary_target_id": "enemy:target"
+          },
+          "modifier_name": "MAvatar_Advanced_Sam_00_Rank02_BuffCD_LuoJi",
+          "mutation_count": 0,
+          "owner_id": "ally:saber",
+          "skipped_reason": "",
+          "status_id": "modifier:MAvatar_Advanced_Sam_00_Rank02_BuffCD_LuoJi",
+          "status_instance_id": "status:5812d1c18d0cd94b",
+          "tbgd_event": "OnBeforeSkillUse",
+          "trigger_id": "trigger:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Sam_00_Ability.json:MAvatar_Advanced_Sam_00_Rank02_BuffCD_LuoJi:42"
+        },
+        "process_only": true,
+        "record_type": "trigger_window",
+        "source": "trigger_system",
+        "trace": {
+          "trigger_id": "trigger:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Sam_00_Ability.json:MAvatar_Advanced_Sam_00_Rank02_BuffCD_LuoJi:42"
+        }
+      },
+      {
+        "mutation_id": null,
+        "payload": {
+          "blocked_reason": "",
+          "canonical_window": "before_attack",
+          "condition_results": [],
+          "effect_results": [],
+          "metadata": {},
+          "modifier_name": null,
+          "mutation_count": 0,
+          "owner_id": null,
+          "skipped_reason": "no_status_local_triggers",
+          "status_id": null,
+          "status_instance_id": null,
+          "tbgd_event": "OnBeforeAttack",
+          "trigger_id": null
+        },
+        "process_only": true,
+        "record_type": "trigger_window",
+        "source": "trigger_system",
+        "trace": {}
+      },
+      {
+        "mutation_id": "mutation:56f5dd8774a05ccd",
+        "payload": {
+          "amount": 5552.704376470589,
+          "attack_type": "Normal",
+          "bypasses_normal_multipliers": false,
+          "crit_resolution": {
+            "crit_damage": 1.0,
+            "crit_rate": 0.5,
+            "event_id": "rng:1:ally:saber:action_def:avatar_skill:101401:10:enemy:target:crit",
+            "is_crit": true,
+            "mode": "crit",
+            "multiplier": 2.0,
+            "reason": "forced_crit",
+            "rng_roll": null
+          },
+          "damage_formula_family": "direct",
+          "damage_kind": "hp_damage",
+          "element_type": "Wind",
+          "final_damage": 5552.704376470589,
+          "formula_result": {
+            "action_definition_id": "action_def:avatar_skill:101401:10",
+            "attack_type": "Normal",
+            "attacker_id": "ally:saber",
+            "calculation_mode": "v0_209_direct_damage_formula",
+            "crit_resolution": {
+              "crit_damage": 1.0,
+              "crit_rate": 0.5,
+              "event_id": "rng:1:ally:saber:action_def:avatar_skill:101401:10:enemy:target:crit",
+              "is_crit": true,
+              "mode": "crit",
+              "multiplier": 2.0,
+              "reason": "forced_crit",
+              "rng_roll": null
+            },
+            "element_type": "Wind",
+            "final_damage": 5552.704376470589,
+            "formula_family": "direct",
+            "modifier_ledger": {
+              "applied_count": 14,
+              "applied_terms": [
+                {
+                  "applied_reason": "crit_rate_clamped",
+                  "applied_value": 0.5,
+                  "bucket": "crit",
+                  "condition": "always",
+                  "key": "critical_chance",
+                  "raw_path": "resources.critical_chance",
+                  "scope": "actor",
+                  "skipped_reason": "",
+                  "source_id": "ally:saber",
+                  "source_type": "actor.resources"
+                },
+                {
+                  "applied_reason": "crit_damage_available",
+                  "applied_value": 1.0,
+                  "bucket": "crit",
+                  "condition": "is_crit",
+                  "key": "critical_damage",
+                  "raw_path": "resources.critical_damage",
+                  "scope": "actor",
+                  "skipped_reason": "",
+                  "source_id": "ally:saber",
+                  "source_type": "actor.resources"
+                },
+                {
+                  "applied_reason": "applied",
+                  "applied_value": 0.2,
+                  "bucket": "damage_bonus",
+                  "condition": "always",
+                  "key": "damage_added_ratio",
+                  "raw_path": "resources.damage_added_ratio",
+                  "scope": "actor",
+                  "skipped_reason": "",
+                  "source_id": "ally:saber",
+                  "source_type": "actor.resources"
+                },
+                {
+                  "applied_reason": "applied",
+                  "applied_value": 0.1,
+                  "bucket": "damage_bonus",
+                  "condition": "element=Wind",
+                  "key": "Wind_damage_added_ratio",
+                  "raw_path": "resources.Wind_damage_added_ratio",
+                  "scope": "actor",
+                  "skipped_reason": "",
+                  "source_id": "ally:saber",
+                  "source_type": "actor.resources"
+                },
+                {
+                  "applied_reason": "base_target_defense",
+                  "applied_value": 1000.0,
+                  "bucket": "defense",
+                  "condition": "always",
+                  "key": "defense",
+                  "raw_path": "unit.defense",
+                  "scope": "target",
+                  "skipped_reason": "",
+                  "source_id": "enemy:target",
+                  "source_type": "target.stats"
+                },
+                {
+                  "applied_reason": "applied",
+                  "applied_value": 0.2,
+                  "bucket": "defense",
+                  "condition": "always",
+                  "key": "def_reduction",
+                  "raw_path": "resources.def_reduction",
+                  "scope": "target",
+                  "skipped_reason": "",
+                  "source_id": "enemy:target",
+                  "source_type": "target.resources"
+                },
+                {
+                  "applied_reason": "applied",
+                  "applied_value": 0.1,
+                  "bucket": "defense",
+                  "condition": "always",
+                  "key": "def_ignore",
+                  "raw_path": "resources.def_ignore",
+                  "scope": "actor",
+                  "skipped_reason": "",
+                  "source_id": "ally:saber",
+                  "source_type": "actor.resources"
+                },
+                {
+                  "applied_reason": "applied",
+                  "applied_value": 0.2,
+                  "bucket": "resistance",
+                  "condition": "element=Wind",
+                  "key": "Wind_resistance",
+                  "raw_path": "resources.Wind_resistance",
+                  "scope": "target",
+                  "skipped_reason": "",
+                  "source_id": "enemy:target",
+                  "source_type": "target.resources"
+                },
+                {
+                  "applied_reason": "applied",
+                  "applied_value": 0.05,
+                  "bucket": "resistance",
+                  "condition": "element=Wind",
+                  "key": "Wind_res_pen",
+                  "raw_path": "resources.Wind_res_pen",
+                  "scope": "actor",
+                  "skipped_reason": "",
+                  "source_id": "ally:saber",
+                  "source_type": "actor.resources"
+                },
+                {
+                  "applied_reason": "applied",
+                  "applied_value": 0.02,
+                  "bucket": "resistance",
+                  "condition": "always",
+                  "key": "all_res_pen",
+                  "raw_path": "resources.all_res_pen",
+                  "scope": "actor",
+                  "skipped_reason": "",
+                  "source_id": "ally:saber",
+                  "source_type": "actor.resources"
+                },
+                {
+                  "applied_reason": "applied",
+                  "applied_value": 0.15,
+                  "bucket": "damage_taken",
+                  "condition": "always",
+                  "key": "damage_taken_ratio",
+                  "raw_path": "resources.damage_taken_ratio",
+                  "scope": "target",
+                  "skipped_reason": "",
+                  "source_id": "enemy:target",
+                  "source_type": "target.resources"
+                },
+                {
+                  "applied_reason": "applied",
+                  "applied_value": 0.1,
+                  "bucket": "damage_reduction",
+                  "condition": "always",
+                  "key": "damage_reduction",
+                  "raw_path": "resources.damage_reduction",
+                  "scope": "target",
+                  "skipped_reason": "",
+                  "source_id": "enemy:target",
+                  "source_type": "target.resources"
+                },
+                {
+                  "applied_reason": "positive_toughness_not_broken",
+                  "applied_value": 60.0,
+                  "bucket": "toughness_state",
+                  "condition": "always",
+                  "key": "current_toughness",
+                  "raw_path": "unit.toughness",
+                  "scope": "target",
+                  "skipped_reason": "",
+                  "source_id": "enemy:target",
+                  "source_type": "target.state"
+                },
+                {
+                  "applied_reason": "positive_toughness_not_broken",
+                  "applied_value": 0.0,
+                  "bucket": "toughness_state",
+                  "condition": "always",
+                  "key": "broken",
+                  "raw_path": "flags.broken",
+                  "scope": "target",
+                  "skipped_reason": "",
+                  "source_id": "enemy:target",
+                  "source_type": "target.state"
+                }
+              ],
+              "buckets": [
+                {
+                  "applied_terms": [
+                    {
+                      "applied_reason": "crit_rate_clamped",
+                      "applied_value": 0.5,
+                      "bucket": "crit",
+                      "condition": "always",
+                      "key": "critical_chance",
+                      "raw_path": "resources.critical_chance",
+                      "scope": "actor",
+                      "skipped_reason": "",
+                      "source_id": "ally:saber",
+                      "source_type": "actor.resources"
+                    },
+                    {
+                      "applied_reason": "crit_damage_available",
+                      "applied_value": 1.0,
+                      "bucket": "crit",
+                      "condition": "is_crit",
+                      "key": "critical_damage",
+                      "raw_path": "resources.critical_damage",
+                      "scope": "actor",
+                      "skipped_reason": "",
+                      "source_id": "ally:saber",
+                      "source_type": "actor.resources"
+                    }
+                  ],
+                  "bucket": "crit",
+                  "metadata": {
+                    "crit_damage": 1.0,
+                    "crit_rate": 0.5,
+                    "event_id": "rng:1:ally:saber:action_def:avatar_skill:101401:10:enemy:target:crit",
+                    "is_crit": true,
+                    "mode": "crit",
+                    "multiplier": 2.0,
+                    "reason": "forced_crit",
+                    "rng_roll": null
+                  },
+                  "multiplier": 2.0,
+                  "skipped_terms": []
+                },
+                {
+                  "applied_terms": [
+                    {
+                      "applied_reason": "applied",
+                      "applied_value": 0.2,
+                      "bucket": "damage_bonus",
+                      "condition": "always",
+                      "key": "damage_added_ratio",
+                      "raw_path": "resources.damage_added_ratio",
+                      "scope": "actor",
+                      "skipped_reason": "",
+                      "source_id": "ally:saber",
+                      "source_type": "actor.resources"
+                    },
+                    {
+                      "applied_reason": "applied",
+                      "applied_value": 0.1,
+                      "bucket": "damage_bonus",
+                      "condition": "element=Wind",
+                      "key": "Wind_damage_added_ratio",
+                      "raw_path": "resources.Wind_damage_added_ratio",
+                      "scope": "actor",
+                      "skipped_reason": "",
+                      "source_id": "ally:saber",
+                      "source_type": "actor.resources"
+                    }
+                  ],
+                  "bucket": "damage_bonus",
+                  "metadata": {
+                    "status_bonus": 0.0
+                  },
+                  "multiplier": 1.3,
+                  "skipped_terms": []
+                },
+                {
+                  "applied_terms": [
+                    {
+                      "applied_reason": "base_target_defense",
+                      "applied_value": 1000.0,
+                      "bucket": "defense",
+                      "condition": "always",
+                      "key": "defense",
+                      "raw_path": "unit.defense",
+                      "scope": "target",
+                      "skipped_reason": "",
+                      "source_id": "enemy:target",
+                      "source_type": "target.stats"
+                    },
+                    {
+                      "applied_reason": "applied",
+                      "applied_value": 0.2,
+                      "bucket": "defense",
+                      "condition": "always",
+                      "key": "def_reduction",
+                      "raw_path": "resources.def_reduction",
+                      "scope": "target",
+                      "skipped_reason": "",
+                      "source_id": "enemy:target",
+                      "source_type": "target.resources"
+                    },
+                    {
+                      "applied_reason": "applied",
+                      "applied_value": 0.1,
+                      "bucket": "defense",
+                      "condition": "always",
+                      "key": "def_ignore",
+                      "raw_path": "resources.def_ignore",
+                      "scope": "actor",
+                      "skipped_reason": "",
+                      "source_id": "ally:saber",
+                      "source_type": "actor.resources"
+                    }
+                  ],
+                  "bucket": "defense",
+                  "metadata": {
+                    "actor_level": 80,
+                    "effective_defense": 700.0000000000001,
+                    "status_def_ignore": 0.0,
+                    "status_def_reduction": 0.0
+                  },
+                  "multiplier": 0.588235294117647,
+                  "skipped_terms": []
+                },
+                {
+                  "applied_terms": [
+                    {
+                      "applied_reason": "applied",
+                      "applied_value": 0.2,
+                      "bucket": "resistance",
+                      "condition": "element=Wind",
+                      "key": "Wind_resistance",
+                      "raw_path": "resources.Wind_resistance",
+                      "scope": "target",
+                      "skipped_reason": "",
+                      "source_id": "enemy:target",
+                      "source_type": "target.resources"
+                    },
+                    {
+                      "applied_reason": "applied",
+                      "applied_value": 0.05,
+                      "bucket": "resistance",
+                      "condition": "element=Wind",
+                      "key": "Wind_res_pen",
+                      "raw_path": "resources.Wind_res_pen",
+                      "scope": "actor",
+                      "skipped_reason": "",
+                      "source_id": "ally:saber",
+                      "source_type": "actor.resources"
+                    },
+                    {
+                      "applied_reason": "applied",
+                      "applied_value": 0.02,
+                      "bucket": "resistance",
+                      "condition": "always",
+                      "key": "all_res_pen",
+                      "raw_path": "resources.all_res_pen",
+                      "scope": "actor",
+                      "skipped_reason": "",
+                      "source_id": "ally:saber",
+                      "source_type": "actor.resources"
+                    }
+                  ],
+                  "bucket": "resistance",
+                  "metadata": {
+                    "selected_resistance": 0.2,
+                    "status_resistance_delta": 0.0
+                  },
+                  "multiplier": 0.8700000000000001,
+                  "skipped_terms": [
+                    {
+                      "applied_reason": "",
+                      "applied_value": null,
+                      "bucket": "resistance",
+                      "condition": "element_resistance_present",
+                      "key": "all_resistance",
+                      "raw_path": "resources.all_resistance",
+                      "scope": "target",
+                      "skipped_reason": "element_specific_resistance_selected",
+                      "source_id": "enemy:target",
+                      "source_type": "target.resources"
+                    }
+                  ]
+                },
+                {
+                  "applied_terms": [
+                    {
+                      "applied_reason": "applied",
+                      "applied_value": 0.15,
+                      "bucket": "damage_taken",
+                      "condition": "always",
+                      "key": "damage_taken_ratio",
+                      "raw_path": "resources.damage_taken_ratio",
+                      "scope": "target",
+                      "skipped_reason": "",
+                      "source_id": "enemy:target",
+                      "source_type": "target.resources"
+                    }
+                  ],
+                  "bucket": "damage_taken",
+                  "metadata": {
+                    "status_damage_taken_ratio": 0.0
+                  },
+                  "multiplier": 1.15,
+                  "skipped_terms": []
+                },
+                {
+                  "applied_terms": [
+                    {
+                      "applied_reason": "applied",
+                      "applied_value": 0.1,
+                      "bucket": "damage_reduction",
+                      "condition": "always",
+                      "key": "damage_reduction",
+                      "raw_path": "resources.damage_reduction",
+                      "scope": "target",
+                      "skipped_reason": "",
+                      "source_id": "enemy:target",
+                      "source_type": "target.resources"
+                    }
+                  ],
+                  "bucket": "damage_reduction",
+                  "metadata": {},
+                  "multiplier": 0.9,
+                  "skipped_terms": []
+                },
+                {
+                  "applied_terms": [
+                    {
+                      "applied_reason": "positive_toughness_not_broken",
+                      "applied_value": 60.0,
+                      "bucket": "toughness_state",
+                      "condition": "always",
+                      "key": "current_toughness",
+                      "raw_path": "unit.toughness",
+                      "scope": "target",
+                      "skipped_reason": "",
+                      "source_id": "enemy:target",
+                      "source_type": "target.state"
+                    },
+                    {
+                      "applied_reason": "positive_toughness_not_broken",
+                      "applied_value": 0.0,
+                      "bucket": "toughness_state",
+                      "condition": "always",
+                      "key": "broken",
+                      "raw_path": "flags.broken",
+                      "scope": "target",
+                      "skipped_reason": "",
+                      "source_id": "enemy:target",
+                      "source_type": "target.state"
+                    }
+                  ],
+                  "bucket": "toughness_state",
+                  "metadata": {
+                    "broken": false,
+                    "current_toughness": 60.0,
+                    "max_toughness": 60.0
+                  },
+                  "multiplier": 0.9,
+                  "skipped_terms": []
+                }
+              ],
+              "formula_family": "direct",
+              "skipped_count": 1,
+              "skipped_terms": [
+                {
+                  "applied_reason": "",
+                  "applied_value": null,
+                  "bucket": "resistance",
+                  "condition": "element_resistance_present",
+                  "key": "all_resistance",
+                  "raw_path": "resources.all_resistance",
+                  "scope": "target",
+                  "skipped_reason": "element_specific_resistance_selected",
+                  "source_id": "enemy:target",
+                  "source_type": "target.resources"
+                }
+              ]
+            },
+            "multipliers": {
+              "crit": 2.0,
+              "damage_bonus": 1.3,
+              "damage_reduction": 0.9,
+              "damage_taken": 1.15,
+              "defense": 0.588235294117647,
+              "resistance": 0.8700000000000001,
+              "toughness_state": 0.9
+            },
+            "rng_events": [
+              {
+                "after_state": "deterministic",
+                "before_state": "deterministic",
+                "event_id": "rng:1:ally:saber:action_def:avatar_skill:101401:10:enemy:target:crit",
+                "metadata": {
+                  "action_definition_id": "action_def:avatar_skill:101401:10",
+                  "actor_id": "ally:saber",
+                  "source_trace": {
+                    "action_id": "avatar_skill:101401",
+                    "action_level": 10,
+                    "definition_id": "action_def:avatar_skill:101401:10",
+                    "source": {
+                      "action_id": "avatar_skill:101401",
+                      "coverage_status": "executable",
+                      "definition_id": "action_def:avatar_skill:101401:10",
+                      "level": 10,
+                      "source": {
+                        "evidence": {
+                          "id_key": "SkillID",
+                          "level": 10,
+                          "resource_mapping": {
+                            "BPAdd": "skill_point_gain_if_positive",
+                            "BPNeed": "skill_point_cost_if_positive",
+                            "SPBase": "energy_gain"
+                          },
+                          "row_index": 65,
+                          "taxonomy": {
+                            "attack_type": "raw TBGD AttackType; follow-up is an attack type axis",
+                            "damage_formula_family": "formula family axis; follow-up is not a damage family",
+                            "element_type": "raw TBGD StanceDamageType when present"
+                          }
+                        },
+                        "raw_id": "101401",
+                        "raw_type": "AvatarSkillConfigLD",
+                        "source_path": "ExcelOutput/AvatarSkillConfigLD.json"
+                      }
+                    }
+                  },
+                  "target_id": "enemy:target"
+                },
+                "result": {
+                  "crit_damage": 1.0,
+                  "crit_rate": 0.5,
+                  "event_id": "rng:1:ally:saber:action_def:avatar_skill:101401:10:enemy:target:crit",
+                  "is_crit": true,
+                  "mode": "crit",
+                  "multiplier": 2.0,
+                  "reason": "forced_crit",
+                  "rng_roll": null
+                },
+                "rng_type": "crit",
+                "source": "damage_formula"
+              }
+            ],
+            "scaling": {
+              "base_damage": 4480.0,
+              "flat_damage": 0.0,
+              "ratio": 1.4,
+              "stat": "attack",
+              "value": 3200.0
+            },
+            "target_id": "enemy:target"
+          },
+          "modifier_ledger": {
+            "applied_count": 14,
+            "applied_terms": [
+              {
+                "applied_reason": "crit_rate_clamped",
+                "applied_value": 0.5,
+                "bucket": "crit",
+                "condition": "always",
+                "key": "critical_chance",
+                "raw_path": "resources.critical_chance",
+                "scope": "actor",
+                "skipped_reason": "",
+                "source_id": "ally:saber",
+                "source_type": "actor.resources"
+              },
+              {
+                "applied_reason": "crit_damage_available",
+                "applied_value": 1.0,
+                "bucket": "crit",
+                "condition": "is_crit",
+                "key": "critical_damage",
+                "raw_path": "resources.critical_damage",
+                "scope": "actor",
+                "skipped_reason": "",
+                "source_id": "ally:saber",
+                "source_type": "actor.resources"
+              },
+              {
+                "applied_reason": "applied",
+                "applied_value": 0.2,
+                "bucket": "damage_bonus",
+                "condition": "always",
+                "key": "damage_added_ratio",
+                "raw_path": "resources.damage_added_ratio",
+                "scope": "actor",
+                "skipped_reason": "",
+                "source_id": "ally:saber",
+                "source_type": "actor.resources"
+              },
+              {
+                "applied_reason": "applied",
+                "applied_value": 0.1,
+                "bucket": "damage_bonus",
+                "condition": "element=Wind",
+                "key": "Wind_damage_added_ratio",
+                "raw_path": "resources.Wind_damage_added_ratio",
+                "scope": "actor",
+                "skipped_reason": "",
+                "source_id": "ally:saber",
+                "source_type": "actor.resources"
+              },
+              {
+                "applied_reason": "base_target_defense",
+                "applied_value": 1000.0,
+                "bucket": "defense",
+                "condition": "always",
+                "key": "defense",
+                "raw_path": "unit.defense",
+                "scope": "target",
+                "skipped_reason": "",
+                "source_id": "enemy:target",
+                "source_type": "target.stats"
+              },
+              {
+                "applied_reason": "applied",
+                "applied_value": 0.2,
+                "bucket": "defense",
+                "condition": "always",
+                "key": "def_reduction",
+                "raw_path": "resources.def_reduction",
+                "scope": "target",
+                "skipped_reason": "",
+                "source_id": "enemy:target",
+                "source_type": "target.resources"
+              },
+              {
+                "applied_reason": "applied",
+                "applied_value": 0.1,
+                "bucket": "defense",
+                "condition": "always",
+                "key": "def_ignore",
+                "raw_path": "resources.def_ignore",
+                "scope": "actor",
+                "skipped_reason": "",
+                "source_id": "ally:saber",
+                "source_type": "actor.resources"
+              },
+              {
+                "applied_reason": "applied",
+                "applied_value": 0.2,
+                "bucket": "resistance",
+                "condition": "element=Wind",
+                "key": "Wind_resistance",
+                "raw_path": "resources.Wind_resistance",
+                "scope": "target",
+                "skipped_reason": "",
+                "source_id": "enemy:target",
+                "source_type": "target.resources"
+              },
+              {
+                "applied_reason": "applied",
+                "applied_value": 0.05,
+                "bucket": "resistance",
+                "condition": "element=Wind",
+                "key": "Wind_res_pen",
+                "raw_path": "resources.Wind_res_pen",
+                "scope": "actor",
+                "skipped_reason": "",
+                "source_id": "ally:saber",
+                "source_type": "actor.resources"
+              },
+              {
+                "applied_reason": "applied",
+                "applied_value": 0.02,
+                "bucket": "resistance",
+                "condition": "always",
+                "key": "all_res_pen",
+                "raw_path": "resources.all_res_pen",
+                "scope": "actor",
+                "skipped_reason": "",
+                "source_id": "ally:saber",
+                "source_type": "actor.resources"
+              },
+              {
+                "applied_reason": "applied",
+                "applied_value": 0.15,
+                "bucket": "damage_taken",
+                "condition": "always",
+                "key": "damage_taken_ratio",
+                "raw_path": "resources.damage_taken_ratio",
+                "scope": "target",
+                "skipped_reason": "",
+                "source_id": "enemy:target",
+                "source_type": "target.resources"
+              },
+              {
+                "applied_reason": "applied",
+                "applied_value": 0.1,
+                "bucket": "damage_reduction",
+                "condition": "always",
+                "key": "damage_reduction",
+                "raw_path": "resources.damage_reduction",
+                "scope": "target",
+                "skipped_reason": "",
+                "source_id": "enemy:target",
+                "source_type": "target.resources"
+              },
+              {
+                "applied_reason": "positive_toughness_not_broken",
+                "applied_value": 60.0,
+                "bucket": "toughness_state",
+                "condition": "always",
+                "key": "current_toughness",
+                "raw_path": "unit.toughness",
+                "scope": "target",
+                "skipped_reason": "",
+                "source_id": "enemy:target",
+                "source_type": "target.state"
+              },
+              {
+                "applied_reason": "positive_toughness_not_broken",
+                "applied_value": 0.0,
+                "bucket": "toughness_state",
+                "condition": "always",
+                "key": "broken",
+                "raw_path": "flags.broken",
+                "scope": "target",
+                "skipped_reason": "",
+                "source_id": "enemy:target",
+                "source_type": "target.state"
+              }
+            ],
+            "buckets": [
+              {
+                "applied_terms": [
+                  {
+                    "applied_reason": "crit_rate_clamped",
+                    "applied_value": 0.5,
+                    "bucket": "crit",
+                    "condition": "always",
+                    "key": "critical_chance",
+                    "raw_path": "resources.critical_chance",
+                    "scope": "actor",
+                    "skipped_reason": "",
+                    "source_id": "ally:saber",
+                    "source_type": "actor.resources"
+                  },
+                  {
+                    "applied_reason": "crit_damage_available",
+                    "applied_value": 1.0,
+                    "bucket": "crit",
+                    "condition": "is_crit",
+                    "key": "critical_damage",
+                    "raw_path": "resources.critical_damage",
+                    "scope": "actor",
+                    "skipped_reason": "",
+                    "source_id": "ally:saber",
+                    "source_type": "actor.resources"
+                  }
+                ],
+                "bucket": "crit",
+                "metadata": {
+                  "crit_damage": 1.0,
+                  "crit_rate": 0.5,
+                  "event_id": "rng:1:ally:saber:action_def:avatar_skill:101401:10:enemy:target:crit",
+                  "is_crit": true,
+                  "mode": "crit",
+                  "multiplier": 2.0,
+                  "reason": "forced_crit",
+                  "rng_roll": null
+                },
+                "multiplier": 2.0,
+                "skipped_terms": []
+              },
+              {
+                "applied_terms": [
+                  {
+                    "applied_reason": "applied",
+                    "applied_value": 0.2,
+                    "bucket": "damage_bonus",
+                    "condition": "always",
+                    "key": "damage_added_ratio",
+                    "raw_path": "resources.damage_added_ratio",
+                    "scope": "actor",
+                    "skipped_reason": "",
+                    "source_id": "ally:saber",
+                    "source_type": "actor.resources"
+                  },
+                  {
+                    "applied_reason": "applied",
+                    "applied_value": 0.1,
+                    "bucket": "damage_bonus",
+                    "condition": "element=Wind",
+                    "key": "Wind_damage_added_ratio",
+                    "raw_path": "resources.Wind_damage_added_ratio",
+                    "scope": "actor",
+                    "skipped_reason": "",
+                    "source_id": "ally:saber",
+                    "source_type": "actor.resources"
+                  }
+                ],
+                "bucket": "damage_bonus",
+                "metadata": {
+                  "status_bonus": 0.0
+                },
+                "multiplier": 1.3,
+                "skipped_terms": []
+              },
+              {
+                "applied_terms": [
+                  {
+                    "applied_reason": "base_target_defense",
+                    "applied_value": 1000.0,
+                    "bucket": "defense",
+                    "condition": "always",
+                    "key": "defense",
+                    "raw_path": "unit.defense",
+                    "scope": "target",
+                    "skipped_reason": "",
+                    "source_id": "enemy:target",
+                    "source_type": "target.stats"
+                  },
+                  {
+                    "applied_reason": "applied",
+                    "applied_value": 0.2,
+                    "bucket": "defense",
+                    "condition": "always",
+                    "key": "def_reduction",
+                    "raw_path": "resources.def_reduction",
+                    "scope": "target",
+                    "skipped_reason": "",
+                    "source_id": "enemy:target",
+                    "source_type": "target.resources"
+                  },
+                  {
+                    "applied_reason": "applied",
+                    "applied_value": 0.1,
+                    "bucket": "defense",
+                    "condition": "always",
+                    "key": "def_ignore",
+                    "raw_path": "resources.def_ignore",
+                    "scope": "actor",
+                    "skipped_reason": "",
+                    "source_id": "ally:saber",
+                    "source_type": "actor.resources"
+                  }
+                ],
+                "bucket": "defense",
+                "metadata": {
+                  "actor_level": 80,
+                  "effective_defense": 700.0000000000001,
+                  "status_def_ignore": 0.0,
+                  "status_def_reduction": 0.0
+                },
+                "multiplier": 0.588235294117647,
+                "skipped_terms": []
+              },
+              {
+                "applied_terms": [
+                  {
+                    "applied_reason": "applied",
+                    "applied_value": 0.2,
+                    "bucket": "resistance",
+                    "condition": "element=Wind",
+                    "key": "Wind_resistance",
+                    "raw_path": "resources.Wind_resistance",
+                    "scope": "target",
+                    "skipped_reason": "",
+                    "source_id": "enemy:target",
+                    "source_type": "target.resources"
+                  },
+                  {
+                    "applied_reason": "applied",
+                    "applied_value": 0.05,
+                    "bucket": "resistance",
+                    "condition": "element=Wind",
+                    "key": "Wind_res_pen",
+                    "raw_path": "resources.Wind_res_pen",
+                    "scope": "actor",
+                    "skipped_reason": "",
+                    "source_id": "ally:saber",
+                    "source_type": "actor.resources"
+                  },
+                  {
+                    "applied_reason": "applied",
+                    "applied_value": 0.02,
+                    "bucket": "resistance",
+                    "condition": "always",
+                    "key": "all_res_pen",
+                    "raw_path": "resources.all_res_pen",
+                    "scope": "actor",
+                    "skipped_reason": "",
+                    "source_id": "ally:saber",
+                    "source_type": "actor.resources"
+                  }
+                ],
+                "bucket": "resistance",
+                "metadata": {
+                  "selected_resistance": 0.2,
+                  "status_resistance_delta": 0.0
+                },
+                "multiplier": 0.8700000000000001,
+                "skipped_terms": [
+                  {
+                    "applied_reason": "",
+                    "applied_value": null,
+                    "bucket": "resistance",
+                    "condition": "element_resistance_present",
+                    "key": "all_resistance",
+                    "raw_path": "resources.all_resistance",
+                    "scope": "target",
+                    "skipped_reason": "element_specific_resistance_selected",
+                    "source_id": "enemy:target",
+                    "source_type": "target.resources"
+                  }
+                ]
+              },
+              {
+                "applied_terms": [
+                  {
+                    "applied_reason": "applied",
+                    "applied_value": 0.15,
+                    "bucket": "damage_taken",
+                    "condition": "always",
+                    "key": "damage_taken_ratio",
+                    "raw_path": "resources.damage_taken_ratio",
+                    "scope": "target",
+                    "skipped_reason": "",
+                    "source_id": "enemy:target",
+                    "source_type": "target.resources"
+                  }
+                ],
+                "bucket": "damage_taken",
+                "metadata": {
+                  "status_damage_taken_ratio": 0.0
+                },
+                "multiplier": 1.15,
+                "skipped_terms": []
+              },
+              {
+                "applied_terms": [
+                  {
+                    "applied_reason": "applied",
+                    "applied_value": 0.1,
+                    "bucket": "damage_reduction",
+                    "condition": "always",
+                    "key": "damage_reduction",
+                    "raw_path": "resources.damage_reduction",
+                    "scope": "target",
+                    "skipped_reason": "",
+                    "source_id": "enemy:target",
+                    "source_type": "target.resources"
+                  }
+                ],
+                "bucket": "damage_reduction",
+                "metadata": {},
+                "multiplier": 0.9,
+                "skipped_terms": []
+              },
+              {
+                "applied_terms": [
+                  {
+                    "applied_reason": "positive_toughness_not_broken",
+                    "applied_value": 60.0,
+                    "bucket": "toughness_state",
+                    "condition": "always",
+                    "key": "current_toughness",
+                    "raw_path": "unit.toughness",
+                    "scope": "target",
+                    "skipped_reason": "",
+                    "source_id": "enemy:target",
+                    "source_type": "target.state"
+                  },
+                  {
+                    "applied_reason": "positive_toughness_not_broken",
+                    "applied_value": 0.0,
+                    "bucket": "toughness_state",
+                    "condition": "always",
+                    "key": "broken",
+                    "raw_path": "flags.broken",
+                    "scope": "target",
+                    "skipped_reason": "",
+                    "source_id": "enemy:target",
+                    "source_type": "target.state"
+                  }
+                ],
+                "bucket": "toughness_state",
+                "metadata": {
+                  "broken": false,
+                  "current_toughness": 60.0,
+                  "max_toughness": 60.0
+                },
+                "multiplier": 0.9,
+                "skipped_terms": []
+              }
+            ],
+            "formula_family": "direct",
+            "skipped_count": 1,
+            "skipped_terms": [
+              {
+                "applied_reason": "",
+                "applied_value": null,
+                "bucket": "resistance",
+                "condition": "element_resistance_present",
+                "key": "all_resistance",
+                "raw_path": "resources.all_resistance",
+                "scope": "target",
+                "skipped_reason": "element_specific_resistance_selected",
+                "source_id": "enemy:target",
+                "source_type": "target.resources"
+              }
+            ]
+          },
+          "normal_multiplier_terms": [
+            {
+              "applied_reason": "crit_rate_clamped",
+              "applied_value": 0.5,
+              "bucket": "crit",
+              "condition": "always",
+              "key": "critical_chance",
+              "raw_path": "resources.critical_chance",
+              "scope": "actor",
+              "skipped_reason": "",
+              "source_id": "ally:saber",
+              "source_type": "actor.resources"
+            },
+            {
+              "applied_reason": "crit_damage_available",
+              "applied_value": 1.0,
+              "bucket": "crit",
+              "condition": "is_crit",
+              "key": "critical_damage",
+              "raw_path": "resources.critical_damage",
+              "scope": "actor",
+              "skipped_reason": "",
+              "source_id": "ally:saber",
+              "source_type": "actor.resources"
+            },
+            {
+              "applied_reason": "applied",
+              "applied_value": 0.2,
+              "bucket": "damage_bonus",
+              "condition": "always",
+              "key": "damage_added_ratio",
+              "raw_path": "resources.damage_added_ratio",
+              "scope": "actor",
+              "skipped_reason": "",
+              "source_id": "ally:saber",
+              "source_type": "actor.resources"
+            },
+            {
+              "applied_reason": "applied",
+              "applied_value": 0.1,
+              "bucket": "damage_bonus",
+              "condition": "element=Wind",
+              "key": "Wind_damage_added_ratio",
+              "raw_path": "resources.Wind_damage_added_ratio",
+              "scope": "actor",
+              "skipped_reason": "",
+              "source_id": "ally:saber",
+              "source_type": "actor.resources"
+            },
+            {
+              "applied_reason": "base_target_defense",
+              "applied_value": 1000.0,
+              "bucket": "defense",
+              "condition": "always",
+              "key": "defense",
+              "raw_path": "unit.defense",
+              "scope": "target",
+              "skipped_reason": "",
+              "source_id": "enemy:target",
+              "source_type": "target.stats"
+            },
+            {
+              "applied_reason": "applied",
+              "applied_value": 0.2,
+              "bucket": "defense",
+              "condition": "always",
+              "key": "def_reduction",
+              "raw_path": "resources.def_reduction",
+              "scope": "target",
+              "skipped_reason": "",
+              "source_id": "enemy:target",
+              "source_type": "target.resources"
+            },
+            {
+              "applied_reason": "applied",
+              "applied_value": 0.1,
+              "bucket": "defense",
+              "condition": "always",
+              "key": "def_ignore",
+              "raw_path": "resources.def_ignore",
+              "scope": "actor",
+              "skipped_reason": "",
+              "source_id": "ally:saber",
+              "source_type": "actor.resources"
+            },
+            {
+              "applied_reason": "applied",
+              "applied_value": 0.2,
+              "bucket": "resistance",
+              "condition": "element=Wind",
+              "key": "Wind_resistance",
+              "raw_path": "resources.Wind_resistance",
+              "scope": "target",
+              "skipped_reason": "",
+              "source_id": "enemy:target",
+              "source_type": "target.resources"
+            },
+            {
+              "applied_reason": "applied",
+              "applied_value": 0.05,
+              "bucket": "resistance",
+              "condition": "element=Wind",
+              "key": "Wind_res_pen",
+              "raw_path": "resources.Wind_res_pen",
+              "scope": "actor",
+              "skipped_reason": "",
+              "source_id": "ally:saber",
+              "source_type": "actor.resources"
+            },
+            {
+              "applied_reason": "applied",
+              "applied_value": 0.02,
+              "bucket": "resistance",
+              "condition": "always",
+              "key": "all_res_pen",
+              "raw_path": "resources.all_res_pen",
+              "scope": "actor",
+              "skipped_reason": "",
+              "source_id": "ally:saber",
+              "source_type": "actor.resources"
+            },
+            {
+              "applied_reason": "applied",
+              "applied_value": 0.15,
+              "bucket": "damage_taken",
+              "condition": "always",
+              "key": "damage_taken_ratio",
+              "raw_path": "resources.damage_taken_ratio",
+              "scope": "target",
+              "skipped_reason": "",
+              "source_id": "enemy:target",
+              "source_type": "target.resources"
+            },
+            {
+              "applied_reason": "applied",
+              "applied_value": 0.1,
+              "bucket": "damage_reduction",
+              "condition": "always",
+              "key": "damage_reduction",
+              "raw_path": "resources.damage_reduction",
+              "scope": "target",
+              "skipped_reason": "",
+              "source_id": "enemy:target",
+              "source_type": "target.resources"
+            },
+            {
+              "applied_reason": "positive_toughness_not_broken",
+              "applied_value": 60.0,
+              "bucket": "toughness_state",
+              "condition": "always",
+              "key": "current_toughness",
+              "raw_path": "unit.toughness",
+              "scope": "target",
+              "skipped_reason": "",
+              "source_id": "enemy:target",
+              "source_type": "target.state"
+            },
+            {
+              "applied_reason": "positive_toughness_not_broken",
+              "applied_value": 0.0,
+              "bucket": "toughness_state",
+              "condition": "always",
+              "key": "broken",
+              "raw_path": "flags.broken",
+              "scope": "target",
+              "skipped_reason": "",
+              "source_id": "enemy:target",
+              "source_type": "target.state"
+            }
+          ],
+          "target_after_hp": 4447.295623529411,
+          "target_before_hp": 10000.0
+        },
+        "process_only": false,
+        "record_type": "damage",
+        "source": "damage_system",
+        "trace": {
+          "action_id": "avatar_skill:101401",
+          "action_level": 10,
+          "definition_id": "action_def:avatar_skill:101401:10",
+          "source": {
+            "action_id": "avatar_skill:101401",
+            "coverage_status": "executable",
+            "definition_id": "action_def:avatar_skill:101401:10",
+            "level": 10,
+            "source": {
+              "evidence": {
+                "id_key": "SkillID",
+                "level": 10,
+                "resource_mapping": {
+                  "BPAdd": "skill_point_gain_if_positive",
+                  "BPNeed": "skill_point_cost_if_positive",
+                  "SPBase": "energy_gain"
+                },
+                "row_index": 65,
+                "taxonomy": {
+                  "attack_type": "raw TBGD AttackType; follow-up is an attack type axis",
+                  "damage_formula_family": "formula family axis; follow-up is not a damage family",
+                  "element_type": "raw TBGD StanceDamageType when present"
+                }
+              },
+              "raw_id": "101401",
+              "raw_type": "AvatarSkillConfigLD",
+              "source_path": "ExcelOutput/AvatarSkillConfigLD.json"
+            }
+          }
+        }
+      },
+      {
+        "mutation_id": null,
+        "payload": {
+          "blocked_reason": "",
+          "canonical_window": "after_attack",
+          "condition_results": [],
+          "effect_results": [],
+          "metadata": {},
+          "modifier_name": null,
+          "mutation_count": 0,
+          "owner_id": null,
+          "skipped_reason": "no_status_local_triggers",
+          "status_id": null,
+          "status_instance_id": null,
+          "tbgd_event": "OnAfterAttack",
+          "trigger_id": null
+        },
+        "process_only": true,
+        "record_type": "trigger_window",
+        "source": "trigger_system",
+        "trace": {}
+      },
+      {
+        "mutation_id": null,
+        "payload": {
+          "blocked_reason": "",
+          "canonical_window": "after_skill_use",
+          "condition_results": [],
+          "effect_results": [],
+          "metadata": {},
+          "modifier_name": null,
+          "mutation_count": 0,
+          "owner_id": null,
+          "skipped_reason": "no_status_local_triggers",
+          "status_id": null,
+          "status_instance_id": null,
+          "tbgd_event": "OnAfterSkillUse",
+          "trigger_id": null
+        },
+        "process_only": true,
+        "record_type": "trigger_window",
+        "source": "trigger_system",
+        "trace": {}
+      }
+    ],
+    "target_ids": [
+      "enemy:target"
+    ]
+  },
+  "target_resolution": {
+    "legal": [
+      "enemy:target"
+    ],
+    "metadata": {
+      "policy": {
+        "allow_ally": false,
+        "allow_defeated": false,
+        "allow_enemy": true,
+        "allow_self": false,
+        "policy_id": "enemy_damage"
+      }
+    },
+    "reason": "explicit_targets_resolved",
+    "rejected": [],
+    "requested": [
+      "enemy:target"
+    ],
+    "selected": [
+      "enemy:target"
+    ],
+    "source": "target_system"
+  },
+  "trigger_windows": [
+    {
+      "blocked_reason": "",
+      "canonical_window": "before_skill_use",
+      "condition_results": [],
+      "effect_results": [
+        {
+          "effect_id": "effect:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Sam_00_Ability.json:MAvatar_Advanced_Sam_00_Rank02_BuffCD_LuoJi:42:callback:0:SetEnergyBarState",
+          "mutation_count": 0,
+          "ok": false,
+          "opcode": "SetEnergyBarState",
+          "record_count": 0,
+          "unsupported": [
+            "SetEnergyBarState"
+          ]
+        },
+        {
+          "effect_id": "effect:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Sam_00_Ability.json:MAvatar_Advanced_Sam_00_Rank02_BuffCD_LuoJi:42:callback:1:RemoveSelfModifier",
+          "mutation_count": 0,
+          "ok": false,
+          "opcode": "RemoveSelfModifier",
+          "record_count": 0,
+          "unsupported": [
+            "RemoveSelfModifier"
+          ]
+        }
+      ],
+      "metadata": {
+        "AttackType": "Normal",
+        "SkillType": "SingleAttack",
+        "action_id": "avatar_skill:101401",
+        "action_level": 10,
+        "actor_id": "ally:saber",
+        "damage_formula_family": "direct",
+        "damage_kind": "hp_damage",
+        "primary_target_id": "enemy:target"
+      },
+      "modifier_name": "MAvatar_Advanced_Sam_00_Rank02_BuffCD_LuoJi",
+      "mutation_count": 0,
+      "owner_id": "ally:saber",
+      "skipped_reason": "",
+      "status_id": "modifier:MAvatar_Advanced_Sam_00_Rank02_BuffCD_LuoJi",
+      "status_instance_id": "status:5812d1c18d0cd94b",
+      "tbgd_event": "OnBeforeSkillUse",
+      "trigger_id": "trigger:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Sam_00_Ability.json:MAvatar_Advanced_Sam_00_Rank02_BuffCD_LuoJi:42"
+    },
+    {
+      "blocked_reason": "",
+      "canonical_window": "before_attack",
+      "condition_results": [],
+      "effect_results": [],
+      "metadata": {},
+      "modifier_name": null,
+      "mutation_count": 0,
+      "owner_id": null,
+      "skipped_reason": "no_status_local_triggers",
+      "status_id": null,
+      "status_instance_id": null,
+      "tbgd_event": "OnBeforeAttack",
+      "trigger_id": null
+    },
+    {
+      "blocked_reason": "",
+      "canonical_window": "after_attack",
+      "condition_results": [],
+      "effect_results": [],
+      "metadata": {},
+      "modifier_name": null,
+      "mutation_count": 0,
+      "owner_id": null,
+      "skipped_reason": "no_status_local_triggers",
+      "status_id": null,
+      "status_instance_id": null,
+      "tbgd_event": "OnAfterAttack",
+      "trigger_id": null
+    },
+    {
+      "blocked_reason": "",
+      "canonical_window": "after_skill_use",
+      "condition_results": [],
+      "effect_results": [],
+      "metadata": {},
+      "modifier_name": null,
+      "mutation_count": 0,
+      "owner_id": null,
+      "skipped_reason": "no_status_local_triggers",
+      "status_id": null,
+      "status_instance_id": null,
+      "tbgd_event": "OnAfterSkillUse",
+      "trigger_id": null
+    }
+  ]
+}

@@ -1,0 +1,492 @@
+{
+  "after": {
+    "battle": {
+      "action_index": 0,
+      "current_window": "idle",
+      "phase": "scenario",
+      "turn_owner_id": "ally:saber",
+      "wave_index": 0
+    },
+    "coverage": {},
+    "event_index": 0,
+    "global_flags": {
+      "current_window": "idle",
+      "phase": "scenario",
+      "turn_owner_id": "ally:saber"
+    },
+    "max_skill_points": 5,
+    "metadata": {
+      "rng_state": "deterministic",
+      "snapshot_contract": "v0_203"
+    },
+    "pending_events": [],
+    "queues": {},
+    "resources": {
+      "max_skill_points": 5,
+      "skill_points": 3
+    },
+    "rng_events": [],
+    "rng_state": "deterministic",
+    "settlement": {},
+    "skill_points": 3,
+    "targeting": {},
+    "teams": {
+      "ally": [
+        "ally:saber"
+      ],
+      "enemy": [
+        "enemy:target"
+      ],
+      "summon": []
+    },
+    "timeline": {
+      "action_values": {
+        "ally:saber": 0.0,
+        "enemy:target": 0.0
+      },
+      "queues": {},
+      "turn_owner_id": "ally:saber"
+    },
+    "units": {
+      "ally:saber": {
+        "action_value": 0.0,
+        "attack": 3200.0,
+        "base_stats": {
+          "attack": 3200.0,
+          "defense": 900.0,
+          "max_hp": 3000.0,
+          "speed": 101.0
+        },
+        "defense": 900.0,
+        "derived_stats": {
+          "break_damage_added_ratio": 0.0,
+          "critical_chance": 0.5,
+          "critical_damage": 1.0,
+          "damage_added_ratio": 0.2,
+          "effect_hit_rate": 0.0,
+          "effect_resistance": 0.0
+        },
+        "energy": 70.0,
+        "flags": {
+          "position": 1
+        },
+        "hp": 3000.0,
+        "level": 80,
+        "max_energy": 120.0,
+        "max_hp": 3000.0,
+        "max_toughness": 0.0,
+        "modifiers": [],
+        "position": 1,
+        "recoverable_hp": 0.0,
+        "resources": {
+          "Wind_damage_added_ratio": 0.1,
+          "Wind_res_pen": 0.05,
+          "all_res_pen": 0.02,
+          "critical_chance": 0.5,
+          "critical_damage": 1.0,
+          "damage_added_ratio": 0.2,
+          "def_ignore": 0.1
+        },
+        "shield": 0.0,
+        "side": "ally",
+        "speed": 101.0,
+        "status_details": [],
+        "statuses": [],
+        "template_id": "avatar:1014",
+        "template_source": {
+          "id": "avatar:1014",
+          "kind": "avatar"
+        },
+        "toughness": 0.0,
+        "toughness_state": {
+          "break_delay": 0.0,
+          "broken": false,
+          "current": 0.0,
+          "maximum": 0.0,
+          "weakness_locked": false,
+          "weaknesses": []
+        },
+        "unit_id": "ally:saber"
+      },
+      "enemy:target": {
+        "action_value": 0.0,
+        "attack": 1000.0,
+        "base_stats": {
+          "attack": 1000.0,
+          "defense": 1000.0,
+          "max_hp": 10000.0,
+          "speed": 100.0
+        },
+        "defense": 1000.0,
+        "derived_stats": {
+          "break_damage_added_ratio": 0.0,
+          "critical_chance": 0.0,
+          "critical_damage": 0.0,
+          "damage_added_ratio": 0.0,
+          "effect_hit_rate": 0.0,
+          "effect_resistance": 0.0
+        },
+        "energy": 0.0,
+        "flags": {
+          "broken": false,
+          "position": 1,
+          "weaknesses": [
+            "Fire",
+            "Thunder"
+          ]
+        },
+        "hp": 10000.0,
+        "level": 80,
+        "max_energy": 0.0,
+        "max_hp": 10000.0,
+        "max_toughness": 60.0,
+        "modifiers": [],
+        "position": 1,
+        "recoverable_hp": 0.0,
+        "resources": {
+          "Wind_resistance": 0.2,
+          "damage_reduction": 0.1,
+          "damage_taken_ratio": 0.15,
+          "def_reduction": 0.2
+        },
+        "shield": 0.0,
+        "side": "enemy",
+        "speed": 100.0,
+        "status_details": [],
+        "statuses": [],
+        "template_id": "monster:1002011",
+        "template_source": {
+          "id": "monster:1002011",
+          "kind": "monster"
+        },
+        "toughness": 60.0,
+        "toughness_state": {
+          "break_delay": 0.0,
+          "broken": false,
+          "current": 60.0,
+          "maximum": 60.0,
+          "weakness_locked": false,
+          "weaknesses": [
+            "Fire",
+            "Thunder"
+          ]
+        },
+        "unit_id": "enemy:target"
+      }
+    },
+    "wave_index": 0
+  },
+  "before": {
+    "battle": {
+      "action_index": 0,
+      "current_window": "idle",
+      "phase": "scenario",
+      "turn_owner_id": "ally:saber",
+      "wave_index": 0
+    },
+    "coverage": {},
+    "event_index": 0,
+    "global_flags": {
+      "current_window": "idle",
+      "phase": "scenario",
+      "turn_owner_id": "ally:saber"
+    },
+    "max_skill_points": 5,
+    "metadata": {
+      "rng_state": "deterministic",
+      "snapshot_contract": "v0_203"
+    },
+    "pending_events": [],
+    "queues": {},
+    "resources": {
+      "max_skill_points": 5,
+      "skill_points": 3
+    },
+    "rng_events": [],
+    "rng_state": "deterministic",
+    "settlement": {},
+    "skill_points": 3,
+    "targeting": {},
+    "teams": {
+      "ally": [
+        "ally:saber"
+      ],
+      "enemy": [
+        "enemy:target"
+      ],
+      "summon": []
+    },
+    "timeline": {
+      "action_values": {
+        "ally:saber": 0.0,
+        "enemy:target": 0.0
+      },
+      "queues": {},
+      "turn_owner_id": "ally:saber"
+    },
+    "units": {
+      "ally:saber": {
+        "action_value": 0.0,
+        "attack": 3200.0,
+        "base_stats": {
+          "attack": 3200.0,
+          "defense": 900.0,
+          "max_hp": 3000.0,
+          "speed": 101.0
+        },
+        "defense": 900.0,
+        "derived_stats": {
+          "break_damage_added_ratio": 0.0,
+          "critical_chance": 0.5,
+          "critical_damage": 1.0,
+          "damage_added_ratio": 0.2,
+          "effect_hit_rate": 0.0,
+          "effect_resistance": 0.0
+        },
+        "energy": 60.0,
+        "flags": {
+          "position": 1
+        },
+        "hp": 3000.0,
+        "level": 80,
+        "max_energy": 120.0,
+        "max_hp": 3000.0,
+        "max_toughness": 0.0,
+        "modifiers": [],
+        "position": 1,
+        "recoverable_hp": 0.0,
+        "resources": {
+          "Wind_damage_added_ratio": 0.1,
+          "Wind_res_pen": 0.05,
+          "all_res_pen": 0.02,
+          "critical_chance": 0.5,
+          "critical_damage": 1.0,
+          "damage_added_ratio": 0.2,
+          "def_ignore": 0.1
+        },
+        "shield": 0.0,
+        "side": "ally",
+        "speed": 101.0,
+        "status_details": [],
+        "statuses": [],
+        "template_id": "avatar:1014",
+        "template_source": {
+          "id": "avatar:1014",
+          "kind": "avatar"
+        },
+        "toughness": 0.0,
+        "toughness_state": {
+          "break_delay": 0.0,
+          "broken": false,
+          "current": 0.0,
+          "maximum": 0.0,
+          "weakness_locked": false,
+          "weaknesses": []
+        },
+        "unit_id": "ally:saber"
+      },
+      "enemy:target": {
+        "action_value": 0.0,
+        "attack": 1000.0,
+        "base_stats": {
+          "attack": 1000.0,
+          "defense": 1000.0,
+          "max_hp": 10000.0,
+          "speed": 100.0
+        },
+        "defense": 1000.0,
+        "derived_stats": {
+          "break_damage_added_ratio": 0.0,
+          "critical_chance": 0.0,
+          "critical_damage": 0.0,
+          "damage_added_ratio": 0.0,
+          "effect_hit_rate": 0.0,
+          "effect_resistance": 0.0
+        },
+        "energy": 0.0,
+        "flags": {
+          "broken": false,
+          "position": 1,
+          "weaknesses": [
+            "Fire",
+            "Thunder"
+          ]
+        },
+        "hp": 10000.0,
+        "level": 80,
+        "max_energy": 0.0,
+        "max_hp": 10000.0,
+        "max_toughness": 60.0,
+        "modifiers": [],
+        "position": 1,
+        "recoverable_hp": 0.0,
+        "resources": {
+          "Wind_resistance": 0.2,
+          "damage_reduction": 0.1,
+          "damage_taken_ratio": 0.15,
+          "def_reduction": 0.2
+        },
+        "shield": 0.0,
+        "side": "enemy",
+        "speed": 100.0,
+        "status_details": [],
+        "statuses": [],
+        "template_id": "monster:1002011",
+        "template_source": {
+          "id": "monster:1002011",
+          "kind": "monster"
+        },
+        "toughness": 60.0,
+        "toughness_state": {
+          "break_delay": 0.0,
+          "broken": false,
+          "current": 60.0,
+          "maximum": 60.0,
+          "weakness_locked": false,
+          "weaknesses": [
+            "Fire",
+            "Thunder"
+          ]
+        },
+        "unit_id": "enemy:target"
+      }
+    },
+    "wave_index": 0
+  },
+  "command": {
+    "action_id": "avatar_skill:101401",
+    "action_level": 10,
+    "actor_id": "ally:saber",
+    "metadata": {
+      "crit_mode": "crit",
+      "effect_id": "effect:validation:v0_213:fixed_resource_delta:ResourceDelta",
+      "label": "Saber normal attack identity smoke",
+      "opcode": "ResourceDelta",
+      "reset_actor_av": true
+    },
+    "queue_name": null,
+    "source": "manual",
+    "target_ids": [
+      "enemy:target"
+    ]
+  },
+  "contract_validation": {},
+  "coverage": {
+    "effect_id": "effect:validation:v0_213:fixed_resource_delta:ResourceDelta",
+    "executor": "v0_213_fixed_resource_delta",
+    "mutation_count": 1,
+    "opcode": "ResourceDelta",
+    "unsupported": []
+  },
+  "events": [
+    {
+      "event_id": "event:0:v0_213_fixed_resource_delta",
+      "event_type": "effect.ResourceDelta",
+      "payload": {
+        "effect_id": "effect:validation:v0_213:fixed_resource_delta:ResourceDelta",
+        "opcode": "ResourceDelta"
+      },
+      "process_only": true,
+      "source_id": "ally:saber",
+      "target_id": "ally:saber",
+      "window": "effect_resolution"
+    }
+  ],
+  "mutations": [
+    {
+      "after": 70.0,
+      "before": 60.0,
+      "metadata": {
+        "amount": 10.0,
+        "caster_id": "ally:saber",
+        "effect_id": "effect:validation:v0_213:fixed_resource_delta:ResourceDelta",
+        "effect_source": {
+          "evidence": {
+            "purpose": "runtime contract validation"
+          },
+          "raw_id": "fixed_resource_delta",
+          "raw_type": "SyntheticEffect",
+          "source_path": "validation/v0_213"
+        },
+        "opcode": "ResourceDelta",
+        "source_id": "validation:v0_213:fixed_resource:effect:validation:v0_213:fixed_resource_delta:ResourceDelta",
+        "standard": {
+          "amount": {
+            "kind": "fixed",
+            "value": 10.0
+          },
+          "resource": "energy",
+          "target_alias": "Caster"
+        }
+      },
+      "mutation_id": "mutation:243e660afa8834f2",
+      "op": "set",
+      "path": [
+        "units",
+        "ally:saber",
+        "energy"
+      ],
+      "reason": "apply fixed energy delta effect",
+      "source": "effect_system"
+    }
+  ],
+  "rng_events": [],
+  "settlement": {
+    "action_id": "avatar_skill:101401",
+    "actor_id": "ally:saber",
+    "records": [
+      {
+        "mutation_id": "mutation:243e660afa8834f2",
+        "payload": {
+          "after": 70.0,
+          "amount": 10.0,
+          "before": 60.0,
+          "effect_id": "effect:validation:v0_213:fixed_resource_delta:ResourceDelta",
+          "opcode": "ResourceDelta",
+          "path": [
+            "units",
+            "ally:saber",
+            "energy"
+          ],
+          "resource": "energy",
+          "target_id": "ally:saber"
+        },
+        "process_only": false,
+        "record_type": "resource_delta",
+        "source": "effect_system",
+        "trace": {
+          "effect_source": {
+            "evidence": {
+              "purpose": "runtime contract validation"
+            },
+            "raw_id": "fixed_resource_delta",
+            "raw_type": "SyntheticEffect",
+            "source_path": "validation/v0_213"
+          }
+        }
+      }
+    ],
+    "target_ids": [
+      "ally:saber"
+    ]
+  },
+  "target_resolution": {
+    "legal": [
+      "ally:saber"
+    ],
+    "metadata": {
+      "effect_id": "effect:validation:v0_213:fixed_resource_delta:ResourceDelta",
+      "opcode": "ResourceDelta"
+    },
+    "reason": "effect_target_alias",
+    "rejected": [],
+    "requested": [
+      "ally:saber"
+    ],
+    "selected": [
+      "ally:saber"
+    ],
+    "source": "effect_system"
+  },
+  "trigger_windows": []
+}

@@ -31,6 +31,11 @@ class StatusInstance:
     unsupported: tuple[str, ...] = ()
     application_operation: str = "add"
     partial: bool = False
+    remaining_duration: float | None = None
+    duration_unit: str = "unknown"
+    stack_policy: str = "single_instance"
+    refresh_policy: str = "replace_partial"
+    lifecycle_state: str = "active"
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -53,6 +58,63 @@ class StatusInstance:
             "unsupported": list(self.unsupported),
             "application_operation": self.application_operation,
             "partial": self.partial,
+            "remaining_duration": self.remaining_duration,
+            "duration_unit": self.duration_unit,
+            "stack_policy": self.stack_policy,
+            "refresh_policy": self.refresh_policy,
+            "lifecycle_state": self.lifecycle_state,
+        }
+
+
+@dataclass(frozen=True)
+class StatusLifecyclePlan:
+    operation: str
+    target_id: str
+    status_id: str
+    source: str
+    status_instance: StatusInstance | None = None
+    before_details: tuple[JSONValue, ...] = ()
+    existing_detail: dict[str, JSONValue] | None = None
+    unsupported: tuple[str, ...] = ()
+    partial: bool = False
+    source_trace: dict[str, JSONValue] = field(default_factory=dict)
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "operation": self.operation,
+            "target_id": self.target_id,
+            "status_id": self.status_id,
+            "source": self.source,
+            "status_instance": self.status_instance.to_json() if self.status_instance else None,
+            "before_details": list(self.before_details),
+            "existing_detail": self.existing_detail,
+            "unsupported": list(self.unsupported),
+            "partial": self.partial,
+            "source_trace": self.source_trace,
+        }
+
+
+@dataclass(frozen=True)
+class StatusLifecycleResult:
+    ok: bool
+    operation: str
+    mutations: tuple[Mutation, ...] = ()
+    records: tuple[dict[str, JSONValue], ...] = ()
+    unsupported: tuple[str, ...] = ()
+    status_instance: StatusInstance | None = None
+    lifecycle_plan: StatusLifecyclePlan | None = None
+    lifecycle_state: str = "unknown"
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "ok": self.ok,
+            "operation": self.operation,
+            "mutations": [mutation.to_json() for mutation in self.mutations],
+            "records": list(self.records),
+            "unsupported": list(self.unsupported),
+            "status_instance": self.status_instance.to_json() if self.status_instance else None,
+            "lifecycle_plan": self.lifecycle_plan.to_json() if self.lifecycle_plan else None,
+            "lifecycle_state": self.lifecycle_state,
         }
 
 
@@ -63,6 +125,7 @@ class StatusApplicationResult:
     records: tuple[dict[str, JSONValue], ...] = ()
     unsupported: tuple[str, ...] = ()
     status_instance: StatusInstance | None = None
+    lifecycle_result: StatusLifecycleResult | None = None
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -71,6 +134,7 @@ class StatusApplicationResult:
             "records": list(self.records),
             "unsupported": list(self.unsupported),
             "status_instance": self.status_instance.to_json() if self.status_instance else None,
+            "lifecycle_result": self.lifecycle_result.to_json() if self.lifecycle_result else None,
         }
 
 
@@ -149,6 +213,7 @@ class StatusSystem:
         existing_detail = _matching_status_detail(before_details, target_id, modifier_name, effect.effect_id, source_id)
         application_operation, partial_reasons = _application_semantics(standard, existing_detail)
         unsupported = [*unsupported, *partial_reasons]
+        duration = _optional_float(standard.get("lifetime"))
         status_instance = StatusInstance(
             instance_id=_status_instance_id(target_id, modifier_name, effect.effect_id, source_id),
             status_id=f"modifier:{modifier_name}",
@@ -158,7 +223,7 @@ class StatusSystem:
             caster_id=caster_id,
             stacks=1,
             max_stacks=_optional_int(standard.get("max_layer")),
-            duration=_optional_float(standard.get("lifetime")),
+            duration=duration,
             dynamic_values=dynamic_values,
             source_trace={
                 "effect_id": effect.effect_id,
@@ -170,50 +235,110 @@ class StatusSystem:
             unsupported=tuple(unsupported),
             application_operation=application_operation,
             partial=bool(partial_reasons),
+            remaining_duration=duration,
+            duration_unit="turn_or_life_step" if duration is not None else "permanent_or_unknown",
+            stack_policy="unsupported_partial" if any(reason.startswith("stack_unsupported") for reason in unsupported) else "single_instance",
+            refresh_policy="unsupported_partial" if any(reason.startswith("refresh_unsupported") for reason in unsupported) else "replace_partial",
+            lifecycle_state="active_partial" if partial_reasons else "active",
         )
-        unit = state.units[target_id]
-        before_statuses = list(unit.statuses)
-        after_statuses = list(dict.fromkeys((*unit.statuses, status_instance.status_id)))
-        after_details = _replace_status_detail(before_details, status_instance)
-        status_mutation = Mutation(
-            op="set",
-            path=("units", target_id, "statuses"),
-            before=before_statuses,
-            after=after_statuses,
-            reason="apply AddModifier status id",
+        plan = StatusLifecyclePlan(
+            operation=application_operation,
+            target_id=target_id,
+            status_id=status_instance.status_id,
             source="status_system",
-            metadata={"status_id": status_instance.status_id, "modifier_name": modifier_name},
-        )
-        detail_mutation = Mutation(
-            op="set",
-            path=("units", target_id, "flags", "status_details"),
-            before=before_details,
-            after=after_details,
-            reason="apply AddModifier status details",
-            source="status_system",
-            metadata={"status_instance": status_instance.to_json()},
-        )
-        records = (
-            SettlementRecord(
-                record_type="status",
-                source="status_system",
-                mutation_id=detail_mutation.stable_id(),
-                process_only=False,
-                payload={
-                    "operation": application_operation,
-                    "status_instance": status_instance.to_json(),
-                    "unsupported": list(unsupported),
-                    "partial": status_instance.partial,
-                },
-                trace=status_instance.source_trace,
-            ).to_json(),
-        )
-        return StatusApplicationResult(
-            ok=True,
-            mutations=(status_mutation, detail_mutation),
-            records=records,
-            unsupported=tuple(unsupported),
             status_instance=status_instance,
+            before_details=tuple(before_details),
+            existing_detail=existing_detail,
+            unsupported=tuple(unsupported),
+            partial=status_instance.partial,
+            source_trace=status_instance.source_trace,
+        )
+        lifecycle_result = self._apply_lifecycle_plan(state, plan)
+        return StatusApplicationResult(
+            ok=lifecycle_result.ok,
+            mutations=lifecycle_result.mutations,
+            records=lifecycle_result.records,
+            unsupported=lifecycle_result.unsupported,
+            status_instance=lifecycle_result.status_instance,
+            lifecycle_result=lifecycle_result,
+        )
+
+    def apply_remove_modifier(
+        self,
+        state: BattleState,
+        effect: EffectIR,
+        *,
+        caster_id: str,
+        source_id: str,
+        owner_id: str | None = None,
+        param_entity_id: str | None = None,
+        current_action_target_id: str | None = None,
+    ) -> StatusApplicationResult:
+        if effect.opcode != "RemoveModifier":
+            return _unsupported_result(effect, "effect is not RemoveModifier")
+        standard = effect.payload.get("standard")
+        if not isinstance(standard, dict):
+            return _unsupported_result(effect, "RemoveModifier effect has no standardized payload")
+        target_id = _resolve_target_alias(
+            standard.get("target_alias"),
+            caster_id=caster_id,
+            owner_id=owner_id,
+            param_entity_id=param_entity_id,
+            current_action_target_id=current_action_target_id,
+        )
+        if target_id is None:
+            return _unsupported_result(effect, f"unsupported_or_missing_target_alias:{standard.get('target_alias')}")
+        if target_id not in state.units:
+            return _unsupported_result(effect, f"target unit {target_id!r} is not in state")
+        modifier_name = standard.get("modifier_name")
+        status_id_value = standard.get("status_id")
+        if isinstance(modifier_name, str) and modifier_name:
+            status_id = f"modifier:{modifier_name}"
+        elif isinstance(status_id_value, str) and status_id_value:
+            status_id = status_id_value
+            modifier_name = status_id.removeprefix("modifier:")
+        else:
+            return _unsupported_result(effect, "RemoveModifier has no modifier_name or status_id")
+        before_details = _status_details(unit_flags=state.units[target_id].flags)
+        existing_detail = _find_status_detail(before_details, status_id)
+        plan = StatusLifecyclePlan(
+            operation="remove",
+            target_id=target_id,
+            status_id=status_id,
+            source="status_system",
+            before_details=tuple(before_details),
+            existing_detail=existing_detail,
+            source_trace={"effect_id": effect.effect_id, "effect_source": effect.source.to_json()},
+        )
+        lifecycle_result = self._apply_lifecycle_plan(state, plan)
+        return StatusApplicationResult(
+            ok=lifecycle_result.ok,
+            mutations=lifecycle_result.mutations,
+            records=lifecycle_result.records,
+            unsupported=lifecycle_result.unsupported,
+            lifecycle_result=lifecycle_result,
+        )
+
+    def _apply_lifecycle_plan(self, state: BattleState, plan: StatusLifecyclePlan) -> StatusLifecycleResult:
+        if plan.operation in {"add", "refresh_or_replace_partial", "replace_partial", "stack"}:
+            return _apply_add_lifecycle_plan(state, plan)
+        if plan.operation == "remove":
+            return _apply_remove_lifecycle_plan(state, plan)
+        return StatusLifecycleResult(
+            ok=False,
+            operation=plan.operation,
+            records=(
+                SettlementRecord(
+                    record_type="status_lifecycle_unsupported",
+                    source="status_system",
+                    process_only=True,
+                    payload={"reason": f"unsupported_lifecycle_operation:{plan.operation}", "lifecycle_plan": plan.to_json()},
+                    trace=plan.source_trace,
+                ).to_json(),
+            ),
+            unsupported=(f"unsupported_lifecycle_operation:{plan.operation}",),
+            lifecycle_plan=plan,
+            lifecycle_state="unsupported",
         )
 
 
@@ -230,6 +355,168 @@ def _unsupported_result(effect: EffectIR, reason: str) -> StatusApplicationResul
             ).to_json(),
         ),
         unsupported=(reason,),
+    )
+
+
+def _apply_add_lifecycle_plan(state: BattleState, plan: StatusLifecyclePlan) -> StatusLifecycleResult:
+    if plan.status_instance is None:
+        reason = "add lifecycle requires status_instance"
+        return StatusLifecycleResult(
+            ok=False,
+            operation=plan.operation,
+            records=(
+                SettlementRecord(
+                    record_type="status_lifecycle_unsupported",
+                    source="status_system",
+                    process_only=True,
+                    payload={"reason": reason, "lifecycle_plan": plan.to_json()},
+                    trace=plan.source_trace,
+                ).to_json(),
+            ),
+            unsupported=(reason,),
+            lifecycle_plan=plan,
+            lifecycle_state="unsupported",
+        )
+    unit = state.units[plan.target_id]
+    before_statuses = list(unit.statuses)
+    after_statuses = list(dict.fromkeys((*unit.statuses, plan.status_id)))
+    before_details = list(plan.before_details)
+    after_details = _replace_status_detail(before_details, plan.status_instance)
+    status_mutation = Mutation(
+        op="set",
+        path=("units", plan.target_id, "statuses"),
+        before=before_statuses,
+        after=after_statuses,
+        reason=f"status lifecycle {plan.operation} status id",
+        source="status_system",
+        metadata={
+            "status_id": plan.status_id,
+            "operation": plan.operation,
+            "lifecycle_plan": plan.to_json(),
+        },
+    )
+    detail_mutation = Mutation(
+        op="set",
+        path=("units", plan.target_id, "flags", "status_details"),
+        before=before_details,
+        after=after_details,
+        reason=f"status lifecycle {plan.operation} status details",
+        source="status_system",
+        metadata={
+            "status_instance": plan.status_instance.to_json(),
+            "lifecycle_plan": plan.to_json(),
+        },
+    )
+    record = SettlementRecord(
+        record_type="status_lifecycle",
+        source="status_system",
+        mutation_id=detail_mutation.stable_id(),
+        process_only=False,
+        payload={
+            "operation": plan.operation,
+            "status_id": plan.status_id,
+            "status_instance": plan.status_instance.to_json(),
+            "lifecycle_plan": plan.to_json(),
+            "unsupported": list(plan.unsupported),
+            "partial": plan.partial,
+        },
+        trace=plan.source_trace,
+    ).to_json()
+    legacy_record = SettlementRecord(
+        record_type="status",
+        source="status_system",
+        mutation_id=detail_mutation.stable_id(),
+        process_only=False,
+        payload={
+            "operation": plan.operation,
+            "status_instance": plan.status_instance.to_json(),
+            "lifecycle_result": {
+                "operation": plan.operation,
+                "partial": plan.partial,
+                "unsupported": list(plan.unsupported),
+            },
+            "unsupported": list(plan.unsupported),
+            "partial": plan.partial,
+        },
+        trace=plan.source_trace,
+    ).to_json()
+    return StatusLifecycleResult(
+        ok=True,
+        operation=plan.operation,
+        mutations=(status_mutation, detail_mutation),
+        records=(record, legacy_record),
+        unsupported=plan.unsupported,
+        status_instance=plan.status_instance,
+        lifecycle_plan=plan,
+        lifecycle_state=plan.status_instance.lifecycle_state,
+    )
+
+
+def _apply_remove_lifecycle_plan(state: BattleState, plan: StatusLifecyclePlan) -> StatusLifecycleResult:
+    unit = state.units[plan.target_id]
+    before_statuses = list(unit.statuses)
+    before_details = list(plan.before_details)
+    if plan.status_id not in unit.statuses and plan.existing_detail is None:
+        reason = "status_not_present"
+        record = SettlementRecord(
+            record_type="status_lifecycle",
+            source="status_system",
+            process_only=True,
+            payload={"operation": plan.operation, "reason": reason, "lifecycle_plan": plan.to_json()},
+            trace=plan.source_trace,
+        ).to_json()
+        return StatusLifecycleResult(
+            ok=False,
+            operation=plan.operation,
+            records=(record,),
+            unsupported=(reason,),
+            lifecycle_plan=plan,
+            lifecycle_state="missing",
+        )
+    after_statuses = [status_id for status_id in before_statuses if status_id != plan.status_id]
+    after_details = [
+        item
+        for item in before_details
+        if not (isinstance(item, dict) and item.get("status_id") == plan.status_id)
+    ]
+    status_mutation = Mutation(
+        op="set",
+        path=("units", plan.target_id, "statuses"),
+        before=before_statuses,
+        after=after_statuses,
+        reason="status lifecycle remove status id",
+        source="status_system",
+        metadata={"status_id": plan.status_id, "operation": plan.operation, "lifecycle_plan": plan.to_json()},
+    )
+    detail_mutation = Mutation(
+        op="set",
+        path=("units", plan.target_id, "flags", "status_details"),
+        before=before_details,
+        after=after_details,
+        reason="status lifecycle remove status details",
+        source="status_system",
+        metadata={"status_id": plan.status_id, "operation": plan.operation, "lifecycle_plan": plan.to_json()},
+    )
+    record = SettlementRecord(
+        record_type="status_lifecycle",
+        source="status_system",
+        mutation_id=detail_mutation.stable_id(),
+        process_only=False,
+        payload={
+            "operation": plan.operation,
+            "status_id": plan.status_id,
+            "removed_detail": plan.existing_detail,
+            "lifecycle_plan": plan.to_json(),
+        },
+        trace=plan.source_trace,
+    ).to_json()
+    return StatusLifecycleResult(
+        ok=True,
+        operation=plan.operation,
+        mutations=(status_mutation, detail_mutation),
+        records=(record,),
+        lifecycle_plan=plan,
+        lifecycle_state="removed",
     )
 
 
@@ -397,6 +684,13 @@ def _matching_status_detail(
     return None
 
 
+def _find_status_detail(details: list[JSONValue], status_id: str) -> dict[str, JSONValue] | None:
+    for item in details:
+        if isinstance(item, dict) and item.get("status_id") == status_id:
+            return item
+    return None
+
+
 def _application_semantics(
     standard: dict[str, JSONValue],
     existing_detail: dict[str, JSONValue] | None,
@@ -406,6 +700,8 @@ def _application_semantics(
     max_layer = _optional_int(standard.get("max_layer"))
     layer_add = _optional_float(standard.get("layer_add_when_stack"))
     lifetime = _optional_float(standard.get("lifetime"))
+    chance_expr = standard.get("chance")
+    chance = _optional_float(chance_expr)
     if existing_detail is not None:
         operation = "refresh_or_replace_partial"
         reasons.append("refresh_or_replace_partial:existing_status_instance")
@@ -417,7 +713,15 @@ def _application_semantics(
         reasons.append("refresh_unsupported:is_refresh")
     if lifetime is not None and lifetime > 0:
         reasons.append("duration_lifecycle_unsupported:lifetime")
+    if chance is not None and chance != 1.0:
+        reasons.append("chance_unsupported:non_guaranteed_add_modifier")
+    if chance is None and not _is_missing_numeric_expr(chance_expr):
+        reasons.append("chance_formula_unsupported")
     return operation, reasons
+
+
+def _is_missing_numeric_expr(expr: object) -> bool:
+    return isinstance(expr, dict) and expr.get("kind") == "missing"
 
 
 def _trigger_ids_by_event(rules: RuleBook, modifier_name: str) -> dict[str, tuple[str, ...]]:
