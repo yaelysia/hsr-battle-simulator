@@ -10,6 +10,7 @@ from .paths import relative_source_path
 from .. import BASELINE_VERSION
 from ..rules.ir import (
     AbilityPhaseIR,
+    AbilityTaskIR,
     ActionAbilityBindingIR,
     ActionDefinitionIR,
     ActionEventIR,
@@ -113,6 +114,8 @@ ELATION_MECHANIC_FILES: tuple[str, ...] = (
 
 DAMAGE_BEHAVIOR_TEMPLATE_FILE = "Config/GlobalConfig/DamageBehaviorTemplateListConfig.json"
 
+ABILITY_TASK_CALLBACKS = ("OnStart", "OnAttack", "OnHit", "OnEnd")
+
 
 @dataclass(frozen=True)
 class LoweringLimits:
@@ -142,7 +145,17 @@ class TBGDLowering:
             table_stats[relative_path] = self._table_stats(relative_path, spec[1])
         entities = list(_dedupe_entities(entities).values())
         action_definitions = list(self._lower_action_definitions().values())
-        action_ability_bindings, ability_phases = self._lower_action_ability_bindings(action_definitions)
+        (
+            action_ability_bindings,
+            ability_phases,
+            ability_tasks,
+            ability_task_effects,
+            ability_task_conditions,
+            ability_task_formulas,
+        ) = self._lower_action_ability_bindings(action_definitions)
+        effects.extend(ability_task_effects)
+        conditions.extend(ability_task_conditions)
+        formulas.extend(ability_task_formulas)
         action_events, hit_profiles = _lower_action_execution_ir(
             action_definitions,
             action_ability_bindings,
@@ -170,6 +183,7 @@ class TBGDLowering:
             action_definitions=tuple(action_definitions),
             action_ability_bindings=tuple(action_ability_bindings),
             ability_phases=tuple(ability_phases),
+            ability_tasks=tuple(ability_tasks),
             action_events=tuple(action_events),
             hit_profiles=tuple(hit_profiles),
             triggers=tuple(triggers),
@@ -198,6 +212,7 @@ class TBGDLowering:
                 "action_binding_status": {
                     "lowered_count": len(action_ability_bindings),
                     "ability_phase_count": len(ability_phases),
+                    "ability_task_count": len(ability_tasks),
                 },
             },
         )
@@ -205,25 +220,40 @@ class TBGDLowering:
     def _lower_action_ability_bindings(
         self,
         definitions: list[ActionDefinitionIR],
-    ) -> tuple[list[ActionAbilityBindingIR], list[AbilityPhaseIR]]:
+    ) -> tuple[
+        list[ActionAbilityBindingIR],
+        list[AbilityPhaseIR],
+        list[AbilityTaskIR],
+        list[EffectIR],
+        list[ConditionIR],
+        list[FormulaIR],
+    ]:
         avatar_skill_rows = self._avatar_skill_rows_by_skill_id()
         avatar_configs = self._avatar_configs_by_skill_id()
         ability_file_cache: dict[str, dict[str, Any] | None] = {}
         bindings: list[ActionAbilityBindingIR] = []
         phases: list[AbilityPhaseIR] = []
+        tasks: list[AbilityTaskIR] = []
+        effects: list[EffectIR] = []
+        conditions: list[ConditionIR] = []
+        formulas: list[FormulaIR] = []
         for definition in definitions:
             if definition.action_id.startswith("avatar_skill:"):
-                binding, binding_phases = self._avatar_action_binding(
+                binding, binding_phases, lowered_tasks = self._avatar_action_binding(
                     definition,
                     avatar_skill_rows.get(definition.source.raw_id, {}),
                     avatar_configs.get(definition.source.raw_id, []),
                     ability_file_cache,
                 )
             else:
-                binding, binding_phases = _blocked_action_binding(definition, "non_avatar_ability_binding_not_executable")
+                binding, binding_phases, lowered_tasks = _blocked_action_binding(definition, "non_avatar_ability_binding_not_executable")
             bindings.append(binding)
             phases.extend(binding_phases)
-        return bindings, phases
+            tasks.extend(lowered_tasks.ability_tasks)
+            effects.extend(lowered_tasks.effects)
+            conditions.extend(lowered_tasks.conditions)
+            formulas.extend(lowered_tasks.formulas)
+        return bindings, phases, tasks, effects, conditions, formulas
 
     def _avatar_skill_rows_by_skill_id(self) -> dict[str, dict[str, Any]]:
         rows: dict[str, dict[str, Any]] = {}
@@ -270,7 +300,7 @@ class TBGDLowering:
         skill_row: dict[str, Any],
         avatar_configs: list[dict[str, Any]],
         ability_file_cache: dict[str, dict[str, Any] | None],
-    ) -> tuple[ActionAbilityBindingIR, list[AbilityPhaseIR]]:
+    ) -> tuple[ActionAbilityBindingIR, list[AbilityPhaseIR], "_LoweredAbility"]:
         skill_trigger_key = str(skill_row.get("SkillTriggerKey") or definition.source.evidence.get("skill_trigger_key") or "")
         if not skill_trigger_key:
             return _blocked_action_binding(definition, "missing_skill_trigger_key")
@@ -301,6 +331,7 @@ class TBGDLowering:
         ability_map = _ability_map(ability_data)
         binding_id = f"action_binding:{definition.action_id}:{definition.level}"
         binding_phases: list[AbilityPhaseIR] = []
+        lowered = _LoweredAbility()
         missing_names = [name for name in ability_names if name not in ability_map]
         for phase_index, ability_name in enumerate(ability_names):
             ability = ability_map.get(ability_name)
@@ -318,9 +349,18 @@ class TBGDLowering:
                     "entry_ability": entry_ability,
                 },
             )
+            phase_id = f"ability_phase:{definition.action_id}:{definition.level}:{phase_index}:{ability_name}"
+            phase_lowered = self._lower_ability_phase_tasks(
+                definition=definition,
+                phase_id=phase_id,
+                ability_name=ability_name,
+                ability=ability,
+                ability_path=ability_path,
+            )
+            lowered.merge(phase_lowered)
             binding_phases.append(
                 AbilityPhaseIR(
-                    phase_id=f"ability_phase:{definition.action_id}:{definition.level}:{phase_index}:{ability_name}",
+                    phase_id=phase_id,
                     binding_id=binding_id,
                     action_id=definition.action_id,
                     level=definition.level,
@@ -331,7 +371,8 @@ class TBGDLowering:
                     callback_summaries=_ability_callback_summaries(ability),
                     source=source,
                     coverage_status="lowered",
-                    blocked_reason="ability_task_execution_not_implemented",
+                    blocked_reason="",
+                    task_ids=tuple(task.task_id for task in phase_lowered.ability_tasks),
                 )
             )
         blocked_reason = "missing_ability_phase_in_ability_file" if missing_names else ""
@@ -370,6 +411,196 @@ class TBGDLowering:
                 blocked_reason=blocked_reason,
             ),
             binding_phases,
+            lowered,
+        )
+
+    def _lower_ability_phase_tasks(
+        self,
+        *,
+        definition: ActionDefinitionIR,
+        phase_id: str,
+        ability_name: str,
+        ability: dict[str, Any],
+        ability_path: str,
+    ) -> "_LoweredAbility":
+        lowered = _LoweredAbility()
+        for callback_kind in ABILITY_TASK_CALLBACKS:
+            callback_tasks = ability.get(callback_kind)
+            if not isinstance(callback_tasks, list):
+                continue
+            for task_index, task in enumerate(callback_tasks):
+                task_lowered = self._lower_ability_task_tree(
+                    task,
+                    definition=definition,
+                    phase_id=phase_id,
+                    ability_name=ability_name,
+                    ability_path=ability_path,
+                    callback_kind=callback_kind,
+                    task_index=task_index,
+                    task_path=f"{callback_kind}[{task_index}]",
+                    branch="root",
+                    parent_task_id="",
+                )
+                lowered.merge(task_lowered)
+        return lowered
+
+    def _lower_ability_task_tree(
+        self,
+        task: Any,
+        *,
+        definition: ActionDefinitionIR,
+        phase_id: str,
+        ability_name: str,
+        ability_path: str,
+        callback_kind: str,
+        task_index: int,
+        task_path: str,
+        branch: str,
+        parent_task_id: str,
+    ) -> "_LoweredAbility":
+        lowered = _LoweredAbility()
+        if not isinstance(task, dict):
+            return lowered
+        opcode = _short_gamecore_type(task.get("$type"))
+        task_id = f"ability_task:{phase_id}:{callback_kind}:{task_path}:{opcode}"
+        source = IRSource(
+            source_path=ability_path,
+            raw_type="AbilityTask",
+            raw_id=ability_name,
+            evidence={
+                "action_id": definition.action_id,
+                "level": definition.level,
+                "phase_id": phase_id,
+                "callback_kind": callback_kind,
+                "task_index": task_index,
+                "task_path": task_path,
+                "branch": branch,
+                "parent_task_id": parent_task_id,
+            },
+        )
+        if opcode == "PredicateTaskList":
+            condition = self._lower_ability_task_condition(task.get("Predicate"), source, task_id)
+            if condition:
+                lowered.conditions.append(condition)
+            success_ids: list[str] = []
+            failed_ids: list[str] = []
+            for child_index, child in enumerate(task.get("SuccessTaskList") or []):
+                child_lowered = self._lower_ability_task_tree(
+                    child,
+                    definition=definition,
+                    phase_id=phase_id,
+                    ability_name=ability_name,
+                    ability_path=ability_path,
+                    callback_kind=callback_kind,
+                    task_index=child_index,
+                    task_path=f"{task_path}.SuccessTaskList[{child_index}]",
+                    branch="success",
+                    parent_task_id=task_id,
+                )
+                lowered.merge(child_lowered)
+                success_ids.extend(
+                    item.task_id
+                    for item in child_lowered.ability_tasks
+                    if item.parent_task_id == task_id
+                )
+            for child_index, child in enumerate(task.get("FailedTaskList") or []):
+                child_lowered = self._lower_ability_task_tree(
+                    child,
+                    definition=definition,
+                    phase_id=phase_id,
+                    ability_name=ability_name,
+                    ability_path=ability_path,
+                    callback_kind=callback_kind,
+                    task_index=child_index,
+                    task_path=f"{task_path}.FailedTaskList[{child_index}]",
+                    branch="failed",
+                    parent_task_id=task_id,
+                )
+                lowered.merge(child_lowered)
+                failed_ids.extend(
+                    item.task_id
+                    for item in child_lowered.ability_tasks
+                    if item.parent_task_id == task_id
+                )
+            coverage_status, blocked_reason = _predicate_task_status(condition)
+            lowered.ability_tasks.insert(
+                0,
+                AbilityTaskIR(
+                    task_id=task_id,
+                    phase_id=phase_id,
+                    action_id=definition.action_id,
+                    level=definition.level,
+                    ability_name=ability_name,
+                    callback_kind=callback_kind,
+                    task_index=task_index,
+                    task_path=task_path,
+                    branch=branch,
+                    opcode=opcode,
+                    condition_id=condition.condition_id if condition else "",
+                    parent_task_id=parent_task_id,
+                    child_task_ids=tuple(success_ids + failed_ids),
+                    success_task_ids=tuple(success_ids),
+                    failed_task_ids=tuple(failed_ids),
+                    source=source,
+                    coverage_status=coverage_status,
+                    blocked_reason=blocked_reason,
+                ),
+            )
+            return lowered
+
+        effect_id = f"effect:{task_id}"
+        payload = _effect_payload(task, opcode, "")
+        coverage_status = _effect_coverage_status(opcode, payload)
+        blocked_reason = "" if coverage_status == "executable" else _effect_blocked_reason(opcode, payload, coverage_status)
+        lowered.effects.append(
+            EffectIR(
+                effect_id=effect_id,
+                opcode=opcode,
+                payload=payload,
+                source=source,
+                coverage_status=coverage_status,
+            )
+        )
+        lowered.formulas.extend(self._extract_formulas(task, source, effect_id))
+        lowered.formulas.extend(_damage_family_evidence(task, opcode, source, effect_id))
+        lowered.ability_tasks.append(
+            AbilityTaskIR(
+                task_id=task_id,
+                phase_id=phase_id,
+                action_id=definition.action_id,
+                level=definition.level,
+                ability_name=ability_name,
+                callback_kind=callback_kind,
+                task_index=task_index,
+                task_path=task_path,
+                branch=branch,
+                opcode=opcode,
+                effect_id=effect_id,
+                parent_task_id=parent_task_id,
+                source=source,
+                coverage_status="executable" if coverage_status == "executable" else "blocked",
+                blocked_reason=blocked_reason,
+            )
+        )
+        return lowered
+
+    def _lower_ability_task_condition(
+        self,
+        predicate: Any,
+        source: IRSource,
+        task_id: str,
+    ) -> ConditionIR | None:
+        if not isinstance(predicate, dict):
+            return None
+        opcode = _short_gamecore_type(predicate.get("$type"))
+        payload = _compact_payload(predicate)
+        status = "executable" if _condition_payload_executable(opcode, payload) else classify_opcode(opcode)
+        return ConditionIR(
+            condition_id=f"condition:{task_id}:{opcode}",
+            opcode=opcode,
+            payload=payload,
+            source=source,
+            coverage_status=status,
         )
 
     def _read_json_dict(self, relative_path: str) -> dict[str, Any] | None:
@@ -738,6 +969,7 @@ class TBGDLowering:
 @dataclass
 class _LoweredAbility:
     entities: list[RuleEntity] = field(default_factory=list)
+    ability_tasks: list[AbilityTaskIR] = field(default_factory=list)
     triggers: list[TriggerIR] = field(default_factory=list)
     effects: list[EffectIR] = field(default_factory=list)
     conditions: list[ConditionIR] = field(default_factory=list)
@@ -745,6 +977,7 @@ class _LoweredAbility:
 
     def merge(self, other: "_LoweredAbility") -> None:
         self.entities.extend(other.entities)
+        self.ability_tasks.extend(other.ability_tasks)
         self.triggers.extend(other.triggers)
         self.effects.extend(other.effects)
         self.conditions.extend(other.conditions)
@@ -910,7 +1143,7 @@ def _blocked_action_binding(
     definition: ActionDefinitionIR,
     reason: str,
     source_path: str = "",
-) -> tuple[ActionAbilityBindingIR, list[AbilityPhaseIR]]:
+) -> tuple[ActionAbilityBindingIR, list[AbilityPhaseIR], _LoweredAbility]:
     source = IRSource(
         source_path=source_path or definition.source.source_path,
         raw_type="ActionAbilityBinding",
@@ -940,6 +1173,7 @@ def _blocked_action_binding(
             blocked_reason=reason,
         ),
         [],
+        _LoweredAbility(),
     )
 
 
@@ -1552,6 +1786,28 @@ def _effect_coverage_status(opcode: str, payload: dict[str, Any]) -> str:
             return "blocked"
         return "executable"
     return classify_opcode(opcode)
+
+
+def _predicate_task_status(condition: ConditionIR | None) -> tuple[str, str]:
+    if condition is None:
+        return "blocked", "missing_predicate_condition"
+    if condition.coverage_status != "executable":
+        return "blocked", f"condition_not_executable:{condition.coverage_status}:{condition.opcode}"
+    return "lowered", ""
+
+
+def _effect_blocked_reason(opcode: str, payload: dict[str, Any], coverage_status: str) -> str:
+    standard = payload.get("standard")
+    if isinstance(standard, dict) and standard.get("blocked_reason"):
+        return str(standard["blocked_reason"])
+    if coverage_status == "blocked":
+        if not isinstance(standard, dict):
+            return f"effect_payload_not_standardized:{opcode}"
+        target_alias = standard.get("target_alias")
+        if target_alias is not None and target_alias not in EXECUTABLE_TARGET_ALIASES:
+            return f"unsupported_target_alias:{target_alias}"
+        return f"effect_not_executable:{opcode}"
+    return f"effect_coverage_status:{coverage_status}:{opcode}"
 
 
 def _condition_payload_executable(opcode: str, payload: dict[str, Any]) -> bool:

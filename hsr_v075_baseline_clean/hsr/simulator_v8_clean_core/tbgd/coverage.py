@@ -132,6 +132,7 @@ def build_coverage_matrix(report: DiscoveryReport, ir: CanonicalIR) -> CoverageM
         ir.action_definitions,
         ir.action_ability_bindings,
         ir.ability_phases,
+        ir.ability_tasks,
         ir.action_events,
         ir.hit_profiles,
         ir.triggers,
@@ -149,6 +150,7 @@ def build_coverage_matrix(report: DiscoveryReport, ir: CanonicalIR) -> CoverageM
             "action_definitions": len(ir.action_definitions),
             "action_ability_bindings": len(ir.action_ability_bindings),
             "ability_phases": len(ir.ability_phases),
+            "ability_tasks": len(ir.ability_tasks),
             "action_events": len(ir.action_events),
             "hit_profiles": len(ir.hit_profiles),
             "triggers": len(ir.triggers),
@@ -291,6 +293,9 @@ def _action_execution_status(ir: CanonicalIR) -> dict[str, Any]:
     )
     phase_status = Counter(phase.coverage_status for phase in ir.ability_phases)
     phase_reasons = Counter(phase.blocked_reason for phase in ir.ability_phases if phase.blocked_reason)
+    task_status = Counter(task.coverage_status for task in ir.ability_tasks)
+    task_reasons = Counter(task.blocked_reason for task in ir.ability_tasks if task.blocked_reason)
+    task_opcodes = Counter(task.opcode for task in ir.ability_tasks)
     event_status = Counter(event.coverage_status for event in ir.action_events)
     hit_status = Counter(profile.coverage_status for profile in ir.hit_profiles)
     hit_reasons = Counter(
@@ -331,7 +336,16 @@ def _action_execution_status(ir: CanonicalIR) -> dict[str, Any]:
             "lowered": len(ir.ability_phases),
             "status_counts": dict(sorted(phase_status.items())),
             "blocked_reason_counts": dict(sorted(phase_reasons.items())),
-            "reason": "AbilityPhaseIR lowers AbilityList phase structure and opcode summaries; task semantics are not executed in this baseline",
+            "reason": "AbilityPhaseIR lowers phase structure and links to AbilityTaskIR; only standardized task effects are executable in this baseline",
+        },
+        "ability_tasks": {
+            "lowered": len(ir.ability_tasks),
+            "executable": task_status["executable"],
+            "blocked": task_status["blocked"],
+            "status_counts": dict(sorted(task_status.items())),
+            "blocked_reason_counts": dict(sorted(task_reasons.items())),
+            "top_opcode_counts": dict(task_opcodes.most_common(20)),
+            "reason": "AbilityTaskIR lowers phase callback tasks; only standardized executable effects are run by the runtime",
         },
         "action_events": {
             "lowered": len(ir.action_events),

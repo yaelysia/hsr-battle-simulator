@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from .ir import (
     AbilityPhaseIR,
+    AbilityTaskIR,
     ActionAbilityBindingIR,
     ActionDefinitionIR,
     ActionEventIR,
@@ -59,6 +60,28 @@ class RuleBook:
             {
                 key: tuple(sorted(value, key=lambda item: (item.phase_index, item.phase_id)))
                 for key, value in ability_phases_by_action.items()
+            },
+        )
+        ability_tasks_by_phase: dict[str, list[AbilityTaskIR]] = {}
+        ability_tasks_by_action: dict[tuple[str, int], list[AbilityTaskIR]] = {}
+        for task in self.ir.ability_tasks:
+            ability_tasks_by_phase.setdefault(task.phase_id, []).append(task)
+            ability_tasks_by_action.setdefault((task.action_id, task.level), []).append(task)
+        object.__setattr__(self, "_ability_tasks", {task.task_id: task for task in self.ir.ability_tasks})
+        object.__setattr__(
+            self,
+            "_ability_tasks_by_phase",
+            {
+                key: tuple(sorted(value, key=lambda item: (item.callback_kind, item.task_path, item.task_id)))
+                for key, value in ability_tasks_by_phase.items()
+            },
+        )
+        object.__setattr__(
+            self,
+            "_ability_tasks_by_action",
+            {
+                key: tuple(sorted(value, key=lambda item: (item.phase_id, item.callback_kind, item.task_path, item.task_id)))
+                for key, value in ability_tasks_by_action.items()
             },
         )
         hit_profiles_by_action: dict[tuple[str, int], list[HitProfileIR]] = {}
@@ -190,6 +213,15 @@ class RuleBook:
 
     def ability_phases_for_binding(self, binding_id: str) -> tuple[AbilityPhaseIR, ...]:
         return self._ability_phases_by_binding.get(binding_id, ())
+
+    def ability_task(self, task_id: str) -> AbilityTaskIR | None:
+        return self._ability_tasks.get(task_id)
+
+    def ability_tasks_for_phase(self, phase_id: str) -> tuple[AbilityTaskIR, ...]:
+        return self._ability_tasks_by_phase.get(phase_id, ())
+
+    def ability_tasks_for_action(self, action_id: str, level: int) -> tuple[AbilityTaskIR, ...]:
+        return self._ability_tasks_by_action.get((action_id, level), ())
 
     def triggers_for_event(self, event: str) -> tuple[TriggerIR, ...]:
         return tuple(trigger for trigger in self.ir.triggers if trigger.event == event)

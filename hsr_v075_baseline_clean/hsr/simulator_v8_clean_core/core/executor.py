@@ -15,6 +15,7 @@ from .reducer import MutationReducer
 from .settlement import SettlementRecord
 from ..rules.ir import ActionDefinitionIR
 from ..rules.rulebook import RuleBook
+from ..systems.ability import AbilityTaskExecutionResult, AbilityTaskSystem
 from ..systems.damage import DamagePacket, DamageSystem
 from ..systems.effect import EffectRegistry
 from ..systems.resource import ResourcePlan, ResourceSystem
@@ -36,6 +37,7 @@ class CombatExecutor:
         self.damage = DamageSystem()
         self.status = StatusSystem(rules)
         self.effects = EffectRegistry(self.status)
+        self.ability_tasks = AbilityTaskSystem(rules, self.effects, reducer=self.reducer)
         self.triggers = TriggerSystem(rules, self.effects, reducer=self.reducer)
 
     def execute(self, command: ActionCommand, state: BattleState) -> tuple[BattleState, BattleTransition]:
@@ -44,6 +46,7 @@ class CombatExecutor:
         action_event_ir = self.rules.require_action_event(command.action_id, command.action_level)
         action_binding = self.rules.action_ability_binding(command.action_id, command.action_level)
         ability_phases = self.rules.ability_phases_for_action(command.action_id, command.action_level)
+        ability_tasks = self.rules.ability_tasks_for_action(command.action_id, command.action_level)
         hit_profiles = self.rules.hit_profiles_for_action(command.action_id, command.action_level)
         action_definition_trace = self.rules.action_definition_source_trace(command.action_id, command.action_level) or {}
         action_event = GameEvent(
@@ -132,10 +135,25 @@ class CombatExecutor:
         ]
         damage_results = []
         damage_mutations: tuple[Mutation, ...] = ()
+        ability_task_results: list[AbilityTaskExecutionResult] = []
 
         if action_enabled:
             for step in action_execution_plan.event_steps:
                 if step.kind == "trigger_window":
+                    callback_kind = _callback_kind_for_step(step.phase)
+                    if callback_kind:
+                        ability_result = self.ability_tasks.execute_callback(
+                            current_state,
+                            phases=ability_phases,
+                            callback_kind=callback_kind,
+                            command=command,
+                            action_definition=action_definition,
+                            target_resolution=target_result.resolution,
+                        )
+                        current_state = ability_result.after_state
+                        ability_task_results.append(ability_result)
+                        ordered_mutations.extend(ability_result.mutations)
+                        runtime_records.extend(ability_result.records)
                     trigger_result = self.triggers.execute_status_window(
                         current_state,
                         canonical_window=step.canonical_window,
@@ -167,6 +185,18 @@ class CombatExecutor:
                         current_state = self.reducer.apply_all(current_state, damage_result.mutations)
                         ordered_mutations.extend(damage_result.mutations)
                         runtime_records.extend(damage_result.records)
+                    ability_result = self.ability_tasks.execute_callback(
+                        current_state,
+                        phases=ability_phases,
+                        callback_kind="OnHit",
+                        command=command,
+                        action_definition=action_definition,
+                        target_resolution=target_result.resolution,
+                    )
+                    current_state = ability_result.after_state
+                    ability_task_results.append(ability_result)
+                    ordered_mutations.extend(ability_result.mutations)
+                    runtime_records.extend(ability_result.records)
         elif action_execution_plan.target_plan.blocked_reason:
             runtime_records.append(
                 SettlementRecord(
@@ -184,6 +214,9 @@ class CombatExecutor:
         trigger_mutations = tuple(mutation for result in trigger_results for mutation in result.mutations)
         trigger_events = tuple(event for result in trigger_results for event in result.events)
         trigger_windows = tuple(window for result in trigger_results for window in result.trigger_windows)
+        ability_task_mutations = tuple(mutation for result in ability_task_results for mutation in result.mutations)
+        ability_task_events = tuple(event for result in ability_task_results for event in result.events)
+        ability_task_records = tuple(record for result in ability_task_results for record in result.task_records)
         mutations = tuple(ordered_mutations)
         after_state = current_state
         damage_rng_events = tuple(event for result in damage_results for event in result.rng_events)
@@ -229,6 +262,17 @@ class CombatExecutor:
                     "binding_id": action_binding.binding_id if action_binding else "",
                     "phase_count": len(ability_phases),
                     "phases": [phase.to_json() for phase in ability_phases],
+                },
+                trace=action_binding.source.to_json() if action_binding else action_definition.source.to_json(),
+            ).to_json(),
+            SettlementRecord(
+                record_type="ability_task_graph",
+                source="rulebook",
+                process_only=True,
+                payload={
+                    "binding_id": action_binding.binding_id if action_binding else "",
+                    "task_count": len(ability_tasks),
+                    "tasks": [task.to_json() for task in ability_tasks],
                 },
                 trace=action_binding.source.to_json() if action_binding else action_definition.source.to_json(),
             ).to_json(),
@@ -323,7 +367,12 @@ class CombatExecutor:
         transaction = ActionTransaction(
             command=command,
             before=before,
-            events=(*events, *trigger_events, *(event for result in damage_results for event in result.events)),
+            events=(
+                *events,
+                *ability_task_events,
+                *trigger_events,
+                *(event for result in damage_results for event in result.events),
+            ),
             mutations=mutations,
             trigger_windows=trigger_windows,
             settlement=settlement,
@@ -337,6 +386,9 @@ class CombatExecutor:
                 "executor": "v0_221_action_ability_binding",
                 "action_ability_binding": action_binding.to_json() if action_binding else None,
                 "ability_phase_graph": [phase.to_json() for phase in ability_phases],
+                "ability_task_graph": [task.to_json() for task in ability_tasks],
+                "ability_task_count": len(ability_tasks),
+                "ability_task_record_count": len(ability_task_records),
                 "action_execution_plan": action_execution_plan.to_json(),
                 "action_event_ir": action_event_ir.to_json(),
                 "action_event_id": action_event_ir.action_event_id,
@@ -357,6 +409,7 @@ class CombatExecutor:
                 "resource_mutation_count": len(resource_mutations),
                 "trigger_window_count": len(trigger_windows),
                 "trigger_mutation_count": len(trigger_mutations),
+                "ability_task_mutation_count": len(ability_task_mutations),
                 "damage_mutation_count": len(damage_mutations),
                 "damage_ok": all(result.ok for result in damage_results) if damage_results else None,
                 "damage_formula_family": action_definition.damage_formula_family,
@@ -441,6 +494,16 @@ def _skill_point_delta(bp_need: float, bp_add: float) -> int:
     if bp_add > 0:
         return int(bp_add)
     return 0
+
+
+def _callback_kind_for_step(phase: str) -> str:
+    if phase == "before_skill_use":
+        return "OnStart"
+    if phase == "before_attack":
+        return "OnAttack"
+    if phase == "after_skill_use":
+        return "OnEnd"
+    return ""
 
 
 def _target_policy(action_definition: ActionDefinitionIR) -> TargetPolicy:

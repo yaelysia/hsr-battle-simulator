@@ -1,0 +1,208 @@
+{
+  "ability_task_status_counts": {
+    "blocked": 74072,
+    "executable": 9045,
+    "lowered": 85
+  },
+  "ability_task_top_opcodes": {
+    "AddModifier": 5417,
+    "GlobalMainIntensityEffect": 3645,
+    "HideLevelStage": 3495,
+    "LookAt": 3044,
+    "MoveToTargetPosition": 1129,
+    "PredicateTaskList": 4569,
+    "RadialBlurEffect": 2698,
+    "RemoveEffect": 2451,
+    "ScaleCharacterModel": 1285,
+    "SetDynamicValue": 3050,
+    "SetEnergyBarState": 1095,
+    "SetTeamFormation": 2810,
+    "ShowBattleUI": 2805,
+    "SyncCharLightAndCameraDir": 1545,
+    "TriggerAbility": 9770,
+    "TriggerAnimState": 4546,
+    "TriggerAnimStateWithMove": 1079,
+    "TriggerEffect": 2841,
+    "WaitAnimState": 11853,
+    "WaitTimelineFinish": 1970
+  },
+  "counts": {
+    "ability_phases": 5944,
+    "ability_tasks": 83202,
+    "action_ability_bindings": 6949,
+    "action_definitions": 6949,
+    "action_events": 6949,
+    "conditions": 25467,
+    "effects": 140852,
+    "entities": 22150,
+    "formulas": 80518,
+    "hit_profiles": 5132,
+    "triggers": 27368
+  },
+  "metadata": {
+    "ability_file_status": {
+      "lowered_count": 1437,
+      "raw_count": 1437,
+      "skipped_count": 0
+    },
+    "action_binding_status": {
+      "ability_phase_count": 5944,
+      "ability_task_count": 83202,
+      "lowered_count": 6949
+    },
+    "limits": {
+      "max_ability_files": null,
+      "max_callbacks_per_file": 200,
+      "max_records_per_table": null
+    },
+    "lowering": "tbgd_first_v0_200",
+    "sampled": {
+      "ability_files": false,
+      "entity_tables": false
+    },
+    "source": "turnbasedgamedata-main",
+    "table_status": {
+      "ExcelOutput/AvatarBreakDamage.json": {
+        "id_key": "Level",
+        "lowered_count": 101,
+        "raw_count": 101,
+        "sampled": false,
+        "skipped_count": 0
+      },
+      "ExcelOutput/AvatarConfig.json": {
+        "id_key": "AvatarID",
+        "lowered_count": 90,
+        "raw_count": 90,
+        "sampled": false,
+        "skipped_count": 0
+      },
+      "ExcelOutput/AvatarConfigLD.json": {
+        "id_key": "AvatarID",
+        "lowered_count": 2,
+        "raw_count": 2,
+        "sampled": false,
+        "skipped_count": 0
+      },
+      "ExcelOutput/AvatarPromotionConfig.json": {
+        "id_key": "AvatarID",
+        "lowered_count": 630,
+        "raw_count": 630,
+        "sampled": false,
+        "skipped_count": 0
+      },
+      "ExcelOutput/AvatarPromotionConfigLD.json": {
+        "id_key": "AvatarID",
+        "lowered_count": 14,
+        "raw_count": 14,
+        "sampled": false,
+        "skipped_count": 0
+      },
+      "ExcelOutput/AvatarSkillConfig.json": {
+        "id_key": "SkillID",
+        "lowered_count": 6657,
+        "raw_count": 6657,
+        "sampled": false,
+        "skipped_count": 0
+      },
+      "ExcelOutput/AvatarSkillConfigLD.json": {
+        "id_key": "SkillID",
+        "lowered_count": 124,
+        "raw_count": 124,
+        "sampled": false,
+        "skipped_count": 0
+      },
+      "ExcelOutput/AvatarStatusConfigLD.json": {
+        "id_key": "StatusID",
+        "lowered_count": 18,
+        "raw_count": 18,
+        "sampled": false,
+        "skipped_count": 0
+      },
+      "ExcelOutput/CommonActiveSkillConfig.json": {
+        "id_key": "SkillID",
+        "lowered_count": 0,
+        "raw_count": 3,
+        "sampled": false,
+        "skipped_count": 0
+      },
+      "ExcelOutput/CommonAvatarSkillConfig.json": {
+        "id_key": "SkillID",
+        "lowered_count": 3,
+        "raw_count": 3,
+        "sampled": false,
+        "skipped_count": 0
+      },
+      "ExcelOutput/ILBattleMonsterSkill.json": {
+        "id_key": "ID",
+        "lowered_count": 165,
+        "raw_count": 165,
+        "sampled": false,
+        "skipped_count": 0
+      },
+      "ExcelOutput/MonsterConfig.json": {
+        "id_key": "MonsterID",
+        "lowered_count": 2509,
+        "raw_count": 2509,
+        "sampled": false,
+        "skipped_count": 0
+      },
+      "ExcelOutput/MonsterTemplateConfig.json": {
+        "id_key": "MonsterTemplateID",
+        "lowered_count": 577,
+        "raw_count": 577,
+        "sampled": false,
+        "skipped_count": 0
+      },
+      "ExcelOutput/RelicSetSkillConfig.json": {
+        "id_key": "SetID",
+        "lowered_count": 90,
+        "raw_count": 90,
+        "sampled": false,
+        "skipped_count": 0
+      },
+      "ExcelOutput/SummonUnitData.json": {
+        "id_key": "ID",
+        "lowered_count": 36,
+        "raw_count": 36,
+        "sampled": false,
+        "skipped_count": 0
+      },
+      "action_definitions:ExcelOutput/AvatarSkillConfig.json": {
+        "id_key": "SkillID",
+        "lowered_count": 6657,
+        "raw_count": 6657,
+        "sampled": false,
+        "skipped_count": 0
+      },
+      "action_definitions:ExcelOutput/AvatarSkillConfigLD.json": {
+        "id_key": "SkillID",
+        "lowered_count": 124,
+        "raw_count": 124,
+        "sampled": false,
+        "skipped_count": 0
+      },
+      "action_definitions:ExcelOutput/CommonActiveSkillConfig.json": {
+        "id_key": "SkillID",
+        "lowered_count": 0,
+        "raw_count": 3,
+        "sampled": false,
+        "skipped_count": 0
+      },
+      "action_definitions:ExcelOutput/CommonAvatarSkillConfig.json": {
+        "id_key": "SkillID",
+        "lowered_count": 3,
+        "raw_count": 3,
+        "sampled": false,
+        "skipped_count": 0
+      },
+      "action_definitions:ExcelOutput/ILBattleMonsterSkill.json": {
+        "id_key": "ID",
+        "lowered_count": 165,
+        "raw_count": 165,
+        "sampled": false,
+        "skipped_count": 0
+      }
+    }
+  },
+  "version": "v0_200"
+}

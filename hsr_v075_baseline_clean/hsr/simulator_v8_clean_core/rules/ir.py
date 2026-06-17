@@ -202,6 +202,7 @@ class AbilityPhaseIR:
     source: IRSource
     coverage_status: CoverageStatus = "audit_only"
     blocked_reason: str = ""
+    task_ids: tuple[str, ...] = ()
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -214,6 +215,53 @@ class AbilityPhaseIR:
             "target_info": self.target_info,
             "opcode_summary": self.opcode_summary,
             "callback_summaries": self.callback_summaries,
+            "source": self.source.to_json(),
+            "coverage_status": self.coverage_status,
+            "blocked_reason": self.blocked_reason,
+            "task_ids": list(self.task_ids),
+        }
+
+
+@dataclass(frozen=True)
+class AbilityTaskIR:
+    task_id: str
+    phase_id: str
+    action_id: str
+    level: int
+    ability_name: str
+    callback_kind: str
+    task_index: int
+    task_path: str
+    branch: str
+    opcode: str
+    source: IRSource
+    effect_id: str = ""
+    condition_id: str = ""
+    parent_task_id: str = ""
+    child_task_ids: tuple[str, ...] = ()
+    success_task_ids: tuple[str, ...] = ()
+    failed_task_ids: tuple[str, ...] = ()
+    coverage_status: CoverageStatus = "blocked"
+    blocked_reason: str = ""
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "task_id": self.task_id,
+            "phase_id": self.phase_id,
+            "action_id": self.action_id,
+            "level": self.level,
+            "ability_name": self.ability_name,
+            "callback_kind": self.callback_kind,
+            "task_index": self.task_index,
+            "task_path": self.task_path,
+            "branch": self.branch,
+            "opcode": self.opcode,
+            "effect_id": self.effect_id,
+            "condition_id": self.condition_id,
+            "parent_task_id": self.parent_task_id,
+            "child_task_ids": list(self.child_task_ids),
+            "success_task_ids": list(self.success_task_ids),
+            "failed_task_ids": list(self.failed_task_ids),
             "source": self.source.to_json(),
             "coverage_status": self.coverage_status,
             "blocked_reason": self.blocked_reason,
@@ -349,6 +397,7 @@ class CanonicalIR:
     action_definitions: tuple[ActionDefinitionIR, ...] = ()
     action_ability_bindings: tuple[ActionAbilityBindingIR, ...] = ()
     ability_phases: tuple[AbilityPhaseIR, ...] = ()
+    ability_tasks: tuple[AbilityTaskIR, ...] = ()
     action_events: tuple[ActionEventIR, ...] = ()
     hit_profiles: tuple[HitProfileIR, ...] = ()
     triggers: tuple[TriggerIR, ...] = ()
@@ -365,6 +414,7 @@ class CanonicalIR:
             "action_definitions": [definition.to_json() for definition in self.action_definitions],
             "action_ability_bindings": [binding.to_json() for binding in self.action_ability_bindings],
             "ability_phases": [phase.to_json() for phase in self.ability_phases],
+            "ability_tasks": [task.to_json() for task in self.ability_tasks],
             "action_events": [event.to_json() for event in self.action_events],
             "hit_profiles": [profile.to_json() for profile in self.hit_profiles],
             "triggers": [trigger.to_json() for trigger in self.triggers],
