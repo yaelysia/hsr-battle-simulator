@@ -1,0 +1,673 @@
+{
+  "condition_opcode_counts": {
+    "ByAnd": 3687,
+    "ByAny": 823,
+    "ByAttackSkillEffect": 6,
+    "ByAttackType": 625,
+    "ByAvatarBaseType": 62,
+    "ByCharacterDamageType": 222,
+    "ByCheckBloodLinkDead": 1,
+    "ByCheckCharacterFly": 4,
+    "ByCheckCustomValueBool": 156,
+    "ByCheckDarkTeamDestroy": 2,
+    "ByCheckFightFinish": 2,
+    "ByCheckModifierCallBackBehaviorFlag": 131,
+    "ByCheckModifierCallBackIsSelf": 1,
+    "ByCheckModifierCallBackModifierValue": 1,
+    "ByCheckModifierCallBackName": 675,
+    "ByCheckModifierCallBackStatusType": 13,
+    "ByCompareAbilityProperty": 91,
+    "ByCompareAliveEnemyNumber": 1,
+    "ByCompareBP": 10,
+    "ByCompareBattleEventID": 43,
+    "ByCompareChallengeLeft": 47,
+    "ByCompareChangeValue": 3,
+    "ByCompareCharacterID": 116,
+    "ByCompareCharacterNumber": 87,
+    "ByCompareControlSkillEffectIsDamaging": 15,
+    "ByCompareCurrentModifierStatusType": 4,
+    "ByCompareDamageCustomName": 28,
+    "ByCompareDamageTag": 62,
+    "ByCompareDynamicValue": 4443,
+    "ByCompareEvolveBuildProperty": 4,
+    "ByCompareGridFightProperty": 3,
+    "ByCompareHP": 62,
+    "ByCompareHPRatio": 267,
+    "ByCompareModifierCustomEvent": 2,
+    "ByCompareModifierValue": 236,
+    "ByCompareMonsterID": 258,
+    "ByCompareMonsterPhase": 294,
+    "ByCompareMonsterRank": 142,
+    "ByCompareMonsterTemplateID": 12,
+    "ByCompareMonsterUniqueID": 103,
+    "ByCompareParamString": 63,
+    "ByCompareParamValue": 75,
+    "ByCompareResistChance": 6,
+    "ByCompareSPRatio": 3,
+    "ByCompareScepterFuncType": 7,
+    "ByCompareSomatoType": 12,
+    "ByCompareStageID": 8,
+    "ByCompareStageType": 9,
+    "ByCompareStance": 1,
+    "ByCompareStanceRatio": 1,
+    "ByCompareTarget": 254,
+    "ByCompareTargetCount": 83,
+    "ByCompareTeamFormationRowIndex": 1,
+    "ByCompareTurnActionEntityTeamType": 3,
+    "ByCompareWaveCount": 415,
+    "ByContainBehaviorFlag": 275,
+    "ByContainCustomString": 149,
+    "ByContainsParamFlag": 21,
+    "ByContainsRedStance": 1,
+    "ByCurrentSkillEffect": 6,
+    "ByCurrentSkillName": 166,
+    "ByCurrentSkillTargetType": 2,
+    "ByCurrentSkillType": 465,
+    "ByDamageSourceContainBehaviorFlag": 6,
+    "ByDistance": 1,
+    "ByGridFightHasTrait": 3,
+    "ByGridFightTraitSelectedCharacter": 7,
+    "ByHasPausedElationTime": 1,
+    "ByHasSkillType": 1,
+    "ByHasStanceWeak": 84,
+    "ByHasSummonRelation": 24,
+    "ByHaveEnemyAlive": 37,
+    "ByHaveUniqueNameEffect": 5,
+    "ByInTimelinePerform": 2,
+    "ByInTurnBasedGameModeState": 50,
+    "ByIsAutoBattle": 1,
+    "ByIsBattleEventEntity": 16,
+    "ByIsContainModifier": 1862,
+    "ByIsControlSkillDisable": 1,
+    "ByIsConvertDamage": 1,
+    "ByIsDamageCritical": 8,
+    "ByIsDamageLuckCritical": 1,
+    "ByIsDamageType": 73,
+    "ByIsEnemy": 1,
+    "ByIsGenderType": 1,
+    "ByIsHitAllCallBackStack": 3,
+    "ByIsInsertAction": 4,
+    "ByIsMatchTeammateCount": 5,
+    "ByIsMazeSkillAffectCurrentWave": 5,
+    "ByIsScepter": 13,
+    "ByIsSplitDamage": 25,
+    "ByIsStageFirstWave": 6,
+    "ByIsSubTargetOfHpSharedGroup": 4,
+    "ByIsTargetAbleToAction": 1,
+    "ByIsTargetUnselectable": 6,
+    "ByIsTargetValid": 52,
+    "ByIsTeamLocationIndexType": 23,
+    "ByIsTeammate": 20,
+    "ByIsTopActionDelayTarget": 2,
+    "ByIsTriggeredBlockDamage": 19,
+    "ByIsTurnActionEntity": 13,
+    "ByIsTurnOwnerEntity": 50,
+    "ByLocalWin": 50,
+    "ByNot": 51,
+    "ByPreShowStanceBreak": 1,
+    "ByRandomChance": 105,
+    "ByRankActivated": 210,
+    "BySimulateSpeedUp": 2,
+    "BySkillPointActivated": 106,
+    "ByStatusCount": 12,
+    "ByTargetAliveState": 36,
+    "ByTargetEntityType": 92,
+    "ByTargetIsStanceWeakForCurrentHit": 4,
+    "ByTargetIsStanceWeakForCurrentSkill": 1,
+    "ByTargetListAny": 45,
+    "ByTargetListIntersects": 119,
+    "ByTargetLockHP": 5,
+    "ByTargetTeam": 2843,
+    "ByTurnOwnerActionPhaseEnd": 1,
+    "ByTurnOwnerHasPendingOneMore": 4,
+    "IMNNDJAAKBC": 2,
+    "LKAKGGLAHGA": 2
+  },
+  "condition_status_counts": {
+    "ByAnd": {
+      "audit_only": 3005,
+      "executable": 682
+    },
+    "ByAny": {
+      "audit_only": 651,
+      "executable": 172
+    },
+    "ByAttackSkillEffect": {
+      "unsupported": 6
+    },
+    "ByAttackType": {
+      "executable": 625
+    },
+    "ByAvatarBaseType": {
+      "unsupported": 62
+    },
+    "ByCharacterDamageType": {
+      "unsupported": 222
+    },
+    "ByCheckBloodLinkDead": {
+      "unsupported": 1
+    },
+    "ByCheckCharacterFly": {
+      "unsupported": 4
+    },
+    "ByCheckCustomValueBool": {
+      "unsupported": 156
+    },
+    "ByCheckDarkTeamDestroy": {
+      "unsupported": 2
+    },
+    "ByCheckFightFinish": {
+      "unsupported": 2
+    },
+    "ByCheckModifierCallBackBehaviorFlag": {
+      "unsupported": 131
+    },
+    "ByCheckModifierCallBackIsSelf": {
+      "unsupported": 1
+    },
+    "ByCheckModifierCallBackModifierValue": {
+      "unsupported": 1
+    },
+    "ByCheckModifierCallBackName": {
+      "unsupported": 675
+    },
+    "ByCheckModifierCallBackStatusType": {
+      "unsupported": 13
+    },
+    "ByCompareAbilityProperty": {
+      "unsupported": 91
+    },
+    "ByCompareAliveEnemyNumber": {
+      "unsupported": 1
+    },
+    "ByCompareBP": {
+      "unsupported": 10
+    },
+    "ByCompareBattleEventID": {
+      "unsupported": 43
+    },
+    "ByCompareChallengeLeft": {
+      "unsupported": 47
+    },
+    "ByCompareChangeValue": {
+      "unsupported": 3
+    },
+    "ByCompareCharacterID": {
+      "unsupported": 116
+    },
+    "ByCompareCharacterNumber": {
+      "unsupported": 87
+    },
+    "ByCompareControlSkillEffectIsDamaging": {
+      "unsupported": 15
+    },
+    "ByCompareCurrentModifierStatusType": {
+      "unsupported": 4
+    },
+    "ByCompareDamageCustomName": {
+      "unsupported": 28
+    },
+    "ByCompareDamageTag": {
+      "unsupported": 62
+    },
+    "ByCompareDynamicValue": {
+      "audit_only": 3341,
+      "executable": 1102
+    },
+    "ByCompareEvolveBuildProperty": {
+      "unsupported": 4
+    },
+    "ByCompareGridFightProperty": {
+      "unsupported": 3
+    },
+    "ByCompareHP": {
+      "unsupported": 62
+    },
+    "ByCompareHPRatio": {
+      "audit_only": 16,
+      "executable": 251
+    },
+    "ByCompareModifierCustomEvent": {
+      "unsupported": 2
+    },
+    "ByCompareModifierValue": {
+      "audit_only": 81,
+      "executable": 155
+    },
+    "ByCompareMonsterID": {
+      "unsupported": 258
+    },
+    "ByCompareMonsterPhase": {
+      "unsupported": 294
+    },
+    "ByCompareMonsterRank": {
+      "unsupported": 142
+    },
+    "ByCompareMonsterTemplateID": {
+      "unsupported": 12
+    },
+    "ByCompareMonsterUniqueID": {
+      "unsupported": 103
+    },
+    "ByCompareParamString": {
+      "unsupported": 63
+    },
+    "ByCompareParamValue": {
+      "unsupported": 75
+    },
+    "ByCompareResistChance": {
+      "unsupported": 6
+    },
+    "ByCompareSPRatio": {
+      "unsupported": 3
+    },
+    "ByCompareScepterFuncType": {
+      "unsupported": 7
+    },
+    "ByCompareSomatoType": {
+      "unsupported": 12
+    },
+    "ByCompareStageID": {
+      "unsupported": 8
+    },
+    "ByCompareStageType": {
+      "unsupported": 9
+    },
+    "ByCompareStance": {
+      "unsupported": 1
+    },
+    "ByCompareStanceRatio": {
+      "unsupported": 1
+    },
+    "ByCompareTarget": {
+      "audit_only": 135,
+      "executable": 119
+    },
+    "ByCompareTargetCount": {
+      "unsupported": 83
+    },
+    "ByCompareTeamFormationRowIndex": {
+      "unsupported": 1
+    },
+    "ByCompareTurnActionEntityTeamType": {
+      "unsupported": 3
+    },
+    "ByCompareWaveCount": {
+      "unsupported": 415
+    },
+    "ByContainBehaviorFlag": {
+      "unsupported": 275
+    },
+    "ByContainCustomString": {
+      "unsupported": 149
+    },
+    "ByContainsParamFlag": {
+      "unsupported": 21
+    },
+    "ByContainsRedStance": {
+      "unsupported": 1
+    },
+    "ByCurrentSkillEffect": {
+      "unsupported": 6
+    },
+    "ByCurrentSkillName": {
+      "unsupported": 166
+    },
+    "ByCurrentSkillTargetType": {
+      "unsupported": 2
+    },
+    "ByCurrentSkillType": {
+      "audit_only": 46,
+      "executable": 419
+    },
+    "ByDamageSourceContainBehaviorFlag": {
+      "unsupported": 6
+    },
+    "ByDistance": {
+      "unsupported": 1
+    },
+    "ByGridFightHasTrait": {
+      "unsupported": 3
+    },
+    "ByGridFightTraitSelectedCharacter": {
+      "unsupported": 7
+    },
+    "ByHasPausedElationTime": {
+      "unsupported": 1
+    },
+    "ByHasSkillType": {
+      "unsupported": 1
+    },
+    "ByHasStanceWeak": {
+      "unsupported": 84
+    },
+    "ByHasSummonRelation": {
+      "unsupported": 24
+    },
+    "ByHaveEnemyAlive": {
+      "unsupported": 37
+    },
+    "ByHaveUniqueNameEffect": {
+      "unsupported": 5
+    },
+    "ByInTimelinePerform": {
+      "unsupported": 2
+    },
+    "ByInTurnBasedGameModeState": {
+      "unsupported": 50
+    },
+    "ByIsAutoBattle": {
+      "unsupported": 1
+    },
+    "ByIsBattleEventEntity": {
+      "unsupported": 16
+    },
+    "ByIsContainModifier": {
+      "audit_only": 643,
+      "executable": 1219
+    },
+    "ByIsControlSkillDisable": {
+      "unsupported": 1
+    },
+    "ByIsConvertDamage": {
+      "unsupported": 1
+    },
+    "ByIsDamageCritical": {
+      "unsupported": 8
+    },
+    "ByIsDamageLuckCritical": {
+      "unsupported": 1
+    },
+    "ByIsDamageType": {
+      "unsupported": 73
+    },
+    "ByIsEnemy": {
+      "unsupported": 1
+    },
+    "ByIsGenderType": {
+      "unsupported": 1
+    },
+    "ByIsHitAllCallBackStack": {
+      "unsupported": 3
+    },
+    "ByIsInsertAction": {
+      "unsupported": 4
+    },
+    "ByIsMatchTeammateCount": {
+      "unsupported": 5
+    },
+    "ByIsMazeSkillAffectCurrentWave": {
+      "unsupported": 5
+    },
+    "ByIsScepter": {
+      "unsupported": 13
+    },
+    "ByIsSplitDamage": {
+      "unsupported": 25
+    },
+    "ByIsStageFirstWave": {
+      "unsupported": 6
+    },
+    "ByIsSubTargetOfHpSharedGroup": {
+      "unsupported": 4
+    },
+    "ByIsTargetAbleToAction": {
+      "unsupported": 1
+    },
+    "ByIsTargetUnselectable": {
+      "unsupported": 6
+    },
+    "ByIsTargetValid": {
+      "unsupported": 52
+    },
+    "ByIsTeamLocationIndexType": {
+      "unsupported": 23
+    },
+    "ByIsTeammate": {
+      "unsupported": 20
+    },
+    "ByIsTopActionDelayTarget": {
+      "unsupported": 2
+    },
+    "ByIsTriggeredBlockDamage": {
+      "unsupported": 19
+    },
+    "ByIsTurnActionEntity": {
+      "unsupported": 13
+    },
+    "ByIsTurnOwnerEntity": {
+      "unsupported": 50
+    },
+    "ByLocalWin": {
+      "unsupported": 50
+    },
+    "ByNot": {
+      "audit_only": 28,
+      "executable": 23
+    },
+    "ByPreShowStanceBreak": {
+      "unsupported": 1
+    },
+    "ByRandomChance": {
+      "unsupported": 105
+    },
+    "ByRankActivated": {
+      "unsupported": 210
+    },
+    "BySimulateSpeedUp": {
+      "unsupported": 2
+    },
+    "BySkillPointActivated": {
+      "unsupported": 106
+    },
+    "ByStatusCount": {
+      "unsupported": 12
+    },
+    "ByTargetAliveState": {
+      "unsupported": 36
+    },
+    "ByTargetEntityType": {
+      "unsupported": 92
+    },
+    "ByTargetIsStanceWeakForCurrentHit": {
+      "unsupported": 4
+    },
+    "ByTargetIsStanceWeakForCurrentSkill": {
+      "unsupported": 1
+    },
+    "ByTargetListAny": {
+      "unsupported": 45
+    },
+    "ByTargetListIntersects": {
+      "unsupported": 119
+    },
+    "ByTargetLockHP": {
+      "unsupported": 5
+    },
+    "ByTargetTeam": {
+      "audit_only": 15,
+      "executable": 2828
+    },
+    "ByTurnOwnerActionPhaseEnd": {
+      "unsupported": 1
+    },
+    "ByTurnOwnerHasPendingOneMore": {
+      "unsupported": 4
+    },
+    "IMNNDJAAKBC": {
+      "unsupported": 2
+    },
+    "LKAKGGLAHGA": {
+      "unsupported": 2
+    }
+  },
+  "counts": {
+    "action_definitions": 6949,
+    "conditions": 20898,
+    "effects": 62219,
+    "entities": 22150,
+    "formulas": 46475,
+    "triggers": 27368
+  },
+  "metadata": {
+    "ability_file_status": {
+      "lowered_count": 1437,
+      "raw_count": 1437,
+      "skipped_count": 0
+    },
+    "limits": {
+      "max_ability_files": null,
+      "max_callbacks_per_file": 200,
+      "max_records_per_table": null
+    },
+    "lowering": "tbgd_first_v0_200",
+    "sampled": {
+      "ability_files": false,
+      "entity_tables": false
+    },
+    "source": "turnbasedgamedata-main",
+    "table_status": {
+      "ExcelOutput/AvatarBreakDamage.json": {
+        "id_key": "Level",
+        "lowered_count": 101,
+        "raw_count": 101,
+        "sampled": false,
+        "skipped_count": 0
+      },
+      "ExcelOutput/AvatarConfig.json": {
+        "id_key": "AvatarID",
+        "lowered_count": 90,
+        "raw_count": 90,
+        "sampled": false,
+        "skipped_count": 0
+      },
+      "ExcelOutput/AvatarConfigLD.json": {
+        "id_key": "AvatarID",
+        "lowered_count": 2,
+        "raw_count": 2,
+        "sampled": false,
+        "skipped_count": 0
+      },
+      "ExcelOutput/AvatarPromotionConfig.json": {
+        "id_key": "AvatarID",
+        "lowered_count": 630,
+        "raw_count": 630,
+        "sampled": false,
+        "skipped_count": 0
+      },
+      "ExcelOutput/AvatarPromotionConfigLD.json": {
+        "id_key": "AvatarID",
+        "lowered_count": 14,
+        "raw_count": 14,
+        "sampled": false,
+        "skipped_count": 0
+      },
+      "ExcelOutput/AvatarSkillConfig.json": {
+        "id_key": "SkillID",
+        "lowered_count": 6657,
+        "raw_count": 6657,
+        "sampled": false,
+        "skipped_count": 0
+      },
+      "ExcelOutput/AvatarSkillConfigLD.json": {
+        "id_key": "SkillID",
+        "lowered_count": 124,
+        "raw_count": 124,
+        "sampled": false,
+        "skipped_count": 0
+      },
+      "ExcelOutput/AvatarStatusConfigLD.json": {
+        "id_key": "StatusID",
+        "lowered_count": 18,
+        "raw_count": 18,
+        "sampled": false,
+        "skipped_count": 0
+      },
+      "ExcelOutput/CommonActiveSkillConfig.json": {
+        "id_key": "SkillID",
+        "lowered_count": 0,
+        "raw_count": 3,
+        "sampled": false,
+        "skipped_count": 0
+      },
+      "ExcelOutput/CommonAvatarSkillConfig.json": {
+        "id_key": "SkillID",
+        "lowered_count": 3,
+        "raw_count": 3,
+        "sampled": false,
+        "skipped_count": 0
+      },
+      "ExcelOutput/ILBattleMonsterSkill.json": {
+        "id_key": "ID",
+        "lowered_count": 165,
+        "raw_count": 165,
+        "sampled": false,
+        "skipped_count": 0
+      },
+      "ExcelOutput/MonsterConfig.json": {
+        "id_key": "MonsterID",
+        "lowered_count": 2509,
+        "raw_count": 2509,
+        "sampled": false,
+        "skipped_count": 0
+      },
+      "ExcelOutput/MonsterTemplateConfig.json": {
+        "id_key": "MonsterTemplateID",
+        "lowered_count": 577,
+        "raw_count": 577,
+        "sampled": false,
+        "skipped_count": 0
+      },
+      "ExcelOutput/RelicSetSkillConfig.json": {
+        "id_key": "SetID",
+        "lowered_count": 90,
+        "raw_count": 90,
+        "sampled": false,
+        "skipped_count": 0
+      },
+      "ExcelOutput/SummonUnitData.json": {
+        "id_key": "ID",
+        "lowered_count": 36,
+        "raw_count": 36,
+        "sampled": false,
+        "skipped_count": 0
+      },
+      "action_definitions:ExcelOutput/AvatarSkillConfig.json": {
+        "id_key": "SkillID",
+        "lowered_count": 6657,
+        "raw_count": 6657,
+        "sampled": false,
+        "skipped_count": 0
+      },
+      "action_definitions:ExcelOutput/AvatarSkillConfigLD.json": {
+        "id_key": "SkillID",
+        "lowered_count": 124,
+        "raw_count": 124,
+        "sampled": false,
+        "skipped_count": 0
+      },
+      "action_definitions:ExcelOutput/CommonActiveSkillConfig.json": {
+        "id_key": "SkillID",
+        "lowered_count": 0,
+        "raw_count": 3,
+        "sampled": false,
+        "skipped_count": 0
+      },
+      "action_definitions:ExcelOutput/CommonAvatarSkillConfig.json": {
+        "id_key": "SkillID",
+        "lowered_count": 3,
+        "raw_count": 3,
+        "sampled": false,
+        "skipped_count": 0
+      },
+      "action_definitions:ExcelOutput/ILBattleMonsterSkill.json": {
+        "id_key": "ID",
+        "lowered_count": 165,
+        "raw_count": 165,
+        "sampled": false,
+        "skipped_count": 0
+      }
+    }
+  },
+  "version": "v0_200"
+}

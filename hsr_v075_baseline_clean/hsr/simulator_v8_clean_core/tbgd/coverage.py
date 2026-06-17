@@ -37,8 +37,17 @@ KNOWN_AUDIT_EFFECTS = {
 }
 
 KNOWN_AUDIT_CONDITIONS = {
+    "ByAnd",
+    "ByAny",
+    "ByAttackType",
     "ByCurrentSkillType",
+    "ByCompareDynamicValue",
     "ByCompareHPRatio",
+    "ByCompareModifierValue",
+    "ByCompareTarget",
+    "ByIsContainModifier",
+    "ByNot",
+    "ByTargetTeam",
     "ByTargetHasModifier",
     "ByTargetHasStatus",
     "ByCheckTargetCamp",

@@ -8,6 +8,7 @@ from ..core.settlement import SettlementRecord
 from ..rules.evaluator import EvaluationContext, RuleEvaluator
 from ..rules.ir import ActionDefinitionIR, ConditionIR, TriggerIR
 from ..rules.rulebook import RuleBook
+from .dynamic_values import binding_source_from_store, status_binding_sources
 from .effect import EffectExecutionContext, EffectRegistry, EffectResult
 
 
@@ -140,8 +141,11 @@ class TriggerSystem:
 
                 condition_results, blocked_reason = self._evaluate_conditions(
                     trigger,
+                    state=current,
+                    status_detail=detail,
                     command=command,
                     action_definition=action_definition,
+                    owner_id=owner_id,
                     primary_target=primary_target,
                     canonical_window=canonical_window,
                     tbgd_event=tbgd_event,
@@ -281,8 +285,11 @@ class TriggerSystem:
         self,
         trigger: TriggerIR,
         *,
+        state: BattleState,
+        status_detail: dict[str, JSONValue],
         command: ActionCommand,
         action_definition: ActionDefinitionIR,
+        owner_id: str,
         primary_target: str | None,
         canonical_window: str,
         tbgd_event: str,
@@ -293,11 +300,16 @@ class TriggerSystem:
             if condition is None:
                 results.append({"condition_id": condition_id, "result": None, "reason": "missing_condition"})
                 return results, f"blocked_condition:{condition_id}:missing"
-            result = self.evaluator.evaluate_condition(
+            result = self.evaluator.evaluate_condition_result(
                 condition,
                 EvaluationContext(
+                    state=state,
                     actor_id=command.actor_id,
                     target_id=primary_target,
+                    owner_id=owner_id,
+                    param_entity_id=primary_target or command.actor_id,
+                    current_action_target_id=primary_target,
+                    status_detail=status_detail,
                     event_payload=_condition_event_payload(
                         command=command,
                         action_definition=action_definition,
@@ -305,14 +317,15 @@ class TriggerSystem:
                         canonical_window=canonical_window,
                         tbgd_event=tbgd_event,
                     ),
+                    binding_sources=_condition_binding_sources(state, command.actor_id, owner_id, primary_target),
                 ),
             )
-            results.append(_condition_result_json(condition, result))
-            if result is True:
+            results.append(result.to_json())
+            if result.ok and result.result is True:
                 continue
-            if result is False:
+            if result.ok and result.result is False:
                 return results, f"blocked_condition:{condition.condition_id}:false"
-            return results, f"blocked_condition:{condition.condition_id}:unsupported"
+            return results, f"blocked_condition:{condition.condition_id}:{result.reason}"
         return results, ""
 
     def _skipped_window(
@@ -396,6 +409,20 @@ def _condition_result_json(condition: ConditionIR, result: bool | None) -> dict[
         "result": result,
         "reason": reason,
     }
+
+
+def _condition_binding_sources(
+    state: BattleState,
+    actor_id: str,
+    owner_id: str,
+    primary_target: str | None,
+) -> tuple[dict[str, JSONValue], ...]:
+    unit_ids = tuple(
+        unit_id
+        for unit_id in (owner_id, actor_id, primary_target)
+        if isinstance(unit_id, str) and unit_id
+    )
+    return (*status_binding_sources(state, unit_ids), binding_source_from_store(state.global_flags.get("dynamic_value_store")))
 
 
 def _window_record(

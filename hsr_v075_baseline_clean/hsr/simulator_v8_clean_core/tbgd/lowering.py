@@ -386,11 +386,12 @@ class TBGDLowering:
         if not isinstance(predicate, dict):
             return None
         opcode = _short_gamecore_type(predicate.get("$type"))
-        status = "executable" if opcode == "ByCurrentSkillType" else classify_opcode(opcode)
+        payload = _compact_payload(predicate)
+        status = "executable" if _condition_payload_executable(opcode, payload) else classify_opcode(opcode)
         return ConditionIR(
             condition_id=f"condition:{source.source_path}:{source.raw_id}:{source.evidence.get('callback_index')}:{task_index}:{opcode}",
             opcode=opcode,
-            payload=_compact_payload(predicate),
+            payload=payload,
             source=source,
             coverage_status=status,
         )
@@ -778,6 +779,20 @@ RESOURCE_DELTA_OPCODES = {"ModifySPNew"}
 DYNAMIC_VALUE_OPCODES = {"SetDynamicValue", "SetDynamicValueByModifierValue"}
 EXECUTABLE_TARGET_ALIASES = {"Caster", "ModifierOwnerEntity", "ParamEntity", "CurrentActionTarget"}
 SUPPORTED_MODIFIER_VALUE_TYPES = {"Layer", "LifeTime"}
+EXECUTABLE_CONDITION_OPCODES = {
+    "AlwaysTrue",
+    "ByAnd",
+    "ByAny",
+    "ByAttackType",
+    "ByCompareDynamicValue",
+    "ByCompareHPRatio",
+    "ByCompareModifierValue",
+    "ByCompareTarget",
+    "ByCurrentSkillType",
+    "ByIsContainModifier",
+    "ByNot",
+    "ByTargetTeam",
+}
 
 
 def _effect_payload(value: dict[str, Any], opcode: str, source_modifier_name: str) -> dict[str, Any]:
@@ -880,6 +895,54 @@ def _effect_coverage_status(opcode: str, payload: dict[str, Any]) -> str:
             return "blocked"
         return "executable"
     return classify_opcode(opcode)
+
+
+def _condition_payload_executable(opcode: str, payload: dict[str, Any]) -> bool:
+    if opcode not in EXECUTABLE_CONDITION_OPCODES:
+        return False
+    if opcode == "AlwaysTrue":
+        return True
+    if opcode == "ByCurrentSkillType":
+        return isinstance(payload.get("SkillType"), str)
+    if opcode == "ByAttackType":
+        return isinstance(payload.get("AttackTypes"), list)
+    if opcode == "ByTargetTeam":
+        return _target_alias(payload.get("TargetType")) in EXECUTABLE_TARGET_ALIASES and payload.get("Team") in {"TeamLight", "TeamDark"}
+    if opcode == "ByIsContainModifier":
+        return _target_alias(payload.get("TargetType")) in EXECUTABLE_TARGET_ALIASES and isinstance(_value_field(payload.get("ModifierName")), str)
+    if opcode == "ByCompareHPRatio":
+        return (
+            _target_alias(payload.get("TargetType")) in EXECUTABLE_TARGET_ALIASES
+            and _numeric_expr_can_be_runtime_bound(_numeric_expr_summary(payload.get("CompareValue")))
+        )
+    if opcode == "ByCompareDynamicValue":
+        return (
+            _target_alias(payload.get("TargetType")) in EXECUTABLE_TARGET_ALIASES
+            and isinstance(_value_field(payload.get("DynamicKey")), str)
+            and _numeric_expr_can_be_runtime_bound(_numeric_expr_summary(payload.get("CompareValue")))
+        )
+    if opcode == "ByCompareModifierValue":
+        return (
+            _target_alias(payload.get("TargetType")) in EXECUTABLE_TARGET_ALIASES
+            and payload.get("ValueType") in SUPPORTED_MODIFIER_VALUE_TYPES
+            and _numeric_expr_can_be_runtime_bound(_numeric_expr_summary(payload.get("CompareValue")))
+        )
+    if opcode == "ByCompareTarget":
+        return _target_alias(payload.get("TargetType")) in EXECUTABLE_TARGET_ALIASES and _target_alias(payload.get("CompareType")) in EXECUTABLE_TARGET_ALIASES
+    if opcode in {"ByAnd", "ByAny"}:
+        predicates = payload.get("PredicateList")
+        return isinstance(predicates, list) and all(_raw_condition_payload_executable(item) for item in predicates)
+    if opcode == "ByNot":
+        return _raw_condition_payload_executable(payload.get("Predicate"))
+    return False
+
+
+def _raw_condition_payload_executable(value: Any) -> bool:
+    if not isinstance(value, dict):
+        return False
+    opcode = _short_gamecore_type(value.get("$type"))
+    payload = _compact_payload(value)
+    return _condition_payload_executable(opcode, payload)
 
 
 def _standard_add_modifier_payload(value: dict[str, Any]) -> dict[str, Any]:

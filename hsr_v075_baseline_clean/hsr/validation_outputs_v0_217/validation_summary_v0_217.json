@@ -1,0 +1,4522 @@
+{
+  "baseline_version": "v0_200",
+  "build": {
+    "scenario_path": "/home/zhangjinhao/code/hsr/hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/scenarios/examples/identity_smoke_v0_204.json",
+    "summary": {
+      "discovery_files": 8683,
+      "ir_conditions": 20898,
+      "ir_effects": 62219,
+      "sampled": {
+        "ability_files": false,
+        "entity_tables": false
+      }
+    },
+    "tbgd_root": "/home/zhangjinhao/code/hsr/turnbasedgamedata-main"
+  },
+  "checks": {
+    "condition_blocked": {
+      "case": {
+        "condition": {
+          "condition_id": "condition:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_BlackSwan_00_Ability.json:MAvatar_Advanced_BlackSwan_00_DOT:27:0:ByCompareSomatoType",
+          "coverage_status": "unsupported",
+          "opcode": "ByCompareSomatoType",
+          "payload": {
+            "SomatoTypes": [
+              "LargeMonster"
+            ],
+            "Target": {
+              "$type": "RPG.GameCore.TargetAlias",
+              "Alias": "ModifierOwnerEntity"
+            }
+          },
+          "source": {
+            "evidence": {
+              "branch": "failed",
+              "callback_index": 27,
+              "task_index": 0
+            },
+            "raw_id": "MAvatar_Advanced_BlackSwan_00_DOT",
+            "raw_type": "GlobalModifiers",
+            "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_BlackSwan_00_Ability.json"
+          }
+        },
+        "result": {
+          "condition_id": "condition:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_BlackSwan_00_Ability.json:MAvatar_Advanced_BlackSwan_00_DOT:27:0:ByCompareSomatoType",
+          "details": {
+            "coverage_status": "unsupported"
+          },
+          "ok": false,
+          "opcode": "ByCompareSomatoType",
+          "reason": "condition_opcode_not_supported:ByCompareSomatoType",
+          "result": null,
+          "source_trace": {
+            "evidence": {
+              "branch": "failed",
+              "callback_index": 27,
+              "task_index": 0
+            },
+            "raw_id": "MAvatar_Advanced_BlackSwan_00_DOT",
+            "raw_type": "GlobalModifiers",
+            "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_BlackSwan_00_Ability.json"
+          }
+        }
+      },
+      "checks": {
+        "blocked_condition_not_ok": true,
+        "blocked_condition_selected": true,
+        "blocked_reason_present": true
+      },
+      "ok": true
+    },
+    "condition_coverage": {
+      "checks": {
+        "ByAnd_executable": true,
+        "ByAnd_lowered": true,
+        "ByAny_executable": true,
+        "ByAny_lowered": true,
+        "ByAttackType_executable": true,
+        "ByAttackType_lowered": true,
+        "ByCompareDynamicValue_executable": true,
+        "ByCompareDynamicValue_lowered": true,
+        "ByCompareHPRatio_executable": true,
+        "ByCompareHPRatio_lowered": true,
+        "ByCompareModifierValue_executable": true,
+        "ByCompareModifierValue_lowered": true,
+        "ByCompareTarget_executable": true,
+        "ByCompareTarget_lowered": true,
+        "ByCurrentSkillType_executable": true,
+        "ByCurrentSkillType_lowered": true,
+        "ByIsContainModifier_executable": true,
+        "ByIsContainModifier_lowered": true,
+        "ByNot_executable": true,
+        "ByNot_lowered": true,
+        "ByTargetTeam_executable": true,
+        "ByTargetTeam_lowered": true
+      },
+      "details": {
+        "ByAnd": {
+          "count": 916,
+          "executable": 682,
+          "fidelity_status": "executable",
+          "lowered": 3687,
+          "reason": "opcode has at least one executable Canonical IR path",
+          "status": "audit_only",
+          "validated": 0
+        },
+        "ByAny": {
+          "count": 587,
+          "executable": 172,
+          "fidelity_status": "executable",
+          "lowered": 823,
+          "reason": "opcode has at least one executable Canonical IR path",
+          "status": "audit_only",
+          "validated": 0
+        },
+        "ByAttackType": {
+          "count": 204,
+          "executable": 625,
+          "fidelity_status": "executable",
+          "lowered": 625,
+          "reason": "opcode has at least one executable Canonical IR path",
+          "status": "audit_only",
+          "validated": 0
+        },
+        "ByCompareDynamicValue": {
+          "count": 1027,
+          "executable": 1102,
+          "fidelity_status": "executable",
+          "lowered": 4445,
+          "reason": "opcode has at least one executable Canonical IR path",
+          "status": "audit_only",
+          "validated": 0
+        },
+        "ByCompareHPRatio": {
+          "count": 212,
+          "executable": 251,
+          "fidelity_status": "executable",
+          "lowered": 267,
+          "reason": "opcode has at least one executable Canonical IR path",
+          "status": "audit_only",
+          "validated": 0
+        },
+        "ByCompareModifierValue": {
+          "count": 139,
+          "executable": 155,
+          "fidelity_status": "executable",
+          "lowered": 236,
+          "reason": "opcode has at least one executable Canonical IR path",
+          "status": "audit_only",
+          "validated": 0
+        },
+        "ByCompareTarget": {
+          "count": 261,
+          "executable": 119,
+          "fidelity_status": "executable",
+          "lowered": 254,
+          "reason": "opcode has at least one executable Canonical IR path",
+          "status": "audit_only",
+          "validated": 0
+        },
+        "ByCurrentSkillType": {
+          "count": 253,
+          "executable": 419,
+          "fidelity_status": "executable",
+          "lowered": 465,
+          "reason": "opcode has at least one executable Canonical IR path",
+          "status": "audit_only",
+          "validated": 0
+        },
+        "ByIsContainModifier": {
+          "count": 849,
+          "executable": 1219,
+          "fidelity_status": "executable",
+          "lowered": 1862,
+          "reason": "opcode has at least one executable Canonical IR path",
+          "status": "audit_only",
+          "validated": 0
+        },
+        "ByNot": {
+          "count": 139,
+          "executable": 23,
+          "fidelity_status": "executable",
+          "lowered": 51,
+          "reason": "opcode has at least one executable Canonical IR path",
+          "status": "audit_only",
+          "validated": 0
+        },
+        "ByTargetTeam": {
+          "count": 502,
+          "executable": 2828,
+          "fidelity_status": "executable",
+          "lowered": 2843,
+          "reason": "opcode has at least one executable Canonical IR path",
+          "status": "audit_only",
+          "validated": 0
+        }
+      },
+      "ok": true
+    },
+    "condition_evaluator": {
+      "cases": {
+        "ByAnd": {
+          "condition": {
+            "condition_id": "condition:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_BlackSwan_00_Ability.json:MAvatar_Advanced_BlackSwan_00_Rank01_SubOnEnemy:12:0:ByAnd",
+            "coverage_status": "executable",
+            "opcode": "ByAnd",
+            "payload": {
+              "PredicateList": [
+                {
+                  "$type": "RPG.GameCore.ByIsContainModifier",
+                  "ModifierName": {
+                    "Value": "MAvatar_Advanced_BlackSwan_00_DOT"
+                  },
+                  "TargetType": {
+                    "$type": "RPG.GameCore.TargetAlias",
+                    "Alias": "ModifierOwnerEntity"
+                  }
+                }
+              ]
+            },
+            "source": {
+              "evidence": {
+                "branch": "callback",
+                "callback_index": 12,
+                "task_index": 0
+              },
+              "raw_id": "MAvatar_Advanced_BlackSwan_00_Rank01_SubOnEnemy",
+              "raw_type": "Modifiers",
+              "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_BlackSwan_00_Ability.json"
+            }
+          },
+          "result": {
+            "condition_id": "condition:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_BlackSwan_00_Ability.json:MAvatar_Advanced_BlackSwan_00_Rank01_SubOnEnemy:12:0:ByAnd",
+            "details": {
+              "children": [
+                {
+                  "condition_id": "condition:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_BlackSwan_00_Ability.json:MAvatar_Advanced_BlackSwan_00_Rank01_SubOnEnemy:12:0:ByAnd",
+                  "details": {
+                    "contains": true,
+                    "modifier_name": "MAvatar_Advanced_BlackSwan_00_DOT",
+                    "target_id": "ally:saber"
+                  },
+                  "ok": true,
+                  "opcode": "ByIsContainModifier",
+                  "reason": "modifier_presence_compared",
+                  "result": true,
+                  "source_trace": {
+                    "evidence": {
+                      "branch": "callback",
+                      "callback_index": 12,
+                      "task_index": 0
+                    },
+                    "raw_id": "MAvatar_Advanced_BlackSwan_00_Rank01_SubOnEnemy",
+                    "raw_type": "Modifiers",
+                    "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_BlackSwan_00_Ability.json"
+                  }
+                }
+              ]
+            },
+            "ok": true,
+            "opcode": "ByAnd",
+            "reason": "and_all_true",
+            "result": true,
+            "source_trace": {
+              "evidence": {
+                "branch": "callback",
+                "callback_index": 12,
+                "task_index": 0
+              },
+              "raw_id": "MAvatar_Advanced_BlackSwan_00_Rank01_SubOnEnemy",
+              "raw_type": "Modifiers",
+              "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_BlackSwan_00_Ability.json"
+            }
+          },
+          "selection": {
+            "coverage_status": "executable",
+            "opcode": "ByAnd",
+            "payload_keys": [
+              "PredicateList"
+            ],
+            "selection_mode": "structured_predicate",
+            "source_trace": {
+              "evidence": {
+                "branch": "callback",
+                "callback_index": 12,
+                "task_index": 0
+              },
+              "raw_id": "MAvatar_Advanced_BlackSwan_00_Rank01_SubOnEnemy",
+              "raw_type": "Modifiers",
+              "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_BlackSwan_00_Ability.json"
+            }
+          },
+          "state": {
+            "snapshot": {
+              "battle": {
+                "action_index": 0,
+                "current_window": "idle",
+                "phase": "scenario",
+                "turn_owner_id": "ally:saber",
+                "wave_index": 0
+              },
+              "coverage": {},
+              "event_index": 0,
+              "global_flags": {
+                "current_window": "idle",
+                "dynamic_value_store": {
+                  "by_hash": {},
+                  "by_name": {},
+                  "entries": {}
+                },
+                "phase": "scenario",
+                "turn_owner_id": "ally:saber"
+              },
+              "max_skill_points": 5,
+              "metadata": {
+                "rng_state": "deterministic",
+                "snapshot_contract": "v0_203"
+              },
+              "pending_events": [],
+              "queues": {},
+              "resources": {
+                "max_skill_points": 5,
+                "skill_points": 3
+              },
+              "rng_events": [],
+              "rng_state": "deterministic",
+              "settlement": {},
+              "skill_points": 3,
+              "targeting": {},
+              "teams": {
+                "ally": [
+                  "ally:saber"
+                ],
+                "enemy": [
+                  "enemy:target"
+                ],
+                "summon": []
+              },
+              "timeline": {
+                "action_values": {
+                  "ally:saber": 0.0,
+                  "enemy:target": 0.0
+                },
+                "queues": {},
+                "turn_owner_id": "ally:saber"
+              },
+              "units": {
+                "ally:saber": {
+                  "action_value": 0.0,
+                  "attack": 3200.0,
+                  "base_stats": {
+                    "attack": 3200.0,
+                    "defense": 900.0,
+                    "max_hp": 3000.0,
+                    "speed": 101.0
+                  },
+                  "defense": 900.0,
+                  "derived_stats": {
+                    "break_damage_added_ratio": 0.0,
+                    "critical_chance": 0.05,
+                    "critical_damage": 0.5,
+                    "damage_added_ratio": 0.0,
+                    "effect_hit_rate": 0.0,
+                    "effect_resistance": 0.0
+                  },
+                  "energy": 60.0,
+                  "flags": {
+                    "position": 1,
+                    "status_details": [
+                      {
+                        "caster_id": "ally:saber",
+                        "duration": 1.0,
+                        "dynamic_values": {},
+                        "instance_id": "validation:v0_217:ally:saber:MAvatar_Advanced_BlackSwan_00_Rank01_SubOnEnemy",
+                        "lifecycle_state": "active",
+                        "modifier_name": "MAvatar_Advanced_BlackSwan_00_Rank01_SubOnEnemy",
+                        "modifiers": [],
+                        "owner_id": "ally:saber",
+                        "remaining_duration": 1.0,
+                        "source_id": "validation:v0_217",
+                        "source_trace": {
+                          "modifier_name": "MAvatar_Advanced_BlackSwan_00_Rank01_SubOnEnemy",
+                          "validation": "v0_217"
+                        },
+                        "stacks": 1,
+                        "status_id": "modifier:MAvatar_Advanced_BlackSwan_00_Rank01_SubOnEnemy",
+                        "trigger_ids_by_event": {},
+                        "unsupported": []
+                      },
+                      {
+                        "caster_id": "ally:saber",
+                        "duration": 1.0,
+                        "dynamic_values": {},
+                        "instance_id": "validation:v0_217:ally:saber:MAvatar_Advanced_BlackSwan_00_DOT",
+                        "lifecycle_state": "active",
+                        "modifier_name": "MAvatar_Advanced_BlackSwan_00_DOT",
+                        "modifiers": [],
+                        "owner_id": "ally:saber",
+                        "remaining_duration": 1.0,
+                        "source_id": "validation:v0_217",
+                        "source_trace": {
+                          "modifier_name": "MAvatar_Advanced_BlackSwan_00_DOT",
+                          "validation": "v0_217"
+                        },
+                        "stacks": 1,
+                        "status_id": "modifier:MAvatar_Advanced_BlackSwan_00_DOT",
+                        "trigger_ids_by_event": {},
+                        "unsupported": []
+                      }
+                    ]
+                  },
+                  "hp": 3000.0,
+                  "level": 80,
+                  "max_energy": 120.0,
+                  "max_hp": 3000.0,
+                  "max_toughness": 0.0,
+                  "modifiers": [],
+                  "position": 1,
+                  "recoverable_hp": 0.0,
+                  "resources": {
+                    "critical_chance": 0.05,
+                    "critical_damage": 0.5
+                  },
+                  "shield": 0.0,
+                  "side": "ally",
+                  "speed": 101.0,
+                  "status_details": [
+                    {
+                      "caster_id": "ally:saber",
+                      "duration": 1.0,
+                      "dynamic_values": {},
+                      "instance_id": "validation:v0_217:ally:saber:MAvatar_Advanced_BlackSwan_00_Rank01_SubOnEnemy",
+                      "lifecycle_state": "active",
+                      "modifier_name": "MAvatar_Advanced_BlackSwan_00_Rank01_SubOnEnemy",
+                      "modifiers": [],
+                      "owner_id": "ally:saber",
+                      "remaining_duration": 1.0,
+                      "source_id": "validation:v0_217",
+                      "source_trace": {
+                        "modifier_name": "MAvatar_Advanced_BlackSwan_00_Rank01_SubOnEnemy",
+                        "validation": "v0_217"
+                      },
+                      "stacks": 1,
+                      "status_id": "modifier:MAvatar_Advanced_BlackSwan_00_Rank01_SubOnEnemy",
+                      "trigger_ids_by_event": {},
+                      "unsupported": []
+                    },
+                    {
+                      "caster_id": "ally:saber",
+                      "duration": 1.0,
+                      "dynamic_values": {},
+                      "instance_id": "validation:v0_217:ally:saber:MAvatar_Advanced_BlackSwan_00_DOT",
+                      "lifecycle_state": "active",
+                      "modifier_name": "MAvatar_Advanced_BlackSwan_00_DOT",
+                      "modifiers": [],
+                      "owner_id": "ally:saber",
+                      "remaining_duration": 1.0,
+                      "source_id": "validation:v0_217",
+                      "source_trace": {
+                        "modifier_name": "MAvatar_Advanced_BlackSwan_00_DOT",
+                        "validation": "v0_217"
+                      },
+                      "stacks": 1,
+                      "status_id": "modifier:MAvatar_Advanced_BlackSwan_00_DOT",
+                      "trigger_ids_by_event": {},
+                      "unsupported": []
+                    }
+                  ],
+                  "statuses": [],
+                  "template_id": "avatar:1014",
+                  "template_source": {
+                    "id": "avatar:1014",
+                    "kind": "avatar"
+                  },
+                  "toughness": 0.0,
+                  "toughness_state": {
+                    "break_delay": 0.0,
+                    "broken": false,
+                    "current": 0.0,
+                    "maximum": 0.0,
+                    "weakness_locked": false,
+                    "weaknesses": []
+                  },
+                  "unit_id": "ally:saber"
+                },
+                "enemy:target": {
+                  "action_value": 0.0,
+                  "attack": 1000.0,
+                  "base_stats": {
+                    "attack": 1000.0,
+                    "defense": 1000.0,
+                    "max_hp": 10000.0,
+                    "speed": 100.0
+                  },
+                  "defense": 1000.0,
+                  "derived_stats": {
+                    "break_damage_added_ratio": 0.0,
+                    "critical_chance": 0.0,
+                    "critical_damage": 0.0,
+                    "damage_added_ratio": 0.0,
+                    "effect_hit_rate": 0.0,
+                    "effect_resistance": 0.0
+                  },
+                  "energy": 0.0,
+                  "flags": {
+                    "position": 1,
+                    "status_details": [
+                      {
+                        "caster_id": "enemy:target",
+                        "duration": 1.0,
+                        "dynamic_values": {},
+                        "instance_id": "validation:v0_217:enemy:target:MAvatar_Advanced_BlackSwan_00_Rank01_SubOnEnemy",
+                        "lifecycle_state": "active",
+                        "modifier_name": "MAvatar_Advanced_BlackSwan_00_Rank01_SubOnEnemy",
+                        "modifiers": [],
+                        "owner_id": "enemy:target",
+                        "remaining_duration": 1.0,
+                        "source_id": "validation:v0_217",
+                        "source_trace": {
+                          "modifier_name": "MAvatar_Advanced_BlackSwan_00_Rank01_SubOnEnemy",
+                          "validation": "v0_217"
+                        },
+                        "stacks": 1,
+                        "status_id": "modifier:MAvatar_Advanced_BlackSwan_00_Rank01_SubOnEnemy",
+                        "trigger_ids_by_event": {},
+                        "unsupported": []
+                      },
+                      {
+                        "caster_id": "enemy:target",
+                        "duration": 1.0,
+                        "dynamic_values": {},
+                        "instance_id": "validation:v0_217:enemy:target:MAvatar_Advanced_BlackSwan_00_DOT",
+                        "lifecycle_state": "active",
+                        "modifier_name": "MAvatar_Advanced_BlackSwan_00_DOT",
+                        "modifiers": [],
+                        "owner_id": "enemy:target",
+                        "remaining_duration": 1.0,
+                        "source_id": "validation:v0_217",
+                        "source_trace": {
+                          "modifier_name": "MAvatar_Advanced_BlackSwan_00_DOT",
+                          "validation": "v0_217"
+                        },
+                        "stacks": 1,
+                        "status_id": "modifier:MAvatar_Advanced_BlackSwan_00_DOT",
+                        "trigger_ids_by_event": {},
+                        "unsupported": []
+                      }
+                    ],
+                    "weaknesses": [
+                      "Fire",
+                      "Thunder"
+                    ]
+                  },
+                  "hp": 10000.0,
+                  "level": 80,
+                  "max_energy": 0.0,
+                  "max_hp": 10000.0,
+                  "max_toughness": 60.0,
+                  "modifiers": [],
+                  "position": 1,
+                  "recoverable_hp": 0.0,
+                  "resources": {},
+                  "shield": 0.0,
+                  "side": "enemy",
+                  "speed": 100.0,
+                  "status_details": [
+                    {
+                      "caster_id": "enemy:target",
+                      "duration": 1.0,
+                      "dynamic_values": {},
+                      "instance_id": "validation:v0_217:enemy:target:MAvatar_Advanced_BlackSwan_00_Rank01_SubOnEnemy",
+                      "lifecycle_state": "active",
+                      "modifier_name": "MAvatar_Advanced_BlackSwan_00_Rank01_SubOnEnemy",
+                      "modifiers": [],
+                      "owner_id": "enemy:target",
+                      "remaining_duration": 1.0,
+                      "source_id": "validation:v0_217",
+                      "source_trace": {
+                        "modifier_name": "MAvatar_Advanced_BlackSwan_00_Rank01_SubOnEnemy",
+                        "validation": "v0_217"
+                      },
+                      "stacks": 1,
+                      "status_id": "modifier:MAvatar_Advanced_BlackSwan_00_Rank01_SubOnEnemy",
+                      "trigger_ids_by_event": {},
+                      "unsupported": []
+                    },
+                    {
+                      "caster_id": "enemy:target",
+                      "duration": 1.0,
+                      "dynamic_values": {},
+                      "instance_id": "validation:v0_217:enemy:target:MAvatar_Advanced_BlackSwan_00_DOT",
+                      "lifecycle_state": "active",
+                      "modifier_name": "MAvatar_Advanced_BlackSwan_00_DOT",
+                      "modifiers": [],
+                      "owner_id": "enemy:target",
+                      "remaining_duration": 1.0,
+                      "source_id": "validation:v0_217",
+                      "source_trace": {
+                        "modifier_name": "MAvatar_Advanced_BlackSwan_00_DOT",
+                        "validation": "v0_217"
+                      },
+                      "stacks": 1,
+                      "status_id": "modifier:MAvatar_Advanced_BlackSwan_00_DOT",
+                      "trigger_ids_by_event": {},
+                      "unsupported": []
+                    }
+                  ],
+                  "statuses": [],
+                  "template_id": "monster:1002011",
+                  "template_source": {
+                    "id": "monster:1002011",
+                    "kind": "monster"
+                  },
+                  "toughness": 60.0,
+                  "toughness_state": {
+                    "break_delay": 0.0,
+                    "broken": false,
+                    "current": 60.0,
+                    "maximum": 60.0,
+                    "weakness_locked": false,
+                    "weaknesses": [
+                      "Fire",
+                      "Thunder"
+                    ]
+                  },
+                  "unit_id": "enemy:target"
+                }
+              },
+              "wave_index": 0
+            }
+          }
+        },
+        "ByAny": {
+          "condition": {
+            "condition_id": "condition:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Huohuo_00_Ability.json:MAvatar_Advanced_Huohuo_Passive:2:0:ByAny",
+            "coverage_status": "executable",
+            "opcode": "ByAny",
+            "payload": {
+              "PredicateList": [
+                {
+                  "$type": "RPG.GameCore.ByCurrentSkillType",
+                  "SkillType": "Skill"
+                },
+                {
+                  "$type": "RPG.GameCore.ByCurrentSkillType",
+                  "SkillType": "Ultra"
+                }
+              ]
+            },
+            "source": {
+              "evidence": {
+                "branch": "callback",
+                "callback_index": 2,
+                "task_index": 0
+              },
+              "raw_id": "MAvatar_Advanced_Huohuo_Passive",
+              "raw_type": "Modifiers",
+              "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Huohuo_00_Ability.json"
+            }
+          },
+          "result": {
+            "condition_id": "condition:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Huohuo_00_Ability.json:MAvatar_Advanced_Huohuo_Passive:2:0:ByAny",
+            "details": {
+              "children": [
+                {
+                  "condition_id": "condition:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Huohuo_00_Ability.json:MAvatar_Advanced_Huohuo_Passive:2:0:ByAny",
+                  "details": {
+                    "actual": "SingleAttack",
+                    "expected": "Skill"
+                  },
+                  "ok": true,
+                  "opcode": "ByCurrentSkillType",
+                  "reason": "skill_type_compared",
+                  "result": false,
+                  "source_trace": {
+                    "evidence": {
+                      "branch": "callback",
+                      "callback_index": 2,
+                      "task_index": 0
+                    },
+                    "raw_id": "MAvatar_Advanced_Huohuo_Passive",
+                    "raw_type": "Modifiers",
+                    "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Huohuo_00_Ability.json"
+                  }
+                },
+                {
+                  "condition_id": "condition:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Huohuo_00_Ability.json:MAvatar_Advanced_Huohuo_Passive:2:0:ByAny",
+                  "details": {
+                    "actual": "SingleAttack",
+                    "expected": "Ultra"
+                  },
+                  "ok": true,
+                  "opcode": "ByCurrentSkillType",
+                  "reason": "skill_type_compared",
+                  "result": false,
+                  "source_trace": {
+                    "evidence": {
+                      "branch": "callback",
+                      "callback_index": 2,
+                      "task_index": 0
+                    },
+                    "raw_id": "MAvatar_Advanced_Huohuo_Passive",
+                    "raw_type": "Modifiers",
+                    "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Huohuo_00_Ability.json"
+                  }
+                }
+              ]
+            },
+            "ok": true,
+            "opcode": "ByAny",
+            "reason": "any_all_false",
+            "result": false,
+            "source_trace": {
+              "evidence": {
+                "branch": "callback",
+                "callback_index": 2,
+                "task_index": 0
+              },
+              "raw_id": "MAvatar_Advanced_Huohuo_Passive",
+              "raw_type": "Modifiers",
+              "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Huohuo_00_Ability.json"
+            }
+          },
+          "selection": {
+            "coverage_status": "executable",
+            "opcode": "ByAny",
+            "payload_keys": [
+              "PredicateList"
+            ],
+            "selection_mode": "structured_predicate",
+            "source_trace": {
+              "evidence": {
+                "branch": "callback",
+                "callback_index": 2,
+                "task_index": 0
+              },
+              "raw_id": "MAvatar_Advanced_Huohuo_Passive",
+              "raw_type": "Modifiers",
+              "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Huohuo_00_Ability.json"
+            }
+          },
+          "state": {
+            "snapshot": {
+              "battle": {
+                "action_index": 0,
+                "current_window": "idle",
+                "phase": "scenario",
+                "turn_owner_id": "ally:saber",
+                "wave_index": 0
+              },
+              "coverage": {},
+              "event_index": 0,
+              "global_flags": {
+                "current_window": "idle",
+                "dynamic_value_store": {
+                  "by_hash": {},
+                  "by_name": {},
+                  "entries": {}
+                },
+                "phase": "scenario",
+                "turn_owner_id": "ally:saber"
+              },
+              "max_skill_points": 5,
+              "metadata": {
+                "rng_state": "deterministic",
+                "snapshot_contract": "v0_203"
+              },
+              "pending_events": [],
+              "queues": {},
+              "resources": {
+                "max_skill_points": 5,
+                "skill_points": 3
+              },
+              "rng_events": [],
+              "rng_state": "deterministic",
+              "settlement": {},
+              "skill_points": 3,
+              "targeting": {},
+              "teams": {
+                "ally": [
+                  "ally:saber"
+                ],
+                "enemy": [
+                  "enemy:target"
+                ],
+                "summon": []
+              },
+              "timeline": {
+                "action_values": {
+                  "ally:saber": 0.0,
+                  "enemy:target": 0.0
+                },
+                "queues": {},
+                "turn_owner_id": "ally:saber"
+              },
+              "units": {
+                "ally:saber": {
+                  "action_value": 0.0,
+                  "attack": 3200.0,
+                  "base_stats": {
+                    "attack": 3200.0,
+                    "defense": 900.0,
+                    "max_hp": 3000.0,
+                    "speed": 101.0
+                  },
+                  "defense": 900.0,
+                  "derived_stats": {
+                    "break_damage_added_ratio": 0.0,
+                    "critical_chance": 0.05,
+                    "critical_damage": 0.5,
+                    "damage_added_ratio": 0.0,
+                    "effect_hit_rate": 0.0,
+                    "effect_resistance": 0.0
+                  },
+                  "energy": 60.0,
+                  "flags": {
+                    "position": 1,
+                    "status_details": [
+                      {
+                        "caster_id": "ally:saber",
+                        "duration": 1.0,
+                        "dynamic_values": {},
+                        "instance_id": "validation:v0_217:ally:saber:MAvatar_Advanced_Huohuo_Passive",
+                        "lifecycle_state": "active",
+                        "modifier_name": "MAvatar_Advanced_Huohuo_Passive",
+                        "modifiers": [],
+                        "owner_id": "ally:saber",
+                        "remaining_duration": 1.0,
+                        "source_id": "validation:v0_217",
+                        "source_trace": {
+                          "modifier_name": "MAvatar_Advanced_Huohuo_Passive",
+                          "validation": "v0_217"
+                        },
+                        "stacks": 1,
+                        "status_id": "modifier:MAvatar_Advanced_Huohuo_Passive",
+                        "trigger_ids_by_event": {},
+                        "unsupported": []
+                      }
+                    ]
+                  },
+                  "hp": 3000.0,
+                  "level": 80,
+                  "max_energy": 120.0,
+                  "max_hp": 3000.0,
+                  "max_toughness": 0.0,
+                  "modifiers": [],
+                  "position": 1,
+                  "recoverable_hp": 0.0,
+                  "resources": {
+                    "critical_chance": 0.05,
+                    "critical_damage": 0.5
+                  },
+                  "shield": 0.0,
+                  "side": "ally",
+                  "speed": 101.0,
+                  "status_details": [
+                    {
+                      "caster_id": "ally:saber",
+                      "duration": 1.0,
+                      "dynamic_values": {},
+                      "instance_id": "validation:v0_217:ally:saber:MAvatar_Advanced_Huohuo_Passive",
+                      "lifecycle_state": "active",
+                      "modifier_name": "MAvatar_Advanced_Huohuo_Passive",
+                      "modifiers": [],
+                      "owner_id": "ally:saber",
+                      "remaining_duration": 1.0,
+                      "source_id": "validation:v0_217",
+                      "source_trace": {
+                        "modifier_name": "MAvatar_Advanced_Huohuo_Passive",
+                        "validation": "v0_217"
+                      },
+                      "stacks": 1,
+                      "status_id": "modifier:MAvatar_Advanced_Huohuo_Passive",
+                      "trigger_ids_by_event": {},
+                      "unsupported": []
+                    }
+                  ],
+                  "statuses": [],
+                  "template_id": "avatar:1014",
+                  "template_source": {
+                    "id": "avatar:1014",
+                    "kind": "avatar"
+                  },
+                  "toughness": 0.0,
+                  "toughness_state": {
+                    "break_delay": 0.0,
+                    "broken": false,
+                    "current": 0.0,
+                    "maximum": 0.0,
+                    "weakness_locked": false,
+                    "weaknesses": []
+                  },
+                  "unit_id": "ally:saber"
+                },
+                "enemy:target": {
+                  "action_value": 0.0,
+                  "attack": 1000.0,
+                  "base_stats": {
+                    "attack": 1000.0,
+                    "defense": 1000.0,
+                    "max_hp": 10000.0,
+                    "speed": 100.0
+                  },
+                  "defense": 1000.0,
+                  "derived_stats": {
+                    "break_damage_added_ratio": 0.0,
+                    "critical_chance": 0.0,
+                    "critical_damage": 0.0,
+                    "damage_added_ratio": 0.0,
+                    "effect_hit_rate": 0.0,
+                    "effect_resistance": 0.0
+                  },
+                  "energy": 0.0,
+                  "flags": {
+                    "position": 1,
+                    "status_details": [
+                      {
+                        "caster_id": "enemy:target",
+                        "duration": 1.0,
+                        "dynamic_values": {},
+                        "instance_id": "validation:v0_217:enemy:target:MAvatar_Advanced_Huohuo_Passive",
+                        "lifecycle_state": "active",
+                        "modifier_name": "MAvatar_Advanced_Huohuo_Passive",
+                        "modifiers": [],
+                        "owner_id": "enemy:target",
+                        "remaining_duration": 1.0,
+                        "source_id": "validation:v0_217",
+                        "source_trace": {
+                          "modifier_name": "MAvatar_Advanced_Huohuo_Passive",
+                          "validation": "v0_217"
+                        },
+                        "stacks": 1,
+                        "status_id": "modifier:MAvatar_Advanced_Huohuo_Passive",
+                        "trigger_ids_by_event": {},
+                        "unsupported": []
+                      }
+                    ],
+                    "weaknesses": [
+                      "Fire",
+                      "Thunder"
+                    ]
+                  },
+                  "hp": 10000.0,
+                  "level": 80,
+                  "max_energy": 0.0,
+                  "max_hp": 10000.0,
+                  "max_toughness": 60.0,
+                  "modifiers": [],
+                  "position": 1,
+                  "recoverable_hp": 0.0,
+                  "resources": {},
+                  "shield": 0.0,
+                  "side": "enemy",
+                  "speed": 100.0,
+                  "status_details": [
+                    {
+                      "caster_id": "enemy:target",
+                      "duration": 1.0,
+                      "dynamic_values": {},
+                      "instance_id": "validation:v0_217:enemy:target:MAvatar_Advanced_Huohuo_Passive",
+                      "lifecycle_state": "active",
+                      "modifier_name": "MAvatar_Advanced_Huohuo_Passive",
+                      "modifiers": [],
+                      "owner_id": "enemy:target",
+                      "remaining_duration": 1.0,
+                      "source_id": "validation:v0_217",
+                      "source_trace": {
+                        "modifier_name": "MAvatar_Advanced_Huohuo_Passive",
+                        "validation": "v0_217"
+                      },
+                      "stacks": 1,
+                      "status_id": "modifier:MAvatar_Advanced_Huohuo_Passive",
+                      "trigger_ids_by_event": {},
+                      "unsupported": []
+                    }
+                  ],
+                  "statuses": [],
+                  "template_id": "monster:1002011",
+                  "template_source": {
+                    "id": "monster:1002011",
+                    "kind": "monster"
+                  },
+                  "toughness": 60.0,
+                  "toughness_state": {
+                    "break_delay": 0.0,
+                    "broken": false,
+                    "current": 60.0,
+                    "maximum": 60.0,
+                    "weakness_locked": false,
+                    "weaknesses": [
+                      "Fire",
+                      "Thunder"
+                    ]
+                  },
+                  "unit_id": "enemy:target"
+                }
+              },
+              "wave_index": 0
+            }
+          }
+        },
+        "ByAttackType": {
+          "condition": {
+            "condition_id": "condition:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_BlackSwan_00_Ability.json:M_Advanced_BlackSwan_P01_ListenAddPoison_SubOnEnemy:2:0:ByAttackType",
+            "coverage_status": "executable",
+            "opcode": "ByAttackType",
+            "payload": {
+              "AttackTypes": [
+                "DOT"
+              ],
+              "TargetType": {
+                "$type": "RPG.GameCore.TargetAlias",
+                "Alias": "ParamEntity"
+              }
+            },
+            "source": {
+              "evidence": {
+                "branch": "callback",
+                "callback_index": 2,
+                "task_index": 0
+              },
+              "raw_id": "M_Advanced_BlackSwan_P01_ListenAddPoison_SubOnEnemy",
+              "raw_type": "Modifiers",
+              "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_BlackSwan_00_Ability.json"
+            }
+          },
+          "result": {
+            "condition_id": "condition:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_BlackSwan_00_Ability.json:M_Advanced_BlackSwan_P01_ListenAddPoison_SubOnEnemy:2:0:ByAttackType",
+            "details": {
+              "actual": "Normal",
+              "expected": [
+                "DOT"
+              ]
+            },
+            "ok": true,
+            "opcode": "ByAttackType",
+            "reason": "attack_type_compared",
+            "result": false,
+            "source_trace": {
+              "evidence": {
+                "branch": "callback",
+                "callback_index": 2,
+                "task_index": 0
+              },
+              "raw_id": "M_Advanced_BlackSwan_P01_ListenAddPoison_SubOnEnemy",
+              "raw_type": "Modifiers",
+              "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_BlackSwan_00_Ability.json"
+            }
+          },
+          "selection": {
+            "coverage_status": "executable",
+            "opcode": "ByAttackType",
+            "payload_keys": [
+              "AttackTypes",
+              "TargetType"
+            ],
+            "selection_mode": "structured_predicate",
+            "source_trace": {
+              "evidence": {
+                "branch": "callback",
+                "callback_index": 2,
+                "task_index": 0
+              },
+              "raw_id": "M_Advanced_BlackSwan_P01_ListenAddPoison_SubOnEnemy",
+              "raw_type": "Modifiers",
+              "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_BlackSwan_00_Ability.json"
+            }
+          },
+          "state": {
+            "snapshot": {
+              "battle": {
+                "action_index": 0,
+                "current_window": "idle",
+                "phase": "scenario",
+                "turn_owner_id": "ally:saber",
+                "wave_index": 0
+              },
+              "coverage": {},
+              "event_index": 0,
+              "global_flags": {
+                "current_window": "idle",
+                "dynamic_value_store": {
+                  "by_hash": {},
+                  "by_name": {},
+                  "entries": {}
+                },
+                "phase": "scenario",
+                "turn_owner_id": "ally:saber"
+              },
+              "max_skill_points": 5,
+              "metadata": {
+                "rng_state": "deterministic",
+                "snapshot_contract": "v0_203"
+              },
+              "pending_events": [],
+              "queues": {},
+              "resources": {
+                "max_skill_points": 5,
+                "skill_points": 3
+              },
+              "rng_events": [],
+              "rng_state": "deterministic",
+              "settlement": {},
+              "skill_points": 3,
+              "targeting": {},
+              "teams": {
+                "ally": [
+                  "ally:saber"
+                ],
+                "enemy": [
+                  "enemy:target"
+                ],
+                "summon": []
+              },
+              "timeline": {
+                "action_values": {
+                  "ally:saber": 0.0,
+                  "enemy:target": 0.0
+                },
+                "queues": {},
+                "turn_owner_id": "ally:saber"
+              },
+              "units": {
+                "ally:saber": {
+                  "action_value": 0.0,
+                  "attack": 3200.0,
+                  "base_stats": {
+                    "attack": 3200.0,
+                    "defense": 900.0,
+                    "max_hp": 3000.0,
+                    "speed": 101.0
+                  },
+                  "defense": 900.0,
+                  "derived_stats": {
+                    "break_damage_added_ratio": 0.0,
+                    "critical_chance": 0.05,
+                    "critical_damage": 0.5,
+                    "damage_added_ratio": 0.0,
+                    "effect_hit_rate": 0.0,
+                    "effect_resistance": 0.0
+                  },
+                  "energy": 60.0,
+                  "flags": {
+                    "position": 1,
+                    "status_details": [
+                      {
+                        "caster_id": "ally:saber",
+                        "duration": 1.0,
+                        "dynamic_values": {},
+                        "instance_id": "validation:v0_217:ally:saber:M_Advanced_BlackSwan_P01_ListenAddPoison_SubOnEnemy",
+                        "lifecycle_state": "active",
+                        "modifier_name": "M_Advanced_BlackSwan_P01_ListenAddPoison_SubOnEnemy",
+                        "modifiers": [],
+                        "owner_id": "ally:saber",
+                        "remaining_duration": 1.0,
+                        "source_id": "validation:v0_217",
+                        "source_trace": {
+                          "modifier_name": "M_Advanced_BlackSwan_P01_ListenAddPoison_SubOnEnemy",
+                          "validation": "v0_217"
+                        },
+                        "stacks": 1,
+                        "status_id": "modifier:M_Advanced_BlackSwan_P01_ListenAddPoison_SubOnEnemy",
+                        "trigger_ids_by_event": {},
+                        "unsupported": []
+                      }
+                    ]
+                  },
+                  "hp": 3000.0,
+                  "level": 80,
+                  "max_energy": 120.0,
+                  "max_hp": 3000.0,
+                  "max_toughness": 0.0,
+                  "modifiers": [],
+                  "position": 1,
+                  "recoverable_hp": 0.0,
+                  "resources": {
+                    "critical_chance": 0.05,
+                    "critical_damage": 0.5
+                  },
+                  "shield": 0.0,
+                  "side": "ally",
+                  "speed": 101.0,
+                  "status_details": [
+                    {
+                      "caster_id": "ally:saber",
+                      "duration": 1.0,
+                      "dynamic_values": {},
+                      "instance_id": "validation:v0_217:ally:saber:M_Advanced_BlackSwan_P01_ListenAddPoison_SubOnEnemy",
+                      "lifecycle_state": "active",
+                      "modifier_name": "M_Advanced_BlackSwan_P01_ListenAddPoison_SubOnEnemy",
+                      "modifiers": [],
+                      "owner_id": "ally:saber",
+                      "remaining_duration": 1.0,
+                      "source_id": "validation:v0_217",
+                      "source_trace": {
+                        "modifier_name": "M_Advanced_BlackSwan_P01_ListenAddPoison_SubOnEnemy",
+                        "validation": "v0_217"
+                      },
+                      "stacks": 1,
+                      "status_id": "modifier:M_Advanced_BlackSwan_P01_ListenAddPoison_SubOnEnemy",
+                      "trigger_ids_by_event": {},
+                      "unsupported": []
+                    }
+                  ],
+                  "statuses": [],
+                  "template_id": "avatar:1014",
+                  "template_source": {
+                    "id": "avatar:1014",
+                    "kind": "avatar"
+                  },
+                  "toughness": 0.0,
+                  "toughness_state": {
+                    "break_delay": 0.0,
+                    "broken": false,
+                    "current": 0.0,
+                    "maximum": 0.0,
+                    "weakness_locked": false,
+                    "weaknesses": []
+                  },
+                  "unit_id": "ally:saber"
+                },
+                "enemy:target": {
+                  "action_value": 0.0,
+                  "attack": 1000.0,
+                  "base_stats": {
+                    "attack": 1000.0,
+                    "defense": 1000.0,
+                    "max_hp": 10000.0,
+                    "speed": 100.0
+                  },
+                  "defense": 1000.0,
+                  "derived_stats": {
+                    "break_damage_added_ratio": 0.0,
+                    "critical_chance": 0.0,
+                    "critical_damage": 0.0,
+                    "damage_added_ratio": 0.0,
+                    "effect_hit_rate": 0.0,
+                    "effect_resistance": 0.0
+                  },
+                  "energy": 0.0,
+                  "flags": {
+                    "position": 1,
+                    "status_details": [
+                      {
+                        "caster_id": "enemy:target",
+                        "duration": 1.0,
+                        "dynamic_values": {},
+                        "instance_id": "validation:v0_217:enemy:target:M_Advanced_BlackSwan_P01_ListenAddPoison_SubOnEnemy",
+                        "lifecycle_state": "active",
+                        "modifier_name": "M_Advanced_BlackSwan_P01_ListenAddPoison_SubOnEnemy",
+                        "modifiers": [],
+                        "owner_id": "enemy:target",
+                        "remaining_duration": 1.0,
+                        "source_id": "validation:v0_217",
+                        "source_trace": {
+                          "modifier_name": "M_Advanced_BlackSwan_P01_ListenAddPoison_SubOnEnemy",
+                          "validation": "v0_217"
+                        },
+                        "stacks": 1,
+                        "status_id": "modifier:M_Advanced_BlackSwan_P01_ListenAddPoison_SubOnEnemy",
+                        "trigger_ids_by_event": {},
+                        "unsupported": []
+                      }
+                    ],
+                    "weaknesses": [
+                      "Fire",
+                      "Thunder"
+                    ]
+                  },
+                  "hp": 10000.0,
+                  "level": 80,
+                  "max_energy": 0.0,
+                  "max_hp": 10000.0,
+                  "max_toughness": 60.0,
+                  "modifiers": [],
+                  "position": 1,
+                  "recoverable_hp": 0.0,
+                  "resources": {},
+                  "shield": 0.0,
+                  "side": "enemy",
+                  "speed": 100.0,
+                  "status_details": [
+                    {
+                      "caster_id": "enemy:target",
+                      "duration": 1.0,
+                      "dynamic_values": {},
+                      "instance_id": "validation:v0_217:enemy:target:M_Advanced_BlackSwan_P01_ListenAddPoison_SubOnEnemy",
+                      "lifecycle_state": "active",
+                      "modifier_name": "M_Advanced_BlackSwan_P01_ListenAddPoison_SubOnEnemy",
+                      "modifiers": [],
+                      "owner_id": "enemy:target",
+                      "remaining_duration": 1.0,
+                      "source_id": "validation:v0_217",
+                      "source_trace": {
+                        "modifier_name": "M_Advanced_BlackSwan_P01_ListenAddPoison_SubOnEnemy",
+                        "validation": "v0_217"
+                      },
+                      "stacks": 1,
+                      "status_id": "modifier:M_Advanced_BlackSwan_P01_ListenAddPoison_SubOnEnemy",
+                      "trigger_ids_by_event": {},
+                      "unsupported": []
+                    }
+                  ],
+                  "statuses": [],
+                  "template_id": "monster:1002011",
+                  "template_source": {
+                    "id": "monster:1002011",
+                    "kind": "monster"
+                  },
+                  "toughness": 60.0,
+                  "toughness_state": {
+                    "break_delay": 0.0,
+                    "broken": false,
+                    "current": 60.0,
+                    "maximum": 60.0,
+                    "weakness_locked": false,
+                    "weaknesses": [
+                      "Fire",
+                      "Thunder"
+                    ]
+                  },
+                  "unit_id": "enemy:target"
+                }
+              },
+              "wave_index": 0
+            }
+          }
+        },
+        "ByCompareDynamicValue": {
+          "condition": {
+            "condition_id": "condition:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Jingliu_00_Ability.json:MAvatar_Advanced_Jingliu_Passive:13:0:ByCompareDynamicValue",
+            "coverage_status": "executable",
+            "opcode": "ByCompareDynamicValue",
+            "payload": {
+              "CompareType": "Equal",
+              "CompareValue": {
+                "FixedValue": {
+                  "Value": 1
+                },
+                "IsDynamic": false
+              },
+              "DynamicKey": {
+                "Value": "LoseHPTrigger"
+              },
+              "Inverse": true,
+              "TargetType": {
+                "$type": "RPG.GameCore.TargetAlias",
+                "Alias": "ParamEntity"
+              }
+            },
+            "source": {
+              "evidence": {
+                "branch": "success",
+                "callback_index": 13,
+                "task_index": 0
+              },
+              "raw_id": "MAvatar_Advanced_Jingliu_Passive",
+              "raw_type": "GlobalModifiers",
+              "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Jingliu_00_Ability.json"
+            }
+          },
+          "result": {
+            "condition_id": "condition:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Jingliu_00_Ability.json:MAvatar_Advanced_Jingliu_Passive:13:0:ByCompareDynamicValue",
+            "details": {
+              "positive": {
+                "condition_id": "condition:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Jingliu_00_Ability.json:MAvatar_Advanced_Jingliu_Passive:13:0:ByCompareDynamicValue",
+                "details": {
+                  "actual": 1.0,
+                  "compare_type": "Equal",
+                  "expected": 1.0
+                },
+                "ok": true,
+                "opcode": "ByCompareDynamicValue",
+                "reason": "numeric_comparison",
+                "result": true,
+                "source_trace": {
+                  "evidence": {
+                    "branch": "success",
+                    "callback_index": 13,
+                    "task_index": 0
+                  },
+                  "raw_id": "MAvatar_Advanced_Jingliu_Passive",
+                  "raw_type": "GlobalModifiers",
+                  "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Jingliu_00_Ability.json"
+                }
+              }
+            },
+            "ok": true,
+            "opcode": "ByCompareDynamicValue",
+            "reason": "inverted:numeric_comparison",
+            "result": false,
+            "source_trace": {
+              "evidence": {
+                "branch": "success",
+                "callback_index": 13,
+                "task_index": 0
+              },
+              "raw_id": "MAvatar_Advanced_Jingliu_Passive",
+              "raw_type": "GlobalModifiers",
+              "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Jingliu_00_Ability.json"
+            }
+          },
+          "selection": {
+            "coverage_status": "executable",
+            "opcode": "ByCompareDynamicValue",
+            "payload_keys": [
+              "CompareType",
+              "CompareValue",
+              "DynamicKey",
+              "Inverse",
+              "TargetType"
+            ],
+            "selection_mode": "structured_predicate",
+            "source_trace": {
+              "evidence": {
+                "branch": "success",
+                "callback_index": 13,
+                "task_index": 0
+              },
+              "raw_id": "MAvatar_Advanced_Jingliu_Passive",
+              "raw_type": "GlobalModifiers",
+              "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Jingliu_00_Ability.json"
+            }
+          },
+          "state": {
+            "snapshot": {
+              "battle": {
+                "action_index": 0,
+                "current_window": "idle",
+                "phase": "scenario",
+                "turn_owner_id": "ally:saber",
+                "wave_index": 0
+              },
+              "coverage": {},
+              "event_index": 0,
+              "global_flags": {
+                "current_window": "idle",
+                "dynamic_value_store": {
+                  "by_hash": {},
+                  "by_name": {
+                    "LoseHPTrigger": [
+                      "dyn:0ca00fd4f7103ff9"
+                    ]
+                  },
+                  "entries": {
+                    "dyn:0ca00fd4f7103ff9": {
+                      "effect_id": null,
+                      "hash": null,
+                      "name": "LoseHPTrigger",
+                      "owner_id": "ally:saber",
+                      "scope": "condition_validation",
+                      "source_trace": {
+                        "condition_payload": {
+                          "CompareType": "Equal",
+                          "CompareValue": {
+                            "FixedValue": {
+                              "Value": 1
+                            },
+                            "IsDynamic": false
+                          },
+                          "DynamicKey": {
+                            "Value": "LoseHPTrigger"
+                          },
+                          "Inverse": true,
+                          "TargetType": {
+                            "$type": "RPG.GameCore.TargetAlias",
+                            "Alias": "ParamEntity"
+                          }
+                        },
+                        "validation": "v0_217"
+                      },
+                      "status_id": null,
+                      "status_instance_id": null,
+                      "value": 1.0
+                    }
+                  }
+                },
+                "phase": "scenario",
+                "turn_owner_id": "ally:saber"
+              },
+              "max_skill_points": 5,
+              "metadata": {
+                "rng_state": "deterministic",
+                "snapshot_contract": "v0_203"
+              },
+              "pending_events": [],
+              "queues": {},
+              "resources": {
+                "max_skill_points": 5,
+                "skill_points": 3
+              },
+              "rng_events": [],
+              "rng_state": "deterministic",
+              "settlement": {},
+              "skill_points": 3,
+              "targeting": {},
+              "teams": {
+                "ally": [
+                  "ally:saber"
+                ],
+                "enemy": [
+                  "enemy:target"
+                ],
+                "summon": []
+              },
+              "timeline": {
+                "action_values": {
+                  "ally:saber": 0.0,
+                  "enemy:target": 0.0
+                },
+                "queues": {},
+                "turn_owner_id": "ally:saber"
+              },
+              "units": {
+                "ally:saber": {
+                  "action_value": 0.0,
+                  "attack": 3200.0,
+                  "base_stats": {
+                    "attack": 3200.0,
+                    "defense": 900.0,
+                    "max_hp": 3000.0,
+                    "speed": 101.0
+                  },
+                  "defense": 900.0,
+                  "derived_stats": {
+                    "break_damage_added_ratio": 0.0,
+                    "critical_chance": 0.05,
+                    "critical_damage": 0.5,
+                    "damage_added_ratio": 0.0,
+                    "effect_hit_rate": 0.0,
+                    "effect_resistance": 0.0
+                  },
+                  "energy": 60.0,
+                  "flags": {
+                    "position": 1,
+                    "status_details": [
+                      {
+                        "caster_id": "ally:saber",
+                        "duration": 1.0,
+                        "dynamic_values": {},
+                        "instance_id": "validation:v0_217:ally:saber:MAvatar_Advanced_Jingliu_Passive",
+                        "lifecycle_state": "active",
+                        "modifier_name": "MAvatar_Advanced_Jingliu_Passive",
+                        "modifiers": [],
+                        "owner_id": "ally:saber",
+                        "remaining_duration": 1.0,
+                        "source_id": "validation:v0_217",
+                        "source_trace": {
+                          "modifier_name": "MAvatar_Advanced_Jingliu_Passive",
+                          "validation": "v0_217"
+                        },
+                        "stacks": 1,
+                        "status_id": "modifier:MAvatar_Advanced_Jingliu_Passive",
+                        "trigger_ids_by_event": {},
+                        "unsupported": []
+                      }
+                    ]
+                  },
+                  "hp": 3000.0,
+                  "level": 80,
+                  "max_energy": 120.0,
+                  "max_hp": 3000.0,
+                  "max_toughness": 0.0,
+                  "modifiers": [],
+                  "position": 1,
+                  "recoverable_hp": 0.0,
+                  "resources": {
+                    "critical_chance": 0.05,
+                    "critical_damage": 0.5
+                  },
+                  "shield": 0.0,
+                  "side": "ally",
+                  "speed": 101.0,
+                  "status_details": [
+                    {
+                      "caster_id": "ally:saber",
+                      "duration": 1.0,
+                      "dynamic_values": {},
+                      "instance_id": "validation:v0_217:ally:saber:MAvatar_Advanced_Jingliu_Passive",
+                      "lifecycle_state": "active",
+                      "modifier_name": "MAvatar_Advanced_Jingliu_Passive",
+                      "modifiers": [],
+                      "owner_id": "ally:saber",
+                      "remaining_duration": 1.0,
+                      "source_id": "validation:v0_217",
+                      "source_trace": {
+                        "modifier_name": "MAvatar_Advanced_Jingliu_Passive",
+                        "validation": "v0_217"
+                      },
+                      "stacks": 1,
+                      "status_id": "modifier:MAvatar_Advanced_Jingliu_Passive",
+                      "trigger_ids_by_event": {},
+                      "unsupported": []
+                    }
+                  ],
+                  "statuses": [],
+                  "template_id": "avatar:1014",
+                  "template_source": {
+                    "id": "avatar:1014",
+                    "kind": "avatar"
+                  },
+                  "toughness": 0.0,
+                  "toughness_state": {
+                    "break_delay": 0.0,
+                    "broken": false,
+                    "current": 0.0,
+                    "maximum": 0.0,
+                    "weakness_locked": false,
+                    "weaknesses": []
+                  },
+                  "unit_id": "ally:saber"
+                },
+                "enemy:target": {
+                  "action_value": 0.0,
+                  "attack": 1000.0,
+                  "base_stats": {
+                    "attack": 1000.0,
+                    "defense": 1000.0,
+                    "max_hp": 10000.0,
+                    "speed": 100.0
+                  },
+                  "defense": 1000.0,
+                  "derived_stats": {
+                    "break_damage_added_ratio": 0.0,
+                    "critical_chance": 0.0,
+                    "critical_damage": 0.0,
+                    "damage_added_ratio": 0.0,
+                    "effect_hit_rate": 0.0,
+                    "effect_resistance": 0.0
+                  },
+                  "energy": 0.0,
+                  "flags": {
+                    "position": 1,
+                    "status_details": [
+                      {
+                        "caster_id": "enemy:target",
+                        "duration": 1.0,
+                        "dynamic_values": {},
+                        "instance_id": "validation:v0_217:enemy:target:MAvatar_Advanced_Jingliu_Passive",
+                        "lifecycle_state": "active",
+                        "modifier_name": "MAvatar_Advanced_Jingliu_Passive",
+                        "modifiers": [],
+                        "owner_id": "enemy:target",
+                        "remaining_duration": 1.0,
+                        "source_id": "validation:v0_217",
+                        "source_trace": {
+                          "modifier_name": "MAvatar_Advanced_Jingliu_Passive",
+                          "validation": "v0_217"
+                        },
+                        "stacks": 1,
+                        "status_id": "modifier:MAvatar_Advanced_Jingliu_Passive",
+                        "trigger_ids_by_event": {},
+                        "unsupported": []
+                      }
+                    ],
+                    "weaknesses": [
+                      "Fire",
+                      "Thunder"
+                    ]
+                  },
+                  "hp": 10000.0,
+                  "level": 80,
+                  "max_energy": 0.0,
+                  "max_hp": 10000.0,
+                  "max_toughness": 60.0,
+                  "modifiers": [],
+                  "position": 1,
+                  "recoverable_hp": 0.0,
+                  "resources": {},
+                  "shield": 0.0,
+                  "side": "enemy",
+                  "speed": 100.0,
+                  "status_details": [
+                    {
+                      "caster_id": "enemy:target",
+                      "duration": 1.0,
+                      "dynamic_values": {},
+                      "instance_id": "validation:v0_217:enemy:target:MAvatar_Advanced_Jingliu_Passive",
+                      "lifecycle_state": "active",
+                      "modifier_name": "MAvatar_Advanced_Jingliu_Passive",
+                      "modifiers": [],
+                      "owner_id": "enemy:target",
+                      "remaining_duration": 1.0,
+                      "source_id": "validation:v0_217",
+                      "source_trace": {
+                        "modifier_name": "MAvatar_Advanced_Jingliu_Passive",
+                        "validation": "v0_217"
+                      },
+                      "stacks": 1,
+                      "status_id": "modifier:MAvatar_Advanced_Jingliu_Passive",
+                      "trigger_ids_by_event": {},
+                      "unsupported": []
+                    }
+                  ],
+                  "statuses": [],
+                  "template_id": "monster:1002011",
+                  "template_source": {
+                    "id": "monster:1002011",
+                    "kind": "monster"
+                  },
+                  "toughness": 60.0,
+                  "toughness_state": {
+                    "break_delay": 0.0,
+                    "broken": false,
+                    "current": 60.0,
+                    "maximum": 60.0,
+                    "weakness_locked": false,
+                    "weaknesses": [
+                      "Fire",
+                      "Thunder"
+                    ]
+                  },
+                  "unit_id": "enemy:target"
+                }
+              },
+              "wave_index": 0
+            }
+          }
+        },
+        "ByCompareHPRatio": {
+          "condition": {
+            "condition_id": "condition:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Ren_00_Ability.json:MAvatar_Advanced_Ren_LoseHPPreShow:27:3:ByCompareHPRatio",
+            "coverage_status": "executable",
+            "opcode": "ByCompareHPRatio",
+            "payload": {
+              "CompareType": "GreaterEqual",
+              "CompareValue": {
+                "FixedValue": {
+                  "Value": 0.5
+                },
+                "IsDynamic": false
+              },
+              "TargetType": {
+                "$type": "RPG.GameCore.TargetAlias",
+                "Alias": "ModifierOwnerEntity"
+              }
+            },
+            "source": {
+              "evidence": {
+                "branch": "success",
+                "callback_index": 27,
+                "task_index": 3
+              },
+              "raw_id": "MAvatar_Advanced_Ren_LoseHPPreShow",
+              "raw_type": "GlobalModifiers",
+              "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Ren_00_Ability.json"
+            }
+          },
+          "result": {
+            "condition_id": "condition:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Ren_00_Ability.json:MAvatar_Advanced_Ren_LoseHPPreShow:27:3:ByCompareHPRatio",
+            "details": {
+              "actual": 1.0,
+              "compare_type": "GreaterEqual",
+              "expected": 0.5
+            },
+            "ok": true,
+            "opcode": "ByCompareHPRatio",
+            "reason": "numeric_comparison",
+            "result": true,
+            "source_trace": {
+              "evidence": {
+                "branch": "success",
+                "callback_index": 27,
+                "task_index": 3
+              },
+              "raw_id": "MAvatar_Advanced_Ren_LoseHPPreShow",
+              "raw_type": "GlobalModifiers",
+              "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Ren_00_Ability.json"
+            }
+          },
+          "selection": {
+            "coverage_status": "executable",
+            "opcode": "ByCompareHPRatio",
+            "payload_keys": [
+              "CompareType",
+              "CompareValue",
+              "TargetType"
+            ],
+            "selection_mode": "structured_predicate",
+            "source_trace": {
+              "evidence": {
+                "branch": "success",
+                "callback_index": 27,
+                "task_index": 3
+              },
+              "raw_id": "MAvatar_Advanced_Ren_LoseHPPreShow",
+              "raw_type": "GlobalModifiers",
+              "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Ren_00_Ability.json"
+            }
+          },
+          "state": {
+            "snapshot": {
+              "battle": {
+                "action_index": 0,
+                "current_window": "idle",
+                "phase": "scenario",
+                "turn_owner_id": "ally:saber",
+                "wave_index": 0
+              },
+              "coverage": {},
+              "event_index": 0,
+              "global_flags": {
+                "current_window": "idle",
+                "dynamic_value_store": {
+                  "by_hash": {},
+                  "by_name": {},
+                  "entries": {}
+                },
+                "phase": "scenario",
+                "turn_owner_id": "ally:saber"
+              },
+              "max_skill_points": 5,
+              "metadata": {
+                "rng_state": "deterministic",
+                "snapshot_contract": "v0_203"
+              },
+              "pending_events": [],
+              "queues": {},
+              "resources": {
+                "max_skill_points": 5,
+                "skill_points": 3
+              },
+              "rng_events": [],
+              "rng_state": "deterministic",
+              "settlement": {},
+              "skill_points": 3,
+              "targeting": {},
+              "teams": {
+                "ally": [
+                  "ally:saber"
+                ],
+                "enemy": [
+                  "enemy:target"
+                ],
+                "summon": []
+              },
+              "timeline": {
+                "action_values": {
+                  "ally:saber": 0.0,
+                  "enemy:target": 0.0
+                },
+                "queues": {},
+                "turn_owner_id": "ally:saber"
+              },
+              "units": {
+                "ally:saber": {
+                  "action_value": 0.0,
+                  "attack": 3200.0,
+                  "base_stats": {
+                    "attack": 3200.0,
+                    "defense": 900.0,
+                    "max_hp": 3000.0,
+                    "speed": 101.0
+                  },
+                  "defense": 900.0,
+                  "derived_stats": {
+                    "break_damage_added_ratio": 0.0,
+                    "critical_chance": 0.05,
+                    "critical_damage": 0.5,
+                    "damage_added_ratio": 0.0,
+                    "effect_hit_rate": 0.0,
+                    "effect_resistance": 0.0
+                  },
+                  "energy": 60.0,
+                  "flags": {
+                    "position": 1,
+                    "status_details": [
+                      {
+                        "caster_id": "ally:saber",
+                        "duration": 1.0,
+                        "dynamic_values": {},
+                        "instance_id": "validation:v0_217:ally:saber:MAvatar_Advanced_Ren_LoseHPPreShow",
+                        "lifecycle_state": "active",
+                        "modifier_name": "MAvatar_Advanced_Ren_LoseHPPreShow",
+                        "modifiers": [],
+                        "owner_id": "ally:saber",
+                        "remaining_duration": 1.0,
+                        "source_id": "validation:v0_217",
+                        "source_trace": {
+                          "modifier_name": "MAvatar_Advanced_Ren_LoseHPPreShow",
+                          "validation": "v0_217"
+                        },
+                        "stacks": 1,
+                        "status_id": "modifier:MAvatar_Advanced_Ren_LoseHPPreShow",
+                        "trigger_ids_by_event": {},
+                        "unsupported": []
+                      }
+                    ]
+                  },
+                  "hp": 3000.0,
+                  "level": 80,
+                  "max_energy": 120.0,
+                  "max_hp": 3000.0,
+                  "max_toughness": 0.0,
+                  "modifiers": [],
+                  "position": 1,
+                  "recoverable_hp": 0.0,
+                  "resources": {
+                    "critical_chance": 0.05,
+                    "critical_damage": 0.5
+                  },
+                  "shield": 0.0,
+                  "side": "ally",
+                  "speed": 101.0,
+                  "status_details": [
+                    {
+                      "caster_id": "ally:saber",
+                      "duration": 1.0,
+                      "dynamic_values": {},
+                      "instance_id": "validation:v0_217:ally:saber:MAvatar_Advanced_Ren_LoseHPPreShow",
+                      "lifecycle_state": "active",
+                      "modifier_name": "MAvatar_Advanced_Ren_LoseHPPreShow",
+                      "modifiers": [],
+                      "owner_id": "ally:saber",
+                      "remaining_duration": 1.0,
+                      "source_id": "validation:v0_217",
+                      "source_trace": {
+                        "modifier_name": "MAvatar_Advanced_Ren_LoseHPPreShow",
+                        "validation": "v0_217"
+                      },
+                      "stacks": 1,
+                      "status_id": "modifier:MAvatar_Advanced_Ren_LoseHPPreShow",
+                      "trigger_ids_by_event": {},
+                      "unsupported": []
+                    }
+                  ],
+                  "statuses": [],
+                  "template_id": "avatar:1014",
+                  "template_source": {
+                    "id": "avatar:1014",
+                    "kind": "avatar"
+                  },
+                  "toughness": 0.0,
+                  "toughness_state": {
+                    "break_delay": 0.0,
+                    "broken": false,
+                    "current": 0.0,
+                    "maximum": 0.0,
+                    "weakness_locked": false,
+                    "weaknesses": []
+                  },
+                  "unit_id": "ally:saber"
+                },
+                "enemy:target": {
+                  "action_value": 0.0,
+                  "attack": 1000.0,
+                  "base_stats": {
+                    "attack": 1000.0,
+                    "defense": 1000.0,
+                    "max_hp": 10000.0,
+                    "speed": 100.0
+                  },
+                  "defense": 1000.0,
+                  "derived_stats": {
+                    "break_damage_added_ratio": 0.0,
+                    "critical_chance": 0.0,
+                    "critical_damage": 0.0,
+                    "damage_added_ratio": 0.0,
+                    "effect_hit_rate": 0.0,
+                    "effect_resistance": 0.0
+                  },
+                  "energy": 0.0,
+                  "flags": {
+                    "position": 1,
+                    "status_details": [
+                      {
+                        "caster_id": "enemy:target",
+                        "duration": 1.0,
+                        "dynamic_values": {},
+                        "instance_id": "validation:v0_217:enemy:target:MAvatar_Advanced_Ren_LoseHPPreShow",
+                        "lifecycle_state": "active",
+                        "modifier_name": "MAvatar_Advanced_Ren_LoseHPPreShow",
+                        "modifiers": [],
+                        "owner_id": "enemy:target",
+                        "remaining_duration": 1.0,
+                        "source_id": "validation:v0_217",
+                        "source_trace": {
+                          "modifier_name": "MAvatar_Advanced_Ren_LoseHPPreShow",
+                          "validation": "v0_217"
+                        },
+                        "stacks": 1,
+                        "status_id": "modifier:MAvatar_Advanced_Ren_LoseHPPreShow",
+                        "trigger_ids_by_event": {},
+                        "unsupported": []
+                      }
+                    ],
+                    "weaknesses": [
+                      "Fire",
+                      "Thunder"
+                    ]
+                  },
+                  "hp": 10000.0,
+                  "level": 80,
+                  "max_energy": 0.0,
+                  "max_hp": 10000.0,
+                  "max_toughness": 60.0,
+                  "modifiers": [],
+                  "position": 1,
+                  "recoverable_hp": 0.0,
+                  "resources": {},
+                  "shield": 0.0,
+                  "side": "enemy",
+                  "speed": 100.0,
+                  "status_details": [
+                    {
+                      "caster_id": "enemy:target",
+                      "duration": 1.0,
+                      "dynamic_values": {},
+                      "instance_id": "validation:v0_217:enemy:target:MAvatar_Advanced_Ren_LoseHPPreShow",
+                      "lifecycle_state": "active",
+                      "modifier_name": "MAvatar_Advanced_Ren_LoseHPPreShow",
+                      "modifiers": [],
+                      "owner_id": "enemy:target",
+                      "remaining_duration": 1.0,
+                      "source_id": "validation:v0_217",
+                      "source_trace": {
+                        "modifier_name": "MAvatar_Advanced_Ren_LoseHPPreShow",
+                        "validation": "v0_217"
+                      },
+                      "stacks": 1,
+                      "status_id": "modifier:MAvatar_Advanced_Ren_LoseHPPreShow",
+                      "trigger_ids_by_event": {},
+                      "unsupported": []
+                    }
+                  ],
+                  "statuses": [],
+                  "template_id": "monster:1002011",
+                  "template_source": {
+                    "id": "monster:1002011",
+                    "kind": "monster"
+                  },
+                  "toughness": 60.0,
+                  "toughness_state": {
+                    "break_delay": 0.0,
+                    "broken": false,
+                    "current": 60.0,
+                    "maximum": 60.0,
+                    "weakness_locked": false,
+                    "weaknesses": [
+                      "Fire",
+                      "Thunder"
+                    ]
+                  },
+                  "unit_id": "enemy:target"
+                }
+              },
+              "wave_index": 0
+            }
+          }
+        },
+        "ByCompareModifierValue": {
+          "condition": {
+            "condition_id": "condition:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Jingliu_00_Ability.json:SkillMaze_Jingliu_Modifier_Frozen:7:4:ByCompareModifierValue",
+            "coverage_status": "executable",
+            "opcode": "ByCompareModifierValue",
+            "payload": {
+              "CompareType": "Equal",
+              "CompareValue": {
+                "FixedValue": {
+                  "Value": 1
+                },
+                "IsDynamic": false
+              },
+              "TargetType": {
+                "$type": "RPG.GameCore.TargetAlias",
+                "Alias": "ModifierOwnerEntity"
+              },
+              "ValueType": "LifeTime"
+            },
+            "source": {
+              "evidence": {
+                "branch": "callback",
+                "callback_index": 7,
+                "task_index": 4
+              },
+              "raw_id": "SkillMaze_Jingliu_Modifier_Frozen",
+              "raw_type": "Modifiers",
+              "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Jingliu_00_Ability.json"
+            }
+          },
+          "result": {
+            "condition_id": "condition:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Jingliu_00_Ability.json:SkillMaze_Jingliu_Modifier_Frozen:7:4:ByCompareModifierValue",
+            "details": {
+              "actual": 1.0,
+              "compare_type": "Equal",
+              "expected": 1.0
+            },
+            "ok": true,
+            "opcode": "ByCompareModifierValue",
+            "reason": "numeric_comparison",
+            "result": true,
+            "source_trace": {
+              "evidence": {
+                "branch": "callback",
+                "callback_index": 7,
+                "task_index": 4
+              },
+              "raw_id": "SkillMaze_Jingliu_Modifier_Frozen",
+              "raw_type": "Modifiers",
+              "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Jingliu_00_Ability.json"
+            }
+          },
+          "selection": {
+            "coverage_status": "executable",
+            "opcode": "ByCompareModifierValue",
+            "payload_keys": [
+              "CompareType",
+              "CompareValue",
+              "TargetType",
+              "ValueType"
+            ],
+            "selection_mode": "structured_predicate",
+            "source_trace": {
+              "evidence": {
+                "branch": "callback",
+                "callback_index": 7,
+                "task_index": 4
+              },
+              "raw_id": "SkillMaze_Jingliu_Modifier_Frozen",
+              "raw_type": "Modifiers",
+              "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Jingliu_00_Ability.json"
+            }
+          },
+          "state": {
+            "snapshot": {
+              "battle": {
+                "action_index": 0,
+                "current_window": "idle",
+                "phase": "scenario",
+                "turn_owner_id": "ally:saber",
+                "wave_index": 0
+              },
+              "coverage": {},
+              "event_index": 0,
+              "global_flags": {
+                "current_window": "idle",
+                "dynamic_value_store": {
+                  "by_hash": {},
+                  "by_name": {},
+                  "entries": {}
+                },
+                "phase": "scenario",
+                "turn_owner_id": "ally:saber"
+              },
+              "max_skill_points": 5,
+              "metadata": {
+                "rng_state": "deterministic",
+                "snapshot_contract": "v0_203"
+              },
+              "pending_events": [],
+              "queues": {},
+              "resources": {
+                "max_skill_points": 5,
+                "skill_points": 3
+              },
+              "rng_events": [],
+              "rng_state": "deterministic",
+              "settlement": {},
+              "skill_points": 3,
+              "targeting": {},
+              "teams": {
+                "ally": [
+                  "ally:saber"
+                ],
+                "enemy": [
+                  "enemy:target"
+                ],
+                "summon": []
+              },
+              "timeline": {
+                "action_values": {
+                  "ally:saber": 0.0,
+                  "enemy:target": 0.0
+                },
+                "queues": {},
+                "turn_owner_id": "ally:saber"
+              },
+              "units": {
+                "ally:saber": {
+                  "action_value": 0.0,
+                  "attack": 3200.0,
+                  "base_stats": {
+                    "attack": 3200.0,
+                    "defense": 900.0,
+                    "max_hp": 3000.0,
+                    "speed": 101.0
+                  },
+                  "defense": 900.0,
+                  "derived_stats": {
+                    "break_damage_added_ratio": 0.0,
+                    "critical_chance": 0.05,
+                    "critical_damage": 0.5,
+                    "damage_added_ratio": 0.0,
+                    "effect_hit_rate": 0.0,
+                    "effect_resistance": 0.0
+                  },
+                  "energy": 60.0,
+                  "flags": {
+                    "position": 1,
+                    "status_details": [
+                      {
+                        "caster_id": "ally:saber",
+                        "duration": 1.0,
+                        "dynamic_values": {},
+                        "instance_id": "validation:v0_217:ally:saber:SkillMaze_Jingliu_Modifier_Frozen",
+                        "lifecycle_state": "active",
+                        "modifier_name": "SkillMaze_Jingliu_Modifier_Frozen",
+                        "modifiers": [],
+                        "owner_id": "ally:saber",
+                        "remaining_duration": 1.0,
+                        "source_id": "validation:v0_217",
+                        "source_trace": {
+                          "modifier_name": "SkillMaze_Jingliu_Modifier_Frozen",
+                          "validation": "v0_217"
+                        },
+                        "stacks": 1,
+                        "status_id": "modifier:SkillMaze_Jingliu_Modifier_Frozen",
+                        "trigger_ids_by_event": {},
+                        "unsupported": []
+                      }
+                    ]
+                  },
+                  "hp": 3000.0,
+                  "level": 80,
+                  "max_energy": 120.0,
+                  "max_hp": 3000.0,
+                  "max_toughness": 0.0,
+                  "modifiers": [],
+                  "position": 1,
+                  "recoverable_hp": 0.0,
+                  "resources": {
+                    "critical_chance": 0.05,
+                    "critical_damage": 0.5
+                  },
+                  "shield": 0.0,
+                  "side": "ally",
+                  "speed": 101.0,
+                  "status_details": [
+                    {
+                      "caster_id": "ally:saber",
+                      "duration": 1.0,
+                      "dynamic_values": {},
+                      "instance_id": "validation:v0_217:ally:saber:SkillMaze_Jingliu_Modifier_Frozen",
+                      "lifecycle_state": "active",
+                      "modifier_name": "SkillMaze_Jingliu_Modifier_Frozen",
+                      "modifiers": [],
+                      "owner_id": "ally:saber",
+                      "remaining_duration": 1.0,
+                      "source_id": "validation:v0_217",
+                      "source_trace": {
+                        "modifier_name": "SkillMaze_Jingliu_Modifier_Frozen",
+                        "validation": "v0_217"
+                      },
+                      "stacks": 1,
+                      "status_id": "modifier:SkillMaze_Jingliu_Modifier_Frozen",
+                      "trigger_ids_by_event": {},
+                      "unsupported": []
+                    }
+                  ],
+                  "statuses": [],
+                  "template_id": "avatar:1014",
+                  "template_source": {
+                    "id": "avatar:1014",
+                    "kind": "avatar"
+                  },
+                  "toughness": 0.0,
+                  "toughness_state": {
+                    "break_delay": 0.0,
+                    "broken": false,
+                    "current": 0.0,
+                    "maximum": 0.0,
+                    "weakness_locked": false,
+                    "weaknesses": []
+                  },
+                  "unit_id": "ally:saber"
+                },
+                "enemy:target": {
+                  "action_value": 0.0,
+                  "attack": 1000.0,
+                  "base_stats": {
+                    "attack": 1000.0,
+                    "defense": 1000.0,
+                    "max_hp": 10000.0,
+                    "speed": 100.0
+                  },
+                  "defense": 1000.0,
+                  "derived_stats": {
+                    "break_damage_added_ratio": 0.0,
+                    "critical_chance": 0.0,
+                    "critical_damage": 0.0,
+                    "damage_added_ratio": 0.0,
+                    "effect_hit_rate": 0.0,
+                    "effect_resistance": 0.0
+                  },
+                  "energy": 0.0,
+                  "flags": {
+                    "position": 1,
+                    "status_details": [
+                      {
+                        "caster_id": "enemy:target",
+                        "duration": 1.0,
+                        "dynamic_values": {},
+                        "instance_id": "validation:v0_217:enemy:target:SkillMaze_Jingliu_Modifier_Frozen",
+                        "lifecycle_state": "active",
+                        "modifier_name": "SkillMaze_Jingliu_Modifier_Frozen",
+                        "modifiers": [],
+                        "owner_id": "enemy:target",
+                        "remaining_duration": 1.0,
+                        "source_id": "validation:v0_217",
+                        "source_trace": {
+                          "modifier_name": "SkillMaze_Jingliu_Modifier_Frozen",
+                          "validation": "v0_217"
+                        },
+                        "stacks": 1,
+                        "status_id": "modifier:SkillMaze_Jingliu_Modifier_Frozen",
+                        "trigger_ids_by_event": {},
+                        "unsupported": []
+                      }
+                    ],
+                    "weaknesses": [
+                      "Fire",
+                      "Thunder"
+                    ]
+                  },
+                  "hp": 10000.0,
+                  "level": 80,
+                  "max_energy": 0.0,
+                  "max_hp": 10000.0,
+                  "max_toughness": 60.0,
+                  "modifiers": [],
+                  "position": 1,
+                  "recoverable_hp": 0.0,
+                  "resources": {},
+                  "shield": 0.0,
+                  "side": "enemy",
+                  "speed": 100.0,
+                  "status_details": [
+                    {
+                      "caster_id": "enemy:target",
+                      "duration": 1.0,
+                      "dynamic_values": {},
+                      "instance_id": "validation:v0_217:enemy:target:SkillMaze_Jingliu_Modifier_Frozen",
+                      "lifecycle_state": "active",
+                      "modifier_name": "SkillMaze_Jingliu_Modifier_Frozen",
+                      "modifiers": [],
+                      "owner_id": "enemy:target",
+                      "remaining_duration": 1.0,
+                      "source_id": "validation:v0_217",
+                      "source_trace": {
+                        "modifier_name": "SkillMaze_Jingliu_Modifier_Frozen",
+                        "validation": "v0_217"
+                      },
+                      "stacks": 1,
+                      "status_id": "modifier:SkillMaze_Jingliu_Modifier_Frozen",
+                      "trigger_ids_by_event": {},
+                      "unsupported": []
+                    }
+                  ],
+                  "statuses": [],
+                  "template_id": "monster:1002011",
+                  "template_source": {
+                    "id": "monster:1002011",
+                    "kind": "monster"
+                  },
+                  "toughness": 60.0,
+                  "toughness_state": {
+                    "break_delay": 0.0,
+                    "broken": false,
+                    "current": 60.0,
+                    "maximum": 60.0,
+                    "weakness_locked": false,
+                    "weaknesses": [
+                      "Fire",
+                      "Thunder"
+                    ]
+                  },
+                  "unit_id": "enemy:target"
+                }
+              },
+              "wave_index": 0
+            }
+          }
+        },
+        "ByCompareTarget": {
+          "condition": {
+            "condition_id": "condition:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_BlackSwan_00_Ability.json:M_Advanced_BlackSwan_00_SkillTree01_SubOnEnemy:5:0:ByCompareTarget",
+            "coverage_status": "executable",
+            "opcode": "ByCompareTarget",
+            "payload": {
+              "CompareType": {
+                "$type": "RPG.GameCore.TargetAlias",
+                "Alias": "Caster"
+              },
+              "TargetType": {
+                "$type": "RPG.GameCore.TargetAlias",
+                "Alias": "ParamEntity"
+              }
+            },
+            "source": {
+              "evidence": {
+                "branch": "callback",
+                "callback_index": 5,
+                "task_index": 0
+              },
+              "raw_id": "M_Advanced_BlackSwan_00_SkillTree01_SubOnEnemy",
+              "raw_type": "Modifiers",
+              "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_BlackSwan_00_Ability.json"
+            }
+          },
+          "result": {
+            "condition_id": "condition:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_BlackSwan_00_Ability.json:M_Advanced_BlackSwan_00_SkillTree01_SubOnEnemy:5:0:ByCompareTarget",
+            "details": {
+              "left_target_id": "enemy:target",
+              "right_target_id": "ally:saber"
+            },
+            "ok": true,
+            "opcode": "ByCompareTarget",
+            "reason": "target_identity_compared",
+            "result": false,
+            "source_trace": {
+              "evidence": {
+                "branch": "callback",
+                "callback_index": 5,
+                "task_index": 0
+              },
+              "raw_id": "M_Advanced_BlackSwan_00_SkillTree01_SubOnEnemy",
+              "raw_type": "Modifiers",
+              "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_BlackSwan_00_Ability.json"
+            }
+          },
+          "selection": {
+            "coverage_status": "executable",
+            "opcode": "ByCompareTarget",
+            "payload_keys": [
+              "CompareType",
+              "TargetType"
+            ],
+            "selection_mode": "structured_predicate",
+            "source_trace": {
+              "evidence": {
+                "branch": "callback",
+                "callback_index": 5,
+                "task_index": 0
+              },
+              "raw_id": "M_Advanced_BlackSwan_00_SkillTree01_SubOnEnemy",
+              "raw_type": "Modifiers",
+              "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_BlackSwan_00_Ability.json"
+            }
+          },
+          "state": {
+            "snapshot": {
+              "battle": {
+                "action_index": 0,
+                "current_window": "idle",
+                "phase": "scenario",
+                "turn_owner_id": "ally:saber",
+                "wave_index": 0
+              },
+              "coverage": {},
+              "event_index": 0,
+              "global_flags": {
+                "current_window": "idle",
+                "dynamic_value_store": {
+                  "by_hash": {},
+                  "by_name": {},
+                  "entries": {}
+                },
+                "phase": "scenario",
+                "turn_owner_id": "ally:saber"
+              },
+              "max_skill_points": 5,
+              "metadata": {
+                "rng_state": "deterministic",
+                "snapshot_contract": "v0_203"
+              },
+              "pending_events": [],
+              "queues": {},
+              "resources": {
+                "max_skill_points": 5,
+                "skill_points": 3
+              },
+              "rng_events": [],
+              "rng_state": "deterministic",
+              "settlement": {},
+              "skill_points": 3,
+              "targeting": {},
+              "teams": {
+                "ally": [
+                  "ally:saber"
+                ],
+                "enemy": [
+                  "enemy:target"
+                ],
+                "summon": []
+              },
+              "timeline": {
+                "action_values": {
+                  "ally:saber": 0.0,
+                  "enemy:target": 0.0
+                },
+                "queues": {},
+                "turn_owner_id": "ally:saber"
+              },
+              "units": {
+                "ally:saber": {
+                  "action_value": 0.0,
+                  "attack": 3200.0,
+                  "base_stats": {
+                    "attack": 3200.0,
+                    "defense": 900.0,
+                    "max_hp": 3000.0,
+                    "speed": 101.0
+                  },
+                  "defense": 900.0,
+                  "derived_stats": {
+                    "break_damage_added_ratio": 0.0,
+                    "critical_chance": 0.05,
+                    "critical_damage": 0.5,
+                    "damage_added_ratio": 0.0,
+                    "effect_hit_rate": 0.0,
+                    "effect_resistance": 0.0
+                  },
+                  "energy": 60.0,
+                  "flags": {
+                    "position": 1,
+                    "status_details": [
+                      {
+                        "caster_id": "ally:saber",
+                        "duration": 1.0,
+                        "dynamic_values": {},
+                        "instance_id": "validation:v0_217:ally:saber:M_Advanced_BlackSwan_00_SkillTree01_SubOnEnemy",
+                        "lifecycle_state": "active",
+                        "modifier_name": "M_Advanced_BlackSwan_00_SkillTree01_SubOnEnemy",
+                        "modifiers": [],
+                        "owner_id": "ally:saber",
+                        "remaining_duration": 1.0,
+                        "source_id": "validation:v0_217",
+                        "source_trace": {
+                          "modifier_name": "M_Advanced_BlackSwan_00_SkillTree01_SubOnEnemy",
+                          "validation": "v0_217"
+                        },
+                        "stacks": 1,
+                        "status_id": "modifier:M_Advanced_BlackSwan_00_SkillTree01_SubOnEnemy",
+                        "trigger_ids_by_event": {},
+                        "unsupported": []
+                      }
+                    ]
+                  },
+                  "hp": 3000.0,
+                  "level": 80,
+                  "max_energy": 120.0,
+                  "max_hp": 3000.0,
+                  "max_toughness": 0.0,
+                  "modifiers": [],
+                  "position": 1,
+                  "recoverable_hp": 0.0,
+                  "resources": {
+                    "critical_chance": 0.05,
+                    "critical_damage": 0.5
+                  },
+                  "shield": 0.0,
+                  "side": "ally",
+                  "speed": 101.0,
+                  "status_details": [
+                    {
+                      "caster_id": "ally:saber",
+                      "duration": 1.0,
+                      "dynamic_values": {},
+                      "instance_id": "validation:v0_217:ally:saber:M_Advanced_BlackSwan_00_SkillTree01_SubOnEnemy",
+                      "lifecycle_state": "active",
+                      "modifier_name": "M_Advanced_BlackSwan_00_SkillTree01_SubOnEnemy",
+                      "modifiers": [],
+                      "owner_id": "ally:saber",
+                      "remaining_duration": 1.0,
+                      "source_id": "validation:v0_217",
+                      "source_trace": {
+                        "modifier_name": "M_Advanced_BlackSwan_00_SkillTree01_SubOnEnemy",
+                        "validation": "v0_217"
+                      },
+                      "stacks": 1,
+                      "status_id": "modifier:M_Advanced_BlackSwan_00_SkillTree01_SubOnEnemy",
+                      "trigger_ids_by_event": {},
+                      "unsupported": []
+                    }
+                  ],
+                  "statuses": [],
+                  "template_id": "avatar:1014",
+                  "template_source": {
+                    "id": "avatar:1014",
+                    "kind": "avatar"
+                  },
+                  "toughness": 0.0,
+                  "toughness_state": {
+                    "break_delay": 0.0,
+                    "broken": false,
+                    "current": 0.0,
+                    "maximum": 0.0,
+                    "weakness_locked": false,
+                    "weaknesses": []
+                  },
+                  "unit_id": "ally:saber"
+                },
+                "enemy:target": {
+                  "action_value": 0.0,
+                  "attack": 1000.0,
+                  "base_stats": {
+                    "attack": 1000.0,
+                    "defense": 1000.0,
+                    "max_hp": 10000.0,
+                    "speed": 100.0
+                  },
+                  "defense": 1000.0,
+                  "derived_stats": {
+                    "break_damage_added_ratio": 0.0,
+                    "critical_chance": 0.0,
+                    "critical_damage": 0.0,
+                    "damage_added_ratio": 0.0,
+                    "effect_hit_rate": 0.0,
+                    "effect_resistance": 0.0
+                  },
+                  "energy": 0.0,
+                  "flags": {
+                    "position": 1,
+                    "status_details": [
+                      {
+                        "caster_id": "enemy:target",
+                        "duration": 1.0,
+                        "dynamic_values": {},
+                        "instance_id": "validation:v0_217:enemy:target:M_Advanced_BlackSwan_00_SkillTree01_SubOnEnemy",
+                        "lifecycle_state": "active",
+                        "modifier_name": "M_Advanced_BlackSwan_00_SkillTree01_SubOnEnemy",
+                        "modifiers": [],
+                        "owner_id": "enemy:target",
+                        "remaining_duration": 1.0,
+                        "source_id": "validation:v0_217",
+                        "source_trace": {
+                          "modifier_name": "M_Advanced_BlackSwan_00_SkillTree01_SubOnEnemy",
+                          "validation": "v0_217"
+                        },
+                        "stacks": 1,
+                        "status_id": "modifier:M_Advanced_BlackSwan_00_SkillTree01_SubOnEnemy",
+                        "trigger_ids_by_event": {},
+                        "unsupported": []
+                      }
+                    ],
+                    "weaknesses": [
+                      "Fire",
+                      "Thunder"
+                    ]
+                  },
+                  "hp": 10000.0,
+                  "level": 80,
+                  "max_energy": 0.0,
+                  "max_hp": 10000.0,
+                  "max_toughness": 60.0,
+                  "modifiers": [],
+                  "position": 1,
+                  "recoverable_hp": 0.0,
+                  "resources": {},
+                  "shield": 0.0,
+                  "side": "enemy",
+                  "speed": 100.0,
+                  "status_details": [
+                    {
+                      "caster_id": "enemy:target",
+                      "duration": 1.0,
+                      "dynamic_values": {},
+                      "instance_id": "validation:v0_217:enemy:target:M_Advanced_BlackSwan_00_SkillTree01_SubOnEnemy",
+                      "lifecycle_state": "active",
+                      "modifier_name": "M_Advanced_BlackSwan_00_SkillTree01_SubOnEnemy",
+                      "modifiers": [],
+                      "owner_id": "enemy:target",
+                      "remaining_duration": 1.0,
+                      "source_id": "validation:v0_217",
+                      "source_trace": {
+                        "modifier_name": "M_Advanced_BlackSwan_00_SkillTree01_SubOnEnemy",
+                        "validation": "v0_217"
+                      },
+                      "stacks": 1,
+                      "status_id": "modifier:M_Advanced_BlackSwan_00_SkillTree01_SubOnEnemy",
+                      "trigger_ids_by_event": {},
+                      "unsupported": []
+                    }
+                  ],
+                  "statuses": [],
+                  "template_id": "monster:1002011",
+                  "template_source": {
+                    "id": "monster:1002011",
+                    "kind": "monster"
+                  },
+                  "toughness": 60.0,
+                  "toughness_state": {
+                    "break_delay": 0.0,
+                    "broken": false,
+                    "current": 60.0,
+                    "maximum": 60.0,
+                    "weakness_locked": false,
+                    "weaknesses": [
+                      "Fire",
+                      "Thunder"
+                    ]
+                  },
+                  "unit_id": "enemy:target"
+                }
+              },
+              "wave_index": 0
+            }
+          }
+        },
+        "ByCurrentSkillType": {
+          "condition": {
+            "condition_id": "condition:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Huohuo_00_Ability.json:MAvatar_Advanced_Huohuo_Passive_HealHP:12:0:ByCurrentSkillType",
+            "coverage_status": "executable",
+            "opcode": "ByCurrentSkillType",
+            "payload": {
+              "SkillType": "Ultra"
+            },
+            "source": {
+              "evidence": {
+                "branch": "callback",
+                "callback_index": 12,
+                "task_index": 0
+              },
+              "raw_id": "MAvatar_Advanced_Huohuo_Passive_HealHP",
+              "raw_type": "GlobalModifiers",
+              "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Huohuo_00_Ability.json"
+            }
+          },
+          "result": {
+            "condition_id": "condition:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Huohuo_00_Ability.json:MAvatar_Advanced_Huohuo_Passive_HealHP:12:0:ByCurrentSkillType",
+            "details": {
+              "actual": "SingleAttack",
+              "expected": "Ultra"
+            },
+            "ok": true,
+            "opcode": "ByCurrentSkillType",
+            "reason": "skill_type_compared",
+            "result": false,
+            "source_trace": {
+              "evidence": {
+                "branch": "callback",
+                "callback_index": 12,
+                "task_index": 0
+              },
+              "raw_id": "MAvatar_Advanced_Huohuo_Passive_HealHP",
+              "raw_type": "GlobalModifiers",
+              "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Huohuo_00_Ability.json"
+            }
+          },
+          "selection": {
+            "coverage_status": "executable",
+            "opcode": "ByCurrentSkillType",
+            "payload_keys": [
+              "SkillType"
+            ],
+            "selection_mode": "structured_predicate",
+            "source_trace": {
+              "evidence": {
+                "branch": "callback",
+                "callback_index": 12,
+                "task_index": 0
+              },
+              "raw_id": "MAvatar_Advanced_Huohuo_Passive_HealHP",
+              "raw_type": "GlobalModifiers",
+              "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Huohuo_00_Ability.json"
+            }
+          },
+          "state": {
+            "snapshot": {
+              "battle": {
+                "action_index": 0,
+                "current_window": "idle",
+                "phase": "scenario",
+                "turn_owner_id": "ally:saber",
+                "wave_index": 0
+              },
+              "coverage": {},
+              "event_index": 0,
+              "global_flags": {
+                "current_window": "idle",
+                "dynamic_value_store": {
+                  "by_hash": {},
+                  "by_name": {},
+                  "entries": {}
+                },
+                "phase": "scenario",
+                "turn_owner_id": "ally:saber"
+              },
+              "max_skill_points": 5,
+              "metadata": {
+                "rng_state": "deterministic",
+                "snapshot_contract": "v0_203"
+              },
+              "pending_events": [],
+              "queues": {},
+              "resources": {
+                "max_skill_points": 5,
+                "skill_points": 3
+              },
+              "rng_events": [],
+              "rng_state": "deterministic",
+              "settlement": {},
+              "skill_points": 3,
+              "targeting": {},
+              "teams": {
+                "ally": [
+                  "ally:saber"
+                ],
+                "enemy": [
+                  "enemy:target"
+                ],
+                "summon": []
+              },
+              "timeline": {
+                "action_values": {
+                  "ally:saber": 0.0,
+                  "enemy:target": 0.0
+                },
+                "queues": {},
+                "turn_owner_id": "ally:saber"
+              },
+              "units": {
+                "ally:saber": {
+                  "action_value": 0.0,
+                  "attack": 3200.0,
+                  "base_stats": {
+                    "attack": 3200.0,
+                    "defense": 900.0,
+                    "max_hp": 3000.0,
+                    "speed": 101.0
+                  },
+                  "defense": 900.0,
+                  "derived_stats": {
+                    "break_damage_added_ratio": 0.0,
+                    "critical_chance": 0.05,
+                    "critical_damage": 0.5,
+                    "damage_added_ratio": 0.0,
+                    "effect_hit_rate": 0.0,
+                    "effect_resistance": 0.0
+                  },
+                  "energy": 60.0,
+                  "flags": {
+                    "position": 1,
+                    "status_details": [
+                      {
+                        "caster_id": "ally:saber",
+                        "duration": 1.0,
+                        "dynamic_values": {},
+                        "instance_id": "validation:v0_217:ally:saber:MAvatar_Advanced_Huohuo_Passive_HealHP",
+                        "lifecycle_state": "active",
+                        "modifier_name": "MAvatar_Advanced_Huohuo_Passive_HealHP",
+                        "modifiers": [],
+                        "owner_id": "ally:saber",
+                        "remaining_duration": 1.0,
+                        "source_id": "validation:v0_217",
+                        "source_trace": {
+                          "modifier_name": "MAvatar_Advanced_Huohuo_Passive_HealHP",
+                          "validation": "v0_217"
+                        },
+                        "stacks": 1,
+                        "status_id": "modifier:MAvatar_Advanced_Huohuo_Passive_HealHP",
+                        "trigger_ids_by_event": {},
+                        "unsupported": []
+                      }
+                    ]
+                  },
+                  "hp": 3000.0,
+                  "level": 80,
+                  "max_energy": 120.0,
+                  "max_hp": 3000.0,
+                  "max_toughness": 0.0,
+                  "modifiers": [],
+                  "position": 1,
+                  "recoverable_hp": 0.0,
+                  "resources": {
+                    "critical_chance": 0.05,
+                    "critical_damage": 0.5
+                  },
+                  "shield": 0.0,
+                  "side": "ally",
+                  "speed": 101.0,
+                  "status_details": [
+                    {
+                      "caster_id": "ally:saber",
+                      "duration": 1.0,
+                      "dynamic_values": {},
+                      "instance_id": "validation:v0_217:ally:saber:MAvatar_Advanced_Huohuo_Passive_HealHP",
+                      "lifecycle_state": "active",
+                      "modifier_name": "MAvatar_Advanced_Huohuo_Passive_HealHP",
+                      "modifiers": [],
+                      "owner_id": "ally:saber",
+                      "remaining_duration": 1.0,
+                      "source_id": "validation:v0_217",
+                      "source_trace": {
+                        "modifier_name": "MAvatar_Advanced_Huohuo_Passive_HealHP",
+                        "validation": "v0_217"
+                      },
+                      "stacks": 1,
+                      "status_id": "modifier:MAvatar_Advanced_Huohuo_Passive_HealHP",
+                      "trigger_ids_by_event": {},
+                      "unsupported": []
+                    }
+                  ],
+                  "statuses": [],
+                  "template_id": "avatar:1014",
+                  "template_source": {
+                    "id": "avatar:1014",
+                    "kind": "avatar"
+                  },
+                  "toughness": 0.0,
+                  "toughness_state": {
+                    "break_delay": 0.0,
+                    "broken": false,
+                    "current": 0.0,
+                    "maximum": 0.0,
+                    "weakness_locked": false,
+                    "weaknesses": []
+                  },
+                  "unit_id": "ally:saber"
+                },
+                "enemy:target": {
+                  "action_value": 0.0,
+                  "attack": 1000.0,
+                  "base_stats": {
+                    "attack": 1000.0,
+                    "defense": 1000.0,
+                    "max_hp": 10000.0,
+                    "speed": 100.0
+                  },
+                  "defense": 1000.0,
+                  "derived_stats": {
+                    "break_damage_added_ratio": 0.0,
+                    "critical_chance": 0.0,
+                    "critical_damage": 0.0,
+                    "damage_added_ratio": 0.0,
+                    "effect_hit_rate": 0.0,
+                    "effect_resistance": 0.0
+                  },
+                  "energy": 0.0,
+                  "flags": {
+                    "position": 1,
+                    "status_details": [
+                      {
+                        "caster_id": "enemy:target",
+                        "duration": 1.0,
+                        "dynamic_values": {},
+                        "instance_id": "validation:v0_217:enemy:target:MAvatar_Advanced_Huohuo_Passive_HealHP",
+                        "lifecycle_state": "active",
+                        "modifier_name": "MAvatar_Advanced_Huohuo_Passive_HealHP",
+                        "modifiers": [],
+                        "owner_id": "enemy:target",
+                        "remaining_duration": 1.0,
+                        "source_id": "validation:v0_217",
+                        "source_trace": {
+                          "modifier_name": "MAvatar_Advanced_Huohuo_Passive_HealHP",
+                          "validation": "v0_217"
+                        },
+                        "stacks": 1,
+                        "status_id": "modifier:MAvatar_Advanced_Huohuo_Passive_HealHP",
+                        "trigger_ids_by_event": {},
+                        "unsupported": []
+                      }
+                    ],
+                    "weaknesses": [
+                      "Fire",
+                      "Thunder"
+                    ]
+                  },
+                  "hp": 10000.0,
+                  "level": 80,
+                  "max_energy": 0.0,
+                  "max_hp": 10000.0,
+                  "max_toughness": 60.0,
+                  "modifiers": [],
+                  "position": 1,
+                  "recoverable_hp": 0.0,
+                  "resources": {},
+                  "shield": 0.0,
+                  "side": "enemy",
+                  "speed": 100.0,
+                  "status_details": [
+                    {
+                      "caster_id": "enemy:target",
+                      "duration": 1.0,
+                      "dynamic_values": {},
+                      "instance_id": "validation:v0_217:enemy:target:MAvatar_Advanced_Huohuo_Passive_HealHP",
+                      "lifecycle_state": "active",
+                      "modifier_name": "MAvatar_Advanced_Huohuo_Passive_HealHP",
+                      "modifiers": [],
+                      "owner_id": "enemy:target",
+                      "remaining_duration": 1.0,
+                      "source_id": "validation:v0_217",
+                      "source_trace": {
+                        "modifier_name": "MAvatar_Advanced_Huohuo_Passive_HealHP",
+                        "validation": "v0_217"
+                      },
+                      "stacks": 1,
+                      "status_id": "modifier:MAvatar_Advanced_Huohuo_Passive_HealHP",
+                      "trigger_ids_by_event": {},
+                      "unsupported": []
+                    }
+                  ],
+                  "statuses": [],
+                  "template_id": "monster:1002011",
+                  "template_source": {
+                    "id": "monster:1002011",
+                    "kind": "monster"
+                  },
+                  "toughness": 60.0,
+                  "toughness_state": {
+                    "break_delay": 0.0,
+                    "broken": false,
+                    "current": 60.0,
+                    "maximum": 60.0,
+                    "weakness_locked": false,
+                    "weaknesses": [
+                      "Fire",
+                      "Thunder"
+                    ]
+                  },
+                  "unit_id": "enemy:target"
+                }
+              },
+              "wave_index": 0
+            }
+          }
+        },
+        "ByIsContainModifier": {
+          "condition": {
+            "condition_id": "condition:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_BlackSwan_00_Ability.json:MAvatar_Advanced_BlackSwan_00_DOT:27:0:ByIsContainModifier",
+            "coverage_status": "executable",
+            "opcode": "ByIsContainModifier",
+            "payload": {
+              "ModifierName": {
+                "Value": "MAvatar_Advanced_BlackSwan_00_DOT_Enhance"
+              },
+              "TargetType": {
+                "$type": "RPG.GameCore.TargetAlias",
+                "Alias": "ModifierOwnerEntity"
+              }
+            },
+            "source": {
+              "evidence": {
+                "branch": "success",
+                "callback_index": 27,
+                "task_index": 0
+              },
+              "raw_id": "MAvatar_Advanced_BlackSwan_00_DOT",
+              "raw_type": "GlobalModifiers",
+              "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_BlackSwan_00_Ability.json"
+            }
+          },
+          "result": {
+            "condition_id": "condition:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_BlackSwan_00_Ability.json:MAvatar_Advanced_BlackSwan_00_DOT:27:0:ByIsContainModifier",
+            "details": {
+              "contains": true,
+              "modifier_name": "MAvatar_Advanced_BlackSwan_00_DOT_Enhance",
+              "target_id": "ally:saber"
+            },
+            "ok": true,
+            "opcode": "ByIsContainModifier",
+            "reason": "modifier_presence_compared",
+            "result": true,
+            "source_trace": {
+              "evidence": {
+                "branch": "success",
+                "callback_index": 27,
+                "task_index": 0
+              },
+              "raw_id": "MAvatar_Advanced_BlackSwan_00_DOT",
+              "raw_type": "GlobalModifiers",
+              "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_BlackSwan_00_Ability.json"
+            }
+          },
+          "selection": {
+            "coverage_status": "executable",
+            "opcode": "ByIsContainModifier",
+            "payload_keys": [
+              "ModifierName",
+              "TargetType"
+            ],
+            "selection_mode": "structured_predicate",
+            "source_trace": {
+              "evidence": {
+                "branch": "success",
+                "callback_index": 27,
+                "task_index": 0
+              },
+              "raw_id": "MAvatar_Advanced_BlackSwan_00_DOT",
+              "raw_type": "GlobalModifiers",
+              "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_BlackSwan_00_Ability.json"
+            }
+          },
+          "state": {
+            "snapshot": {
+              "battle": {
+                "action_index": 0,
+                "current_window": "idle",
+                "phase": "scenario",
+                "turn_owner_id": "ally:saber",
+                "wave_index": 0
+              },
+              "coverage": {},
+              "event_index": 0,
+              "global_flags": {
+                "current_window": "idle",
+                "dynamic_value_store": {
+                  "by_hash": {},
+                  "by_name": {},
+                  "entries": {}
+                },
+                "phase": "scenario",
+                "turn_owner_id": "ally:saber"
+              },
+              "max_skill_points": 5,
+              "metadata": {
+                "rng_state": "deterministic",
+                "snapshot_contract": "v0_203"
+              },
+              "pending_events": [],
+              "queues": {},
+              "resources": {
+                "max_skill_points": 5,
+                "skill_points": 3
+              },
+              "rng_events": [],
+              "rng_state": "deterministic",
+              "settlement": {},
+              "skill_points": 3,
+              "targeting": {},
+              "teams": {
+                "ally": [
+                  "ally:saber"
+                ],
+                "enemy": [
+                  "enemy:target"
+                ],
+                "summon": []
+              },
+              "timeline": {
+                "action_values": {
+                  "ally:saber": 0.0,
+                  "enemy:target": 0.0
+                },
+                "queues": {},
+                "turn_owner_id": "ally:saber"
+              },
+              "units": {
+                "ally:saber": {
+                  "action_value": 0.0,
+                  "attack": 3200.0,
+                  "base_stats": {
+                    "attack": 3200.0,
+                    "defense": 900.0,
+                    "max_hp": 3000.0,
+                    "speed": 101.0
+                  },
+                  "defense": 900.0,
+                  "derived_stats": {
+                    "break_damage_added_ratio": 0.0,
+                    "critical_chance": 0.05,
+                    "critical_damage": 0.5,
+                    "damage_added_ratio": 0.0,
+                    "effect_hit_rate": 0.0,
+                    "effect_resistance": 0.0
+                  },
+                  "energy": 60.0,
+                  "flags": {
+                    "position": 1,
+                    "status_details": [
+                      {
+                        "caster_id": "ally:saber",
+                        "duration": 1.0,
+                        "dynamic_values": {},
+                        "instance_id": "validation:v0_217:ally:saber:MAvatar_Advanced_BlackSwan_00_DOT_Enhance",
+                        "lifecycle_state": "active",
+                        "modifier_name": "MAvatar_Advanced_BlackSwan_00_DOT_Enhance",
+                        "modifiers": [],
+                        "owner_id": "ally:saber",
+                        "remaining_duration": 1.0,
+                        "source_id": "validation:v0_217",
+                        "source_trace": {
+                          "modifier_name": "MAvatar_Advanced_BlackSwan_00_DOT_Enhance",
+                          "validation": "v0_217"
+                        },
+                        "stacks": 1,
+                        "status_id": "modifier:MAvatar_Advanced_BlackSwan_00_DOT_Enhance",
+                        "trigger_ids_by_event": {},
+                        "unsupported": []
+                      },
+                      {
+                        "caster_id": "ally:saber",
+                        "duration": 1.0,
+                        "dynamic_values": {},
+                        "instance_id": "validation:v0_217:ally:saber:MAvatar_Advanced_BlackSwan_00_DOT",
+                        "lifecycle_state": "active",
+                        "modifier_name": "MAvatar_Advanced_BlackSwan_00_DOT",
+                        "modifiers": [],
+                        "owner_id": "ally:saber",
+                        "remaining_duration": 1.0,
+                        "source_id": "validation:v0_217",
+                        "source_trace": {
+                          "modifier_name": "MAvatar_Advanced_BlackSwan_00_DOT",
+                          "validation": "v0_217"
+                        },
+                        "stacks": 1,
+                        "status_id": "modifier:MAvatar_Advanced_BlackSwan_00_DOT",
+                        "trigger_ids_by_event": {},
+                        "unsupported": []
+                      }
+                    ]
+                  },
+                  "hp": 3000.0,
+                  "level": 80,
+                  "max_energy": 120.0,
+                  "max_hp": 3000.0,
+                  "max_toughness": 0.0,
+                  "modifiers": [],
+                  "position": 1,
+                  "recoverable_hp": 0.0,
+                  "resources": {
+                    "critical_chance": 0.05,
+                    "critical_damage": 0.5
+                  },
+                  "shield": 0.0,
+                  "side": "ally",
+                  "speed": 101.0,
+                  "status_details": [
+                    {
+                      "caster_id": "ally:saber",
+                      "duration": 1.0,
+                      "dynamic_values": {},
+                      "instance_id": "validation:v0_217:ally:saber:MAvatar_Advanced_BlackSwan_00_DOT_Enhance",
+                      "lifecycle_state": "active",
+                      "modifier_name": "MAvatar_Advanced_BlackSwan_00_DOT_Enhance",
+                      "modifiers": [],
+                      "owner_id": "ally:saber",
+                      "remaining_duration": 1.0,
+                      "source_id": "validation:v0_217",
+                      "source_trace": {
+                        "modifier_name": "MAvatar_Advanced_BlackSwan_00_DOT_Enhance",
+                        "validation": "v0_217"
+                      },
+                      "stacks": 1,
+                      "status_id": "modifier:MAvatar_Advanced_BlackSwan_00_DOT_Enhance",
+                      "trigger_ids_by_event": {},
+                      "unsupported": []
+                    },
+                    {
+                      "caster_id": "ally:saber",
+                      "duration": 1.0,
+                      "dynamic_values": {},
+                      "instance_id": "validation:v0_217:ally:saber:MAvatar_Advanced_BlackSwan_00_DOT",
+                      "lifecycle_state": "active",
+                      "modifier_name": "MAvatar_Advanced_BlackSwan_00_DOT",
+                      "modifiers": [],
+                      "owner_id": "ally:saber",
+                      "remaining_duration": 1.0,
+                      "source_id": "validation:v0_217",
+                      "source_trace": {
+                        "modifier_name": "MAvatar_Advanced_BlackSwan_00_DOT",
+                        "validation": "v0_217"
+                      },
+                      "stacks": 1,
+                      "status_id": "modifier:MAvatar_Advanced_BlackSwan_00_DOT",
+                      "trigger_ids_by_event": {},
+                      "unsupported": []
+                    }
+                  ],
+                  "statuses": [],
+                  "template_id": "avatar:1014",
+                  "template_source": {
+                    "id": "avatar:1014",
+                    "kind": "avatar"
+                  },
+                  "toughness": 0.0,
+                  "toughness_state": {
+                    "break_delay": 0.0,
+                    "broken": false,
+                    "current": 0.0,
+                    "maximum": 0.0,
+                    "weakness_locked": false,
+                    "weaknesses": []
+                  },
+                  "unit_id": "ally:saber"
+                },
+                "enemy:target": {
+                  "action_value": 0.0,
+                  "attack": 1000.0,
+                  "base_stats": {
+                    "attack": 1000.0,
+                    "defense": 1000.0,
+                    "max_hp": 10000.0,
+                    "speed": 100.0
+                  },
+                  "defense": 1000.0,
+                  "derived_stats": {
+                    "break_damage_added_ratio": 0.0,
+                    "critical_chance": 0.0,
+                    "critical_damage": 0.0,
+                    "damage_added_ratio": 0.0,
+                    "effect_hit_rate": 0.0,
+                    "effect_resistance": 0.0
+                  },
+                  "energy": 0.0,
+                  "flags": {
+                    "position": 1,
+                    "status_details": [
+                      {
+                        "caster_id": "enemy:target",
+                        "duration": 1.0,
+                        "dynamic_values": {},
+                        "instance_id": "validation:v0_217:enemy:target:MAvatar_Advanced_BlackSwan_00_DOT_Enhance",
+                        "lifecycle_state": "active",
+                        "modifier_name": "MAvatar_Advanced_BlackSwan_00_DOT_Enhance",
+                        "modifiers": [],
+                        "owner_id": "enemy:target",
+                        "remaining_duration": 1.0,
+                        "source_id": "validation:v0_217",
+                        "source_trace": {
+                          "modifier_name": "MAvatar_Advanced_BlackSwan_00_DOT_Enhance",
+                          "validation": "v0_217"
+                        },
+                        "stacks": 1,
+                        "status_id": "modifier:MAvatar_Advanced_BlackSwan_00_DOT_Enhance",
+                        "trigger_ids_by_event": {},
+                        "unsupported": []
+                      },
+                      {
+                        "caster_id": "enemy:target",
+                        "duration": 1.0,
+                        "dynamic_values": {},
+                        "instance_id": "validation:v0_217:enemy:target:MAvatar_Advanced_BlackSwan_00_DOT",
+                        "lifecycle_state": "active",
+                        "modifier_name": "MAvatar_Advanced_BlackSwan_00_DOT",
+                        "modifiers": [],
+                        "owner_id": "enemy:target",
+                        "remaining_duration": 1.0,
+                        "source_id": "validation:v0_217",
+                        "source_trace": {
+                          "modifier_name": "MAvatar_Advanced_BlackSwan_00_DOT",
+                          "validation": "v0_217"
+                        },
+                        "stacks": 1,
+                        "status_id": "modifier:MAvatar_Advanced_BlackSwan_00_DOT",
+                        "trigger_ids_by_event": {},
+                        "unsupported": []
+                      }
+                    ],
+                    "weaknesses": [
+                      "Fire",
+                      "Thunder"
+                    ]
+                  },
+                  "hp": 10000.0,
+                  "level": 80,
+                  "max_energy": 0.0,
+                  "max_hp": 10000.0,
+                  "max_toughness": 60.0,
+                  "modifiers": [],
+                  "position": 1,
+                  "recoverable_hp": 0.0,
+                  "resources": {},
+                  "shield": 0.0,
+                  "side": "enemy",
+                  "speed": 100.0,
+                  "status_details": [
+                    {
+                      "caster_id": "enemy:target",
+                      "duration": 1.0,
+                      "dynamic_values": {},
+                      "instance_id": "validation:v0_217:enemy:target:MAvatar_Advanced_BlackSwan_00_DOT_Enhance",
+                      "lifecycle_state": "active",
+                      "modifier_name": "MAvatar_Advanced_BlackSwan_00_DOT_Enhance",
+                      "modifiers": [],
+                      "owner_id": "enemy:target",
+                      "remaining_duration": 1.0,
+                      "source_id": "validation:v0_217",
+                      "source_trace": {
+                        "modifier_name": "MAvatar_Advanced_BlackSwan_00_DOT_Enhance",
+                        "validation": "v0_217"
+                      },
+                      "stacks": 1,
+                      "status_id": "modifier:MAvatar_Advanced_BlackSwan_00_DOT_Enhance",
+                      "trigger_ids_by_event": {},
+                      "unsupported": []
+                    },
+                    {
+                      "caster_id": "enemy:target",
+                      "duration": 1.0,
+                      "dynamic_values": {},
+                      "instance_id": "validation:v0_217:enemy:target:MAvatar_Advanced_BlackSwan_00_DOT",
+                      "lifecycle_state": "active",
+                      "modifier_name": "MAvatar_Advanced_BlackSwan_00_DOT",
+                      "modifiers": [],
+                      "owner_id": "enemy:target",
+                      "remaining_duration": 1.0,
+                      "source_id": "validation:v0_217",
+                      "source_trace": {
+                        "modifier_name": "MAvatar_Advanced_BlackSwan_00_DOT",
+                        "validation": "v0_217"
+                      },
+                      "stacks": 1,
+                      "status_id": "modifier:MAvatar_Advanced_BlackSwan_00_DOT",
+                      "trigger_ids_by_event": {},
+                      "unsupported": []
+                    }
+                  ],
+                  "statuses": [],
+                  "template_id": "monster:1002011",
+                  "template_source": {
+                    "id": "monster:1002011",
+                    "kind": "monster"
+                  },
+                  "toughness": 60.0,
+                  "toughness_state": {
+                    "break_delay": 0.0,
+                    "broken": false,
+                    "current": 60.0,
+                    "maximum": 60.0,
+                    "weakness_locked": false,
+                    "weaknesses": [
+                      "Fire",
+                      "Thunder"
+                    ]
+                  },
+                  "unit_id": "enemy:target"
+                }
+              },
+              "wave_index": 0
+            }
+          }
+        },
+        "ByNot": {
+          "condition": {
+            "condition_id": "condition:Config/ConfigAbility/Avatar/Avatar_Luocha_00_Ability.json:MAvatar_Luocha_00_Passive01_QuickHealthHP:1:0:ByNot",
+            "coverage_status": "executable",
+            "opcode": "ByNot",
+            "payload": {
+              "Predicate": {
+                "$type": "RPG.GameCore.ByIsContainModifier",
+                "ModifierName": {
+                  "Value": "MAvatar_Luocha_00_Passive01_HealHPCD"
+                },
+                "TargetType": {
+                  "$type": "RPG.GameCore.TargetAlias",
+                  "Alias": "Caster"
+                }
+              }
+            },
+            "source": {
+              "evidence": {
+                "branch": "success",
+                "callback_index": 1,
+                "task_index": 0
+              },
+              "raw_id": "MAvatar_Luocha_00_Passive01_QuickHealthHP",
+              "raw_type": "Modifiers",
+              "source_path": "Config/ConfigAbility/Avatar/Avatar_Luocha_00_Ability.json"
+            }
+          },
+          "result": {
+            "condition_id": "condition:Config/ConfigAbility/Avatar/Avatar_Luocha_00_Ability.json:MAvatar_Luocha_00_Passive01_QuickHealthHP:1:0:ByNot",
+            "details": {
+              "child": {
+                "condition_id": "condition:Config/ConfigAbility/Avatar/Avatar_Luocha_00_Ability.json:MAvatar_Luocha_00_Passive01_QuickHealthHP:1:0:ByNot",
+                "details": {
+                  "contains": true,
+                  "modifier_name": "MAvatar_Luocha_00_Passive01_HealHPCD",
+                  "target_id": "ally:saber"
+                },
+                "ok": true,
+                "opcode": "ByIsContainModifier",
+                "reason": "modifier_presence_compared",
+                "result": true,
+                "source_trace": {
+                  "evidence": {
+                    "branch": "success",
+                    "callback_index": 1,
+                    "task_index": 0
+                  },
+                  "raw_id": "MAvatar_Luocha_00_Passive01_QuickHealthHP",
+                  "raw_type": "Modifiers",
+                  "source_path": "Config/ConfigAbility/Avatar/Avatar_Luocha_00_Ability.json"
+                }
+              }
+            },
+            "ok": true,
+            "opcode": "ByNot",
+            "reason": "not_child_inverted",
+            "result": false,
+            "source_trace": {
+              "evidence": {
+                "branch": "success",
+                "callback_index": 1,
+                "task_index": 0
+              },
+              "raw_id": "MAvatar_Luocha_00_Passive01_QuickHealthHP",
+              "raw_type": "Modifiers",
+              "source_path": "Config/ConfigAbility/Avatar/Avatar_Luocha_00_Ability.json"
+            }
+          },
+          "selection": {
+            "coverage_status": "executable",
+            "opcode": "ByNot",
+            "payload_keys": [
+              "Predicate"
+            ],
+            "selection_mode": "structured_predicate",
+            "source_trace": {
+              "evidence": {
+                "branch": "success",
+                "callback_index": 1,
+                "task_index": 0
+              },
+              "raw_id": "MAvatar_Luocha_00_Passive01_QuickHealthHP",
+              "raw_type": "Modifiers",
+              "source_path": "Config/ConfigAbility/Avatar/Avatar_Luocha_00_Ability.json"
+            }
+          },
+          "state": {
+            "snapshot": {
+              "battle": {
+                "action_index": 0,
+                "current_window": "idle",
+                "phase": "scenario",
+                "turn_owner_id": "ally:saber",
+                "wave_index": 0
+              },
+              "coverage": {},
+              "event_index": 0,
+              "global_flags": {
+                "current_window": "idle",
+                "dynamic_value_store": {
+                  "by_hash": {},
+                  "by_name": {},
+                  "entries": {}
+                },
+                "phase": "scenario",
+                "turn_owner_id": "ally:saber"
+              },
+              "max_skill_points": 5,
+              "metadata": {
+                "rng_state": "deterministic",
+                "snapshot_contract": "v0_203"
+              },
+              "pending_events": [],
+              "queues": {},
+              "resources": {
+                "max_skill_points": 5,
+                "skill_points": 3
+              },
+              "rng_events": [],
+              "rng_state": "deterministic",
+              "settlement": {},
+              "skill_points": 3,
+              "targeting": {},
+              "teams": {
+                "ally": [
+                  "ally:saber"
+                ],
+                "enemy": [
+                  "enemy:target"
+                ],
+                "summon": []
+              },
+              "timeline": {
+                "action_values": {
+                  "ally:saber": 0.0,
+                  "enemy:target": 0.0
+                },
+                "queues": {},
+                "turn_owner_id": "ally:saber"
+              },
+              "units": {
+                "ally:saber": {
+                  "action_value": 0.0,
+                  "attack": 3200.0,
+                  "base_stats": {
+                    "attack": 3200.0,
+                    "defense": 900.0,
+                    "max_hp": 3000.0,
+                    "speed": 101.0
+                  },
+                  "defense": 900.0,
+                  "derived_stats": {
+                    "break_damage_added_ratio": 0.0,
+                    "critical_chance": 0.05,
+                    "critical_damage": 0.5,
+                    "damage_added_ratio": 0.0,
+                    "effect_hit_rate": 0.0,
+                    "effect_resistance": 0.0
+                  },
+                  "energy": 60.0,
+                  "flags": {
+                    "position": 1,
+                    "status_details": [
+                      {
+                        "caster_id": "ally:saber",
+                        "duration": 1.0,
+                        "dynamic_values": {},
+                        "instance_id": "validation:v0_217:ally:saber:MAvatar_Luocha_00_Passive01_QuickHealthHP",
+                        "lifecycle_state": "active",
+                        "modifier_name": "MAvatar_Luocha_00_Passive01_QuickHealthHP",
+                        "modifiers": [],
+                        "owner_id": "ally:saber",
+                        "remaining_duration": 1.0,
+                        "source_id": "validation:v0_217",
+                        "source_trace": {
+                          "modifier_name": "MAvatar_Luocha_00_Passive01_QuickHealthHP",
+                          "validation": "v0_217"
+                        },
+                        "stacks": 1,
+                        "status_id": "modifier:MAvatar_Luocha_00_Passive01_QuickHealthHP",
+                        "trigger_ids_by_event": {},
+                        "unsupported": []
+                      },
+                      {
+                        "caster_id": "ally:saber",
+                        "duration": 1.0,
+                        "dynamic_values": {},
+                        "instance_id": "validation:v0_217:ally:saber:MAvatar_Luocha_00_Passive01_HealHPCD",
+                        "lifecycle_state": "active",
+                        "modifier_name": "MAvatar_Luocha_00_Passive01_HealHPCD",
+                        "modifiers": [],
+                        "owner_id": "ally:saber",
+                        "remaining_duration": 1.0,
+                        "source_id": "validation:v0_217",
+                        "source_trace": {
+                          "modifier_name": "MAvatar_Luocha_00_Passive01_HealHPCD",
+                          "validation": "v0_217"
+                        },
+                        "stacks": 1,
+                        "status_id": "modifier:MAvatar_Luocha_00_Passive01_HealHPCD",
+                        "trigger_ids_by_event": {},
+                        "unsupported": []
+                      }
+                    ]
+                  },
+                  "hp": 3000.0,
+                  "level": 80,
+                  "max_energy": 120.0,
+                  "max_hp": 3000.0,
+                  "max_toughness": 0.0,
+                  "modifiers": [],
+                  "position": 1,
+                  "recoverable_hp": 0.0,
+                  "resources": {
+                    "critical_chance": 0.05,
+                    "critical_damage": 0.5
+                  },
+                  "shield": 0.0,
+                  "side": "ally",
+                  "speed": 101.0,
+                  "status_details": [
+                    {
+                      "caster_id": "ally:saber",
+                      "duration": 1.0,
+                      "dynamic_values": {},
+                      "instance_id": "validation:v0_217:ally:saber:MAvatar_Luocha_00_Passive01_QuickHealthHP",
+                      "lifecycle_state": "active",
+                      "modifier_name": "MAvatar_Luocha_00_Passive01_QuickHealthHP",
+                      "modifiers": [],
+                      "owner_id": "ally:saber",
+                      "remaining_duration": 1.0,
+                      "source_id": "validation:v0_217",
+                      "source_trace": {
+                        "modifier_name": "MAvatar_Luocha_00_Passive01_QuickHealthHP",
+                        "validation": "v0_217"
+                      },
+                      "stacks": 1,
+                      "status_id": "modifier:MAvatar_Luocha_00_Passive01_QuickHealthHP",
+                      "trigger_ids_by_event": {},
+                      "unsupported": []
+                    },
+                    {
+                      "caster_id": "ally:saber",
+                      "duration": 1.0,
+                      "dynamic_values": {},
+                      "instance_id": "validation:v0_217:ally:saber:MAvatar_Luocha_00_Passive01_HealHPCD",
+                      "lifecycle_state": "active",
+                      "modifier_name": "MAvatar_Luocha_00_Passive01_HealHPCD",
+                      "modifiers": [],
+                      "owner_id": "ally:saber",
+                      "remaining_duration": 1.0,
+                      "source_id": "validation:v0_217",
+                      "source_trace": {
+                        "modifier_name": "MAvatar_Luocha_00_Passive01_HealHPCD",
+                        "validation": "v0_217"
+                      },
+                      "stacks": 1,
+                      "status_id": "modifier:MAvatar_Luocha_00_Passive01_HealHPCD",
+                      "trigger_ids_by_event": {},
+                      "unsupported": []
+                    }
+                  ],
+                  "statuses": [],
+                  "template_id": "avatar:1014",
+                  "template_source": {
+                    "id": "avatar:1014",
+                    "kind": "avatar"
+                  },
+                  "toughness": 0.0,
+                  "toughness_state": {
+                    "break_delay": 0.0,
+                    "broken": false,
+                    "current": 0.0,
+                    "maximum": 0.0,
+                    "weakness_locked": false,
+                    "weaknesses": []
+                  },
+                  "unit_id": "ally:saber"
+                },
+                "enemy:target": {
+                  "action_value": 0.0,
+                  "attack": 1000.0,
+                  "base_stats": {
+                    "attack": 1000.0,
+                    "defense": 1000.0,
+                    "max_hp": 10000.0,
+                    "speed": 100.0
+                  },
+                  "defense": 1000.0,
+                  "derived_stats": {
+                    "break_damage_added_ratio": 0.0,
+                    "critical_chance": 0.0,
+                    "critical_damage": 0.0,
+                    "damage_added_ratio": 0.0,
+                    "effect_hit_rate": 0.0,
+                    "effect_resistance": 0.0
+                  },
+                  "energy": 0.0,
+                  "flags": {
+                    "position": 1,
+                    "status_details": [
+                      {
+                        "caster_id": "enemy:target",
+                        "duration": 1.0,
+                        "dynamic_values": {},
+                        "instance_id": "validation:v0_217:enemy:target:MAvatar_Luocha_00_Passive01_QuickHealthHP",
+                        "lifecycle_state": "active",
+                        "modifier_name": "MAvatar_Luocha_00_Passive01_QuickHealthHP",
+                        "modifiers": [],
+                        "owner_id": "enemy:target",
+                        "remaining_duration": 1.0,
+                        "source_id": "validation:v0_217",
+                        "source_trace": {
+                          "modifier_name": "MAvatar_Luocha_00_Passive01_QuickHealthHP",
+                          "validation": "v0_217"
+                        },
+                        "stacks": 1,
+                        "status_id": "modifier:MAvatar_Luocha_00_Passive01_QuickHealthHP",
+                        "trigger_ids_by_event": {},
+                        "unsupported": []
+                      },
+                      {
+                        "caster_id": "enemy:target",
+                        "duration": 1.0,
+                        "dynamic_values": {},
+                        "instance_id": "validation:v0_217:enemy:target:MAvatar_Luocha_00_Passive01_HealHPCD",
+                        "lifecycle_state": "active",
+                        "modifier_name": "MAvatar_Luocha_00_Passive01_HealHPCD",
+                        "modifiers": [],
+                        "owner_id": "enemy:target",
+                        "remaining_duration": 1.0,
+                        "source_id": "validation:v0_217",
+                        "source_trace": {
+                          "modifier_name": "MAvatar_Luocha_00_Passive01_HealHPCD",
+                          "validation": "v0_217"
+                        },
+                        "stacks": 1,
+                        "status_id": "modifier:MAvatar_Luocha_00_Passive01_HealHPCD",
+                        "trigger_ids_by_event": {},
+                        "unsupported": []
+                      }
+                    ],
+                    "weaknesses": [
+                      "Fire",
+                      "Thunder"
+                    ]
+                  },
+                  "hp": 10000.0,
+                  "level": 80,
+                  "max_energy": 0.0,
+                  "max_hp": 10000.0,
+                  "max_toughness": 60.0,
+                  "modifiers": [],
+                  "position": 1,
+                  "recoverable_hp": 0.0,
+                  "resources": {},
+                  "shield": 0.0,
+                  "side": "enemy",
+                  "speed": 100.0,
+                  "status_details": [
+                    {
+                      "caster_id": "enemy:target",
+                      "duration": 1.0,
+                      "dynamic_values": {},
+                      "instance_id": "validation:v0_217:enemy:target:MAvatar_Luocha_00_Passive01_QuickHealthHP",
+                      "lifecycle_state": "active",
+                      "modifier_name": "MAvatar_Luocha_00_Passive01_QuickHealthHP",
+                      "modifiers": [],
+                      "owner_id": "enemy:target",
+                      "remaining_duration": 1.0,
+                      "source_id": "validation:v0_217",
+                      "source_trace": {
+                        "modifier_name": "MAvatar_Luocha_00_Passive01_QuickHealthHP",
+                        "validation": "v0_217"
+                      },
+                      "stacks": 1,
+                      "status_id": "modifier:MAvatar_Luocha_00_Passive01_QuickHealthHP",
+                      "trigger_ids_by_event": {},
+                      "unsupported": []
+                    },
+                    {
+                      "caster_id": "enemy:target",
+                      "duration": 1.0,
+                      "dynamic_values": {},
+                      "instance_id": "validation:v0_217:enemy:target:MAvatar_Luocha_00_Passive01_HealHPCD",
+                      "lifecycle_state": "active",
+                      "modifier_name": "MAvatar_Luocha_00_Passive01_HealHPCD",
+                      "modifiers": [],
+                      "owner_id": "enemy:target",
+                      "remaining_duration": 1.0,
+                      "source_id": "validation:v0_217",
+                      "source_trace": {
+                        "modifier_name": "MAvatar_Luocha_00_Passive01_HealHPCD",
+                        "validation": "v0_217"
+                      },
+                      "stacks": 1,
+                      "status_id": "modifier:MAvatar_Luocha_00_Passive01_HealHPCD",
+                      "trigger_ids_by_event": {},
+                      "unsupported": []
+                    }
+                  ],
+                  "statuses": [],
+                  "template_id": "monster:1002011",
+                  "template_source": {
+                    "id": "monster:1002011",
+                    "kind": "monster"
+                  },
+                  "toughness": 60.0,
+                  "toughness_state": {
+                    "break_delay": 0.0,
+                    "broken": false,
+                    "current": 60.0,
+                    "maximum": 60.0,
+                    "weakness_locked": false,
+                    "weaknesses": [
+                      "Fire",
+                      "Thunder"
+                    ]
+                  },
+                  "unit_id": "enemy:target"
+                }
+              },
+              "wave_index": 0
+            }
+          }
+        },
+        "ByTargetTeam": {
+          "condition": {
+            "condition_id": "condition:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_BlackSwan_00_Ability.json:MAvatar_Advanced_BlackSwan_00_Rank02_AddDotOnCreate:21:0:ByTargetTeam",
+            "coverage_status": "executable",
+            "opcode": "ByTargetTeam",
+            "payload": {
+              "TargetType": {
+                "$type": "RPG.GameCore.TargetAlias",
+                "Alias": "ParamEntity"
+              },
+              "Team": "TeamDark"
+            },
+            "source": {
+              "evidence": {
+                "branch": "callback",
+                "callback_index": 21,
+                "task_index": 0
+              },
+              "raw_id": "MAvatar_Advanced_BlackSwan_00_Rank02_AddDotOnCreate",
+              "raw_type": "Modifiers",
+              "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_BlackSwan_00_Ability.json"
+            }
+          },
+          "result": {
+            "condition_id": "condition:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_BlackSwan_00_Ability.json:MAvatar_Advanced_BlackSwan_00_Rank02_AddDotOnCreate:21:0:ByTargetTeam",
+            "details": {
+              "expected": "TeamDark",
+              "side": "enemy",
+              "target_id": "enemy:target"
+            },
+            "ok": true,
+            "opcode": "ByTargetTeam",
+            "reason": "target_team_compared",
+            "result": true,
+            "source_trace": {
+              "evidence": {
+                "branch": "callback",
+                "callback_index": 21,
+                "task_index": 0
+              },
+              "raw_id": "MAvatar_Advanced_BlackSwan_00_Rank02_AddDotOnCreate",
+              "raw_type": "Modifiers",
+              "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_BlackSwan_00_Ability.json"
+            }
+          },
+          "selection": {
+            "coverage_status": "executable",
+            "opcode": "ByTargetTeam",
+            "payload_keys": [
+              "TargetType",
+              "Team"
+            ],
+            "selection_mode": "structured_predicate",
+            "source_trace": {
+              "evidence": {
+                "branch": "callback",
+                "callback_index": 21,
+                "task_index": 0
+              },
+              "raw_id": "MAvatar_Advanced_BlackSwan_00_Rank02_AddDotOnCreate",
+              "raw_type": "Modifiers",
+              "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_BlackSwan_00_Ability.json"
+            }
+          },
+          "state": {
+            "snapshot": {
+              "battle": {
+                "action_index": 0,
+                "current_window": "idle",
+                "phase": "scenario",
+                "turn_owner_id": "ally:saber",
+                "wave_index": 0
+              },
+              "coverage": {},
+              "event_index": 0,
+              "global_flags": {
+                "current_window": "idle",
+                "dynamic_value_store": {
+                  "by_hash": {},
+                  "by_name": {},
+                  "entries": {}
+                },
+                "phase": "scenario",
+                "turn_owner_id": "ally:saber"
+              },
+              "max_skill_points": 5,
+              "metadata": {
+                "rng_state": "deterministic",
+                "snapshot_contract": "v0_203"
+              },
+              "pending_events": [],
+              "queues": {},
+              "resources": {
+                "max_skill_points": 5,
+                "skill_points": 3
+              },
+              "rng_events": [],
+              "rng_state": "deterministic",
+              "settlement": {},
+              "skill_points": 3,
+              "targeting": {},
+              "teams": {
+                "ally": [
+                  "ally:saber"
+                ],
+                "enemy": [
+                  "enemy:target"
+                ],
+                "summon": []
+              },
+              "timeline": {
+                "action_values": {
+                  "ally:saber": 0.0,
+                  "enemy:target": 0.0
+                },
+                "queues": {},
+                "turn_owner_id": "ally:saber"
+              },
+              "units": {
+                "ally:saber": {
+                  "action_value": 0.0,
+                  "attack": 3200.0,
+                  "base_stats": {
+                    "attack": 3200.0,
+                    "defense": 900.0,
+                    "max_hp": 3000.0,
+                    "speed": 101.0
+                  },
+                  "defense": 900.0,
+                  "derived_stats": {
+                    "break_damage_added_ratio": 0.0,
+                    "critical_chance": 0.05,
+                    "critical_damage": 0.5,
+                    "damage_added_ratio": 0.0,
+                    "effect_hit_rate": 0.0,
+                    "effect_resistance": 0.0
+                  },
+                  "energy": 60.0,
+                  "flags": {
+                    "position": 1,
+                    "status_details": [
+                      {
+                        "caster_id": "ally:saber",
+                        "duration": 1.0,
+                        "dynamic_values": {},
+                        "instance_id": "validation:v0_217:ally:saber:MAvatar_Advanced_BlackSwan_00_Rank02_AddDotOnCreate",
+                        "lifecycle_state": "active",
+                        "modifier_name": "MAvatar_Advanced_BlackSwan_00_Rank02_AddDotOnCreate",
+                        "modifiers": [],
+                        "owner_id": "ally:saber",
+                        "remaining_duration": 1.0,
+                        "source_id": "validation:v0_217",
+                        "source_trace": {
+                          "modifier_name": "MAvatar_Advanced_BlackSwan_00_Rank02_AddDotOnCreate",
+                          "validation": "v0_217"
+                        },
+                        "stacks": 1,
+                        "status_id": "modifier:MAvatar_Advanced_BlackSwan_00_Rank02_AddDotOnCreate",
+                        "trigger_ids_by_event": {},
+                        "unsupported": []
+                      }
+                    ]
+                  },
+                  "hp": 3000.0,
+                  "level": 80,
+                  "max_energy": 120.0,
+                  "max_hp": 3000.0,
+                  "max_toughness": 0.0,
+                  "modifiers": [],
+                  "position": 1,
+                  "recoverable_hp": 0.0,
+                  "resources": {
+                    "critical_chance": 0.05,
+                    "critical_damage": 0.5
+                  },
+                  "shield": 0.0,
+                  "side": "ally",
+                  "speed": 101.0,
+                  "status_details": [
+                    {
+                      "caster_id": "ally:saber",
+                      "duration": 1.0,
+                      "dynamic_values": {},
+                      "instance_id": "validation:v0_217:ally:saber:MAvatar_Advanced_BlackSwan_00_Rank02_AddDotOnCreate",
+                      "lifecycle_state": "active",
+                      "modifier_name": "MAvatar_Advanced_BlackSwan_00_Rank02_AddDotOnCreate",
+                      "modifiers": [],
+                      "owner_id": "ally:saber",
+                      "remaining_duration": 1.0,
+                      "source_id": "validation:v0_217",
+                      "source_trace": {
+                        "modifier_name": "MAvatar_Advanced_BlackSwan_00_Rank02_AddDotOnCreate",
+                        "validation": "v0_217"
+                      },
+                      "stacks": 1,
+                      "status_id": "modifier:MAvatar_Advanced_BlackSwan_00_Rank02_AddDotOnCreate",
+                      "trigger_ids_by_event": {},
+                      "unsupported": []
+                    }
+                  ],
+                  "statuses": [],
+                  "template_id": "avatar:1014",
+                  "template_source": {
+                    "id": "avatar:1014",
+                    "kind": "avatar"
+                  },
+                  "toughness": 0.0,
+                  "toughness_state": {
+                    "break_delay": 0.0,
+                    "broken": false,
+                    "current": 0.0,
+                    "maximum": 0.0,
+                    "weakness_locked": false,
+                    "weaknesses": []
+                  },
+                  "unit_id": "ally:saber"
+                },
+                "enemy:target": {
+                  "action_value": 0.0,
+                  "attack": 1000.0,
+                  "base_stats": {
+                    "attack": 1000.0,
+                    "defense": 1000.0,
+                    "max_hp": 10000.0,
+                    "speed": 100.0
+                  },
+                  "defense": 1000.0,
+                  "derived_stats": {
+                    "break_damage_added_ratio": 0.0,
+                    "critical_chance": 0.0,
+                    "critical_damage": 0.0,
+                    "damage_added_ratio": 0.0,
+                    "effect_hit_rate": 0.0,
+                    "effect_resistance": 0.0
+                  },
+                  "energy": 0.0,
+                  "flags": {
+                    "position": 1,
+                    "status_details": [
+                      {
+                        "caster_id": "enemy:target",
+                        "duration": 1.0,
+                        "dynamic_values": {},
+                        "instance_id": "validation:v0_217:enemy:target:MAvatar_Advanced_BlackSwan_00_Rank02_AddDotOnCreate",
+                        "lifecycle_state": "active",
+                        "modifier_name": "MAvatar_Advanced_BlackSwan_00_Rank02_AddDotOnCreate",
+                        "modifiers": [],
+                        "owner_id": "enemy:target",
+                        "remaining_duration": 1.0,
+                        "source_id": "validation:v0_217",
+                        "source_trace": {
+                          "modifier_name": "MAvatar_Advanced_BlackSwan_00_Rank02_AddDotOnCreate",
+                          "validation": "v0_217"
+                        },
+                        "stacks": 1,
+                        "status_id": "modifier:MAvatar_Advanced_BlackSwan_00_Rank02_AddDotOnCreate",
+                        "trigger_ids_by_event": {},
+                        "unsupported": []
+                      }
+                    ],
+                    "weaknesses": [
+                      "Fire",
+                      "Thunder"
+                    ]
+                  },
+                  "hp": 10000.0,
+                  "level": 80,
+                  "max_energy": 0.0,
+                  "max_hp": 10000.0,
+                  "max_toughness": 60.0,
+                  "modifiers": [],
+                  "position": 1,
+                  "recoverable_hp": 0.0,
+                  "resources": {},
+                  "shield": 0.0,
+                  "side": "enemy",
+                  "speed": 100.0,
+                  "status_details": [
+                    {
+                      "caster_id": "enemy:target",
+                      "duration": 1.0,
+                      "dynamic_values": {},
+                      "instance_id": "validation:v0_217:enemy:target:MAvatar_Advanced_BlackSwan_00_Rank02_AddDotOnCreate",
+                      "lifecycle_state": "active",
+                      "modifier_name": "MAvatar_Advanced_BlackSwan_00_Rank02_AddDotOnCreate",
+                      "modifiers": [],
+                      "owner_id": "enemy:target",
+                      "remaining_duration": 1.0,
+                      "source_id": "validation:v0_217",
+                      "source_trace": {
+                        "modifier_name": "MAvatar_Advanced_BlackSwan_00_Rank02_AddDotOnCreate",
+                        "validation": "v0_217"
+                      },
+                      "stacks": 1,
+                      "status_id": "modifier:MAvatar_Advanced_BlackSwan_00_Rank02_AddDotOnCreate",
+                      "trigger_ids_by_event": {},
+                      "unsupported": []
+                    }
+                  ],
+                  "statuses": [],
+                  "template_id": "monster:1002011",
+                  "template_source": {
+                    "id": "monster:1002011",
+                    "kind": "monster"
+                  },
+                  "toughness": 60.0,
+                  "toughness_state": {
+                    "break_delay": 0.0,
+                    "broken": false,
+                    "current": 60.0,
+                    "maximum": 60.0,
+                    "weakness_locked": false,
+                    "weaknesses": [
+                      "Fire",
+                      "Thunder"
+                    ]
+                  },
+                  "unit_id": "enemy:target"
+                }
+              },
+              "wave_index": 0
+            }
+          }
+        }
+      },
+      "checks": {
+        "ByAnd_evaluated": true,
+        "ByAnd_selected": true,
+        "ByAnd_structured_details": true,
+        "ByAny_evaluated": true,
+        "ByAny_selected": true,
+        "ByAny_structured_details": true,
+        "ByAttackType_evaluated": true,
+        "ByAttackType_selected": true,
+        "ByAttackType_structured_details": true,
+        "ByCompareDynamicValue_evaluated": true,
+        "ByCompareDynamicValue_selected": true,
+        "ByCompareDynamicValue_structured_details": true,
+        "ByCompareHPRatio_evaluated": true,
+        "ByCompareHPRatio_selected": true,
+        "ByCompareHPRatio_structured_details": true,
+        "ByCompareModifierValue_evaluated": true,
+        "ByCompareModifierValue_selected": true,
+        "ByCompareModifierValue_structured_details": true,
+        "ByCompareTarget_evaluated": true,
+        "ByCompareTarget_selected": true,
+        "ByCompareTarget_structured_details": true,
+        "ByCurrentSkillType_evaluated": true,
+        "ByCurrentSkillType_selected": true,
+        "ByCurrentSkillType_structured_details": true,
+        "ByIsContainModifier_evaluated": true,
+        "ByIsContainModifier_selected": true,
+        "ByIsContainModifier_structured_details": true,
+        "ByNot_evaluated": true,
+        "ByNot_selected": true,
+        "ByNot_structured_details": true,
+        "ByTargetTeam_evaluated": true,
+        "ByTargetTeam_selected": true,
+        "ByTargetTeam_structured_details": true
+      },
+      "ok": true
+    },
+    "damage_semantics_regression": {
+      "checks": {
+        "direct_damage_has_ledger": true,
+        "direct_damage_not_bypassing": true,
+        "has_direct_damage": true,
+        "no_follow_up_family": true
+      },
+      "ok": true
+    },
+    "fixed_damage_families": {
+      "checks": {
+        "hp_loss_bypasses_normal_multipliers": true,
+        "hp_loss_no_normal_multiplier_terms": true,
+        "hp_loss_ok": true,
+        "true_damage_bypasses_normal_multipliers": true,
+        "true_damage_no_normal_multiplier_terms": true,
+        "true_damage_ok": true
+      },
+      "details": {
+        "hp_loss": {
+          "errors": [],
+          "events": [],
+          "mutations": [
+            {
+              "after": 9950.0,
+              "before": 10000.0,
+              "metadata": {
+                "action_definition": null,
+                "amount": 50.0,
+                "attack_type": "hp_loss_validation",
+                "attacker_id": "ally:saber",
+                "bypasses_normal_multipliers": true,
+                "damage_formula_family": "hp_loss",
+                "damage_kind": "hp_damage",
+                "element_type": null,
+                "metadata": {},
+                "source_trace": {
+                  "validation": "v0_217"
+                },
+                "target_id": "enemy:target"
+              },
+              "mutation_id": "mutation:59e0c35ac0fd8e51",
+              "op": "set",
+              "path": [
+                "units",
+                "enemy:target",
+                "hp"
+              ],
+              "reason": "apply damage packet",
+              "source": "damage_system"
+            }
+          ],
+          "ok": true,
+          "packet": {
+            "action_definition": null,
+            "amount": 50.0,
+            "attack_type": "hp_loss_validation",
+            "attacker_id": "ally:saber",
+            "bypasses_normal_multipliers": true,
+            "damage_formula_family": "hp_loss",
+            "damage_kind": "hp_damage",
+            "element_type": null,
+            "metadata": {},
+            "source_trace": {
+              "validation": "v0_217"
+            },
+            "target_id": "enemy:target"
+          },
+          "records": [
+            {
+              "mutation_id": "mutation:59e0c35ac0fd8e51",
+              "payload": {
+                "amount": 50.0,
+                "attack_type": "hp_loss_validation",
+                "bypasses_normal_multipliers": true,
+                "damage_formula_family": "hp_loss",
+                "damage_kind": "hp_damage",
+                "element_type": null,
+                "normal_multiplier_terms": [],
+                "target_after_hp": 9950.0,
+                "target_before_hp": 10000.0
+              },
+              "process_only": false,
+              "record_type": "hp_loss",
+              "source": "damage_system",
+              "trace": {
+                "validation": "v0_217"
+              }
+            }
+          ],
+          "rng_events": []
+        },
+        "true_damage": {
+          "errors": [],
+          "events": [],
+          "mutations": [
+            {
+              "after": 9900.0,
+              "before": 10000.0,
+              "metadata": {
+                "action_definition": null,
+                "amount": 100.0,
+                "attack_type": "true_damage_validation",
+                "attacker_id": "ally:saber",
+                "bypasses_normal_multipliers": true,
+                "damage_formula_family": "true_damage",
+                "damage_kind": "hp_damage",
+                "element_type": null,
+                "metadata": {},
+                "source_trace": {
+                  "validation": "v0_217"
+                },
+                "target_id": "enemy:target"
+              },
+              "mutation_id": "mutation:1bf151efbb0d74ea",
+              "op": "set",
+              "path": [
+                "units",
+                "enemy:target",
+                "hp"
+              ],
+              "reason": "apply damage packet",
+              "source": "damage_system"
+            }
+          ],
+          "ok": true,
+          "packet": {
+            "action_definition": null,
+            "amount": 100.0,
+            "attack_type": "true_damage_validation",
+            "attacker_id": "ally:saber",
+            "bypasses_normal_multipliers": true,
+            "damage_formula_family": "true_damage",
+            "damage_kind": "hp_damage",
+            "element_type": null,
+            "metadata": {},
+            "source_trace": {
+              "validation": "v0_217"
+            },
+            "target_id": "enemy:target"
+          },
+          "records": [
+            {
+              "mutation_id": "mutation:1bf151efbb0d74ea",
+              "payload": {
+                "amount": 100.0,
+                "attack_type": "true_damage_validation",
+                "bypasses_normal_multipliers": true,
+                "damage_formula_family": "true_damage",
+                "damage_kind": "hp_damage",
+                "element_type": null,
+                "normal_multiplier_terms": [],
+                "target_after_hp": 9900.0,
+                "target_before_hp": 10000.0
+              },
+              "process_only": false,
+              "record_type": "damage",
+              "source": "damage_system",
+              "trace": {
+                "validation": "v0_217"
+              }
+            }
+          ],
+          "rng_events": []
+        }
+      },
+      "ok": true
+    },
+    "status_modifier_ledger_regression": {
+      "checks": {
+        "has_damage_bonus_status_term": true,
+        "has_status_ledger_transition": true,
+        "has_status_source_term": true
+      },
+      "ok": true,
+      "status_terms": [
+        {
+          "applied_reason": "status_stack_property",
+          "applied_value": 1.0,
+          "bucket": "damage_bonus",
+          "condition": "property=AllDamageTypeAddedRatio",
+          "key": "damage_added_ratio",
+          "raw_path": "_CallbackList[1].CallbackConfig[2]",
+          "scope": "actor",
+          "skipped_reason": "",
+          "source_id": "status:482b5f8fe18d1b69",
+          "source_type": "actor.status"
+        }
+      ]
+    }
+  },
+  "fidelity": {
+    "event_count": 201,
+    "event_lifecycle_counts": {
+      "discovered_only": 3,
+      "lowered": 198
+    },
+    "opcode_count": 1212,
+    "opcode_lifecycle_counts": {
+      "blocked": 484,
+      "discovered_only": 123,
+      "executable": 22,
+      "lowered": 583
+    }
+  },
+  "ok": true,
+  "scenario": {
+    "command": {
+      "action_id": "avatar_skill:101401",
+      "action_level": 10,
+      "target_ids": [
+        "enemy:target"
+      ]
+    },
+    "identity": {
+      "errors": [],
+      "ok": true,
+      "source_traces": [
+        {
+          "coverage_status": "audit_only",
+          "entity_id": "avatar:1014",
+          "entity_type": "avatar",
+          "source": {
+            "evidence": {
+              "id_key": "AvatarID",
+              "row_index": 0
+            },
+            "raw_id": "1014",
+            "raw_type": "AvatarConfigLD",
+            "source_path": "ExcelOutput/AvatarConfigLD.json"
+          }
+        },
+        {
+          "coverage_status": "audit_only",
+          "entity_id": "monster:1002011",
+          "entity_type": "monster",
+          "source": {
+            "evidence": {
+              "id_key": "MonsterID",
+              "row_index": 0
+            },
+            "raw_id": "1002011",
+            "raw_type": "MonsterConfig",
+            "source_path": "ExcelOutput/MonsterConfig.json"
+          }
+        },
+        {
+          "coverage_status": "audit_only",
+          "entity_id": "avatar_skill:101401",
+          "entity_type": "avatar_skill",
+          "source": {
+            "evidence": {
+              "id_key": "SkillID",
+              "row_index": 65
+            },
+            "raw_id": "101401",
+            "raw_type": "AvatarSkillConfigLD",
+            "source_path": "ExcelOutput/AvatarSkillConfigLD.json"
+          }
+        },
+        {
+          "action_id": "avatar_skill:101401",
+          "coverage_status": "executable",
+          "definition_id": "action_def:avatar_skill:101401:10",
+          "level": 10,
+          "source": {
+            "evidence": {
+              "id_key": "SkillID",
+              "level": 10,
+              "resource_mapping": {
+                "BPAdd": "skill_point_gain_if_positive",
+                "BPNeed": "skill_point_cost_if_positive",
+                "SPBase": "energy_gain"
+              },
+              "row_index": 65,
+              "taxonomy": {
+                "attack_type": "raw TBGD AttackType; follow-up is an attack type axis",
+                "damage_formula_family": "formula family axis; follow-up is not a damage family",
+                "element_type": "raw TBGD StanceDamageType when present"
+              }
+            },
+            "raw_id": "101401",
+            "raw_type": "AvatarSkillConfigLD",
+            "source_path": "ExcelOutput/AvatarSkillConfigLD.json"
+          }
+        }
+      ]
+    },
+    "scenario_id": "identity_smoke_v0_204"
+  },
+  "snapshot_completeness": {
+    "errors": [],
+    "missing_paths": [],
+    "ok": true
+  },
+  "static_checks": {
+    "ok": true,
+    "violations": []
+  },
+  "version": "v0_217"
+}
