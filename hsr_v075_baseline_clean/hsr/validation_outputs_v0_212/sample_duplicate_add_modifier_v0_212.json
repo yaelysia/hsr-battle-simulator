@@ -1,0 +1,279 @@
+{
+  "events": [],
+  "mutations": [
+    {
+      "after": [
+        "modifier:MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean"
+      ],
+      "before": [
+        "modifier:MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean"
+      ],
+      "metadata": {
+        "modifier_name": "MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean",
+        "status_id": "modifier:MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean"
+      },
+      "mutation_id": "mutation:bd0656a751bceb57",
+      "op": "set",
+      "path": [
+        "units",
+        "ally:saber",
+        "statuses"
+      ],
+      "reason": "apply AddModifier status id",
+      "source": "status_system"
+    },
+    {
+      "after": [
+        {
+          "application_operation": "refresh_or_replace_partial",
+          "caster_id": "ally:saber",
+          "duration": null,
+          "dynamic_values": {},
+          "instance_id": "status:adf62baa932ca8fc",
+          "max_stacks": null,
+          "modifier_name": "MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean",
+          "modifiers": [],
+          "owner_id": "ally:saber",
+          "partial": true,
+          "source_id": "validation:v0_212:duplicate_partial:effect:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json:MAvatar_Advanced_Seele_00_Skill02InsertMuteSp:39:success:1:AddModifier",
+          "source_trace": {
+            "effect_id": "effect:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json:MAvatar_Advanced_Seele_00_Skill02InsertMuteSp:39:success:1:AddModifier",
+            "effect_source": {
+              "evidence": {
+                "branch": "success",
+                "callback_index": 39,
+                "task_index": 1
+              },
+              "raw_id": "MAvatar_Advanced_Seele_00_Skill02InsertMuteSp",
+              "raw_type": "GlobalModifiers",
+              "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json"
+            },
+            "modifier_definition": {
+              "evidence": {
+                "definition_kind": "modifier_definition",
+                "map_name": "GlobalModifiers",
+                "modifier_name": "MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean"
+              },
+              "raw_id": "MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean",
+              "raw_type": "GlobalModifiers",
+              "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json"
+            }
+          },
+          "stacks": 1,
+          "status_id": "modifier:MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean",
+          "trigger_ids_by_event": {
+            "OnAfterSkillUse": [
+              "trigger:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json:MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean:40"
+            ],
+            "OnInsertActionFinish": [
+              "trigger:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json:MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean:41"
+            ]
+          },
+          "unsupported": [
+            "refresh_or_replace_partial:existing_status_instance"
+          ]
+        }
+      ],
+      "before": [
+        {
+          "application_operation": "add",
+          "caster_id": "ally:saber",
+          "duration": null,
+          "dynamic_values": {},
+          "instance_id": "status:adf62baa932ca8fc",
+          "max_stacks": null,
+          "modifier_name": "MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean",
+          "modifiers": [],
+          "owner_id": "ally:saber",
+          "partial": false,
+          "source_id": "validation:v0_212:duplicate_partial:effect:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json:MAvatar_Advanced_Seele_00_Skill02InsertMuteSp:39:success:1:AddModifier",
+          "source_trace": {
+            "effect_id": "effect:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json:MAvatar_Advanced_Seele_00_Skill02InsertMuteSp:39:success:1:AddModifier",
+            "effect_source": {
+              "evidence": {
+                "branch": "success",
+                "callback_index": 39,
+                "task_index": 1
+              },
+              "raw_id": "MAvatar_Advanced_Seele_00_Skill02InsertMuteSp",
+              "raw_type": "GlobalModifiers",
+              "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json"
+            },
+            "modifier_definition": {
+              "evidence": {
+                "definition_kind": "modifier_definition",
+                "map_name": "GlobalModifiers",
+                "modifier_name": "MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean"
+              },
+              "raw_id": "MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean",
+              "raw_type": "GlobalModifiers",
+              "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json"
+            }
+          },
+          "stacks": 1,
+          "status_id": "modifier:MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean",
+          "trigger_ids_by_event": {
+            "OnAfterSkillUse": [
+              "trigger:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json:MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean:40"
+            ],
+            "OnInsertActionFinish": [
+              "trigger:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json:MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean:41"
+            ]
+          },
+          "unsupported": []
+        }
+      ],
+      "metadata": {
+        "status_instance": {
+          "application_operation": "refresh_or_replace_partial",
+          "caster_id": "ally:saber",
+          "duration": null,
+          "dynamic_values": {},
+          "instance_id": "status:adf62baa932ca8fc",
+          "max_stacks": null,
+          "modifier_name": "MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean",
+          "modifiers": [],
+          "owner_id": "ally:saber",
+          "partial": true,
+          "source_id": "validation:v0_212:duplicate_partial:effect:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json:MAvatar_Advanced_Seele_00_Skill02InsertMuteSp:39:success:1:AddModifier",
+          "source_trace": {
+            "effect_id": "effect:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json:MAvatar_Advanced_Seele_00_Skill02InsertMuteSp:39:success:1:AddModifier",
+            "effect_source": {
+              "evidence": {
+                "branch": "success",
+                "callback_index": 39,
+                "task_index": 1
+              },
+              "raw_id": "MAvatar_Advanced_Seele_00_Skill02InsertMuteSp",
+              "raw_type": "GlobalModifiers",
+              "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json"
+            },
+            "modifier_definition": {
+              "evidence": {
+                "definition_kind": "modifier_definition",
+                "map_name": "GlobalModifiers",
+                "modifier_name": "MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean"
+              },
+              "raw_id": "MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean",
+              "raw_type": "GlobalModifiers",
+              "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json"
+            }
+          },
+          "stacks": 1,
+          "status_id": "modifier:MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean",
+          "trigger_ids_by_event": {
+            "OnAfterSkillUse": [
+              "trigger:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json:MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean:40"
+            ],
+            "OnInsertActionFinish": [
+              "trigger:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json:MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean:41"
+            ]
+          },
+          "unsupported": [
+            "refresh_or_replace_partial:existing_status_instance"
+          ]
+        }
+      },
+      "mutation_id": "mutation:b8473981f641fb2c",
+      "op": "set",
+      "path": [
+        "units",
+        "ally:saber",
+        "flags",
+        "status_details"
+      ],
+      "reason": "apply AddModifier status details",
+      "source": "status_system"
+    }
+  ],
+  "records": [
+    {
+      "mutation_id": "mutation:b8473981f641fb2c",
+      "payload": {
+        "operation": "refresh_or_replace_partial",
+        "partial": true,
+        "status_instance": {
+          "application_operation": "refresh_or_replace_partial",
+          "caster_id": "ally:saber",
+          "duration": null,
+          "dynamic_values": {},
+          "instance_id": "status:adf62baa932ca8fc",
+          "max_stacks": null,
+          "modifier_name": "MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean",
+          "modifiers": [],
+          "owner_id": "ally:saber",
+          "partial": true,
+          "source_id": "validation:v0_212:duplicate_partial:effect:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json:MAvatar_Advanced_Seele_00_Skill02InsertMuteSp:39:success:1:AddModifier",
+          "source_trace": {
+            "effect_id": "effect:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json:MAvatar_Advanced_Seele_00_Skill02InsertMuteSp:39:success:1:AddModifier",
+            "effect_source": {
+              "evidence": {
+                "branch": "success",
+                "callback_index": 39,
+                "task_index": 1
+              },
+              "raw_id": "MAvatar_Advanced_Seele_00_Skill02InsertMuteSp",
+              "raw_type": "GlobalModifiers",
+              "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json"
+            },
+            "modifier_definition": {
+              "evidence": {
+                "definition_kind": "modifier_definition",
+                "map_name": "GlobalModifiers",
+                "modifier_name": "MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean"
+              },
+              "raw_id": "MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean",
+              "raw_type": "GlobalModifiers",
+              "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json"
+            }
+          },
+          "stacks": 1,
+          "status_id": "modifier:MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean",
+          "trigger_ids_by_event": {
+            "OnAfterSkillUse": [
+              "trigger:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json:MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean:40"
+            ],
+            "OnInsertActionFinish": [
+              "trigger:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json:MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean:41"
+            ]
+          },
+          "unsupported": [
+            "refresh_or_replace_partial:existing_status_instance"
+          ]
+        },
+        "unsupported": [
+          "refresh_or_replace_partial:existing_status_instance"
+        ]
+      },
+      "process_only": false,
+      "record_type": "status",
+      "source": "status_system",
+      "trace": {
+        "effect_id": "effect:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json:MAvatar_Advanced_Seele_00_Skill02InsertMuteSp:39:success:1:AddModifier",
+        "effect_source": {
+          "evidence": {
+            "branch": "success",
+            "callback_index": 39,
+            "task_index": 1
+          },
+          "raw_id": "MAvatar_Advanced_Seele_00_Skill02InsertMuteSp",
+          "raw_type": "GlobalModifiers",
+          "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json"
+        },
+        "modifier_definition": {
+          "evidence": {
+            "definition_kind": "modifier_definition",
+            "map_name": "GlobalModifiers",
+            "modifier_name": "MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean"
+          },
+          "raw_id": "MAvatar_Advanced_Seele_00_Skill02InsertMuteSp_Clean",
+          "raw_type": "GlobalModifiers",
+          "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json"
+        }
+      }
+    }
+  ],
+  "unsupported": [
+    "refresh_or_replace_partial:existing_status_instance"
+  ]
+}

@@ -6,7 +6,7 @@ from ..core.model import ActionCommand, BattleState, GameEvent, JSONValue, Mutat
 from ..core.reducer import MutationReducer
 from ..core.settlement import SettlementRecord
 from ..rules.evaluator import EvaluationContext, RuleEvaluator
-from ..rules.ir import ConditionIR, TriggerIR
+from ..rules.ir import ActionDefinitionIR, ConditionIR, TriggerIR
 from ..rules.rulebook import RuleBook
 from .effect import EffectExecutionContext, EffectRegistry, EffectResult
 
@@ -77,6 +77,7 @@ class TriggerSystem:
         canonical_window: str,
         tbgd_event: str,
         command: ActionCommand,
+        action_definition: ActionDefinitionIR,
         target_resolution: TargetResolution,
         enabled: bool,
         skipped_reason: str = "",
@@ -98,6 +99,27 @@ class TriggerSystem:
             if not trigger_ids:
                 continue
             for trigger_id in trigger_ids:
+                scope_ok, scope_reason = _status_scope_ok(
+                    detail,
+                    unit_id=unit_id,
+                    command=command,
+                    primary_target=primary_target,
+                )
+                if not scope_ok:
+                    record = _window_record(
+                        canonical_window,
+                        tbgd_event,
+                        detail,
+                        trigger_id=trigger_id,
+                        skipped_reason=scope_reason,
+                        metadata=_window_metadata(
+                            command=command,
+                            action_definition=action_definition,
+                            primary_target=primary_target,
+                        ),
+                    )
+                    self._append_process_record(records, window_records, record)
+                    continue
                 status_trigger_count += 1
                 trigger = self.rules.trigger(trigger_id)
                 if trigger is None:
@@ -107,6 +129,11 @@ class TriggerSystem:
                         detail,
                         trigger_id=trigger_id,
                         blocked_reason="missing_trigger",
+                        metadata=_window_metadata(
+                            command=command,
+                            action_definition=action_definition,
+                            primary_target=primary_target,
+                        ),
                     )
                     self._append_process_record(records, window_records, record)
                     continue
@@ -114,6 +141,7 @@ class TriggerSystem:
                 condition_results, blocked_reason = self._evaluate_conditions(
                     trigger,
                     command=command,
+                    action_definition=action_definition,
                     primary_target=primary_target,
                     canonical_window=canonical_window,
                     tbgd_event=tbgd_event,
@@ -126,6 +154,11 @@ class TriggerSystem:
                         trigger_id=trigger.trigger_id,
                         condition_results=tuple(condition_results),
                         blocked_reason=blocked_reason,
+                        metadata=_window_metadata(
+                            command=command,
+                            action_definition=action_definition,
+                            primary_target=primary_target,
+                        ),
                     )
                     self._append_process_record(records, window_records, record)
                     continue
@@ -148,7 +181,13 @@ class TriggerSystem:
                                 source="trigger_system",
                                 process_only=True,
                                 payload=effect_result_json,
-                                trace={"trigger_id": trigger.trigger_id},
+                                trace=_effect_trace(
+                                    trigger,
+                                    effect_id,
+                                    detail,
+                                    canonical_window=canonical_window,
+                                    tbgd_event=tbgd_event,
+                                ),
                             ).to_json()
                         )
                         continue
@@ -168,7 +207,16 @@ class TriggerSystem:
                     mutations.extend(result.mutations)
                     records.extend(result.records)
                     if result.unsupported and not result.records:
-                        records.append(_unsupported_effect_record(trigger, effect.effect_id, result))
+                        records.append(
+                            _unsupported_effect_record(
+                                trigger,
+                                effect.effect_id,
+                                result,
+                                detail,
+                                canonical_window=canonical_window,
+                                tbgd_event=tbgd_event,
+                            )
+                        )
                     trigger_mutation_count += len(result.mutations)
                     effect_results.append(
                         {
@@ -189,10 +237,15 @@ class TriggerSystem:
                     condition_results=tuple(condition_results),
                     effect_results=tuple(effect_results),
                     mutation_count=trigger_mutation_count,
+                    metadata=_window_metadata(
+                        command=command,
+                        action_definition=action_definition,
+                        primary_target=primary_target,
+                    ),
                 )
                 self._append_process_record(records, window_records, record)
 
-        if status_trigger_count == 0:
+        if not window_records:
             record = TriggerWindowRecord(
                 canonical_window=canonical_window,
                 tbgd_event=tbgd_event,
@@ -229,6 +282,7 @@ class TriggerSystem:
         trigger: TriggerIR,
         *,
         command: ActionCommand,
+        action_definition: ActionDefinitionIR,
         primary_target: str | None,
         canonical_window: str,
         tbgd_event: str,
@@ -244,12 +298,13 @@ class TriggerSystem:
                 EvaluationContext(
                     actor_id=command.actor_id,
                     target_id=primary_target,
-                    event_payload={
-                        "canonical_window": canonical_window,
-                        "tbgd_event": tbgd_event,
-                        "action_id": command.action_id,
-                        "action_level": command.action_level,
-                    },
+                    event_payload=_condition_event_payload(
+                        command=command,
+                        action_definition=action_definition,
+                        primary_target=primary_target,
+                        canonical_window=canonical_window,
+                        tbgd_event=tbgd_event,
+                    ),
                 ),
             )
             results.append(_condition_result_json(condition, result))
@@ -351,8 +406,10 @@ def _window_record(
     trigger_id: str,
     condition_results: tuple[dict[str, JSONValue], ...] = (),
     effect_results: tuple[dict[str, JSONValue], ...] = (),
+    skipped_reason: str = "",
     blocked_reason: str = "",
     mutation_count: int = 0,
+    metadata: dict[str, JSONValue] | None = None,
 ) -> TriggerWindowRecord:
     return TriggerWindowRecord(
         canonical_window=canonical_window,
@@ -364,12 +421,22 @@ def _window_record(
         trigger_id=trigger_id,
         condition_results=condition_results,
         effect_results=effect_results,
+        skipped_reason=skipped_reason,
         blocked_reason=blocked_reason,
         mutation_count=mutation_count,
+        metadata=metadata or {},
     )
 
 
-def _unsupported_effect_record(trigger: TriggerIR, effect_id: str, result: EffectResult) -> dict[str, JSONValue]:
+def _unsupported_effect_record(
+    trigger: TriggerIR,
+    effect_id: str,
+    result: EffectResult,
+    detail: dict[str, JSONValue],
+    *,
+    canonical_window: str,
+    tbgd_event: str,
+) -> dict[str, JSONValue]:
     return SettlementRecord(
         record_type="effect_unsupported",
         source="trigger_system",
@@ -378,10 +445,99 @@ def _unsupported_effect_record(trigger: TriggerIR, effect_id: str, result: Effec
             "trigger_id": trigger.trigger_id,
             "effect_id": effect_id,
             "unsupported": list(result.unsupported),
+            "canonical_window": canonical_window,
+            "tbgd_event": tbgd_event,
+            "status_instance_id": _optional_str(detail.get("instance_id")),
+            "modifier_name": _optional_str(detail.get("modifier_name")),
         },
-        trace={"trigger_id": trigger.trigger_id},
+        trace=_effect_trace(
+            trigger,
+            effect_id,
+            detail,
+            canonical_window=canonical_window,
+            tbgd_event=tbgd_event,
+        ),
     ).to_json()
 
 
 def _optional_str(value: object) -> str | None:
     return value if isinstance(value, str) else None
+
+
+def _status_scope_ok(
+    detail: dict[str, JSONValue],
+    *,
+    unit_id: str,
+    command: ActionCommand,
+    primary_target: str | None,
+) -> tuple[bool, str]:
+    owner_id = _optional_str(detail.get("owner_id")) or unit_id
+    if owner_id == command.actor_id:
+        return True, ""
+    if primary_target is not None and owner_id == primary_target:
+        return True, ""
+    return False, "scope_mismatch:status_owner_is_not_actor_or_primary_target"
+
+
+def _condition_event_payload(
+    *,
+    command: ActionCommand,
+    action_definition: ActionDefinitionIR,
+    primary_target: str | None,
+    canonical_window: str,
+    tbgd_event: str,
+) -> dict[str, JSONValue]:
+    return {
+        "SkillType": action_definition.skill_effect,
+        "AttackType": action_definition.attack_type,
+        "canonical_window": canonical_window,
+        "tbgd_event": tbgd_event,
+        "action_id": command.action_id,
+        "action_level": command.action_level,
+        "actor_id": command.actor_id,
+        "primary_target_id": primary_target,
+        "attack_type": action_definition.attack_type,
+        "damage_kind": action_definition.damage_kind,
+        "damage_formula_family": action_definition.damage_formula_family,
+        "skill_effect": action_definition.skill_effect,
+    }
+
+
+def _window_metadata(
+    *,
+    command: ActionCommand,
+    action_definition: ActionDefinitionIR,
+    primary_target: str | None,
+) -> dict[str, JSONValue]:
+    return {
+        "actor_id": command.actor_id,
+        "primary_target_id": primary_target,
+        "action_id": command.action_id,
+        "action_level": command.action_level,
+        "SkillType": action_definition.skill_effect,
+        "AttackType": action_definition.attack_type,
+        "damage_kind": action_definition.damage_kind,
+        "damage_formula_family": action_definition.damage_formula_family,
+    }
+
+
+def _effect_trace(
+    trigger: TriggerIR,
+    effect_id: str,
+    detail: dict[str, JSONValue],
+    *,
+    canonical_window: str,
+    tbgd_event: str,
+) -> dict[str, JSONValue]:
+    return {
+        "canonical_window": canonical_window,
+        "tbgd_event": tbgd_event,
+        "trigger_id": trigger.trigger_id,
+        "trigger_source": trigger.source.to_json(),
+        "effect_id": effect_id,
+        "status_instance_id": _optional_str(detail.get("instance_id")),
+        "status_id": _optional_str(detail.get("status_id")),
+        "modifier_name": _optional_str(detail.get("modifier_name")),
+        "owner_id": _optional_str(detail.get("owner_id")),
+        "status_source_trace": detail.get("source_trace") if isinstance(detail.get("source_trace"), dict) else {},
+    }

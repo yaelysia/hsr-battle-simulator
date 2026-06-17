@@ -29,6 +29,8 @@ class StatusInstance:
     modifiers: tuple[dict[str, JSONValue], ...] = ()
     trigger_ids_by_event: dict[str, tuple[str, ...]] = field(default_factory=dict)
     unsupported: tuple[str, ...] = ()
+    application_operation: str = "add"
+    partial: bool = False
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -49,6 +51,8 @@ class StatusInstance:
                 for event, trigger_ids in sorted(self.trigger_ids_by_event.items())
             },
             "unsupported": list(self.unsupported),
+            "application_operation": self.application_operation,
+            "partial": self.partial,
         }
 
 
@@ -141,6 +145,10 @@ class StatusSystem:
 
         dynamic_values = _resolve_dynamic_values(standard)
         modifiers, unsupported = _runtime_modifiers(definition, dynamic_values)
+        before_details = _status_details(unit_flags=state.units[target_id].flags)
+        existing_detail = _matching_status_detail(before_details, target_id, modifier_name, effect.effect_id, source_id)
+        application_operation, partial_reasons = _application_semantics(standard, existing_detail)
+        unsupported = [*unsupported, *partial_reasons]
         status_instance = StatusInstance(
             instance_id=_status_instance_id(target_id, modifier_name, effect.effect_id, source_id),
             status_id=f"modifier:{modifier_name}",
@@ -160,11 +168,12 @@ class StatusSystem:
             modifiers=tuple(modifiers),
             trigger_ids_by_event=_trigger_ids_by_event(self.rules, modifier_name),
             unsupported=tuple(unsupported),
+            application_operation=application_operation,
+            partial=bool(partial_reasons),
         )
         unit = state.units[target_id]
         before_statuses = list(unit.statuses)
         after_statuses = list(dict.fromkeys((*unit.statuses, status_instance.status_id)))
-        before_details = _status_details(unit_flags=unit.flags)
         after_details = _replace_status_detail(before_details, status_instance)
         status_mutation = Mutation(
             op="set",
@@ -191,9 +200,10 @@ class StatusSystem:
                 mutation_id=detail_mutation.stable_id(),
                 process_only=False,
                 payload={
-                    "operation": "add_modifier",
+                    "operation": application_operation,
                     "status_instance": status_instance.to_json(),
                     "unsupported": list(unsupported),
+                    "partial": status_instance.partial,
                 },
                 trace=status_instance.source_trace,
             ).to_json(),
@@ -366,6 +376,48 @@ def _replace_status_detail(details: list[JSONValue], status_instance: StatusInst
         *(item for item in details if not (isinstance(item, dict) and item.get("instance_id") == status_instance.instance_id)),
         instance_json,
     ]
+
+
+def _matching_status_detail(
+    details: list[JSONValue],
+    target_id: str,
+    modifier_name: str,
+    effect_id: str,
+    source_id: str,
+) -> dict[str, JSONValue] | None:
+    instance_id = _status_instance_id(target_id, modifier_name, effect_id, source_id)
+    status_id = f"modifier:{modifier_name}"
+    for item in details:
+        if not isinstance(item, dict):
+            continue
+        if item.get("instance_id") == instance_id:
+            return item
+        if item.get("status_id") == status_id and item.get("source_id") == source_id:
+            return item
+    return None
+
+
+def _application_semantics(
+    standard: dict[str, JSONValue],
+    existing_detail: dict[str, JSONValue] | None,
+) -> tuple[str, list[str]]:
+    reasons: list[str] = []
+    operation = "add"
+    max_layer = _optional_int(standard.get("max_layer"))
+    layer_add = _optional_float(standard.get("layer_add_when_stack"))
+    lifetime = _optional_float(standard.get("lifetime"))
+    if existing_detail is not None:
+        operation = "refresh_or_replace_partial"
+        reasons.append("refresh_or_replace_partial:existing_status_instance")
+    if max_layer is not None and max_layer > 1:
+        reasons.append("stack_unsupported:max_layer")
+    if layer_add is not None and layer_add != 0:
+        reasons.append("stack_unsupported:layer_add_when_stack")
+    if bool(standard.get("is_refresh", False)):
+        reasons.append("refresh_unsupported:is_refresh")
+    if lifetime is not None and lifetime > 0:
+        reasons.append("duration_lifecycle_unsupported:lifetime")
+    return operation, reasons
 
 
 def _trigger_ids_by_event(rules: RuleBook, modifier_name: str) -> dict[str, tuple[str, ...]]:

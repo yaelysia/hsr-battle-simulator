@@ -5,7 +5,7 @@ from typing import Callable
 
 from ..core.model import BattleState, GameEvent, JSONValue, Mutation
 from ..rules.ir import EffectIR
-from .status import StatusSystem
+from .status import SUPPORTED_ADD_MODIFIER_ALIASES, StatusSystem
 
 
 @dataclass(frozen=True)
@@ -48,7 +48,13 @@ class EffectRegistry:
         return handler(effect, context)
 
     def coverage(self, effect: EffectIR) -> str:
-        return "executable" if effect.opcode in self._handlers else effect.coverage_status
+        if effect.opcode not in self._handlers:
+            return effect.coverage_status
+        if effect.coverage_status != "executable":
+            return effect.coverage_status
+        if effect.opcode == "AddModifier" and not _add_modifier_payload_is_executable(effect):
+            return "blocked"
+        return "executable"
 
     def _execute_add_modifier(
         self,
@@ -73,3 +79,13 @@ class EffectRegistry:
             records=result.records,
             unsupported=result.unsupported,
         )
+
+
+def _add_modifier_payload_is_executable(effect: EffectIR) -> bool:
+    standard = effect.payload.get("standard")
+    if not isinstance(standard, dict):
+        return False
+    modifier_name = standard.get("modifier_name")
+    if not isinstance(modifier_name, str) or not modifier_name:
+        return False
+    return standard.get("target_alias") in SUPPORTED_ADD_MODIFIER_ALIASES

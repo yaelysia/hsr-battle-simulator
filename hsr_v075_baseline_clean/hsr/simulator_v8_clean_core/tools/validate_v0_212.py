@@ -6,14 +6,15 @@ from pathlib import Path
 from typing import Any
 
 from .. import BASELINE_VERSION
+from ..core.action_plan import build_action_event_plan
 from ..core.executor import CombatExecutor
 from ..core.fidelity import build_fidelity_matrix
-from ..core.model import ActionCommand, BattleState
+from ..core.model import ActionCommand, BattleState, UnitState
 from ..core.reducer import MutationReducer
 from ..core.settlement import SettlementTraceabilityValidator
 from ..core.snapshot_contract import SnapshotCompletenessValidator
 from ..core.transition_contract import TransitionContractValidator
-from ..rules.ir import CanonicalIR, EffectIR, TriggerIR
+from ..rules.ir import ActionDefinitionIR, CanonicalIR, EffectIR, TriggerIR
 from ..rules.rulebook import RuleBook
 from ..scenarios.build_state import ScenarioStateBuilder
 from ..scenarios.identity import IdentityResolver
@@ -28,7 +29,7 @@ from .io import write_json
 from .static_checks import run_static_checks
 
 
-VALIDATION_VERSION = "v0_211"
+VALIDATION_VERSION = "v0_212"
 SUPPORTED_TRIGGER_EVENTS = ("OnBeforeSkillUse", "OnBeforeAttack", "OnAfterAttack", "OnAfterSkillUse")
 SUPPORTED_ADD_MODIFIER_ALIASES = {"Caster", "ModifierOwnerEntity", "ParamEntity", "CurrentActionTarget"}
 NON_MAINLINE_PREFIXES = (
@@ -54,10 +55,10 @@ def run_validation(
     rules = RuleBook(ir)
 
     if write_full_ir:
-        write_json(output_dir / "canonical_ir_v0_211.json", ir.to_json())
-    write_json(output_dir / "canonical_ir_summary_v0_211.json", _canonical_ir_summary(ir))
-    write_json(output_dir / "coverage_matrix_v0_211.json", coverage.to_json())
-    write_json(output_dir / "fidelity_matrix_v0_211.json", fidelity.to_json())
+        write_json(output_dir / "canonical_ir_v0_212.json", ir.to_json())
+    write_json(output_dir / "canonical_ir_summary_v0_212.json", _canonical_ir_summary(ir))
+    write_json(output_dir / "coverage_matrix_v0_212.json", coverage.to_json())
+    write_json(output_dir / "fidelity_matrix_v0_212.json", fidelity.to_json())
 
     scenario = ScenarioLoader().load_path(scenario_path)
     identity_result = IdentityResolver(rules).validate(scenario)
@@ -102,6 +103,9 @@ def run_validation(
         blocked_condition_sample["pre_effect"] if blocked_condition_sample else None,
     )
     status_ledger_transition = _status_ledger_transition(ir, rules, base_state, command)
+    non_attack_case = _non_attack_action_case(ir, rules, base_state, command)
+    scope_case = _scope_mismatch_case(rules, base_state, command, sample)
+    duplicate_add_modifier_result = _duplicate_add_modifier_result(rules, base_state, command, sample)
 
     snapshot_validator = SnapshotCompletenessValidator()
     transition_validator = TransitionContractValidator()
@@ -130,6 +134,13 @@ def run_validation(
         ),
         "status_modifier_ledger_regression": _status_modifier_ledger_regression_checks(status_ledger_transition),
         "damage_semantics_regression": _damage_semantics_regression_checks(action_transition),
+        "action_event_plan": _action_event_plan_checks(package_root, action_transition, non_attack_case),
+        "damage_target_resolution": _damage_target_resolution_checks(action_transition),
+        "trigger_scope_gating": _trigger_scope_gating_checks(scope_case),
+        "condition_payload": _condition_payload_checks(action_transition),
+        "add_modifier_partial": _add_modifier_partial_checks(duplicate_add_modifier_result),
+        "effect_coverage": _effect_coverage_checks(rules, sample, unsupported_alias_effect),
+        "unsupported_effect_trace": _unsupported_effect_trace_checks(unsupported_effect_transition),
     }
     static_result = run_static_checks(package_root)
 
@@ -178,22 +189,27 @@ def run_validation(
         "static_checks": static_result.to_json(),
         "fidelity": fidelity.to_json()["summary"],
     }
-    write_json(output_dir / "validation_summary_v0_211.json", result)
-    write_json(output_dir / "sample_trigger_executor_transition_v0_211.json", action_transition.to_json())
-    write_json(output_dir / "sample_pre_status_application_v0_211.json", _effect_result_json(pre_status_result))
+    write_json(output_dir / "validation_summary_v0_212.json", result)
+    write_json(output_dir / "sample_trigger_executor_transition_v0_212.json", action_transition.to_json())
+    write_json(output_dir / "sample_pre_status_application_v0_212.json", _effect_result_json(pre_status_result))
     if unsupported_effect_transition is not None:
-        write_json(output_dir / "sample_unsupported_effect_transition_v0_211.json", unsupported_effect_transition.to_json())
+        write_json(output_dir / "sample_unsupported_effect_transition_v0_212.json", unsupported_effect_transition.to_json())
     if blocked_condition_transition is not None:
-        write_json(output_dir / "sample_blocked_condition_transition_v0_211.json", blocked_condition_transition.to_json())
+        write_json(output_dir / "sample_blocked_condition_transition_v0_212.json", blocked_condition_transition.to_json())
     if status_ledger_transition is not None:
-        write_json(output_dir / "sample_status_ledger_transition_v0_211.json", status_ledger_transition.to_json())
+        write_json(output_dir / "sample_status_ledger_transition_v0_212.json", status_ledger_transition.to_json())
+    if non_attack_case.get("transition") is not None:
+        write_json(output_dir / "sample_non_attack_transition_v0_212.json", non_attack_case["transition"].to_json())
+    if scope_case.get("transition") is not None:
+        write_json(output_dir / "sample_scope_mismatch_transition_v0_212.json", scope_case["transition"].to_json())
+    write_json(output_dir / "sample_duplicate_add_modifier_v0_212.json", _effect_result_json(duplicate_add_modifier_result))
     return result
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Validate v8 trigger window and effect execution spine.")
     parser.add_argument("--tbgd-root", type=Path, default=None)
-    parser.add_argument("--output-dir", type=Path, default=Path("validation_outputs_v0_211"))
+    parser.add_argument("--output-dir", type=Path, default=Path("validation_outputs_v0_212"))
     parser.add_argument("--scenario", type=Path, default=None)
     parser.add_argument("--max-ability-files", type=int, default=None)
     parser.add_argument("--write-full-ir", action="store_true")
@@ -351,6 +367,105 @@ def _status_ledger_transition(
     status_state = MutationReducer().apply_all(base_state, effect_result.mutations)
     _, transition = CombatExecutor(rules).execute(command, status_state)
     return transition
+
+
+def _non_attack_action_case(
+    ir: CanonicalIR,
+    rules: RuleBook,
+    base_state: BattleState,
+    command: ActionCommand,
+) -> dict[str, Any]:
+    definition = _select_non_attack_action_definition(ir, base_state.skill_points)
+    if definition is None:
+        return {"definition": None, "transition": None, "after": None, "replay": {"ok": False, "errors": ["missing non-attack definition"]}}
+    non_attack_command = replace(
+        command,
+        action_id=definition.action_id,
+        action_level=definition.level,
+        target_ids=(command.actor_id,),
+        metadata={**command.metadata, "crit_mode": "noncrit", "reset_actor_av": False},
+    )
+    after, transition = CombatExecutor(rules).execute(non_attack_command, base_state)
+    replay = MutationReducer().replay_snapshot(
+        base_state,
+        transition.transaction.mutations,
+        after.snapshot().to_json(),
+    )
+    return {
+        "definition": definition,
+        "command": non_attack_command,
+        "transition": transition,
+        "after": after,
+        "replay": {"ok": replay.ok, "errors": list(replay.errors)},
+    }
+
+
+def _scope_mismatch_case(
+    rules: RuleBook,
+    base_state: BattleState,
+    command: ActionCommand,
+    sample: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if not sample:
+        return {"transition": None, "effect_result": None}
+    bench = UnitState(
+        unit_id="ally:bench",
+        side="ally",
+        template_id="avatar:1014",
+        level=80,
+        max_hp=1000.0,
+        hp=1000.0,
+        attack=1000.0,
+        defense=500.0,
+        speed=100.0,
+        energy=0.0,
+        max_energy=120.0,
+    )
+    state = replace(base_state, units={**base_state.units, bench.unit_id: bench})
+    effect_result = EffectRegistry(StatusSystem(rules)).execute(
+        sample["pre_effect"],
+        EffectExecutionContext(
+            state=state,
+            caster_id=bench.unit_id,
+            source_id=f"validation:{VALIDATION_VERSION}:offscope:{sample['pre_effect'].effect_id}",
+            owner_id=bench.unit_id,
+            param_entity_id=bench.unit_id,
+            current_action_target_id=bench.unit_id,
+        ),
+    )
+    state = MutationReducer().apply_all(state, effect_result.mutations)
+    _, transition = CombatExecutor(rules).execute(command, state)
+    return {"transition": transition, "effect_result": effect_result}
+
+
+def _duplicate_add_modifier_result(
+    rules: RuleBook,
+    base_state: BattleState,
+    command: ActionCommand,
+    sample: dict[str, Any] | None,
+):
+    if not sample:
+        return None
+    first = _execute_effect(rules, base_state, sample["pre_effect"], command, source_suffix="duplicate_partial")
+    state = MutationReducer().apply_all(base_state, first.mutations)
+    return _execute_effect(rules, state, sample["pre_effect"], command, source_suffix="duplicate_partial")
+
+
+def _select_non_attack_action_definition(ir: CanonicalIR, skill_points: int) -> ActionDefinitionIR | None:
+    for definition in sorted(
+        ir.action_definitions,
+        key=lambda item: (item.source.source_path, item.action_id, item.level),
+    ):
+        if not _is_mainline_source(definition.source.source_path):
+            continue
+        if definition.coverage_status != "executable":
+            continue
+        if definition.bp_need > skill_points:
+            continue
+        plan = build_action_event_plan(definition)
+        if not plan.has_attack_windows and not plan.has_damage_step:
+            return definition
+    return None
 
 
 def _select_status_damage_bonus_effect(ir: CanonicalIR, rules: RuleBook) -> EffectIR | None:
@@ -585,6 +700,157 @@ def _damage_semantics_regression_checks(transition) -> dict[str, object]:
         "no_follow_up_family": payload.get("damage_formula_family") != "follow_up",
     }
     return {"ok": all(checks.values()), "checks": checks}
+
+
+def _action_event_plan_checks(package_root: Path, attack_transition, non_attack_case: dict[str, Any]) -> dict[str, object]:
+    attack_plan = attack_transition.coverage.get("action_event_plan", {})
+    non_attack_transition = non_attack_case.get("transition")
+    non_attack_plan = (
+        non_attack_transition.coverage.get("action_event_plan", {})
+        if non_attack_transition is not None
+        else {}
+    )
+    non_attack_windows = (
+        [
+            window.get("canonical_window")
+            for window in non_attack_transition.to_json().get("trigger_windows", [])
+            if isinstance(window, dict)
+        ]
+        if non_attack_transition is not None
+        else []
+    )
+    executor_source = (package_root / "core/executor.py").read_text(encoding="utf-8")
+    checks = {
+        "attack_action_has_attack_windows": attack_plan.get("has_attack_windows") is True,
+        "non_attack_case_found": non_attack_transition is not None,
+        "non_attack_plan_has_no_attack_windows": non_attack_plan.get("has_attack_windows") is False,
+        "non_attack_omits_before_attack": "before_attack" not in non_attack_windows,
+        "non_attack_omits_after_attack": "after_attack" not in non_attack_windows,
+        "non_attack_has_no_damage_record": not bool(_damage_record(non_attack_transition)),
+        "non_attack_replay_ok": bool(non_attack_case.get("replay", {}).get("ok")),
+        "executor_has_no_trigger_result_slice": "trigger_results[:" not in executor_source,
+        "executor_has_no_ordered_mutation_helper": "_ordered_action_mutations" not in executor_source,
+    }
+    return {
+        "ok": all(checks.values()),
+        "checks": checks,
+        "non_attack_definition": (
+            non_attack_case["definition"].to_json()
+            if non_attack_case.get("definition") is not None
+            else None
+        ),
+        "non_attack_windows": non_attack_windows,
+    }
+
+
+def _damage_target_resolution_checks(transition) -> dict[str, object]:
+    selected = list(transition.target_resolution.selected)
+    damage_targets = [
+        mutation.path[1]
+        for mutation in transition.transaction.mutations
+        if mutation.source == "damage_system" and len(mutation.path) >= 3 and mutation.path[0] == "units"
+    ]
+    checks = {
+        "has_selected_target": bool(selected),
+        "has_damage_mutation": bool(damage_targets),
+        "damage_target_matches_selected": bool(selected and damage_targets)
+        and all(target == selected[0] for target in damage_targets),
+    }
+    return {"ok": all(checks.values()), "checks": checks, "selected": selected, "damage_targets": damage_targets}
+
+
+def _trigger_scope_gating_checks(scope_case: dict[str, Any]) -> dict[str, object]:
+    transition = scope_case.get("transition")
+    windows = transition.to_json().get("trigger_windows", []) if transition is not None else []
+    scope_windows = [
+        window
+        for window in windows
+        if isinstance(window, dict) and str(window.get("skipped_reason", "")).startswith("scope_mismatch")
+    ]
+    status_mutations = [
+        mutation.to_json()
+        for mutation in (transition.transaction.mutations if transition is not None else ())
+        if mutation.source == "status_system"
+    ]
+    checks = {
+        "scope_case_built": transition is not None,
+        "scope_mismatch_recorded": bool(scope_windows),
+        "offscope_status_did_not_execute_effect": not status_mutations,
+    }
+    return {"ok": all(checks.values()), "checks": checks, "scope_windows": scope_windows}
+
+
+def _condition_payload_checks(transition) -> dict[str, object]:
+    plan = transition.coverage.get("action_event_plan", {})
+    expected_skill_type = plan.get("skill_type")
+    windows = transition.to_json().get("trigger_windows", [])
+    payloads = [
+        window.get("metadata", {})
+        for window in windows
+        if isinstance(window, dict) and isinstance(window.get("metadata"), dict)
+    ]
+    checks = {
+        "has_trigger_window_metadata": bool(payloads),
+        "metadata_contains_skill_type": any(payload.get("SkillType") == expected_skill_type for payload in payloads),
+        "metadata_contains_attack_type": any("AttackType" in payload for payload in payloads),
+        "metadata_contains_damage_axes": any(
+            "damage_kind" in payload and "damage_formula_family" in payload
+            for payload in payloads
+        ),
+    }
+    return {"ok": all(checks.values()), "checks": checks, "sample_payloads": payloads[:3]}
+
+
+def _add_modifier_partial_checks(effect_result) -> dict[str, object]:
+    status_instance = _status_instance(effect_result)
+    unsupported = list(effect_result.unsupported) if effect_result is not None else []
+    checks = {
+        "duplicate_result_exists": effect_result is not None,
+        "status_instance_present": bool(status_instance),
+        "partial_marked": bool(status_instance and status_instance.get("partial") is True),
+        "operation_is_refresh_or_replace_partial": bool(
+            status_instance and status_instance.get("application_operation") == "refresh_or_replace_partial"
+        ),
+        "unsupported_reason_recorded": any("refresh_or_replace_partial" in reason for reason in unsupported),
+    }
+    return {"ok": all(checks.values()), "checks": checks, "unsupported": unsupported, "status_instance": status_instance}
+
+
+def _effect_coverage_checks(
+    rules: RuleBook,
+    sample: dict[str, Any] | None,
+    unsupported_alias_effect: EffectIR | None,
+) -> dict[str, object]:
+    registry = EffectRegistry(StatusSystem(rules))
+    executable_effect = sample.get("pre_effect") if sample else None
+    checks = {
+        "executable_add_modifier_coverage": bool(
+            executable_effect is not None and registry.coverage(executable_effect) == "executable"
+        ),
+        "blocked_alias_not_executable": bool(
+            unsupported_alias_effect is not None and registry.coverage(unsupported_alias_effect) != "executable"
+        ),
+    }
+    return {
+        "ok": all(checks.values()),
+        "checks": checks,
+        "coverage": {
+            "executable": registry.coverage(executable_effect) if executable_effect is not None else None,
+            "unsupported_alias": registry.coverage(unsupported_alias_effect) if unsupported_alias_effect is not None else None,
+        },
+    }
+
+
+def _unsupported_effect_trace_checks(transition) -> dict[str, object]:
+    records = _records_of_type(transition, "effect_unsupported")
+    traces = [record.get("trace", {}) for record in records if isinstance(record, dict)]
+    checks = {
+        "has_unsupported_effect_record": bool(records),
+        "trace_has_window": any(isinstance(trace, dict) and trace.get("canonical_window") for trace in traces),
+        "trace_has_status_source": any(isinstance(trace, dict) and trace.get("status_instance_id") for trace in traces),
+        "trace_has_trigger_source": any(isinstance(trace, dict) and isinstance(trace.get("trigger_source"), dict) for trace in traces),
+    }
+    return {"ok": all(checks.values()), "checks": checks, "records": records}
 
 
 def _sample_json(sample: dict[str, Any] | None) -> dict[str, Any] | None:
