@@ -55,14 +55,6 @@ class CombatExecutor:
                 "source": command.source,
             },
         )
-        timeline_result = self.timeline.open_action(
-            state,
-            command.actor_id,
-            TimelinePlan(
-                reset_actor_av=_metadata_bool(command.metadata, "reset_actor_av", False),
-                source="combat_executor.timeline",
-            ),
-        )
         target_result = self.targets.resolve_action_targets(
             state,
             command.actor_id,
@@ -91,13 +83,34 @@ class CombatExecutor:
                 },
             ),
         )
-        events: tuple[GameEvent, ...] = (action_event, *timeline_result.events)
-        timeline_mutations = timeline_result.mutations
-        resource_mutations = resource_result.mutations
+        plan_blocked_reason = action_execution_plan.target_plan.blocked_reason
+        blocked_reason = _action_blocked_reason(
+            target_ok=target_result.ok,
+            resource_ok=resource_result.ok,
+            has_selected_target=bool(target_result.resolution.selected),
+            plan_blocked_reason=plan_blocked_reason,
+            target_errors=target_result.errors,
+            resource_errors=resource_result.errors,
+        )
+        action_enabled = not blocked_reason
+        if action_enabled:
+            timeline_result = self.timeline.open_action(
+                state,
+                command.actor_id,
+                TimelinePlan(
+                    reset_actor_av=_metadata_bool(command.metadata, "reset_actor_av", False),
+                    source="combat_executor.timeline",
+                ),
+            )
+            events: tuple[GameEvent, ...] = (action_event, *timeline_result.events)
+            timeline_mutations = timeline_result.mutations
+            resource_mutations = resource_result.mutations
+        else:
+            events = (action_event,)
+            timeline_mutations = ()
+            resource_mutations = ()
         pre_damage_mutations = (*timeline_mutations, *resource_mutations)
         current_state = self.reducer.apply_all(state, pre_damage_mutations)
-        action_enabled = target_result.ok and resource_result.ok and bool(target_result.resolution.selected)
-        skipped_reason = "" if action_enabled else _trigger_skip_reason(target_result.ok, resource_result.ok)
         trigger_results: list[TriggerWindowResult] = []
         ordered_mutations: list[Mutation] = list(pre_damage_mutations)
         runtime_records: list[dict[str, JSONValue]] = [
@@ -107,52 +120,53 @@ class CombatExecutor:
         damage_results = []
         damage_mutations: tuple[Mutation, ...] = ()
 
-        for step in action_execution_plan.event_steps:
-            if step.kind == "trigger_window":
-                trigger_result = self.triggers.execute_status_window(
-                    current_state,
-                    canonical_window=step.canonical_window,
-                    tbgd_event=step.tbgd_event,
-                    command=command,
-                    action_definition=action_definition,
-                    target_resolution=target_result.resolution,
-                    enabled=action_enabled if step.requires_action_enabled else True,
-                    skipped_reason=skipped_reason,
-                )
-                current_state = trigger_result.after_state
-                trigger_results.append(trigger_result)
-                ordered_mutations.extend(trigger_result.mutations)
-                runtime_records.extend(trigger_result.records)
-                continue
-            if step.kind == "damage" and action_enabled:
-                for damage_plan in action_execution_plan.damage_plan:
-                    damage_packet = _damage_packet(
-                        command,
-                        action_definition,
-                        action_definition_trace,
-                        damage_plan,
+        if action_enabled:
+            for step in action_execution_plan.event_steps:
+                if step.kind == "trigger_window":
+                    trigger_result = self.triggers.execute_status_window(
+                        current_state,
+                        canonical_window=step.canonical_window,
+                        tbgd_event=step.tbgd_event,
+                        command=command,
+                        action_definition=action_definition,
+                        target_resolution=target_result.resolution,
+                        enabled=True,
+                        skipped_reason="",
                     )
-                    if damage_packet is None:
-                        continue
-                    damage_result = self.damage.apply_packet(current_state, damage_packet)
-                    damage_results.append(damage_result)
-                    damage_mutations = (*damage_mutations, *damage_result.mutations)
-                    current_state = self.reducer.apply_all(current_state, damage_result.mutations)
-                    ordered_mutations.extend(damage_result.mutations)
-                    runtime_records.extend(damage_result.records)
-            elif step.kind == "damage" and not action_enabled and action_execution_plan.target_plan.blocked_reason:
-                runtime_records.append(
-                    SettlementRecord(
-                        record_type="damage_blocked",
-                        source="combat_executor",
-                        process_only=True,
-                        payload={
-                            "reason": action_execution_plan.target_plan.blocked_reason,
-                            "action_execution_plan": action_execution_plan.to_json(),
-                        },
-                        trace=action_definition_trace,
-                    ).to_json()
-                )
+                    current_state = trigger_result.after_state
+                    trigger_results.append(trigger_result)
+                    ordered_mutations.extend(trigger_result.mutations)
+                    runtime_records.extend(trigger_result.records)
+                    continue
+                if step.kind == "damage":
+                    for damage_plan in action_execution_plan.damage_plan:
+                        damage_packet = _damage_packet(
+                            command,
+                            action_definition,
+                            action_definition_trace,
+                            damage_plan,
+                        )
+                        if damage_packet is None:
+                            continue
+                        damage_result = self.damage.apply_packet(current_state, damage_packet)
+                        damage_results.append(damage_result)
+                        damage_mutations = (*damage_mutations, *damage_result.mutations)
+                        current_state = self.reducer.apply_all(current_state, damage_result.mutations)
+                        ordered_mutations.extend(damage_result.mutations)
+                        runtime_records.extend(damage_result.records)
+        elif action_execution_plan.target_plan.blocked_reason:
+            runtime_records.append(
+                SettlementRecord(
+                    record_type="damage_blocked",
+                    source="combat_executor",
+                    process_only=True,
+                    payload={
+                        "reason": action_execution_plan.target_plan.blocked_reason,
+                        "action_execution_plan": action_execution_plan.to_json(),
+                    },
+                    trace=action_definition_trace,
+                ).to_json()
+            )
 
         trigger_mutations = tuple(mutation for result in trigger_results for mutation in result.mutations)
         trigger_events = tuple(event for result in trigger_results for event in result.events)
@@ -195,6 +209,22 @@ class CombatExecutor:
                 trace={"definition_id": action_definition.definition_id},
             ).to_json(),
             SettlementRecord(
+                record_type="action_preflight",
+                source="combat_executor",
+                process_only=True,
+                payload={
+                    "action_enabled": action_enabled,
+                    "blocked_reason": blocked_reason,
+                    "target_ok": target_result.ok,
+                    "resource_ok": resource_result.ok,
+                    "has_selected_target": bool(target_result.resolution.selected),
+                    "plan_blocked_reason": plan_blocked_reason,
+                    "target_errors": list(target_result.errors),
+                    "resource_errors": list(resource_result.errors),
+                },
+                trace={"definition_id": action_definition.definition_id},
+            ).to_json(),
+            SettlementRecord(
                 record_type="target_resolution",
                 source="target_system",
                 process_only=True,
@@ -203,6 +233,21 @@ class CombatExecutor:
             ).to_json(),
         ]
         records.extend(runtime_records)
+        if not action_enabled:
+            records.append(
+                SettlementRecord(
+                    record_type="action_blocked",
+                    source="combat_executor",
+                    process_only=True,
+                    payload={
+                        "reason": blocked_reason,
+                        "target_ok": target_result.ok,
+                        "resource_ok": resource_result.ok,
+                        "plan_blocked_reason": plan_blocked_reason,
+                    },
+                    trace={"definition_id": action_definition.definition_id},
+                ).to_json()
+            )
         if not target_result.ok:
             records.append(
                 SettlementRecord(
@@ -248,6 +293,11 @@ class CombatExecutor:
                 "definition_id": action_definition.definition_id,
                 "target_ok": target_result.ok,
                 "resource_ok": resource_result.ok,
+                "action_enabled": action_enabled,
+                "blocked_reason": blocked_reason,
+                "plan_blocked_reason": plan_blocked_reason,
+                "primary_action_target_id": action_execution_plan.primary_action_target_id,
+                "per_hit_target_context_not_implemented": action_execution_plan.per_hit_target_context_not_implemented,
                 "timeline_mutation_count": len(timeline_mutations),
                 "resource_mutation_count": len(resource_mutations),
                 "trigger_window_count": len(trigger_windows),
@@ -275,13 +325,27 @@ def _mutation_record(record_type: str, mutation: Mutation) -> dict[str, JSONValu
         },
     ).to_json()
 
-def _trigger_skip_reason(target_ok: bool, resource_ok: bool) -> str:
+def _action_blocked_reason(
+    *,
+    target_ok: bool,
+    resource_ok: bool,
+    has_selected_target: bool,
+    plan_blocked_reason: str,
+    target_errors: tuple[str, ...],
+    resource_errors: tuple[str, ...],
+) -> str:
     reasons: list[str] = []
+    if plan_blocked_reason:
+        reasons.append(plan_blocked_reason)
     if not target_ok:
         reasons.append("target_resolution_failed")
     if not resource_ok:
         reasons.append("resource_plan_failed")
-    return ",".join(reasons) or "action_not_executable"
+    if target_ok and not has_selected_target:
+        reasons.append("no_selected_target")
+    reasons.extend(f"target_error:{error}" for error in target_errors)
+    reasons.extend(f"resource_error:{error}" for error in resource_errors)
+    return ",".join(dict.fromkeys(reasons))
 
 
 def _metadata_bool(metadata: dict[str, JSONValue], key: str, default: bool) -> bool:
@@ -360,6 +424,9 @@ def _damage_packet(
             "target_group": damage_plan.target_group,
             "multiplier_source": damage_plan.multiplier_source,
             "multi_hit_not_implemented": True,
+            "primary_action_target_id": damage_plan.primary_action_target_id,
+            "per_hit_target_context_not_implemented": True,
+            "target_group_multiplier_not_implemented": damage_plan.target_group_multiplier_not_implemented,
         },
     )
 

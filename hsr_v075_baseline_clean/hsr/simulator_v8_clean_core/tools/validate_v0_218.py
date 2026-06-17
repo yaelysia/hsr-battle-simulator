@@ -221,7 +221,7 @@ def _execute_mode_case(
         return {"definition": None, "transition": None, "after": None, "error": f"missing {mode} definition"}
     target_ids = () if mode == "aoe" else ("enemy:target",)
     if mode == "unknown":
-        target_ids = (base_command.actor_id,)
+        target_ids = ("enemy:target",)
     command = replace(
         base_command,
         action_id=definition.action_id,
@@ -232,6 +232,7 @@ def _execute_mode_case(
     replay = MutationReducer().replay_snapshot(state, transition.transaction.mutations, after.snapshot().to_json())
     return {
         "definition": definition,
+        "before": state,
         "command": command,
         "transition": transition,
         "after": after,
@@ -333,6 +334,16 @@ def _multi_target_damage_checks(cases: dict[str, dict[str, Any]]) -> dict[str, o
         "damage_metadata_has_hit_index": _damage_records_have_metadata(cases["blast"].get("transition"), "hit_index"),
         "damage_metadata_has_multiplier_source": _damage_records_have_metadata(cases["blast"].get("transition"), "multiplier_source"),
         "damage_metadata_marks_multi_hit_pending": _damage_records_have_metadata(cases["blast"].get("transition"), "multi_hit_not_implemented"),
+        "aoe_metadata_marks_target_group_multiplier_pending": _damage_records_have_metadata_value(
+            cases["aoe"].get("transition"),
+            "target_group_multiplier_not_implemented",
+            True,
+        ),
+        "blast_metadata_marks_target_group_multiplier_pending": _damage_records_have_metadata_value(
+            cases["blast"].get("transition"),
+            "target_group_multiplier_not_implemented",
+            True,
+        ),
     }
     return {"ok": all(checks.values()), "checks": checks}
 
@@ -341,11 +352,21 @@ def _blocked_mode_checks(cases: dict[str, dict[str, Any]], plans: dict[str, dict
     bounce_transition = cases["bounce"].get("transition")
     checks = {
         "bounce_has_blocked_reason": _plan_blocked_reason(bounce_transition) == "bounce_not_executable",
+        "bounce_action_disabled": bounce_transition is not None and bounce_transition.coverage.get("action_enabled") is False,
+        "bounce_has_no_mutations": _mutation_count(bounce_transition) == 0,
+        "bounce_has_no_trigger_windows": bounce_transition is not None and not bounce_transition.transaction.trigger_windows,
         "bounce_has_no_damage_mutation": _damage_mutation_count(bounce_transition) == 0,
         "bounce_records_blocked": bool(_records_of_type(bounce_transition, "damage_blocked")),
         "unknown_plan_has_blocked_reason": plans.get("unknown", {}).get("target_plan", {}).get("blocked_reason")
         == "unknown_target_mode_not_executable",
+        "unknown_action_disabled": cases["unknown"].get("transition") is not None
+        and cases["unknown"]["transition"].coverage.get("action_enabled") is False,
+        "unknown_has_no_mutations": _mutation_count(cases["unknown"].get("transition")) == 0,
+        "unknown_has_no_trigger_windows": cases["unknown"].get("transition") is not None
+        and not cases["unknown"]["transition"].transaction.trigger_windows,
         "unknown_has_no_damage_plan": not plans.get("unknown", {}).get("damage_plan"),
+        "unknown_snapshot_unchanged": _case_snapshot_unchanged(cases["unknown"]),
+        "bounce_snapshot_unchanged": _case_snapshot_unchanged(cases["bounce"]),
     }
     return {"ok": all(checks.values()), "checks": checks}
 
@@ -434,6 +455,18 @@ def _damage_mutation_count(transition) -> int:
     return sum(1 for mutation in transition.transaction.mutations if mutation.source == "damage_system")
 
 
+def _mutation_count(transition) -> int:
+    return 0 if transition is None else len(transition.transaction.mutations)
+
+
+def _case_snapshot_unchanged(case: dict[str, Any]) -> bool:
+    before = case.get("before")
+    after = case.get("after")
+    if not isinstance(before, BattleState) or not isinstance(after, BattleState):
+        return False
+    return before.snapshot().to_json() == after.snapshot().to_json()
+
+
 def _damage_records_have_metadata(transition, key: str) -> bool:
     records = _records_of_type(transition, "damage")
     if not records:
@@ -442,6 +475,18 @@ def _damage_records_have_metadata(transition, key: str) -> bool:
         payload = record.get("payload", {})
         metadata = payload.get("packet_metadata", {}) if isinstance(payload, dict) else {}
         if not isinstance(metadata, dict) or key not in metadata:
+            return False
+    return True
+
+
+def _damage_records_have_metadata_value(transition, key: str, expected: object) -> bool:
+    records = _records_of_type(transition, "damage")
+    if not records:
+        return False
+    for record in records:
+        payload = record.get("payload", {})
+        metadata = payload.get("packet_metadata", {}) if isinstance(payload, dict) else {}
+        if not isinstance(metadata, dict) or metadata.get(key) != expected:
             return False
     return True
 

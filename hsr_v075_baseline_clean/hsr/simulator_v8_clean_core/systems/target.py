@@ -37,21 +37,22 @@ class TargetSystem:
         explicit = self.resolve_explicit_targets(state, actor_id, target_ids, policy=policy)
         if not explicit.ok:
             return explicit
-        if policy.target_mode == "bounce":
+        blocked_reason = _target_mode_blocked_reason(policy.target_mode)
+        if blocked_reason:
             resolution = TargetResolution(
                 requested=explicit.resolution.requested,
                 legal=explicit.resolution.legal,
                 selected=(),
                 rejected=explicit.resolution.legal,
-                reason="bounce_not_executable",
+                reason=blocked_reason,
                 source="target_system",
                 metadata={
                     **explicit.resolution.metadata,
                     "target_groups": {},
-                    "blocked_reason": "bounce_not_executable",
+                    "blocked_reason": blocked_reason,
                 },
             )
-            return TargetingResult(resolution=resolution, ok=False, errors=("bounce_not_executable",))
+            return TargetingResult(resolution=resolution, ok=False, errors=(blocked_reason,))
         target_groups = _target_groups(state, actor_id, explicit.resolution.legal, policy)
         selected = tuple(
             dict.fromkeys(
@@ -183,6 +184,16 @@ def _target_groups(
         adjacent = _adjacent_units(state, actor_id, primary, legal)
         return {"primary": (primary,), "adjacent": adjacent, "selected": (primary, *adjacent)}
     return {"selected": legal}
+
+
+def _target_mode_blocked_reason(target_mode: str) -> str:
+    if target_mode == "bounce":
+        return "bounce_not_executable"
+    if target_mode == "unknown":
+        return "unknown_target_mode_not_executable"
+    if target_mode not in {"single", "aoe", "blast", "self_or_team"}:
+        return f"unsupported_target_mode:{target_mode}"
+    return ""
 
 
 def _adjacent_units(

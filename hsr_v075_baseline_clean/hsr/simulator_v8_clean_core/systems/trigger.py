@@ -91,6 +91,7 @@ class TriggerSystem:
         records: list[dict[str, JSONValue]] = []
         window_records: list[dict[str, JSONValue]] = []
         primary_target = target_resolution.selected[0] if target_resolution.selected else None
+        selected_targets = target_resolution.selected
         status_trigger_count = 0
 
         for unit_id, detail in _iter_status_details(current):
@@ -117,6 +118,7 @@ class TriggerSystem:
                             command=command,
                             action_definition=action_definition,
                             primary_target=primary_target,
+                            selected_targets=selected_targets,
                         ),
                     )
                     self._append_process_record(records, window_records, record)
@@ -134,6 +136,7 @@ class TriggerSystem:
                             command=command,
                             action_definition=action_definition,
                             primary_target=primary_target,
+                            selected_targets=selected_targets,
                         ),
                     )
                     self._append_process_record(records, window_records, record)
@@ -162,6 +165,7 @@ class TriggerSystem:
                             command=command,
                             action_definition=action_definition,
                             primary_target=primary_target,
+                            selected_targets=selected_targets,
                         ),
                     )
                     self._append_process_record(records, window_records, record)
@@ -245,6 +249,7 @@ class TriggerSystem:
                         command=command,
                         action_definition=action_definition,
                         primary_target=primary_target,
+                        selected_targets=selected_targets,
                     ),
                 )
                 self._append_process_record(records, window_records, record)
@@ -254,6 +259,12 @@ class TriggerSystem:
                 canonical_window=canonical_window,
                 tbgd_event=tbgd_event,
                 skipped_reason="no_status_local_triggers",
+                metadata=_window_metadata(
+                    command=command,
+                    action_definition=action_definition,
+                    primary_target=primary_target,
+                    selected_targets=selected_targets,
+                ),
             )
             self._append_process_record(records, window_records, record)
 
@@ -535,10 +546,17 @@ def _window_metadata(
     command: ActionCommand,
     action_definition: ActionDefinitionIR,
     primary_target: str | None,
+    selected_targets: tuple[str, ...],
 ) -> dict[str, JSONValue]:
+    is_multi_target = len(selected_targets) > 1
     return {
         "actor_id": command.actor_id,
         "primary_target_id": primary_target,
+        "primary_action_target_id": primary_target,
+        "selected_target_ids": list(selected_targets),
+        "selected_target_count": len(selected_targets),
+        "multi_target_scope_partial": is_multi_target,
+        "per_hit_target_context_not_implemented": is_multi_target,
         "action_id": command.action_id,
         "action_level": command.action_level,
         "SkillType": action_definition.skill_effect,

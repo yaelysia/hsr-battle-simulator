@@ -76,10 +76,14 @@ def run_validation(
         "ok": (
             "enemy:missing" in unknown_transition.target_resolution.rejected
             and not bool(unknown_transition.coverage.get("target_ok", True))
+            and not bool(unknown_transition.coverage.get("action_enabled", True))
+            and build_result.state.snapshot().to_json() == unknown_state.snapshot().to_json()
+            and not unknown_transition.transaction.mutations
         ),
         "after_skill_points": unknown_state.skill_points,
         "target_resolution": unknown_transition.target_resolution.to_json(),
         "coverage": unknown_transition.coverage,
+        "mutation_count": len(unknown_transition.transaction.mutations),
     }
 
     insufficient_state = replace(build_result.state, skill_points=0)
@@ -235,14 +239,18 @@ def _insufficient_executor_check(before_state, after_state, transition) -> dict[
     resource_errors = [record for record in records if record.get("record_type") == "resource_error"]
     return {
         "ok": (
-            before_state.skill_points == after_state.skill_points
+            before_state.snapshot().to_json() == after_state.snapshot().to_json()
+            and before_state.skill_points == after_state.skill_points
+            and not transition.transaction.mutations
             and not skill_point_mutations
             and bool(resource_errors)
             and not bool(transition.coverage.get("resource_ok", True))
+            and not bool(transition.coverage.get("action_enabled", True))
         ),
         "before_skill_points": before_state.skill_points,
         "after_skill_points": after_state.skill_points,
         "skill_point_mutations": skill_point_mutations,
+        "mutation_count": len(transition.transaction.mutations),
         "resource_errors": resource_errors,
         "coverage": transition.coverage,
     }

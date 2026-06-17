@@ -1,0 +1,1156 @@
+{
+  "after": {
+    "battle": {
+      "action_index": 0,
+      "current_window": "idle",
+      "phase": "scenario",
+      "turn_owner_id": "ally:saber",
+      "wave_index": 0
+    },
+    "coverage": {},
+    "event_index": 0,
+    "global_flags": {
+      "current_window": "idle",
+      "dynamic_value_store": {
+        "by_hash": {},
+        "by_name": {},
+        "entries": {}
+      },
+      "phase": "scenario",
+      "turn_owner_id": "ally:saber"
+    },
+    "max_skill_points": 5,
+    "metadata": {
+      "rng_state": "deterministic",
+      "snapshot_contract": "v0_203"
+    },
+    "pending_events": [],
+    "queues": {},
+    "resources": {
+      "max_skill_points": 5,
+      "skill_points": 5
+    },
+    "rng_events": [],
+    "rng_state": "deterministic",
+    "settlement": {},
+    "skill_points": 5,
+    "targeting": {},
+    "teams": {
+      "ally": [
+        "ally:saber"
+      ],
+      "enemy": [
+        "enemy:left",
+        "enemy:right",
+        "enemy:target"
+      ],
+      "summon": []
+    },
+    "timeline": {
+      "action_values": {
+        "ally:saber": 0.0,
+        "enemy:left": 0.0,
+        "enemy:right": 0.0,
+        "enemy:target": 0.0
+      },
+      "queues": {},
+      "turn_owner_id": "ally:saber"
+    },
+    "units": {
+      "ally:saber": {
+        "action_value": 0.0,
+        "attack": 3200.0,
+        "base_stats": {
+          "attack": 3200.0,
+          "defense": 900.0,
+          "max_hp": 3000.0,
+          "speed": 101.0
+        },
+        "defense": 900.0,
+        "derived_stats": {
+          "break_damage_added_ratio": 0.0,
+          "critical_chance": 0.05,
+          "critical_damage": 0.5,
+          "damage_added_ratio": 0.0,
+          "effect_hit_rate": 0.0,
+          "effect_resistance": 0.0
+        },
+        "energy": 60.0,
+        "flags": {
+          "position": 1
+        },
+        "hp": 3000.0,
+        "level": 80,
+        "max_energy": 120.0,
+        "max_hp": 3000.0,
+        "max_toughness": 0.0,
+        "modifiers": [],
+        "position": 1,
+        "recoverable_hp": 0.0,
+        "resources": {
+          "critical_chance": 0.05,
+          "critical_damage": 0.5
+        },
+        "shield": 0.0,
+        "side": "ally",
+        "speed": 101.0,
+        "status_details": [],
+        "statuses": [],
+        "template_id": "avatar:1014",
+        "template_source": {
+          "id": "avatar:1014",
+          "kind": "avatar"
+        },
+        "toughness": 0.0,
+        "toughness_state": {
+          "break_delay": 0.0,
+          "broken": false,
+          "current": 0.0,
+          "maximum": 0.0,
+          "weakness_locked": false,
+          "weaknesses": []
+        },
+        "unit_id": "ally:saber"
+      },
+      "enemy:left": {
+        "action_value": 0.0,
+        "attack": 1000.0,
+        "base_stats": {
+          "attack": 1000.0,
+          "defense": 1000.0,
+          "max_hp": 10000.0,
+          "speed": 100.0
+        },
+        "defense": 1000.0,
+        "derived_stats": {
+          "break_damage_added_ratio": 0.0,
+          "critical_chance": 0.0,
+          "critical_damage": 0.0,
+          "damage_added_ratio": 0.0,
+          "effect_hit_rate": 0.0,
+          "effect_resistance": 0.0
+        },
+        "energy": 0.0,
+        "flags": {
+          "position": 1,
+          "weaknesses": [
+            "Fire",
+            "Thunder"
+          ]
+        },
+        "hp": 10000.0,
+        "level": 80,
+        "max_energy": 0.0,
+        "max_hp": 10000.0,
+        "max_toughness": 60.0,
+        "modifiers": [],
+        "position": 1,
+        "recoverable_hp": 0.0,
+        "resources": {},
+        "shield": 0.0,
+        "side": "enemy",
+        "speed": 100.0,
+        "status_details": [],
+        "statuses": [],
+        "template_id": "monster:1002011",
+        "template_source": {
+          "id": "monster:1002011",
+          "kind": "monster"
+        },
+        "toughness": 60.0,
+        "toughness_state": {
+          "break_delay": 0.0,
+          "broken": false,
+          "current": 60.0,
+          "maximum": 60.0,
+          "weakness_locked": false,
+          "weaknesses": [
+            "Fire",
+            "Thunder"
+          ]
+        },
+        "unit_id": "enemy:left"
+      },
+      "enemy:right": {
+        "action_value": 0.0,
+        "attack": 1000.0,
+        "base_stats": {
+          "attack": 1000.0,
+          "defense": 1000.0,
+          "max_hp": 10000.0,
+          "speed": 100.0
+        },
+        "defense": 1000.0,
+        "derived_stats": {
+          "break_damage_added_ratio": 0.0,
+          "critical_chance": 0.0,
+          "critical_damage": 0.0,
+          "damage_added_ratio": 0.0,
+          "effect_hit_rate": 0.0,
+          "effect_resistance": 0.0
+        },
+        "energy": 0.0,
+        "flags": {
+          "position": 3,
+          "weaknesses": [
+            "Fire",
+            "Thunder"
+          ]
+        },
+        "hp": 10000.0,
+        "level": 80,
+        "max_energy": 0.0,
+        "max_hp": 10000.0,
+        "max_toughness": 60.0,
+        "modifiers": [],
+        "position": 3,
+        "recoverable_hp": 0.0,
+        "resources": {},
+        "shield": 0.0,
+        "side": "enemy",
+        "speed": 100.0,
+        "status_details": [],
+        "statuses": [],
+        "template_id": "monster:1002011",
+        "template_source": {
+          "id": "monster:1002011",
+          "kind": "monster"
+        },
+        "toughness": 60.0,
+        "toughness_state": {
+          "break_delay": 0.0,
+          "broken": false,
+          "current": 60.0,
+          "maximum": 60.0,
+          "weakness_locked": false,
+          "weaknesses": [
+            "Fire",
+            "Thunder"
+          ]
+        },
+        "unit_id": "enemy:right"
+      },
+      "enemy:target": {
+        "action_value": 0.0,
+        "attack": 1000.0,
+        "base_stats": {
+          "attack": 1000.0,
+          "defense": 1000.0,
+          "max_hp": 10000.0,
+          "speed": 100.0
+        },
+        "defense": 1000.0,
+        "derived_stats": {
+          "break_damage_added_ratio": 0.0,
+          "critical_chance": 0.0,
+          "critical_damage": 0.0,
+          "damage_added_ratio": 0.0,
+          "effect_hit_rate": 0.0,
+          "effect_resistance": 0.0
+        },
+        "energy": 0.0,
+        "flags": {
+          "position": 2,
+          "weaknesses": [
+            "Fire",
+            "Thunder"
+          ]
+        },
+        "hp": 10000.0,
+        "level": 80,
+        "max_energy": 0.0,
+        "max_hp": 10000.0,
+        "max_toughness": 60.0,
+        "modifiers": [],
+        "position": 2,
+        "recoverable_hp": 0.0,
+        "resources": {},
+        "shield": 0.0,
+        "side": "enemy",
+        "speed": 100.0,
+        "status_details": [],
+        "statuses": [],
+        "template_id": "monster:1002011",
+        "template_source": {
+          "id": "monster:1002011",
+          "kind": "monster"
+        },
+        "toughness": 60.0,
+        "toughness_state": {
+          "break_delay": 0.0,
+          "broken": false,
+          "current": 60.0,
+          "maximum": 60.0,
+          "weakness_locked": false,
+          "weaknesses": [
+            "Fire",
+            "Thunder"
+          ]
+        },
+        "unit_id": "enemy:target"
+      }
+    },
+    "wave_index": 0
+  },
+  "before": {
+    "battle": {
+      "action_index": 0,
+      "current_window": "idle",
+      "phase": "scenario",
+      "turn_owner_id": "ally:saber",
+      "wave_index": 0
+    },
+    "coverage": {},
+    "event_index": 0,
+    "global_flags": {
+      "current_window": "idle",
+      "dynamic_value_store": {
+        "by_hash": {},
+        "by_name": {},
+        "entries": {}
+      },
+      "phase": "scenario",
+      "turn_owner_id": "ally:saber"
+    },
+    "max_skill_points": 5,
+    "metadata": {
+      "rng_state": "deterministic",
+      "snapshot_contract": "v0_203"
+    },
+    "pending_events": [],
+    "queues": {},
+    "resources": {
+      "max_skill_points": 5,
+      "skill_points": 5
+    },
+    "rng_events": [],
+    "rng_state": "deterministic",
+    "settlement": {},
+    "skill_points": 5,
+    "targeting": {},
+    "teams": {
+      "ally": [
+        "ally:saber"
+      ],
+      "enemy": [
+        "enemy:left",
+        "enemy:right",
+        "enemy:target"
+      ],
+      "summon": []
+    },
+    "timeline": {
+      "action_values": {
+        "ally:saber": 0.0,
+        "enemy:left": 0.0,
+        "enemy:right": 0.0,
+        "enemy:target": 0.0
+      },
+      "queues": {},
+      "turn_owner_id": "ally:saber"
+    },
+    "units": {
+      "ally:saber": {
+        "action_value": 0.0,
+        "attack": 3200.0,
+        "base_stats": {
+          "attack": 3200.0,
+          "defense": 900.0,
+          "max_hp": 3000.0,
+          "speed": 101.0
+        },
+        "defense": 900.0,
+        "derived_stats": {
+          "break_damage_added_ratio": 0.0,
+          "critical_chance": 0.05,
+          "critical_damage": 0.5,
+          "damage_added_ratio": 0.0,
+          "effect_hit_rate": 0.0,
+          "effect_resistance": 0.0
+        },
+        "energy": 60.0,
+        "flags": {
+          "position": 1
+        },
+        "hp": 3000.0,
+        "level": 80,
+        "max_energy": 120.0,
+        "max_hp": 3000.0,
+        "max_toughness": 0.0,
+        "modifiers": [],
+        "position": 1,
+        "recoverable_hp": 0.0,
+        "resources": {
+          "critical_chance": 0.05,
+          "critical_damage": 0.5
+        },
+        "shield": 0.0,
+        "side": "ally",
+        "speed": 101.0,
+        "status_details": [],
+        "statuses": [],
+        "template_id": "avatar:1014",
+        "template_source": {
+          "id": "avatar:1014",
+          "kind": "avatar"
+        },
+        "toughness": 0.0,
+        "toughness_state": {
+          "break_delay": 0.0,
+          "broken": false,
+          "current": 0.0,
+          "maximum": 0.0,
+          "weakness_locked": false,
+          "weaknesses": []
+        },
+        "unit_id": "ally:saber"
+      },
+      "enemy:left": {
+        "action_value": 0.0,
+        "attack": 1000.0,
+        "base_stats": {
+          "attack": 1000.0,
+          "defense": 1000.0,
+          "max_hp": 10000.0,
+          "speed": 100.0
+        },
+        "defense": 1000.0,
+        "derived_stats": {
+          "break_damage_added_ratio": 0.0,
+          "critical_chance": 0.0,
+          "critical_damage": 0.0,
+          "damage_added_ratio": 0.0,
+          "effect_hit_rate": 0.0,
+          "effect_resistance": 0.0
+        },
+        "energy": 0.0,
+        "flags": {
+          "position": 1,
+          "weaknesses": [
+            "Fire",
+            "Thunder"
+          ]
+        },
+        "hp": 10000.0,
+        "level": 80,
+        "max_energy": 0.0,
+        "max_hp": 10000.0,
+        "max_toughness": 60.0,
+        "modifiers": [],
+        "position": 1,
+        "recoverable_hp": 0.0,
+        "resources": {},
+        "shield": 0.0,
+        "side": "enemy",
+        "speed": 100.0,
+        "status_details": [],
+        "statuses": [],
+        "template_id": "monster:1002011",
+        "template_source": {
+          "id": "monster:1002011",
+          "kind": "monster"
+        },
+        "toughness": 60.0,
+        "toughness_state": {
+          "break_delay": 0.0,
+          "broken": false,
+          "current": 60.0,
+          "maximum": 60.0,
+          "weakness_locked": false,
+          "weaknesses": [
+            "Fire",
+            "Thunder"
+          ]
+        },
+        "unit_id": "enemy:left"
+      },
+      "enemy:right": {
+        "action_value": 0.0,
+        "attack": 1000.0,
+        "base_stats": {
+          "attack": 1000.0,
+          "defense": 1000.0,
+          "max_hp": 10000.0,
+          "speed": 100.0
+        },
+        "defense": 1000.0,
+        "derived_stats": {
+          "break_damage_added_ratio": 0.0,
+          "critical_chance": 0.0,
+          "critical_damage": 0.0,
+          "damage_added_ratio": 0.0,
+          "effect_hit_rate": 0.0,
+          "effect_resistance": 0.0
+        },
+        "energy": 0.0,
+        "flags": {
+          "position": 3,
+          "weaknesses": [
+            "Fire",
+            "Thunder"
+          ]
+        },
+        "hp": 10000.0,
+        "level": 80,
+        "max_energy": 0.0,
+        "max_hp": 10000.0,
+        "max_toughness": 60.0,
+        "modifiers": [],
+        "position": 3,
+        "recoverable_hp": 0.0,
+        "resources": {},
+        "shield": 0.0,
+        "side": "enemy",
+        "speed": 100.0,
+        "status_details": [],
+        "statuses": [],
+        "template_id": "monster:1002011",
+        "template_source": {
+          "id": "monster:1002011",
+          "kind": "monster"
+        },
+        "toughness": 60.0,
+        "toughness_state": {
+          "break_delay": 0.0,
+          "broken": false,
+          "current": 60.0,
+          "maximum": 60.0,
+          "weakness_locked": false,
+          "weaknesses": [
+            "Fire",
+            "Thunder"
+          ]
+        },
+        "unit_id": "enemy:right"
+      },
+      "enemy:target": {
+        "action_value": 0.0,
+        "attack": 1000.0,
+        "base_stats": {
+          "attack": 1000.0,
+          "defense": 1000.0,
+          "max_hp": 10000.0,
+          "speed": 100.0
+        },
+        "defense": 1000.0,
+        "derived_stats": {
+          "break_damage_added_ratio": 0.0,
+          "critical_chance": 0.0,
+          "critical_damage": 0.0,
+          "damage_added_ratio": 0.0,
+          "effect_hit_rate": 0.0,
+          "effect_resistance": 0.0
+        },
+        "energy": 0.0,
+        "flags": {
+          "position": 2,
+          "weaknesses": [
+            "Fire",
+            "Thunder"
+          ]
+        },
+        "hp": 10000.0,
+        "level": 80,
+        "max_energy": 0.0,
+        "max_hp": 10000.0,
+        "max_toughness": 60.0,
+        "modifiers": [],
+        "position": 2,
+        "recoverable_hp": 0.0,
+        "resources": {},
+        "shield": 0.0,
+        "side": "enemy",
+        "speed": 100.0,
+        "status_details": [],
+        "statuses": [],
+        "template_id": "monster:1002011",
+        "template_source": {
+          "id": "monster:1002011",
+          "kind": "monster"
+        },
+        "toughness": 60.0,
+        "toughness_state": {
+          "break_delay": 0.0,
+          "broken": false,
+          "current": 60.0,
+          "maximum": 60.0,
+          "weakness_locked": false,
+          "weaknesses": [
+            "Fire",
+            "Thunder"
+          ]
+        },
+        "unit_id": "enemy:target"
+      }
+    },
+    "wave_index": 0
+  },
+  "command": {
+    "action_id": "avatar_skill:100101",
+    "action_level": 1,
+    "actor_id": "ally:saber",
+    "metadata": {
+      "crit_mode": "noncrit",
+      "label": "Saber normal attack identity smoke",
+      "reset_actor_av": false
+    },
+    "queue_name": null,
+    "source": "manual",
+    "target_ids": [
+      "enemy:missing"
+    ]
+  },
+  "contract_validation": {},
+  "coverage": {
+    "action_enabled": false,
+    "action_event_plan": {
+      "action_id": "avatar_skill:100101",
+      "action_level": 1,
+      "attack_type": "Normal",
+      "damage_formula_family": "direct",
+      "damage_kind": "hp_damage",
+      "has_attack_windows": true,
+      "has_damage_step": true,
+      "skill_type": "SingleAttack",
+      "steps": [
+        {
+          "canonical_window": "before_skill_use",
+          "kind": "trigger_window",
+          "phase": "before_skill_use",
+          "requires_action_enabled": true,
+          "tbgd_event": "OnBeforeSkillUse"
+        },
+        {
+          "canonical_window": "before_attack",
+          "kind": "trigger_window",
+          "phase": "before_attack",
+          "requires_action_enabled": true,
+          "tbgd_event": "OnBeforeAttack"
+        },
+        {
+          "canonical_window": "",
+          "kind": "damage",
+          "phase": "damage",
+          "requires_action_enabled": true,
+          "tbgd_event": ""
+        },
+        {
+          "canonical_window": "after_attack",
+          "kind": "trigger_window",
+          "phase": "after_attack",
+          "requires_action_enabled": true,
+          "tbgd_event": "OnAfterAttack"
+        },
+        {
+          "canonical_window": "after_skill_use",
+          "kind": "trigger_window",
+          "phase": "after_skill_use",
+          "requires_action_enabled": true,
+          "tbgd_event": "OnAfterSkillUse"
+        }
+      ]
+    },
+    "action_execution_plan": {
+      "action_id": "avatar_skill:100101",
+      "action_level": 1,
+      "damage_plan": [],
+      "derived_from_action_definition": true,
+      "derived_reason": "derived_from_action_definition_target_mode_and_damage_kind",
+      "event_steps": [
+        {
+          "canonical_window": "before_skill_use",
+          "kind": "trigger_window",
+          "phase": "before_skill_use",
+          "requires_action_enabled": true,
+          "tbgd_event": "OnBeforeSkillUse"
+        },
+        {
+          "canonical_window": "before_attack",
+          "kind": "trigger_window",
+          "phase": "before_attack",
+          "requires_action_enabled": true,
+          "tbgd_event": "OnBeforeAttack"
+        },
+        {
+          "canonical_window": "",
+          "kind": "damage",
+          "phase": "damage",
+          "requires_action_enabled": true,
+          "tbgd_event": ""
+        },
+        {
+          "canonical_window": "after_attack",
+          "kind": "trigger_window",
+          "phase": "after_attack",
+          "requires_action_enabled": true,
+          "tbgd_event": "OnAfterAttack"
+        },
+        {
+          "canonical_window": "after_skill_use",
+          "kind": "trigger_window",
+          "phase": "after_skill_use",
+          "requires_action_enabled": true,
+          "tbgd_event": "OnAfterSkillUse"
+        }
+      ],
+      "hit_plan": [
+        {
+          "hit_index": 0,
+          "multi_hit_not_implemented": true,
+          "multiplier_source": {
+            "Value": 0.5
+          },
+          "target_group": "selected"
+        }
+      ],
+      "per_hit_target_context_not_implemented": true,
+      "primary_action_target_id": null,
+      "source_trace": {
+        "action_id": "avatar_skill:100101",
+        "coverage_status": "executable",
+        "definition_id": "action_def:avatar_skill:100101:1",
+        "level": 1,
+        "source": {
+          "evidence": {
+            "id_key": "SkillID",
+            "level": 1,
+            "resource_mapping": {
+              "BPAdd": "skill_point_gain_if_positive",
+              "BPNeed": "skill_point_cost_if_positive",
+              "SPBase": "energy_gain"
+            },
+            "row_index": 3983,
+            "taxonomy": {
+              "attack_type": "raw TBGD AttackType; follow-up is an attack type axis",
+              "damage_formula_family": "formula family axis; follow-up is not a damage family",
+              "element_type": "raw TBGD StanceDamageType when present"
+            }
+          },
+          "raw_id": "100101",
+          "raw_type": "AvatarSkillConfig",
+          "source_path": "ExcelOutput/AvatarSkillConfig.json"
+        }
+      },
+      "target_plan": {
+        "blocked_reason": "",
+        "requested_target_ids": [
+          "enemy:missing"
+        ],
+        "selection_mode": "primary",
+        "source": "action_definition",
+        "target_mode": "single"
+      }
+    },
+    "blocked_reason": "target_resolution_failed,target_error:unknown:enemy:missing",
+    "damage_formula_family": "direct",
+    "damage_mutation_count": 0,
+    "damage_ok": null,
+    "definition_id": "action_def:avatar_skill:100101:1",
+    "executor": "v0_212_trigger_action_foundation",
+    "per_hit_target_context_not_implemented": true,
+    "plan_blocked_reason": "",
+    "primary_action_target_id": null,
+    "resource_mutation_count": 0,
+    "resource_ok": true,
+    "target_ok": false,
+    "timeline_mutation_count": 0,
+    "trigger_mutation_count": 0,
+    "trigger_window_count": 0
+  },
+  "events": [
+    {
+      "event_id": "event:1:action_requested",
+      "event_type": "action.requested",
+      "payload": {
+        "action_id": "avatar_skill:100101",
+        "action_level": 1,
+        "definition_id": "action_def:avatar_skill:100101:1",
+        "source": "manual"
+      },
+      "process_only": true,
+      "source_id": "ally:saber",
+      "target_id": null,
+      "window": "action_request"
+    }
+  ],
+  "mutations": [],
+  "rng_events": [],
+  "settlement": {
+    "action_id": "avatar_skill:100101",
+    "actor_id": "ally:saber",
+    "records": [
+      {
+        "mutation_id": null,
+        "payload": {
+          "definition_known": true,
+          "event": "action.requested",
+          "rule_known": true
+        },
+        "process_only": true,
+        "record_type": "process",
+        "source": "combat_executor",
+        "trace": {
+          "event_id": "event:1:action_requested"
+        }
+      },
+      {
+        "mutation_id": null,
+        "payload": {
+          "action_id": "avatar_skill:100101",
+          "attack_type": "Normal",
+          "bp_add": 1.0,
+          "bp_need": -1.0,
+          "coverage_status": "executable",
+          "damage_formula_family": "direct",
+          "damage_kind": "hp_damage",
+          "definition_id": "action_def:avatar_skill:100101:1",
+          "element_type": "Ice",
+          "level": 1,
+          "param_list": [
+            {
+              "Value": 0.5
+            }
+          ],
+          "show_damage_list": [],
+          "show_stance_list": [
+            {
+              "Value": 30
+            },
+            {
+              "Value": 0
+            },
+            {
+              "Value": 0
+            }
+          ],
+          "skill_effect": "SingleAttack",
+          "source": {
+            "evidence": {
+              "id_key": "SkillID",
+              "level": 1,
+              "resource_mapping": {
+                "BPAdd": "skill_point_gain_if_positive",
+                "BPNeed": "skill_point_cost_if_positive",
+                "SPBase": "energy_gain"
+              },
+              "row_index": 3983,
+              "taxonomy": {
+                "attack_type": "raw TBGD AttackType; follow-up is an attack type axis",
+                "damage_formula_family": "formula family axis; follow-up is not a damage family",
+                "element_type": "raw TBGD StanceDamageType when present"
+              }
+            },
+            "raw_id": "100101",
+            "raw_type": "AvatarSkillConfig",
+            "source_path": "ExcelOutput/AvatarSkillConfig.json"
+          },
+          "source_mode": "mainline",
+          "sp_base": 20.0,
+          "sp_multiple_ratio": 0.5,
+          "stance_damage_type": "Ice",
+          "target_mode": "single"
+        },
+        "process_only": true,
+        "record_type": "action_definition",
+        "source": "rulebook",
+        "trace": {
+          "action_id": "avatar_skill:100101",
+          "coverage_status": "executable",
+          "definition_id": "action_def:avatar_skill:100101:1",
+          "level": 1,
+          "source": {
+            "evidence": {
+              "id_key": "SkillID",
+              "level": 1,
+              "resource_mapping": {
+                "BPAdd": "skill_point_gain_if_positive",
+                "BPNeed": "skill_point_cost_if_positive",
+                "SPBase": "energy_gain"
+              },
+              "row_index": 3983,
+              "taxonomy": {
+                "attack_type": "raw TBGD AttackType; follow-up is an attack type axis",
+                "damage_formula_family": "formula family axis; follow-up is not a damage family",
+                "element_type": "raw TBGD StanceDamageType when present"
+              }
+            },
+            "raw_id": "100101",
+            "raw_type": "AvatarSkillConfig",
+            "source_path": "ExcelOutput/AvatarSkillConfig.json"
+          }
+        }
+      },
+      {
+        "mutation_id": null,
+        "payload": {
+          "action_id": "avatar_skill:100101",
+          "action_level": 1,
+          "attack_type": "Normal",
+          "damage_formula_family": "direct",
+          "damage_kind": "hp_damage",
+          "has_attack_windows": true,
+          "has_damage_step": true,
+          "skill_type": "SingleAttack",
+          "steps": [
+            {
+              "canonical_window": "before_skill_use",
+              "kind": "trigger_window",
+              "phase": "before_skill_use",
+              "requires_action_enabled": true,
+              "tbgd_event": "OnBeforeSkillUse"
+            },
+            {
+              "canonical_window": "before_attack",
+              "kind": "trigger_window",
+              "phase": "before_attack",
+              "requires_action_enabled": true,
+              "tbgd_event": "OnBeforeAttack"
+            },
+            {
+              "canonical_window": "",
+              "kind": "damage",
+              "phase": "damage",
+              "requires_action_enabled": true,
+              "tbgd_event": ""
+            },
+            {
+              "canonical_window": "after_attack",
+              "kind": "trigger_window",
+              "phase": "after_attack",
+              "requires_action_enabled": true,
+              "tbgd_event": "OnAfterAttack"
+            },
+            {
+              "canonical_window": "after_skill_use",
+              "kind": "trigger_window",
+              "phase": "after_skill_use",
+              "requires_action_enabled": true,
+              "tbgd_event": "OnAfterSkillUse"
+            }
+          ]
+        },
+        "process_only": true,
+        "record_type": "action_event_plan",
+        "source": "combat_executor",
+        "trace": {
+          "definition_id": "action_def:avatar_skill:100101:1"
+        }
+      },
+      {
+        "mutation_id": null,
+        "payload": {
+          "action_id": "avatar_skill:100101",
+          "action_level": 1,
+          "damage_plan": [],
+          "derived_from_action_definition": true,
+          "derived_reason": "derived_from_action_definition_target_mode_and_damage_kind",
+          "event_steps": [
+            {
+              "canonical_window": "before_skill_use",
+              "kind": "trigger_window",
+              "phase": "before_skill_use",
+              "requires_action_enabled": true,
+              "tbgd_event": "OnBeforeSkillUse"
+            },
+            {
+              "canonical_window": "before_attack",
+              "kind": "trigger_window",
+              "phase": "before_attack",
+              "requires_action_enabled": true,
+              "tbgd_event": "OnBeforeAttack"
+            },
+            {
+              "canonical_window": "",
+              "kind": "damage",
+              "phase": "damage",
+              "requires_action_enabled": true,
+              "tbgd_event": ""
+            },
+            {
+              "canonical_window": "after_attack",
+              "kind": "trigger_window",
+              "phase": "after_attack",
+              "requires_action_enabled": true,
+              "tbgd_event": "OnAfterAttack"
+            },
+            {
+              "canonical_window": "after_skill_use",
+              "kind": "trigger_window",
+              "phase": "after_skill_use",
+              "requires_action_enabled": true,
+              "tbgd_event": "OnAfterSkillUse"
+            }
+          ],
+          "hit_plan": [
+            {
+              "hit_index": 0,
+              "multi_hit_not_implemented": true,
+              "multiplier_source": {
+                "Value": 0.5
+              },
+              "target_group": "selected"
+            }
+          ],
+          "per_hit_target_context_not_implemented": true,
+          "primary_action_target_id": null,
+          "source_trace": {
+            "action_id": "avatar_skill:100101",
+            "coverage_status": "executable",
+            "definition_id": "action_def:avatar_skill:100101:1",
+            "level": 1,
+            "source": {
+              "evidence": {
+                "id_key": "SkillID",
+                "level": 1,
+                "resource_mapping": {
+                  "BPAdd": "skill_point_gain_if_positive",
+                  "BPNeed": "skill_point_cost_if_positive",
+                  "SPBase": "energy_gain"
+                },
+                "row_index": 3983,
+                "taxonomy": {
+                  "attack_type": "raw TBGD AttackType; follow-up is an attack type axis",
+                  "damage_formula_family": "formula family axis; follow-up is not a damage family",
+                  "element_type": "raw TBGD StanceDamageType when present"
+                }
+              },
+              "raw_id": "100101",
+              "raw_type": "AvatarSkillConfig",
+              "source_path": "ExcelOutput/AvatarSkillConfig.json"
+            }
+          },
+          "target_plan": {
+            "blocked_reason": "",
+            "requested_target_ids": [
+              "enemy:missing"
+            ],
+            "selection_mode": "primary",
+            "source": "action_definition",
+            "target_mode": "single"
+          }
+        },
+        "process_only": true,
+        "record_type": "action_execution_plan",
+        "source": "combat_executor",
+        "trace": {
+          "definition_id": "action_def:avatar_skill:100101:1"
+        }
+      },
+      {
+        "mutation_id": null,
+        "payload": {
+          "action_enabled": false,
+          "blocked_reason": "target_resolution_failed,target_error:unknown:enemy:missing",
+          "has_selected_target": false,
+          "plan_blocked_reason": "",
+          "resource_errors": [],
+          "resource_ok": true,
+          "target_errors": [
+            "unknown:enemy:missing"
+          ],
+          "target_ok": false
+        },
+        "process_only": true,
+        "record_type": "action_preflight",
+        "source": "combat_executor",
+        "trace": {
+          "definition_id": "action_def:avatar_skill:100101:1"
+        }
+      },
+      {
+        "mutation_id": null,
+        "payload": {
+          "legal": [],
+          "metadata": {
+            "errors": [
+              "unknown:enemy:missing"
+            ],
+            "policy": {
+              "allow_ally": false,
+              "allow_defeated": false,
+              "allow_enemy": true,
+              "allow_self": false,
+              "policy_id": "enemy_damage",
+              "selection_mode": "single",
+              "target_mode": "single"
+            }
+          },
+          "reason": "explicit_targets_rejected",
+          "rejected": [
+            "enemy:missing"
+          ],
+          "requested": [
+            "enemy:missing"
+          ],
+          "selected": [],
+          "source": "target_system"
+        },
+        "process_only": true,
+        "record_type": "target_resolution",
+        "source": "target_system",
+        "trace": {
+          "errors": [
+            "unknown:enemy:missing"
+          ]
+        }
+      },
+      {
+        "mutation_id": null,
+        "payload": {
+          "plan_blocked_reason": "",
+          "reason": "target_resolution_failed,target_error:unknown:enemy:missing",
+          "resource_ok": true,
+          "target_ok": false
+        },
+        "process_only": true,
+        "record_type": "action_blocked",
+        "source": "combat_executor",
+        "trace": {
+          "definition_id": "action_def:avatar_skill:100101:1"
+        }
+      },
+      {
+        "mutation_id": null,
+        "payload": {
+          "errors": [
+            "unknown:enemy:missing"
+          ]
+        },
+        "process_only": true,
+        "record_type": "target_error",
+        "source": "target_system",
+        "trace": {}
+      }
+    ],
+    "target_ids": [
+      "enemy:missing"
+    ]
+  },
+  "target_resolution": {
+    "legal": [],
+    "metadata": {
+      "errors": [
+        "unknown:enemy:missing"
+      ],
+      "policy": {
+        "allow_ally": false,
+        "allow_defeated": false,
+        "allow_enemy": true,
+        "allow_self": false,
+        "policy_id": "enemy_damage",
+        "selection_mode": "single",
+        "target_mode": "single"
+      }
+    },
+    "reason": "explicit_targets_rejected",
+    "rejected": [
+      "enemy:missing"
+    ],
+    "requested": [
+      "enemy:missing"
+    ],
+    "selected": [],
+    "source": "target_system"
+  },
+  "trigger_windows": []
+}

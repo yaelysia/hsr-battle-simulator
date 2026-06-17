@@ -90,7 +90,9 @@ class DamagePlan:
     target_group: str
     damage_formula_family: str
     multiplier_source: object
+    primary_action_target_id: str | None = None
     blocked_reason: str = ""
+    target_group_multiplier_not_implemented: bool = False
 
     def to_json(self) -> dict[str, object]:
         return {
@@ -99,7 +101,9 @@ class DamagePlan:
             "target_group": self.target_group,
             "damage_formula_family": self.damage_formula_family,
             "multiplier_source": self.multiplier_source,
+            "primary_action_target_id": self.primary_action_target_id,
             "blocked_reason": self.blocked_reason,
+            "target_group_multiplier_not_implemented": self.target_group_multiplier_not_implemented,
         }
 
 
@@ -113,6 +117,8 @@ class ActionExecutionPlan:
     damage_plan: tuple[DamagePlan, ...]
     source_trace: dict[str, object]
     derived_reason: str
+    primary_action_target_id: str | None = None
+    per_hit_target_context_not_implemented: bool = True
 
     def to_json(self) -> dict[str, object]:
         return {
@@ -125,6 +131,8 @@ class ActionExecutionPlan:
             "source_trace": self.source_trace,
             "derived_reason": self.derived_reason,
             "derived_from_action_definition": True,
+            "primary_action_target_id": self.primary_action_target_id,
+            "per_hit_target_context_not_implemented": self.per_hit_target_context_not_implemented,
         }
 
 
@@ -196,6 +204,7 @@ def build_action_execution_plan(
         blocked_reason=_target_plan_blocked_reason(target_mode),
     )
     multiplier_source = action_definition.param_list[0] if action_definition.param_list else None
+    primary_action_target_id = _primary_action_target_id(resolved_target_groups or {})
     hit_plan = (
         HitPlan(
             hit_index=0,
@@ -212,7 +221,9 @@ def build_action_execution_plan(
             target_group=group_name,
             damage_formula_family=action_definition.damage_formula_family,
             multiplier_source=multiplier_source,
+            primary_action_target_id=primary_action_target_id,
             blocked_reason=target_plan.blocked_reason,
+            target_group_multiplier_not_implemented=action_definition.target_mode in {"aoe", "blast"},
         )
         for group_name, target_ids in damage_targets
         for target_id in target_ids
@@ -226,6 +237,8 @@ def build_action_execution_plan(
         damage_plan=damage_plan,
         source_trace=source_trace or {},
         derived_reason="derived_from_action_definition_target_mode_and_damage_kind",
+        primary_action_target_id=primary_action_target_id,
+        per_hit_target_context_not_implemented=True,
     )
 
 
@@ -279,3 +292,13 @@ def _damage_targets(
         return tuple(groups)
     selected = target_groups.get("selected", ())
     return (("selected", selected),) if selected else ()
+
+
+def _primary_action_target_id(target_groups: dict[str, tuple[str, ...]]) -> str | None:
+    primary = target_groups.get("primary", ())
+    if primary:
+        return primary[0]
+    selected = target_groups.get("selected", ())
+    if selected:
+        return selected[0]
+    return None

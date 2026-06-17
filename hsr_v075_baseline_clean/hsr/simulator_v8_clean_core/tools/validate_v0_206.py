@@ -261,16 +261,20 @@ def _insufficient_skill_points_check(before_state, after_state, transition) -> d
     definition_records = [record for record in records if record.get("record_type") == "action_definition"]
     return {
         "ok": (
-            before_state.skill_points == after_state.skill_points
+            before_state.snapshot().to_json() == after_state.snapshot().to_json()
+            and before_state.skill_points == after_state.skill_points
+            and not transition.transaction.mutations
             and not skill_point_mutations
             and bool(resource_errors)
             and bool(definition_records)
             and transition.coverage.get("definition_id") == "action_def:avatar_skill:101402:10"
             and not bool(transition.coverage.get("resource_ok", True))
+            and not bool(transition.coverage.get("action_enabled", True))
         ),
         "before_skill_points": before_state.skill_points,
         "after_skill_points": after_state.skill_points,
         "skill_point_mutations": skill_point_mutations,
+        "mutation_count": len(transition.transaction.mutations),
         "resource_errors": resource_errors,
         "coverage": transition.coverage,
     }
