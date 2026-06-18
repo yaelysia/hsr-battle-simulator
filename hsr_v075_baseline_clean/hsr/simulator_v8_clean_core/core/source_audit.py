@@ -37,6 +37,11 @@ MUTATION_SOURCE_POLICIES: dict[str, dict[str, JSONValue]] = {
         "required_metadata": ["toughness_emission_id", "source_task_id", "hit_profile_id", "source_trace"],
         "coverage_required": "executable",
     },
+    "break_system": {
+        "required_ir": ["ToughnessEmissionIR + AbilityTaskIR + HitProfileIR"],
+        "required_metadata": ["toughness_emission_id", "source_task_id", "hit_profile_id", "source_trace", "break_lifecycle"],
+        "coverage_required": "executable toughness emission",
+    },
     "status_system": {
         "required_ir": ["EffectIR", "ModifierDefinition"],
         "required_metadata": ["lifecycle_plan"],
@@ -141,6 +146,8 @@ class RuntimeSourceAuditor:
             return self._audit_damage_mutation(mutation, records, violations)
         if mutation.source == "toughness_system":
             return self._audit_toughness_mutation(mutation, records, violations)
+        if mutation.source == "break_system":
+            return self._audit_break_mutation(mutation, records, violations)
         if mutation.source == "status_system":
             return self._audit_status_mutation(mutation, records, violations)
         if mutation.source == "effect_system":
@@ -271,6 +278,13 @@ class RuntimeSourceAuditor:
         task_id = _required_str(mutation, metadata, "source_task_id", violations)
         hit_profile_id = _required_str(mutation, metadata, "hit_profile_id", violations)
         _require_dict(mutation, metadata, "source_trace", violations)
+        evaluation = metadata.get("numeric_evaluation")
+        if not isinstance(evaluation, dict):
+            violations.append(_violation(mutation, "numeric_evaluation_missing", missing_field="numeric_evaluation"))
+        elif evaluation.get("ok") is False:
+            violations.append(_violation(mutation, "mutation_has_failed_numeric_evaluation", details={"numeric_evaluation": evaluation}))
+        elif evaluation.get("ok") is True:
+            _audit_dynamic_numeric_binding(mutation, evaluation, violations)
         if emission_id:
             emission = self.rules.toughness_emission(emission_id)
             if emission is None:
@@ -300,6 +314,58 @@ class RuntimeSourceAuditor:
                 "toughness_emission_id": emission_id or "",
                 "source_task_id": task_id or "",
                 "hit_profile_id": hit_profile_id or "",
+            },
+        )
+
+    def _audit_break_mutation(
+        self,
+        mutation: Mutation,
+        records: tuple[dict[str, JSONValue], ...],
+        violations: list[SourceAuditViolation],
+    ) -> dict[str, JSONValue]:
+        metadata = mutation.metadata
+        emission_id = _required_str(mutation, metadata, "toughness_emission_id", violations)
+        task_id = _required_str(mutation, metadata, "source_task_id", violations)
+        hit_profile_id = _required_str(mutation, metadata, "hit_profile_id", violations)
+        _require_dict(mutation, metadata, "source_trace", violations)
+        _require_dict(mutation, metadata, "break_lifecycle", violations)
+        evaluation = metadata.get("numeric_evaluation")
+        if not isinstance(evaluation, dict):
+            violations.append(_violation(mutation, "numeric_evaluation_missing", missing_field="numeric_evaluation"))
+        elif evaluation.get("ok") is False:
+            violations.append(_violation(mutation, "mutation_has_failed_numeric_evaluation", details={"numeric_evaluation": evaluation}))
+        elif evaluation.get("ok") is True:
+            _audit_dynamic_numeric_binding(mutation, evaluation, violations)
+        if emission_id:
+            emission = self.rules.toughness_emission(emission_id)
+            if emission is None:
+                violations.append(_violation(mutation, "toughness_emission_missing", details={"toughness_emission_id": emission_id}))
+            else:
+                _audit_source(emission.source, emission.coverage_status, mutation, violations, executable_required=True)
+                if task_id and emission.source_task_id != task_id:
+                    violations.append(_violation(mutation, "toughness_emission_task_mismatch", details={"expected": emission.source_task_id, "actual": task_id}))
+                if hit_profile_id and emission.hit_profile_id != hit_profile_id:
+                    violations.append(_violation(mutation, "toughness_emission_hit_profile_mismatch", details={"expected": emission.hit_profile_id, "actual": hit_profile_id}))
+        if task_id:
+            task = self.rules.ability_task(task_id)
+            if task is None:
+                violations.append(_violation(mutation, "ability_task_missing", details={"source_task_id": task_id}))
+            else:
+                _audit_source(task.source, task.coverage_status, mutation, violations, check_status=False)
+        if hit_profile_id:
+            profile = self.rules.hit_profile(hit_profile_id)
+            if profile is None:
+                violations.append(_violation(mutation, "hit_profile_missing", details={"hit_profile_id": hit_profile_id}))
+            else:
+                _audit_source(profile.source, profile.coverage_status, mutation, violations, check_status=False)
+        return _trace(
+            mutation,
+            records,
+            {
+                "toughness_emission_id": emission_id or "",
+                "source_task_id": task_id or "",
+                "hit_profile_id": hit_profile_id or "",
+                "break_lifecycle": metadata.get("break_lifecycle") if isinstance(metadata.get("break_lifecycle"), dict) else {},
             },
         )
 

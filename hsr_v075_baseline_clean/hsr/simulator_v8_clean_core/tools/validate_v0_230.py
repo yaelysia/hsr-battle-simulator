@@ -17,6 +17,7 @@ from ..rules.rulebook import RuleBook
 from ..scenarios.build_state import ScenarioStateBuilder
 from ..scenarios.identity import IdentityResolver
 from ..scenarios.loader import ScenarioLoader
+from ..systems.dynamic_values import upsert_dynamic_value
 from ..systems.toughness import ToughnessPacket, ToughnessSystem
 from ..tbgd.coverage import build_coverage_matrix
 from ..tbgd.discovery import TBGDDiscovery
@@ -161,11 +162,14 @@ def _show_stance_blocked_checks(emissions: tuple[ToughnessEmissionIR, ...]) -> d
     show_stance = [emission for emission in emissions if _is_show_stance_evidence(emission)]
     checks = {
         "selected_action_has_toughness_emissions": bool(emissions),
-        "selected_action_has_show_stance_evidence": bool(show_stance),
-        "show_stance_evidence_all_blocked": bool(show_stance)
-        and all(emission.coverage_status != "executable" for emission in show_stance),
-        "blocked_reason_mentions_semantics": bool(show_stance)
-        and any("show_stance_semantics_not_confirmed" in emission.blocked_reason for emission in show_stance),
+        "show_stance_does_not_drive_executable_toughness": not any(
+            emission.coverage_status == "executable" for emission in show_stance
+        ),
+        "executable_emissions_use_attack_property_stance_value": all(
+            _uses_attack_property_stance_value(emission)
+            for emission in emissions
+            if emission.coverage_status == "executable"
+        ),
     }
     return {"ok": all(checks.values()), "checks": checks, "emission_count": len(emissions)}
 
@@ -239,10 +243,12 @@ def _executable_toughness_case(ir, rules: RuleBook, profile: CombatantProfileIR)
         }
     emission = executable[0]
     action = rules.require_action_definition(emission.action_id, emission.level)
+    compatible_profile = _profile_for_element(ir, rules, emission.element_type) or profile
     avatar = _avatar_for_action(ir, action)
-    scenario = ScenarioLoader().load_dict(_scenario_dict(profile, action, avatar, enemy_panel={}))
-    state = ScenarioStateBuilder(rules).build(scenario).state
-    command = ScenarioStateBuilder(rules).build(scenario).commands[0]
+    scenario = ScenarioLoader().load_dict(_scenario_dict(compatible_profile, action, avatar, enemy_panel={}))
+    build_result = ScenarioStateBuilder(rules).build(scenario)
+    state = _state_with_toughness_dynamic_binding(build_result.state, emission)
+    command = build_result.commands[0]
     after_state, transition = CombatExecutor(rules).execute(command, state)
     source_audit = RuntimeSourceAuditor(rules).validate_transition(transition)
     replay_ok = MutationReducer().replay_snapshot(state, transition.transaction.mutations, transition.after.to_json()).ok
@@ -255,6 +261,38 @@ def _executable_toughness_case(ir, rules: RuleBook, profile: CombatantProfileIR)
     }
     checks["ok"] = all(value for key, value in checks.items() if key != "ok")
     return {"status": "executed", "checks": checks, "emission": emission.to_json()}
+
+
+def _profile_for_element(ir, rules: RuleBook, element_type: str | None) -> CombatantProfileIR | None:
+    if not element_type:
+        return None
+    for profile in sorted(ir.combatant_profiles, key=lambda item: item.entity_id):
+        if profile.entity_type != "monster" or profile.coverage_status != "executable":
+            continue
+        if element_type not in profile.weaknesses:
+            continue
+        if rules.entity(profile.entity_id) is not None:
+            return profile
+    return None
+
+
+def _state_with_toughness_dynamic_binding(state, emission: ToughnessEmissionIR):
+    expr = emission.toughness_amount_expr
+    if not (isinstance(expr, dict) and expr.get("kind") == "dynamic_hash" and expr.get("hash") is not None):
+        return state
+    store = upsert_dynamic_value(
+        state.global_flags.get("dynamic_value_store"),
+        scope="action_toughness_value",
+        owner_id="ally:actor",
+        value=30.0,
+        hash_key=expr.get("hash"),
+        source_trace={
+            "selection_mode": "structured_toughness_dynamic_binding",
+            "toughness_emission_id": emission.toughness_emission_id,
+            "source": emission.source.to_json(),
+        },
+    )
+    return replace(state, global_flags={**state.global_flags, "dynamic_value_store": store})
 
 
 def _apply_unit_case(state, packet: ToughnessPacket) -> dict[str, object]:
@@ -293,8 +331,17 @@ def _is_show_stance_blocked(emission: ToughnessEmissionIR) -> bool:
 
 def _is_show_stance_evidence(emission: ToughnessEmissionIR) -> bool:
     evidence = emission.source.evidence
+    amount_source = evidence.get("toughness_amount_source")
+    if isinstance(amount_source, dict) and amount_source.get("source_kind") == "ability_task_attack_property_stance_value":
+        return False
     stance_source = evidence.get("stance_source")
     return isinstance(stance_source, dict) and stance_source.get("show_stance_audit_only") is True
+
+
+def _uses_attack_property_stance_value(emission: ToughnessEmissionIR) -> bool:
+    evidence = emission.source.evidence
+    amount_source = evidence.get("toughness_amount_source")
+    return isinstance(amount_source, dict) and amount_source.get("source_kind") == "ability_task_attack_property_stance_value"
 
 
 def _action_selection(action: ActionDefinitionIR, avatar: RuleEntity) -> dict[str, object]:

@@ -15,6 +15,8 @@ from ..rules.ir import (
     ActionDefinitionIR,
     ActionEventIR,
     ActionPhaseStepIR,
+    BreakDamageEmissionIR,
+    BreakTemplateIR,
     CanonicalIR,
     CombatantProfileIR,
     ConditionIR,
@@ -175,6 +177,7 @@ class TBGDLowering:
             ability_task_effects,
             hit_profiles,
         )
+        break_templates, break_damage_emissions = self._lower_break_templates()
         for relative_path, _, id_key in ACTION_DEFINITION_TABLES:
             table_stats[f"action_definitions:{relative_path}"] = self._table_stats(relative_path, id_key)
 
@@ -203,6 +206,8 @@ class TBGDLowering:
             hit_profiles=tuple(hit_profiles),
             damage_emissions=tuple(damage_emissions),
             toughness_emissions=tuple(toughness_emissions),
+            break_templates=tuple(break_templates),
+            break_damage_emissions=tuple(break_damage_emissions),
             triggers=tuple(triggers),
             effects=tuple(effects),
             conditions=tuple(conditions),
@@ -233,6 +238,8 @@ class TBGDLowering:
                     "ability_task_count": len(ability_tasks),
                     "damage_emission_count": len(damage_emissions),
                     "toughness_emission_count": len(toughness_emissions),
+                    "break_template_count": len(break_templates),
+                    "break_damage_emission_count": len(break_damage_emissions),
                 },
                 "combatant_profile_status": {
                     "lowered_count": len(combatant_profiles),
@@ -253,6 +260,90 @@ class TBGDLowering:
         for template_id, template_row in sorted(template_rows.items()):
             profiles.append(_combatant_profile_from_template(template_id, template_row))
         return profiles
+
+    def _lower_break_templates(self) -> tuple[list[BreakTemplateIR], list[BreakDamageEmissionIR]]:
+        relative_path = "Config/ConfigGlobalTaskListTemplate/GlobalTaskListTemplate.json"
+        path = self.tbgd_root / relative_path
+        if not path.exists():
+            return [], []
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return [], []
+        templates = data.get("TaskListTemplate") if isinstance(data, dict) else None
+        if not isinstance(templates, list):
+            return [], []
+        lowered_templates: list[BreakTemplateIR] = []
+        damage_emissions: list[BreakDamageEmissionIR] = []
+        for index, template in enumerate(templates):
+            if not isinstance(template, dict):
+                continue
+            name = str(template.get("Name") or "")
+            if not name.startswith("StanceBreak_"):
+                continue
+            task_list = template.get("TaskList")
+            if not isinstance(task_list, list):
+                task_list = []
+            element = name.removeprefix("StanceBreak_") or None
+            source = IRSource(
+                source_path=relative_path,
+                raw_type="GlobalTaskListTemplate",
+                raw_id=name,
+                evidence={
+                    "row_index": index,
+                    "task_count": len(task_list),
+                    "purpose": "normal_weakness_break_lifecycle_template",
+                },
+            )
+            lowered_templates.append(
+                BreakTemplateIR(
+                    template_id=f"break_template:{name}",
+                    element_type=element,
+                    task_names=tuple(_short_gamecore_type(task.get("$type")) for task in task_list if isinstance(task, dict)),
+                    source=source,
+                    coverage_status="executable",
+                    blocked_reason="",
+                )
+            )
+            for task_index, task in enumerate(task_list):
+                if not isinstance(task, dict):
+                    continue
+                opcode = _short_gamecore_type(task.get("$type"))
+                if opcode != "DamageByAttackProperty":
+                    continue
+                attack_property = task.get("AttackProperty")
+                if not isinstance(attack_property, dict):
+                    continue
+                formula_type = str(attack_property.get("FormulaType") or "")
+                if formula_type != "ByBreakDamage":
+                    continue
+                scaling_expr = _numeric_expr_summary(attack_property.get("BreakDamagePercentage"))
+                task_id = f"break_template_task:{name}:{task_index}:{opcode}"
+                damage_emissions.append(
+                    BreakDamageEmissionIR(
+                        break_damage_emission_id=f"break_damage_emission:{name}:{task_index}",
+                        template_id=f"break_template:{name}",
+                        source_task_id=task_id,
+                        element_type=element,
+                        damage_formula_family="break",
+                        scaling_expr=scaling_expr,
+                        source=IRSource(
+                            source_path=relative_path,
+                            raw_type="GlobalBreakDamageTask",
+                            raw_id=name,
+                            evidence={
+                                "template_id": f"break_template:{name}",
+                                "task_index": task_index,
+                                "task_id": task_id,
+                                "opcode": opcode,
+                                "attack_property": _json_safe(attack_property),
+                            },
+                        ),
+                        coverage_status="blocked",
+                        blocked_reason="break_damage_formula_not_admitted_v0_231",
+                    )
+                )
+        return lowered_templates, damage_emissions
 
     def _rows_by_id(self, relative_path: str, id_key: str) -> dict[str, dict[str, Any]]:
         path = self.tbgd_root / relative_path
@@ -1674,9 +1765,7 @@ def _lower_toughness_emissions(
                         hit_profile_id=profile.hit_profile_id if profile else "",
                         target_group=profile.target_group if profile else "unknown",
                         element_type=profile.element_type if profile else None,
-                        toughness_amount_expr=profile.stance_expr
-                        if profile
-                        else {"kind": "missing", "blocked_reason": "missing_hit_profile"},
+                        toughness_amount_expr=_toughness_amount_expr(effect),
                         source=_toughness_emission_source(task, effect, profile),
                         coverage_status="blocked" if blocked_reason else "executable",
                         blocked_reason=blocked_reason,
@@ -1771,6 +1860,8 @@ def _toughness_emission_source(
             "hit_profile_id": profile.hit_profile_id if profile else "",
             "hit_profile_source": profile.source.to_json() if profile else None,
             "stance_source": profile.stance_source if profile else {},
+            "toughness_amount_source": _toughness_amount_expr(effect),
+            "attack_property": _json_safe(payload.get("AttackProperty")) if isinstance(payload, dict) else {},
         },
     )
 
@@ -1795,10 +1886,26 @@ def _toughness_emission_blocked_reason(
         return target_group_reason.replace("damage_", "toughness_", 1)
     if profile.coverage_status != "executable":
         return f"hit_profile_not_executable:{profile.blocked_reason or profile.coverage_status}"
-    amount_expr = profile.stance_expr
-    if amount_expr.get("kind") != "fixed":
-        return amount_expr.get("blocked_reason") or "toughness_amount_not_executable"
+    amount_expr = _toughness_amount_expr(effect)
+    if not _numeric_expr_can_be_runtime_bound(amount_expr):
+        return amount_expr.get("reason") or amount_expr.get("blocked_reason") or "toughness_amount_not_executable"
     return ""
+
+
+def _toughness_amount_expr(effect: EffectIR | None) -> dict[str, Any]:
+    if effect is None:
+        return {"kind": "missing", "reason": "toughness_emission_effect_missing"}
+    attack_property = effect.payload.get("AttackProperty") if isinstance(effect.payload, dict) else None
+    if not isinstance(attack_property, dict):
+        return {"kind": "missing", "reason": "toughness_emission_attack_property_missing"}
+    if "StanceValue" not in attack_property:
+        return {"kind": "missing", "reason": "attack_property_stance_value_missing"}
+    expr = _numeric_expr_summary(attack_property.get("StanceValue"))
+    return {
+        **expr,
+        "raw_path": "AttackProperty.StanceValue",
+        "source_kind": "ability_task_attack_property_stance_value",
+    }
 
 
 def _action_event_from_definition(

@@ -8,6 +8,8 @@ from .ir import (
     ActionAbilityBindingIR,
     ActionDefinitionIR,
     ActionEventIR,
+    BreakDamageEmissionIR,
+    BreakTemplateIR,
     CanonicalIR,
     CombatantProfileIR,
     ConditionIR,
@@ -152,6 +154,16 @@ class RuleBook:
                 for key, value in toughness_emissions_by_task.items()
             },
         )
+        object.__setattr__(
+            self,
+            "_break_templates",
+            {template.template_id: template for template in self.ir.break_templates},
+        )
+        object.__setattr__(
+            self,
+            "_break_damage_emissions",
+            {emission.break_damage_emission_id: emission for emission in self.ir.break_damage_emissions},
+        )
         object.__setattr__(self, "_effects", {effect.effect_id: effect for effect in self.ir.effects})
         object.__setattr__(self, "_conditions", {condition.condition_id: condition for condition in self.ir.conditions})
         object.__setattr__(self, "_triggers", {trigger.trigger_id: trigger for trigger in self.ir.triggers})
@@ -291,6 +303,18 @@ class RuleBook:
 
     def toughness_emissions_for_task(self, task_id: str) -> tuple[ToughnessEmissionIR, ...]:
         return self._toughness_emissions_by_task.get(task_id, ())
+
+    def break_template(self, template_id: str) -> BreakTemplateIR | None:
+        return self._break_templates.get(template_id)
+
+    def break_templates(self) -> tuple[BreakTemplateIR, ...]:
+        return self.ir.break_templates
+
+    def break_damage_emission(self, emission_id: str) -> BreakDamageEmissionIR | None:
+        return self._break_damage_emissions.get(emission_id)
+
+    def break_damage_emissions(self) -> tuple[BreakDamageEmissionIR, ...]:
+        return self.ir.break_damage_emissions
 
     def action_ability_binding(self, action_id: str, level: int) -> ActionAbilityBindingIR | None:
         return self._action_ability_bindings.get((action_id, level))

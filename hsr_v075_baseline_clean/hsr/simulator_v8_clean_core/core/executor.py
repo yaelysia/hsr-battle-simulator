@@ -234,6 +234,7 @@ class CombatExecutor:
                                 trace=action_definition_trace,
                             ).to_json()
                         )
+                    applied_toughness_keys: set[tuple[str, str]] = set()
                     for damage_plan in action_execution_plan.damage_plan:
                         damage_packet = _damage_packet(
                             command,
@@ -253,6 +254,7 @@ class CombatExecutor:
                             action_execution_plan.toughness_plan,
                             damage_plan,
                         ):
+                            applied_toughness_keys.add((toughness_plan.toughness_emission_id, toughness_plan.target_id))
                             toughness_packet = _toughness_packet(command, toughness_plan)
                             toughness_result = self.toughness.apply_packet(current_state, toughness_packet)
                             toughness_results.append(toughness_result)
@@ -260,6 +262,17 @@ class CombatExecutor:
                             current_state = self.reducer.apply_all(current_state, toughness_result.mutations)
                             ordered_mutations.extend(toughness_result.mutations)
                             runtime_records.extend(toughness_result.records)
+                    for toughness_plan in action_execution_plan.toughness_plan:
+                        key = (toughness_plan.toughness_emission_id, toughness_plan.target_id)
+                        if key in applied_toughness_keys:
+                            continue
+                        toughness_packet = _toughness_packet(command, toughness_plan)
+                        toughness_result = self.toughness.apply_packet(current_state, toughness_packet)
+                        toughness_results.append(toughness_result)
+                        toughness_mutations = (*toughness_mutations, *toughness_result.mutations)
+                        current_state = self.reducer.apply_all(current_state, toughness_result.mutations)
+                        ordered_mutations.extend(toughness_result.mutations)
+                        runtime_records.extend(toughness_result.records)
                     ability_result = self.ability_tasks.execute_callback(
                         current_state,
                         phases=ability_phases,
@@ -761,13 +774,14 @@ def _toughness_packet(command: ActionCommand, toughness_plan: ToughnessPlan) -> 
         source_task_id=toughness_plan.source_task_id,
         hit_profile_id=toughness_plan.hit_profile_id,
         element_type=toughness_plan.element_type,
-        amount=toughness_plan.toughness_amount,
+        amount=None,
+        amount_expr=toughness_plan.toughness_amount_expr,
         target_group=toughness_plan.target_group,
         coverage_status="executable" if not toughness_plan.blocked_reason else "blocked",
         source_trace=toughness_plan.source_trace,
         metadata={
             "primary_action_target_id": toughness_plan.primary_action_target_id,
-            "toughness_amount_source": toughness_plan.toughness_amount_source,
+            "toughness_amount_expr": toughness_plan.toughness_amount_expr,
             "source_trace": toughness_plan.source_trace,
         },
     )

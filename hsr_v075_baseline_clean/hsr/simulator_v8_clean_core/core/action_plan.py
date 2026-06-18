@@ -136,8 +136,8 @@ class ToughnessPlan:
     target_id: str
     target_group: str
     element_type: str | None
-    toughness_amount: float
-    toughness_amount_source: dict[str, object]
+    toughness_amount_expr: dict[str, object]
+    toughness_amount_evaluation: dict[str, object] | None
     source_trace: dict[str, object]
     primary_action_target_id: str | None = None
     blocked_reason: str = ""
@@ -151,8 +151,8 @@ class ToughnessPlan:
             "target_id": self.target_id,
             "target_group": self.target_group,
             "element_type": self.element_type,
-            "toughness_amount": self.toughness_amount,
-            "toughness_amount_source": self.toughness_amount_source,
+            "toughness_amount_expr": self.toughness_amount_expr,
+            "toughness_amount_evaluation": self.toughness_amount_evaluation or {},
             "source_trace": self.source_trace,
             "primary_action_target_id": self.primary_action_target_id,
             "blocked_reason": self.blocked_reason,
@@ -380,7 +380,7 @@ def _toughness_plan_from_emissions(
     primary_action_target_id: str | None,
     plan_blocked_reason: str,
 ) -> tuple[ToughnessPlan, ...]:
-    if action_definition.damage_kind != "hp_damage" or plan_blocked_reason:
+    if plan_blocked_reason:
         return ()
     plans: list[ToughnessPlan] = []
     for emission in toughness_emissions:
@@ -388,9 +388,6 @@ def _toughness_plan_from_emissions(
             continue
         profile = hit_profiles.get(emission.hit_profile_id)
         if profile is None:
-            continue
-        amount = _toughness_amount(emission)
-        if amount is None:
             continue
         for target_id in _targets_for_hit_profile(profile, target_groups):
             plans.append(
@@ -402,8 +399,8 @@ def _toughness_plan_from_emissions(
                     target_id=target_id,
                     target_group=profile.target_group,
                     element_type=emission.element_type,
-                    toughness_amount=amount,
-                    toughness_amount_source=emission.toughness_amount_expr,
+                    toughness_amount_expr=emission.toughness_amount_expr,
+                    toughness_amount_evaluation=None,
                     source_trace=emission.source.to_json(),
                     primary_action_target_id=primary_action_target_id,
                     blocked_reason=emission.blocked_reason,
@@ -427,16 +424,6 @@ def _targets_for_hit_profile(
 
 def _hit_scaling_ratio(profile: HitProfileIR) -> float | None:
     expr = profile.multiplier_expr
-    if expr.get("kind") != "fixed":
-        return None
-    value = expr.get("value")
-    if isinstance(value, (int, float)):
-        return float(value)
-    return None
-
-
-def _toughness_amount(emission: ToughnessEmissionIR) -> float | None:
-    expr = emission.toughness_amount_expr
     if expr.get("kind") != "fixed":
         return None
     value = expr.get("value")

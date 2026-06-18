@@ -285,6 +285,52 @@ class ToughnessEmissionIR:
 
 
 @dataclass(frozen=True)
+class BreakTemplateIR:
+    template_id: str
+    element_type: str | None
+    task_names: tuple[str, ...]
+    source: IRSource
+    coverage_status: CoverageStatus = "blocked"
+    blocked_reason: str = ""
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "template_id": self.template_id,
+            "element_type": self.element_type,
+            "task_names": list(self.task_names),
+            "source": self.source.to_json(),
+            "coverage_status": self.coverage_status,
+            "blocked_reason": self.blocked_reason,
+        }
+
+
+@dataclass(frozen=True)
+class BreakDamageEmissionIR:
+    break_damage_emission_id: str
+    template_id: str
+    source_task_id: str
+    element_type: str | None
+    damage_formula_family: str
+    scaling_expr: dict[str, JSONValue]
+    source: IRSource
+    coverage_status: CoverageStatus = "blocked"
+    blocked_reason: str = ""
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "break_damage_emission_id": self.break_damage_emission_id,
+            "template_id": self.template_id,
+            "source_task_id": self.source_task_id,
+            "element_type": self.element_type,
+            "damage_formula_family": self.damage_formula_family,
+            "scaling_expr": self.scaling_expr,
+            "source": self.source.to_json(),
+            "coverage_status": self.coverage_status,
+            "blocked_reason": self.blocked_reason,
+        }
+
+
+@dataclass(frozen=True)
 class AbilityPhaseIR:
     phase_id: str
     binding_id: str
@@ -499,6 +545,8 @@ class CanonicalIR:
     hit_profiles: tuple[HitProfileIR, ...] = ()
     damage_emissions: tuple[DamageEmissionIR, ...] = ()
     toughness_emissions: tuple[ToughnessEmissionIR, ...] = ()
+    break_templates: tuple[BreakTemplateIR, ...] = ()
+    break_damage_emissions: tuple[BreakDamageEmissionIR, ...] = ()
     triggers: tuple[TriggerIR, ...] = ()
     effects: tuple[EffectIR, ...] = ()
     conditions: tuple[ConditionIR, ...] = ()
@@ -519,6 +567,8 @@ class CanonicalIR:
             "hit_profiles": [profile.to_json() for profile in self.hit_profiles],
             "damage_emissions": [emission.to_json() for emission in self.damage_emissions],
             "toughness_emissions": [emission.to_json() for emission in self.toughness_emissions],
+            "break_templates": [template.to_json() for template in self.break_templates],
+            "break_damage_emissions": [emission.to_json() for emission in self.break_damage_emissions],
             "triggers": [trigger.to_json() for trigger in self.triggers],
             "effects": [effect.to_json() for effect in self.effects],
             "conditions": [condition.to_json() for condition in self.conditions],
