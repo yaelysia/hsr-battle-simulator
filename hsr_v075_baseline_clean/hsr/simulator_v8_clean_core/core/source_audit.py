@@ -16,6 +16,44 @@ NON_MUTATING_STATUSES = {
     "unsupported",
 }
 
+MUTATION_SOURCE_POLICIES: dict[str, dict[str, JSONValue]] = {
+    "combat_executor.timeline": {
+        "required_ir": ["ActionDefinitionIR", "ActionEventIR"],
+        "required_metadata": ["action_id", "action_level", "definition_id", "action_event_id", "source_trace"],
+        "coverage_required": "ActionDefinitionIR executable; ActionEventIR traceable",
+    },
+    "combat_executor.resources": {
+        "required_ir": ["ActionDefinitionIR", "ActionEventIR"],
+        "required_metadata": ["action_id", "action_level", "definition_id", "action_event_id", "source_trace"],
+        "coverage_required": "ActionDefinitionIR executable; ActionEventIR traceable",
+    },
+    "damage_system": {
+        "required_ir": ["DamageEmissionIR", "AbilityTaskIR", "HitProfileIR"],
+        "required_metadata": ["damage_emission_id", "source_task_id", "hit_profile_id", "source_trace"],
+        "coverage_required": "executable",
+    },
+    "status_system": {
+        "required_ir": ["EffectIR", "ModifierDefinition"],
+        "required_metadata": ["lifecycle_plan"],
+        "coverage_required": "executable",
+    },
+    "effect_system": {
+        "required_ir": ["EffectIR"],
+        "required_metadata": ["effect_id", "effect_source"],
+        "coverage_required": "executable",
+    },
+    "queue_system": {
+        "required_ir": ["ActionDefinitionIR or EffectIR"],
+        "required_metadata": ["queue_name", "queue_operation", "source_trace"],
+        "coverage_required": "executable",
+    },
+    "combat_executor.queue": {
+        "required_ir": ["ActionDefinitionIR or EffectIR"],
+        "required_metadata": ["queue_name", "queue_operation", "source_trace"],
+        "coverage_required": "executable",
+    },
+}
+
 
 @dataclass(frozen=True)
 class SourceAuditViolation:
@@ -81,6 +119,9 @@ class RuntimeSourceAuditor:
             traces=tuple(traces),
         )
 
+    def policy_matrix(self) -> dict[str, JSONValue]:
+        return {source: dict(policy) for source, policy in sorted(MUTATION_SOURCE_POLICIES.items())}
+
     def _audit_mutation(
         self,
         mutation: Mutation,
@@ -97,6 +138,8 @@ class RuntimeSourceAuditor:
             return self._audit_status_mutation(mutation, records, violations)
         if mutation.source == "effect_system":
             return self._audit_effect_mutation(mutation, records, violations)
+        if mutation.source in {"queue_system", "combat_executor.queue"}:
+            return self._audit_queue_mutation(mutation, records, violations)
         violations.append(_violation(mutation, "unsupported_mutation_source", details={"records": list(records)}))
         return _trace(mutation, records, {})
 
@@ -249,6 +292,44 @@ class RuntimeSourceAuditor:
             if failed and not ok_values and not has_fixed_mechanism_state:
                 violations.append(_violation(mutation, "mutation_has_only_failed_numeric_evaluations", details={"numeric_evaluations": failed}))
         return _trace(mutation, records, {"effect_id": effect_id or "", "opcode": str(metadata.get("opcode") or "")})
+
+    def _audit_queue_mutation(
+        self,
+        mutation: Mutation,
+        records: tuple[dict[str, JSONValue], ...],
+        violations: list[SourceAuditViolation],
+    ) -> dict[str, JSONValue]:
+        metadata = mutation.metadata
+        _required_str(mutation, metadata, "queue_name", violations)
+        _required_str(mutation, metadata, "queue_operation", violations)
+        _require_dict(mutation, metadata, "source_trace", violations)
+        effect_id = metadata.get("effect_id")
+        action_id = metadata.get("action_id")
+        action_level = metadata.get("action_level")
+        if isinstance(effect_id, str) and effect_id:
+            self._audit_effect_id(mutation, effect_id, violations)
+        elif isinstance(action_id, str) and isinstance(action_level, int):
+            self._audit_action_source_mutation(mutation, records, violations, require_action_event=False)
+        else:
+            violations.append(
+                _violation(
+                    mutation,
+                    "queue_source_ir_missing",
+                    missing_field="effect_id|action_id+action_level",
+                    details={"metadata": metadata},
+                )
+            )
+        return _trace(
+            mutation,
+            records,
+            {
+                "queue_name": str(metadata.get("queue_name") or ""),
+                "queue_operation": str(metadata.get("queue_operation") or ""),
+                "effect_id": str(effect_id or ""),
+                "action_id": str(action_id or ""),
+                "action_level": action_level if isinstance(action_level, int) else "",
+            },
+        )
 
     def _audit_effect_id(self, mutation: Mutation, effect_id: str, violations: list[SourceAuditViolation]) -> None:
         effect = self.rules.effect(effect_id)
