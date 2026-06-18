@@ -36,6 +36,8 @@ class DamagePacket:
     element_type: str | None = None
     action_definition: ActionDefinitionIR | None = None
     damage_emission_id: str = ""
+    break_damage_emission_id: str = ""
+    break_template_id: str = ""
     source_task_id: str = ""
     hit_profile_id: str = ""
     scaling_ratio: float | None = None
@@ -60,6 +62,8 @@ class DamagePacket:
             "element_type": self.element_type,
             "action_definition": _action_definition_summary(self.action_definition),
             "damage_emission_id": self.damage_emission_id,
+            "break_damage_emission_id": self.break_damage_emission_id,
+            "break_template_id": self.break_template_id,
             "source_task_id": self.source_task_id,
             "hit_profile_id": self.hit_profile_id,
             "scaling_ratio": self.scaling_ratio,

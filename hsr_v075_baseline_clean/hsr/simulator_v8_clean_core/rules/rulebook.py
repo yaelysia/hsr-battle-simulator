@@ -9,6 +9,7 @@ from .ir import (
     ActionDefinitionIR,
     ActionEventIR,
     BreakDamageEmissionIR,
+    BreakStatusEmissionIR,
     BreakTemplateIR,
     CanonicalIR,
     CombatantProfileIR,
@@ -161,8 +162,44 @@ class RuleBook:
         )
         object.__setattr__(
             self,
+            "_break_templates_by_element",
+            {
+                str(template.element_type): template
+                for template in self.ir.break_templates
+                if template.element_type
+            },
+        )
+        object.__setattr__(
+            self,
             "_break_damage_emissions",
             {emission.break_damage_emission_id: emission for emission in self.ir.break_damage_emissions},
+        )
+        break_damage_emissions_by_template: dict[str, list[BreakDamageEmissionIR]] = {}
+        for emission in self.ir.break_damage_emissions:
+            break_damage_emissions_by_template.setdefault(emission.template_id, []).append(emission)
+        object.__setattr__(
+            self,
+            "_break_damage_emissions_by_template",
+            {
+                key: tuple(sorted(value, key=lambda item: item.break_damage_emission_id))
+                for key, value in break_damage_emissions_by_template.items()
+            },
+        )
+        object.__setattr__(
+            self,
+            "_break_status_emissions",
+            {emission.break_status_emission_id: emission for emission in self.ir.break_status_emissions},
+        )
+        break_status_emissions_by_template: dict[str, list[BreakStatusEmissionIR]] = {}
+        for emission in self.ir.break_status_emissions:
+            break_status_emissions_by_template.setdefault(emission.template_id, []).append(emission)
+        object.__setattr__(
+            self,
+            "_break_status_emissions_by_template",
+            {
+                key: tuple(sorted(value, key=lambda item: item.break_status_emission_id))
+                for key, value in break_status_emissions_by_template.items()
+            },
         )
         object.__setattr__(self, "_effects", {effect.effect_id: effect for effect in self.ir.effects})
         object.__setattr__(self, "_conditions", {condition.condition_id: condition for condition in self.ir.conditions})
@@ -310,11 +347,28 @@ class RuleBook:
     def break_templates(self) -> tuple[BreakTemplateIR, ...]:
         return self.ir.break_templates
 
+    def break_template_for_element(self, element_type: str | None) -> BreakTemplateIR | None:
+        if not element_type:
+            return None
+        return self._break_templates_by_element.get(str(element_type))
+
     def break_damage_emission(self, emission_id: str) -> BreakDamageEmissionIR | None:
         return self._break_damage_emissions.get(emission_id)
 
     def break_damage_emissions(self) -> tuple[BreakDamageEmissionIR, ...]:
         return self.ir.break_damage_emissions
+
+    def break_damage_emissions_for_template(self, template_id: str) -> tuple[BreakDamageEmissionIR, ...]:
+        return self._break_damage_emissions_by_template.get(template_id, ())
+
+    def break_status_emission(self, emission_id: str) -> BreakStatusEmissionIR | None:
+        return self._break_status_emissions.get(emission_id)
+
+    def break_status_emissions(self) -> tuple[BreakStatusEmissionIR, ...]:
+        return self.ir.break_status_emissions
+
+    def break_status_emissions_for_template(self, template_id: str) -> tuple[BreakStatusEmissionIR, ...]:
+        return self._break_status_emissions_by_template.get(template_id, ())
 
     def action_ability_binding(self, action_id: str, level: int) -> ActionAbilityBindingIR | None:
         return self._action_ability_bindings.get((action_id, level))

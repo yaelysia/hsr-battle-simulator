@@ -331,6 +331,34 @@ class BreakDamageEmissionIR:
 
 
 @dataclass(frozen=True)
+class BreakStatusEmissionIR:
+    break_status_emission_id: str
+    template_id: str
+    source_task_id: str
+    effect_id: str
+    opcode: str
+    target_alias: str | None
+    modifier_name: str | None
+    source: IRSource
+    coverage_status: CoverageStatus = "blocked"
+    blocked_reason: str = ""
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "break_status_emission_id": self.break_status_emission_id,
+            "template_id": self.template_id,
+            "source_task_id": self.source_task_id,
+            "effect_id": self.effect_id,
+            "opcode": self.opcode,
+            "target_alias": self.target_alias,
+            "modifier_name": self.modifier_name,
+            "source": self.source.to_json(),
+            "coverage_status": self.coverage_status,
+            "blocked_reason": self.blocked_reason,
+        }
+
+
+@dataclass(frozen=True)
 class AbilityPhaseIR:
     phase_id: str
     binding_id: str
@@ -547,6 +575,7 @@ class CanonicalIR:
     toughness_emissions: tuple[ToughnessEmissionIR, ...] = ()
     break_templates: tuple[BreakTemplateIR, ...] = ()
     break_damage_emissions: tuple[BreakDamageEmissionIR, ...] = ()
+    break_status_emissions: tuple[BreakStatusEmissionIR, ...] = ()
     triggers: tuple[TriggerIR, ...] = ()
     effects: tuple[EffectIR, ...] = ()
     conditions: tuple[ConditionIR, ...] = ()
@@ -569,6 +598,7 @@ class CanonicalIR:
             "toughness_emissions": [emission.to_json() for emission in self.toughness_emissions],
             "break_templates": [template.to_json() for template in self.break_templates],
             "break_damage_emissions": [emission.to_json() for emission in self.break_damage_emissions],
+            "break_status_emissions": [emission.to_json() for emission in self.break_status_emissions],
             "triggers": [trigger.to_json() for trigger in self.triggers],
             "effects": [effect.to_json() for effect in self.effects],
             "conditions": [condition.to_json() for condition in self.conditions],

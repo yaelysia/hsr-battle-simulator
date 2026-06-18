@@ -16,6 +16,7 @@ from ..rules.ir import (
     ActionEventIR,
     ActionPhaseStepIR,
     BreakDamageEmissionIR,
+    BreakStatusEmissionIR,
     BreakTemplateIR,
     CanonicalIR,
     CombatantProfileIR,
@@ -177,7 +178,8 @@ class TBGDLowering:
             ability_task_effects,
             hit_profiles,
         )
-        break_templates, break_damage_emissions = self._lower_break_templates()
+        break_templates, break_damage_emissions, break_status_emissions, break_effects = self._lower_break_templates()
+        effects.extend(break_effects)
         for relative_path, _, id_key in ACTION_DEFINITION_TABLES:
             table_stats[f"action_definitions:{relative_path}"] = self._table_stats(relative_path, id_key)
 
@@ -208,6 +210,7 @@ class TBGDLowering:
             toughness_emissions=tuple(toughness_emissions),
             break_templates=tuple(break_templates),
             break_damage_emissions=tuple(break_damage_emissions),
+            break_status_emissions=tuple(break_status_emissions),
             triggers=tuple(triggers),
             effects=tuple(effects),
             conditions=tuple(conditions),
@@ -240,6 +243,7 @@ class TBGDLowering:
                     "toughness_emission_count": len(toughness_emissions),
                     "break_template_count": len(break_templates),
                     "break_damage_emission_count": len(break_damage_emissions),
+                    "break_status_emission_count": len(break_status_emissions),
                 },
                 "combatant_profile_status": {
                     "lowered_count": len(combatant_profiles),
@@ -261,20 +265,24 @@ class TBGDLowering:
             profiles.append(_combatant_profile_from_template(template_id, template_row))
         return profiles
 
-    def _lower_break_templates(self) -> tuple[list[BreakTemplateIR], list[BreakDamageEmissionIR]]:
+    def _lower_break_templates(
+        self,
+    ) -> tuple[list[BreakTemplateIR], list[BreakDamageEmissionIR], list[BreakStatusEmissionIR], list[EffectIR]]:
         relative_path = "Config/ConfigGlobalTaskListTemplate/GlobalTaskListTemplate.json"
         path = self.tbgd_root / relative_path
         if not path.exists():
-            return [], []
+            return [], [], [], []
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
         except Exception:
-            return [], []
+            return [], [], [], []
         templates = data.get("TaskListTemplate") if isinstance(data, dict) else None
         if not isinstance(templates, list):
-            return [], []
+            return [], [], [], []
         lowered_templates: list[BreakTemplateIR] = []
         damage_emissions: list[BreakDamageEmissionIR] = []
+        status_emissions: list[BreakStatusEmissionIR] = []
+        effects: list[EffectIR] = []
         for index, template in enumerate(templates):
             if not isinstance(template, dict):
                 continue
@@ -309,6 +317,51 @@ class TBGDLowering:
                 if not isinstance(task, dict):
                     continue
                 opcode = _short_gamecore_type(task.get("$type"))
+                task_id = f"break_template_task:{name}:{task_index}:{opcode}"
+                if opcode == "AddModifier":
+                    payload = _effect_payload(task, opcode, name)
+                    coverage_status = _effect_coverage_status(opcode, payload)
+                    blocked_reason = _effect_blocked_reason(opcode, payload, coverage_status) if coverage_status != "executable" else ""
+                    effect_id = f"break_effect:{name}:{task_index}:{opcode}"
+                    status_emission_id = f"break_status_emission:{name}:{task_index}"
+                    source = IRSource(
+                        source_path=relative_path,
+                        raw_type="GlobalBreakStatusTask",
+                        raw_id=name,
+                        evidence={
+                            "template_id": f"break_template:{name}",
+                            "break_status_emission_id": status_emission_id,
+                            "task_index": task_index,
+                            "task_id": task_id,
+                            "opcode": opcode,
+                            "task": _json_safe(task),
+                        },
+                    )
+                    effects.append(
+                        EffectIR(
+                            effect_id=effect_id,
+                            opcode=opcode,
+                            payload=payload,
+                            source=source,
+                            coverage_status=coverage_status,
+                        )
+                    )
+                    standard = payload.get("standard") if isinstance(payload.get("standard"), dict) else {}
+                    status_emissions.append(
+                        BreakStatusEmissionIR(
+                            break_status_emission_id=status_emission_id,
+                            template_id=f"break_template:{name}",
+                            source_task_id=task_id,
+                            effect_id=effect_id,
+                            opcode=opcode,
+                            target_alias=str(standard.get("target_alias") or "") or None,
+                            modifier_name=str(standard.get("modifier_name") or "") or None,
+                            source=source,
+                            coverage_status=coverage_status,
+                            blocked_reason=blocked_reason,
+                        )
+                    )
+                    continue
                 if opcode != "DamageByAttackProperty":
                     continue
                 attack_property = task.get("AttackProperty")
@@ -318,7 +371,6 @@ class TBGDLowering:
                 if formula_type != "ByBreakDamage":
                     continue
                 scaling_expr = _numeric_expr_summary(attack_property.get("BreakDamagePercentage"))
-                task_id = f"break_template_task:{name}:{task_index}:{opcode}"
                 damage_emissions.append(
                     BreakDamageEmissionIR(
                         break_damage_emission_id=f"break_damage_emission:{name}:{task_index}",
@@ -340,10 +392,10 @@ class TBGDLowering:
                             },
                         ),
                         coverage_status="blocked",
-                        blocked_reason="break_damage_formula_not_admitted_v0_231",
+                        blocked_reason=_break_damage_blocked_reason(scaling_expr),
                     )
                 )
-        return lowered_templates, damage_emissions
+        return lowered_templates, damage_emissions, status_emissions, effects
 
     def _rows_by_id(self, relative_path: str, id_key: str) -> dict[str, dict[str, Any]]:
         path = self.tbgd_root / relative_path
@@ -2805,6 +2857,18 @@ def _numeric_expr_can_be_runtime_bound(value: Any) -> bool:
     if isinstance(value, dict) and value.get("kind") == "dynamic_hash" and value.get("hash") is not None:
         return True
     return False
+
+
+def _break_damage_blocked_reason(scaling_expr: dict[str, Any]) -> str:
+    reason = scaling_expr.get("reason")
+    kind = scaling_expr.get("kind")
+    if isinstance(reason, str) and reason:
+        return f"break_damage_percentage_not_executable:{kind}:{reason}"
+    if kind == "dynamic_hash":
+        return "break_damage_formula_not_admitted:break_base_damage_inputs_missing"
+    if kind == "fixed":
+        return "break_damage_formula_not_admitted:break_base_damage_formula_missing"
+    return f"break_damage_percentage_not_executable:{kind or 'unknown'}"
 
 
 def _mechanism_bar_has_fixed_payload(standard: dict[str, Any]) -> bool:

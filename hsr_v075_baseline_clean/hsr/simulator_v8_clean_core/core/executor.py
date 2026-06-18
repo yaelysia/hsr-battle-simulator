@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 from .action_plan import DamagePlan, ToughnessPlan, build_action_execution_plan
 from .model import (
     ActionCommand,
@@ -16,6 +18,7 @@ from .settlement import SettlementRecord
 from ..rules.ir import ActionDefinitionIR
 from ..rules.rulebook import RuleBook
 from ..systems.ability import AbilityTaskExecutionResult, AbilityTaskSystem
+from ..systems.break_system import BreakApplicationResult, BreakSystem
 from ..systems.damage import DamagePacket, DamageSystem
 from ..systems.effect import EffectRegistry
 from ..systems.resource import ResourcePlan, ResourceSystem
@@ -39,6 +42,7 @@ class CombatExecutor:
         self.toughness = ToughnessSystem()
         self.status = StatusSystem(rules)
         self.effects = EffectRegistry(self.status)
+        self.breaks = BreakSystem(rules, self.effects, reducer=self.reducer)
         self.ability_tasks = AbilityTaskSystem(rules, self.effects, reducer=self.reducer)
         self.triggers = TriggerSystem(rules, self.effects, reducer=self.reducer)
 
@@ -155,6 +159,8 @@ class CombatExecutor:
         damage_mutations: tuple[Mutation, ...] = ()
         toughness_results = []
         toughness_mutations: tuple[Mutation, ...] = ()
+        break_results: list[BreakApplicationResult] = []
+        break_mutations: tuple[Mutation, ...] = ()
         ability_task_results: list[AbilityTaskExecutionResult] = []
 
         if action_enabled:
@@ -262,6 +268,13 @@ class CombatExecutor:
                             current_state = self.reducer.apply_all(current_state, toughness_result.mutations)
                             ordered_mutations.extend(toughness_result.mutations)
                             runtime_records.extend(toughness_result.records)
+                            break_result = _enter_break_if_depleted(self.breaks, current_state, toughness_result)
+                            if break_result:
+                                current_state = break_result.after_state
+                                break_results.append(break_result)
+                                break_mutations = (*break_mutations, *break_result.mutations)
+                                ordered_mutations.extend(break_result.mutations)
+                                runtime_records.extend(break_result.records)
                     for toughness_plan in action_execution_plan.toughness_plan:
                         key = (toughness_plan.toughness_emission_id, toughness_plan.target_id)
                         if key in applied_toughness_keys:
@@ -273,6 +286,13 @@ class CombatExecutor:
                         current_state = self.reducer.apply_all(current_state, toughness_result.mutations)
                         ordered_mutations.extend(toughness_result.mutations)
                         runtime_records.extend(toughness_result.records)
+                        break_result = _enter_break_if_depleted(self.breaks, current_state, toughness_result)
+                        if break_result:
+                            current_state = break_result.after_state
+                            break_results.append(break_result)
+                            break_mutations = (*break_mutations, *break_result.mutations)
+                            ordered_mutations.extend(break_result.mutations)
+                            runtime_records.extend(break_result.records)
                     ability_result = self.ability_tasks.execute_callback(
                         current_state,
                         phases=ability_phases,
@@ -530,8 +550,21 @@ class CombatExecutor:
                 "ability_task_mutation_count": len(ability_task_mutations),
                 "damage_mutation_count": len(damage_mutations),
                 "toughness_mutation_count": len(toughness_mutations),
+                "break_mutation_count": len(break_mutations),
+                "break_status_mutation_count": len(
+                    [mutation for mutation in break_mutations if mutation.source == "status_system"]
+                ),
+                "break_damage_mutation_count": len(
+                    [
+                        mutation
+                        for mutation in break_mutations
+                        if mutation.source == "damage_system"
+                        and mutation.metadata.get("damage_formula_family") == "break"
+                    ]
+                ),
                 "damage_ok": all(result.ok for result in damage_results) if damage_results else None,
                 "toughness_ok": all(result.ok for result in toughness_results) if toughness_results else None,
+                "break_ok": all(result.ok for result in break_results) if break_results else None,
                 "damage_formula_family": action_definition.damage_formula_family,
             },
         )
@@ -764,6 +797,24 @@ def _toughness_plans_for_damage_plan(
         for plan in toughness_plans
         if plan.hit_profile_id == damage_plan.hit_profile_id and plan.target_id == damage_plan.target_id
     )
+
+
+def _enter_break_if_depleted(breaks: BreakSystem, state: BattleState, toughness_result) -> BreakApplicationResult | None:
+    if not toughness_result.ok or not toughness_result.mutations:
+        return None
+    target = state.units.get(toughness_result.packet.target_id)
+    if target is None:
+        return None
+    if target.toughness > 0 or bool(target.flags.get("broken", False)):
+        return None
+    metadata = dict(toughness_result.packet.metadata)
+    for mutation in toughness_result.mutations:
+        if mutation.source != "toughness_system":
+            continue
+        for key in ("numeric_evaluation", "weakness_check", "amount"):
+            if key in mutation.metadata:
+                metadata[key] = mutation.metadata[key]
+    return breaks.enter_break(state, replace(toughness_result.packet, metadata=metadata))
 
 
 def _toughness_packet(command: ActionCommand, toughness_plan: ToughnessPlan) -> ToughnessPacket:

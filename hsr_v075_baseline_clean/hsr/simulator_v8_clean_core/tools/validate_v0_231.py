@@ -170,6 +170,7 @@ def _execute_toughness_case(rules: RuleBook, case: dict[str, Any], *, deplete: b
     return {
         "checks": checks,
         "initial_state": state,
+        "after_state": after_state,
         "transition": transition.to_json(),
         "source_audit": source_audit.to_json(),
     }

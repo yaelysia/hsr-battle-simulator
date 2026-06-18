@@ -142,6 +142,7 @@ def build_coverage_matrix(report: DiscoveryReport, ir: CanonicalIR) -> CoverageM
         ir.toughness_emissions,
         ir.break_templates,
         ir.break_damage_emissions,
+        ir.break_status_emissions,
         ir.triggers,
         ir.effects,
         ir.conditions,
@@ -165,6 +166,7 @@ def build_coverage_matrix(report: DiscoveryReport, ir: CanonicalIR) -> CoverageM
             "toughness_emissions": len(ir.toughness_emissions),
             "break_templates": len(ir.break_templates),
             "break_damage_emissions": len(ir.break_damage_emissions),
+            "break_status_emissions": len(ir.break_status_emissions),
             "triggers": len(ir.triggers),
             "effects": len(ir.effects),
             "conditions": len(ir.conditions),
@@ -347,6 +349,12 @@ def _action_execution_status(ir: CanonicalIR) -> dict[str, Any]:
         for emission in ir.break_damage_emissions
         if emission.blocked_reason
     )
+    break_status_status = Counter(emission.coverage_status for emission in ir.break_status_emissions)
+    break_status_reasons = Counter(
+        emission.blocked_reason
+        for emission in ir.break_status_emissions
+        if emission.blocked_reason
+    )
     hit_reasons = Counter(
         profile.blocked_reason
         for profile in ir.hit_profiles
@@ -445,5 +453,13 @@ def _action_execution_status(ir: CanonicalIR) -> dict[str, Any]:
             "status_counts": dict(sorted(break_damage_status.items())),
             "blocked_reason_counts": dict(sorted(break_damage_reasons.items())),
             "reason": "BreakDamageEmissionIR records ByBreakDamage template tasks; damage formula execution remains blocked until formula inputs are admitted",
+        },
+        "break_status_emissions": {
+            "lowered": len(ir.break_status_emissions),
+            "executable": break_status_status["executable"],
+            "blocked": break_status_status["blocked"],
+            "status_counts": dict(sorted(break_status_status.items())),
+            "blocked_reason_counts": dict(sorted(break_status_reasons.items())),
+            "reason": "BreakStatusEmissionIR records standardized status effects from normal break templates; executable emissions go through EffectRegistry and StatusSystem",
         },
     }

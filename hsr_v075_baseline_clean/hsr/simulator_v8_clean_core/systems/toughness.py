@@ -128,98 +128,18 @@ class ToughnessSystem:
         ]
         mutations: list[Mutation] = [mutation]
         if after <= 0 and not bool(target.flags.get("broken", False)):
-            break_metadata = {
-                **metadata,
-                "break_lifecycle": {
-                    "reason": "toughness_depleted",
-                    "event_types": ["OnTriggerBreak", "OnBeingBreak"],
-                    "break_damage_status": "blocked_until_break_damage_formula_admitted",
-                },
-            }
-            broken_mutation = Mutation(
-                op="set",
-                path=("units", packet.target_id, "flags", "broken"),
-                before=bool(target.flags.get("broken", False)),
-                after=True,
-                reason="enter weakness break state",
-                source="break_system",
-                metadata=break_metadata,
-            )
-            element_mutation = Mutation(
-                op="set",
-                path=("units", packet.target_id, "flags", "break_element"),
-                before=target.flags.get("break_element"),
-                after=packet.element_type,
-                reason="record weakness break element",
-                source="break_system",
-                metadata=break_metadata,
-            )
-            source_mutation = Mutation(
-                op="set",
-                path=("units", packet.target_id, "flags", "break_source"),
-                before=target.flags.get("break_source"),
-                after={
-                    "attacker_id": packet.attacker_id,
-                    "toughness_emission_id": packet.toughness_emission_id,
-                    "source_task_id": packet.source_task_id,
-                    "hit_profile_id": packet.hit_profile_id,
-                    "source_trace": packet.source_trace,
-                },
-                reason="record weakness break source",
-                source="break_system",
-                metadata=break_metadata,
-            )
-            mutations.extend((broken_mutation, element_mutation, source_mutation))
             records.append(
                 SettlementRecord(
-                    record_type="break_lifecycle",
-                    source="break_system",
-                    mutation_id=broken_mutation.stable_id(),
-                    process_only=False,
+                    record_type="toughness_depleted_pending_break",
+                    source="toughness_system",
+                    process_only=True,
                     payload={
                         "target_id": packet.target_id,
-                        "event_types": ["OnTriggerBreak", "OnBeingBreak"],
                         "toughness_emission_id": packet.toughness_emission_id,
                         "source_task_id": packet.source_task_id,
                         "hit_profile_id": packet.hit_profile_id,
                         "break_element": packet.element_type,
-                        "break_damage_status": "blocked_until_break_damage_formula_admitted",
-                    },
-                    trace=packet.source_trace,
-                ).to_json()
-            )
-            for extra_mutation, field_name in (
-                (element_mutation, "break_element"),
-                (source_mutation, "break_source"),
-            ):
-                records.append(
-                    SettlementRecord(
-                        record_type="break_lifecycle",
-                        source="break_system",
-                        mutation_id=extra_mutation.stable_id(),
-                        process_only=False,
-                        payload={
-                            "target_id": packet.target_id,
-                            "field": field_name,
-                            "toughness_emission_id": packet.toughness_emission_id,
-                            "source_task_id": packet.source_task_id,
-                            "hit_profile_id": packet.hit_profile_id,
-                            "break_element": packet.element_type,
-                            "break_damage_status": "blocked_until_break_damage_formula_admitted",
-                        },
-                        trace=packet.source_trace,
-                    ).to_json()
-                )
-            records.append(
-                SettlementRecord(
-                    record_type="break_event",
-                    source="break_system",
-                    process_only=True,
-                    payload={
-                        "target_id": packet.target_id,
-                        "events": ["OnTriggerBreak", "OnBeingBreak"],
-                        "toughness_emission_id": packet.toughness_emission_id,
-                        "break_damage_status": "blocked_until_break_damage_formula_admitted",
+                        "next_system": "break_system",
                     },
                     trace=packet.source_trace,
                 ).to_json()
@@ -227,8 +147,8 @@ class ToughnessSystem:
         elif after <= 0:
             records.append(
                 SettlementRecord(
-                    record_type="break_lifecycle_skipped",
-                    source="break_system",
+                    record_type="toughness_depleted_break_skipped",
+                    source="toughness_system",
                     process_only=True,
                     payload={
                         "target_id": packet.target_id,
