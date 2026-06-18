@@ -143,6 +143,10 @@ def build_coverage_matrix(report: DiscoveryReport, ir: CanonicalIR) -> CoverageM
         ir.break_templates,
         ir.break_damage_emissions,
         ir.break_status_emissions,
+        ir.status_callbacks,
+        ir.status_callback_tasks,
+        ir.status_damage_emissions,
+        ir.action_delay_emissions,
         ir.triggers,
         ir.effects,
         ir.conditions,
@@ -167,6 +171,10 @@ def build_coverage_matrix(report: DiscoveryReport, ir: CanonicalIR) -> CoverageM
             "break_templates": len(ir.break_templates),
             "break_damage_emissions": len(ir.break_damage_emissions),
             "break_status_emissions": len(ir.break_status_emissions),
+            "status_callbacks": len(ir.status_callbacks),
+            "status_callback_tasks": len(ir.status_callback_tasks),
+            "status_damage_emissions": len(ir.status_damage_emissions),
+            "action_delay_emissions": len(ir.action_delay_emissions),
             "triggers": len(ir.triggers),
             "effects": len(ir.effects),
             "conditions": len(ir.conditions),
@@ -355,6 +363,14 @@ def _action_execution_status(ir: CanonicalIR) -> dict[str, Any]:
         for emission in ir.break_status_emissions
         if emission.blocked_reason
     )
+    status_callback_status = Counter(callback.coverage_status for callback in ir.status_callbacks)
+    status_callback_reasons = Counter(callback.blocked_reason for callback in ir.status_callbacks if callback.blocked_reason)
+    status_callback_task_status = Counter(task.coverage_status for task in ir.status_callback_tasks)
+    status_callback_task_reasons = Counter(task.blocked_reason for task in ir.status_callback_tasks if task.blocked_reason)
+    status_damage_status = Counter(emission.coverage_status for emission in ir.status_damage_emissions)
+    status_damage_reasons = Counter(emission.blocked_reason for emission in ir.status_damage_emissions if emission.blocked_reason)
+    action_delay_status = Counter(emission.coverage_status for emission in ir.action_delay_emissions)
+    action_delay_reasons = Counter(emission.blocked_reason for emission in ir.action_delay_emissions if emission.blocked_reason)
     hit_reasons = Counter(
         profile.blocked_reason
         for profile in ir.hit_profiles
@@ -467,5 +483,37 @@ def _action_execution_status(ir: CanonicalIR) -> dict[str, Any]:
             "status_counts": dict(sorted(break_status_status.items())),
             "blocked_reason_counts": dict(sorted(break_status_reasons.items())),
             "reason": "BreakStatusEmissionIR records standardized status effects from normal break templates; executable emissions go through EffectRegistry and StatusSystem",
+        },
+        "status_callbacks": {
+            "lowered": len(ir.status_callbacks),
+            "executable": status_callback_status["executable"],
+            "blocked": status_callback_status["blocked"],
+            "status_counts": dict(sorted(status_callback_status.items())),
+            "blocked_reason_counts": dict(sorted(status_callback_reasons.items())),
+            "reason": "StatusCallbackIR lowers modifier-local callbacks; only OnStack and OnPhase1 are admitted in the current break-status scope",
+        },
+        "status_callback_tasks": {
+            "lowered": len(ir.status_callback_tasks),
+            "executable": status_callback_task_status["executable"],
+            "blocked": status_callback_task_status["blocked"],
+            "status_counts": dict(sorted(status_callback_task_status.items())),
+            "blocked_reason_counts": dict(sorted(status_callback_task_reasons.items())),
+            "reason": "StatusCallbackTaskIR lowers modifier callback tasks; unsupported branches remain blocked and non-mutating",
+        },
+        "status_damage_emissions": {
+            "lowered": len(ir.status_damage_emissions),
+            "executable": status_damage_status["executable"],
+            "blocked": status_damage_status["blocked"],
+            "status_counts": dict(sorted(status_damage_status.items())),
+            "blocked_reason_counts": dict(sorted(status_damage_reasons.items())),
+            "reason": "StatusDamageEmissionIR admits OnPhase1 ByBreakDamage DOT tick sources only when formula shape can be evaluated by NumericEvaluator",
+        },
+        "action_delay_emissions": {
+            "lowered": len(ir.action_delay_emissions),
+            "executable": action_delay_status["executable"],
+            "blocked": action_delay_status["blocked"],
+            "status_counts": dict(sorted(action_delay_status.items())),
+            "blocked_reason_counts": dict(sorted(action_delay_reasons.items())),
+            "reason": "ActionDelayEmissionIR records OnStack delay evidence; ModifyActionDelay normalized AV scale remains blocked until source semantics are admitted",
         },
     }

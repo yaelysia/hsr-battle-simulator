@@ -28,8 +28,8 @@ MUTATION_SOURCE_POLICIES: dict[str, dict[str, JSONValue]] = {
         "coverage_required": "ActionDefinitionIR executable; ActionEventIR traceable",
     },
     "damage_system": {
-        "required_ir": ["DamageEmissionIR + AbilityTaskIR + HitProfileIR", "BreakDamageEmissionIR + BreakBaseDamageIR for break", "or EffectIR for hp_loss"],
-        "required_metadata": ["damage_emission_id/source_task_id/hit_profile_id or break_damage_emission_id or effect_id", "source_trace"],
+        "required_ir": ["DamageEmissionIR + AbilityTaskIR + HitProfileIR", "BreakDamageEmissionIR + BreakBaseDamageIR for break", "StatusDamageEmissionIR + StatusCallbackIR for break DOT tick", "or EffectIR for hp_loss"],
+        "required_metadata": ["damage_emission_id/source_task_id/hit_profile_id or break_damage_emission_id or status_damage_emission_id or effect_id", "source_trace"],
         "coverage_required": "executable",
     },
     "toughness_system": {
@@ -51,6 +51,11 @@ MUTATION_SOURCE_POLICIES: dict[str, dict[str, JSONValue]] = {
         "required_ir": ["EffectIR"],
         "required_metadata": ["effect_id", "effect_source"],
         "coverage_required": "executable",
+    },
+    "status_callback_system": {
+        "required_ir": ["StatusCallbackIR + StatusCallbackTaskIR + StatusDamageEmissionIR or ActionDelayEmissionIR"],
+        "required_metadata": ["callback_id", "task_id", "source_trace"],
+        "coverage_required": "executable for mutating paths; blocked paths process-only",
     },
     "queue_system": {
         "required_ir": ["ActionDefinitionIR or EffectIR"],
@@ -217,6 +222,8 @@ class RuntimeSourceAuditor:
         violations: list[SourceAuditViolation],
     ) -> dict[str, JSONValue]:
         metadata = mutation.metadata
+        if metadata.get("damage_formula_family") == "break" and metadata.get("status_damage_emission_id"):
+            return self._audit_status_callback_damage_mutation(mutation, records, violations)
         if metadata.get("damage_formula_family") == "break":
             return self._audit_break_damage_mutation(mutation, records, violations)
         effect_id = _first_str(metadata.get("effect_id"))
@@ -323,6 +330,81 @@ class RuntimeSourceAuditor:
                 "break_damage_emission_id": emission_id or "",
                 "break_template_id": template_id or "",
                 "source_task_id": task_id or "",
+            },
+        )
+
+    def _audit_status_callback_damage_mutation(
+        self,
+        mutation: Mutation,
+        records: tuple[dict[str, JSONValue], ...],
+        violations: list[SourceAuditViolation],
+    ) -> dict[str, JSONValue]:
+        metadata = mutation.metadata
+        emission_id = _required_str(mutation, metadata, "status_damage_emission_id", violations)
+        callback_id = _required_str(mutation, metadata, "status_callback_id", violations)
+        task_id = _required_str(mutation, metadata, "source_task_id", violations)
+        template_id = _required_str(mutation, metadata, "break_template_id", violations)
+        _required_str(mutation, metadata, "status_instance_id", violations)
+        _required_str(mutation, metadata, "modifier_name", violations)
+        _require_dict(mutation, metadata, "source_trace", violations)
+        break_base_source = metadata.get("break_base_damage_source")
+        if not isinstance(break_base_source, dict):
+            violations.append(_violation(mutation, "break_base_damage_source_missing", missing_field="break_base_damage_source"))
+        else:
+            level = break_base_source.get("level")
+            if isinstance(level, int):
+                base = self.rules.break_base_damage(level)
+                if base is None:
+                    violations.append(_violation(mutation, "break_base_damage_ir_missing", details={"level": level}))
+                else:
+                    _audit_source(base.source, base.coverage_status, mutation, violations, executable_required=True)
+            else:
+                violations.append(_violation(mutation, "break_base_damage_level_missing", missing_field="break_base_damage_source.level"))
+        evaluation = metadata.get("numeric_evaluation")
+        if not isinstance(evaluation, dict):
+            violations.append(_violation(mutation, "numeric_evaluation_missing", missing_field="numeric_evaluation"))
+        elif evaluation.get("ok") is False:
+            violations.append(_violation(mutation, "mutation_has_failed_numeric_evaluation", details={"numeric_evaluation": evaluation}))
+        elif evaluation.get("ok") is True:
+            _audit_dynamic_numeric_binding(mutation, evaluation, violations)
+        if template_id:
+            template = self.rules.break_template(template_id)
+            if template is None:
+                violations.append(_violation(mutation, "break_template_missing", details={"break_template_id": template_id}))
+            else:
+                _audit_source(template.source, template.coverage_status, mutation, violations, executable_required=True)
+        if callback_id:
+            callback = self.rules.status_callback(callback_id)
+            if callback is None:
+                violations.append(_violation(mutation, "status_callback_missing", details={"status_callback_id": callback_id}))
+            else:
+                _audit_source(callback.source, callback.coverage_status, mutation, violations, executable_required=True)
+        if task_id:
+            task = self.rules.status_callback_task(task_id)
+            if task is None:
+                violations.append(_violation(mutation, "status_callback_task_missing", details={"source_task_id": task_id}))
+            else:
+                _audit_source(task.source, task.coverage_status, mutation, violations, executable_required=True)
+                if callback_id and task.callback_id != callback_id:
+                    violations.append(_violation(mutation, "status_callback_task_callback_mismatch", details={"expected": task.callback_id, "actual": callback_id}))
+        if emission_id:
+            emission = self.rules.status_damage_emission(emission_id)
+            if emission is None:
+                violations.append(_violation(mutation, "status_damage_emission_missing", details={"status_damage_emission_id": emission_id}))
+            else:
+                _audit_source(emission.source, emission.coverage_status, mutation, violations, executable_required=True)
+                if callback_id and emission.callback_id != callback_id:
+                    violations.append(_violation(mutation, "status_damage_callback_mismatch", details={"expected": emission.callback_id, "actual": callback_id}))
+                if task_id and emission.source_task_id != task_id:
+                    violations.append(_violation(mutation, "status_damage_task_mismatch", details={"expected": emission.source_task_id, "actual": task_id}))
+        return _trace(
+            mutation,
+            records,
+            {
+                "status_damage_emission_id": emission_id or "",
+                "status_callback_id": callback_id or "",
+                "source_task_id": task_id or "",
+                "break_template_id": template_id or "",
             },
         )
 

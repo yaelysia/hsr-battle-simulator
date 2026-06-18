@@ -379,6 +379,134 @@ class BreakStatusEmissionIR:
 
 
 @dataclass(frozen=True)
+class StatusCallbackIR:
+    callback_id: str
+    modifier_name: str
+    event: str
+    task_ids: tuple[str, ...]
+    source: IRSource
+    coverage_status: CoverageStatus = "blocked"
+    blocked_reason: str = ""
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "callback_id": self.callback_id,
+            "modifier_name": self.modifier_name,
+            "event": self.event,
+            "task_ids": list(self.task_ids),
+            "source": self.source.to_json(),
+            "coverage_status": self.coverage_status,
+            "blocked_reason": self.blocked_reason,
+        }
+
+
+@dataclass(frozen=True)
+class StatusCallbackTaskIR:
+    task_id: str
+    callback_id: str
+    modifier_name: str
+    event: str
+    task_index: int
+    task_path: str
+    branch: str
+    opcode: str
+    source: IRSource
+    effect_id: str = ""
+    condition_id: str = ""
+    parent_task_id: str = ""
+    child_task_ids: tuple[str, ...] = ()
+    success_task_ids: tuple[str, ...] = ()
+    failed_task_ids: tuple[str, ...] = ()
+    coverage_status: CoverageStatus = "blocked"
+    blocked_reason: str = ""
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "task_id": self.task_id,
+            "callback_id": self.callback_id,
+            "modifier_name": self.modifier_name,
+            "event": self.event,
+            "task_index": self.task_index,
+            "task_path": self.task_path,
+            "branch": self.branch,
+            "opcode": self.opcode,
+            "effect_id": self.effect_id,
+            "condition_id": self.condition_id,
+            "parent_task_id": self.parent_task_id,
+            "child_task_ids": list(self.child_task_ids),
+            "success_task_ids": list(self.success_task_ids),
+            "failed_task_ids": list(self.failed_task_ids),
+            "source": self.source.to_json(),
+            "coverage_status": self.coverage_status,
+            "blocked_reason": self.blocked_reason,
+        }
+
+
+@dataclass(frozen=True)
+class StatusDamageEmissionIR:
+    status_damage_emission_id: str
+    callback_id: str
+    source_task_id: str
+    modifier_name: str
+    event: str
+    attack_type: str
+    damage_formula_family: str
+    element_type: str | None
+    scaling_expr: dict[str, JSONValue]
+    source: IRSource
+    coverage_status: CoverageStatus = "blocked"
+    blocked_reason: str = ""
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "status_damage_emission_id": self.status_damage_emission_id,
+            "callback_id": self.callback_id,
+            "source_task_id": self.source_task_id,
+            "modifier_name": self.modifier_name,
+            "event": self.event,
+            "attack_type": self.attack_type,
+            "damage_formula_family": self.damage_formula_family,
+            "element_type": self.element_type,
+            "scaling_expr": self.scaling_expr,
+            "source": self.source.to_json(),
+            "coverage_status": self.coverage_status,
+            "blocked_reason": self.blocked_reason,
+        }
+
+
+@dataclass(frozen=True)
+class ActionDelayEmissionIR:
+    action_delay_emission_id: str
+    callback_id: str
+    source_task_id: str
+    modifier_name: str
+    event: str
+    opcode: str
+    target_alias: str | None
+    delay_mode: str
+    delay_expr: dict[str, JSONValue]
+    source: IRSource
+    coverage_status: CoverageStatus = "blocked"
+    blocked_reason: str = ""
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "action_delay_emission_id": self.action_delay_emission_id,
+            "callback_id": self.callback_id,
+            "source_task_id": self.source_task_id,
+            "modifier_name": self.modifier_name,
+            "event": self.event,
+            "opcode": self.opcode,
+            "target_alias": self.target_alias,
+            "delay_mode": self.delay_mode,
+            "delay_expr": self.delay_expr,
+            "source": self.source.to_json(),
+            "coverage_status": self.coverage_status,
+            "blocked_reason": self.blocked_reason,
+        }
+
+
+@dataclass(frozen=True)
 class AbilityPhaseIR:
     phase_id: str
     binding_id: str
@@ -597,6 +725,10 @@ class CanonicalIR:
     break_base_damage: tuple[BreakBaseDamageIR, ...] = ()
     break_damage_emissions: tuple[BreakDamageEmissionIR, ...] = ()
     break_status_emissions: tuple[BreakStatusEmissionIR, ...] = ()
+    status_callbacks: tuple[StatusCallbackIR, ...] = ()
+    status_callback_tasks: tuple[StatusCallbackTaskIR, ...] = ()
+    status_damage_emissions: tuple[StatusDamageEmissionIR, ...] = ()
+    action_delay_emissions: tuple[ActionDelayEmissionIR, ...] = ()
     triggers: tuple[TriggerIR, ...] = ()
     effects: tuple[EffectIR, ...] = ()
     conditions: tuple[ConditionIR, ...] = ()
@@ -621,6 +753,10 @@ class CanonicalIR:
             "break_base_damage": [item.to_json() for item in self.break_base_damage],
             "break_damage_emissions": [emission.to_json() for emission in self.break_damage_emissions],
             "break_status_emissions": [emission.to_json() for emission in self.break_status_emissions],
+            "status_callbacks": [callback.to_json() for callback in self.status_callbacks],
+            "status_callback_tasks": [task.to_json() for task in self.status_callback_tasks],
+            "status_damage_emissions": [emission.to_json() for emission in self.status_damage_emissions],
+            "action_delay_emissions": [emission.to_json() for emission in self.action_delay_emissions],
             "triggers": [trigger.to_json() for trigger in self.triggers],
             "effects": [effect.to_json() for effect in self.effects],
             "conditions": [condition.to_json() for condition in self.conditions],

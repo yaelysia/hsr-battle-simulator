@@ -37,6 +37,10 @@ class DamagePacket:
     action_definition: ActionDefinitionIR | None = None
     damage_emission_id: str = ""
     break_damage_emission_id: str = ""
+    status_damage_emission_id: str = ""
+    status_callback_id: str = ""
+    status_instance_id: str = ""
+    modifier_name: str = ""
     break_template_id: str = ""
     source_task_id: str = ""
     hit_profile_id: str = ""
@@ -63,6 +67,10 @@ class DamagePacket:
             "action_definition": _action_definition_summary(self.action_definition),
             "damage_emission_id": self.damage_emission_id,
             "break_damage_emission_id": self.break_damage_emission_id,
+            "status_damage_emission_id": self.status_damage_emission_id,
+            "status_callback_id": self.status_callback_id,
+            "status_instance_id": self.status_instance_id,
+            "modifier_name": self.modifier_name,
             "break_template_id": self.break_template_id,
             "source_task_id": self.source_task_id,
             "hit_profile_id": self.hit_profile_id,
@@ -205,8 +213,8 @@ class DamageSystem:
     def _apply_break_damage(self, state: BattleState, packet: DamagePacket) -> DamageApplicationResult:
         if packet.amount is None:
             return _damage_error(packet, "break damage requires admitted amount")
-        if not packet.break_damage_emission_id:
-            return _damage_error(packet, "break damage requires break_damage_emission_id")
+        if not packet.break_damage_emission_id and not packet.status_damage_emission_id:
+            return _damage_error(packet, "break damage requires break_damage_emission_id or status_damage_emission_id")
         if not packet.break_template_id:
             return _damage_error(packet, "break damage requires break_template_id")
         target = state.units[packet.target_id]
@@ -220,12 +228,14 @@ class DamageSystem:
             "final_damage": final_damage,
             "normal_multiplier_terms": [],
         }
+        record_type = "break_dot_tick" if packet.status_damage_emission_id else "break_damage"
+        reason = "apply break status DOT tick" if packet.status_damage_emission_id else "apply normal break damage"
         mutation = Mutation(
             op="set",
             path=("units", packet.target_id, "hp"),
             before=target.hp,
             after=after,
-            reason="apply normal break damage",
+            reason=reason,
             source="damage_system",
             metadata=metadata,
         )
@@ -235,7 +245,7 @@ class DamageSystem:
             mutations=(mutation,),
             records=(
                 SettlementRecord(
-                    record_type="break_damage",
+                    record_type=record_type,
                     source="damage_system",
                     mutation_id=mutation.stable_id(),
                     process_only=False,
@@ -248,6 +258,10 @@ class DamageSystem:
                         "element_type": packet.element_type,
                         "break_template_id": packet.break_template_id,
                         "break_damage_emission_id": packet.break_damage_emission_id,
+                        "status_damage_emission_id": packet.status_damage_emission_id,
+                        "status_callback_id": packet.status_callback_id,
+                        "status_instance_id": packet.status_instance_id,
+                        "modifier_name": packet.modifier_name,
                         "source_task_id": packet.source_task_id,
                         "hit_profile_id": packet.hit_profile_id,
                         "packet_metadata": packet.metadata,

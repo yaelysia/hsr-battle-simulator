@@ -7,6 +7,7 @@ from .ir import (
     AbilityTaskIR,
     ActionAbilityBindingIR,
     ActionDefinitionIR,
+    ActionDelayEmissionIR,
     ActionEventIR,
     BreakBaseDamageIR,
     BreakDamageEmissionIR,
@@ -20,6 +21,9 @@ from .ir import (
     FormulaIR,
     HitProfileIR,
     RuleEntity,
+    StatusCallbackIR,
+    StatusCallbackTaskIR,
+    StatusDamageEmissionIR,
     ToughnessEmissionIR,
     TriggerIR,
 )
@@ -207,6 +211,70 @@ class RuleBook:
                 for key, value in break_status_emissions_by_template.items()
             },
         )
+        object.__setattr__(
+            self,
+            "_status_callbacks",
+            {callback.callback_id: callback for callback in self.ir.status_callbacks},
+        )
+        status_callbacks_by_modifier_event: dict[tuple[str, str], list[StatusCallbackIR]] = {}
+        for callback in self.ir.status_callbacks:
+            status_callbacks_by_modifier_event.setdefault((callback.modifier_name, callback.event), []).append(callback)
+        object.__setattr__(
+            self,
+            "_status_callbacks_by_modifier_event",
+            {
+                key: tuple(sorted(value, key=lambda item: item.callback_id))
+                for key, value in status_callbacks_by_modifier_event.items()
+            },
+        )
+        object.__setattr__(
+            self,
+            "_status_callback_tasks",
+            {task.task_id: task for task in self.ir.status_callback_tasks},
+        )
+        status_callback_tasks_by_callback: dict[str, list[StatusCallbackTaskIR]] = {}
+        for task in self.ir.status_callback_tasks:
+            status_callback_tasks_by_callback.setdefault(task.callback_id, []).append(task)
+        object.__setattr__(
+            self,
+            "_status_callback_tasks_by_callback",
+            {
+                key: tuple(sorted(value, key=lambda item: (item.task_path, item.task_id)))
+                for key, value in status_callback_tasks_by_callback.items()
+            },
+        )
+        object.__setattr__(
+            self,
+            "_status_damage_emissions",
+            {emission.status_damage_emission_id: emission for emission in self.ir.status_damage_emissions},
+        )
+        status_damage_emissions_by_callback: dict[str, list[StatusDamageEmissionIR]] = {}
+        for emission in self.ir.status_damage_emissions:
+            status_damage_emissions_by_callback.setdefault(emission.callback_id, []).append(emission)
+        object.__setattr__(
+            self,
+            "_status_damage_emissions_by_callback",
+            {
+                key: tuple(sorted(value, key=lambda item: item.status_damage_emission_id))
+                for key, value in status_damage_emissions_by_callback.items()
+            },
+        )
+        object.__setattr__(
+            self,
+            "_action_delay_emissions",
+            {emission.action_delay_emission_id: emission for emission in self.ir.action_delay_emissions},
+        )
+        action_delay_emissions_by_callback: dict[str, list[ActionDelayEmissionIR]] = {}
+        for emission in self.ir.action_delay_emissions:
+            action_delay_emissions_by_callback.setdefault(emission.callback_id, []).append(emission)
+        object.__setattr__(
+            self,
+            "_action_delay_emissions_by_callback",
+            {
+                key: tuple(sorted(value, key=lambda item: item.action_delay_emission_id))
+                for key, value in action_delay_emissions_by_callback.items()
+            },
+        )
         object.__setattr__(self, "_effects", {effect.effect_id: effect for effect in self.ir.effects})
         object.__setattr__(self, "_conditions", {condition.condition_id: condition for condition in self.ir.conditions})
         object.__setattr__(self, "_triggers", {trigger.trigger_id: trigger for trigger in self.ir.triggers})
@@ -381,6 +449,30 @@ class RuleBook:
 
     def break_status_emissions_for_template(self, template_id: str) -> tuple[BreakStatusEmissionIR, ...]:
         return self._break_status_emissions_by_template.get(template_id, ())
+
+    def status_callback(self, callback_id: str) -> StatusCallbackIR | None:
+        return self._status_callbacks.get(callback_id)
+
+    def status_callbacks_for_modifier_event(self, modifier_name: str, event: str) -> tuple[StatusCallbackIR, ...]:
+        return self._status_callbacks_by_modifier_event.get((modifier_name, event), ())
+
+    def status_callback_task(self, task_id: str) -> StatusCallbackTaskIR | None:
+        return self._status_callback_tasks.get(task_id)
+
+    def status_callback_tasks_for_callback(self, callback_id: str) -> tuple[StatusCallbackTaskIR, ...]:
+        return self._status_callback_tasks_by_callback.get(callback_id, ())
+
+    def status_damage_emission(self, emission_id: str) -> StatusDamageEmissionIR | None:
+        return self._status_damage_emissions.get(emission_id)
+
+    def status_damage_emissions_for_callback(self, callback_id: str) -> tuple[StatusDamageEmissionIR, ...]:
+        return self._status_damage_emissions_by_callback.get(callback_id, ())
+
+    def action_delay_emission(self, emission_id: str) -> ActionDelayEmissionIR | None:
+        return self._action_delay_emissions.get(emission_id)
+
+    def action_delay_emissions_for_callback(self, callback_id: str) -> tuple[ActionDelayEmissionIR, ...]:
+        return self._action_delay_emissions_by_callback.get(callback_id, ())
 
     def action_ability_binding(self, action_id: str, level: int) -> ActionAbilityBindingIR | None:
         return self._action_ability_bindings.get((action_id, level))

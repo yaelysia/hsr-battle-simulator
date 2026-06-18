@@ -10,6 +10,7 @@ from ..rules.ir import BreakDamageEmissionIR, BreakStatusEmissionIR, BreakTempla
 from ..rules.rulebook import RuleBook
 from .damage import DamagePacket, DamageSystem
 from .effect import EffectExecutionContext, EffectRegistry
+from .status_callbacks import StatusCallbackSystem
 from .toughness import ToughnessPacket
 
 
@@ -37,11 +38,13 @@ class BreakSystem:
         *,
         reducer: MutationReducer | None = None,
         damage: DamageSystem | None = None,
+        status_callbacks: StatusCallbackSystem | None = None,
     ) -> None:
         self.rules = rules
         self.effects = effects
         self.reducer = reducer or MutationReducer()
         self.damage = damage or DamageSystem()
+        self.status_callbacks = status_callbacks or StatusCallbackSystem(rules, damage=self.damage, reducer=self.reducer)
 
     def enter_break(self, state: BattleState, packet: ToughnessPacket) -> BreakApplicationResult:
         target = state.units.get(packet.target_id)
@@ -329,10 +332,22 @@ class BreakSystem:
             ),
             *result.records,
         ]
+        if emission.modifier_name:
+            on_stack = self.status_callbacks.execute(
+                after_state,
+                unit_id=packet.target_id,
+                modifier_name=emission.modifier_name,
+                event="OnStack",
+            )
+            after_state = on_stack.after_state
+            records.extend(on_stack.records)
+            result_mutations = (*result.mutations, *on_stack.mutations)
+        else:
+            result_mutations = result.mutations
         return BreakApplicationResult(
             ok=bool(result.mutations) or not result.unsupported,
             after_state=after_state,
-            mutations=result.mutations,
+            mutations=result_mutations,
             records=tuple(records),
             events=result.events,
             errors=() if result.mutations else tuple(str(item) for item in result.unsupported),

@@ -14,6 +14,7 @@ from ..rules.ir import (
     AbilityTaskIR,
     ActionAbilityBindingIR,
     ActionDefinitionIR,
+    ActionDelayEmissionIR,
     ActionEventIR,
     ActionPhaseStepIR,
     BreakBaseDamageIR,
@@ -29,6 +30,9 @@ from ..rules.ir import (
     HitProfileIR,
     IRSource,
     RuleEntity,
+    StatusCallbackIR,
+    StatusCallbackTaskIR,
+    StatusDamageEmissionIR,
     ToughnessEmissionIR,
     TriggerIR,
 )
@@ -146,6 +150,10 @@ class TBGDLowering:
         effects: list[EffectIR] = []
         conditions: list[ConditionIR] = []
         formulas: list[FormulaIR] = []
+        status_callbacks: list[StatusCallbackIR] = []
+        status_callback_tasks: list[StatusCallbackTaskIR] = []
+        status_damage_emissions: list[StatusDamageEmissionIR] = []
+        action_delay_emissions: list[ActionDelayEmissionIR] = []
 
         table_stats: dict[str, dict[str, Any]] = {}
         for relative_path, spec in ENTITY_TABLES.items():
@@ -195,6 +203,10 @@ class TBGDLowering:
             effects.extend(lowered.effects)
             conditions.extend(lowered.conditions)
             formulas.extend(lowered.formulas)
+            status_callbacks.extend(lowered.status_callbacks)
+            status_callback_tasks.extend(lowered.status_callback_tasks)
+            status_damage_emissions.extend(lowered.status_damage_emissions)
+            action_delay_emissions.extend(lowered.action_delay_emissions)
         entities = list(_dedupe_entities(entities).values())
         formulas.extend(self._lower_elation_mechanics())
         formulas.extend(self._lower_damage_behavior_templates())
@@ -215,6 +227,10 @@ class TBGDLowering:
             break_base_damage=tuple(break_base_damage),
             break_damage_emissions=tuple(break_damage_emissions),
             break_status_emissions=tuple(break_status_emissions),
+            status_callbacks=tuple(status_callbacks),
+            status_callback_tasks=tuple(status_callback_tasks),
+            status_damage_emissions=tuple(status_damage_emissions),
+            action_delay_emissions=tuple(action_delay_emissions),
             triggers=tuple(triggers),
             effects=tuple(effects),
             conditions=tuple(conditions),
@@ -249,6 +265,10 @@ class TBGDLowering:
                     "break_base_damage_count": len(break_base_damage),
                     "break_damage_emission_count": len(break_damage_emissions),
                     "break_status_emission_count": len(break_status_emissions),
+                    "status_callback_count": len(status_callbacks),
+                    "status_callback_task_count": len(status_callback_tasks),
+                    "status_damage_emission_count": len(status_damage_emissions),
+                    "action_delay_emission_count": len(action_delay_emissions),
                 },
                 "combatant_profile_status": {
                     "lowered_count": len(combatant_profiles),
@@ -982,11 +1002,46 @@ class TBGDLowering:
                     lowered.merge(task_lowered)
                     trigger_effects.extend(effect.effect_id for effect in task_lowered.effects)
                     trigger_conditions.extend(condition.condition_id for condition in task_lowered.conditions)
+                callback_id = f"status_callback:{relative}:{modifier_name}:{callback_index}:{event}"
+                callback_lowered = self._lower_status_callback_tasks(
+                    tasks,
+                    relative=relative,
+                    map_name=map_name,
+                    modifier_name=modifier_name,
+                    callback_id=callback_id,
+                    event=event,
+                    callback_index=callback_index,
+                )
+                lowered.merge(callback_lowered)
                 source = IRSource(
                     source_path=relative,
                     raw_type=map_name,
                     raw_id=modifier_name,
                     evidence={"callback_index": callback_index, "event": event},
+                )
+                callback_task_ids = tuple(
+                    task.task_id
+                    for task in callback_lowered.status_callback_tasks
+                    if not task.parent_task_id
+                )
+                source_admitted = _status_callback_source_admitted(relative)
+                status = "executable" if event in {"OnStack", "OnPhase1"} and source_admitted else "blocked"
+                if status == "executable":
+                    blocked_reason = ""
+                elif not source_admitted:
+                    blocked_reason = "status_callback_source_mode_not_admitted"
+                else:
+                    blocked_reason = f"status_callback_event_not_admitted:{event}"
+                lowered.status_callbacks.append(
+                    StatusCallbackIR(
+                        callback_id=callback_id,
+                        modifier_name=modifier_name,
+                        event=event,
+                        task_ids=callback_task_ids,
+                        source=source,
+                        coverage_status=status,
+                        blocked_reason=blocked_reason,
+                    )
                 )
                 lowered.triggers.append(
                     TriggerIR(
@@ -998,6 +1053,182 @@ class TBGDLowering:
                         coverage_status="audit_only",
                     )
                 )
+        return lowered
+
+    def _lower_status_callback_tasks(
+        self,
+        tasks: Any,
+        *,
+        relative: str,
+        map_name: str,
+        modifier_name: str,
+        callback_id: str,
+        event: str,
+        callback_index: int,
+    ) -> "_LoweredAbility":
+        lowered = _LoweredAbility()
+        if not isinstance(tasks, list):
+            return lowered
+        for task_index, task in enumerate(tasks):
+            task_lowered = self._lower_status_callback_task_tree(
+                task,
+                relative=relative,
+                map_name=map_name,
+                modifier_name=modifier_name,
+                callback_id=callback_id,
+                event=event,
+                callback_index=callback_index,
+                task_index=task_index,
+                task_path=f"CallbackConfig[{task_index}]",
+                branch="root",
+                parent_task_id="",
+            )
+            lowered.merge(task_lowered)
+        return lowered
+
+    def _lower_status_callback_task_tree(
+        self,
+        task: Any,
+        *,
+        relative: str,
+        map_name: str,
+        modifier_name: str,
+        callback_id: str,
+        event: str,
+        callback_index: int,
+        task_index: int,
+        task_path: str,
+        branch: str,
+        parent_task_id: str,
+    ) -> "_LoweredAbility":
+        lowered = _LoweredAbility()
+        if not isinstance(task, dict):
+            return lowered
+        opcode = _short_gamecore_type(task.get("$type"))
+        task_id = f"status_callback_task:{relative}:{modifier_name}:{callback_index}:{task_path}:{opcode}"
+        source = IRSource(
+            source_path=relative,
+            raw_type=map_name,
+            raw_id=modifier_name,
+            evidence={
+                "callback_id": callback_id,
+                "callback_index": callback_index,
+                "event": event,
+                "task_index": task_index,
+                "task_path": task_path,
+                "branch": branch,
+                "parent_task_id": parent_task_id,
+                "opcode": opcode,
+                "task": _json_safe(task),
+            },
+        )
+        if opcode == "PredicateTaskList":
+            condition = self._lower_condition(task.get("Predicate"), source, task_index)
+            if condition:
+                lowered.conditions.append(condition)
+            success_ids: list[str] = []
+            failed_ids: list[str] = []
+            for child_index, child in enumerate(task.get("SuccessTaskList") or []):
+                child_lowered = self._lower_status_callback_task_tree(
+                    child,
+                    relative=relative,
+                    map_name=map_name,
+                    modifier_name=modifier_name,
+                    callback_id=callback_id,
+                    event=event,
+                    callback_index=callback_index,
+                    task_index=child_index,
+                    task_path=f"{task_path}.SuccessTaskList[{child_index}]",
+                    branch="success",
+                    parent_task_id=task_id,
+                )
+                lowered.merge(child_lowered)
+                success_ids.extend(item.task_id for item in child_lowered.status_callback_tasks if item.parent_task_id == task_id)
+            for child_index, child in enumerate(task.get("FailedTaskList") or []):
+                child_lowered = self._lower_status_callback_task_tree(
+                    child,
+                    relative=relative,
+                    map_name=map_name,
+                    modifier_name=modifier_name,
+                    callback_id=callback_id,
+                    event=event,
+                    callback_index=callback_index,
+                    task_index=child_index,
+                    task_path=f"{task_path}.FailedTaskList[{child_index}]",
+                    branch="failed",
+                    parent_task_id=task_id,
+                )
+                lowered.merge(child_lowered)
+                failed_ids.extend(item.task_id for item in child_lowered.status_callback_tasks if item.parent_task_id == task_id)
+            coverage_status, blocked_reason = _predicate_task_status(condition)
+            lowered.status_callback_tasks.insert(
+                0,
+                StatusCallbackTaskIR(
+                    task_id=task_id,
+                    callback_id=callback_id,
+                    modifier_name=modifier_name,
+                    event=event,
+                    task_index=task_index,
+                    task_path=task_path,
+                    branch=branch,
+                    opcode=opcode,
+                    condition_id=condition.condition_id if condition else "",
+                    parent_task_id=parent_task_id,
+                    child_task_ids=tuple(success_ids + failed_ids),
+                    success_task_ids=tuple(success_ids),
+                    failed_task_ids=tuple(failed_ids),
+                    source=source,
+                    coverage_status=coverage_status,
+                    blocked_reason=blocked_reason,
+                )
+            )
+            return lowered
+
+        effect_id = f"effect:{relative}:{modifier_name}:{callback_index}:{branch}:{task_index}:{opcode}"
+        coverage_status, blocked_reason = _status_callback_task_admission(event, opcode, task)
+        if coverage_status == "executable" and not _status_callback_source_admitted(relative):
+            coverage_status = "blocked"
+            blocked_reason = "status_callback_source_mode_not_admitted"
+        lowered.status_callback_tasks.append(
+            StatusCallbackTaskIR(
+                task_id=task_id,
+                callback_id=callback_id,
+                modifier_name=modifier_name,
+                event=event,
+                task_index=task_index,
+                task_path=task_path,
+                branch=branch,
+                opcode=opcode,
+                effect_id=effect_id,
+                parent_task_id=parent_task_id,
+                source=source,
+                coverage_status=coverage_status,
+                blocked_reason=blocked_reason,
+            )
+        )
+        if opcode == "DamageByAttackProperty":
+            emission = _status_damage_emission_from_task(
+                callback_id=callback_id,
+                task_id=task_id,
+                modifier_name=modifier_name,
+                event=event,
+                task=task,
+                source=source,
+            )
+            if emission is not None:
+                lowered.status_damage_emissions.append(emission)
+        if opcode in {"ModifyActionDelay", "SetActionDelay"}:
+            lowered.action_delay_emissions.append(
+                _action_delay_emission_from_task(
+                    callback_id=callback_id,
+                    task_id=task_id,
+                    modifier_name=modifier_name,
+                    event=event,
+                    opcode=opcode,
+                    task=task,
+                    source=source,
+                )
+            )
         return lowered
 
     def _lower_task(
@@ -1223,6 +1454,10 @@ class TBGDLowering:
 class _LoweredAbility:
     entities: list[RuleEntity] = field(default_factory=list)
     ability_tasks: list[AbilityTaskIR] = field(default_factory=list)
+    status_callbacks: list[StatusCallbackIR] = field(default_factory=list)
+    status_callback_tasks: list[StatusCallbackTaskIR] = field(default_factory=list)
+    status_damage_emissions: list[StatusDamageEmissionIR] = field(default_factory=list)
+    action_delay_emissions: list[ActionDelayEmissionIR] = field(default_factory=list)
     triggers: list[TriggerIR] = field(default_factory=list)
     effects: list[EffectIR] = field(default_factory=list)
     conditions: list[ConditionIR] = field(default_factory=list)
@@ -1231,6 +1466,10 @@ class _LoweredAbility:
     def merge(self, other: "_LoweredAbility") -> None:
         self.entities.extend(other.entities)
         self.ability_tasks.extend(other.ability_tasks)
+        self.status_callbacks.extend(other.status_callbacks)
+        self.status_callback_tasks.extend(other.status_callback_tasks)
+        self.status_damage_emissions.extend(other.status_damage_emissions)
+        self.action_delay_emissions.extend(other.action_delay_emissions)
         self.triggers.extend(other.triggers)
         self.effects.extend(other.effects)
         self.conditions.extend(other.conditions)
@@ -2498,6 +2737,133 @@ def _predicate_task_status(condition: ConditionIR | None) -> tuple[str, str]:
     if condition.coverage_status != "executable":
         return "blocked", f"condition_not_executable:{condition.coverage_status}:{condition.opcode}"
     return "lowered", ""
+
+
+def _status_callback_task_admission(event: str, opcode: str, task: dict[str, Any]) -> tuple[str, str]:
+    if event not in {"OnStack", "OnPhase1"}:
+        return "blocked", f"status_callback_event_not_admitted:{event}"
+    if opcode == "DamageByAttackProperty":
+        attack_property = task.get("AttackProperty")
+        if not isinstance(attack_property, dict):
+            return "blocked", "attack_property_missing"
+        formula_type = str(attack_property.get("FormulaType") or "")
+        attack_type = str(attack_property.get("AttackType") or task.get("AttackType") or "")
+        scaling_expr = _numeric_expr_summary(attack_property.get("BreakDamagePercentage"))
+        if event != "OnPhase1":
+            return "blocked", f"status_damage_event_not_admitted:{event}"
+        if formula_type != "ByBreakDamage":
+            return "blocked", f"status_damage_formula_not_admitted:{formula_type}"
+        if attack_type != "DOT":
+            return "blocked", f"status_damage_attack_type_not_admitted:{attack_type}"
+        if not _numeric_expr_can_be_runtime_bound(scaling_expr):
+            return "blocked", f"status_damage_scaling_not_executable:{scaling_expr.get('reason') or scaling_expr.get('kind')}"
+        return "executable", ""
+    if opcode in {"ModifyActionDelay", "SetActionDelay"}:
+        if event != "OnStack":
+            return "blocked", f"action_delay_event_not_admitted:{event}"
+        if opcode == "ModifyActionDelay":
+            return "blocked", "normalized_action_delay_scale_not_admitted"
+        delay_expr = _action_delay_expr(task, opcode)
+        if _numeric_expr_can_be_runtime_bound(delay_expr):
+            return "blocked", "action_delay_av_write_semantics_not_admitted"
+        return "blocked", f"action_delay_numeric_not_executable:{delay_expr.get('reason') or delay_expr.get('kind')}"
+    return "blocked", f"status_callback_task_opcode_not_admitted:{opcode}"
+
+
+def _status_callback_source_admitted(relative_path: str) -> bool:
+    return relative_path == "Config/ConfigGlobalModifier/GlobalModifier_Common_Specific.json"
+
+
+def _status_damage_emission_from_task(
+    *,
+    callback_id: str,
+    task_id: str,
+    modifier_name: str,
+    event: str,
+    task: dict[str, Any],
+    source: IRSource,
+) -> StatusDamageEmissionIR | None:
+    attack_property = task.get("AttackProperty")
+    if not isinstance(attack_property, dict):
+        return None
+    formula_type = str(attack_property.get("FormulaType") or "")
+    if formula_type != "ByBreakDamage":
+        return None
+    attack_type = str(attack_property.get("AttackType") or task.get("AttackType") or "")
+    scaling_expr = _numeric_expr_summary(attack_property.get("BreakDamagePercentage"))
+    coverage_status, blocked_reason = _status_callback_task_admission(event, "DamageByAttackProperty", task)
+    if coverage_status == "executable" and not _status_callback_source_admitted(source.source_path):
+        coverage_status = "blocked"
+        blocked_reason = "status_callback_source_mode_not_admitted"
+    return StatusDamageEmissionIR(
+        status_damage_emission_id=f"status_damage_emission:{callback_id}:{task_id}",
+        callback_id=callback_id,
+        source_task_id=task_id,
+        modifier_name=modifier_name,
+        event=event,
+        attack_type=attack_type,
+        damage_formula_family="break",
+        element_type=None,
+        scaling_expr=scaling_expr,
+        source=source,
+        coverage_status=coverage_status,
+        blocked_reason=blocked_reason,
+    )
+
+
+def _action_delay_emission_from_task(
+    *,
+    callback_id: str,
+    task_id: str,
+    modifier_name: str,
+    event: str,
+    opcode: str,
+    task: dict[str, Any],
+    source: IRSource,
+) -> ActionDelayEmissionIR:
+    delay_mode = _value_field(task.get("DelayType")) or _value_field(task.get("ActionDelayType")) or _first_present_key(
+        task,
+        ("AddNormalizedValue", "SetNormalizedValue", "FixedValue", "Value"),
+    )
+    delay_expr = _action_delay_expr(task, opcode)
+    coverage_status, blocked_reason = _status_callback_task_admission(event, opcode, task)
+    if coverage_status == "executable" and not _status_callback_source_admitted(source.source_path):
+        coverage_status = "blocked"
+        blocked_reason = "status_callback_source_mode_not_admitted"
+    return ActionDelayEmissionIR(
+        action_delay_emission_id=f"action_delay_emission:{callback_id}:{task_id}",
+        callback_id=callback_id,
+        source_task_id=task_id,
+        modifier_name=modifier_name,
+        event=event,
+        opcode=opcode,
+        target_alias=_target_alias(task.get("TargetType")) or "ModifierOwnerEntity",
+        delay_mode=str(delay_mode or opcode),
+        delay_expr=delay_expr,
+        source=source,
+        coverage_status=coverage_status,
+        blocked_reason=blocked_reason,
+    )
+
+
+def _action_delay_expr(task: dict[str, Any], opcode: str) -> dict[str, Any]:
+    key = _first_present_key(
+        task,
+        (
+            "AddNormalizedValue",
+            "SetNormalizedValue",
+            "FixedAddNormalizedValue",
+            "FixedSetNormalizedValue",
+            "DelayValue",
+            "Value",
+        ),
+    )
+    if not key:
+        return {"kind": "missing", "value": None, "supported": False, "reason": "action_delay_value_missing"}
+    expr = _numeric_expr_summary(task.get(key))
+    expr["source_field"] = key
+    expr["opcode"] = opcode
+    return expr
 
 
 def _effect_blocked_reason(opcode: str, payload: dict[str, Any], coverage_status: str) -> str:
