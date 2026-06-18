@@ -24,3 +24,6 @@ turnbasedgamedata-main/
 
 # CodeGraph index (to be added later)
 .codegraph/
+
+# Generated validation artifacts
+hsr_v075_baseline_clean/hsr/validation_outputs_v*/
