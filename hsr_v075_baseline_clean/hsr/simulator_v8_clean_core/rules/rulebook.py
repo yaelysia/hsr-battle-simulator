@@ -24,6 +24,7 @@ from .ir import (
     StatusCallbackIR,
     StatusCallbackTaskIR,
     StatusDamageEmissionIR,
+    SuperBreakEmissionIR,
     ToughnessEmissionIR,
     TriggerIR,
 )
@@ -275,6 +276,22 @@ class RuleBook:
                 for key, value in action_delay_emissions_by_callback.items()
             },
         )
+        object.__setattr__(
+            self,
+            "_super_break_emissions",
+            {emission.super_break_emission_id: emission for emission in self.ir.super_break_emissions},
+        )
+        super_break_emissions_by_template: dict[str, list[SuperBreakEmissionIR]] = {}
+        for emission in self.ir.super_break_emissions:
+            super_break_emissions_by_template.setdefault(emission.template_id, []).append(emission)
+        object.__setattr__(
+            self,
+            "_super_break_emissions_by_template",
+            {
+                key: tuple(sorted(value, key=lambda item: item.super_break_emission_id))
+                for key, value in super_break_emissions_by_template.items()
+            },
+        )
         object.__setattr__(self, "_effects", {effect.effect_id: effect for effect in self.ir.effects})
         object.__setattr__(self, "_conditions", {condition.condition_id: condition for condition in self.ir.conditions})
         object.__setattr__(self, "_triggers", {trigger.trigger_id: trigger for trigger in self.ir.triggers})
@@ -473,6 +490,15 @@ class RuleBook:
 
     def action_delay_emissions_for_callback(self, callback_id: str) -> tuple[ActionDelayEmissionIR, ...]:
         return self._action_delay_emissions_by_callback.get(callback_id, ())
+
+    def super_break_emission(self, emission_id: str) -> SuperBreakEmissionIR | None:
+        return self._super_break_emissions.get(emission_id)
+
+    def super_break_emissions(self) -> tuple[SuperBreakEmissionIR, ...]:
+        return self.ir.super_break_emissions
+
+    def super_break_emissions_for_template(self, template_id: str) -> tuple[SuperBreakEmissionIR, ...]:
+        return self._super_break_emissions_by_template.get(template_id, ())
 
     def action_ability_binding(self, action_id: str, level: int) -> ActionAbilityBindingIR | None:
         return self._action_ability_bindings.get((action_id, level))

@@ -507,6 +507,36 @@ class ActionDelayEmissionIR:
 
 
 @dataclass(frozen=True)
+class SuperBreakEmissionIR:
+    super_break_emission_id: str
+    template_id: str
+    source_task_id: str
+    target_alias: str | None
+    attack_type: str
+    damage_formula_family: str
+    element_type: str | None
+    scaling_expr: dict[str, JSONValue]
+    source: IRSource
+    coverage_status: CoverageStatus = "blocked"
+    blocked_reason: str = ""
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "super_break_emission_id": self.super_break_emission_id,
+            "template_id": self.template_id,
+            "source_task_id": self.source_task_id,
+            "target_alias": self.target_alias,
+            "attack_type": self.attack_type,
+            "damage_formula_family": self.damage_formula_family,
+            "element_type": self.element_type,
+            "scaling_expr": self.scaling_expr,
+            "source": self.source.to_json(),
+            "coverage_status": self.coverage_status,
+            "blocked_reason": self.blocked_reason,
+        }
+
+
+@dataclass(frozen=True)
 class AbilityPhaseIR:
     phase_id: str
     binding_id: str
@@ -729,6 +759,7 @@ class CanonicalIR:
     status_callback_tasks: tuple[StatusCallbackTaskIR, ...] = ()
     status_damage_emissions: tuple[StatusDamageEmissionIR, ...] = ()
     action_delay_emissions: tuple[ActionDelayEmissionIR, ...] = ()
+    super_break_emissions: tuple[SuperBreakEmissionIR, ...] = ()
     triggers: tuple[TriggerIR, ...] = ()
     effects: tuple[EffectIR, ...] = ()
     conditions: tuple[ConditionIR, ...] = ()
@@ -757,6 +788,7 @@ class CanonicalIR:
             "status_callback_tasks": [task.to_json() for task in self.status_callback_tasks],
             "status_damage_emissions": [emission.to_json() for emission in self.status_damage_emissions],
             "action_delay_emissions": [emission.to_json() for emission in self.action_delay_emissions],
+            "super_break_emissions": [emission.to_json() for emission in self.super_break_emissions],
             "triggers": [trigger.to_json() for trigger in self.triggers],
             "effects": [effect.to_json() for effect in self.effects],
             "conditions": [condition.to_json() for condition in self.conditions],

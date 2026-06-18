@@ -33,6 +33,7 @@ from ..rules.ir import (
     StatusCallbackIR,
     StatusCallbackTaskIR,
     StatusDamageEmissionIR,
+    SuperBreakEmissionIR,
     ToughnessEmissionIR,
     TriggerIR,
 )
@@ -154,6 +155,7 @@ class TBGDLowering:
         status_callback_tasks: list[StatusCallbackTaskIR] = []
         status_damage_emissions: list[StatusDamageEmissionIR] = []
         action_delay_emissions: list[ActionDelayEmissionIR] = []
+        super_break_emissions: list[SuperBreakEmissionIR] = []
 
         table_stats: dict[str, dict[str, Any]] = {}
         for relative_path, spec in ENTITY_TABLES.items():
@@ -190,6 +192,7 @@ class TBGDLowering:
         )
         break_base_damage = self._lower_break_base_damage()
         break_templates, break_damage_emissions, break_status_emissions, break_effects = self._lower_break_templates()
+        super_break_emissions.extend(self._lower_super_break_emissions())
         effects.extend(break_effects)
         for relative_path, _, id_key in ACTION_DEFINITION_TABLES:
             table_stats[f"action_definitions:{relative_path}"] = self._table_stats(relative_path, id_key)
@@ -231,6 +234,7 @@ class TBGDLowering:
             status_callback_tasks=tuple(status_callback_tasks),
             status_damage_emissions=tuple(status_damage_emissions),
             action_delay_emissions=tuple(action_delay_emissions),
+            super_break_emissions=tuple(super_break_emissions),
             triggers=tuple(triggers),
             effects=tuple(effects),
             conditions=tuple(conditions),
@@ -269,6 +273,7 @@ class TBGDLowering:
                     "status_callback_task_count": len(status_callback_tasks),
                     "status_damage_emission_count": len(status_damage_emissions),
                     "action_delay_emission_count": len(action_delay_emissions),
+                    "super_break_emission_count": len(super_break_emissions),
                 },
                 "combatant_profile_status": {
                     "lowered_count": len(combatant_profiles),
@@ -473,6 +478,67 @@ class TBGDLowering:
                     )
                 )
         return lowered_templates, damage_emissions, status_emissions, effects
+
+    def _lower_super_break_emissions(self) -> list[SuperBreakEmissionIR]:
+        relative_path = "Config/ConfigGlobalTaskListTemplate/GlobalTaskListTemplate.json"
+        path = self.tbgd_root / relative_path
+        if not path.exists():
+            return []
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return []
+        templates = data.get("TaskListTemplate") if isinstance(data, dict) else None
+        if not isinstance(templates, list):
+            return []
+        emissions: list[SuperBreakEmissionIR] = []
+        admitted_templates = {"DealSuperBreakDamage", "BeingDealSuperBreakDamage"}
+        for template_index, template in enumerate(templates):
+            if not isinstance(template, dict):
+                continue
+            name = str(template.get("Name") or "")
+            if name not in admitted_templates:
+                continue
+            for task_path, task in _iter_task_tree(template.get("TaskList"), prefix="TaskList"):
+                opcode = _short_gamecore_type(task.get("$type"))
+                if opcode != "DamageByAttackProperty":
+                    continue
+                attack_property = task.get("AttackProperty")
+                if not isinstance(attack_property, dict):
+                    continue
+                if not _is_super_break_attack_property(attack_property, template_name=name):
+                    continue
+                scaling_expr = _numeric_expr_summary(attack_property.get("BreakDamagePercentage"))
+                coverage_status = "executable" if _numeric_expr_can_be_runtime_bound(scaling_expr) else "blocked"
+                blocked_reason = "" if coverage_status == "executable" else _super_break_blocked_reason(scaling_expr)
+                source = IRSource(
+                    source_path=relative_path,
+                    raw_type="GlobalSuperBreakDamageTask",
+                    raw_id=name,
+                    evidence={
+                        "template_id": f"super_break_template:{name}",
+                        "template_index": template_index,
+                        "task_path": task_path,
+                        "opcode": opcode,
+                        "attack_property": _json_safe(attack_property),
+                    },
+                )
+                emissions.append(
+                    SuperBreakEmissionIR(
+                        super_break_emission_id=f"super_break_emission:{name}:{_safe_id(task_path)}",
+                        template_id=f"super_break_template:{name}",
+                        source_task_id=f"super_break_template_task:{name}:{_safe_id(task_path)}:{opcode}",
+                        target_alias=_target_alias(task.get("TargetType")),
+                        attack_type=str(attack_property.get("AttackType") or task.get("AttackType") or ""),
+                        damage_formula_family="super_break",
+                        element_type=_display_element_type(attack_property),
+                        scaling_expr=scaling_expr,
+                        source=source,
+                        coverage_status=coverage_status,
+                        blocked_reason=blocked_reason,
+                    )
+                )
+        return emissions
 
     def _rows_by_id(self, relative_path: str, id_key: str) -> dict[str, dict[str, Any]]:
         path = self.tbgd_root / relative_path
@@ -1025,7 +1091,11 @@ class TBGDLowering:
                     if not task.parent_task_id
                 )
                 source_admitted = _status_callback_source_admitted(relative)
-                status = "executable" if event in {"OnStack", "OnPhase1"} and source_admitted else "blocked"
+                admitted_event = event in {"OnStack", "OnPhase1"} or (
+                    event == "OnListenTurnEnd"
+                    and any(task.coverage_status == "executable" for task in callback_lowered.status_callback_tasks)
+                )
+                status = "executable" if admitted_event and source_admitted else "blocked"
                 if status == "executable":
                     blocked_reason = ""
                 elif not source_admitted:
@@ -2740,7 +2810,7 @@ def _predicate_task_status(condition: ConditionIR | None) -> tuple[str, str]:
 
 
 def _status_callback_task_admission(event: str, opcode: str, task: dict[str, Any]) -> tuple[str, str]:
-    if event not in {"OnStack", "OnPhase1"}:
+    if event not in {"OnStack", "OnPhase1", "OnListenTurnEnd"}:
         return "blocked", f"status_callback_event_not_admitted:{event}"
     if opcode == "DamageByAttackProperty":
         attack_property = task.get("AttackProperty")
@@ -2759,13 +2829,13 @@ def _status_callback_task_admission(event: str, opcode: str, task: dict[str, Any
             return "blocked", f"status_damage_scaling_not_executable:{scaling_expr.get('reason') or scaling_expr.get('kind')}"
         return "executable", ""
     if opcode in {"ModifyActionDelay", "SetActionDelay"}:
-        if event != "OnStack":
+        if event not in {"OnStack", "OnListenTurnEnd"}:
             return "blocked", f"action_delay_event_not_admitted:{event}"
         if opcode == "ModifyActionDelay":
             return "blocked", "normalized_action_delay_scale_not_admitted"
         delay_expr = _action_delay_expr(task, opcode)
         if _numeric_expr_can_be_runtime_bound(delay_expr):
-            return "blocked", "action_delay_av_write_semantics_not_admitted"
+            return "executable", ""
         return "blocked", f"action_delay_numeric_not_executable:{delay_expr.get('reason') or delay_expr.get('kind')}"
     return "blocked", f"status_callback_task_opcode_not_admitted:{opcode}"
 
@@ -3301,6 +3371,60 @@ def _break_damage_blocked_reason(scaling_expr: dict[str, Any]) -> str:
     if kind == "fixed":
         return "break_damage_formula_not_admitted:break_base_damage_formula_missing"
     return f"break_damage_percentage_not_executable:{kind or 'unknown'}"
+
+
+def _super_break_blocked_reason(scaling_expr: dict[str, Any]) -> str:
+    reason = scaling_expr.get("reason")
+    kind = scaling_expr.get("kind")
+    if isinstance(reason, str) and reason:
+        return f"super_break_percentage_not_executable:{kind}:{reason}"
+    return f"super_break_percentage_not_executable:{kind or 'unknown'}"
+
+
+def _is_super_break_attack_property(attack_property: dict[str, Any], *, template_name: str) -> bool:
+    formula_type = str(attack_property.get("FormulaType") or "")
+    final_formula_type = str(attack_property.get("FinalFormulaType") or "")
+    display = attack_property.get("DisplayData")
+    display_element = str(display.get("ElementDamageType") or "") if isinstance(display, dict) else ""
+    return (
+        template_name in {"DealSuperBreakDamage", "BeingDealSuperBreakDamage"}
+        and formula_type == "ByBreakDamage"
+        and (final_formula_type == "ByPureDamage" or display_element == "Super")
+    )
+
+
+def _display_element_type(attack_property: dict[str, Any]) -> str | None:
+    display = attack_property.get("DisplayData")
+    if not isinstance(display, dict):
+        return None
+    element = display.get("ElementDamageType")
+    return str(element) if isinstance(element, str) and element else None
+
+
+def _iter_task_tree(value: Any, *, prefix: str) -> list[tuple[str, dict[str, Any]]]:
+    result: list[tuple[str, dict[str, Any]]] = []
+    if not isinstance(value, list):
+        return result
+    for index, task in enumerate(value):
+        if not isinstance(task, dict):
+            continue
+        path = f"{prefix}[{index}]"
+        result.append((path, task))
+        for child_key in ("TaskList", "SuccessTaskList", "FailedTaskList"):
+            child = task.get(child_key)
+            if isinstance(child, list):
+                result.extend(_iter_task_tree(child, prefix=f"{path}.{child_key}"))
+    return result
+
+
+def _safe_id(value: str) -> str:
+    return (
+        value.replace("[", "_")
+        .replace("]", "")
+        .replace(".", "_")
+        .replace(":", "_")
+        .replace("/", "_")
+    )
 
 
 def _postfix_expr_is_admitted(postfix: dict[str, Any]) -> bool:

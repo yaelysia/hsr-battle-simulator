@@ -10,6 +10,7 @@ from ..rules.ir import ActionDelayEmissionIR, StatusCallbackIR, StatusCallbackTa
 from ..rules.rulebook import RuleBook
 from .damage import DamagePacket, DamageSystem
 from .dynamic_values import find_status_detail
+from .timeline import TimelineSystem
 
 
 @dataclass(frozen=True)
@@ -31,10 +32,12 @@ class StatusCallbackSystem:
         *,
         damage: DamageSystem | None = None,
         reducer: MutationReducer | None = None,
+        timeline: TimelineSystem | None = None,
     ) -> None:
         self.rules = rules
         self.damage = damage or DamageSystem()
         self.reducer = reducer or MutationReducer()
+        self.timeline = timeline or TimelineSystem()
 
     def execute(
         self,
@@ -308,23 +311,82 @@ class StatusCallbackSystem:
         detail: dict[str, JSONValue],
         emissions: tuple[ActionDelayEmissionIR, ...],
     ) -> StatusCallbackExecutionResult:
+        current_state = state
+        mutations: list[Mutation] = []
         records = []
         errors = []
         for emission in emissions:
-            reason = emission.blocked_reason or "action_delay_av_write_semantics_not_admitted"
+            if emission.coverage_status != "executable":
+                reason = emission.blocked_reason or f"action_delay_not_executable:{emission.coverage_status}"
+                records.append(_action_delay_blocked_record(callback, task, detail, emission, reason))
+                errors.append(reason)
+                continue
+            if emission.opcode != "SetActionDelay":
+                reason = "normalized_action_delay_scale_not_admitted"
+                records.append(_action_delay_blocked_record(callback, task, detail, emission, reason))
+                errors.append(reason)
+                continue
+            target_id = _resolve_callback_target_id(detail, emission.target_alias)
+            if not target_id or target_id not in current_state.units:
+                reason = f"action_delay_target_not_resolved:{emission.target_alias or 'unknown'}"
+                records.append(_action_delay_blocked_record(callback, task, detail, emission, reason))
+                errors.append(reason)
+                continue
+            evaluation = RuleEvaluator().evaluate_numeric(
+                emission.delay_expr,
+                NumericEvaluationContext(
+                    binding_sources=(_status_delay_binding_source(detail, emission),),
+                    source_trace={
+                        "action_delay_source": emission.source.to_json(),
+                        "status_callback_source": callback.source.to_json(),
+                        "status_instance_source": _json_dict(detail.get("source_trace")),
+                    },
+                ),
+            )
+            if not evaluation.ok or evaluation.value is None:
+                reason = evaluation.blocked_reason or "action_delay_numeric_evaluation_failed"
+                records.append(_action_delay_blocked_record(callback, task, detail, emission, reason, evaluation=evaluation))
+                errors.append(reason)
+                continue
+            mutation = self.timeline.set_action_value(
+                current_state,
+                target_id,
+                float(evaluation.value),
+                source="status_callback_system",
+                metadata={
+                    "callback_id": callback.callback_id,
+                    "task_id": task.task_id,
+                    "action_delay_emission_id": emission.action_delay_emission_id,
+                    "modifier_name": callback.modifier_name,
+                    "event": callback.event,
+                    "opcode": emission.opcode,
+                    "target_alias": emission.target_alias or "",
+                    "numeric_evaluation": evaluation.to_json(),
+                    "source_trace": {
+                        "action_delay_source": emission.source.to_json(),
+                        "status_callback_source": callback.source.to_json(),
+                        "status_task_source": task.source.to_json(),
+                        "status_instance_source": _json_dict(detail.get("source_trace")),
+                    },
+                },
+            )
+            current_state = self.reducer.apply_all(current_state, (mutation,))
+            mutations.append(mutation)
             records.append(
                 SettlementRecord(
-                    record_type="action_delay_blocked",
+                    record_type="action_delay",
                     source="status_callback_system",
-                    process_only=True,
+                    mutation_id=mutation.stable_id(),
+                    process_only=False,
                     payload={
-                        "reason": reason,
                         "callback_id": callback.callback_id,
                         "task_id": task.task_id,
                         "action_delay_emission_id": emission.action_delay_emission_id,
                         "modifier_name": callback.modifier_name,
                         "event": callback.event,
-                        "blocking_dependency": reason,
+                        "target_id": target_id,
+                        "action_value": float(evaluation.value),
+                        "numeric_evaluation": evaluation.to_json(),
                     },
                     trace={
                         "action_delay_source": emission.source.to_json(),
@@ -333,8 +395,13 @@ class StatusCallbackSystem:
                     },
                 ).to_json()
             )
-            errors.append(reason)
-        return StatusCallbackExecutionResult(ok=False, after_state=state, records=tuple(records), errors=tuple(errors))
+        return StatusCallbackExecutionResult(
+            ok=not errors,
+            after_state=current_state,
+            mutations=tuple(mutations),
+            records=tuple(records),
+            errors=tuple(errors),
+        )
 
     def _evaluate_status_damage_amount(
         self,
@@ -417,6 +484,29 @@ def _status_damage_binding_sources(
     if status_entry is None:
         return ()
     return (base_source, status_entry)
+
+
+def _status_delay_binding_source(
+    detail: dict[str, JSONValue],
+    emission: ActionDelayEmissionIR,
+) -> dict[str, JSONValue]:
+    hashes = _postfix_dynamic_hashes(emission.delay_expr)
+    if len(hashes) != 1:
+        return {
+            "source_type": "status_instance",
+            "entries": {},
+            "by_hash": {},
+            "by_name": {},
+        }
+    status_entry = _single_status_dynamic_entry(detail, str(hashes[0]))
+    if status_entry is not None:
+        return status_entry
+    return {
+        "source_type": "status_instance",
+        "entries": {},
+        "by_hash": {},
+        "by_name": {},
+    }
 
 
 def _single_status_dynamic_entry(detail: dict[str, JSONValue], hash_key: str) -> dict[str, JSONValue] | None:
@@ -549,6 +639,51 @@ def _break_element_from_detail(detail: dict[str, JSONValue]) -> str | None:
         return None
     template = parts[1]
     return template.removeprefix("StanceBreak_") or None
+
+
+def _resolve_callback_target_id(detail: dict[str, JSONValue], target_alias: str | None) -> str:
+    alias = target_alias or "ModifierOwnerEntity"
+    if alias == "ModifierOwnerEntity":
+        return str(detail.get("owner_id") or "")
+    if alias == "Caster":
+        return str(detail.get("caster_id") or "")
+    if alias in {"ParamEntity", "CurrentActionTarget"}:
+        return str(detail.get("owner_id") or "")
+    return ""
+
+
+def _action_delay_blocked_record(
+    callback: StatusCallbackIR,
+    task: StatusCallbackTaskIR,
+    detail: dict[str, JSONValue],
+    emission: ActionDelayEmissionIR,
+    reason: str,
+    *,
+    evaluation: NumericEvaluationResult | None = None,
+) -> dict[str, JSONValue]:
+    return SettlementRecord(
+        record_type="action_delay_blocked",
+        source="status_callback_system",
+        process_only=True,
+        payload={
+            "reason": reason,
+            "callback_id": callback.callback_id,
+            "task_id": task.task_id,
+            "action_delay_emission_id": emission.action_delay_emission_id,
+            "modifier_name": callback.modifier_name,
+            "event": callback.event,
+            "opcode": emission.opcode,
+            "target_alias": emission.target_alias or "",
+            "numeric_evaluation": evaluation.to_json() if evaluation else {},
+            "blocking_dependency": reason,
+        },
+        trace={
+            "action_delay_source": emission.source.to_json(),
+            "status_callback_source": callback.source.to_json(),
+            "status_task_source": task.source.to_json(),
+            "status_instance_source": _json_dict(detail.get("source_trace")),
+        },
+    ).to_json()
 
 
 def _status_damage_blocked_record(

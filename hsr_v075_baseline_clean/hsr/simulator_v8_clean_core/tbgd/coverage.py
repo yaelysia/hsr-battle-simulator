@@ -147,6 +147,7 @@ def build_coverage_matrix(report: DiscoveryReport, ir: CanonicalIR) -> CoverageM
         ir.status_callback_tasks,
         ir.status_damage_emissions,
         ir.action_delay_emissions,
+        ir.super_break_emissions,
         ir.triggers,
         ir.effects,
         ir.conditions,
@@ -175,6 +176,7 @@ def build_coverage_matrix(report: DiscoveryReport, ir: CanonicalIR) -> CoverageM
             "status_callback_tasks": len(ir.status_callback_tasks),
             "status_damage_emissions": len(ir.status_damage_emissions),
             "action_delay_emissions": len(ir.action_delay_emissions),
+            "super_break_emissions": len(ir.super_break_emissions),
             "triggers": len(ir.triggers),
             "effects": len(ir.effects),
             "conditions": len(ir.conditions),
@@ -371,6 +373,12 @@ def _action_execution_status(ir: CanonicalIR) -> dict[str, Any]:
     status_damage_reasons = Counter(emission.blocked_reason for emission in ir.status_damage_emissions if emission.blocked_reason)
     action_delay_status = Counter(emission.coverage_status for emission in ir.action_delay_emissions)
     action_delay_reasons = Counter(emission.blocked_reason for emission in ir.action_delay_emissions if emission.blocked_reason)
+    super_break_status = Counter(emission.coverage_status for emission in ir.super_break_emissions)
+    super_break_reasons = Counter(
+        emission.blocked_reason
+        for emission in ir.super_break_emissions
+        if emission.blocked_reason
+    )
     hit_reasons = Counter(
         profile.blocked_reason
         for profile in ir.hit_profiles
@@ -515,5 +523,13 @@ def _action_execution_status(ir: CanonicalIR) -> dict[str, Any]:
             "status_counts": dict(sorted(action_delay_status.items())),
             "blocked_reason_counts": dict(sorted(action_delay_reasons.items())),
             "reason": "ActionDelayEmissionIR records OnStack delay evidence; ModifyActionDelay normalized AV scale remains blocked until source semantics are admitted",
+        },
+        "super_break_emissions": {
+            "lowered": len(ir.super_break_emissions),
+            "executable": super_break_status["executable"],
+            "blocked": super_break_status["blocked"],
+            "status_counts": dict(sorted(super_break_status.items())),
+            "blocked_reason_counts": dict(sorted(super_break_reasons.items())),
+            "reason": "SuperBreakEmissionIR records admitted global super-break template damage tasks; runtime requires audited stance-damage and break-base inputs",
         },
     }

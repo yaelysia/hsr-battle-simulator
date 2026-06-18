@@ -20,8 +20,8 @@ DamageFormulaFamily = Literal[
 ]
 
 
-EXECUTABLE_DAMAGE_FAMILIES: frozenset[str] = frozenset({"direct", "break", "true_damage", "hp_loss"})
-BLOCKED_DAMAGE_FAMILIES: frozenset[str] = frozenset({"dot", "super_break", "elation"})
+EXECUTABLE_DAMAGE_FAMILIES: frozenset[str] = frozenset({"direct", "break", "super_break", "true_damage", "hp_loss"})
+BLOCKED_DAMAGE_FAMILIES: frozenset[str] = frozenset({"dot", "elation"})
 FOLLOW_UP_ATTACK_TYPE = "follow_up"
 
 
@@ -37,6 +37,7 @@ class DamagePacket:
     action_definition: ActionDefinitionIR | None = None
     damage_emission_id: str = ""
     break_damage_emission_id: str = ""
+    super_break_emission_id: str = ""
     status_damage_emission_id: str = ""
     status_callback_id: str = ""
     status_instance_id: str = ""
@@ -67,6 +68,7 @@ class DamagePacket:
             "action_definition": _action_definition_summary(self.action_definition),
             "damage_emission_id": self.damage_emission_id,
             "break_damage_emission_id": self.break_damage_emission_id,
+            "super_break_emission_id": self.super_break_emission_id,
             "status_damage_emission_id": self.status_damage_emission_id,
             "status_callback_id": self.status_callback_id,
             "status_instance_id": self.status_instance_id,
@@ -110,6 +112,8 @@ class DamageSystem:
             return self._apply_direct_damage(state, packet)
         if packet.damage_formula_family == "break":
             return self._apply_break_damage(state, packet)
+        if packet.damage_formula_family == "super_break":
+            return self._apply_super_break_damage(state, packet)
         if packet.damage_formula_family in {"true_damage", "hp_loss"}:
             return self._apply_fixed_hp_delta(state, packet)
         if packet.damage_formula_family in BLOCKED_DAMAGE_FAMILIES:
@@ -267,6 +271,66 @@ class DamageSystem:
                         "packet_metadata": packet.metadata,
                         "bypasses_normal_multipliers": False,
                         "normal_multiplier_terms": [],
+                        "numeric_evaluation": packet.metadata.get("numeric_evaluation", {}),
+                        "break_base_damage_source": packet.metadata.get("break_base_damage_source", {}),
+                        "target_before_hp": target.hp,
+                        "target_after_hp": after,
+                    },
+                    trace=packet.source_trace,
+                ).to_json(),
+            ),
+        )
+
+    def _apply_super_break_damage(self, state: BattleState, packet: DamagePacket) -> DamageApplicationResult:
+        if packet.amount is None:
+            return _damage_error(packet, "super break damage requires admitted amount")
+        if not packet.super_break_emission_id:
+            return _damage_error(packet, "super break damage requires super_break_emission_id")
+        target = state.units[packet.target_id]
+        final_damage = float(packet.amount)
+        after = max(0.0, target.hp - final_damage)
+        packet_json = packet.to_json()
+        metadata = {
+            **packet_json,
+            **packet.metadata,
+            "packet_metadata": packet.metadata,
+            "final_damage": final_damage,
+            "normal_multiplier_terms": [],
+            "super_break_ledger": packet.metadata.get("super_break_ledger", {}),
+        }
+        mutation = Mutation(
+            op="set",
+            path=("units", packet.target_id, "hp"),
+            before=target.hp,
+            after=after,
+            reason="apply super break damage",
+            source="damage_system",
+            metadata=metadata,
+        )
+        return DamageApplicationResult(
+            packet=packet,
+            ok=True,
+            mutations=(mutation,),
+            records=(
+                SettlementRecord(
+                    record_type="super_break_damage",
+                    source="damage_system",
+                    mutation_id=mutation.stable_id(),
+                    process_only=False,
+                    payload={
+                        "amount": final_damage,
+                        "final_damage": final_damage,
+                        "attack_type": packet.attack_type,
+                        "damage_kind": packet.damage_kind,
+                        "damage_formula_family": packet.damage_formula_family,
+                        "element_type": packet.element_type,
+                        "super_break_emission_id": packet.super_break_emission_id,
+                        "break_template_id": packet.break_template_id,
+                        "source_task_id": packet.source_task_id,
+                        "packet_metadata": packet.metadata,
+                        "bypasses_normal_multipliers": False,
+                        "normal_multiplier_terms": [],
+                        "super_break_ledger": packet.metadata.get("super_break_ledger", {}),
                         "numeric_evaluation": packet.metadata.get("numeric_evaluation", {}),
                         "break_base_damage_source": packet.metadata.get("break_base_damage_source", {}),
                         "target_before_hp": target.hp,

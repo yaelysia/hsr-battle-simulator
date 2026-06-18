@@ -9,6 +9,7 @@ from ..rules.evaluator import NumericEvaluationContext, NumericEvaluationResult,
 from ..rules.ir import BreakDamageEmissionIR, BreakStatusEmissionIR, BreakTemplateIR
 from ..rules.rulebook import RuleBook
 from .damage import DamagePacket, DamageSystem
+from .dynamic_values import find_status_detail
 from .effect import EffectExecutionContext, EffectRegistry
 from .status_callbacks import StatusCallbackSystem
 from .toughness import ToughnessPacket
@@ -353,6 +354,161 @@ class BreakSystem:
             errors=() if result.mutations else tuple(str(item) for item in result.unsupported),
         )
 
+    def recover_from_break_status(
+        self,
+        state: BattleState,
+        *,
+        unit_id: str,
+        modifier_name: str,
+    ) -> BreakApplicationResult:
+        target = state.units.get(unit_id)
+        if target is None:
+            return BreakApplicationResult(ok=False, after_state=state, errors=("target_missing",))
+        detail = find_status_detail(state, unit_id, modifier_name=modifier_name)
+        if detail is None:
+            return BreakApplicationResult(
+                ok=False,
+                after_state=state,
+                records=(
+                    SettlementRecord(
+                        record_type="break_recovery_blocked",
+                        source="break_system",
+                        process_only=True,
+                        payload={"reason": "break_status_detail_missing", "target_id": unit_id, "modifier_name": modifier_name},
+                        trace={},
+                    ).to_json(),
+                ),
+                errors=("break_status_detail_missing",),
+            )
+        recovery_source = _break_recovery_source(detail)
+        emission_id = str(recovery_source.get("break_status_emission_id") or "")
+        if not emission_id:
+            reason = "break_recovery_source_missing"
+            return BreakApplicationResult(
+                ok=False,
+                after_state=state,
+                records=(
+                    SettlementRecord(
+                        record_type="break_recovery_blocked",
+                        source="break_system",
+                        process_only=True,
+                        payload={"reason": reason, "target_id": unit_id, "modifier_name": modifier_name},
+                        trace=_json_dict(detail.get("source_trace")),
+                    ).to_json(),
+                ),
+                errors=(reason,),
+            )
+        emission = self.rules.break_status_emission(emission_id)
+        if emission is None or emission.coverage_status != "executable":
+            reason = "break_status_emission_not_executable_for_recovery"
+            return BreakApplicationResult(
+                ok=False,
+                after_state=state,
+                records=(
+                    SettlementRecord(
+                        record_type="break_recovery_blocked",
+                        source="break_system",
+                        process_only=True,
+                        payload={"reason": reason, "target_id": unit_id, "break_status_emission_id": emission_id},
+                        trace=_json_dict(detail.get("source_trace")),
+                    ).to_json(),
+                ),
+                errors=(reason,),
+            )
+        status_id = str(detail.get("status_id") or f"modifier:{modifier_name}")
+        status_details = [
+            item
+            for item in target.flags.get("status_details", ())
+            if not (isinstance(item, dict) and item.get("instance_id") == detail.get("instance_id"))
+        ]
+        metadata: dict[str, JSONValue] = {
+            "break_recovery": {
+                "reason": "break_status_expire_or_recovery",
+                "break_status_emission_id": emission_id,
+                "status_instance_id": str(detail.get("instance_id") or ""),
+                "modifier_name": modifier_name,
+            },
+            "source_trace": {
+                "break_status_source": emission.source.to_json(),
+                "status_instance_source": _json_dict(detail.get("source_trace")),
+            },
+        }
+        mutations = [
+            Mutation(
+                op="set",
+                path=("units", unit_id, "flags", "broken"),
+                before=bool(target.flags.get("broken", False)),
+                after=False,
+                reason="recover from weakness break",
+                source="break_system",
+                metadata=metadata,
+            ),
+            Mutation(
+                op="set",
+                path=("units", unit_id, "flags", "break_element"),
+                before=target.flags.get("break_element"),
+                after=None,
+                reason="clear break element",
+                source="break_system",
+                metadata=metadata,
+            ),
+            Mutation(
+                op="set",
+                path=("units", unit_id, "flags", "break_source"),
+                before=target.flags.get("break_source"),
+                after=None,
+                reason="clear break source",
+                source="break_system",
+                metadata=metadata,
+            ),
+            Mutation(
+                op="set",
+                path=("units", unit_id, "toughness"),
+                before=target.toughness,
+                after=target.max_toughness,
+                reason="restore toughness after break recovery",
+                source="break_system",
+                metadata=metadata,
+            ),
+            Mutation(
+                op="set",
+                path=("units", unit_id, "statuses"),
+                before=list(target.statuses),
+                after=[item for item in target.statuses if item != status_id],
+                reason="remove break status on recovery",
+                source="break_system",
+                metadata=metadata,
+            ),
+            Mutation(
+                op="set",
+                path=("units", unit_id, "flags", "status_details"),
+                before=list(target.flags.get("status_details", ())),
+                after=status_details,
+                reason="remove break status detail on recovery",
+                source="break_system",
+                metadata=metadata,
+            ),
+        ]
+        after_state = self.reducer.apply_all(state, tuple(mutations))
+        records = tuple(
+            SettlementRecord(
+                record_type="break_recovery",
+                source="break_system",
+                mutation_id=mutation.stable_id(),
+                process_only=False,
+                payload={
+                    "target_id": unit_id,
+                    "field": mutation.path[-1],
+                    "break_status_emission_id": emission_id,
+                    "status_instance_id": str(detail.get("instance_id") or ""),
+                    "modifier_name": modifier_name,
+                },
+                trace=metadata["source_trace"],
+            ).to_json()
+            for mutation in mutations
+        )
+        return BreakApplicationResult(ok=True, after_state=after_state, mutations=tuple(mutations), records=records)
+
 
 def _break_metadata(packet: ToughnessPacket, template: BreakTemplateIR) -> dict[str, JSONValue]:
     return {
@@ -575,6 +731,23 @@ def _break_base_source_from_evaluation(evaluation: NumericEvaluationResult) -> d
             break_base = source_trace.get("break_base_damage")
             return break_base if isinstance(break_base, dict) else source_trace
     return {}
+
+
+def _break_recovery_source(detail: dict[str, JSONValue]) -> dict[str, JSONValue]:
+    source_trace = _json_dict(detail.get("source_trace"))
+    effect_source = source_trace.get("effect_source")
+    evidence = effect_source.get("evidence") if isinstance(effect_source, dict) else None
+    emission_id = evidence.get("break_status_emission_id") if isinstance(evidence, dict) else None
+    if not isinstance(emission_id, str) or not emission_id:
+        return {}
+    return {
+        "break_status_emission_id": emission_id,
+        "source_trace": source_trace,
+    }
+
+
+def _json_dict(value: object) -> dict[str, JSONValue]:
+    return value if isinstance(value, dict) else {}
 
 
 def _blocked(
