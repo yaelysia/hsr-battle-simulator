@@ -201,6 +201,8 @@ class DamageSystem:
             return _damage_error(packet, f"{packet.damage_formula_family} requires fixed amount")
         target = state.units[packet.target_id]
         after = max(0.0, target.hp - packet.amount)
+        packet_json = packet.to_json()
+        metadata = {**packet_json, **packet.metadata, "packet_metadata": packet.metadata}
         mutation = Mutation(
             op="set",
             path=("units", packet.target_id, "hp"),
@@ -208,7 +210,7 @@ class DamageSystem:
             after=after,
             reason="apply damage packet",
             source="damage_system",
-            metadata=packet.to_json(),
+            metadata=metadata,
         )
         record_type = "hp_loss" if packet.damage_formula_family == "hp_loss" else "damage"
         bypasses_normal_multipliers = packet.damage_formula_family in {"true_damage", "hp_loss"}
@@ -230,6 +232,8 @@ class DamageSystem:
                         "element_type": packet.element_type,
                         "damage_emission_id": packet.damage_emission_id,
                         "source_task_id": packet.source_task_id,
+                        "hit_profile_id": packet.hit_profile_id,
+                        "packet_metadata": packet.metadata,
                         "bypasses_normal_multipliers": bypasses_normal_multipliers,
                         "normal_multiplier_terms": [],
                         "target_before_hp": target.hp,

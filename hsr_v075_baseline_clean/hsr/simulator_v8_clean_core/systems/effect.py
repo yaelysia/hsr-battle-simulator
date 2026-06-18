@@ -7,6 +7,7 @@ from ..core.model import BattleState, GameEvent, JSONValue, Mutation
 from ..core.settlement import SettlementRecord
 from ..rules.evaluator import NumericEvaluationContext, NumericEvaluationResult, RuleEvaluator
 from ..rules.ir import EffectIR
+from .damage import DamagePacket, DamageSystem
 from .dynamic_values import (
     binding_source_from_store,
     find_status_detail,
@@ -58,6 +59,7 @@ class EffectRegistry:
         self.register("ModifyShield", self._execute_shield)
         self.register("ResourceDelta", self._execute_resource_delta)
         self.register("ModifySPNew", self._execute_resource_delta)
+        self.register("LoseHPByRatio", self._execute_hp_loss_ratio)
         self.register("SetEnergyBarState", self._execute_mechanism_bar_state)
         self.register("SetMonsterEnergyBarState", self._execute_mechanism_bar_state)
         self.register("SetSummonerEnergyBarState", self._execute_mechanism_bar_state)
@@ -83,6 +85,8 @@ class EffectRegistry:
         if effect.opcode in {"RemoveModifier", "RemoveSelfModifier"} and not _remove_modifier_payload_is_executable(effect):
             return "blocked"
         if effect.opcode in {"Heal", "HealHP", "Shield", "InitShield", "StackShield", "ModifyShield", "ResourceDelta", "ModifySPNew"} and not _fixed_payload_is_executable(effect):
+            return "blocked"
+        if effect.opcode == "LoseHPByRatio" and not _hp_loss_ratio_payload_is_executable(effect):
             return "blocked"
         if effect.opcode in {"SetEnergyBarState", "SetMonsterEnergyBarState", "SetSummonerEnergyBarState"} and not _mechanism_bar_payload_is_executable(effect):
             return "blocked"
@@ -149,6 +153,9 @@ class EffectRegistry:
     def _execute_resource_delta(self, effect: EffectIR, context: EffectExecutionContext | None) -> EffectResult:
         return _execute_fixed_unit_delta(effect, context, kind="resource_delta")
 
+    def _execute_hp_loss_ratio(self, effect: EffectIR, context: EffectExecutionContext | None) -> EffectResult:
+        return _execute_hp_loss_ratio(effect, context)
+
     def _execute_mechanism_bar_state(self, effect: EffectIR, context: EffectExecutionContext | None) -> EffectResult:
         return _execute_mechanism_bar_state(effect, context)
 
@@ -186,6 +193,8 @@ def _fixed_payload_is_executable(effect: EffectIR) -> bool:
     standard = effect.payload.get("standard")
     if not isinstance(standard, dict):
         return False
+    if standard.get("blocked_reason"):
+        return False
     if standard.get("target_alias") not in SUPPORTED_ADD_MODIFIER_ALIASES:
         return False
     if not _runtime_numeric_payload_is_executable(standard.get("amount", standard.get("delta"))):
@@ -193,6 +202,19 @@ def _fixed_payload_is_executable(effect: EffectIR) -> bool:
     if effect.opcode in {"ResourceDelta", "ModifySPNew"}:
         return isinstance(standard.get("resource"), str) and bool(standard.get("resource"))
     return True
+
+
+def _hp_loss_ratio_payload_is_executable(effect: EffectIR) -> bool:
+    standard = effect.payload.get("standard")
+    if not isinstance(standard, dict):
+        return False
+    if standard.get("blocked_reason"):
+        return False
+    return (
+        standard.get("target_alias") in SUPPORTED_ADD_MODIFIER_ALIASES
+        and standard.get("ratio_type") in {"MaxHP", "CurrentHP"}
+        and _runtime_numeric_payload_is_executable(standard.get("ratio"))
+    )
 
 
 def _mechanism_bar_payload_is_executable(effect: EffectIR) -> bool:
@@ -243,6 +265,9 @@ def _execute_fixed_unit_delta(
     standard = effect.payload.get("standard")
     if not isinstance(standard, dict):
         return _unsupported_effect(effect, f"{kind} effect has no standardized payload")
+    blocked_reason = standard.get("blocked_reason")
+    if isinstance(blocked_reason, str) and blocked_reason:
+        return _unsupported_effect(effect, f"unsupported_formula:{blocked_reason}", {"standard": standard})
     target_id = _resolve_target_alias(
         standard.get("target_alias"),
         caster_id=context.caster_id,
@@ -332,6 +357,78 @@ def _execute_fixed_unit_delta(
         )
         return _mutation_effect_result(effect, kind, mutation, amount, target_id=target_id, resource=resource, evaluation=amount_result)
     return _unsupported_effect(effect, f"unsupported_resource_delta:{resource}")
+
+
+def _execute_hp_loss_ratio(effect: EffectIR, context: EffectExecutionContext | None) -> EffectResult:
+    if context is None:
+        return _unsupported_effect(effect, "hp_loss_ratio requires EffectExecutionContext")
+    standard = effect.payload.get("standard")
+    if not isinstance(standard, dict):
+        return _unsupported_effect(effect, "hp_loss_ratio effect has no standardized payload")
+    blocked_reason = standard.get("blocked_reason")
+    if isinstance(blocked_reason, str) and blocked_reason:
+        return _unsupported_effect(effect, f"unsupported_formula:{blocked_reason}", {"standard": standard})
+    target_id = _resolve_target_alias(
+        standard.get("target_alias"),
+        caster_id=context.caster_id,
+        owner_id=context.owner_id,
+        param_entity_id=context.param_entity_id,
+        current_action_target_id=context.current_action_target_id,
+    )
+    if target_id is None:
+        return _unsupported_effect(effect, f"unsupported_or_missing_target_alias:{standard.get('target_alias')}", {"standard": standard})
+    if target_id not in context.state.units:
+        return _unsupported_effect(effect, f"target unit {target_id!r} is not in state", {"standard": standard})
+    ratio_type = standard.get("ratio_type")
+    if ratio_type not in {"MaxHP", "CurrentHP"}:
+        return _unsupported_effect(effect, f"unsupported_formula:hp_loss_ratio_type_not_supported:{ratio_type}", {"standard": standard})
+    ratio_result = _evaluate_numeric(effect, context, standard.get("ratio"))
+    if not ratio_result.ok or ratio_result.value is None:
+        return _unsupported_effect(
+            effect,
+            f"unsupported_formula:{ratio_result.blocked_reason or 'numeric_evaluation_failed'}",
+            {"numeric_evaluation": ratio_result.to_json(), "standard": standard},
+        )
+    ratio = ratio_result.value
+    if ratio < 0:
+        return _unsupported_effect(effect, "unsupported_formula:hp_loss_ratio_negative", {"numeric_evaluation": ratio_result.to_json(), "standard": standard})
+    target = context.state.units[target_id]
+    base_hp = target.max_hp if ratio_type == "MaxHP" else target.hp
+    amount = base_hp * ratio
+    effect_source = effect.source.to_json()
+    packet = DamagePacket(
+        attacker_id=context.caster_id,
+        target_id=target_id,
+        attack_type=str(standard.get("attack_type") or "hp_loss"),
+        damage_formula_family="hp_loss",
+        amount=amount,
+        damage_kind="hp_loss",
+        element_type=str(standard.get("damage_type") or "") or None,
+        source_trace={"effect_id": effect.effect_id, "effect_source": effect_source},
+        metadata={
+            "effect_id": effect.effect_id,
+            "opcode": effect.opcode,
+            "source_id": context.source_id,
+            "caster_id": context.caster_id,
+            "standard": standard,
+            "effect_source": effect_source,
+            "numeric_evaluation": ratio_result.to_json(),
+            "ratio": ratio,
+            "ratio_type": str(ratio_type),
+            "base_hp": base_hp,
+            "damage_formula_family": "hp_loss",
+        },
+    )
+    return _damage_result_to_effect_result(DamageSystem().apply_packet(context.state, packet))
+
+
+def _damage_result_to_effect_result(result) -> EffectResult:
+    return EffectResult(
+        events=result.events,
+        mutations=result.mutations,
+        records=result.records,
+        unsupported=tuple(result.errors),
+    )
 
 
 def _execute_mechanism_bar_state(effect: EffectIR, context: EffectExecutionContext | None) -> EffectResult:

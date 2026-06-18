@@ -93,18 +93,27 @@ def run_validation(
     scenario_path: Path,
     max_ability_files: int | None = None,
     write_full_ir: bool = False,
+    write_diagnostics: bool = False,
+    write_matrices: bool = False,
 ) -> dict[str, object]:
-    discovery = TBGDDiscovery(tbgd_root).scan()
     ir = TBGDLowering(tbgd_root, LoweringLimits(max_ability_files=max_ability_files)).build()
-    coverage = build_coverage_matrix(discovery, ir)
-    fidelity = build_fidelity_matrix(discovery, ir)
     rules = RuleBook(ir)
 
     if write_full_ir:
         write_json(output_dir / "canonical_ir_v0_225.json", ir.to_json())
     write_json(output_dir / "canonical_ir_summary_v0_225.json", _canonical_ir_summary(ir))
-    write_json(output_dir / "coverage_matrix_v0_225.json", coverage.to_json())
-    write_json(output_dir / "fidelity_matrix_v0_225.json", fidelity.to_json())
+    matrix_summary = _matrix_summary_not_written()
+    if write_matrices:
+        discovery = TBGDDiscovery(tbgd_root).scan()
+        coverage = build_coverage_matrix(discovery, ir)
+        fidelity = build_fidelity_matrix(discovery, ir)
+        write_json(output_dir / "coverage_matrix_v0_225.json", coverage.to_json())
+        write_json(output_dir / "fidelity_matrix_v0_225.json", fidelity.to_json())
+        matrix_summary = {
+            "written": True,
+            "discovery_files": len(discovery.files),
+            "fidelity": fidelity.to_json()["summary"],
+        }
 
     scenario = ScenarioLoader().load_path(scenario_path)
     identity_result = IdentityResolver(rules).validate(scenario)
@@ -145,6 +154,7 @@ def run_validation(
         }
     )
     source_audit_full = _source_audit_full_checks(rules, audit_transitions)
+    source_audit_summary = _source_audit_summary(source_audit_full)
     sample_trace = _sample_source_trace(source_audit_full["results"])
     negative_snapshot = _negative_snapshot_checks(negative_cases)
     mechanism_matrix = _mechanism_trust_matrix(
@@ -172,7 +182,7 @@ def run_validation(
         }
     )
     checks = {
-        "source_audit_full": source_audit_full,
+        "source_audit": source_audit_summary,
         "source_audit_trace_sample": sample_trace,
         "mutation_source_categories": _mutation_source_category_checks(audit_transitions),
         "mutation_source_policy_coverage": _mutation_source_policy_checks(package_root),
@@ -207,7 +217,7 @@ def run_validation(
             "tbgd_root": tbgd_root.as_posix(),
             "scenario_path": scenario_path.as_posix(),
             "summary": {
-                "discovery_files": len(discovery.files),
+                "discovery_files": matrix_summary.get("discovery_files", None),
                 "ir_action_definitions": len(ir.action_definitions),
                 "ir_action_events": len(ir.action_events),
                 "ir_hit_profiles": len(ir.hit_profiles),
@@ -230,17 +240,19 @@ def run_validation(
         "checks": checks,
         "snapshot_completeness": snapshot_result.to_json(),
         "static_checks": static_result.to_json(),
-        "fidelity": fidelity.to_json()["summary"],
+        "matrices": matrix_summary,
     }
 
     write_json(output_dir / "validation_summary_v0_225.json", result)
-    write_json(output_dir / "source_audit_full_v0_225.json", source_audit_full)
+    write_json(output_dir / "source_audit_summary_v0_225.json", source_audit_summary)
     write_json(output_dir / "sample_source_audit_trace_v0_225.json", sample_trace)
     write_json(output_dir / "mechanism_trust_matrix_v0_225.json", mechanism_matrix)
-    write_json(output_dir / "sample_negative_cases_v0_225.json", _negative_cases_json(negative_cases))
-    write_json(output_dir / "sample_damage_emission_case_v0_225.json", _damage_emission_case_json(damage_case))
-    write_json(output_dir / "sample_no_fake_damage_case_v0_225.json", _damage_emission_case_json(no_fake_damage_case))
-    _write_transition_samples(output_dir, audit_transitions)
+    if write_diagnostics:
+        write_json(output_dir / "source_audit_full_v0_225.json", source_audit_full)
+        write_json(output_dir / "sample_negative_cases_v0_225.json", _negative_cases_json(negative_cases))
+        write_json(output_dir / "sample_damage_emission_case_v0_225.json", _damage_emission_case_json(damage_case))
+        write_json(output_dir / "sample_no_fake_damage_case_v0_225.json", _damage_emission_case_json(no_fake_damage_case))
+        _write_transition_samples(output_dir, audit_transitions)
     return result
 
 
@@ -251,6 +263,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--scenario", type=Path, default=None)
     parser.add_argument("--max-ability-files", type=int, default=None)
     parser.add_argument("--write-full-ir", action="store_true")
+    parser.add_argument("--write-diagnostics", action="store_true")
+    parser.add_argument("--write-matrices", action="store_true")
     args = parser.parse_args(argv)
 
     package_root = Path(__file__).resolve().parents[1]
@@ -263,6 +277,8 @@ def main(argv: list[str] | None = None) -> int:
         scenario_path,
         max_ability_files=args.max_ability_files,
         write_full_ir=args.write_full_ir,
+        write_diagnostics=args.write_diagnostics,
+        write_matrices=args.write_matrices,
     )
     print(f"v8 {VALIDATION_VERSION} validation ok={result['ok']}")
     return 0 if result["ok"] else 1
@@ -326,7 +342,7 @@ def _existing_effect_cases(
     )
     cases["effect_mechanism_bar"] = _with_replay(_mark_effect_case(mechanism_case, "structured_predicate_or_blocked", "mechanism_bar_state"))
     modify_sp = _modify_sp_case(ir, registry, state, command)
-    cases["effect_modify_sp_manual_binding"] = _with_replay(
+    cases["effect_modify_sp"] = _with_replay(
         _mark_effect_case(modify_sp, "manual_input_binding_smoke", "ModifySPNew")
     )
     return cases
@@ -434,6 +450,33 @@ def _source_audit_full_checks(
         "checked_mutation_count": mutation_total,
         "policy": auditor.policy_matrix(),
         "results": results,
+    }
+
+
+def _source_audit_summary(source_audit: dict[str, Any]) -> dict[str, Any]:
+    results = source_audit.get("results", {})
+    failures: dict[str, Any] = {}
+    if isinstance(results, dict):
+        for name, result in results.items():
+            if isinstance(result, dict) and not result.get("ok"):
+                failures[str(name)] = {
+                    "checked_mutations": result.get("checked_mutations"),
+                    "failures": result.get("failures", []),
+                }
+    return {
+        "ok": bool(source_audit.get("ok")),
+        "checked_transition_count": source_audit.get("checked_transition_count", 0),
+        "checked_mutation_count": source_audit.get("checked_mutation_count", 0),
+        "policy_sources": sorted(source_audit.get("policy", {}).keys()) if isinstance(source_audit.get("policy"), dict) else [],
+        "failed_transition_count": len(failures),
+        "failures": failures,
+    }
+
+
+def _matrix_summary_not_written() -> dict[str, Any]:
+    return {
+        "written": False,
+        "reason": "coverage/fidelity matrices are skipped by default; pass --write-matrices for diagnostic output",
     }
 
 
@@ -572,12 +615,7 @@ def _mechanism_trust_matrix(
         "remove_modifier": _trust_entry(_has_transition(effect_cases.get("effect_remove_modifier")), False, TRUSTED, "real TBGD RemoveModifier source is audited"),
         "heal": _effect_trust_entry(effect_cases.get("effect_heal"), "fixed HealHP source is audited when present; otherwise blocked"),
         "shield": _effect_trust_entry(effect_cases.get("effect_shield"), "fixed shield source is audited when present; otherwise blocked"),
-        "resource_delta": _trust_entry(
-            _has_transition(effect_cases.get("effect_modify_sp_manual_binding")),
-            False,
-            STRUCTURAL,
-            "ModifySPNew uses structured effect selection but current positive value comes from manual input binding smoke",
-        ),
+        "resource_delta": _resource_delta_trust_entry(effect_cases.get("effect_modify_sp")),
         "dynamic_value_store": _trust_entry(_has_transition(dynamic_value_case), False, TRUSTED, "real dynamic value effect writes DynamicValueStore through effect_system"),
         "trigger_window": _trust_entry(_has_trigger_window(damage_case), False, STRUCTURAL, "actor/primary-target local trigger windows are represented; global/per-hit scope remains partial"),
         "ability_task": _trust_entry(_has_transition(damage_case), False, TRUSTED, "phase task graph is present and mutating effects/damage are source-audited"),
@@ -600,6 +638,28 @@ def _effect_trust_entry(case: dict[str, Any] | None, risk: str) -> dict[str, Any
     if _has_transition(case):
         return _trust_entry(True, False, TRUSTED, risk)
     return _trust_entry(False, False, BLOCKED, risk)
+
+
+def _resource_delta_trust_entry(case: dict[str, Any] | None) -> dict[str, Any]:
+    if case is None:
+        return _trust_entry(False, False, BLOCKED, "ModifySPNew case missing")
+    selection = case.get("selection", {})
+    selection_mode = selection.get("selection_mode") if isinstance(selection, dict) else ""
+    if _has_transition(case) and selection_mode == "structured_predicate":
+        return _trust_entry(
+            True,
+            False,
+            TRUSTED,
+            "ModifySPNew fixed skill point delta is selected from real executable TBGD EffectIR; ratio/max/set SP operations remain blocked",
+        )
+    if _has_transition(case):
+        return _trust_entry(
+            True,
+            False,
+            STRUCTURAL,
+            "ModifySPNew executable path still depends on manual dynamic binding; fixed source was not found",
+        )
+    return _trust_entry(False, False, BLOCKED, "No executable ModifySPNew effect transition")
 
 
 def _trust_entry(

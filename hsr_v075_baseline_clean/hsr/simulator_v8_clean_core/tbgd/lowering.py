@@ -1786,6 +1786,7 @@ MECHANISM_BAR_OPCODES = {"SetEnergyBarState", "SetMonsterEnergyBarState", "SetSu
 RESOURCE_DELTA_OPCODES = {"ModifySPNew"}
 DYNAMIC_VALUE_OPCODES = {"SetDynamicValue", "SetDynamicValueByModifierValue"}
 DAMAGE_EMISSION_OPCODES = {"DamageByAttackProperty"}
+HP_LOSS_OPCODES = {"LoseHPByRatio"}
 EXECUTABLE_TARGET_ALIASES = {"Caster", "ModifierOwnerEntity", "ParamEntity", "CurrentActionTarget"}
 DAMAGE_EMISSION_TARGET_ALIASES = {
     "AbilityTargetEntity",
@@ -1824,6 +1825,8 @@ def _effect_payload(value: dict[str, Any], opcode: str, source_modifier_name: st
         payload["standard"] = _standard_mechanism_bar_payload(value, opcode)
     elif opcode in RESOURCE_DELTA_OPCODES:
         payload["standard"] = _standard_resource_delta_payload(value, opcode)
+    elif opcode in HP_LOSS_OPCODES:
+        payload["standard"] = _standard_hp_loss_ratio_payload(value)
     elif opcode == "SetDynamicValue":
         payload["standard"] = _standard_set_dynamic_value_payload(value)
     elif opcode == "SetDynamicValueByModifierValue":
@@ -1858,6 +1861,8 @@ def _effect_coverage_status(opcode: str, payload: dict[str, Any]) -> str:
         standard = payload.get("standard")
         if not isinstance(standard, dict):
             return "blocked"
+        if standard.get("blocked_reason"):
+            return "blocked"
         if standard.get("target_alias") not in EXECUTABLE_TARGET_ALIASES:
             return "blocked"
         if not _numeric_expr_can_be_runtime_bound(standard.get("amount")):
@@ -1874,11 +1879,26 @@ def _effect_coverage_status(opcode: str, payload: dict[str, Any]) -> str:
         standard = payload.get("standard")
         if not isinstance(standard, dict):
             return "blocked"
+        if standard.get("blocked_reason"):
+            return "blocked"
         if standard.get("target_alias") not in EXECUTABLE_TARGET_ALIASES:
             return "blocked"
         if not isinstance(standard.get("resource"), str):
             return "blocked"
         if not _numeric_expr_can_be_runtime_bound(standard.get("amount")):
+            return "blocked"
+        return "executable"
+    if opcode in HP_LOSS_OPCODES:
+        standard = payload.get("standard")
+        if not isinstance(standard, dict):
+            return "blocked"
+        if standard.get("blocked_reason"):
+            return "blocked"
+        if standard.get("target_alias") not in EXECUTABLE_TARGET_ALIASES:
+            return "blocked"
+        if standard.get("ratio_type") not in {"MaxHP", "CurrentHP"}:
+            return "blocked"
+        if not _numeric_expr_can_be_runtime_bound(standard.get("ratio")):
             return "blocked"
         return "executable"
     if opcode == "SetDynamicValue":
@@ -2019,10 +2039,11 @@ def _standard_remove_modifier_payload(value: dict[str, Any], opcode: str, source
 def _standard_heal_payload(value: dict[str, Any]) -> dict[str, Any]:
     amount = _numeric_expr_summary(value.get("ModifyValue"))
     percentage = _numeric_expr_summary(value.get("HealPercentage"))
+    formula_type = _value_field(value.get("FormulaType"))
     payload = {
         "kind": "heal",
         "target_alias": _target_alias(value.get("TargetType")),
-        "formula_type": _value_field(value.get("FormulaType")),
+        "formula_type": formula_type,
         "amount": amount,
         "percentage": percentage,
         "raw_formula_fields": {
@@ -2031,7 +2052,9 @@ def _standard_heal_payload(value: dict[str, Any]) -> dict[str, Any]:
             "FormulaType": _json_safe(value.get("FormulaType")),
         },
     }
-    if not _numeric_expr_can_be_runtime_bound(amount):
+    if formula_type not in {None, "", "HealByBaseValue"}:
+        payload["blocked_reason"] = f"formula_type_not_supported:{formula_type}"
+    elif not _numeric_expr_can_be_runtime_bound(amount):
         payload["blocked_reason"] = "fixed_or_bound_modify_value_required"
     return payload
 
@@ -2039,11 +2062,12 @@ def _standard_heal_payload(value: dict[str, Any]) -> dict[str, Any]:
 def _standard_shield_payload(value: dict[str, Any], opcode: str) -> dict[str, Any]:
     amount = _numeric_expr_summary(value.get("ShieldValue"))
     percentage = _numeric_expr_summary(value.get("ShieldPercentage"))
+    formula_type = _value_field(value.get("FormulaType"))
     payload = {
         "kind": "shield",
         "shield_opcode": opcode,
         "target_alias": _target_alias(value.get("TargetType")),
-        "formula_type": _value_field(value.get("FormulaType")),
+        "formula_type": formula_type,
         "amount": amount,
         "percentage": percentage,
         "raw_formula_fields": {
@@ -2052,7 +2076,9 @@ def _standard_shield_payload(value: dict[str, Any], opcode: str) -> dict[str, An
             "FormulaType": _json_safe(value.get("FormulaType")),
         },
     }
-    if not _numeric_expr_can_be_runtime_bound(amount):
+    if formula_type not in {None, "", "ShieldByBaseValue"}:
+        payload["blocked_reason"] = f"formula_type_not_supported:{formula_type}"
+    elif not _numeric_expr_can_be_runtime_bound(amount):
         payload["blocked_reason"] = "fixed_or_bound_shield_value_required"
     return payload
 
@@ -2084,19 +2110,74 @@ def _standard_mechanism_bar_payload(value: dict[str, Any], opcode: str) -> dict[
 
 
 def _standard_resource_delta_payload(value: dict[str, Any], opcode: str) -> dict[str, Any]:
-    amount = _numeric_expr_summary(value.get("AddValue", value.get("ModifyValue")))
+    amount_field = _first_present_key(value, ("AddValue", "ModifyValue", "FixedAddValue"))
+    unsupported_field = "" if amount_field else _first_present_key(
+        value,
+        (
+            "AddRatio",
+            "FixedAddRatio",
+            "AddMaxSPRatio",
+            "FixedAddMaxSPRatio",
+            "SetValue",
+            "SetMaxSPRatio",
+            "FixedSetValue",
+            "FixedSetMaxSPRatio",
+        ),
+    )
+    formula_field = amount_field or unsupported_field
+    amount = _numeric_expr_summary(value.get(formula_field) if formula_field else None)
     payload = {
         "kind": "resource_delta",
         "resource": "skill_points" if opcode == "ModifySPNew" else opcode,
         "target_alias": _target_alias(value.get("TargetType")),
+        "formula_type": formula_field or "missing",
         "amount": amount,
         "raw_formula_fields": {
             "AddValue": _json_safe(value.get("AddValue")),
             "ModifyValue": _json_safe(value.get("ModifyValue")),
+            "FixedAddValue": _json_safe(value.get("FixedAddValue")),
+            "AddRatio": _json_safe(value.get("AddRatio")),
+            "FixedAddRatio": _json_safe(value.get("FixedAddRatio")),
+            "AddMaxSPRatio": _json_safe(value.get("AddMaxSPRatio")),
+            "FixedAddMaxSPRatio": _json_safe(value.get("FixedAddMaxSPRatio")),
+            "SetValue": _json_safe(value.get("SetValue")),
+            "SetMaxSPRatio": _json_safe(value.get("SetMaxSPRatio")),
         },
     }
-    if not _numeric_expr_can_be_runtime_bound(amount):
+    if unsupported_field:
+        payload["blocked_reason"] = f"resource_formula_type_not_supported:{unsupported_field}"
+    elif not _numeric_expr_can_be_runtime_bound(amount):
         payload["blocked_reason"] = "fixed_or_bound_resource_delta_required"
+    return payload
+
+
+def _standard_hp_loss_ratio_payload(value: dict[str, Any]) -> dict[str, Any]:
+    ratio = _numeric_expr_summary(value.get("Ratio"))
+    ratio_type = _value_field(value.get("RatioType"))
+    floor = bool(value.get("Floor")) if value.get("Floor") is not None else False
+    payload = {
+        "kind": "hp_loss_ratio",
+        "target_alias": _target_alias(value.get("TargetType")),
+        "ratio": ratio,
+        "ratio_type": ratio_type,
+        "floor": floor,
+        "attack_type": _value_field(value.get("AttackType")),
+        "damage_type": _value_field(value.get("DamageType")),
+        "raw_formula_fields": {
+            "Ratio": _json_safe(value.get("Ratio")),
+            "RatioType": _json_safe(value.get("RatioType")),
+            "Floor": _json_safe(value.get("Floor")),
+            "AttackType": _json_safe(value.get("AttackType")),
+            "DamageType": _json_safe(value.get("DamageType")),
+            "TargetType": _json_safe(value.get("TargetType")),
+        },
+    }
+    if floor:
+        payload["blocked_reason"] = "hp_loss_floor_rounding_not_supported"
+    elif ratio_type not in {"MaxHP", "CurrentHP"}:
+        payload["blocked_reason"] = f"hp_loss_ratio_type_not_supported:{ratio_type}"
+    elif not _numeric_expr_can_be_runtime_bound(ratio):
+        payload["blocked_reason"] = str(ratio.get("reason") or "fixed_or_bound_hp_loss_ratio_required")
     return payload
 
 
@@ -2212,6 +2293,13 @@ def _value_field(value: Any) -> Any:
     if isinstance(value, dict) and "Value" in value:
         return _json_safe(value.get("Value"))
     return _json_safe(value)
+
+
+def _first_present_key(value: dict[str, Any], keys: tuple[str, ...]) -> str:
+    for key in keys:
+        if key in value:
+            return key
+    return ""
 
 
 def _numeric_expr_summary(value: Any) -> dict[str, Any]:

@@ -28,8 +28,8 @@ MUTATION_SOURCE_POLICIES: dict[str, dict[str, JSONValue]] = {
         "coverage_required": "ActionDefinitionIR executable; ActionEventIR traceable",
     },
     "damage_system": {
-        "required_ir": ["DamageEmissionIR", "AbilityTaskIR", "HitProfileIR"],
-        "required_metadata": ["damage_emission_id", "source_task_id", "hit_profile_id", "source_trace"],
+        "required_ir": ["DamageEmissionIR + AbilityTaskIR + HitProfileIR", "or EffectIR for hp_loss"],
+        "required_metadata": ["damage_emission_id/source_task_id/hit_profile_id or effect_id", "source_trace"],
         "coverage_required": "executable",
     },
     "status_system": {
@@ -203,6 +203,26 @@ class RuntimeSourceAuditor:
         violations: list[SourceAuditViolation],
     ) -> dict[str, JSONValue]:
         metadata = mutation.metadata
+        effect_id = _first_str(metadata.get("effect_id"))
+        if effect_id and metadata.get("damage_formula_family") == "hp_loss":
+            self._audit_effect_id(mutation, effect_id, violations)
+            if not isinstance(metadata.get("effect_source"), dict):
+                violations.append(_violation(mutation, "effect_source_missing", missing_field="effect_source"))
+            _require_dict(mutation, metadata, "source_trace", violations)
+            evaluation = metadata.get("numeric_evaluation")
+            if not isinstance(evaluation, dict):
+                violations.append(_violation(mutation, "numeric_evaluation_missing", missing_field="numeric_evaluation"))
+            elif evaluation.get("ok") is False:
+                violations.append(_violation(mutation, "mutation_has_failed_numeric_evaluation", details={"numeric_evaluation": evaluation}))
+            return _trace(
+                mutation,
+                records,
+                {
+                    "effect_id": effect_id,
+                    "opcode": str(metadata.get("opcode") or ""),
+                    "damage_formula_family": "hp_loss",
+                },
+            )
         emission_id = _required_str(mutation, metadata, "damage_emission_id", violations)
         task_id = _required_str(mutation, metadata, "source_task_id", violations)
         hit_profile_id = _required_str(mutation, metadata, "hit_profile_id", violations)

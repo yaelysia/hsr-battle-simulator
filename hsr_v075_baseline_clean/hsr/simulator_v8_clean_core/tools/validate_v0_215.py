@@ -99,7 +99,7 @@ def run_validation(
         "numeric_evaluator": _numeric_evaluator_checks(evaluator_cases),
         "dynamic_shield": _dynamic_shield_checks(shield_case),
         "unsupported_dynamic_heal_blocked": _unsupported_heal_checks(heal_case),
-        "modify_sp_new": _modify_sp_checks(resource_case, coverage.to_json()),
+        "modify_sp_new": _modify_sp_checks(resource_case, coverage.to_json(), ir),
         "status_modifier_ledger_regression": _status_modifier_ledger_regression_checks(status_ledger_transition),
         "damage_semantics_regression": _damage_semantics_regression_checks(damage_regression_transition),
         "fixed_damage_families": _fixed_damage_family_checks(fixed_damage_cases),
@@ -308,14 +308,16 @@ def _modify_sp_case(
     if effect is None:
         return {"effect": None, "transition": None, "error": "missing ModifySPNew effect"}
     amount_expr = effect.payload["standard"]["amount"]
-    hash_key = str(amount_expr.get("hash")) if isinstance(amount_expr, dict) else ""
+    hash_key = str(amount_expr.get("hash")) if isinstance(amount_expr, dict) and amount_expr.get("kind") == "dynamic_hash" else ""
+    dynamic_values = {hash_key: 1.0} if hash_key else None
+    selection_mode = "manual_input_binding_smoke" if hash_key else "structured_predicate"
     result = _execute_effect(
         registry,
         base_state,
         effect,
         command,
         source_suffix="modify_sp_bound",
-        dynamic_values={hash_key: 1.0},
+        dynamic_values=dynamic_values,
     )
     after = MutationReducer().apply_all(base_state, result.mutations)
     transition = _effect_transition(
@@ -333,7 +335,16 @@ def _modify_sp_case(
         "result": result,
         "transition": transition,
         "bound_hash": hash_key,
-        "bound_value": 1.0,
+        "bound_value": 1.0 if hash_key else None,
+        "selection": {
+            "selection_mode": selection_mode,
+            "mechanism": "ModifySPNew",
+            "opcode": effect.opcode,
+            "coverage_status": effect.coverage_status,
+            "amount_kind": amount_expr.get("kind") if isinstance(amount_expr, dict) else "",
+            "formula_type": effect.payload["standard"].get("formula_type"),
+            "source_trace": effect.source.to_json(),
+        },
     }
 
 
@@ -493,14 +504,36 @@ def _unsupported_heal_checks(case: dict[str, Any]) -> dict[str, object]:
     return {"ok": all(checks.values()), "checks": checks, "reasons": reasons, "records": records}
 
 
-def _modify_sp_checks(case: dict[str, Any], coverage_json: dict[str, Any]) -> dict[str, object]:
+def _modify_sp_checks(case: dict[str, Any], coverage_json: dict[str, Any], ir: CanonicalIR) -> dict[str, object]:
     transition = case.get("transition")
     records = _records_of_type(transition, "resource_delta")
     opcode_status = coverage_json.get("opcode_status", {}).get("ModifySPNew", {})
+    selection = case.get("selection", {})
+    unsupported_formula_types = {
+        "AddRatio",
+        "FixedAddRatio",
+        "AddMaxSPRatio",
+        "FixedAddMaxSPRatio",
+        "SetValue",
+        "SetMaxSPRatio",
+        "FixedSetValue",
+        "FixedSetMaxSPRatio",
+    }
+    unsupported_effects = [
+        effect
+        for effect in ir.effects
+        if effect.opcode == "ModifySPNew"
+        and isinstance(effect.payload.get("standard"), dict)
+        and effect.payload["standard"].get("formula_type") in unsupported_formula_types
+    ]
     checks = {
         "modify_sp_lowered": opcode_status.get("lowered", 0) > 0,
         "real_modify_sp_effect_selected": isinstance(case.get("effect"), EffectIR)
         and case["effect"].opcode == "ModifySPNew",
+        "fixed_delta_source_selected": isinstance(selection, dict)
+        and selection.get("selection_mode") == "structured_predicate"
+        and selection.get("amount_kind") == "fixed"
+        and selection.get("formula_type") == "FixedAddValue",
         "transition_exists": transition is not None,
         "skill_point_mutation": bool(
             transition is not None
@@ -510,8 +543,16 @@ def _modify_sp_checks(case: dict[str, Any], coverage_json: dict[str, Any]) -> di
             isinstance(record.get("payload"), dict) and isinstance(record["payload"].get("numeric_evaluation"), dict)
             for record in records
         ),
+        "ratio_max_set_fields_blocked": bool(unsupported_effects)
+        and all(effect.coverage_status != "executable" for effect in unsupported_effects),
     }
-    return {"ok": all(checks.values()), "checks": checks, "opcode_status": opcode_status, "records": records}
+    return {
+        "ok": all(checks.values()),
+        "checks": checks,
+        "opcode_status": opcode_status,
+        "records": records,
+        "unsupported_formula_type_count": len(unsupported_effects),
+    }
 
 
 def _fixed_damage_family_checks(cases: dict[str, Any]) -> dict[str, object]:
@@ -593,15 +634,21 @@ def _select_unsupported_heal_effect(ir: CanonicalIR) -> EffectIR | None:
 
 
 def _select_modify_sp_effect(ir: CanonicalIR) -> EffectIR | None:
+    executable_dynamic: EffectIR | None = None
     for effect in sorted(ir.effects, key=lambda item: (item.source.source_path, item.effect_id)):
         if effect.opcode != "ModifySPNew":
             continue
         if not _is_mainline_source(effect.source.source_path):
             continue
         standard = effect.payload.get("standard")
-        if isinstance(standard, dict) and isinstance(standard.get("amount"), dict):
+        amount = standard.get("amount") if isinstance(standard, dict) else None
+        if effect.coverage_status != "executable" or not isinstance(amount, dict):
+            continue
+        if amount.get("kind") == "fixed":
             return effect
-    return None
+        if amount.get("kind") == "dynamic_hash" and executable_dynamic is None:
+            executable_dynamic = effect
+    return executable_dynamic
 
 
 def _with_crit_mode(command: ActionCommand, crit_mode: str) -> ActionCommand:
