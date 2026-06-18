@@ -73,6 +73,21 @@ class EffectRegistry:
         handler = self._handlers.get(effect.opcode)
         if not handler:
             return EffectResult(unsupported=(effect.opcode,))
+        coverage = self.coverage(effect)
+        if coverage != "executable":
+            specific_reason = _effect_payload_blocked_reason(effect)
+            reason = f"effect_not_executable:{coverage}"
+            if specific_reason:
+                reason = f"{reason}:{specific_reason}"
+            return _unsupported_effect(
+                effect,
+                reason,
+                {
+                    "coverage_status": effect.coverage_status,
+                    "effective_coverage": coverage,
+                    "blocked_reason": specific_reason or _effect_blocked_reason(effect),
+                },
+            )
         return handler(effect, context)
 
     def coverage(self, effect: EffectIR) -> str:
@@ -252,6 +267,53 @@ def _dynamic_value_payload_is_executable(effect: EffectIR) -> bool:
             and _runtime_numeric_payload_is_executable(standard.get("multiplier"))
         )
     return False
+
+
+def _effect_blocked_reason(effect: EffectIR) -> str:
+    standard = effect.payload.get("standard")
+    if isinstance(standard, dict) and isinstance(standard.get("blocked_reason"), str):
+        return standard["blocked_reason"]
+    reason = effect.payload.get("blocked_reason")
+    if isinstance(reason, str):
+        return reason
+    return ""
+
+
+def _effect_payload_blocked_reason(effect: EffectIR) -> str:
+    standard = effect.payload.get("standard")
+    if not isinstance(standard, dict):
+        return "standard_payload_missing"
+    blocked_reason = standard.get("blocked_reason")
+    if isinstance(blocked_reason, str) and blocked_reason:
+        return blocked_reason
+    if effect.opcode == "AddModifier":
+        modifier_name = standard.get("modifier_name")
+        if not isinstance(modifier_name, str) or not modifier_name:
+            return "modifier_name_missing"
+        if standard.get("target_alias") not in SUPPORTED_ADD_MODIFIER_ALIASES:
+            return f"unsupported_or_missing_target_alias:{standard.get('target_alias')}"
+    if effect.opcode in {"RemoveModifier", "RemoveSelfModifier"}:
+        has_modifier = isinstance(standard.get("modifier_name"), str) and bool(standard.get("modifier_name"))
+        has_status = isinstance(standard.get("status_id"), str) and bool(standard.get("status_id"))
+        if not (has_modifier or has_status):
+            return "modifier_name_or_status_id_missing"
+        if standard.get("target_alias") not in SUPPORTED_ADD_MODIFIER_ALIASES:
+            return f"unsupported_or_missing_target_alias:{standard.get('target_alias')}"
+    if effect.opcode in {"Heal", "HealHP", "Shield", "InitShield", "StackShield", "ModifyShield", "ResourceDelta", "ModifySPNew"}:
+        if standard.get("target_alias") not in SUPPORTED_ADD_MODIFIER_ALIASES:
+            return f"unsupported_or_missing_target_alias:{standard.get('target_alias')}"
+        if not _runtime_numeric_payload_is_executable(standard.get("amount", standard.get("delta"))):
+            return "fixed_or_bound_numeric_required"
+        if effect.opcode in {"ResourceDelta", "ModifySPNew"} and not isinstance(standard.get("resource"), str):
+            return "resource_missing"
+    if effect.opcode == "LoseHPByRatio":
+        if standard.get("target_alias") not in SUPPORTED_ADD_MODIFIER_ALIASES:
+            return f"unsupported_or_missing_target_alias:{standard.get('target_alias')}"
+        if standard.get("ratio_type") not in {"MaxHP", "CurrentHP"}:
+            return f"hp_loss_ratio_type_not_supported:{standard.get('ratio_type')}"
+        if not _runtime_numeric_payload_is_executable(standard.get("ratio")):
+            return "fixed_or_bound_ratio_required"
+    return _effect_blocked_reason(effect)
 
 
 def _execute_fixed_unit_delta(

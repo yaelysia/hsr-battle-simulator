@@ -32,7 +32,7 @@ def run_validation(
     tbgd_root: Path,
     output_dir: Path,
     scenario_path: Path,
-    max_ability_files: int = 120,
+    max_ability_files: int | None = None,
 ) -> dict[str, object]:
     discovery = TBGDDiscovery(tbgd_root).scan()
     ir = TBGDLowering(tbgd_root, LoweringLimits(max_ability_files=max_ability_files)).build()
@@ -155,7 +155,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--tbgd-root", type=Path, default=None)
     parser.add_argument("--output-dir", type=Path, default=Path("validation_outputs_v0_207"))
     parser.add_argument("--scenario", type=Path, default=None)
-    parser.add_argument("--max-ability-files", type=int, default=120)
+    parser.add_argument("--max-ability-files", type=int, default=None)
     args = parser.parse_args(argv)
 
     package_root = Path(__file__).resolve().parents[1]

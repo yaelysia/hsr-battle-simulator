@@ -11,7 +11,7 @@ from .snapshot_replay import run_snapshot_replay_check
 from .static_checks import run_static_checks
 
 
-def run_validation(package_root: Path, tbgd_root: Path, output_dir: Path, max_ability_files: int = 120) -> dict[str, object]:
+def run_validation(package_root: Path, tbgd_root: Path, output_dir: Path, max_ability_files: int | None = None) -> dict[str, object]:
     build_summary = build_outputs(tbgd_root, output_dir, max_ability_files=max_ability_files)
     static_result = run_static_checks(package_root)
     replay_result = run_snapshot_replay_check()
@@ -30,7 +30,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Validate v8 TBGD-first clean core baseline.")
     parser.add_argument("--tbgd-root", type=Path, default=None)
     parser.add_argument("--output-dir", type=Path, default=Path("validation_outputs_v0_200"))
-    parser.add_argument("--max-ability-files", type=int, default=120)
+    parser.add_argument("--max-ability-files", type=int, default=None)
     args = parser.parse_args(argv)
 
     package_root = Path(__file__).resolve().parents[1]
@@ -42,4 +42,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

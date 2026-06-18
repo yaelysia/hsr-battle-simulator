@@ -122,7 +122,7 @@ ABILITY_TASK_CALLBACKS = ("OnStart", "OnAttack", "OnHit", "OnEnd")
 class LoweringLimits:
     max_records_per_table: int | None = None
     max_ability_files: int | None = None
-    max_callbacks_per_file: int = 200
+    max_callbacks_per_file: int | None = None
 
 
 class TBGDLowering:
@@ -209,6 +209,7 @@ class TBGDLowering:
                     "entity_tables": self.limits.max_records_per_table is not None,
                     "ability_files": self.limits.max_ability_files is not None
                     and len(selected_ability_files) < len(ability_files),
+                    "callbacks": self.limits.max_callbacks_per_file is not None,
                 },
                 "table_status": table_stats,
                 "ability_file_status": {
@@ -713,7 +714,10 @@ class TBGDLowering:
             if not isinstance(callbacks, list):
                 continue
             for callback in callbacks:
-                if callback_index >= self.limits.max_callbacks_per_file:
+                if (
+                    self.limits.max_callbacks_per_file is not None
+                    and callback_index >= self.limits.max_callbacks_per_file
+                ):
                     return lowered
                 callback_index += 1
                 if not isinstance(callback, dict):

@@ -19,6 +19,7 @@ from ..systems.effect import EffectExecutionContext, EffectRegistry
 from ..systems.status import StatusSystem
 from ..tbgd.lowering import TBGDLowering
 from ..tbgd.paths import find_tbgd_root
+from .build_ir import build_outputs
 from .io import write_json
 from .static_checks import run_static_checks
 from .validate_v0_214 import HEAL_OPCODES, SHIELD_OPCODES, _select_blocked_effect
@@ -177,6 +178,10 @@ def _blocked_formula_checks(
         checks[f"{name}_no_mutations"] = isinstance(transition, BattleTransition) and not transition.transaction.mutations
         checks[f"{name}_snapshot_unchanged"] = isinstance(before, BattleState) and isinstance(after, BattleState) and before.snapshot().to_json() == after.snapshot().to_json()
         checks[f"{name}_blocked_reason_present"] = bool(case.get("unsupported"))
+        checks[f"{name}_blocked_by_registry_coverage_gate"] = any(
+            str(reason).startswith("effect_not_executable:")
+            for reason in case.get("unsupported", ())
+        )
     return {
         "ok": all(checks.values()),
         "checks": checks,
@@ -298,12 +303,21 @@ def _transition_quality_checks(effect_cases: dict[str, dict[str, Any]]) -> dict[
 
 def _lowering_default_checks(ir) -> dict[str, Any]:
     sampled = ir.metadata.get("sampled", {})
+    build_outputs_defaults = build_outputs.__defaults__ or ()
+    build_outputs_default_max_ability_files = build_outputs_defaults[-1] if build_outputs_defaults else "missing"
     checks = {
         "metadata_sampled_present": isinstance(sampled, dict),
         "ability_files_not_sampled": isinstance(sampled, dict) and sampled.get("ability_files") is False,
+        "callbacks_not_sampled": isinstance(sampled, dict) and sampled.get("callbacks") is False,
         "entity_tables_not_sampled": isinstance(sampled, dict) and sampled.get("entity_tables") is False,
+        "build_ir_default_not_sampled": build_outputs_default_max_ability_files is None,
     }
-    return {"ok": all(checks.values()), "checks": checks, "sampled": sampled}
+    return {
+        "ok": all(checks.values()),
+        "checks": checks,
+        "sampled": sampled,
+        "build_outputs_default_max_ability_files": build_outputs_default_max_ability_files,
+    }
 
 
 def _actionability_matrix(

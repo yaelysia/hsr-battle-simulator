@@ -50,6 +50,8 @@ class CombatExecutor:
         hit_profiles = self.rules.hit_profiles_for_action(command.action_id, command.action_level)
         damage_emissions = self.rules.damage_emissions_for_action(command.action_id, command.action_level)
         action_definition_trace = self.rules.action_definition_source_trace(command.action_id, command.action_level) or {}
+        binding_blocked_reason = _binding_blocked_reason(action_binding)
+        action_event_blocked_reason = _action_event_blocked_reason(action_event_ir)
         action_source_metadata = {
             "definition_id": action_definition.definition_id,
             "action_id": action_definition.action_id,
@@ -75,7 +77,7 @@ class CombatExecutor:
             state,
             command.actor_id,
             command.target_ids,
-            policy=_target_policy(action_definition),
+            policy=_target_policy(action_definition, action_event_ir.target_mode),
         )
         action_execution_plan = build_action_execution_plan(
             action_definition,
@@ -105,7 +107,11 @@ class CombatExecutor:
                 metadata=action_source_metadata,
             ),
         )
-        plan_blocked_reason = action_execution_plan.target_plan.blocked_reason
+        plan_blocked_reason = _combined_blocked_reason(
+            binding_blocked_reason,
+            action_event_blocked_reason,
+            action_execution_plan.target_plan.blocked_reason,
+        )
         blocked_reason = _action_blocked_reason(
             target_ok=target_result.ok,
             resource_ok=resource_result.ok,
@@ -343,6 +349,8 @@ class CombatExecutor:
                     "resource_ok": resource_result.ok,
                     "binding_ok": bool(action_binding and action_binding.coverage_status == "executable"),
                     "binding_blocked_reason": action_binding.blocked_reason if action_binding else "action_ability_binding_missing",
+                    "event_ok": not action_event_blocked_reason,
+                    "event_blocked_reason": action_event_blocked_reason,
                     "has_selected_target": bool(target_result.resolution.selected),
                     "plan_blocked_reason": plan_blocked_reason,
                     "target_errors": list(target_result.errors),
@@ -440,6 +448,10 @@ class CombatExecutor:
                 "definition_id": action_definition.definition_id,
                 "target_ok": target_result.ok,
                 "resource_ok": resource_result.ok,
+                "binding_ok": bool(action_binding and action_binding.coverage_status == "executable"),
+                "binding_blocked_reason": binding_blocked_reason,
+                "event_ok": not action_event_blocked_reason,
+                "event_blocked_reason": action_event_blocked_reason,
                 "action_enabled": action_enabled,
                 "blocked_reason": blocked_reason,
                 "plan_blocked_reason": plan_blocked_reason,
@@ -549,6 +561,28 @@ def _skill_point_delta(bp_need: float, bp_add: float) -> int:
     return 0
 
 
+def _binding_blocked_reason(action_binding) -> str:
+    if action_binding is None:
+        return "action_ability_binding_missing"
+    if action_binding.coverage_status != "executable":
+        return action_binding.blocked_reason or f"action_ability_binding_not_executable:{action_binding.coverage_status}"
+    if not action_binding.phase_ids:
+        return "action_ability_binding_has_no_phase_ids"
+    return ""
+
+
+def _action_event_blocked_reason(action_event_ir) -> str:
+    if action_event_ir.blocked_reason:
+        return action_event_ir.blocked_reason
+    if action_event_ir.event_source_status != "ability_phase_graph_bound":
+        return f"action_event_source_not_bound:{action_event_ir.event_source_status}"
+    return ""
+
+
+def _combined_blocked_reason(*reasons: str) -> str:
+    return ",".join(dict.fromkeys(reason for reason in reasons if reason))
+
+
 def _callback_kind_for_step(phase: str) -> str:
     if phase == "before_skill_use":
         return "OnStart"
@@ -559,14 +593,14 @@ def _callback_kind_for_step(phase: str) -> str:
     return ""
 
 
-def _target_policy(action_definition: ActionDefinitionIR) -> TargetPolicy:
-    if action_definition.target_mode == "self_or_team":
+def _target_policy(action_definition: ActionDefinitionIR, target_mode: str) -> TargetPolicy:
+    if target_mode == "self_or_team":
         return TargetPolicy(
             policy_id="self_or_team",
             allow_enemy=False,
             allow_ally=True,
             allow_self=True,
-            target_mode=action_definition.target_mode,
+            target_mode=target_mode,
             selection_mode="explicit_ally_or_self",
         )
     if action_definition.damage_kind == "hp_damage":
@@ -575,16 +609,16 @@ def _target_policy(action_definition: ActionDefinitionIR) -> TargetPolicy:
             allow_enemy=True,
             allow_ally=False,
             allow_self=False,
-            target_mode=action_definition.target_mode,
-            selection_mode=action_definition.target_mode,
+            target_mode=target_mode,
+            selection_mode=target_mode,
         )
     return TargetPolicy(
         policy_id="explicit_any",
         allow_enemy=True,
         allow_ally=True,
         allow_self=True,
-        target_mode=action_definition.target_mode,
-        selection_mode=action_definition.target_mode,
+        target_mode=target_mode,
+        selection_mode=target_mode,
     )
 
 
