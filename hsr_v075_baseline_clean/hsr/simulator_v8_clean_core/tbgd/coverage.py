@@ -138,6 +138,8 @@ def build_coverage_matrix(report: DiscoveryReport, ir: CanonicalIR) -> CoverageM
         ir.ability_tasks,
         ir.action_events,
         ir.hit_profiles,
+        ir.damage_emissions,
+        ir.toughness_emissions,
         ir.triggers,
         ir.effects,
         ir.conditions,
@@ -157,6 +159,8 @@ def build_coverage_matrix(report: DiscoveryReport, ir: CanonicalIR) -> CoverageM
             "ability_tasks": len(ir.ability_tasks),
             "action_events": len(ir.action_events),
             "hit_profiles": len(ir.hit_profiles),
+            "damage_emissions": len(ir.damage_emissions),
+            "toughness_emissions": len(ir.toughness_emissions),
             "triggers": len(ir.triggers),
             "effects": len(ir.effects),
             "conditions": len(ir.conditions),
@@ -325,6 +329,12 @@ def _action_execution_status(ir: CanonicalIR) -> dict[str, Any]:
         for emission in ir.damage_emissions
         if emission.blocked_reason
     )
+    toughness_status = Counter(emission.coverage_status for emission in ir.toughness_emissions)
+    toughness_reasons = Counter(
+        emission.blocked_reason
+        for emission in ir.toughness_emissions
+        if emission.blocked_reason
+    )
     hit_reasons = Counter(
         profile.blocked_reason
         for profile in ir.hit_profiles
@@ -398,5 +408,14 @@ def _action_execution_status(ir: CanonicalIR) -> dict[str, Any]:
             "status_counts": dict(sorted(emission_status.items())),
             "blocked_reason_counts": dict(sorted(emission_reasons.items())),
             "reason": "DamageEmissionIR links AbilityTaskIR damage opcodes to hit profile evidence; blocked emissions are not allowed to create fake damage packets",
+        },
+        "toughness_emissions": {
+            "lowered": len(ir.toughness_emissions),
+            "executable": toughness_status["executable"],
+            "blocked": toughness_status["blocked"],
+            "audit_only": toughness_status["audit_only"],
+            "status_counts": dict(sorted(toughness_status.items())),
+            "blocked_reason_counts": dict(sorted(toughness_reasons.items())),
+            "reason": "ToughnessEmissionIR links AbilityTaskIR attack evidence to toughness evidence; ShowStance evidence remains blocked until game semantics are admitted",
         },
     }

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from ..rules.ir import ActionDefinitionIR, ActionEventIR, DamageEmissionIR, HitProfileIR
+from ..rules.ir import ActionDefinitionIR, ActionEventIR, DamageEmissionIR, HitProfileIR, ToughnessEmissionIR
 
 
 @dataclass(frozen=True)
@@ -128,6 +128,38 @@ class DamagePlan:
 
 
 @dataclass(frozen=True)
+class ToughnessPlan:
+    toughness_emission_id: str
+    source_task_id: str
+    hit_profile_id: str
+    hit_index: int
+    target_id: str
+    target_group: str
+    element_type: str | None
+    toughness_amount: float
+    toughness_amount_source: dict[str, object]
+    source_trace: dict[str, object]
+    primary_action_target_id: str | None = None
+    blocked_reason: str = ""
+
+    def to_json(self) -> dict[str, object]:
+        return {
+            "toughness_emission_id": self.toughness_emission_id,
+            "source_task_id": self.source_task_id,
+            "hit_profile_id": self.hit_profile_id,
+            "hit_index": self.hit_index,
+            "target_id": self.target_id,
+            "target_group": self.target_group,
+            "element_type": self.element_type,
+            "toughness_amount": self.toughness_amount,
+            "toughness_amount_source": self.toughness_amount_source,
+            "source_trace": self.source_trace,
+            "primary_action_target_id": self.primary_action_target_id,
+            "blocked_reason": self.blocked_reason,
+        }
+
+
+@dataclass(frozen=True)
 class ActionExecutionPlan:
     action_id: str
     action_level: int
@@ -136,6 +168,8 @@ class ActionExecutionPlan:
     hit_plan: tuple[HitPlan, ...]
     damage_plan: tuple[DamagePlan, ...]
     damage_emissions: tuple[DamageEmissionIR, ...]
+    toughness_plan: tuple[ToughnessPlan, ...]
+    toughness_emissions: tuple[ToughnessEmissionIR, ...]
     source_trace: dict[str, object]
     derived_reason: str
     primary_action_target_id: str | None = None
@@ -150,6 +184,8 @@ class ActionExecutionPlan:
             "hit_plan": [hit.to_json() for hit in self.hit_plan],
             "damage_plan": [damage.to_json() for damage in self.damage_plan],
             "damage_emissions": [emission.to_json() for emission in self.damage_emissions],
+            "toughness_plan": [toughness.to_json() for toughness in self.toughness_plan],
+            "toughness_emissions": [emission.to_json() for emission in self.toughness_emissions],
             "source_trace": self.source_trace,
             "derived_reason": self.derived_reason,
             "derived_from_action_definition": True,
@@ -159,6 +195,7 @@ class ActionExecutionPlan:
             "binding_id": self.source_trace.get("binding_id", ""),
             "phase_ids": list(self.source_trace.get("phase_ids", ())),
             "damage_emission_ids": [emission.damage_emission_id for emission in self.damage_emissions],
+            "toughness_emission_ids": [emission.toughness_emission_id for emission in self.toughness_emissions],
             "primary_action_target_id": self.primary_action_target_id,
             "per_hit_target_context_not_implemented": self.per_hit_target_context_not_implemented,
         }
@@ -221,6 +258,7 @@ def build_action_execution_plan(
     action_event: ActionEventIR,
     hit_profiles: tuple[HitProfileIR, ...],
     damage_emissions: tuple[DamageEmissionIR, ...] = (),
+    toughness_emissions: tuple[ToughnessEmissionIR, ...] = (),
     *,
     requested_target_ids: tuple[str, ...],
     resolved_target_groups: dict[str, tuple[str, ...]] | None = None,
@@ -244,6 +282,14 @@ def build_action_execution_plan(
         primary_action_target_id,
         target_plan.blocked_reason,
     )
+    toughness_plan = _toughness_plan_from_emissions(
+        action_definition,
+        toughness_emissions,
+        {profile.hit_profile_id: profile for profile in hit_profiles},
+        resolved_target_groups or {},
+        primary_action_target_id,
+        target_plan.blocked_reason,
+    )
     return ActionExecutionPlan(
         action_id=action_definition.action_id,
         action_level=action_definition.level,
@@ -252,6 +298,8 @@ def build_action_execution_plan(
         hit_plan=hit_plan,
         damage_plan=damage_plan,
         damage_emissions=damage_emissions,
+        toughness_plan=toughness_plan,
+        toughness_emissions=toughness_emissions,
         source_trace=source_trace or {},
         derived_reason=action_event.derived_reason,
         primary_action_target_id=primary_action_target_id,
@@ -324,6 +372,46 @@ def _damage_plan_from_emissions(
     return tuple(plans)
 
 
+def _toughness_plan_from_emissions(
+    action_definition: ActionDefinitionIR,
+    toughness_emissions: tuple[ToughnessEmissionIR, ...],
+    hit_profiles: dict[str, HitProfileIR],
+    target_groups: dict[str, tuple[str, ...]],
+    primary_action_target_id: str | None,
+    plan_blocked_reason: str,
+) -> tuple[ToughnessPlan, ...]:
+    if action_definition.damage_kind != "hp_damage" or plan_blocked_reason:
+        return ()
+    plans: list[ToughnessPlan] = []
+    for emission in toughness_emissions:
+        if emission.coverage_status != "executable":
+            continue
+        profile = hit_profiles.get(emission.hit_profile_id)
+        if profile is None:
+            continue
+        amount = _toughness_amount(emission)
+        if amount is None:
+            continue
+        for target_id in _targets_for_hit_profile(profile, target_groups):
+            plans.append(
+                ToughnessPlan(
+                    toughness_emission_id=emission.toughness_emission_id,
+                    source_task_id=emission.source_task_id,
+                    hit_profile_id=profile.hit_profile_id,
+                    hit_index=profile.hit_index,
+                    target_id=target_id,
+                    target_group=profile.target_group,
+                    element_type=emission.element_type,
+                    toughness_amount=amount,
+                    toughness_amount_source=emission.toughness_amount_expr,
+                    source_trace=emission.source.to_json(),
+                    primary_action_target_id=primary_action_target_id,
+                    blocked_reason=emission.blocked_reason,
+                )
+            )
+    return tuple(plans)
+
+
 def _targets_for_hit_profile(
     profile: HitProfileIR,
     target_groups: dict[str, tuple[str, ...]],
@@ -339,6 +427,16 @@ def _targets_for_hit_profile(
 
 def _hit_scaling_ratio(profile: HitProfileIR) -> float | None:
     expr = profile.multiplier_expr
+    if expr.get("kind") != "fixed":
+        return None
+    value = expr.get("value")
+    if isinstance(value, (int, float)):
+        return float(value)
+    return None
+
+
+def _toughness_amount(emission: ToughnessEmissionIR) -> float | None:
+    expr = emission.toughness_amount_expr
     if expr.get("kind") != "fixed":
         return None
     value = expr.get("value")

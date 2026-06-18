@@ -34,6 +34,8 @@ RUNTIME_MAIN_BANNED_ACTION_INFERENCE_TOKENS = (
     "param_list[0]",
     "show_damage_list[",
     "show_stance_list[",
+    "ShowStanceList",
+    "ShowStance",
     "ConfigAbility",
     "ConfigCharacter",
     "AbilityList",

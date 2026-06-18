@@ -1,0 +1,159 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+from ..core.model import BattleState, JSONValue, Mutation
+from ..core.settlement import SettlementRecord
+
+
+@dataclass(frozen=True)
+class ToughnessPacket:
+    attacker_id: str
+    target_id: str
+    toughness_emission_id: str
+    source_task_id: str
+    hit_profile_id: str
+    element_type: str | None
+    amount: float
+    target_group: str
+    coverage_status: str
+    source_trace: dict[str, JSONValue]
+    metadata: dict[str, JSONValue] = field(default_factory=dict)
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "attacker_id": self.attacker_id,
+            "target_id": self.target_id,
+            "toughness_emission_id": self.toughness_emission_id,
+            "source_task_id": self.source_task_id,
+            "hit_profile_id": self.hit_profile_id,
+            "element_type": self.element_type,
+            "amount": self.amount,
+            "target_group": self.target_group,
+            "coverage_status": self.coverage_status,
+            "source_trace": self.source_trace,
+            "metadata": self.metadata,
+        }
+
+
+@dataclass(frozen=True)
+class ToughnessApplicationResult:
+    packet: ToughnessPacket
+    ok: bool
+    mutations: tuple[Mutation, ...] = ()
+    records: tuple[dict[str, JSONValue], ...] = ()
+    errors: tuple[str, ...] = ()
+
+
+class ToughnessSystem:
+    def apply_packet(self, state: BattleState, packet: ToughnessPacket) -> ToughnessApplicationResult:
+        if packet.coverage_status != "executable":
+            return _blocked(packet, f"toughness_emission_not_executable:{packet.coverage_status}")
+        if packet.amount <= 0:
+            return _skipped(packet, "toughness_amount_not_positive")
+        target = state.units.get(packet.target_id)
+        if target is None:
+            return _blocked(packet, "target_missing")
+        if target.max_toughness <= 0:
+            return _skipped(packet, "target_has_no_toughness")
+        if target.toughness <= 0:
+            return _skipped(packet, "target_toughness_already_depleted")
+        if bool(target.flags.get("weakness_locked", False)):
+            return _skipped(packet, "target_weakness_locked")
+        weaknesses = tuple(str(item) for item in target.flags.get("weaknesses", ()) if isinstance(item, str))
+        if packet.element_type and packet.element_type not in weaknesses:
+            return _skipped(
+                packet,
+                "element_not_in_target_weaknesses",
+                extra={"weaknesses": list(weaknesses)},
+            )
+        before = target.toughness
+        after = max(0.0, before - packet.amount)
+        if after == before:
+            return _skipped(packet, "toughness_unchanged")
+        metadata = {
+            **packet.to_json(),
+            **packet.metadata,
+            "weakness_check": {
+                "element_type": packet.element_type,
+                "weaknesses": list(weaknesses),
+                "weakness_locked": bool(target.flags.get("weakness_locked", False)),
+                "passed": True,
+            },
+        }
+        mutation = Mutation(
+            op="set",
+            path=("units", packet.target_id, "toughness"),
+            before=before,
+            after=after,
+            reason="apply toughness damage",
+            source="toughness_system",
+            metadata=metadata,
+        )
+        records = [
+            SettlementRecord(
+                record_type="toughness",
+                source="toughness_system",
+                mutation_id=mutation.stable_id(),
+                process_only=False,
+                payload={
+                    "amount": packet.amount,
+                    "target_before_toughness": before,
+                    "target_after_toughness": after,
+                    "toughness_emission_id": packet.toughness_emission_id,
+                    "source_task_id": packet.source_task_id,
+                    "hit_profile_id": packet.hit_profile_id,
+                    "element_type": packet.element_type,
+                    "weakness_check": metadata["weakness_check"],
+                },
+                trace=packet.source_trace,
+            ).to_json()
+        ]
+        if after <= 0:
+            records.append(
+                SettlementRecord(
+                    record_type="toughness_depleted_pending_break",
+                    source="toughness_system",
+                    process_only=True,
+                    payload={
+                        "target_id": packet.target_id,
+                        "reason": "break_trigger_not_implemented_v0_230",
+                        "toughness_emission_id": packet.toughness_emission_id,
+                    },
+                    trace=packet.source_trace,
+                ).to_json()
+            )
+        return ToughnessApplicationResult(packet=packet, ok=True, mutations=(mutation,), records=tuple(records))
+
+
+def _blocked(packet: ToughnessPacket, reason: str) -> ToughnessApplicationResult:
+    return ToughnessApplicationResult(
+        packet=packet,
+        ok=False,
+        records=(
+            SettlementRecord(
+                record_type="toughness_emission_blocked",
+                source="toughness_system",
+                process_only=True,
+                payload={**packet.to_json(), "reason": reason},
+                trace=packet.source_trace,
+            ).to_json(),
+        ),
+        errors=(reason,),
+    )
+
+
+def _skipped(packet: ToughnessPacket, reason: str, *, extra: dict[str, JSONValue] | None = None) -> ToughnessApplicationResult:
+    return ToughnessApplicationResult(
+        packet=packet,
+        ok=True,
+        records=(
+            SettlementRecord(
+                record_type="toughness_skipped",
+                source="toughness_system",
+                process_only=True,
+                payload={**packet.to_json(), "reason": reason, **(extra or {})},
+                trace=packet.source_trace,
+            ).to_json(),
+        ),
+    )

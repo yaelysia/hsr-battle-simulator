@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .action_plan import DamagePlan, build_action_execution_plan
+from .action_plan import DamagePlan, ToughnessPlan, build_action_execution_plan
 from .model import (
     ActionCommand,
     ActionSettlement,
@@ -22,6 +22,7 @@ from ..systems.resource import ResourcePlan, ResourceSystem
 from ..systems.status import StatusSystem
 from ..systems.target import TargetPolicy, TargetSystem
 from ..systems.timeline import TimelinePlan, TimelineSystem
+from ..systems.toughness import ToughnessPacket, ToughnessSystem
 from ..systems.trigger import TriggerSystem, TriggerWindowResult
 
 
@@ -35,6 +36,7 @@ class CombatExecutor:
         self.targets = TargetSystem()
         self.timeline = TimelineSystem()
         self.damage = DamageSystem()
+        self.toughness = ToughnessSystem()
         self.status = StatusSystem(rules)
         self.effects = EffectRegistry(self.status)
         self.ability_tasks = AbilityTaskSystem(rules, self.effects, reducer=self.reducer)
@@ -49,6 +51,7 @@ class CombatExecutor:
         ability_tasks = self.rules.ability_tasks_for_action(command.action_id, command.action_level)
         hit_profiles = self.rules.hit_profiles_for_action(command.action_id, command.action_level)
         damage_emissions = self.rules.damage_emissions_for_action(command.action_id, command.action_level)
+        toughness_emissions = self.rules.toughness_emissions_for_action(command.action_id, command.action_level)
         action_definition_trace = self.rules.action_definition_source_trace(command.action_id, command.action_level) or {}
         binding_blocked_reason = _binding_blocked_reason(action_binding)
         action_event_blocked_reason = _action_event_blocked_reason(action_event_ir)
@@ -94,7 +97,9 @@ class CombatExecutor:
                 "event_source_status": action_event_ir.event_source_status,
                 "hit_profile_ids": [profile.hit_profile_id for profile in hit_profiles],
                 "damage_emission_ids": [emission.damage_emission_id for emission in damage_emissions],
+                "toughness_emission_ids": [emission.toughness_emission_id for emission in toughness_emissions],
             },
+            toughness_emissions=toughness_emissions,
         )
         action_event_plan_payload = _action_event_plan_compat_payload(action_definition, action_event_ir)
         resource_result = self.resources.plan_action_resources(
@@ -148,6 +153,8 @@ class CombatExecutor:
         ]
         damage_results = []
         damage_mutations: tuple[Mutation, ...] = ()
+        toughness_results = []
+        toughness_mutations: tuple[Mutation, ...] = ()
         ability_task_results: list[AbilityTaskExecutionResult] = []
 
         if action_enabled:
@@ -204,6 +211,29 @@ class CombatExecutor:
                                 trace=action_definition_trace,
                             ).to_json()
                         )
+                    if action_execution_plan.toughness_emissions and not action_execution_plan.toughness_plan:
+                        runtime_records.append(
+                            SettlementRecord(
+                                record_type="toughness_emission_blocked",
+                                source="combat_executor",
+                                process_only=True,
+                                payload={
+                                    "reason": _toughness_emission_blocked_reason(
+                                        action_execution_plan.toughness_emissions
+                                    ),
+                                    "toughness_emission_count": len(action_execution_plan.toughness_emissions),
+                                    "executable_toughness_emission_count": len(
+                                        [
+                                            emission
+                                            for emission in action_execution_plan.toughness_emissions
+                                            if emission.coverage_status == "executable"
+                                        ]
+                                    ),
+                                    "action_execution_plan": action_execution_plan.to_json(),
+                                },
+                                trace=action_definition_trace,
+                            ).to_json()
+                        )
                     for damage_plan in action_execution_plan.damage_plan:
                         damage_packet = _damage_packet(
                             command,
@@ -219,6 +249,17 @@ class CombatExecutor:
                         current_state = self.reducer.apply_all(current_state, damage_result.mutations)
                         ordered_mutations.extend(damage_result.mutations)
                         runtime_records.extend(damage_result.records)
+                        for toughness_plan in _toughness_plans_for_damage_plan(
+                            action_execution_plan.toughness_plan,
+                            damage_plan,
+                        ):
+                            toughness_packet = _toughness_packet(command, toughness_plan)
+                            toughness_result = self.toughness.apply_packet(current_state, toughness_packet)
+                            toughness_results.append(toughness_result)
+                            toughness_mutations = (*toughness_mutations, *toughness_result.mutations)
+                            current_state = self.reducer.apply_all(current_state, toughness_result.mutations)
+                            ordered_mutations.extend(toughness_result.mutations)
+                            runtime_records.extend(toughness_result.records)
                     ability_result = self.ability_tasks.execute_callback(
                         current_state,
                         phases=ability_phases,
@@ -329,6 +370,13 @@ class CombatExecutor:
                 source="rulebook",
                 process_only=True,
                 payload={"emissions": [emission.to_json() for emission in damage_emissions]},
+                trace={"definition_id": action_definition.definition_id},
+            ).to_json(),
+            SettlementRecord(
+                record_type="toughness_emissions",
+                source="rulebook",
+                process_only=True,
+                payload={"emissions": [emission.to_json() for emission in toughness_emissions]},
                 trace={"definition_id": action_definition.definition_id},
             ).to_json(),
             SettlementRecord(
@@ -445,6 +493,11 @@ class CombatExecutor:
                 "executable_damage_emission_count": len(
                     [emission for emission in damage_emissions if emission.coverage_status == "executable"]
                 ),
+                "toughness_emission_ids": [emission.toughness_emission_id for emission in toughness_emissions],
+                "toughness_emission_count": len(toughness_emissions),
+                "executable_toughness_emission_count": len(
+                    [emission for emission in toughness_emissions if emission.coverage_status == "executable"]
+                ),
                 "definition_id": action_definition.definition_id,
                 "target_ok": target_result.ok,
                 "resource_ok": resource_result.ok,
@@ -463,7 +516,9 @@ class CombatExecutor:
                 "trigger_mutation_count": len(trigger_mutations),
                 "ability_task_mutation_count": len(ability_task_mutations),
                 "damage_mutation_count": len(damage_mutations),
+                "toughness_mutation_count": len(toughness_mutations),
                 "damage_ok": all(result.ok for result in damage_results) if damage_results else None,
+                "toughness_ok": all(result.ok for result in toughness_results) if toughness_results else None,
                 "damage_formula_family": action_definition.damage_formula_family,
             },
         )
@@ -542,6 +597,19 @@ def _damage_emission_blocked_reason(damage_emissions) -> str:
     if blocked_reasons:
         return ",".join(dict.fromkeys(blocked_reasons))
     return "no_executable_damage_emission"
+
+
+def _toughness_emission_blocked_reason(toughness_emissions) -> str:
+    if not toughness_emissions:
+        return "toughness_emission_missing"
+    blocked_reasons = [
+        emission.blocked_reason
+        for emission in toughness_emissions
+        if getattr(emission, "blocked_reason", "")
+    ]
+    if blocked_reasons:
+        return ",".join(dict.fromkeys(blocked_reasons))
+    return "no_executable_toughness_emission"
 
 
 def _metadata_bool(metadata: dict[str, JSONValue], key: str, default: bool) -> bool:
@@ -670,6 +738,37 @@ def _damage_packet(
             "primary_action_target_id": damage_plan.primary_action_target_id,
             "per_hit_target_context_not_implemented": True,
             "target_group_multiplier_not_implemented": damage_plan.target_group_multiplier_not_implemented,
+        },
+    )
+
+
+def _toughness_plans_for_damage_plan(
+    toughness_plans: tuple[ToughnessPlan, ...],
+    damage_plan: DamagePlan,
+) -> tuple[ToughnessPlan, ...]:
+    return tuple(
+        plan
+        for plan in toughness_plans
+        if plan.hit_profile_id == damage_plan.hit_profile_id and plan.target_id == damage_plan.target_id
+    )
+
+
+def _toughness_packet(command: ActionCommand, toughness_plan: ToughnessPlan) -> ToughnessPacket:
+    return ToughnessPacket(
+        attacker_id=command.actor_id,
+        target_id=toughness_plan.target_id,
+        toughness_emission_id=toughness_plan.toughness_emission_id,
+        source_task_id=toughness_plan.source_task_id,
+        hit_profile_id=toughness_plan.hit_profile_id,
+        element_type=toughness_plan.element_type,
+        amount=toughness_plan.toughness_amount,
+        target_group=toughness_plan.target_group,
+        coverage_status="executable" if not toughness_plan.blocked_reason else "blocked",
+        source_trace=toughness_plan.source_trace,
+        metadata={
+            "primary_action_target_id": toughness_plan.primary_action_target_id,
+            "toughness_amount_source": toughness_plan.toughness_amount_source,
+            "source_trace": toughness_plan.source_trace,
         },
     )
 

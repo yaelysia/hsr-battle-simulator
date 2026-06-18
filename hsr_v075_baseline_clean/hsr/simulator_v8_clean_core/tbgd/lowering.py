@@ -24,6 +24,7 @@ from ..rules.ir import (
     HitProfileIR,
     IRSource,
     RuleEntity,
+    ToughnessEmissionIR,
     TriggerIR,
 )
 
@@ -169,6 +170,11 @@ class TBGDLowering:
             ability_task_effects,
             hit_profiles,
         )
+        toughness_emissions = _lower_toughness_emissions(
+            ability_tasks,
+            ability_task_effects,
+            hit_profiles,
+        )
         for relative_path, _, id_key in ACTION_DEFINITION_TABLES:
             table_stats[f"action_definitions:{relative_path}"] = self._table_stats(relative_path, id_key)
 
@@ -196,6 +202,7 @@ class TBGDLowering:
             action_events=tuple(action_events),
             hit_profiles=tuple(hit_profiles),
             damage_emissions=tuple(damage_emissions),
+            toughness_emissions=tuple(toughness_emissions),
             triggers=tuple(triggers),
             effects=tuple(effects),
             conditions=tuple(conditions),
@@ -225,6 +232,7 @@ class TBGDLowering:
                     "ability_phase_count": len(ability_phases),
                     "ability_task_count": len(ability_tasks),
                     "damage_emission_count": len(damage_emissions),
+                    "toughness_emission_count": len(toughness_emissions),
                 },
                 "combatant_profile_status": {
                     "lowered_count": len(combatant_profiles),
@@ -1631,6 +1639,52 @@ def _lower_damage_emissions(
     return emissions
 
 
+def _lower_toughness_emissions(
+    tasks: list[AbilityTaskIR],
+    effects: list[EffectIR],
+    hit_profiles: list[HitProfileIR],
+) -> list[ToughnessEmissionIR]:
+    effect_by_id = {effect.effect_id: effect for effect in effects}
+    profiles_by_action: dict[tuple[str, int], list[HitProfileIR]] = {}
+    tasks_by_action: dict[tuple[str, int], list[AbilityTaskIR]] = {}
+    for profile in hit_profiles:
+        profiles_by_action.setdefault((profile.action_id, profile.level), []).append(profile)
+    for task in tasks:
+        if task.opcode in DAMAGE_EMISSION_OPCODES:
+            tasks_by_action.setdefault((task.action_id, task.level), []).append(task)
+
+    emissions: list[ToughnessEmissionIR] = []
+    for action_key, action_tasks in tasks_by_action.items():
+        action_profiles = tuple(sorted(
+            profiles_by_action.get(action_key, ()),
+            key=lambda profile: (profile.hit_index, profile.target_group, profile.hit_profile_id),
+        ))
+        for task in sorted(action_tasks, key=lambda item: (item.phase_id, item.callback_kind, item.task_path, item.task_id)):
+            effect = effect_by_id.get(task.effect_id)
+            target_profiles = action_profiles or (None,)
+            for profile in target_profiles:
+                blocked_reason = _toughness_emission_blocked_reason(task, effect, profile)
+                emissions.append(
+                    ToughnessEmissionIR(
+                        toughness_emission_id=_toughness_emission_id(task, profile),
+                        action_id=task.action_id,
+                        level=task.level,
+                        phase_id=task.phase_id,
+                        source_task_id=task.task_id,
+                        hit_profile_id=profile.hit_profile_id if profile else "",
+                        target_group=profile.target_group if profile else "unknown",
+                        element_type=profile.element_type if profile else None,
+                        toughness_amount_expr=profile.stance_expr
+                        if profile
+                        else {"kind": "missing", "blocked_reason": "missing_hit_profile"},
+                        source=_toughness_emission_source(task, effect, profile),
+                        coverage_status="blocked" if blocked_reason else "executable",
+                        blocked_reason=blocked_reason,
+                    )
+                )
+    return emissions
+
+
 def _damage_emission_id(task: AbilityTaskIR, profile: HitProfileIR | None) -> str:
     hit_id = profile.hit_profile_id if profile else "missing_hit_profile"
     return f"damage_emission:{task.task_id}:{hit_id}"
@@ -1692,6 +1746,59 @@ def _damage_emission_target_group_blocked_reason(target_alias: str | None, targe
     if target_alias == "AllEnemy":
         return "" if target_group == "selected" else f"damage_target_group_mismatch:{target_alias}:{target_group}"
     return f"unsupported_damage_target_alias:{target_alias}"
+
+
+def _toughness_emission_id(task: AbilityTaskIR, profile: HitProfileIR | None) -> str:
+    hit_id = profile.hit_profile_id if profile else "missing_hit_profile"
+    return f"toughness_emission:{task.task_id}:{hit_id}"
+
+
+def _toughness_emission_source(
+    task: AbilityTaskIR,
+    effect: EffectIR | None,
+    profile: HitProfileIR | None,
+) -> IRSource:
+    payload = effect.payload if effect else {}
+    return IRSource(
+        source_path=task.source.source_path,
+        raw_type="AbilityToughnessEmission",
+        raw_id=task.opcode,
+        evidence={
+            **task.source.evidence,
+            "task_id": task.task_id,
+            "effect_id": task.effect_id,
+            "target_alias": _target_alias(payload.get("TargetType")),
+            "hit_profile_id": profile.hit_profile_id if profile else "",
+            "hit_profile_source": profile.source.to_json() if profile else None,
+            "stance_source": profile.stance_source if profile else {},
+        },
+    )
+
+
+def _toughness_emission_blocked_reason(
+    task: AbilityTaskIR,
+    effect: EffectIR | None,
+    profile: HitProfileIR | None,
+) -> str:
+    if effect is None:
+        return "toughness_emission_effect_missing"
+    payload = effect.payload
+    target_alias = _target_alias(payload.get("TargetType"))
+    if target_alias not in DAMAGE_EMISSION_TARGET_ALIASES:
+        return f"unsupported_toughness_target_alias:{target_alias}"
+    if not isinstance(payload.get("AttackProperty"), dict):
+        return "toughness_emission_attack_property_missing"
+    if profile is None:
+        return "toughness_emission_hit_profile_missing"
+    target_group_reason = _damage_emission_target_group_blocked_reason(target_alias, profile.target_group)
+    if target_group_reason:
+        return target_group_reason.replace("damage_", "toughness_", 1)
+    if profile.coverage_status != "executable":
+        return f"hit_profile_not_executable:{profile.blocked_reason or profile.coverage_status}"
+    amount_expr = profile.stance_expr
+    if amount_expr.get("kind") != "fixed":
+        return amount_expr.get("blocked_reason") or "toughness_amount_not_executable"
+    return ""
 
 
 def _action_event_from_definition(

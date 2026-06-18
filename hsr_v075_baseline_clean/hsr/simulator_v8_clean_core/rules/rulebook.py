@@ -16,6 +16,7 @@ from .ir import (
     FormulaIR,
     HitProfileIR,
     RuleEntity,
+    ToughnessEmissionIR,
     TriggerIR,
 )
 
@@ -123,6 +124,32 @@ class RuleBook:
             {
                 key: tuple(sorted(value, key=lambda item: (item.hit_profile_id, item.damage_emission_id)))
                 for key, value in damage_emissions_by_task.items()
+            },
+        )
+        toughness_emissions_by_action: dict[tuple[str, int], list[ToughnessEmissionIR]] = {}
+        toughness_emissions_by_task: dict[str, list[ToughnessEmissionIR]] = {}
+        for emission in self.ir.toughness_emissions:
+            toughness_emissions_by_action.setdefault((emission.action_id, emission.level), []).append(emission)
+            toughness_emissions_by_task.setdefault(emission.source_task_id, []).append(emission)
+        object.__setattr__(
+            self,
+            "_toughness_emissions",
+            {emission.toughness_emission_id: emission for emission in self.ir.toughness_emissions},
+        )
+        object.__setattr__(
+            self,
+            "_toughness_emissions_by_action",
+            {
+                key: tuple(sorted(value, key=lambda item: (item.source_task_id, item.hit_profile_id, item.toughness_emission_id)))
+                for key, value in toughness_emissions_by_action.items()
+            },
+        )
+        object.__setattr__(
+            self,
+            "_toughness_emissions_by_task",
+            {
+                key: tuple(sorted(value, key=lambda item: (item.hit_profile_id, item.toughness_emission_id)))
+                for key, value in toughness_emissions_by_task.items()
             },
         )
         object.__setattr__(self, "_effects", {effect.effect_id: effect for effect in self.ir.effects})
@@ -255,6 +282,15 @@ class RuleBook:
 
     def damage_emissions_for_task(self, task_id: str) -> tuple[DamageEmissionIR, ...]:
         return self._damage_emissions_by_task.get(task_id, ())
+
+    def toughness_emission(self, toughness_emission_id: str) -> ToughnessEmissionIR | None:
+        return self._toughness_emissions.get(toughness_emission_id)
+
+    def toughness_emissions_for_action(self, action_id: str, level: int) -> tuple[ToughnessEmissionIR, ...]:
+        return self._toughness_emissions_by_action.get((action_id, level), ())
+
+    def toughness_emissions_for_task(self, task_id: str) -> tuple[ToughnessEmissionIR, ...]:
+        return self._toughness_emissions_by_task.get(task_id, ())
 
     def action_ability_binding(self, action_id: str, level: int) -> ActionAbilityBindingIR | None:
         return self._action_ability_bindings.get((action_id, level))
