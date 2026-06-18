@@ -16,7 +16,7 @@ from ..rules.rulebook import RuleBook
 from ..scenarios.build_state import ScenarioStateBuilder
 from ..scenarios.identity import IdentityResolver
 from ..scenarios.loader import ScenarioLoader
-from ..systems.effect import EffectRegistry
+from ..systems.effect import EffectExecutionContext, EffectRegistry
 from ..systems.status import StatusSystem
 from ..tbgd.coverage import build_coverage_matrix
 from ..tbgd.discovery import TBGDDiscovery
@@ -38,6 +38,7 @@ from .validate_v0_214 import (
     REMOVE_OPCODES,
     REMOVE_SELF_OPCODES,
     SHIELD_OPCODES,
+    _effect_transition,
     _fixed_or_blocked_case,
     _mechanism_bar_case,
     _remove_effect_case,
@@ -315,22 +316,24 @@ def _existing_effect_cases(
             "RemoveSelfModifier",
         )
     )
-    heal_case = _fixed_or_blocked_case(
+    heal_case = _bound_numeric_effect_case(
+        rules,
         registry,
         _with_damaged_actor(state, command.actor_id),
         command,
-        _select_fixed_amount_effect(ir, HEAL_OPCODES),
-        _select_blocked_effect(ir, HEAL_OPCODES),
+        HEAL_OPCODES,
         "heal",
+        _select_blocked_effect(ir, HEAL_OPCODES),
     )
     cases["effect_heal"] = _with_replay(_mark_effect_case(heal_case, "structured_predicate_or_blocked", "HealHP"))
-    shield_case = _fixed_or_blocked_case(
+    shield_case = _bound_numeric_effect_case(
+        rules,
         registry,
         state,
         command,
-        _select_fixed_amount_effect(ir, SHIELD_OPCODES),
-        _select_blocked_effect(ir, SHIELD_OPCODES),
+        SHIELD_OPCODES,
         "shield",
+        _select_blocked_effect(ir, SHIELD_OPCODES),
     )
     cases["effect_shield"] = _with_replay(_mark_effect_case(shield_case, "structured_predicate_or_blocked", "Shield"))
     mechanism_case = _mechanism_bar_case(
@@ -346,6 +349,210 @@ def _existing_effect_cases(
         _mark_effect_case(modify_sp, "manual_input_binding_smoke", "ModifySPNew")
     )
     return cases
+
+
+MAINLINE_EFFECT_PREFIXES = (
+    "Config/ConfigAbility/Avatar/",
+    "Config/ConfigAbility/Monster/",
+    "Config/ConfigAbility/Servant/",
+)
+EXCLUDED_EFFECT_SOURCE_MARKERS = (
+    "Activity",
+    "AetherDivide",
+    "BattleEvent",
+    "Currency",
+    "Fate",
+    "GridFight",
+    "MazeBuff",
+    "Rogue",
+    "Story",
+)
+SUPPORTED_VALIDATION_ALIASES = {"Caster", "ModifierOwnerEntity", "ParamEntity", "CurrentActionTarget"}
+
+
+def _bound_numeric_effect_case(
+    rules: RuleBook,
+    registry: EffectRegistry,
+    base_state: BattleState,
+    command: ActionCommand,
+    opcodes: tuple[str, ...],
+    record_type: str,
+    blocked_effect: EffectIR | None,
+) -> dict[str, Any]:
+    selected = _select_fixed_or_status_bound_amount_effect(rules.ir, rules, opcodes)
+    if selected is None:
+        return {
+            "mode": "blocked_no_executable_mainline_sample",
+            "effect": blocked_effect,
+            "transition": None,
+            "selection": _effect_selection(blocked_effect, "structured_predicate_blocked", record_type),
+        }
+    effect, binding = selected
+    state = base_state
+    if binding:
+        state = _with_status_dynamic_binding(base_state, command.actor_id, effect, binding)
+    target_id = _effect_target_id(effect, command.actor_id)
+    result = registry.execute(
+        effect,
+        EffectExecutionContext(
+            state=state,
+            caster_id=command.actor_id,
+            source_id=f"validation:{VALIDATION_VERSION}:{record_type}:structured:{effect.effect_id}",
+            owner_id=command.actor_id,
+            param_entity_id=command.actor_id,
+            current_action_target_id=command.actor_id,
+        ),
+    )
+    after = MutationReducer().apply_all(state, result.mutations)
+    transition = _effect_transition(
+        command=command,
+        before_state=state,
+        after_state=after,
+        effect=effect,
+        effect_result=result,
+        target_id=target_id,
+        coverage_id=f"{VALIDATION_VERSION}_{record_type}_structured",
+    )
+    selection = _effect_selection(effect, "structured_predicate", record_type)
+    selection.update(
+        {
+            "amount_kind": _amount_kind(effect),
+            "binding_source": binding["source_type"] if binding else "fixed_amount",
+            "binding_hash": binding.get("hash", "") if binding else "",
+            "modifier_definition_source": binding.get("modifier_definition_source", {}) if binding else {},
+        }
+    )
+    return {
+        "mode": "status_bound_dynamic_executable" if binding else "fixed_executable",
+        "effect": effect,
+        "result": result,
+        "transition": transition,
+        "before_state": state,
+        "selection": selection,
+        "binding": binding or {},
+    }
+
+
+def _select_fixed_or_status_bound_amount_effect(
+    ir: CanonicalIR,
+    rules: RuleBook,
+    opcodes: tuple[str, ...],
+) -> tuple[EffectIR, dict[str, Any] | None] | None:
+    for effect in sorted(ir.effects, key=lambda item: (item.source.source_path, item.effect_id)):
+        if effect.opcode not in opcodes or effect.coverage_status != "executable":
+            continue
+        if not _is_mainline_effect_source(effect.source.source_path):
+            continue
+        standard = effect.payload.get("standard")
+        if not isinstance(standard, dict) or standard.get("target_alias") not in SUPPORTED_VALIDATION_ALIASES:
+            continue
+        amount = standard.get("amount")
+        if _fixed_amount_value(amount) is not None:
+            return effect, None
+        hash_key = _dynamic_hash_key(amount)
+        if not hash_key:
+            continue
+        binding = _modifier_dynamic_hash_binding(rules, effect.source.raw_id, hash_key)
+        if binding is not None:
+            return effect, binding
+    return None
+
+
+def _is_mainline_effect_source(source_path: str) -> bool:
+    return source_path.startswith(MAINLINE_EFFECT_PREFIXES) and not any(
+        marker in source_path for marker in EXCLUDED_EFFECT_SOURCE_MARKERS
+    )
+
+
+def _fixed_amount_value(amount: object) -> float | None:
+    if isinstance(amount, dict) and amount.get("kind") == "fixed" and isinstance(amount.get("value"), (int, float)):
+        return float(amount["value"])
+    return None
+
+
+def _dynamic_hash_key(amount: object) -> str:
+    if isinstance(amount, dict) and amount.get("kind") == "dynamic_hash" and amount.get("hash") is not None:
+        return str(amount["hash"])
+    return ""
+
+
+def _modifier_dynamic_hash_binding(
+    rules: RuleBook,
+    modifier_name: str,
+    hash_key: str,
+) -> dict[str, Any] | None:
+    definition = rules.modifier_definition(modifier_name)
+    if definition is None:
+        return None
+    bindings = definition.fields.get("dynamic_value_bindings")
+    by_hash = bindings.get("by_hash") if isinstance(bindings, dict) else None
+    binding = by_hash.get(hash_key) if isinstance(by_hash, dict) else None
+    if not isinstance(binding, dict):
+        return None
+    return {
+        "hash": hash_key,
+        "value": 123.0,
+        "source_type": "status_instance",
+        "modifier_name": modifier_name,
+        "modifier_definition_source": definition.source.to_json(),
+        "binding": binding,
+    }
+
+
+def _with_status_dynamic_binding(
+    state: BattleState,
+    unit_id: str,
+    effect: EffectIR,
+    binding: dict[str, Any],
+) -> BattleState:
+    unit = state.units[unit_id]
+    modifier_name = str(binding["modifier_name"])
+    instance_id = f"status_instance:validation:{VALIDATION_VERSION}:{modifier_name}"
+    detail = {
+        "instance_id": instance_id,
+        "status_id": modifier_name,
+        "modifier_name": modifier_name,
+        "owner_id": unit_id,
+        "source_id": f"validation:{VALIDATION_VERSION}:status_dynamic_binding:{effect.effect_id}",
+        "source_trace": {
+            "effect_id": effect.effect_id,
+            "effect_source": effect.source.to_json(),
+            "modifier_definition_source": binding["modifier_definition_source"],
+            "dynamic_value_binding": binding["binding"],
+        },
+        "dynamic_values": {"__by_hash": {str(binding["hash"]): float(binding["value"])}},
+    }
+    details = tuple(item for item in unit.flags.get("status_details", ()) if isinstance(item, dict))
+    flags = {**unit.flags, "status_details": [*details, detail]}
+    statuses = tuple(dict.fromkeys((*unit.statuses, modifier_name)))
+    updated_unit = replace(unit, statuses=statuses, flags=flags)
+    return replace(state, units={**state.units, unit_id: updated_unit})
+
+
+def _effect_target_id(effect: EffectIR, actor_id: str) -> str:
+    standard = effect.payload.get("standard")
+    alias = standard.get("target_alias") if isinstance(standard, dict) else ""
+    if alias in {"Caster", "ModifierOwnerEntity", "ParamEntity", "CurrentActionTarget"}:
+        return actor_id
+    return actor_id
+
+
+def _amount_kind(effect: EffectIR) -> str:
+    standard = effect.payload.get("standard")
+    amount = standard.get("amount") if isinstance(standard, dict) else None
+    return str(amount.get("kind") or "") if isinstance(amount, dict) else ""
+
+
+def _effect_selection(effect: EffectIR | None, selection_mode: str, mechanism: str) -> dict[str, Any]:
+    if effect is None:
+        return {"selection_mode": selection_mode, "mechanism": mechanism, "missing_effect": True}
+    return {
+        "selection_mode": selection_mode,
+        "mechanism": mechanism,
+        "opcode": effect.opcode,
+        "coverage_status": effect.coverage_status,
+        "source_trace": effect.source.to_json(),
+    }
 
 
 def _status_ledger_case(
@@ -613,8 +820,8 @@ def _mechanism_trust_matrix(
         "status_lifecycle": _trust_entry("status_system" in audited_sources, False, TRUSTED, "Add/Remove lifecycle mutations require executable EffectIR and modifier definition"),
         "add_modifier": _trust_entry(_has_transition(status_case), False, TRUSTED, "real TBGD AddModifier source is audited"),
         "remove_modifier": _trust_entry(_has_transition(effect_cases.get("effect_remove_modifier")), False, TRUSTED, "real TBGD RemoveModifier source is audited"),
-        "heal": _effect_trust_entry(effect_cases.get("effect_heal"), "fixed HealHP source is audited when present; otherwise blocked"),
-        "shield": _effect_trust_entry(effect_cases.get("effect_shield"), "fixed shield source is audited when present; otherwise blocked"),
+        "heal": _effect_trust_entry(effect_cases.get("effect_heal"), "fixed or status-bound HealHP source is audited when present; unsupported formula families remain blocked"),
+        "shield": _effect_trust_entry(effect_cases.get("effect_shield"), "fixed or status-bound shield source is audited when present; unsupported formula families remain blocked"),
         "resource_delta": _resource_delta_trust_entry(effect_cases.get("effect_modify_sp")),
         "dynamic_value_store": _trust_entry(_has_transition(dynamic_value_case), False, TRUSTED, "real dynamic value effect writes DynamicValueStore through effect_system"),
         "trigger_window": _trust_entry(_has_trigger_window(damage_case), False, STRUCTURAL, "actor/primary-target local trigger windows are represented; global/per-hit scope remains partial"),

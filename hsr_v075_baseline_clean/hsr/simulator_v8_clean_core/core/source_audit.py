@@ -214,6 +214,8 @@ class RuntimeSourceAuditor:
                 violations.append(_violation(mutation, "numeric_evaluation_missing", missing_field="numeric_evaluation"))
             elif evaluation.get("ok") is False:
                 violations.append(_violation(mutation, "mutation_has_failed_numeric_evaluation", details={"numeric_evaluation": evaluation}))
+            elif evaluation.get("ok") is True:
+                _audit_dynamic_numeric_binding(mutation, evaluation, violations)
             return _trace(
                 mutation,
                 records,
@@ -292,6 +294,8 @@ class RuntimeSourceAuditor:
         evaluations = metadata.get("numeric_evaluations")
         if isinstance(evaluation, dict) and evaluation.get("ok") is False:
             violations.append(_violation(mutation, "mutation_has_failed_numeric_evaluation", details={"numeric_evaluation": evaluation}))
+        if isinstance(evaluation, dict) and evaluation.get("ok") is True:
+            _audit_dynamic_numeric_binding(mutation, evaluation, violations)
         if isinstance(evaluations, dict):
             failed = {
                 str(key): value
@@ -311,6 +315,9 @@ class RuntimeSourceAuditor:
             )
             if failed and not ok_values and not has_fixed_mechanism_state:
                 violations.append(_violation(mutation, "mutation_has_only_failed_numeric_evaluations", details={"numeric_evaluations": failed}))
+            for value in ok_values.values():
+                if isinstance(value, dict):
+                    _audit_dynamic_numeric_binding(mutation, value, violations)
         return _trace(mutation, records, {"effect_id": effect_id or "", "opcode": str(metadata.get("opcode") or "")})
 
     def _audit_queue_mutation(
@@ -390,6 +397,46 @@ def _audit_source(
         violations.append(_violation(mutation, "source_ir_not_executable", details={"coverage_status": coverage_status, "source": source.to_json()}))
     elif check_status and coverage_status in NON_MUTATING_STATUSES:
         violations.append(_violation(mutation, "non_mutating_ir_produced_mutation", details={"coverage_status": coverage_status, "source": source.to_json()}))
+
+
+def _audit_dynamic_numeric_binding(
+    mutation: Mutation,
+    evaluation: dict[str, JSONValue],
+    violations: list[SourceAuditViolation],
+) -> None:
+    if evaluation.get("expression_kind") != "dynamic_hash":
+        return
+    bindings = evaluation.get("bindings")
+    if not isinstance(bindings, dict) or not bindings:
+        violations.append(_violation(mutation, "dynamic_numeric_binding_missing", missing_field="numeric_evaluation.bindings"))
+        return
+    source_type = str(bindings.get("source_type") or "")
+    if source_type == "explicit_dynamic_values":
+        violations.append(
+            _violation(
+                mutation,
+                "manual_dynamic_value_binding_not_allowed_for_trusted_mutation",
+                missing_field="numeric_evaluation.bindings.source_type",
+                details={"bindings": bindings},
+            )
+        )
+        return
+    if source_type not in {"status_instance", "dynamic_value_store"}:
+        violations.append(
+            _violation(
+                mutation,
+                "dynamic_numeric_binding_source_not_trusted",
+                missing_field="numeric_evaluation.bindings.source_type",
+                details={"bindings": bindings},
+            )
+        )
+        return
+    entry = bindings.get("entry")
+    if not isinstance(entry, dict):
+        violations.append(_violation(mutation, "dynamic_numeric_binding_entry_missing", missing_field="numeric_evaluation.bindings.entry"))
+        return
+    if not isinstance(entry.get("source_trace"), dict):
+        violations.append(_violation(mutation, "dynamic_numeric_binding_source_trace_missing", missing_field="numeric_evaluation.bindings.entry.source_trace"))
 
 
 def _required_str(

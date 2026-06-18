@@ -1,0 +1,198 @@
+{
+  "heal": {
+    "coverage": {
+      "effect_id": "effect:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Huohuo_00_Ability.json:MAvatar_Advanced_Huohuo_Passive_HealHP:11:callback:4:HealHP",
+      "executor": "v0_227_heal_blocked",
+      "mutation_count": 0,
+      "opcode": "HealHP",
+      "unsupported": [
+        "unsupported_formula:formula_type_not_supported:HealByHealerMaxHP"
+      ]
+    },
+    "effect": {
+      "coverage_status": "blocked",
+      "effect_id": "effect:Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Huohuo_00_Ability.json:MAvatar_Advanced_Huohuo_Passive_HealHP:11:callback:4:HealHP",
+      "opcode": "HealHP",
+      "payload": {
+        "DisplayData": {
+          "FixedPosition": false
+        },
+        "FormulaType": "HealByHealerMaxHP",
+        "HealPercentage": {
+          "IsDynamic": true,
+          "PostfixExpr": {
+            "DynamicHashes": [
+              109982389
+            ],
+            "FixedValues": [],
+            "OpCodes": "AQAR"
+          }
+        },
+        "ModifyValue": {
+          "IsDynamic": true,
+          "PostfixExpr": {
+            "DynamicHashes": [
+              -790698825
+            ],
+            "FixedValues": [],
+            "OpCodes": "AQAR"
+          }
+        },
+        "TargetType": {
+          "$type": "RPG.GameCore.TargetAlias",
+          "Alias": "ModifierOwnerEntity"
+        },
+        "standard": {
+          "amount": {
+            "hash": -790698825,
+            "kind": "dynamic_hash",
+            "raw": {
+              "IsDynamic": true,
+              "PostfixExpr": {
+                "DynamicHashes": [
+                  -790698825
+                ],
+                "FixedValues": [],
+                "OpCodes": "AQAR"
+              }
+            },
+            "supported": true
+          },
+          "blocked_reason": "formula_type_not_supported:HealByHealerMaxHP",
+          "formula_type": "HealByHealerMaxHP",
+          "kind": "heal",
+          "percentage": {
+            "hash": 109982389,
+            "kind": "dynamic_hash",
+            "raw": {
+              "IsDynamic": true,
+              "PostfixExpr": {
+                "DynamicHashes": [
+                  109982389
+                ],
+                "FixedValues": [],
+                "OpCodes": "AQAR"
+              }
+            },
+            "supported": true
+          },
+          "raw_formula_fields": {
+            "FormulaType": "HealByHealerMaxHP",
+            "HealPercentage": {
+              "IsDynamic": true,
+              "PostfixExpr": {
+                "DynamicHashes": [
+                  109982389
+                ],
+                "FixedValues": [],
+                "OpCodes": "AQAR"
+              }
+            },
+            "ModifyValue": {
+              "IsDynamic": true,
+              "PostfixExpr": {
+                "DynamicHashes": [
+                  -790698825
+                ],
+                "FixedValues": [],
+                "OpCodes": "AQAR"
+              }
+            }
+          },
+          "target_alias": "ModifierOwnerEntity"
+        }
+      },
+      "source": {
+        "evidence": {
+          "branch": "callback",
+          "callback_index": 11,
+          "task_index": 4
+        },
+        "raw_id": "MAvatar_Advanced_Huohuo_Passive_HealHP",
+        "raw_type": "GlobalModifiers",
+        "source_path": "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Huohuo_00_Ability.json"
+      }
+    },
+    "mutation_count": 0,
+    "unsupported": [
+      "unsupported_formula:formula_type_not_supported:HealByHealerMaxHP"
+    ]
+  },
+  "shield": {
+    "coverage": {
+      "effect_id": "effect:Config/ConfigAbility/Avatar/Avatar_Aventurine_00_Ability.json:MAvatar_Aventurine_StackableShield:34:callback:1:StackShield",
+      "executor": "v0_227_shield_blocked",
+      "mutation_count": 0,
+      "opcode": "StackShield",
+      "unsupported": [
+        "unsupported_formula:fixed_or_bound_shield_value_required"
+      ]
+    },
+    "effect": {
+      "coverage_status": "blocked",
+      "effect_id": "effect:Config/ConfigAbility/Avatar/Avatar_Aventurine_00_Ability.json:MAvatar_Aventurine_StackableShield:34:callback:1:StackShield",
+      "opcode": "StackShield",
+      "payload": {
+        "MaxStack": {
+          "IsDynamic": true,
+          "PostfixExpr": {
+            "DynamicHashes": [
+              1079898730,
+              -1177161350
+            ],
+            "FixedValues": [],
+            "OpCodes": "AQABAQQR"
+          }
+        },
+        "StackValue": {
+          "IsDynamic": true,
+          "PostfixExpr": {
+            "DynamicHashes": [
+              -1200970748
+            ],
+            "FixedValues": [],
+            "OpCodes": "AQAR"
+          }
+        },
+        "standard": {
+          "amount": {
+            "kind": "missing",
+            "reason": "missing",
+            "supported": false,
+            "value": null
+          },
+          "blocked_reason": "fixed_or_bound_shield_value_required",
+          "formula_type": null,
+          "kind": "shield",
+          "percentage": {
+            "kind": "missing",
+            "reason": "missing",
+            "supported": false,
+            "value": null
+          },
+          "raw_formula_fields": {
+            "FormulaType": null,
+            "ShieldPercentage": null,
+            "ShieldValue": null
+          },
+          "shield_opcode": "StackShield",
+          "target_alias": null
+        }
+      },
+      "source": {
+        "evidence": {
+          "branch": "callback",
+          "callback_index": 34,
+          "task_index": 1
+        },
+        "raw_id": "MAvatar_Aventurine_StackableShield",
+        "raw_type": "GlobalModifiers",
+        "source_path": "Config/ConfigAbility/Avatar/Avatar_Aventurine_00_Ability.json"
+      }
+    },
+    "mutation_count": 0,
+    "unsupported": [
+      "unsupported_formula:fixed_or_bound_shield_value_required"
+    ]
+  }
+}

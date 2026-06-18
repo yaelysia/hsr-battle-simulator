@@ -121,7 +121,7 @@ ABILITY_TASK_CALLBACKS = ("OnStart", "OnAttack", "OnHit", "OnEnd")
 @dataclass(frozen=True)
 class LoweringLimits:
     max_records_per_table: int | None = None
-    max_ability_files: int | None = 120
+    max_ability_files: int | None = None
     max_callbacks_per_file: int = 200
 
 

@@ -1,0 +1,69 @@
+{
+  "entries": {
+    "condition_evaluator": {
+      "blocking_dependency": "",
+      "current_actionability": "not_applicable",
+      "reason": "condition-only checks do not produce mutation; source audit is not applicable",
+      "repaired": true,
+      "semantic_status": "trusted_for_current_scope",
+      "source_audit_applicable": false
+    },
+    "heal_fixed_or_status_bound": {
+      "blocking_dependency": "",
+      "current_actionability": "fixed_now",
+      "reason": "Mainline executable HealHP is selected and audited through status dynamic binding",
+      "repaired": true,
+      "semantic_status": "trusted_for_current_scope"
+    },
+    "hp_loss": {
+      "blocking_dependency": "",
+      "current_actionability": "fixed_now",
+      "reason": "Covered by v0_226 LoseHPByRatio fixed/bound ratio path",
+      "repaired": true,
+      "semantic_status": "trusted_for_current_scope"
+    },
+    "lowering_default_full_read": {
+      "blocking_dependency": "",
+      "current_actionability": "fixed_now",
+      "reason": "LoweringLimits defaults to full TBGD ability read",
+      "repaired": true,
+      "semantic_status": "trusted_for_current_scope"
+    },
+    "queue": {
+      "blocking_dependency": "no admitted executable queue opcode/effect lowering exists",
+      "current_actionability": "wait_for_dependency",
+      "reason": "cannot be made trusted without the named dependency",
+      "repaired": false,
+      "semantic_status": "blocked"
+    },
+    "shield_fixed_or_status_bound": {
+      "blocking_dependency": "",
+      "current_actionability": "fixed_now",
+      "reason": "Mainline executable InitShield is selected and audited through status dynamic binding",
+      "repaired": true,
+      "semantic_status": "trusted_for_current_scope"
+    },
+    "trigger_window": {
+      "blocking_dependency": "per-hit target context, global listener, and being-hit listener are not implemented",
+      "current_actionability": "wait_for_dependency",
+      "reason": "cannot be made trusted without the named dependency",
+      "repaired": false,
+      "semantic_status": "structural_only"
+    },
+    "true_damage": {
+      "blocking_dependency": "no admitted executable TBGD true-damage emission or effect source exists",
+      "current_actionability": "wait_for_dependency",
+      "reason": "cannot be made trusted without the named dependency",
+      "repaired": false,
+      "semantic_status": "structural_only"
+    },
+    "unsupported_heal_shield_formulas": {
+      "blocking_dependency": "",
+      "current_actionability": "fixed_now",
+      "reason": "Unsupported heal/shield formulas block without state mutation",
+      "repaired": true,
+      "semantic_status": "trusted_for_current_scope"
+    }
+  },
+  "ok": true
+}

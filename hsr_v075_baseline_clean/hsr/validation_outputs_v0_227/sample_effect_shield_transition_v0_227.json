@@ -1,0 +1,877 @@
+{
+  "after": {
+    "battle": {
+      "action_index": 0,
+      "current_window": "idle",
+      "phase": "scenario",
+      "turn_owner_id": "ally:saber",
+      "wave_index": 0
+    },
+    "coverage": {},
+    "event_index": 0,
+    "global_flags": {
+      "current_window": "idle",
+      "dynamic_value_store": {
+        "by_hash": {},
+        "by_name": {},
+        "entries": {}
+      },
+      "phase": "scenario",
+      "turn_owner_id": "ally:saber"
+    },
+    "max_skill_points": 5,
+    "metadata": {
+      "rng_state": "deterministic",
+      "snapshot_contract": "v0_203"
+    },
+    "pending_events": [],
+    "queues": {},
+    "resources": {
+      "max_skill_points": 5,
+      "skill_points": 3
+    },
+    "rng_events": [],
+    "rng_state": "deterministic",
+    "settlement": {},
+    "skill_points": 3,
+    "targeting": {},
+    "teams": {
+      "ally": [
+        "ally:saber"
+      ],
+      "enemy": [
+        "enemy:target"
+      ],
+      "summon": []
+    },
+    "timeline": {
+      "action_values": {
+        "ally:saber": 0.0,
+        "enemy:target": 0.0
+      },
+      "queues": {},
+      "turn_owner_id": "ally:saber"
+    },
+    "units": {
+      "ally:saber": {
+        "action_value": 0.0,
+        "attack": 3200.0,
+        "base_stats": {
+          "attack": 3200.0,
+          "defense": 900.0,
+          "max_hp": 3000.0,
+          "speed": 101.0
+        },
+        "defense": 900.0,
+        "derived_stats": {
+          "break_damage_added_ratio": 0.0,
+          "critical_chance": 0.05,
+          "critical_damage": 0.5,
+          "damage_added_ratio": 0.0,
+          "effect_hit_rate": 0.0,
+          "effect_resistance": 0.0
+        },
+        "energy": 60.0,
+        "flags": {
+          "position": 1,
+          "status_details": [
+            {
+              "dynamic_values": {
+                "__by_hash": {
+                  "-295141034": 123.0
+                }
+              },
+              "instance_id": "status_instance:validation:v0_225:MAvatar_Gepard_00_Ultra_Shield",
+              "modifier_name": "MAvatar_Gepard_00_Ultra_Shield",
+              "owner_id": "ally:saber",
+              "source_id": "validation:v0_225:status_dynamic_binding:effect:Config/ConfigAbility/Avatar/Avatar_Gepard_00_Ability.json:MAvatar_Gepard_00_Ultra_Shield:12:callback:0:InitShield",
+              "source_trace": {
+                "dynamic_value_binding": {
+                  "hash": "-295141034",
+                  "raw": {
+                    "ReadInfo": {
+                      "Index": 0,
+                      "Type": "None"
+                    }
+                  },
+                  "raw_path": "DynamicValues.Floats[-295141034]",
+                  "read_info": {
+                    "Index": 0,
+                    "Type": "None"
+                  },
+                  "value_type": "float"
+                },
+                "effect_id": "effect:Config/ConfigAbility/Avatar/Avatar_Gepard_00_Ability.json:MAvatar_Gepard_00_Ultra_Shield:12:callback:0:InitShield",
+                "effect_source": {
+                  "evidence": {
+                    "branch": "callback",
+                    "callback_index": 12,
+                    "task_index": 0
+                  },
+                  "raw_id": "MAvatar_Gepard_00_Ultra_Shield",
+                  "raw_type": "GlobalModifiers",
+                  "source_path": "Config/ConfigAbility/Avatar/Avatar_Gepard_00_Ability.json"
+                },
+                "modifier_definition_source": {
+                  "evidence": {
+                    "definition_kind": "modifier_definition",
+                    "map_name": "GlobalModifiers",
+                    "modifier_name": "MAvatar_Gepard_00_Ultra_Shield"
+                  },
+                  "raw_id": "MAvatar_Gepard_00_Ultra_Shield",
+                  "raw_type": "GlobalModifiers",
+                  "source_path": "Config/ConfigAbility/Avatar/Avatar_Gepard_00_Ability.json"
+                }
+              },
+              "status_id": "MAvatar_Gepard_00_Ultra_Shield"
+            }
+          ]
+        },
+        "hp": 3000.0,
+        "level": 80,
+        "max_energy": 120.0,
+        "max_hp": 3000.0,
+        "max_toughness": 0.0,
+        "modifiers": [],
+        "position": 1,
+        "recoverable_hp": 0.0,
+        "resources": {
+          "critical_chance": 0.05,
+          "critical_damage": 0.5,
+          "shield": 123.0
+        },
+        "shield": 123.0,
+        "side": "ally",
+        "speed": 101.0,
+        "status_details": [
+          {
+            "dynamic_values": {
+              "__by_hash": {
+                "-295141034": 123.0
+              }
+            },
+            "instance_id": "status_instance:validation:v0_225:MAvatar_Gepard_00_Ultra_Shield",
+            "modifier_name": "MAvatar_Gepard_00_Ultra_Shield",
+            "owner_id": "ally:saber",
+            "source_id": "validation:v0_225:status_dynamic_binding:effect:Config/ConfigAbility/Avatar/Avatar_Gepard_00_Ability.json:MAvatar_Gepard_00_Ultra_Shield:12:callback:0:InitShield",
+            "source_trace": {
+              "dynamic_value_binding": {
+                "hash": "-295141034",
+                "raw": {
+                  "ReadInfo": {
+                    "Index": 0,
+                    "Type": "None"
+                  }
+                },
+                "raw_path": "DynamicValues.Floats[-295141034]",
+                "read_info": {
+                  "Index": 0,
+                  "Type": "None"
+                },
+                "value_type": "float"
+              },
+              "effect_id": "effect:Config/ConfigAbility/Avatar/Avatar_Gepard_00_Ability.json:MAvatar_Gepard_00_Ultra_Shield:12:callback:0:InitShield",
+              "effect_source": {
+                "evidence": {
+                  "branch": "callback",
+                  "callback_index": 12,
+                  "task_index": 0
+                },
+                "raw_id": "MAvatar_Gepard_00_Ultra_Shield",
+                "raw_type": "GlobalModifiers",
+                "source_path": "Config/ConfigAbility/Avatar/Avatar_Gepard_00_Ability.json"
+              },
+              "modifier_definition_source": {
+                "evidence": {
+                  "definition_kind": "modifier_definition",
+                  "map_name": "GlobalModifiers",
+                  "modifier_name": "MAvatar_Gepard_00_Ultra_Shield"
+                },
+                "raw_id": "MAvatar_Gepard_00_Ultra_Shield",
+                "raw_type": "GlobalModifiers",
+                "source_path": "Config/ConfigAbility/Avatar/Avatar_Gepard_00_Ability.json"
+              }
+            },
+            "status_id": "MAvatar_Gepard_00_Ultra_Shield"
+          }
+        ],
+        "statuses": [
+          "MAvatar_Gepard_00_Ultra_Shield"
+        ],
+        "template_id": "avatar:1014",
+        "template_source": {
+          "id": "avatar:1014",
+          "kind": "avatar"
+        },
+        "toughness": 0.0,
+        "toughness_state": {
+          "break_delay": 0.0,
+          "broken": false,
+          "current": 0.0,
+          "maximum": 0.0,
+          "weakness_locked": false,
+          "weaknesses": []
+        },
+        "unit_id": "ally:saber"
+      },
+      "enemy:target": {
+        "action_value": 0.0,
+        "attack": 1000.0,
+        "base_stats": {
+          "attack": 1000.0,
+          "defense": 1000.0,
+          "max_hp": 10000.0,
+          "speed": 100.0
+        },
+        "defense": 1000.0,
+        "derived_stats": {
+          "break_damage_added_ratio": 0.0,
+          "critical_chance": 0.0,
+          "critical_damage": 0.0,
+          "damage_added_ratio": 0.0,
+          "effect_hit_rate": 0.0,
+          "effect_resistance": 0.0
+        },
+        "energy": 0.0,
+        "flags": {
+          "position": 1,
+          "weaknesses": [
+            "Fire",
+            "Thunder"
+          ]
+        },
+        "hp": 10000.0,
+        "level": 80,
+        "max_energy": 0.0,
+        "max_hp": 10000.0,
+        "max_toughness": 60.0,
+        "modifiers": [],
+        "position": 1,
+        "recoverable_hp": 0.0,
+        "resources": {},
+        "shield": 0.0,
+        "side": "enemy",
+        "speed": 100.0,
+        "status_details": [],
+        "statuses": [],
+        "template_id": "monster:1002011",
+        "template_source": {
+          "id": "monster:1002011",
+          "kind": "monster"
+        },
+        "toughness": 60.0,
+        "toughness_state": {
+          "break_delay": 0.0,
+          "broken": false,
+          "current": 60.0,
+          "maximum": 60.0,
+          "weakness_locked": false,
+          "weaknesses": [
+            "Fire",
+            "Thunder"
+          ]
+        },
+        "unit_id": "enemy:target"
+      }
+    },
+    "wave_index": 0
+  },
+  "before": {
+    "battle": {
+      "action_index": 0,
+      "current_window": "idle",
+      "phase": "scenario",
+      "turn_owner_id": "ally:saber",
+      "wave_index": 0
+    },
+    "coverage": {},
+    "event_index": 0,
+    "global_flags": {
+      "current_window": "idle",
+      "dynamic_value_store": {
+        "by_hash": {},
+        "by_name": {},
+        "entries": {}
+      },
+      "phase": "scenario",
+      "turn_owner_id": "ally:saber"
+    },
+    "max_skill_points": 5,
+    "metadata": {
+      "rng_state": "deterministic",
+      "snapshot_contract": "v0_203"
+    },
+    "pending_events": [],
+    "queues": {},
+    "resources": {
+      "max_skill_points": 5,
+      "skill_points": 3
+    },
+    "rng_events": [],
+    "rng_state": "deterministic",
+    "settlement": {},
+    "skill_points": 3,
+    "targeting": {},
+    "teams": {
+      "ally": [
+        "ally:saber"
+      ],
+      "enemy": [
+        "enemy:target"
+      ],
+      "summon": []
+    },
+    "timeline": {
+      "action_values": {
+        "ally:saber": 0.0,
+        "enemy:target": 0.0
+      },
+      "queues": {},
+      "turn_owner_id": "ally:saber"
+    },
+    "units": {
+      "ally:saber": {
+        "action_value": 0.0,
+        "attack": 3200.0,
+        "base_stats": {
+          "attack": 3200.0,
+          "defense": 900.0,
+          "max_hp": 3000.0,
+          "speed": 101.0
+        },
+        "defense": 900.0,
+        "derived_stats": {
+          "break_damage_added_ratio": 0.0,
+          "critical_chance": 0.05,
+          "critical_damage": 0.5,
+          "damage_added_ratio": 0.0,
+          "effect_hit_rate": 0.0,
+          "effect_resistance": 0.0
+        },
+        "energy": 60.0,
+        "flags": {
+          "position": 1,
+          "status_details": [
+            {
+              "dynamic_values": {
+                "__by_hash": {
+                  "-295141034": 123.0
+                }
+              },
+              "instance_id": "status_instance:validation:v0_225:MAvatar_Gepard_00_Ultra_Shield",
+              "modifier_name": "MAvatar_Gepard_00_Ultra_Shield",
+              "owner_id": "ally:saber",
+              "source_id": "validation:v0_225:status_dynamic_binding:effect:Config/ConfigAbility/Avatar/Avatar_Gepard_00_Ability.json:MAvatar_Gepard_00_Ultra_Shield:12:callback:0:InitShield",
+              "source_trace": {
+                "dynamic_value_binding": {
+                  "hash": "-295141034",
+                  "raw": {
+                    "ReadInfo": {
+                      "Index": 0,
+                      "Type": "None"
+                    }
+                  },
+                  "raw_path": "DynamicValues.Floats[-295141034]",
+                  "read_info": {
+                    "Index": 0,
+                    "Type": "None"
+                  },
+                  "value_type": "float"
+                },
+                "effect_id": "effect:Config/ConfigAbility/Avatar/Avatar_Gepard_00_Ability.json:MAvatar_Gepard_00_Ultra_Shield:12:callback:0:InitShield",
+                "effect_source": {
+                  "evidence": {
+                    "branch": "callback",
+                    "callback_index": 12,
+                    "task_index": 0
+                  },
+                  "raw_id": "MAvatar_Gepard_00_Ultra_Shield",
+                  "raw_type": "GlobalModifiers",
+                  "source_path": "Config/ConfigAbility/Avatar/Avatar_Gepard_00_Ability.json"
+                },
+                "modifier_definition_source": {
+                  "evidence": {
+                    "definition_kind": "modifier_definition",
+                    "map_name": "GlobalModifiers",
+                    "modifier_name": "MAvatar_Gepard_00_Ultra_Shield"
+                  },
+                  "raw_id": "MAvatar_Gepard_00_Ultra_Shield",
+                  "raw_type": "GlobalModifiers",
+                  "source_path": "Config/ConfigAbility/Avatar/Avatar_Gepard_00_Ability.json"
+                }
+              },
+              "status_id": "MAvatar_Gepard_00_Ultra_Shield"
+            }
+          ]
+        },
+        "hp": 3000.0,
+        "level": 80,
+        "max_energy": 120.0,
+        "max_hp": 3000.0,
+        "max_toughness": 0.0,
+        "modifiers": [],
+        "position": 1,
+        "recoverable_hp": 0.0,
+        "resources": {
+          "critical_chance": 0.05,
+          "critical_damage": 0.5
+        },
+        "shield": 0.0,
+        "side": "ally",
+        "speed": 101.0,
+        "status_details": [
+          {
+            "dynamic_values": {
+              "__by_hash": {
+                "-295141034": 123.0
+              }
+            },
+            "instance_id": "status_instance:validation:v0_225:MAvatar_Gepard_00_Ultra_Shield",
+            "modifier_name": "MAvatar_Gepard_00_Ultra_Shield",
+            "owner_id": "ally:saber",
+            "source_id": "validation:v0_225:status_dynamic_binding:effect:Config/ConfigAbility/Avatar/Avatar_Gepard_00_Ability.json:MAvatar_Gepard_00_Ultra_Shield:12:callback:0:InitShield",
+            "source_trace": {
+              "dynamic_value_binding": {
+                "hash": "-295141034",
+                "raw": {
+                  "ReadInfo": {
+                    "Index": 0,
+                    "Type": "None"
+                  }
+                },
+                "raw_path": "DynamicValues.Floats[-295141034]",
+                "read_info": {
+                  "Index": 0,
+                  "Type": "None"
+                },
+                "value_type": "float"
+              },
+              "effect_id": "effect:Config/ConfigAbility/Avatar/Avatar_Gepard_00_Ability.json:MAvatar_Gepard_00_Ultra_Shield:12:callback:0:InitShield",
+              "effect_source": {
+                "evidence": {
+                  "branch": "callback",
+                  "callback_index": 12,
+                  "task_index": 0
+                },
+                "raw_id": "MAvatar_Gepard_00_Ultra_Shield",
+                "raw_type": "GlobalModifiers",
+                "source_path": "Config/ConfigAbility/Avatar/Avatar_Gepard_00_Ability.json"
+              },
+              "modifier_definition_source": {
+                "evidence": {
+                  "definition_kind": "modifier_definition",
+                  "map_name": "GlobalModifiers",
+                  "modifier_name": "MAvatar_Gepard_00_Ultra_Shield"
+                },
+                "raw_id": "MAvatar_Gepard_00_Ultra_Shield",
+                "raw_type": "GlobalModifiers",
+                "source_path": "Config/ConfigAbility/Avatar/Avatar_Gepard_00_Ability.json"
+              }
+            },
+            "status_id": "MAvatar_Gepard_00_Ultra_Shield"
+          }
+        ],
+        "statuses": [
+          "MAvatar_Gepard_00_Ultra_Shield"
+        ],
+        "template_id": "avatar:1014",
+        "template_source": {
+          "id": "avatar:1014",
+          "kind": "avatar"
+        },
+        "toughness": 0.0,
+        "toughness_state": {
+          "break_delay": 0.0,
+          "broken": false,
+          "current": 0.0,
+          "maximum": 0.0,
+          "weakness_locked": false,
+          "weaknesses": []
+        },
+        "unit_id": "ally:saber"
+      },
+      "enemy:target": {
+        "action_value": 0.0,
+        "attack": 1000.0,
+        "base_stats": {
+          "attack": 1000.0,
+          "defense": 1000.0,
+          "max_hp": 10000.0,
+          "speed": 100.0
+        },
+        "defense": 1000.0,
+        "derived_stats": {
+          "break_damage_added_ratio": 0.0,
+          "critical_chance": 0.0,
+          "critical_damage": 0.0,
+          "damage_added_ratio": 0.0,
+          "effect_hit_rate": 0.0,
+          "effect_resistance": 0.0
+        },
+        "energy": 0.0,
+        "flags": {
+          "position": 1,
+          "weaknesses": [
+            "Fire",
+            "Thunder"
+          ]
+        },
+        "hp": 10000.0,
+        "level": 80,
+        "max_energy": 0.0,
+        "max_hp": 10000.0,
+        "max_toughness": 60.0,
+        "modifiers": [],
+        "position": 1,
+        "recoverable_hp": 0.0,
+        "resources": {},
+        "shield": 0.0,
+        "side": "enemy",
+        "speed": 100.0,
+        "status_details": [],
+        "statuses": [],
+        "template_id": "monster:1002011",
+        "template_source": {
+          "id": "monster:1002011",
+          "kind": "monster"
+        },
+        "toughness": 60.0,
+        "toughness_state": {
+          "break_delay": 0.0,
+          "broken": false,
+          "current": 60.0,
+          "maximum": 60.0,
+          "weakness_locked": false,
+          "weaknesses": [
+            "Fire",
+            "Thunder"
+          ]
+        },
+        "unit_id": "enemy:target"
+      }
+    },
+    "wave_index": 0
+  },
+  "command": {
+    "action_id": "avatar_skill:101401",
+    "action_level": 10,
+    "actor_id": "ally:saber",
+    "metadata": {
+      "effect_id": "effect:Config/ConfigAbility/Avatar/Avatar_Gepard_00_Ability.json:MAvatar_Gepard_00_Ultra_Shield:12:callback:0:InitShield",
+      "label": "Saber normal attack identity smoke",
+      "opcode": "InitShield",
+      "reset_actor_av": true
+    },
+    "queue_name": null,
+    "source": "manual",
+    "target_ids": [
+      "enemy:target"
+    ]
+  },
+  "contract_validation": {},
+  "coverage": {
+    "effect_id": "effect:Config/ConfigAbility/Avatar/Avatar_Gepard_00_Ability.json:MAvatar_Gepard_00_Ultra_Shield:12:callback:0:InitShield",
+    "executor": "v0_225_shield_structured",
+    "mutation_count": 1,
+    "opcode": "InitShield",
+    "unsupported": []
+  },
+  "events": [
+    {
+      "event_id": "event:0:v0_225_shield_structured",
+      "event_type": "effect.InitShield",
+      "payload": {
+        "effect_id": "effect:Config/ConfigAbility/Avatar/Avatar_Gepard_00_Ability.json:MAvatar_Gepard_00_Ultra_Shield:12:callback:0:InitShield",
+        "opcode": "InitShield"
+      },
+      "process_only": true,
+      "source_id": "ally:saber",
+      "target_id": "ally:saber",
+      "window": "effect_resolution"
+    }
+  ],
+  "mutations": [
+    {
+      "after": 123.0,
+      "before": 0.0,
+      "metadata": {
+        "amount": 123.0,
+        "caster_id": "ally:saber",
+        "effect_id": "effect:Config/ConfigAbility/Avatar/Avatar_Gepard_00_Ability.json:MAvatar_Gepard_00_Ultra_Shield:12:callback:0:InitShield",
+        "effect_source": {
+          "evidence": {
+            "branch": "callback",
+            "callback_index": 12,
+            "task_index": 0
+          },
+          "raw_id": "MAvatar_Gepard_00_Ultra_Shield",
+          "raw_type": "GlobalModifiers",
+          "source_path": "Config/ConfigAbility/Avatar/Avatar_Gepard_00_Ability.json"
+        },
+        "numeric_evaluation": {
+          "bindings": {
+            "entry": {
+              "hash": "-295141034",
+              "name": null,
+              "owner_id": "ally:saber",
+              "scope": "status",
+              "source_trace": {
+                "dynamic_value_binding": {
+                  "hash": "-295141034",
+                  "raw": {
+                    "ReadInfo": {
+                      "Index": 0,
+                      "Type": "None"
+                    }
+                  },
+                  "raw_path": "DynamicValues.Floats[-295141034]",
+                  "read_info": {
+                    "Index": 0,
+                    "Type": "None"
+                  },
+                  "value_type": "float"
+                },
+                "effect_id": "effect:Config/ConfigAbility/Avatar/Avatar_Gepard_00_Ability.json:MAvatar_Gepard_00_Ultra_Shield:12:callback:0:InitShield",
+                "effect_source": {
+                  "evidence": {
+                    "branch": "callback",
+                    "callback_index": 12,
+                    "task_index": 0
+                  },
+                  "raw_id": "MAvatar_Gepard_00_Ultra_Shield",
+                  "raw_type": "GlobalModifiers",
+                  "source_path": "Config/ConfigAbility/Avatar/Avatar_Gepard_00_Ability.json"
+                },
+                "modifier_definition_source": {
+                  "evidence": {
+                    "definition_kind": "modifier_definition",
+                    "map_name": "GlobalModifiers",
+                    "modifier_name": "MAvatar_Gepard_00_Ultra_Shield"
+                  },
+                  "raw_id": "MAvatar_Gepard_00_Ultra_Shield",
+                  "raw_type": "GlobalModifiers",
+                  "source_path": "Config/ConfigAbility/Avatar/Avatar_Gepard_00_Ability.json"
+                }
+              },
+              "status_id": "MAvatar_Gepard_00_Ultra_Shield",
+              "status_instance_id": "status_instance:validation:v0_225:MAvatar_Gepard_00_Ultra_Shield",
+              "value": 123.0
+            },
+            "entry_key": "dyn:74d3c2600db957fa",
+            "hash": -295141034,
+            "key": "-295141034",
+            "matched_by": "hash",
+            "source_type": "status_instance",
+            "value": 123.0
+          },
+          "blocked_reason": "",
+          "expression_kind": "dynamic_hash",
+          "ok": true,
+          "source_trace": {
+            "effect_id": "effect:Config/ConfigAbility/Avatar/Avatar_Gepard_00_Ability.json:MAvatar_Gepard_00_Ultra_Shield:12:callback:0:InitShield",
+            "effect_source": {
+              "evidence": {
+                "branch": "callback",
+                "callback_index": 12,
+                "task_index": 0
+              },
+              "raw_id": "MAvatar_Gepard_00_Ultra_Shield",
+              "raw_type": "GlobalModifiers",
+              "source_path": "Config/ConfigAbility/Avatar/Avatar_Gepard_00_Ability.json"
+            }
+          },
+          "value": 123.0
+        },
+        "opcode": "InitShield",
+        "source_id": "validation:v0_225:shield:structured:effect:Config/ConfigAbility/Avatar/Avatar_Gepard_00_Ability.json:MAvatar_Gepard_00_Ultra_Shield:12:callback:0:InitShield",
+        "standard": {
+          "amount": {
+            "hash": -295141034,
+            "kind": "dynamic_hash",
+            "raw": {
+              "IsDynamic": true,
+              "PostfixExpr": {
+                "DynamicHashes": [
+                  -295141034
+                ],
+                "FixedValues": [],
+                "OpCodes": "AQAR"
+              }
+            },
+            "supported": true
+          },
+          "formula_type": null,
+          "kind": "shield",
+          "percentage": {
+            "kind": "missing",
+            "reason": "missing",
+            "supported": false,
+            "value": null
+          },
+          "raw_formula_fields": {
+            "FormulaType": null,
+            "ShieldPercentage": null,
+            "ShieldValue": {
+              "IsDynamic": true,
+              "PostfixExpr": {
+                "DynamicHashes": [
+                  -295141034
+                ],
+                "FixedValues": [],
+                "OpCodes": "AQAR"
+              }
+            }
+          },
+          "shield_opcode": "InitShield",
+          "target_alias": "ModifierOwnerEntity"
+        }
+      },
+      "mutation_id": "mutation:36d9fb7154b9277d",
+      "op": "set",
+      "path": [
+        "units",
+        "ally:saber",
+        "resources",
+        "shield"
+      ],
+      "reason": "apply numeric shield effect",
+      "source": "effect_system"
+    }
+  ],
+  "rng_events": [],
+  "settlement": {
+    "action_id": "avatar_skill:101401",
+    "actor_id": "ally:saber",
+    "records": [
+      {
+        "mutation_id": "mutation:36d9fb7154b9277d",
+        "payload": {
+          "after": 123.0,
+          "amount": 123.0,
+          "before": 0.0,
+          "effect_id": "effect:Config/ConfigAbility/Avatar/Avatar_Gepard_00_Ability.json:MAvatar_Gepard_00_Ultra_Shield:12:callback:0:InitShield",
+          "numeric_evaluation": {
+            "bindings": {
+              "entry": {
+                "hash": "-295141034",
+                "name": null,
+                "owner_id": "ally:saber",
+                "scope": "status",
+                "source_trace": {
+                  "dynamic_value_binding": {
+                    "hash": "-295141034",
+                    "raw": {
+                      "ReadInfo": {
+                        "Index": 0,
+                        "Type": "None"
+                      }
+                    },
+                    "raw_path": "DynamicValues.Floats[-295141034]",
+                    "read_info": {
+                      "Index": 0,
+                      "Type": "None"
+                    },
+                    "value_type": "float"
+                  },
+                  "effect_id": "effect:Config/ConfigAbility/Avatar/Avatar_Gepard_00_Ability.json:MAvatar_Gepard_00_Ultra_Shield:12:callback:0:InitShield",
+                  "effect_source": {
+                    "evidence": {
+                      "branch": "callback",
+                      "callback_index": 12,
+                      "task_index": 0
+                    },
+                    "raw_id": "MAvatar_Gepard_00_Ultra_Shield",
+                    "raw_type": "GlobalModifiers",
+                    "source_path": "Config/ConfigAbility/Avatar/Avatar_Gepard_00_Ability.json"
+                  },
+                  "modifier_definition_source": {
+                    "evidence": {
+                      "definition_kind": "modifier_definition",
+                      "map_name": "GlobalModifiers",
+                      "modifier_name": "MAvatar_Gepard_00_Ultra_Shield"
+                    },
+                    "raw_id": "MAvatar_Gepard_00_Ultra_Shield",
+                    "raw_type": "GlobalModifiers",
+                    "source_path": "Config/ConfigAbility/Avatar/Avatar_Gepard_00_Ability.json"
+                  }
+                },
+                "status_id": "MAvatar_Gepard_00_Ultra_Shield",
+                "status_instance_id": "status_instance:validation:v0_225:MAvatar_Gepard_00_Ultra_Shield",
+                "value": 123.0
+              },
+              "entry_key": "dyn:74d3c2600db957fa",
+              "hash": -295141034,
+              "key": "-295141034",
+              "matched_by": "hash",
+              "source_type": "status_instance",
+              "value": 123.0
+            },
+            "blocked_reason": "",
+            "expression_kind": "dynamic_hash",
+            "ok": true,
+            "source_trace": {
+              "effect_id": "effect:Config/ConfigAbility/Avatar/Avatar_Gepard_00_Ability.json:MAvatar_Gepard_00_Ultra_Shield:12:callback:0:InitShield",
+              "effect_source": {
+                "evidence": {
+                  "branch": "callback",
+                  "callback_index": 12,
+                  "task_index": 0
+                },
+                "raw_id": "MAvatar_Gepard_00_Ultra_Shield",
+                "raw_type": "GlobalModifiers",
+                "source_path": "Config/ConfigAbility/Avatar/Avatar_Gepard_00_Ability.json"
+              }
+            },
+            "value": 123.0
+          },
+          "opcode": "InitShield",
+          "path": [
+            "units",
+            "ally:saber",
+            "resources",
+            "shield"
+          ],
+          "resource": "shield",
+          "target_id": "ally:saber"
+        },
+        "process_only": false,
+        "record_type": "shield",
+        "source": "effect_system",
+        "trace": {
+          "effect_source": {
+            "evidence": {
+              "branch": "callback",
+              "callback_index": 12,
+              "task_index": 0
+            },
+            "raw_id": "MAvatar_Gepard_00_Ultra_Shield",
+            "raw_type": "GlobalModifiers",
+            "source_path": "Config/ConfigAbility/Avatar/Avatar_Gepard_00_Ability.json"
+          }
+        }
+      }
+    ],
+    "target_ids": [
+      "ally:saber"
+    ]
+  },
+  "target_resolution": {
+    "legal": [
+      "ally:saber"
+    ],
+    "metadata": {
+      "effect_id": "effect:Config/ConfigAbility/Avatar/Avatar_Gepard_00_Ability.json:MAvatar_Gepard_00_Ultra_Shield:12:callback:0:InitShield",
+      "opcode": "InitShield"
+    },
+    "reason": "effect_target_alias",
+    "rejected": [],
+    "requested": [
+      "ally:saber"
+    ],
+    "selected": [
+      "ally:saber"
+    ],
+    "source": "effect_system"
+  },
+  "trigger_windows": []
+}
