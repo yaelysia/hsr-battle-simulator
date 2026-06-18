@@ -49,8 +49,6 @@ NON_MAINLINE_PREFIXES = (
     "Config/ConfigAbility/Rogue",
     "Config/ConfigAbility/Fate",
     "Config/ConfigAbility/BattleEvent/",
-    "Config/ConfigAbility/Avatar/Avatar_AetherDivide",
-    "Config/ConfigAbility/Monster/Monster_AetherDivide",
 )
 
 
@@ -81,10 +79,10 @@ def run_validation(
     command = build_result.commands[0]
     registry = EffectRegistry(StatusSystem(rules))
 
-    evaluator_cases = _numeric_evaluator_cases()
-    shield_case = _gepard_shield_case(ir, registry, base_state, command)
-    heal_case = _huohuo_heal_case(ir, registry, base_state, command)
+    shield_case = _dynamic_shield_case(ir, registry, base_state, command)
+    heal_case = _unsupported_heal_case(ir, registry, base_state, command)
     resource_case = _modify_sp_case(ir, registry, base_state, command)
+    evaluator_cases = _numeric_evaluator_cases(_selected_dynamic_hash(shield_case, resource_case))
     formula_state = _formula_test_state(base_state)
     status_ledger_transition = _status_ledger_transition(ir, rules, formula_state, _with_crit_mode(command, "crit"))
     damage_regression_transition = status_ledger_transition
@@ -93,14 +91,14 @@ def run_validation(
     snapshot_result = SnapshotCompletenessValidator().validate(base_state.snapshot())
     transition_checks = _transition_quality_checks(
         {
-            "gepard_shield": shield_case,
+            "dynamic_shield": shield_case,
             "modify_sp": resource_case,
         }
     )
     checks = {
         "numeric_evaluator": _numeric_evaluator_checks(evaluator_cases),
-        "gepard_dynamic_shield": _gepard_shield_checks(shield_case),
-        "huohuo_dynamic_heal_blocked": _huohuo_heal_checks(heal_case),
+        "dynamic_shield": _dynamic_shield_checks(shield_case),
+        "unsupported_dynamic_heal_blocked": _unsupported_heal_checks(heal_case),
         "modify_sp_new": _modify_sp_checks(resource_case, coverage.to_json()),
         "status_modifier_ledger_regression": _status_modifier_ledger_regression_checks(status_ledger_transition),
         "damage_semantics_regression": _damage_semantics_regression_checks(damage_regression_transition),
@@ -148,8 +146,8 @@ def run_validation(
     write_json(output_dir / "validation_summary_v0_215.json", result)
     write_json(output_dir / "sample_numeric_evaluator_cases_v0_215.json", evaluator_cases)
     for name, case in (
-        ("gepard_dynamic_shield", shield_case),
-        ("huohuo_dynamic_heal", heal_case),
+        ("dynamic_shield", shield_case),
+        ("unsupported_dynamic_heal", heal_case),
         ("modify_sp_new", resource_case),
     ):
         write_json(output_dir / f"sample_{name}_case_v0_215.json", _case_json(case))
@@ -205,16 +203,17 @@ def _canonical_ir_summary(ir: CanonicalIR) -> dict[str, object]:
     }
 
 
-def _numeric_evaluator_cases() -> dict[str, Any]:
+def _numeric_evaluator_cases(dynamic_hash: str) -> dict[str, Any]:
     evaluator = RuleEvaluator()
+    hash_expr: dict[str, Any] = {"kind": "dynamic_hash", "hash": dynamic_hash}
     cases = {
         "fixed": evaluator.evaluate_numeric({"kind": "fixed", "value": 12.5}, NumericEvaluationContext()).to_json(),
         "bound_dynamic_hash": evaluator.evaluate_numeric(
-            {"kind": "dynamic_hash", "hash": -295141034},
-            NumericEvaluationContext(dynamic_values={"-295141034": 321.0}),
+            hash_expr,
+            NumericEvaluationContext(dynamic_values={dynamic_hash: 321.0}),
         ).to_json(),
         "unbound_dynamic_hash": evaluator.evaluate_numeric(
-            {"kind": "dynamic_hash", "hash": -295141034},
+            hash_expr,
             NumericEvaluationContext(),
         ).to_json(),
         "unsupported_postfix": evaluator.evaluate_numeric(
@@ -225,15 +224,15 @@ def _numeric_evaluator_cases() -> dict[str, Any]:
     return cases
 
 
-def _gepard_shield_case(
+def _dynamic_shield_case(
     ir: CanonicalIR,
     registry: EffectRegistry,
     base_state: BattleState,
     command: ActionCommand,
 ) -> dict[str, Any]:
-    effect = _select_gepard_shield_effect(ir)
+    effect = _select_dynamic_shield_effect(ir)
     if effect is None:
-        return {"effect": None, "transition": None, "error": "missing Gepard InitShield effect"}
+        return {"effect": None, "transition": None, "error": "missing executable mainline dynamic shield effect"}
     amount_expr = effect.payload["standard"]["amount"]
     hash_key = str(amount_expr.get("hash")) if isinstance(amount_expr, dict) else ""
     bound_result = _execute_effect(
@@ -241,7 +240,7 @@ def _gepard_shield_case(
         base_state,
         effect,
         command,
-        source_suffix="gepard_shield_bound",
+        source_suffix="dynamic_shield_bound",
         dynamic_values={hash_key: 321.0},
     )
     bound_after = MutationReducer().apply_all(base_state, bound_result.mutations)
@@ -252,14 +251,14 @@ def _gepard_shield_case(
         effect=effect,
         effect_result=bound_result,
         target_id=command.actor_id,
-        coverage_id="v0_215_gepard_dynamic_shield",
+        coverage_id="v0_215_dynamic_shield",
     )
     unbound_result = _execute_effect(
         registry,
         base_state,
         effect,
         command,
-        source_suffix="gepard_shield_unbound",
+        source_suffix="dynamic_shield_unbound",
     )
     return {
         "effect": effect,
@@ -272,15 +271,15 @@ def _gepard_shield_case(
     }
 
 
-def _huohuo_heal_case(
+def _unsupported_heal_case(
     ir: CanonicalIR,
     registry: EffectRegistry,
     base_state: BattleState,
     command: ActionCommand,
 ) -> dict[str, Any]:
-    effect = _select_huohuo_heal_effect(ir)
+    effect = _select_unsupported_heal_effect(ir)
     if effect is None:
-        return {"effect": None, "result": None, "error": "missing Huohuo HealHP effect"}
+        return {"effect": None, "result": None, "error": "missing mainline unsupported HealHP effect"}
     standard = effect.payload.get("standard", {})
     bindings: dict[str, float] = {}
     if isinstance(standard, dict):
@@ -293,7 +292,7 @@ def _huohuo_heal_case(
         base_state,
         effect,
         command,
-        source_suffix="huohuo_heal_blocked",
+        source_suffix="unsupported_heal_blocked",
         dynamic_values=bindings,
     )
     return {"effect": effect, "result": result, "dynamic_values": bindings}
@@ -455,13 +454,13 @@ def _numeric_evaluator_checks(cases: dict[str, Any]) -> dict[str, object]:
     return {"ok": all(checks.values()), "checks": checks, "cases": cases}
 
 
-def _gepard_shield_checks(case: dict[str, Any]) -> dict[str, object]:
+def _dynamic_shield_checks(case: dict[str, Any]) -> dict[str, object]:
     transition = case.get("transition")
     records = _records_of_type(transition, "shield")
     unbound_result = case.get("unbound_result")
     unbound_reasons = list(unbound_result.unsupported) if unbound_result is not None else []
     checks = {
-        "real_gepard_effect_selected": _effect_source_contains(case.get("effect"), "Avatar_Gepard_00_Ability.json"),
+        "real_dynamic_shield_effect_selected": _effect_matches_structured_dynamic_shield(case.get("effect")),
         "bound_transition_exists": transition is not None,
         "bound_has_shield_record": bool(records),
         "bound_has_numeric_evaluation": any(
@@ -474,13 +473,20 @@ def _gepard_shield_checks(case: dict[str, Any]) -> dict[str, object]:
     return {"ok": all(checks.values()), "checks": checks, "records": records, "unbound_reasons": unbound_reasons}
 
 
-def _huohuo_heal_checks(case: dict[str, Any]) -> dict[str, object]:
+def _unsupported_heal_checks(case: dict[str, Any]) -> dict[str, object]:
     result = case.get("result")
     reasons = list(result.unsupported) if result is not None else []
     records = list(result.records) if result is not None else []
+    effect = case.get("effect")
+    standard = effect.payload.get("standard") if isinstance(effect, EffectIR) else {}
+    formula_type = standard.get("formula_type") if isinstance(standard, dict) else ""
     checks = {
-        "real_huohuo_effect_selected": _effect_source_contains(case.get("effect"), "Avatar_Advanced_Huohuo_00_Ability.json"),
-        "formula_type_blocked": any("formula_type_not_supported:HealByHealerMaxHP" in reason for reason in reasons),
+        "real_unsupported_heal_effect_selected": _effect_matches_structured_unsupported_heal(effect),
+        "formula_type_blocked": bool(
+            isinstance(formula_type, str)
+            and formula_type
+            and any(f"formula_type_not_supported:{formula_type}" in reason for reason in reasons)
+        ),
         "no_heal_mutation": bool(result is not None and not result.mutations),
         "unsupported_record_exists": any(record.get("record_type") == "effect_unsupported" for record in records),
     }
@@ -551,26 +557,37 @@ def _transition_quality_checks(cases: dict[str, dict[str, Any]]) -> dict[str, ob
     return {"ok": all(checks.values()), "checks": checks, "details": details}
 
 
-def _select_gepard_shield_effect(ir: CanonicalIR) -> EffectIR | None:
+def _select_dynamic_shield_effect(ir: CanonicalIR) -> EffectIR | None:
     for effect in sorted(ir.effects, key=lambda item: (item.source.source_path, item.effect_id)):
-        if effect.opcode != "InitShield":
-            continue
-        if not effect.source.source_path.endswith("Avatar_Gepard_00_Ability.json"):
+        if effect.opcode not in {"InitShield", "StackShield", "ModifyShield"}:
             continue
         standard = effect.payload.get("standard")
-        if isinstance(standard, dict) and isinstance(standard.get("amount"), dict):
+        if not _is_mainline_source(effect.source.source_path):
+            continue
+        if effect.coverage_status != "executable":
+            continue
+        if (
+            isinstance(standard, dict)
+            and _is_supported_shield_formula_type(standard.get("formula_type"))
+            and _is_dynamic_hash_expr(standard.get("amount"))
+        ):
             return effect
     return None
 
 
-def _select_huohuo_heal_effect(ir: CanonicalIR) -> EffectIR | None:
+def _select_unsupported_heal_effect(ir: CanonicalIR) -> EffectIR | None:
     for effect in sorted(ir.effects, key=lambda item: (item.source.source_path, item.effect_id)):
         if effect.opcode != "HealHP":
             continue
-        if not effect.source.source_path.endswith("Avatar_Advanced_Huohuo_00_Ability.json"):
+        if not _is_mainline_source(effect.source.source_path):
             continue
         standard = effect.payload.get("standard")
-        if isinstance(standard, dict) and standard.get("formula_type") == "HealByHealerMaxHP":
+        if (
+            isinstance(standard, dict)
+            and isinstance(standard.get("formula_type"), str)
+            and str(standard.get("formula_type"))
+            and effect.coverage_status != "executable"
+        ):
             return effect
     return None
 
@@ -601,8 +618,55 @@ def _records_of_type(transition, record_type: str) -> list[dict[str, Any]]:
     ]
 
 
-def _effect_source_contains(effect: object, text: str) -> bool:
-    return isinstance(effect, EffectIR) and text in effect.source.source_path
+def _effect_matches_structured_dynamic_shield(effect: object) -> bool:
+    if not isinstance(effect, EffectIR):
+        return False
+    standard = effect.payload.get("standard")
+    return (
+        effect.opcode in {"InitShield", "StackShield", "ModifyShield"}
+        and effect.coverage_status == "executable"
+        and _is_mainline_source(effect.source.source_path)
+        and isinstance(standard, dict)
+        and _is_supported_shield_formula_type(standard.get("formula_type"))
+        and _is_dynamic_hash_expr(standard.get("amount"))
+    )
+
+
+def _effect_matches_structured_unsupported_heal(effect: object) -> bool:
+    if not isinstance(effect, EffectIR):
+        return False
+    standard = effect.payload.get("standard")
+    return (
+        effect.opcode == "HealHP"
+        and effect.coverage_status != "executable"
+        and _is_mainline_source(effect.source.source_path)
+        and isinstance(standard, dict)
+        and isinstance(standard.get("formula_type"), str)
+        and bool(standard.get("formula_type"))
+    )
+
+
+def _is_dynamic_hash_expr(value: object) -> bool:
+    return isinstance(value, dict) and value.get("kind") == "dynamic_hash" and value.get("hash") not in (None, "")
+
+
+def _is_supported_shield_formula_type(value: object) -> bool:
+    return value in {None, "", "ShieldByBaseValue"}
+
+
+def _selected_dynamic_hash(*cases: dict[str, Any]) -> str:
+    for case in cases:
+        effect = case.get("effect")
+        if not isinstance(effect, EffectIR):
+            continue
+        standard = effect.payload.get("standard")
+        if not isinstance(standard, dict):
+            continue
+        for key in ("amount", "percentage"):
+            expr = standard.get(key)
+            if _is_dynamic_hash_expr(expr):
+                return str(expr.get("hash"))
+    return "manual_input_binding_smoke_dynamic_hash"
 
 
 def _is_mainline_source(source_path: str) -> bool:

@@ -50,6 +50,14 @@ class CombatExecutor:
         hit_profiles = self.rules.hit_profiles_for_action(command.action_id, command.action_level)
         damage_emissions = self.rules.damage_emissions_for_action(command.action_id, command.action_level)
         action_definition_trace = self.rules.action_definition_source_trace(command.action_id, command.action_level) or {}
+        action_source_metadata = {
+            "definition_id": action_definition.definition_id,
+            "action_id": action_definition.action_id,
+            "action_level": action_definition.level,
+            "action_event_id": action_event_ir.action_event_id,
+            "source_trace": action_definition_trace,
+            "action_event_source_trace": action_event_ir.source.to_json(),
+        }
         action_event = GameEvent(
             "action.requested",
             source_id=command.actor_id,
@@ -94,12 +102,7 @@ class CombatExecutor:
                 skill_point_delta=_skill_point_delta(action_definition.bp_need, action_definition.bp_add),
                 energy_gain=action_definition.sp_base,
                 source="combat_executor.resources",
-                metadata={
-                    "definition_id": action_definition.definition_id,
-                    "action_id": action_definition.action_id,
-                    "action_level": action_definition.level,
-                    "source_trace": action_definition_trace,
-                },
+                metadata=action_source_metadata,
             ),
         )
         plan_blocked_reason = action_execution_plan.target_plan.blocked_reason
@@ -119,6 +122,7 @@ class CombatExecutor:
                 TimelinePlan(
                     reset_actor_av=_metadata_bool(command.metadata, "reset_actor_av", False),
                     source="combat_executor.timeline",
+                    metadata=action_source_metadata,
                 ),
             )
             events: tuple[GameEvent, ...] = (action_event, *timeline_result.events)

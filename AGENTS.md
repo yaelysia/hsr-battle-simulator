@@ -97,6 +97,23 @@ hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/FORBIDDEN.md
 - 不允许跳过未知 opcode 后仍标记为 supported。
 - 不允许 `audit_only` 被当成 executable。
 
+## v8 审查红线
+
+每次例行审查、结构回正或新增机制时，必须按以下红线检查，不能只看验证是否绿：
+
+- 任何 runtime `Mutation` 都必须能反向追溯到 Canonical IR 中的真实 TBGD 机制节点，例如 action definition、ability binding、ability phase、ability task、effect、condition、formula、damage emission、status definition。
+- 只有 `source_trace` 不等于来源正确；必须确认 source trace 指向的 IR 节点本身不是为了 runtime 方便伪造出来的占位。
+- `derived`、`audit_only`、`discovered_only`、`blocked`、placeholder 只能生成 process-only settlement，不能产生状态 mutation。
+- 缺少真实来源时，runtime 必须显式 blocked，并保持 state unchanged；不能为了让 smoke case 可跑而 fallback 到旧推导或默认执行。
+- Canonical IR 必须诚实表达 TBGD 中发现的事实；禁止为了补 runtime 输入而制造不存在的规则事实。
+- 每个新增可执行机制都必须有 negative validation：证明缺少真实来源、unsupported condition、unsupported target、unsupported formula 时不会假执行。
+- 每个新增 mutation 类机制都必须至少抽一条样例，从 mutation metadata 反查到 settlement，再反查到 Canonical IR，再反查到 TBGD source path/evidence。
+- 验证样例必须优先按结构化谓词选择，例如 opcode、coverage_status、source_mode、target_mode、payload 可执行性；禁止按角色名、固定 action id、固定文件名、固定 hash 选择主样例。
+- 旧验证如果因为来源边界变严而失败，优先升级验证输入到真实来源链路；禁止为了旧 smoke 继续保留假执行路径。
+- 审查结论必须区分“字段完整 / replay 通过”和“机制来源真实 / 语义正确”。前者不能替代后者。
+- 每个阶段必须要回头检查一遍本次修改是否正确，不要给后续审查纠偏添加压力。
+- 每次阶段汇报必须说明：当前做到哪里、距离最小可用战斗纵切还缺什么、距离完整复刻还缺哪些大模块。
+
 ## 快照与结算目标摘要
 
 详细目标见：
@@ -181,4 +198,3 @@ Seele 旧值已知高于观测 `109262`，不要手工修正数值。差异必�
 - v8 代码检查点不要混入无关文件。
 - `AGENTS.md` 只有在用户明确要求维护项目入口说明时才提交。
 - 如果工作区里存在用户未提交修改，不要回滚；与当前任务无关则忽略。
-

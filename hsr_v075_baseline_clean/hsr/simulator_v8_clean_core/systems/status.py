@@ -416,7 +416,26 @@ def _apply_add_lifecycle_plan(state: BattleState, plan: StatusLifecyclePlan) -> 
             "lifecycle_plan": plan.to_json(),
         },
     )
-    record = SettlementRecord(
+    status_id_record = SettlementRecord(
+        record_type="status_lifecycle",
+        source="status_system",
+        mutation_id=status_mutation.stable_id(),
+        process_only=False,
+        payload={
+            "operation": plan.operation,
+            "status_id": plan.status_id,
+            "lifecycle_result": {
+                "operation": plan.operation,
+                "partial": plan.partial,
+                "unsupported": list(plan.unsupported),
+            },
+            "lifecycle_plan": plan.to_json(),
+            "unsupported": list(plan.unsupported),
+            "partial": plan.partial,
+        },
+        trace=plan.source_trace,
+    ).to_json()
+    detail_record = SettlementRecord(
         record_type="status_lifecycle",
         source="status_system",
         mutation_id=detail_mutation.stable_id(),
@@ -453,7 +472,7 @@ def _apply_add_lifecycle_plan(state: BattleState, plan: StatusLifecyclePlan) -> 
         ok=True,
         operation=plan.operation,
         mutations=(status_mutation, detail_mutation),
-        records=(record, legacy_record),
+        records=(status_id_record, detail_record, legacy_record),
         unsupported=plan.unsupported,
         status_instance=plan.status_instance,
         lifecycle_plan=plan,
@@ -506,7 +525,19 @@ def _apply_remove_lifecycle_plan(state: BattleState, plan: StatusLifecyclePlan) 
         source="status_system",
         metadata={"status_id": plan.status_id, "operation": plan.operation, "lifecycle_plan": plan.to_json()},
     )
-    record = SettlementRecord(
+    status_id_record = SettlementRecord(
+        record_type="status_lifecycle",
+        source="status_system",
+        mutation_id=status_mutation.stable_id(),
+        process_only=False,
+        payload={
+            "operation": plan.operation,
+            "status_id": plan.status_id,
+            "lifecycle_plan": plan.to_json(),
+        },
+        trace=plan.source_trace,
+    ).to_json()
+    detail_record = SettlementRecord(
         record_type="status_lifecycle",
         source="status_system",
         mutation_id=detail_mutation.stable_id(),
@@ -523,7 +554,7 @@ def _apply_remove_lifecycle_plan(state: BattleState, plan: StatusLifecyclePlan) 
         ok=True,
         operation=plan.operation,
         mutations=(status_mutation, detail_mutation),
-        records=(record,),
+        records=(status_id_record, detail_record),
         lifecycle_plan=plan,
         lifecycle_state="removed",
     )

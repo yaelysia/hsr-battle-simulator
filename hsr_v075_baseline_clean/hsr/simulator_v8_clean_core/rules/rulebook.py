@@ -88,6 +88,7 @@ class RuleBook:
         hit_profiles_by_action: dict[tuple[str, int], list[HitProfileIR]] = {}
         for profile in self.ir.hit_profiles:
             hit_profiles_by_action.setdefault((profile.action_id, profile.level), []).append(profile)
+        object.__setattr__(self, "_hit_profiles", {profile.hit_profile_id: profile for profile in self.ir.hit_profiles})
         object.__setattr__(
             self,
             "_hit_profiles_by_action",
@@ -227,6 +228,9 @@ class RuleBook:
 
     def hit_profiles_for_action(self, action_id: str, level: int) -> tuple[HitProfileIR, ...]:
         return self._hit_profiles_by_action.get((action_id, level), ())
+
+    def hit_profile(self, hit_profile_id: str) -> HitProfileIR | None:
+        return self._hit_profiles.get(hit_profile_id)
 
     def damage_emission(self, damage_emission_id: str) -> DamageEmissionIR | None:
         return self._damage_emissions.get(damage_emission_id)

@@ -37,8 +37,6 @@ NON_MAINLINE_PREFIXES = (
     "Config/ConfigAbility/Rogue",
     "Config/ConfigAbility/Fate",
     "Config/ConfigAbility/BattleEvent/",
-    "Config/ConfigAbility/Avatar/Avatar_AetherDivide",
-    "Config/ConfigAbility/Monster/Monster_AetherDivide",
 )
 CONDITION_OPCODES = (
     "ByCurrentSkillType",
