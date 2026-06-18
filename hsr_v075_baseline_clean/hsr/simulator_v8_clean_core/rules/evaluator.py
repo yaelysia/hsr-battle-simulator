@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 from dataclasses import dataclass
 from typing import Any
 
@@ -210,14 +211,7 @@ class RuleEvaluator:
         if kind == "dynamic_hash":
             return _evaluate_dynamic_hash(expression, context, source_trace)
         if kind == "postfix_expr":
-            return NumericEvaluationResult(
-                ok=False,
-                value=None,
-                expression_kind="postfix_expr",
-                bindings={"raw": expression.get("raw")},
-                source_trace=source_trace,
-                blocked_reason=str(expression.get("reason") or "unsupported_postfix_expr"),
-            )
+            return _evaluate_postfix_expr(expression.get("raw") or expression, context, source_trace)
         if kind == "unsupported":
             return NumericEvaluationResult(
                 ok=False,
@@ -241,29 +235,7 @@ class RuleEvaluator:
             )
         postfix = expression.get("PostfixExpr")
         if isinstance(postfix, dict):
-            hashes = postfix.get("DynamicHashes")
-            fixed_values = postfix.get("FixedValues")
-            opcodes = postfix.get("OpCodes")
-            if (
-                opcodes == "AQAR"
-                and isinstance(hashes, list)
-                and len(hashes) == 1
-                and isinstance(hashes[0], int)
-                and (not fixed_values)
-            ):
-                return _evaluate_dynamic_hash(
-                    {"kind": "dynamic_hash", "hash": int(hashes[0]), "raw": expression},
-                    context,
-                    source_trace,
-                )
-            return NumericEvaluationResult(
-                ok=False,
-                value=None,
-                expression_kind="postfix_expr",
-                bindings={"raw": expression},
-                source_trace=source_trace,
-                blocked_reason="unsupported_postfix_expr",
-            )
+            return _evaluate_postfix_expr(expression, context, source_trace)
 
         return NumericEvaluationResult(
             ok=False,
@@ -322,6 +294,192 @@ def _evaluate_dynamic_hash(
         source_trace=source_trace,
         blocked_reason=f"dynamic_hash_unbound:{key}",
     )
+
+
+def _evaluate_postfix_expr(
+    expression: dict[str, Any],
+    context: NumericEvaluationContext,
+    source_trace: dict[str, Any],
+) -> NumericEvaluationResult:
+    postfix = expression.get("PostfixExpr") if isinstance(expression.get("PostfixExpr"), dict) else expression
+    if not isinstance(postfix, dict):
+        return NumericEvaluationResult(
+            ok=False,
+            value=None,
+            expression_kind="postfix_expr",
+            bindings={"raw": expression},
+            source_trace=source_trace,
+            blocked_reason="postfix_expr_missing",
+        )
+    opcodes = _decode_postfix_opcodes(postfix.get("OpCodes"))
+    if opcodes is None:
+        return NumericEvaluationResult(
+            ok=False,
+            value=None,
+            expression_kind="postfix_expr",
+            bindings={"raw": expression},
+            source_trace=source_trace,
+            blocked_reason="postfix_opcodes_decode_failed",
+        )
+    fixed_values = _postfix_fixed_values(postfix.get("FixedValues"))
+    dynamic_hashes = postfix.get("DynamicHashes") if isinstance(postfix.get("DynamicHashes"), list) else []
+    stack: list[float] = []
+    tokens: list[dict[str, Any]] = []
+    dynamic_operands: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
+    unsupported: list[int] = []
+    ended = False
+    index = 0
+    while index < len(opcodes):
+        opcode = opcodes[index]
+        if opcode == 17:
+            tokens.append({"op": "end"})
+            ended = True
+            index += 1
+            continue
+        if opcode == 0:
+            if index + 1 >= len(opcodes):
+                errors.append({"op": opcode, "reason": "missing_fixed_index"})
+                break
+            fixed_index = int(opcodes[index + 1])
+            tokens.append({"op": "fixed", "index": fixed_index})
+            if fixed_index < 0 or fixed_index >= len(fixed_values):
+                errors.append({"op": opcode, "index": fixed_index, "reason": "fixed_operand_unresolved"})
+            else:
+                stack.append(float(fixed_values[fixed_index]))
+            index += 2
+            continue
+        if opcode == 1:
+            if index + 1 >= len(opcodes):
+                errors.append({"op": opcode, "reason": "missing_dynamic_index"})
+                break
+            dynamic_index = int(opcodes[index + 1])
+            tokens.append({"op": "dynamic", "index": dynamic_index})
+            if dynamic_index < 0 or dynamic_index >= len(dynamic_hashes):
+                errors.append({"op": opcode, "index": dynamic_index, "reason": "dynamic_hash_missing"})
+            else:
+                dynamic_hash = dynamic_hashes[dynamic_index]
+                result = _evaluate_dynamic_hash(
+                    {"kind": "dynamic_hash", "hash": dynamic_hash, "raw": expression},
+                    context,
+                    source_trace,
+                )
+                operand = {
+                    "index": dynamic_index,
+                    "hash": dynamic_hash,
+                    "ok": result.ok,
+                    "value": result.value,
+                    "bindings": result.bindings,
+                    "blocked_reason": result.blocked_reason,
+                }
+                dynamic_operands.append(operand)
+                if not result.ok or result.value is None:
+                    errors.append(
+                        {
+                            "op": opcode,
+                            "index": dynamic_index,
+                            "hash": dynamic_hash,
+                            "reason": result.blocked_reason or "dynamic_operand_unresolved",
+                        }
+                    )
+                else:
+                    stack.append(float(result.value))
+            index += 2
+            continue
+        if opcode in {2, 3, 4, 5}:
+            op_name = {2: "add", 3: "sub", 4: "mul", 5: "div"}[opcode]
+            tokens.append({"op": op_name})
+            if len(stack) < 2:
+                errors.append({"op": opcode, "reason": "stack_underflow"})
+            else:
+                rhs = stack.pop()
+                lhs = stack.pop()
+                if opcode == 2:
+                    stack.append(lhs + rhs)
+                elif opcode == 3:
+                    stack.append(lhs - rhs)
+                elif opcode == 4:
+                    stack.append(lhs * rhs)
+                elif rhs == 0:
+                    errors.append({"op": opcode, "reason": "division_by_zero"})
+                else:
+                    stack.append(lhs / rhs)
+            index += 1
+            continue
+        unsupported.append(opcode)
+        tokens.append({"op": f"unsupported_{opcode}", "opcode": opcode})
+        index += 1
+
+    bindings = {
+        "raw": expression,
+        "opcodes_bytes": opcodes,
+        "tokens": tokens,
+        "fixed_values": fixed_values,
+        "dynamic_operands": dynamic_operands,
+    }
+    if unsupported:
+        return NumericEvaluationResult(
+            ok=False,
+            value=None,
+            expression_kind="postfix_expr",
+            bindings={**bindings, "unsupported_opcode_bytes": sorted(set(unsupported))},
+            source_trace=source_trace,
+            blocked_reason="unsupported_postfix_opcode",
+        )
+    if errors:
+        return NumericEvaluationResult(
+            ok=False,
+            value=None,
+            expression_kind="postfix_expr",
+            bindings={**bindings, "errors": errors},
+            source_trace=source_trace,
+            blocked_reason=str(errors[0].get("reason") or "postfix_evaluation_error"),
+        )
+    if not ended:
+        return NumericEvaluationResult(
+            ok=False,
+            value=None,
+            expression_kind="postfix_expr",
+            bindings=bindings,
+            source_trace=source_trace,
+            blocked_reason="postfix_missing_end_opcode",
+        )
+    if len(stack) != 1:
+        return NumericEvaluationResult(
+            ok=False,
+            value=None,
+            expression_kind="postfix_expr",
+            bindings={**bindings, "final_stack_size": len(stack)},
+            source_trace=source_trace,
+            blocked_reason="postfix_final_stack_size",
+        )
+    return NumericEvaluationResult(
+        ok=True,
+        value=float(stack[0]),
+        expression_kind="postfix_expr",
+        bindings={**bindings, "pattern": "postfix_add_sub_mul_div"},
+        source_trace=source_trace,
+    )
+
+
+def _decode_postfix_opcodes(value: Any) -> list[int] | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return list(base64.b64decode(value))
+    except Exception:
+        return None
+
+
+def _postfix_fixed_values(value: Any) -> list[float]:
+    fixed_values: list[float] = []
+    if not isinstance(value, list):
+        return fixed_values
+    for item in value:
+        raw = item.get("Value") if isinstance(item, dict) else item
+        if isinstance(raw, (int, float)):
+            fixed_values.append(float(raw))
+    return fixed_values
 
 
 def _evaluate_condition_payload(

@@ -446,13 +446,19 @@ def _action_execution_status(ir: CanonicalIR) -> dict[str, Any]:
             "blocked_reason_counts": dict(sorted(break_template_reasons.items())),
             "reason": "BreakTemplateIR lowers normal StanceBreak global templates for break lifecycle source tracing",
         },
+        "break_base_damage": {
+            "lowered": len(ir.break_base_damage),
+            "executable": sum(1 for item in ir.break_base_damage if item.coverage_status == "executable"),
+            "blocked": sum(1 for item in ir.break_base_damage if item.coverage_status == "blocked"),
+            "reason": "BreakBaseDamageIR lowers AvatarBreakDamage level table used by admitted normal break damage",
+        },
         "break_damage_emissions": {
             "lowered": len(ir.break_damage_emissions),
             "executable": break_damage_status["executable"],
             "blocked": break_damage_status["blocked"],
             "status_counts": dict(sorted(break_damage_status.items())),
             "blocked_reason_counts": dict(sorted(break_damage_reasons.items())),
-            "reason": "BreakDamageEmissionIR records ByBreakDamage template tasks; damage formula execution remains blocked until formula inputs are admitted",
+            "reason": "BreakDamageEmissionIR records admitted ByBreakDamage template tasks; runtime still blocks unsupported formula operands",
         },
         "break_status_emissions": {
             "lowered": len(ir.break_status_emissions),

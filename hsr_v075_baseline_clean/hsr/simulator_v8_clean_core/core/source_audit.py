@@ -28,7 +28,7 @@ MUTATION_SOURCE_POLICIES: dict[str, dict[str, JSONValue]] = {
         "coverage_required": "ActionDefinitionIR executable; ActionEventIR traceable",
     },
     "damage_system": {
-        "required_ir": ["DamageEmissionIR + AbilityTaskIR + HitProfileIR", "BreakDamageEmissionIR for break", "or EffectIR for hp_loss"],
+        "required_ir": ["DamageEmissionIR + AbilityTaskIR + HitProfileIR", "BreakDamageEmissionIR + BreakBaseDamageIR for break", "or EffectIR for hp_loss"],
         "required_metadata": ["damage_emission_id/source_task_id/hit_profile_id or break_damage_emission_id or effect_id", "source_trace"],
         "coverage_required": "executable",
     },
@@ -279,6 +279,19 @@ class RuntimeSourceAuditor:
         emission_id = _required_str(mutation, metadata, "break_damage_emission_id", violations)
         template_id = _required_str(mutation, metadata, "break_template_id", violations)
         task_id = _required_str(mutation, metadata, "source_task_id", violations)
+        break_base_source = metadata.get("break_base_damage_source")
+        if not isinstance(break_base_source, dict):
+            violations.append(_violation(mutation, "break_base_damage_source_missing", missing_field="break_base_damage_source"))
+        else:
+            level = break_base_source.get("level")
+            if isinstance(level, int):
+                base = self.rules.break_base_damage(level)
+                if base is None:
+                    violations.append(_violation(mutation, "break_base_damage_ir_missing", details={"level": level}))
+                else:
+                    _audit_source(base.source, base.coverage_status, mutation, violations, executable_required=True)
+            else:
+                violations.append(_violation(mutation, "break_base_damage_level_missing", missing_field="break_base_damage_source.level"))
         _require_dict(mutation, metadata, "source_trace", violations)
         evaluation = metadata.get("numeric_evaluation")
         if not isinstance(evaluation, dict):
@@ -605,6 +618,9 @@ def _audit_dynamic_numeric_binding(
     evaluation: dict[str, JSONValue],
     violations: list[SourceAuditViolation],
 ) -> None:
+    if evaluation.get("expression_kind") == "postfix_expr":
+        _audit_postfix_dynamic_numeric_binding(mutation, evaluation, violations)
+        return
     if evaluation.get("expression_kind") != "dynamic_hash":
         return
     bindings = evaluation.get("bindings")
@@ -622,7 +638,7 @@ def _audit_dynamic_numeric_binding(
             )
         )
         return
-    if source_type not in {"status_instance", "dynamic_value_store"}:
+    if source_type not in {"status_instance", "dynamic_value_store", "break_template_runtime_value"}:
         violations.append(
             _violation(
                 mutation,
@@ -638,6 +654,55 @@ def _audit_dynamic_numeric_binding(
         return
     if not isinstance(entry.get("source_trace"), dict):
         violations.append(_violation(mutation, "dynamic_numeric_binding_source_trace_missing", missing_field="numeric_evaluation.bindings.entry.source_trace"))
+
+
+def _audit_postfix_dynamic_numeric_binding(
+    mutation: Mutation,
+    evaluation: dict[str, JSONValue],
+    violations: list[SourceAuditViolation],
+) -> None:
+    bindings = evaluation.get("bindings")
+    if not isinstance(bindings, dict):
+        violations.append(_violation(mutation, "postfix_numeric_binding_missing", missing_field="numeric_evaluation.bindings"))
+        return
+    operands = bindings.get("dynamic_operands")
+    if not isinstance(operands, list) or not operands:
+        violations.append(_violation(mutation, "postfix_dynamic_operands_missing", missing_field="numeric_evaluation.bindings.dynamic_operands"))
+        return
+    for operand in operands:
+        if not isinstance(operand, dict):
+            violations.append(_violation(mutation, "postfix_dynamic_operand_invalid", details={"operand": operand}))
+            continue
+        if operand.get("ok") is not True:
+            violations.append(_violation(mutation, "postfix_dynamic_operand_unresolved", details={"operand": operand}))
+            continue
+        operand_bindings = operand.get("bindings")
+        if not isinstance(operand_bindings, dict):
+            violations.append(_violation(mutation, "postfix_dynamic_operand_binding_missing", details={"operand": operand}))
+            continue
+        source_type = str(operand_bindings.get("source_type") or "")
+        if source_type not in {"status_instance", "dynamic_value_store", "break_template_runtime_value"}:
+            violations.append(
+                _violation(
+                    mutation,
+                    "postfix_dynamic_binding_source_not_trusted",
+                    missing_field="numeric_evaluation.bindings.dynamic_operands.bindings.source_type",
+                    details={"bindings": operand_bindings},
+                )
+            )
+            continue
+        entry = operand_bindings.get("entry")
+        if not isinstance(entry, dict):
+            violations.append(_violation(mutation, "postfix_dynamic_binding_entry_missing", details={"bindings": operand_bindings}))
+            continue
+        if not isinstance(entry.get("source_trace"), dict):
+            violations.append(
+                _violation(
+                    mutation,
+                    "postfix_dynamic_binding_source_trace_missing",
+                    missing_field="numeric_evaluation.bindings.dynamic_operands.bindings.entry.source_trace",
+                )
+            )
 
 
 def _required_str(

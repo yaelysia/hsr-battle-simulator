@@ -285,6 +285,26 @@ class ToughnessEmissionIR:
 
 
 @dataclass(frozen=True)
+class BreakBaseDamageIR:
+    level: int
+    break_base_damage: float
+    hardness_base_damage: float | None
+    source: IRSource
+    coverage_status: CoverageStatus = "executable"
+    blocked_reason: str = ""
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "level": self.level,
+            "break_base_damage": self.break_base_damage,
+            "hardness_base_damage": self.hardness_base_damage,
+            "source": self.source.to_json(),
+            "coverage_status": self.coverage_status,
+            "blocked_reason": self.blocked_reason,
+        }
+
+
+@dataclass(frozen=True)
 class BreakTemplateIR:
     template_id: str
     element_type: str | None
@@ -574,6 +594,7 @@ class CanonicalIR:
     damage_emissions: tuple[DamageEmissionIR, ...] = ()
     toughness_emissions: tuple[ToughnessEmissionIR, ...] = ()
     break_templates: tuple[BreakTemplateIR, ...] = ()
+    break_base_damage: tuple[BreakBaseDamageIR, ...] = ()
     break_damage_emissions: tuple[BreakDamageEmissionIR, ...] = ()
     break_status_emissions: tuple[BreakStatusEmissionIR, ...] = ()
     triggers: tuple[TriggerIR, ...] = ()
@@ -597,6 +618,7 @@ class CanonicalIR:
             "damage_emissions": [emission.to_json() for emission in self.damage_emissions],
             "toughness_emissions": [emission.to_json() for emission in self.toughness_emissions],
             "break_templates": [template.to_json() for template in self.break_templates],
+            "break_base_damage": [item.to_json() for item in self.break_base_damage],
             "break_damage_emissions": [emission.to_json() for emission in self.break_damage_emissions],
             "break_status_emissions": [emission.to_json() for emission in self.break_status_emissions],
             "triggers": [trigger.to_json() for trigger in self.triggers],

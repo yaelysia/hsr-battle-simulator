@@ -193,7 +193,9 @@ def _break_transition_checks(transition: dict[str, Any]) -> dict[str, object]:
         "break_status_mutation_present": bool(status_mutations),
         "break_event_record_present": any(record.get("record_type") == "break_event" for record in records),
         "break_status_record_present": any(record.get("record_type") == "break_status" for record in records),
-        "break_damage_record_present": any(record.get("record_type") == "break_damage_blocked" for record in records),
+        "break_damage_record_present": any(
+            record.get("record_type") in {"break_damage_blocked", "break_damage"} for record in records
+        ),
         "target_broken_after": _target_broken_after(transition),
         "break_mutation_has_template_source": all(
             isinstance(item.get("metadata", {}).get("break_template_source"), dict)

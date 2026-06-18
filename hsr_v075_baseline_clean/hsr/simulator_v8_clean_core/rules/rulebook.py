@@ -8,6 +8,7 @@ from .ir import (
     ActionAbilityBindingIR,
     ActionDefinitionIR,
     ActionEventIR,
+    BreakBaseDamageIR,
     BreakDamageEmissionIR,
     BreakStatusEmissionIR,
     BreakTemplateIR,
@@ -173,6 +174,11 @@ class RuleBook:
             self,
             "_break_damage_emissions",
             {emission.break_damage_emission_id: emission for emission in self.ir.break_damage_emissions},
+        )
+        object.__setattr__(
+            self,
+            "_break_base_damage_by_level",
+            {row.level: row for row in self.ir.break_base_damage},
         )
         break_damage_emissions_by_template: dict[str, list[BreakDamageEmissionIR]] = {}
         for emission in self.ir.break_damage_emissions:
@@ -354,6 +360,12 @@ class RuleBook:
 
     def break_damage_emission(self, emission_id: str) -> BreakDamageEmissionIR | None:
         return self._break_damage_emissions.get(emission_id)
+
+    def break_base_damage(self, level: int) -> BreakBaseDamageIR | None:
+        return self._break_base_damage_by_level.get(level)
+
+    def break_base_damage_rows(self) -> tuple[BreakBaseDamageIR, ...]:
+        return self.ir.break_base_damage
 
     def break_damage_emissions(self) -> tuple[BreakDamageEmissionIR, ...]:
         return self.ir.break_damage_emissions

@@ -20,8 +20,8 @@ DamageFormulaFamily = Literal[
 ]
 
 
-EXECUTABLE_DAMAGE_FAMILIES: frozenset[str] = frozenset({"direct", "true_damage", "hp_loss"})
-BLOCKED_DAMAGE_FAMILIES: frozenset[str] = frozenset({"dot", "break", "super_break", "elation"})
+EXECUTABLE_DAMAGE_FAMILIES: frozenset[str] = frozenset({"direct", "break", "true_damage", "hp_loss"})
+BLOCKED_DAMAGE_FAMILIES: frozenset[str] = frozenset({"dot", "super_break", "elation"})
 FOLLOW_UP_ATTACK_TYPE = "follow_up"
 
 
@@ -100,6 +100,8 @@ class DamageSystem:
     def apply_packet(self, state: BattleState, packet: DamagePacket) -> DamageApplicationResult:
         if packet.damage_formula_family == "direct":
             return self._apply_direct_damage(state, packet)
+        if packet.damage_formula_family == "break":
+            return self._apply_break_damage(state, packet)
         if packet.damage_formula_family in {"true_damage", "hp_loss"}:
             return self._apply_fixed_hp_delta(state, packet)
         if packet.damage_formula_family in BLOCKED_DAMAGE_FAMILIES:
@@ -192,6 +194,67 @@ class DamageSystem:
                         "formula_result": formula_json,
                         "modifier_ledger": formula_json["modifier_ledger"],
                         "crit_resolution": formula_json["crit_resolution"],
+                        "target_before_hp": target.hp,
+                        "target_after_hp": after,
+                    },
+                    trace=packet.source_trace,
+                ).to_json(),
+            ),
+        )
+
+    def _apply_break_damage(self, state: BattleState, packet: DamagePacket) -> DamageApplicationResult:
+        if packet.amount is None:
+            return _damage_error(packet, "break damage requires admitted amount")
+        if not packet.break_damage_emission_id:
+            return _damage_error(packet, "break damage requires break_damage_emission_id")
+        if not packet.break_template_id:
+            return _damage_error(packet, "break damage requires break_template_id")
+        target = state.units[packet.target_id]
+        final_damage = float(packet.amount)
+        after = max(0.0, target.hp - final_damage)
+        packet_json = packet.to_json()
+        metadata = {
+            **packet_json,
+            **packet.metadata,
+            "packet_metadata": packet.metadata,
+            "final_damage": final_damage,
+            "normal_multiplier_terms": [],
+        }
+        mutation = Mutation(
+            op="set",
+            path=("units", packet.target_id, "hp"),
+            before=target.hp,
+            after=after,
+            reason="apply normal break damage",
+            source="damage_system",
+            metadata=metadata,
+        )
+        return DamageApplicationResult(
+            packet=packet,
+            ok=True,
+            mutations=(mutation,),
+            records=(
+                SettlementRecord(
+                    record_type="break_damage",
+                    source="damage_system",
+                    mutation_id=mutation.stable_id(),
+                    process_only=False,
+                    payload={
+                        "amount": final_damage,
+                        "final_damage": final_damage,
+                        "attack_type": packet.attack_type,
+                        "damage_kind": packet.damage_kind,
+                        "damage_formula_family": packet.damage_formula_family,
+                        "element_type": packet.element_type,
+                        "break_template_id": packet.break_template_id,
+                        "break_damage_emission_id": packet.break_damage_emission_id,
+                        "source_task_id": packet.source_task_id,
+                        "hit_profile_id": packet.hit_profile_id,
+                        "packet_metadata": packet.metadata,
+                        "bypasses_normal_multipliers": False,
+                        "normal_multiplier_terms": [],
+                        "numeric_evaluation": packet.metadata.get("numeric_evaluation", {}),
+                        "break_base_damage_source": packet.metadata.get("break_base_damage_source", {}),
                         "target_before_hp": target.hp,
                         "target_after_hp": after,
                     },

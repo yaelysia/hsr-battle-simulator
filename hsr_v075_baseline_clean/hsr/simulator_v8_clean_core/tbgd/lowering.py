@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import base64
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,7 @@ from ..rules.ir import (
     ActionDefinitionIR,
     ActionEventIR,
     ActionPhaseStepIR,
+    BreakBaseDamageIR,
     BreakDamageEmissionIR,
     BreakStatusEmissionIR,
     BreakTemplateIR,
@@ -178,6 +180,7 @@ class TBGDLowering:
             ability_task_effects,
             hit_profiles,
         )
+        break_base_damage = self._lower_break_base_damage()
         break_templates, break_damage_emissions, break_status_emissions, break_effects = self._lower_break_templates()
         effects.extend(break_effects)
         for relative_path, _, id_key in ACTION_DEFINITION_TABLES:
@@ -209,6 +212,7 @@ class TBGDLowering:
             damage_emissions=tuple(damage_emissions),
             toughness_emissions=tuple(toughness_emissions),
             break_templates=tuple(break_templates),
+            break_base_damage=tuple(break_base_damage),
             break_damage_emissions=tuple(break_damage_emissions),
             break_status_emissions=tuple(break_status_emissions),
             triggers=tuple(triggers),
@@ -242,6 +246,7 @@ class TBGDLowering:
                     "damage_emission_count": len(damage_emissions),
                     "toughness_emission_count": len(toughness_emissions),
                     "break_template_count": len(break_templates),
+                    "break_base_damage_count": len(break_base_damage),
                     "break_damage_emission_count": len(break_damage_emissions),
                     "break_status_emission_count": len(break_status_emissions),
                 },
@@ -264,6 +269,57 @@ class TBGDLowering:
         for template_id, template_row in sorted(template_rows.items()):
             profiles.append(_combatant_profile_from_template(template_id, template_row))
         return profiles
+
+    def _lower_break_base_damage(self) -> list[BreakBaseDamageIR]:
+        relative_path = "ExcelOutput/AvatarBreakDamage.json"
+        path = self.tbgd_root / relative_path
+        if not path.exists():
+            return []
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return []
+        if not isinstance(data, list):
+            return []
+        rows: list[BreakBaseDamageIR] = []
+        for row_index, row in enumerate(_limit_sequence(data, self.limits.max_records_per_table)):
+            if not isinstance(row, dict):
+                continue
+            level_value = row.get("Level")
+            break_base = _value_field(row.get("BreakBaseDamage"))
+            hardness_base = _value_field(row.get("HardnessBaseDamage"))
+            coverage_status = "executable"
+            blocked_reason = ""
+            if not isinstance(level_value, int):
+                coverage_status = "blocked"
+                blocked_reason = "break_base_damage_level_missing"
+                level_value = -1
+            if not isinstance(break_base, (int, float)):
+                coverage_status = "blocked"
+                blocked_reason = "break_base_damage_value_missing"
+                break_base = 0.0
+            rows.append(
+                BreakBaseDamageIR(
+                    level=int(level_value),
+                    break_base_damage=float(break_base),
+                    hardness_base_damage=float(hardness_base) if isinstance(hardness_base, (int, float)) else None,
+                    source=IRSource(
+                        source_path=relative_path,
+                        raw_type="AvatarBreakDamage",
+                        raw_id=str(level_value),
+                        evidence={
+                            "row_index": row_index,
+                            "fields": {
+                                "BreakBaseDamage": _json_safe(row.get("BreakBaseDamage")),
+                                "HardnessBaseDamage": _json_safe(row.get("HardnessBaseDamage")),
+                            },
+                        },
+                    ),
+                    coverage_status=coverage_status,
+                    blocked_reason=blocked_reason,
+                )
+            )
+        return rows
 
     def _lower_break_templates(
         self,
@@ -371,6 +427,7 @@ class TBGDLowering:
                 if formula_type != "ByBreakDamage":
                     continue
                 scaling_expr = _numeric_expr_summary(attack_property.get("BreakDamagePercentage"))
+                coverage_status = "executable" if _numeric_expr_can_be_runtime_bound(scaling_expr) else "blocked"
                 damage_emissions.append(
                     BreakDamageEmissionIR(
                         break_damage_emission_id=f"break_damage_emission:{name}:{task_index}",
@@ -391,8 +448,8 @@ class TBGDLowering:
                                 "attack_property": _json_safe(attack_property),
                             },
                         ),
-                        coverage_status="blocked",
-                        blocked_reason=_break_damage_blocked_reason(scaling_expr),
+                        coverage_status=coverage_status,
+                        blocked_reason="" if coverage_status == "executable" else _break_damage_blocked_reason(scaling_expr),
                     )
                 )
         return lowered_templates, damage_emissions, status_emissions, effects
@@ -2834,6 +2891,13 @@ def _numeric_expr_summary(value: Any) -> dict[str, Any]:
                     "supported": True,
                     "raw": _json_safe(value),
                 }
+            if _postfix_expr_is_admitted(postfix):
+                return {
+                    "kind": "postfix_expr",
+                    "supported": True,
+                    "raw": _json_safe(value),
+                    "admission": "postfix_add_sub_mul_div",
+                }
             return {
                 "kind": "postfix_expr",
                 "supported": False,
@@ -2856,6 +2920,8 @@ def _numeric_expr_can_be_runtime_bound(value: Any) -> bool:
         return True
     if isinstance(value, dict) and value.get("kind") == "dynamic_hash" and value.get("hash") is not None:
         return True
+    if isinstance(value, dict) and value.get("kind") == "postfix_expr" and value.get("supported") is True:
+        return True
     return False
 
 
@@ -2869,6 +2935,49 @@ def _break_damage_blocked_reason(scaling_expr: dict[str, Any]) -> str:
     if kind == "fixed":
         return "break_damage_formula_not_admitted:break_base_damage_formula_missing"
     return f"break_damage_percentage_not_executable:{kind or 'unknown'}"
+
+
+def _postfix_expr_is_admitted(postfix: dict[str, Any]) -> bool:
+    opcodes = postfix.get("OpCodes")
+    if not isinstance(opcodes, str) or not opcodes:
+        return False
+    try:
+        decoded = list(base64.b64decode(opcodes))
+    except Exception:
+        return False
+    fixed_values = postfix.get("FixedValues")
+    dynamic_hashes = postfix.get("DynamicHashes")
+    fixed_count = len(fixed_values) if isinstance(fixed_values, list) else 0
+    dynamic_count = len(dynamic_hashes) if isinstance(dynamic_hashes, list) else 0
+    stack_size = 0
+    index = 0
+    ended = False
+    while index < len(decoded):
+        opcode = decoded[index]
+        if opcode == 17:
+            ended = True
+            index += 1
+            continue
+        if opcode == 0:
+            if index + 1 >= len(decoded) or decoded[index + 1] >= fixed_count:
+                return False
+            stack_size += 1
+            index += 2
+            continue
+        if opcode == 1:
+            if index + 1 >= len(decoded) or decoded[index + 1] >= dynamic_count:
+                return False
+            stack_size += 1
+            index += 2
+            continue
+        if opcode in {2, 3, 4, 5}:
+            if stack_size < 2:
+                return False
+            stack_size -= 1
+            index += 1
+            continue
+        return False
+    return ended and stack_size == 1
 
 
 def _mechanism_bar_has_fixed_payload(standard: dict[str, Any]) -> bool:

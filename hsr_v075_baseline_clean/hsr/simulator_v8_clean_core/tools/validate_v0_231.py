@@ -271,7 +271,8 @@ def _coverage_checks(coverage_json: dict[str, Any], ir) -> dict[str, object]:
         "toughness_emissions_present": len(ir.toughness_emissions) > 0,
         "executable_toughness_present": toughness.get("executable", 0) > 0,
         "break_templates_present": break_templates.get("executable", 0) >= 7,
-        "break_damage_emissions_blocked": break_damage.get("lowered", 0) >= 7 and break_damage.get("executable", 0) == 0,
+        "break_damage_emissions_reported": break_damage.get("lowered", 0) >= 7
+        and break_damage.get("blocked", 0) + break_damage.get("executable", 0) == break_damage.get("lowered", 0),
     }
     return {"ok": all(checks.values()), "checks": checks, "status": status}
 
@@ -308,14 +309,16 @@ def _show_stance_checks(ir) -> dict[str, object]:
 
 
 def _break_damage_checks(ir) -> dict[str, object]:
+    executable = [emission for emission in ir.break_damage_emissions if emission.coverage_status == "executable"]
+    blocked = [emission for emission in ir.break_damage_emissions if emission.coverage_status != "executable"]
     checks = {
         "break_templates_lowered": len(ir.break_templates) >= 7,
         "break_templates_executable_for_lifecycle": all(template.coverage_status == "executable" for template in ir.break_templates),
         "break_damage_emissions_lowered": len(ir.break_damage_emissions) >= 7,
-        "break_damage_emissions_blocked": all(emission.coverage_status != "executable" for emission in ir.break_damage_emissions),
-        "blocked_reason_present": all(emission.blocked_reason for emission in ir.break_damage_emissions),
+        "break_damage_emissions_status_reported": len(executable) + len(blocked) == len(ir.break_damage_emissions),
+        "blocked_reason_present": all(emission.blocked_reason for emission in blocked),
     }
-    return {"ok": all(checks.values()), "checks": checks}
+    return {"ok": all(checks.values()), "checks": checks, "executable_count": len(executable)}
 
 
 def _is_show_stance_driven(emission: ToughnessEmissionIR) -> bool:
@@ -339,8 +342,12 @@ def _trust_summary(ir, reduce_case: dict[str, Any], break_case: dict[str, Any]) 
             "scope": "toughness depletion sets broken state and records OnTriggerBreak/OnBeingBreak process events",
         },
         "break_damage": {
-            "semantic_status": "blocked",
-            "blocking_dependency": "Break damage formula inputs/postfix semantics are not admitted; BreakDamageEmissionIR is lowered but non-mutating",
+            "semantic_status": "trusted_for_current_scope"
+            if any(emission.coverage_status == "executable" for emission in ir.break_damage_emissions)
+            else "blocked",
+            "blocking_dependency": ""
+            if any(emission.coverage_status == "executable" for emission in ir.break_damage_emissions)
+            else "Break damage formula inputs/postfix semantics are not admitted; BreakDamageEmissionIR is lowered but non-mutating",
             "lowered_count": len(ir.break_damage_emissions),
         },
         "super_break": {
