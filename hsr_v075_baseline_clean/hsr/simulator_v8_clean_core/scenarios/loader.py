@@ -43,6 +43,7 @@ def _unit(data: Any, index: int) -> UnitSpec:
         raise TypeError(f"units[{index}] must be an object")
     panel_data = dict(data.get("panel", {}))
     panel = PanelInput(
+        explicit_fields=tuple(str(key) for key in panel_data.keys()),
         max_hp=float(panel_data.get("max_hp", 1.0)),
         hp=float(panel_data["hp"]) if "hp" in panel_data else None,
         attack=float(panel_data.get("attack", 0.0)),

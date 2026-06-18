@@ -64,6 +64,7 @@ class CoverageMatrix:
     formula_status: dict[str, dict[str, Any]]
     table_status: dict[str, dict[str, Any]]
     modifier_status: dict[str, Any]
+    combatant_profile_status: dict[str, Any]
     action_execution_status: dict[str, Any]
 
     def to_json(self) -> dict[str, Any]:
@@ -75,6 +76,7 @@ class CoverageMatrix:
             "formula_status": self.formula_status,
             "table_status": self.table_status,
             "modifier_status": self.modifier_status,
+            "combatant_profile_status": self.combatant_profile_status,
             "action_execution_status": self.action_execution_status,
         }
 
@@ -129,6 +131,7 @@ def build_coverage_matrix(report: DiscoveryReport, ir: CanonicalIR) -> CoverageM
     ir_status_counts: Counter[str] = Counter()
     for collection in (
         ir.entities,
+        ir.combatant_profiles,
         ir.action_definitions,
         ir.action_ability_bindings,
         ir.ability_phases,
@@ -147,6 +150,7 @@ def build_coverage_matrix(report: DiscoveryReport, ir: CanonicalIR) -> CoverageM
         discovery_summary=report.to_json()["summary"],
         ir_summary={
             "entities": len(ir.entities),
+            "combatant_profiles": len(ir.combatant_profiles),
             "action_definitions": len(ir.action_definitions),
             "action_ability_bindings": len(ir.action_ability_bindings),
             "ability_phases": len(ir.ability_phases),
@@ -164,6 +168,7 @@ def build_coverage_matrix(report: DiscoveryReport, ir: CanonicalIR) -> CoverageM
         formula_status=formula_status,
         table_status=dict(ir.metadata.get("table_status", {})),
         modifier_status=modifier_status,
+        combatant_profile_status=_combatant_profile_status(ir),
         action_execution_status=action_execution_status,
     )
 
@@ -281,6 +286,22 @@ def _modifier_status(
                 "reason": "SetDynamicValueByModifierValue is standardized when source modifier, value type, target key, and multiplier are executable",
             },
         },
+    }
+
+
+def _combatant_profile_status(ir: CanonicalIR) -> dict[str, Any]:
+    status_counts = Counter(profile.coverage_status for profile in ir.combatant_profiles)
+    blocked_reasons = Counter(profile.blocked_reason for profile in ir.combatant_profiles if profile.blocked_reason)
+    monster_profiles = [profile for profile in ir.combatant_profiles if profile.entity_type == "monster"]
+    return {
+        "lowered": len(ir.combatant_profiles),
+        "monster_profiles": len(monster_profiles),
+        "executable": status_counts["executable"],
+        "blocked": status_counts["blocked"],
+        "lowered_only": status_counts["lowered"],
+        "status_counts": dict(sorted(status_counts.items())),
+        "blocked_reason_counts": dict(sorted(blocked_reasons.items())),
+        "reason": "CombatantProfileIR derives enemy base profile from MonsterConfig and MonsterTemplateConfig; executable monster profiles may seed scenario state when panel fields are absent",
     }
 
 

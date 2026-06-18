@@ -8,6 +8,21 @@ from ..core.model import JSONValue, UnitSide
 
 @dataclass(frozen=True)
 class PanelInput:
+    explicit_fields: tuple[str, ...] = (
+        "max_hp",
+        "hp",
+        "attack",
+        "defense",
+        "speed",
+        "energy",
+        "max_energy",
+        "toughness",
+        "max_toughness",
+        "action_value",
+        "resources",
+        "flags",
+        "statuses",
+    )
     max_hp: float = 1.0
     hp: float | None = None
     attack: float = 0.0

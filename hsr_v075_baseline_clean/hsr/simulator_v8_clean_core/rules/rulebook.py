@@ -9,6 +9,7 @@ from .ir import (
     ActionDefinitionIR,
     ActionEventIR,
     CanonicalIR,
+    CombatantProfileIR,
     ConditionIR,
     DamageEmissionIR,
     EffectIR,
@@ -27,6 +28,11 @@ class RuleBook:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "_entities", {entity.entity_id: entity for entity in self.ir.entities})
+        object.__setattr__(
+            self,
+            "_combatant_profiles",
+            {profile.entity_id: profile for profile in self.ir.combatant_profiles},
+        )
         object.__setattr__(
             self,
             "_action_definitions",
@@ -171,6 +177,15 @@ class RuleBook:
             "coverage_status": entity.coverage_status,
             "source": entity.source.to_json(),
         }
+
+    def combatant_profile(self, entity_id: str) -> CombatantProfileIR | None:
+        return self._combatant_profiles.get(entity_id)
+
+    def require_combatant_profile(self, entity_id: str) -> CombatantProfileIR:
+        profile = self.combatant_profile(entity_id)
+        if profile is None:
+            raise KeyError(f"unknown combatant profile {entity_id!r}")
+        return profile
 
     def effect(self, effect_id: str) -> EffectIR | None:
         return self._effects.get(effect_id)

@@ -127,6 +127,36 @@ class RuleEntity:
 
 
 @dataclass(frozen=True)
+class CombatantProfileIR:
+    profile_id: str
+    entity_id: str
+    entity_type: str
+    template_id: str
+    base_stats: dict[str, JSONValue]
+    toughness_profile: dict[str, JSONValue]
+    weaknesses: tuple[str, ...]
+    resistances: dict[str, JSONValue]
+    source: IRSource
+    coverage_status: CoverageStatus = "blocked"
+    blocked_reason: str = ""
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "profile_id": self.profile_id,
+            "entity_id": self.entity_id,
+            "entity_type": self.entity_type,
+            "template_id": self.template_id,
+            "base_stats": self.base_stats,
+            "toughness_profile": self.toughness_profile,
+            "weaknesses": list(self.weaknesses),
+            "resistances": self.resistances,
+            "source": self.source.to_json(),
+            "coverage_status": self.coverage_status,
+            "blocked_reason": self.blocked_reason,
+        }
+
+
+@dataclass(frozen=True)
 class ActionPhaseStepIR:
     kind: str
     phase: str
@@ -428,6 +458,7 @@ class ActionDefinitionIR:
 class CanonicalIR:
     version: str
     entities: tuple[RuleEntity, ...] = ()
+    combatant_profiles: tuple[CombatantProfileIR, ...] = ()
     action_definitions: tuple[ActionDefinitionIR, ...] = ()
     action_ability_bindings: tuple[ActionAbilityBindingIR, ...] = ()
     ability_phases: tuple[AbilityPhaseIR, ...] = ()
@@ -446,6 +477,7 @@ class CanonicalIR:
             "version": self.version,
             "metadata": self.metadata,
             "entities": [entity.to_json() for entity in self.entities],
+            "combatant_profiles": [profile.to_json() for profile in self.combatant_profiles],
             "action_definitions": [definition.to_json() for definition in self.action_definitions],
             "action_ability_bindings": [binding.to_json() for binding in self.action_ability_bindings],
             "ability_phases": [phase.to_json() for phase in self.ability_phases],

@@ -16,6 +16,7 @@ from ..rules.ir import (
     ActionEventIR,
     ActionPhaseStepIR,
     CanonicalIR,
+    CombatantProfileIR,
     ConditionIR,
     DamageEmissionIR,
     EffectIR,
@@ -145,6 +146,7 @@ class TBGDLowering:
             entities.extend(self._lower_entity_table(relative_path, spec))
             table_stats[relative_path] = self._table_stats(relative_path, spec[1])
         entities = list(_dedupe_entities(entities).values())
+        combatant_profiles = self._lower_combatant_profiles()
         action_definitions = list(self._lower_action_definitions().values())
         (
             action_ability_bindings,
@@ -186,6 +188,7 @@ class TBGDLowering:
         return CanonicalIR(
             version=BASELINE_VERSION,
             entities=tuple(entities),
+            combatant_profiles=tuple(combatant_profiles),
             action_definitions=tuple(action_definitions),
             action_ability_bindings=tuple(action_ability_bindings),
             ability_phases=tuple(ability_phases),
@@ -223,8 +226,38 @@ class TBGDLowering:
                     "ability_task_count": len(ability_tasks),
                     "damage_emission_count": len(damage_emissions),
                 },
+                "combatant_profile_status": {
+                    "lowered_count": len(combatant_profiles),
+                    "executable_count": sum(1 for profile in combatant_profiles if profile.coverage_status == "executable"),
+                    "blocked_count": sum(1 for profile in combatant_profiles if profile.coverage_status == "blocked"),
+                },
             },
         )
+
+    def _lower_combatant_profiles(self) -> list[CombatantProfileIR]:
+        monster_rows = self._rows_by_id("ExcelOutput/MonsterConfig.json", "MonsterID")
+        template_rows = self._rows_by_id("ExcelOutput/MonsterTemplateConfig.json", "MonsterTemplateID")
+        profiles: list[CombatantProfileIR] = []
+        for monster_id, monster_row in sorted(monster_rows.items()):
+            template_id = str(monster_row.get("MonsterTemplateID") or "")
+            template_row = template_rows.get(template_id)
+            profiles.append(_combatant_profile_from_monster(monster_id, monster_row, template_id, template_row))
+        for template_id, template_row in sorted(template_rows.items()):
+            profiles.append(_combatant_profile_from_template(template_id, template_row))
+        return profiles
+
+    def _rows_by_id(self, relative_path: str, id_key: str) -> dict[str, dict[str, Any]]:
+        path = self.tbgd_root / relative_path
+        if not path.exists():
+            return {}
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, list):
+            return {}
+        rows: dict[str, dict[str, Any]] = {}
+        for row in _limit_sequence(data, self.limits.max_records_per_table):
+            if isinstance(row, dict) and id_key in row:
+                rows[str(row[id_key])] = row
+        return rows
 
     def _lower_action_ability_bindings(
         self,
@@ -1093,6 +1126,195 @@ def _stack_property_summaries(modifier: dict[str, Any]) -> list[dict[str, Any]]:
     return summaries
 
 
+def _combatant_profile_from_monster(
+    monster_id: str,
+    monster_row: dict[str, Any],
+    template_id: str,
+    template_row: dict[str, Any] | None,
+) -> CombatantProfileIR:
+    source = IRSource(
+        source_path="ExcelOutput/MonsterConfig.json",
+        raw_type="MonsterConfig",
+        raw_id=monster_id,
+        evidence={
+            "entity_id": f"monster:{monster_id}",
+            "template_id": template_id,
+            "template_source_path": "ExcelOutput/MonsterTemplateConfig.json",
+            "raw_paths": {
+                "template_id": "MonsterTemplateID",
+                "attack_modify_ratio": "AttackModifyRatio",
+                "defense_modify_ratio": "DefenceModifyRatio",
+                "hp_modify_ratio": "HPModifyRatio",
+                "speed_modify_ratio": "SpeedModifyRatio",
+                "stance_modify_ratio": "StanceModifyRatio",
+                "weaknesses": "StanceWeakList",
+                "resistances": "DamageTypeResistance",
+            },
+        },
+    )
+    if template_row is None:
+        return _blocked_combatant_profile(
+            profile_id=f"combatant_profile:monster:{monster_id}",
+            entity_id=f"monster:{monster_id}",
+            entity_type="monster",
+            template_id=template_id,
+            source=source,
+            reason="monster_template_missing",
+        )
+    stat_result = _monster_profile_stats(monster_row, template_row)
+    blocked_reason = stat_result.get("blocked_reason", "")
+    return CombatantProfileIR(
+        profile_id=f"combatant_profile:monster:{monster_id}",
+        entity_id=f"monster:{monster_id}",
+        entity_type="monster",
+        template_id=f"monster_template:{template_id}" if template_id else "",
+        base_stats=stat_result["base_stats"] if isinstance(stat_result.get("base_stats"), dict) else {},
+        toughness_profile=stat_result["toughness_profile"] if isinstance(stat_result.get("toughness_profile"), dict) else {},
+        weaknesses=tuple(str(item) for item in monster_row.get("StanceWeakList") or ()),
+        resistances=_damage_type_resistances(monster_row.get("DamageTypeResistance")),
+        source=source,
+        coverage_status="blocked" if blocked_reason else "executable",
+        blocked_reason=blocked_reason,
+    )
+
+
+def _combatant_profile_from_template(template_id: str, template_row: dict[str, Any]) -> CombatantProfileIR:
+    source = IRSource(
+        source_path="ExcelOutput/MonsterTemplateConfig.json",
+        raw_type="MonsterTemplateConfig",
+        raw_id=template_id,
+        evidence={
+            "entity_id": f"monster_template:{template_id}",
+            "raw_paths": {
+                "attack": "AttackBase",
+                "defense": "DefenceBase",
+                "hp": "HPBase",
+                "speed": "SpeedBase",
+                "stance": "StanceBase",
+            },
+        },
+    )
+    stat_result = _monster_template_profile_stats(template_row)
+    blocked_reason = stat_result.get("blocked_reason", "")
+    return CombatantProfileIR(
+        profile_id=f"combatant_profile:monster_template:{template_id}",
+        entity_id=f"monster_template:{template_id}",
+        entity_type="monster_template",
+        template_id=f"monster_template:{template_id}",
+        base_stats=stat_result["base_stats"] if isinstance(stat_result.get("base_stats"), dict) else {},
+        toughness_profile=stat_result["toughness_profile"] if isinstance(stat_result.get("toughness_profile"), dict) else {},
+        weaknesses=(),
+        resistances={},
+        source=source,
+        coverage_status="blocked" if blocked_reason else "lowered",
+        blocked_reason=blocked_reason or "monster_template_profile_lacks_monster_weakness_and_resistance",
+    )
+
+
+def _monster_profile_stats(monster_row: dict[str, Any], template_row: dict[str, Any]) -> dict[str, Any]:
+    template_stats = _monster_template_profile_stats(template_row)
+    if template_stats.get("blocked_reason"):
+        return template_stats
+    required_ratios = {
+        "attack": ("AttackModifyRatio", "attack"),
+        "defense": ("DefenceModifyRatio", "defense"),
+        "max_hp": ("HPModifyRatio", "max_hp"),
+        "speed": ("SpeedModifyRatio", "speed"),
+        "max_toughness": ("StanceModifyRatio", "max_toughness"),
+    }
+    missing = [key for key, _ in required_ratios.values() if _required_number(monster_row, key) is None]
+    if missing:
+        return {"blocked_reason": f"monster_modify_ratio_missing:{','.join(missing)}"}
+    base_stats = dict(template_stats["base_stats"])
+    toughness_profile = dict(template_stats["toughness_profile"])
+    for stat_name, (ratio_key, source_stat) in required_ratios.items():
+        ratio = _required_number(monster_row, ratio_key)
+        if ratio is None:
+            continue
+        if stat_name == "max_toughness":
+            base_value = float(toughness_profile.get(source_stat, 0.0))
+            toughness_profile[stat_name] = base_value * ratio
+            toughness_profile["current_toughness"] = toughness_profile[stat_name]
+            toughness_profile["stance_modify_ratio"] = ratio
+        else:
+            base_stats[stat_name] = float(base_stats.get(source_stat, 0.0)) * ratio
+    return {
+        "base_stats": base_stats,
+        "toughness_profile": toughness_profile,
+        "blocked_reason": "",
+    }
+
+
+def _monster_template_profile_stats(template_row: dict[str, Any]) -> dict[str, Any]:
+    required = {
+        "attack": "AttackBase",
+        "defense": "DefenceBase",
+        "max_hp": "HPBase",
+        "speed": "SpeedBase",
+        "max_toughness": "StanceBase",
+    }
+    missing = [key for key in required.values() if _required_number(template_row, key) is None]
+    if missing:
+        return {"blocked_reason": f"monster_template_base_stat_missing:{','.join(missing)}"}
+    base_stats = {
+        "attack": _required_number(template_row, "AttackBase") or 0.0,
+        "defense": _required_number(template_row, "DefenceBase") or 0.0,
+        "max_hp": _required_number(template_row, "HPBase") or 0.0,
+        "speed": _required_number(template_row, "SpeedBase") or 0.0,
+    }
+    max_toughness = _required_number(template_row, "StanceBase") or 0.0
+    return {
+        "base_stats": base_stats,
+        "toughness_profile": {
+            "max_toughness": max_toughness,
+            "current_toughness": max_toughness,
+            "stance_base": max_toughness,
+            "stance_type": str(template_row.get("StanceType") or ""),
+        },
+        "blocked_reason": "",
+    }
+
+
+def _damage_type_resistances(value: Any) -> dict[str, Any]:
+    if not isinstance(value, list):
+        return {}
+    result: dict[str, Any] = {}
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        damage_type = item.get("DamageType")
+        if not isinstance(damage_type, str) or not damage_type:
+            continue
+        resistance = _required_number(item, "Value")
+        if resistance is not None:
+            result[damage_type] = resistance
+    return result
+
+
+def _blocked_combatant_profile(
+    *,
+    profile_id: str,
+    entity_id: str,
+    entity_type: str,
+    template_id: str,
+    source: IRSource,
+    reason: str,
+) -> CombatantProfileIR:
+    return CombatantProfileIR(
+        profile_id=profile_id,
+        entity_id=entity_id,
+        entity_type=entity_type,
+        template_id=template_id,
+        base_stats={},
+        toughness_profile={},
+        weaknesses=(),
+        resistances={},
+        source=source,
+        coverage_status="blocked",
+        blocked_reason=reason,
+    )
+
+
 def _action_definition_from_row(
     relative_path: str,
     entity_type: str,
@@ -1770,6 +1992,17 @@ def _number_value(value: Any, default: float) -> float:
     if isinstance(value, (int, float)):
         return float(value)
     return default
+
+
+def _required_number(row: dict[str, Any], key: str) -> float | None:
+    if key not in row:
+        return None
+    value = row.get(key)
+    if isinstance(value, dict):
+        return _required_number(value, "Value")
+    if isinstance(value, (int, float)):
+        return float(value)
+    return None
 
 
 def _list_json_values(value: Any) -> list[Any]:

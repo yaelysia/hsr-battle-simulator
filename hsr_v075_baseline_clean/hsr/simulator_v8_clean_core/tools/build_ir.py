@@ -34,6 +34,7 @@ def build_outputs(tbgd_root: Path, output_dir: Path, max_ability_files: int | No
         "summary": {
             "discovery_files": len(discovery.files),
             "ir_entities": len(ir.entities),
+            "ir_combatant_profiles": len(ir.combatant_profiles),
             "ir_action_definitions": len(ir.action_definitions),
             "ir_triggers": len(ir.triggers),
             "ir_effects": len(ir.effects),
