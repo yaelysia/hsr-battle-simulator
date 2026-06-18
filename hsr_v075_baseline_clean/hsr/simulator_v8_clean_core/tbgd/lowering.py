@@ -17,6 +17,7 @@ from ..rules.ir import (
     ActionPhaseStepIR,
     CanonicalIR,
     ConditionIR,
+    DamageEmissionIR,
     EffectIR,
     FormulaIR,
     HitProfileIR,
@@ -161,6 +162,11 @@ class TBGDLowering:
             action_ability_bindings,
             ability_phases,
         )
+        damage_emissions = _lower_damage_emissions(
+            ability_tasks,
+            ability_task_effects,
+            hit_profiles,
+        )
         for relative_path, _, id_key in ACTION_DEFINITION_TABLES:
             table_stats[f"action_definitions:{relative_path}"] = self._table_stats(relative_path, id_key)
 
@@ -186,6 +192,7 @@ class TBGDLowering:
             ability_tasks=tuple(ability_tasks),
             action_events=tuple(action_events),
             hit_profiles=tuple(hit_profiles),
+            damage_emissions=tuple(damage_emissions),
             triggers=tuple(triggers),
             effects=tuple(effects),
             conditions=tuple(conditions),
@@ -213,6 +220,7 @@ class TBGDLowering:
                     "lowered_count": len(action_ability_bindings),
                     "ability_phase_count": len(ability_phases),
                     "ability_task_count": len(ability_tasks),
+                    "damage_emission_count": len(damage_emissions),
                 },
             },
         )
@@ -1351,6 +1359,115 @@ def _lower_action_execution_ir(
     return events, profiles
 
 
+def _lower_damage_emissions(
+    tasks: list[AbilityTaskIR],
+    effects: list[EffectIR],
+    hit_profiles: list[HitProfileIR],
+) -> list[DamageEmissionIR]:
+    effect_by_id = {effect.effect_id: effect for effect in effects}
+    profiles_by_action: dict[tuple[str, int], list[HitProfileIR]] = {}
+    tasks_by_action: dict[tuple[str, int], list[AbilityTaskIR]] = {}
+    for profile in hit_profiles:
+        profiles_by_action.setdefault((profile.action_id, profile.level), []).append(profile)
+    for task in tasks:
+        if task.opcode in DAMAGE_EMISSION_OPCODES:
+            tasks_by_action.setdefault((task.action_id, task.level), []).append(task)
+
+    emissions: list[DamageEmissionIR] = []
+    for action_key, action_tasks in tasks_by_action.items():
+        action_profiles = tuple(sorted(
+            profiles_by_action.get(action_key, ()),
+            key=lambda profile: (profile.hit_index, profile.target_group, profile.hit_profile_id),
+        ))
+        for task in sorted(action_tasks, key=lambda item: (item.phase_id, item.callback_kind, item.task_path, item.task_id)):
+            effect = effect_by_id.get(task.effect_id)
+            target_profiles = action_profiles or (None,)
+            for profile in target_profiles:
+                blocked_reason = _damage_emission_blocked_reason(task, effect, profile)
+                source = _damage_emission_source(task, effect, profile)
+                emissions.append(
+                    DamageEmissionIR(
+                        damage_emission_id=_damage_emission_id(task, profile),
+                        action_id=task.action_id,
+                        level=task.level,
+                        phase_id=task.phase_id,
+                        source_task_id=task.task_id,
+                        hit_profile_id=profile.hit_profile_id if profile else "",
+                        target_group=profile.target_group if profile else "unknown",
+                        damage_formula_family=profile.damage_formula_family if profile else "unknown",
+                        element_type=profile.element_type if profile else None,
+                        scaling_ratio_expr=profile.multiplier_expr if profile else {"kind": "missing", "blocked_reason": "missing_hit_profile"},
+                        source=source,
+                        coverage_status="blocked" if blocked_reason else "executable",
+                        blocked_reason=blocked_reason,
+                    )
+                )
+    return emissions
+
+
+def _damage_emission_id(task: AbilityTaskIR, profile: HitProfileIR | None) -> str:
+    hit_id = profile.hit_profile_id if profile else "missing_hit_profile"
+    return f"damage_emission:{task.task_id}:{hit_id}"
+
+
+def _damage_emission_source(
+    task: AbilityTaskIR,
+    effect: EffectIR | None,
+    profile: HitProfileIR | None,
+) -> IRSource:
+    payload = effect.payload if effect else {}
+    return IRSource(
+        source_path=task.source.source_path,
+        raw_type="AbilityDamageEmission",
+        raw_id=task.opcode,
+        evidence={
+            **task.source.evidence,
+            "task_id": task.task_id,
+            "effect_id": task.effect_id,
+            "target_alias": _target_alias(payload.get("TargetType")),
+            "hit_profile_id": profile.hit_profile_id if profile else "",
+            "hit_profile_source": profile.source.to_json() if profile else None,
+        },
+    )
+
+
+def _damage_emission_blocked_reason(
+    task: AbilityTaskIR,
+    effect: EffectIR | None,
+    profile: HitProfileIR | None,
+) -> str:
+    if effect is None:
+        return "damage_emission_effect_missing"
+    payload = effect.payload
+    target_alias = _target_alias(payload.get("TargetType"))
+    if target_alias not in DAMAGE_EMISSION_TARGET_ALIASES:
+        return f"unsupported_damage_target_alias:{target_alias}"
+    if not isinstance(payload.get("AttackProperty"), dict):
+        return "damage_emission_attack_property_missing"
+    if profile is None:
+        return "damage_emission_hit_profile_missing"
+    target_group_reason = _damage_emission_target_group_blocked_reason(target_alias, profile.target_group)
+    if target_group_reason:
+        return target_group_reason
+    if profile.coverage_status != "executable":
+        return f"hit_profile_not_executable:{profile.blocked_reason or profile.coverage_status}"
+    if profile.damage_formula_family != "direct":
+        return f"damage_emission_family_not_executable:{profile.damage_formula_family}"
+    if profile.multiplier_expr.get("kind") != "fixed":
+        return "damage_emission_scaling_ratio_not_fixed"
+    return ""
+
+
+def _damage_emission_target_group_blocked_reason(target_alias: str | None, target_group: str) -> str:
+    if target_alias in {"AbilityTargetEntity", "CurrentActionTarget"}:
+        return "" if target_group in {"primary", "selected"} else f"damage_target_group_mismatch:{target_alias}:{target_group}"
+    if target_alias == "AbilityTargetAdjoinEntity":
+        return "" if target_group == "adjacent" else f"damage_target_group_mismatch:{target_alias}:{target_group}"
+    if target_alias == "AllEnemy":
+        return "" if target_group == "selected" else f"damage_target_group_mismatch:{target_alias}:{target_group}"
+    return f"unsupported_damage_target_alias:{target_alias}"
+
+
 def _action_event_from_definition(
     definition: ActionDefinitionIR,
     hit_profiles: list[HitProfileIR],
@@ -1668,7 +1785,14 @@ SHIELD_OPCODES = {"InitShield", "StackShield", "ModifyShield"}
 MECHANISM_BAR_OPCODES = {"SetEnergyBarState", "SetMonsterEnergyBarState", "SetSummonerEnergyBarState"}
 RESOURCE_DELTA_OPCODES = {"ModifySPNew"}
 DYNAMIC_VALUE_OPCODES = {"SetDynamicValue", "SetDynamicValueByModifierValue"}
+DAMAGE_EMISSION_OPCODES = {"DamageByAttackProperty"}
 EXECUTABLE_TARGET_ALIASES = {"Caster", "ModifierOwnerEntity", "ParamEntity", "CurrentActionTarget"}
+DAMAGE_EMISSION_TARGET_ALIASES = {
+    "AbilityTargetEntity",
+    "AbilityTargetAdjoinEntity",
+    "AllEnemy",
+    "CurrentActionTarget",
+}
 SUPPORTED_MODIFIER_VALUE_TYPES = {"Layer", "LifeTime"}
 EXECUTABLE_CONDITION_OPCODES = {
     "AlwaysTrue",

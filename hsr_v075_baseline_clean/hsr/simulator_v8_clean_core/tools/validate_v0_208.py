@@ -25,6 +25,7 @@ from ..tbgd.lowering import LoweringLimits, TBGDLowering
 from ..tbgd.paths import find_tbgd_root
 from .io import write_json
 from .static_checks import run_static_checks
+from .validate_v0_209 import _damage_emission_command
 
 
 VALIDATION_VERSION = "v0_208"
@@ -50,7 +51,7 @@ def run_validation(
     scenario = ScenarioLoader().load_path(scenario_path)
     identity_result = IdentityResolver(rules).validate(scenario)
     build_result = ScenarioStateBuilder(rules).build(scenario)
-    command = build_result.commands[0]
+    command = _damage_emission_command(ir, rules, build_result.commands[0])
 
     executor = CombatExecutor(rules)
     after_state, transition = executor.execute(command, build_result.state)

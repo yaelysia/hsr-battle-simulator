@@ -33,9 +33,11 @@ from .validate_v0_218 import (
     _blocked_mode_checks,
     _case_json,
     _damage_case_json,
+    _damage_emissions_have_blocked_reason,
     _definition_selection_checks,
     _execute_mode_case,
     _execution_plan_checks,
+    _executable_damage_emission_count,
     _fixed_damage_family_cases,
     _fixed_damage_family_checks,
     _multi_enemy_state,
@@ -140,10 +142,11 @@ def run_validation(
             "scenario_path": scenario_path.as_posix(),
             "summary": {
                 "discovery_files": len(discovery.files),
-                "ir_action_definitions": len(ir.action_definitions),
-                "ir_action_events": len(ir.action_events),
-                "ir_hit_profiles": len(ir.hit_profiles),
-                "ir_effects": len(ir.effects),
+            "ir_action_definitions": len(ir.action_definitions),
+            "ir_action_events": len(ir.action_events),
+            "ir_hit_profiles": len(ir.hit_profiles),
+            "ir_damage_emissions": len(ir.damage_emissions),
+            "ir_effects": len(ir.effects),
                 "sampled": ir.metadata.get("sampled", {}),
             },
         },
@@ -221,6 +224,7 @@ def _canonical_ir_summary(ir: CanonicalIR) -> dict[str, object]:
             "action_definitions": len(ir.action_definitions),
             "action_events": len(ir.action_events),
             "hit_profiles": len(ir.hit_profiles),
+            "damage_emissions": len(ir.damage_emissions),
             "triggers": len(ir.triggers),
             "effects": len(ir.effects),
             "conditions": len(ir.conditions),
@@ -239,6 +243,7 @@ def _plan_cases(rules: RuleBook, definitions: dict[str, ActionDefinitionIR | Non
             definition,
             rules.require_action_event(definition.action_id, definition.level),
             rules.hit_profiles_for_action(definition.action_id, definition.level),
+            rules.damage_emissions_for_action(definition.action_id, definition.level),
             requested_target_ids=("enemy:target",),
             resolved_target_groups={},
             source_trace=definition.source.to_json(),
@@ -364,20 +369,37 @@ def _runtime_hit_profile_path_checks(
         checks[f"{mode}_coverage_has_action_event_id"] = bool(
             transition is not None and transition.coverage.get("action_event_id")
         )
-        checks[f"{mode}_plan_source_is_ir"] = isinstance(plan, dict) and plan.get("plan_source") == "action_event_ir_hit_profile_ir"
+        checks[f"{mode}_plan_source_is_ir"] = isinstance(plan, dict) and plan.get("plan_source") in {
+            "action_event_ir_hit_profile_ir",
+            "action_event_ir_damage_emission_ir_hit_profile_ir",
+        }
+        checks[f"{mode}_damage_plan_source_is_emission_ir"] = isinstance(plan, dict) and plan.get("damage_plan_source") == "damage_emission_ir_hit_profile_ir"
         checks[f"{mode}_hit_plan_has_profile_ids"] = _plan_hit_entries_have(plan, "hit_profile_id")
-        checks[f"{mode}_damage_records_have_profile_ids"] = _damage_records_have_packet_metadata(damage_records, "hit_profile_id")
-        checks[f"{mode}_damage_records_have_scaling_ratio"] = _damage_records_have_packet_metadata(damage_records, "scaling_ratio")
-        checks[f"{mode}_damage_records_have_hit_source_trace"] = _damage_records_have_packet_metadata(damage_records, "hit_source_trace")
-        checks[f"{mode}_damage_records_have_numeric_fidelity"] = _damage_records_have_packet_metadata(
-            damage_records,
-            "numeric_fidelity_status",
-        )
-        if mode in {"aoe", "blast"}:
-            checks[f"{mode}_damage_structural_only"] = all(
-                _packet_metadata(record).get("numeric_fidelity_status") == "structural_only"
-                for record in damage_records
+        if _executable_damage_emission_count(transition) > 0:
+            checks[f"{mode}_damage_records_have_profile_ids"] = _damage_records_have_packet_metadata(damage_records, "hit_profile_id")
+            checks[f"{mode}_damage_records_have_emission_ids"] = _damage_records_have_packet_metadata(damage_records, "damage_emission_id")
+            checks[f"{mode}_damage_records_have_source_task_ids"] = _damage_records_have_packet_metadata(damage_records, "source_task_id")
+            checks[f"{mode}_damage_records_have_scaling_ratio"] = _damage_records_have_packet_metadata(damage_records, "scaling_ratio")
+            checks[f"{mode}_damage_records_have_hit_source_trace"] = _damage_records_have_packet_metadata(damage_records, "hit_source_trace")
+            checks[f"{mode}_damage_records_have_numeric_fidelity"] = _damage_records_have_packet_metadata(
+                damage_records,
+                "numeric_fidelity_status",
             )
+        else:
+            checks[f"{mode}_damage_records_have_profile_ids"] = not damage_records and _damage_emissions_have_blocked_reason(transition)
+            checks[f"{mode}_damage_records_have_emission_ids"] = not damage_records and _damage_emissions_have_blocked_reason(transition)
+            checks[f"{mode}_damage_records_have_source_task_ids"] = not damage_records and _damage_emissions_have_blocked_reason(transition)
+            checks[f"{mode}_damage_records_have_scaling_ratio"] = not damage_records and _damage_emissions_have_blocked_reason(transition)
+            checks[f"{mode}_damage_records_have_hit_source_trace"] = not damage_records and _damage_emissions_have_blocked_reason(transition)
+            checks[f"{mode}_damage_records_have_numeric_fidelity"] = not damage_records and _damage_emissions_have_blocked_reason(transition)
+        if mode in {"aoe", "blast"}:
+            if damage_records:
+                checks[f"{mode}_damage_structural_only"] = all(
+                    _packet_metadata(record).get("numeric_fidelity_status") == "structural_only"
+                    for record in damage_records
+                )
+            else:
+                checks[f"{mode}_damage_structural_only"] = _damage_emissions_have_blocked_reason(transition)
         details[mode] = {
             "coverage": transition.coverage if transition is not None else {},
             "damage_record_count": len(damage_records),

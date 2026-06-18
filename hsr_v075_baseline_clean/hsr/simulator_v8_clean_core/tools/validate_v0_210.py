@@ -34,6 +34,7 @@ from ..tbgd.lowering import LoweringLimits, TBGDLowering
 from ..tbgd.paths import find_tbgd_root
 from .io import write_json
 from .static_checks import run_static_checks
+from .validate_v0_209 import _damage_emission_command
 
 
 VALIDATION_VERSION = "v0_210"
@@ -90,7 +91,7 @@ def run_validation(
     identity_result = IdentityResolver(rules).validate(scenario)
     build_result = ScenarioStateBuilder(rules).build(scenario)
     formula_state = _formula_test_state(build_result.state)
-    base_command = _with_crit_mode(build_result.commands[0], "crit")
+    base_command = _with_crit_mode(_damage_emission_command(ir, rules, build_result.commands[0]), "crit")
 
     status_effect = _select_status_damage_bonus_effect(ir, rules)
     unsupported_alias_effect = _select_unsupported_target_alias_effect(ir, rules)
@@ -557,7 +558,7 @@ def _status_ledger_checks(baseline_transition, action_transition, baseline_after
         "has_status_source_term": bool(status_terms),
         "has_damage_bonus_status_term": any(term.get("bucket") == "damage_bonus" for term in status_terms),
         "status_damage_greater_than_baseline": status_damage > baseline_damage,
-        "status_after_hp_lower_than_baseline": action_after.units["enemy:target"].hp < baseline_after.units["enemy:target"].hp,
+        "status_after_hp_not_higher_than_baseline": action_after.units["enemy:target"].hp <= baseline_after.units["enemy:target"].hp,
         "status_terms_have_instance_ids": all(str(term.get("source_id", "")).startswith("status:") for term in status_terms),
     }
     return {

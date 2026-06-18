@@ -156,6 +156,7 @@ def run_validation(
                 "ir_ability_phases": len(ir.ability_phases),
                 "ir_action_events": len(ir.action_events),
                 "ir_hit_profiles": len(ir.hit_profiles),
+                "ir_damage_emissions": len(ir.damage_emissions),
                 "ir_effects": len(ir.effects),
                 "sampled": ir.metadata.get("sampled", {}),
             },
@@ -241,6 +242,7 @@ def _canonical_ir_summary(ir: CanonicalIR) -> dict[str, object]:
             "ability_phases": len(ir.ability_phases),
             "action_events": len(ir.action_events),
             "hit_profiles": len(ir.hit_profiles),
+            "damage_emissions": len(ir.damage_emissions),
             "triggers": len(ir.triggers),
             "effects": len(ir.effects),
             "conditions": len(ir.conditions),
@@ -302,6 +304,7 @@ def _plan_cases(rules: RuleBook, definitions: dict[str, ActionDefinitionIR | Non
             definition,
             rules.require_action_event(definition.action_id, definition.level),
             rules.hit_profiles_for_action(definition.action_id, definition.level),
+            rules.damage_emissions_for_action(definition.action_id, definition.level),
             requested_target_ids=("enemy:target",),
             resolved_target_groups={},
             source_trace={

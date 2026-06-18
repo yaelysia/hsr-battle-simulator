@@ -38,10 +38,12 @@ from .validate_v0_218 import (
     _definition_selection_checks,
     _execute_mode_case,
     _execution_plan_checks,
+    _executable_damage_emission_count,
     _fixed_damage_family_cases,
     _fixed_damage_family_checks,
     _multi_enemy_state,
     _multi_target_damage_checks,
+    _damage_emissions_have_blocked_reason,
     _records_of_type,
     _select_definition,
     _target_mode_checks,
@@ -202,6 +204,7 @@ def _plan_cases(rules: RuleBook, definitions: dict[str, ActionDefinitionIR | Non
             definition,
             rules.require_action_event(definition.action_id, definition.level),
             rules.hit_profiles_for_action(definition.action_id, definition.level),
+            rules.damage_emissions_for_action(definition.action_id, definition.level),
             requested_target_ids=("enemy:target",),
             resolved_target_groups={},
             source_trace=definition.source.to_json(),
@@ -343,11 +346,18 @@ def _multi_target_context_checks(cases: dict[str, dict[str, Any]]) -> dict[str, 
             and window["metadata"].get("per_hit_target_context_not_implemented") is True
             for window in windows
         )
-        checks[f"{mode}_damage_metadata_target_group_multiplier_pending"] = _damage_records_have_metadata_value(
-            transition,
-            "target_group_multiplier_not_implemented",
-            True,
-        )
+        if _executable_damage_emission_count(transition) > 0:
+            checks[f"{mode}_damage_metadata_target_group_multiplier_pending"] = _damage_records_have_metadata_value(
+                transition,
+                "target_group_multiplier_not_implemented",
+                True,
+            )
+        else:
+            checks[f"{mode}_damage_metadata_target_group_multiplier_pending"] = (
+                transition is not None
+                and not _records_of_type(transition, "damage")
+                and _damage_emissions_have_blocked_reason(transition)
+            )
         details[mode] = {
             "coverage": transition.coverage if transition is not None else {},
             "trigger_windows": windows,

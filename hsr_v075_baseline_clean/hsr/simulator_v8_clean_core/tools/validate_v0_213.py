@@ -73,7 +73,11 @@ def run_validation(
     identity_result = IdentityResolver(rules).validate(scenario)
     build_result = ScenarioStateBuilder(rules).build(scenario)
     base_state = _formula_test_state(build_result.state)
-    command = _with_crit_mode(build_result.commands[0], "crit")
+    command = _command_for_executable_damage_emission(
+        ir,
+        rules,
+        _with_crit_mode(build_result.commands[0], "crit"),
+    )
 
     sample = _select_trigger_spine_sample(ir, rules)
     pre_status_result = None
@@ -384,10 +388,62 @@ def _status_ledger_transition(
     effect = _select_status_damage_bonus_effect(ir, rules)
     if effect is None:
         return None
+    damage_definition = _select_executable_damage_emission_definition(ir, rules)
+    if damage_definition is None:
+        return None
+    command = replace(
+        command,
+        action_id=damage_definition.action_id,
+        action_level=damage_definition.level,
+        target_ids=_target_ids_for_damage_definition(damage_definition, command.actor_id),
+    )
     effect_result = _execute_effect(rules, base_state, effect, command, source_suffix="status_ledger")
     status_state = MutationReducer().apply_all(base_state, effect_result.mutations)
     _, transition = CombatExecutor(rules).execute(command, status_state)
     return transition
+
+
+def _select_executable_damage_emission_definition(ir: CanonicalIR, rules: RuleBook) -> ActionDefinitionIR | None:
+    bindings = {(binding.action_id, binding.level): binding for binding in ir.action_ability_bindings}
+    for emission in sorted(ir.damage_emissions, key=lambda item: (item.source.source_path, item.action_id, item.level, item.damage_emission_id)):
+        if emission.coverage_status != "executable":
+            continue
+        definition = rules.action_definition(emission.action_id, emission.level)
+        if definition is None:
+            continue
+        if definition.damage_kind != "hp_damage" or definition.damage_formula_family != "direct":
+            continue
+        binding = bindings.get((definition.action_id, definition.level))
+        if binding is None or binding.coverage_status != "executable":
+            continue
+        if not str(binding.config_source.get("ability_file_path", "")).startswith("Config/ConfigAbility/Avatar/"):
+            continue
+        return definition
+    return None
+
+
+def _command_for_executable_damage_emission(
+    ir: CanonicalIR,
+    rules: RuleBook,
+    command: ActionCommand,
+) -> ActionCommand:
+    definition = _select_executable_damage_emission_definition(ir, rules)
+    if definition is None:
+        return command
+    return replace(
+        command,
+        action_id=definition.action_id,
+        action_level=definition.level,
+        target_ids=_target_ids_for_damage_definition(definition, command.actor_id),
+    )
+
+
+def _target_ids_for_damage_definition(definition: ActionDefinitionIR, actor_id: str) -> tuple[str, ...]:
+    if definition.target_mode == "aoe":
+        return ()
+    if definition.target_mode == "self_or_team":
+        return (actor_id,)
+    return ("enemy:target",)
 
 
 def _non_attack_action_case(

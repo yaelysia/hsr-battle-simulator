@@ -189,6 +189,40 @@ class HitProfileIR:
 
 
 @dataclass(frozen=True)
+class DamageEmissionIR:
+    damage_emission_id: str
+    action_id: str
+    level: int
+    phase_id: str
+    source_task_id: str
+    hit_profile_id: str
+    target_group: str
+    damage_formula_family: str
+    element_type: str | None
+    scaling_ratio_expr: dict[str, JSONValue]
+    source: IRSource
+    coverage_status: CoverageStatus = "blocked"
+    blocked_reason: str = ""
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "damage_emission_id": self.damage_emission_id,
+            "action_id": self.action_id,
+            "level": self.level,
+            "phase_id": self.phase_id,
+            "source_task_id": self.source_task_id,
+            "hit_profile_id": self.hit_profile_id,
+            "target_group": self.target_group,
+            "damage_formula_family": self.damage_formula_family,
+            "element_type": self.element_type,
+            "scaling_ratio_expr": self.scaling_ratio_expr,
+            "source": self.source.to_json(),
+            "coverage_status": self.coverage_status,
+            "blocked_reason": self.blocked_reason,
+        }
+
+
+@dataclass(frozen=True)
 class AbilityPhaseIR:
     phase_id: str
     binding_id: str
@@ -400,6 +434,7 @@ class CanonicalIR:
     ability_tasks: tuple[AbilityTaskIR, ...] = ()
     action_events: tuple[ActionEventIR, ...] = ()
     hit_profiles: tuple[HitProfileIR, ...] = ()
+    damage_emissions: tuple[DamageEmissionIR, ...] = ()
     triggers: tuple[TriggerIR, ...] = ()
     effects: tuple[EffectIR, ...] = ()
     conditions: tuple[ConditionIR, ...] = ()
@@ -417,6 +452,7 @@ class CanonicalIR:
             "ability_tasks": [task.to_json() for task in self.ability_tasks],
             "action_events": [event.to_json() for event in self.action_events],
             "hit_profiles": [profile.to_json() for profile in self.hit_profiles],
+            "damage_emissions": [emission.to_json() for emission in self.damage_emissions],
             "triggers": [trigger.to_json() for trigger in self.triggers],
             "effects": [effect.to_json() for effect in self.effects],
             "conditions": [condition.to_json() for condition in self.conditions],

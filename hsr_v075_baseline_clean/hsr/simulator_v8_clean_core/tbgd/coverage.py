@@ -298,6 +298,12 @@ def _action_execution_status(ir: CanonicalIR) -> dict[str, Any]:
     task_opcodes = Counter(task.opcode for task in ir.ability_tasks)
     event_status = Counter(event.coverage_status for event in ir.action_events)
     hit_status = Counter(profile.coverage_status for profile in ir.hit_profiles)
+    emission_status = Counter(emission.coverage_status for emission in ir.damage_emissions)
+    emission_reasons = Counter(
+        emission.blocked_reason
+        for emission in ir.damage_emissions
+        if emission.blocked_reason
+    )
     hit_reasons = Counter(
         profile.blocked_reason
         for profile in ir.hit_profiles
@@ -362,5 +368,14 @@ def _action_execution_status(ir: CanonicalIR) -> dict[str, Any]:
             "multi_param_profile_count": len(multi_param_profiles),
             "show_damage_or_stance_evidence_count": len(show_evidence_profiles),
             "reason": "HitProfileIR carries multiplier evidence; multi-hit and display stance/damage mappings are not treated as final runtime semantics",
+        },
+        "damage_emissions": {
+            "lowered": len(ir.damage_emissions),
+            "executable": emission_status["executable"],
+            "blocked": emission_status["blocked"],
+            "audit_only": emission_status["audit_only"],
+            "status_counts": dict(sorted(emission_status.items())),
+            "blocked_reason_counts": dict(sorted(emission_reasons.items())),
+            "reason": "DamageEmissionIR links AbilityTaskIR damage opcodes to hit profile evidence; blocked emissions are not allowed to create fake damage packets",
         },
     }

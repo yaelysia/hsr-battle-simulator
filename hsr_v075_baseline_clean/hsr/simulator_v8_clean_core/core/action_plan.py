@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from ..rules.ir import ActionDefinitionIR, ActionEventIR, HitProfileIR
+from ..rules.ir import ActionDefinitionIR, ActionEventIR, DamageEmissionIR, HitProfileIR
 
 
 @dataclass(frozen=True)
@@ -93,6 +93,8 @@ class HitPlan:
 
 @dataclass(frozen=True)
 class DamagePlan:
+    damage_emission_id: str
+    source_task_id: str
     hit_profile_id: str
     hit_index: int
     target_id: str
@@ -108,6 +110,8 @@ class DamagePlan:
 
     def to_json(self) -> dict[str, object]:
         return {
+            "damage_emission_id": self.damage_emission_id,
+            "source_task_id": self.source_task_id,
             "hit_profile_id": self.hit_profile_id,
             "hit_index": self.hit_index,
             "target_id": self.target_id,
@@ -131,6 +135,7 @@ class ActionExecutionPlan:
     target_plan: TargetPlan
     hit_plan: tuple[HitPlan, ...]
     damage_plan: tuple[DamagePlan, ...]
+    damage_emissions: tuple[DamageEmissionIR, ...]
     source_trace: dict[str, object]
     derived_reason: str
     primary_action_target_id: str | None = None
@@ -144,13 +149,16 @@ class ActionExecutionPlan:
             "target_plan": self.target_plan.to_json(),
             "hit_plan": [hit.to_json() for hit in self.hit_plan],
             "damage_plan": [damage.to_json() for damage in self.damage_plan],
+            "damage_emissions": [emission.to_json() for emission in self.damage_emissions],
             "source_trace": self.source_trace,
             "derived_reason": self.derived_reason,
             "derived_from_action_definition": True,
-            "plan_source": "action_event_ir_hit_profile_ir",
+            "plan_source": "action_event_ir_damage_emission_ir_hit_profile_ir",
+            "damage_plan_source": "damage_emission_ir_hit_profile_ir",
             "event_source_status": self.source_trace.get("event_source_status", ""),
             "binding_id": self.source_trace.get("binding_id", ""),
             "phase_ids": list(self.source_trace.get("phase_ids", ())),
+            "damage_emission_ids": [emission.damage_emission_id for emission in self.damage_emissions],
             "primary_action_target_id": self.primary_action_target_id,
             "per_hit_target_context_not_implemented": self.per_hit_target_context_not_implemented,
         }
@@ -212,6 +220,7 @@ def build_action_execution_plan(
     action_definition: ActionDefinitionIR,
     action_event: ActionEventIR,
     hit_profiles: tuple[HitProfileIR, ...],
+    damage_emissions: tuple[DamageEmissionIR, ...] = (),
     *,
     requested_target_ids: tuple[str, ...],
     resolved_target_groups: dict[str, tuple[str, ...]] | None = None,
@@ -227,9 +236,10 @@ def build_action_execution_plan(
     )
     primary_action_target_id = _primary_action_target_id(resolved_target_groups or {})
     hit_plan = tuple(_hit_plan(profile) for profile in hit_profiles)
-    damage_plan = _damage_plan_from_profiles(
+    damage_plan = _damage_plan_from_emissions(
         action_definition,
-        hit_profiles,
+        damage_emissions,
+        {profile.hit_profile_id: profile for profile in hit_profiles},
         resolved_target_groups or {},
         primary_action_target_id,
         target_plan.blocked_reason,
@@ -241,6 +251,7 @@ def build_action_execution_plan(
         target_plan=target_plan,
         hit_plan=hit_plan,
         damage_plan=damage_plan,
+        damage_emissions=damage_emissions,
         source_trace=source_trace or {},
         derived_reason=action_event.derived_reason,
         primary_action_target_id=primary_action_target_id,
@@ -271,9 +282,10 @@ def _hit_plan(profile: HitProfileIR) -> HitPlan:
     )
 
 
-def _damage_plan_from_profiles(
+def _damage_plan_from_emissions(
     action_definition: ActionDefinitionIR,
-    hit_profiles: tuple[HitProfileIR, ...],
+    damage_emissions: tuple[DamageEmissionIR, ...],
+    hit_profiles: dict[str, HitProfileIR],
     target_groups: dict[str, tuple[str, ...]],
     primary_action_target_id: str | None,
     plan_blocked_reason: str,
@@ -281,8 +293,11 @@ def _damage_plan_from_profiles(
     if action_definition.damage_kind != "hp_damage" or plan_blocked_reason:
         return ()
     plans: list[DamagePlan] = []
-    for profile in hit_profiles:
-        if profile.coverage_status == "blocked":
+    for emission in damage_emissions:
+        if emission.coverage_status != "executable":
+            continue
+        profile = hit_profiles.get(emission.hit_profile_id)
+        if profile is None:
             continue
         scaling_ratio = _hit_scaling_ratio(profile)
         if scaling_ratio is None:
@@ -290,6 +305,8 @@ def _damage_plan_from_profiles(
         for target_id in _targets_for_hit_profile(profile, target_groups):
             plans.append(
                 DamagePlan(
+                    damage_emission_id=emission.damage_emission_id,
+                    source_task_id=emission.source_task_id,
                     hit_profile_id=profile.hit_profile_id,
                     hit_index=profile.hit_index,
                     target_id=target_id,

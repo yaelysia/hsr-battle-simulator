@@ -78,6 +78,7 @@ def run_validation(
             definition,
             rules.require_action_event(definition.action_id, definition.level),
             rules.hit_profiles_for_action(definition.action_id, definition.level),
+            rules.damage_emissions_for_action(definition.action_id, definition.level),
             requested_target_ids=("enemy:target",),
             resolved_target_groups={},
             source_trace=definition.source.to_json(),
@@ -189,6 +190,7 @@ def _canonical_ir_summary(ir: CanonicalIR) -> dict[str, object]:
             "action_definitions": len(ir.action_definitions),
             "action_events": len(ir.action_events),
             "hit_profiles": len(ir.hit_profiles),
+            "damage_emissions": len(ir.damage_emissions),
             "triggers": len(ir.triggers),
             "effects": len(ir.effects),
             "conditions": len(ir.conditions),
@@ -214,6 +216,15 @@ def _select_definition(ir: CanonicalIR, target_mode: str) -> ActionDefinitionIR 
             continue
         return definition
     return None
+
+
+def _definition_has_executable_damage_emission(ir: CanonicalIR, definition: ActionDefinitionIR) -> bool:
+    return any(
+        emission.action_id == definition.action_id
+        and emission.level == definition.level
+        and emission.coverage_status == "executable"
+        for emission in ir.damage_emissions
+    )
 
 
 def _execute_mode_case(
@@ -332,26 +343,53 @@ def _target_mode_checks(cases: dict[str, dict[str, Any]]) -> dict[str, object]:
 
 
 def _multi_target_damage_checks(cases: dict[str, dict[str, Any]]) -> dict[str, object]:
+    aoe_transition = cases["aoe"].get("transition")
+    blast_transition = cases["blast"].get("transition")
     checks = {
-        "aoe_multiple_damage_mutations": _damage_mutation_count(cases["aoe"].get("transition")) >= 3,
-        "blast_multiple_damage_mutations": _damage_mutation_count(cases["blast"].get("transition")) >= 3,
-        "aoe_damage_records_traceable": len(_records_of_type(cases["aoe"].get("transition"), "damage")) >= 3,
-        "blast_damage_records_traceable": len(_records_of_type(cases["blast"].get("transition"), "damage")) >= 3,
-        "damage_metadata_has_hit_index": _damage_records_have_metadata(cases["blast"].get("transition"), "hit_index"),
-        "damage_metadata_has_multiplier_source": _damage_records_have_metadata(cases["blast"].get("transition"), "multiplier_source"),
-        "damage_metadata_marks_multi_hit_pending": _damage_records_have_metadata(cases["blast"].get("transition"), "multi_hit_not_implemented"),
-        "aoe_metadata_marks_target_group_multiplier_pending": _damage_records_have_metadata_value(
-            cases["aoe"].get("transition"),
-            "target_group_multiplier_not_implemented",
-            True,
-        ),
-        "blast_metadata_marks_target_group_multiplier_pending": _damage_records_have_metadata_value(
-            cases["blast"].get("transition"),
-            "target_group_multiplier_not_implemented",
-            True,
-        ),
+        "aoe_damage_emission_contract": _multi_target_damage_or_no_fake_damage(aoe_transition),
+        "blast_damage_emission_contract": _multi_target_damage_or_no_fake_damage(blast_transition),
     }
     return {"ok": all(checks.values()), "checks": checks}
+
+
+def _multi_target_damage_or_no_fake_damage(transition) -> bool:
+    if transition is None:
+        return False
+    if _executable_damage_emission_count(transition) <= 0:
+        return _damage_mutation_count(transition) == 0 and _damage_emissions_have_blocked_reason(transition)
+    damage_records = _records_of_type(transition, "damage")
+    return (
+        _damage_mutation_count(transition) >= 1
+        and len(damage_records) >= 1
+        and _damage_records_have_metadata(transition, "hit_index")
+        and _damage_records_have_metadata(transition, "multiplier_source")
+        and _damage_records_have_metadata(transition, "multi_hit_not_implemented")
+        and _damage_records_have_metadata(transition, "damage_emission_id")
+        and _damage_records_have_metadata(transition, "source_task_id")
+    )
+
+
+def _executable_damage_emission_count(transition) -> int:
+    if transition is None:
+        return 0
+    value = transition.coverage.get("executable_damage_emission_count", 0)
+    return int(value) if isinstance(value, int) else 0
+
+
+def _damage_emissions_have_blocked_reason(transition) -> bool:
+    records = _records_of_type(transition, "damage_emissions")
+    for record in records:
+        payload = record.get("payload", {})
+        emissions = payload.get("emissions", []) if isinstance(payload, dict) else []
+        if isinstance(emissions, list) and any(
+            isinstance(emission, dict) and emission.get("blocked_reason") for emission in emissions
+        ):
+            return True
+    for record in _records_of_type(transition, "damage_emission_blocked"):
+        payload = record.get("payload", {})
+        if isinstance(payload, dict) and payload.get("reason"):
+            return True
+    return False
 
 
 def _blocked_mode_checks(cases: dict[str, dict[str, Any]], plans: dict[str, dict[str, Any]]) -> dict[str, object]:

@@ -14,7 +14,7 @@ from ..core.reducer import MutationReducer
 from ..core.settlement import SettlementTraceabilityValidator
 from ..core.snapshot_contract import SnapshotCompletenessValidator
 from ..core.transition_contract import TransitionContractValidator
-from ..rules.ir import CanonicalIR
+from ..rules.ir import ActionDefinitionIR, CanonicalIR
 from ..rules.rulebook import RuleBook
 from ..scenarios.build_state import ScenarioStateBuilder
 from ..scenarios.identity import IdentityResolver
@@ -61,7 +61,7 @@ def run_validation(
     identity_result = IdentityResolver(rules).validate(scenario)
     build_result = ScenarioStateBuilder(rules).build(scenario)
     formula_state = _formula_test_state(build_result.state)
-    base_command = build_result.commands[0]
+    base_command = _damage_emission_command(ir, rules, build_result.commands[0])
     crit_command = _with_crit_mode(base_command, "crit")
     noncrit_command = _with_crit_mode(base_command, "noncrit")
     auto_command = replace(base_command, metadata={key: value for key, value in base_command.metadata.items() if key != "crit_mode"})
@@ -206,6 +206,38 @@ def _formula_test_state(state: BattleState) -> BattleState:
 
 def _with_crit_mode(command: ActionCommand, crit_mode: str) -> ActionCommand:
     return replace(command, metadata={**command.metadata, "crit_mode": crit_mode})
+
+
+def _damage_emission_command(ir: CanonicalIR, rules: RuleBook, base_command: ActionCommand) -> ActionCommand:
+    for emission in sorted(
+        ir.damage_emissions,
+        key=lambda item: (item.source.source_path, item.action_id, item.level, item.source_task_id, item.hit_profile_id),
+    ):
+        if emission.coverage_status != "executable" or emission.damage_formula_family != "direct":
+            continue
+        definition = rules.action_definition(emission.action_id, emission.level)
+        if definition is None:
+            continue
+        target_ids = _target_ids_for_damage_definition(definition, base_command.actor_id)
+        if target_ids is None:
+            continue
+        return replace(
+            base_command,
+            action_id=definition.action_id,
+            action_level=definition.level,
+            target_ids=target_ids,
+        )
+    return base_command
+
+
+def _target_ids_for_damage_definition(definition: ActionDefinitionIR, actor_id: str) -> tuple[str, ...] | None:
+    if definition.target_mode == "aoe":
+        return ()
+    if definition.target_mode in {"single", "blast"}:
+        return ("enemy:target",)
+    if definition.target_mode == "self_or_team":
+        return (actor_id,)
+    return None
 
 
 def _direct_formula_contract_checks(transition) -> dict[str, object]:

@@ -48,6 +48,7 @@ class CombatExecutor:
         ability_phases = self.rules.ability_phases_for_action(command.action_id, command.action_level)
         ability_tasks = self.rules.ability_tasks_for_action(command.action_id, command.action_level)
         hit_profiles = self.rules.hit_profiles_for_action(command.action_id, command.action_level)
+        damage_emissions = self.rules.damage_emissions_for_action(command.action_id, command.action_level)
         action_definition_trace = self.rules.action_definition_source_trace(command.action_id, command.action_level) or {}
         action_event = GameEvent(
             "action.requested",
@@ -72,6 +73,7 @@ class CombatExecutor:
             action_definition,
             action_event_ir,
             hit_profiles,
+            damage_emissions,
             requested_target_ids=command.target_ids,
             resolved_target_groups=_target_groups_from_resolution(target_result.resolution.metadata),
             source_trace={
@@ -81,6 +83,7 @@ class CombatExecutor:
                 "phase_ids": [phase.phase_id for phase in ability_phases],
                 "event_source_status": action_event_ir.event_source_status,
                 "hit_profile_ids": [profile.hit_profile_id for profile in hit_profiles],
+                "damage_emission_ids": [emission.damage_emission_id for emission in damage_emissions],
             },
         )
         action_event_plan_payload = _action_event_plan_compat_payload(action_definition, action_event_ir)
@@ -170,6 +173,27 @@ class CombatExecutor:
                     runtime_records.extend(trigger_result.records)
                     continue
                 if step.kind == "damage":
+                    if not action_execution_plan.damage_plan:
+                        runtime_records.append(
+                            SettlementRecord(
+                                record_type="damage_emission_blocked",
+                                source="combat_executor",
+                                process_only=True,
+                                payload={
+                                    "reason": _damage_emission_blocked_reason(action_execution_plan.damage_emissions),
+                                    "damage_emission_count": len(action_execution_plan.damage_emissions),
+                                    "executable_damage_emission_count": len(
+                                        [
+                                            emission
+                                            for emission in action_execution_plan.damage_emissions
+                                            if emission.coverage_status == "executable"
+                                        ]
+                                    ),
+                                    "action_execution_plan": action_execution_plan.to_json(),
+                                },
+                                trace=action_definition_trace,
+                            ).to_json()
+                        )
                     for damage_plan in action_execution_plan.damage_plan:
                         damage_packet = _damage_packet(
                             command,
@@ -291,6 +315,13 @@ class CombatExecutor:
                 trace={"definition_id": action_definition.definition_id},
             ).to_json(),
             SettlementRecord(
+                record_type="damage_emissions",
+                source="rulebook",
+                process_only=True,
+                payload={"emissions": [emission.to_json() for emission in damage_emissions]},
+                trace={"definition_id": action_definition.definition_id},
+            ).to_json(),
+            SettlementRecord(
                 record_type="action_execution_plan",
                 source="combat_executor",
                 process_only=True,
@@ -397,6 +428,11 @@ class CombatExecutor:
                 "event_source_status": action_event_ir.event_source_status,
                 "action_event_plan": action_event_plan_payload,
                 "hit_profile_ids": [profile.hit_profile_id for profile in hit_profiles],
+                "damage_emission_ids": [emission.damage_emission_id for emission in damage_emissions],
+                "damage_emission_count": len(damage_emissions),
+                "executable_damage_emission_count": len(
+                    [emission for emission in damage_emissions if emission.coverage_status == "executable"]
+                ),
                 "definition_id": action_definition.definition_id,
                 "target_ok": target_result.ok,
                 "resource_ok": resource_result.ok,
@@ -479,6 +515,19 @@ def _action_blocked_reason(
     return ",".join(dict.fromkeys(reasons))
 
 
+def _damage_emission_blocked_reason(damage_emissions) -> str:
+    if not damage_emissions:
+        return "damage_emission_missing"
+    blocked_reasons = [
+        emission.blocked_reason
+        for emission in damage_emissions
+        if getattr(emission, "blocked_reason", "")
+    ]
+    if blocked_reasons:
+        return ",".join(dict.fromkeys(blocked_reasons))
+    return "no_executable_damage_emission"
+
+
 def _metadata_bool(metadata: dict[str, JSONValue], key: str, default: bool) -> bool:
     value = metadata.get(key, default)
     if isinstance(value, bool):
@@ -543,13 +592,13 @@ def _damage_packet(
 ) -> DamagePacket | None:
     if action_definition.damage_kind != "hp_damage":
         return None
-    if action_definition.damage_formula_family not in {"direct", "true_damage", "hp_loss", "elation"}:
+    if damage_plan.damage_formula_family not in {"direct", "true_damage", "hp_loss", "elation"}:
         return None
     return DamagePacket(
         attacker_id=command.actor_id,
         target_id=damage_plan.target_id,
         attack_type=action_definition.attack_type,
-        damage_formula_family=action_definition.damage_formula_family,
+        damage_formula_family=damage_plan.damage_formula_family,
         damage_kind=action_definition.damage_kind,
         element_type=action_definition.element_type,
         action_definition=action_definition,
@@ -558,15 +607,21 @@ def _damage_packet(
             "action_id": action_definition.action_id,
             "action_level": action_definition.level,
             "source": source_trace,
+            "damage_emission_id": damage_plan.damage_emission_id,
+            "source_task_id": damage_plan.source_task_id,
             "hit_profile_id": damage_plan.hit_profile_id,
             "hit_source_trace": damage_plan.hit_source_trace,
         },
+        damage_emission_id=damage_plan.damage_emission_id,
+        source_task_id=damage_plan.source_task_id,
         hit_profile_id=damage_plan.hit_profile_id,
         scaling_ratio=damage_plan.scaling_ratio,
         hit_source_trace=damage_plan.hit_source_trace,
         metadata={
             **_damage_metadata(command),
             "hit_index": damage_plan.hit_index,
+            "damage_emission_id": damage_plan.damage_emission_id,
+            "source_task_id": damage_plan.source_task_id,
             "hit_profile_id": damage_plan.hit_profile_id,
             "target_group": damage_plan.target_group,
             "multiplier_source": damage_plan.multiplier_source,

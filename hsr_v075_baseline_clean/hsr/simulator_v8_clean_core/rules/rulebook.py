@@ -10,6 +10,7 @@ from .ir import (
     ActionEventIR,
     CanonicalIR,
     ConditionIR,
+    DamageEmissionIR,
     EffectIR,
     FormulaIR,
     HitProfileIR,
@@ -93,6 +94,28 @@ class RuleBook:
             {
                 key: tuple(sorted(value, key=lambda item: (item.hit_index, item.target_group, item.hit_profile_id)))
                 for key, value in hit_profiles_by_action.items()
+            },
+        )
+        damage_emissions_by_action: dict[tuple[str, int], list[DamageEmissionIR]] = {}
+        damage_emissions_by_task: dict[str, list[DamageEmissionIR]] = {}
+        for emission in self.ir.damage_emissions:
+            damage_emissions_by_action.setdefault((emission.action_id, emission.level), []).append(emission)
+            damage_emissions_by_task.setdefault(emission.source_task_id, []).append(emission)
+        object.__setattr__(self, "_damage_emissions", {emission.damage_emission_id: emission for emission in self.ir.damage_emissions})
+        object.__setattr__(
+            self,
+            "_damage_emissions_by_action",
+            {
+                key: tuple(sorted(value, key=lambda item: (item.source_task_id, item.hit_profile_id, item.damage_emission_id)))
+                for key, value in damage_emissions_by_action.items()
+            },
+        )
+        object.__setattr__(
+            self,
+            "_damage_emissions_by_task",
+            {
+                key: tuple(sorted(value, key=lambda item: (item.hit_profile_id, item.damage_emission_id)))
+                for key, value in damage_emissions_by_task.items()
             },
         )
         object.__setattr__(self, "_effects", {effect.effect_id: effect for effect in self.ir.effects})
@@ -204,6 +227,15 @@ class RuleBook:
 
     def hit_profiles_for_action(self, action_id: str, level: int) -> tuple[HitProfileIR, ...]:
         return self._hit_profiles_by_action.get((action_id, level), ())
+
+    def damage_emission(self, damage_emission_id: str) -> DamageEmissionIR | None:
+        return self._damage_emissions.get(damage_emission_id)
+
+    def damage_emissions_for_action(self, action_id: str, level: int) -> tuple[DamageEmissionIR, ...]:
+        return self._damage_emissions_by_action.get((action_id, level), ())
+
+    def damage_emissions_for_task(self, task_id: str) -> tuple[DamageEmissionIR, ...]:
+        return self._damage_emissions_by_task.get(task_id, ())
 
     def action_ability_binding(self, action_id: str, level: int) -> ActionAbilityBindingIR | None:
         return self._action_ability_bindings.get((action_id, level))

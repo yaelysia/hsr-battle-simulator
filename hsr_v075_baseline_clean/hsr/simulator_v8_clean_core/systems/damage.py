@@ -35,6 +35,8 @@ class DamagePacket:
     damage_kind: str = "hp_damage"
     element_type: str | None = None
     action_definition: ActionDefinitionIR | None = None
+    damage_emission_id: str = ""
+    source_task_id: str = ""
     hit_profile_id: str = ""
     scaling_ratio: float | None = None
     hit_source_trace: dict[str, JSONValue] = field(default_factory=dict)
@@ -57,6 +59,8 @@ class DamagePacket:
             "damage_formula_family": self.damage_formula_family,
             "element_type": self.element_type,
             "action_definition": _action_definition_summary(self.action_definition),
+            "damage_emission_id": self.damage_emission_id,
+            "source_task_id": self.source_task_id,
             "hit_profile_id": self.hit_profile_id,
             "scaling_ratio": self.scaling_ratio,
             "hit_source_trace": self.hit_source_trace,
@@ -173,6 +177,8 @@ class DamageSystem:
                         "damage_kind": packet.damage_kind,
                         "damage_formula_family": packet.damage_formula_family,
                         "element_type": packet.element_type,
+                        "damage_emission_id": packet.damage_emission_id,
+                        "source_task_id": packet.source_task_id,
                         "hit_profile_id": packet.hit_profile_id,
                         "scaling_ratio": packet.scaling_ratio,
                         "hit_source_trace": packet.hit_source_trace,
@@ -222,6 +228,8 @@ class DamageSystem:
                         "damage_kind": packet.damage_kind,
                         "damage_formula_family": packet.damage_formula_family,
                         "element_type": packet.element_type,
+                        "damage_emission_id": packet.damage_emission_id,
+                        "source_task_id": packet.source_task_id,
                         "bypasses_normal_multipliers": bypasses_normal_multipliers,
                         "normal_multiplier_terms": [],
                         "target_before_hp": target.hp,

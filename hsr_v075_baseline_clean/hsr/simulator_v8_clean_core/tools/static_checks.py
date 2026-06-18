@@ -37,6 +37,8 @@ RUNTIME_MAIN_BANNED_ACTION_INFERENCE_TOKENS = (
     "ConfigAbility",
     "ConfigCharacter",
     "AbilityList",
+    "DamageByAttackProperty",
+    "AttackData",
 )
 
 
