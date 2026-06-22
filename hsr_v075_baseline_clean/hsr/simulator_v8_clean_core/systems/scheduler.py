@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from ..core.model import (
     ActionCommand,
@@ -68,6 +68,127 @@ class CombatScheduler:
                 records=_mutation_records("timeline_initialize", result.mutations, result.plan),
                 coverage={"timeline_rule": rule.to_json()},
             ),
+        )
+
+    def step(self, state: BattleState, command: ActionCommand | None = None) -> SchedulerStepResult:
+        """Run one scheduler step.
+
+        The scheduler owns turn lifecycle ordering only. Queue drain and action
+        mechanics stay in their existing systems so source audit continues to
+        validate the underlying mutation source instead of a scheduler shortcut.
+        """
+        queue_step = self._try_queue_drain(state)
+        if queue_step is not None:
+            return _with_scheduler_record(
+                queue_step,
+                record_type="scheduler_queue_step",
+                payload={"scheduler_step": "queue_drain_priority"},
+            )
+
+        begin_result = self.advance_to_next_turn(state)
+        if begin_result.transition.coverage.get("blocked_reason"):
+            return begin_result
+
+        actor_id = begin_result.transition.transaction.command.actor_id
+        if command is None:
+            return _with_scheduler_record(
+                begin_result,
+                record_type="scheduler_turn_begin_step",
+                payload={
+                    "scheduler_step": "turn_begin_only",
+                    "actor_id": actor_id,
+                    "blocking_dependency": "manual_route_command_or_ai_policy",
+                },
+            )
+
+        if command.actor_id != actor_id:
+            return self._blocked(
+                state,
+                "scheduler:manual_actor_mismatch",
+                "manual_command_actor_mismatch",
+                {
+                    "expected_actor_id": actor_id,
+                    "actual_actor_id": command.actor_id,
+                    "command": _command_payload(command),
+                },
+            )
+
+        from ..core.executor import CombatExecutor
+
+        parent_metadata = {
+            "scheduler_parent": {
+                "turn_actor_id": actor_id,
+                "turn_transition_action_id": begin_result.transition.transaction.command.action_id,
+                "turn_sequence_index": begin_result.after_state.global_flags.get("turn_sequence_index", 0),
+                "source": "timeline_scheduler.step",
+            }
+        }
+        scheduled_command = replace(
+            command,
+            metadata={**command.metadata, **parent_metadata},
+        )
+        after_action, action_transition = CombatExecutor(self.rules).execute(scheduled_command, begin_result.after_state)
+        end_result = self.end_current_turn(after_action)
+        combined = _combine_scheduler_transitions(
+            before_state=state,
+            after_state=end_result.after_state,
+            actor_id=actor_id,
+            records=(
+                *_scheduler_process_records(
+                    "scheduler_action_step",
+                    {
+                        "scheduler_step": "manual_action_turn_lifecycle",
+                        "turn_begin_action_id": begin_result.transition.transaction.command.action_id,
+                        "child_action_id": action_transition.transaction.command.action_id,
+                        "turn_end_action_id": end_result.transition.transaction.command.action_id,
+                    },
+                ),
+                *(begin_result.transition.transaction.settlement.records if begin_result.transition.transaction.settlement else ()),
+                *(action_transition.transaction.settlement.records if action_transition.transaction.settlement else ()),
+                *(end_result.transition.transaction.settlement.records if end_result.transition.transaction.settlement else ()),
+            ),
+            events=(
+                *begin_result.transition.transaction.events,
+                GameEvent(
+                    "scheduler.action.before",
+                    source_id=actor_id,
+                    event_id=f"event:{begin_result.after_state.event_index}:scheduler_action_before:{actor_id}",
+                    window="scheduler",
+                    process_only=True,
+                    payload={"command": _command_payload(scheduled_command)},
+                ),
+                *action_transition.transaction.events,
+                GameEvent(
+                    "scheduler.action.after",
+                    source_id=actor_id,
+                    event_id=f"event:{after_action.event_index}:scheduler_action_after:{actor_id}",
+                    window="scheduler",
+                    process_only=True,
+                    payload={"command": _command_payload(scheduled_command)},
+                ),
+                *end_result.transition.transaction.events,
+            ),
+            mutations=(
+                *begin_result.transition.transaction.mutations,
+                *action_transition.transaction.mutations,
+                *end_result.transition.transaction.mutations,
+            ),
+            target_resolution=action_transition.target_resolution,
+            coverage={
+                "scheduler_step": "manual_action_turn_lifecycle",
+                "turn_begin": begin_result.transition.coverage,
+                "action_child": {
+                    "command": _command_payload(scheduled_command),
+                    "coverage": action_transition.coverage,
+                },
+                "turn_end": end_result.transition.coverage,
+                "unsupported_hooks": _unsupported_turn_hooks(),
+            },
+        )
+        return SchedulerStepResult(
+            end_result.after_state,
+            combined,
+            child_transitions=(begin_result.transition, action_transition, end_result.transition),
         )
 
     def advance_to_next_turn(self, state: BattleState) -> SchedulerStepResult:
@@ -277,6 +398,121 @@ def _transition(
         target_resolution=TargetResolution(reason="scheduler_no_target", source="timeline_scheduler"),
         coverage=coverage or {},
     )
+
+
+def _combine_scheduler_transitions(
+    *,
+    before_state: BattleState,
+    after_state: BattleState,
+    actor_id: str,
+    events: tuple[GameEvent, ...],
+    mutations: tuple[Mutation, ...],
+    records: tuple[dict[str, JSONValue], ...],
+    target_resolution: TargetResolution,
+    coverage: dict[str, JSONValue],
+) -> BattleTransition:
+    action_id = "scheduler:step"
+    command = ActionCommand(
+        actor_id=actor_id,
+        action_id=action_id,
+        action_level=0,
+        metadata={"scheduler": "timeline", "scheduler_step": coverage.get("scheduler_step", "")},
+    )
+    settlement = ActionSettlement(action_id=action_id, actor_id=actor_id, target_ids=(), records=records)
+    return BattleTransition(
+        transaction=ActionTransaction(
+            command=command,
+            before=before_state.snapshot(),
+            events=events,
+            mutations=mutations,
+            trigger_windows=(),
+            settlement=settlement,
+        ),
+        after=after_state.snapshot(),
+        target_resolution=target_resolution,
+        coverage=coverage,
+    )
+
+
+def _with_scheduler_record(
+    result: SchedulerStepResult,
+    *,
+    record_type: str,
+    payload: dict[str, JSONValue],
+) -> SchedulerStepResult:
+    settlement = result.transition.transaction.settlement
+    records = settlement.records if settlement else ()
+    appended = (*records, *_scheduler_process_records(record_type, payload))
+    command = result.transition.transaction.command
+    replacement = BattleTransition(
+        transaction=ActionTransaction(
+            command=command,
+            before=result.transition.transaction.before,
+            events=result.transition.transaction.events,
+            mutations=result.transition.transaction.mutations,
+            trigger_windows=result.transition.transaction.trigger_windows,
+            settlement=ActionSettlement(
+                action_id=command.action_id,
+                actor_id=command.actor_id,
+                target_ids=command.target_ids,
+                records=appended,
+            ),
+        ),
+        after=result.transition.after,
+        target_resolution=result.transition.target_resolution,
+        rng_events=result.transition.rng_events,
+        coverage={**result.transition.coverage, **payload},
+        contract_validation=result.transition.contract_validation,
+    )
+    return SchedulerStepResult(result.after_state, replacement, result.child_transitions)
+
+
+def _scheduler_process_records(
+    record_type: str,
+    payload: dict[str, JSONValue],
+) -> tuple[dict[str, JSONValue], ...]:
+    return (
+        SettlementRecord(
+            record_type=record_type,
+            source="timeline_scheduler",
+            process_only=True,
+            payload=payload,
+            trace={},
+        ).to_json(),
+    )
+
+
+def _command_payload(command: ActionCommand) -> dict[str, JSONValue]:
+    return {
+        "actor_id": command.actor_id,
+        "action_id": command.action_id,
+        "action_level": command.action_level,
+        "target_ids": list(command.target_ids),
+        "source": command.source,
+        "queue_name": command.queue_name,
+        "metadata": command.metadata,
+    }
+
+
+def _unsupported_turn_hooks() -> dict[str, JSONValue]:
+    return {
+        "duration_tick": {
+            "status": "blocked",
+            "blocking_dependency": "StatusLifecycle source admission for decrement/expire",
+        },
+        "extra_turn": {
+            "status": "blocked",
+            "blocking_dependency": "extra-turn queue/window admission",
+        },
+        "ultimate": {
+            "status": "blocked",
+            "blocking_dependency": "ultimate interrupt queue priority admission",
+        },
+        "interrupt": {
+            "status": "blocked",
+            "blocking_dependency": "interrupt window admission",
+        },
+    }
 
 
 def _mutation_records(
