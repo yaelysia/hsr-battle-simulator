@@ -367,6 +367,11 @@ def _action_execution_status(ir: CanonicalIR) -> dict[str, Any]:
     )
     status_callback_status = Counter(callback.coverage_status for callback in ir.status_callbacks)
     status_callback_reasons = Counter(callback.blocked_reason for callback in ir.status_callbacks if callback.blocked_reason)
+    status_callback_blocked_categories = Counter(
+        _listener_blocked_category(callback.blocked_reason or callback.blocking_dependency)
+        for callback in ir.status_callbacks
+        if callback.blocked_reason or callback.blocking_dependency
+    )
     status_callback_scopes = Counter(callback.scope_kind for callback in ir.status_callbacks)
     status_callback_source_modes = Counter(callback.source_mode for callback in ir.status_callbacks)
     status_callback_task_status = Counter(task.coverage_status for task in ir.status_callback_tasks)
@@ -500,6 +505,7 @@ def _action_execution_status(ir: CanonicalIR) -> dict[str, Any]:
             "blocked": status_callback_status["blocked"],
             "status_counts": dict(sorted(status_callback_status.items())),
             "blocked_reason_counts": dict(sorted(status_callback_reasons.items())),
+            "blocked_category_counts": dict(sorted(status_callback_blocked_categories.items())),
             "scope_counts": dict(sorted(status_callback_scopes.items())),
             "source_mode_counts": dict(sorted(status_callback_source_modes.items())),
             "reason": "StatusCallbackIR lowers modifier callbacks with explicit listener scope; only admitted source/scope/task combinations may mutate runtime state",
@@ -537,3 +543,27 @@ def _action_execution_status(ir: CanonicalIR) -> dict[str, Any]:
             "reason": "SuperBreakEmissionIR records admitted global super-break template damage tasks; runtime requires audited stance-damage and break-base inputs",
         },
     }
+
+
+def _listener_blocked_category(reason: str) -> str:
+    if not reason:
+        return ""
+    if "event_alias" in reason or "listener_event_mapping" in reason:
+        return "event_alias_missing"
+    if "source_mode_not_admitted" in reason or reason.startswith("source_"):
+        return "source_not_admitted"
+    if reason.startswith("scope_") or "scope_not_admitted" in reason:
+        return "scope_not_admitted"
+    if "condition" in reason:
+        return "condition_not_admitted"
+    if "target" in reason or "alias" in reason:
+        return "target_not_admitted"
+    if "effect" in reason or "opcode" in reason or "callback_task" in reason:
+        return "effect_not_admitted"
+    if "queue" in reason or "intent" in reason or "normalized_action_delay" in reason:
+        return "downstream_intent_missing"
+    if reason in {"status_callback_missing", "listener_match_missing"}:
+        return "effect_not_admitted"
+    if reason == "status_detail_missing":
+        return "target_not_admitted"
+    return "downstream_intent_missing"

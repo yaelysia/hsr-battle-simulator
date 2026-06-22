@@ -37,6 +37,9 @@ class ListenerMatch:
     status: str = "matched"
     reason: str = ""
     source: str = "rulebook"
+    order_key: dict[str, JSONValue] | None = None
+    event_alias: dict[str, JSONValue] | None = None
+    blocked_category: str = ""
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -51,6 +54,28 @@ class ListenerMatch:
             "status": self.status,
             "reason": self.reason,
             "source": self.source,
+            "order_key": self.order_key or {},
+            "event_alias": self.event_alias or {},
+            "blocked_category": self.blocked_category,
+        }
+
+
+@dataclass(frozen=True)
+class EventAlias:
+    callback_event: str
+    scope_kind: str
+    source_basis: str
+    admission_status: str = "executable"
+    blocked_dependency: str = ""
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "callback_event": self.callback_event,
+            "scope_kind": self.scope_kind,
+            "source_basis": self.source_basis,
+            "admission_status": self.admission_status,
+            "blocked_dependency": self.blocked_dependency,
+            "blocked_category": _blocked_category(self.blocked_dependency),
         }
 
 
@@ -149,6 +174,7 @@ class EventDispatchSystem:
     ) -> EventDispatchResult:
         canonical_window = event.window
         tbgd_event = _event_payload_str(event, "tbgd_event") or event.event_type
+        event_aliases = _event_aliases(event)
         dispatch_record = _dispatch_record(
             event,
             listener_kind="action_status_window",
@@ -159,6 +185,7 @@ class EventDispatchSystem:
                 "tbgd_event": tbgd_event,
                 "selected_target_ids": list(target_resolution.selected),
                 "requested_target_ids": list(target_resolution.requested),
+                "event_aliases": [alias.to_json() for alias in event_aliases],
             },
         )
         result = self.trigger_system.execute_status_window(
@@ -205,8 +232,8 @@ class EventDispatchSystem:
         unit_id: str | None,
         modifier_name: str | None,
     ) -> EventDispatchResult:
-        callback_events = _callback_events_for_event(event)
-        dispatch_scope = _event_scope_kind(event)
+        aliases = _event_aliases(event)
+        dispatch_scope = aliases[0].scope_kind if aliases else "unknown"
         dispatch_record = _dispatch_record(
             event,
             listener_kind="listener_dispatch",
@@ -215,33 +242,15 @@ class EventDispatchSystem:
             metadata={
                 "unit_id": unit_id or "",
                 "modifier_name": modifier_name or "",
-                "callback_events": list(callback_events),
+                "callback_events": [alias.callback_event for alias in aliases if alias.callback_event],
                 "event_scope_kind": dispatch_scope,
+                "event_aliases": [alias.to_json() for alias in aliases],
             },
         )
-        if not callback_events:
-            reason = "listener_event_mapping_missing"
-            listener_record = _listener_record(
-                event,
-                listener_kind="listener_dispatch",
-                listener_id="",
-                source="event_dispatch_system",
-                status="blocked",
-                reason=reason,
-                metadata={"event_scope_kind": dispatch_scope},
-            )
-            return EventDispatchResult(
-                after_state=state,
-                events=(event,),
-                records=(dispatch_record, listener_record),
-                listener_records=(listener_record,),
-                errors=(reason,),
-            )
-
         matches = self._resolve_listener_matches(
             state,
             event=event,
-            callback_events=callback_events,
+            aliases=aliases,
             unit_id=unit_id,
             modifier_name=modifier_name,
         )
@@ -255,10 +264,11 @@ class EventDispatchSystem:
                 status="skipped",
                 reason=reason,
                 metadata={
-                    "callback_events": list(callback_events),
+                    "callback_events": [alias.callback_event for alias in aliases if alias.callback_event],
                     "event_scope_kind": dispatch_scope,
                     "unit_id": unit_id or "",
                     "modifier_name": modifier_name or "",
+                    "event_aliases": [alias.to_json() for alias in aliases],
                 },
             )
             return EventDispatchResult(
@@ -331,26 +341,29 @@ class EventDispatchSystem:
         state: BattleState,
         *,
         event: GameEvent,
-        callback_events: tuple[str, ...],
+        aliases: tuple[EventAlias, ...],
         unit_id: str | None,
         modifier_name: str | None,
     ) -> tuple[ListenerMatch, ...]:
         if unit_id and modifier_name:
-            return self._explicit_status_matches(state, event, callback_events, unit_id, modifier_name)
+            return self._explicit_status_matches(state, event, aliases, unit_id, modifier_name)
         matches: list[ListenerMatch] = []
-        for callback_event in callback_events:
-            for callback in self.rules.status_callbacks_for_event(callback_event):
+        for alias in aliases:
+            if not alias.callback_event or alias.admission_status != "executable":
+                matches.append(_alias_blocked_match(event, alias, state))
+                continue
+            for callback in self.rules.status_callbacks_for_event_scope(alias.callback_event, alias.scope_kind):
                 for detail in _status_details_for_modifier(state, callback.modifier_name):
-                    match = _match_callback_to_event(event, callback, detail, explicit=False)
+                    match = _match_callback_to_event(event, callback, detail, explicit=False, alias=alias, state=state)
                     if match is not None:
                         matches.append(match)
-        return tuple(matches)
+        return tuple(sorted(matches, key=_match_sort_key))
 
     def _explicit_status_matches(
         self,
         state: BattleState,
         event: GameEvent,
-        callback_events: tuple[str, ...],
+        aliases: tuple[EventAlias, ...],
         unit_id: str,
         modifier_name: str,
     ) -> tuple[ListenerMatch, ...]:
@@ -360,38 +373,52 @@ class EventDispatchSystem:
                 ListenerMatch(
                     listener_kind="status_callback",
                     scope_kind="status_local",
-                    callback_event=callback_events[0],
+                    callback_event=aliases[0].callback_event if aliases else "",
                     unit_id=unit_id,
                     modifier_name=modifier_name,
                     callback=None,
                     status="blocked",
                     reason="status_detail_missing",
                     source="event_dispatch_system",
+                    order_key=_listener_order_key(state, "status_local", unit_id, -1, None),
+                    event_alias=aliases[0].to_json() if aliases else {},
+                    blocked_category=_blocked_category("status_detail_missing"),
                 ),
             )
         matches: list[ListenerMatch] = []
-        for callback_event in callback_events:
-            callbacks = self.rules.status_callbacks_for_modifier_event(modifier_name, callback_event)
+        for alias in aliases:
+            if not alias.callback_event or alias.admission_status != "executable":
+                matches.append(_alias_blocked_match(event, alias, state, unit_id=unit_id, modifier_name=modifier_name))
+                continue
+            callbacks = self.rules.status_callbacks_for_modifier_event_scope(
+                modifier_name,
+                alias.callback_event,
+                alias.scope_kind,
+            ) or self.rules.status_callbacks_for_modifier_event(modifier_name, alias.callback_event)
             if not callbacks:
                 matches.append(
                     ListenerMatch(
                         listener_kind="status_callback",
-                        scope_kind="status_local",
-                        callback_event=callback_event,
+                        scope_kind=alias.scope_kind,
+                        callback_event=alias.callback_event,
                         unit_id=unit_id,
                         modifier_name=modifier_name,
                         callback=None,
-                        status="matched",
+                        status="skipped",
+                        reason="status_callback_missing",
                         source="event_dispatch_system",
                         status_instance_id=str(detail.get("instance_id") or ""),
+                        order_key=_listener_order_key(state, alias.scope_kind, unit_id, _status_order(state, unit_id, detail), None),
+                        event_alias=alias.to_json(),
+                        blocked_category=_blocked_category("status_callback_missing"),
                     )
                 )
                 continue
             for callback in callbacks:
-                match = _match_callback_to_event(event, callback, detail, explicit=True)
+                match = _match_callback_to_event(event, callback, detail, explicit=True, alias=alias, state=state)
                 if match is not None:
                     matches.append(match)
-        return tuple(matches)
+        return tuple(sorted(matches, key=_match_sort_key))
 
     def dispatch_blocked(
         self,
@@ -454,19 +481,96 @@ def _dispatch_record(
     ).to_json()
 
 
-def _callback_events_for_event(event: GameEvent) -> tuple[str, ...]:
+SCOPE_PRIORITY = {
+    "actor_local": 10,
+    "status_local": 20,
+    "primary_target_local": 30,
+    "per_hit_target_local": 40,
+    "being_hit_target_local": 50,
+    "owner_local": 60,
+    "global_listener": 90,
+}
+
+
+CANONICAL_EVENT_ALIASES: dict[str, tuple[tuple[str, str, str], ...]] = {
+    "damage.hit": (
+        ("OnHit", "per_hit_target_local", "downstream_intent_missing:per_hit_listener_execution_not_admitted"),
+        ("OnBeingHit", "being_hit_target_local", "downstream_intent_missing:being_hit_listener_execution_not_admitted"),
+    ),
+    "toughness.hit": (
+        ("OnHit", "per_hit_target_local", "downstream_intent_missing:per_hit_listener_execution_not_admitted"),
+    ),
+    "break.triggered": (
+        ("OnTriggerBreak", "actor_local", "downstream_intent_missing:break_listener_execution_not_admitted"),
+        ("OnBeingBreak", "being_hit_target_local", "downstream_intent_missing:being_break_listener_execution_not_admitted"),
+    ),
+    "status.callback": (
+        ("OnPhase1", "status_local", "event_alias_missing:status_callback_requires_explicit_callback_event"),
+    ),
+}
+
+
+def _event_aliases(event: GameEvent) -> tuple[EventAlias, ...]:
+    aliases: list[EventAlias] = []
     raw_events = event.payload.get("callback_events")
     if isinstance(raw_events, (list, tuple)):
-        events = tuple(str(item) for item in raw_events if isinstance(item, str) and item)
-        if events:
-            return tuple(dict.fromkeys(events))
+        for item in raw_events:
+            if isinstance(item, str) and item:
+                aliases.append(
+                    EventAlias(
+                        callback_event=item,
+                        scope_kind=_scope_kind_for_callback_event(event, item),
+                        source_basis="event.payload.callback_events",
+                    )
+                )
     for key in ("callback_event", "tbgd_event"):
         value = event.payload.get(key)
         if isinstance(value, str) and value:
-            return (value,)
+            aliases.append(
+                EventAlias(
+                    callback_event=value,
+                    scope_kind=_scope_kind_for_callback_event(event, value),
+                    source_basis=f"event.payload.{key}",
+                )
+            )
     if event.window.startswith("On"):
-        return (event.window,)
-    return ()
+        aliases.append(
+            EventAlias(
+                callback_event=event.window,
+                scope_kind=_scope_kind_for_callback_event(event, event.window),
+                source_basis="event.window",
+            )
+        )
+    if not aliases:
+        for callback_event, scope_kind, blocked_dependency in CANONICAL_EVENT_ALIASES.get(event.event_type, ()):
+            aliases.append(
+                EventAlias(
+                    callback_event=callback_event,
+                    scope_kind=scope_kind,
+                    source_basis=f"canonical_event_alias:{event.event_type}",
+                    admission_status="blocked",
+                    blocked_dependency=blocked_dependency,
+                )
+            )
+    deduped: list[EventAlias] = []
+    seen: set[tuple[str, str, str]] = set()
+    for alias in aliases:
+        key = (alias.callback_event, alias.scope_kind, alias.source_basis)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(alias)
+    if deduped:
+        return tuple(deduped)
+    return (
+        EventAlias(
+            callback_event="",
+            scope_kind=_event_scope_kind(event),
+            source_basis=f"runtime_event:{event.event_type}",
+            admission_status="blocked",
+            blocked_dependency="event_alias_missing",
+        ),
+    )
 
 
 def _event_scope_kind(event: GameEvent) -> str:
@@ -484,6 +588,28 @@ def _event_scope_kind(event: GameEvent) -> str:
     if "Hit" in event.window:
         return "per_hit_target_local"
     return "status_local"
+
+
+def _scope_kind_for_callback_event(event: GameEvent, callback_event: str) -> str:
+    explicit = event.payload.get("listener_scope")
+    if isinstance(explicit, str) and explicit:
+        return explicit
+    if callback_event.startswith("OnListen"):
+        return "global_listener"
+    if (
+        callback_event.startswith("OnBeing")
+        or "BeingHit" in callback_event
+        or "BeingAttacked" in callback_event
+        or "BeingBreak" in callback_event
+    ):
+        return "being_hit_target_local"
+    if "Hit" in callback_event:
+        return "per_hit_target_local"
+    if callback_event in {"OnBeforeSkillUse", "OnBeforeAttack", "OnAfterAttack", "OnAfterSkillUse"}:
+        return "actor_local"
+    if callback_event in {"OnStack", "OnPhase1"}:
+        return "status_local"
+    return _event_scope_kind(event)
 
 
 def _status_details_for_modifier(state: BattleState, modifier_name: str) -> tuple[dict[str, JSONValue], ...]:
@@ -515,6 +641,8 @@ def _match_callback_to_event(
     detail: dict[str, JSONValue],
     *,
     explicit: bool,
+    alias: EventAlias,
+    state: BattleState,
 ) -> ListenerMatch | None:
     unit_id = str(detail.get("owner_id") or event.target_id or "")
     modifier_name = str(detail.get("modifier_name") or callback.modifier_name)
@@ -537,6 +665,7 @@ def _match_callback_to_event(
         reason = "global_listener_auto_execution_not_admitted"
     if status == "skipped" and not explicit:
         return None
+    status_order = _status_order(state, unit_id, detail)
     return ListenerMatch(
         listener_kind=_listener_kind_for_scope(scope_kind),
         scope_kind=scope_kind,
@@ -548,6 +677,9 @@ def _match_callback_to_event(
         status=status,
         reason=reason,
         source="rulebook.status_callback",
+        order_key=_listener_order_key(state, scope_kind, unit_id, status_order, callback),
+        event_alias=alias.to_json(),
+        blocked_category=_blocked_category(reason),
     )
 
 
@@ -612,6 +744,115 @@ def _listener_kind_for_scope(scope_kind: str) -> str:
     return "status_callback"
 
 
+def _alias_blocked_match(
+    event: GameEvent,
+    alias: EventAlias,
+    state: BattleState,
+    *,
+    unit_id: str | None = None,
+    modifier_name: str | None = None,
+) -> ListenerMatch:
+    reason = alias.blocked_dependency or f"event_alias_not_admitted:{alias.admission_status}"
+    target_unit = unit_id or str(event.target_id or _event_current_hit_target_id(event) or "")
+    return ListenerMatch(
+        listener_kind=_listener_kind_for_scope(alias.scope_kind),
+        scope_kind=alias.scope_kind,
+        callback_event=alias.callback_event,
+        unit_id=target_unit,
+        modifier_name=modifier_name or "",
+        callback=None,
+        status="blocked",
+        reason=reason,
+        source="event_alias_matrix",
+        order_key=_listener_order_key(state, alias.scope_kind, target_unit, -1, None),
+        event_alias=alias.to_json(),
+        blocked_category=_blocked_category(reason),
+    )
+
+
+def _listener_order_key(
+    state: BattleState,
+    scope_kind: str,
+    unit_id: str,
+    status_order: int,
+    callback: StatusCallbackIR | None,
+) -> dict[str, JSONValue]:
+    unit_order = _unit_order(state, unit_id)
+    callback_source_key = ""
+    callback_id = ""
+    task_order: list[str] = []
+    if callback is not None:
+        callback_source_key = f"{callback.source.source_path}:{callback.source.raw_type}:{callback.source.raw_id}"
+        callback_id = callback.callback_id
+        task_order = list(callback.task_ids)
+    return {
+        "scope_priority": SCOPE_PRIORITY.get(scope_kind, 999),
+        "scope_kind": scope_kind,
+        "unit_order": unit_order,
+        "unit_id": unit_id,
+        "status_order": status_order,
+        "callback_source_order": callback_source_key,
+        "callback_id": callback_id,
+        "task_order": task_order,
+    }
+
+
+def _match_sort_key(match: ListenerMatch) -> tuple[object, ...]:
+    order = match.order_key or {}
+    return (
+        int(order.get("scope_priority") or 999),
+        int(order.get("unit_order") or 999999),
+        int(order.get("status_order") if isinstance(order.get("status_order"), int) else 999999),
+        str(order.get("callback_source_order") or ""),
+        str(order.get("callback_id") or ""),
+        tuple(str(item) for item in order.get("task_order", []) if isinstance(item, str))
+        if isinstance(order.get("task_order"), list)
+        else (),
+    )
+
+
+def _unit_order(state: BattleState, unit_id: str) -> int:
+    for index, candidate in enumerate(sorted(state.units)):
+        if candidate == unit_id:
+            return index
+    return 999999
+
+
+def _status_order(state: BattleState, unit_id: str, detail: dict[str, JSONValue]) -> int:
+    unit = state.units.get(unit_id)
+    if unit is None:
+        return 999999
+    instance_id = str(detail.get("instance_id") or "")
+    for index, candidate in enumerate(unit.flags.get("status_details", ())):
+        if isinstance(candidate, dict) and str(candidate.get("instance_id") or "") == instance_id:
+            return index
+    return 999999
+
+
+def _blocked_category(reason: str) -> str:
+    if not reason:
+        return ""
+    if "event_alias" in reason or "listener_event_mapping" in reason:
+        return "event_alias_missing"
+    if "source_mode_not_admitted" in reason or reason.startswith("source_"):
+        return "source_not_admitted"
+    if reason.startswith("scope_") or "scope_not_admitted" in reason:
+        return "scope_not_admitted"
+    if "condition" in reason:
+        return "condition_not_admitted"
+    if "target" in reason or "alias" in reason:
+        return "target_not_admitted"
+    if "effect" in reason or "opcode" in reason or "callback_task" in reason:
+        return "effect_not_admitted"
+    if "queue" in reason or "intent" in reason or "normalized_action_delay" in reason:
+        return "downstream_intent_missing"
+    if reason in {"status_callback_missing", "listener_match_missing"}:
+        return "effect_not_admitted"
+    if reason == "status_detail_missing":
+        return "target_not_admitted"
+    return "downstream_intent_missing"
+
+
 def _listener_record(
     event: GameEvent,
     *,
@@ -622,6 +863,10 @@ def _listener_record(
     reason: str = "",
     metadata: dict[str, JSONValue] | None = None,
 ) -> dict[str, JSONValue]:
+    metadata = metadata or {}
+    order_key = metadata.get("order_key") if isinstance(metadata.get("order_key"), dict) else {}
+    event_alias = metadata.get("event_alias") if isinstance(metadata.get("event_alias"), dict) else {}
+    blocked_category = str(metadata.get("blocked_category") or _blocked_category(reason))
     return SettlementRecord(
         record_type="listener_match",
         source="event_dispatch_system",
@@ -633,7 +878,10 @@ def _listener_record(
             "listener_source": source,
             "status": status,
             "reason": reason,
-            "metadata": metadata or {},
+            "blocked_category": blocked_category,
+            "order_key": order_key,
+            "event_alias": event_alias,
+            "metadata": metadata,
         },
         trace={"event_id": event.to_json()["event_id"], "listener_id": listener_id},
     ).to_json()
@@ -643,12 +891,18 @@ def _listener_records_from_trigger_windows(
     windows: tuple[dict[str, JSONValue], ...],
 ) -> tuple[dict[str, JSONValue], ...]:
     records: list[dict[str, JSONValue]] = []
-    for window in windows:
+    for index, window in enumerate(windows):
         if not isinstance(window, dict):
             continue
         metadata = window.get("metadata") if isinstance(window.get("metadata"), dict) else {}
+        tbgd_event = str(window.get("tbgd_event") or "")
+        alias = EventAlias(
+            callback_event=tbgd_event,
+            scope_kind="actor_local",
+            source_basis="trigger_window.tbgd_event",
+        )
         event = GameEvent(
-            event_type=str(window.get("tbgd_event") or "trigger.window"),
+            event_type=tbgd_event or "trigger.window",
             source_id=str(metadata.get("actor_id") or "") if isinstance(metadata, dict) else "",
             target_id=str(metadata.get("primary_target_id") or "") if isinstance(metadata, dict) else "",
             window=str(window.get("canonical_window") or "unspecified"),
@@ -679,10 +933,22 @@ def _listener_records_from_trigger_windows(
                 reason=reason,
                 metadata={
                     "canonical_window": str(window.get("canonical_window") or ""),
-                    "tbgd_event": str(window.get("tbgd_event") or ""),
+                    "tbgd_event": tbgd_event,
                     "status_instance_id": str(window.get("status_instance_id") or ""),
                     "modifier_name": str(window.get("modifier_name") or ""),
                     "mutation_count": int(window.get("mutation_count") or 0),
+                    "order_key": {
+                        "scope_priority": SCOPE_PRIORITY["actor_local"],
+                        "scope_kind": "actor_local",
+                        "unit_order": index,
+                        "unit_id": str(metadata.get("actor_id") or "") if isinstance(metadata, dict) else "",
+                        "status_order": index,
+                        "callback_source_order": "trigger_system",
+                        "callback_id": str(window.get("trigger_id") or ""),
+                        "task_order": [],
+                    },
+                    "event_alias": alias.to_json(),
+                    "blocked_category": _blocked_category(reason),
                 },
             )
         )

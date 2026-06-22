@@ -266,12 +266,24 @@ def _select_multi_target_damage_definition(ir):
 def _select_blocked_scoped_listener(rules: RuleBook) -> StatusCallbackIR:
     preferred_scopes = ("per_hit_target_local", "being_hit_target_local", "global_listener")
     for scope in preferred_scopes:
-        for callback in sorted(rules.ir.status_callbacks, key=lambda item: (item.source.source_path, item.event, item.modifier_name, item.callback_id)):
+        for callback in sorted(rules.ir.status_callbacks, key=_blocked_listener_sort_key):
             if callback.scope_kind != scope:
                 continue
             if callback.coverage_status != "executable":
                 return callback
     raise RuntimeError("no blocked scoped listener callback found")
+
+
+def _blocked_listener_sort_key(callback: StatusCallbackIR) -> tuple[object, ...]:
+    path = callback.source.source_path
+    return (
+        callback.source_mode != "mainline",
+        path.startswith("Config/ConfigAbility/Activity/"),
+        path,
+        callback.event,
+        callback.modifier_name,
+        callback.callback_id,
+    )
 
 
 def _state_with_callback_status(state: BattleState, callback: StatusCallbackIR) -> BattleState:
