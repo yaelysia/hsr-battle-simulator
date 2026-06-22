@@ -10,6 +10,7 @@ from ..rules.ir import BreakDamageEmissionIR, BreakStatusEmissionIR, BreakTempla
 from ..rules.rulebook import RuleBook
 from .damage import DamagePacket, DamageSystem
 from .dynamic_values import find_status_detail
+from .event_dispatch import EventDispatchSystem
 from .effect import EffectExecutionContext, EffectRegistry
 from .status_callbacks import StatusCallbackSystem
 from .toughness import ToughnessPacket
@@ -40,12 +41,19 @@ class BreakSystem:
         reducer: MutationReducer | None = None,
         damage: DamageSystem | None = None,
         status_callbacks: StatusCallbackSystem | None = None,
+        event_dispatcher: EventDispatchSystem | None = None,
     ) -> None:
         self.rules = rules
         self.effects = effects
         self.reducer = reducer or MutationReducer()
         self.damage = damage or DamageSystem()
-        self.status_callbacks = status_callbacks or StatusCallbackSystem(rules, damage=self.damage, reducer=self.reducer)
+        self.event_dispatcher = event_dispatcher or EventDispatchSystem(
+            rules,
+            effects,
+            reducer=self.reducer,
+            damage=self.damage,
+            status_callbacks=status_callbacks,
+        )
 
     def enter_break(self, state: BattleState, packet: ToughnessPacket) -> BreakApplicationResult:
         target = state.units.get(packet.target_id)
@@ -334,23 +342,37 @@ class BreakSystem:
             *result.records,
         ]
         if emission.modifier_name:
-            on_stack = self.status_callbacks.execute(
+            on_stack = self.event_dispatcher.dispatch_status_callback(
                 after_state,
+                event=GameEvent(
+                    "status.callback.OnStack",
+                    source_id=packet.attacker_id,
+                    target_id=packet.target_id,
+                    window="OnStack",
+                    process_only=True,
+                    payload={
+                        "callback_event": "OnStack",
+                        "modifier_name": emission.modifier_name,
+                        "break_status_emission_id": emission.break_status_emission_id,
+                        "break_template_id": template.template_id,
+                    },
+                ),
                 unit_id=packet.target_id,
                 modifier_name=emission.modifier_name,
-                event="OnStack",
             )
             after_state = on_stack.after_state
             records.extend(on_stack.records)
             result_mutations = (*result.mutations, *on_stack.mutations)
+            result_events = (*result.events, *on_stack.events)
         else:
             result_mutations = result.mutations
+            result_events = result.events
         return BreakApplicationResult(
             ok=bool(result.mutations) or not result.unsupported,
             after_state=after_state,
             mutations=result_mutations,
             records=tuple(records),
-            events=result.events,
+            events=result_events,
             errors=() if result.mutations else tuple(str(item) for item in result.unsupported),
         )
 

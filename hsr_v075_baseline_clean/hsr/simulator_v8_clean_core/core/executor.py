@@ -26,7 +26,7 @@ from ..systems.status import StatusSystem
 from ..systems.target import TargetPolicy, TargetSystem
 from ..systems.timeline import TimelinePlan, TimelineSystem
 from ..systems.toughness import ToughnessPacket, ToughnessSystem
-from ..systems.trigger import TriggerSystem, TriggerWindowResult
+from ..systems.event_dispatch import EventDispatchResult, EventDispatchSystem
 
 
 class CombatExecutor:
@@ -44,7 +44,7 @@ class CombatExecutor:
         self.effects = EffectRegistry(self.status)
         self.breaks = BreakSystem(rules, self.effects, reducer=self.reducer)
         self.ability_tasks = AbilityTaskSystem(rules, self.effects, reducer=self.reducer)
-        self.triggers = TriggerSystem(rules, self.effects, reducer=self.reducer)
+        self.event_dispatcher = EventDispatchSystem(rules, self.effects, reducer=self.reducer)
 
     def execute(self, command: ActionCommand, state: BattleState) -> tuple[BattleState, BattleTransition]:
         before = state.snapshot()
@@ -149,7 +149,7 @@ class CombatExecutor:
             resource_mutations = ()
         pre_damage_mutations = (*timeline_mutations, *resource_mutations)
         current_state = self.reducer.apply_all(state, pre_damage_mutations)
-        trigger_results: list[TriggerWindowResult] = []
+        trigger_results: list[EventDispatchResult] = []
         ordered_mutations: list[Mutation] = list(pre_damage_mutations)
         runtime_records: list[dict[str, JSONValue]] = [
             *(_mutation_record("timeline", mutation) for mutation in timeline_mutations),
@@ -180,10 +180,26 @@ class CombatExecutor:
                         ability_task_results.append(ability_result)
                         ordered_mutations.extend(ability_result.mutations)
                         runtime_records.extend(ability_result.records)
-                    trigger_result = self.triggers.execute_status_window(
+                    dispatch_event = GameEvent(
+                        event_type=f"action.window.{step.canonical_window}",
+                        source_id=command.actor_id,
+                        target_id=target_result.resolution.selected[0] if target_result.resolution.selected else None,
+                        event_id=f"event:{current_state.event_index}:{step.canonical_window}:dispatch",
+                        window=step.canonical_window,
+                        process_only=True,
+                        payload={
+                            "tbgd_event": step.tbgd_event,
+                            "phase": step.phase,
+                            "action_id": command.action_id,
+                            "action_level": command.action_level,
+                            "actor_id": command.actor_id,
+                            "selected_target_ids": list(target_result.resolution.selected),
+                            "primary_action_target_id": action_execution_plan.primary_action_target_id,
+                        },
+                    )
+                    trigger_result = self.event_dispatcher.dispatch_action_window(
                         current_state,
-                        canonical_window=step.canonical_window,
-                        tbgd_event=step.tbgd_event,
+                        event=dispatch_event,
                         command=command,
                         action_definition=action_definition,
                         target_resolution=target_result.resolution,
@@ -496,6 +512,8 @@ class CombatExecutor:
                 *ability_task_events,
                 *trigger_events,
                 *(event for result in damage_results for event in result.events),
+                *(event for result in toughness_results for event in result.events),
+                *(event for result in break_results for event in result.events),
             ),
             mutations=mutations,
             trigger_windows=trigger_windows,
@@ -542,7 +560,9 @@ class CombatExecutor:
                 "blocked_reason": blocked_reason,
                 "plan_blocked_reason": plan_blocked_reason,
                 "primary_action_target_id": action_execution_plan.primary_action_target_id,
-                "per_hit_target_context_not_implemented": action_execution_plan.per_hit_target_context_not_implemented,
+                "per_hit_target_context_available": action_execution_plan.per_hit_target_context_available,
+                "per_hit_listener_admission_partial": action_execution_plan.per_hit_listener_admission_partial,
+                "per_hit_target_context_not_implemented": not action_execution_plan.per_hit_target_context_available,
                 "timeline_mutation_count": len(timeline_mutations),
                 "resource_mutation_count": len(resource_mutations),
                 "trigger_window_count": len(trigger_windows),
@@ -782,7 +802,10 @@ def _damage_packet(
             "numeric_fidelity_status": damage_plan.numeric_fidelity_status,
             "multi_hit_not_implemented": True,
             "primary_action_target_id": damage_plan.primary_action_target_id,
-            "per_hit_target_context_not_implemented": True,
+            "current_hit_target_id": damage_plan.target_id,
+            "per_hit_target_context_available": True,
+            "per_hit_listener_admission_partial": True,
+            "per_hit_target_context_not_implemented": False,
             "target_group_multiplier_not_implemented": damage_plan.target_group_multiplier_not_implemented,
         },
     )

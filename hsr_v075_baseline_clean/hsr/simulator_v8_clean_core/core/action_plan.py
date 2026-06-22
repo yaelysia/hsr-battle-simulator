@@ -173,7 +173,8 @@ class ActionExecutionPlan:
     source_trace: dict[str, object]
     derived_reason: str
     primary_action_target_id: str | None = None
-    per_hit_target_context_not_implemented: bool = True
+    per_hit_target_context_available: bool = False
+    per_hit_listener_admission_partial: bool = True
 
     def to_json(self) -> dict[str, object]:
         return {
@@ -197,7 +198,9 @@ class ActionExecutionPlan:
             "damage_emission_ids": [emission.damage_emission_id for emission in self.damage_emissions],
             "toughness_emission_ids": [emission.toughness_emission_id for emission in self.toughness_emissions],
             "primary_action_target_id": self.primary_action_target_id,
-            "per_hit_target_context_not_implemented": self.per_hit_target_context_not_implemented,
+            "per_hit_target_context_available": self.per_hit_target_context_available,
+            "per_hit_listener_admission_partial": self.per_hit_listener_admission_partial,
+            "per_hit_target_context_not_implemented": not self.per_hit_target_context_available,
         }
 
 
@@ -303,7 +306,8 @@ def build_action_execution_plan(
         source_trace=source_trace or {},
         derived_reason=action_event.derived_reason,
         primary_action_target_id=primary_action_target_id,
-        per_hit_target_context_not_implemented=True,
+        per_hit_target_context_available=bool(damage_plan or toughness_plan),
+        per_hit_listener_admission_partial=True,
     )
 
 

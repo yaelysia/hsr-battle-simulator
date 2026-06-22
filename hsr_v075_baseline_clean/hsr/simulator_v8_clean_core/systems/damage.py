@@ -180,6 +180,15 @@ class DamageSystem:
         return DamageApplicationResult(
             packet=packet,
             ok=True,
+            events=(
+                _damage_hit_event(
+                    packet,
+                    record_type="damage",
+                    amount=final_damage,
+                    before_hp=target.hp,
+                    after_hp=after,
+                ),
+            ),
             mutations=(mutation,),
             rng_events=formula_result.rng_events,
             records=(
@@ -246,6 +255,15 @@ class DamageSystem:
         return DamageApplicationResult(
             packet=packet,
             ok=True,
+            events=(
+                _damage_hit_event(
+                    packet,
+                    record_type=record_type,
+                    amount=final_damage,
+                    before_hp=target.hp,
+                    after_hp=after,
+                ),
+            ),
             mutations=(mutation,),
             records=(
                 SettlementRecord(
@@ -310,6 +328,15 @@ class DamageSystem:
         return DamageApplicationResult(
             packet=packet,
             ok=True,
+            events=(
+                _damage_hit_event(
+                    packet,
+                    record_type="super_break_damage",
+                    amount=final_damage,
+                    before_hp=target.hp,
+                    after_hp=after,
+                ),
+            ),
             mutations=(mutation,),
             records=(
                 SettlementRecord(
@@ -362,6 +389,15 @@ class DamageSystem:
         return DamageApplicationResult(
             packet=packet,
             ok=True,
+            events=(
+                _damage_hit_event(
+                    packet,
+                    record_type=record_type,
+                    amount=float(packet.amount),
+                    before_hp=target.hp,
+                    after_hp=after,
+                ),
+            ),
             mutations=(mutation,),
             records=(
                 SettlementRecord(
@@ -439,6 +475,49 @@ def _damage_error(packet: DamagePacket, error: str) -> DamageApplicationResult:
 def _metadata_str(metadata: dict[str, JSONValue], key: str) -> str | None:
     value = metadata.get(key)
     return str(value) if isinstance(value, str) else None
+
+
+def _damage_hit_event(
+    packet: DamagePacket,
+    *,
+    record_type: str,
+    amount: float,
+    before_hp: float,
+    after_hp: float,
+) -> GameEvent:
+    return GameEvent(
+        event_type="damage.hit",
+        source_id=packet.attacker_id,
+        target_id=packet.target_id,
+        window=str(packet.metadata.get("window") or "damage"),
+        process_only=True,
+        payload={
+            "record_type": record_type,
+            "attacker_id": packet.attacker_id,
+            "target_id": packet.target_id,
+            "current_hit_target_id": packet.target_id,
+            "primary_action_target_id": packet.metadata.get("primary_action_target_id"),
+            "hit_index": packet.metadata.get("hit_index"),
+            "target_group": packet.metadata.get("target_group"),
+            "amount": amount,
+            "target_before_hp": before_hp,
+            "target_after_hp": after_hp,
+            "attack_type": packet.attack_type,
+            "damage_kind": packet.damage_kind,
+            "damage_formula_family": packet.damage_formula_family,
+            "element_type": packet.element_type,
+            "damage_emission_id": packet.damage_emission_id,
+            "break_damage_emission_id": packet.break_damage_emission_id,
+            "super_break_emission_id": packet.super_break_emission_id,
+            "status_damage_emission_id": packet.status_damage_emission_id,
+            "status_callback_id": packet.status_callback_id,
+            "source_task_id": packet.source_task_id,
+            "hit_profile_id": packet.hit_profile_id,
+            "source_trace": packet.source_trace,
+            "per_hit_target_context_available": True,
+            "per_hit_listener_admission_partial": True,
+        },
+    )
 
 
 def _action_definition_summary(action_definition: ActionDefinitionIR | None) -> dict[str, JSONValue] | None:

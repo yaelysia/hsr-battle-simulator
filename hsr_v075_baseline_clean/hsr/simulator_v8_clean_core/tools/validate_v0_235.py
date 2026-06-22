@@ -22,7 +22,7 @@ from ..systems.break_system import BreakSystem
 from ..systems.dynamic_values import find_status_detail, upsert_dynamic_value
 from ..systems.effect import EffectRegistry
 from ..systems.status import StatusSystem
-from ..systems.status_callbacks import StatusCallbackSystem
+from ..systems.event_dispatch import EventDispatchSystem
 from ..systems.super_break import SuperBreakPacket, SuperBreakSystem
 from ..tbgd.coverage import build_coverage_matrix
 from ..tbgd.discovery import TBGDDiscovery
@@ -226,11 +226,11 @@ def _execute_break_setup(rules: RuleBook, case: dict[str, Any]) -> dict[str, Any
 def _execute_action_delay_case(rules: RuleBook, base_state) -> dict[str, Any]:
     delay = _select_executable_action_delay(rules)
     state = _state_with_delay_status(rules, base_state, delay)
-    result = StatusCallbackSystem(rules).execute(
+    result = EventDispatchSystem(rules, EffectRegistry(StatusSystem(rules))).dispatch_status_callback(
         state,
+        event=_status_callback_event(delay.event, delay.modifier_name),
         unit_id="enemy:profile_target",
         modifier_name=delay.modifier_name,
-        event=delay.event,
     )
     transition = _system_transition(
         before_state=state,
@@ -346,11 +346,11 @@ def _execute_super_break_case(rules: RuleBook, state) -> dict[str, Any]:
 def _negative_cases(rules: RuleBook, state, case: dict[str, Any]) -> dict[str, Any]:
     delay = _select_blocked_normalized_delay(rules)
     delay_state = _state_with_delay_status(rules, state, delay) if delay is not None else state
-    blocked_delay = StatusCallbackSystem(rules).execute(
+    blocked_delay = EventDispatchSystem(rules, EffectRegistry(StatusSystem(rules))).dispatch_status_callback(
         delay_state,
+        event=_status_callback_event(delay.event if delay else "OnStack", delay.modifier_name if delay else "__missing__"),
         unit_id="enemy:profile_target",
         modifier_name=delay.modifier_name if delay else "__missing__",
-        event=delay.event if delay else "OnStack",
     )
     super_break_missing = SuperBreakSystem(rules).apply_packet(
         replace(
@@ -510,6 +510,19 @@ def _system_transition(
             source="validation_system_transition",
         ),
         coverage={"validation_action": action_id, "mutation_count": len(tuple(mutations))},
+    )
+
+
+def _status_callback_event(event: str, modifier_name: str):
+    from ..core.model import GameEvent
+
+    return GameEvent(
+        event_type=f"status.callback.{event}",
+        source_id="ally:actor",
+        target_id="enemy:profile_target",
+        window=event,
+        process_only=True,
+        payload={"callback_event": event, "modifier_name": modifier_name},
     )
 
 

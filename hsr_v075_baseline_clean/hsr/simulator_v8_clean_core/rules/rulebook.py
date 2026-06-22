@@ -218,14 +218,24 @@ class RuleBook:
             {callback.callback_id: callback for callback in self.ir.status_callbacks},
         )
         status_callbacks_by_modifier_event: dict[tuple[str, str], list[StatusCallbackIR]] = {}
+        status_callbacks_by_event: dict[str, list[StatusCallbackIR]] = {}
         for callback in self.ir.status_callbacks:
             status_callbacks_by_modifier_event.setdefault((callback.modifier_name, callback.event), []).append(callback)
+            status_callbacks_by_event.setdefault(callback.event, []).append(callback)
         object.__setattr__(
             self,
             "_status_callbacks_by_modifier_event",
             {
                 key: tuple(sorted(value, key=lambda item: item.callback_id))
                 for key, value in status_callbacks_by_modifier_event.items()
+            },
+        )
+        object.__setattr__(
+            self,
+            "_status_callbacks_by_event",
+            {
+                key: tuple(sorted(value, key=lambda item: (item.modifier_name, item.callback_id)))
+                for key, value in status_callbacks_by_event.items()
             },
         )
         object.__setattr__(
@@ -472,6 +482,9 @@ class RuleBook:
 
     def status_callbacks_for_modifier_event(self, modifier_name: str, event: str) -> tuple[StatusCallbackIR, ...]:
         return self._status_callbacks_by_modifier_event.get((modifier_name, event), ())
+
+    def status_callbacks_for_event(self, event: str) -> tuple[StatusCallbackIR, ...]:
+        return self._status_callbacks_by_event.get(event, ())
 
     def status_callback_task(self, task_id: str) -> StatusCallbackTaskIR | None:
         return self._status_callback_tasks.get(task_id)

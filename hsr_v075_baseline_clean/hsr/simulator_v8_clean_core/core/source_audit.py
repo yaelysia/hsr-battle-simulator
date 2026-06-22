@@ -57,6 +57,11 @@ MUTATION_SOURCE_POLICIES: dict[str, dict[str, JSONValue]] = {
         "required_metadata": ["callback_id", "task_id", "source_trace"],
         "coverage_required": "executable for mutating paths; blocked paths process-only",
     },
+    "event_dispatch_system": {
+        "required_ir": ["TriggerIR or StatusCallbackIR"],
+        "required_metadata": ["event", "listener_kind", "scope"],
+        "coverage_required": "process-only dispatch records; mutating listener effects keep their underlying source",
+    },
     "queue_system": {
         "required_ir": ["ActionDefinitionIR or EffectIR"],
         "required_metadata": ["queue_name", "queue_operation", "source_trace"],

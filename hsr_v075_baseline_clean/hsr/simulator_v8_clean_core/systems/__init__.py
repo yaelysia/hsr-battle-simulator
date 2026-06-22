@@ -1,6 +1,7 @@
 from .damage import DamageSystem
 from .damage_formula import DamageFormulaResult, DirectDamageFormula, ModifierLedger
 from .effect import EffectExecutionContext, EffectRegistry, EffectResult
+from .event_dispatch import EventDispatchResult, EventDispatchSystem
 from .queue import QueueSystem
 from .resource import ResourcePlan, ResourcePlanResult, ResourceSystem
 from .status import StatusApplicationResult, StatusInstance, StatusSystem
@@ -16,6 +17,8 @@ __all__ = [
     "EffectRegistry",
     "EffectExecutionContext",
     "EffectResult",
+    "EventDispatchSystem",
+    "EventDispatchResult",
     "QueueSystem",
     "ResourcePlan",
     "ResourcePlanResult",
