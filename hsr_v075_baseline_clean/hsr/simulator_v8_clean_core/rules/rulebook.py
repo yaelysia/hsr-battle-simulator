@@ -14,6 +14,7 @@ from .ir import (
     BreakStatusEmissionIR,
     BreakTemplateIR,
     CanonicalIR,
+    CombatantActionSetIR,
     CombatantProfileIR,
     ConditionIR,
     DamageEmissionIR,
@@ -21,8 +22,10 @@ from .ir import (
     FormulaIR,
     HitProfileIR,
     QueueIntentIR,
+    QueuePriorityIR,
     QueueResolutionIR,
     RuleEntity,
+    StandaloneAbilityGraphIR,
     StatusCallbackIR,
     StatusCallbackTaskIR,
     StatusDamageEmissionIR,
@@ -65,6 +68,7 @@ class RuleBook:
         for phase in self.ir.ability_phases:
             ability_phases_by_binding.setdefault(phase.binding_id, []).append(phase)
             ability_phases_by_action.setdefault((phase.action_id, phase.level), []).append(phase)
+        object.__setattr__(self, "_ability_phases", {phase.phase_id: phase for phase in self.ir.ability_phases})
         object.__setattr__(
             self,
             "_ability_phases_by_binding",
@@ -339,6 +343,37 @@ class RuleBook:
         )
         object.__setattr__(
             self,
+            "_queue_priorities",
+            {priority.queue_priority_id: priority for priority in self.ir.queue_priorities},
+        )
+        object.__setattr__(
+            self,
+            "_queue_priority_by_table_key",
+            {(priority.priority_table, priority.priority_key): priority for priority in self.ir.queue_priorities},
+        )
+        standalone_ability_graphs_by_name: dict[str, list[StandaloneAbilityGraphIR]] = {}
+        for graph in self.ir.standalone_ability_graphs:
+            standalone_ability_graphs_by_name.setdefault(graph.ability_name, []).append(graph)
+        object.__setattr__(
+            self,
+            "_standalone_ability_graphs",
+            {graph.standalone_ability_graph_id: graph for graph in self.ir.standalone_ability_graphs},
+        )
+        object.__setattr__(
+            self,
+            "_standalone_ability_graphs_by_name",
+            {
+                key: tuple(sorted(value, key=lambda item: (item.source.source_path, item.standalone_ability_graph_id)))
+                for key, value in standalone_ability_graphs_by_name.items()
+            },
+        )
+        object.__setattr__(
+            self,
+            "_combatant_action_sets",
+            {action_set.entity_ref: action_set for action_set in self.ir.combatant_action_sets},
+        )
+        object.__setattr__(
+            self,
             "_super_break_emissions",
             {emission.super_break_emission_id: emission for emission in self.ir.super_break_emissions},
         )
@@ -578,6 +613,21 @@ class RuleBook:
     def queue_resolution_for_intent(self, queue_intent_id: str) -> QueueResolutionIR | None:
         return self._queue_resolution_by_intent.get(queue_intent_id)
 
+    def queue_priority(self, queue_priority_id: str) -> QueuePriorityIR | None:
+        return self._queue_priorities.get(queue_priority_id)
+
+    def queue_priority_by_key(self, priority_table: str, priority_key: str) -> QueuePriorityIR | None:
+        return self._queue_priority_by_table_key.get((priority_table, priority_key))
+
+    def standalone_ability_graph(self, graph_id: str) -> StandaloneAbilityGraphIR | None:
+        return self._standalone_ability_graphs.get(graph_id)
+
+    def standalone_ability_graphs_by_name(self, ability_name: str) -> tuple[StandaloneAbilityGraphIR, ...]:
+        return self._standalone_ability_graphs_by_name.get(ability_name, ())
+
+    def combatant_action_set(self, entity_ref: str) -> CombatantActionSetIR | None:
+        return self._combatant_action_sets.get(entity_ref)
+
     def super_break_emission(self, emission_id: str) -> SuperBreakEmissionIR | None:
         return self._super_break_emissions.get(emission_id)
 
@@ -595,6 +645,9 @@ class RuleBook:
 
     def ability_phases_for_binding(self, binding_id: str) -> tuple[AbilityPhaseIR, ...]:
         return self._ability_phases_by_binding.get(binding_id, ())
+
+    def ability_phase(self, phase_id: str) -> AbilityPhaseIR | None:
+        return self._ability_phases.get(phase_id)
 
     def ability_task(self, task_id: str) -> AbilityTaskIR | None:
         return self._ability_tasks.get(task_id)

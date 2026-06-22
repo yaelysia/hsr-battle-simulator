@@ -154,6 +154,11 @@ def build_coverage_matrix(report: DiscoveryReport, ir: CanonicalIR) -> CoverageM
         ir.status_callback_tasks,
         ir.status_damage_emissions,
         ir.action_delay_emissions,
+        ir.queue_intents,
+        ir.queue_resolutions,
+        ir.queue_priorities,
+        ir.standalone_ability_graphs,
+        ir.combatant_action_sets,
         ir.super_break_emissions,
         ir.triggers,
         ir.effects,
@@ -183,6 +188,11 @@ def build_coverage_matrix(report: DiscoveryReport, ir: CanonicalIR) -> CoverageM
             "status_callback_tasks": len(ir.status_callback_tasks),
             "status_damage_emissions": len(ir.status_damage_emissions),
             "action_delay_emissions": len(ir.action_delay_emissions),
+            "queue_intents": len(ir.queue_intents),
+            "queue_resolutions": len(ir.queue_resolutions),
+            "queue_priorities": len(ir.queue_priorities),
+            "standalone_ability_graphs": len(ir.standalone_ability_graphs),
+            "combatant_action_sets": len(ir.combatant_action_sets),
             "super_break_emissions": len(ir.super_break_emissions),
             "triggers": len(ir.triggers),
             "effects": len(ir.effects),
@@ -393,6 +403,14 @@ def _action_execution_status(ir: CanonicalIR) -> dict[str, Any]:
     queue_resolution_status = Counter(resolution.coverage_status for resolution in ir.queue_resolutions)
     queue_resolution_reasons = Counter(resolution.blocked_reason for resolution in ir.queue_resolutions if resolution.blocked_reason)
     queue_resolution_kinds = Counter(resolution.resolved_kind for resolution in ir.queue_resolutions)
+    queue_priority_status = Counter(priority.coverage_status for priority in ir.queue_priorities)
+    queue_priority_reasons = Counter(priority.blocked_reason for priority in ir.queue_priorities if priority.blocked_reason)
+    queue_priority_tables = Counter(priority.priority_table for priority in ir.queue_priorities)
+    standalone_graph_status = Counter(graph.coverage_status for graph in ir.standalone_ability_graphs)
+    standalone_graph_reasons = Counter(graph.blocked_reason for graph in ir.standalone_ability_graphs if graph.blocked_reason)
+    standalone_graph_source_modes = Counter(graph.source_mode for graph in ir.standalone_ability_graphs)
+    combatant_action_set_status = Counter(action_set.coverage_status for action_set in ir.combatant_action_sets)
+    combatant_action_set_reasons = Counter(action_set.blocked_reason for action_set in ir.combatant_action_sets if action_set.blocked_reason)
     super_break_status = Counter(emission.coverage_status for emission in ir.super_break_emissions)
     super_break_reasons = Counter(
         emission.blocked_reason
@@ -564,6 +582,32 @@ def _action_execution_status(ir: CanonicalIR) -> dict[str, Any]:
             "blocked_reason_counts": dict(sorted(queue_resolution_reasons.items())),
             "resolved_kind_counts": dict(sorted(queue_resolution_kinds.items())),
             "reason": "QueueResolutionIR admits whether queued action_or_ability_ref can be resolved from Canonical IR before any drain/dequeue is allowed",
+        },
+        "queue_priorities": {
+            "lowered": len(ir.queue_priorities),
+            "executable": queue_priority_status["executable"],
+            "blocked": queue_priority_status["blocked"],
+            "status_counts": dict(sorted(queue_priority_status.items())),
+            "blocked_reason_counts": dict(sorted(queue_priority_reasons.items())),
+            "priority_table_counts": dict(sorted(queue_priority_tables.items())),
+            "reason": "QueuePriorityIR lowers InsertAbilityPriority and InsertActionPriority from PriorityConfig for admitted queue drain ordering",
+        },
+        "standalone_ability_graphs": {
+            "lowered": len(ir.standalone_ability_graphs),
+            "executable": standalone_graph_status["executable"],
+            "blocked": standalone_graph_status["blocked"],
+            "status_counts": dict(sorted(standalone_graph_status.items())),
+            "blocked_reason_counts": dict(sorted(standalone_graph_reasons.items())),
+            "source_mode_counts": dict(sorted(standalone_graph_source_modes.items())),
+            "reason": "StandaloneAbilityGraphIR lowers AbilityList.Name graphs used by TurnInsertAbility without hand-written AbilityName mappings",
+        },
+        "combatant_action_sets": {
+            "lowered": len(ir.combatant_action_sets),
+            "executable": combatant_action_set_status["executable"],
+            "blocked": combatant_action_set_status["blocked"],
+            "status_counts": dict(sorted(combatant_action_set_status.items())),
+            "blocked_reason_counts": dict(sorted(combatant_action_set_reasons.items())),
+            "reason": "CombatantActionSetIR maps entity_ref + SkillIndex to canonical action definitions for TurnInsertAction admission",
         },
         "super_break_emissions": {
             "lowered": len(ir.super_break_emissions),

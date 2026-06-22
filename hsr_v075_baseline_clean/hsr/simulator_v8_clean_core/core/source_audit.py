@@ -63,12 +63,12 @@ MUTATION_SOURCE_POLICIES: dict[str, dict[str, JSONValue]] = {
         "coverage_required": "process-only dispatch records; mutating listener effects keep their underlying source",
     },
     "queue_system": {
-        "required_ir": ["QueueIntentIR for enqueue; QueueIntentIR + QueueResolutionIR for dequeue"],
+        "required_ir": ["QueueIntentIR + QueuePriorityIR for enqueue; QueueIntentIR + QueueResolutionIR + QueuePriorityIR for dequeue"],
         "required_metadata": ["queue_name", "queue_operation", "queue_intent_id", "source_trace"],
         "coverage_required": "executable",
     },
     "combat_executor.queue": {
-        "required_ir": ["QueueIntentIR for enqueue; QueueIntentIR + QueueResolutionIR for dequeue"],
+        "required_ir": ["QueueIntentIR + QueuePriorityIR for enqueue; QueueIntentIR + QueueResolutionIR + QueuePriorityIR for dequeue"],
         "required_metadata": ["queue_name", "queue_operation", "queue_intent_id", "source_trace"],
         "coverage_required": "executable",
     },
@@ -789,6 +789,22 @@ class RuntimeSourceAuditor:
                     details={"metadata": metadata},
                 )
             )
+        queue_priority_id = metadata.get("queue_priority_id")
+        if isinstance(queue_priority_id, str) and queue_priority_id:
+            priority = self.rules.queue_priority(queue_priority_id)
+            if priority is None:
+                violations.append(_violation(mutation, "queue_priority_ir_missing", details={"queue_priority_id": queue_priority_id}))
+            else:
+                _audit_source(priority.source, priority.coverage_status, mutation, violations, executable_required=True)
+        else:
+            violations.append(
+                _violation(
+                    mutation,
+                    "queue_priority_ir_missing",
+                    missing_field="queue_priority_id",
+                    details={"metadata": metadata},
+                )
+            )
         queue_resolution_id = metadata.get("queue_resolution_id")
         if operation == "dequeue":
             _required_str(mutation, metadata, "queue_resolution_id", violations)
@@ -808,6 +824,7 @@ class RuntimeSourceAuditor:
                 "queue_operation": operation,
                 "queue_intent_id": str(queue_intent_id or ""),
                 "queue_resolution_id": str(queue_resolution_id or ""),
+                "queue_priority_id": str(queue_priority_id or ""),
             },
         )
 

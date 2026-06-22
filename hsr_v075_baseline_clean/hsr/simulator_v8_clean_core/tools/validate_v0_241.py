@@ -102,6 +102,8 @@ def _queue_enqueue_state_case(rules: RuleBook, base_state: BattleState, intent: 
     result = EventDispatchSystem(rules, EffectRegistry(StatusSystem(rules))).dispatch_event(
         state,
         event=_event_for_callback(callback),
+        unit_id=_unit_id_for_callback(callback),
+        modifier_name=callback.modifier_name,
     )
     transition = _system_transition(
         before_state=state,
@@ -298,6 +300,10 @@ def _require_callback(rules: RuleBook, intent: QueueIntentIR) -> StatusCallbackI
     if callback is None:
         raise RuntimeError(f"QueueIntentIR callback missing: {intent.callback_id}")
     return callback
+
+
+def _unit_id_for_callback(callback: StatusCallbackIR) -> str:
+    return "ally:actor" if callback.scope_kind == "actor_local" else "enemy:profile_target"
 
 
 if __name__ == "__main__":

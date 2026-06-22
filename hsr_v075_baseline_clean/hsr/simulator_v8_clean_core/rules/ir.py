@@ -609,6 +609,74 @@ class QueueResolutionIR:
 
 
 @dataclass(frozen=True)
+class QueuePriorityIR:
+    queue_priority_id: str
+    priority_table: str
+    priority_key: str
+    priority_value: float
+    source: IRSource
+    coverage_status: CoverageStatus = "executable"
+    blocked_reason: str = ""
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "queue_priority_id": self.queue_priority_id,
+            "priority_table": self.priority_table,
+            "priority_key": self.priority_key,
+            "priority_value": self.priority_value,
+            "source": self.source.to_json(),
+            "coverage_status": self.coverage_status,
+            "blocked_reason": self.blocked_reason,
+        }
+
+
+@dataclass(frozen=True)
+class StandaloneAbilityGraphIR:
+    standalone_ability_graph_id: str
+    ability_name: str
+    source_mode: str
+    phase_ids: tuple[str, ...]
+    task_ids: tuple[str, ...]
+    executable_task_ids: tuple[str, ...]
+    source: IRSource
+    coverage_status: CoverageStatus = "blocked"
+    blocked_reason: str = ""
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "standalone_ability_graph_id": self.standalone_ability_graph_id,
+            "ability_name": self.ability_name,
+            "source_mode": self.source_mode,
+            "phase_ids": list(self.phase_ids),
+            "task_ids": list(self.task_ids),
+            "executable_task_ids": list(self.executable_task_ids),
+            "source": self.source.to_json(),
+            "coverage_status": self.coverage_status,
+            "blocked_reason": self.blocked_reason,
+        }
+
+
+@dataclass(frozen=True)
+class CombatantActionSetIR:
+    combatant_action_set_id: str
+    entity_ref: str
+    skill_index_map: dict[str, JSONValue]
+    source: IRSource
+    coverage_status: CoverageStatus = "blocked"
+    blocked_reason: str = ""
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "combatant_action_set_id": self.combatant_action_set_id,
+            "entity_ref": self.entity_ref,
+            "skill_index_map": self.skill_index_map,
+            "source": self.source.to_json(),
+            "coverage_status": self.coverage_status,
+            "blocked_reason": self.blocked_reason,
+        }
+
+
+@dataclass(frozen=True)
 class AbilityPhaseIR:
     phase_id: str
     binding_id: str
@@ -833,6 +901,9 @@ class CanonicalIR:
     action_delay_emissions: tuple[ActionDelayEmissionIR, ...] = ()
     queue_intents: tuple[QueueIntentIR, ...] = ()
     queue_resolutions: tuple[QueueResolutionIR, ...] = ()
+    queue_priorities: tuple[QueuePriorityIR, ...] = ()
+    standalone_ability_graphs: tuple[StandaloneAbilityGraphIR, ...] = ()
+    combatant_action_sets: tuple[CombatantActionSetIR, ...] = ()
     super_break_emissions: tuple[SuperBreakEmissionIR, ...] = ()
     triggers: tuple[TriggerIR, ...] = ()
     effects: tuple[EffectIR, ...] = ()
@@ -864,6 +935,9 @@ class CanonicalIR:
             "action_delay_emissions": [emission.to_json() for emission in self.action_delay_emissions],
             "queue_intents": [intent.to_json() for intent in self.queue_intents],
             "queue_resolutions": [resolution.to_json() for resolution in self.queue_resolutions],
+            "queue_priorities": [priority.to_json() for priority in self.queue_priorities],
+            "standalone_ability_graphs": [graph.to_json() for graph in self.standalone_ability_graphs],
+            "combatant_action_sets": [action_set.to_json() for action_set in self.combatant_action_sets],
             "super_break_emissions": [emission.to_json() for emission in self.super_break_emissions],
             "triggers": [trigger.to_json() for trigger in self.triggers],
             "effects": [effect.to_json() for effect in self.effects],

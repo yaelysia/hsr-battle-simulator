@@ -519,6 +519,10 @@ class StatusCallbackSystem:
                 target_ids=target_ids,
                 priority_source=intent.priority_source,
                 source_trace=source_trace,
+                priority_key=str(intent.priority_source.get("priority_key") or ""),
+                priority_value=_json_float(intent.priority_source.get("priority_value")),
+                queue_priority_id=str(intent.priority_source.get("queue_priority_id") or ""),
+                priority_source_trace=_json_dict(intent.priority_source.get("source_trace")),
                 status="pending",
                 drain_status="not_admitted",
             )
@@ -533,6 +537,9 @@ class StatusCallbackSystem:
                     "callback_id": callback.callback_id,
                     "opcode": intent.opcode,
                     "queue_kind": intent.queue_kind,
+                    "queue_priority_id": entry.queue_priority_id,
+                    "priority_key": entry.priority_key,
+                    "priority_value": entry.priority_value,
                     "admission_result": "executable",
                     "target_resolution": {
                         "actor_target_alias": intent.actor_target_alias or "",
@@ -560,7 +567,7 @@ class StatusCallbackSystem:
                         "queue_kind": intent.queue_kind,
                         "entry": entry.to_json(),
                         "drain_candidate": False,
-                        "drain_blocked_reason": "queue_drain_not_admitted_v0_240",
+                        "drain_blocked_reason": "queue_drain_pending_resolution",
                     },
                     trace=source_trace,
                 ).to_json()
@@ -967,3 +974,7 @@ def _task_blocked_record(
 
 def _json_dict(value: object) -> dict[str, JSONValue]:
     return value if isinstance(value, dict) else {}
+
+
+def _json_float(value: object) -> float | None:
+    return float(value) if isinstance(value, (int, float)) else None

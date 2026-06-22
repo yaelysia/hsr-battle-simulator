@@ -6,7 +6,7 @@ from ..core.model import ActionCommand, BattleState, GameEvent, JSONValue, Mutat
 from ..core.reducer import MutationReducer
 from ..core.settlement import SettlementRecord
 from ..rules.evaluator import EvaluationContext, RuleEvaluator
-from ..rules.ir import AbilityPhaseIR, AbilityTaskIR, ActionDefinitionIR
+from ..rules.ir import AbilityPhaseIR, AbilityTaskIR, ActionDefinitionIR, IRSource
 from ..rules.rulebook import RuleBook
 from .dynamic_values import binding_source_from_store, status_binding_sources, store_from_state
 from .effect import EffectExecutionContext, EffectRegistry
@@ -99,6 +99,123 @@ class AbilityTaskSystem:
                     },
                 )
             )
+        return AbilityTaskExecutionResult(
+            after_state=current,
+            mutations=tuple(mutations),
+            events=tuple(events),
+            records=tuple(records),
+            task_records=tuple(task_records),
+        )
+
+    def execute_standalone(
+        self,
+        state: BattleState,
+        *,
+        phases: tuple[AbilityPhaseIR, ...],
+        actor_id: str,
+        target_ids: tuple[str, ...],
+        queue_entry: dict[str, JSONValue],
+        queue_resolution: dict[str, JSONValue],
+    ) -> AbilityTaskExecutionResult:
+        if not phases:
+            return AbilityTaskExecutionResult(
+                after_state=state,
+                records=(
+                    SettlementRecord(
+                        record_type="standalone_ability_blocked",
+                        source="ability_task_system",
+                        process_only=True,
+                        payload={
+                            "reason": "standalone_ability_phases_missing",
+                            "queue_entry": queue_entry,
+                            "queue_resolution": queue_resolution,
+                        },
+                        trace={},
+                    ).to_json(),
+                ),
+            )
+        ability_name = phases[0].ability_name
+        action_id = f"standalone_ability:{ability_name}"
+        action_definition = ActionDefinitionIR(
+            definition_id=f"standalone_action_def:{ability_name}",
+            action_id=action_id,
+            level=0,
+            attack_type="StandaloneAbility",
+            skill_effect="standalone_ability",
+            target_mode="single" if target_ids else "none",
+            bp_need=0.0,
+            bp_add=0.0,
+            sp_base=0.0,
+            sp_multiple_ratio=0.0,
+            param_list=(),
+            show_stance_list=(),
+            show_damage_list=(),
+            stance_damage_type=None,
+            source=phases[0].source if phases else IRSource("", "", ""),
+            coverage_status="executable",
+            damage_kind="none",
+            damage_formula_family="none",
+            element_type=None,
+            source_mode="queue_standalone",
+        )
+        command = ActionCommand(
+            actor_id=actor_id,
+            action_id=action_id,
+            action_level=0,
+            target_ids=target_ids,
+            source="queue",
+            queue_name=str(queue_entry.get("queue_name") or ""),
+            metadata={
+                "parent_queue_entry_id": str(queue_entry.get("entry_id") or ""),
+                "queue_intent_id": str(queue_entry.get("queue_intent_id") or ""),
+                "queue_resolution_id": str(queue_resolution.get("queue_resolution_id") or ""),
+                "standalone_ability_name": ability_name,
+            },
+        )
+        target_resolution = TargetResolution(
+            requested=target_ids,
+            legal=target_ids,
+            selected=target_ids,
+            rejected=(),
+            reason="queue_standalone_targets_from_queue_entry",
+            source="queue_resolution",
+            metadata={
+                "queue_entry_id": str(queue_entry.get("entry_id") or ""),
+                "queue_resolution_id": str(queue_resolution.get("queue_resolution_id") or ""),
+            },
+        )
+        current = state
+        mutations: list[Mutation] = []
+        events: list[GameEvent] = []
+        records: list[dict[str, JSONValue]] = [
+            SettlementRecord(
+                record_type="standalone_ability_execution",
+                source="ability_task_system",
+                process_only=True,
+                payload={
+                    "ability_name": ability_name,
+                    "phase_ids": [phase.phase_id for phase in phases],
+                    "queue_entry": queue_entry,
+                    "queue_resolution": queue_resolution,
+                },
+                trace={"standalone_phase_source": phases[0].source.to_json()},
+            ).to_json()
+        ]
+        task_records: list[dict[str, JSONValue]] = []
+        for callback_kind in ("OnStart", "OnAttack", "OnHit", "OnEnd"):
+            result = self.execute_callback(
+                current,
+                phases=phases,
+                callback_kind=callback_kind,
+                command=command,
+                action_definition=action_definition,
+                target_resolution=target_resolution,
+            )
+            current = result.after_state
+            mutations.extend(result.mutations)
+            events.extend(result.events)
+            records.extend(result.records)
+            task_records.extend(result.task_records)
         return AbilityTaskExecutionResult(
             after_state=current,
             mutations=tuple(mutations),

@@ -93,6 +93,8 @@ def _queue_enqueue_case(rules: RuleBook, base_state: BattleState, intent: QueueI
     result = EventDispatchSystem(rules, EffectRegistry(StatusSystem(rules))).dispatch_event(
         state,
         event=_event_for_callback(callback),
+        unit_id=_unit_id_for_callback(callback),
+        modifier_name=callback.modifier_name,
     )
     transition = _system_transition(
         before_state=state,
@@ -143,6 +145,8 @@ def _blocked_queue_intent_case(rules: RuleBook, base_state: BattleState, intent:
     result = EventDispatchSystem(rules, EffectRegistry(StatusSystem(rules))).dispatch_event(
         state,
         event=_event_for_callback(callback),
+        unit_id=_unit_id_for_callback(callback),
+        modifier_name=callback.modifier_name,
     )
     transition = _system_transition(
         before_state=state,
@@ -191,6 +195,9 @@ def _select_executable_queue_intent(rules: RuleBook) -> QueueIntentIR:
             continue
         if not intent.action_ref_or_ability_name:
             continue
+        task = rules.status_callback_task(intent.source_task_id)
+        if task is None or task.coverage_status != "executable" or task.parent_task_id:
+            continue
         callback = rules.status_callback(intent.callback_id)
         if callback is None or callback.coverage_status != "executable":
             continue
@@ -228,6 +235,10 @@ def _require_callback(rules: RuleBook, intent: QueueIntentIR) -> StatusCallbackI
     if callback is None:
         raise RuntimeError(f"QueueIntentIR callback missing: {intent.callback_id}")
     return callback
+
+
+def _unit_id_for_callback(callback: StatusCallbackIR) -> str:
+    return "ally:actor" if callback.scope_kind == "actor_local" else "enemy:profile_target"
 
 
 def _queue_entries(state: BattleState, queue_name: str) -> tuple[dict[str, Any], ...]:

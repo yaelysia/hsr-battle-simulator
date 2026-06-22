@@ -22,6 +22,7 @@ from ..rules.ir import (
     BreakStatusEmissionIR,
     BreakTemplateIR,
     CanonicalIR,
+    CombatantActionSetIR,
     CombatantProfileIR,
     ConditionIR,
     DamageEmissionIR,
@@ -30,8 +31,10 @@ from ..rules.ir import (
     HitProfileIR,
     IRSource,
     QueueIntentIR,
+    QueuePriorityIR,
     QueueResolutionIR,
     RuleEntity,
+    StandaloneAbilityGraphIR,
     StatusCallbackIR,
     StatusCallbackTaskIR,
     StatusDamageEmissionIR,
@@ -159,6 +162,12 @@ class TBGDLowering:
         action_delay_emissions: list[ActionDelayEmissionIR] = []
         queue_intents: list[QueueIntentIR] = []
         super_break_emissions: list[SuperBreakEmissionIR] = []
+        queue_priorities = self._lower_queue_priorities()
+        queue_priority_lookup = {
+            (priority.priority_table, priority.priority_key): priority
+            for priority in queue_priorities
+            if priority.coverage_status == "executable"
+        }
 
         table_stats: dict[str, dict[str, Any]] = {}
         for relative_path, spec in ENTITY_TABLES.items():
@@ -203,7 +212,7 @@ class TBGDLowering:
         ability_files = self._ability_files()
         selected_ability_files = _limit_sequence(ability_files, self.limits.max_ability_files)
         for path in selected_ability_files:
-            lowered = self._lower_ability_file(path)
+            lowered = self._lower_ability_file(path, queue_priority_lookup)
             entities.extend(lowered.entities)
             triggers.extend(lowered.triggers)
             effects.extend(lowered.effects)
@@ -214,10 +223,26 @@ class TBGDLowering:
             status_damage_emissions.extend(lowered.status_damage_emissions)
             action_delay_emissions.extend(lowered.action_delay_emissions)
             queue_intents.extend(lowered.queue_intents)
+        (
+            standalone_ability_graphs,
+            standalone_phases,
+            standalone_tasks,
+            standalone_effects,
+            standalone_conditions,
+            standalone_formulas,
+        ) = self._lower_standalone_ability_graphs(selected_ability_files)
+        ability_phases.extend(standalone_phases)
+        ability_tasks.extend(standalone_tasks)
+        effects.extend(standalone_effects)
+        conditions.extend(standalone_conditions)
+        formulas.extend(standalone_formulas)
+        combatant_action_sets = self._lower_combatant_action_sets(action_definitions)
         queue_resolutions = _lower_queue_resolutions(
             queue_intents=queue_intents,
             action_bindings=action_ability_bindings,
             ability_phases=ability_phases,
+            standalone_graphs=standalone_ability_graphs,
+            combatant_action_sets=combatant_action_sets,
         )
         entities = list(_dedupe_entities(entities).values())
         formulas.extend(self._lower_elation_mechanics())
@@ -245,6 +270,9 @@ class TBGDLowering:
             action_delay_emissions=tuple(action_delay_emissions),
             queue_intents=tuple(queue_intents),
             queue_resolutions=tuple(queue_resolutions),
+            queue_priorities=tuple(queue_priorities),
+            standalone_ability_graphs=tuple(standalone_ability_graphs),
+            combatant_action_sets=tuple(combatant_action_sets),
             super_break_emissions=tuple(super_break_emissions),
             triggers=tuple(triggers),
             effects=tuple(effects),
@@ -286,6 +314,9 @@ class TBGDLowering:
                     "action_delay_emission_count": len(action_delay_emissions),
                     "queue_intent_count": len(queue_intents),
                     "queue_resolution_count": len(queue_resolutions),
+                    "queue_priority_count": len(queue_priorities),
+                    "standalone_ability_graph_count": len(standalone_ability_graphs),
+                    "combatant_action_set_count": len(combatant_action_sets),
                     "super_break_emission_count": len(super_break_emissions),
                 },
                 "combatant_profile_status": {
@@ -553,6 +584,116 @@ class TBGDLowering:
                 )
         return emissions
 
+    def _lower_queue_priorities(self) -> list[QueuePriorityIR]:
+        relative_path = "Config/GlobalConfig/PriorityConfig.json"
+        path = self.tbgd_root / relative_path
+        if not path.exists():
+            return []
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return []
+        config = data.get("ConfigList") if isinstance(data, dict) else None
+        if not isinstance(config, dict):
+            return []
+        priorities: list[QueuePriorityIR] = []
+        for table_name in ("InsertAbilityPriority", "InsertActionPriority"):
+            table = config.get(table_name)
+            priority_keys = table.get("PriorityKeys") if isinstance(table, dict) else None
+            if not isinstance(priority_keys, dict):
+                continue
+            for priority_key, priority_value in sorted(priority_keys.items()):
+                coverage_status = "executable" if isinstance(priority_value, (int, float)) else "blocked"
+                blocked_reason = "" if coverage_status == "executable" else "queue_priority_value_not_numeric"
+                priorities.append(
+                    QueuePriorityIR(
+                        queue_priority_id=f"queue_priority:{table_name}:{priority_key}",
+                        priority_table=table_name,
+                        priority_key=str(priority_key),
+                        priority_value=float(priority_value) if isinstance(priority_value, (int, float)) else 0.0,
+                        source=IRSource(
+                            source_path=relative_path,
+                            raw_type="PriorityConfig",
+                            raw_id=f"{table_name}:{priority_key}",
+                            evidence={
+                                "table": table_name,
+                                "priority_key": str(priority_key),
+                                "priority_value": _json_safe(priority_value),
+                                "raw_path": f"ConfigList.{table_name}.PriorityKeys.{priority_key}",
+                            },
+                        ),
+                        coverage_status=coverage_status,
+                        blocked_reason=blocked_reason,
+                    )
+                )
+        return priorities
+
+    def _lower_combatant_action_sets(
+        self,
+        definitions: list[ActionDefinitionIR],
+    ) -> list[CombatantActionSetIR]:
+        definitions_by_action: dict[str, list[ActionDefinitionIR]] = {}
+        for definition in definitions:
+            definitions_by_action.setdefault(definition.action_id, []).append(definition)
+        rows: list[CombatantActionSetIR] = []
+        for relative_path, entity_type, id_key in (
+            ("ExcelOutput/AvatarConfig.json", "avatar", "AvatarID"),
+            ("ExcelOutput/AvatarConfigLD.json", "avatar", "AvatarID"),
+            ("ExcelOutput/MonsterConfig.json", "monster", "MonsterID"),
+        ):
+            path = self.tbgd_root / relative_path
+            if not path.exists():
+                continue
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if not isinstance(data, list):
+                continue
+            for row_index, row in enumerate(_limit_sequence(data, self.limits.max_records_per_table)):
+                if not isinstance(row, dict) or id_key not in row:
+                    continue
+                raw_id = str(row[id_key])
+                skills = row.get("SkillList")
+                if not isinstance(skills, list):
+                    skills = []
+                skill_index_map: dict[str, JSONValue] = {}
+                for index, skill_id in enumerate(skills):
+                    action_ref = f"avatar_skill:{skill_id}" if entity_type == "avatar" else f"monster_skill:{skill_id}"
+                    levels = sorted({definition.level for definition in definitions_by_action.get(action_ref, ())})
+                    skill_index_map[str(index)] = {
+                        "skill_id": str(skill_id),
+                        "action_ref": action_ref,
+                        "levels": levels,
+                        "default_level": levels[-1] if levels else None,
+                        "coverage_status": "executable" if levels else "blocked",
+                        "blocked_reason": "" if levels else "action_definition_missing_for_skill",
+                    }
+                coverage_status = "executable" if any(
+                    isinstance(item, dict) and item.get("coverage_status") == "executable"
+                    for item in skill_index_map.values()
+                ) else "blocked"
+                rows.append(
+                    CombatantActionSetIR(
+                        combatant_action_set_id=f"combatant_action_set:{entity_type}:{raw_id}",
+                        entity_ref=f"{entity_type}:{raw_id}",
+                        skill_index_map=skill_index_map,
+                        source=IRSource(
+                            source_path=relative_path,
+                            raw_type=Path(relative_path).stem,
+                            raw_id=raw_id,
+                            evidence={
+                                "row_index": row_index,
+                                "id_key": id_key,
+                                "skill_list": _json_safe(skills),
+                            },
+                        ),
+                        coverage_status=coverage_status,
+                        blocked_reason="" if coverage_status == "executable" else "combatant_action_set_has_no_executable_actions",
+                    )
+                )
+        return rows
+
     def _rows_by_id(self, relative_path: str, id_key: str) -> dict[str, dict[str, Any]]:
         path = self.tbgd_root / relative_path
         if not path.exists():
@@ -603,6 +744,98 @@ class TBGDLowering:
             conditions.extend(lowered_tasks.conditions)
             formulas.extend(lowered_tasks.formulas)
         return bindings, phases, tasks, effects, conditions, formulas
+
+    def _lower_standalone_ability_graphs(
+        self,
+        ability_files: list[Path],
+    ) -> tuple[
+        list[StandaloneAbilityGraphIR],
+        list[AbilityPhaseIR],
+        list[AbilityTaskIR],
+        list[EffectIR],
+        list[ConditionIR],
+        list[FormulaIR],
+    ]:
+        graphs: list[StandaloneAbilityGraphIR] = []
+        phases: list[AbilityPhaseIR] = []
+        tasks: list[AbilityTaskIR] = []
+        effects: list[EffectIR] = []
+        conditions: list[ConditionIR] = []
+        formulas: list[FormulaIR] = []
+        for path in ability_files:
+            relative = relative_source_path(self.tbgd_root, path)
+            if not _standalone_ability_source_admitted(relative):
+                continue
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if not isinstance(data, dict):
+                continue
+            ability_map = _ability_map(data)
+            source_mode = _standalone_ability_source_mode(relative)
+            for ability_index, (ability_name, ability) in enumerate(sorted(ability_map.items())):
+                action_id = f"standalone_ability:{ability_name}"
+                phase_id = f"standalone_ability_phase:{_safe_id(relative)}:{ability_index}:{_safe_id(ability_name)}"
+                graph_id = f"standalone_ability_graph:{_safe_id(relative)}:{_safe_id(ability_name)}"
+                definition = _StandaloneActionRef(action_id=action_id, level=0)
+                lowered = self._lower_ability_phase_tasks(
+                    definition=definition,  # type: ignore[arg-type]
+                    phase_id=phase_id,
+                    ability_name=ability_name,
+                    ability=ability,
+                    ability_path=relative,
+                )
+                tasks.extend(lowered.ability_tasks)
+                effects.extend(lowered.effects)
+                conditions.extend(lowered.conditions)
+                formulas.extend(lowered.formulas)
+                task_ids = tuple(task.task_id for task in lowered.ability_tasks)
+                executable_task_ids = tuple(
+                    task.task_id
+                    for task in lowered.ability_tasks
+                    if task.coverage_status == "executable" and task.effect_id
+                )
+                phase = AbilityPhaseIR(
+                    phase_id=phase_id,
+                    binding_id=graph_id,
+                    action_id=action_id,
+                    level=0,
+                    ability_name=ability_name,
+                    phase_index=0,
+                    target_info=_json_safe(ability.get("TargetInfo")) if isinstance(ability.get("TargetInfo"), dict) else {},
+                    opcode_summary=_ability_opcode_summary(ability),
+                    callback_summaries=_ability_callback_summaries(ability),
+                    source=IRSource(
+                        source_path=relative,
+                        raw_type="StandaloneAbilityList",
+                        raw_id=ability_name,
+                        evidence={
+                            "ability_index": ability_index,
+                            "ability_name": ability_name,
+                            "source_mode": source_mode,
+                            "purpose": "queue_insert_ability_resolution",
+                        },
+                    ),
+                    coverage_status="lowered",
+                    blocked_reason="",
+                    task_ids=task_ids,
+                )
+                phases.append(phase)
+                graphs.append(
+                    StandaloneAbilityGraphIR(
+                        standalone_ability_graph_id=graph_id,
+                        ability_name=ability_name,
+                        source_mode=source_mode,
+                        phase_ids=(phase_id,),
+                        task_ids=task_ids,
+                        executable_task_ids=executable_task_ids,
+                        source=phase.source,
+                        coverage_status="executable" if task_ids else "blocked",
+                        blocked_reason="" if task_ids else "standalone_ability_has_no_tasks",
+                    )
+                )
+        return graphs, phases, tasks, effects, conditions, formulas
 
     def _avatar_skill_rows_by_skill_id(self) -> dict[str, dict[str, Any]]:
         rows: dict[str, dict[str, Any]] = {}
@@ -1039,7 +1272,11 @@ class TBGDLowering:
             files.extend(path for path in root.rglob("*.json") if not path.name.endswith(".layout.json"))
         return sorted(files)
 
-    def _lower_ability_file(self, path: Path) -> "_LoweredAbility":
+    def _lower_ability_file(
+        self,
+        path: Path,
+        queue_priority_lookup: dict[tuple[str, str], QueuePriorityIR],
+    ) -> "_LoweredAbility":
         relative = relative_source_path(self.tbgd_root, path)
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
@@ -1090,6 +1327,7 @@ class TBGDLowering:
                     callback_id=callback_id,
                     event=event,
                     callback_index=callback_index,
+                    queue_priority_lookup=queue_priority_lookup,
                 )
                 lowered.merge(callback_lowered)
                 source = IRSource(
@@ -1160,6 +1398,7 @@ class TBGDLowering:
         callback_id: str,
         event: str,
         callback_index: int,
+        queue_priority_lookup: dict[tuple[str, str], QueuePriorityIR],
     ) -> "_LoweredAbility":
         lowered = _LoweredAbility()
         if not isinstance(tasks, list):
@@ -1177,6 +1416,7 @@ class TBGDLowering:
                 task_path=f"CallbackConfig[{task_index}]",
                 branch="root",
                 parent_task_id="",
+                queue_priority_lookup=queue_priority_lookup,
             )
             lowered.merge(task_lowered)
         return lowered
@@ -1195,6 +1435,7 @@ class TBGDLowering:
         task_path: str,
         branch: str,
         parent_task_id: str,
+        queue_priority_lookup: dict[tuple[str, str], QueuePriorityIR],
     ) -> "_LoweredAbility":
         lowered = _LoweredAbility()
         if not isinstance(task, dict):
@@ -1236,6 +1477,7 @@ class TBGDLowering:
                     task_path=f"{task_path}.SuccessTaskList[{child_index}]",
                     branch="success",
                     parent_task_id=task_id,
+                    queue_priority_lookup=queue_priority_lookup,
                 )
                 lowered.merge(child_lowered)
                 success_ids.extend(item.task_id for item in child_lowered.status_callback_tasks if item.parent_task_id == task_id)
@@ -1252,6 +1494,7 @@ class TBGDLowering:
                     task_path=f"{task_path}.FailedTaskList[{child_index}]",
                     branch="failed",
                     parent_task_id=task_id,
+                    queue_priority_lookup=queue_priority_lookup,
                 )
                 lowered.merge(child_lowered)
                 failed_ids.extend(item.task_id for item in child_lowered.status_callback_tasks if item.parent_task_id == task_id)
@@ -1334,6 +1577,7 @@ class TBGDLowering:
                     opcode=opcode,
                     task=task,
                     source=source,
+                    queue_priority_lookup=queue_priority_lookup,
                 )
             )
         return lowered
@@ -1583,6 +1827,12 @@ class _LoweredAbility:
         self.effects.extend(other.effects)
         self.conditions.extend(other.conditions)
         self.formulas.extend(other.formulas)
+
+
+@dataclass(frozen=True)
+class _StandaloneActionRef:
+    action_id: str
+    level: int
 
 
 def _short_gamecore_type(raw_type: Any) -> str:
@@ -2850,8 +3100,6 @@ def _predicate_task_status(condition: ConditionIR | None) -> tuple[str, str]:
 
 def _status_callback_task_admission(event: str, opcode: str, task: dict[str, Any]) -> tuple[str, str]:
     if opcode in QUEUE_INTENT_OPCODES:
-        if event not in {"OnAfterBeingAttacked", "OnAfterBeingHitAll", "OnListenCharacterDie", "OnLimboWaitHeal"}:
-            return "blocked", f"queue_intent_event_not_admitted:{event}"
         actor_target_alias = _target_alias(task.get("TargetType"))
         ability_target_alias = _target_alias(task.get("AbilityTarget")) or _target_alias(task.get("AutoCastTargetType"))
         skill_index_expr = _queue_skill_index_expr(task, opcode)
@@ -2863,6 +3111,7 @@ def _status_callback_task_admission(event: str, opcode: str, task: dict[str, Any
             ability_target_alias=ability_target_alias,
             ability_name=_value_field(task.get("AbilityName")),
             skill_index_expr=skill_index_expr,
+            priority_source={"priority_ordering_admitted": True},
             abort_policy=_queue_abort_policy(task),
         )
         if blocked_reason == "queue_intent_source_mode_not_admitted":
@@ -3035,6 +3284,7 @@ def _queue_intent_from_task(
     opcode: str,
     task: dict[str, Any],
     source: IRSource,
+    queue_priority_lookup: dict[tuple[str, str], QueuePriorityIR],
 ) -> QueueIntentIR:
     queue_kind = {
         "TurnInsertAbility": "turn_insert_ability",
@@ -3045,7 +3295,7 @@ def _queue_intent_from_task(
     ability_target_alias = _target_alias(task.get("AbilityTarget")) or _target_alias(task.get("AutoCastTargetType"))
     ability_name = _value_field(task.get("AbilityName"))
     skill_index_expr = _queue_skill_index_expr(task, opcode)
-    priority_source = _queue_priority_source(task, opcode)
+    priority_source = _queue_priority_source(task, opcode, queue_priority_lookup)
     abort_policy = _queue_abort_policy(task)
     coverage_status, blocked_reason = _queue_intent_admission(
         task=task,
@@ -3055,6 +3305,7 @@ def _queue_intent_from_task(
         ability_target_alias=ability_target_alias,
         ability_name=ability_name,
         skill_index_expr=skill_index_expr,
+        priority_source=priority_source,
         abort_policy=abort_policy,
     )
     return QueueIntentIR(
@@ -3091,17 +3342,36 @@ def _queue_skill_index_expr(task: dict[str, Any], opcode: str) -> dict[str, Any]
     return {"kind": "none", "value": None, "supported": True, "source_field": "", "opcode": opcode}
 
 
-def _queue_priority_source(task: dict[str, Any], opcode: str) -> dict[str, Any]:
+def _queue_priority_source(
+    task: dict[str, Any],
+    opcode: str,
+    queue_priority_lookup: dict[tuple[str, str], QueuePriorityIR],
+) -> dict[str, Any]:
     key = {
         "TurnInsertAbility": "InsertAbilityPriority",
         "TurnInsertAction": "InsertActionPriority",
         "TurnInsertAssistantAbility": "InsertAbilityPriority",
     }.get(opcode, "InsertPriority")
+    priority_table = "InsertActionPriority" if opcode == "TurnInsertAction" else "InsertAbilityPriority"
+    priority_key = task.get(key)
+    priority = queue_priority_lookup.get((priority_table, str(priority_key))) if priority_key is not None else None
+    if priority is not None:
+        return {
+            "field": key,
+            "priority_table": priority_table,
+            "priority_key": priority.priority_key,
+            "priority_value": priority.priority_value,
+            "queue_priority_id": priority.queue_priority_id,
+            "priority_ordering_admitted": True,
+            "source_trace": priority.source.to_json(),
+        }
     return {
         "field": key,
-        "value": _json_safe(task.get(key)),
+        "priority_table": priority_table,
+        "priority_key": str(priority_key or ""),
+        "value": _json_safe(priority_key),
         "priority_ordering_admitted": False,
-        "reason": "queue_priority_ordering_not_admitted",
+        "reason": f"queue_priority_key_not_admitted:{priority_table}:{priority_key or 'missing'}",
     }
 
 
@@ -3126,6 +3396,7 @@ def _queue_intent_admission(
     ability_target_alias: str | None,
     ability_name: Any,
     skill_index_expr: dict[str, Any],
+    priority_source: dict[str, Any],
     abort_policy: dict[str, Any],
 ) -> tuple[str, str]:
     if not _queue_intent_source_admitted(source.source_path):
@@ -3134,6 +3405,8 @@ def _queue_intent_admission(
         return "blocked", f"queue_actor_target_alias_not_admitted:{actor_target_alias or 'missing'}"
     if ability_target_alias and ability_target_alias not in QUEUE_TARGET_ALIASES:
         return "blocked", f"queue_ability_target_alias_not_admitted:{ability_target_alias}"
+    if priority_source.get("priority_ordering_admitted") is not True:
+        return "blocked", str(priority_source.get("reason") or "queue_priority_not_admitted")
     if abort_policy.get("OnInsertAbort"):
         return "blocked", "queue_abort_policy_not_admitted"
     if opcode == "TurnInsertAbility":
@@ -3150,10 +3423,40 @@ def _queue_intent_admission(
 
 
 def _queue_intent_source_admitted(relative_path: str) -> bool:
-    if not relative_path.startswith("Config/ConfigGlobalModifier/"):
+    if not _queue_source_candidate(relative_path):
         return False
-    blocked_markers = ("Rogue", "Activity", "GridFight", "Fate", "Chess")
-    return not any(marker in relative_path for marker in blocked_markers)
+    return not _queue_source_blocked(relative_path)
+
+
+def _standalone_ability_source_admitted(relative_path: str) -> bool:
+    return relative_path.startswith("Config/ConfigAbility/") and _queue_source_candidate(relative_path) and not _queue_source_blocked(relative_path)
+
+
+def _standalone_ability_source_mode(relative_path: str) -> str:
+    if relative_path.startswith("Config/ConfigAbility/Avatar/"):
+        return "mainline_avatar"
+    if relative_path.startswith("Config/ConfigAbility/Monster/"):
+        return "mainline_monster"
+    if relative_path.startswith("Config/ConfigAbility/BattleEventAbility"):
+        return "mainline_battle_event"
+    if relative_path.endswith("Config/ConfigAbility/Common_Additional_Ability.json"):
+        return "mainline_common_additional"
+    return "blocked_or_unknown"
+
+
+def _queue_source_candidate(relative_path: str) -> bool:
+    return (
+        relative_path.startswith("Config/ConfigGlobalModifier/")
+        or relative_path.startswith("Config/ConfigAbility/Avatar/")
+        or relative_path.startswith("Config/ConfigAbility/Monster/")
+        or relative_path.startswith("Config/ConfigAbility/BattleEventAbility")
+        or relative_path == "Config/ConfigAbility/Common_Additional_Ability.json"
+    )
+
+
+def _queue_source_blocked(relative_path: str) -> bool:
+    blocked_markers = ("Rogue", "Activity", "GridFight", "ElationBattle", "Fate", "Story", "Level/", "SubLevelGraph", "Chess")
+    return any(marker in relative_path for marker in blocked_markers)
 
 
 def _lower_queue_resolutions(
@@ -3161,6 +3464,8 @@ def _lower_queue_resolutions(
     queue_intents: list[QueueIntentIR],
     action_bindings: list[ActionAbilityBindingIR],
     ability_phases: list[AbilityPhaseIR],
+    standalone_graphs: list[StandaloneAbilityGraphIR],
+    combatant_action_sets: list[CombatantActionSetIR],
 ) -> list[QueueResolutionIR]:
     phases_by_ability: dict[str, list[AbilityPhaseIR]] = {}
     for phase in ability_phases:
@@ -3168,6 +3473,9 @@ def _lower_queue_resolutions(
     bindings_by_action: dict[tuple[str, int], ActionAbilityBindingIR] = {
         (binding.action_id, binding.level): binding for binding in action_bindings
     }
+    standalone_by_ability: dict[str, list[StandaloneAbilityGraphIR]] = {}
+    for graph in standalone_graphs:
+        standalone_by_ability.setdefault(graph.ability_name, []).append(graph)
     resolutions: list[QueueResolutionIR] = []
     for intent in queue_intents:
         resolutions.append(
@@ -3175,6 +3483,8 @@ def _lower_queue_resolutions(
                 intent,
                 phases_by_ability=phases_by_ability,
                 bindings_by_action=bindings_by_action,
+                standalone_by_ability=standalone_by_ability,
+                combatant_action_sets=combatant_action_sets,
             )
         )
     return resolutions
@@ -3185,6 +3495,8 @@ def _queue_resolution_from_intent(
     *,
     phases_by_ability: dict[str, list[AbilityPhaseIR]],
     bindings_by_action: dict[tuple[str, int], ActionAbilityBindingIR],
+    standalone_by_ability: dict[str, list[StandaloneAbilityGraphIR]],
+    combatant_action_sets: list[CombatantActionSetIR],
 ) -> QueueResolutionIR:
     source = IRSource(
         source_path=intent.source.source_path,
@@ -3222,6 +3534,52 @@ def _queue_resolution_from_intent(
                 source=source,
                 coverage_status="blocked",
                 blocked_reason="queue_ability_name_missing",
+            )
+        graph_candidates = tuple(sorted(standalone_by_ability.get(ability_name, ()), key=lambda item: item.standalone_ability_graph_id))
+        same_source_graphs = tuple(graph for graph in graph_candidates if graph.source.source_path == intent.source.source_path)
+        selected_graphs = same_source_graphs or graph_candidates
+        if len(selected_graphs) > 1:
+            return QueueResolutionIR(
+                queue_resolution_id=resolution_id,
+                queue_intent_id=intent.queue_intent_id,
+                action_or_ability_ref=ability_name,
+                resolved_kind="ambiguous_standalone_ability_graph",
+                resolved_ids={
+                    "candidate_graph_ids": [graph.standalone_ability_graph_id for graph in selected_graphs],
+                    "candidate_source_paths": [graph.source.source_path for graph in selected_graphs],
+                },
+                source=source,
+                coverage_status="blocked",
+                blocked_reason=f"queue_ability_graph_ambiguous:{ability_name}",
+            )
+        if len(selected_graphs) == 1:
+            graph = selected_graphs[0]
+            if graph.coverage_status != "executable":
+                return QueueResolutionIR(
+                    queue_resolution_id=resolution_id,
+                    queue_intent_id=intent.queue_intent_id,
+                    action_or_ability_ref=ability_name,
+                    resolved_kind="standalone_ability_graph_blocked",
+                    resolved_ids={"standalone_ability_graph_id": graph.standalone_ability_graph_id},
+                    source=source,
+                    coverage_status="blocked",
+                    blocked_reason=graph.blocked_reason or f"standalone_ability_graph_not_executable:{graph.coverage_status}",
+                )
+            return QueueResolutionIR(
+                queue_resolution_id=resolution_id,
+                queue_intent_id=intent.queue_intent_id,
+                action_or_ability_ref=ability_name,
+                resolved_kind="standalone_ability_graph",
+                resolved_ids={
+                    "standalone_ability_graph_id": graph.standalone_ability_graph_id,
+                    "phase_ids": list(graph.phase_ids),
+                    "task_ids": list(graph.task_ids),
+                    "executable_task_ids": list(graph.executable_task_ids),
+                    "source_mode": graph.source_mode,
+                },
+                source=source,
+                coverage_status="executable",
+                blocked_reason="",
             )
         phases = tuple(sorted(phases_by_ability.get(ability_name, ()), key=lambda item: item.phase_id))
         if not phases:
@@ -3261,12 +3619,13 @@ def _queue_resolution_from_intent(
         reason = "queue_insert_action_requires_runtime_actor_action_resolution"
         if intent.skill_index_expr.get("kind") != "fixed":
             reason = f"queue_insert_action_skill_index_not_admitted:{intent.skill_index_expr.get('kind') or 'missing'}"
+        action_set_count = sum(1 for action_set in combatant_action_sets if action_set.coverage_status == "executable")
         return QueueResolutionIR(
             queue_resolution_id=resolution_id,
             queue_intent_id=intent.queue_intent_id,
             action_or_ability_ref=intent.action_ref_or_ability_name,
             resolved_kind="insert_action_not_admitted",
-            resolved_ids={"skill_index_expr": _json_safe(intent.skill_index_expr)},
+            resolved_ids={"skill_index_expr": _json_safe(intent.skill_index_expr), "executable_action_set_count": action_set_count},
             source=source,
             coverage_status="blocked",
             blocked_reason=reason,
