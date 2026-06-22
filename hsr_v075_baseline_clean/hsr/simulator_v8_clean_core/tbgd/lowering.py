@@ -1090,7 +1090,9 @@ class TBGDLowering:
                     for task in callback_lowered.status_callback_tasks
                     if not task.parent_task_id
                 )
+                source_mode = _status_callback_source_mode(relative)
                 source_admitted = _status_callback_source_admitted(relative)
+                scope_kind = _status_callback_scope_kind(event)
                 admitted_event = event in {"OnStack", "OnPhase1"} or (
                     event == "OnListenTurnEnd"
                     and any(task.coverage_status == "executable" for task in callback_lowered.status_callback_tasks)
@@ -1102,6 +1104,7 @@ class TBGDLowering:
                     blocked_reason = "status_callback_source_mode_not_admitted"
                 else:
                     blocked_reason = f"status_callback_event_not_admitted:{event}"
+                blocking_dependency = "" if status == "executable" else blocked_reason
                 lowered.status_callbacks.append(
                     StatusCallbackIR(
                         callback_id=callback_id,
@@ -1111,6 +1114,10 @@ class TBGDLowering:
                         source=source,
                         coverage_status=status,
                         blocked_reason=blocked_reason,
+                        scope_kind=scope_kind,
+                        source_mode=source_mode,
+                        admission_status=status,
+                        blocking_dependency=blocking_dependency,
                     )
                 )
                 lowered.triggers.append(
@@ -2842,6 +2849,28 @@ def _status_callback_task_admission(event: str, opcode: str, task: dict[str, Any
 
 def _status_callback_source_admitted(relative_path: str) -> bool:
     return relative_path == "Config/ConfigGlobalModifier/GlobalModifier_Common_Specific.json"
+
+
+def _status_callback_source_mode(relative_path: str) -> str:
+    if _status_callback_source_admitted(relative_path):
+        return "mainline_global_modifier"
+    if "Rogue" in relative_path or "Activity" in relative_path or "GridFight" in relative_path:
+        return "special_mode_audit_only"
+    return "mainline_unadmitted"
+
+
+def _status_callback_scope_kind(event: str) -> str:
+    if event.startswith("OnListen"):
+        return "global_listener"
+    if event.startswith("OnBeing") or "BeingHit" in event or "BeingAttacked" in event:
+        return "being_hit_target_local"
+    if "Hit" in event:
+        return "per_hit_target_local"
+    if event in {"OnBeforeSkillUse", "OnBeforeAttack", "OnAfterAttack", "OnAfterSkillUse"}:
+        return "actor_local"
+    if event in {"OnStack", "OnPhase1"}:
+        return "status_local"
+    return "owner_local"
 
 
 def _status_damage_emission_from_task(

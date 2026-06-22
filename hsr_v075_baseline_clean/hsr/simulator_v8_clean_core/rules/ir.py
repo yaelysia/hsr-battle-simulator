@@ -387,6 +387,10 @@ class StatusCallbackIR:
     source: IRSource
     coverage_status: CoverageStatus = "blocked"
     blocked_reason: str = ""
+    scope_kind: str = "status_local"
+    source_mode: str = "mainline"
+    admission_status: CoverageStatus = "blocked"
+    blocking_dependency: str = ""
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -397,6 +401,10 @@ class StatusCallbackIR:
             "source": self.source.to_json(),
             "coverage_status": self.coverage_status,
             "blocked_reason": self.blocked_reason,
+            "scope_kind": self.scope_kind,
+            "source_mode": self.source_mode,
+            "admission_status": self.admission_status,
+            "blocking_dependency": self.blocking_dependency,
         }
 
 

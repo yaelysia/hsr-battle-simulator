@@ -150,6 +150,7 @@ class CombatExecutor:
         pre_damage_mutations = (*timeline_mutations, *resource_mutations)
         current_state = self.reducer.apply_all(state, pre_damage_mutations)
         trigger_results: list[EventDispatchResult] = []
+        listener_dispatch_results: list[EventDispatchResult] = []
         ordered_mutations: list[Mutation] = list(pre_damage_mutations)
         runtime_records: list[dict[str, JSONValue]] = [
             *(_mutation_record("timeline", mutation) for mutation in timeline_mutations),
@@ -272,6 +273,12 @@ class CombatExecutor:
                         current_state = self.reducer.apply_all(current_state, damage_result.mutations)
                         ordered_mutations.extend(damage_result.mutations)
                         runtime_records.extend(damage_result.records)
+                        for emitted_event in damage_result.events:
+                            dispatch_result = self.event_dispatcher.dispatch_event(current_state, event=emitted_event)
+                            current_state = dispatch_result.after_state
+                            listener_dispatch_results.append(dispatch_result)
+                            ordered_mutations.extend(dispatch_result.mutations)
+                            runtime_records.extend(dispatch_result.records)
                         for toughness_plan in _toughness_plans_for_damage_plan(
                             action_execution_plan.toughness_plan,
                             damage_plan,
@@ -284,6 +291,12 @@ class CombatExecutor:
                             current_state = self.reducer.apply_all(current_state, toughness_result.mutations)
                             ordered_mutations.extend(toughness_result.mutations)
                             runtime_records.extend(toughness_result.records)
+                            for emitted_event in toughness_result.events:
+                                dispatch_result = self.event_dispatcher.dispatch_event(current_state, event=emitted_event)
+                                current_state = dispatch_result.after_state
+                                listener_dispatch_results.append(dispatch_result)
+                                ordered_mutations.extend(dispatch_result.mutations)
+                                runtime_records.extend(dispatch_result.records)
                             break_result = _enter_break_if_depleted(self.breaks, current_state, toughness_result)
                             if break_result:
                                 current_state = break_result.after_state
@@ -291,6 +304,12 @@ class CombatExecutor:
                                 break_mutations = (*break_mutations, *break_result.mutations)
                                 ordered_mutations.extend(break_result.mutations)
                                 runtime_records.extend(break_result.records)
+                                for emitted_event in break_result.events:
+                                    dispatch_result = self.event_dispatcher.dispatch_event(current_state, event=emitted_event)
+                                    current_state = dispatch_result.after_state
+                                    listener_dispatch_results.append(dispatch_result)
+                                    ordered_mutations.extend(dispatch_result.mutations)
+                                    runtime_records.extend(dispatch_result.records)
                     for toughness_plan in action_execution_plan.toughness_plan:
                         key = (toughness_plan.toughness_emission_id, toughness_plan.target_id)
                         if key in applied_toughness_keys:
@@ -302,6 +321,12 @@ class CombatExecutor:
                         current_state = self.reducer.apply_all(current_state, toughness_result.mutations)
                         ordered_mutations.extend(toughness_result.mutations)
                         runtime_records.extend(toughness_result.records)
+                        for emitted_event in toughness_result.events:
+                            dispatch_result = self.event_dispatcher.dispatch_event(current_state, event=emitted_event)
+                            current_state = dispatch_result.after_state
+                            listener_dispatch_results.append(dispatch_result)
+                            ordered_mutations.extend(dispatch_result.mutations)
+                            runtime_records.extend(dispatch_result.records)
                         break_result = _enter_break_if_depleted(self.breaks, current_state, toughness_result)
                         if break_result:
                             current_state = break_result.after_state
@@ -309,6 +334,12 @@ class CombatExecutor:
                             break_mutations = (*break_mutations, *break_result.mutations)
                             ordered_mutations.extend(break_result.mutations)
                             runtime_records.extend(break_result.records)
+                            for emitted_event in break_result.events:
+                                dispatch_result = self.event_dispatcher.dispatch_event(current_state, event=emitted_event)
+                                current_state = dispatch_result.after_state
+                                listener_dispatch_results.append(dispatch_result)
+                                ordered_mutations.extend(dispatch_result.mutations)
+                                runtime_records.extend(dispatch_result.records)
                     ability_result = self.ability_tasks.execute_callback(
                         current_state,
                         phases=ability_phases,
@@ -341,6 +372,9 @@ class CombatExecutor:
         ability_task_mutations = tuple(mutation for result in ability_task_results for mutation in result.mutations)
         ability_task_events = tuple(event for result in ability_task_results for event in result.events)
         ability_task_records = tuple(record for result in ability_task_results for record in result.task_records)
+        listener_dispatch_mutations = tuple(mutation for result in listener_dispatch_results for mutation in result.mutations)
+        listener_dispatch_events = tuple(event for result in listener_dispatch_results for event in result.events)
+        listener_dispatch_records = tuple(record for result in listener_dispatch_results for record in result.records)
         mutations = tuple(ordered_mutations)
         after_state = current_state
         damage_rng_events = tuple(event for result in damage_results for event in result.rng_events)
@@ -507,10 +541,11 @@ class CombatExecutor:
         transaction = ActionTransaction(
             command=command,
             before=before,
-            events=(
+            events=_dedupe_events(
                 *events,
                 *ability_task_events,
                 *trigger_events,
+                *listener_dispatch_events,
                 *(event for result in damage_results for event in result.events),
                 *(event for result in toughness_results for event in result.events),
                 *(event for result in break_results for event in result.events),
@@ -567,6 +602,8 @@ class CombatExecutor:
                 "resource_mutation_count": len(resource_mutations),
                 "trigger_window_count": len(trigger_windows),
                 "trigger_mutation_count": len(trigger_mutations),
+                "listener_dispatch_record_count": len(listener_dispatch_records),
+                "listener_dispatch_mutation_count": len(listener_dispatch_mutations),
                 "ability_task_mutation_count": len(ability_task_mutations),
                 "damage_mutation_count": len(damage_mutations),
                 "toughness_mutation_count": len(toughness_mutations),
@@ -605,6 +642,19 @@ def _mutation_record(record_type: str, mutation: Mutation) -> dict[str, JSONValu
             "metadata": mutation.metadata,
         },
     ).to_json()
+
+
+def _dedupe_events(*events: GameEvent) -> tuple[GameEvent, ...]:
+    seen: set[str] = set()
+    deduped: list[GameEvent] = []
+    for event in events:
+        event_id = str(event.to_json().get("event_id") or "")
+        key = event_id or repr(event.to_json())
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(event)
+    return tuple(deduped)
 
 
 def _action_event_plan_compat_payload(action_definition: ActionDefinitionIR, action_event_ir) -> dict[str, JSONValue]:

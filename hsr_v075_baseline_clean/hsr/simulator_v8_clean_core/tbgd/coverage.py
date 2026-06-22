@@ -367,6 +367,8 @@ def _action_execution_status(ir: CanonicalIR) -> dict[str, Any]:
     )
     status_callback_status = Counter(callback.coverage_status for callback in ir.status_callbacks)
     status_callback_reasons = Counter(callback.blocked_reason for callback in ir.status_callbacks if callback.blocked_reason)
+    status_callback_scopes = Counter(callback.scope_kind for callback in ir.status_callbacks)
+    status_callback_source_modes = Counter(callback.source_mode for callback in ir.status_callbacks)
     status_callback_task_status = Counter(task.coverage_status for task in ir.status_callback_tasks)
     status_callback_task_reasons = Counter(task.blocked_reason for task in ir.status_callback_tasks if task.blocked_reason)
     status_damage_status = Counter(emission.coverage_status for emission in ir.status_damage_emissions)
@@ -498,7 +500,9 @@ def _action_execution_status(ir: CanonicalIR) -> dict[str, Any]:
             "blocked": status_callback_status["blocked"],
             "status_counts": dict(sorted(status_callback_status.items())),
             "blocked_reason_counts": dict(sorted(status_callback_reasons.items())),
-            "reason": "StatusCallbackIR lowers modifier-local callbacks; only OnStack and OnPhase1 are admitted in the current break-status scope",
+            "scope_counts": dict(sorted(status_callback_scopes.items())),
+            "source_mode_counts": dict(sorted(status_callback_source_modes.items())),
+            "reason": "StatusCallbackIR lowers modifier callbacks with explicit listener scope; only admitted source/scope/task combinations may mutate runtime state",
         },
         "status_callback_tasks": {
             "lowered": len(ir.status_callback_tasks),
