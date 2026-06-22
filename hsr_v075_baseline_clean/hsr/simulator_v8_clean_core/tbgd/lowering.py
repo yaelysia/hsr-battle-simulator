@@ -39,6 +39,7 @@ from ..rules.ir import (
     StatusCallbackTaskIR,
     StatusDamageEmissionIR,
     SuperBreakEmissionIR,
+    TimelineRuleIR,
     ToughnessEmissionIR,
     TriggerIR,
 )
@@ -162,6 +163,7 @@ class TBGDLowering:
         action_delay_emissions: list[ActionDelayEmissionIR] = []
         queue_intents: list[QueueIntentIR] = []
         super_break_emissions: list[SuperBreakEmissionIR] = []
+        timeline_rules = self._lower_timeline_rules()
         queue_priorities = self._lower_queue_priorities()
         queue_priority_lookup = {
             (priority.priority_table, priority.priority_key): priority
@@ -273,6 +275,7 @@ class TBGDLowering:
             queue_priorities=tuple(queue_priorities),
             standalone_ability_graphs=tuple(standalone_ability_graphs),
             combatant_action_sets=tuple(combatant_action_sets),
+            timeline_rules=tuple(timeline_rules),
             super_break_emissions=tuple(super_break_emissions),
             triggers=tuple(triggers),
             effects=tuple(effects),
@@ -317,6 +320,7 @@ class TBGDLowering:
                     "queue_priority_count": len(queue_priorities),
                     "standalone_ability_graph_count": len(standalone_ability_graphs),
                     "combatant_action_set_count": len(combatant_action_sets),
+                    "timeline_rule_count": len(timeline_rules),
                     "super_break_emission_count": len(super_break_emissions),
                 },
                 "combatant_profile_status": {
@@ -326,6 +330,27 @@ class TBGDLowering:
                 },
             },
         )
+
+    def _lower_timeline_rules(self) -> list[TimelineRuleIR]:
+        return [
+            TimelineRuleIR(
+                timeline_rule_id="timeline_rule:engine_convention:base_action_gauge_10000",
+                base_action_gauge=10000.0,
+                initial_action_value_rule="base_action_gauge / effective_speed",
+                turn_reset_rule="base_action_gauge / effective_speed after regular turn end",
+                source_kind="engine_convention",
+                source=IRSource(
+                    source_path="simulator_v8_clean_core/timeline_engine_convention",
+                    raw_type="TimelineEngineConvention",
+                    raw_id="base_action_gauge_10000",
+                    evidence={
+                        "reason": "TBGD raw constant source not admitted yet; recorded as explicit engine convention instead of TBGD source",
+                        "formula": "10000 / speed",
+                    },
+                ),
+                coverage_status="executable",
+            )
+        ]
 
     def _lower_combatant_profiles(self) -> list[CombatantProfileIR]:
         monster_rows = self._rows_by_id("ExcelOutput/MonsterConfig.json", "MonsterID")

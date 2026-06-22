@@ -22,6 +22,11 @@ MUTATION_SOURCE_POLICIES: dict[str, dict[str, JSONValue]] = {
         "required_metadata": ["action_id", "action_level", "definition_id", "action_event_id", "source_trace"],
         "coverage_required": "ActionDefinitionIR executable; ActionEventIR traceable",
     },
+    "timeline_system": {
+        "required_ir": ["TimelineRuleIR + TurnAdvancePlan"],
+        "required_metadata": ["timeline_rule_id", "turn_advance_plan_id", "source_trace"],
+        "coverage_required": "TimelineRuleIR executable or explicit engine_convention",
+    },
     "combat_executor.resources": {
         "required_ir": ["ActionDefinitionIR", "ActionEventIR"],
         "required_metadata": ["action_id", "action_level", "definition_id", "action_event_id", "source_trace"],
@@ -150,6 +155,8 @@ class RuntimeSourceAuditor:
     ) -> dict[str, JSONValue]:
         if mutation.source == "combat_executor.timeline":
             return self._audit_action_source_mutation(mutation, records, violations, require_action_event=True)
+        if mutation.source == "timeline_system":
+            return self._audit_timeline_rule_mutation(mutation, records, violations)
         if mutation.source == "combat_executor.resources":
             return self._audit_action_source_mutation(mutation, records, violations, require_action_event=True)
         if mutation.source == "damage_system":
@@ -219,6 +226,47 @@ class RuntimeSourceAuditor:
                 "action_level": action_level if action_level is not None else "",
                 "definition_id": definition_id or "",
                 "action_event_id": action_event_id or "",
+            },
+        )
+
+    def _audit_timeline_rule_mutation(
+        self,
+        mutation: Mutation,
+        records: tuple[dict[str, JSONValue], ...],
+        violations: list[SourceAuditViolation],
+    ) -> dict[str, JSONValue]:
+        metadata = mutation.metadata
+        timeline_rule_id = _required_str(mutation, metadata, "timeline_rule_id", violations)
+        plan_id = _required_str(mutation, metadata, "turn_advance_plan_id", violations)
+        _require_dict(mutation, metadata, "source_trace", violations)
+        if timeline_rule_id:
+            rule = self.rules.timeline_rule(timeline_rule_id)
+            if rule is None:
+                violations.append(_violation(mutation, "timeline_rule_missing", details={"timeline_rule_id": timeline_rule_id}))
+            else:
+                if rule.coverage_status != "executable":
+                    violations.append(
+                        _violation(
+                            mutation,
+                            "timeline_rule_not_executable",
+                            details={"timeline_rule_id": timeline_rule_id, "coverage_status": rule.coverage_status},
+                        )
+                    )
+                if rule.source_kind not in {"tbgd", "engine_convention"}:
+                    violations.append(
+                        _violation(
+                            mutation,
+                            "timeline_rule_source_kind_not_admitted",
+                            details={"timeline_rule_id": timeline_rule_id, "source_kind": rule.source_kind},
+                        )
+                    )
+                _audit_source(rule.source, rule.coverage_status, mutation, violations, executable_required=False)
+        return _trace(
+            mutation,
+            records,
+            {
+                "timeline_rule_id": timeline_rule_id or "",
+                "turn_advance_plan_id": plan_id or "",
             },
         )
 

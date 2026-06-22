@@ -30,6 +30,7 @@ from .ir import (
     StatusCallbackTaskIR,
     StatusDamageEmissionIR,
     SuperBreakEmissionIR,
+    TimelineRuleIR,
     ToughnessEmissionIR,
     TriggerIR,
 )
@@ -374,6 +375,11 @@ class RuleBook:
         )
         object.__setattr__(
             self,
+            "_timeline_rules",
+            {rule.timeline_rule_id: rule for rule in self.ir.timeline_rules},
+        )
+        object.__setattr__(
+            self,
             "_super_break_emissions",
             {emission.super_break_emission_id: emission for emission in self.ir.super_break_emissions},
         )
@@ -627,6 +633,15 @@ class RuleBook:
 
     def combatant_action_set(self, entity_ref: str) -> CombatantActionSetIR | None:
         return self._combatant_action_sets.get(entity_ref)
+
+    def timeline_rule(self, timeline_rule_id: str) -> TimelineRuleIR | None:
+        return self._timeline_rules.get(timeline_rule_id)
+
+    def default_timeline_rule(self) -> TimelineRuleIR:
+        rules = sorted(self.ir.timeline_rules, key=lambda item: item.timeline_rule_id)
+        if not rules:
+            raise KeyError("missing timeline rule")
+        return rules[0]
 
     def super_break_emission(self, emission_id: str) -> SuperBreakEmissionIR | None:
         return self._super_break_emissions.get(emission_id)

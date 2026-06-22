@@ -879,6 +879,30 @@ class ActionDefinitionIR:
 
 
 @dataclass(frozen=True)
+class TimelineRuleIR:
+    timeline_rule_id: str
+    base_action_gauge: float
+    initial_action_value_rule: str
+    turn_reset_rule: str
+    source_kind: str
+    source: IRSource
+    coverage_status: CoverageStatus = "executable"
+    blocked_reason: str = ""
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "timeline_rule_id": self.timeline_rule_id,
+            "base_action_gauge": self.base_action_gauge,
+            "initial_action_value_rule": self.initial_action_value_rule,
+            "turn_reset_rule": self.turn_reset_rule,
+            "source_kind": self.source_kind,
+            "source": self.source.to_json(),
+            "coverage_status": self.coverage_status,
+            "blocked_reason": self.blocked_reason,
+        }
+
+
+@dataclass(frozen=True)
 class CanonicalIR:
     version: str
     entities: tuple[RuleEntity, ...] = ()
@@ -904,6 +928,7 @@ class CanonicalIR:
     queue_priorities: tuple[QueuePriorityIR, ...] = ()
     standalone_ability_graphs: tuple[StandaloneAbilityGraphIR, ...] = ()
     combatant_action_sets: tuple[CombatantActionSetIR, ...] = ()
+    timeline_rules: tuple[TimelineRuleIR, ...] = ()
     super_break_emissions: tuple[SuperBreakEmissionIR, ...] = ()
     triggers: tuple[TriggerIR, ...] = ()
     effects: tuple[EffectIR, ...] = ()
@@ -938,6 +963,7 @@ class CanonicalIR:
             "queue_priorities": [priority.to_json() for priority in self.queue_priorities],
             "standalone_ability_graphs": [graph.to_json() for graph in self.standalone_ability_graphs],
             "combatant_action_sets": [action_set.to_json() for action_set in self.combatant_action_sets],
+            "timeline_rules": [rule.to_json() for rule in self.timeline_rules],
             "super_break_emissions": [emission.to_json() for emission in self.super_break_emissions],
             "triggers": [trigger.to_json() for trigger in self.triggers],
             "effects": [effect.to_json() for effect in self.effects],

@@ -140,7 +140,12 @@ class BattleState:
                 "targeting": dict(global_flags.get("targeting", {})),
                 "teams": teams,
                 "timeline": {
+                    "global_av": float(global_flags.get("global_av", 0.0)),
                     "turn_owner_id": global_flags.get("turn_owner_id"),
+                    "active_turn": dict(global_flags.get("active_turn", {})),
+                    "turn_queue_policy": dict(global_flags.get("turn_queue_policy", {})),
+                    "last_advanced_delta": float(global_flags.get("last_advanced_delta", 0.0)),
+                    "turn_sequence_index": int(global_flags.get("turn_sequence_index", 0)),
                     "action_values": {
                         unit_id: unit.action_value for unit_id, unit in sorted(self.units.items())
                     },
