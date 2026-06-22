@@ -513,6 +513,7 @@ class StatusCallbackSystem:
                 entry_id=f"queue_entry:{intent.queue_intent_id}:{len(current_state.queues.get(queue_name, ()))}",
                 queue_name=queue_name,
                 queue_kind=intent.queue_kind,
+                queue_intent_id=intent.queue_intent_id,
                 actor_id=actor_id,
                 action_or_ability_ref=intent.action_ref_or_ability_name,
                 target_ids=target_ids,

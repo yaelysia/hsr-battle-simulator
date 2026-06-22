@@ -390,6 +390,9 @@ def _action_execution_status(ir: CanonicalIR) -> dict[str, Any]:
     queue_intent_status = Counter(intent.coverage_status for intent in ir.queue_intents)
     queue_intent_reasons = Counter(intent.blocked_reason for intent in ir.queue_intents if intent.blocked_reason)
     queue_intent_opcodes = Counter(intent.opcode for intent in ir.queue_intents)
+    queue_resolution_status = Counter(resolution.coverage_status for resolution in ir.queue_resolutions)
+    queue_resolution_reasons = Counter(resolution.blocked_reason for resolution in ir.queue_resolutions if resolution.blocked_reason)
+    queue_resolution_kinds = Counter(resolution.resolved_kind for resolution in ir.queue_resolutions)
     super_break_status = Counter(emission.coverage_status for emission in ir.super_break_emissions)
     super_break_reasons = Counter(
         emission.blocked_reason
@@ -552,6 +555,15 @@ def _action_execution_status(ir: CanonicalIR) -> dict[str, Any]:
             "blocked_reason_counts": dict(sorted(queue_intent_reasons.items())),
             "opcode_counts": dict(sorted(queue_intent_opcodes.items())),
             "reason": "QueueIntentIR records admitted insert-action task evidence; v0_240 only enqueues pending entries and does not drain or execute them",
+        },
+        "queue_resolutions": {
+            "lowered": len(ir.queue_resolutions),
+            "executable": queue_resolution_status["executable"],
+            "blocked": queue_resolution_status["blocked"],
+            "status_counts": dict(sorted(queue_resolution_status.items())),
+            "blocked_reason_counts": dict(sorted(queue_resolution_reasons.items())),
+            "resolved_kind_counts": dict(sorted(queue_resolution_kinds.items())),
+            "reason": "QueueResolutionIR admits whether queued action_or_ability_ref can be resolved from Canonical IR before any drain/dequeue is allowed",
         },
         "super_break_emissions": {
             "lowered": len(ir.super_break_emissions),

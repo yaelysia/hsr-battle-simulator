@@ -30,6 +30,7 @@ from ..rules.ir import (
     HitProfileIR,
     IRSource,
     QueueIntentIR,
+    QueueResolutionIR,
     RuleEntity,
     StatusCallbackIR,
     StatusCallbackTaskIR,
@@ -213,6 +214,11 @@ class TBGDLowering:
             status_damage_emissions.extend(lowered.status_damage_emissions)
             action_delay_emissions.extend(lowered.action_delay_emissions)
             queue_intents.extend(lowered.queue_intents)
+        queue_resolutions = _lower_queue_resolutions(
+            queue_intents=queue_intents,
+            action_bindings=action_ability_bindings,
+            ability_phases=ability_phases,
+        )
         entities = list(_dedupe_entities(entities).values())
         formulas.extend(self._lower_elation_mechanics())
         formulas.extend(self._lower_damage_behavior_templates())
@@ -238,6 +244,7 @@ class TBGDLowering:
             status_damage_emissions=tuple(status_damage_emissions),
             action_delay_emissions=tuple(action_delay_emissions),
             queue_intents=tuple(queue_intents),
+            queue_resolutions=tuple(queue_resolutions),
             super_break_emissions=tuple(super_break_emissions),
             triggers=tuple(triggers),
             effects=tuple(effects),
@@ -278,6 +285,7 @@ class TBGDLowering:
                     "status_damage_emission_count": len(status_damage_emissions),
                     "action_delay_emission_count": len(action_delay_emissions),
                     "queue_intent_count": len(queue_intents),
+                    "queue_resolution_count": len(queue_resolutions),
                     "super_break_emission_count": len(super_break_emissions),
                 },
                 "combatant_profile_status": {
@@ -3146,6 +3154,144 @@ def _queue_intent_source_admitted(relative_path: str) -> bool:
         return False
     blocked_markers = ("Rogue", "Activity", "GridFight", "Fate", "Chess")
     return not any(marker in relative_path for marker in blocked_markers)
+
+
+def _lower_queue_resolutions(
+    *,
+    queue_intents: list[QueueIntentIR],
+    action_bindings: list[ActionAbilityBindingIR],
+    ability_phases: list[AbilityPhaseIR],
+) -> list[QueueResolutionIR]:
+    phases_by_ability: dict[str, list[AbilityPhaseIR]] = {}
+    for phase in ability_phases:
+        phases_by_ability.setdefault(phase.ability_name, []).append(phase)
+    bindings_by_action: dict[tuple[str, int], ActionAbilityBindingIR] = {
+        (binding.action_id, binding.level): binding for binding in action_bindings
+    }
+    resolutions: list[QueueResolutionIR] = []
+    for intent in queue_intents:
+        resolutions.append(
+            _queue_resolution_from_intent(
+                intent,
+                phases_by_ability=phases_by_ability,
+                bindings_by_action=bindings_by_action,
+            )
+        )
+    return resolutions
+
+
+def _queue_resolution_from_intent(
+    intent: QueueIntentIR,
+    *,
+    phases_by_ability: dict[str, list[AbilityPhaseIR]],
+    bindings_by_action: dict[tuple[str, int], ActionAbilityBindingIR],
+) -> QueueResolutionIR:
+    source = IRSource(
+        source_path=intent.source.source_path,
+        raw_type="QueueResolution",
+        raw_id=intent.queue_intent_id,
+        evidence={
+            "queue_intent_id": intent.queue_intent_id,
+            "queue_intent_source": intent.source.to_json(),
+            "opcode": intent.opcode,
+            "queue_kind": intent.queue_kind,
+        },
+    )
+    resolution_id = f"queue_resolution:{intent.queue_intent_id}"
+    if intent.coverage_status != "executable":
+        reason = intent.blocked_reason or f"queue_intent_not_executable:{intent.coverage_status}"
+        return QueueResolutionIR(
+            queue_resolution_id=resolution_id,
+            queue_intent_id=intent.queue_intent_id,
+            action_or_ability_ref=intent.action_ref_or_ability_name,
+            resolved_kind="blocked_intent",
+            resolved_ids={},
+            source=source,
+            coverage_status="blocked",
+            blocked_reason=f"queue_intent_not_executable:{reason}",
+        )
+    if intent.opcode == "TurnInsertAbility":
+        ability_name = intent.action_ref_or_ability_name
+        if not ability_name:
+            return QueueResolutionIR(
+                queue_resolution_id=resolution_id,
+                queue_intent_id=intent.queue_intent_id,
+                action_or_ability_ref=ability_name,
+                resolved_kind="missing_ability_name",
+                resolved_ids={},
+                source=source,
+                coverage_status="blocked",
+                blocked_reason="queue_ability_name_missing",
+            )
+        phases = tuple(sorted(phases_by_ability.get(ability_name, ()), key=lambda item: item.phase_id))
+        if not phases:
+            return QueueResolutionIR(
+                queue_resolution_id=resolution_id,
+                queue_intent_id=intent.queue_intent_id,
+                action_or_ability_ref=ability_name,
+                resolved_kind="unresolved_ability_name",
+                resolved_ids={},
+                source=source,
+                coverage_status="blocked",
+                blocked_reason=f"queue_ability_graph_not_lowered_or_missing:{ability_name}",
+            )
+        action_keys = tuple(sorted({(phase.action_id, phase.level) for phase in phases}))
+        binding_ids = tuple(
+            binding.binding_id
+            for key in action_keys
+            for binding in (bindings_by_action.get(key),)
+            if binding is not None
+        )
+        return QueueResolutionIR(
+            queue_resolution_id=resolution_id,
+            queue_intent_id=intent.queue_intent_id,
+            action_or_ability_ref=ability_name,
+            resolved_kind="ability_phase_graph",
+            resolved_ids={
+                "phase_ids": [phase.phase_id for phase in phases],
+                "task_ids": [task_id for phase in phases for task_id in phase.task_ids],
+                "action_keys": [f"{action_id}:{level}" for action_id, level in action_keys],
+                "binding_ids": list(binding_ids),
+            },
+            source=source,
+            coverage_status="executable",
+            blocked_reason="",
+        )
+    if intent.opcode == "TurnInsertAction":
+        reason = "queue_insert_action_requires_runtime_actor_action_resolution"
+        if intent.skill_index_expr.get("kind") != "fixed":
+            reason = f"queue_insert_action_skill_index_not_admitted:{intent.skill_index_expr.get('kind') or 'missing'}"
+        return QueueResolutionIR(
+            queue_resolution_id=resolution_id,
+            queue_intent_id=intent.queue_intent_id,
+            action_or_ability_ref=intent.action_ref_or_ability_name,
+            resolved_kind="insert_action_not_admitted",
+            resolved_ids={"skill_index_expr": _json_safe(intent.skill_index_expr)},
+            source=source,
+            coverage_status="blocked",
+            blocked_reason=reason,
+        )
+    if intent.opcode == "TurnInsertAssistantAbility":
+        return QueueResolutionIR(
+            queue_resolution_id=resolution_id,
+            queue_intent_id=intent.queue_intent_id,
+            action_or_ability_ref=intent.action_ref_or_ability_name,
+            resolved_kind="assistant_ability_not_admitted",
+            resolved_ids={"assistant_ability_expr": _json_safe(intent.skill_index_expr)},
+            source=source,
+            coverage_status="blocked",
+            blocked_reason="queue_insert_assistant_ability_not_admitted",
+        )
+    return QueueResolutionIR(
+        queue_resolution_id=resolution_id,
+        queue_intent_id=intent.queue_intent_id,
+        action_or_ability_ref=intent.action_ref_or_ability_name,
+        resolved_kind="queue_opcode_not_admitted",
+        resolved_ids={},
+        source=source,
+        coverage_status="blocked",
+        blocked_reason=f"queue_opcode_not_admitted:{intent.opcode}",
+    )
 
 
 def _effect_blocked_reason(opcode: str, payload: dict[str, Any], coverage_status: str) -> str:

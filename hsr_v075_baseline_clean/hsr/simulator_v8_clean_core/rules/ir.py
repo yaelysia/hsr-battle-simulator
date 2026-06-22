@@ -585,6 +585,30 @@ class SuperBreakEmissionIR:
 
 
 @dataclass(frozen=True)
+class QueueResolutionIR:
+    queue_resolution_id: str
+    queue_intent_id: str
+    action_or_ability_ref: str
+    resolved_kind: str
+    resolved_ids: dict[str, JSONValue]
+    source: IRSource
+    coverage_status: CoverageStatus = "blocked"
+    blocked_reason: str = ""
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "queue_resolution_id": self.queue_resolution_id,
+            "queue_intent_id": self.queue_intent_id,
+            "action_or_ability_ref": self.action_or_ability_ref,
+            "resolved_kind": self.resolved_kind,
+            "resolved_ids": self.resolved_ids,
+            "source": self.source.to_json(),
+            "coverage_status": self.coverage_status,
+            "blocked_reason": self.blocked_reason,
+        }
+
+
+@dataclass(frozen=True)
 class AbilityPhaseIR:
     phase_id: str
     binding_id: str
@@ -808,6 +832,7 @@ class CanonicalIR:
     status_damage_emissions: tuple[StatusDamageEmissionIR, ...] = ()
     action_delay_emissions: tuple[ActionDelayEmissionIR, ...] = ()
     queue_intents: tuple[QueueIntentIR, ...] = ()
+    queue_resolutions: tuple[QueueResolutionIR, ...] = ()
     super_break_emissions: tuple[SuperBreakEmissionIR, ...] = ()
     triggers: tuple[TriggerIR, ...] = ()
     effects: tuple[EffectIR, ...] = ()
@@ -838,6 +863,7 @@ class CanonicalIR:
             "status_damage_emissions": [emission.to_json() for emission in self.status_damage_emissions],
             "action_delay_emissions": [emission.to_json() for emission in self.action_delay_emissions],
             "queue_intents": [intent.to_json() for intent in self.queue_intents],
+            "queue_resolutions": [resolution.to_json() for resolution in self.queue_resolutions],
             "super_break_emissions": [emission.to_json() for emission in self.super_break_emissions],
             "triggers": [trigger.to_json() for trigger in self.triggers],
             "effects": [effect.to_json() for effect in self.effects],

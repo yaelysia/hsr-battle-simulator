@@ -21,6 +21,7 @@ from .ir import (
     FormulaIR,
     HitProfileIR,
     QueueIntentIR,
+    QueueResolutionIR,
     RuleEntity,
     StatusCallbackIR,
     StatusCallbackTaskIR,
@@ -328,6 +329,16 @@ class RuleBook:
         )
         object.__setattr__(
             self,
+            "_queue_resolutions",
+            {resolution.queue_resolution_id: resolution for resolution in self.ir.queue_resolutions},
+        )
+        object.__setattr__(
+            self,
+            "_queue_resolution_by_intent",
+            {resolution.queue_intent_id: resolution for resolution in self.ir.queue_resolutions},
+        )
+        object.__setattr__(
+            self,
             "_super_break_emissions",
             {emission.super_break_emission_id: emission for emission in self.ir.super_break_emissions},
         )
@@ -560,6 +571,12 @@ class RuleBook:
 
     def queue_intents_for_callback(self, callback_id: str) -> tuple[QueueIntentIR, ...]:
         return self._queue_intents_by_callback.get(callback_id, ())
+
+    def queue_resolution(self, queue_resolution_id: str) -> QueueResolutionIR | None:
+        return self._queue_resolutions.get(queue_resolution_id)
+
+    def queue_resolution_for_intent(self, queue_intent_id: str) -> QueueResolutionIR | None:
+        return self._queue_resolution_by_intent.get(queue_intent_id)
 
     def super_break_emission(self, emission_id: str) -> SuperBreakEmissionIR | None:
         return self._super_break_emissions.get(emission_id)

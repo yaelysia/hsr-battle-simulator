@@ -63,12 +63,12 @@ MUTATION_SOURCE_POLICIES: dict[str, dict[str, JSONValue]] = {
         "coverage_required": "process-only dispatch records; mutating listener effects keep their underlying source",
     },
     "queue_system": {
-        "required_ir": ["QueueIntentIR"],
+        "required_ir": ["QueueIntentIR for enqueue; QueueIntentIR + QueueResolutionIR for dequeue"],
         "required_metadata": ["queue_name", "queue_operation", "queue_intent_id", "source_trace"],
         "coverage_required": "executable",
     },
     "combat_executor.queue": {
-        "required_ir": ["QueueIntentIR"],
+        "required_ir": ["QueueIntentIR for enqueue; QueueIntentIR + QueueResolutionIR for dequeue"],
         "required_metadata": ["queue_name", "queue_operation", "queue_intent_id", "source_trace"],
         "coverage_required": "executable",
     },
@@ -772,6 +772,7 @@ class RuntimeSourceAuditor:
         _required_str(mutation, metadata, "queue_operation", violations)
         _required_str(mutation, metadata, "queue_intent_id", violations)
         _require_dict(mutation, metadata, "source_trace", violations)
+        operation = str(metadata.get("queue_operation") or "")
         queue_intent_id = metadata.get("queue_intent_id")
         if isinstance(queue_intent_id, str) and queue_intent_id:
             intent = self.rules.queue_intent(queue_intent_id)
@@ -788,13 +789,25 @@ class RuntimeSourceAuditor:
                     details={"metadata": metadata},
                 )
             )
+        queue_resolution_id = metadata.get("queue_resolution_id")
+        if operation == "dequeue":
+            _required_str(mutation, metadata, "queue_resolution_id", violations)
+            if isinstance(queue_resolution_id, str) and queue_resolution_id:
+                resolution = self.rules.queue_resolution(queue_resolution_id)
+                if resolution is None:
+                    violations.append(
+                        _violation(mutation, "queue_resolution_ir_missing", details={"queue_resolution_id": queue_resolution_id})
+                    )
+                else:
+                    _audit_source(resolution.source, resolution.coverage_status, mutation, violations, executable_required=True)
         return _trace(
             mutation,
             records,
             {
                 "queue_name": str(metadata.get("queue_name") or ""),
-                "queue_operation": str(metadata.get("queue_operation") or ""),
+                "queue_operation": operation,
                 "queue_intent_id": str(queue_intent_id or ""),
+                "queue_resolution_id": str(queue_resolution_id or ""),
             },
         )
 
