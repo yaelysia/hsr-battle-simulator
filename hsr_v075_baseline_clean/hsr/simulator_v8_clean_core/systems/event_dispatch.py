@@ -316,6 +316,7 @@ class EventDispatchSystem:
                 unit_id=match.unit_id,
                 modifier_name=match.modifier_name,
                 event=match.callback_event,
+                trigger_event=event,
             )
             current_state = result.after_state
             mutations.extend(result.mutations)
@@ -587,9 +588,9 @@ def _event_aliases(event: GameEvent) -> tuple[EventAlias, ...]:
                 )
             )
     deduped: list[EventAlias] = []
-    seen: set[tuple[str, str, str]] = set()
+    seen: set[tuple[str, str]] = set()
     for alias in aliases:
-        key = (alias.callback_event, alias.scope_kind, alias.source_basis)
+        key = (alias.callback_event, alias.scope_kind)
         if key in seen:
             continue
         seen.add(key)

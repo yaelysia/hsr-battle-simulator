@@ -63,13 +63,13 @@ MUTATION_SOURCE_POLICIES: dict[str, dict[str, JSONValue]] = {
         "coverage_required": "process-only dispatch records; mutating listener effects keep their underlying source",
     },
     "queue_system": {
-        "required_ir": ["ActionDefinitionIR or EffectIR"],
-        "required_metadata": ["queue_name", "queue_operation", "source_trace"],
+        "required_ir": ["QueueIntentIR"],
+        "required_metadata": ["queue_name", "queue_operation", "queue_intent_id", "source_trace"],
         "coverage_required": "executable",
     },
     "combat_executor.queue": {
-        "required_ir": ["ActionDefinitionIR or EffectIR"],
-        "required_metadata": ["queue_name", "queue_operation", "source_trace"],
+        "required_ir": ["QueueIntentIR"],
+        "required_metadata": ["queue_name", "queue_operation", "queue_intent_id", "source_trace"],
         "coverage_required": "executable",
     },
 }
@@ -770,20 +770,21 @@ class RuntimeSourceAuditor:
         metadata = mutation.metadata
         _required_str(mutation, metadata, "queue_name", violations)
         _required_str(mutation, metadata, "queue_operation", violations)
+        _required_str(mutation, metadata, "queue_intent_id", violations)
         _require_dict(mutation, metadata, "source_trace", violations)
-        effect_id = metadata.get("effect_id")
-        action_id = metadata.get("action_id")
-        action_level = metadata.get("action_level")
-        if isinstance(effect_id, str) and effect_id:
-            self._audit_effect_id(mutation, effect_id, violations)
-        elif isinstance(action_id, str) and isinstance(action_level, int):
-            self._audit_action_source_mutation(mutation, records, violations, require_action_event=False)
+        queue_intent_id = metadata.get("queue_intent_id")
+        if isinstance(queue_intent_id, str) and queue_intent_id:
+            intent = self.rules.queue_intent(queue_intent_id)
+            if intent is None:
+                violations.append(_violation(mutation, "queue_intent_ir_missing", details={"queue_intent_id": queue_intent_id}))
+            else:
+                _audit_source(intent.source, intent.coverage_status, mutation, violations, executable_required=True)
         else:
             violations.append(
                 _violation(
                     mutation,
                     "queue_source_ir_missing",
-                    missing_field="effect_id|action_id+action_level",
+                    missing_field="queue_intent_id",
                     details={"metadata": metadata},
                 )
             )
@@ -793,9 +794,7 @@ class RuntimeSourceAuditor:
             {
                 "queue_name": str(metadata.get("queue_name") or ""),
                 "queue_operation": str(metadata.get("queue_operation") or ""),
-                "effect_id": str(effect_id or ""),
-                "action_id": str(action_id or ""),
-                "action_level": action_level if isinstance(action_level, int) else "",
+                "queue_intent_id": str(queue_intent_id or ""),
             },
         )
 

@@ -97,7 +97,7 @@ class BattleState:
     skill_points: int = 3
     max_skill_points: int = 5
     global_flags: dict[str, JSONValue] = field(default_factory=dict)
-    queues: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    queues: dict[str, tuple[JSONValue, ...]] = field(default_factory=dict)
     rng_state: str = "deterministic"
     event_index: int = 0
 

@@ -20,6 +20,7 @@ from .ir import (
     EffectIR,
     FormulaIR,
     HitProfileIR,
+    QueueIntentIR,
     RuleEntity,
     StatusCallbackIR,
     StatusCallbackTaskIR,
@@ -311,6 +312,22 @@ class RuleBook:
         )
         object.__setattr__(
             self,
+            "_queue_intents",
+            {intent.queue_intent_id: intent for intent in self.ir.queue_intents},
+        )
+        queue_intents_by_callback: dict[str, list[QueueIntentIR]] = {}
+        for intent in self.ir.queue_intents:
+            queue_intents_by_callback.setdefault(intent.callback_id, []).append(intent)
+        object.__setattr__(
+            self,
+            "_queue_intents_by_callback",
+            {
+                key: tuple(sorted(value, key=lambda item: item.queue_intent_id))
+                for key, value in queue_intents_by_callback.items()
+            },
+        )
+        object.__setattr__(
+            self,
             "_super_break_emissions",
             {emission.super_break_emission_id: emission for emission in self.ir.super_break_emissions},
         )
@@ -537,6 +554,12 @@ class RuleBook:
 
     def action_delay_emissions_for_callback(self, callback_id: str) -> tuple[ActionDelayEmissionIR, ...]:
         return self._action_delay_emissions_by_callback.get(callback_id, ())
+
+    def queue_intent(self, queue_intent_id: str) -> QueueIntentIR | None:
+        return self._queue_intents.get(queue_intent_id)
+
+    def queue_intents_for_callback(self, callback_id: str) -> tuple[QueueIntentIR, ...]:
+        return self._queue_intents_by_callback.get(callback_id, ())
 
     def super_break_emission(self, emission_id: str) -> SuperBreakEmissionIR | None:
         return self._super_break_emissions.get(emission_id)

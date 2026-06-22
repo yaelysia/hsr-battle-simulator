@@ -6,10 +6,11 @@ from ..core.model import BattleState, GameEvent, JSONValue, Mutation
 from ..core.reducer import MutationReducer
 from ..core.settlement import SettlementRecord
 from ..rules.evaluator import NumericEvaluationContext, NumericEvaluationResult, RuleEvaluator
-from ..rules.ir import ActionDelayEmissionIR, StatusCallbackIR, StatusCallbackTaskIR, StatusDamageEmissionIR
+from ..rules.ir import ActionDelayEmissionIR, QueueIntentIR, StatusCallbackIR, StatusCallbackTaskIR, StatusDamageEmissionIR
 from ..rules.rulebook import RuleBook
 from .damage import DamagePacket, DamageSystem
 from .dynamic_values import find_status_detail
+from .queue import QueueEntry, QueueSystem
 from .timeline import TimelineSystem
 
 
@@ -33,11 +34,13 @@ class StatusCallbackSystem:
         damage: DamageSystem | None = None,
         reducer: MutationReducer | None = None,
         timeline: TimelineSystem | None = None,
+        queue: QueueSystem | None = None,
     ) -> None:
         self.rules = rules
         self.damage = damage or DamageSystem()
         self.reducer = reducer or MutationReducer()
         self.timeline = timeline or TimelineSystem()
+        self.queue = queue or QueueSystem()
 
     def execute(
         self,
@@ -46,6 +49,7 @@ class StatusCallbackSystem:
         unit_id: str,
         modifier_name: str,
         event: str,
+        trigger_event: GameEvent | None = None,
     ) -> StatusCallbackExecutionResult:
         detail = find_status_detail(state, unit_id, modifier_name=modifier_name)
         if detail is None:
@@ -83,7 +87,7 @@ class StatusCallbackSystem:
         errors: list[str] = []
         events: list[GameEvent] = []
         for callback in callbacks:
-            result = self._execute_callback(current_state, callback, detail)
+            result = self._execute_callback(current_state, callback, detail, trigger_event)
             current_state = result.after_state
             mutations.extend(result.mutations)
             records.extend(result.records)
@@ -103,6 +107,7 @@ class StatusCallbackSystem:
         state: BattleState,
         callback: StatusCallbackIR,
         detail: dict[str, JSONValue],
+        trigger_event: GameEvent | None,
     ) -> StatusCallbackExecutionResult:
         if callback.coverage_status != "executable":
             reason = callback.blocked_reason or f"status_callback_not_executable:{callback.coverage_status}"
@@ -147,7 +152,7 @@ class StatusCallbackSystem:
         for task in self.rules.status_callback_tasks_for_callback(callback.callback_id):
             if task.parent_task_id:
                 continue
-            result = self._execute_task(current_state, callback, task, detail)
+            result = self._execute_task(current_state, callback, task, detail, trigger_event)
             current_state = result.after_state
             mutations.extend(result.mutations)
             records.extend(result.records)
@@ -168,6 +173,7 @@ class StatusCallbackSystem:
         callback: StatusCallbackIR,
         task: StatusCallbackTaskIR,
         detail: dict[str, JSONValue],
+        trigger_event: GameEvent | None,
     ) -> StatusCallbackExecutionResult:
         delay_emissions = [
             emission
@@ -179,7 +185,15 @@ class StatusCallbackSystem:
             for emission in self.rules.status_damage_emissions_for_callback(callback.callback_id)
             if emission.source_task_id == task.task_id
         ]
+        queue_intents = [
+            intent
+            for intent in self.rules.queue_intents_for_callback(callback.callback_id)
+            if intent.source_task_id == task.task_id
+        ]
         if task.coverage_status != "executable":
+            if queue_intents:
+                reason = task.blocked_reason or f"status_callback_task_not_executable:{task.coverage_status}"
+                return self._blocked_queue_intents(state, callback, task, detail, tuple(queue_intents), reason)
             if delay_emissions:
                 return self._execute_delay_emissions(state, callback, task, detail, tuple(delay_emissions))
             if damage_emissions:
@@ -209,6 +223,8 @@ class StatusCallbackSystem:
             return self._execute_damage_emissions(state, callback, task, detail, tuple(damage_emissions))
         if delay_emissions:
             return self._execute_delay_emissions(state, callback, task, detail, tuple(delay_emissions))
+        if queue_intents:
+            return self._execute_queue_intents(state, callback, task, detail, trigger_event, tuple(queue_intents))
         return StatusCallbackExecutionResult(
             ok=True,
             after_state=state,
@@ -454,6 +470,128 @@ class StatusCallbackSystem:
             ),
         )
 
+    def _execute_queue_intents(
+        self,
+        state: BattleState,
+        callback: StatusCallbackIR,
+        task: StatusCallbackTaskIR,
+        detail: dict[str, JSONValue],
+        trigger_event: GameEvent | None,
+        intents: tuple[QueueIntentIR, ...],
+    ) -> StatusCallbackExecutionResult:
+        current_state = state
+        mutations: list[Mutation] = []
+        records: list[dict[str, JSONValue]] = []
+        errors: list[str] = []
+        for intent in intents:
+            if intent.coverage_status != "executable":
+                reason = intent.blocked_reason or f"queue_intent_not_executable:{intent.coverage_status}"
+                records.append(_queue_intent_blocked_record(callback, task, detail, intent, reason))
+                errors.append(reason)
+                continue
+            actor_id = _resolve_queue_alias(detail, trigger_event, intent.actor_target_alias)
+            target_id = _resolve_queue_alias(detail, trigger_event, intent.ability_target_alias)
+            if not actor_id or actor_id not in current_state.units:
+                reason = f"queue_actor_not_resolved:{intent.actor_target_alias or 'missing'}"
+                records.append(_queue_intent_blocked_record(callback, task, detail, intent, reason))
+                errors.append(reason)
+                continue
+            target_ids = (target_id,) if target_id and target_id in current_state.units else ()
+            if intent.ability_target_alias and not target_ids:
+                reason = f"queue_target_not_resolved:{intent.ability_target_alias}"
+                records.append(_queue_intent_blocked_record(callback, task, detail, intent, reason))
+                errors.append(reason)
+                continue
+            queue_name = intent.queue_kind
+            source_trace = {
+                "queue_intent_source": intent.source.to_json(),
+                "status_callback_source": callback.source.to_json(),
+                "status_task_source": task.source.to_json(),
+                "status_instance_source": _json_dict(detail.get("source_trace")),
+            }
+            entry = QueueEntry(
+                entry_id=f"queue_entry:{intent.queue_intent_id}:{len(current_state.queues.get(queue_name, ()))}",
+                queue_name=queue_name,
+                queue_kind=intent.queue_kind,
+                actor_id=actor_id,
+                action_or_ability_ref=intent.action_ref_or_ability_name,
+                target_ids=target_ids,
+                priority_source=intent.priority_source,
+                source_trace=source_trace,
+                status="pending",
+                drain_status="not_admitted",
+            )
+            mutation = self.queue.enqueue(
+                current_state,
+                queue_name,
+                entry,
+                source="queue_system",
+                metadata={
+                    "queue_intent_id": intent.queue_intent_id,
+                    "source_task_id": task.task_id,
+                    "callback_id": callback.callback_id,
+                    "opcode": intent.opcode,
+                    "queue_kind": intent.queue_kind,
+                    "admission_result": "executable",
+                    "target_resolution": {
+                        "actor_target_alias": intent.actor_target_alias or "",
+                        "ability_target_alias": intent.ability_target_alias or "",
+                        "actor_id": actor_id,
+                        "target_ids": list(target_ids),
+                    },
+                    "source_trace": source_trace,
+                },
+            )
+            current_state = self.reducer.apply_all(current_state, (mutation,))
+            mutations.append(mutation)
+            records.append(
+                SettlementRecord(
+                    record_type="queue_enqueue",
+                    source="queue_system",
+                    mutation_id=mutation.stable_id(),
+                    process_only=False,
+                    payload={
+                        "queue_intent_id": intent.queue_intent_id,
+                        "callback_id": callback.callback_id,
+                        "task_id": task.task_id,
+                        "opcode": intent.opcode,
+                        "queue_name": queue_name,
+                        "queue_kind": intent.queue_kind,
+                        "entry": entry.to_json(),
+                        "drain_candidate": False,
+                        "drain_blocked_reason": "queue_drain_not_admitted_v0_240",
+                    },
+                    trace=source_trace,
+                ).to_json()
+            )
+        return StatusCallbackExecutionResult(
+            ok=not errors,
+            after_state=current_state,
+            mutations=tuple(mutations),
+            records=tuple(records),
+            errors=tuple(errors),
+        )
+
+    def _blocked_queue_intents(
+        self,
+        state: BattleState,
+        callback: StatusCallbackIR,
+        task: StatusCallbackTaskIR,
+        detail: dict[str, JSONValue],
+        intents: tuple[QueueIntentIR, ...],
+        reason: str,
+    ) -> StatusCallbackExecutionResult:
+        blocked_reason = f"queue_task_not_executable:{reason}"
+        return StatusCallbackExecutionResult(
+            ok=False,
+            after_state=state,
+            records=tuple(
+                _queue_intent_blocked_record(callback, task, detail, intent, blocked_reason)
+                for intent in intents
+            ),
+            errors=(blocked_reason,),
+        )
+
 
 def _status_damage_binding_sources(
     detail: dict[str, JSONValue],
@@ -650,6 +788,59 @@ def _resolve_callback_target_id(detail: dict[str, JSONValue], target_alias: str 
     if alias in {"ParamEntity", "CurrentActionTarget"}:
         return str(detail.get("owner_id") or "")
     return ""
+
+
+def _resolve_queue_alias(detail: dict[str, JSONValue], event: GameEvent | None, target_alias: str | None) -> str:
+    alias = target_alias or ""
+    payload = event.payload if event is not None else {}
+    if alias == "ModifierOwnerEntity":
+        return str(detail.get("owner_id") or "")
+    if alias == "Caster":
+        return str(detail.get("caster_id") or "")
+    if alias in {"ParamEntity", "CurrentActionTarget", "AbilityTargetEntity"}:
+        for key in ("current_hit_target_id", "target_id", "primary_action_target_id"):
+            value = payload.get(key)
+            if isinstance(value, str) and value:
+                return value
+        return str(event.target_id or "") if event is not None else str(detail.get("owner_id") or "")
+    if alias == "DamageAttackerEntity":
+        for key in ("attacker_id", "actor_id"):
+            value = payload.get(key)
+            if isinstance(value, str) and value:
+                return value
+        return str(event.source_id or "") if event is not None else ""
+    return ""
+
+
+def _queue_intent_blocked_record(
+    callback: StatusCallbackIR,
+    task: StatusCallbackTaskIR,
+    detail: dict[str, JSONValue],
+    intent: QueueIntentIR,
+    reason: str,
+) -> dict[str, JSONValue]:
+    return SettlementRecord(
+        record_type="queue_intent_blocked",
+        source="status_callback_system",
+        process_only=True,
+        payload={
+            "reason": reason,
+            "callback_id": callback.callback_id,
+            "task_id": task.task_id,
+            "queue_intent_id": intent.queue_intent_id,
+            "modifier_name": callback.modifier_name,
+            "event": callback.event,
+            "opcode": intent.opcode,
+            "queue_kind": intent.queue_kind,
+            "blocking_dependency": reason,
+        },
+        trace={
+            "queue_intent_source": intent.source.to_json(),
+            "status_callback_source": callback.source.to_json(),
+            "status_task_source": task.source.to_json(),
+            "status_instance_source": _json_dict(detail.get("source_trace")),
+        },
+    ).to_json()
 
 
 def _action_delay_blocked_record(

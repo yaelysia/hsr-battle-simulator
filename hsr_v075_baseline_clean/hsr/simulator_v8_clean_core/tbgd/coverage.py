@@ -32,6 +32,9 @@ KNOWN_AUDIT_EFFECTS = {
     "SetSummonerEnergyBarState",
     "SummonUnit",
     "SummonMonster",
+    "TurnInsertAbility",
+    "TurnInsertAction",
+    "TurnInsertAssistantAbility",
     "ForceKill",
     "PredicateTaskList",
 }
@@ -92,6 +95,10 @@ def build_coverage_matrix(report: DiscoveryReport, ir: CanonicalIR) -> CoverageM
         lowered_opcodes[condition.opcode] += 1
         if condition.coverage_status == "executable":
             executable_opcodes[condition.opcode] += 1
+    for intent in ir.queue_intents:
+        lowered_opcodes[intent.opcode] += 1
+        if intent.coverage_status == "executable":
+            executable_opcodes[intent.opcode] += 1
 
     opcode_status: dict[str, dict[str, Any]] = {}
     for opcode, count in sorted(report.gamecore_type_counts.items()):
@@ -380,6 +387,9 @@ def _action_execution_status(ir: CanonicalIR) -> dict[str, Any]:
     status_damage_reasons = Counter(emission.blocked_reason for emission in ir.status_damage_emissions if emission.blocked_reason)
     action_delay_status = Counter(emission.coverage_status for emission in ir.action_delay_emissions)
     action_delay_reasons = Counter(emission.blocked_reason for emission in ir.action_delay_emissions if emission.blocked_reason)
+    queue_intent_status = Counter(intent.coverage_status for intent in ir.queue_intents)
+    queue_intent_reasons = Counter(intent.blocked_reason for intent in ir.queue_intents if intent.blocked_reason)
+    queue_intent_opcodes = Counter(intent.opcode for intent in ir.queue_intents)
     super_break_status = Counter(emission.coverage_status for emission in ir.super_break_emissions)
     super_break_reasons = Counter(
         emission.blocked_reason
@@ -533,6 +543,15 @@ def _action_execution_status(ir: CanonicalIR) -> dict[str, Any]:
             "status_counts": dict(sorted(action_delay_status.items())),
             "blocked_reason_counts": dict(sorted(action_delay_reasons.items())),
             "reason": "ActionDelayEmissionIR records OnStack delay evidence; ModifyActionDelay normalized AV scale remains blocked until source semantics are admitted",
+        },
+        "queue_intents": {
+            "lowered": len(ir.queue_intents),
+            "executable": queue_intent_status["executable"],
+            "blocked": queue_intent_status["blocked"],
+            "status_counts": dict(sorted(queue_intent_status.items())),
+            "blocked_reason_counts": dict(sorted(queue_intent_reasons.items())),
+            "opcode_counts": dict(sorted(queue_intent_opcodes.items())),
+            "reason": "QueueIntentIR records admitted insert-action task evidence; v0_240 only enqueues pending entries and does not drain or execute them",
         },
         "super_break_emissions": {
             "lowered": len(ir.super_break_emissions),

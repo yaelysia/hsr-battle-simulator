@@ -29,6 +29,7 @@ from ..rules.ir import (
     FormulaIR,
     HitProfileIR,
     IRSource,
+    QueueIntentIR,
     RuleEntity,
     StatusCallbackIR,
     StatusCallbackTaskIR,
@@ -155,6 +156,7 @@ class TBGDLowering:
         status_callback_tasks: list[StatusCallbackTaskIR] = []
         status_damage_emissions: list[StatusDamageEmissionIR] = []
         action_delay_emissions: list[ActionDelayEmissionIR] = []
+        queue_intents: list[QueueIntentIR] = []
         super_break_emissions: list[SuperBreakEmissionIR] = []
 
         table_stats: dict[str, dict[str, Any]] = {}
@@ -210,6 +212,7 @@ class TBGDLowering:
             status_callback_tasks.extend(lowered.status_callback_tasks)
             status_damage_emissions.extend(lowered.status_damage_emissions)
             action_delay_emissions.extend(lowered.action_delay_emissions)
+            queue_intents.extend(lowered.queue_intents)
         entities = list(_dedupe_entities(entities).values())
         formulas.extend(self._lower_elation_mechanics())
         formulas.extend(self._lower_damage_behavior_templates())
@@ -234,6 +237,7 @@ class TBGDLowering:
             status_callback_tasks=tuple(status_callback_tasks),
             status_damage_emissions=tuple(status_damage_emissions),
             action_delay_emissions=tuple(action_delay_emissions),
+            queue_intents=tuple(queue_intents),
             super_break_emissions=tuple(super_break_emissions),
             triggers=tuple(triggers),
             effects=tuple(effects),
@@ -273,6 +277,7 @@ class TBGDLowering:
                     "status_callback_task_count": len(status_callback_tasks),
                     "status_damage_emission_count": len(status_damage_emissions),
                     "action_delay_emission_count": len(action_delay_emissions),
+                    "queue_intent_count": len(queue_intents),
                     "super_break_emission_count": len(super_break_emissions),
                 },
                 "combatant_profile_status": {
@@ -1093,11 +1098,16 @@ class TBGDLowering:
                 source_mode = _status_callback_source_mode(relative)
                 source_admitted = _status_callback_source_admitted(relative)
                 scope_kind = _status_callback_scope_kind(event)
+                has_executable_queue_intent = any(
+                    intent.coverage_status == "executable"
+                    for intent in callback_lowered.queue_intents
+                    if intent.callback_id == callback_id
+                )
                 admitted_event = event in {"OnStack", "OnPhase1"} or (
                     event == "OnListenTurnEnd"
                     and any(task.coverage_status == "executable" for task in callback_lowered.status_callback_tasks)
-                )
-                status = "executable" if admitted_event and source_admitted else "blocked"
+                ) or has_executable_queue_intent
+                status = "executable" if admitted_event and (source_admitted or has_executable_queue_intent) else "blocked"
                 if status == "executable":
                     blocked_reason = ""
                 elif not source_admitted:
@@ -1263,7 +1273,8 @@ class TBGDLowering:
 
         effect_id = f"effect:{relative}:{modifier_name}:{callback_index}:{branch}:{task_index}:{opcode}"
         coverage_status, blocked_reason = _status_callback_task_admission(event, opcode, task)
-        if coverage_status == "executable" and not _status_callback_source_admitted(relative):
+        source_admitted = _queue_intent_source_admitted(relative) if opcode in QUEUE_INTENT_OPCODES else _status_callback_source_admitted(relative)
+        if coverage_status == "executable" and not source_admitted:
             coverage_status = "blocked"
             blocked_reason = "status_callback_source_mode_not_admitted"
         lowered.status_callback_tasks.append(
@@ -1300,6 +1311,17 @@ class TBGDLowering:
                     callback_id=callback_id,
                     task_id=task_id,
                     modifier_name=modifier_name,
+                    event=event,
+                    opcode=opcode,
+                    task=task,
+                    source=source,
+                )
+            )
+        if opcode in QUEUE_INTENT_OPCODES:
+            lowered.queue_intents.append(
+                _queue_intent_from_task(
+                    callback_id=callback_id,
+                    task_id=task_id,
                     event=event,
                     opcode=opcode,
                     task=task,
@@ -1535,6 +1557,7 @@ class _LoweredAbility:
     status_callback_tasks: list[StatusCallbackTaskIR] = field(default_factory=list)
     status_damage_emissions: list[StatusDamageEmissionIR] = field(default_factory=list)
     action_delay_emissions: list[ActionDelayEmissionIR] = field(default_factory=list)
+    queue_intents: list[QueueIntentIR] = field(default_factory=list)
     triggers: list[TriggerIR] = field(default_factory=list)
     effects: list[EffectIR] = field(default_factory=list)
     conditions: list[ConditionIR] = field(default_factory=list)
@@ -1547,6 +1570,7 @@ class _LoweredAbility:
         self.status_callback_tasks.extend(other.status_callback_tasks)
         self.status_damage_emissions.extend(other.status_damage_emissions)
         self.action_delay_emissions.extend(other.action_delay_emissions)
+        self.queue_intents.extend(other.queue_intents)
         self.triggers.extend(other.triggers)
         self.effects.extend(other.effects)
         self.conditions.extend(other.conditions)
@@ -2817,6 +2841,25 @@ def _predicate_task_status(condition: ConditionIR | None) -> tuple[str, str]:
 
 
 def _status_callback_task_admission(event: str, opcode: str, task: dict[str, Any]) -> tuple[str, str]:
+    if opcode in QUEUE_INTENT_OPCODES:
+        if event not in {"OnAfterBeingAttacked", "OnAfterBeingHitAll", "OnListenCharacterDie", "OnLimboWaitHeal"}:
+            return "blocked", f"queue_intent_event_not_admitted:{event}"
+        actor_target_alias = _target_alias(task.get("TargetType"))
+        ability_target_alias = _target_alias(task.get("AbilityTarget")) or _target_alias(task.get("AutoCastTargetType"))
+        skill_index_expr = _queue_skill_index_expr(task, opcode)
+        coverage_status, blocked_reason = _queue_intent_admission(
+            task=task,
+            opcode=opcode,
+            source=IRSource(source_path="Config/ConfigGlobalModifier/_admission_probe.json", raw_type="QueueIntentAdmissionProbe", raw_id=opcode),
+            actor_target_alias=actor_target_alias,
+            ability_target_alias=ability_target_alias,
+            ability_name=_value_field(task.get("AbilityName")),
+            skill_index_expr=skill_index_expr,
+            abort_policy=_queue_abort_policy(task),
+        )
+        if blocked_reason == "queue_intent_source_mode_not_admitted":
+            return "executable", ""
+        return coverage_status, blocked_reason
     if event not in {"OnStack", "OnPhase1", "OnListenTurnEnd"}:
         return "blocked", f"status_callback_event_not_admitted:{event}"
     if opcode == "DamageByAttackProperty":
@@ -2963,6 +3006,146 @@ def _action_delay_expr(task: dict[str, Any], opcode: str) -> dict[str, Any]:
     expr["source_field"] = key
     expr["opcode"] = opcode
     return expr
+
+
+QUEUE_INTENT_OPCODES = {"TurnInsertAbility", "TurnInsertAction", "TurnInsertAssistantAbility"}
+QUEUE_TARGET_ALIASES = {
+    "Caster",
+    "ModifierOwnerEntity",
+    "ParamEntity",
+    "CurrentActionTarget",
+    "DamageAttackerEntity",
+    "AbilityTargetEntity",
+}
+
+
+def _queue_intent_from_task(
+    *,
+    callback_id: str,
+    task_id: str,
+    event: str,
+    opcode: str,
+    task: dict[str, Any],
+    source: IRSource,
+) -> QueueIntentIR:
+    queue_kind = {
+        "TurnInsertAbility": "turn_insert_ability",
+        "TurnInsertAction": "turn_insert_action",
+        "TurnInsertAssistantAbility": "turn_insert_assistant_ability",
+    }.get(opcode, "unknown")
+    actor_target_alias = _target_alias(task.get("TargetType"))
+    ability_target_alias = _target_alias(task.get("AbilityTarget")) or _target_alias(task.get("AutoCastTargetType"))
+    ability_name = _value_field(task.get("AbilityName"))
+    skill_index_expr = _queue_skill_index_expr(task, opcode)
+    priority_source = _queue_priority_source(task, opcode)
+    abort_policy = _queue_abort_policy(task)
+    coverage_status, blocked_reason = _queue_intent_admission(
+        task=task,
+        opcode=opcode,
+        source=source,
+        actor_target_alias=actor_target_alias,
+        ability_target_alias=ability_target_alias,
+        ability_name=ability_name,
+        skill_index_expr=skill_index_expr,
+        abort_policy=abort_policy,
+    )
+    return QueueIntentIR(
+        queue_intent_id=f"queue_intent:{callback_id}:{task_id}",
+        source_task_id=task_id,
+        callback_id=callback_id,
+        phase_id="",
+        opcode=opcode,
+        queue_kind=queue_kind,
+        priority_source=priority_source,
+        actor_target_alias=actor_target_alias,
+        action_ref_or_ability_name=str(ability_name or ""),
+        skill_index_expr=skill_index_expr,
+        ability_target_alias=ability_target_alias,
+        auto_cast=bool(task.get("AutoCast")) if isinstance(task.get("AutoCast"), bool) else False,
+        abort_policy=abort_policy,
+        source=source,
+        coverage_status=coverage_status,
+        blocked_reason=blocked_reason,
+    )
+
+
+def _queue_skill_index_expr(task: dict[str, Any], opcode: str) -> dict[str, Any]:
+    if opcode == "TurnInsertAction":
+        expr = _numeric_expr_summary(task.get("SkillIndex"))
+        expr["source_field"] = "SkillIndex"
+        expr["opcode"] = opcode
+        return expr
+    if opcode == "TurnInsertAssistantAbility":
+        expr = _numeric_expr_summary(task.get("AssistantAbilityID"))
+        expr["source_field"] = "AssistantAbilityID"
+        expr["opcode"] = opcode
+        return expr
+    return {"kind": "none", "value": None, "supported": True, "source_field": "", "opcode": opcode}
+
+
+def _queue_priority_source(task: dict[str, Any], opcode: str) -> dict[str, Any]:
+    key = {
+        "TurnInsertAbility": "InsertAbilityPriority",
+        "TurnInsertAction": "InsertActionPriority",
+        "TurnInsertAssistantAbility": "InsertAbilityPriority",
+    }.get(opcode, "InsertPriority")
+    return {
+        "field": key,
+        "value": _json_safe(task.get(key)),
+        "priority_ordering_admitted": False,
+        "reason": "queue_priority_ordering_not_admitted",
+    }
+
+
+def _queue_abort_policy(task: dict[str, Any]) -> dict[str, Any]:
+    fields = {
+        "OnInsertAbort": _json_safe(task.get("OnInsertAbort")),
+        "AbortBehaviorFlags": _json_safe(task.get("AbortBehaviorFlags")),
+        "OwnerAliveState": _json_safe(task.get("OwnerAliveState")),
+        "TargetAliveState": _json_safe(task.get("TargetAliveState")),
+        "CanRunOnUnselectableTarget": _json_safe(task.get("CanRunOnUnselectableTarget")),
+        "ShowInActionBar": _json_safe(task.get("ShowInActionBar")),
+    }
+    return {key: value for key, value in fields.items() if value not in (None, [], {})}
+
+
+def _queue_intent_admission(
+    *,
+    task: dict[str, Any],
+    opcode: str,
+    source: IRSource,
+    actor_target_alias: str | None,
+    ability_target_alias: str | None,
+    ability_name: Any,
+    skill_index_expr: dict[str, Any],
+    abort_policy: dict[str, Any],
+) -> tuple[str, str]:
+    if not _queue_intent_source_admitted(source.source_path):
+        return "blocked", "queue_intent_source_mode_not_admitted"
+    if actor_target_alias not in QUEUE_TARGET_ALIASES:
+        return "blocked", f"queue_actor_target_alias_not_admitted:{actor_target_alias or 'missing'}"
+    if ability_target_alias and ability_target_alias not in QUEUE_TARGET_ALIASES:
+        return "blocked", f"queue_ability_target_alias_not_admitted:{ability_target_alias}"
+    if abort_policy.get("OnInsertAbort"):
+        return "blocked", "queue_abort_policy_not_admitted"
+    if opcode == "TurnInsertAbility":
+        if not isinstance(ability_name, str) or not ability_name:
+            return "blocked", "queue_insert_ability_name_missing"
+        return "executable", ""
+    if opcode == "TurnInsertAction":
+        if skill_index_expr.get("kind") != "fixed":
+            return "blocked", f"queue_insert_action_skill_index_not_admitted:{skill_index_expr.get('kind') or 'missing'}"
+        return "blocked", "queue_insert_action_execution_not_admitted"
+    if opcode == "TurnInsertAssistantAbility":
+        return "blocked", "queue_insert_assistant_ability_not_admitted"
+    return "blocked", f"queue_opcode_not_admitted:{opcode}"
+
+
+def _queue_intent_source_admitted(relative_path: str) -> bool:
+    if not relative_path.startswith("Config/ConfigGlobalModifier/"):
+        return False
+    blocked_markers = ("Rogue", "Activity", "GridFight", "Fate", "Chess")
+    return not any(marker in relative_path for marker in blocked_markers)
 
 
 def _effect_blocked_reason(opcode: str, payload: dict[str, Any], coverage_status: str) -> str:

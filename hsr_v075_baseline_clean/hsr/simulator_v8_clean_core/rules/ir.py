@@ -515,6 +515,46 @@ class ActionDelayEmissionIR:
 
 
 @dataclass(frozen=True)
+class QueueIntentIR:
+    queue_intent_id: str
+    source_task_id: str
+    callback_id: str
+    phase_id: str
+    opcode: str
+    queue_kind: str
+    priority_source: dict[str, JSONValue]
+    actor_target_alias: str | None
+    action_ref_or_ability_name: str
+    skill_index_expr: dict[str, JSONValue]
+    ability_target_alias: str | None
+    auto_cast: bool
+    abort_policy: dict[str, JSONValue]
+    source: IRSource
+    coverage_status: CoverageStatus = "blocked"
+    blocked_reason: str = ""
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "queue_intent_id": self.queue_intent_id,
+            "source_task_id": self.source_task_id,
+            "callback_id": self.callback_id,
+            "phase_id": self.phase_id,
+            "opcode": self.opcode,
+            "queue_kind": self.queue_kind,
+            "priority_source": self.priority_source,
+            "actor_target_alias": self.actor_target_alias,
+            "action_ref_or_ability_name": self.action_ref_or_ability_name,
+            "skill_index_expr": self.skill_index_expr,
+            "ability_target_alias": self.ability_target_alias,
+            "auto_cast": self.auto_cast,
+            "abort_policy": self.abort_policy,
+            "source": self.source.to_json(),
+            "coverage_status": self.coverage_status,
+            "blocked_reason": self.blocked_reason,
+        }
+
+
+@dataclass(frozen=True)
 class SuperBreakEmissionIR:
     super_break_emission_id: str
     template_id: str
@@ -767,6 +807,7 @@ class CanonicalIR:
     status_callback_tasks: tuple[StatusCallbackTaskIR, ...] = ()
     status_damage_emissions: tuple[StatusDamageEmissionIR, ...] = ()
     action_delay_emissions: tuple[ActionDelayEmissionIR, ...] = ()
+    queue_intents: tuple[QueueIntentIR, ...] = ()
     super_break_emissions: tuple[SuperBreakEmissionIR, ...] = ()
     triggers: tuple[TriggerIR, ...] = ()
     effects: tuple[EffectIR, ...] = ()
@@ -796,6 +837,7 @@ class CanonicalIR:
             "status_callback_tasks": [task.to_json() for task in self.status_callback_tasks],
             "status_damage_emissions": [emission.to_json() for emission in self.status_damage_emissions],
             "action_delay_emissions": [emission.to_json() for emission in self.action_delay_emissions],
+            "queue_intents": [intent.to_json() for intent in self.queue_intents],
             "super_break_emissions": [emission.to_json() for emission in self.super_break_emissions],
             "triggers": [trigger.to_json() for trigger in self.triggers],
             "effects": [effect.to_json() for effect in self.effects],
