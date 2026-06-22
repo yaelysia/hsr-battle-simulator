@@ -256,6 +256,14 @@ class EventDispatchSystem:
         )
         if not matches:
             reason = "listener_match_missing"
+            alias = aliases[0] if aliases else EventAlias(
+                callback_event="",
+                scope_kind=dispatch_scope,
+                source_basis=f"runtime_event:{event.event_type}",
+                admission_status="blocked",
+                blocked_dependency="event_alias_missing",
+            )
+            target_unit = str(unit_id or event.target_id or _event_current_hit_target_id(event) or "")
             listener_record = _listener_record(
                 event,
                 listener_kind="listener_dispatch",
@@ -269,6 +277,9 @@ class EventDispatchSystem:
                     "unit_id": unit_id or "",
                     "modifier_name": modifier_name or "",
                     "event_aliases": [alias.to_json() for alias in aliases],
+                    "order_key": _listener_order_key(state, alias.scope_kind, target_unit, -1, None),
+                    "event_alias": alias.to_json(),
+                    "blocked_category": _blocked_category(reason),
                 },
             )
             return EventDispatchResult(
@@ -438,6 +449,29 @@ class EventDispatchSystem:
             reason=reason,
             metadata=metadata or {},
         )
+        aliases = _event_aliases(event)
+        alias = aliases[0] if aliases else EventAlias(
+            callback_event="",
+            scope_kind=scope,
+            source_basis=f"runtime_event:{event.event_type}",
+            admission_status="blocked",
+            blocked_dependency="event_alias_missing",
+        )
+        listener_metadata: dict[str, JSONValue] = {
+            **(metadata or {}),
+            "order_key": {
+                "scope_priority": SCOPE_PRIORITY.get(scope, 999),
+                "scope_kind": scope,
+                "unit_order": 999999,
+                "unit_id": str(event.target_id or ""),
+                "status_order": -1,
+                "callback_source_order": "",
+                "callback_id": "",
+                "task_order": [],
+            },
+            "event_alias": alias.to_json(),
+            "blocked_category": _blocked_category(reason),
+        }
         listener_record = _listener_record(
             event,
             listener_kind=listener_kind,
@@ -445,7 +479,7 @@ class EventDispatchSystem:
             source="event_dispatch_system",
             status="blocked",
             reason=reason,
-            metadata=metadata or {},
+            metadata=listener_metadata,
         )
         return EventDispatchResult(
             after_state=state,

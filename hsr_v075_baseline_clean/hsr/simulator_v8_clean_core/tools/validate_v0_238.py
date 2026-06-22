@@ -66,6 +66,7 @@ def run_validation(package_root: Path, tbgd_root: Path, output_dir: Path) -> dic
     multi_target_case = _multi_target_dispatch_case(rules, ir, build_result)
     order_case = _listener_order_case(rules, break_setup["initial_state"])
     unknown_alias_case = _unknown_event_alias_case(rules, break_setup["initial_state"])
+    no_match_case = _listener_no_match_case(rules, break_setup["initial_state"])
 
     transitions = (
         status_dispatch_case["transition"],
@@ -73,6 +74,7 @@ def run_validation(package_root: Path, tbgd_root: Path, output_dir: Path) -> dic
         multi_target_case["transition"],
         order_case["transition"],
         unknown_alias_case["transition"],
+        no_match_case["transition"],
     )
     checks = {
         "coverage": _coverage_checks(coverage.to_json(), ir),
@@ -85,6 +87,7 @@ def run_validation(package_root: Path, tbgd_root: Path, output_dir: Path) -> dic
         "blocked_listener_regression": blocked_listener_case["checks"],
         "multi_target_regression": multi_target_case["checks"],
         "unknown_alias": unknown_alias_case["checks"],
+        "listener_no_match": no_match_case["checks"],
     }
     result = {
         "version": VALIDATION_VERSION,
@@ -107,6 +110,7 @@ def run_validation(package_root: Path, tbgd_root: Path, output_dir: Path) -> dic
             "multi_target": multi_target_case["source_audit"],
             "listener_order": order_case["source_audit"],
             "unknown_alias": unknown_alias_case["source_audit"],
+            "listener_no_match": no_match_case["source_audit"],
         },
         "trust_matrix": _trust_matrix(checks),
     }
@@ -117,6 +121,7 @@ def run_validation(package_root: Path, tbgd_root: Path, output_dir: Path) -> dic
     write_json(output_dir / "sample_multi_target_dispatch_transition_v0_238.json", multi_target_case["transition"])
     write_json(output_dir / "sample_listener_order_transition_v0_238.json", order_case["transition"])
     write_json(output_dir / "sample_unknown_event_alias_transition_v0_238.json", unknown_alias_case["transition"])
+    write_json(output_dir / "sample_listener_no_match_transition_v0_238.json", no_match_case["transition"])
     write_json(output_dir / "coverage_summary_v0_238.json", coverage.to_json())
     return result
 
@@ -198,6 +203,57 @@ def _unknown_event_alias_case(rules: RuleBook, state: BattleState) -> dict[str, 
             "event_alias_missing_recorded": any(
                 _record_payload(record).get("blocked_category") == "event_alias_missing"
                 for record in listener_records
+            ),
+        }
+    )
+    checks["ok"] = all(value for key, value in checks.items() if key != "ok")
+    return {
+        "checks": checks,
+        "transition": transition.to_json(),
+        "source_audit": source_audit.to_json(),
+    }
+
+
+def _listener_no_match_case(rules: RuleBook, state: BattleState) -> dict[str, Any]:
+    event = GameEvent(
+        event_type="validation.listener_no_match",
+        source_id="ally:actor",
+        target_id="enemy:profile_target",
+        window="OnListenValidationNoMatch",
+        process_only=True,
+        payload={
+            "callback_event": "OnListenValidationNoMatch",
+            "listener_scope": "global_listener",
+            "source_basis": "validation_listener_no_match",
+        },
+    )
+    result = EventDispatchSystem(rules, EffectRegistry(StatusSystem(rules))).dispatch_event(state, event=event)
+    transition = _system_transition_from_dispatch(
+        before_state=state,
+        result=result,
+        action_id="event_dispatch:listener_no_match",
+        metadata={"event_type": event.event_type},
+    )
+    source_audit = RuntimeSourceAuditor(rules).validate_transition(transition)
+    records = _records(transition)
+    listener_records = _records_of_type(records, "listener_match")
+    payloads = [_record_payload(record) for record in listener_records]
+    checks = _transition_checks_for_case(transition, state)
+    checks.update(
+        {
+            "source_audit": source_audit.ok,
+            "snapshot_unchanged": transition.after.to_json() == transition.transaction.before.to_json(),
+            "no_mutations": not transition.transaction.mutations,
+            "listener_match_missing_recorded": any(payload.get("reason") == "listener_match_missing" for payload in payloads),
+            "no_match_has_order_key": all(
+                isinstance(payload.get("order_key"), dict) and bool(payload.get("order_key"))
+                for payload in payloads
+                if payload.get("reason") == "listener_match_missing"
+            ),
+            "no_match_has_event_alias": all(
+                isinstance(payload.get("event_alias"), dict) and bool(payload.get("event_alias"))
+                for payload in payloads
+                if payload.get("reason") == "listener_match_missing"
             ),
         }
     )
