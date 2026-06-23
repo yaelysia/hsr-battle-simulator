@@ -616,7 +616,7 @@ def _action_execution_status(ir: CanonicalIR) -> dict[str, Any]:
             "status_counts": dict(sorted(queue_window_status.items())),
             "blocked_reason_counts": dict(sorted(queue_window_reasons.items())),
             "window_family_counts": dict(sorted(queue_window_families.items())),
-            "reason": "QueueWindowIR classifies queue entries into ultimate/follow_up/counter/extra_turn/immediate/interrupt/insert/assistant families before runtime drain admission",
+            "reason": "QueueWindowIR classifies explicit queue families before runtime drain admission; text-only hints are kept as discovered evidence and cannot make a queue window executable",
         },
         "queue_lifecycle_policies": {
             "lowered": len(ir.queue_lifecycle_policies),

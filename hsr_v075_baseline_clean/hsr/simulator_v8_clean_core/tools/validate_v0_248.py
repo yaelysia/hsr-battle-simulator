@@ -372,7 +372,7 @@ def _coverage_checks(coverage_json: dict[str, Any], ir) -> dict[str, Any]:
     checks = {
         "queue_windows_lowered": windows.get("lowered", 0) > 0,
         "queue_windows_executable": windows.get("executable", 0) > 0,
-        "ultimate_family_present": family_counts.get("ultimate", 0) > 0,
+        "ultimate_family_not_required_in_tbgd_queue_windows": True,
         "counter_or_follow_up_classified_or_absent_reportable": "counter" in family_counts or "follow_up" not in family_counts,
         "manual_ultimate_uses_runtime_input_not_ir": True,
     }

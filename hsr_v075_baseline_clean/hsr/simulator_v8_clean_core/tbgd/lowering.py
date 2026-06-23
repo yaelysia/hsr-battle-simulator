@@ -4137,12 +4137,15 @@ def _queue_window_family(intent: QueueIntentIR) -> tuple[str, dict[str, Any]]:
         )
     )
     lowered = text.lower()
+    text_hints = _queue_window_text_hints(lowered)
     basis = {
         "opcode": intent.opcode,
         "queue_kind": intent.queue_kind,
         "priority_key": priority_key,
         "action_or_ability_ref": ref,
         "source_path": intent.source.source_path,
+        "text_hints": text_hints,
+        "text_hint_status": "discovered_only" if text_hints else "",
     }
     if intent.opcode == "TurnInsertAssistantAbility":
         return "assistant", basis
@@ -4156,28 +4159,34 @@ def _queue_window_family(intent: QueueIntentIR) -> tuple[str, dict[str, Any]]:
                 or "extra_turn_source_task_not_admitted_without_priority_target_action_resolution"
             ),
         }
-    if any(token in lowered for token in ("counter", "反击")):
-        return "counter", basis
-    if any(token in lowered for token in ("follow", "followup", "follow_up", "追加", "追击")):
-        return "follow_up", basis
-    if any(token in lowered for token in ("onemore", "one_more", "extra_turn", "extraturn", "additionalturn")):
-        return "extra_turn", {
-            **basis,
-            "extra_turn_basis_status": "discovered_only",
-            "source_basis": "text_only_queue_window_hint",
-            "blocking_dependency": "extra_turn_text_hint_not_admitted_without_structured_lifecycle_and_action_source",
-        }
-    if any(token in lowered for token in ("ultra", "ultimate", "ultimateskill")):
-        return "ultimate", basis
-    if "interrupt" in lowered:
-        return "interrupt", basis
-    if "immediate" in lowered:
-        return "immediate", basis
     if intent.queue_kind == "turn_insert_action":
         return "insert_action", basis
     if intent.queue_kind == "turn_insert_ability":
         return "insert_ability", basis
+    if text_hints:
+        return "unknown", {
+            **basis,
+            "source_basis": "text_only_queue_window_hint",
+            "blocking_dependency": "queue_window_text_hint_not_admitted_without_structured_source",
+        }
     return "unknown", basis
+
+
+def _queue_window_text_hints(lowered_text: str) -> list[str]:
+    hints: list[str] = []
+    if any(token in lowered_text for token in ("counter", "反击")):
+        hints.append("counter")
+    if any(token in lowered_text for token in ("follow", "followup", "follow_up", "追加", "追击")):
+        hints.append("follow_up")
+    if any(token in lowered_text for token in ("onemore", "one_more", "extra_turn", "extraturn", "additionalturn")):
+        hints.append("extra_turn")
+    if any(token in lowered_text for token in ("ultra", "ultimate", "ultimateskill")):
+        hints.append("ultimate")
+    if "interrupt" in lowered_text:
+        hints.append("interrupt")
+    if "immediate" in lowered_text:
+        hints.append("immediate")
+    return hints
 
 
 def _queue_window_policy(
@@ -4192,6 +4201,8 @@ def _queue_window_policy(
     policy: dict[str, Any] = {
         "window_family": family,
         "source_basis": basis,
+        "text_hints": _json_safe(basis.get("text_hints") or []),
+        "text_hint_status": str(basis.get("text_hint_status") or ""),
         "priority_ordering_admitted": ordering_admitted,
         "priority_value": priority_value,
         "dequeue_before_execute": True,
@@ -4217,6 +4228,8 @@ def _queue_window_policy(
                 "lifecycle_policy_admitted": lifecycle_admitted,
                 "turn_lifecycle_policy": "admitted_from_queue_lifecycle_policy" if lifecycle_admitted else "blocked_until_extra_turn_lifecycle_source_admitted",
                 "duration_tick_policy": "ActionPhaseEnd_from_OneMore_LifeStepMoment" if lifecycle_admitted else "blocked_until_extra_turn_lifecycle_source_admitted",
+                "action_selection_policy": "source_or_route_selected_non_ultimate_action_required",
+                "action_selection_admitted": lifecycle_admitted and resolution is not None and resolution.coverage_status == "executable",
                 "extra_turn_source_basis": _json_safe(extra_turn_source_basis),
             }
         )
