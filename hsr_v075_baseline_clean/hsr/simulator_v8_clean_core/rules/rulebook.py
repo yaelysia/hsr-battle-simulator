@@ -22,6 +22,7 @@ from .ir import (
     FormulaIR,
     HitProfileIR,
     QueueIntentIR,
+    QueueLifecyclePolicyIR,
     QueuePriorityIR,
     QueueResolutionIR,
     QueueWindowIR,
@@ -364,6 +365,29 @@ class RuleBook:
             "_queue_window_by_intent",
             {window.queue_intent_id: window for window in self.ir.queue_windows},
         )
+        object.__setattr__(
+            self,
+            "_queue_lifecycle_policies",
+            {policy.queue_lifecycle_policy_id: policy for policy in self.ir.queue_lifecycle_policies},
+        )
+        object.__setattr__(
+            self,
+            "_queue_lifecycle_policy_by_window",
+            {
+                policy.queue_window_id: policy
+                for policy in self.ir.queue_lifecycle_policies
+                if policy.queue_window_id
+            },
+        )
+        object.__setattr__(
+            self,
+            "_queue_lifecycle_policy_by_intent",
+            {
+                policy.queue_intent_id: policy
+                for policy in self.ir.queue_lifecycle_policies
+                if policy.queue_intent_id
+            },
+        )
         standalone_ability_graphs_by_name: dict[str, list[StandaloneAbilityGraphIR]] = {}
         for graph in self.ir.standalone_ability_graphs:
             standalone_ability_graphs_by_name.setdefault(graph.ability_name, []).append(graph)
@@ -647,6 +671,15 @@ class RuleBook:
 
     def queue_window_for_intent(self, queue_intent_id: str) -> QueueWindowIR | None:
         return self._queue_window_by_intent.get(queue_intent_id)
+
+    def queue_lifecycle_policy(self, policy_id: str) -> QueueLifecyclePolicyIR | None:
+        return self._queue_lifecycle_policies.get(policy_id)
+
+    def queue_lifecycle_policy_for_window(self, queue_window_id: str) -> QueueLifecyclePolicyIR | None:
+        return self._queue_lifecycle_policy_by_window.get(queue_window_id)
+
+    def queue_lifecycle_policy_for_intent(self, queue_intent_id: str) -> QueueLifecyclePolicyIR | None:
+        return self._queue_lifecycle_policy_by_intent.get(queue_intent_id)
 
     def standalone_ability_graph(self, graph_id: str) -> StandaloneAbilityGraphIR | None:
         return self._standalone_ability_graphs.get(graph_id)

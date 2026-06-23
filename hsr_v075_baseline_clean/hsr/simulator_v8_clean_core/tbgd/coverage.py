@@ -413,6 +413,9 @@ def _action_execution_status(ir: CanonicalIR) -> dict[str, Any]:
     queue_window_status = Counter(window.coverage_status for window in ir.queue_windows)
     queue_window_reasons = Counter(window.blocked_reason for window in ir.queue_windows if window.blocked_reason)
     queue_window_families = Counter(window.window_family for window in ir.queue_windows)
+    queue_lifecycle_status = Counter(policy.coverage_status for policy in ir.queue_lifecycle_policies)
+    queue_lifecycle_reasons = Counter(policy.blocked_reason for policy in ir.queue_lifecycle_policies if policy.blocked_reason)
+    queue_lifecycle_families = Counter(policy.window_family for policy in ir.queue_lifecycle_policies)
     standalone_graph_status = Counter(graph.coverage_status for graph in ir.standalone_ability_graphs)
     standalone_graph_reasons = Counter(graph.blocked_reason for graph in ir.standalone_ability_graphs if graph.blocked_reason)
     standalone_graph_source_modes = Counter(graph.source_mode for graph in ir.standalone_ability_graphs)
@@ -607,6 +610,16 @@ def _action_execution_status(ir: CanonicalIR) -> dict[str, Any]:
             "blocked_reason_counts": dict(sorted(queue_window_reasons.items())),
             "window_family_counts": dict(sorted(queue_window_families.items())),
             "reason": "QueueWindowIR classifies queue entries into ultimate/follow_up/counter/extra_turn/immediate/interrupt/insert/assistant families before runtime drain admission",
+        },
+        "queue_lifecycle_policies": {
+            "lowered": len(ir.queue_lifecycle_policies),
+            "executable": queue_lifecycle_status["executable"],
+            "blocked": queue_lifecycle_status["blocked"],
+            "discovered_only": queue_lifecycle_status["discovered_only"],
+            "status_counts": dict(sorted(queue_lifecycle_status.items())),
+            "blocked_reason_counts": dict(sorted(queue_lifecycle_reasons.items())),
+            "window_family_counts": dict(sorted(queue_lifecycle_families.items())),
+            "reason": "QueueLifecyclePolicyIR separates extra-turn source/lifecycle evidence from queue window execution admission",
         },
         "standalone_ability_graphs": {
             "lowered": len(ir.standalone_ability_graphs),

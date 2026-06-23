@@ -634,6 +634,24 @@ class QueueSystem:
                 blocked_reason=str(window_policy.get("blocking_dependency") or "queue_window_ordering_not_admitted"),
                 source_trace={"queue_resolution_source": resolution.source.to_json(), "queue_entry": entry},
             )
+        if window_family == "extra_turn" and window_policy.get("lifecycle_policy_admitted") is not True:
+            return QueueWindowPlan(
+                False,
+                "blocked",
+                window_family,
+                queue_kind,
+                str(entry.get("queue_intent_id") or ""),
+                resolution.queue_resolution_id,
+                queue_priority_id=str(priority_source.get("queue_priority_id") or ""),
+                queue_window_id=queue_window_id,
+                window_family=window_family,
+                priority_key=str(priority_source.get("priority_key") or ""),
+                priority_value=priority_value,
+                window_policy=window_policy,
+                target_resolution=target_resolution,
+                blocked_reason=str(window_policy.get("blocking_dependency") or "extra_turn_lifecycle_policy_not_admitted"),
+                source_trace={"queue_resolution_source": resolution.source.to_json(), "queue_entry": entry},
+            )
         return QueueWindowPlan(
             True,
             "admitted",

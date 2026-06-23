@@ -31,6 +31,7 @@ from ..rules.ir import (
     HitProfileIR,
     IRSource,
     QueueIntentIR,
+    QueueLifecyclePolicyIR,
     QueuePriorityIR,
     QueueResolutionIR,
     QueueWindowIR,
@@ -241,6 +242,7 @@ class TBGDLowering:
         effects.extend(standalone_effects)
         conditions.extend(standalone_conditions)
         formulas.extend(standalone_formulas)
+        queue_intents.extend(_extra_turn_queue_intents_from_ability_tasks(ability_tasks))
         combatant_action_sets = self._lower_combatant_action_sets(action_definitions)
         queue_resolutions = _lower_queue_resolutions(
             queue_intents=queue_intents,
@@ -249,7 +251,9 @@ class TBGDLowering:
             standalone_graphs=standalone_ability_graphs,
             combatant_action_sets=combatant_action_sets,
         )
-        queue_windows = _lower_queue_windows(queue_intents, queue_resolutions)
+        extra_turn_source_basis = self._extra_turn_source_basis()
+        queue_windows = _lower_queue_windows(queue_intents, queue_resolutions, extra_turn_source_basis)
+        queue_lifecycle_policies = _lower_queue_lifecycle_policies(queue_windows, extra_turn_source_basis)
         entities = list(_dedupe_entities(entities).values())
         formulas.extend(self._lower_elation_mechanics())
         formulas.extend(self._lower_damage_behavior_templates())
@@ -278,6 +282,7 @@ class TBGDLowering:
             queue_resolutions=tuple(queue_resolutions),
             queue_priorities=tuple(queue_priorities),
             queue_windows=tuple(queue_windows),
+            queue_lifecycle_policies=tuple(queue_lifecycle_policies),
             standalone_ability_graphs=tuple(standalone_ability_graphs),
             combatant_action_sets=tuple(combatant_action_sets),
             timeline_rules=tuple(timeline_rules),
@@ -680,6 +685,116 @@ class TBGDLowering:
                     )
                 )
         return priorities
+
+    def _extra_turn_source_basis(self) -> dict[str, Any]:
+        basis: dict[str, Any] = {
+            "source_kind": "extra_turn_source_discovery",
+            "source_basis_status": "blocked",
+            "blocking_dependency": "extra_turn_lifecycle_source_missing",
+            "evidence": {},
+        }
+        enum_path = "Config/GlobalConfig/JsonEnumDefineConfig.json"
+        enum_data = _read_json_file(self.tbgd_root / enum_path)
+        if isinstance(enum_data, dict):
+            modifier_flags = _enum_values(enum_data, "ModifierBehaviorFlag")
+            modifier_states = _enum_values(enum_data, "ModifierState")
+            enum_evidence: dict[str, Any] = {}
+            if "OneMore" in modifier_flags:
+                enum_evidence["ModifierBehaviorFlag.OneMore"] = {
+                    "value": modifier_flags["OneMore"],
+                    "source": IRSource(
+                        source_path=enum_path,
+                        raw_type="JsonEnumDefineConfig",
+                        raw_id="ModifierBehaviorFlag.OneMore",
+                        evidence={"enum": "ModifierBehaviorFlag", "key": "OneMore", "value": modifier_flags["OneMore"]},
+                    ).to_json(),
+                }
+            if "OneMoreCount" in modifier_flags:
+                enum_evidence["ModifierBehaviorFlag.OneMoreCount"] = {
+                    "value": modifier_flags["OneMoreCount"],
+                    "source": IRSource(
+                        source_path=enum_path,
+                        raw_type="JsonEnumDefineConfig",
+                        raw_id="ModifierBehaviorFlag.OneMoreCount",
+                        evidence={"enum": "ModifierBehaviorFlag", "key": "OneMoreCount", "value": modifier_flags["OneMoreCount"]},
+                    ).to_json(),
+                }
+            if "OneMore" in modifier_states:
+                enum_evidence["ModifierState.OneMore"] = {
+                    "value": modifier_states["OneMore"],
+                    "source": IRSource(
+                        source_path=enum_path,
+                        raw_type="JsonEnumDefineConfig",
+                        raw_id="ModifierState.OneMore",
+                        evidence={"enum": "ModifierState", "key": "OneMore", "value": modifier_states["OneMore"]},
+                    ).to_json(),
+                }
+            if enum_evidence:
+                basis["evidence"]["enum"] = enum_evidence
+
+        const_path = "Config/GlobalConfig/GameCoreConstValue.json"
+        const_data = _read_json_file(self.tbgd_root / const_path)
+        custom_switches = const_data.get("CustomSwitchMap") if isinstance(const_data, dict) else None
+        if isinstance(custom_switches, dict) and "InsertAbilityAfterUltraSkillEndDontTickAbility" in custom_switches:
+            value = custom_switches.get("InsertAbilityAfterUltraSkillEndDontTickAbility")
+            basis["evidence"]["insert_ability_after_ultra_skill_end_dont_tick_ability"] = {
+                "value": _json_safe(value),
+                "source": IRSource(
+                    source_path=const_path,
+                    raw_type="GameCoreConstValue",
+                    raw_id="CustomSwitchMap.InsertAbilityAfterUltraSkillEndDontTickAbility",
+                    evidence={
+                        "raw_path": "CustomSwitchMap.InsertAbilityAfterUltraSkillEndDontTickAbility",
+                        "value": _json_safe(value),
+                    },
+                ).to_json(),
+            }
+
+        modifier_path = "Config/ConfigGlobalModifier/GlobalModifier_Common_Specific.json"
+        modifier_data = _read_json_file(self.tbgd_root / modifier_path)
+        modifier_map = modifier_data.get("ModifierMap") if isinstance(modifier_data, dict) else None
+        modifier = modifier_map.get("OneMore") if isinstance(modifier_map, dict) else None
+        if isinstance(modifier, dict):
+            behavior_flags = tuple(str(item) for item in modifier.get("BehaviorFlagList", ()) if isinstance(item, str))
+            lifetime = modifier.get("LifeTime")
+            life_step_moment = modifier.get("LifeStepMoment")
+            lifecycle_admitted = (
+                "OneMore" in behavior_flags
+                and isinstance(lifetime, (int, float))
+                and str(life_step_moment) == "ActionPhaseEnd"
+            )
+            source = IRSource(
+                source_path=modifier_path,
+                raw_type="ConfigGlobalModifier",
+                raw_id="OneMore",
+                evidence={
+                    "modifier_name": "OneMore",
+                    "raw_path": "ModifierMap.OneMore",
+                    "BehaviorFlagList": list(behavior_flags),
+                    "LifeTime": _json_safe(lifetime),
+                    "LifeStepMoment": _json_safe(life_step_moment),
+                    "Stacking": _json_safe(modifier.get("Stacking")),
+                },
+            )
+            basis["evidence"]["one_more_modifier"] = {
+                "lifecycle_admitted": lifecycle_admitted,
+                "source": source.to_json(),
+            }
+            if lifecycle_admitted:
+                basis["source_basis_status"] = "lifecycle_source_admitted"
+                basis["blocking_dependency"] = ""
+                basis["lifecycle_policy"] = {
+                    "turn_begin_policy": "queue_extra_turn_begin_event",
+                    "turn_end_policy": "queue_extra_turn_end_event",
+                    "duration_tick_policy": "ActionPhaseEnd_from_OneMore_LifeStepMoment",
+                    "av_policy": "queue_child_bypasses_natural_av_advance",
+                    "natural_turn_policy": "extra_turn_is_non_natural_queue_turn",
+                    "reentry_policy": "append_pending_no_recursive_drain",
+                    "remaining_duration": int(lifetime),
+                }
+            else:
+                basis["blocking_dependency"] = "one_more_modifier_lifecycle_not_admitted"
+        return basis
 
     def _lower_combatant_action_sets(
         self,
@@ -1633,6 +1748,17 @@ class TBGDLowering:
                     queue_priority_lookup=queue_priority_lookup,
                 )
             )
+        if opcode in EXTRA_TURN_SOURCE_OPCODES:
+            lowered.queue_intents.append(
+                _extra_turn_queue_intent_from_task(
+                    callback_id=callback_id,
+                    phase_id="",
+                    task_id=task_id,
+                    opcode=opcode,
+                    task=task,
+                    source=source,
+                )
+            )
         return lowered
 
     def _lower_task(
@@ -1886,6 +2012,21 @@ class _LoweredAbility:
 class _StandaloneActionRef:
     action_id: str
     level: int
+
+
+def _read_json_file(path: Path) -> Any:
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def _enum_values(data: dict[str, Any], enum_name: str) -> dict[str, Any]:
+    enum = data.get(enum_name)
+    values = enum.get("Values") if isinstance(enum, dict) else None
+    return dict(values) if isinstance(values, dict) else {}
 
 
 def _short_gamecore_type(raw_type: Any) -> str:
@@ -3325,6 +3466,7 @@ def _action_delay_expr(task: dict[str, Any], opcode: str) -> dict[str, Any]:
 
 
 QUEUE_INTENT_OPCODES = {"TurnInsertAbility", "TurnInsertAction", "TurnInsertAssistantAbility"}
+EXTRA_TURN_SOURCE_OPCODES = {"UseSkillOneMore"}
 QUEUE_TARGET_ALIASES = {
     "Caster",
     "ModifierOwnerEntity",
@@ -3390,6 +3532,72 @@ def _queue_intent_from_task(
         coverage_status=coverage_status,
         blocked_reason=blocked_reason,
     )
+
+
+def _extra_turn_queue_intent_from_task(
+    *,
+    callback_id: str,
+    phase_id: str,
+    task_id: str,
+    opcode: str,
+    task: dict[str, Any],
+    source: IRSource,
+) -> QueueIntentIR:
+    skill_type = _value_field(task.get("SkillType"))
+    child_index = _numeric_expr_summary(task.get("ChildSkillIndex"))
+    child_index["source_field"] = "ChildSkillIndex"
+    child_index["opcode"] = opcode
+    priority_source = {
+        "field": "",
+        "priority_table": "",
+        "priority_key": "",
+        "priority_ordering_admitted": False,
+        "reason": "extra_turn_priority_source_missing_for_use_skill_one_more",
+    }
+    return QueueIntentIR(
+        queue_intent_id=f"queue_intent:{callback_id or phase_id}:{task_id}",
+        source_task_id=task_id,
+        callback_id=callback_id,
+        phase_id=phase_id,
+        opcode=opcode,
+        queue_kind="extra_turn",
+        priority_source=priority_source,
+        actor_target_alias="Caster",
+        action_ref_or_ability_name=str(skill_type or ""),
+        skill_index_expr=child_index,
+        ability_target_alias=None,
+        auto_cast=False,
+        abort_policy={},
+        source=source,
+        coverage_status="blocked",
+        blocked_reason=(
+            "extra_turn_use_skill_one_more_not_admitted:"
+            "priority_target_action_resolution_and_lifecycle_policy_required"
+        ),
+    )
+
+
+def _extra_turn_queue_intents_from_ability_tasks(tasks: list[AbilityTaskIR]) -> list[QueueIntentIR]:
+    intents: list[QueueIntentIR] = []
+    seen: set[str] = set()
+    for task in tasks:
+        if task.opcode not in EXTRA_TURN_SOURCE_OPCODES:
+            continue
+        raw_task = task.source.evidence.get("task") if isinstance(task.source.evidence, dict) else None
+        task_payload = raw_task if isinstance(raw_task, dict) else {}
+        intent = _extra_turn_queue_intent_from_task(
+            callback_id="",
+            phase_id=task.phase_id,
+            task_id=task.task_id,
+            opcode=task.opcode,
+            task=task_payload,
+            source=task.source,
+        )
+        if intent.queue_intent_id in seen:
+            continue
+        seen.add(intent.queue_intent_id)
+        intents.append(intent)
+    return intents
 
 
 def _queue_skill_index_expr(task: dict[str, Any], opcode: str) -> dict[str, Any]:
@@ -3784,17 +3992,118 @@ def _queue_resolution_from_intent(
 def _lower_queue_windows(
     queue_intents: list[QueueIntentIR],
     queue_resolutions: list[QueueResolutionIR],
+    extra_turn_source_basis: dict[str, Any],
 ) -> list[QueueWindowIR]:
     resolutions_by_intent = {resolution.queue_intent_id: resolution for resolution in queue_resolutions}
     return [
-        _queue_window_from_intent(intent, resolutions_by_intent.get(intent.queue_intent_id))
+        _queue_window_from_intent(intent, resolutions_by_intent.get(intent.queue_intent_id), extra_turn_source_basis)
         for intent in queue_intents
     ]
 
 
-def _queue_window_from_intent(intent: QueueIntentIR, resolution: QueueResolutionIR | None) -> QueueWindowIR:
+def _lower_queue_lifecycle_policies(
+    queue_windows: list[QueueWindowIR],
+    extra_turn_source_basis: dict[str, Any],
+) -> list[QueueLifecyclePolicyIR]:
+    policies: list[QueueLifecyclePolicyIR] = []
+    source_evidence = extra_turn_source_basis.get("evidence") if isinstance(extra_turn_source_basis.get("evidence"), dict) else {}
+    source_policy = extra_turn_source_basis.get("lifecycle_policy") if isinstance(extra_turn_source_basis.get("lifecycle_policy"), dict) else {}
+    one_more_source = _first_source_from_extra_turn_basis(extra_turn_source_basis)
+    policies.append(
+        QueueLifecyclePolicyIR(
+            queue_lifecycle_policy_id="queue_lifecycle_policy:extra_turn_source:OneMore",
+            queue_window_id="",
+            queue_intent_id="",
+            window_family="extra_turn",
+            lifecycle_policy=_json_safe(source_policy) if source_policy else {},
+            source_basis=_json_safe(extra_turn_source_basis),
+            source=one_more_source,
+            coverage_status="discovered_only"
+            if extra_turn_source_basis.get("source_basis_status") == "lifecycle_source_admitted"
+            else "blocked",
+            blocked_reason=""
+            if extra_turn_source_basis.get("source_basis_status") == "lifecycle_source_admitted"
+            else str(extra_turn_source_basis.get("blocking_dependency") or "extra_turn_lifecycle_source_missing"),
+        )
+    )
+    for window in queue_windows:
+        if window.window_family != "extra_turn":
+            continue
+        window_policy = window.window_policy if isinstance(window.window_policy, dict) else {}
+        policy_id = str(window_policy.get("queue_lifecycle_policy_id") or f"queue_lifecycle_policy:queue_window:{window.queue_intent_id}")
+        admitted = window.coverage_status == "executable" and window_policy.get("lifecycle_policy_admitted") is True
+        lifecycle_policy = _json_safe(source_policy) if source_policy else {}
+        if isinstance(lifecycle_policy, dict):
+            lifecycle_policy = {
+                **lifecycle_policy,
+                "queue_window_id": window.queue_window_id,
+                "queue_intent_id": window.queue_intent_id,
+                "window_family": window.window_family,
+                "window_policy": window_policy,
+            }
+        blocked_reason = ""
+        if not admitted:
+            blocked_reason = (
+                window.blocked_reason
+                or str(window_policy.get("blocking_dependency") or "")
+                or "extra_turn_window_or_lifecycle_not_admitted"
+            )
+        policies.append(
+            QueueLifecyclePolicyIR(
+                queue_lifecycle_policy_id=policy_id,
+                queue_window_id=window.queue_window_id,
+                queue_intent_id=window.queue_intent_id,
+                window_family=window.window_family,
+                lifecycle_policy=lifecycle_policy if isinstance(lifecycle_policy, dict) else {},
+                source_basis={
+                    "extra_turn_source_basis": _json_safe(extra_turn_source_basis),
+                    "queue_window_source": window.source.to_json(),
+                    "source_evidence_keys": sorted(str(key) for key in source_evidence),
+                },
+                source=IRSource(
+                    source_path=window.source.source_path,
+                    raw_type="QueueLifecyclePolicy",
+                    raw_id=policy_id,
+                    evidence={
+                        "queue_window_id": window.queue_window_id,
+                        "queue_intent_id": window.queue_intent_id,
+                        "queue_window_source": window.source.to_json(),
+                        "extra_turn_source_basis": _json_safe(extra_turn_source_basis),
+                    },
+                ),
+                coverage_status="executable" if admitted else "blocked",
+                blocked_reason=blocked_reason,
+            )
+        )
+    return policies
+
+
+def _first_source_from_extra_turn_basis(extra_turn_source_basis: dict[str, Any]) -> IRSource:
+    evidence = extra_turn_source_basis.get("evidence") if isinstance(extra_turn_source_basis.get("evidence"), dict) else {}
+    modifier = evidence.get("one_more_modifier") if isinstance(evidence.get("one_more_modifier"), dict) else {}
+    source = modifier.get("source") if isinstance(modifier.get("source"), dict) else None
+    if isinstance(source, dict):
+        return IRSource(
+            source_path=str(source.get("source_path") or "Config/ConfigGlobalModifier/GlobalModifier_Common_Specific.json"),
+            raw_type=str(source.get("raw_type") or "ConfigGlobalModifier"),
+            raw_id=str(source.get("raw_id") or "OneMore"),
+            evidence=_json_safe(source.get("evidence") or {}),
+        )
+    return IRSource(
+        source_path="Config/GlobalConfig/JsonEnumDefineConfig.json",
+        raw_type="ExtraTurnSourceDiscovery",
+        raw_id="OneMore",
+        evidence=_json_safe(extra_turn_source_basis),
+    )
+
+
+def _queue_window_from_intent(
+    intent: QueueIntentIR,
+    resolution: QueueResolutionIR | None,
+    extra_turn_source_basis: dict[str, Any],
+) -> QueueWindowIR:
     family, basis = _queue_window_family(intent)
-    policy = _queue_window_policy(intent, resolution, family, basis)
+    policy = _queue_window_policy(intent, resolution, family, basis, extra_turn_source_basis)
     source = IRSource(
         source_path=intent.source.source_path,
         raw_type="QueueWindow",
@@ -3821,6 +4130,9 @@ def _queue_window_from_intent(intent: QueueIntentIR, resolution: QueueResolution
     elif not policy.get("priority_ordering_admitted"):
         status = "blocked"
         reason = str(policy.get("blocking_dependency") or "queue_window_ordering_not_admitted")
+    elif policy.get("lifecycle_policy_admitted") is False:
+        status = "blocked"
+        reason = str(policy.get("blocking_dependency") or "queue_window_lifecycle_policy_not_admitted")
     elif family in {"assistant", "unknown"}:
         status = "blocked"
         reason = f"queue_window_family_not_admitted:{family}"
@@ -3864,12 +4176,27 @@ def _queue_window_family(intent: QueueIntentIR) -> tuple[str, dict[str, Any]]:
     }
     if intent.opcode == "TurnInsertAssistantAbility":
         return "assistant", basis
+    if intent.opcode in EXTRA_TURN_SOURCE_OPCODES or intent.queue_kind == "extra_turn":
+        return "extra_turn", {
+            **basis,
+            "extra_turn_basis_status": "discovered_only",
+            "source_basis": "structured_extra_turn_source_task",
+            "blocking_dependency": (
+                intent.blocked_reason
+                or "extra_turn_source_task_not_admitted_without_priority_target_action_resolution"
+            ),
+        }
     if any(token in lowered for token in ("counter", "反击")):
         return "counter", basis
     if any(token in lowered for token in ("follow", "followup", "follow_up", "追加", "追击")):
         return "follow_up", basis
     if any(token in lowered for token in ("onemore", "one_more", "extra_turn", "extraturn", "additionalturn")):
-        return "extra_turn", basis
+        return "extra_turn", {
+            **basis,
+            "extra_turn_basis_status": "discovered_only",
+            "source_basis": "text_only_queue_window_hint",
+            "blocking_dependency": "extra_turn_text_hint_not_admitted_without_structured_lifecycle_and_action_source",
+        }
     if any(token in lowered for token in ("ultra", "ultimate", "ultimateskill")):
         return "ultimate", basis
     if "interrupt" in lowered:
@@ -3888,6 +4215,7 @@ def _queue_window_policy(
     resolution: QueueResolutionIR | None,
     family: str,
     basis: dict[str, Any],
+    extra_turn_source_basis: dict[str, Any],
 ) -> dict[str, Any]:
     priority_value = _json_float(intent.priority_source.get("priority_value"))
     ordering_admitted = intent.priority_source.get("priority_ordering_admitted") is True and priority_value is not None
@@ -3907,13 +4235,27 @@ def _queue_window_policy(
     elif resolution.coverage_status != "executable":
         policy["blocking_dependency"] = resolution.blocked_reason or f"queue_resolution_not_executable:{resolution.coverage_status}"
     if family == "extra_turn":
+        lifecycle_admitted = (
+            basis.get("extra_turn_basis_status") == "admitted"
+            and extra_turn_source_basis.get("source_basis_status") == "lifecycle_source_admitted"
+        )
+        lifecycle_policy_id = f"queue_lifecycle_policy:queue_window:{intent.queue_intent_id}"
         policy.update(
             {
                 "natural_av_advance": "bypassed_for_queue_child",
-                "turn_lifecycle_policy": "blocked_until_extra_turn_lifecycle_source_admitted",
-                "duration_tick_policy": "blocked_until_extra_turn_lifecycle_source_admitted",
+                "queue_lifecycle_policy_id": lifecycle_policy_id,
+                "lifecycle_policy_admitted": lifecycle_admitted,
+                "turn_lifecycle_policy": "admitted_from_queue_lifecycle_policy" if lifecycle_admitted else "blocked_until_extra_turn_lifecycle_source_admitted",
+                "duration_tick_policy": "ActionPhaseEnd_from_OneMore_LifeStepMoment" if lifecycle_admitted else "blocked_until_extra_turn_lifecycle_source_admitted",
+                "extra_turn_source_basis": _json_safe(extra_turn_source_basis),
             }
         )
+        if not lifecycle_admitted:
+            policy["blocking_dependency"] = (
+                str(basis.get("blocking_dependency") or "")
+                or str(extra_turn_source_basis.get("blocking_dependency") or "")
+                or "extra_turn_lifecycle_source_not_admitted"
+            )
     elif family == "ultimate":
         policy.update(
             {

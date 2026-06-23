@@ -68,12 +68,12 @@ MUTATION_SOURCE_POLICIES: dict[str, dict[str, JSONValue]] = {
         "coverage_required": "process-only dispatch records; mutating listener effects keep their underlying source",
     },
     "queue_system": {
-        "required_ir": ["QueueIntentIR + QueuePriorityIR + QueueWindowIR for enqueue; QueueIntentIR + QueueResolutionIR + QueuePriorityIR + QueueWindowIR + QueueWindowPlan for dequeue"],
+        "required_ir": ["QueueIntentIR + QueuePriorityIR + QueueWindowIR for enqueue; QueueIntentIR + QueueResolutionIR + QueuePriorityIR + QueueWindowIR + QueueWindowPlan for dequeue; extra_turn additionally requires QueueLifecyclePolicyIR"],
         "required_metadata": ["queue_name", "queue_operation", "queue_intent_id", "queue_window_id", "target_resolution", "source_trace"],
         "coverage_required": "executable",
     },
     "combat_executor.queue": {
-        "required_ir": ["QueueIntentIR + QueuePriorityIR + QueueWindowIR for enqueue; QueueIntentIR + QueueResolutionIR + QueuePriorityIR + QueueWindowIR + QueueWindowPlan for dequeue"],
+        "required_ir": ["QueueIntentIR + QueuePriorityIR + QueueWindowIR for enqueue; QueueIntentIR + QueueResolutionIR + QueuePriorityIR + QueueWindowIR + QueueWindowPlan for dequeue; extra_turn additionally requires QueueLifecyclePolicyIR"],
         "required_metadata": ["queue_name", "queue_operation", "queue_intent_id", "queue_window_id", "target_resolution", "source_trace"],
         "coverage_required": "executable",
     },
@@ -903,6 +903,7 @@ class RuntimeSourceAuditor:
                 )
             )
         queue_window_id = metadata.get("queue_window_id")
+        window = None
         if isinstance(queue_window_id, str) and queue_window_id:
             window = self.rules.queue_window(queue_window_id)
             if window is None:
@@ -926,6 +927,51 @@ class RuntimeSourceAuditor:
                     details={"metadata": metadata},
                 )
             )
+        window_family = ""
+        if window is not None:
+            window_family = window.window_family
+        elif isinstance(metadata.get("window_family"), str):
+            window_family = str(metadata.get("window_family") or "")
+        if window_family == "extra_turn":
+            policy_id = _first_str(metadata.get("queue_lifecycle_policy_id"))
+            window_plan = metadata.get("queue_window_plan")
+            if not policy_id and isinstance(window_plan, dict):
+                policy = window_plan.get("window_policy")
+                if isinstance(policy, dict):
+                    policy_id = _first_str(policy.get("queue_lifecycle_policy_id"))
+            if not policy_id:
+                violations.append(
+                    _violation(
+                        mutation,
+                        "queue_lifecycle_policy_missing",
+                        missing_field="queue_lifecycle_policy_id",
+                        details={"metadata": metadata},
+                    )
+                )
+            else:
+                lifecycle_policy = self.rules.queue_lifecycle_policy(policy_id)
+                if lifecycle_policy is None:
+                    violations.append(
+                        _violation(
+                            mutation,
+                            "queue_lifecycle_policy_ir_missing",
+                            details={"queue_lifecycle_policy_id": policy_id},
+                        )
+                    )
+                elif lifecycle_policy.coverage_status != "executable":
+                    violations.append(
+                        _violation(
+                            mutation,
+                            "queue_lifecycle_policy_not_executable",
+                            details={
+                                "queue_lifecycle_policy_id": policy_id,
+                                "coverage_status": lifecycle_policy.coverage_status,
+                                "blocked_reason": lifecycle_policy.blocked_reason,
+                            },
+                        )
+                    )
+                else:
+                    _audit_source(lifecycle_policy.source, lifecycle_policy.coverage_status, mutation, violations, executable_required=True)
         target_resolution = metadata.get("target_resolution")
         if operation == "enqueue":
             if not isinstance(target_resolution, dict):

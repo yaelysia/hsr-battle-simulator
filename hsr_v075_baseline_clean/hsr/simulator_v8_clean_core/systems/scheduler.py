@@ -525,6 +525,7 @@ class CombatScheduler:
                 "queue_operation": "dequeue",
                 "scheduler": "timeline_scheduler",
                 "queue_window_plan": plan.queue_window or {},
+                "queue_lifecycle_policy_id": _queue_lifecycle_policy_id(plan),
                 **_manual_ultimate_dequeue_metadata(self.rules, plan),
             },
         )
@@ -551,6 +552,30 @@ class CombatScheduler:
             ),
         )
         after_state = after_dequeue
+        window_family = str((plan.queue_window or {}).get("window_family") or "")
+        if window_family == "extra_turn":
+            lifecycle_policy = _queue_lifecycle_policy(plan)
+            events = (
+                *events,
+                GameEvent(
+                    "extra_turn.begin",
+                    source_id=str(plan.queue_entry.get("actor_id") or ""),
+                    event_id=f"event:{after_dequeue.event_index}:extra_turn_begin:{plan.queue_intent_id}",
+                    window="extra_turn",
+                    process_only=True,
+                    payload={"drain_plan": plan.to_json(), "lifecycle_policy": lifecycle_policy},
+                ),
+            )
+            records.extend(
+                _scheduler_process_records(
+                    "extra_turn_begin",
+                    {
+                        "queue_intent_id": plan.queue_intent_id,
+                        "queue_window_plan": plan.queue_window or {},
+                        "lifecycle_policy": lifecycle_policy,
+                    },
+                )
+            )
         if resolution.resolved_kind == "standalone_ability_graph":
             graph_id = _first_str(resolution.resolved_ids.get("standalone_ability_graph_id"))
             phases = _phases_for_graph(self.rules, graph_id)
@@ -639,6 +664,29 @@ class CombatScheduler:
                         trace=energy_mutation.metadata.get("source_trace") if isinstance(energy_mutation.metadata.get("source_trace"), dict) else {},
                     ).to_json()
                 )
+        if window_family == "extra_turn":
+            lifecycle_policy = _queue_lifecycle_policy(plan)
+            events = (
+                *events,
+                GameEvent(
+                    "extra_turn.end",
+                    source_id=str(plan.queue_entry.get("actor_id") or ""),
+                    event_id=f"event:{after_state.event_index}:extra_turn_end:{plan.queue_intent_id}",
+                    window="extra_turn",
+                    process_only=True,
+                    payload={"drain_plan": plan.to_json(), "lifecycle_policy": lifecycle_policy},
+                ),
+            )
+            records.extend(
+                _scheduler_process_records(
+                    "extra_turn_end",
+                    {
+                        "queue_intent_id": plan.queue_intent_id,
+                        "queue_window_plan": plan.queue_window or {},
+                        "lifecycle_policy": lifecycle_policy,
+                    },
+                )
+            )
         return SchedulerStepResult(
             after_state,
             _transition(
@@ -943,6 +991,26 @@ def _resolutions_for_queue(rules: RuleBook, state: BattleState, queue_name: str)
         if resolution is not None:
             resolutions[intent_id] = resolution
     return resolutions
+
+
+def _queue_lifecycle_policy_id(plan: QueueDrainPlan) -> str:
+    window = plan.queue_window or {}
+    policy = window.get("window_policy") if isinstance(window.get("window_policy"), dict) else {}
+    return str(policy.get("queue_lifecycle_policy_id") or "")
+
+
+def _queue_lifecycle_policy(plan: QueueDrainPlan) -> dict[str, JSONValue]:
+    window = plan.queue_window or {}
+    policy = window.get("window_policy") if isinstance(window.get("window_policy"), dict) else {}
+    lifecycle_basis = policy.get("extra_turn_source_basis")
+    return {
+        "queue_lifecycle_policy_id": str(policy.get("queue_lifecycle_policy_id") or ""),
+        "lifecycle_policy_admitted": policy.get("lifecycle_policy_admitted") is True,
+        "turn_lifecycle_policy": str(policy.get("turn_lifecycle_policy") or ""),
+        "duration_tick_policy": str(policy.get("duration_tick_policy") or ""),
+        "natural_av_advance": str(policy.get("natural_av_advance") or ""),
+        "extra_turn_source_basis": lifecycle_basis if isinstance(lifecycle_basis, dict) else {},
+    }
 
 
 def _resolution_for_drain_plan(rules: RuleBook, state: BattleState, plan: QueueDrainPlan) -> QueueResolutionIR | None:
