@@ -347,11 +347,28 @@ class CombatScheduler:
         resolution = self.rules.queue_resolution(plan.queue_resolution_id)
         if resolution is None:
             return self._blocked(state, "queue:drain", "queue_resolution_missing", {"drain_plan": plan.to_json()})
+        if resolution.resolved_kind == "action_definition":
+            preflight_reason = self._queue_action_preflight_reason(state, plan)
+            if preflight_reason:
+                return self._blocked(
+                    state,
+                    "queue:action_drain",
+                    preflight_reason,
+                    {
+                        "drain_plan": plan.to_json(),
+                        "queue_resolution": resolution.to_json(),
+                        "queue_window_plan": plan.queue_window or {},
+                    },
+                )
         dequeue = self.queue.drain_admitted(
             state,
             plan,
             source="queue_system",
-            metadata={"queue_operation": "dequeue", "scheduler": "timeline_scheduler"},
+            metadata={
+                "queue_operation": "dequeue",
+                "scheduler": "timeline_scheduler",
+                "queue_window_plan": plan.queue_window or {},
+            },
         )
         after_dequeue = self.reducer.apply_all(state, (dequeue,))
         records: list[dict[str, JSONValue]] = [
@@ -391,6 +408,55 @@ class CombatScheduler:
             mutations = (*mutations, *ability_result.mutations)
             events = (*events, *ability_result.events)
             records.extend(ability_result.records)
+        elif resolution.resolved_kind == "action_definition":
+            from ..core.executor import CombatExecutor
+
+            actor_id = str(plan.queue_entry.get("actor_id") or "")
+            queue_command = ActionCommand(
+                actor_id=actor_id,
+                action_id=plan.resolved_action_id,
+                action_level=plan.resolved_action_level or 0,
+                target_ids=tuple(str(item) for item in plan.queue_entry.get("target_ids", ()) if isinstance(item, str)),
+                source="queue",
+                queue_name=plan.queue_name,
+                metadata={
+                    "queue_parent": {
+                        "queue_entry": plan.queue_entry,
+                        "queue_intent_id": plan.queue_intent_id,
+                        "queue_resolution_id": plan.queue_resolution_id,
+                        "queue_priority_id": plan.queue_priority_id,
+                        "priority_key": plan.priority_key,
+                        "priority_value": plan.priority_value,
+                        "drain_order": plan.drain_order,
+                        "queue_window_plan": plan.queue_window or {},
+                    }
+                },
+            )
+            after_action, action_transition = CombatExecutor(self.rules).execute(queue_command, after_dequeue)
+            after_state = after_action
+            mutations = (*mutations, *action_transition.transaction.mutations)
+            events = (
+                *events,
+                GameEvent(
+                    "queue.action.before",
+                    source_id=actor_id,
+                    event_id=f"event:{after_dequeue.event_index}:queue_action_before:{plan.queue_intent_id}",
+                    window="queue",
+                    process_only=True,
+                    payload={"command": _command_payload(queue_command), "drain_plan": plan.to_json()},
+                ),
+                *action_transition.transaction.events,
+                GameEvent(
+                    "queue.action.after",
+                    source_id=actor_id,
+                    event_id=f"event:{after_action.event_index}:queue_action_after:{plan.queue_intent_id}",
+                    window="queue",
+                    process_only=True,
+                    payload={"command": _command_payload(queue_command), "drain_plan": plan.to_json()},
+                ),
+            )
+            if action_transition.transaction.settlement:
+                records.extend(action_transition.transaction.settlement.records)
         return SchedulerStepResult(
             after_state,
             _transition(
@@ -401,9 +467,37 @@ class CombatScheduler:
                 events=events,
                 mutations=mutations,
                 records=tuple(records),
-                coverage={"drain_plan": plan.to_json(), "queue_resolution": resolution.to_json()},
+                coverage={
+                    "drain_plan": plan.to_json(),
+                    "queue_resolution": resolution.to_json(),
+                    "queue_window_plan": plan.queue_window or {},
+                },
             ),
+            child_transitions=(action_transition,) if resolution.resolved_kind == "action_definition" else (),
         )
+
+    def _queue_action_preflight_reason(self, state: BattleState, plan: QueueDrainPlan) -> str:
+        actor_id = str(plan.queue_entry.get("actor_id") or "")
+        if not actor_id or actor_id not in state.units:
+            return "queue_action_actor_missing"
+        if not plan.resolved_action_id or plan.resolved_action_level is None:
+            return "queue_action_resolution_missing"
+        if not any(isinstance(item, str) and item for item in plan.queue_entry.get("target_ids", ())):
+            return "queue_action_target_missing"
+        definition = self.rules.action_definition(plan.resolved_action_id, plan.resolved_action_level)
+        if definition is None:
+            return "queue_action_definition_missing"
+        action_event = self.rules.action_event(plan.resolved_action_id, plan.resolved_action_level)
+        if action_event is None:
+            return "queue_action_event_missing"
+        if action_event.coverage_status in {"blocked", "audit_only", "discovered_only", "unsupported"}:
+            return f"queue_action_event_not_admitted:{action_event.coverage_status}"
+        if definition.bp_need > state.skill_points:
+            return "queue_action_resource_preflight_failed:insufficient_skill_points"
+        window = plan.queue_window or {}
+        if window.get("ok") is not True:
+            return str(window.get("blocked_reason") or "queue_window_not_admitted")
+        return ""
 
     def _blocked(
         self,
@@ -569,15 +663,15 @@ def _unsupported_turn_hooks() -> dict[str, JSONValue]:
         },
         "extra_turn": {
             "status": "blocked",
-            "blocking_dependency": "extra-turn queue/window admission",
+            "blocking_dependency": "requires admitted QueueWindowPlan for extra-turn source plus execution ordering",
         },
         "ultimate": {
             "status": "blocked",
-            "blocking_dependency": "ultimate interrupt queue priority admission",
+            "blocking_dependency": "requires ultimate QueueWindowPlan source and full interrupt priority ordering",
         },
         "interrupt": {
             "status": "blocked",
-            "blocking_dependency": "interrupt window admission",
+            "blocking_dependency": "requires interrupt QueueWindowPlan source and total ordering against active action",
         },
     }
 

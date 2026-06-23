@@ -68,12 +68,12 @@ MUTATION_SOURCE_POLICIES: dict[str, dict[str, JSONValue]] = {
         "coverage_required": "process-only dispatch records; mutating listener effects keep their underlying source",
     },
     "queue_system": {
-        "required_ir": ["QueueIntentIR + QueuePriorityIR for enqueue; QueueIntentIR + QueueResolutionIR + QueuePriorityIR for dequeue"],
+        "required_ir": ["QueueIntentIR + QueuePriorityIR for enqueue; QueueIntentIR + QueueResolutionIR + QueuePriorityIR + QueueWindowPlan for dequeue"],
         "required_metadata": ["queue_name", "queue_operation", "queue_intent_id", "source_trace"],
         "coverage_required": "executable",
     },
     "combat_executor.queue": {
-        "required_ir": ["QueueIntentIR + QueuePriorityIR for enqueue; QueueIntentIR + QueueResolutionIR + QueuePriorityIR for dequeue"],
+        "required_ir": ["QueueIntentIR + QueuePriorityIR for enqueue; QueueIntentIR + QueueResolutionIR + QueuePriorityIR + QueueWindowPlan for dequeue"],
         "required_metadata": ["queue_name", "queue_operation", "queue_intent_id", "source_trace"],
         "coverage_required": "executable",
     },
@@ -874,6 +874,17 @@ class RuntimeSourceAuditor:
         queue_resolution_id = metadata.get("queue_resolution_id")
         if operation == "dequeue":
             _required_str(mutation, metadata, "queue_resolution_id", violations)
+            window_plan = metadata.get("queue_window_plan")
+            if not isinstance(window_plan, dict):
+                violations.append(_violation(mutation, "queue_window_plan_missing", missing_field="queue_window_plan"))
+            elif window_plan.get("ok") is not True:
+                violations.append(
+                    _violation(
+                        mutation,
+                        "queue_window_plan_not_admitted",
+                        details={"queue_window_plan": window_plan},
+                    )
+                )
             if isinstance(queue_resolution_id, str) and queue_resolution_id:
                 resolution = self.rules.queue_resolution(queue_resolution_id)
                 if resolution is None:

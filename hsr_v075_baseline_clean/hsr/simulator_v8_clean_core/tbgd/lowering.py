@@ -3447,7 +3447,7 @@ def _queue_intent_admission(
     if opcode == "TurnInsertAction":
         if skill_index_expr.get("kind") != "fixed":
             return "blocked", f"queue_insert_action_skill_index_not_admitted:{skill_index_expr.get('kind') or 'missing'}"
-        return "blocked", "queue_insert_action_execution_not_admitted"
+        return "executable", ""
     if opcode == "TurnInsertAssistantAbility":
         return "blocked", "queue_insert_assistant_ability_not_admitted"
     return "blocked", f"queue_opcode_not_admitted:{opcode}"
@@ -3647,19 +3647,83 @@ def _queue_resolution_from_intent(
             blocked_reason="",
         )
     if intent.opcode == "TurnInsertAction":
-        reason = "queue_insert_action_requires_runtime_actor_action_resolution"
         if intent.skill_index_expr.get("kind") != "fixed":
             reason = f"queue_insert_action_skill_index_not_admitted:{intent.skill_index_expr.get('kind') or 'missing'}"
+            return QueueResolutionIR(
+                queue_resolution_id=resolution_id,
+                queue_intent_id=intent.queue_intent_id,
+                action_or_ability_ref=intent.action_ref_or_ability_name,
+                resolved_kind="insert_action_not_admitted",
+                resolved_ids={"skill_index_expr": _json_safe(intent.skill_index_expr)},
+                source=source,
+                coverage_status="blocked",
+                blocked_reason=reason,
+            )
+        skill_index_value = intent.skill_index_expr.get("value")
+        if not isinstance(skill_index_value, (int, float)):
+            return QueueResolutionIR(
+                queue_resolution_id=resolution_id,
+                queue_intent_id=intent.queue_intent_id,
+                action_or_ability_ref=intent.action_ref_or_ability_name,
+                resolved_kind="insert_action_not_admitted",
+                resolved_ids={"skill_index_expr": _json_safe(intent.skill_index_expr)},
+                source=source,
+                coverage_status="blocked",
+                blocked_reason="queue_insert_action_skill_index_value_missing",
+            )
+        skill_index_key = str(int(skill_index_value))
+        candidates: list[dict[str, Any]] = []
+        for action_set in sorted(combatant_action_sets, key=lambda item: item.combatant_action_set_id):
+            if action_set.coverage_status != "executable":
+                continue
+            entry = action_set.skill_index_map.get(skill_index_key)
+            if not isinstance(entry, dict) or entry.get("coverage_status") != "executable":
+                continue
+            action_ref = entry.get("action_ref")
+            default_level = entry.get("default_level")
+            if not isinstance(action_ref, str) or not isinstance(default_level, int):
+                continue
+            candidates.append(
+                {
+                    "combatant_action_set_id": action_set.combatant_action_set_id,
+                    "entity_ref": action_set.entity_ref,
+                    "skill_index": skill_index_key,
+                    "action_ref": action_ref,
+                    "action_level": default_level,
+                    "skill_id": entry.get("skill_id"),
+                    "source": action_set.source.to_json(),
+                }
+            )
         action_set_count = sum(1 for action_set in combatant_action_sets if action_set.coverage_status == "executable")
+        if not candidates:
+            return QueueResolutionIR(
+                queue_resolution_id=resolution_id,
+                queue_intent_id=intent.queue_intent_id,
+                action_or_ability_ref=f"skill_index:{skill_index_key}",
+                resolved_kind="insert_action_not_admitted",
+                resolved_ids={
+                    "skill_index_expr": _json_safe(intent.skill_index_expr),
+                    "skill_index": skill_index_key,
+                    "executable_action_set_count": action_set_count,
+                },
+                source=source,
+                coverage_status="blocked",
+                blocked_reason=f"queue_insert_action_no_action_set_candidate:{skill_index_key}",
+            )
         return QueueResolutionIR(
             queue_resolution_id=resolution_id,
             queue_intent_id=intent.queue_intent_id,
-            action_or_ability_ref=intent.action_ref_or_ability_name,
-            resolved_kind="insert_action_not_admitted",
-            resolved_ids={"skill_index_expr": _json_safe(intent.skill_index_expr), "executable_action_set_count": action_set_count},
+            action_or_ability_ref=f"skill_index:{skill_index_key}",
+            resolved_kind="action_definition",
+            resolved_ids={
+                "skill_index_expr": _json_safe(intent.skill_index_expr),
+                "skill_index": skill_index_key,
+                "action_set_candidates": candidates,
+                "executable_action_set_count": action_set_count,
+            },
             source=source,
-            coverage_status="blocked",
-            blocked_reason=reason,
+            coverage_status="executable",
+            blocked_reason="",
         )
     if intent.opcode == "TurnInsertAssistantAbility":
         return QueueResolutionIR(

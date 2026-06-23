@@ -46,6 +46,36 @@ class QueueEntry:
 
 
 @dataclass(frozen=True)
+class QueueWindowPlan:
+    ok: bool
+    status: str
+    window_kind: str
+    queue_kind: str
+    queue_intent_id: str
+    queue_resolution_id: str
+    queue_priority_id: str = ""
+    priority_key: str = ""
+    priority_value: float | None = None
+    blocked_reason: str = ""
+    source_trace: dict[str, JSONValue] | None = None
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "ok": self.ok,
+            "status": self.status,
+            "window_kind": self.window_kind,
+            "queue_kind": self.queue_kind,
+            "queue_intent_id": self.queue_intent_id,
+            "queue_resolution_id": self.queue_resolution_id,
+            "queue_priority_id": self.queue_priority_id,
+            "priority_key": self.priority_key,
+            "priority_value": self.priority_value,
+            "blocked_reason": self.blocked_reason,
+            "source_trace": self.source_trace or {},
+        }
+
+
+@dataclass(frozen=True)
 class QueueDrainPlan:
     ok: bool
     status: str
@@ -60,6 +90,9 @@ class QueueDrainPlan:
     priority_value: float | None = None
     resolved_kind: str = ""
     drain_order: int | None = None
+    queue_window: dict[str, JSONValue] | None = None
+    resolved_action_id: str = ""
+    resolved_action_level: int | None = None
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -76,6 +109,9 @@ class QueueDrainPlan:
             "priority_value": self.priority_value,
             "resolved_kind": self.resolved_kind,
             "drain_order": self.drain_order,
+            "queue_window": self.queue_window or {},
+            "resolved_action_id": self.resolved_action_id,
+            "resolved_action_level": self.resolved_action_level,
         }
 
 
@@ -94,7 +130,7 @@ class QueueSystem:
         resolution: QueueResolutionIR | None,
     ) -> QueueDrainPlan:
         entry = self.peek(state, queue_name)
-        return self._plan_entry(queue_name, entry, resolution, drain_order=0)
+        return self._plan_entry(state, queue_name, entry, resolution, drain_order=0)
 
     def plan_next_drain(
         self,
@@ -107,6 +143,7 @@ class QueueSystem:
             return QueueDrainPlan(False, "blocked", queue_name, {}, "", "", "queue_empty_or_legacy_entry")
         plans = [
             self._plan_entry(
+                state,
                 queue_name,
                 entry,
                 resolutions_by_intent.get(str(entry.get("queue_intent_id") or "")),
@@ -131,6 +168,7 @@ class QueueSystem:
 
     def _plan_entry(
         self,
+        state: BattleState,
         queue_name: str,
         entry: dict[str, JSONValue] | None,
         resolution: QueueResolutionIR | None,
@@ -228,6 +266,100 @@ class QueueSystem:
                     resolved_kind=resolution.resolved_kind,
                     drain_order=drain_order,
                 )
+            window = self._queue_window_plan(
+                entry,
+                resolution,
+                priority_source=priority_source,
+                priority_value=priority_value,
+            )
+            if not window.ok:
+                return self._blocked_with_window(
+                    queue_name,
+                    entry,
+                    queue_intent_id,
+                    resolution,
+                    priority_source,
+                    priority_value,
+                    drain_order,
+                    window,
+                )
+        elif resolution.resolved_kind == "action_definition":
+            action_match = self._resolve_action_candidate(state, entry, resolution)
+            window = self._queue_window_plan(
+                entry,
+                resolution,
+                priority_source=priority_source,
+                priority_value=priority_value,
+            )
+            if not action_match["ok"]:
+                return QueueDrainPlan(
+                    False,
+                    "blocked",
+                    queue_name,
+                    entry,
+                    queue_intent_id,
+                    resolution.queue_resolution_id,
+                    str(action_match["blocked_reason"]),
+                    {"queue_resolution_source": resolution.source.to_json()},
+                    queue_priority_id=str(priority_source.get("queue_priority_id") or ""),
+                    priority_key=str(priority_source.get("priority_key") or ""),
+                    priority_value=priority_value,
+                    resolved_kind=resolution.resolved_kind,
+                    drain_order=drain_order,
+                    queue_window=window.to_json(),
+                )
+            if not window.ok:
+                return self._blocked_with_window(
+                    queue_name,
+                    entry,
+                    queue_intent_id,
+                    resolution,
+                    priority_source,
+                    priority_value,
+                    drain_order,
+                    window,
+                )
+            return QueueDrainPlan(
+                True,
+                "drain_candidate",
+                queue_name,
+                entry,
+                queue_intent_id,
+                resolution.queue_resolution_id,
+                "",
+                {"queue_resolution_source": resolution.source.to_json()},
+                queue_priority_id=str(priority_source.get("queue_priority_id") or ""),
+                priority_key=str(priority_source.get("priority_key") or ""),
+                priority_value=priority_value,
+                resolved_kind=resolution.resolved_kind,
+                drain_order=drain_order,
+                queue_window=window.to_json(),
+                resolved_action_id=str(action_match["action_id"]),
+                resolved_action_level=int(action_match["action_level"]),
+            )
+        else:
+            window = self._queue_window_plan(
+                entry,
+                resolution,
+                priority_source=priority_source,
+                priority_value=priority_value,
+            )
+            return self._blocked_with_window(
+                queue_name,
+                entry,
+                queue_intent_id,
+                resolution,
+                priority_source,
+                priority_value,
+                drain_order,
+                window,
+            )
+        window = self._queue_window_plan(
+            entry,
+            resolution,
+            priority_source=priority_source,
+            priority_value=priority_value,
+        )
         return QueueDrainPlan(
             True,
             "drain_candidate",
@@ -242,6 +374,124 @@ class QueueSystem:
             priority_value=priority_value,
             resolved_kind=resolution.resolved_kind,
             drain_order=drain_order,
+            queue_window=window.to_json(),
+        )
+
+    def _queue_window_plan(
+        self,
+        entry: dict[str, JSONValue],
+        resolution: QueueResolutionIR,
+        *,
+        priority_source: dict[str, JSONValue],
+        priority_value: float,
+    ) -> QueueWindowPlan:
+        queue_kind = str(entry.get("queue_kind") or "")
+        if queue_kind == "turn_insert_action":
+            window_kind = "turn_insert_action"
+        elif queue_kind == "turn_insert_ability":
+            window_kind = "turn_insert_ability"
+        elif queue_kind == "turn_insert_assistant_ability":
+            window_kind = "turn_insert_assistant_ability"
+        else:
+            return QueueWindowPlan(
+                False,
+                "blocked",
+                "unknown",
+                queue_kind,
+                str(entry.get("queue_intent_id") or ""),
+                resolution.queue_resolution_id,
+                queue_priority_id=str(priority_source.get("queue_priority_id") or ""),
+                priority_key=str(priority_source.get("priority_key") or ""),
+                priority_value=priority_value,
+                blocked_reason=f"queue_window_kind_not_admitted:{queue_kind or 'missing'}",
+                source_trace={"queue_resolution_source": resolution.source.to_json()},
+            )
+        return QueueWindowPlan(
+            True,
+            "admitted",
+            window_kind,
+            queue_kind,
+            str(entry.get("queue_intent_id") or ""),
+            resolution.queue_resolution_id,
+            queue_priority_id=str(priority_source.get("queue_priority_id") or ""),
+            priority_key=str(priority_source.get("priority_key") or ""),
+            priority_value=priority_value,
+            source_trace={"queue_resolution_source": resolution.source.to_json()},
+        )
+
+    def _resolve_action_candidate(
+        self,
+        state: BattleState,
+        entry: dict[str, JSONValue],
+        resolution: QueueResolutionIR,
+    ) -> dict[str, JSONValue]:
+        actor_id = str(entry.get("actor_id") or "")
+        if not actor_id or actor_id not in state.units:
+            return {"ok": False, "blocked_reason": "queue_action_actor_missing"}
+        actor = state.units[actor_id]
+        if not actor.template_id:
+            return {"ok": False, "blocked_reason": "queue_action_actor_template_missing"}
+        candidates = resolution.resolved_ids.get("action_set_candidates")
+        if not isinstance(candidates, list):
+            return {"ok": False, "blocked_reason": "queue_action_set_candidates_missing"}
+        matches = [
+            candidate
+            for candidate in candidates
+            if isinstance(candidate, dict) and candidate.get("entity_ref") == actor.template_id
+        ]
+        if not matches:
+            return {
+                "ok": False,
+                "blocked_reason": f"queue_action_set_not_resolved_for_actor:{actor.template_id}",
+            }
+        if len(matches) > 1:
+            return {
+                "ok": False,
+                "blocked_reason": f"queue_action_set_ambiguous_for_actor:{actor.template_id}",
+            }
+        match = matches[0]
+        action_id = match.get("action_ref")
+        action_level = match.get("action_level")
+        if not isinstance(action_id, str) or not action_id:
+            return {"ok": False, "blocked_reason": "queue_action_ref_missing"}
+        if not isinstance(action_level, int):
+            return {"ok": False, "blocked_reason": "queue_action_level_missing"}
+        target_ids = entry.get("target_ids")
+        if not isinstance(target_ids, list) or not any(isinstance(item, str) and item for item in target_ids):
+            return {"ok": False, "blocked_reason": "queue_action_target_missing"}
+        return {
+            "ok": True,
+            "action_id": action_id,
+            "action_level": action_level,
+            "combatant_action_set_id": str(match.get("combatant_action_set_id") or ""),
+        }
+
+    def _blocked_with_window(
+        self,
+        queue_name: str,
+        entry: dict[str, JSONValue],
+        queue_intent_id: str,
+        resolution: QueueResolutionIR,
+        priority_source: dict[str, JSONValue],
+        priority_value: float,
+        drain_order: int | None,
+        window: QueueWindowPlan,
+    ) -> QueueDrainPlan:
+        return QueueDrainPlan(
+            False,
+            "blocked",
+            queue_name,
+            entry,
+            queue_intent_id,
+            resolution.queue_resolution_id,
+            window.blocked_reason or f"queue_window_not_admitted:{window.window_kind}",
+            {"queue_resolution_source": resolution.source.to_json()},
+            queue_priority_id=str(priority_source.get("queue_priority_id") or ""),
+            priority_key=str(priority_source.get("priority_key") or ""),
+            priority_value=priority_value,
+            resolved_kind=resolution.resolved_kind,
+            drain_order=drain_order,
+            queue_window=window.to_json(),
         )
 
     def enqueue(
@@ -356,5 +606,8 @@ class QueueSystem:
                 "priority_value": plan.priority_value,
                 "source_trace": plan.source_trace or {},
                 "drain_plan": plan.to_json(),
+                "queue_window_plan": plan.queue_window or {},
+                "resolved_action_id": plan.resolved_action_id,
+                "resolved_action_level": plan.resolved_action_level,
             },
         )
