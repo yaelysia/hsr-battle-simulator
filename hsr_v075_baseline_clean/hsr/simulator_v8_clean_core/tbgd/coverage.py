@@ -416,6 +416,13 @@ def _action_execution_status(ir: CanonicalIR) -> dict[str, Any]:
     queue_lifecycle_status = Counter(policy.coverage_status for policy in ir.queue_lifecycle_policies)
     queue_lifecycle_reasons = Counter(policy.blocked_reason for policy in ir.queue_lifecycle_policies if policy.blocked_reason)
     queue_lifecycle_families = Counter(policy.window_family for policy in ir.queue_lifecycle_policies)
+    skill_continuation_status = Counter(continuation.coverage_status for continuation in ir.skill_continuations)
+    skill_continuation_reasons = Counter(
+        continuation.blocked_reason
+        for continuation in ir.skill_continuations
+        if continuation.blocked_reason
+    )
+    skill_continuation_opcodes = Counter(continuation.opcode for continuation in ir.skill_continuations)
     standalone_graph_status = Counter(graph.coverage_status for graph in ir.standalone_ability_graphs)
     standalone_graph_reasons = Counter(graph.blocked_reason for graph in ir.standalone_ability_graphs if graph.blocked_reason)
     standalone_graph_source_modes = Counter(graph.source_mode for graph in ir.standalone_ability_graphs)
@@ -620,6 +627,15 @@ def _action_execution_status(ir: CanonicalIR) -> dict[str, Any]:
             "blocked_reason_counts": dict(sorted(queue_lifecycle_reasons.items())),
             "window_family_counts": dict(sorted(queue_lifecycle_families.items())),
             "reason": "QueueLifecyclePolicyIR separates extra-turn source/lifecycle evidence from queue window execution admission",
+        },
+        "skill_continuations": {
+            "lowered": len(ir.skill_continuations),
+            "executable": skill_continuation_status["executable"],
+            "blocked": skill_continuation_status["blocked"],
+            "status_counts": dict(sorted(skill_continuation_status.items())),
+            "blocked_reason_counts": dict(sorted(skill_continuation_reasons.items())),
+            "opcode_counts": dict(sorted(skill_continuation_opcodes.items())),
+            "reason": "SkillContinuationIR records UseSkillOneMore as skill/ultimate internal continuation, not as a true extra turn queue source",
         },
         "standalone_ability_graphs": {
             "lowered": len(ir.standalone_ability_graphs),

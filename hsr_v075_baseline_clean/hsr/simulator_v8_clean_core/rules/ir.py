@@ -933,6 +933,40 @@ class ActionDefinitionIR:
 
 
 @dataclass(frozen=True)
+class SkillContinuationIR:
+    continuation_id: str
+    source_task_id: str
+    phase_id: str
+    action_id: str
+    level: int
+    ability_name: str
+    opcode: str
+    continuation_kind: str
+    fixed_skill_type: str
+    child_skill_index_expr: dict[str, JSONValue]
+    source: IRSource
+    coverage_status: CoverageStatus = "blocked"
+    blocked_reason: str = ""
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "continuation_id": self.continuation_id,
+            "source_task_id": self.source_task_id,
+            "phase_id": self.phase_id,
+            "action_id": self.action_id,
+            "level": self.level,
+            "ability_name": self.ability_name,
+            "opcode": self.opcode,
+            "continuation_kind": self.continuation_kind,
+            "fixed_skill_type": self.fixed_skill_type,
+            "child_skill_index_expr": self.child_skill_index_expr,
+            "source": self.source.to_json(),
+            "coverage_status": self.coverage_status,
+            "blocked_reason": self.blocked_reason,
+        }
+
+
+@dataclass(frozen=True)
 class TimelineRuleIR:
     timeline_rule_id: str
     base_action_gauge: float
@@ -1004,6 +1038,7 @@ class CanonicalIR:
     queue_priorities: tuple[QueuePriorityIR, ...] = ()
     queue_windows: tuple[QueueWindowIR, ...] = ()
     queue_lifecycle_policies: tuple[QueueLifecyclePolicyIR, ...] = ()
+    skill_continuations: tuple[SkillContinuationIR, ...] = ()
     standalone_ability_graphs: tuple[StandaloneAbilityGraphIR, ...] = ()
     combatant_action_sets: tuple[CombatantActionSetIR, ...] = ()
     timeline_rules: tuple[TimelineRuleIR, ...] = ()
@@ -1042,6 +1077,7 @@ class CanonicalIR:
             "queue_priorities": [priority.to_json() for priority in self.queue_priorities],
             "queue_windows": [window.to_json() for window in self.queue_windows],
             "queue_lifecycle_policies": [policy.to_json() for policy in self.queue_lifecycle_policies],
+            "skill_continuations": [continuation.to_json() for continuation in self.skill_continuations],
             "standalone_ability_graphs": [graph.to_json() for graph in self.standalone_ability_graphs],
             "combatant_action_sets": [action_set.to_json() for action_set in self.combatant_action_sets],
             "timeline_rules": [rule.to_json() for rule in self.timeline_rules],

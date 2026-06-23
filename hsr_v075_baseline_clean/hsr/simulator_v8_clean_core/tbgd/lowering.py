@@ -37,6 +37,7 @@ from ..rules.ir import (
     QueueWindowIR,
     ResourceRuleIR,
     RuleEntity,
+    SkillContinuationIR,
     StandaloneAbilityGraphIR,
     StatusCallbackIR,
     StatusCallbackTaskIR,
@@ -165,6 +166,7 @@ class TBGDLowering:
         status_damage_emissions: list[StatusDamageEmissionIR] = []
         action_delay_emissions: list[ActionDelayEmissionIR] = []
         queue_intents: list[QueueIntentIR] = []
+        skill_continuations: list[SkillContinuationIR] = []
         super_break_emissions: list[SuperBreakEmissionIR] = []
         timeline_rules = self._lower_timeline_rules()
         resource_rules = self._lower_resource_rules()
@@ -229,6 +231,7 @@ class TBGDLowering:
             status_damage_emissions.extend(lowered.status_damage_emissions)
             action_delay_emissions.extend(lowered.action_delay_emissions)
             queue_intents.extend(lowered.queue_intents)
+            skill_continuations.extend(lowered.skill_continuations)
         (
             standalone_ability_graphs,
             standalone_phases,
@@ -242,7 +245,7 @@ class TBGDLowering:
         effects.extend(standalone_effects)
         conditions.extend(standalone_conditions)
         formulas.extend(standalone_formulas)
-        queue_intents.extend(_extra_turn_queue_intents_from_ability_tasks(ability_tasks))
+        skill_continuations = _skill_continuations_from_ability_tasks(ability_tasks)
         combatant_action_sets = self._lower_combatant_action_sets(action_definitions)
         queue_resolutions = _lower_queue_resolutions(
             queue_intents=queue_intents,
@@ -283,6 +286,7 @@ class TBGDLowering:
             queue_priorities=tuple(queue_priorities),
             queue_windows=tuple(queue_windows),
             queue_lifecycle_policies=tuple(queue_lifecycle_policies),
+            skill_continuations=tuple(skill_continuations),
             standalone_ability_graphs=tuple(standalone_ability_graphs),
             combatant_action_sets=tuple(combatant_action_sets),
             timeline_rules=tuple(timeline_rules),
@@ -1748,17 +1752,6 @@ class TBGDLowering:
                     queue_priority_lookup=queue_priority_lookup,
                 )
             )
-        if opcode in EXTRA_TURN_SOURCE_OPCODES:
-            lowered.queue_intents.append(
-                _extra_turn_queue_intent_from_task(
-                    callback_id=callback_id,
-                    phase_id="",
-                    task_id=task_id,
-                    opcode=opcode,
-                    task=task,
-                    source=source,
-                )
-            )
         return lowered
 
     def _lower_task(
@@ -1989,6 +1982,7 @@ class _LoweredAbility:
     status_damage_emissions: list[StatusDamageEmissionIR] = field(default_factory=list)
     action_delay_emissions: list[ActionDelayEmissionIR] = field(default_factory=list)
     queue_intents: list[QueueIntentIR] = field(default_factory=list)
+    skill_continuations: list[SkillContinuationIR] = field(default_factory=list)
     triggers: list[TriggerIR] = field(default_factory=list)
     effects: list[EffectIR] = field(default_factory=list)
     conditions: list[ConditionIR] = field(default_factory=list)
@@ -2002,6 +1996,7 @@ class _LoweredAbility:
         self.status_damage_emissions.extend(other.status_damage_emissions)
         self.action_delay_emissions.extend(other.action_delay_emissions)
         self.queue_intents.extend(other.queue_intents)
+        self.skill_continuations.extend(other.skill_continuations)
         self.triggers.extend(other.triggers)
         self.effects.extend(other.effects)
         self.conditions.extend(other.conditions)
@@ -3466,7 +3461,7 @@ def _action_delay_expr(task: dict[str, Any], opcode: str) -> dict[str, Any]:
 
 
 QUEUE_INTENT_OPCODES = {"TurnInsertAbility", "TurnInsertAction", "TurnInsertAssistantAbility"}
-EXTRA_TURN_SOURCE_OPCODES = {"UseSkillOneMore"}
+SKILL_CONTINUATION_OPCODES = {"UseSkillOneMore"}
 QUEUE_TARGET_ALIASES = {
     "Caster",
     "ModifierOwnerEntity",
@@ -3534,70 +3529,45 @@ def _queue_intent_from_task(
     )
 
 
-def _extra_turn_queue_intent_from_task(
-    *,
-    callback_id: str,
-    phase_id: str,
-    task_id: str,
-    opcode: str,
-    task: dict[str, Any],
-    source: IRSource,
-) -> QueueIntentIR:
-    skill_type = _value_field(task.get("SkillType"))
-    child_index = _numeric_expr_summary(task.get("ChildSkillIndex"))
+def _skill_continuation_from_task(task: AbilityTaskIR) -> SkillContinuationIR:
+    raw_task = task.source.evidence.get("task") if isinstance(task.source.evidence, dict) else None
+    task_payload = raw_task if isinstance(raw_task, dict) else {}
+    skill_type = _value_field(task_payload.get("SkillType"))
+    child_index = _numeric_expr_summary(task_payload.get("ChildSkillIndex"))
     child_index["source_field"] = "ChildSkillIndex"
-    child_index["opcode"] = opcode
-    priority_source = {
-        "field": "",
-        "priority_table": "",
-        "priority_key": "",
-        "priority_ordering_admitted": False,
-        "reason": "extra_turn_priority_source_missing_for_use_skill_one_more",
-    }
-    return QueueIntentIR(
-        queue_intent_id=f"queue_intent:{callback_id or phase_id}:{task_id}",
-        source_task_id=task_id,
-        callback_id=callback_id,
-        phase_id=phase_id,
-        opcode=opcode,
-        queue_kind="extra_turn",
-        priority_source=priority_source,
-        actor_target_alias="Caster",
-        action_ref_or_ability_name=str(skill_type or ""),
-        skill_index_expr=child_index,
-        ability_target_alias=None,
-        auto_cast=False,
-        abort_policy={},
-        source=source,
+    child_index["opcode"] = task.opcode
+    return SkillContinuationIR(
+        continuation_id=f"skill_continuation:{task.task_id}",
+        source_task_id=task.task_id,
+        phase_id=task.phase_id,
+        action_id=task.action_id,
+        level=task.level,
+        ability_name=task.ability_name,
+        opcode=task.opcode,
+        continuation_kind="ultimate_or_skill_internal_sequence",
+        fixed_skill_type=str(skill_type or ""),
+        child_skill_index_expr=child_index,
+        source=task.source,
         coverage_status="blocked",
         blocked_reason=(
-            "extra_turn_use_skill_one_more_not_admitted:"
-            "priority_target_action_resolution_and_lifecycle_policy_required"
+            "skill_continuation_not_queue_extra_turn:"
+            "requires source-specific continuation runner and fixed action segment admission"
         ),
     )
 
 
-def _extra_turn_queue_intents_from_ability_tasks(tasks: list[AbilityTaskIR]) -> list[QueueIntentIR]:
-    intents: list[QueueIntentIR] = []
+def _skill_continuations_from_ability_tasks(tasks: list[AbilityTaskIR]) -> list[SkillContinuationIR]:
+    continuations: list[SkillContinuationIR] = []
     seen: set[str] = set()
     for task in tasks:
-        if task.opcode not in EXTRA_TURN_SOURCE_OPCODES:
+        if task.opcode not in SKILL_CONTINUATION_OPCODES:
             continue
-        raw_task = task.source.evidence.get("task") if isinstance(task.source.evidence, dict) else None
-        task_payload = raw_task if isinstance(raw_task, dict) else {}
-        intent = _extra_turn_queue_intent_from_task(
-            callback_id="",
-            phase_id=task.phase_id,
-            task_id=task.task_id,
-            opcode=task.opcode,
-            task=task_payload,
-            source=task.source,
-        )
-        if intent.queue_intent_id in seen:
+        continuation = _skill_continuation_from_task(task)
+        if continuation.continuation_id in seen:
             continue
-        seen.add(intent.queue_intent_id)
-        intents.append(intent)
-    return intents
+        seen.add(continuation.continuation_id)
+        continuations.append(continuation)
+    return continuations
 
 
 def _queue_skill_index_expr(task: dict[str, Any], opcode: str) -> dict[str, Any]:
@@ -4176,7 +4146,7 @@ def _queue_window_family(intent: QueueIntentIR) -> tuple[str, dict[str, Any]]:
     }
     if intent.opcode == "TurnInsertAssistantAbility":
         return "assistant", basis
-    if intent.opcode in EXTRA_TURN_SOURCE_OPCODES or intent.queue_kind == "extra_turn":
+    if intent.queue_kind == "extra_turn":
         return "extra_turn", {
             **basis,
             "extra_turn_basis_status": "discovered_only",

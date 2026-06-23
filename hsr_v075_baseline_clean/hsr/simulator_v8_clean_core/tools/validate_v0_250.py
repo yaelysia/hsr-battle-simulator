@@ -23,7 +23,6 @@ VALIDATION_VERSION = "v0_250"
 EXTRA_TURN_SOURCE_TOKENS = (
     "OneMore",
     "OneMoreCount",
-    "UseSkillOneMore",
     "ByTurnOwnerHasPendingOneMore",
 )
 

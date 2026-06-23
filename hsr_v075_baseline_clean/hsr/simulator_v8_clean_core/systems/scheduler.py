@@ -249,6 +249,10 @@ class CombatScheduler:
                 payload={"scheduler_step": "queue_drain_priority"},
             )
 
+        pending_turn_end = state.global_flags.get("pending_turn_end")
+        if isinstance(pending_turn_end, dict):
+            return self._complete_pending_turn_end(state, pending_turn_end)
+
         begin_result = self.advance_to_next_turn(state)
         if begin_result.transition.coverage.get("blocked_reason"):
             return begin_result
@@ -292,6 +296,90 @@ class CombatScheduler:
             metadata={**command.metadata, **parent_metadata},
         )
         after_action, action_transition = CombatExecutor(self.rules).execute(scheduled_command, begin_result.after_state)
+        if _has_queue_entries(after_action):
+            pending_mutation = self._pending_turn_end_mutation(after_action, actor_id, action_transition.transaction.command.action_id)
+            after_pending = self.reducer.apply_all(after_action, (pending_mutation,))
+            pending_record = SettlementRecord(
+                record_type="scheduler_turn_end_deferred",
+                source="timeline_scheduler",
+                mutation_id=pending_mutation.stable_id(),
+                process_only=False,
+                payload={
+                    "reason": "queue_entries_pending_after_action",
+                    "actor_id": actor_id,
+                    "child_action_id": action_transition.transaction.command.action_id,
+                    "pending_turn_end": pending_mutation.after,
+                },
+                trace=pending_mutation.metadata.get("source_trace") if isinstance(pending_mutation.metadata.get("source_trace"), dict) else {},
+            ).to_json()
+            combined = _combine_scheduler_transitions(
+                before_state=state,
+                after_state=after_pending,
+                actor_id=actor_id,
+                records=(
+                    *_scheduler_process_records(
+                        "scheduler_action_step",
+                        {
+                            "scheduler_step": "manual_action_turn_lifecycle_deferred_for_queue",
+                            "turn_begin_action_id": begin_result.transition.transaction.command.action_id,
+                            "child_action_id": action_transition.transaction.command.action_id,
+                            "turn_end": "deferred_until_pending_queue_drained",
+                        },
+                    ),
+                    *(begin_result.transition.transaction.settlement.records if begin_result.transition.transaction.settlement else ()),
+                    *(action_transition.transaction.settlement.records if action_transition.transaction.settlement else ()),
+                    pending_record,
+                ),
+                events=(
+                    *begin_result.transition.transaction.events,
+                    GameEvent(
+                        "scheduler.action.before",
+                        source_id=actor_id,
+                        event_id=f"event:{begin_result.after_state.event_index}:scheduler_action_before:{actor_id}",
+                        window="scheduler",
+                        process_only=True,
+                        payload={"command": _command_payload(scheduled_command)},
+                    ),
+                    *action_transition.transaction.events,
+                    GameEvent(
+                        "scheduler.action.after",
+                        source_id=actor_id,
+                        event_id=f"event:{after_action.event_index}:scheduler_action_after:{actor_id}",
+                        window="scheduler",
+                        process_only=True,
+                        payload={"command": _command_payload(scheduled_command)},
+                    ),
+                    GameEvent(
+                        "scheduler.turn_end_deferred",
+                        source_id=actor_id,
+                        event_id=f"event:{after_action.event_index}:turn_end_deferred:{actor_id}",
+                        window="scheduler",
+                        process_only=True,
+                        payload={"pending_turn_end": pending_mutation.after},
+                    ),
+                ),
+                mutations=(
+                    *begin_result.transition.transaction.mutations,
+                    *action_transition.transaction.mutations,
+                    pending_mutation,
+                ),
+                target_resolution=action_transition.target_resolution,
+                coverage={
+                    "scheduler_step": "manual_action_turn_lifecycle_deferred_for_queue",
+                    "turn_begin": begin_result.transition.coverage,
+                    "action_child": {
+                        "command": _command_payload(scheduled_command),
+                        "coverage": action_transition.coverage,
+                    },
+                    "turn_end": {"deferred": True, "reason": "queue_entries_pending_after_action"},
+                    "unsupported_hooks": _unsupported_turn_hooks(),
+                },
+            )
+            return SchedulerStepResult(
+                after_pending,
+                combined,
+                child_transitions=(begin_result.transition, action_transition),
+            )
         action_lifecycle = self._apply_status_lifecycle_tick(after_action, "ActionPhaseEnd", actor_id=actor_id)
         end_result = self.end_current_turn(action_lifecycle.after_state)
         combined = _combine_scheduler_transitions(
@@ -495,8 +583,8 @@ class CombatScheduler:
         plan = sorted(
             plans,
             key=lambda item: (
-                float(item.priority_value) if item.priority_value is not None else float("inf"),
                 QUEUE_WINDOW_FAMILY_ORDER.get((item.queue_window or {}).get("window_family") or "unknown", 999),
+                float(item.priority_value) if item.priority_value is not None else float("inf"),
                 item.drain_order if item.drain_order is not None else 0,
                 str(item.queue_entry.get("entry_id") or ""),
             ),
@@ -733,6 +821,124 @@ class CombatScheduler:
             return str(window.get("blocked_reason") or "queue_window_not_admitted")
         return ""
 
+    def _pending_turn_end_mutation(self, state: BattleState, actor_id: str, child_action_id: str) -> Mutation:
+        rule = self.rules.default_timeline_rule()
+        plan_id = f"turn_advance_plan:{state.event_index}:{actor_id}:pending_turn_end"
+        pending = {
+            "actor_id": actor_id,
+            "child_action_id": child_action_id,
+            "turn_sequence_index": state.global_flags.get("turn_sequence_index", 0),
+            "timeline_rule_id": rule.timeline_rule_id,
+            "reason": "queue_entries_pending_after_action",
+        }
+        return Mutation(
+            op="set",
+            path=("global_flags", "pending_turn_end"),
+            before=state.global_flags.get("pending_turn_end"),
+            after=pending,
+            reason="defer natural turn end while queue entries are pending",
+            source="timeline_system",
+            metadata={
+                "timeline_rule_id": rule.timeline_rule_id,
+                "turn_advance_plan_id": plan_id,
+                "source_trace": rule.source.to_json(),
+                "scheduler_operation": "defer_turn_end_for_queue",
+            },
+            mutation_id=f"mutation:timeline:pending_turn_end:{state.event_index}:{actor_id}",
+        )
+
+    def _clear_pending_turn_end_mutation(self, state: BattleState, actor_id: str) -> Mutation:
+        rule = self.rules.default_timeline_rule()
+        plan_id = f"turn_advance_plan:{state.event_index}:{actor_id}:clear_pending_turn_end"
+        return Mutation(
+            op="set",
+            path=("global_flags", "pending_turn_end"),
+            before=state.global_flags.get("pending_turn_end"),
+            after=None,
+            reason="clear deferred natural turn end marker",
+            source="timeline_system",
+            metadata={
+                "timeline_rule_id": rule.timeline_rule_id,
+                "turn_advance_plan_id": plan_id,
+                "source_trace": rule.source.to_json(),
+                "scheduler_operation": "clear_deferred_turn_end",
+            },
+            mutation_id=f"mutation:timeline:pending_turn_end_clear:{state.event_index}:{actor_id}",
+        )
+
+    def _complete_pending_turn_end(self, state: BattleState, pending_turn_end: dict[str, JSONValue]) -> SchedulerStepResult:
+        actor_id = str(pending_turn_end.get("actor_id") or "")
+        if not actor_id or actor_id not in state.units:
+            return self._blocked(
+                state,
+                "scheduler:pending_turn_end",
+                "pending_turn_end_actor_missing",
+                {"pending_turn_end": pending_turn_end},
+            )
+        action_lifecycle = self._apply_status_lifecycle_tick(state, "ActionPhaseEnd", actor_id=actor_id)
+        end_result = self.end_current_turn(action_lifecycle.after_state)
+        clear_mutation = self._clear_pending_turn_end_mutation(end_result.after_state, actor_id)
+        after_clear = self.reducer.apply_all(end_result.after_state, (clear_mutation,))
+        clear_record = SettlementRecord(
+            record_type="scheduler_pending_turn_end_cleared",
+            source="timeline_scheduler",
+            mutation_id=clear_mutation.stable_id(),
+            process_only=False,
+            payload={"pending_turn_end": pending_turn_end},
+            trace=clear_mutation.metadata.get("source_trace") if isinstance(clear_mutation.metadata.get("source_trace"), dict) else {},
+        ).to_json()
+        combined = _combine_scheduler_transitions(
+            before_state=state,
+            after_state=after_clear,
+            actor_id=actor_id,
+            records=(
+                *_scheduler_process_records(
+                    "scheduler_pending_turn_end_step",
+                    {
+                        "scheduler_step": "complete_deferred_turn_lifecycle",
+                        "pending_turn_end": pending_turn_end,
+                        "action_lifecycle_hook": "ActionPhaseEnd",
+                    },
+                ),
+                *action_lifecycle.records,
+                *(end_result.transition.transaction.settlement.records if end_result.transition.transaction.settlement else ()),
+                clear_record,
+            ),
+            events=(
+                GameEvent(
+                    "scheduler.pending_turn_end.begin",
+                    source_id=actor_id,
+                    event_id=f"event:{state.event_index}:pending_turn_end_begin:{actor_id}",
+                    window="scheduler",
+                    process_only=True,
+                    payload={"pending_turn_end": pending_turn_end},
+                ),
+                *action_lifecycle.events,
+                *end_result.transition.transaction.events,
+                GameEvent(
+                    "scheduler.pending_turn_end.end",
+                    source_id=actor_id,
+                    event_id=f"event:{after_clear.event_index}:pending_turn_end_end:{actor_id}",
+                    window="scheduler",
+                    process_only=True,
+                    payload={"pending_turn_end": pending_turn_end},
+                ),
+            ),
+            mutations=(
+                *action_lifecycle.mutations,
+                *end_result.transition.transaction.mutations,
+                clear_mutation,
+            ),
+            target_resolution=TargetResolution(reason="pending_turn_end_no_target", source="timeline_scheduler"),
+            coverage={
+                "scheduler_step": "complete_deferred_turn_lifecycle",
+                "pending_turn_end": pending_turn_end,
+                "action_lifecycle": {"life_step_moment": "ActionPhaseEnd", "mutation_count": len(action_lifecycle.mutations)},
+                "turn_end": end_result.transition.coverage,
+            },
+        )
+        return SchedulerStepResult(after_clear, combined, child_transitions=(end_result.transition,))
+
     def _ultimate_energy_cost_mutation(
         self,
         state: BattleState,
@@ -920,6 +1126,10 @@ def _command_payload(command: ActionCommand) -> dict[str, JSONValue]:
         "queue_name": command.queue_name,
         "metadata": command.metadata,
     }
+
+
+def _has_queue_entries(state: BattleState) -> bool:
+    return any(bool(entries) for entries in state.queues.values())
 
 
 def _unsupported_turn_hooks() -> dict[str, JSONValue]:

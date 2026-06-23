@@ -28,6 +28,7 @@ from .ir import (
     QueueWindowIR,
     ResourceRuleIR,
     RuleEntity,
+    SkillContinuationIR,
     StandaloneAbilityGraphIR,
     StatusCallbackIR,
     StatusCallbackTaskIR,
@@ -388,6 +389,11 @@ class RuleBook:
                 if policy.queue_intent_id
             },
         )
+        object.__setattr__(
+            self,
+            "_skill_continuations",
+            {continuation.continuation_id: continuation for continuation in self.ir.skill_continuations},
+        )
         standalone_ability_graphs_by_name: dict[str, list[StandaloneAbilityGraphIR]] = {}
         for graph in self.ir.standalone_ability_graphs:
             standalone_ability_graphs_by_name.setdefault(graph.ability_name, []).append(graph)
@@ -680,6 +686,12 @@ class RuleBook:
 
     def queue_lifecycle_policy_for_intent(self, queue_intent_id: str) -> QueueLifecyclePolicyIR | None:
         return self._queue_lifecycle_policy_by_intent.get(queue_intent_id)
+
+    def skill_continuation(self, continuation_id: str) -> SkillContinuationIR | None:
+        return self._skill_continuations.get(continuation_id)
+
+    def skill_continuations(self) -> tuple[SkillContinuationIR, ...]:
+        return tuple(sorted(self.ir.skill_continuations, key=lambda item: item.continuation_id))
 
     def standalone_ability_graph(self, graph_id: str) -> StandaloneAbilityGraphIR | None:
         return self._standalone_ability_graphs.get(graph_id)

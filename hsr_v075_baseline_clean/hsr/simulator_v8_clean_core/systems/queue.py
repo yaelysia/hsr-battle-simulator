@@ -154,11 +154,11 @@ class QueueDrainPlan:
 
 
 QUEUE_WINDOW_FAMILY_ORDER: dict[str, int] = {
-    "interrupt": 0,
+    "follow_up": 0,
+    "counter": 0,
     "ultimate": 10,
-    "counter": 20,
-    "follow_up": 30,
-    "extra_turn": 40,
+    "extra_turn": 10,
+    "interrupt": 20,
     "immediate": 50,
     "insert_action": 60,
     "insert_ability": 70,
@@ -328,8 +328,8 @@ class QueueSystem:
         return sorted(
             admitted,
             key=lambda plan: (
-                float(plan.priority_value) if plan.priority_value is not None else float("inf"),
                 QUEUE_WINDOW_FAMILY_ORDER.get(plan.queue_window.get("window_family") or "unknown", 999),
+                float(plan.priority_value) if plan.priority_value is not None else float("inf"),
                 plan.drain_order if plan.drain_order is not None else 0,
                 str(plan.queue_entry.get("entry_id") or ""),
             ),
