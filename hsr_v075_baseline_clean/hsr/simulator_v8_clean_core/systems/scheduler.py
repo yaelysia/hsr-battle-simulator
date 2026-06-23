@@ -20,6 +20,7 @@ from ..rules.rulebook import RuleBook
 from .ability import AbilityTaskSystem
 from .effect import EffectRegistry
 from .queue import QUEUE_WINDOW_FAMILY_ORDER, QueueDrainPlan, QueueEntry, QueueSystem
+from .resource import ResourceSystem
 from .status import StatusSystem
 from .timeline import TimelineSystem, TurnAdvancePlan, TurnAdvanceResult
 
@@ -52,6 +53,7 @@ class CombatScheduler:
         self.reducer = MutationReducer()
         self.timeline = TimelineSystem()
         self.queue = QueueSystem()
+        self.resources = ResourceSystem()
         self.status = StatusSystem(rules)
         self.effects = EffectRegistry(self.status)
         self.ability_tasks = AbilityTaskSystem(rules, self.effects, reducer=self.reducer)
@@ -160,7 +162,8 @@ class CombatScheduler:
                 "dequeue_before_execute": True,
                 "drain_via_scheduler": True,
                 "energy_preflight_admitted": True,
-                "energy_cost_policy": "manual_preflight_only_until_ultimate_cost_source_admitted",
+                "energy_cost_policy": "set_actor_energy_to_zero_after_admitted_execution",
+                "resource_rule_id": self.rules.default_ultimate_energy_cost_rule().resource_rule_id,
             },
             target_resolution=target_resolution,
             status="pending",
@@ -612,6 +615,30 @@ class CombatScheduler:
             )
             if action_transition.transaction.settlement:
                 records.extend(action_transition.transaction.settlement.records)
+            if plan.queue_intent_id.startswith("manual_ultimate:") and action_transition.coverage.get("action_enabled") is True:
+                energy_mutation = self._ultimate_energy_cost_mutation(after_state, plan, queue_command)
+                after_state = self.reducer.apply_all(after_state, (energy_mutation,))
+                mutations = (*mutations, energy_mutation)
+                records.append(
+                    SettlementRecord(
+                        record_type="ultimate_energy_cost",
+                        source="combat_executor.resources",
+                        mutation_id=energy_mutation.stable_id(),
+                        process_only=False,
+                        payload={
+                            "actor_id": actor_id,
+                            "action_id": queue_command.action_id,
+                            "action_level": queue_command.action_level,
+                            "queue_intent_id": plan.queue_intent_id,
+                            "queue_resolution_id": plan.queue_resolution_id,
+                            "queue_window_plan": plan.queue_window or {},
+                            "resource_rule_id": energy_mutation.metadata.get("resource_rule_id"),
+                            "before_energy": energy_mutation.before,
+                            "after_energy": energy_mutation.after,
+                        },
+                        trace=energy_mutation.metadata.get("source_trace") if isinstance(energy_mutation.metadata.get("source_trace"), dict) else {},
+                    ).to_json()
+                )
         return SchedulerStepResult(
             after_state,
             _transition(
@@ -657,6 +684,40 @@ class CombatScheduler:
         if window.get("ok") is not True:
             return str(window.get("blocked_reason") or "queue_window_not_admitted")
         return ""
+
+    def _ultimate_energy_cost_mutation(
+        self,
+        state: BattleState,
+        plan: QueueDrainPlan,
+        command: ActionCommand,
+    ) -> Mutation:
+        rule = self.rules.default_ultimate_energy_cost_rule()
+        definition = self.rules.require_action_definition(command.action_id, command.action_level)
+        action_event = self.rules.require_action_event(command.action_id, command.action_level)
+        action_trace = self.rules.action_definition_source_trace(command.action_id, command.action_level) or {}
+        source_trace = {
+            **action_trace,
+            "action_event_source_trace": action_event.source.to_json(),
+            "queue_parent": command.metadata.get("queue_parent") if isinstance(command.metadata.get("queue_parent"), dict) else {},
+            "resource_rule_source": rule.source.to_json(),
+        }
+        return self.resources.spend_ultimate_energy(
+            state,
+            command.actor_id,
+            rule,
+            metadata={
+                "action_id": command.action_id,
+                "action_level": command.action_level,
+                "definition_id": definition.definition_id,
+                "action_event_id": action_event.action_event_id,
+                "queue_parent": command.metadata.get("queue_parent") if isinstance(command.metadata.get("queue_parent"), dict) else {},
+                "queue_intent_id": plan.queue_intent_id,
+                "queue_resolution_id": plan.queue_resolution_id,
+                "queue_priority_id": plan.queue_priority_id,
+                "queue_window_plan": plan.queue_window or {},
+                "source_trace": source_trace,
+            },
+        )
 
     def _blocked(
         self,
@@ -829,7 +890,7 @@ def _unsupported_turn_hooks() -> dict[str, JSONValue]:
         "ultimate": {
             "status": "admitted_for_manual_queue_current_scope",
             "window_family": "ultimate",
-            "remaining_blocking_dependency": "TBGD automatic ultimate interrupt priority and energy cost mutation source admission",
+            "remaining_blocking_dependency": "TBGD automatic ultimate interrupt priority admission",
         },
         "follow_up": {
             "status": "queue_window_gate",

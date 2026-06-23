@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from ..core.model import BattleState, JSONValue, Mutation
+from ..rules.ir import ResourceRuleIR
 
 
 @dataclass(frozen=True)
@@ -60,6 +61,37 @@ class ResourceSystem:
             source=source,
             metadata={"delta": delta},
             mutation_id=f"mutation:{unit_id}:energy:{state.event_index}:{delta}",
+        )
+
+    def spend_ultimate_energy(
+        self,
+        state: BattleState,
+        unit_id: str,
+        rule: ResourceRuleIR,
+        *,
+        metadata: dict[str, JSONValue] | None = None,
+    ) -> Mutation:
+        unit = state.units[unit_id]
+        after = 0.0
+        return Mutation(
+            op="set",
+            path=("units", unit_id, "energy"),
+            before=unit.energy,
+            after=after,
+            reason="apply ultimate energy cost",
+            source="combat_executor.resources",
+            metadata={
+                **(metadata or {}),
+                "resource_operation": "ultimate_energy_cost",
+                "resource_rule_id": rule.resource_rule_id,
+                "resource_rule_kind": rule.rule_kind,
+                "resource_rule_operation": rule.operation,
+                "resource_rule_source_kind": rule.source_kind,
+                "resource_rule_source": rule.source.to_json(),
+                "before_energy": unit.energy,
+                "after_energy": after,
+            },
+            mutation_id=f"mutation:ultimate_energy_cost:{state.event_index}:{unit_id}",
         )
 
     def plan_action_resources(self, state: BattleState, actor_id: str, plan: ResourcePlan) -> ResourcePlanResult:

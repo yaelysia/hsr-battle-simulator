@@ -25,6 +25,7 @@ from .ir import (
     QueuePriorityIR,
     QueueResolutionIR,
     QueueWindowIR,
+    ResourceRuleIR,
     RuleEntity,
     StandaloneAbilityGraphIR,
     StatusCallbackIR,
@@ -391,6 +392,11 @@ class RuleBook:
         )
         object.__setattr__(
             self,
+            "_resource_rules",
+            {rule.resource_rule_id: rule for rule in self.ir.resource_rules},
+        )
+        object.__setattr__(
+            self,
             "_super_break_emissions",
             {emission.super_break_emission_id: emission for emission in self.ir.super_break_emissions},
         )
@@ -658,6 +664,23 @@ class RuleBook:
         rules = sorted(self.ir.timeline_rules, key=lambda item: item.timeline_rule_id)
         if not rules:
             raise KeyError("missing timeline rule")
+        return rules[0]
+
+    def resource_rule(self, resource_rule_id: str) -> ResourceRuleIR | None:
+        return self._resource_rules.get(resource_rule_id)
+
+    def resource_rules_by_kind(self, rule_kind: str) -> tuple[ResourceRuleIR, ...]:
+        return tuple(
+            sorted(
+                (rule for rule in self.ir.resource_rules if rule.rule_kind == rule_kind),
+                key=lambda item: item.resource_rule_id,
+            )
+        )
+
+    def default_ultimate_energy_cost_rule(self) -> ResourceRuleIR:
+        rules = self.resource_rules_by_kind("ultimate_energy_cost")
+        if not rules:
+            raise KeyError("missing ultimate energy cost resource rule")
         return rules[0]
 
     def super_break_emission(self, emission_id: str) -> SuperBreakEmissionIR | None:

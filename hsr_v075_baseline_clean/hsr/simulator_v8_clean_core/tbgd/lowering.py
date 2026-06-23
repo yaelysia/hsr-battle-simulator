@@ -34,6 +34,7 @@ from ..rules.ir import (
     QueuePriorityIR,
     QueueResolutionIR,
     QueueWindowIR,
+    ResourceRuleIR,
     RuleEntity,
     StandaloneAbilityGraphIR,
     StatusCallbackIR,
@@ -165,6 +166,7 @@ class TBGDLowering:
         queue_intents: list[QueueIntentIR] = []
         super_break_emissions: list[SuperBreakEmissionIR] = []
         timeline_rules = self._lower_timeline_rules()
+        resource_rules = self._lower_resource_rules()
         queue_priorities = self._lower_queue_priorities()
         queue_priority_lookup = {
             (priority.priority_table, priority.priority_key): priority
@@ -279,6 +281,7 @@ class TBGDLowering:
             standalone_ability_graphs=tuple(standalone_ability_graphs),
             combatant_action_sets=tuple(combatant_action_sets),
             timeline_rules=tuple(timeline_rules),
+            resource_rules=tuple(resource_rules),
             super_break_emissions=tuple(super_break_emissions),
             triggers=tuple(triggers),
             effects=tuple(effects),
@@ -325,6 +328,7 @@ class TBGDLowering:
                     "standalone_ability_graph_count": len(standalone_ability_graphs),
                     "combatant_action_set_count": len(combatant_action_sets),
                     "timeline_rule_count": len(timeline_rules),
+                    "resource_rule_count": len(resource_rules),
                     "super_break_emission_count": len(super_break_emissions),
                 },
                 "combatant_profile_status": {
@@ -350,6 +354,26 @@ class TBGDLowering:
                     evidence={
                         "reason": "TBGD raw constant source not admitted yet; recorded as explicit engine convention instead of TBGD source",
                         "formula": "10000 / speed",
+                    },
+                ),
+                coverage_status="executable",
+            )
+        ]
+
+    def _lower_resource_rules(self) -> list[ResourceRuleIR]:
+        return [
+            ResourceRuleIR(
+                resource_rule_id="resource_rule:engine_convention:ultimate_energy_cost_to_zero",
+                rule_kind="ultimate_energy_cost",
+                operation="set_actor_energy_to_zero_after_admitted_ultimate_execution",
+                source_kind="engine_convention",
+                source=IRSource(
+                    source_path="simulator_v8_clean_core/resource_engine_convention",
+                    raw_type="ResourceEngineConvention",
+                    raw_id="ultimate_energy_cost_to_zero",
+                    evidence={
+                        "reason": "TBGD raw constant source not admitted yet; recorded as explicit engine convention instead of TBGD source",
+                        "operation": "after an admitted ultimate action executes, set actor energy to 0",
                     },
                 ),
                 coverage_status="executable",
@@ -4051,49 +4075,59 @@ def _standard_remove_modifier_payload(value: dict[str, Any], opcode: str, source
 
 
 def _standard_heal_payload(value: dict[str, Any]) -> dict[str, Any]:
-    amount = _numeric_expr_summary(value.get("ModifyValue"))
+    modify_value = _numeric_expr_summary(value.get("ModifyValue"))
     percentage = _numeric_expr_summary(value.get("HealPercentage"))
     formula_type = _value_field(value.get("FormulaType"))
+    ratio_formula_types = {"HealByTargetMaxHP", "HealByHealerMaxHP"}
+    amount = percentage if formula_type in ratio_formula_types else modify_value
     payload = {
         "kind": "heal",
         "target_alias": _target_alias(value.get("TargetType")),
         "formula_type": formula_type,
         "amount": amount,
+        "amount_role": "ratio" if formula_type in ratio_formula_types else "flat",
+        "formula_base": _heal_formula_base(formula_type),
         "percentage": percentage,
+        "modify_value": modify_value,
         "raw_formula_fields": {
             "ModifyValue": _json_safe(value.get("ModifyValue")),
             "HealPercentage": _json_safe(value.get("HealPercentage")),
             "FormulaType": _json_safe(value.get("FormulaType")),
         },
     }
-    if formula_type not in {None, "", "HealByBaseValue"}:
+    if formula_type not in {None, "", "HealByBaseValue", *ratio_formula_types}:
         payload["blocked_reason"] = f"formula_type_not_supported:{formula_type}"
     elif not _numeric_expr_can_be_runtime_bound(amount):
-        payload["blocked_reason"] = "fixed_or_bound_modify_value_required"
+        payload["blocked_reason"] = "fixed_or_bound_heal_percentage_required" if formula_type in ratio_formula_types else "fixed_or_bound_modify_value_required"
     return payload
 
 
 def _standard_shield_payload(value: dict[str, Any], opcode: str) -> dict[str, Any]:
-    amount = _numeric_expr_summary(value.get("ShieldValue"))
+    shield_value = _numeric_expr_summary(value.get("ShieldValue"))
     percentage = _numeric_expr_summary(value.get("ShieldPercentage"))
     formula_type = _value_field(value.get("FormulaType"))
+    ratio_formula_types = {"ShieldByCasterMaxHP", "ShieldByCasterDefence", "ShieldByTargetMaxHP"}
+    amount = percentage if formula_type in ratio_formula_types else shield_value
     payload = {
         "kind": "shield",
         "shield_opcode": opcode,
         "target_alias": _target_alias(value.get("TargetType")),
         "formula_type": formula_type,
         "amount": amount,
+        "amount_role": "ratio" if formula_type in ratio_formula_types else "flat",
+        "formula_base": _shield_formula_base(formula_type),
         "percentage": percentage,
+        "shield_value": shield_value,
         "raw_formula_fields": {
             "ShieldValue": _json_safe(value.get("ShieldValue")),
             "ShieldPercentage": _json_safe(value.get("ShieldPercentage")),
             "FormulaType": _json_safe(value.get("FormulaType")),
         },
     }
-    if formula_type not in {None, "", "ShieldByBaseValue"}:
+    if formula_type not in {None, "", "ShieldByBaseValue", *ratio_formula_types}:
         payload["blocked_reason"] = f"formula_type_not_supported:{formula_type}"
     elif not _numeric_expr_can_be_runtime_bound(amount):
-        payload["blocked_reason"] = "fixed_or_bound_shield_value_required"
+        payload["blocked_reason"] = "fixed_or_bound_shield_percentage_required" if formula_type in ratio_formula_types else "fixed_or_bound_shield_value_required"
     return payload
 
 
@@ -4124,28 +4158,37 @@ def _standard_mechanism_bar_payload(value: dict[str, Any], opcode: str) -> dict[
 
 
 def _standard_resource_delta_payload(value: dict[str, Any], opcode: str) -> dict[str, Any]:
-    amount_field = _first_present_key(value, ("AddValue", "ModifyValue", "FixedAddValue"))
+    admitted_fields = (
+        "AddValue",
+        "ModifyValue",
+        "FixedAddValue",
+        "SetValue",
+        "FixedSetValue",
+        "AddMaxSPRatio",
+        "FixedAddMaxSPRatio",
+        "SetMaxSPRatio",
+        "FixedSetMaxSPRatio",
+    )
+    amount_field = _first_present_key(value, admitted_fields)
     unsupported_field = "" if amount_field else _first_present_key(
         value,
         (
             "AddRatio",
             "FixedAddRatio",
-            "AddMaxSPRatio",
-            "FixedAddMaxSPRatio",
-            "SetValue",
-            "SetMaxSPRatio",
-            "FixedSetValue",
-            "FixedSetMaxSPRatio",
         ),
     )
     formula_field = amount_field or unsupported_field
     amount = _numeric_expr_summary(value.get(formula_field) if formula_field else None)
+    operation = "set" if formula_field in {"SetValue", "FixedSetValue", "SetMaxSPRatio", "FixedSetMaxSPRatio"} else "add"
+    scale_basis = "max_skill_points" if formula_field in {"AddMaxSPRatio", "FixedAddMaxSPRatio", "SetMaxSPRatio", "FixedSetMaxSPRatio"} else "flat"
     payload = {
         "kind": "resource_delta",
         "resource": "skill_points" if opcode == "ModifySPNew" else opcode,
         "target_alias": _target_alias(value.get("TargetType")),
         "formula_type": formula_field or "missing",
         "amount": amount,
+        "operation": operation,
+        "scale_basis": scale_basis,
         "raw_formula_fields": {
             "AddValue": _json_safe(value.get("AddValue")),
             "ModifyValue": _json_safe(value.get("ModifyValue")),
@@ -4156,6 +4199,8 @@ def _standard_resource_delta_payload(value: dict[str, Any], opcode: str) -> dict
             "FixedAddMaxSPRatio": _json_safe(value.get("FixedAddMaxSPRatio")),
             "SetValue": _json_safe(value.get("SetValue")),
             "SetMaxSPRatio": _json_safe(value.get("SetMaxSPRatio")),
+            "FixedSetValue": _json_safe(value.get("FixedSetValue")),
+            "FixedSetMaxSPRatio": _json_safe(value.get("FixedSetMaxSPRatio")),
         },
     }
     if unsupported_field:
@@ -4187,12 +4232,30 @@ def _standard_hp_loss_ratio_payload(value: dict[str, Any]) -> dict[str, Any]:
         },
     }
     if floor:
-        payload["blocked_reason"] = "hp_loss_floor_rounding_not_supported"
-    elif ratio_type not in {"MaxHP", "CurrentHP"}:
+        payload["rounding_policy"] = "floor_from_tbgd_flag"
+    if ratio_type not in {"MaxHP", "CurrentHP"}:
         payload["blocked_reason"] = f"hp_loss_ratio_type_not_supported:{ratio_type}"
     elif not _numeric_expr_can_be_runtime_bound(ratio):
         payload["blocked_reason"] = str(ratio.get("reason") or "fixed_or_bound_hp_loss_ratio_required")
     return payload
+
+
+def _heal_formula_base(formula_type: Any) -> str:
+    if formula_type == "HealByTargetMaxHP":
+        return "target.max_hp"
+    if formula_type == "HealByHealerMaxHP":
+        return "caster.max_hp"
+    return "flat"
+
+
+def _shield_formula_base(formula_type: Any) -> str:
+    if formula_type == "ShieldByCasterMaxHP":
+        return "caster.max_hp"
+    if formula_type == "ShieldByCasterDefence":
+        return "caster.defense"
+    if formula_type == "ShieldByTargetMaxHP":
+        return "target.max_hp"
+    return "flat"
 
 
 def _standard_set_dynamic_value_payload(value: dict[str, Any]) -> dict[str, Any]:

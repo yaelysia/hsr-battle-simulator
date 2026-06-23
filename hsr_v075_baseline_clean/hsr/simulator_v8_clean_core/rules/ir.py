@@ -931,6 +931,28 @@ class TimelineRuleIR:
 
 
 @dataclass(frozen=True)
+class ResourceRuleIR:
+    resource_rule_id: str
+    rule_kind: str
+    operation: str
+    source_kind: str
+    source: IRSource
+    coverage_status: CoverageStatus = "executable"
+    blocked_reason: str = ""
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "resource_rule_id": self.resource_rule_id,
+            "rule_kind": self.rule_kind,
+            "operation": self.operation,
+            "source_kind": self.source_kind,
+            "source": self.source.to_json(),
+            "coverage_status": self.coverage_status,
+            "blocked_reason": self.blocked_reason,
+        }
+
+
+@dataclass(frozen=True)
 class CanonicalIR:
     version: str
     entities: tuple[RuleEntity, ...] = ()
@@ -958,6 +980,7 @@ class CanonicalIR:
     standalone_ability_graphs: tuple[StandaloneAbilityGraphIR, ...] = ()
     combatant_action_sets: tuple[CombatantActionSetIR, ...] = ()
     timeline_rules: tuple[TimelineRuleIR, ...] = ()
+    resource_rules: tuple[ResourceRuleIR, ...] = ()
     super_break_emissions: tuple[SuperBreakEmissionIR, ...] = ()
     triggers: tuple[TriggerIR, ...] = ()
     effects: tuple[EffectIR, ...] = ()
@@ -994,6 +1017,7 @@ class CanonicalIR:
             "standalone_ability_graphs": [graph.to_json() for graph in self.standalone_ability_graphs],
             "combatant_action_sets": [action_set.to_json() for action_set in self.combatant_action_sets],
             "timeline_rules": [rule.to_json() for rule in self.timeline_rules],
+            "resource_rules": [rule.to_json() for rule in self.resource_rules],
             "super_break_emissions": [emission.to_json() for emission in self.super_break_emissions],
             "triggers": [trigger.to_json() for trigger in self.triggers],
             "effects": [effect.to_json() for effect in self.effects],

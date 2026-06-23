@@ -28,7 +28,7 @@ MUTATION_SOURCE_POLICIES: dict[str, dict[str, JSONValue]] = {
         "coverage_required": "TimelineRuleIR executable or explicit engine_convention",
     },
     "combat_executor.resources": {
-        "required_ir": ["ActionDefinitionIR", "ActionEventIR"],
+        "required_ir": ["ActionDefinitionIR", "ActionEventIR", "ResourceRuleIR for ultimate energy cost"],
         "required_metadata": ["action_id", "action_level", "definition_id", "action_event_id", "source_trace"],
         "coverage_required": "ActionDefinitionIR executable; ActionEventIR traceable",
     },
@@ -217,6 +217,33 @@ class RuntimeSourceAuditor:
                 )
             else:
                 _audit_source(event.source, event.coverage_status, mutation, violations, check_status=False)
+        resource_operation = _first_str(metadata.get("resource_operation"))
+        resource_rule_id = _first_str(metadata.get("resource_rule_id"))
+        if resource_operation == "ultimate_energy_cost":
+            if not resource_rule_id:
+                violations.append(_violation(mutation, "resource_rule_id_missing", missing_field="resource_rule_id"))
+            else:
+                rule = self.rules.resource_rule(resource_rule_id)
+                if rule is None:
+                    violations.append(_violation(mutation, "resource_rule_missing", details={"resource_rule_id": resource_rule_id}))
+                else:
+                    if rule.coverage_status != "executable":
+                        violations.append(
+                            _violation(
+                                mutation,
+                                "resource_rule_not_executable",
+                                details={"resource_rule_id": resource_rule_id, "coverage_status": rule.coverage_status},
+                            )
+                        )
+                    if rule.source_kind not in {"tbgd", "engine_convention"}:
+                        violations.append(
+                            _violation(
+                                mutation,
+                                "resource_rule_source_kind_not_admitted",
+                                details={"resource_rule_id": resource_rule_id, "source_kind": rule.source_kind},
+                            )
+                        )
+                    _audit_source(rule.source, rule.coverage_status, mutation, violations, executable_required=False)
         _require_dict(mutation, metadata, "source_trace", violations)
         return _trace(
             mutation,
@@ -226,6 +253,8 @@ class RuntimeSourceAuditor:
                 "action_level": action_level if action_level is not None else "",
                 "definition_id": definition_id or "",
                 "action_event_id": action_event_id or "",
+                "resource_operation": resource_operation,
+                "resource_rule_id": resource_rule_id,
             },
         )
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Callable
 
@@ -349,10 +350,18 @@ def _execute_fixed_unit_delta(
             f"unsupported_formula:{amount_result.blocked_reason or 'numeric_evaluation_failed'}",
             {"numeric_evaluation": amount_result.to_json(), "standard": standard},
         )
-    amount = amount_result.value
+    amount, formula_details, formula_reason = _resolve_formula_amount(kind, context.state, standard, target_id, context.caster_id, amount_result.value)
+    if formula_reason:
+        return _unsupported_effect(
+            effect,
+            formula_reason,
+            {"numeric_evaluation": amount_result.to_json(), "standard": standard},
+        )
     state = context.state
     if kind == "resource_delta" and standard.get("resource") == "skill_points":
-        after = max(0, min(state.max_skill_points, state.skill_points + int(amount)))
+        operation = str(standard.get("operation") or "add")
+        after_value = amount if operation == "set" else state.skill_points + amount
+        after = max(0, min(state.max_skill_points, int(after_value)))
         mutation = Mutation(
             op="set",
             path=("skill_points",),
@@ -360,7 +369,7 @@ def _execute_fixed_unit_delta(
             after=after,
             reason="apply numeric skill point delta effect",
             source="effect_system",
-            metadata=_effect_metadata(effect, context, standard, amount, amount_result),
+            metadata=_effect_metadata(effect, context, standard, amount, amount_result, formula_details=formula_details),
         )
         return _mutation_effect_result(effect, kind, mutation, amount, target_id=None, resource="skill_points", evaluation=amount_result)
     if target_id not in state.units:
@@ -375,7 +384,7 @@ def _execute_fixed_unit_delta(
             after=after,
             reason="apply numeric heal effect",
             source="effect_system",
-            metadata=_effect_metadata(effect, context, standard, amount, amount_result),
+            metadata=_effect_metadata(effect, context, standard, amount, amount_result, formula_details=formula_details),
         )
         return _mutation_effect_result(effect, kind, mutation, amount, target_id=target_id, evaluation=amount_result)
     if kind == "shield":
@@ -388,7 +397,7 @@ def _execute_fixed_unit_delta(
             after=after,
             reason="apply numeric shield effect",
             source="effect_system",
-            metadata=_effect_metadata(effect, context, standard, amount, amount_result),
+            metadata=_effect_metadata(effect, context, standard, amount, amount_result, formula_details=formula_details),
         )
         return _mutation_effect_result(effect, kind, mutation, amount, target_id=target_id, resource="shield", evaluation=amount_result)
     resource = standard.get("resource")
@@ -402,7 +411,7 @@ def _execute_fixed_unit_delta(
             after=after,
             reason="apply numeric energy delta effect",
             source="effect_system",
-            metadata=_effect_metadata(effect, context, standard, amount, amount_result),
+            metadata=_effect_metadata(effect, context, standard, amount, amount_result, formula_details=formula_details),
         )
         return _mutation_effect_result(effect, kind, mutation, amount, target_id=target_id, resource="energy", evaluation=amount_result)
     if kind == "resource_delta" and isinstance(resource, str) and resource:
@@ -415,7 +424,7 @@ def _execute_fixed_unit_delta(
             after=after,
             reason=f"apply numeric {resource} delta effect",
             source="effect_system",
-            metadata=_effect_metadata(effect, context, standard, amount, amount_result),
+            metadata=_effect_metadata(effect, context, standard, amount, amount_result, formula_details=formula_details),
         )
         return _mutation_effect_result(effect, kind, mutation, amount, target_id=target_id, resource=resource, evaluation=amount_result)
     return _unsupported_effect(effect, f"unsupported_resource_delta:{resource}")
@@ -457,6 +466,10 @@ def _execute_hp_loss_ratio(effect: EffectIR, context: EffectExecutionContext | N
     target = context.state.units[target_id]
     base_hp = target.max_hp if ratio_type == "MaxHP" else target.hp
     amount = base_hp * ratio
+    rounding_policy = "none"
+    if standard.get("floor") is True:
+        amount = float(math.floor(amount))
+        rounding_policy = "floor_from_tbgd_flag"
     effect_source = effect.source.to_json()
     packet = DamagePacket(
         attacker_id=context.caster_id,
@@ -478,6 +491,7 @@ def _execute_hp_loss_ratio(effect: EffectIR, context: EffectExecutionContext | N
             "ratio": ratio,
             "ratio_type": str(ratio_type),
             "base_hp": base_hp,
+            "rounding_policy": rounding_policy,
             "damage_formula_family": "hp_loss",
         },
     )
@@ -822,6 +836,8 @@ def _effect_metadata(
     standard: dict[str, JSONValue],
     amount: float,
     evaluation: NumericEvaluationResult | None = None,
+    *,
+    formula_details: dict[str, JSONValue] | None = None,
 ) -> dict[str, JSONValue]:
     metadata: dict[str, JSONValue] = {
         "effect_id": effect.effect_id,
@@ -834,6 +850,8 @@ def _effect_metadata(
     }
     if evaluation is not None:
         metadata["numeric_evaluation"] = evaluation.to_json()
+    if formula_details:
+        metadata["formula_details"] = formula_details
     return metadata
 
 
@@ -881,14 +899,64 @@ def _numeric_bindings(values: dict[str, float] | None) -> dict[str, float]:
 def _formula_type_blocked(effect: EffectIR, standard: dict[str, JSONValue], kind: str) -> str:
     formula_type = standard.get("formula_type")
     if kind == "heal":
-        if formula_type in {None, "", "HealByBaseValue"}:
+        if formula_type in {None, "", "HealByBaseValue", "HealByTargetMaxHP", "HealByHealerMaxHP"}:
             return ""
         return f"unsupported_formula:formula_type_not_supported:{formula_type}"
     if kind == "shield":
-        if formula_type in {None, "", "ShieldByBaseValue"}:
+        if formula_type in {None, "", "ShieldByBaseValue", "ShieldByCasterMaxHP", "ShieldByCasterDefence", "ShieldByTargetMaxHP"}:
             return ""
         return f"unsupported_formula:formula_type_not_supported:{formula_type}"
     return ""
+
+
+def _resolve_formula_amount(
+    kind: str,
+    state: BattleState,
+    standard: dict[str, JSONValue],
+    target_id: str | None,
+    caster_id: str,
+    raw_value: float,
+) -> tuple[float, dict[str, JSONValue], str]:
+    formula_type = standard.get("formula_type")
+    formula_base = str(standard.get("formula_base") or "flat")
+    details: dict[str, JSONValue] = {
+        "formula_type": str(formula_type or ""),
+        "amount_role": str(standard.get("amount_role") or "flat"),
+        "formula_base": formula_base,
+        "raw_value": raw_value,
+    }
+    if kind == "resource_delta":
+        scale_basis = str(standard.get("scale_basis") or "flat")
+        details["operation"] = str(standard.get("operation") or "add")
+        details["scale_basis"] = scale_basis
+        if scale_basis == "max_skill_points":
+            details["base_value"] = state.max_skill_points
+            return state.max_skill_points * raw_value, details, ""
+        if scale_basis == "flat":
+            details["base_value"] = 1.0
+            return raw_value, details, ""
+        return 0.0, details, f"unsupported_formula:resource_scale_basis_not_supported:{scale_basis}"
+    if formula_base == "flat":
+        details["base_value"] = 1.0
+        return raw_value, details, ""
+    if target_id is None:
+        return 0.0, details, "unsupported_formula:formula_target_missing"
+    target = state.units.get(target_id)
+    caster = state.units.get(caster_id)
+    if target is None:
+        return 0.0, details, "unsupported_formula:formula_target_missing"
+    if caster is None:
+        return 0.0, details, "unsupported_formula:formula_caster_missing"
+    if formula_base == "target.max_hp":
+        details["base_value"] = target.max_hp
+        return target.max_hp * raw_value, details, ""
+    if formula_base == "caster.max_hp":
+        details["base_value"] = caster.max_hp
+        return caster.max_hp * raw_value, details, ""
+    if formula_base == "caster.defense":
+        details["base_value"] = caster.defense
+        return caster.defense * raw_value, details, ""
+    return 0.0, details, f"unsupported_formula:formula_base_not_supported:{formula_base}"
 
 
 def _resolve_target_alias(
