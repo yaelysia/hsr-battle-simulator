@@ -509,6 +509,40 @@ class QueueSystem:
                 resolved_action_id=str(action_match["action_id"]),
                 resolved_action_level=int(action_match["action_level"]),
             )
+        elif resolution.resolved_kind == "extra_turn_action_choice":
+            window = self._queue_window_plan(
+                entry,
+                resolution,
+                priority_source=priority_source,
+                priority_value=priority_value,
+            )
+            if not window.ok:
+                return self._blocked_with_window(
+                    queue_name,
+                    entry,
+                    queue_intent_id,
+                    resolution,
+                    priority_source,
+                    priority_value,
+                    drain_order,
+                    window,
+                )
+            return QueueDrainPlan(
+                True,
+                "drain_candidate",
+                queue_name,
+                entry,
+                queue_intent_id,
+                resolution.queue_resolution_id,
+                "",
+                {"queue_resolution_source": resolution.source.to_json()},
+                queue_priority_id=str(priority_source.get("queue_priority_id") or ""),
+                priority_key=str(priority_source.get("priority_key") or ""),
+                priority_value=priority_value,
+                resolved_kind=resolution.resolved_kind,
+                drain_order=drain_order,
+                queue_window=window.to_json(),
+            )
         else:
             window = self._queue_window_plan(
                 entry,

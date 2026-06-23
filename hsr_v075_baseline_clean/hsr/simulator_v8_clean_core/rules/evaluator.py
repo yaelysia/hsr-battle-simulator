@@ -81,6 +81,9 @@ EXECUTABLE_CONDITION_OPCODES = {
     "ByCompareTarget",
     "ByCurrentSkillType",
     "ByIsContainModifier",
+    "ByHaveEnemyAlive",
+    "ByIsCurrentSkillActive",
+    "ByIsInsertAction",
     "ByNot",
     "ByTargetTeam",
 }
@@ -572,6 +575,61 @@ def _evaluate_condition_payload(
             opcode,
             "modifier_presence_compared",
             {"target_id": target_id, "modifier_name": modifier_name, "contains": contains},
+            source_trace,
+        )
+    if opcode == "ByIsInsertAction":
+        payload_value = (context.event_payload or {}).get("is_insert_action")
+        matched = payload_value is True
+        if payload.get("Inverse") is True:
+            matched = not matched
+        return _condition_result(
+            matched,
+            condition_id,
+            opcode,
+            "insert_action_flag_checked",
+            {"actual": payload_value, "inverse": payload.get("Inverse") is True},
+            source_trace,
+        )
+    if opcode == "ByIsCurrentSkillActive":
+        target_id, target_details = _resolve_condition_target(payload.get("TargetType"), context)
+        if target_id is None:
+            return _condition_blocked(condition_id, opcode, "target_alias_unresolved", target_details, source_trace)
+        payload_value = (context.event_payload or {}).get("is_current_skill_active")
+        matched = payload_value is True
+        if payload.get("Inverse") is True:
+            matched = not matched
+        return _condition_result(
+            matched,
+            condition_id,
+            opcode,
+            "current_skill_active_flag_checked",
+            {"target_id": target_id, "actual": payload_value, "inverse": payload.get("Inverse") is True},
+            source_trace,
+        )
+    if opcode == "ByHaveEnemyAlive":
+        target_id, target_details = _resolve_condition_target(payload.get("TargetType"), context)
+        if target_id is None:
+            return _condition_blocked(condition_id, opcode, "target_alias_unresolved", target_details, source_trace)
+        state = context.state
+        units = getattr(state, "units", None)
+        actor = _state_unit(context, target_id)
+        if not isinstance(units, dict) or actor is None:
+            return _condition_blocked(condition_id, opcode, "state_or_actor_missing", {"target_id": target_id}, source_trace)
+        actor_side = getattr(actor, "side", None)
+        alive_enemies = [
+            unit_id
+            for unit_id, unit in units.items()
+            if getattr(unit, "side", None) != actor_side and float(getattr(unit, "hp", 0.0) or 0.0) > 0
+        ]
+        matched = bool(alive_enemies)
+        if payload.get("Inverse") is True:
+            matched = not matched
+        return _condition_result(
+            matched,
+            condition_id,
+            opcode,
+            "enemy_alive_checked",
+            {"target_id": target_id, "alive_enemy_ids": alive_enemies, "inverse": payload.get("Inverse") is True},
             source_trace,
         )
     if opcode == "ByCompareHPRatio":

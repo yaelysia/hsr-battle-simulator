@@ -592,7 +592,8 @@ class CombatScheduler:
         resolution = _resolution_for_drain_plan(self.rules, state, plan)
         if resolution is None:
             return self._blocked(state, "queue:drain", "queue_resolution_missing", {"drain_plan": plan.to_json()})
-        if resolution.resolved_kind == "action_definition":
+        action_transition = None
+        if resolution.resolved_kind == "action_definition" or _is_extra_turn_action_choice_plan(plan, resolution):
             preflight_reason = self._queue_action_preflight_reason(state, plan, command=command)
             if preflight_reason:
                 return self._blocked(
@@ -680,7 +681,7 @@ class CombatScheduler:
             mutations = (*mutations, *ability_result.mutations)
             events = (*events, *ability_result.events)
             records.extend(ability_result.records)
-        elif resolution.resolved_kind == "action_definition":
+        elif resolution.resolved_kind == "action_definition" or _is_extra_turn_action_choice_plan(plan, resolution):
             from ..core.executor import CombatExecutor
 
             actor_id = str(plan.queue_entry.get("actor_id") or "")
@@ -779,6 +780,7 @@ class CombatScheduler:
                     },
                 )
             )
+        child_transitions = (action_transition,) if action_transition is not None else ()
         return SchedulerStepResult(
             after_state,
             _transition(
@@ -795,7 +797,7 @@ class CombatScheduler:
                     "queue_window_plan": plan.queue_window or {},
                 },
             ),
-            child_transitions=(action_transition,) if resolution.resolved_kind == "action_definition" else (),
+            child_transitions=child_transitions,
         )
 
     def _queue_action_preflight_reason(self, state: BattleState, plan: QueueDrainPlan, *, command: ActionCommand | None = None) -> str:
@@ -1379,6 +1381,11 @@ def _manual_ultimate_command_payload(source_trace: dict[str, JSONValue]) -> dict
     evidence = manual_source.get("evidence") if isinstance(manual_source.get("evidence"), dict) else {}
     command = evidence.get("command") if isinstance(evidence.get("command"), dict) else {}
     return command
+
+
+def _is_extra_turn_action_choice_plan(plan: QueueDrainPlan, resolution: QueueResolutionIR) -> bool:
+    window_family = str((plan.queue_window or {}).get("window_family") or "")
+    return window_family == "extra_turn" and resolution.resolved_kind == "extra_turn_action_choice"
 
 
 def _phases_for_graph(rules: RuleBook, graph_id: str) -> tuple[AbilityPhaseIR, ...]:

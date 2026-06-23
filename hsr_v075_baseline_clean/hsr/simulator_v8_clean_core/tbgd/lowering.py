@@ -1530,11 +1530,23 @@ class TBGDLowering:
                     for intent in callback_lowered.queue_intents
                     if intent.callback_id == callback_id
                 )
+                has_executable_callback_task = any(
+                    task.coverage_status == "executable"
+                    for task in callback_lowered.status_callback_tasks
+                    if task.callback_id == callback_id
+                )
                 admitted_event = event in {"OnStack", "OnPhase1"} or (
                     event == "OnListenTurnEnd"
                     and any(task.coverage_status == "executable" for task in callback_lowered.status_callback_tasks)
-                ) or has_executable_queue_intent
-                status = "executable" if admitted_event and (source_admitted or has_executable_queue_intent) else "blocked"
+                ) or has_executable_queue_intent or (
+                    event in {"OnTriggerDeath", "OnTriggerDeathrattle", "OnAfterSkillUse"}
+                    and has_executable_callback_task
+                )
+                status = (
+                    "executable"
+                    if admitted_event and (source_admitted or has_executable_queue_intent or has_executable_callback_task)
+                    else "blocked"
+                )
                 if status == "executable":
                     blocked_reason = ""
                 elif not source_admitted:
@@ -1705,7 +1717,11 @@ class TBGDLowering:
 
         effect_id = f"effect:{relative}:{modifier_name}:{callback_index}:{branch}:{task_index}:{opcode}"
         coverage_status, blocked_reason = _status_callback_task_admission(event, opcode, task)
-        source_admitted = _queue_intent_source_admitted(relative) if opcode in QUEUE_INTENT_OPCODES else _status_callback_source_admitted(relative)
+        source_admitted = (
+            _queue_intent_source_admitted(relative)
+            if opcode in QUEUE_INTENT_OPCODES
+            else _status_callback_task_source_admitted(relative, event, opcode)
+        )
         if coverage_status == "executable" and not source_admitted:
             coverage_status = "blocked"
             blocked_reason = "status_callback_source_mode_not_admitted"
@@ -3168,6 +3184,9 @@ EXECUTABLE_CONDITION_OPCODES = {
     "ByCompareTarget",
     "ByCurrentSkillType",
     "ByIsContainModifier",
+    "ByHaveEnemyAlive",
+    "ByIsCurrentSkillActive",
+    "ByIsInsertAction",
     "ByNot",
     "ByTargetTeam",
 }
@@ -3304,8 +3323,8 @@ def _predicate_task_status(condition: ConditionIR | None) -> tuple[str, str]:
 
 def _status_callback_task_admission(event: str, opcode: str, task: dict[str, Any]) -> tuple[str, str]:
     if opcode in QUEUE_INTENT_OPCODES:
-        actor_target_alias = _target_alias(task.get("TargetType"))
-        ability_target_alias = _target_alias(task.get("AbilityTarget")) or _target_alias(task.get("AutoCastTargetType"))
+        actor_target_alias = _queue_actor_target_alias(task, opcode)
+        ability_target_alias = _queue_ability_target_alias(task, opcode)
         skill_index_expr = _queue_skill_index_expr(task, opcode)
         coverage_status, blocked_reason = _queue_intent_admission(
             task=task,
@@ -3313,7 +3332,7 @@ def _status_callback_task_admission(event: str, opcode: str, task: dict[str, Any
             source=IRSource(source_path="Config/ConfigGlobalModifier/_admission_probe.json", raw_type="QueueIntentAdmissionProbe", raw_id=opcode),
             actor_target_alias=actor_target_alias,
             ability_target_alias=ability_target_alias,
-            ability_name=_value_field(task.get("AbilityName")),
+            ability_name=_queue_action_ref_or_ability_name(task, opcode),
             skill_index_expr=skill_index_expr,
             priority_source={"priority_ordering_admitted": True},
             abort_policy=_queue_abort_policy(task),
@@ -3321,6 +3340,12 @@ def _status_callback_task_admission(event: str, opcode: str, task: dict[str, Any
         if blocked_reason == "queue_intent_source_mode_not_admitted":
             return "executable", ""
         return coverage_status, blocked_reason
+    if event in {"OnTriggerDeath", "OnTriggerDeathrattle", "OnAfterSkillUse"} and opcode in {"SetDynamicValue", "AddModifier"}:
+        payload = _effect_payload(task, opcode, "")
+        coverage = _effect_coverage_status(opcode, payload)
+        if coverage == "executable":
+            return "executable", ""
+        return "blocked", _effect_blocked_reason(opcode, payload, coverage)
     if event not in {"OnStack", "OnPhase1", "OnListenTurnEnd"}:
         return "blocked", f"status_callback_event_not_admitted:{event}"
     if opcode == "DamageByAttackProperty":
@@ -3353,6 +3378,19 @@ def _status_callback_task_admission(event: str, opcode: str, task: dict[str, Any
 
 def _status_callback_source_admitted(relative_path: str) -> bool:
     return relative_path == "Config/ConfigGlobalModifier/GlobalModifier_Common_Specific.json"
+
+
+def _status_callback_task_source_admitted(relative_path: str, event: str, opcode: str) -> bool:
+    if _status_callback_source_admitted(relative_path):
+        return True
+    if (
+        _queue_source_candidate(relative_path)
+        and not _queue_source_blocked(relative_path)
+        and event in {"OnTriggerDeath", "OnTriggerDeathrattle", "OnAfterSkillUse"}
+        and opcode in {"SetDynamicValue", "AddModifier"}
+    ):
+        return True
+    return False
 
 
 def _status_callback_source_mode(relative_path: str) -> str:
@@ -3501,9 +3539,9 @@ def _queue_intent_from_task(
         "TurnInsertAction": "turn_insert_action",
         "TurnInsertAssistantAbility": "turn_insert_assistant_ability",
     }.get(opcode, "unknown")
-    actor_target_alias = _target_alias(task.get("TargetType"))
-    ability_target_alias = _target_alias(task.get("AbilityTarget")) or _target_alias(task.get("AutoCastTargetType"))
-    ability_name = _value_field(task.get("AbilityName"))
+    actor_target_alias = _queue_actor_target_alias(task, opcode)
+    ability_target_alias = _queue_ability_target_alias(task, opcode)
+    ability_name = _queue_action_ref_or_ability_name(task, opcode)
     skill_index_expr = _queue_skill_index_expr(task, opcode)
     priority_source = _queue_priority_source(task, opcode, queue_priority_lookup)
     abort_policy = _queue_abort_policy(task)
@@ -3581,6 +3619,15 @@ def _skill_continuations_from_ability_tasks(tasks: list[AbilityTaskIR]) -> list[
 
 def _queue_skill_index_expr(task: dict[str, Any], opcode: str) -> dict[str, Any]:
     if opcode == "TurnInsertAction":
+        if _queue_prepare_ability_name(task):
+            return {
+                "kind": "none",
+                "value": None,
+                "supported": True,
+                "source_field": "PrepareAbilityName",
+                "opcode": opcode,
+                "action_selection": "route_or_source_selected_non_ultimate_action",
+            }
         expr = _numeric_expr_summary(task.get("SkillIndex"))
         expr["source_field"] = "SkillIndex"
         expr["opcode"] = opcode
@@ -3605,6 +3652,8 @@ def _queue_priority_source(
     }.get(opcode, "InsertPriority")
     priority_table = "InsertActionPriority" if opcode == "TurnInsertAction" else "InsertAbilityPriority"
     priority_key = task.get(key)
+    if priority_key is None and opcode == "TurnInsertAction" and _queue_prepare_ability_name(task):
+        priority_key = "PROG_Default"
     priority = queue_priority_lookup.get((priority_table, str(priority_key))) if priority_key is not None else None
     if priority is not None:
         return {
@@ -3638,6 +3687,37 @@ def _queue_abort_policy(task: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in fields.items() if value not in (None, [], {})}
 
 
+def _queue_prepare_ability_name(task: dict[str, Any]) -> str:
+    value = _value_field(task.get("PrepareAbilityName"))
+    return value if isinstance(value, str) and value else ""
+
+
+def _queue_action_ref_or_ability_name(task: dict[str, Any], opcode: str) -> Any:
+    if opcode == "TurnInsertAction":
+        prepared = _queue_prepare_ability_name(task)
+        if prepared:
+            return prepared
+    return _value_field(task.get("AbilityName"))
+
+
+def _queue_actor_target_alias(task: dict[str, Any], opcode: str) -> str | None:
+    alias = _target_alias(task.get("TargetType"))
+    if alias:
+        return alias
+    if opcode == "TurnInsertAction" and _queue_prepare_ability_name(task):
+        return "ModifierOwnerEntity"
+    return None
+
+
+def _queue_ability_target_alias(task: dict[str, Any], opcode: str) -> str | None:
+    alias = _target_alias(task.get("AbilityTarget")) or _target_alias(task.get("AutoCastTargetType"))
+    if alias:
+        return alias
+    if opcode == "TurnInsertAction" and _queue_prepare_ability_name(task):
+        return None
+    return None
+
+
 def _queue_intent_admission(
     *,
     task: dict[str, Any],
@@ -3659,12 +3739,15 @@ def _queue_intent_admission(
     if priority_source.get("priority_ordering_admitted") is not True:
         return "blocked", str(priority_source.get("reason") or "queue_priority_not_admitted")
     if abort_policy.get("OnInsertAbort"):
-        return "blocked", "queue_abort_policy_not_admitted"
+        if not (opcode == "TurnInsertAction" and _queue_prepare_ability_name(task)):
+            return "blocked", "queue_abort_policy_not_admitted"
     if opcode == "TurnInsertAbility":
         if not isinstance(ability_name, str) or not ability_name:
             return "blocked", "queue_insert_ability_name_missing"
         return "executable", ""
     if opcode == "TurnInsertAction":
+        if _queue_prepare_ability_name(task):
+            return "executable", ""
         if skill_index_expr.get("kind") != "fixed":
             return "blocked", f"queue_insert_action_skill_index_not_admitted:{skill_index_expr.get('kind') or 'missing'}"
         return "executable", ""
@@ -3867,6 +3950,21 @@ def _queue_resolution_from_intent(
             blocked_reason="",
         )
     if intent.opcode == "TurnInsertAction":
+        if intent.action_ref_or_ability_name and intent.skill_index_expr.get("source_field") == "PrepareAbilityName":
+            return QueueResolutionIR(
+                queue_resolution_id=resolution_id,
+                queue_intent_id=intent.queue_intent_id,
+                action_or_ability_ref=intent.action_ref_or_ability_name,
+                resolved_kind="extra_turn_action_choice",
+                resolved_ids={
+                    "prepare_ability_name": intent.action_ref_or_ability_name,
+                    "action_selection": "route_or_source_selected_non_ultimate_action",
+                    "skill_index_expr": _json_safe(intent.skill_index_expr),
+                },
+                source=source,
+                coverage_status="executable",
+                blocked_reason="",
+            )
         if intent.skill_index_expr.get("kind") != "fixed":
             reason = f"queue_insert_action_skill_index_not_admitted:{intent.skill_index_expr.get('kind') or 'missing'}"
             return QueueResolutionIR(
@@ -4252,6 +4350,14 @@ def _queue_window_family(intent: QueueIntentIR) -> tuple[str, dict[str, Any]]:
                 or "extra_turn_source_task_not_admitted_without_priority_target_action_resolution"
             ),
         }
+    if intent.queue_kind == "turn_insert_action" and intent.skill_index_expr.get("source_field") == "PrepareAbilityName":
+        return "extra_turn", {
+            **basis,
+            "extra_turn_basis_status": "admitted",
+            "source_basis": "structured_turn_insert_action_prepare_ability",
+            "prepare_ability_name": intent.action_ref_or_ability_name,
+            "action_selection_policy": "route_or_source_selected_non_ultimate_action",
+        }
     if intent.queue_kind == "turn_insert_action":
         return "insert_action", basis
     if intent.queue_kind == "turn_insert_ability":
@@ -4376,6 +4482,10 @@ def _condition_payload_executable(opcode: str, payload: dict[str, Any]) -> bool:
         return _target_alias(payload.get("TargetType")) in EXECUTABLE_TARGET_ALIASES and payload.get("Team") in {"TeamLight", "TeamDark"}
     if opcode == "ByIsContainModifier":
         return _target_alias(payload.get("TargetType")) in EXECUTABLE_TARGET_ALIASES and isinstance(_value_field(payload.get("ModifierName")), str)
+    if opcode == "ByIsInsertAction":
+        return True
+    if opcode in {"ByIsCurrentSkillActive", "ByHaveEnemyAlive"}:
+        return _target_alias(payload.get("TargetType")) in EXECUTABLE_TARGET_ALIASES
     if opcode == "ByCompareHPRatio":
         return (
             _target_alias(payload.get("TargetType")) in EXECUTABLE_TARGET_ALIASES
@@ -4383,8 +4493,7 @@ def _condition_payload_executable(opcode: str, payload: dict[str, Any]) -> bool:
         )
     if opcode == "ByCompareDynamicValue":
         return (
-            _target_alias(payload.get("TargetType")) in EXECUTABLE_TARGET_ALIASES
-            and isinstance(_value_field(payload.get("DynamicKey")), str)
+            isinstance(_value_field(payload.get("DynamicKey")), str)
             and _numeric_expr_can_be_runtime_bound(_numeric_expr_summary(payload.get("CompareValue")))
         )
     if opcode == "ByCompareModifierValue":

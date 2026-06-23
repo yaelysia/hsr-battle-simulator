@@ -5,11 +5,12 @@ from dataclasses import dataclass
 from ..core.model import BattleState, GameEvent, JSONValue, Mutation
 from ..core.reducer import MutationReducer
 from ..core.settlement import SettlementRecord
-from ..rules.evaluator import NumericEvaluationContext, NumericEvaluationResult, RuleEvaluator
+from ..rules.evaluator import EvaluationContext, NumericEvaluationContext, NumericEvaluationResult, RuleEvaluator
 from ..rules.ir import ActionDelayEmissionIR, QueueIntentIR, StatusCallbackIR, StatusCallbackTaskIR, StatusDamageEmissionIR
 from ..rules.rulebook import RuleBook
 from .damage import DamagePacket, DamageSystem
-from .dynamic_values import find_status_detail
+from .dynamic_values import binding_source_from_store, find_status_detail, status_binding_sources, store_from_state
+from .effect import EffectExecutionContext, EffectRegistry
 from .queue import QueueEntry, QueueSystem, QueueTargetResolver
 from .timeline import TimelineSystem
 
@@ -35,6 +36,7 @@ class StatusCallbackSystem:
         reducer: MutationReducer | None = None,
         timeline: TimelineSystem | None = None,
         queue: QueueSystem | None = None,
+        effect_registry: EffectRegistry | None = None,
     ) -> None:
         self.rules = rules
         self.damage = damage or DamageSystem()
@@ -42,6 +44,8 @@ class StatusCallbackSystem:
         self.timeline = timeline or TimelineSystem()
         self.queue = queue or QueueSystem()
         self.queue_targets = QueueTargetResolver()
+        self.effect_registry = effect_registry or EffectRegistry()
+        self.evaluator = RuleEvaluator()
 
     def execute(
         self,
@@ -68,6 +72,9 @@ class StatusCallbackSystem:
                 errors=("status_detail_missing",),
             )
         callbacks = self.rules.status_callbacks_for_modifier_event(modifier_name, event)
+        admitted_callback_ids = _trigger_ids_for_event(detail, event)
+        if admitted_callback_ids:
+            callbacks = tuple(callback for callback in callbacks if callback.callback_id in admitted_callback_ids)
         if not callbacks:
             return StatusCallbackExecutionResult(
                 ok=True,
@@ -150,10 +157,15 @@ class StatusCallbackSystem:
                 },
             )
         ]
-        for task in self.rules.status_callback_tasks_for_callback(callback.callback_id):
-            if task.parent_task_id:
-                continue
-            result = self._execute_task(current_state, callback, task, detail, trigger_event)
+        tasks = {task.task_id: task for task in self.rules.status_callback_tasks_for_callback(callback.callback_id)}
+        roots = tuple(
+            sorted(
+                (task for task in tasks.values() if not task.parent_task_id),
+                key=lambda item: (item.task_index, item.task_path, item.task_id),
+            )
+        )
+        for task in roots:
+            result = self._execute_task(current_state, callback, task, detail, trigger_event, tasks)
             current_state = result.after_state
             mutations.extend(result.mutations)
             records.extend(result.records)
@@ -175,7 +187,10 @@ class StatusCallbackSystem:
         task: StatusCallbackTaskIR,
         detail: dict[str, JSONValue],
         trigger_event: GameEvent | None,
+        tasks: dict[str, StatusCallbackTaskIR],
     ) -> StatusCallbackExecutionResult:
+        if task.opcode == "PredicateTaskList":
+            return self._execute_predicate_task(state, callback, task, detail, trigger_event, tasks)
         delay_emissions = [
             emission
             for emission in self.rules.action_delay_emissions_for_callback(callback.callback_id)
@@ -226,10 +241,137 @@ class StatusCallbackSystem:
             return self._execute_delay_emissions(state, callback, task, detail, tuple(delay_emissions))
         if queue_intents:
             return self._execute_queue_intents(state, callback, task, detail, trigger_event, tuple(queue_intents))
+        if task.effect_id:
+            return self._execute_effect_task(state, callback, task, detail, trigger_event)
         return StatusCallbackExecutionResult(
             ok=True,
             after_state=state,
             records=(_task_blocked_record(callback, task, detail, "status_callback_task_has_no_executable_runtime_effect"),),
+        )
+
+    def _execute_predicate_task(
+        self,
+        state: BattleState,
+        callback: StatusCallbackIR,
+        task: StatusCallbackTaskIR,
+        detail: dict[str, JSONValue],
+        trigger_event: GameEvent | None,
+        tasks: dict[str, StatusCallbackTaskIR],
+    ) -> StatusCallbackExecutionResult:
+        condition = self.rules.condition(task.condition_id) if task.condition_id else None
+        if condition is None:
+            reason = "missing_predicate_condition"
+            return StatusCallbackExecutionResult(
+                ok=False,
+                after_state=state,
+                records=(_task_blocked_record(callback, task, detail, reason),),
+                errors=(reason,),
+            )
+        result = self.evaluator.evaluate_condition_result(
+            condition,
+            _condition_context(state, detail, trigger_event),
+        )
+        if not result.ok or result.result is None:
+            reason = f"blocked_condition:{condition.condition_id}:{result.reason}"
+            return StatusCallbackExecutionResult(
+                ok=False,
+                after_state=state,
+                records=(_task_blocked_record(callback, task, detail, reason, condition_result=result.to_json()),),
+                errors=(reason,),
+            )
+        selected_child_ids = task.success_task_ids if result.result else task.failed_task_ids
+        current_state = state
+        mutations: list[Mutation] = []
+        records: list[dict[str, JSONValue]] = [
+            _task_blocked_record(
+                callback,
+                task,
+                detail,
+                "",
+                ok=True,
+                condition_result=result.to_json(),
+                selected_child_ids=selected_child_ids,
+            )
+        ]
+        events: list[GameEvent] = []
+        errors: list[str] = []
+        for child_id in selected_child_ids:
+            child = tasks.get(child_id)
+            if child is None:
+                reason = f"missing_child_task:{child_id}"
+                records.append(_task_blocked_record(callback, task, detail, reason))
+                errors.append(reason)
+                continue
+            child_result = self._execute_task(current_state, callback, child, detail, trigger_event, tasks)
+            current_state = child_result.after_state
+            mutations.extend(child_result.mutations)
+            records.extend(child_result.records)
+            events.extend(child_result.events)
+            errors.extend(child_result.errors)
+        return StatusCallbackExecutionResult(
+            ok=not errors,
+            after_state=current_state,
+            mutations=tuple(mutations),
+            records=tuple(records),
+            events=tuple(events),
+            errors=tuple(errors),
+        )
+
+    def _execute_effect_task(
+        self,
+        state: BattleState,
+        callback: StatusCallbackIR,
+        task: StatusCallbackTaskIR,
+        detail: dict[str, JSONValue],
+        trigger_event: GameEvent | None,
+    ) -> StatusCallbackExecutionResult:
+        if task.coverage_status != "executable":
+            reason = task.blocked_reason or f"status_callback_task_not_executable:{task.coverage_status}"
+            return StatusCallbackExecutionResult(
+                ok=False,
+                after_state=state,
+                records=(_task_blocked_record(callback, task, detail, reason),),
+                errors=(reason,),
+            )
+        effect = self.rules.effect(task.effect_id)
+        if effect is None:
+            reason = "status_callback_effect_missing"
+            return StatusCallbackExecutionResult(
+                ok=False,
+                after_state=state,
+                records=(_task_blocked_record(callback, task, detail, reason),),
+                errors=(reason,),
+            )
+        coverage = self.effect_registry.coverage(effect)
+        if coverage != "executable":
+            reason = f"effect_not_executable:{coverage}"
+            result = self.effect_registry.execute(effect, _effect_context(state, task, detail, trigger_event))
+            return StatusCallbackExecutionResult(
+                ok=False,
+                after_state=state,
+                records=(*result.records, _task_blocked_record(callback, task, detail, reason)),
+                errors=(reason, *result.unsupported),
+            )
+        result = self.effect_registry.execute(effect, _effect_context(state, task, detail, trigger_event))
+        after_state = self.reducer.apply_all(state, result.mutations)
+        records = (
+            *result.records,
+            _task_blocked_record(
+                callback,
+                task,
+                detail,
+                ",".join(result.unsupported),
+                ok=not result.unsupported,
+                mutation_count=len(result.mutations),
+                record_count=len(result.records),
+            ),
+        )
+        return StatusCallbackExecutionResult(
+            ok=not result.unsupported,
+            after_state=after_state,
+            mutations=result.mutations,
+            records=records,
+            errors=result.unsupported,
         )
 
     def _execute_damage_emissions(
@@ -977,6 +1119,12 @@ def _task_blocked_record(
     task: StatusCallbackTaskIR,
     detail: dict[str, JSONValue],
     reason: str,
+    *,
+    ok: bool = False,
+    condition_result: dict[str, JSONValue] | None = None,
+    selected_child_ids: tuple[str, ...] = (),
+    mutation_count: int = 0,
+    record_count: int = 0,
 ) -> dict[str, JSONValue]:
     return SettlementRecord(
         record_type="status_callback_task_blocked",
@@ -984,11 +1132,17 @@ def _task_blocked_record(
         process_only=True,
         payload={
             "reason": reason,
+            "ok": ok,
             "callback_id": callback.callback_id,
             "task_id": task.task_id,
             "opcode": task.opcode,
             "modifier_name": callback.modifier_name,
             "event": callback.event,
+            "condition_id": task.condition_id,
+            "condition_result": condition_result or {},
+            "selected_child_ids": list(selected_child_ids),
+            "mutation_count": mutation_count,
+            "record_count": record_count,
             "blocking_dependency": reason,
         },
         trace={
@@ -997,6 +1151,81 @@ def _task_blocked_record(
             "status_instance_source": _json_dict(detail.get("source_trace")),
         },
     ).to_json()
+
+
+def _condition_context(
+    state: BattleState,
+    detail: dict[str, JSONValue],
+    event: GameEvent | None,
+) -> EvaluationContext:
+    payload = event.payload if event is not None and isinstance(event.payload, dict) else {}
+    owner_id = str(detail.get("owner_id") or "")
+    caster_id = str(detail.get("caster_id") or owner_id)
+    target_id = _first_payload_str(payload, ("current_hit_target_id", "primary_target_id", "target_id")) or (
+        str(event.target_id or "") if event is not None else ""
+    )
+    param_entity_id = target_id or owner_id
+    unit_ids = tuple(unit_id for unit_id in (owner_id, caster_id, param_entity_id) if unit_id)
+    return EvaluationContext(
+        state=state,
+        actor_id=caster_id,
+        target_id=target_id or None,
+        owner_id=owner_id,
+        param_entity_id=param_entity_id or None,
+        current_action_target_id=target_id or None,
+        status_detail=detail,
+        event_payload=dict(payload),
+        binding_sources=(
+            *status_binding_sources(state, unit_ids),
+            binding_source_from_store(store_from_state(state)),
+        ),
+    )
+
+
+def _effect_context(
+    state: BattleState,
+    task: StatusCallbackTaskIR,
+    detail: dict[str, JSONValue],
+    event: GameEvent | None,
+) -> EffectExecutionContext:
+    payload = event.payload if event is not None and isinstance(event.payload, dict) else {}
+    owner_id = str(detail.get("owner_id") or "")
+    caster_id = str(detail.get("caster_id") or owner_id)
+    target_id = _first_payload_str(payload, ("current_hit_target_id", "primary_target_id", "target_id")) or (
+        str(event.target_id or "") if event is not None else ""
+    )
+    param_entity_id = target_id or owner_id
+    unit_ids = tuple(unit_id for unit_id in (owner_id, caster_id, param_entity_id) if unit_id)
+    return EffectExecutionContext(
+        state=state,
+        caster_id=caster_id,
+        source_id=f"status_callback_task:{task.task_id}",
+        owner_id=owner_id,
+        param_entity_id=param_entity_id or None,
+        current_action_target_id=target_id or None,
+        binding_sources=(
+            *status_binding_sources(state, unit_ids),
+            binding_source_from_store(store_from_state(state)),
+        ),
+    )
+
+
+def _first_payload_str(payload: dict[str, JSONValue], keys: tuple[str, ...]) -> str:
+    for key in keys:
+        value = payload.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return ""
+
+
+def _trigger_ids_for_event(detail: dict[str, JSONValue], event: str) -> tuple[str, ...]:
+    mapping = detail.get("trigger_ids_by_event")
+    if not isinstance(mapping, dict):
+        return ()
+    value = mapping.get(event)
+    if not isinstance(value, list):
+        return ()
+    return tuple(str(item) for item in value if isinstance(item, str) and item)
 
 
 def _json_dict(value: object) -> dict[str, JSONValue]:

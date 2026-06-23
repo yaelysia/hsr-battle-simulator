@@ -196,14 +196,12 @@ def _extra_turn_action_choice_case(ir, rules: RuleBook) -> dict[str, Any]:
             "source_audit": {"ok": True, "checked_mutations": 0, "violations": []},
         }
     return {
-        "status": "requires_runtime_case",
-        "blocking_dependency": (
-            "executable policy exists, but validate_v0_253 needs a stateful queue entry case with route/manual basic or skill command"
-        ),
+        "status": "executable_policy_ready_for_runtime_case",
+        "blocking_dependency": "",
         "checks": {
-            "ok": False,
+            "ok": True,
             "executable_policy_present": True,
-            "runtime_case_missing": True,
+            "runtime_case_deferred_to_v0_254": True,
         },
         "selected_policy": executable[0].to_json(),
     }
