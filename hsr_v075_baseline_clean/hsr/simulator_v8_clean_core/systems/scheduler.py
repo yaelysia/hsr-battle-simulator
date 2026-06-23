@@ -15,7 +15,7 @@ from ..core.model import (
 )
 from ..core.reducer import MutationReducer
 from ..core.settlement import SettlementRecord
-from ..rules.ir import AbilityPhaseIR, QueueResolutionIR
+from ..rules.ir import AbilityPhaseIR, IRSource, QueueResolutionIR
 from ..rules.rulebook import RuleBook
 from .ability import AbilityTaskSystem
 from .effect import EffectRegistry
@@ -498,7 +498,7 @@ class CombatScheduler:
                 str(item.queue_entry.get("entry_id") or ""),
             ),
         )[0]
-        resolution = self.rules.queue_resolution(plan.queue_resolution_id)
+        resolution = _resolution_for_drain_plan(self.rules, state, plan)
         if resolution is None:
             return self._blocked(state, "queue:drain", "queue_resolution_missing", {"drain_plan": plan.to_json()})
         if resolution.resolved_kind == "action_definition":
@@ -522,6 +522,7 @@ class CombatScheduler:
                 "queue_operation": "dequeue",
                 "scheduler": "timeline_scheduler",
                 "queue_window_plan": plan.queue_window or {},
+                **_manual_ultimate_dequeue_metadata(self.rules, plan),
             },
         )
         after_dequeue = self.reducer.apply_all(state, (dequeue,))
@@ -648,6 +649,10 @@ class CombatScheduler:
             return f"queue_action_event_not_admitted:{action_event.coverage_status}"
         if definition.bp_need > state.skill_points:
             return "queue_action_resource_preflight_failed:insufficient_skill_points"
+        if plan.queue_intent_id.startswith("manual_ultimate:"):
+            actor = state.units[actor_id]
+            if actor.max_energy <= 0 or actor.energy < actor.max_energy:
+                return "manual_ultimate_energy_not_ready_at_drain"
         window = plan.queue_window or {}
         if window.get("ok") is not True:
             return str(window.get("blocked_reason") or "queue_window_not_admitted")
@@ -817,22 +822,22 @@ def _unsupported_turn_hooks() -> dict[str, JSONValue]:
             "remaining_blocking_dependency": "dynamic/postfix LifeTime and unsupported LifeStepMoment admission",
         },
         "extra_turn": {
-            "status": "blocked",
+            "status": "queue_window_gate",
             "window_family": "extra_turn",
             "blocking_dependency": blocked_window_dependency,
         },
         "ultimate": {
-            "status": "blocked",
+            "status": "admitted_for_manual_queue_current_scope",
             "window_family": "ultimate",
-            "blocking_dependency": blocked_window_dependency,
+            "remaining_blocking_dependency": "TBGD automatic ultimate interrupt priority and energy cost mutation source admission",
         },
         "follow_up": {
-            "status": "blocked",
+            "status": "queue_window_gate",
             "window_family": "follow_up",
             "blocking_dependency": blocked_window_dependency,
         },
         "counter": {
-            "status": "blocked",
+            "status": "queue_window_gate",
             "window_family": "counter",
             "blocking_dependency": blocked_window_dependency,
         },
@@ -868,10 +873,99 @@ def _resolutions_for_queue(rules: RuleBook, state: BattleState, queue_name: str)
         if not isinstance(entry, dict):
             continue
         intent_id = str(entry.get("queue_intent_id") or "")
+        if intent_id.startswith("manual_ultimate:"):
+            resolution = _manual_ultimate_resolution_for_entry(state, entry)
+            if resolution is not None:
+                resolutions[intent_id] = resolution
+            continue
         resolution = rules.queue_resolution_for_intent(intent_id)
         if resolution is not None:
             resolutions[intent_id] = resolution
     return resolutions
+
+
+def _resolution_for_drain_plan(rules: RuleBook, state: BattleState, plan: QueueDrainPlan) -> QueueResolutionIR | None:
+    if plan.queue_intent_id.startswith("manual_ultimate:"):
+        return _manual_ultimate_resolution_for_entry(state, plan.queue_entry)
+    return rules.queue_resolution(plan.queue_resolution_id)
+
+
+def _manual_ultimate_resolution_for_entry(state: BattleState, entry: dict[str, JSONValue]) -> QueueResolutionIR | None:
+    intent_id = str(entry.get("queue_intent_id") or "")
+    actor_id = str(entry.get("actor_id") or "")
+    action_id = str(entry.get("action_or_ability_ref") or "")
+    if not intent_id or not actor_id or not action_id:
+        return None
+    actor = state.units.get(actor_id)
+    if actor is None or not actor.template_id:
+        return None
+    source_trace = entry.get("source_trace") if isinstance(entry.get("source_trace"), dict) else {}
+    command = _manual_ultimate_command_payload(source_trace)
+    action_level = command.get("action_level")
+    if not isinstance(action_level, int):
+        return None
+    source = IRSource(
+        source_path="manual_route_input",
+        raw_type="ManualQueueResolution",
+        raw_id=intent_id,
+        evidence={
+            "queue_entry": entry,
+            "manual_input_source": source_trace.get("manual_input_source", {}),
+            "resolution_kind": "manual_ultimate_action_definition",
+        },
+    )
+    return QueueResolutionIR(
+        queue_resolution_id=f"manual_queue_resolution:ultimate:{intent_id}",
+        queue_intent_id=intent_id,
+        action_or_ability_ref=action_id,
+        resolved_kind="action_definition",
+        resolved_ids={
+            "manual_ultimate": True,
+            "action_set_candidates": [
+                {
+                    "combatant_action_set_id": "manual_route_input",
+                    "entity_ref": actor.template_id,
+                    "skill_index": "",
+                    "action_ref": action_id,
+                    "action_level": action_level,
+                    "source": source.to_json(),
+                }
+            ],
+        },
+        source=source,
+        coverage_status="executable",
+        blocked_reason="",
+    )
+
+
+def _manual_ultimate_dequeue_metadata(rules: RuleBook, plan: QueueDrainPlan) -> dict[str, JSONValue]:
+    if not plan.queue_intent_id.startswith("manual_ultimate:"):
+        return {}
+    source_trace = plan.queue_entry.get("source_trace") if isinstance(plan.queue_entry.get("source_trace"), dict) else {}
+    command = _manual_ultimate_command_payload(source_trace)
+    action_id = str(command.get("action_id") or plan.resolved_action_id or plan.queue_entry.get("action_or_ability_ref") or "")
+    action_level = command.get("action_level")
+    if not isinstance(action_level, int):
+        action_level = plan.resolved_action_level if isinstance(plan.resolved_action_level, int) else 0
+    definition = rules.action_definition(action_id, action_level) if action_id else None
+    action_event = rules.action_event(action_id, action_level) if action_id else None
+    return {
+        "manual_ultimate": True,
+        "manual_input_source": source_trace.get("manual_input_source", {}),
+        "action_id": action_id,
+        "action_level": action_level,
+        "definition_id": definition.definition_id if definition is not None else "",
+        "action_event_id": action_event.action_event_id if action_event is not None else "",
+        "source_trace": source_trace,
+        "target_resolution": (plan.queue_window or {}).get("target_resolution", plan.queue_entry.get("target_resolution", {})),
+    }
+
+
+def _manual_ultimate_command_payload(source_trace: dict[str, JSONValue]) -> dict[str, JSONValue]:
+    manual_source = source_trace.get("manual_input_source") if isinstance(source_trace.get("manual_input_source"), dict) else {}
+    evidence = manual_source.get("evidence") if isinstance(manual_source.get("evidence"), dict) else {}
+    command = evidence.get("command") if isinstance(evidence.get("command"), dict) else {}
+    return command
 
 
 def _phases_for_graph(rules: RuleBook, graph_id: str) -> tuple[AbilityPhaseIR, ...]:
