@@ -50,7 +50,7 @@ MUTATION_SOURCE_POLICIES: dict[str, dict[str, JSONValue]] = {
     "status_system": {
         "required_ir": ["EffectIR", "ModifierDefinition"],
         "required_metadata": ["lifecycle_plan"],
-        "coverage_required": "executable",
+        "coverage_required": "executable; duration tick/expire also require executable duration admission",
     },
     "effect_system": {
         "required_ir": ["EffectIR"],
@@ -735,6 +735,24 @@ class RuntimeSourceAuditor:
         modifier_name = _first_str(source_trace.get("modifier_name"), lifecycle.get("modifier_name"))
         if modifier_name and self.rules.modifier_definition(modifier_name) is None:
             violations.append(_violation(mutation, "modifier_definition_missing", details={"modifier_name": modifier_name}))
+        if lifecycle.get("operation") in {"tick", "expire"}:
+            duration_admission = source_trace.get("duration_admission")
+            if not isinstance(duration_admission, dict):
+                violations.append(
+                    _violation(
+                        mutation,
+                        "status_duration_admission_missing",
+                        missing_field="lifecycle_plan.source_trace.duration_admission",
+                    )
+                )
+            elif duration_admission.get("admission_status") != "executable":
+                violations.append(
+                    _violation(
+                        mutation,
+                        "status_duration_admission_not_executable",
+                        details={"duration_admission": duration_admission},
+                    )
+                )
         return _trace(mutation, records, {"effect_id": effect_id or "", "modifier_name": modifier_name or "", "lifecycle_plan": lifecycle})
 
     def _audit_break_status_source(

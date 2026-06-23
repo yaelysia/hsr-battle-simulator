@@ -12,6 +12,7 @@ from ..rules.rulebook import RuleBook
 
 
 SUPPORTED_ADD_MODIFIER_ALIASES = {"Caster", "ModifierOwnerEntity", "ParamEntity", "CurrentActionTarget"}
+SUPPORTED_DURATION_LIFE_STEP_MOMENTS = {"ModifierPhase1End", "ActionPhaseEnd"}
 
 
 @dataclass(frozen=True)
@@ -34,6 +35,8 @@ class StatusInstance:
     partial: bool = False
     remaining_duration: float | None = None
     duration_unit: str = "unknown"
+    life_step_moment: str = ""
+    duration_admission: dict[str, JSONValue] = field(default_factory=dict)
     stack_policy: str = "single_instance"
     refresh_policy: str = "replace_partial"
     lifecycle_state: str = "active"
@@ -61,6 +64,8 @@ class StatusInstance:
             "partial": self.partial,
             "remaining_duration": self.remaining_duration,
             "duration_unit": self.duration_unit,
+            "life_step_moment": self.life_step_moment,
+            "duration_admission": self.duration_admission,
             "stack_policy": self.stack_policy,
             "refresh_policy": self.refresh_policy,
             "lifecycle_state": self.lifecycle_state,
@@ -220,9 +225,11 @@ class StatusSystem:
         modifiers, unsupported = _runtime_modifiers(definition, resolved_dynamic_values)
         before_details = _status_details(unit_flags=state.units[target_id].flags)
         existing_detail = _matching_status_detail(before_details, target_id, modifier_name, effect.effect_id, source_id)
-        application_operation, partial_reasons = _application_semantics(standard, existing_detail)
+        duration_admission = _runtime_duration_admission(standard, definition, effect)
+        application_operation, partial_reasons = _application_semantics(standard, existing_detail, duration_admission)
         unsupported = [*unsupported, *partial_reasons]
-        duration = _optional_float(standard.get("lifetime"))
+        duration = _admitted_duration_value(duration_admission)
+        life_step_moment = str(duration_admission.get("life_step_moment") or "")
         status_instance = StatusInstance(
             instance_id=_status_instance_id(target_id, modifier_name, effect.effect_id, source_id),
             status_id=f"modifier:{modifier_name}",
@@ -237,7 +244,9 @@ class StatusSystem:
             source_trace={
                 "effect_id": effect.effect_id,
                 "effect_source": effect.source.to_json(),
+                "modifier_name": modifier_name,
                 "modifier_definition": definition.source.to_json(),
+                "duration_admission": duration_admission,
             },
             modifiers=tuple(modifiers),
             trigger_ids_by_event=_trigger_ids_by_event(self.rules, modifier_name),
@@ -245,7 +254,9 @@ class StatusSystem:
             application_operation=application_operation,
             partial=bool(partial_reasons),
             remaining_duration=duration,
-            duration_unit="turn_or_life_step" if duration is not None else "permanent_or_unknown",
+            duration_unit=life_step_moment if duration is not None else "permanent_or_unknown",
+            life_step_moment=life_step_moment,
+            duration_admission=duration_admission,
             stack_policy="unsupported_partial" if any(reason.startswith("stack_unsupported") for reason in unsupported) else "single_instance",
             refresh_policy="unsupported_partial" if any(reason.startswith("refresh_unsupported") for reason in unsupported) else "replace_partial",
             lifecycle_state="active_partial" if partial_reasons else "active",
@@ -333,6 +344,10 @@ class StatusSystem:
             return _apply_add_lifecycle_plan(state, plan)
         if plan.operation == "remove":
             return _apply_remove_lifecycle_plan(state, plan)
+        if plan.operation == "tick":
+            return _apply_tick_lifecycle_plan(state, plan)
+        if plan.operation == "expire":
+            return _apply_expire_lifecycle_plan(state, plan)
         return StatusLifecycleResult(
             ok=False,
             operation=plan.operation,
@@ -348,6 +363,81 @@ class StatusSystem:
             unsupported=(f"unsupported_lifecycle_operation:{plan.operation}",),
             lifecycle_plan=plan,
             lifecycle_state="unsupported",
+        )
+
+    def plan_lifecycle_tick(
+        self,
+        state: BattleState,
+        unit_id: str,
+        status_detail: dict[str, JSONValue],
+        life_step_moment: str,
+    ) -> StatusLifecyclePlan:
+        if unit_id not in state.units:
+            return _unsupported_lifecycle_plan("tick_blocked", unit_id, "", "unit_missing", {})
+        status_id = str(status_detail.get("status_id") or "")
+        source_trace = _status_detail_source_trace(status_detail)
+        modifier_name = str(status_detail.get("modifier_name") or status_id.removeprefix("modifier:"))
+        if modifier_name:
+            source_trace.setdefault("modifier_name", modifier_name)
+        source_trace.setdefault("status_instance_id", str(status_detail.get("instance_id") or ""))
+        detail_moment = str(status_detail.get("life_step_moment") or "")
+        if detail_moment != life_step_moment:
+            return _unsupported_lifecycle_plan("tick_skipped", unit_id, status_id, "life_step_moment_mismatch", source_trace)
+        duration_admission = _status_detail_duration_admission(status_detail)
+        source_trace.setdefault("duration_admission", duration_admission)
+        if duration_admission.get("admission_status") != "executable":
+            reason = str(duration_admission.get("blocked_reason") or "duration_admission_not_executable")
+            return _unsupported_lifecycle_plan("tick_blocked", unit_id, status_id, reason, source_trace)
+        remaining = _number_or_none(status_detail.get("remaining_duration"))
+        if remaining is None:
+            return _unsupported_lifecycle_plan("tick_blocked", unit_id, status_id, "remaining_duration_missing", source_trace)
+        if remaining <= 0:
+            return _unsupported_lifecycle_plan("tick_blocked", unit_id, status_id, "status_already_expired", source_trace)
+        before_details = _status_details(state.units[unit_id].flags)
+        operation = "expire" if remaining <= 1 else "tick"
+        return StatusLifecyclePlan(
+            operation=operation,
+            target_id=unit_id,
+            status_id=status_id,
+            source="status_system",
+            before_details=tuple(before_details),
+            existing_detail=status_detail,
+            source_trace=source_trace,
+        )
+
+    def apply_lifecycle_tick(
+        self,
+        state: BattleState,
+        unit_id: str,
+        status_detail: dict[str, JSONValue],
+        life_step_moment: str,
+    ) -> StatusLifecycleResult:
+        plan = self.plan_lifecycle_tick(state, unit_id, status_detail, life_step_moment)
+        if plan.operation in {"tick", "expire"}:
+            return self._apply_lifecycle_plan(state, plan)
+        if plan.operation == "tick_skipped":
+            return StatusLifecycleResult(
+                ok=True,
+                operation=plan.operation,
+                lifecycle_plan=plan,
+                lifecycle_state="skipped",
+            )
+        reason = plan.unsupported[0] if plan.unsupported else f"unsupported_lifecycle_operation:{plan.operation}"
+        return StatusLifecycleResult(
+            ok=False,
+            operation=plan.operation,
+            records=(
+                SettlementRecord(
+                    record_type="status_lifecycle_blocked",
+                    source="status_system",
+                    process_only=True,
+                    payload={"reason": reason, "lifecycle_plan": plan.to_json()},
+                    trace=plan.source_trace,
+                ).to_json(),
+            ),
+            unsupported=(reason,),
+            lifecycle_plan=plan,
+            lifecycle_state="blocked",
         )
 
 
@@ -560,6 +650,151 @@ def _apply_remove_lifecycle_plan(state: BattleState, plan: StatusLifecyclePlan) 
     )
 
 
+def _apply_tick_lifecycle_plan(state: BattleState, plan: StatusLifecyclePlan) -> StatusLifecycleResult:
+    unit = state.units[plan.target_id]
+    before_details = list(plan.before_details)
+    existing = plan.existing_detail if isinstance(plan.existing_detail, dict) else None
+    if existing is None:
+        return _blocked_lifecycle_result(plan, "status_detail_missing_for_tick")
+    remaining = _number_or_none(existing.get("remaining_duration"))
+    if remaining is None or remaining <= 1:
+        return _blocked_lifecycle_result(plan, "tick_requires_remaining_duration_above_one")
+    updated_detail = {**existing, "remaining_duration": float(remaining - 1), "lifecycle_state": "active"}
+    after_details = [
+        updated_detail
+        if isinstance(item, dict) and item.get("instance_id") == existing.get("instance_id")
+        else item
+        for item in before_details
+    ]
+    detail_mutation = Mutation(
+        op="set",
+        path=("units", plan.target_id, "flags", "status_details"),
+        before=before_details,
+        after=after_details,
+        reason="status lifecycle tick duration",
+        source="status_system",
+        metadata={
+            "status_id": plan.status_id,
+            "operation": plan.operation,
+            "lifecycle_plan": plan.to_json(),
+        },
+    )
+    record = SettlementRecord(
+        record_type="status_lifecycle",
+        source="status_system",
+        mutation_id=detail_mutation.stable_id(),
+        process_only=False,
+        payload={
+            "operation": plan.operation,
+            "status_id": plan.status_id,
+            "remaining_before": remaining,
+            "remaining_after": float(remaining - 1),
+            "lifecycle_plan": plan.to_json(),
+        },
+        trace=plan.source_trace,
+    ).to_json()
+    return StatusLifecycleResult(
+        ok=True,
+        operation=plan.operation,
+        mutations=(detail_mutation,),
+        records=(record,),
+        lifecycle_plan=plan,
+        lifecycle_state="active",
+    )
+
+
+def _apply_expire_lifecycle_plan(state: BattleState, plan: StatusLifecyclePlan) -> StatusLifecycleResult:
+    unit = state.units[plan.target_id]
+    before_statuses = list(unit.statuses)
+    before_details = list(plan.before_details)
+    existing = plan.existing_detail if isinstance(plan.existing_detail, dict) else None
+    if existing is None:
+        return _blocked_lifecycle_result(plan, "status_detail_missing_for_expire")
+    after_statuses = [status_id for status_id in before_statuses if status_id != plan.status_id]
+    after_details = [
+        item
+        for item in before_details
+        if not (
+            isinstance(item, dict)
+            and (
+                item.get("instance_id") == existing.get("instance_id")
+                or item.get("status_id") == plan.status_id
+            )
+        )
+    ]
+    status_mutation = Mutation(
+        op="set",
+        path=("units", plan.target_id, "statuses"),
+        before=before_statuses,
+        after=after_statuses,
+        reason="status lifecycle expire status id",
+        source="status_system",
+        metadata={"status_id": plan.status_id, "operation": plan.operation, "lifecycle_plan": plan.to_json()},
+    )
+    detail_mutation = Mutation(
+        op="set",
+        path=("units", plan.target_id, "flags", "status_details"),
+        before=before_details,
+        after=after_details,
+        reason="status lifecycle expire status details",
+        source="status_system",
+        metadata={"status_id": plan.status_id, "operation": plan.operation, "lifecycle_plan": plan.to_json()},
+    )
+    status_record = SettlementRecord(
+        record_type="status_lifecycle",
+        source="status_system",
+        mutation_id=status_mutation.stable_id(),
+        process_only=False,
+        payload={
+            "operation": plan.operation,
+            "status_id": plan.status_id,
+            "expired_detail": existing,
+            "lifecycle_plan": plan.to_json(),
+        },
+        trace=plan.source_trace,
+    ).to_json()
+    detail_record = SettlementRecord(
+        record_type="status_lifecycle",
+        source="status_system",
+        mutation_id=detail_mutation.stable_id(),
+        process_only=False,
+        payload={
+            "operation": plan.operation,
+            "status_id": plan.status_id,
+            "expired_detail": existing,
+            "lifecycle_plan": plan.to_json(),
+        },
+        trace=plan.source_trace,
+    ).to_json()
+    return StatusLifecycleResult(
+        ok=True,
+        operation=plan.operation,
+        mutations=(status_mutation, detail_mutation),
+        records=(status_record, detail_record),
+        lifecycle_plan=plan,
+        lifecycle_state="expired",
+    )
+
+
+def _blocked_lifecycle_result(plan: StatusLifecyclePlan, reason: str) -> StatusLifecycleResult:
+    return StatusLifecycleResult(
+        ok=False,
+        operation=plan.operation,
+        records=(
+            SettlementRecord(
+                record_type="status_lifecycle_blocked",
+                source="status_system",
+                process_only=True,
+                payload={"reason": reason, "lifecycle_plan": plan.to_json()},
+                trace=plan.source_trace,
+            ).to_json(),
+        ),
+        unsupported=(reason,),
+        lifecycle_plan=plan,
+        lifecycle_state="blocked",
+    )
+
+
 def _resolve_target_alias(
     alias: object,
     *,
@@ -729,6 +964,167 @@ def _optional_int(expr: object) -> int | None:
     return int(value) if value is not None else None
 
 
+def _runtime_duration_admission(
+    standard: dict[str, JSONValue],
+    definition: RuleEntity,
+    effect: EffectIR,
+) -> dict[str, JSONValue]:
+    source_mode = _duration_source_mode(effect.source.source_path)
+    if source_mode != "mainline":
+        return {
+            "admission_status": "blocked",
+            "blocked_reason": f"duration_source_mode_not_admitted:{source_mode}",
+            "source_mode": source_mode,
+            "effect_source": effect.source.to_json(),
+        }
+    standard_lifetime = standard.get("lifetime")
+    definition_lifetime = definition.fields.get("lifetime_expr")
+    standard_moment = str(standard.get("life_step_moment") or "")
+    definition_moment = str(definition.fields.get("life_step_moment") or "")
+    combined_standard = _duration_admission_from_expr(
+        standard_lifetime,
+        standard_moment or definition_moment,
+        source_kind="effect",
+        source_trace={"effect_id": effect.effect_id, "effect_source": effect.source.to_json()},
+    )
+    if combined_standard.get("admission_status") == "executable":
+        return combined_standard
+    if not _is_missing_numeric_expr(standard_lifetime):
+        return combined_standard
+    combined_definition = _duration_admission_from_expr(
+        definition_lifetime,
+        definition_moment,
+        source_kind="modifier_definition",
+        source_trace={"modifier_definition": definition.source.to_json()},
+    )
+    if combined_definition.get("admission_status") == "executable":
+        return combined_definition
+    return combined_standard if combined_standard.get("admission_status") != "not_applicable" else combined_definition
+
+
+def _duration_admission_from_expr(
+    lifetime_expr: object,
+    life_step_moment: str,
+    *,
+    source_kind: str,
+    source_trace: dict[str, JSONValue],
+) -> dict[str, JSONValue]:
+    result = RuleEvaluator().evaluate_numeric(lifetime_expr, NumericEvaluationContext(source_trace=source_trace))
+    if _is_missing_numeric_expr(lifetime_expr):
+        return {
+            "admission_status": "not_applicable",
+            "blocked_reason": "lifetime_missing",
+            "life_step_moment": life_step_moment,
+            "source_kind": source_kind,
+            "source_trace": source_trace,
+            "numeric_evaluation": result.to_json(),
+        }
+    if not result.ok or result.value is None:
+        return {
+            "admission_status": "blocked",
+            "blocked_reason": result.blocked_reason or f"lifetime_not_executable:{result.expression_kind}",
+            "life_step_moment": life_step_moment,
+            "source_kind": source_kind,
+            "source_trace": source_trace,
+            "numeric_evaluation": result.to_json(),
+        }
+    if result.expression_kind != "fixed":
+        return {
+            "admission_status": "blocked",
+            "blocked_reason": f"lifetime_not_fixed:{result.expression_kind}",
+            "life_step_moment": life_step_moment,
+            "source_kind": source_kind,
+            "source_trace": source_trace,
+            "numeric_evaluation": result.to_json(),
+        }
+    if result.value <= 0:
+        return {
+            "admission_status": "blocked",
+            "blocked_reason": "lifetime_non_positive_or_missing",
+            "life_step_moment": life_step_moment,
+            "source_kind": source_kind,
+            "source_trace": source_trace,
+            "numeric_evaluation": result.to_json(),
+        }
+    if life_step_moment not in SUPPORTED_DURATION_LIFE_STEP_MOMENTS:
+        reason = "life_step_moment_missing" if not life_step_moment else f"unsupported_life_step_moment:{life_step_moment}"
+        return {
+            "admission_status": "blocked",
+            "blocked_reason": reason,
+            "life_step_moment": life_step_moment,
+            "source_kind": source_kind,
+            "source_trace": source_trace,
+            "numeric_evaluation": result.to_json(),
+        }
+    return {
+        "admission_status": "executable",
+        "blocked_reason": "",
+        "life_step_moment": life_step_moment,
+        "remaining_duration": float(result.value),
+        "source_kind": source_kind,
+        "source_trace": source_trace,
+        "numeric_evaluation": result.to_json(),
+    }
+
+
+def _admitted_duration_value(duration_admission: dict[str, JSONValue]) -> float | None:
+    if duration_admission.get("admission_status") != "executable":
+        return None
+    value = duration_admission.get("remaining_duration")
+    return float(value) if isinstance(value, (int, float)) else None
+
+
+def _duration_source_mode(source_path: str) -> str:
+    blocked_markers = (
+        "/Activity/",
+        "/Rogue/",
+        "/GridFight/",
+        "/Fate/",
+        "/Story/",
+        "/Level/",
+        "/SubLevelGraph/",
+        "/ElationBattle/",
+        "Config/Level/",
+        "Config/Gameplays/",
+    )
+    return "special_mode" if any(marker in source_path for marker in blocked_markers) else "mainline"
+
+
+def _number_or_none(value: object) -> float | None:
+    return float(value) if isinstance(value, (int, float)) else None
+
+
+def _status_detail_source_trace(status_detail: dict[str, JSONValue]) -> dict[str, JSONValue]:
+    source_trace = status_detail.get("source_trace")
+    return dict(source_trace) if isinstance(source_trace, dict) else {}
+
+
+def _status_detail_duration_admission(status_detail: dict[str, JSONValue]) -> dict[str, JSONValue]:
+    admission = status_detail.get("duration_admission")
+    if isinstance(admission, dict):
+        return dict(admission)
+    source_trace = _status_detail_source_trace(status_detail)
+    nested = source_trace.get("duration_admission")
+    return dict(nested) if isinstance(nested, dict) else {}
+
+
+def _unsupported_lifecycle_plan(
+    operation: str,
+    target_id: str,
+    status_id: str,
+    reason: str,
+    source_trace: dict[str, JSONValue],
+) -> StatusLifecyclePlan:
+    return StatusLifecyclePlan(
+        operation=operation,
+        target_id=target_id,
+        status_id=status_id,
+        source="status_system",
+        unsupported=(reason,),
+        source_trace=source_trace,
+    )
+
+
 def _status_details(unit_flags: dict[str, JSONValue]) -> list[JSONValue]:
     details = unit_flags.get("status_details", ())
     if isinstance(details, list):
@@ -775,12 +1171,12 @@ def _find_status_detail(details: list[JSONValue], status_id: str) -> dict[str, J
 def _application_semantics(
     standard: dict[str, JSONValue],
     existing_detail: dict[str, JSONValue] | None,
+    duration_admission: dict[str, JSONValue],
 ) -> tuple[str, list[str]]:
     reasons: list[str] = []
     operation = "add"
     max_layer = _optional_int(standard.get("max_layer"))
     layer_add = _optional_float(standard.get("layer_add_when_stack"))
-    lifetime = _optional_float(standard.get("lifetime"))
     chance_expr = standard.get("chance")
     chance = _optional_float(chance_expr)
     if existing_detail is not None:
@@ -792,8 +1188,8 @@ def _application_semantics(
         reasons.append("stack_unsupported:layer_add_when_stack")
     if bool(standard.get("is_refresh", False)):
         reasons.append("refresh_unsupported:is_refresh")
-    if lifetime is not None and lifetime > 0:
-        reasons.append("duration_lifecycle_unsupported:lifetime")
+    if duration_admission.get("admission_status") == "blocked":
+        reasons.append(f"duration_lifecycle_blocked:{duration_admission.get('blocked_reason')}")
     if chance is not None and chance != 1.0:
         reasons.append("chance_unsupported:non_guaranteed_add_modifier")
     if chance is None and not _is_missing_numeric_expr(chance_expr):

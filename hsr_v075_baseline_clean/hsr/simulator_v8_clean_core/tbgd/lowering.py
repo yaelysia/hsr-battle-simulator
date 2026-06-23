@@ -1901,6 +1901,12 @@ def _modifier_definition_entity(
         "map_name": map_name,
         "stacking": _json_safe(modifier.get("Stacking")),
         "lifetime": _json_safe(modifier.get("LifeTime")),
+        "lifetime_expr": _numeric_expr_summary(modifier.get("LifeTime")),
+        "life_step_moment": _value_field(modifier.get("LifeStepMoment")),
+        "duration_admission": _duration_admission_payload(
+            _numeric_expr_summary(modifier.get("LifeTime")),
+            _value_field(modifier.get("LifeStepMoment")),
+        ),
         "behavior_flags": _json_safe(modifier.get("BehaviorFlagList", [])),
         "dynamic_values": _json_safe(modifier.get("DynamicValues", {})),
         "dynamic_value_bindings": _dynamic_value_bindings(modifier.get("DynamicValues")),
@@ -3746,15 +3752,63 @@ def _standard_add_modifier_payload(value: dict[str, Any]) -> dict[str, Any]:
         for key, item in (value.get("DynamicValues") or {}).items()
         if isinstance(value.get("DynamicValues"), dict)
     }
+    lifetime = _numeric_expr_summary(value.get("LifeTime"))
+    life_step_moment = _value_field(value.get("LifeStepMoment"))
     return {
         "modifier_name": _value_field(value.get("ModifierName")),
         "target_alias": _target_alias(value.get("TargetType")),
         "dynamic_values": dynamic_values,
         "dynamic_value_requests": _dynamic_value_requests(dynamic_values),
-        "lifetime": _numeric_expr_summary(value.get("LifeTime")),
+        "lifetime": lifetime,
+        "life_step_moment": life_step_moment,
+        "duration_admission": _duration_admission_payload(lifetime, life_step_moment),
         "layer_add_when_stack": _numeric_expr_summary(value.get("LayerAddWhenStack")),
         "max_layer": _numeric_expr_summary(value.get("MaxLayer")),
         "chance": _numeric_expr_summary(value.get("Chance")),
+    }
+
+
+SUPPORTED_DURATION_LIFE_STEP_MOMENTS = {"ModifierPhase1End", "ActionPhaseEnd"}
+
+
+def _duration_admission_payload(lifetime_expr: dict[str, Any], life_step_moment: object) -> dict[str, Any]:
+    moment = str(life_step_moment or "")
+    if lifetime_expr.get("kind") == "missing":
+        return {
+            "admission_status": "not_applicable",
+            "blocked_reason": "lifetime_missing",
+            "life_step_moment": moment,
+            "lifetime_expr": lifetime_expr,
+        }
+    if lifetime_expr.get("kind") != "fixed":
+        return {
+            "admission_status": "blocked",
+            "blocked_reason": f"lifetime_not_fixed:{lifetime_expr.get('kind') or 'unknown'}",
+            "life_step_moment": moment,
+            "lifetime_expr": lifetime_expr,
+        }
+    value = lifetime_expr.get("value")
+    if not isinstance(value, (int, float)) or float(value) <= 0:
+        return {
+            "admission_status": "blocked",
+            "blocked_reason": "lifetime_non_positive_or_missing",
+            "life_step_moment": moment,
+            "lifetime_expr": lifetime_expr,
+        }
+    if moment not in SUPPORTED_DURATION_LIFE_STEP_MOMENTS:
+        reason = "life_step_moment_missing" if not moment else f"unsupported_life_step_moment:{moment}"
+        return {
+            "admission_status": "blocked",
+            "blocked_reason": reason,
+            "life_step_moment": moment,
+            "lifetime_expr": lifetime_expr,
+        }
+    return {
+        "admission_status": "executable",
+        "blocked_reason": "",
+        "life_step_moment": moment,
+        "remaining_duration": float(value),
+        "lifetime_expr": lifetime_expr,
     }
 
 

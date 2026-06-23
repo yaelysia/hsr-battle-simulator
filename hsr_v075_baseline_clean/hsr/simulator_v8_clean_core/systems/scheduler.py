@@ -31,6 +31,14 @@ class SchedulerStepResult:
     child_transitions: tuple[BattleTransition, ...] = ()
 
 
+@dataclass(frozen=True)
+class _StatusLifecycleSweep:
+    after_state: BattleState
+    events: tuple[GameEvent, ...] = ()
+    mutations: tuple[Mutation, ...] = ()
+    records: tuple[dict[str, JSONValue], ...] = ()
+
+
 class CombatScheduler:
     """Timeline and queue scheduling boundary.
 
@@ -128,7 +136,8 @@ class CombatScheduler:
             metadata={**command.metadata, **parent_metadata},
         )
         after_action, action_transition = CombatExecutor(self.rules).execute(scheduled_command, begin_result.after_state)
-        end_result = self.end_current_turn(after_action)
+        action_lifecycle = self._apply_status_lifecycle_tick(after_action, "ActionPhaseEnd", actor_id=actor_id)
+        end_result = self.end_current_turn(action_lifecycle.after_state)
         combined = _combine_scheduler_transitions(
             before_state=state,
             after_state=end_result.after_state,
@@ -140,11 +149,13 @@ class CombatScheduler:
                         "scheduler_step": "manual_action_turn_lifecycle",
                         "turn_begin_action_id": begin_result.transition.transaction.command.action_id,
                         "child_action_id": action_transition.transaction.command.action_id,
+                        "action_lifecycle_hook": "ActionPhaseEnd",
                         "turn_end_action_id": end_result.transition.transaction.command.action_id,
                     },
                 ),
                 *(begin_result.transition.transaction.settlement.records if begin_result.transition.transaction.settlement else ()),
                 *(action_transition.transaction.settlement.records if action_transition.transaction.settlement else ()),
+                *action_lifecycle.records,
                 *(end_result.transition.transaction.settlement.records if end_result.transition.transaction.settlement else ()),
             ),
             events=(
@@ -166,11 +177,13 @@ class CombatScheduler:
                     process_only=True,
                     payload={"command": _command_payload(scheduled_command)},
                 ),
+                *action_lifecycle.events,
                 *end_result.transition.transaction.events,
             ),
             mutations=(
                 *begin_result.transition.transaction.mutations,
                 *action_transition.transaction.mutations,
+                *action_lifecycle.mutations,
                 *end_result.transition.transaction.mutations,
             ),
             target_resolution=action_transition.target_resolution,
@@ -181,6 +194,7 @@ class CombatScheduler:
                     "command": _command_payload(scheduled_command),
                     "coverage": action_transition.coverage,
                 },
+                "action_lifecycle": {"life_step_moment": "ActionPhaseEnd", "mutation_count": len(action_lifecycle.mutations)},
                 "turn_end": end_result.transition.coverage,
                 "unsupported_hooks": _unsupported_turn_hooks(),
             },
@@ -243,8 +257,9 @@ class CombatScheduler:
         if not actor_id or actor_id not in state.units:
             return self._blocked(state, "timeline:turn_end", "active_turn_missing", {"active_turn": active_turn})
         rule = self.rules.default_timeline_rule()
-        result = self.timeline.end_turn(state, actor_id, rule, turn_kind="regular")
-        after = self.reducer.apply_all(state, result.mutations)
+        lifecycle = self._apply_status_lifecycle_tick(state, "ModifierPhase1End", actor_id=actor_id)
+        result = self.timeline.end_turn(lifecycle.after_state, actor_id, rule, turn_kind="regular")
+        after = self.reducer.apply_all(lifecycle.after_state, result.mutations)
         return SchedulerStepResult(
             after,
             _transition(
@@ -252,11 +267,62 @@ class CombatScheduler:
                 after_state=after,
                 action_id="timeline:end_current_turn",
                 actor_id=actor_id,
-                events=result.events,
-                mutations=result.mutations,
-                records=_mutation_records("turn_end", result.mutations, result.plan),
-                coverage={"timeline_rule": rule.to_json(), "turn_advance_plan": result.plan.to_json()},
+                events=(*lifecycle.events, *result.events),
+                mutations=(*lifecycle.mutations, *result.mutations),
+                records=(
+                    *lifecycle.records,
+                    *_mutation_records("turn_end", result.mutations, result.plan),
+                ),
+                coverage={
+                    "timeline_rule": rule.to_json(),
+                    "turn_advance_plan": result.plan.to_json(),
+                    "status_lifecycle": {
+                        "life_step_moment": "ModifierPhase1End",
+                        "mutation_count": len(lifecycle.mutations),
+                    },
+                },
             ),
+        )
+
+    def _apply_status_lifecycle_tick(
+        self,
+        state: BattleState,
+        life_step_moment: str,
+        *,
+        actor_id: str,
+    ) -> _StatusLifecycleSweep:
+        current = state
+        mutations: list[Mutation] = []
+        records: list[dict[str, JSONValue]] = []
+        for unit_id in sorted(tuple(current.units)):
+            details = tuple(
+                item
+                for item in current.units[unit_id].flags.get("status_details", ())
+                if isinstance(item, dict)
+            )
+            for detail in details:
+                result = self.status.apply_lifecycle_tick(current, unit_id, detail, life_step_moment)
+                records.extend(result.records)
+                if result.mutations:
+                    mutations.extend(result.mutations)
+                    current = self.reducer.apply_all(current, result.mutations)
+        event = GameEvent(
+            "status.lifecycle.tick",
+            source_id=actor_id,
+            event_id=f"event:{state.event_index}:status_lifecycle:{life_step_moment}:{actor_id}",
+            window=life_step_moment,
+            process_only=True,
+            payload={
+                "life_step_moment": life_step_moment,
+                "mutation_count": len(mutations),
+                "record_count": len(records),
+            },
+        )
+        return _StatusLifecycleSweep(
+            after_state=current,
+            events=(event,),
+            mutations=tuple(mutations),
+            records=tuple(records),
         )
 
     def _try_queue_drain(self, state: BattleState) -> SchedulerStepResult | None:
@@ -497,8 +563,9 @@ def _command_payload(command: ActionCommand) -> dict[str, JSONValue]:
 def _unsupported_turn_hooks() -> dict[str, JSONValue]:
     return {
         "duration_tick": {
-            "status": "blocked",
-            "blocking_dependency": "StatusLifecycle source admission for decrement/expire",
+            "status": "admitted_for_current_scope",
+            "scope": "fixed numeric LifeTime with admitted ModifierPhase1End or ActionPhaseEnd",
+            "remaining_blocking_dependency": "dynamic/postfix LifeTime and unsupported LifeStepMoment admission",
         },
         "extra_turn": {
             "status": "blocked",
