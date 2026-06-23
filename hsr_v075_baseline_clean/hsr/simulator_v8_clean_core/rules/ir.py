@@ -685,6 +685,38 @@ class QueueLifecyclePolicyIR:
 
 
 @dataclass(frozen=True)
+class ExtraActionPolicyIR:
+    extra_action_policy_id: str
+    queue_intent_id: str
+    queue_window_id: str
+    source_kind: str
+    action_selection_kind: str
+    allowed_action_kinds: tuple[str, ...]
+    fixed_action_ref: str
+    lifecycle_policy_id: str
+    source_basis: dict[str, JSONValue]
+    source: IRSource
+    coverage_status: CoverageStatus = "blocked"
+    blocked_reason: str = ""
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "extra_action_policy_id": self.extra_action_policy_id,
+            "queue_intent_id": self.queue_intent_id,
+            "queue_window_id": self.queue_window_id,
+            "source_kind": self.source_kind,
+            "action_selection_kind": self.action_selection_kind,
+            "allowed_action_kinds": list(self.allowed_action_kinds),
+            "fixed_action_ref": self.fixed_action_ref,
+            "lifecycle_policy_id": self.lifecycle_policy_id,
+            "source_basis": self.source_basis,
+            "source": self.source.to_json(),
+            "coverage_status": self.coverage_status,
+            "blocked_reason": self.blocked_reason,
+        }
+
+
+@dataclass(frozen=True)
 class StandaloneAbilityGraphIR:
     standalone_ability_graph_id: str
     ability_name: str
@@ -1038,6 +1070,7 @@ class CanonicalIR:
     queue_priorities: tuple[QueuePriorityIR, ...] = ()
     queue_windows: tuple[QueueWindowIR, ...] = ()
     queue_lifecycle_policies: tuple[QueueLifecyclePolicyIR, ...] = ()
+    extra_action_policies: tuple[ExtraActionPolicyIR, ...] = ()
     skill_continuations: tuple[SkillContinuationIR, ...] = ()
     standalone_ability_graphs: tuple[StandaloneAbilityGraphIR, ...] = ()
     combatant_action_sets: tuple[CombatantActionSetIR, ...] = ()
@@ -1077,6 +1110,7 @@ class CanonicalIR:
             "queue_priorities": [priority.to_json() for priority in self.queue_priorities],
             "queue_windows": [window.to_json() for window in self.queue_windows],
             "queue_lifecycle_policies": [policy.to_json() for policy in self.queue_lifecycle_policies],
+            "extra_action_policies": [policy.to_json() for policy in self.extra_action_policies],
             "skill_continuations": [continuation.to_json() for continuation in self.skill_continuations],
             "standalone_ability_graphs": [graph.to_json() for graph in self.standalone_ability_graphs],
             "combatant_action_sets": [action_set.to_json() for action_set in self.combatant_action_sets],

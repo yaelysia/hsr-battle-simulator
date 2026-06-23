@@ -518,13 +518,16 @@ class StatusCallbackSystem:
                 errors.append(reason)
                 continue
             lifecycle_policy_id = ""
+            extra_action_policy_id = ""
             if isinstance(window.window_policy, dict):
                 lifecycle_policy_id = str(window.window_policy.get("queue_lifecycle_policy_id") or "")
+                extra_action_policy_id = str(window.window_policy.get("extra_action_policy_id") or "")
             queue_name = intent.queue_kind
             source_trace = {
                 "queue_intent_source": intent.source.to_json(),
                 "queue_window_source": window.source.to_json(),
                 "queue_lifecycle_policy_id": lifecycle_policy_id,
+                "extra_action_policy_id": extra_action_policy_id,
                 "status_callback_source": callback.source.to_json(),
                 "status_task_source": task.source.to_json(),
                 "status_instance_source": _json_dict(detail.get("source_trace")),
@@ -564,6 +567,7 @@ class StatusCallbackSystem:
                     "queue_priority_id": entry.queue_priority_id,
                     "queue_window_id": entry.queue_window_id,
                     "queue_lifecycle_policy_id": lifecycle_policy_id,
+                    "extra_action_policy_id": extra_action_policy_id,
                     "window_family": entry.window_family,
                     "priority_key": entry.priority_key,
                     "priority_value": entry.priority_value,

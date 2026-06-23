@@ -68,12 +68,12 @@ MUTATION_SOURCE_POLICIES: dict[str, dict[str, JSONValue]] = {
         "coverage_required": "process-only dispatch records; mutating listener effects keep their underlying source",
     },
     "queue_system": {
-        "required_ir": ["QueueIntentIR + QueuePriorityIR + QueueWindowIR for enqueue; QueueIntentIR + QueueResolutionIR + QueuePriorityIR + QueueWindowIR + QueueWindowPlan for dequeue; extra_turn additionally requires QueueLifecyclePolicyIR"],
+        "required_ir": ["QueueIntentIR + QueuePriorityIR + QueueWindowIR for enqueue; QueueIntentIR + QueueResolutionIR + QueuePriorityIR + QueueWindowIR + QueueWindowPlan for dequeue; extra_turn additionally requires QueueLifecyclePolicyIR + ExtraActionPolicyIR"],
         "required_metadata": ["queue_name", "queue_operation", "queue_intent_id", "queue_window_id", "target_resolution", "source_trace"],
         "coverage_required": "executable",
     },
     "combat_executor.queue": {
-        "required_ir": ["QueueIntentIR + QueuePriorityIR + QueueWindowIR for enqueue; QueueIntentIR + QueueResolutionIR + QueuePriorityIR + QueueWindowIR + QueueWindowPlan for dequeue; extra_turn additionally requires QueueLifecyclePolicyIR"],
+        "required_ir": ["QueueIntentIR + QueuePriorityIR + QueueWindowIR for enqueue; QueueIntentIR + QueueResolutionIR + QueuePriorityIR + QueueWindowIR + QueueWindowPlan for dequeue; extra_turn additionally requires QueueLifecyclePolicyIR + ExtraActionPolicyIR"],
         "required_metadata": ["queue_name", "queue_operation", "queue_intent_id", "queue_window_id", "target_resolution", "source_trace"],
         "coverage_required": "executable",
     },
@@ -972,6 +972,44 @@ class RuntimeSourceAuditor:
                     )
                 else:
                     _audit_source(lifecycle_policy.source, lifecycle_policy.coverage_status, mutation, violations, executable_required=True)
+            extra_action_policy_id = _first_str(metadata.get("extra_action_policy_id"))
+            if not extra_action_policy_id and isinstance(window_plan, dict):
+                policy = window_plan.get("window_policy")
+                if isinstance(policy, dict):
+                    extra_action_policy_id = _first_str(policy.get("extra_action_policy_id"))
+            if not extra_action_policy_id:
+                violations.append(
+                    _violation(
+                        mutation,
+                        "extra_action_policy_missing",
+                        missing_field="extra_action_policy_id",
+                        details={"metadata": metadata},
+                    )
+                )
+            else:
+                extra_policy = self.rules.extra_action_policy(extra_action_policy_id)
+                if extra_policy is None:
+                    violations.append(
+                        _violation(
+                            mutation,
+                            "extra_action_policy_ir_missing",
+                            details={"extra_action_policy_id": extra_action_policy_id},
+                        )
+                    )
+                elif extra_policy.coverage_status != "executable":
+                    violations.append(
+                        _violation(
+                            mutation,
+                            "extra_action_policy_not_executable",
+                            details={
+                                "extra_action_policy_id": extra_action_policy_id,
+                                "coverage_status": extra_policy.coverage_status,
+                                "blocked_reason": extra_policy.blocked_reason,
+                            },
+                        )
+                    )
+                else:
+                    _audit_source(extra_policy.source, extra_policy.coverage_status, mutation, violations, executable_required=True)
         target_resolution = metadata.get("target_resolution")
         if operation == "enqueue":
             if not isinstance(target_resolution, dict):

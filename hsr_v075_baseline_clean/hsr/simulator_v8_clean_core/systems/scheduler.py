@@ -241,7 +241,7 @@ class CombatScheduler:
         mechanics stay in their existing systems so source audit continues to
         validate the underlying mutation source instead of a scheduler shortcut.
         """
-        queue_step = self._try_queue_drain(state)
+        queue_step = self._try_queue_drain(state, command=command)
         if queue_step is not None:
             return _with_scheduler_record(
                 queue_step,
@@ -569,7 +569,7 @@ class CombatScheduler:
             records=tuple(records),
         )
 
-    def _try_queue_drain(self, state: BattleState) -> SchedulerStepResult | None:
+    def _try_queue_drain(self, state: BattleState, command: ActionCommand | None = None) -> SchedulerStepResult | None:
         plans: list[QueueDrainPlan] = []
         for queue_name in sorted(state.queues):
             resolutions = _resolutions_for_queue(self.rules, state, queue_name)
@@ -593,7 +593,7 @@ class CombatScheduler:
         if resolution is None:
             return self._blocked(state, "queue:drain", "queue_resolution_missing", {"drain_plan": plan.to_json()})
         if resolution.resolved_kind == "action_definition":
-            preflight_reason = self._queue_action_preflight_reason(state, plan)
+            preflight_reason = self._queue_action_preflight_reason(state, plan, command=command)
             if preflight_reason:
                 return self._blocked(
                     state,
@@ -614,6 +614,7 @@ class CombatScheduler:
                 "scheduler": "timeline_scheduler",
                 "queue_window_plan": plan.queue_window or {},
                 "queue_lifecycle_policy_id": _queue_lifecycle_policy_id(plan),
+                "extra_action_policy_id": _extra_action_policy_id(plan),
                 **_manual_ultimate_dequeue_metadata(self.rules, plan),
             },
         )
@@ -683,11 +684,12 @@ class CombatScheduler:
             from ..core.executor import CombatExecutor
 
             actor_id = str(plan.queue_entry.get("actor_id") or "")
+            selected_command = self._queue_action_command_from_plan(plan, command)
             queue_command = ActionCommand(
                 actor_id=actor_id,
-                action_id=plan.resolved_action_id,
-                action_level=plan.resolved_action_level or 0,
-                target_ids=tuple(str(item) for item in plan.queue_entry.get("target_ids", ()) if isinstance(item, str)),
+                action_id=selected_command.action_id,
+                action_level=selected_command.action_level,
+                target_ids=selected_command.target_ids,
                 source="queue",
                 queue_name=plan.queue_name,
                 metadata={
@@ -700,6 +702,8 @@ class CombatScheduler:
                         "priority_value": plan.priority_value,
                         "drain_order": plan.drain_order,
                         "queue_window_plan": plan.queue_window or {},
+                        "extra_action_policy": _extra_action_policy_payload(self.rules, plan),
+                        "action_choice_source": selected_command.metadata.get("action_choice_source", "queue_resolution"),
                     }
                 },
             )
@@ -794,22 +798,45 @@ class CombatScheduler:
             child_transitions=(action_transition,) if resolution.resolved_kind == "action_definition" else (),
         )
 
-    def _queue_action_preflight_reason(self, state: BattleState, plan: QueueDrainPlan) -> str:
+    def _queue_action_preflight_reason(self, state: BattleState, plan: QueueDrainPlan, *, command: ActionCommand | None = None) -> str:
         actor_id = str(plan.queue_entry.get("actor_id") or "")
         if not actor_id or actor_id not in state.units:
             return "queue_action_actor_missing"
-        if not plan.resolved_action_id or plan.resolved_action_level is None:
+        selected_action_id = plan.resolved_action_id
+        selected_action_level = plan.resolved_action_level
+        selected_targets = tuple(str(item) for item in plan.queue_entry.get("target_ids", ()) if isinstance(item, str))
+        extra_policy = self._extra_action_policy_for_plan(plan)
+        window_family = str((plan.queue_window or {}).get("window_family") or "")
+        if window_family == "extra_turn":
+            if extra_policy is None:
+                return "extra_turn_action_policy_missing"
+            if extra_policy.coverage_status != "executable":
+                return extra_policy.blocked_reason or f"extra_turn_action_policy_not_executable:{extra_policy.coverage_status}"
+            if extra_policy.action_selection_kind == "route_or_source_selected_non_ultimate_action":
+                if command is None:
+                    return "extra_turn_route_action_choice_missing"
+                if command.actor_id != actor_id:
+                    return "extra_turn_route_action_actor_mismatch"
+                selected_action_id = command.action_id
+                selected_action_level = command.action_level
+                selected_targets = tuple(target_id for target_id in command.target_ids if target_id in state.units)
+        if not selected_action_id or selected_action_level is None:
             return "queue_action_resolution_missing"
-        if not any(isinstance(item, str) and item for item in plan.queue_entry.get("target_ids", ())):
+        if not selected_targets:
             return "queue_action_target_missing"
-        definition = self.rules.action_definition(plan.resolved_action_id, plan.resolved_action_level)
+        definition = self.rules.action_definition(selected_action_id, selected_action_level)
         if definition is None:
             return "queue_action_definition_missing"
-        action_event = self.rules.action_event(plan.resolved_action_id, plan.resolved_action_level)
+        action_event = self.rules.action_event(selected_action_id, selected_action_level)
         if action_event is None:
             return "queue_action_event_missing"
         if action_event.coverage_status in {"blocked", "audit_only", "discovered_only", "unsupported"}:
             return f"queue_action_event_not_admitted:{action_event.coverage_status}"
+        if window_family == "extra_turn":
+            if _is_ultimate_definition(definition.attack_type, definition.skill_effect):
+                return "extra_turn_ultimate_action_not_allowed"
+            if not _is_basic_or_skill_definition(definition.attack_type, definition.skill_effect):
+                return "extra_turn_action_kind_not_admitted"
         if definition.bp_need > state.skill_points:
             return "queue_action_resource_preflight_failed:insufficient_skill_points"
         if plan.queue_intent_id.startswith("manual_ultimate:"):
@@ -820,6 +847,38 @@ class CombatScheduler:
         if window.get("ok") is not True:
             return str(window.get("blocked_reason") or "queue_window_not_admitted")
         return ""
+
+    def _queue_action_command_from_plan(self, plan: QueueDrainPlan, command: ActionCommand | None) -> ActionCommand:
+        window_family = str((plan.queue_window or {}).get("window_family") or "")
+        if window_family == "extra_turn" and command is not None:
+            return replace(
+                command,
+                source="queue",
+                queue_name=plan.queue_name,
+                metadata={**command.metadata, "action_choice_source": "route_manual_extra_turn"},
+            )
+        return ActionCommand(
+            actor_id=str(plan.queue_entry.get("actor_id") or ""),
+            action_id=plan.resolved_action_id,
+            action_level=plan.resolved_action_level or 0,
+            target_ids=tuple(str(item) for item in plan.queue_entry.get("target_ids", ()) if isinstance(item, str)),
+            source="queue",
+            queue_name=plan.queue_name,
+            metadata={"action_choice_source": "queue_resolution"},
+        )
+
+    def _extra_action_policy_for_plan(self, plan: QueueDrainPlan):
+        window = plan.queue_window or {}
+        policy_id = ""
+        policy = window.get("window_policy")
+        if isinstance(policy, dict):
+            policy_id = str(policy.get("extra_action_policy_id") or "")
+        if policy_id:
+            return self.rules.extra_action_policy(policy_id)
+        queue_window_id = str(window.get("queue_window_id") or "")
+        if queue_window_id:
+            return self.rules.extra_action_policy_for_window(queue_window_id)
+        return self.rules.extra_action_policy_for_intent(plan.queue_intent_id)
 
     def _pending_turn_end_mutation(self, state: BattleState, actor_id: str, child_action_id: str) -> Mutation:
         rule = self.rules.default_timeline_rule()
@@ -1209,18 +1268,33 @@ def _queue_lifecycle_policy_id(plan: QueueDrainPlan) -> str:
     return str(policy.get("queue_lifecycle_policy_id") or "")
 
 
+def _extra_action_policy_id(plan: QueueDrainPlan) -> str:
+    window = plan.queue_window or {}
+    policy = window.get("window_policy") if isinstance(window.get("window_policy"), dict) else {}
+    return str(policy.get("extra_action_policy_id") or "")
+
+
 def _queue_lifecycle_policy(plan: QueueDrainPlan) -> dict[str, JSONValue]:
     window = plan.queue_window or {}
     policy = window.get("window_policy") if isinstance(window.get("window_policy"), dict) else {}
     lifecycle_basis = policy.get("extra_turn_source_basis")
     return {
         "queue_lifecycle_policy_id": str(policy.get("queue_lifecycle_policy_id") or ""),
+        "extra_action_policy_id": str(policy.get("extra_action_policy_id") or ""),
         "lifecycle_policy_admitted": policy.get("lifecycle_policy_admitted") is True,
         "turn_lifecycle_policy": str(policy.get("turn_lifecycle_policy") or ""),
         "duration_tick_policy": str(policy.get("duration_tick_policy") or ""),
         "natural_av_advance": str(policy.get("natural_av_advance") or ""),
         "extra_turn_source_basis": lifecycle_basis if isinstance(lifecycle_basis, dict) else {},
     }
+
+
+def _extra_action_policy_payload(rules: RuleBook, plan: QueueDrainPlan) -> dict[str, JSONValue]:
+    window = plan.queue_window or {}
+    policy = window.get("window_policy") if isinstance(window.get("window_policy"), dict) else {}
+    policy_id = str(policy.get("extra_action_policy_id") or "")
+    item = rules.extra_action_policy(policy_id) if policy_id else None
+    return item.to_json() if item is not None else {}
 
 
 def _resolution_for_drain_plan(rules: RuleBook, state: BattleState, plan: QueueDrainPlan) -> QueueResolutionIR | None:
@@ -1332,3 +1406,8 @@ def _first_str(value: JSONValue) -> str:
 def _is_ultimate_definition(attack_type: str, skill_effect: str) -> bool:
     text = f"{attack_type} {skill_effect}".lower()
     return any(token in text for token in ("ultra", "ultimate"))
+
+
+def _is_basic_or_skill_definition(attack_type: str, skill_effect: str) -> bool:
+    text = f"{attack_type} {skill_effect}".lower()
+    return any(token in text for token in ("normal", "basic", "bpskill", "skill"))

@@ -27,6 +27,7 @@ from ..rules.ir import (
     ConditionIR,
     DamageEmissionIR,
     EffectIR,
+    ExtraActionPolicyIR,
     FormulaIR,
     HitProfileIR,
     IRSource,
@@ -257,6 +258,13 @@ class TBGDLowering:
         extra_turn_source_basis = self._extra_turn_source_basis()
         queue_windows = _lower_queue_windows(queue_intents, queue_resolutions, extra_turn_source_basis)
         queue_lifecycle_policies = _lower_queue_lifecycle_policies(queue_windows, extra_turn_source_basis)
+        extra_action_policies = _lower_extra_action_policies(
+            queue_intents=queue_intents,
+            queue_windows=queue_windows,
+            queue_lifecycle_policies=queue_lifecycle_policies,
+            skill_continuations=skill_continuations,
+            extra_turn_source_basis=extra_turn_source_basis,
+        )
         entities = list(_dedupe_entities(entities).values())
         formulas.extend(self._lower_elation_mechanics())
         formulas.extend(self._lower_damage_behavior_templates())
@@ -286,6 +294,7 @@ class TBGDLowering:
             queue_priorities=tuple(queue_priorities),
             queue_windows=tuple(queue_windows),
             queue_lifecycle_policies=tuple(queue_lifecycle_policies),
+            extra_action_policies=tuple(extra_action_policies),
             skill_continuations=tuple(skill_continuations),
             standalone_ability_graphs=tuple(standalone_ability_graphs),
             combatant_action_sets=tuple(combatant_action_sets),
@@ -4048,6 +4057,90 @@ def _lower_queue_lifecycle_policies(
     return policies
 
 
+def _lower_extra_action_policies(
+    *,
+    queue_intents: list[QueueIntentIR],
+    queue_windows: list[QueueWindowIR],
+    queue_lifecycle_policies: list[QueueLifecyclePolicyIR],
+    skill_continuations: list[SkillContinuationIR],
+    extra_turn_source_basis: dict[str, Any],
+) -> list[ExtraActionPolicyIR]:
+    policies: list[ExtraActionPolicyIR] = []
+    lifecycle_by_window = {policy.queue_window_id: policy for policy in queue_lifecycle_policies if policy.queue_window_id}
+    intent_by_id = {intent.queue_intent_id: intent for intent in queue_intents}
+    for window in queue_windows:
+        if window.window_family != "extra_turn":
+            continue
+        intent = intent_by_id.get(window.queue_intent_id)
+        lifecycle = lifecycle_by_window.get(window.queue_window_id)
+        lifecycle_ok = lifecycle is not None and lifecycle.coverage_status == "executable"
+        window_ok = window.coverage_status == "executable"
+        policy_id = f"extra_action_policy:queue_window:{window.queue_intent_id}"
+        source_basis = {
+            "queue_window_source": window.source.to_json(),
+            "queue_intent_source": intent.source.to_json() if intent is not None else {},
+            "queue_lifecycle_policy": lifecycle.to_json() if lifecycle is not None else {},
+            "extra_turn_source_basis": _json_safe(extra_turn_source_basis),
+        }
+        blocked_reason = ""
+        if not window_ok:
+            blocked_reason = window.blocked_reason or f"queue_window_not_executable:{window.coverage_status}"
+        elif not lifecycle_ok:
+            blocked_reason = "extra_turn_lifecycle_policy_not_admitted"
+        policies.append(
+            ExtraActionPolicyIR(
+                extra_action_policy_id=policy_id,
+                queue_intent_id=window.queue_intent_id,
+                queue_window_id=window.queue_window_id,
+                source_kind="true_extra_turn",
+                action_selection_kind="route_or_source_selected_non_ultimate_action",
+                allowed_action_kinds=("basic", "skill"),
+                fixed_action_ref="",
+                lifecycle_policy_id=lifecycle.queue_lifecycle_policy_id if lifecycle is not None else "",
+                source_basis=source_basis,
+                source=IRSource(
+                    source_path=window.source.source_path,
+                    raw_type="ExtraActionPolicy",
+                    raw_id=policy_id,
+                    evidence=source_basis,
+                ),
+                coverage_status="executable" if window_ok and lifecycle_ok else "blocked",
+                blocked_reason=blocked_reason,
+            )
+        )
+    for continuation in skill_continuations:
+        policy_id = f"extra_action_policy:skill_continuation:{continuation.continuation_id}"
+        source_basis = {
+            "skill_continuation": continuation.to_json(),
+            "reason": "UseSkillOneMore is a skill or ultimate internal continuation, not a true extra turn",
+        }
+        policies.append(
+            ExtraActionPolicyIR(
+                extra_action_policy_id=policy_id,
+                queue_intent_id="",
+                queue_window_id="",
+                source_kind="skill_or_ultimate_internal_continuation",
+                action_selection_kind="fixed_internal_segment",
+                allowed_action_kinds=(),
+                fixed_action_ref=continuation.fixed_skill_type,
+                lifecycle_policy_id="",
+                source_basis=source_basis,
+                source=IRSource(
+                    source_path=continuation.source.source_path,
+                    raw_type="SkillContinuationPolicy",
+                    raw_id=policy_id,
+                    evidence=source_basis,
+                ),
+                coverage_status="blocked",
+                blocked_reason=(
+                    "skill_continuation_runner_not_admitted:"
+                    "requires source-specific mapping from continuation segment to executable action or ability"
+                ),
+            )
+        )
+    return policies
+
+
 def _first_source_from_extra_turn_basis(extra_turn_source_basis: dict[str, Any]) -> IRSource:
     evidence = extra_turn_source_basis.get("evidence") if isinstance(extra_turn_source_basis.get("evidence"), dict) else {}
     modifier = evidence.get("one_more_modifier") if isinstance(evidence.get("one_more_modifier"), dict) else {}
@@ -4225,6 +4318,7 @@ def _queue_window_policy(
             {
                 "natural_av_advance": "bypassed_for_queue_child",
                 "queue_lifecycle_policy_id": lifecycle_policy_id,
+                "extra_action_policy_id": f"extra_action_policy:queue_window:{intent.queue_intent_id}",
                 "lifecycle_policy_admitted": lifecycle_admitted,
                 "turn_lifecycle_policy": "admitted_from_queue_lifecycle_policy" if lifecycle_admitted else "blocked_until_extra_turn_lifecycle_source_admitted",
                 "duration_tick_policy": "ActionPhaseEnd_from_OneMore_LifeStepMoment" if lifecycle_admitted else "blocked_until_extra_turn_lifecycle_source_admitted",

@@ -416,6 +416,9 @@ def _action_execution_status(ir: CanonicalIR) -> dict[str, Any]:
     queue_lifecycle_status = Counter(policy.coverage_status for policy in ir.queue_lifecycle_policies)
     queue_lifecycle_reasons = Counter(policy.blocked_reason for policy in ir.queue_lifecycle_policies if policy.blocked_reason)
     queue_lifecycle_families = Counter(policy.window_family for policy in ir.queue_lifecycle_policies)
+    extra_action_policy_status = Counter(policy.coverage_status for policy in ir.extra_action_policies)
+    extra_action_policy_reasons = Counter(policy.blocked_reason for policy in ir.extra_action_policies if policy.blocked_reason)
+    extra_action_policy_kinds = Counter(policy.source_kind for policy in ir.extra_action_policies)
     skill_continuation_status = Counter(continuation.coverage_status for continuation in ir.skill_continuations)
     skill_continuation_reasons = Counter(
         continuation.blocked_reason
@@ -627,6 +630,15 @@ def _action_execution_status(ir: CanonicalIR) -> dict[str, Any]:
             "blocked_reason_counts": dict(sorted(queue_lifecycle_reasons.items())),
             "window_family_counts": dict(sorted(queue_lifecycle_families.items())),
             "reason": "QueueLifecyclePolicyIR separates extra-turn source/lifecycle evidence from queue window execution admission",
+        },
+        "extra_action_policies": {
+            "lowered": len(ir.extra_action_policies),
+            "executable": extra_action_policy_status["executable"],
+            "blocked": extra_action_policy_status["blocked"],
+            "status_counts": dict(sorted(extra_action_policy_status.items())),
+            "blocked_reason_counts": dict(sorted(extra_action_policy_reasons.items())),
+            "source_kind_counts": dict(sorted(extra_action_policy_kinds.items())),
+            "reason": "ExtraActionPolicyIR admits true extra-turn action selection separately from OneMore lifecycle and skill continuation evidence",
         },
         "skill_continuations": {
             "lowered": len(ir.skill_continuations),

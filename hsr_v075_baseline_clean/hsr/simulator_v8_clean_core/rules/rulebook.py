@@ -19,6 +19,7 @@ from .ir import (
     ConditionIR,
     DamageEmissionIR,
     EffectIR,
+    ExtraActionPolicyIR,
     FormulaIR,
     HitProfileIR,
     QueueIntentIR,
@@ -391,6 +392,29 @@ class RuleBook:
         )
         object.__setattr__(
             self,
+            "_extra_action_policies",
+            {policy.extra_action_policy_id: policy for policy in self.ir.extra_action_policies},
+        )
+        object.__setattr__(
+            self,
+            "_extra_action_policy_by_window",
+            {
+                policy.queue_window_id: policy
+                for policy in self.ir.extra_action_policies
+                if policy.queue_window_id
+            },
+        )
+        object.__setattr__(
+            self,
+            "_extra_action_policy_by_intent",
+            {
+                policy.queue_intent_id: policy
+                for policy in self.ir.extra_action_policies
+                if policy.queue_intent_id
+            },
+        )
+        object.__setattr__(
+            self,
             "_skill_continuations",
             {continuation.continuation_id: continuation for continuation in self.ir.skill_continuations},
         )
@@ -686,6 +710,15 @@ class RuleBook:
 
     def queue_lifecycle_policy_for_intent(self, queue_intent_id: str) -> QueueLifecyclePolicyIR | None:
         return self._queue_lifecycle_policy_by_intent.get(queue_intent_id)
+
+    def extra_action_policy(self, policy_id: str) -> ExtraActionPolicyIR | None:
+        return self._extra_action_policies.get(policy_id)
+
+    def extra_action_policy_for_window(self, queue_window_id: str) -> ExtraActionPolicyIR | None:
+        return self._extra_action_policy_by_window.get(queue_window_id)
+
+    def extra_action_policy_for_intent(self, queue_intent_id: str) -> ExtraActionPolicyIR | None:
+        return self._extra_action_policy_by_intent.get(queue_intent_id)
 
     def skill_continuation(self, continuation_id: str) -> SkillContinuationIR | None:
         return self._skill_continuations.get(continuation_id)
