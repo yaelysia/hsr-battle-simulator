@@ -19,7 +19,7 @@ from ..rules.ir import AbilityPhaseIR, QueueResolutionIR
 from ..rules.rulebook import RuleBook
 from .ability import AbilityTaskSystem
 from .effect import EffectRegistry
-from .queue import QueueDrainPlan, QueueSystem
+from .queue import QUEUE_WINDOW_FAMILY_ORDER, QueueDrainPlan, QueueEntry, QueueSystem
 from .status import StatusSystem
 from .timeline import TimelineSystem, TurnAdvancePlan, TurnAdvanceResult
 
@@ -77,6 +77,159 @@ class CombatScheduler:
                 coverage={"timeline_rule": rule.to_json()},
             ),
         )
+
+    def enqueue_manual_ultimate(self, state: BattleState, command: ActionCommand) -> SchedulerStepResult:
+        actor = state.units.get(command.actor_id)
+        if actor is None:
+            return self._blocked(state, "queue:manual_ultimate_request", "manual_ultimate_actor_missing", {"command": _command_payload(command)})
+        definition = self.rules.action_definition(command.action_id, command.action_level)
+        action_event = self.rules.action_event(command.action_id, command.action_level)
+        if definition is None:
+            return self._blocked(state, "queue:manual_ultimate_request", "manual_ultimate_action_definition_missing", {"command": _command_payload(command)})
+        if action_event is None:
+            return self._blocked(state, "queue:manual_ultimate_request", "manual_ultimate_action_event_missing", {"command": _command_payload(command)})
+        if not _is_ultimate_definition(definition.attack_type, definition.skill_effect):
+            return self._blocked(
+                state,
+                "queue:manual_ultimate_request",
+                "manual_ultimate_action_not_ultra",
+                {"command": _command_payload(command), "definition": definition.to_json()},
+            )
+        if actor.max_energy <= 0 or actor.energy < actor.max_energy:
+            return self._blocked(
+                state,
+                "queue:manual_ultimate_request",
+                "manual_ultimate_energy_not_ready",
+                {"actor_id": actor.unit_id, "energy": actor.energy, "max_energy": actor.max_energy, "command": _command_payload(command)},
+            )
+        target_ids = tuple(target_id for target_id in command.target_ids if target_id in state.units)
+        if not target_ids:
+            return self._blocked(
+                state,
+                "queue:manual_ultimate_request",
+                "manual_ultimate_target_not_resolved",
+                {"command": _command_payload(command), "requested_targets": list(command.target_ids)},
+            )
+        queue_intent_id = f"manual_ultimate:{command.actor_id}:{command.action_id}:{command.action_level}:{state.event_index}"
+        source_trace = {
+            "manual_input_source": {
+                "source_path": "manual_route_input",
+                "raw_type": "ManualUltimateRequest",
+                "raw_id": queue_intent_id,
+                "evidence": {"command": _command_payload(command)},
+            },
+            "action_definition_source": definition.source.to_json(),
+            "action_event_source": action_event.source.to_json(),
+        }
+        priority_source = {
+            "field": "manual_route_input",
+            "priority_table": "manual_ultimate",
+            "priority_key": "manual_ultimate",
+            "priority_value": 0.0,
+            "priority_ordering_admitted": True,
+            "source_trace": source_trace["manual_input_source"],
+        }
+        target_resolution = {
+            "ok": True,
+            "actor_id": command.actor_id,
+            "target_ids": list(target_ids),
+            "actor_alias": "ManualRouteActor",
+            "target_alias": "ManualRouteTarget",
+            "blocked_reason": "",
+            "source_trace": source_trace,
+        }
+        entry = QueueEntry(
+            entry_id=f"queue_entry:{queue_intent_id}:0",
+            queue_name="manual_ultimate",
+            queue_kind="manual_ultimate",
+            queue_intent_id=queue_intent_id,
+            actor_id=command.actor_id,
+            action_or_ability_ref=command.action_id,
+            target_ids=target_ids,
+            priority_source=priority_source,
+            source_trace=source_trace,
+            priority_key="manual_ultimate",
+            priority_value=0.0,
+            queue_window_id=f"manual_queue_window:ultimate:{queue_intent_id}",
+            window_family="ultimate",
+            window_policy={
+                "window_family": "ultimate",
+                "priority_ordering_admitted": True,
+                "priority_value": 0.0,
+                "source_basis": "manual_route_input",
+                "dequeue_before_execute": True,
+                "drain_via_scheduler": True,
+                "energy_preflight_admitted": True,
+                "energy_cost_policy": "manual_preflight_only_until_ultimate_cost_source_admitted",
+            },
+            target_resolution=target_resolution,
+            status="pending",
+            drain_status="pending_resolution",
+        )
+        mutation = self.queue.enqueue(
+            state,
+            "manual_ultimate",
+            entry,
+            source="queue_system",
+            metadata={
+                "queue_intent_id": queue_intent_id,
+                "queue_window_id": entry.queue_window_id,
+                "window_family": entry.window_family,
+                "queue_kind": entry.queue_kind,
+                "manual_ultimate": True,
+                "action_id": command.action_id,
+                "action_level": command.action_level,
+                "definition_id": definition.definition_id,
+                "action_event_id": action_event.action_event_id,
+                "priority_key": entry.priority_key,
+                "priority_value": entry.priority_value,
+                "target_resolution": target_resolution,
+                "manual_input_source": source_trace["manual_input_source"],
+                "source_trace": source_trace,
+            },
+        )
+        after = self.reducer.apply_all(state, (mutation,))
+        records = (
+            SettlementRecord(
+                record_type="queue_enqueue",
+                source="queue_system",
+                mutation_id=mutation.stable_id(),
+                process_only=False,
+                payload={
+                    "queue_entry": entry.to_json(),
+                    "manual_ultimate": True,
+                    "command": _command_payload(command),
+                    "drain_candidate": False,
+                    "drain_blocked_reason": "manual_ultimate_queue_resolution_not_admitted_yet",
+                },
+                trace=source_trace,
+            ).to_json(),
+        )
+        transition = _transition(
+            before_state=state,
+            after_state=after,
+            action_id="queue:manual_ultimate_request",
+            actor_id=command.actor_id,
+            events=(
+                GameEvent(
+                    "queue.manual_ultimate.requested",
+                    source_id=command.actor_id,
+                    target_id=target_ids[0],
+                    event_id=f"event:{state.event_index}:manual_ultimate:{command.actor_id}",
+                    window="manual_ultimate",
+                    process_only=True,
+                    payload={"queue_entry": entry.to_json(), "command": _command_payload(command)},
+                ),
+            ),
+            mutations=(mutation,),
+            records=records,
+            coverage={
+                "manual_ultimate": True,
+                "queue_entry": entry.to_json(),
+                "source_trace": source_trace,
+            },
+        )
+        return SchedulerStepResult(after, transition)
 
     def step(self, state: BattleState, command: ActionCommand | None = None) -> SchedulerStepResult:
         """Run one scheduler step.
@@ -340,6 +493,7 @@ class CombatScheduler:
             plans,
             key=lambda item: (
                 float(item.priority_value) if item.priority_value is not None else float("inf"),
+                QUEUE_WINDOW_FAMILY_ORDER.get((item.queue_window or {}).get("window_family") or "unknown", 999),
                 item.drain_order if item.drain_order is not None else 0,
                 str(item.queue_entry.get("entry_id") or ""),
             ),
@@ -655,6 +809,7 @@ def _command_payload(command: ActionCommand) -> dict[str, JSONValue]:
 
 
 def _unsupported_turn_hooks() -> dict[str, JSONValue]:
+    blocked_window_dependency = "requires admitted QueueWindowIR, QueueTargetResolution, queue priority, and source-specific window policy"
     return {
         "duration_tick": {
             "status": "admitted_for_current_scope",
@@ -663,15 +818,28 @@ def _unsupported_turn_hooks() -> dict[str, JSONValue]:
         },
         "extra_turn": {
             "status": "blocked",
-            "blocking_dependency": "requires admitted QueueWindowPlan for extra-turn source plus execution ordering",
+            "window_family": "extra_turn",
+            "blocking_dependency": blocked_window_dependency,
         },
         "ultimate": {
             "status": "blocked",
-            "blocking_dependency": "requires ultimate QueueWindowPlan source and full interrupt priority ordering",
+            "window_family": "ultimate",
+            "blocking_dependency": blocked_window_dependency,
+        },
+        "follow_up": {
+            "status": "blocked",
+            "window_family": "follow_up",
+            "blocking_dependency": blocked_window_dependency,
+        },
+        "counter": {
+            "status": "blocked",
+            "window_family": "counter",
+            "blocking_dependency": blocked_window_dependency,
         },
         "interrupt": {
             "status": "blocked",
-            "blocking_dependency": "requires interrupt QueueWindowPlan source and total ordering against active action",
+            "window_family": "interrupt",
+            "blocking_dependency": blocked_window_dependency,
         },
     }
 
@@ -726,3 +894,8 @@ def _first_str(value: JSONValue) -> str:
             if isinstance(item, str):
                 return item
     return ""
+
+
+def _is_ultimate_definition(attack_type: str, skill_effect: str) -> bool:
+    text = f"{attack_type} {skill_effect}".lower()
+    return any(token in text for token in ("ultra", "ultimate"))

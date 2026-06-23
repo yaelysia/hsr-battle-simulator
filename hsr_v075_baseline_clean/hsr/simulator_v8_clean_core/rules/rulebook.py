@@ -24,6 +24,7 @@ from .ir import (
     QueueIntentIR,
     QueuePriorityIR,
     QueueResolutionIR,
+    QueueWindowIR,
     RuleEntity,
     StandaloneAbilityGraphIR,
     StatusCallbackIR,
@@ -352,6 +353,16 @@ class RuleBook:
             "_queue_priority_by_table_key",
             {(priority.priority_table, priority.priority_key): priority for priority in self.ir.queue_priorities},
         )
+        object.__setattr__(
+            self,
+            "_queue_windows",
+            {window.queue_window_id: window for window in self.ir.queue_windows},
+        )
+        object.__setattr__(
+            self,
+            "_queue_window_by_intent",
+            {window.queue_intent_id: window for window in self.ir.queue_windows},
+        )
         standalone_ability_graphs_by_name: dict[str, list[StandaloneAbilityGraphIR]] = {}
         for graph in self.ir.standalone_ability_graphs:
             standalone_ability_graphs_by_name.setdefault(graph.ability_name, []).append(graph)
@@ -624,6 +635,12 @@ class RuleBook:
 
     def queue_priority_by_key(self, priority_table: str, priority_key: str) -> QueuePriorityIR | None:
         return self._queue_priority_by_table_key.get((priority_table, priority_key))
+
+    def queue_window(self, queue_window_id: str) -> QueueWindowIR | None:
+        return self._queue_windows.get(queue_window_id)
+
+    def queue_window_for_intent(self, queue_intent_id: str) -> QueueWindowIR | None:
+        return self._queue_window_by_intent.get(queue_intent_id)
 
     def standalone_ability_graph(self, graph_id: str) -> StandaloneAbilityGraphIR | None:
         return self._standalone_ability_graphs.get(graph_id)

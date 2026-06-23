@@ -10,7 +10,7 @@ from ..rules.ir import ActionDelayEmissionIR, QueueIntentIR, StatusCallbackIR, S
 from ..rules.rulebook import RuleBook
 from .damage import DamagePacket, DamageSystem
 from .dynamic_values import find_status_detail
-from .queue import QueueEntry, QueueSystem
+from .queue import QueueEntry, QueueSystem, QueueTargetResolver
 from .timeline import TimelineSystem
 
 
@@ -41,6 +41,7 @@ class StatusCallbackSystem:
         self.reducer = reducer or MutationReducer()
         self.timeline = timeline or TimelineSystem()
         self.queue = queue or QueueSystem()
+        self.queue_targets = QueueTargetResolver()
 
     def execute(
         self,
@@ -489,22 +490,37 @@ class StatusCallbackSystem:
                 records.append(_queue_intent_blocked_record(callback, task, detail, intent, reason))
                 errors.append(reason)
                 continue
-            actor_id = _resolve_queue_alias(detail, trigger_event, intent.actor_target_alias)
-            target_id = _resolve_queue_alias(detail, trigger_event, intent.ability_target_alias)
-            if not actor_id or actor_id not in current_state.units:
-                reason = f"queue_actor_not_resolved:{intent.actor_target_alias or 'missing'}"
+            window = self.rules.queue_window_for_intent(intent.queue_intent_id)
+            if window is None:
+                reason = "queue_window_ir_missing"
                 records.append(_queue_intent_blocked_record(callback, task, detail, intent, reason))
                 errors.append(reason)
                 continue
-            target_ids = (target_id,) if target_id and target_id in current_state.units else ()
-            if intent.ability_target_alias and not target_ids:
-                reason = f"queue_target_not_resolved:{intent.ability_target_alias}"
+            if window.coverage_status != "executable":
+                reason = window.blocked_reason or f"queue_window_not_executable:{window.coverage_status}"
+                records.append(_queue_intent_blocked_record(callback, task, detail, intent, reason))
+                errors.append(reason)
+                continue
+            target_resolution = self.queue_targets.resolve(
+                current_state,
+                detail=detail,
+                trigger_event=trigger_event,
+                actor_alias=intent.actor_target_alias,
+                target_alias=intent.ability_target_alias,
+                source_trace={
+                    "queue_window_source": window.source.to_json(),
+                    "queue_intent_source": intent.source.to_json(),
+                },
+            )
+            if not target_resolution.ok:
+                reason = target_resolution.blocked_reason or "queue_target_resolution_failed"
                 records.append(_queue_intent_blocked_record(callback, task, detail, intent, reason))
                 errors.append(reason)
                 continue
             queue_name = intent.queue_kind
             source_trace = {
                 "queue_intent_source": intent.source.to_json(),
+                "queue_window_source": window.source.to_json(),
                 "status_callback_source": callback.source.to_json(),
                 "status_task_source": task.source.to_json(),
                 "status_instance_source": _json_dict(detail.get("source_trace")),
@@ -514,15 +530,19 @@ class StatusCallbackSystem:
                 queue_name=queue_name,
                 queue_kind=intent.queue_kind,
                 queue_intent_id=intent.queue_intent_id,
-                actor_id=actor_id,
+                actor_id=target_resolution.actor_id,
                 action_or_ability_ref=intent.action_ref_or_ability_name,
-                target_ids=target_ids,
+                target_ids=target_resolution.target_ids,
                 priority_source=intent.priority_source,
                 source_trace=source_trace,
                 priority_key=str(intent.priority_source.get("priority_key") or ""),
                 priority_value=_json_float(intent.priority_source.get("priority_value")),
                 queue_priority_id=str(intent.priority_source.get("queue_priority_id") or ""),
                 priority_source_trace=_json_dict(intent.priority_source.get("source_trace")),
+                queue_window_id=window.queue_window_id,
+                window_family=window.window_family,
+                window_policy=window.window_policy,
+                target_resolution=target_resolution.to_json(),
                 status="pending",
                 drain_status="not_admitted",
             )
@@ -538,15 +558,12 @@ class StatusCallbackSystem:
                     "opcode": intent.opcode,
                     "queue_kind": intent.queue_kind,
                     "queue_priority_id": entry.queue_priority_id,
+                    "queue_window_id": entry.queue_window_id,
+                    "window_family": entry.window_family,
                     "priority_key": entry.priority_key,
                     "priority_value": entry.priority_value,
                     "admission_result": "executable",
-                    "target_resolution": {
-                        "actor_target_alias": intent.actor_target_alias or "",
-                        "ability_target_alias": intent.ability_target_alias or "",
-                        "actor_id": actor_id,
-                        "target_ids": list(target_ids),
-                    },
+                    "target_resolution": target_resolution.to_json(),
                     "source_trace": source_trace,
                 },
             )
@@ -566,6 +583,7 @@ class StatusCallbackSystem:
                         "queue_name": queue_name,
                         "queue_kind": intent.queue_kind,
                         "entry": entry.to_json(),
+                        "queue_window": window.to_json(),
                         "drain_candidate": False,
                         "drain_blocked_reason": "queue_drain_pending_resolution",
                     },

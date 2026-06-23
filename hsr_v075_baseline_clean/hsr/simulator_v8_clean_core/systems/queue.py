@@ -3,8 +3,30 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from ..core.model import BattleState, JSONValue, Mutation
+from ..core.model import BattleState, GameEvent, JSONValue, Mutation
 from ..rules.ir import QueueResolutionIR
+
+
+@dataclass(frozen=True)
+class QueueTargetResolution:
+    ok: bool
+    actor_id: str
+    target_ids: tuple[str, ...]
+    actor_alias: str
+    target_alias: str
+    blocked_reason: str = ""
+    source_trace: dict[str, JSONValue] | None = None
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "ok": self.ok,
+            "actor_id": self.actor_id,
+            "target_ids": list(self.target_ids),
+            "actor_alias": self.actor_alias,
+            "target_alias": self.target_alias,
+            "blocked_reason": self.blocked_reason,
+            "source_trace": self.source_trace or {},
+        }
 
 
 @dataclass(frozen=True)
@@ -22,6 +44,10 @@ class QueueEntry:
     priority_value: float | None = None
     queue_priority_id: str = ""
     priority_source_trace: dict[str, JSONValue] | None = None
+    queue_window_id: str = ""
+    window_family: str = ""
+    window_policy: dict[str, JSONValue] | None = None
+    target_resolution: dict[str, JSONValue] | None = None
     status: str = "pending"
     drain_status: str = "not_attempted"
 
@@ -39,6 +65,10 @@ class QueueEntry:
             "priority_value": self.priority_value,
             "queue_priority_id": self.queue_priority_id,
             "priority_source_trace": self.priority_source_trace or {},
+            "queue_window_id": self.queue_window_id,
+            "window_family": self.window_family,
+            "window_policy": self.window_policy or {},
+            "target_resolution": self.target_resolution or {},
             "source_trace": self.source_trace,
             "status": self.status,
             "drain_status": self.drain_status,
@@ -54,8 +84,12 @@ class QueueWindowPlan:
     queue_intent_id: str
     queue_resolution_id: str
     queue_priority_id: str = ""
+    queue_window_id: str = ""
+    window_family: str = ""
     priority_key: str = ""
     priority_value: float | None = None
+    window_policy: dict[str, JSONValue] | None = None
+    target_resolution: dict[str, JSONValue] | None = None
     blocked_reason: str = ""
     source_trace: dict[str, JSONValue] | None = None
 
@@ -68,8 +102,12 @@ class QueueWindowPlan:
             "queue_intent_id": self.queue_intent_id,
             "queue_resolution_id": self.queue_resolution_id,
             "queue_priority_id": self.queue_priority_id,
+            "queue_window_id": self.queue_window_id,
+            "window_family": self.window_family,
             "priority_key": self.priority_key,
             "priority_value": self.priority_value,
+            "window_policy": self.window_policy or {},
+            "target_resolution": self.target_resolution or {},
             "blocked_reason": self.blocked_reason,
             "source_trace": self.source_trace or {},
         }
@@ -115,6 +153,139 @@ class QueueDrainPlan:
         }
 
 
+QUEUE_WINDOW_FAMILY_ORDER: dict[str, int] = {
+    "interrupt": 0,
+    "ultimate": 10,
+    "counter": 20,
+    "follow_up": 30,
+    "extra_turn": 40,
+    "immediate": 50,
+    "insert_action": 60,
+    "insert_ability": 70,
+    "assistant": 90,
+    "unknown": 999,
+}
+
+
+class QueueTargetResolver:
+    def resolve(
+        self,
+        state: BattleState,
+        *,
+        detail: dict[str, JSONValue],
+        trigger_event: GameEvent | None,
+        actor_alias: str | None,
+        target_alias: str | None,
+        source_trace: dict[str, JSONValue] | None = None,
+    ) -> QueueTargetResolution:
+        actor_id = self._resolve_single(state, detail, trigger_event, actor_alias, relative_actor_id="")
+        if not actor_id:
+            return QueueTargetResolution(
+                False,
+                "",
+                (),
+                actor_alias or "",
+                target_alias or "",
+                f"queue_actor_not_resolved:{actor_alias or 'missing'}",
+                source_trace,
+            )
+        if actor_id not in state.units:
+            return QueueTargetResolution(
+                False,
+                actor_id,
+                (),
+                actor_alias or "",
+                target_alias or "",
+                f"queue_actor_missing:{actor_id}",
+                source_trace,
+            )
+        target_ids = self._resolve_many(state, detail, trigger_event, target_alias, relative_actor_id=actor_id)
+        if target_alias and not target_ids:
+            return QueueTargetResolution(
+                False,
+                actor_id,
+                (),
+                actor_alias or "",
+                target_alias,
+                f"queue_target_not_resolved:{target_alias}",
+                source_trace,
+            )
+        missing_targets = tuple(target_id for target_id in target_ids if target_id not in state.units)
+        if missing_targets:
+            return QueueTargetResolution(
+                False,
+                actor_id,
+                target_ids,
+                actor_alias or "",
+                target_alias or "",
+                f"queue_target_missing:{','.join(missing_targets)}",
+                source_trace,
+            )
+        return QueueTargetResolution(True, actor_id, target_ids, actor_alias or "", target_alias or "", "", source_trace)
+
+    def _resolve_single(
+        self,
+        state: BattleState,
+        detail: dict[str, JSONValue],
+        trigger_event: GameEvent | None,
+        alias: str | None,
+        *,
+        relative_actor_id: str,
+    ) -> str:
+        values = self._resolve_many(state, detail, trigger_event, alias, relative_actor_id=relative_actor_id)
+        return values[0] if values else ""
+
+    def _resolve_many(
+        self,
+        state: BattleState,
+        detail: dict[str, JSONValue],
+        trigger_event: GameEvent | None,
+        alias: str | None,
+        *,
+        relative_actor_id: str,
+    ) -> tuple[str, ...]:
+        if not alias:
+            return ()
+        payload = trigger_event.payload if trigger_event is not None else {}
+        if not isinstance(payload, dict):
+            payload = {}
+        if alias == "Caster":
+            return _nonempty_tuple(detail.get("caster_id"))
+        if alias == "ModifierOwnerEntity":
+            return _nonempty_tuple(detail.get("owner_id"))
+        if alias in {"ParamEntity", "CurrentActionTarget", "AbilityTargetEntity"}:
+            return _first_nonempty_tuple(
+                payload.get("current_hit_target_id"),
+                payload.get("primary_target_id"),
+                payload.get("target_id"),
+                trigger_event.target_id if trigger_event is not None else "",
+            )
+        if alias == "DamageAttackerEntity":
+            return _first_nonempty_tuple(
+                payload.get("damage_attacker_id"),
+                payload.get("attacker_id"),
+                trigger_event.source_id if trigger_event is not None else "",
+            )
+        if alias == "ModifierOwnerSkillTargetEntityList":
+            return _first_nonempty_tuple(
+                payload.get("modifier_owner_skill_target_ids"),
+                payload.get("selected_target_ids"),
+                payload.get("target_ids"),
+            )
+        if alias == "ParamEntitySkillTargetEntityList":
+            return _first_nonempty_tuple(
+                payload.get("param_entity_skill_target_ids"),
+                payload.get("selected_target_ids"),
+                payload.get("target_ids"),
+                payload.get("current_hit_target_id"),
+            )
+        if alias == "AllEnemy":
+            return _units_by_relative_side(state, relative_actor_id, enemy=True)
+        if alias in {"AllTeamMember", "AllLightTeam"}:
+            return _units_by_relative_side(state, relative_actor_id, enemy=False)
+        return ()
+
+
 class QueueSystem:
     def peek(self, state: BattleState, queue_name: str) -> dict[str, JSONValue] | None:
         current = tuple(state.queues.get(queue_name, ()))
@@ -158,6 +329,7 @@ class QueueSystem:
             admitted,
             key=lambda plan: (
                 float(plan.priority_value) if plan.priority_value is not None else float("inf"),
+                QUEUE_WINDOW_FAMILY_ORDER.get(plan.queue_window.get("window_family") or "unknown", 999),
                 plan.drain_order if plan.drain_order is not None else 0,
                 str(plan.queue_entry.get("entry_id") or ""),
             ),
@@ -386,13 +558,11 @@ class QueueSystem:
         priority_value: float,
     ) -> QueueWindowPlan:
         queue_kind = str(entry.get("queue_kind") or "")
-        if queue_kind == "turn_insert_action":
-            window_kind = "turn_insert_action"
-        elif queue_kind == "turn_insert_ability":
-            window_kind = "turn_insert_ability"
-        elif queue_kind == "turn_insert_assistant_ability":
-            window_kind = "turn_insert_assistant_ability"
-        else:
+        queue_window_id = str(entry.get("queue_window_id") or "")
+        window_family = str(entry.get("window_family") or "")
+        window_policy = entry.get("window_policy") if isinstance(entry.get("window_policy"), dict) else {}
+        target_resolution = entry.get("target_resolution") if isinstance(entry.get("target_resolution"), dict) else {}
+        if not queue_window_id or not window_family:
             return QueueWindowPlan(
                 False,
                 "blocked",
@@ -401,22 +571,84 @@ class QueueSystem:
                 str(entry.get("queue_intent_id") or ""),
                 resolution.queue_resolution_id,
                 queue_priority_id=str(priority_source.get("queue_priority_id") or ""),
+                queue_window_id=queue_window_id,
+                window_family=window_family,
                 priority_key=str(priority_source.get("priority_key") or ""),
                 priority_value=priority_value,
-                blocked_reason=f"queue_window_kind_not_admitted:{queue_kind or 'missing'}",
-                source_trace={"queue_resolution_source": resolution.source.to_json()},
+                window_policy=window_policy,
+                target_resolution=target_resolution,
+                blocked_reason="queue_window_ir_missing_on_entry",
+                source_trace={"queue_resolution_source": resolution.source.to_json(), "queue_entry": entry},
+            )
+        if target_resolution and target_resolution.get("ok") is not True:
+            return QueueWindowPlan(
+                False,
+                "blocked",
+                window_family,
+                queue_kind,
+                str(entry.get("queue_intent_id") or ""),
+                resolution.queue_resolution_id,
+                queue_priority_id=str(priority_source.get("queue_priority_id") or ""),
+                queue_window_id=queue_window_id,
+                window_family=window_family,
+                priority_key=str(priority_source.get("priority_key") or ""),
+                priority_value=priority_value,
+                window_policy=window_policy,
+                target_resolution=target_resolution,
+                blocked_reason=str(target_resolution.get("blocked_reason") or "queue_target_resolution_not_admitted"),
+                source_trace={"queue_resolution_source": resolution.source.to_json(), "queue_entry": entry},
+            )
+        if window_family not in QUEUE_WINDOW_FAMILY_ORDER or window_family in {"assistant", "unknown"}:
+            return QueueWindowPlan(
+                False,
+                "blocked",
+                window_family or "unknown",
+                queue_kind,
+                str(entry.get("queue_intent_id") or ""),
+                resolution.queue_resolution_id,
+                queue_priority_id=str(priority_source.get("queue_priority_id") or ""),
+                queue_window_id=queue_window_id,
+                window_family=window_family or "unknown",
+                priority_key=str(priority_source.get("priority_key") or ""),
+                priority_value=priority_value,
+                window_policy=window_policy,
+                target_resolution=target_resolution,
+                blocked_reason=f"queue_window_family_not_admitted:{window_family or 'missing'}",
+                source_trace={"queue_resolution_source": resolution.source.to_json(), "queue_entry": entry},
+            )
+        if window_policy.get("window_ordering_admitted") is False:
+            return QueueWindowPlan(
+                False,
+                "blocked",
+                window_family,
+                queue_kind,
+                str(entry.get("queue_intent_id") or ""),
+                resolution.queue_resolution_id,
+                queue_priority_id=str(priority_source.get("queue_priority_id") or ""),
+                queue_window_id=queue_window_id,
+                window_family=window_family,
+                priority_key=str(priority_source.get("priority_key") or ""),
+                priority_value=priority_value,
+                window_policy=window_policy,
+                target_resolution=target_resolution,
+                blocked_reason=str(window_policy.get("blocking_dependency") or "queue_window_ordering_not_admitted"),
+                source_trace={"queue_resolution_source": resolution.source.to_json(), "queue_entry": entry},
             )
         return QueueWindowPlan(
             True,
             "admitted",
-            window_kind,
+            window_family,
             queue_kind,
             str(entry.get("queue_intent_id") or ""),
             resolution.queue_resolution_id,
             queue_priority_id=str(priority_source.get("queue_priority_id") or ""),
+            queue_window_id=queue_window_id,
+            window_family=window_family,
             priority_key=str(priority_source.get("priority_key") or ""),
             priority_value=priority_value,
-            source_trace={"queue_resolution_source": resolution.source.to_json()},
+            window_policy=window_policy,
+            target_resolution=target_resolution,
+            source_trace={"queue_resolution_source": resolution.source.to_json(), "queue_entry": entry},
         )
 
     def _resolve_action_candidate(
@@ -607,7 +839,40 @@ class QueueSystem:
                 "source_trace": plan.source_trace or {},
                 "drain_plan": plan.to_json(),
                 "queue_window_plan": plan.queue_window or {},
+                "queue_window_id": (plan.queue_window or {}).get("queue_window_id", ""),
+                "window_family": (plan.queue_window or {}).get("window_family", ""),
+                "target_resolution": (plan.queue_window or {}).get("target_resolution", {}),
                 "resolved_action_id": plan.resolved_action_id,
                 "resolved_action_level": plan.resolved_action_level,
             },
         )
+
+
+def _first_nonempty_tuple(*values: Any) -> tuple[str, ...]:
+    for value in values:
+        result = _nonempty_tuple(value)
+        if result:
+            return result
+    return ()
+
+
+def _nonempty_tuple(value: Any) -> tuple[str, ...]:
+    if isinstance(value, str) and value:
+        return (value,)
+    if isinstance(value, (tuple, list)):
+        return tuple(str(item) for item in value if isinstance(item, str) and item)
+    return ()
+
+
+def _units_by_relative_side(state: BattleState, actor_id: str, *, enemy: bool) -> tuple[str, ...]:
+    actor = state.units.get(actor_id)
+    if actor is None:
+        return ()
+    def matches(unit_side: str) -> bool:
+        return unit_side != actor.side if enemy else unit_side == actor.side
+
+    return tuple(
+        unit_id
+        for unit_id, unit in sorted(state.units.items())
+        if matches(unit.side)
+    )

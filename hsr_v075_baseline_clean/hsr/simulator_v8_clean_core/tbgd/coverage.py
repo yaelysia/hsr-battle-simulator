@@ -408,6 +408,9 @@ def _action_execution_status(ir: CanonicalIR) -> dict[str, Any]:
     queue_priority_status = Counter(priority.coverage_status for priority in ir.queue_priorities)
     queue_priority_reasons = Counter(priority.blocked_reason for priority in ir.queue_priorities if priority.blocked_reason)
     queue_priority_tables = Counter(priority.priority_table for priority in ir.queue_priorities)
+    queue_window_status = Counter(window.coverage_status for window in ir.queue_windows)
+    queue_window_reasons = Counter(window.blocked_reason for window in ir.queue_windows if window.blocked_reason)
+    queue_window_families = Counter(window.window_family for window in ir.queue_windows)
     standalone_graph_status = Counter(graph.coverage_status for graph in ir.standalone_ability_graphs)
     standalone_graph_reasons = Counter(graph.blocked_reason for graph in ir.standalone_ability_graphs if graph.blocked_reason)
     standalone_graph_source_modes = Counter(graph.source_mode for graph in ir.standalone_ability_graphs)
@@ -593,6 +596,15 @@ def _action_execution_status(ir: CanonicalIR) -> dict[str, Any]:
             "blocked_reason_counts": dict(sorted(queue_priority_reasons.items())),
             "priority_table_counts": dict(sorted(queue_priority_tables.items())),
             "reason": "QueuePriorityIR lowers InsertAbilityPriority and InsertActionPriority from PriorityConfig for admitted queue drain ordering",
+        },
+        "queue_windows": {
+            "lowered": len(ir.queue_windows),
+            "executable": queue_window_status["executable"],
+            "blocked": queue_window_status["blocked"],
+            "status_counts": dict(sorted(queue_window_status.items())),
+            "blocked_reason_counts": dict(sorted(queue_window_reasons.items())),
+            "window_family_counts": dict(sorted(queue_window_families.items())),
+            "reason": "QueueWindowIR classifies queue entries into ultimate/follow_up/counter/extra_turn/immediate/interrupt/insert/assistant families before runtime drain admission",
         },
         "standalone_ability_graphs": {
             "lowered": len(ir.standalone_ability_graphs),

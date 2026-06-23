@@ -631,6 +631,34 @@ class QueuePriorityIR:
 
 
 @dataclass(frozen=True)
+class QueueWindowIR:
+    queue_window_id: str
+    queue_intent_id: str
+    queue_kind: str
+    window_family: str
+    priority_key: str
+    priority_value: float | None
+    window_policy: dict[str, JSONValue]
+    source: IRSource
+    coverage_status: CoverageStatus = "blocked"
+    blocked_reason: str = ""
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "queue_window_id": self.queue_window_id,
+            "queue_intent_id": self.queue_intent_id,
+            "queue_kind": self.queue_kind,
+            "window_family": self.window_family,
+            "priority_key": self.priority_key,
+            "priority_value": self.priority_value,
+            "window_policy": self.window_policy,
+            "source": self.source.to_json(),
+            "coverage_status": self.coverage_status,
+            "blocked_reason": self.blocked_reason,
+        }
+
+
+@dataclass(frozen=True)
 class StandaloneAbilityGraphIR:
     standalone_ability_graph_id: str
     ability_name: str
@@ -926,6 +954,7 @@ class CanonicalIR:
     queue_intents: tuple[QueueIntentIR, ...] = ()
     queue_resolutions: tuple[QueueResolutionIR, ...] = ()
     queue_priorities: tuple[QueuePriorityIR, ...] = ()
+    queue_windows: tuple[QueueWindowIR, ...] = ()
     standalone_ability_graphs: tuple[StandaloneAbilityGraphIR, ...] = ()
     combatant_action_sets: tuple[CombatantActionSetIR, ...] = ()
     timeline_rules: tuple[TimelineRuleIR, ...] = ()
@@ -961,6 +990,7 @@ class CanonicalIR:
             "queue_intents": [intent.to_json() for intent in self.queue_intents],
             "queue_resolutions": [resolution.to_json() for resolution in self.queue_resolutions],
             "queue_priorities": [priority.to_json() for priority in self.queue_priorities],
+            "queue_windows": [window.to_json() for window in self.queue_windows],
             "standalone_ability_graphs": [graph.to_json() for graph in self.standalone_ability_graphs],
             "combatant_action_sets": [action_set.to_json() for action_set in self.combatant_action_sets],
             "timeline_rules": [rule.to_json() for rule in self.timeline_rules],

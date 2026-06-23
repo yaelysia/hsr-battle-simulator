@@ -33,6 +33,7 @@ from ..rules.ir import (
     QueueIntentIR,
     QueuePriorityIR,
     QueueResolutionIR,
+    QueueWindowIR,
     RuleEntity,
     StandaloneAbilityGraphIR,
     StatusCallbackIR,
@@ -246,6 +247,7 @@ class TBGDLowering:
             standalone_graphs=standalone_ability_graphs,
             combatant_action_sets=combatant_action_sets,
         )
+        queue_windows = _lower_queue_windows(queue_intents, queue_resolutions)
         entities = list(_dedupe_entities(entities).values())
         formulas.extend(self._lower_elation_mechanics())
         formulas.extend(self._lower_damage_behavior_templates())
@@ -273,6 +275,7 @@ class TBGDLowering:
             queue_intents=tuple(queue_intents),
             queue_resolutions=tuple(queue_resolutions),
             queue_priorities=tuple(queue_priorities),
+            queue_windows=tuple(queue_windows),
             standalone_ability_graphs=tuple(standalone_ability_graphs),
             combatant_action_sets=tuple(combatant_action_sets),
             timeline_rules=tuple(timeline_rules),
@@ -318,6 +321,7 @@ class TBGDLowering:
                     "queue_intent_count": len(queue_intents),
                     "queue_resolution_count": len(queue_resolutions),
                     "queue_priority_count": len(queue_priorities),
+                    "queue_window_count": len(queue_windows),
                     "standalone_ability_graph_count": len(standalone_ability_graphs),
                     "combatant_action_set_count": len(combatant_action_sets),
                     "timeline_rule_count": len(timeline_rules),
@@ -3304,6 +3308,11 @@ QUEUE_TARGET_ALIASES = {
     "CurrentActionTarget",
     "DamageAttackerEntity",
     "AbilityTargetEntity",
+    "ModifierOwnerSkillTargetEntityList",
+    "ParamEntitySkillTargetEntityList",
+    "AllEnemy",
+    "AllTeamMember",
+    "AllLightTeam",
 }
 
 
@@ -3746,6 +3755,155 @@ def _queue_resolution_from_intent(
         coverage_status="blocked",
         blocked_reason=f"queue_opcode_not_admitted:{intent.opcode}",
     )
+
+
+def _lower_queue_windows(
+    queue_intents: list[QueueIntentIR],
+    queue_resolutions: list[QueueResolutionIR],
+) -> list[QueueWindowIR]:
+    resolutions_by_intent = {resolution.queue_intent_id: resolution for resolution in queue_resolutions}
+    return [
+        _queue_window_from_intent(intent, resolutions_by_intent.get(intent.queue_intent_id))
+        for intent in queue_intents
+    ]
+
+
+def _queue_window_from_intent(intent: QueueIntentIR, resolution: QueueResolutionIR | None) -> QueueWindowIR:
+    family, basis = _queue_window_family(intent)
+    policy = _queue_window_policy(intent, resolution, family, basis)
+    source = IRSource(
+        source_path=intent.source.source_path,
+        raw_type="QueueWindow",
+        raw_id=intent.queue_intent_id,
+        evidence={
+            "queue_intent_id": intent.queue_intent_id,
+            "queue_intent_source": intent.source.to_json(),
+            "queue_kind": intent.queue_kind,
+            "opcode": intent.opcode,
+            "priority_source": _json_safe(intent.priority_source),
+            "family_basis": basis,
+            "resolution": resolution.to_json() if resolution is not None else {},
+        },
+    )
+    if intent.coverage_status != "executable":
+        status = "blocked"
+        reason = intent.blocked_reason or f"queue_intent_not_executable:{intent.coverage_status}"
+    elif resolution is None:
+        status = "blocked"
+        reason = "queue_resolution_missing_for_window"
+    elif resolution.coverage_status != "executable":
+        status = "blocked"
+        reason = resolution.blocked_reason or f"queue_resolution_not_executable:{resolution.coverage_status}"
+    elif not policy.get("priority_ordering_admitted"):
+        status = "blocked"
+        reason = str(policy.get("blocking_dependency") or "queue_window_ordering_not_admitted")
+    elif family in {"assistant", "unknown"}:
+        status = "blocked"
+        reason = f"queue_window_family_not_admitted:{family}"
+    else:
+        status = "executable"
+        reason = ""
+    return QueueWindowIR(
+        queue_window_id=f"queue_window:{intent.queue_intent_id}",
+        queue_intent_id=intent.queue_intent_id,
+        queue_kind=intent.queue_kind,
+        window_family=family,
+        priority_key=str(intent.priority_source.get("priority_key") or ""),
+        priority_value=_json_float(intent.priority_source.get("priority_value")),
+        window_policy=policy,
+        source=source,
+        coverage_status=status,
+        blocked_reason=reason,
+    )
+
+
+def _queue_window_family(intent: QueueIntentIR) -> tuple[str, dict[str, Any]]:
+    priority_key = str(intent.priority_source.get("priority_key") or "")
+    ref = intent.action_ref_or_ability_name
+    text = " ".join(
+        (
+            intent.opcode,
+            intent.queue_kind,
+            priority_key,
+            ref,
+            intent.source.source_path,
+            str(intent.source.raw_id),
+        )
+    )
+    lowered = text.lower()
+    basis = {
+        "opcode": intent.opcode,
+        "queue_kind": intent.queue_kind,
+        "priority_key": priority_key,
+        "action_or_ability_ref": ref,
+        "source_path": intent.source.source_path,
+    }
+    if intent.opcode == "TurnInsertAssistantAbility":
+        return "assistant", basis
+    if any(token in lowered for token in ("counter", "反击")):
+        return "counter", basis
+    if any(token in lowered for token in ("follow", "followup", "follow_up", "追加", "追击")):
+        return "follow_up", basis
+    if any(token in lowered for token in ("onemore", "one_more", "extra_turn", "extraturn", "additionalturn")):
+        return "extra_turn", basis
+    if any(token in lowered for token in ("ultra", "ultimate", "ultimateskill")):
+        return "ultimate", basis
+    if "interrupt" in lowered:
+        return "interrupt", basis
+    if "immediate" in lowered:
+        return "immediate", basis
+    if intent.queue_kind == "turn_insert_action":
+        return "insert_action", basis
+    if intent.queue_kind == "turn_insert_ability":
+        return "insert_ability", basis
+    return "unknown", basis
+
+
+def _queue_window_policy(
+    intent: QueueIntentIR,
+    resolution: QueueResolutionIR | None,
+    family: str,
+    basis: dict[str, Any],
+) -> dict[str, Any]:
+    priority_value = _json_float(intent.priority_source.get("priority_value"))
+    ordering_admitted = intent.priority_source.get("priority_ordering_admitted") is True and priority_value is not None
+    policy: dict[str, Any] = {
+        "window_family": family,
+        "source_basis": basis,
+        "priority_ordering_admitted": ordering_admitted,
+        "priority_value": priority_value,
+        "dequeue_before_execute": True,
+        "drain_via_scheduler": True,
+        "reentrant_drain_allowed": False,
+    }
+    if not ordering_admitted:
+        policy["blocking_dependency"] = str(intent.priority_source.get("reason") or "queue_priority_not_admitted")
+    if resolution is None:
+        policy["blocking_dependency"] = "queue_resolution_missing_for_window"
+    elif resolution.coverage_status != "executable":
+        policy["blocking_dependency"] = resolution.blocked_reason or f"queue_resolution_not_executable:{resolution.coverage_status}"
+    if family == "extra_turn":
+        policy.update(
+            {
+                "natural_av_advance": "bypassed_for_queue_child",
+                "turn_lifecycle_policy": "blocked_until_extra_turn_lifecycle_source_admitted",
+                "duration_tick_policy": "blocked_until_extra_turn_lifecycle_source_admitted",
+            }
+        )
+    elif family == "ultimate":
+        policy.update(
+            {
+                "interrupts_current_action": "not_admitted",
+                "energy_cost_policy": "manual_preflight_only_until_ultimate_cost_source_admitted",
+            }
+        )
+    elif family in {"follow_up", "counter"}:
+        policy.update({"attack_semantics": "queue_window_only_not_damage_family"})
+    elif family == "assistant":
+        policy["blocking_dependency"] = "assistant_actor_resolution_not_admitted"
+    elif family == "unknown":
+        policy["blocking_dependency"] = "queue_window_family_unknown"
+    return policy
 
 
 def _effect_blocked_reason(opcode: str, payload: dict[str, Any], coverage_status: str) -> str:
@@ -4405,6 +4563,14 @@ def _json_safe(value: Any) -> Any:
     if isinstance(value, (str, int, float, bool)) or value is None:
         return value
     return str(value)
+
+
+def _json_float(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    return None
 
 
 def _iter_postfix_expr(value: Any) -> list[dict[str, Any]]:

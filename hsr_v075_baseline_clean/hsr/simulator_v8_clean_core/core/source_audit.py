@@ -68,13 +68,13 @@ MUTATION_SOURCE_POLICIES: dict[str, dict[str, JSONValue]] = {
         "coverage_required": "process-only dispatch records; mutating listener effects keep their underlying source",
     },
     "queue_system": {
-        "required_ir": ["QueueIntentIR + QueuePriorityIR for enqueue; QueueIntentIR + QueueResolutionIR + QueuePriorityIR + QueueWindowPlan for dequeue"],
-        "required_metadata": ["queue_name", "queue_operation", "queue_intent_id", "source_trace"],
+        "required_ir": ["QueueIntentIR + QueuePriorityIR + QueueWindowIR for enqueue; QueueIntentIR + QueueResolutionIR + QueuePriorityIR + QueueWindowIR + QueueWindowPlan for dequeue"],
+        "required_metadata": ["queue_name", "queue_operation", "queue_intent_id", "queue_window_id", "target_resolution", "source_trace"],
         "coverage_required": "executable",
     },
     "combat_executor.queue": {
-        "required_ir": ["QueueIntentIR + QueuePriorityIR for enqueue; QueueIntentIR + QueueResolutionIR + QueuePriorityIR + QueueWindowPlan for dequeue"],
-        "required_metadata": ["queue_name", "queue_operation", "queue_intent_id", "source_trace"],
+        "required_ir": ["QueueIntentIR + QueuePriorityIR + QueueWindowIR for enqueue; QueueIntentIR + QueueResolutionIR + QueuePriorityIR + QueueWindowIR + QueueWindowPlan for dequeue"],
+        "required_metadata": ["queue_name", "queue_operation", "queue_intent_id", "queue_window_id", "target_resolution", "source_trace"],
         "coverage_required": "executable",
     },
 }
@@ -840,6 +840,8 @@ class RuntimeSourceAuditor:
         _require_dict(mutation, metadata, "source_trace", violations)
         operation = str(metadata.get("queue_operation") or "")
         queue_intent_id = metadata.get("queue_intent_id")
+        if isinstance(queue_intent_id, str) and queue_intent_id.startswith("manual_ultimate:"):
+            return self._audit_manual_ultimate_queue_mutation(mutation, records, violations)
         if isinstance(queue_intent_id, str) and queue_intent_id:
             intent = self.rules.queue_intent(queue_intent_id)
             if intent is None:
@@ -871,6 +873,42 @@ class RuntimeSourceAuditor:
                     details={"metadata": metadata},
                 )
             )
+        queue_window_id = metadata.get("queue_window_id")
+        if isinstance(queue_window_id, str) and queue_window_id:
+            window = self.rules.queue_window(queue_window_id)
+            if window is None:
+                violations.append(_violation(mutation, "queue_window_ir_missing", details={"queue_window_id": queue_window_id}))
+            else:
+                _audit_source(window.source, window.coverage_status, mutation, violations, executable_required=True)
+                if isinstance(queue_intent_id, str) and queue_intent_id and window.queue_intent_id != queue_intent_id:
+                    violations.append(
+                        _violation(
+                            mutation,
+                            "queue_window_intent_mismatch",
+                            details={"expected": queue_intent_id, "actual": window.queue_intent_id},
+                        )
+                    )
+        else:
+            violations.append(
+                _violation(
+                    mutation,
+                    "queue_window_ir_missing",
+                    missing_field="queue_window_id",
+                    details={"metadata": metadata},
+                )
+            )
+        target_resolution = metadata.get("target_resolution")
+        if operation == "enqueue":
+            if not isinstance(target_resolution, dict):
+                violations.append(_violation(mutation, "queue_target_resolution_missing", missing_field="target_resolution"))
+            elif target_resolution.get("ok") is not True:
+                violations.append(
+                    _violation(
+                        mutation,
+                        "queue_target_resolution_not_admitted",
+                        details={"target_resolution": target_resolution},
+                    )
+                )
         queue_resolution_id = metadata.get("queue_resolution_id")
         if operation == "dequeue":
             _required_str(mutation, metadata, "queue_resolution_id", violations)
@@ -883,6 +921,25 @@ class RuntimeSourceAuditor:
                         mutation,
                         "queue_window_plan_not_admitted",
                         details={"queue_window_plan": window_plan},
+                    )
+                )
+            elif queue_window_id and window_plan.get("queue_window_id") != queue_window_id:
+                violations.append(
+                    _violation(
+                        mutation,
+                        "queue_window_plan_id_mismatch",
+                        details={"queue_window_id": queue_window_id, "queue_window_plan": window_plan},
+                    )
+                )
+            plan_target_resolution = window_plan.get("target_resolution") if isinstance(window_plan, dict) else None
+            if not isinstance(plan_target_resolution, dict):
+                violations.append(_violation(mutation, "queue_target_resolution_missing", missing_field="queue_window_plan.target_resolution"))
+            elif plan_target_resolution.get("ok") is not True:
+                violations.append(
+                    _violation(
+                        mutation,
+                        "queue_target_resolution_not_admitted",
+                        details={"target_resolution": plan_target_resolution},
                     )
                 )
             if isinstance(queue_resolution_id, str) and queue_resolution_id:
@@ -902,6 +959,57 @@ class RuntimeSourceAuditor:
                 "queue_intent_id": str(queue_intent_id or ""),
                 "queue_resolution_id": str(queue_resolution_id or ""),
                 "queue_priority_id": str(queue_priority_id or ""),
+                "queue_window_id": str(queue_window_id or ""),
+            },
+        )
+
+    def _audit_manual_ultimate_queue_mutation(
+        self,
+        mutation: Mutation,
+        records: tuple[dict[str, JSONValue], ...],
+        violations: list[SourceAuditViolation],
+    ) -> dict[str, JSONValue]:
+        metadata = mutation.metadata
+        _required_str(mutation, metadata, "queue_name", violations)
+        _required_str(mutation, metadata, "queue_operation", violations)
+        _required_str(mutation, metadata, "queue_intent_id", violations)
+        _required_str(mutation, metadata, "queue_window_id", violations)
+        _require_dict(mutation, metadata, "manual_input_source", violations)
+        _require_dict(mutation, metadata, "target_resolution", violations)
+        _require_dict(mutation, metadata, "source_trace", violations)
+        action_id = _required_str(mutation, metadata, "action_id", violations)
+        action_level = _required_int(mutation, metadata, "action_level", violations)
+        definition_id = _required_str(mutation, metadata, "definition_id", violations)
+        action_event_id = _required_str(mutation, metadata, "action_event_id", violations)
+        target_resolution = metadata.get("target_resolution")
+        if isinstance(target_resolution, dict) and target_resolution.get("ok") is not True:
+            violations.append(_violation(mutation, "manual_ultimate_target_resolution_not_admitted", details={"target_resolution": target_resolution}))
+        if action_id and action_level is not None:
+            definition = self.rules.action_definition(action_id, action_level)
+            if definition is None:
+                violations.append(_violation(mutation, "manual_ultimate_action_definition_missing", details={"action_id": action_id, "level": action_level}))
+            elif definition.definition_id != definition_id:
+                violations.append(_violation(mutation, "manual_ultimate_definition_id_mismatch", details={"expected": definition.definition_id, "actual": definition_id}))
+            else:
+                _audit_source(definition.source, definition.coverage_status, mutation, violations, executable_required=True)
+            action_event = self.rules.action_event(action_id, action_level)
+            if action_event is None:
+                violations.append(_violation(mutation, "manual_ultimate_action_event_missing", details={"action_id": action_id, "level": action_level}))
+            elif action_event.action_event_id != action_event_id:
+                violations.append(_violation(mutation, "manual_ultimate_action_event_id_mismatch", details={"expected": action_event.action_event_id, "actual": action_event_id}))
+            else:
+                _audit_source(action_event.source, action_event.coverage_status, mutation, violations, check_status=False)
+        return _trace(
+            mutation,
+            records,
+            {
+                "queue_name": str(metadata.get("queue_name") or ""),
+                "queue_operation": str(metadata.get("queue_operation") or ""),
+                "queue_intent_id": str(metadata.get("queue_intent_id") or ""),
+                "queue_window_id": str(metadata.get("queue_window_id") or ""),
+                "manual_ultimate": True,
+                "action_id": action_id or "",
+                "action_level": action_level if action_level is not None else "",
             },
         )
 
