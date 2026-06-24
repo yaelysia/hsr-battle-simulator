@@ -916,6 +916,8 @@ def _damage_metadata(command: ActionCommand) -> dict[str, JSONValue]:
     crit_mode = command.metadata.get("crit_mode")
     if isinstance(crit_mode, str):
         metadata["crit_mode"] = crit_mode
+    metadata["is_current_skill_active"] = True
+    metadata["is_insert_action"] = command.source == "queue"
     return metadata
 
 

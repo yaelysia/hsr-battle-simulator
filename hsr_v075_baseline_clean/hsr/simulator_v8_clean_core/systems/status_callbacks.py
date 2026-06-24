@@ -73,7 +73,7 @@ class StatusCallbackSystem:
             )
         callbacks = self.rules.status_callbacks_for_modifier_event(modifier_name, event)
         admitted_callback_ids = _trigger_ids_for_event(detail, event)
-        if admitted_callback_ids:
+        if admitted_callback_ids is not None:
             callbacks = tuple(callback for callback in callbacks if callback.callback_id in admitted_callback_ids)
         if not callbacks:
             return StatusCallbackExecutionResult(
@@ -1218,10 +1218,10 @@ def _first_payload_str(payload: dict[str, JSONValue], keys: tuple[str, ...]) -> 
     return ""
 
 
-def _trigger_ids_for_event(detail: dict[str, JSONValue], event: str) -> tuple[str, ...]:
+def _trigger_ids_for_event(detail: dict[str, JSONValue], event: str) -> tuple[str, ...] | None:
     mapping = detail.get("trigger_ids_by_event")
     if not isinstance(mapping, dict):
-        return ()
+        return None
     value = mapping.get(event)
     if not isinstance(value, list):
         return ()

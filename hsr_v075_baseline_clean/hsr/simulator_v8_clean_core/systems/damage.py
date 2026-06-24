@@ -180,14 +180,12 @@ class DamageSystem:
         return DamageApplicationResult(
             packet=packet,
             ok=True,
-            events=(
-                _damage_hit_event(
-                    packet,
-                    record_type="damage",
-                    amount=final_damage,
-                    before_hp=target.hp,
-                    after_hp=after,
-                ),
+            events=_damage_events(
+                packet,
+                record_type="damage",
+                amount=final_damage,
+                before_hp=target.hp,
+                after_hp=after,
             ),
             mutations=(mutation,),
             rng_events=formula_result.rng_events,
@@ -255,14 +253,12 @@ class DamageSystem:
         return DamageApplicationResult(
             packet=packet,
             ok=True,
-            events=(
-                _damage_hit_event(
-                    packet,
-                    record_type=record_type,
-                    amount=final_damage,
-                    before_hp=target.hp,
-                    after_hp=after,
-                ),
+            events=_damage_events(
+                packet,
+                record_type=record_type,
+                amount=final_damage,
+                before_hp=target.hp,
+                after_hp=after,
             ),
             mutations=(mutation,),
             records=(
@@ -328,14 +324,12 @@ class DamageSystem:
         return DamageApplicationResult(
             packet=packet,
             ok=True,
-            events=(
-                _damage_hit_event(
-                    packet,
-                    record_type="super_break_damage",
-                    amount=final_damage,
-                    before_hp=target.hp,
-                    after_hp=after,
-                ),
+            events=_damage_events(
+                packet,
+                record_type="super_break_damage",
+                amount=final_damage,
+                before_hp=target.hp,
+                after_hp=after,
             ),
             mutations=(mutation,),
             records=(
@@ -389,14 +383,12 @@ class DamageSystem:
         return DamageApplicationResult(
             packet=packet,
             ok=True,
-            events=(
-                _damage_hit_event(
-                    packet,
-                    record_type=record_type,
-                    amount=float(packet.amount),
-                    before_hp=target.hp,
-                    after_hp=after,
-                ),
+            events=_damage_events(
+                packet,
+                record_type=record_type,
+                amount=float(packet.amount),
+                before_hp=target.hp,
+                after_hp=after,
             ),
             mutations=(mutation,),
             records=(
@@ -477,6 +469,34 @@ def _metadata_str(metadata: dict[str, JSONValue], key: str) -> str | None:
     return str(value) if isinstance(value, str) else None
 
 
+def _damage_events(
+    packet: DamagePacket,
+    *,
+    record_type: str,
+    amount: float,
+    before_hp: float,
+    after_hp: float,
+) -> tuple[GameEvent, ...]:
+    hit_event = _damage_hit_event(
+        packet,
+        record_type=record_type,
+        amount=amount,
+        before_hp=before_hp,
+        after_hp=after_hp,
+    )
+    defeat_event = _damage_defeat_event(
+        packet,
+        hit_event=hit_event,
+        record_type=record_type,
+        amount=amount,
+        before_hp=before_hp,
+        after_hp=after_hp,
+    )
+    if defeat_event is None:
+        return (hit_event,)
+    return (hit_event, defeat_event)
+
+
 def _damage_hit_event(
     packet: DamagePacket,
     *,
@@ -514,8 +534,67 @@ def _damage_hit_event(
             "source_task_id": packet.source_task_id,
             "hit_profile_id": packet.hit_profile_id,
             "source_trace": packet.source_trace,
+            "is_current_skill_active": bool(packet.metadata.get("is_current_skill_active", False)),
+            "is_insert_action": bool(packet.metadata.get("is_insert_action", False)),
             "per_hit_target_context_available": True,
             "per_hit_listener_admission_partial": True,
+        },
+    )
+
+
+def _damage_defeat_event(
+    packet: DamagePacket,
+    *,
+    hit_event: GameEvent,
+    record_type: str,
+    amount: float,
+    before_hp: float,
+    after_hp: float,
+) -> GameEvent | None:
+    if before_hp <= 0 or after_hp > 0:
+        return None
+    damage_event_id = str(hit_event.to_json().get("event_id") or "")
+    return GameEvent(
+        event_type="unit.defeated",
+        source_id=packet.attacker_id,
+        target_id=packet.target_id,
+        window="unit.defeated",
+        process_only=True,
+        payload={
+            "record_type": record_type,
+            "damage_event_id": damage_event_id,
+            "lethal_damage_event_id": damage_event_id,
+            "attacker_id": packet.attacker_id,
+            "actor_id": packet.attacker_id,
+            "killer_id": packet.attacker_id,
+            "kill_credit_owner_id": packet.attacker_id,
+            "target_id": packet.target_id,
+            "defeated_unit_id": packet.target_id,
+            "current_hit_target_id": packet.target_id,
+            "primary_action_target_id": packet.metadata.get("primary_action_target_id"),
+            "primary_target_id": packet.metadata.get("primary_action_target_id") or packet.target_id,
+            "hit_index": packet.metadata.get("hit_index"),
+            "target_group": packet.metadata.get("target_group"),
+            "amount": amount,
+            "target_before_hp": before_hp,
+            "target_after_hp": after_hp,
+            "caused_by_damage": True,
+            "defeated_by_damage": True,
+            "kill_credit_rule": "hp_transition_positive_to_zero",
+            "attack_type": packet.attack_type,
+            "damage_kind": packet.damage_kind,
+            "damage_formula_family": packet.damage_formula_family,
+            "element_type": packet.element_type,
+            "damage_emission_id": packet.damage_emission_id,
+            "break_damage_emission_id": packet.break_damage_emission_id,
+            "super_break_emission_id": packet.super_break_emission_id,
+            "status_damage_emission_id": packet.status_damage_emission_id,
+            "status_callback_id": packet.status_callback_id,
+            "source_task_id": packet.source_task_id,
+            "hit_profile_id": packet.hit_profile_id,
+            "source_trace": packet.source_trace,
+            "is_current_skill_active": bool(packet.metadata.get("is_current_skill_active", False)),
+            "is_insert_action": bool(packet.metadata.get("is_insert_action", False)),
         },
     )
 

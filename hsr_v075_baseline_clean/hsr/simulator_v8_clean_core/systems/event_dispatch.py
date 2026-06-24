@@ -528,6 +528,10 @@ SCOPE_PRIORITY = {
 
 
 CANONICAL_EVENT_ALIASES: dict[str, tuple[tuple[str, str, str], ...]] = {
+    "unit.defeated": (
+        ("OnTriggerDeath", "owner_local", ""),
+        ("OnTriggerDeathrattle", "owner_local", ""),
+    ),
     "damage.hit": (
         ("OnHit", "per_hit_target_local", "downstream_intent_missing:per_hit_listener_execution_not_admitted"),
         ("OnBeingHit", "being_hit_target_local", "downstream_intent_missing:being_hit_listener_execution_not_admitted"),
@@ -583,7 +587,7 @@ def _event_aliases(event: GameEvent) -> tuple[EventAlias, ...]:
                     callback_event=callback_event,
                     scope_kind=scope_kind,
                     source_basis=f"canonical_event_alias:{event.event_type}",
-                    admission_status="blocked",
+                    admission_status="blocked" if blocked_dependency else "executable",
                     blocked_dependency=blocked_dependency,
                 )
             )
@@ -614,6 +618,8 @@ def _event_scope_kind(event: GameEvent) -> str:
         return value
     if event.event_type in {"damage.hit", "toughness.hit"}:
         return "per_hit_target_local"
+    if event.event_type == "unit.defeated":
+        return "owner_local"
     if event.event_type.startswith("break."):
         return "being_hit_target_local"
     if event.window.startswith("OnListen"):
@@ -642,6 +648,8 @@ def _scope_kind_for_callback_event(event: GameEvent, callback_event: str) -> str
         return "per_hit_target_local"
     if callback_event in {"OnBeforeSkillUse", "OnBeforeAttack", "OnAfterAttack", "OnAfterSkillUse"}:
         return "actor_local"
+    if callback_event in {"OnTriggerDeath", "OnTriggerDeathrattle"}:
+        return "owner_local"
     if callback_event in {"OnStack", "OnPhase1"}:
         return "status_local"
     return _event_scope_kind(event)
@@ -689,6 +697,9 @@ def _match_callback_to_event(
     if not scope_ok:
         status = "skipped"
         reason = scope_reason
+    elif not _status_detail_admits_callback(detail, callback):
+        status = "skipped"
+        reason = "status_trigger_id_not_admitted_for_event"
     elif callback.coverage_status != "executable":
         status = "blocked"
         reason = callback.blocked_reason or f"listener_not_executable:{callback.coverage_status}"
@@ -743,8 +754,20 @@ def _scope_matches(
         target_id = current_hit_target_id or str(event.target_id or "")
         return (owner_id == target_id, "scope_being_hit_target_mismatch")
     if scope_kind == "owner_local":
+        if event.event_type == "unit.defeated":
+            return (owner_id == actor_id, "scope_kill_credit_owner_mismatch")
         return (owner_id in {actor_id, primary_target_id, current_hit_target_id}, "scope_owner_not_in_event_context")
     return False, f"scope_not_admitted:{scope_kind}"
+
+
+def _status_detail_admits_callback(detail: dict[str, JSONValue], callback: StatusCallbackIR) -> bool:
+    mapping = detail.get("trigger_ids_by_event")
+    if not isinstance(mapping, dict):
+        return True
+    raw_ids = mapping.get(callback.event)
+    if not isinstance(raw_ids, list):
+        return False
+    return callback.callback_id in {str(item) for item in raw_ids if isinstance(item, str)}
 
 
 def _event_actor_id(event: GameEvent) -> str:
