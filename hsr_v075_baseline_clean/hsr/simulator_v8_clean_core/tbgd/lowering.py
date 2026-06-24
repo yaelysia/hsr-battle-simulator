@@ -3354,15 +3354,27 @@ def _status_callback_task_admission(event: str, opcode: str, task: dict[str, Any
             return "blocked", "attack_property_missing"
         formula_type = str(attack_property.get("FormulaType") or "")
         attack_type = str(attack_property.get("AttackType") or task.get("AttackType") or "")
-        scaling_expr = _numeric_expr_summary(attack_property.get("BreakDamagePercentage"))
         if event != "OnPhase1":
             return "blocked", f"status_damage_event_not_admitted:{event}"
         if attack_type == "DOT" and formula_type != "ByBreakDamage":
-            return "blocked", f"dot_formula_not_admitted:{formula_type or 'missing'}:damage_value_percentage_formula_not_admitted"
+            damage_value = _numeric_expr_summary(attack_property.get("DamageValue"))
+            damage_percentage = _numeric_expr_summary(attack_property.get("DamagePercentage"))
+            extra_formula_type = str(attack_property.get("ExtraFormulaType") or "")
+            extra_damage_percentage = _numeric_expr_summary(attack_property.get("ExtraDamagePercentage"))
+            if not _numeric_expr_can_be_runtime_bound(damage_value):
+                if _numeric_expr_can_be_runtime_bound(damage_percentage):
+                    return "blocked", "dot_damage_percentage_base_not_admitted"
+                return "blocked", f"dot_damage_value_not_executable:{damage_value.get('reason') or damage_value.get('kind')}"
+            if extra_formula_type and extra_formula_type != "ByDefence":
+                return "blocked", f"dot_extra_formula_type_not_admitted:{extra_formula_type}"
+            if extra_formula_type == "ByDefence" and not _numeric_expr_can_be_runtime_bound(extra_damage_percentage):
+                return "blocked", f"dot_extra_damage_percentage_not_executable:{extra_damage_percentage.get('reason') or extra_damage_percentage.get('kind')}"
+            return "executable", ""
         if formula_type != "ByBreakDamage":
             return "blocked", f"status_damage_formula_not_admitted:{formula_type}"
         if attack_type != "DOT":
             return "blocked", f"status_damage_attack_type_not_admitted:{attack_type}"
+        scaling_expr = _numeric_expr_summary(attack_property.get("BreakDamagePercentage"))
         if not _numeric_expr_can_be_runtime_bound(scaling_expr):
             return "blocked", f"status_damage_scaling_not_executable:{scaling_expr.get('reason') or scaling_expr.get('kind')}"
         return "executable", ""
@@ -3441,9 +3453,9 @@ def _status_damage_emission_from_task(
             "kind": "dot_attack_property",
             "damage_percentage": _numeric_expr_summary(attack_property.get("DamagePercentage")),
             "damage_value": _numeric_expr_summary(attack_property.get("DamageValue")),
+            "formula_type": str(attack_property.get("FormulaType") or ""),
             "extra_formula_type": str(attack_property.get("ExtraFormulaType") or ""),
             "extra_damage_percentage": _numeric_expr_summary(attack_property.get("ExtraDamagePercentage")),
-            "blocked_reason": f"dot_formula_not_admitted:{formula_type or 'missing'}:damage_value_percentage_formula_not_admitted",
         }
         element_type = _attack_property_element_type(attack_property)
     else:

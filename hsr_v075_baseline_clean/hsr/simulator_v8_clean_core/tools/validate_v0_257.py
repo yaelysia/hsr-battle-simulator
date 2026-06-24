@@ -90,10 +90,13 @@ def _damage_family_matrix(ir) -> dict[str, Any]:
         ),
         "dot": _family_entry(
             "dot",
-            semantic_status="blocked",
+            semantic_status="trusted_for_current_scope" if status_damage_counts["dot"].get("executable", 0) > 0 else "blocked",
             source_counts=status_damage_counts["dot"],
-            blocking_dependency="ordinary_dot_damage_value_percentage_formula_not_admitted",
-            notes="break DOT is covered by the break family; ordinary DOT sources are lowered but blocked until formula admission.",
+            blocking_dependency="" if status_damage_counts["dot"].get("executable", 0) > 0 else "ordinary_dot_damage_value_formula_not_admitted",
+            notes=(
+                "Ordinary DOT is trusted only when StatusDamageEmissionIR is executable and the runtime formula can "
+                "evaluate DamageValue/status-bound numeric input; break DOT remains covered by the break family."
+            ),
         ),
         "break": _family_entry(
             "break",
@@ -204,8 +207,14 @@ def _matrix_checks(matrix: dict[str, Any]) -> dict[str, Any]:
         ),
         "elation_blocked_with_dependency": families["elation"]["semantic_status"] == "blocked"
         and bool(families["elation"]["blocking_dependency"]),
-        "dot_ordinary_formula_blocked_with_dependency": families["dot"]["semantic_status"] == "blocked"
-        and "dot" in families["dot"]["blocking_dependency"],
+        "dot_ordinary_formula_status_explicit": (
+            families["dot"]["semantic_status"] == "trusted_for_current_scope"
+            and families["dot"]["source_counts"].get("executable", 0) > 0
+        )
+        or (
+            families["dot"]["semantic_status"] == "blocked"
+            and "dot" in families["dot"]["blocking_dependency"]
+        ),
         "direct_has_executable_source": families["direct"]["source_counts"].get("executable", 0) > 0,
         "hp_loss_not_structural": families["hp_loss"]["semantic_status"] == "trusted_for_current_scope",
     }

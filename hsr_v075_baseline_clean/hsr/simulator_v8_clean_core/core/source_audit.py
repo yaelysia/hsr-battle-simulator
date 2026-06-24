@@ -517,6 +517,13 @@ class RuntimeSourceAuditor:
             violations.append(_violation(mutation, "mutation_has_failed_numeric_evaluation", details={"numeric_evaluation": evaluation}))
         elif evaluation.get("ok") is True:
             _audit_dynamic_numeric_binding(mutation, evaluation, violations)
+        dot_formula = metadata.get("dot_formula_result")
+        if isinstance(dot_formula, dict):
+            evaluations = dot_formula.get("numeric_evaluations")
+            if isinstance(evaluations, dict):
+                for key, nested in evaluations.items():
+                    if isinstance(nested, dict) and nested.get("ok") is True:
+                        _audit_dynamic_numeric_binding(mutation, nested, violations)
         if callback_id:
             callback = self.rules.status_callback(callback_id)
             if callback is None:

@@ -9,6 +9,7 @@ from ..rules.evaluator import EvaluationContext, NumericEvaluationContext, Numer
 from ..rules.ir import ActionDelayEmissionIR, QueueIntentIR, StatusCallbackIR, StatusCallbackTaskIR, StatusDamageEmissionIR
 from ..rules.rulebook import RuleBook
 from .damage import DamagePacket, DamageSourceFrame, DamageSystem, DamageWindowLedger
+from .dot_formula import DotFormula, DotFormulaInput
 from .dynamic_values import binding_source_from_store, find_status_detail, status_binding_sources, store_from_state
 from .effect import EffectExecutionContext, EffectRegistry
 from .queue import QueueEntry, QueueSystem, QueueTargetResolver
@@ -421,6 +422,14 @@ class StatusCallbackSystem:
                 records.append(_status_damage_blocked_record(callback, task, detail, emission, reason))
                 errors.append(reason)
                 continue
+            if emission.damage_formula_family == "dot":
+                result = self._execute_dot_damage_emission(current_state, callback, task, detail, emission, damage_window_ledger)
+                current_state = result.after_state
+                mutations.extend(result.mutations)
+                records.extend(result.records)
+                events.extend(result.events)
+                errors.extend(result.errors)
+                continue
             evaluation = self._evaluate_status_damage_amount(current_state, detail, emission)
             if not evaluation.ok or evaluation.value is None:
                 reason = evaluation.blocked_reason or "status_damage_numeric_evaluation_failed"
@@ -514,6 +523,108 @@ class StatusCallbackSystem:
             records=tuple(records),
             events=tuple(events),
             errors=tuple(errors),
+        )
+
+    def _execute_dot_damage_emission(
+        self,
+        state: BattleState,
+        callback: StatusCallbackIR,
+        task: StatusCallbackTaskIR,
+        detail: dict[str, JSONValue],
+        emission: StatusDamageEmissionIR,
+        damage_window_ledger: DamageWindowLedger | None,
+    ) -> StatusCallbackExecutionResult:
+        target_id = str(detail.get("owner_id") or "")
+        caster_id = str(detail.get("caster_id") or "")
+        if target_id not in state.units or caster_id not in state.units:
+            reason = "status_damage_actor_or_target_missing"
+            return StatusCallbackExecutionResult(
+                ok=False,
+                after_state=state,
+                records=(_status_damage_blocked_record(callback, task, detail, emission, reason),),
+                errors=(reason,),
+            )
+        trace = {
+            "status_damage_source": emission.source.to_json(),
+            "status_callback_source": callback.source.to_json(),
+            "status_task_source": task.source.to_json(),
+            "status_instance_source": _json_dict(detail.get("source_trace")),
+        }
+        formula_result = DotFormula().calculate(
+            DotFormulaInput(
+                state=state,
+                caster_id=caster_id,
+                target_id=target_id,
+                status_detail=detail,
+                emission=emission,
+                source_trace=trace,
+            )
+        )
+        if not formula_result.ok:
+            reason = formula_result.blocked_reason or "dot_formula_evaluation_failed"
+            records = (
+                _status_damage_blocked_record(
+                    callback,
+                    task,
+                    detail,
+                    emission,
+                    reason,
+                    evaluation_payload=formula_result.to_json(),
+                ),
+            )
+            return StatusCallbackExecutionResult(ok=False, after_state=state, records=records, errors=(reason,))
+        source_id = f"status_damage:{emission.status_damage_emission_id}"
+        sequence_id = f"status_damage:{str(detail.get('instance_id') or '')}:{emission.status_damage_emission_id}"
+        packet = DamagePacket(
+            attacker_id=caster_id,
+            target_id=target_id,
+            attack_type=emission.attack_type,
+            damage_formula_family="dot",
+            amount=formula_result.final_damage,
+            element_type=emission.element_type,
+            status_damage_emission_id=emission.status_damage_emission_id,
+            status_callback_id=callback.callback_id,
+            status_instance_id=str(detail.get("instance_id") or ""),
+            modifier_name=callback.modifier_name,
+            source_task_id=task.task_id,
+            source_frame=DamageSourceFrame(
+                owner_id=caster_id,
+                source_id=source_id,
+                source_kind="dot",
+                sequence_id=sequence_id,
+                target_id=target_id,
+                can_continue_after_lethal=False,
+                source_trace=trace,
+            ),
+            source_trace=trace,
+            metadata={
+                "damage_formula_family": "dot",
+                "record_type": "dot_damage",
+                "status_damage_emission_id": emission.status_damage_emission_id,
+                "status_callback_id": callback.callback_id,
+                "status_instance_id": str(detail.get("instance_id") or ""),
+                "modifier_name": callback.modifier_name,
+                "source_task_id": task.task_id,
+                "damage_source_owner_id": caster_id,
+                "damage_source_id": source_id,
+                "damage_source_kind": "dot",
+                "damage_sequence_id": sequence_id,
+                "can_continue_after_lethal": False,
+                "numeric_evaluation": formula_result.primary_numeric_evaluation,
+                "dot_formula_result": formula_result.to_json(),
+                "dot_ledger": formula_result.dot_ledger,
+                "source_trace": trace,
+            },
+        )
+        damage_result = self.damage.apply_packet(state, packet, window_ledger=damage_window_ledger)
+        after_state = self.reducer.apply_all(state, damage_result.mutations)
+        return StatusCallbackExecutionResult(
+            ok=not damage_result.errors,
+            after_state=after_state,
+            mutations=damage_result.mutations,
+            records=damage_result.records,
+            events=damage_result.events,
+            errors=damage_result.errors,
         )
 
     def _execute_delay_emissions(
@@ -1116,6 +1227,7 @@ def _status_damage_blocked_record(
     reason: str,
     *,
     evaluation: NumericEvaluationResult | None = None,
+    evaluation_payload: dict[str, JSONValue] | None = None,
 ) -> dict[str, JSONValue]:
     return SettlementRecord(
         record_type="dot_damage_blocked" if emission.damage_formula_family == "dot" else "break_dot_tick_blocked",
@@ -1130,7 +1242,7 @@ def _status_damage_blocked_record(
             "event": callback.event,
             "attack_type": emission.attack_type,
             "damage_formula_family": emission.damage_formula_family,
-            "numeric_evaluation": evaluation.to_json() if evaluation else {},
+            "numeric_evaluation": evaluation_payload or (evaluation.to_json() if evaluation else {}),
             "blocking_dependency": reason,
         },
         trace={
