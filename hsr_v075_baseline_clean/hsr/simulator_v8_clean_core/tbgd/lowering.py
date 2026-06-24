@@ -3357,6 +3357,8 @@ def _status_callback_task_admission(event: str, opcode: str, task: dict[str, Any
         scaling_expr = _numeric_expr_summary(attack_property.get("BreakDamagePercentage"))
         if event != "OnPhase1":
             return "blocked", f"status_damage_event_not_admitted:{event}"
+        if attack_type == "DOT" and formula_type != "ByBreakDamage":
+            return "blocked", f"dot_formula_not_admitted:{formula_type or 'missing'}:damage_value_percentage_formula_not_admitted"
         if formula_type != "ByBreakDamage":
             return "blocked", f"status_damage_formula_not_admitted:{formula_type}"
         if attack_type != "DOT":
@@ -3428,10 +3430,24 @@ def _status_damage_emission_from_task(
     if not isinstance(attack_property, dict):
         return None
     formula_type = str(attack_property.get("FormulaType") or "")
-    if formula_type != "ByBreakDamage":
-        return None
     attack_type = str(attack_property.get("AttackType") or task.get("AttackType") or "")
-    scaling_expr = _numeric_expr_summary(attack_property.get("BreakDamagePercentage"))
+    if formula_type == "ByBreakDamage":
+        damage_formula_family = "break"
+        scaling_expr = _numeric_expr_summary(attack_property.get("BreakDamagePercentage"))
+        element_type = None
+    elif attack_type == "DOT":
+        damage_formula_family = "dot"
+        scaling_expr = {
+            "kind": "dot_attack_property",
+            "damage_percentage": _numeric_expr_summary(attack_property.get("DamagePercentage")),
+            "damage_value": _numeric_expr_summary(attack_property.get("DamageValue")),
+            "extra_formula_type": str(attack_property.get("ExtraFormulaType") or ""),
+            "extra_damage_percentage": _numeric_expr_summary(attack_property.get("ExtraDamagePercentage")),
+            "blocked_reason": f"dot_formula_not_admitted:{formula_type or 'missing'}:damage_value_percentage_formula_not_admitted",
+        }
+        element_type = _attack_property_element_type(attack_property)
+    else:
+        return None
     coverage_status, blocked_reason = _status_callback_task_admission(event, "DamageByAttackProperty", task)
     if coverage_status == "executable" and not _status_callback_source_admitted(source.source_path):
         coverage_status = "blocked"
@@ -3443,8 +3459,8 @@ def _status_damage_emission_from_task(
         modifier_name=modifier_name,
         event=event,
         attack_type=attack_type,
-        damage_formula_family="break",
-        element_type=None,
+        damage_formula_family=damage_formula_family,
+        element_type=element_type,
         scaling_expr=scaling_expr,
         source=source,
         coverage_status=coverage_status,
@@ -5008,6 +5024,15 @@ def _display_element_type(attack_property: dict[str, Any]) -> str | None:
         return None
     element = display.get("ElementDamageType")
     return str(element) if isinstance(element, str) and element else None
+
+
+def _attack_property_element_type(attack_property: dict[str, Any]) -> str | None:
+    damage_type = attack_property.get("DamageType")
+    if isinstance(damage_type, dict):
+        element = damage_type.get("DamageType")
+        if isinstance(element, str) and element:
+            return element
+    return _display_element_type(attack_property)
 
 
 def _iter_task_tree(value: Any, *, prefix: str) -> list[tuple[str, dict[str, Any]]]:

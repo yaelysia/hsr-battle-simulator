@@ -33,8 +33,8 @@ MUTATION_SOURCE_POLICIES: dict[str, dict[str, JSONValue]] = {
         "coverage_required": "ActionDefinitionIR executable; ActionEventIR traceable",
     },
     "damage_system": {
-        "required_ir": ["DamageEmissionIR + AbilityTaskIR + HitProfileIR", "BreakDamageEmissionIR + BreakBaseDamageIR for break", "StatusDamageEmissionIR + StatusCallbackIR for break DOT tick", "SuperBreakEmissionIR + BreakBaseDamageIR for super-break", "or EffectIR for hp_loss"],
-        "required_metadata": ["damage_emission_id/source_task_id/hit_profile_id or break_damage_emission_id or status_damage_emission_id or super_break_emission_id or effect_id", "source_trace"],
+        "required_ir": ["DamageEmissionIR + AbilityTaskIR + HitProfileIR", "BreakDamageEmissionIR + BreakBaseDamageIR for break", "StatusDamageEmissionIR + StatusCallbackIR for DOT/break DOT tick", "SuperBreakEmissionIR + BreakBaseDamageIR for super-break", "or EffectIR for hp_loss/true_damage"],
+        "required_metadata": ["damage_emission_id/source_task_id/hit_profile_id or break_damage_emission_id or status_damage_emission_id or super_break_emission_id or effect_id", "source_trace", "source_frame"],
         "coverage_required": "executable",
     },
     "toughness_system": {
@@ -306,6 +306,9 @@ class RuntimeSourceAuditor:
         violations: list[SourceAuditViolation],
     ) -> dict[str, JSONValue]:
         metadata = mutation.metadata
+        _require_dict(mutation, metadata, "source_frame", violations)
+        if metadata.get("damage_formula_family") == "dot" and metadata.get("status_damage_emission_id"):
+            return self._audit_status_dot_damage_mutation(mutation, records, violations)
         if metadata.get("damage_formula_family") == "break" and metadata.get("status_damage_emission_id"):
             return self._audit_status_callback_damage_mutation(mutation, records, violations)
         if metadata.get("damage_formula_family") == "break":
@@ -313,7 +316,7 @@ class RuntimeSourceAuditor:
         if metadata.get("damage_formula_family") == "super_break":
             return self._audit_super_break_damage_mutation(mutation, records, violations)
         effect_id = _first_str(metadata.get("effect_id"))
-        if effect_id and metadata.get("damage_formula_family") == "hp_loss":
+        if effect_id and metadata.get("damage_formula_family") in {"hp_loss", "true_damage"}:
             self._audit_effect_id(mutation, effect_id, violations)
             if not isinstance(metadata.get("effect_source"), dict):
                 violations.append(_violation(mutation, "effect_source_missing", missing_field="effect_source"))
@@ -331,7 +334,7 @@ class RuntimeSourceAuditor:
                 {
                     "effect_id": effect_id,
                     "opcode": str(metadata.get("opcode") or ""),
-                    "damage_formula_family": "hp_loss",
+                    "damage_formula_family": str(metadata.get("damage_formula_family") or ""),
                 },
             )
         emission_id = _required_str(mutation, metadata, "damage_emission_id", violations)
@@ -491,6 +494,69 @@ class RuntimeSourceAuditor:
                 "status_callback_id": callback_id or "",
                 "source_task_id": task_id or "",
                 "break_template_id": template_id or "",
+            },
+        )
+
+    def _audit_status_dot_damage_mutation(
+        self,
+        mutation: Mutation,
+        records: tuple[dict[str, JSONValue], ...],
+        violations: list[SourceAuditViolation],
+    ) -> dict[str, JSONValue]:
+        metadata = mutation.metadata
+        emission_id = _required_str(mutation, metadata, "status_damage_emission_id", violations)
+        callback_id = _required_str(mutation, metadata, "status_callback_id", violations)
+        task_id = _required_str(mutation, metadata, "source_task_id", violations)
+        _required_str(mutation, metadata, "status_instance_id", violations)
+        _required_str(mutation, metadata, "modifier_name", violations)
+        _require_dict(mutation, metadata, "source_trace", violations)
+        evaluation = metadata.get("numeric_evaluation")
+        if not isinstance(evaluation, dict):
+            violations.append(_violation(mutation, "numeric_evaluation_missing", missing_field="numeric_evaluation"))
+        elif evaluation.get("ok") is False:
+            violations.append(_violation(mutation, "mutation_has_failed_numeric_evaluation", details={"numeric_evaluation": evaluation}))
+        elif evaluation.get("ok") is True:
+            _audit_dynamic_numeric_binding(mutation, evaluation, violations)
+        if callback_id:
+            callback = self.rules.status_callback(callback_id)
+            if callback is None:
+                violations.append(_violation(mutation, "status_callback_missing", details={"status_callback_id": callback_id}))
+            else:
+                _audit_source(callback.source, callback.coverage_status, mutation, violations, executable_required=True)
+        if task_id:
+            task = self.rules.status_callback_task(task_id)
+            if task is None:
+                violations.append(_violation(mutation, "status_callback_task_missing", details={"source_task_id": task_id}))
+            else:
+                _audit_source(task.source, task.coverage_status, mutation, violations, executable_required=True)
+                if callback_id and task.callback_id != callback_id:
+                    violations.append(_violation(mutation, "status_callback_task_callback_mismatch", details={"expected": task.callback_id, "actual": callback_id}))
+        if emission_id:
+            emission = self.rules.status_damage_emission(emission_id)
+            if emission is None:
+                violations.append(_violation(mutation, "status_damage_emission_missing", details={"status_damage_emission_id": emission_id}))
+            else:
+                _audit_source(emission.source, emission.coverage_status, mutation, violations, executable_required=True)
+                if emission.damage_formula_family != "dot":
+                    violations.append(
+                        _violation(
+                            mutation,
+                            "status_damage_family_mismatch",
+                            details={"expected": "dot", "actual": emission.damage_formula_family},
+                        )
+                    )
+                if callback_id and emission.callback_id != callback_id:
+                    violations.append(_violation(mutation, "status_damage_callback_mismatch", details={"expected": emission.callback_id, "actual": callback_id}))
+                if task_id and emission.source_task_id != task_id:
+                    violations.append(_violation(mutation, "status_damage_task_mismatch", details={"expected": emission.source_task_id, "actual": task_id}))
+        return _trace(
+            mutation,
+            records,
+            {
+                "status_damage_emission_id": emission_id or "",
+                "status_callback_id": callback_id or "",
+                "source_task_id": task_id or "",
+                "damage_formula_family": "dot",
             },
         )
 

@@ -1118,7 +1118,7 @@ def _status_damage_blocked_record(
     evaluation: NumericEvaluationResult | None = None,
 ) -> dict[str, JSONValue]:
     return SettlementRecord(
-        record_type="break_dot_tick_blocked",
+        record_type="dot_damage_blocked" if emission.damage_formula_family == "dot" else "break_dot_tick_blocked",
         source="status_callback_system",
         process_only=True,
         payload={

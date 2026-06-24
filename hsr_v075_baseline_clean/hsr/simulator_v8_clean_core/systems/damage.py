@@ -20,9 +20,93 @@ DamageFormulaFamily = Literal[
 ]
 
 
-EXECUTABLE_DAMAGE_FAMILIES: frozenset[str] = frozenset({"direct", "break", "super_break", "true_damage", "hp_loss"})
-BLOCKED_DAMAGE_FAMILIES: frozenset[str] = frozenset({"dot", "elation"})
 FOLLOW_UP_ATTACK_TYPE = "follow_up"
+
+
+@dataclass(frozen=True)
+class DamageFamilyPolicy:
+    family: str
+    runtime_status: str
+    record_type: str
+    uses_direct_multiplier_ledger: bool
+    bypasses_normal_multipliers: bool
+    source_requirement: str
+    blocked_reason: str = ""
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "family": self.family,
+            "runtime_status": self.runtime_status,
+            "record_type": self.record_type,
+            "uses_direct_multiplier_ledger": self.uses_direct_multiplier_ledger,
+            "bypasses_normal_multipliers": self.bypasses_normal_multipliers,
+            "source_requirement": self.source_requirement,
+            "blocked_reason": self.blocked_reason,
+        }
+
+
+DAMAGE_FAMILY_POLICIES: dict[str, DamageFamilyPolicy] = {
+    "direct": DamageFamilyPolicy(
+        family="direct",
+        runtime_status="executable_with_damage_emission",
+        record_type="damage",
+        uses_direct_multiplier_ledger=True,
+        bypasses_normal_multipliers=False,
+        source_requirement="executable DamageEmissionIR + HitProfileIR + ActionDefinitionIR",
+    ),
+    "dot": DamageFamilyPolicy(
+        family="dot",
+        runtime_status="executable_with_admitted_status_damage_amount",
+        record_type="dot_damage",
+        uses_direct_multiplier_ledger=False,
+        bypasses_normal_multipliers=False,
+        source_requirement="executable StatusDamageEmissionIR with final admitted amount",
+    ),
+    "break": DamageFamilyPolicy(
+        family="break",
+        runtime_status="executable_with_break_emission",
+        record_type="break_damage",
+        uses_direct_multiplier_ledger=False,
+        bypasses_normal_multipliers=False,
+        source_requirement="executable BreakDamageEmissionIR or StatusDamageEmissionIR",
+    ),
+    "super_break": DamageFamilyPolicy(
+        family="super_break",
+        runtime_status="executable_with_super_break_emission",
+        record_type="super_break_damage",
+        uses_direct_multiplier_ledger=False,
+        bypasses_normal_multipliers=False,
+        source_requirement="executable SuperBreakEmissionIR",
+    ),
+    "true_damage": DamageFamilyPolicy(
+        family="true_damage",
+        runtime_status="executable_with_admitted_fixed_amount",
+        record_type="damage",
+        uses_direct_multiplier_ledger=False,
+        bypasses_normal_multipliers=True,
+        source_requirement="executable true-damage EffectIR or DamageEmissionIR with admitted amount",
+    ),
+    "hp_loss": DamageFamilyPolicy(
+        family="hp_loss",
+        runtime_status="executable_with_admitted_fixed_amount",
+        record_type="hp_loss",
+        uses_direct_multiplier_ledger=False,
+        bypasses_normal_multipliers=True,
+        source_requirement="executable hp-loss EffectIR with admitted amount",
+    ),
+    "elation": DamageFamilyPolicy(
+        family="elation",
+        runtime_status="blocked",
+        record_type="damage_blocked",
+        uses_direct_multiplier_ledger=False,
+        bypasses_normal_multipliers=False,
+        source_requirement="Elation formula inputs admitted from TBGD",
+        blocked_reason=(
+            "Elation damage is a mainline 4.0 damage formula family, "
+            "but the complete TBGD formula inputs are not admitted"
+        ),
+    ),
+}
 
 
 @dataclass(frozen=True)
@@ -148,7 +232,8 @@ class DamagePacket:
             "source_trace": self.source_trace,
             "source_frame": source_frame_for_packet(self).to_json(),
             "metadata": self.metadata,
-            "bypasses_normal_multipliers": self.damage_formula_family in {"true_damage", "hp_loss"},
+            "bypasses_normal_multipliers": _family_policy(self.damage_formula_family).bypasses_normal_multipliers,
+            "uses_direct_multiplier_ledger": _family_policy(self.damage_formula_family).uses_direct_multiplier_ledger,
         }
 
 
@@ -193,9 +278,11 @@ class DamageSystem:
             result = self._apply_break_damage(state, packet, dead_target_continuation=dead_target_continuation)
         elif packet.damage_formula_family == "super_break":
             result = self._apply_super_break_damage(state, packet, dead_target_continuation=dead_target_continuation)
+        elif packet.damage_formula_family == "dot":
+            result = self._apply_dot_damage(state, packet, dead_target_continuation=dead_target_continuation)
         elif packet.damage_formula_family in {"true_damage", "hp_loss"}:
             result = self._apply_fixed_hp_delta(state, packet, dead_target_continuation=dead_target_continuation)
-        elif packet.damage_formula_family in BLOCKED_DAMAGE_FAMILIES:
+        elif _family_policy(packet.damage_formula_family).runtime_status == "blocked":
             result = self._blocked_family(packet)
         else:
             result = DamageApplicationResult(
@@ -219,6 +306,86 @@ class DamageSystem:
             for event in result.events:
                 window_ledger.record_defeat_event(event)
         return result
+
+    def _apply_dot_damage(
+        self,
+        state: BattleState,
+        packet: DamagePacket,
+        *,
+        dead_target_continuation: bool = False,
+    ) -> DamageApplicationResult:
+        if packet.amount is None:
+            return _damage_error(packet, "dot damage requires admitted amount")
+        if not packet.status_damage_emission_id:
+            return _damage_error(packet, "dot damage requires status_damage_emission_id")
+        target = state.units[packet.target_id]
+        final_damage = float(packet.amount)
+        after = max(0.0, target.hp - final_damage)
+        packet_json = packet.to_json()
+        metadata = {
+            **packet_json,
+            **packet.metadata,
+            "packet_metadata": packet.metadata,
+            "final_damage": final_damage,
+            "normal_multiplier_terms": [],
+            "uses_direct_multiplier_ledger": False,
+            "bypasses_normal_multipliers": False,
+        }
+        mutation = None if dead_target_continuation else Mutation(
+            op="set",
+            path=("units", packet.target_id, "hp"),
+            before=target.hp,
+            after=after,
+            reason="apply dot damage",
+            source="damage_system",
+            metadata=metadata,
+        )
+        record_payload: dict[str, JSONValue] = {
+            "amount": final_damage,
+            "final_damage": final_damage,
+            "attack_type": packet.attack_type,
+            "damage_kind": packet.damage_kind,
+            "damage_formula_family": packet.damage_formula_family,
+            "element_type": packet.element_type,
+            "status_damage_emission_id": packet.status_damage_emission_id,
+            "status_callback_id": packet.status_callback_id,
+            "status_instance_id": packet.status_instance_id,
+            "modifier_name": packet.modifier_name,
+            "source_task_id": packet.source_task_id,
+            "packet_metadata": packet.metadata,
+            "source_frame": packet_json["source_frame"],
+            "bypasses_normal_multipliers": False,
+            "uses_direct_multiplier_ledger": False,
+            "normal_multiplier_terms": [],
+            "numeric_evaluation": packet.metadata.get("numeric_evaluation", {}),
+            "target_before_hp": target.hp,
+            "target_after_hp": after,
+        }
+        if dead_target_continuation:
+            record_payload["dead_target_continuation"] = True
+            record_payload["continuation_reason"] = "same_damage_sequence_after_lethal"
+        return DamageApplicationResult(
+            packet=packet,
+            ok=True,
+            events=_damage_events(
+                packet,
+                record_type="dot_damage",
+                amount=final_damage,
+                before_hp=target.hp,
+                after_hp=after,
+            ),
+            mutations=(mutation,) if mutation is not None else (),
+            records=(
+                SettlementRecord(
+                    record_type="dot_damage",
+                    source="damage_system",
+                    mutation_id=mutation.stable_id() if mutation is not None else None,
+                    process_only=mutation is None,
+                    payload=record_payload,
+                    trace=packet.source_trace,
+                ).to_json(),
+            ),
+        )
 
     def _apply_direct_damage(
         self,
@@ -523,8 +690,8 @@ class DamageSystem:
             source="damage_system",
             metadata=metadata,
         )
-        record_type = "hp_loss" if packet.damage_formula_family == "hp_loss" else "damage"
-        bypasses_normal_multipliers = packet.damage_formula_family in {"true_damage", "hp_loss"}
+        policy = _family_policy(packet.damage_formula_family)
+        record_type = policy.record_type
         record_payload: dict[str, JSONValue] = {
             "amount": packet.amount,
             "attack_type": packet.attack_type,
@@ -536,7 +703,8 @@ class DamageSystem:
             "hit_profile_id": packet.hit_profile_id,
             "packet_metadata": packet.metadata,
             "source_frame": packet_json["source_frame"],
-            "bypasses_normal_multipliers": bypasses_normal_multipliers,
+            "bypasses_normal_multipliers": policy.bypasses_normal_multipliers,
+            "uses_direct_multiplier_ledger": policy.uses_direct_multiplier_ledger,
             "normal_multiplier_terms": [],
             "target_before_hp": target.hp,
             "target_after_hp": after,
@@ -568,12 +736,8 @@ class DamageSystem:
         )
 
     def _blocked_family(self, packet: DamagePacket) -> DamageApplicationResult:
-        reason = (
-            "Elation damage is a mainline 4.0 damage formula family, "
-            "but its complete formula is not executable in v0_209"
-            if packet.damage_formula_family == "elation"
-            else f"{packet.damage_formula_family} damage family is not executable in v0_209"
-        )
+        policy = _family_policy(packet.damage_formula_family)
+        reason = policy.blocked_reason or f"{packet.damage_formula_family} damage family is not executable"
         return DamageApplicationResult(
             packet=packet,
             ok=False,
@@ -586,6 +750,7 @@ class DamageSystem:
                         "damage_formula_family": packet.damage_formula_family,
                         "attack_type": packet.attack_type,
                         "reason": reason,
+                        "family_policy": policy.to_json(),
                     },
                     trace=packet.source_trace,
                 ).to_json(),
@@ -678,6 +843,22 @@ def source_frame_for_packet(packet: DamagePacket) -> DamageSourceFrame:
         target_id=packet.target_id,
         can_continue_after_lethal=can_continue,
         source_trace=trace if isinstance(trace, dict) else packet.source_trace,
+    )
+
+
+def _family_policy(family: str) -> DamageFamilyPolicy:
+    key = str(family or "")
+    return DAMAGE_FAMILY_POLICIES.get(
+        key,
+        DamageFamilyPolicy(
+            family=key or "unknown",
+            runtime_status="unsupported",
+            record_type="damage_error",
+            uses_direct_multiplier_ledger=False,
+            bypasses_normal_multipliers=False,
+            source_requirement="unsupported damage formula family",
+            blocked_reason=f"unsupported damage formula family {family!r}",
+        ),
     )
 
 
