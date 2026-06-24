@@ -7,7 +7,7 @@ from ..core.reducer import MutationReducer
 from ..core.settlement import SettlementRecord
 from ..rules.ir import ActionDefinitionIR, StatusCallbackIR
 from ..rules.rulebook import RuleBook
-from .damage import DamageSystem
+from .damage import DamageSystem, DamageWindowLedger
 from .effect import EffectRegistry
 from .status_callbacks import StatusCallbackSystem
 from .timeline import TimelineSystem
@@ -143,6 +143,7 @@ class EventDispatchSystem:
         skipped_reason: str = "",
         unit_id: str | None = None,
         modifier_name: str | None = None,
+        damage_window_ledger: DamageWindowLedger | None = None,
     ) -> EventDispatchResult:
         if command is not None and action_definition is not None and target_resolution is not None:
             return self._dispatch_action_window_event(
@@ -159,6 +160,7 @@ class EventDispatchSystem:
             event=event,
             unit_id=unit_id,
             modifier_name=modifier_name,
+            damage_window_ledger=damage_window_ledger,
         )
 
     def _dispatch_action_window_event(
@@ -216,12 +218,14 @@ class EventDispatchSystem:
         event: GameEvent,
         unit_id: str,
         modifier_name: str,
+        damage_window_ledger: DamageWindowLedger | None = None,
     ) -> EventDispatchResult:
         return self.dispatch_event(
             state,
             event=event,
             unit_id=unit_id,
             modifier_name=modifier_name,
+            damage_window_ledger=damage_window_ledger,
         )
 
     def _dispatch_listener_event(
@@ -231,6 +235,7 @@ class EventDispatchSystem:
         event: GameEvent,
         unit_id: str | None,
         modifier_name: str | None,
+        damage_window_ledger: DamageWindowLedger | None,
     ) -> EventDispatchResult:
         aliases = _event_aliases(event)
         dispatch_scope = aliases[0].scope_kind if aliases else "unknown"
@@ -317,6 +322,7 @@ class EventDispatchSystem:
                 modifier_name=match.modifier_name,
                 event=match.callback_event,
                 trigger_event=event,
+                damage_window_ledger=damage_window_ledger,
             )
             current_state = result.after_state
             mutations.extend(result.mutations)

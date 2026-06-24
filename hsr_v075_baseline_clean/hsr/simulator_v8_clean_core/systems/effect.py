@@ -8,7 +8,7 @@ from ..core.model import BattleState, GameEvent, JSONValue, Mutation
 from ..core.settlement import SettlementRecord
 from ..rules.evaluator import NumericEvaluationContext, NumericEvaluationResult, RuleEvaluator
 from ..rules.ir import EffectIR
-from .damage import DamagePacket, DamageSystem
+from .damage import DamagePacket, DamageSourceFrame, DamageSystem, DamageWindowLedger
 from .dynamic_values import (
     binding_source_from_store,
     find_status_detail,
@@ -37,6 +37,7 @@ class EffectExecutionContext:
     current_action_target_id: str | None = None
     dynamic_values: dict[str, float] | None = None
     binding_sources: tuple[dict[str, JSONValue], ...] = ()
+    damage_window_ledger: DamageWindowLedger | None = None
 
 
 EffectHandler = Callable[[EffectIR, EffectExecutionContext | None], EffectResult]
@@ -479,12 +480,26 @@ def _execute_hp_loss_ratio(effect: EffectIR, context: EffectExecutionContext | N
         amount=amount,
         damage_kind="hp_loss",
         element_type=str(standard.get("damage_type") or "") or None,
+        source_frame=DamageSourceFrame(
+            owner_id=context.caster_id,
+            source_id=f"effect:{effect.effect_id}",
+            source_kind="effect_damage",
+            sequence_id=f"effect:{context.source_id}:{effect.effect_id}",
+            target_id=target_id,
+            can_continue_after_lethal=False,
+            source_trace={"effect_id": effect.effect_id, "effect_source": effect_source},
+        ),
         source_trace={"effect_id": effect.effect_id, "effect_source": effect_source},
         metadata={
             "effect_id": effect.effect_id,
             "opcode": effect.opcode,
             "source_id": context.source_id,
             "caster_id": context.caster_id,
+            "damage_source_owner_id": context.caster_id,
+            "damage_source_id": f"effect:{effect.effect_id}",
+            "damage_source_kind": "effect_damage",
+            "damage_sequence_id": f"effect:{context.source_id}:{effect.effect_id}",
+            "can_continue_after_lethal": False,
             "standard": standard,
             "effect_source": effect_source,
             "numeric_evaluation": ratio_result.to_json(),
@@ -495,7 +510,13 @@ def _execute_hp_loss_ratio(effect: EffectIR, context: EffectExecutionContext | N
             "damage_formula_family": "hp_loss",
         },
     )
-    return _damage_result_to_effect_result(DamageSystem().apply_packet(context.state, packet))
+    return _damage_result_to_effect_result(
+        DamageSystem().apply_packet(
+            context.state,
+            packet,
+            window_ledger=context.damage_window_ledger,
+        )
+    )
 
 
 def _damage_result_to_effect_result(result) -> EffectResult:

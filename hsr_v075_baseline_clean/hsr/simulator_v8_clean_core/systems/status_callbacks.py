@@ -8,7 +8,7 @@ from ..core.settlement import SettlementRecord
 from ..rules.evaluator import EvaluationContext, NumericEvaluationContext, NumericEvaluationResult, RuleEvaluator
 from ..rules.ir import ActionDelayEmissionIR, QueueIntentIR, StatusCallbackIR, StatusCallbackTaskIR, StatusDamageEmissionIR
 from ..rules.rulebook import RuleBook
-from .damage import DamagePacket, DamageSystem
+from .damage import DamagePacket, DamageSourceFrame, DamageSystem, DamageWindowLedger
 from .dynamic_values import binding_source_from_store, find_status_detail, status_binding_sources, store_from_state
 from .effect import EffectExecutionContext, EffectRegistry
 from .queue import QueueEntry, QueueSystem, QueueTargetResolver
@@ -55,6 +55,7 @@ class StatusCallbackSystem:
         modifier_name: str,
         event: str,
         trigger_event: GameEvent | None = None,
+        damage_window_ledger: DamageWindowLedger | None = None,
     ) -> StatusCallbackExecutionResult:
         detail = find_status_detail(state, unit_id, modifier_name=modifier_name)
         if detail is None:
@@ -95,7 +96,7 @@ class StatusCallbackSystem:
         errors: list[str] = []
         events: list[GameEvent] = []
         for callback in callbacks:
-            result = self._execute_callback(current_state, callback, detail, trigger_event)
+            result = self._execute_callback(current_state, callback, detail, trigger_event, damage_window_ledger)
             current_state = result.after_state
             mutations.extend(result.mutations)
             records.extend(result.records)
@@ -116,6 +117,7 @@ class StatusCallbackSystem:
         callback: StatusCallbackIR,
         detail: dict[str, JSONValue],
         trigger_event: GameEvent | None,
+        damage_window_ledger: DamageWindowLedger | None,
     ) -> StatusCallbackExecutionResult:
         if callback.coverage_status != "executable":
             reason = callback.blocked_reason or f"status_callback_not_executable:{callback.coverage_status}"
@@ -165,7 +167,7 @@ class StatusCallbackSystem:
             )
         )
         for task in roots:
-            result = self._execute_task(current_state, callback, task, detail, trigger_event, tasks)
+            result = self._execute_task(current_state, callback, task, detail, trigger_event, tasks, damage_window_ledger)
             current_state = result.after_state
             mutations.extend(result.mutations)
             records.extend(result.records)
@@ -188,9 +190,10 @@ class StatusCallbackSystem:
         detail: dict[str, JSONValue],
         trigger_event: GameEvent | None,
         tasks: dict[str, StatusCallbackTaskIR],
+        damage_window_ledger: DamageWindowLedger | None,
     ) -> StatusCallbackExecutionResult:
         if task.opcode == "PredicateTaskList":
-            return self._execute_predicate_task(state, callback, task, detail, trigger_event, tasks)
+            return self._execute_predicate_task(state, callback, task, detail, trigger_event, tasks, damage_window_ledger)
         delay_emissions = [
             emission
             for emission in self.rules.action_delay_emissions_for_callback(callback.callback_id)
@@ -236,13 +239,20 @@ class StatusCallbackSystem:
                 errors=(reason,),
             )
         if damage_emissions:
-            return self._execute_damage_emissions(state, callback, task, detail, tuple(damage_emissions))
+            return self._execute_damage_emissions(
+                state,
+                callback,
+                task,
+                detail,
+                tuple(damage_emissions),
+                damage_window_ledger,
+            )
         if delay_emissions:
             return self._execute_delay_emissions(state, callback, task, detail, tuple(delay_emissions))
         if queue_intents:
             return self._execute_queue_intents(state, callback, task, detail, trigger_event, tuple(queue_intents))
         if task.effect_id:
-            return self._execute_effect_task(state, callback, task, detail, trigger_event)
+            return self._execute_effect_task(state, callback, task, detail, trigger_event, damage_window_ledger)
         return StatusCallbackExecutionResult(
             ok=True,
             after_state=state,
@@ -257,6 +267,7 @@ class StatusCallbackSystem:
         detail: dict[str, JSONValue],
         trigger_event: GameEvent | None,
         tasks: dict[str, StatusCallbackTaskIR],
+        damage_window_ledger: DamageWindowLedger | None,
     ) -> StatusCallbackExecutionResult:
         condition = self.rules.condition(task.condition_id) if task.condition_id else None
         if condition is None:
@@ -302,7 +313,15 @@ class StatusCallbackSystem:
                 records.append(_task_blocked_record(callback, task, detail, reason))
                 errors.append(reason)
                 continue
-            child_result = self._execute_task(current_state, callback, child, detail, trigger_event, tasks)
+            child_result = self._execute_task(
+                current_state,
+                callback,
+                child,
+                detail,
+                trigger_event,
+                tasks,
+                damage_window_ledger,
+            )
             current_state = child_result.after_state
             mutations.extend(child_result.mutations)
             records.extend(child_result.records)
@@ -324,6 +343,7 @@ class StatusCallbackSystem:
         task: StatusCallbackTaskIR,
         detail: dict[str, JSONValue],
         trigger_event: GameEvent | None,
+        damage_window_ledger: DamageWindowLedger | None,
     ) -> StatusCallbackExecutionResult:
         if task.coverage_status != "executable":
             reason = task.blocked_reason or f"status_callback_task_not_executable:{task.coverage_status}"
@@ -345,14 +365,20 @@ class StatusCallbackSystem:
         coverage = self.effect_registry.coverage(effect)
         if coverage != "executable":
             reason = f"effect_not_executable:{coverage}"
-            result = self.effect_registry.execute(effect, _effect_context(state, task, detail, trigger_event))
+            result = self.effect_registry.execute(
+                effect,
+                _effect_context(state, task, detail, trigger_event, damage_window_ledger),
+            )
             return StatusCallbackExecutionResult(
                 ok=False,
                 after_state=state,
                 records=(*result.records, _task_blocked_record(callback, task, detail, reason)),
                 errors=(reason, *result.unsupported),
             )
-        result = self.effect_registry.execute(effect, _effect_context(state, task, detail, trigger_event))
+        result = self.effect_registry.execute(
+            effect,
+            _effect_context(state, task, detail, trigger_event, damage_window_ledger),
+        )
         after_state = self.reducer.apply_all(state, result.mutations)
         records = (
             *result.records,
@@ -371,6 +397,7 @@ class StatusCallbackSystem:
             after_state=after_state,
             mutations=result.mutations,
             records=records,
+            events=result.events,
             errors=result.unsupported,
         )
 
@@ -381,10 +408,12 @@ class StatusCallbackSystem:
         task: StatusCallbackTaskIR,
         detail: dict[str, JSONValue],
         emissions: tuple[StatusDamageEmissionIR, ...],
+        damage_window_ledger: DamageWindowLedger | None,
     ) -> StatusCallbackExecutionResult:
         current_state = state
         mutations: list[Mutation] = []
         records: list[dict[str, JSONValue]] = []
+        events: list[GameEvent] = []
         errors: list[str] = []
         for emission in emissions:
             if emission.coverage_status != "executable":
@@ -424,6 +453,20 @@ class StatusCallbackSystem:
                 modifier_name=callback.modifier_name,
                 break_template_id=break_template_id,
                 source_task_id=task.task_id,
+                source_frame=DamageSourceFrame(
+                    owner_id=caster_id,
+                    source_id=f"status_damage:{emission.status_damage_emission_id}",
+                    source_kind="status_damage",
+                    sequence_id=f"status_damage:{str(detail.get('instance_id') or '')}:{emission.status_damage_emission_id}",
+                    target_id=target_id,
+                    can_continue_after_lethal=False,
+                    source_trace={
+                        "status_damage_source": emission.source.to_json(),
+                        "status_callback_source": callback.source.to_json(),
+                        "status_task_source": task.source.to_json(),
+                        "status_instance_source": _json_dict(detail.get("source_trace")),
+                    },
+                ),
                 source_trace={
                     "status_damage_source": emission.source.to_json(),
                     "status_callback_source": callback.source.to_json(),
@@ -438,6 +481,11 @@ class StatusCallbackSystem:
                     "status_instance_id": str(detail.get("instance_id") or ""),
                     "modifier_name": callback.modifier_name,
                     "source_task_id": task.task_id,
+                    "damage_source_owner_id": caster_id,
+                    "damage_source_id": f"status_damage:{emission.status_damage_emission_id}",
+                    "damage_source_kind": "status_damage",
+                    "damage_sequence_id": f"status_damage:{str(detail.get('instance_id') or '')}:{emission.status_damage_emission_id}",
+                    "can_continue_after_lethal": False,
                     "break_template_id": break_template_id,
                     "numeric_evaluation": evaluation.to_json(),
                     "break_base_damage_source": _break_base_source_from_evaluation(evaluation),
@@ -449,16 +497,22 @@ class StatusCallbackSystem:
                     },
                 },
             )
-            damage_result = self.damage.apply_packet(current_state, packet)
+            damage_result = self.damage.apply_packet(
+                current_state,
+                packet,
+                window_ledger=damage_window_ledger,
+            )
             current_state = self.reducer.apply_all(current_state, damage_result.mutations)
             mutations.extend(damage_result.mutations)
             records.extend(damage_result.records)
+            events.extend(damage_result.events)
             errors.extend(damage_result.errors)
         return StatusCallbackExecutionResult(
             ok=not errors,
             after_state=current_state,
             mutations=tuple(mutations),
             records=tuple(records),
+            events=tuple(events),
             errors=tuple(errors),
         )
 
@@ -1187,6 +1241,7 @@ def _effect_context(
     task: StatusCallbackTaskIR,
     detail: dict[str, JSONValue],
     event: GameEvent | None,
+    damage_window_ledger: DamageWindowLedger | None = None,
 ) -> EffectExecutionContext:
     payload = event.payload if event is not None and isinstance(event.payload, dict) else {}
     owner_id = str(detail.get("owner_id") or "")
@@ -1207,6 +1262,7 @@ def _effect_context(
             *status_binding_sources(state, unit_ids),
             binding_source_from_store(store_from_state(state)),
         ),
+        damage_window_ledger=damage_window_ledger,
     )
 
 

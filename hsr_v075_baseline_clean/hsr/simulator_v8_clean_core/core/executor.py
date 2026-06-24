@@ -19,7 +19,7 @@ from ..rules.ir import ActionDefinitionIR
 from ..rules.rulebook import RuleBook
 from ..systems.ability import AbilityTaskExecutionResult, AbilityTaskSystem
 from ..systems.break_system import BreakApplicationResult, BreakSystem
-from ..systems.damage import DamagePacket, DamageSystem
+from ..systems.damage import DamagePacket, DamageSystem, DamageSourceFrame, DamageWindowLedger
 from ..systems.effect import EffectRegistry
 from ..systems.resource import ResourcePlan, ResourceSystem
 from ..systems.status import StatusSystem
@@ -163,6 +163,7 @@ class CombatExecutor:
         break_results: list[BreakApplicationResult] = []
         break_mutations: tuple[Mutation, ...] = ()
         ability_task_results: list[AbilityTaskExecutionResult] = []
+        damage_window_ledger = DamageWindowLedger()
 
         if action_enabled:
             for step in action_execution_plan.event_steps:
@@ -267,14 +268,22 @@ class CombatExecutor:
                         )
                         if damage_packet is None:
                             continue
-                        damage_result = self.damage.apply_packet(current_state, damage_packet)
+                        damage_result = self.damage.apply_packet(
+                            current_state,
+                            damage_packet,
+                            window_ledger=damage_window_ledger,
+                        )
                         damage_results.append(damage_result)
                         damage_mutations = (*damage_mutations, *damage_result.mutations)
                         current_state = self.reducer.apply_all(current_state, damage_result.mutations)
                         ordered_mutations.extend(damage_result.mutations)
                         runtime_records.extend(damage_result.records)
                         for emitted_event in damage_result.events:
-                            dispatch_result = self.event_dispatcher.dispatch_event(current_state, event=emitted_event)
+                            dispatch_result = self.event_dispatcher.dispatch_event(
+                                current_state,
+                                event=emitted_event,
+                                damage_window_ledger=damage_window_ledger,
+                            )
                             current_state = dispatch_result.after_state
                             listener_dispatch_results.append(dispatch_result)
                             ordered_mutations.extend(dispatch_result.mutations)
@@ -839,8 +848,29 @@ def _damage_packet(
         hit_profile_id=damage_plan.hit_profile_id,
         scaling_ratio=damage_plan.scaling_ratio,
         hit_source_trace=damage_plan.hit_source_trace,
+        source_frame=DamageSourceFrame(
+            owner_id=command.actor_id,
+            source_id=f"action:{command.action_id}:level:{command.action_level}",
+            source_kind="primary_action_damage",
+            sequence_id=f"action:{command.actor_id}:{command.action_id}:level:{command.action_level}",
+            target_id=damage_plan.target_id,
+            can_continue_after_lethal=True,
+            source_trace={
+                "definition_id": action_definition.definition_id,
+                "action_id": action_definition.action_id,
+                "action_level": action_definition.level,
+                "damage_emission_id": damage_plan.damage_emission_id,
+                "source_task_id": damage_plan.source_task_id,
+                "hit_profile_id": damage_plan.hit_profile_id,
+            },
+        ),
         metadata={
             **_damage_metadata(command),
+            "damage_source_owner_id": command.actor_id,
+            "damage_source_id": f"action:{command.action_id}:level:{command.action_level}",
+            "damage_source_kind": "primary_action_damage",
+            "damage_sequence_id": f"action:{command.actor_id}:{command.action_id}:level:{command.action_level}",
+            "can_continue_after_lethal": True,
             "hit_index": damage_plan.hit_index,
             "damage_emission_id": damage_plan.damage_emission_id,
             "source_task_id": damage_plan.source_task_id,
