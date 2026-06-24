@@ -653,6 +653,11 @@ class RuleBook:
     def character_eidolon_slots_for_card(self, card_id: str) -> tuple[CharacterEidolonSlotIR, ...]:
         return self._character_eidolon_slots_by_card.get(card_id, ())
 
+    def character_eidolon_slots_for_level(self, card_id: str, eidolon_level: int) -> tuple[CharacterEidolonSlotIR, ...]:
+        if eidolon_level < 0 or eidolon_level > 6:
+            raise ValueError(f"eidolon_level must be between 0 and 6, got {eidolon_level!r}")
+        return tuple(slot for slot in self.character_eidolon_slots_for_card(card_id) if slot.rank <= eidolon_level)
+
     def require_combatant_profile(self, entity_id: str) -> CombatantProfileIR:
         profile = self.combatant_profile(entity_id)
         if profile is None:

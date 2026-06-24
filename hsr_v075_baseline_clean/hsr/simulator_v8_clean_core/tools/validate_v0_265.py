@@ -130,7 +130,7 @@ def _card_contract_case(ir: CanonicalIR, rules: RuleBook, card: CharacterDataCar
     checks = {
         "seele_card_exists": bool(card),
         "card_executable": card.coverage_status == "executable",
-        "schema_version_v0_265": card.schema_version == "v0_265",
+        "schema_version_current": card.schema_version in {"v0_265", "v0_267"},
         "json_roundtrip": json_roundtrip == card_json,
         "contract_sections_present": {
             "identity",
@@ -151,8 +151,8 @@ def _card_contract_case(ir: CanonicalIR, rules: RuleBook, card: CharacterDataCar
         "extra_turn_queue_slots_present": any(slot.semantics.get("window_family") == "extra_turn" for slot in queue_slots),
         "extra_action_policy_slots_present": bool(extra_action_slots),
         "trace_nodes_present": bool(trace_nodes),
-        "eidolon_slots_reserved": len(eidolon_slots) == 6
-        and all(slot.coverage_status == "blocked" and slot.blocked_reason for slot in eidolon_slots),
+        "eidolon_slots_present": len(eidolon_slots) == 6
+        and all(slot.rank == index + 1 and slot.rank_id for index, slot in enumerate(eidolon_slots)),
         "rulebook_slot_ids_resolve": all(rules.character_mechanism_slot(slot_id) is not None for slot_id in card.mechanism_slot_ids),
         "rulebook_trace_ids_resolve": all(rules.character_trace_node(trace_id) is not None for trace_id in card.trace_node_ids),
         "rulebook_eidolon_ids_resolve": all(rules.character_eidolon_slot(slot_id) is not None for slot_id in card.eidolon_slot_ids),
@@ -376,11 +376,17 @@ def _trace_and_eidolon_case(rules: RuleBook, card: CharacterDataCardIR) -> dict[
             slot.coverage_status != "executable" and bool(slot.blocked_reason) for slot in trace_slots
         ),
         "eidolon_interface_has_six_slots": len(eidolons) == 6,
-        "eidolon_default_no_effect": all(
-            slot.coverage_status == "blocked"
-            and slot.blocked_reason == "eidolon_interface_reserved_v0_265"
-            and not slot.linked_mechanism_slot_ids
+        "eidolon_prefix_slots_have_sources": all(
+            slot.coverage_status == "executable"
+            and slot.activation.get("kind") == "eidolon_prefix_toggle"
+            and slot.activation.get("prefix_closed") is True
+            and slot.linked_mechanism_slot_ids
             for slot in eidolons
+        ),
+        "eidolon_runtime_effect_slots_still_blocked": all(
+            slot.coverage_status != "executable" and bool(slot.blocked_reason)
+            for slot in slots
+            if slot.mechanism_kind == "eidolon_rank_effect"
         ),
     }
     checks["ok"] = all(value for key, value in checks.items() if key != "ok")

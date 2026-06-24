@@ -44,6 +44,7 @@ class UnitSpec:
     side: UnitSide
     entity_ref: str
     level: int = 80
+    eidolon_level: int = 0
     position: int | None = None
     panel: PanelInput = field(default_factory=PanelInput)
 

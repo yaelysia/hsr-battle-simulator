@@ -63,6 +63,7 @@ def _unit(data: Any, index: int) -> UnitSpec:
         side=_required_str(data, "side"),
         entity_ref=_required_str(data, "entity_ref"),
         level=int(data.get("level", 80)),
+        eidolon_level=int(data.get("eidolon_level", 0)),
         position=int(data["position"]) if "position" in data else None,
         panel=panel,
     )

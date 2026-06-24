@@ -33,6 +33,28 @@ class ScenarioStateBuilder:
             if unit.position is not None:
                 flags["position"] = unit.position
             entity = self.rules.require_entity(unit.entity_ref)
+            if unit.eidolon_level < 0 or unit.eidolon_level > 6:
+                raise ValueError(f"unit {unit.unit_id}: eidolon_level must be between 0 and 6")
+            if entity.entity_type == "avatar":
+                card = self.rules.character_data_card_for_entity(unit.entity_ref)
+                if card is not None:
+                    eidolon_slots = self.rules.character_eidolon_slots_for_level(card.card_id, unit.eidolon_level)
+                    flags["character_data_card_id"] = card.card_id
+                    flags["eidolon_level_requested"] = unit.eidolon_level
+                    flags["enabled_eidolon_ranks"] = tuple(slot.rank for slot in eidolon_slots)
+                    flags["enabled_eidolon_slot_ids"] = tuple(slot.eidolon_slot_id for slot in eidolon_slots)
+                    flags["enabled_eidolon_rank_ids"] = tuple(slot.rank_id for slot in eidolon_slots)
+                    flags["enabled_eidolon_mechanism_slot_ids"] = tuple(
+                        slot_id for slot in eidolon_slots for slot_id in slot.linked_mechanism_slot_ids
+                    )
+                    flags["eidolon_activation_policy"] = {
+                        "kind": "prefix_closed",
+                        "requested_level": unit.eidolon_level,
+                        "independent_rank_toggle_allowed": False,
+                    }
+                    flags["eidolon_source_traces"] = tuple(slot.source.to_json() for slot in eidolon_slots)
+                elif unit.eidolon_level:
+                    raise ValueError(f"unit {unit.unit_id}: eidolon_level requires a character data card")
             profile = self.rules.combatant_profile(unit.entity_ref) if entity.entity_type in {"monster", "monster_template"} else None
             profile_values = _profile_values(profile)
             panel_overrides = _panel_overrides(panel, profile_values)

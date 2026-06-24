@@ -285,6 +285,8 @@ class CharacterEidolonSlotIR:
     source: IRSource
     coverage_status: CoverageStatus = "blocked"
     blocked_reason: str = "eidolon_interface_reserved_v0_265"
+    activation: dict[str, JSONValue] = field(default_factory=dict)
+    semantics: dict[str, JSONValue] = field(default_factory=dict)
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -294,6 +296,8 @@ class CharacterEidolonSlotIR:
             "rank": self.rank,
             "rank_id": self.rank_id,
             "linked_mechanism_slot_ids": list(self.linked_mechanism_slot_ids),
+            "activation": self.activation,
+            "semantics": self.semantics,
             "source": self.source.to_json(),
             "coverage_status": self.coverage_status,
             "blocked_reason": self.blocked_reason,

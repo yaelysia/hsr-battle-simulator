@@ -60,6 +60,7 @@ def build_character_card_ir(
     skill_tables: tuple[SkillTableSpec, ...],
 ) -> CharacterCardBuildResult:
     avatar_rows = _avatar_rows(tbgd_root, max_records_per_table=max_records_per_table)
+    rank_rows_by_id = _avatar_rank_rows_by_id(tbgd_root, max_records_per_table=max_records_per_table)
     promotion_rows_by_avatar = _promotion_rows_by_avatar(tbgd_root)
     skill_to_card = _skill_to_card_map(avatar_rows)
     avatar_id_to_card = {str(row["AvatarID"]): f"character_data_card:avatar:{row['AvatarID']}" for _, _, row in avatar_rows}
@@ -137,7 +138,7 @@ def build_character_card_ir(
     for relative_path, row_index, row in avatar_rows:
         avatar_id = str(row["AvatarID"])
         card_id = f"character_data_card:avatar:{avatar_id}"
-        for slot in _eidolon_slots_from_avatar_row(relative_path, row_index, row, card_id):
+        for slot in _eidolon_slots_from_avatar_row(relative_path, row_index, row, card_id, rank_rows_by_id):
             eidolon_slots_by_card.setdefault(card_id, []).append(slot)
     eidolon_slot_ids_by_card = {
         card_id: [slot.eidolon_slot_id for slot in slots] for card_id, slots in eidolon_slots_by_card.items()
@@ -147,6 +148,12 @@ def build_character_card_ir(
     mechanism_slots.extend(_bounce_mechanism_slot(policy) for policy in bounce_policies)
     mechanism_slots.extend(skill_param_slots)
     mechanism_slots.extend(trace_slots)
+    mechanism_slots.extend(
+        _eidolon_mechanism_slot(slot)
+        for slots in eidolon_slots_by_card.values()
+        for slot in slots
+        if slot.linked_mechanism_slot_ids
+    )
     mechanism_slot_ids_by_card: dict[str, list[str]] = {}
     for slot in mechanism_slots:
         if slot.character_data_card_id:
@@ -175,6 +182,7 @@ def build_character_card_ir(
                 skill_ids=skill_ids,
                 skill_formula_binding_ids=binding_ids,
                 bounce_policy_ids=bounce_policy_ids,
+                schema_version="v0_267",
                 action_set=action_set_by_card.get(card_id, {"skill_ids": list(skill_ids), "actions": []}),
                 mechanism_slot_ids=tuple(sorted(mechanism_slot_ids_by_card.get(card_id, ()))),
                 trace_node_ids=tuple(sorted(trace_node_ids_by_card.get(card_id, ()))),
@@ -228,7 +236,7 @@ def build_character_card_ir(
 
 def _character_data_card_contract() -> dict[str, JSONValue]:
     return {
-        "schema_version": "v0_265",
+        "schema_version": "v0_267",
         "runtime_boundary": {
             "runtime_reads": "Canonical IR only",
             "text_map_allowed_in_runtime": False,
@@ -257,6 +265,12 @@ def _character_data_card_contract() -> dict[str, JSONValue]:
             "character_specific_runtime_logic_allowed": False,
             "character_specific_rules_enter_as_card_slots": True,
             "unsupported_slots_must_block": True,
+        },
+        "eidolon_policy": {
+            "configuration_shape": "single_level_0_to_6",
+            "enabled_slots": "prefix_closed_ranks_1_through_level",
+            "independent_rank_toggle_allowed": False,
+            "runtime_effects_must_enter_as_mechanism_slots": True,
         },
         "equipment_boundary": {
             "relics": "external_equipment_card",
@@ -382,6 +396,41 @@ def _bounce_mechanism_slot(policy: BouncePolicyIR) -> CharacterMechanismSlotIR:
     )
 
 
+def _eidolon_mechanism_slot(slot: CharacterEidolonSlotIR) -> CharacterMechanismSlotIR:
+    mechanism_slot_id = slot.linked_mechanism_slot_ids[0]
+    has_effect_source = bool(
+        slot.semantics.get("rank_ability")
+        or slot.semantics.get("skill_add_level_list")
+        or slot.semantics.get("extra_effect_id_list")
+    )
+    blocked_reason = (
+        "eidolon_effect_runtime_admission_pending_v0_267"
+        if has_effect_source
+        else "eidolon_slot_has_no_runtime_effect_source"
+    )
+    return CharacterMechanismSlotIR(
+        mechanism_slot_id=mechanism_slot_id,
+        character_data_card_id=slot.character_data_card_id,
+        mechanism_kind="eidolon_rank_effect",
+        runtime_system="character_card_assembly",
+        linked_ir_ids={
+            "eidolon_slot_id": slot.eidolon_slot_id,
+            "rank_id": slot.rank_id,
+            "rank": slot.rank,
+        },
+        activation={
+            "kind": "eidolon_prefix_toggle",
+            "required_eidolon_level": slot.rank,
+            "enabled_when_requested_level_at_least": slot.rank,
+            "prefix_closed": True,
+        },
+        semantics=slot.semantics,
+        source=slot.source,
+        coverage_status="blocked",
+        blocked_reason=blocked_reason,
+    )
+
+
 def _trace_nodes_and_slots(
     tbgd_root: Path,
     *,
@@ -499,6 +548,7 @@ def _eidolon_slots_from_avatar_row(
     row_index: int,
     row: dict[str, Any],
     card_id: str,
+    rank_rows_by_id: dict[str, tuple[str, int, dict[str, Any]]],
 ) -> list[CharacterEidolonSlotIR]:
     avatar_id = str(row["AvatarID"])
     rank_ids = row.get("RankIDList")
@@ -507,6 +557,29 @@ def _eidolon_slots_from_avatar_row(
     slots: list[CharacterEidolonSlotIR] = []
     for index in range(6):
         rank_id = str(rank_ids[index]) if index < len(rank_ids) else ""
+        rank_row_info = rank_rows_by_id.get(rank_id)
+        rank_relative_path = ""
+        rank_row_index = -1
+        rank_row: dict[str, Any] = {}
+        if rank_row_info is not None:
+            rank_relative_path, rank_row_index, rank_row = rank_row_info
+        mechanism_slot_id = f"character_mechanism_slot:{card_id}:eidolon:{index + 1}" if rank_row_info else ""
+        coverage_status = "executable" if rank_id and rank_row_info else "blocked"
+        blocked_reason = ""
+        if not rank_id:
+            blocked_reason = "eidolon_rank_id_missing"
+        elif rank_row_info is None:
+            blocked_reason = "eidolon_rank_config_missing"
+        semantics = {
+            "rank": index + 1,
+            "rank_id": rank_id,
+            "rank_ability": _json_safe(rank_row.get("RankAbility") or []),
+            "skill_add_level_list": _json_safe(rank_row.get("SkillAddLevelList") or {}),
+            "extra_effect_id_list": _json_safe(rank_row.get("ExtraEffectIDList") or []),
+            "param_values": _json_safe(_param_values(rank_row.get("Param") or [])),
+            "effect_application_boundary": "character_mechanism_slot",
+            "runtime_effects_are_not_implicit": True,
+        }
         slots.append(
             CharacterEidolonSlotIR(
                 eidolon_slot_id=f"character_eidolon_slot:{card_id}:rank:{index + 1}",
@@ -514,18 +587,38 @@ def _eidolon_slots_from_avatar_row(
                 avatar_id=avatar_id,
                 rank=index + 1,
                 rank_id=rank_id,
-                linked_mechanism_slot_ids=(),
+                linked_mechanism_slot_ids=(mechanism_slot_id,) if mechanism_slot_id else (),
                 source=IRSource(
-                    source_path=relative_path,
-                    raw_type=Path(relative_path).stem,
-                    raw_id=f"{avatar_id}:rank:{index + 1}",
+                    source_path=rank_relative_path or relative_path,
+                    raw_type=Path(rank_relative_path or relative_path).stem,
+                    raw_id=rank_id or f"{avatar_id}:rank:{index + 1}",
                     evidence={
                         "row_index": row_index,
+                        "avatar_config_source_path": relative_path,
+                        "avatar_config_row_index": row_index,
                         "rank_id": rank_id,
                         "rank_id_list": _json_safe(rank_ids),
-                        "builder": "character_eidolon_interface_v0_265",
+                        "rank_config_source_path": rank_relative_path,
+                        "rank_config_row_index": rank_row_index,
+                        "rank_config_rank": _json_safe(rank_row.get("Rank")),
+                        "rank_name": _json_safe(rank_row.get("Name")),
+                        "rank_desc": _json_safe(rank_row.get("Desc")),
+                        "rank_ability": _json_safe(rank_row.get("RankAbility") or []),
+                        "skill_add_level_list": _json_safe(rank_row.get("SkillAddLevelList") or {}),
+                        "extra_effect_id_list": _json_safe(rank_row.get("ExtraEffectIDList") or []),
+                        "param_values": semantics["param_values"],
+                        "builder": "character_eidolon_interface_v0_267",
                     },
                 ),
+                coverage_status=coverage_status,
+                blocked_reason=blocked_reason,
+                activation={
+                    "kind": "eidolon_prefix_toggle",
+                    "rank": index + 1,
+                    "prefix_closed": True,
+                    "selection_source": "scenario_unit_eidolon_level",
+                },
+                semantics=semantics,
             )
         )
     return slots
@@ -730,6 +823,29 @@ def _avatar_rows(tbgd_root: Path, *, max_records_per_table: int | None) -> list[
         copied["_character_card_enhanced_id"] = enhanced_row.get("EnhancedID")
         copied["_character_card_enhanced_skill_list"] = _json_safe(enhanced_row.get("SkillList") or [])
         rows.append((enhanced_relative_path, enhanced_row_index, copied))
+    return rows
+
+
+def _avatar_rank_rows_by_id(
+    tbgd_root: Path,
+    *,
+    max_records_per_table: int | None,
+) -> dict[str, tuple[str, int, dict[str, Any]]]:
+    rows: dict[str, tuple[str, int, dict[str, Any]]] = {}
+    for relative_path in ("ExcelOutput/AvatarRankConfig.json", "ExcelOutput/AvatarRankConfigLD.json"):
+        path = tbgd_root / relative_path
+        if not path.exists():
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if not isinstance(data, list):
+            continue
+        for row_index, row in enumerate(_limit_sequence(data, max_records_per_table)):
+            if not isinstance(row, dict) or row.get("RankID") is None:
+                continue
+            rows.setdefault(str(row["RankID"]), (relative_path, row_index, row))
     return rows
 
 
@@ -1224,6 +1340,16 @@ def _list_json_values(value: Any) -> list[JSONValue]:
     if not isinstance(value, list):
         return []
     return [_json_safe(item) for item in value]
+
+
+def _param_values(value: Any) -> list[JSONValue]:
+    if not isinstance(value, list):
+        return []
+    result: list[JSONValue] = []
+    for item in value:
+        extracted = _value_field(item)
+        result.append(extracted if extracted is not None else _json_safe(item))
+    return result
 
 
 def _json_safe(value: Any) -> JSONValue:
