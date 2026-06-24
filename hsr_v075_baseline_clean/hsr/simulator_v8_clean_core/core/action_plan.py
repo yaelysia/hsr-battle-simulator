@@ -77,6 +77,7 @@ class HitPlan:
     hit_source_trace: dict[str, object] | None = None
     numeric_fidelity_status: str = "unknown"
     multi_hit_not_implemented: bool = True
+    hit_formula_slot_admitted: bool = False
 
     def to_json(self) -> dict[str, object]:
         return {
@@ -88,6 +89,7 @@ class HitPlan:
             "hit_source_trace": self.hit_source_trace or {},
             "numeric_fidelity_status": self.numeric_fidelity_status,
             "multi_hit_not_implemented": self.multi_hit_not_implemented,
+            "hit_formula_slot_admitted": self.hit_formula_slot_admitted,
         }
 
 
@@ -326,6 +328,7 @@ def _event_step_from_ir(step) -> ActionEventStep:
 
 
 def _hit_plan(profile: HitProfileIR) -> HitPlan:
+    hit_formula_slot_admitted = profile.multiplier_source.get("source_kind") == "character_data_card_skill_formula"
     return HitPlan(
         hit_profile_id=profile.hit_profile_id,
         hit_index=profile.hit_index,
@@ -334,7 +337,8 @@ def _hit_plan(profile: HitProfileIR) -> HitPlan:
         scaling_ratio=_hit_scaling_ratio(profile),
         hit_source_trace=profile.source.to_json(),
         numeric_fidelity_status=profile.numeric_fidelity_status,
-        multi_hit_not_implemented=True,
+        multi_hit_not_implemented=not hit_formula_slot_admitted,
+        hit_formula_slot_admitted=hit_formula_slot_admitted,
     )
 
 
