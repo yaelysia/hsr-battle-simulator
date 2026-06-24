@@ -6,7 +6,17 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
-from ..rules.ir import AvatarProfileIR, BouncePolicyIR, CharacterDataCardIR, IRSource, JSONValue, SkillFormulaBindingIR
+from ..rules.ir import (
+    AvatarProfileIR,
+    BouncePolicyIR,
+    CharacterDataCardIR,
+    CharacterEidolonSlotIR,
+    CharacterMechanismSlotIR,
+    CharacterTraceNodeIR,
+    IRSource,
+    JSONValue,
+    SkillFormulaBindingIR,
+)
 
 
 SkillTableSpec = tuple[str, str, str]
@@ -16,6 +26,9 @@ SkillTableSpec = tuple[str, str, str]
 class CharacterCardBuildResult:
     avatar_profiles: list[AvatarProfileIR]
     character_data_cards: list[CharacterDataCardIR]
+    character_mechanism_slots: list[CharacterMechanismSlotIR]
+    character_trace_nodes: list[CharacterTraceNodeIR]
+    character_eidolon_slots: list[CharacterEidolonSlotIR]
     skill_formula_bindings: list[SkillFormulaBindingIR]
     bounce_policies: list[BouncePolicyIR]
 
@@ -49,6 +62,13 @@ def build_character_card_ir(
     avatar_rows = _avatar_rows(tbgd_root, max_records_per_table=max_records_per_table)
     promotion_rows_by_avatar = _promotion_rows_by_avatar(tbgd_root)
     skill_to_card = _skill_to_card_map(avatar_rows)
+    avatar_id_to_card = {str(row["AvatarID"]): f"character_data_card:avatar:{row['AvatarID']}" for _, _, row in avatar_rows}
+    action_set_by_card = _action_set_by_card(
+        tbgd_root,
+        skill_tables=skill_tables,
+        skill_to_card=skill_to_card,
+        max_records_per_table=max_records_per_table,
+    )
     text_map = _load_text_map(tbgd_root)
     skill_formula_bindings: list[SkillFormulaBindingIR] = []
     bounce_policies: list[BouncePolicyIR] = []
@@ -92,6 +112,33 @@ def build_character_card_ir(
     for policy in bounce_policies:
         if policy.character_data_card_id:
             bounce_policy_ids_by_card.setdefault(policy.character_data_card_id, []).append(policy.bounce_policy_id)
+    trace_nodes, trace_slots = _trace_nodes_and_slots(
+        tbgd_root,
+        avatar_id_to_card=avatar_id_to_card,
+        max_records_per_table=max_records_per_table,
+    )
+    trace_nodes = list({node.trace_node_id: node for node in trace_nodes}.values())
+    trace_slots = list({slot.mechanism_slot_id: slot for slot in trace_slots}.values())
+    trace_node_ids_by_card: dict[str, list[str]] = {}
+    for node in trace_nodes:
+        trace_node_ids_by_card.setdefault(node.character_data_card_id, []).append(node.trace_node_id)
+    eidolon_slots_by_card: dict[str, list[CharacterEidolonSlotIR]] = {}
+    for relative_path, row_index, row in avatar_rows:
+        avatar_id = str(row["AvatarID"])
+        card_id = f"character_data_card:avatar:{avatar_id}"
+        for slot in _eidolon_slots_from_avatar_row(relative_path, row_index, row, card_id):
+            eidolon_slots_by_card.setdefault(card_id, []).append(slot)
+    eidolon_slot_ids_by_card = {
+        card_id: [slot.eidolon_slot_id for slot in slots] for card_id, slots in eidolon_slots_by_card.items()
+    }
+    mechanism_slots: list[CharacterMechanismSlotIR] = []
+    mechanism_slots.extend(_formula_mechanism_slot(binding) for binding in skill_formula_bindings)
+    mechanism_slots.extend(_bounce_mechanism_slot(policy) for policy in bounce_policies)
+    mechanism_slots.extend(trace_slots)
+    mechanism_slot_ids_by_card: dict[str, list[str]] = {}
+    for slot in mechanism_slots:
+        if slot.character_data_card_id:
+            mechanism_slot_ids_by_card.setdefault(slot.character_data_card_id, []).append(slot.mechanism_slot_id)
     avatar_profiles: list[AvatarProfileIR] = []
     character_cards: list[CharacterDataCardIR] = []
     for relative_path, row_index, row in avatar_rows:
@@ -116,6 +163,11 @@ def build_character_card_ir(
                 skill_ids=skill_ids,
                 skill_formula_binding_ids=binding_ids,
                 bounce_policy_ids=bounce_policy_ids,
+                action_set=action_set_by_card.get(card_id, {"skill_ids": list(skill_ids), "actions": []}),
+                mechanism_slot_ids=tuple(sorted(mechanism_slot_ids_by_card.get(card_id, ()))),
+                trace_node_ids=tuple(sorted(trace_node_ids_by_card.get(card_id, ()))),
+                eidolon_slot_ids=tuple(sorted(eidolon_slot_ids_by_card.get(card_id, ()))),
+                card_contract=_character_data_card_contract(),
                 source=IRSource(
                     source_path=relative_path,
                     raw_type=Path(relative_path).stem,
@@ -126,7 +178,10 @@ def build_character_card_ir(
                         "profile_id": profile.avatar_profile_id,
                         "skill_formula_binding_count": len(binding_ids),
                         "bounce_policy_count": len(bounce_policy_ids),
-                        "builder": "character_data_card_v0_262",
+                        "mechanism_slot_count": len(mechanism_slot_ids_by_card.get(card_id, ())),
+                        "trace_node_count": len(trace_node_ids_by_card.get(card_id, ())),
+                        "eidolon_slot_count": len(eidolon_slot_ids_by_card.get(card_id, ())),
+                        "builder": "character_data_card_v0_265",
                     },
                 ),
                 coverage_status="blocked" if blocked_reason else "executable",
@@ -136,9 +191,323 @@ def build_character_card_ir(
     return CharacterCardBuildResult(
         avatar_profiles=avatar_profiles,
         character_data_cards=character_cards,
+        character_mechanism_slots=mechanism_slots,
+        character_trace_nodes=trace_nodes,
+        character_eidolon_slots=list(
+            {
+                slot.eidolon_slot_id: slot
+                for slots in eidolon_slots_by_card.values()
+                for slot in slots
+            }.values()
+        ),
         skill_formula_bindings=skill_formula_bindings,
         bounce_policies=bounce_policies,
     )
+
+
+def _character_data_card_contract() -> dict[str, JSONValue]:
+    return {
+        "schema_version": "v0_265",
+        "runtime_boundary": {
+            "runtime_reads": "Canonical IR only",
+            "text_map_allowed_in_runtime": False,
+            "raw_tbgd_allowed_in_runtime": False,
+            "character_name_special_case_allowed": False,
+        },
+        "required_sections": [
+            "identity",
+            "base_profile_source",
+            "action_set",
+            "formula_slots",
+            "target_group_slots",
+            "bounce_policy",
+            "status_and_dynamic_values",
+            "listeners",
+            "extra_actions",
+            "traces",
+            "eidolon_interface",
+        ],
+        "formula_policy": {
+            "shape": "basis_value * multiplier + optional_terms",
+            "basis_is_declared_by_card": True,
+            "attack_default_allowed": False,
+        },
+        "mechanism_policy": {
+            "character_specific_runtime_logic_allowed": False,
+            "character_specific_rules_enter_as_card_slots": True,
+            "unsupported_slots_must_block": True,
+        },
+        "equipment_boundary": {
+            "relics": "external_equipment_card",
+            "light_cones": "external_equipment_card",
+        },
+    }
+
+
+def _action_set_by_card(
+    tbgd_root: Path,
+    *,
+    skill_tables: tuple[SkillTableSpec, ...],
+    skill_to_card: dict[str, str],
+    max_records_per_table: int | None,
+) -> dict[str, dict[str, JSONValue]]:
+    by_card: dict[str, list[dict[str, JSONValue]]] = {}
+    for relative_path, entity_type, id_key in skill_tables:
+        path = tbgd_root / relative_path
+        if not path.exists():
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if not isinstance(data, list):
+            continue
+        for row_index, row in enumerate(_limit_sequence(data, max_records_per_table)):
+            if not isinstance(row, dict) or row.get(id_key) is None:
+                continue
+            raw_id = str(row[id_key])
+            card_id = skill_to_card.get(raw_id)
+            if not card_id:
+                continue
+            action = {
+                "action_id": f"{entity_type}:{raw_id}",
+                "raw_skill_id": raw_id,
+                "level": int(_number_value(row.get("Level"), 1.0)),
+                "skill_trigger_key": str(row.get("SkillTriggerKey") or ""),
+                "skill_effect": str(row.get("SkillEffect") or ""),
+                "attack_type": str(row.get("AttackType") or ""),
+                "max_level": _json_safe(row.get("MaxLevel")),
+                "source_trace": IRSource(
+                    source_path=relative_path,
+                    raw_type=Path(relative_path).stem,
+                    raw_id=raw_id,
+                    evidence={
+                        "row_index": row_index,
+                        "id_key": id_key,
+                        "builder": "character_action_set_v0_265",
+                    },
+                ).to_json(),
+            }
+            by_card.setdefault(card_id, []).append(action)
+    result: dict[str, dict[str, JSONValue]] = {}
+    for card_id, actions in by_card.items():
+        result[card_id] = {
+            "actions": sorted(
+                actions,
+                key=lambda item: (str(item.get("raw_skill_id") or ""), int(item.get("level") or 0)),
+            ),
+            "selection_policy": "runtime resolves action through ActionDefinitionIR; card only records action evidence",
+        }
+    return result
+
+
+def _formula_mechanism_slot(binding: SkillFormulaBindingIR) -> CharacterMechanismSlotIR:
+    return CharacterMechanismSlotIR(
+        mechanism_slot_id=f"character_mechanism_slot:{binding.formula_slot_id}",
+        character_data_card_id=binding.character_data_card_id,
+        mechanism_kind="formula_slot",
+        runtime_system="damage_formula",
+        linked_ir_ids={
+            "skill_formula_binding_id": binding.binding_id,
+            "formula_slot_id": binding.formula_slot_id,
+            "action_id": binding.action_id,
+            "level": binding.level,
+            "bounce_policy_id": binding.bounce_policy_id,
+        },
+        activation={
+            "kind": "always_when_action_executes",
+            "requires_trace_enabled": False,
+        },
+        semantics={
+            "formula_role": binding.formula_role,
+            "basis_expr": binding.scaling_basis_expr,
+            "multiplier_param_index": binding.param_index,
+            "multiplier_param_value": binding.param_value,
+            "target_group_hint": binding.target_group_hint,
+            "hit_sequence_order": binding.sequence_order,
+        },
+        source=binding.source,
+        coverage_status=binding.coverage_status,
+        blocked_reason=binding.blocked_reason,
+    )
+
+
+def _bounce_mechanism_slot(policy: BouncePolicyIR) -> CharacterMechanismSlotIR:
+    return CharacterMechanismSlotIR(
+        mechanism_slot_id=f"character_mechanism_slot:{policy.bounce_policy_id}",
+        character_data_card_id=policy.character_data_card_id,
+        mechanism_kind="bounce_policy",
+        runtime_system="target_system",
+        linked_ir_ids={
+            "bounce_policy_id": policy.bounce_policy_id,
+            "action_id": policy.action_id,
+            "level": policy.level,
+        },
+        activation={
+            "kind": "when_action_target_mode_is_bounce",
+            "requires_trace_enabled": False,
+        },
+        semantics={
+            "bounce_count": policy.bounce_count,
+            "candidate_scope": policy.candidate_scope,
+            "selection_strategy": policy.selection_strategy,
+            "live_target_priority": policy.live_target_priority,
+            "continue_on_all_defeated": policy.continue_on_all_defeated,
+            "rng_source_kind": policy.rng_source_kind,
+        },
+        source=policy.source,
+        coverage_status=policy.coverage_status,
+        blocked_reason=policy.blocked_reason,
+    )
+
+
+def _trace_nodes_and_slots(
+    tbgd_root: Path,
+    *,
+    avatar_id_to_card: dict[str, str],
+    max_records_per_table: int | None,
+) -> tuple[list[CharacterTraceNodeIR], list[CharacterMechanismSlotIR]]:
+    trace_nodes: list[CharacterTraceNodeIR] = []
+    slots: list[CharacterMechanismSlotIR] = []
+    for relative_path in ("ExcelOutput/AvatarSkillTreeConfig.json", "ExcelOutput/AvatarSkillTreeConfigLD.json"):
+        path = tbgd_root / relative_path
+        if not path.exists():
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if not isinstance(data, list):
+            continue
+        for row_index, row in enumerate(_limit_sequence(data, max_records_per_table)):
+            if not isinstance(row, dict) or row.get("AvatarID") is None or row.get("PointID") is None:
+                continue
+            avatar_id = str(row["AvatarID"])
+            card_id = avatar_id_to_card.get(avatar_id)
+            if not card_id:
+                continue
+            point_id = str(row["PointID"])
+            level = int(_number_value(row.get("Level"), 1.0))
+            trace_node_id = f"character_trace_node:{card_id}:{point_id}:{level}"
+            source = IRSource(
+                source_path=relative_path,
+                raw_type=Path(relative_path).stem,
+                raw_id=f"{point_id}:{level}",
+                evidence={
+                    "row_index": row_index,
+                    "avatar_id": avatar_id,
+                    "point_id": point_id,
+                    "level": level,
+                    "point_type": _json_safe(row.get("PointType")),
+                    "anchor_type": str(row.get("AnchorType") or ""),
+                    "point_trigger_key": str(row.get("PointTriggerKey") or ""),
+                    "ability_name": str(row.get("AbilityName") or ""),
+                    "status_add_list": _json_safe(row.get("StatusAddList") or []),
+                    "extra_effect_id_list": _json_safe(row.get("ExtraEffectIDList") or []),
+                    "builder": "character_trace_node_v0_265",
+                },
+            )
+            linked_slot_ids: list[str] = []
+            status_add_list = row.get("StatusAddList")
+            if isinstance(status_add_list, list) and status_add_list:
+                slot_id = f"character_mechanism_slot:{card_id}:trace:{point_id}:{level}:static_status_add"
+                linked_slot_ids.append(slot_id)
+                slots.append(
+                    CharacterMechanismSlotIR(
+                        mechanism_slot_id=slot_id,
+                        character_data_card_id=card_id,
+                        mechanism_kind="trace_static_stat_bonus",
+                        runtime_system="avatar_profile_assembly",
+                        linked_ir_ids={"trace_node_id": trace_node_id},
+                        activation={
+                            "kind": "trace_toggle",
+                            "trace_node_id": trace_node_id,
+                            "default_enabled": bool(row.get("DefaultUnlock") is True),
+                        },
+                        semantics={
+                            "status_add_list": _json_safe(status_add_list),
+                            "application_boundary": "character_panel_assembly",
+                        },
+                        source=source,
+                        coverage_status="blocked",
+                        blocked_reason="avatar_panel_trace_stat_application_pending",
+                    )
+                )
+            ability_name = str(row.get("AbilityName") or "")
+            if ability_name:
+                slot_id = f"character_mechanism_slot:{card_id}:trace:{point_id}:{level}:ability"
+                linked_slot_ids.append(slot_id)
+                slots.append(
+                    CharacterMechanismSlotIR(
+                        mechanism_slot_id=slot_id,
+                        character_data_card_id=card_id,
+                        mechanism_kind="trace_ability_hook",
+                        runtime_system="event_dispatch_or_effect_registry",
+                        linked_ir_ids={"trace_node_id": trace_node_id, "ability_name": ability_name},
+                        activation={
+                            "kind": "trace_toggle",
+                            "trace_node_id": trace_node_id,
+                            "default_enabled": bool(row.get("DefaultUnlock") is True),
+                        },
+                        semantics={
+                            "ability_name": ability_name,
+                            "admission_boundary": "must resolve to admitted ability graph/effect before executable",
+                        },
+                        source=source,
+                        coverage_status="blocked",
+                        blocked_reason="trace_ability_effect_not_admitted_v0_265",
+                    )
+                )
+            trace_nodes.append(
+                CharacterTraceNodeIR(
+                    trace_node_id=trace_node_id,
+                    character_data_card_id=card_id,
+                    avatar_id=avatar_id,
+                    trace_id=point_id,
+                    trace_kind=str(row.get("PointType") or ""),
+                    linked_mechanism_slot_ids=tuple(linked_slot_ids),
+                    source=source,
+                    coverage_status="executable",
+                )
+            )
+    return trace_nodes, slots
+
+
+def _eidolon_slots_from_avatar_row(
+    relative_path: str,
+    row_index: int,
+    row: dict[str, Any],
+    card_id: str,
+) -> list[CharacterEidolonSlotIR]:
+    avatar_id = str(row["AvatarID"])
+    rank_ids = row.get("RankIDList")
+    if not isinstance(rank_ids, list):
+        rank_ids = []
+    slots: list[CharacterEidolonSlotIR] = []
+    for index in range(6):
+        rank_id = str(rank_ids[index]) if index < len(rank_ids) else ""
+        slots.append(
+            CharacterEidolonSlotIR(
+                eidolon_slot_id=f"character_eidolon_slot:{card_id}:rank:{index + 1}",
+                character_data_card_id=card_id,
+                avatar_id=avatar_id,
+                rank=index + 1,
+                rank_id=rank_id,
+                linked_mechanism_slot_ids=(),
+                source=IRSource(
+                    source_path=relative_path,
+                    raw_type=Path(relative_path).stem,
+                    raw_id=f"{avatar_id}:rank:{index + 1}",
+                    evidence={
+                        "row_index": row_index,
+                        "rank_id": rank_id,
+                        "rank_id_list": _json_safe(rank_ids),
+                        "builder": "character_eidolon_interface_v0_265",
+                    },
+                ),
+            )
+        )
+    return slots
 
 
 def skill_formula_bindings_from_row(

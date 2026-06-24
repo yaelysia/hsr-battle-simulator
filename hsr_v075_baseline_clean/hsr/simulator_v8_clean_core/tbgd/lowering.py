@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import base64
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +26,8 @@ from ..rules.ir import (
     BreakTemplateIR,
     BouncePolicyIR,
     CanonicalIR,
+    CharacterDataCardIR,
+    CharacterMechanismSlotIR,
     CombatantActionSetIR,
     CombatantProfileIR,
     ConditionIR,
@@ -195,6 +197,9 @@ class TBGDLowering:
         )
         avatar_profiles = character_cards.avatar_profiles
         character_data_cards = character_cards.character_data_cards
+        character_mechanism_slots = list(character_cards.character_mechanism_slots)
+        character_trace_nodes = character_cards.character_trace_nodes
+        character_eidolon_slots = character_cards.character_eidolon_slots
         skill_formula_bindings = character_cards.skill_formula_bindings
         bounce_policies = character_cards.bounce_policies
         combatant_profiles = self._lower_combatant_profiles()
@@ -287,6 +292,18 @@ class TBGDLowering:
             skill_continuations=skill_continuations,
             extra_turn_source_basis=extra_turn_source_basis,
         )
+        runtime_character_slots = _character_runtime_mechanism_slots(
+            character_data_cards=character_data_cards,
+            skill_formula_bindings=skill_formula_bindings,
+            action_ability_bindings=action_ability_bindings,
+            status_callbacks=status_callbacks,
+            queue_intents=queue_intents,
+            queue_windows=queue_windows,
+            extra_action_policies=extra_action_policies,
+            skill_continuations=skill_continuations,
+        )
+        character_mechanism_slots.extend(runtime_character_slots)
+        character_data_cards = _attach_character_runtime_mechanism_slots(character_data_cards, runtime_character_slots)
         entities = list(_dedupe_entities(entities).values())
         formulas.extend(self._lower_elation_mechanics())
         formulas.extend(self._lower_damage_behavior_templates())
@@ -296,6 +313,9 @@ class TBGDLowering:
             entities=tuple(entities),
             avatar_profiles=tuple(avatar_profiles),
             character_data_cards=tuple(character_data_cards),
+            character_mechanism_slots=tuple(character_mechanism_slots),
+            character_trace_nodes=tuple(character_trace_nodes),
+            character_eidolon_slots=tuple(character_eidolon_slots),
             bounce_policies=tuple(bounce_policies),
             combatant_profiles=tuple(combatant_profiles),
             action_definitions=tuple(action_definitions),
@@ -376,6 +396,9 @@ class TBGDLowering:
                     "super_break_emission_count": len(super_break_emissions),
                     "skill_formula_binding_count": len(skill_formula_bindings),
                     "bounce_policy_count": len(bounce_policies),
+                    "character_mechanism_slot_count": len(character_mechanism_slots),
+                    "character_trace_node_count": len(character_trace_nodes),
+                    "character_eidolon_slot_count": len(character_eidolon_slots),
                 },
                 "avatar_profile_status": {
                     "lowered_count": len(avatar_profiles),
@@ -2100,6 +2123,200 @@ def _entity_raw_id(entity_type: str, id_key: str, row: dict[str, Any]) -> str:
         promotion = row.get("Promotion", 0)
         return f"{row[id_key]}:{promotion}"
     return str(row[id_key])
+
+
+def _character_runtime_mechanism_slots(
+    *,
+    character_data_cards: list[CharacterDataCardIR],
+    skill_formula_bindings: list[SkillFormulaBindingIR],
+    action_ability_bindings: list[ActionAbilityBindingIR],
+    status_callbacks: list[StatusCallbackIR],
+    queue_intents: list[QueueIntentIR],
+    queue_windows: list[QueueWindowIR],
+    extra_action_policies: list[ExtraActionPolicyIR],
+    skill_continuations: list[SkillContinuationIR],
+) -> list[CharacterMechanismSlotIR]:
+    valid_card_ids = {card.card_id for card in character_data_cards}
+    action_to_card: dict[tuple[str, int], str] = {}
+    for binding in skill_formula_bindings:
+        if binding.character_data_card_id in valid_card_ids:
+            action_to_card[(binding.action_id, binding.level)] = binding.character_data_card_id
+    ability_file_to_card: dict[str, str] = {}
+    for binding in action_ability_bindings:
+        card_id = action_to_card.get((binding.action_id, binding.level))
+        if not card_id:
+            continue
+        ability_file = _ability_file_from_action_binding(binding)
+        if ability_file:
+            ability_file_to_card[ability_file] = card_id
+    callback_to_card: dict[str, str] = {}
+    slots: list[CharacterMechanismSlotIR] = []
+    for callback in status_callbacks:
+        card_id = ability_file_to_card.get(callback.source.source_path, "")
+        if not card_id:
+            continue
+        callback_to_card[callback.callback_id] = card_id
+        slots.append(
+            CharacterMechanismSlotIR(
+                mechanism_slot_id=f"character_mechanism_slot:{card_id}:status_callback:{callback.callback_id}",
+                character_data_card_id=card_id,
+                mechanism_kind="status_callback",
+                runtime_system="event_dispatch_system",
+                linked_ir_ids={
+                    "status_callback_id": callback.callback_id,
+                    "modifier_name": callback.modifier_name,
+                    "event": callback.event,
+                    "task_ids": list(callback.task_ids),
+                },
+                activation={
+                    "kind": "status_listener",
+                    "event": callback.event,
+                    "scope_kind": callback.scope_kind,
+                    "source_mode": callback.source_mode,
+                },
+                semantics={
+                    "admission_status": callback.admission_status,
+                    "blocking_dependency": callback.blocking_dependency,
+                    "blocked_reason": callback.blocked_reason,
+                },
+                source=callback.source,
+                coverage_status=callback.coverage_status,
+                blocked_reason=callback.blocked_reason,
+            )
+        )
+    intent_to_card: dict[str, str] = {}
+    window_by_intent = {window.queue_intent_id: window for window in queue_windows}
+    for intent in queue_intents:
+        card_id = callback_to_card.get(intent.callback_id) or ability_file_to_card.get(intent.source.source_path, "")
+        if not card_id:
+            continue
+        intent_to_card[intent.queue_intent_id] = card_id
+        window = window_by_intent.get(intent.queue_intent_id)
+        slots.append(
+            CharacterMechanismSlotIR(
+                mechanism_slot_id=f"character_mechanism_slot:{card_id}:queue_intent:{intent.queue_intent_id}",
+                character_data_card_id=card_id,
+                mechanism_kind="queue_intent",
+                runtime_system="queue_system",
+                linked_ir_ids={
+                    "queue_intent_id": intent.queue_intent_id,
+                    "callback_id": intent.callback_id,
+                    "source_task_id": intent.source_task_id,
+                    "queue_window_id": window.queue_window_id if window else "",
+                },
+                activation={
+                    "kind": "callback_task",
+                    "opcode": intent.opcode,
+                    "queue_kind": intent.queue_kind,
+                },
+                semantics={
+                    "action_ref_or_ability_name": intent.action_ref_or_ability_name,
+                    "skill_index_expr": intent.skill_index_expr,
+                    "actor_target_alias": intent.actor_target_alias,
+                    "ability_target_alias": intent.ability_target_alias,
+                    "window_family": window.window_family if window else "",
+                },
+                source=intent.source,
+                coverage_status=intent.coverage_status,
+                blocked_reason=intent.blocked_reason,
+            )
+        )
+    for policy in extra_action_policies:
+        card_id = intent_to_card.get(policy.queue_intent_id)
+        if not card_id:
+            continue
+        slots.append(
+            CharacterMechanismSlotIR(
+                mechanism_slot_id=f"character_mechanism_slot:{card_id}:extra_action_policy:{policy.extra_action_policy_id}",
+                character_data_card_id=card_id,
+                mechanism_kind="extra_action_policy",
+                runtime_system="scheduler",
+                linked_ir_ids={
+                    "extra_action_policy_id": policy.extra_action_policy_id,
+                    "queue_intent_id": policy.queue_intent_id,
+                    "queue_window_id": policy.queue_window_id,
+                    "lifecycle_policy_id": policy.lifecycle_policy_id,
+                },
+                activation={
+                    "kind": "queue_window",
+                    "source_kind": policy.source_kind,
+                },
+                semantics={
+                    "action_selection_kind": policy.action_selection_kind,
+                    "allowed_action_kinds": list(policy.allowed_action_kinds),
+                    "fixed_action_ref": policy.fixed_action_ref,
+                    "source_basis": policy.source_basis,
+                },
+                source=policy.source,
+                coverage_status=policy.coverage_status,
+                blocked_reason=policy.blocked_reason,
+            )
+        )
+    for continuation in skill_continuations:
+        card_id = action_to_card.get((continuation.action_id, continuation.level))
+        if not card_id:
+            continue
+        slots.append(
+            CharacterMechanismSlotIR(
+                mechanism_slot_id=f"character_mechanism_slot:{card_id}:skill_continuation:{continuation.continuation_id}",
+                character_data_card_id=card_id,
+                mechanism_kind="skill_continuation",
+                runtime_system="skill_continuation_runner",
+                linked_ir_ids={
+                    "skill_continuation_id": continuation.continuation_id,
+                    "source_task_id": continuation.source_task_id,
+                    "action_id": continuation.action_id,
+                    "level": continuation.level,
+                },
+                activation={
+                    "kind": "ability_task",
+                    "opcode": continuation.opcode,
+                },
+                semantics={
+                    "continuation_kind": continuation.continuation_kind,
+                    "fixed_skill_type": continuation.fixed_skill_type,
+                    "child_skill_index_expr": continuation.child_skill_index_expr,
+                },
+                source=continuation.source,
+                coverage_status=continuation.coverage_status,
+                blocked_reason=continuation.blocked_reason,
+            )
+        )
+    return _dedupe_character_mechanism_slots(slots)
+
+
+def _attach_character_runtime_mechanism_slots(
+    cards: list[CharacterDataCardIR],
+    slots: list[CharacterMechanismSlotIR],
+) -> list[CharacterDataCardIR]:
+    slot_ids_by_card: dict[str, list[str]] = {}
+    for slot in slots:
+        slot_ids_by_card.setdefault(slot.character_data_card_id, []).append(slot.mechanism_slot_id)
+    updated: list[CharacterDataCardIR] = []
+    for card in cards:
+        existing = list(card.mechanism_slot_ids)
+        existing.extend(slot_ids_by_card.get(card.card_id, ()))
+        updated.append(replace(card, mechanism_slot_ids=tuple(sorted(dict.fromkeys(existing)))))
+    return updated
+
+
+def _dedupe_character_mechanism_slots(slots: list[CharacterMechanismSlotIR]) -> list[CharacterMechanismSlotIR]:
+    deduped: dict[str, CharacterMechanismSlotIR] = {}
+    for slot in slots:
+        deduped[slot.mechanism_slot_id] = slot
+    return list(deduped.values())
+
+
+def _ability_file_from_action_binding(binding: ActionAbilityBindingIR) -> str:
+    for value in (
+        binding.config_source.get("ability_file") if isinstance(binding.config_source, dict) else None,
+        binding.config_source.get("ability_file_path") if isinstance(binding.config_source, dict) else None,
+        binding.source.evidence.get("ability_file") if isinstance(binding.source.evidence, dict) else None,
+        binding.source.evidence.get("ability_file_path") if isinstance(binding.source.evidence, dict) else None,
+    ):
+        if isinstance(value, str) and value:
+            return value
+    return ""
 
 
 def _dedupe_entities(entities: list[RuleEntity]) -> dict[str, RuleEntity]:

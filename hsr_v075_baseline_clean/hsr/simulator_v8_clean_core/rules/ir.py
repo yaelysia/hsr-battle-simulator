@@ -193,15 +193,107 @@ class CharacterDataCardIR:
     source: IRSource
     coverage_status: CoverageStatus = "blocked"
     blocked_reason: str = ""
+    schema_version: str = "v0_265"
+    action_set: dict[str, JSONValue] = field(default_factory=dict)
+    mechanism_slot_ids: tuple[str, ...] = ()
+    trace_node_ids: tuple[str, ...] = ()
+    eidolon_slot_ids: tuple[str, ...] = ()
+    card_contract: dict[str, JSONValue] = field(default_factory=dict)
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
             "card_id": self.card_id,
+            "schema_version": self.schema_version,
             "entity_ref": self.entity_ref,
             "profile_id": self.profile_id,
             "skill_ids": list(self.skill_ids),
+            "action_set": self.action_set,
             "skill_formula_binding_ids": list(self.skill_formula_binding_ids),
             "bounce_policy_ids": list(self.bounce_policy_ids),
+            "mechanism_slot_ids": list(self.mechanism_slot_ids),
+            "trace_node_ids": list(self.trace_node_ids),
+            "eidolon_slot_ids": list(self.eidolon_slot_ids),
+            "card_contract": self.card_contract,
+            "source": self.source.to_json(),
+            "coverage_status": self.coverage_status,
+            "blocked_reason": self.blocked_reason,
+        }
+
+
+@dataclass(frozen=True)
+class CharacterMechanismSlotIR:
+    mechanism_slot_id: str
+    character_data_card_id: str
+    mechanism_kind: str
+    runtime_system: str
+    linked_ir_ids: dict[str, JSONValue]
+    activation: dict[str, JSONValue]
+    semantics: dict[str, JSONValue]
+    source: IRSource
+    coverage_status: CoverageStatus = "blocked"
+    blocked_reason: str = ""
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "mechanism_slot_id": self.mechanism_slot_id,
+            "character_data_card_id": self.character_data_card_id,
+            "mechanism_kind": self.mechanism_kind,
+            "runtime_system": self.runtime_system,
+            "linked_ir_ids": self.linked_ir_ids,
+            "activation": self.activation,
+            "semantics": self.semantics,
+            "source": self.source.to_json(),
+            "coverage_status": self.coverage_status,
+            "blocked_reason": self.blocked_reason,
+        }
+
+
+@dataclass(frozen=True)
+class CharacterTraceNodeIR:
+    trace_node_id: str
+    character_data_card_id: str
+    avatar_id: str
+    trace_id: str
+    trace_kind: str
+    linked_mechanism_slot_ids: tuple[str, ...]
+    source: IRSource
+    coverage_status: CoverageStatus = "blocked"
+    blocked_reason: str = ""
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "trace_node_id": self.trace_node_id,
+            "character_data_card_id": self.character_data_card_id,
+            "avatar_id": self.avatar_id,
+            "trace_id": self.trace_id,
+            "trace_kind": self.trace_kind,
+            "linked_mechanism_slot_ids": list(self.linked_mechanism_slot_ids),
+            "source": self.source.to_json(),
+            "coverage_status": self.coverage_status,
+            "blocked_reason": self.blocked_reason,
+        }
+
+
+@dataclass(frozen=True)
+class CharacterEidolonSlotIR:
+    eidolon_slot_id: str
+    character_data_card_id: str
+    avatar_id: str
+    rank: int
+    rank_id: str
+    linked_mechanism_slot_ids: tuple[str, ...]
+    source: IRSource
+    coverage_status: CoverageStatus = "blocked"
+    blocked_reason: str = "eidolon_interface_reserved_v0_265"
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "eidolon_slot_id": self.eidolon_slot_id,
+            "character_data_card_id": self.character_data_card_id,
+            "avatar_id": self.avatar_id,
+            "rank": self.rank,
+            "rank_id": self.rank_id,
+            "linked_mechanism_slot_ids": list(self.linked_mechanism_slot_ids),
             "source": self.source.to_json(),
             "coverage_status": self.coverage_status,
             "blocked_reason": self.blocked_reason,
@@ -1192,6 +1284,9 @@ class CanonicalIR:
     entities: tuple[RuleEntity, ...] = ()
     avatar_profiles: tuple[AvatarProfileIR, ...] = ()
     character_data_cards: tuple[CharacterDataCardIR, ...] = ()
+    character_mechanism_slots: tuple[CharacterMechanismSlotIR, ...] = ()
+    character_trace_nodes: tuple[CharacterTraceNodeIR, ...] = ()
+    character_eidolon_slots: tuple[CharacterEidolonSlotIR, ...] = ()
     bounce_policies: tuple[BouncePolicyIR, ...] = ()
     combatant_profiles: tuple[CombatantProfileIR, ...] = ()
     action_definitions: tuple[ActionDefinitionIR, ...] = ()
@@ -1236,6 +1331,9 @@ class CanonicalIR:
             "entities": [entity.to_json() for entity in self.entities],
             "avatar_profiles": [profile.to_json() for profile in self.avatar_profiles],
             "character_data_cards": [card.to_json() for card in self.character_data_cards],
+            "character_mechanism_slots": [slot.to_json() for slot in self.character_mechanism_slots],
+            "character_trace_nodes": [node.to_json() for node in self.character_trace_nodes],
+            "character_eidolon_slots": [slot.to_json() for slot in self.character_eidolon_slots],
             "bounce_policies": [policy.to_json() for policy in self.bounce_policies],
             "combatant_profiles": [profile.to_json() for profile in self.combatant_profiles],
             "action_definitions": [definition.to_json() for definition in self.action_definitions],

@@ -10,6 +10,9 @@ from .ir import (
     ActionDelayEmissionIR,
     ActionEventIR,
     AvatarProfileIR,
+    CharacterEidolonSlotIR,
+    CharacterMechanismSlotIR,
+    CharacterTraceNodeIR,
     CharacterDataCardIR,
     BreakBaseDamageIR,
     BreakDamageEmissionIR,
@@ -67,6 +70,54 @@ class RuleBook:
             self,
             "_character_data_cards_by_entity_ref",
             {card.entity_ref: card for card in self.ir.character_data_cards},
+        )
+        mechanism_slots_by_card: dict[str, list[CharacterMechanismSlotIR]] = {}
+        for slot in self.ir.character_mechanism_slots:
+            mechanism_slots_by_card.setdefault(slot.character_data_card_id, []).append(slot)
+        object.__setattr__(
+            self,
+            "_character_mechanism_slots",
+            {slot.mechanism_slot_id: slot for slot in self.ir.character_mechanism_slots},
+        )
+        object.__setattr__(
+            self,
+            "_character_mechanism_slots_by_card",
+            {
+                key: tuple(sorted(value, key=lambda item: item.mechanism_slot_id))
+                for key, value in mechanism_slots_by_card.items()
+            },
+        )
+        trace_nodes_by_card: dict[str, list[CharacterTraceNodeIR]] = {}
+        for node in self.ir.character_trace_nodes:
+            trace_nodes_by_card.setdefault(node.character_data_card_id, []).append(node)
+        object.__setattr__(
+            self,
+            "_character_trace_nodes",
+            {node.trace_node_id: node for node in self.ir.character_trace_nodes},
+        )
+        object.__setattr__(
+            self,
+            "_character_trace_nodes_by_card",
+            {
+                key: tuple(sorted(value, key=lambda item: (item.trace_id, item.trace_node_id)))
+                for key, value in trace_nodes_by_card.items()
+            },
+        )
+        eidolon_slots_by_card: dict[str, list[CharacterEidolonSlotIR]] = {}
+        for slot in self.ir.character_eidolon_slots:
+            eidolon_slots_by_card.setdefault(slot.character_data_card_id, []).append(slot)
+        object.__setattr__(
+            self,
+            "_character_eidolon_slots",
+            {slot.eidolon_slot_id: slot for slot in self.ir.character_eidolon_slots},
+        )
+        object.__setattr__(
+            self,
+            "_character_eidolon_slots_by_card",
+            {
+                key: tuple(sorted(value, key=lambda item: (item.rank, item.eidolon_slot_id)))
+                for key, value in eidolon_slots_by_card.items()
+            },
         )
         bounce_policies_by_action: dict[tuple[str, int], list[BouncePolicyIR]] = {}
         for policy in self.ir.bounce_policies:
@@ -583,6 +634,24 @@ class RuleBook:
 
     def character_data_card_for_entity(self, entity_ref: str) -> CharacterDataCardIR | None:
         return self._character_data_cards_by_entity_ref.get(entity_ref)
+
+    def character_mechanism_slot(self, mechanism_slot_id: str) -> CharacterMechanismSlotIR | None:
+        return self._character_mechanism_slots.get(mechanism_slot_id)
+
+    def character_mechanism_slots_for_card(self, card_id: str) -> tuple[CharacterMechanismSlotIR, ...]:
+        return self._character_mechanism_slots_by_card.get(card_id, ())
+
+    def character_trace_node(self, trace_node_id: str) -> CharacterTraceNodeIR | None:
+        return self._character_trace_nodes.get(trace_node_id)
+
+    def character_trace_nodes_for_card(self, card_id: str) -> tuple[CharacterTraceNodeIR, ...]:
+        return self._character_trace_nodes_by_card.get(card_id, ())
+
+    def character_eidolon_slot(self, eidolon_slot_id: str) -> CharacterEidolonSlotIR | None:
+        return self._character_eidolon_slots.get(eidolon_slot_id)
+
+    def character_eidolon_slots_for_card(self, card_id: str) -> tuple[CharacterEidolonSlotIR, ...]:
+        return self._character_eidolon_slots_by_card.get(card_id, ())
 
     def require_combatant_profile(self, entity_id: str) -> CombatantProfileIR:
         profile = self.combatant_profile(entity_id)
