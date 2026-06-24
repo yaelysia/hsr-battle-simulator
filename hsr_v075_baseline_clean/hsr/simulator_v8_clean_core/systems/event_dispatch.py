@@ -534,6 +534,9 @@ SCOPE_PRIORITY = {
 
 
 CANONICAL_EVENT_ALIASES: dict[str, tuple[tuple[str, str, str], ...]] = {
+    "turn.begin": (
+        ("OnListenAllowAction", "owner_local", ""),
+    ),
     "action.after_attack": (
         ("OnListenAfterAttack", "global_listener", ""),
     ),
@@ -645,6 +648,8 @@ def _scope_kind_for_callback_event(event: GameEvent, callback_event: str) -> str
     explicit = event.payload.get("listener_scope")
     if isinstance(explicit, str) and explicit:
         return explicit
+    if callback_event == "OnListenAllowAction":
+        return "owner_local"
     if callback_event.startswith("OnListen"):
         return "global_listener"
     if (

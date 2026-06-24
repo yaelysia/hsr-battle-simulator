@@ -22,12 +22,14 @@
 - `action.after_attack` 通过统一 dispatcher 发布，支持加强版希儿 50% 自动战技监听。
 - `TurnInsertAction.IgnoreBPDec` 进入 queue source trace，并在 scheduler/executor 中跳过战技点消耗与回能。
 - `TurnInsertAction.PreCheck(SameTagInsertUnusedCount)` 进入 queue admission；已有使用标记时不再入队。
+- `OnListenAllowAction -> RemoveSelfModifier` 接入状态回调执行链；希儿回合开始会移除自动战技已用标记。
+- 状态回调内的 queue precheck 会在同组选中子任务执行前运行；如果“一回合一次”预检失败，前置辅助状态不会先污染战斗状态。
 - 角色卡新增通用 `skill_param_slot`，用于保存非伤害公式参数证据，例如加强版希儿天赋持续时间。
 - `extra_turn_ultimate_action_not_allowed` 硬禁路径已移除。
 
 ## 仍未做
 
-- 50% 自动战技的“回合开始重置次数”还未做完整 turn-begin 还原链路；当前已支持有使用标记时阻止再次入队。
+- 本阶段只接入希儿加强版示例卡中已能追溯到 Advanced 配置和角色卡槽位的机制；其他角色加强版卡片尚未制作。
 - 本阶段不做遗器、光锥、完整星魂、敌方 AI、波次系统。
 
 ## 验证

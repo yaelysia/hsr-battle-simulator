@@ -13,6 +13,7 @@ from .dot_formula import DotFormula, DotFormulaInput
 from .dynamic_values import binding_source_from_store, find_status_detail, status_binding_sources, store_from_state
 from .effect import EffectExecutionContext, EffectRegistry
 from .queue import QueueEntry, QueueSystem, QueueTargetResolver
+from .status import StatusSystem
 from .timeline import TimelineSystem
 
 
@@ -45,7 +46,7 @@ class StatusCallbackSystem:
         self.timeline = timeline or TimelineSystem()
         self.queue = queue or QueueSystem()
         self.queue_targets = QueueTargetResolver()
-        self.effect_registry = effect_registry or EffectRegistry()
+        self.effect_registry = effect_registry or EffectRegistry(StatusSystem(rules))
         self.evaluator = RuleEvaluator()
 
     def execute(
@@ -309,6 +310,22 @@ class StatusCallbackSystem:
         ]
         events: list[GameEvent] = []
         errors: list[str] = []
+        precheck_result = self._precheck_selected_queue_group(
+            state,
+            callback,
+            task,
+            detail,
+            trigger_event,
+            selected_child_ids,
+            tasks,
+        )
+        if precheck_result is not None:
+            return StatusCallbackExecutionResult(
+                ok=False,
+                after_state=state,
+                records=tuple(records) + precheck_result.records,
+                errors=precheck_result.errors,
+            )
         for child_id in selected_child_ids:
             child = tasks.get(child_id)
             if child is None:
@@ -409,6 +426,24 @@ class StatusCallbackSystem:
             if not result.ok or result.result is not True:
                 continue
             selected_count += 1
+            precheck_result = self._precheck_selected_queue_group(
+                current_state,
+                callback,
+                task,
+                detail,
+                retarget_event,
+                task.child_task_ids,
+                tasks,
+            )
+            if precheck_result is not None:
+                return StatusCallbackExecutionResult(
+                    ok=False,
+                    after_state=current_state,
+                    mutations=tuple(mutations),
+                    records=tuple(records) + precheck_result.records,
+                    events=tuple(events),
+                    errors=precheck_result.errors,
+                )
             for child_id in task.child_task_ids:
                 child = tasks.get(child_id)
                 if child is None:
@@ -1023,6 +1058,68 @@ class StatusCallbackSystem:
             records=tuple(records),
             errors=tuple(errors),
         )
+
+    def _precheck_selected_queue_group(
+        self,
+        state: BattleState,
+        callback: StatusCallbackIR,
+        parent_task: StatusCallbackTaskIR,
+        detail: dict[str, JSONValue],
+        trigger_event: GameEvent | None,
+        selected_child_ids: tuple[str, ...],
+        tasks: dict[str, StatusCallbackTaskIR],
+    ) -> StatusCallbackExecutionResult | None:
+        for child_id in selected_child_ids:
+            child = tasks.get(child_id)
+            if child is None:
+                continue
+            intents = tuple(
+                intent
+                for intent in self.rules.queue_intents_for_callback(callback.callback_id)
+                if intent.source_task_id == child.task_id
+            )
+            if not intents:
+                continue
+            for intent in intents:
+                if intent.coverage_status != "executable":
+                    continue
+                window = self.rules.queue_window_for_intent(intent.queue_intent_id)
+                if window is None or window.coverage_status != "executable":
+                    continue
+                target_resolution = self.queue_targets.resolve(
+                    state,
+                    detail=detail,
+                    trigger_event=trigger_event,
+                    actor_alias=intent.actor_target_alias,
+                    target_alias=intent.ability_target_alias,
+                    source_trace={
+                        "queue_window_source": window.source.to_json(),
+                        "queue_intent_source": intent.source.to_json(),
+                    },
+                )
+                if not target_resolution.ok:
+                    continue
+                reason = _queue_insert_precheck_blocked(state, intent, target_resolution.actor_id)
+                if not reason:
+                    continue
+                records = (
+                    _task_blocked_record(
+                        callback,
+                        parent_task,
+                        detail,
+                        reason,
+                        ok=False,
+                        selected_child_ids=selected_child_ids,
+                    ),
+                    _queue_intent_blocked_record(callback, child, detail, intent, reason),
+                )
+                return StatusCallbackExecutionResult(
+                    ok=False,
+                    after_state=state,
+                    records=records,
+                    errors=(reason,),
+                )
+        return None
 
     def _blocked_queue_intents(
         self,

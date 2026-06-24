@@ -385,6 +385,18 @@ def _auto_skill_50_case(rules: RuleBook, card: CharacterDataCardIR) -> dict[str,
         used_marker=True,
     )
     used_result = _dispatch_after_attack(rules, used_state, target_id="enemy:target")
+    reset_result = _dispatch_turn_begin(rules, used_state, actor_id="ally:seele")
+    reset_transition = _callback_transition(
+        before_state=used_state,
+        after_state=reset_result.after_state,
+        records=reset_result.records,
+        mutations=reset_result.mutations,
+        events=reset_result.events,
+        action_id="event_dispatch:auto_skill_turn_begin_reset",
+        actor_id="ally:seele",
+        target_id="ally:seele",
+        metadata={"callback_event": "OnListenAllowAction", "character_data_card_id": card.card_id},
+    )
     no_target_state = _auto_skill_state(
         rules,
         callback,
@@ -394,11 +406,14 @@ def _auto_skill_50_case(rules: RuleBook, card: CharacterDataCardIR) -> dict[str,
     )
     no_target_result = _dispatch_after_attack(rules, no_target_state, target_id="enemy:target")
     passing_audit = RuntimeSourceAuditor(rules).validate_transition(passing_transition)
+    reset_audit = RuntimeSourceAuditor(rules).validate_transition(reset_transition)
     passing_entries = _queue_entries(passing_result.after_state, "turn_insert_action")
     passing_entry = passing_entries[0] if passing_entries else {}
     checks = {
         **{f"passing_{key}": value for key, value in _transition_checks(passing_transition, passing_state).items()},
+        **{f"reset_{key}": value for key, value in _transition_checks(reset_transition, used_state).items()},
         "passing_source_audit": passing_audit.ok,
+        "reset_source_audit": reset_audit.ok,
         "auto_skill_callback_executable": callback.coverage_status == "executable",
         "passing_enqueued_action": bool(passing_entries),
         "passing_target_is_attacked_target": passing_entry.get("target_ids") == ["enemy:target"],
@@ -407,6 +422,11 @@ def _auto_skill_50_case(rules: RuleBook, card: CharacterDataCardIR) -> dict[str,
         and _entry_resource_policy(passing_entry).get("ignore_energy_gain") is True,
         "high_hp_state_unchanged": high_hp_state.snapshot().to_json() == high_hp_result.after_state.snapshot().to_json(),
         "used_once_state_unchanged": used_state.snapshot().to_json() == used_result.after_state.snapshot().to_json(),
+        "turn_begin_reset_removed_used_marker": not _unit_has_modifier(
+            reset_result.after_state,
+            "ally:seele",
+            "MAvatar_Advanced_Seele_00_Skill02InsertCheck",
+        ),
         "no_live_target_state_unchanged": no_target_state.snapshot().to_json() == no_target_result.after_state.snapshot().to_json(),
     }
     checks["ok"] = all(value for key, value in checks.items() if key != "ok")
@@ -415,12 +435,13 @@ def _auto_skill_50_case(rules: RuleBook, card: CharacterDataCardIR) -> dict[str,
         "selected_callback": callback.to_json(),
         "passing_queue_entry": passing_entry,
         "passing_transition": passing_transition.to_json(),
+        "reset_transition": reset_transition.to_json(),
         "negative_results": {
             "high_hp_errors": list(high_hp_result.errors),
             "used_once_errors": list(used_result.errors),
             "no_live_target_errors": list(no_target_result.errors),
         },
-        "source_audit": passing_audit.to_json(),
+        "source_audit": {"passing": passing_audit.to_json(), "reset": reset_audit.to_json()},
     }
 
 
@@ -577,6 +598,7 @@ def _auto_skill_state(
         },
     ]
     if used_marker:
+        reset_callback = _select_auto_skill_reset_callback(rules)
         statuses.append(f"modifier:{used_modifier}")
         details.append(
             {
@@ -585,7 +607,8 @@ def _auto_skill_state(
                 "modifier_name": used_modifier,
                 "owner_id": "ally:seele",
                 "caster_id": "ally:seele",
-                "source_trace": {"validation": "same_tag_insert_used_marker"},
+                "source_trace": {"status_callback": reset_callback.source.to_json()},
+                "trigger_ids_by_event": {reset_callback.event: [reset_callback.callback_id]},
             }
         )
     seele = UnitState(
@@ -649,6 +672,50 @@ def _dispatch_after_attack(rules: RuleBook, state: BattleState, *, target_id: st
         },
     )
     return EventDispatchSystem(rules, EffectRegistry(StatusSystem(rules))).dispatch_event(state, event=event)
+
+
+def _dispatch_turn_begin(rules: RuleBook, state: BattleState, *, actor_id: str):
+    event = GameEvent(
+        "turn.begin",
+        source_id=actor_id,
+        target_id=actor_id,
+        window="OnListenAllowAction",
+        process_only=True,
+        payload={
+            "actor_id": actor_id,
+            "primary_target_id": actor_id,
+            "current_hit_target_id": actor_id,
+            "target_id": actor_id,
+        },
+    )
+    return EventDispatchSystem(rules, EffectRegistry(StatusSystem(rules))).dispatch_event(state, event=event)
+
+
+def _select_auto_skill_reset_callback(rules: RuleBook) -> StatusCallbackIR:
+    for callback in rules.status_callbacks_for_modifier_event(
+        "MAvatar_Advanced_Seele_00_Skill02InsertCheck",
+        "OnListenAllowAction",
+    ):
+        if callback.coverage_status != "executable":
+            continue
+        if "Config/ConfigAbility/Avatar/Advanced/Avatar_Advanced_Seele_00_Ability.json" not in callback.source.source_path:
+            continue
+        tasks = rules.status_callback_tasks_for_callback(callback.callback_id)
+        if any(task.opcode == "RemoveSelfModifier" and task.coverage_status == "executable" for task in tasks):
+            return callback
+    raise RuntimeError("enhanced Seele auto skill reset callback missing")
+
+
+def _unit_has_modifier(state: BattleState, unit_id: str, modifier_name: str) -> bool:
+    unit = state.units.get(unit_id)
+    if unit is None:
+        return False
+    if modifier_name in unit.statuses or f"modifier:{modifier_name}" in unit.statuses:
+        return True
+    return any(
+        isinstance(detail, dict) and detail.get("modifier_name") == modifier_name
+        for detail in unit.flags.get("status_details", ())
+    )
 
 
 def _callback_transition(

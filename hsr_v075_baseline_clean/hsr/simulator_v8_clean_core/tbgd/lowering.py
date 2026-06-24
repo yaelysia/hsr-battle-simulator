@@ -1702,7 +1702,7 @@ class TBGDLowering:
                     event == "OnListenTurnEnd"
                     and any(task.coverage_status == "executable" for task in callback_lowered.status_callback_tasks)
                 ) or has_executable_queue_intent or (
-                    event in {"OnTriggerDeath", "OnListenCharacterDie", "OnTriggerDeathrattle", "OnAfterSkillUse"}
+                    event in {"OnTriggerDeath", "OnListenCharacterDie", "OnTriggerDeathrattle", "OnAfterSkillUse", "OnListenAllowAction"}
                     and has_executable_callback_task
                 )
                 status = (
@@ -4206,6 +4206,8 @@ def _status_callback_task_admission(event: str, opcode: str, task: dict[str, Any
         if coverage == "executable":
             return "executable", ""
         return "blocked", _effect_blocked_reason(opcode, payload, coverage)
+    if event == "OnListenAllowAction" and opcode == "RemoveSelfModifier":
+        return "executable", ""
     if event not in {"OnStack", "OnPhase1", "OnListenTurnEnd"}:
         return "blocked", f"status_callback_event_not_admitted:{event}"
     if opcode == "DamageByAttackProperty":
@@ -4283,7 +4285,7 @@ def _status_callback_source_mode(relative_path: str) -> str:
 
 
 def _status_callback_scope_kind(event: str) -> str:
-    if event == "OnListenCharacterDie":
+    if event in {"OnListenCharacterDie", "OnListenAllowAction"}:
         return "owner_local"
     if event.startswith("OnListen"):
         return "global_listener"
