@@ -436,6 +436,9 @@ class DamageSystem:
             "scaling_ratio": packet.scaling_ratio,
             "hit_source_trace": packet.hit_source_trace,
             "packet_metadata": packet.metadata,
+            "hit_index": packet.metadata.get("hit_index"),
+            "target_group": packet.metadata.get("target_group"),
+            "target_selection_policy": packet.metadata.get("target_selection_policy", {}),
             "source_frame": packet_json["source_frame"],
             "bypasses_normal_multipliers": False,
             "normal_multiplier_terms": formula_json["modifier_ledger"]["applied_terms"],
@@ -478,6 +481,8 @@ class DamageSystem:
             source="damage_system",
             metadata={
                 **packet_json,
+                **packet.metadata,
+                "packet_metadata": packet.metadata,
                 "formula_result": formula_json,
                 "modifier_ledger": formula_json["modifier_ledger"],
                 "crit_resolution": formula_json["crit_resolution"],

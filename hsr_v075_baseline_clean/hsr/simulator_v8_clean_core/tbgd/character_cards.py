@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
-from ..rules.ir import AvatarProfileIR, CharacterDataCardIR, IRSource, JSONValue, SkillFormulaBindingIR
+from ..rules.ir import AvatarProfileIR, BouncePolicyIR, CharacterDataCardIR, IRSource, JSONValue, SkillFormulaBindingIR
 
 
 SkillTableSpec = tuple[str, str, str]
@@ -17,6 +17,7 @@ class CharacterCardBuildResult:
     avatar_profiles: list[AvatarProfileIR]
     character_data_cards: list[CharacterDataCardIR]
     skill_formula_bindings: list[SkillFormulaBindingIR]
+    bounce_policies: list[BouncePolicyIR]
 
 
 SKILL_TEXT_BASIS_WORDS: dict[str, str] = {
@@ -50,6 +51,7 @@ def build_character_card_ir(
     skill_to_card = _skill_to_card_map(avatar_rows)
     text_map = _load_text_map(tbgd_root)
     skill_formula_bindings: list[SkillFormulaBindingIR] = []
+    bounce_policies: list[BouncePolicyIR] = []
     for relative_path, entity_type, id_key in skill_tables:
         skill_formula_bindings.extend(
             _skill_formula_bindings_for_table(
@@ -62,10 +64,34 @@ def build_character_card_ir(
                 max_records_per_table=max_records_per_table,
             )
         )
+        bounce_policies.extend(
+            _bounce_policies_for_table(
+                tbgd_root,
+                relative_path=relative_path,
+                entity_type=entity_type,
+                id_key=id_key,
+                text_map=text_map,
+                skill_to_card=skill_to_card,
+                max_records_per_table=max_records_per_table,
+            )
+        )
+    bounce_policy_by_action = {
+        (policy.action_id, policy.level): policy.bounce_policy_id
+        for policy in bounce_policies
+        if policy.coverage_status == "executable"
+    }
+    skill_formula_bindings = [
+        _attach_bounce_policy_to_formula_binding(binding, bounce_policy_by_action)
+        for binding in skill_formula_bindings
+    ]
     bindings_by_card: dict[str, list[str]] = {}
     for binding in skill_formula_bindings:
         if binding.character_data_card_id:
             bindings_by_card.setdefault(binding.character_data_card_id, []).append(binding.binding_id)
+    bounce_policy_ids_by_card: dict[str, list[str]] = {}
+    for policy in bounce_policies:
+        if policy.character_data_card_id:
+            bounce_policy_ids_by_card.setdefault(policy.character_data_card_id, []).append(policy.bounce_policy_id)
     avatar_profiles: list[AvatarProfileIR] = []
     character_cards: list[CharacterDataCardIR] = []
     for relative_path, row_index, row in avatar_rows:
@@ -76,6 +102,7 @@ def build_character_card_ir(
         card_id = f"character_data_card:avatar:{avatar_id}"
         skill_ids = tuple(str(skill_id) for skill_id in row.get("SkillList") or ())
         binding_ids = tuple(sorted(bindings_by_card.get(card_id, ())))
+        bounce_policy_ids = tuple(sorted(bounce_policy_ids_by_card.get(card_id, ())))
         blocked_reason = ""
         if profile.coverage_status != "executable":
             blocked_reason = profile.blocked_reason or "avatar_profile_not_executable"
@@ -88,6 +115,7 @@ def build_character_card_ir(
                 profile_id=profile.avatar_profile_id,
                 skill_ids=skill_ids,
                 skill_formula_binding_ids=binding_ids,
+                bounce_policy_ids=bounce_policy_ids,
                 source=IRSource(
                     source_path=relative_path,
                     raw_type=Path(relative_path).stem,
@@ -97,6 +125,7 @@ def build_character_card_ir(
                         "skill_list": _json_safe(row.get("SkillList")),
                         "profile_id": profile.avatar_profile_id,
                         "skill_formula_binding_count": len(binding_ids),
+                        "bounce_policy_count": len(bounce_policy_ids),
                         "builder": "character_data_card_v0_262",
                     },
                 ),
@@ -108,6 +137,7 @@ def build_character_card_ir(
         avatar_profiles=avatar_profiles,
         character_data_cards=character_cards,
         skill_formula_bindings=skill_formula_bindings,
+        bounce_policies=bounce_policies,
     )
 
 
@@ -337,6 +367,127 @@ def _skill_formula_bindings_for_table(
     return bindings
 
 
+def _bounce_policies_for_table(
+    tbgd_root: Path,
+    *,
+    relative_path: str,
+    entity_type: str,
+    id_key: str,
+    text_map: dict[str, str],
+    skill_to_card: dict[str, str],
+    max_records_per_table: int | None,
+) -> list[BouncePolicyIR]:
+    path = tbgd_root / relative_path
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    if not isinstance(data, list):
+        return []
+    policies: list[BouncePolicyIR] = []
+    for row_index, row in enumerate(_limit_sequence(data, max_records_per_table)):
+        if not isinstance(row, dict) or id_key not in row:
+            continue
+        policy = _bounce_policy_from_row(
+            relative_path=relative_path,
+            entity_type=entity_type,
+            id_key=id_key,
+            row_index=row_index,
+            row=row,
+            text_map=text_map,
+            skill_to_card=skill_to_card,
+        )
+        if policy is not None:
+            policies.append(policy)
+    return policies
+
+
+def _bounce_policy_from_row(
+    *,
+    relative_path: str,
+    entity_type: str,
+    id_key: str,
+    row_index: int,
+    row: dict[str, Any],
+    text_map: dict[str, str],
+    skill_to_card: dict[str, str],
+) -> BouncePolicyIR | None:
+    skill_effect = str(row.get("SkillEffect") or "")
+    if skill_effect.lower() != "bounce":
+        return None
+    raw_id = str(row[id_key])
+    action_id = f"{entity_type}:{raw_id}"
+    character_data_card_id = skill_to_card.get(raw_id, "")
+    level = int(_number_value(row.get("Level"), 1.0))
+    text_hash = _text_hash(row.get("SkillDesc"))
+    skill_text = text_map.get(text_hash, "") if text_hash else ""
+    normalized_text = _normalize_skill_text(skill_text)
+    bounce_count = _bounce_count_from_text(normalized_text)
+    selection_strategy = _bounce_selection_strategy(normalized_text)
+    candidate_scope = _bounce_candidate_scope(normalized_text)
+    blocked_reason = ""
+    if entity_type != "avatar_skill":
+        blocked_reason = "bounce_policy_only_avatar_skill_admitted"
+    elif not character_data_card_id:
+        blocked_reason = "character_data_card_missing_for_bounce_policy"
+    elif bounce_count <= 0:
+        blocked_reason = "bounce_count_not_admitted_from_skill_text"
+    elif not candidate_scope:
+        blocked_reason = "bounce_candidate_scope_not_admitted_from_skill_text"
+    elif not selection_strategy:
+        blocked_reason = "bounce_selection_strategy_not_admitted_from_skill_text"
+    source = IRSource(
+        source_path=relative_path,
+        raw_type=Path(relative_path).stem,
+        raw_id=raw_id,
+        evidence={
+            "row_index": row_index,
+            "id_key": id_key,
+            "level": level,
+            "skill_effect": skill_effect,
+            "skill_desc_hash": text_hash,
+            "skill_text_excerpt": normalized_text[:240],
+            "bounce_count": bounce_count,
+            "candidate_scope": candidate_scope,
+            "selection_strategy": selection_strategy,
+            "live_target_priority_source_kind": "engine_convention",
+            "continue_on_all_defeated_source_kind": "engine_convention",
+            "character_data_card_id": character_data_card_id,
+            "builder": "character_data_card_v0_264",
+        },
+    )
+    return BouncePolicyIR(
+        bounce_policy_id=f"bounce_policy:{action_id}:{level}",
+        character_data_card_id=character_data_card_id,
+        action_id=action_id,
+        level=level,
+        bounce_count=bounce_count,
+        initial_target_group="primary",
+        bounce_target_group="bounce",
+        candidate_scope=candidate_scope or "unknown",
+        selection_strategy=selection_strategy or "unknown",
+        live_target_priority=True,
+        continue_on_all_defeated=True,
+        allow_repeat_after_all_hit=True,
+        rng_source_kind="battle_rng",
+        source=source,
+        coverage_status="blocked" if blocked_reason else "executable",
+        blocked_reason=blocked_reason,
+    )
+
+
+def _attach_bounce_policy_to_formula_binding(
+    binding: SkillFormulaBindingIR,
+    policy_by_action: dict[tuple[str, int], str],
+) -> SkillFormulaBindingIR:
+    policy_id = policy_by_action.get((binding.action_id, binding.level), "")
+    if not policy_id:
+        return binding
+    return replace(binding, bounce_policy_id=policy_id)
+
+
 def _avatar_profile_from_row(
     relative_path: str,
     row_index: int,
@@ -481,6 +632,31 @@ def _formula_match_clause(text: str, start: int, end: int) -> str:
     while right < len(text) and text[right] not in "，,。.;；：:":
         right += 1
     return text[left:right]
+
+
+def _bounce_count_from_text(text: str) -> int:
+    match = re.search(r"额外造成(?P<count>\d+)次伤害", text)
+    if match:
+        return int(match.group("count"))
+    match = re.search(r"弹射(?P<count>\d+)次", text)
+    if match:
+        return int(match.group("count"))
+    return 0
+
+
+def _bounce_candidate_scope(text: str) -> str:
+    if "随机敌方单体" in text or "敌方随机单体" in text or "随机对敌方单体" in text:
+        return "enemy_single"
+    return ""
+
+
+def _bounce_selection_strategy(text: str) -> str:
+    prefer_unhit_terms = ("未受到过", "未命中", "未被命中", "未被攻击", "优先攻击", "优先对")
+    if any(term in text for term in prefer_unhit_terms):
+        return "prefer_unhit_then_random"
+    if "随机" in text:
+        return "random_live_targets"
+    return ""
 
 
 def _limit_sequence(items: list[Any], limit: int | None) -> list[Any]:

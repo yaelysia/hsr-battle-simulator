@@ -56,6 +56,7 @@ class CombatExecutor:
         hit_profiles = self.rules.hit_profiles_for_action(command.action_id, command.action_level)
         damage_emissions = self.rules.damage_emissions_for_action(command.action_id, command.action_level)
         toughness_emissions = self.rules.toughness_emissions_for_action(command.action_id, command.action_level)
+        bounce_policy = _bounce_policy_for_profiles(self.rules, hit_profiles)
         action_definition_trace = self.rules.action_definition_source_trace(command.action_id, command.action_level) or {}
         binding_blocked_reason = _binding_blocked_reason(action_binding)
         action_event_blocked_reason = _action_event_blocked_reason(action_event_ir)
@@ -84,7 +85,7 @@ class CombatExecutor:
             state,
             command.actor_id,
             command.target_ids,
-            policy=_target_policy(action_definition, action_event_ir.target_mode),
+            policy=_target_policy(action_definition, action_event_ir.target_mode, bounce_policy),
         )
         action_execution_plan = build_action_execution_plan(
             action_definition,
@@ -102,6 +103,7 @@ class CombatExecutor:
                 "hit_profile_ids": [profile.hit_profile_id for profile in hit_profiles],
                 "damage_emission_ids": [emission.damage_emission_id for emission in damage_emissions],
                 "toughness_emission_ids": [emission.toughness_emission_id for emission in toughness_emissions],
+                "bounce_policy_id": bounce_policy.get("bounce_policy_id", "") if bounce_policy else "",
             },
             toughness_emissions=toughness_emissions,
         )
@@ -157,6 +159,7 @@ class CombatExecutor:
             *(_mutation_record("resource", mutation) for mutation in resource_mutations),
         ]
         damage_results = []
+        target_rng_events = []
         damage_mutations: tuple[Mutation, ...] = ()
         toughness_results = []
         toughness_mutations: tuple[Mutation, ...] = ()
@@ -164,6 +167,7 @@ class CombatExecutor:
         break_mutations: tuple[Mutation, ...] = ()
         ability_task_results: list[AbilityTaskExecutionResult] = []
         damage_window_ledger = DamageWindowLedger()
+        action_hit_targets: list[str] = []
 
         if action_enabled:
             for step in action_execution_plan.event_steps:
@@ -260,6 +264,46 @@ class CombatExecutor:
                         )
                     applied_toughness_keys: set[tuple[str, str]] = set()
                     for damage_plan in action_execution_plan.damage_plan:
+                        if damage_plan.target_group.startswith("bounce:"):
+                            bounce_result = self.targets.resolve_bounce_hit_target(
+                                current_state,
+                                actor_id=command.actor_id,
+                                primary_target_id=action_execution_plan.primary_action_target_id
+                                or (target_result.resolution.selected[0] if target_result.resolution.selected else ""),
+                                bounce_policy=_bounce_policy_from_damage_plan(damage_plan),
+                                hit_index=damage_plan.hit_index,
+                                previous_hit_targets=tuple(action_hit_targets),
+                                action_id=command.action_id,
+                                action_level=command.action_level,
+                            )
+                            if not bounce_result.ok:
+                                runtime_records.append(
+                                    SettlementRecord(
+                                        record_type="bounce_target_blocked",
+                                        source="target_system",
+                                        process_only=True,
+                                        payload={
+                                            "reason": bounce_result.error,
+                                            "damage_plan": damage_plan.to_json(),
+                                            "metadata": bounce_result.metadata,
+                                        },
+                                        trace=damage_plan.hit_source_trace,
+                                    ).to_json()
+                                )
+                                continue
+                            if bounce_result.rng_event is not None:
+                                target_rng_events.append(bounce_result.rng_event)
+                            damage_plan = replace(
+                                damage_plan,
+                                target_id=bounce_result.target_id,
+                                target_selection_policy={
+                                    **(damage_plan.target_selection_policy or {}),
+                                    "resolved_bounce_target": bounce_result.metadata,
+                                    "rng_event": bounce_result.rng_event.to_json()
+                                    if bounce_result.rng_event is not None
+                                    else {},
+                                },
+                            )
                         damage_packet = _damage_packet(
                             command,
                             action_definition,
@@ -319,6 +363,7 @@ class CombatExecutor:
                                     listener_dispatch_results.append(dispatch_result)
                                     ordered_mutations.extend(dispatch_result.mutations)
                                     runtime_records.extend(dispatch_result.records)
+                        action_hit_targets.append(damage_plan.target_id)
                     for toughness_plan in action_execution_plan.toughness_plan:
                         key = (toughness_plan.toughness_emission_id, toughness_plan.target_id)
                         if key in applied_toughness_keys:
@@ -386,7 +431,10 @@ class CombatExecutor:
         listener_dispatch_records = tuple(record for result in listener_dispatch_results for record in result.records)
         mutations = tuple(ordered_mutations)
         after_state = current_state
-        damage_rng_events = tuple(event for result in damage_results for event in result.rng_events)
+        damage_rng_events = (
+            *tuple(target_rng_events),
+            *tuple(event for result in damage_results for event in result.rng_events),
+        )
 
         records: list[dict[str, JSONValue]] = [
             SettlementRecord(
@@ -786,7 +834,11 @@ def _callback_kind_for_step(phase: str) -> str:
     return ""
 
 
-def _target_policy(action_definition: ActionDefinitionIR, target_mode: str) -> TargetPolicy:
+def _target_policy(
+    action_definition: ActionDefinitionIR,
+    target_mode: str,
+    bounce_policy: dict[str, JSONValue] | None = None,
+) -> TargetPolicy:
     if target_mode == "self_or_team":
         return TargetPolicy(
             policy_id="self_or_team",
@@ -804,6 +856,7 @@ def _target_policy(action_definition: ActionDefinitionIR, target_mode: str) -> T
             allow_self=False,
             target_mode=target_mode,
             selection_mode=target_mode,
+            bounce_policy=bounce_policy or {},
         )
     return TargetPolicy(
         policy_id="explicit_any",
@@ -812,7 +865,19 @@ def _target_policy(action_definition: ActionDefinitionIR, target_mode: str) -> T
         allow_self=True,
         target_mode=target_mode,
         selection_mode=target_mode,
+        bounce_policy=bounce_policy or {},
     )
+
+
+def _bounce_policy_for_profiles(rules: RuleBook, hit_profiles) -> dict[str, JSONValue]:
+    for profile in hit_profiles:
+        policy_id = getattr(profile, "bounce_policy_id", "")
+        if not policy_id:
+            continue
+        policy = rules.bounce_policy(policy_id)
+        if policy is not None:
+            return policy.to_json()
+    return {}
 
 
 def _damage_packet(
@@ -882,15 +947,27 @@ def _damage_packet(
             "scaling_basis": damage_plan.scaling_basis,
             "hit_source_trace": damage_plan.hit_source_trace,
             "numeric_fidelity_status": damage_plan.numeric_fidelity_status,
-            "multi_hit_not_implemented": True,
+            "hit_formula_slot_admitted": damage_plan.multiplier_source.get("source_kind")
+            == "character_data_card_skill_formula",
+            "multi_hit_source_status": (
+                "character_data_card_slot"
+                if damage_plan.multiplier_source.get("source_kind") == "character_data_card_skill_formula"
+                else "non_card_or_blocked_source"
+            ),
             "primary_action_target_id": damage_plan.primary_action_target_id,
             "current_hit_target_id": damage_plan.target_id,
             "per_hit_target_context_available": True,
             "per_hit_listener_admission_partial": True,
             "per_hit_target_context_not_implemented": False,
             "target_group_multiplier_not_implemented": damage_plan.target_group_multiplier_not_implemented,
+            "target_selection_policy": damage_plan.target_selection_policy or {},
         },
     )
+
+
+def _bounce_policy_from_damage_plan(damage_plan: DamagePlan) -> dict[str, JSONValue]:
+    policy = (damage_plan.target_selection_policy or {}).get("bounce_policy")
+    return policy if isinstance(policy, dict) else {}
 
 
 def _toughness_plans_for_damage_plan(

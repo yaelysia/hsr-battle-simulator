@@ -15,6 +15,7 @@ from .ir import (
     BreakDamageEmissionIR,
     BreakStatusEmissionIR,
     BreakTemplateIR,
+    BouncePolicyIR,
     CanonicalIR,
     CombatantActionSetIR,
     CombatantProfileIR,
@@ -66,6 +67,22 @@ class RuleBook:
             self,
             "_character_data_cards_by_entity_ref",
             {card.entity_ref: card for card in self.ir.character_data_cards},
+        )
+        bounce_policies_by_action: dict[tuple[str, int], list[BouncePolicyIR]] = {}
+        for policy in self.ir.bounce_policies:
+            bounce_policies_by_action.setdefault((policy.action_id, policy.level), []).append(policy)
+        object.__setattr__(
+            self,
+            "_bounce_policies",
+            {policy.bounce_policy_id: policy for policy in self.ir.bounce_policies},
+        )
+        object.__setattr__(
+            self,
+            "_bounce_policies_by_action",
+            {
+                key: tuple(sorted(value, key=lambda item: item.bounce_policy_id))
+                for key, value in bounce_policies_by_action.items()
+            },
         )
         object.__setattr__(
             self,
@@ -632,6 +649,12 @@ class RuleBook:
 
     def hit_profile(self, hit_profile_id: str) -> HitProfileIR | None:
         return self._hit_profiles.get(hit_profile_id)
+
+    def bounce_policy(self, bounce_policy_id: str) -> BouncePolicyIR | None:
+        return self._bounce_policies.get(bounce_policy_id)
+
+    def bounce_policies_for_action(self, action_id: str, level: int) -> tuple[BouncePolicyIR, ...]:
+        return self._bounce_policies_by_action.get((action_id, level), ())
 
     def skill_formula_binding(self, binding_id: str) -> SkillFormulaBindingIR | None:
         return self._skill_formula_bindings.get(binding_id)

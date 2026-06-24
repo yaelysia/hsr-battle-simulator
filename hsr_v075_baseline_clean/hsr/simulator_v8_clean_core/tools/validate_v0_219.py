@@ -241,12 +241,13 @@ def _preflight_negative_cases(
             costing,
             target_ids=target_ids,
         )
-    if definitions.get("bounce") is not None:
+    blocked_bounce = _select_blocked_bounce_definition(ir, rules)
+    if blocked_bounce is not None:
         cases["bounce"] = _execute_definition_case(
             rules,
             base_state,
             base_command,
-            definitions["bounce"],
+            blocked_bounce,
             target_ids=("enemy:target",),
         )
     if definitions.get("unknown") is not None:
@@ -271,6 +272,23 @@ def _select_costing_definition(ir: CanonicalIR) -> ActionDefinitionIR | None:
         if not definition.param_list:
             continue
         return definition
+    return None
+
+
+def _select_blocked_bounce_definition(ir: CanonicalIR, rules: RuleBook) -> ActionDefinitionIR | None:
+    for definition in sorted(ir.action_definitions, key=lambda item: (item.source.source_path, item.action_id, item.level)):
+        if definition.target_mode != "bounce":
+            continue
+        policies = rules.bounce_policies_for_action(definition.action_id, definition.level)
+        has_executable_policy = any(policy.coverage_status == "executable" for policy in policies)
+        has_executable_emission = any(
+            emission.coverage_status == "executable"
+            for emission in rules.damage_emissions_for_action(definition.action_id, definition.level)
+        )
+        event = rules.action_event(definition.action_id, definition.level)
+        event_admitted = event is not None and not event.blocked_reason and event.coverage_status in {"lowered", "executable"}
+        if not (has_executable_policy and has_executable_emission and event_admitted):
+            return definition
     return None
 
 

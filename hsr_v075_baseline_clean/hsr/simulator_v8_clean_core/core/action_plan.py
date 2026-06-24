@@ -108,6 +108,7 @@ class DamagePlan:
     primary_action_target_id: str | None = None
     blocked_reason: str = ""
     target_group_multiplier_not_implemented: bool = False
+    target_selection_policy: dict[str, object] | None = None
 
     def to_json(self) -> dict[str, object]:
         return {
@@ -126,6 +127,7 @@ class DamagePlan:
             "primary_action_target_id": self.primary_action_target_id,
             "blocked_reason": self.blocked_reason,
             "target_group_multiplier_not_implemented": self.target_group_multiplier_not_implemented,
+            "target_selection_policy": self.target_selection_policy or {},
         }
 
 
@@ -373,7 +375,8 @@ def _damage_plan_from_emissions(
                     numeric_fidelity_status=profile.numeric_fidelity_status,
                     primary_action_target_id=primary_action_target_id,
                     blocked_reason=profile.blocked_reason,
-                    target_group_multiplier_not_implemented=action_definition.target_mode in {"aoe", "blast"},
+                    target_group_multiplier_not_implemented=_target_group_multiplier_not_implemented(action_definition, profile),
+                    target_selection_policy=profile.target_selection_policy,
                 )
             )
     return tuple(plans)
@@ -426,7 +429,15 @@ def _targets_for_hit_profile(
         return target_groups.get("adjacent", ())
     if profile.target_group == "selected":
         return target_groups.get("selected", ())
+    if profile.target_group.startswith("bounce:"):
+        return ("__bounce_pending__",)
     return ()
+
+
+def _target_group_multiplier_not_implemented(action_definition: ActionDefinitionIR, profile: HitProfileIR) -> bool:
+    if action_definition.target_mode not in {"aoe", "blast"}:
+        return False
+    return str(profile.multiplier_source.get("source_kind") or "") != "character_data_card_skill_formula"
 
 
 def _hit_scaling_ratio(profile: HitProfileIR) -> float | None:
@@ -463,8 +474,6 @@ def _selection_mode(target_mode: str) -> str:
 
 
 def _target_plan_blocked_reason(target_mode: str) -> str:
-    if target_mode == "bounce":
-        return "bounce_not_executable"
     if target_mode == "unknown":
         return "unknown_target_mode_not_executable"
     return ""

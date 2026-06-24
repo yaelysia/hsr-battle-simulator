@@ -24,6 +24,7 @@ from ..rules.ir import (
     BreakDamageEmissionIR,
     BreakStatusEmissionIR,
     BreakTemplateIR,
+    BouncePolicyIR,
     CanonicalIR,
     CombatantActionSetIR,
     CombatantProfileIR,
@@ -195,6 +196,7 @@ class TBGDLowering:
         avatar_profiles = character_cards.avatar_profiles
         character_data_cards = character_cards.character_data_cards
         skill_formula_bindings = character_cards.skill_formula_bindings
+        bounce_policies = character_cards.bounce_policies
         combatant_profiles = self._lower_combatant_profiles()
         action_definitions = list(self._lower_action_definitions().values())
         (
@@ -218,6 +220,7 @@ class TBGDLowering:
             action_ability_bindings,
             ability_phases,
             skill_formula_bindings,
+            bounce_policies,
         )
         damage_emissions = _lower_damage_emissions(
             ability_tasks,
@@ -293,6 +296,7 @@ class TBGDLowering:
             entities=tuple(entities),
             avatar_profiles=tuple(avatar_profiles),
             character_data_cards=tuple(character_data_cards),
+            bounce_policies=tuple(bounce_policies),
             combatant_profiles=tuple(combatant_profiles),
             action_definitions=tuple(action_definitions),
             action_ability_bindings=tuple(action_ability_bindings),
@@ -371,6 +375,7 @@ class TBGDLowering:
                     "resource_rule_count": len(resource_rules),
                     "super_break_emission_count": len(super_break_emissions),
                     "skill_formula_binding_count": len(skill_formula_bindings),
+                    "bounce_policy_count": len(bounce_policies),
                 },
                 "avatar_profile_status": {
                     "lowered_count": len(avatar_profiles),
@@ -1125,6 +1130,7 @@ class TBGDLowering:
         if ability_data is None:
             return _blocked_action_binding(definition, "avatar_ability_file_not_readable", ability_path)
         ability_map = _ability_map(ability_data)
+        ability_names = _expand_triggered_ability_names(ability_names, ability_map)
         binding_id = f"action_binding:{definition.action_id}:{definition.level}"
         binding_phases: list[AbilityPhaseIR] = []
         lowered = _LoweredAbility()
@@ -1184,6 +1190,7 @@ class TBGDLowering:
                 "avatar_config": _json_safe(avatar_config),
                 "ability_file": ability_path,
                 "missing_ability_names": missing_names,
+                "trigger_expanded_ability_names": ability_names,
             },
         )
         return (
@@ -2529,6 +2536,50 @@ def _ability_names_for_skill(
     return list(dict.fromkeys(name for name in ability_names if name))
 
 
+def _expand_triggered_ability_names(
+    ability_names: list[str],
+    ability_map: dict[str, dict[str, Any]],
+    *,
+    max_depth: int = 3,
+) -> list[str]:
+    expanded: list[str] = []
+    seen: set[str] = set()
+    queue: list[tuple[str, int]] = [(name, 0) for name in ability_names]
+    while queue:
+        ability_name, depth = queue.pop(0)
+        if not ability_name or ability_name in seen:
+            continue
+        seen.add(ability_name)
+        expanded.append(ability_name)
+        if depth >= max_depth:
+            continue
+        ability = ability_map.get(ability_name)
+        if not isinstance(ability, dict):
+            continue
+        for child_name in _trigger_ability_names_from_value(ability):
+            if child_name in ability_map and child_name not in seen:
+                queue.append((child_name, depth + 1))
+    return expanded
+
+
+def _trigger_ability_names_from_value(value: Any) -> list[str]:
+    names: list[str] = []
+    if isinstance(value, list):
+        for item in value:
+            names.extend(_trigger_ability_names_from_value(item))
+    elif isinstance(value, dict):
+        raw_type = str(value.get("$type") or "")
+        if raw_type.endswith("TriggerAbility"):
+            ability_name = value.get("AbilityName")
+            if isinstance(ability_name, dict) and isinstance(ability_name.get("Value"), str):
+                names.append(str(ability_name["Value"]))
+            elif isinstance(ability_name, str):
+                names.append(ability_name)
+        for item in value.values():
+            names.extend(_trigger_ability_names_from_value(item))
+    return list(dict.fromkeys(name for name in names if name))
+
+
 def _ability_names_from_value(value: Any) -> list[str]:
     names: list[str] = []
     if isinstance(value, str):
@@ -2633,11 +2684,13 @@ def _lower_action_execution_ir(
     bindings: list[ActionAbilityBindingIR],
     phases: list[AbilityPhaseIR],
     skill_formula_bindings: list[SkillFormulaBindingIR],
+    bounce_policies: list[BouncePolicyIR],
 ) -> tuple[list[ActionEventIR], list[HitProfileIR]]:
     binding_by_action = {(binding.action_id, binding.level): binding for binding in bindings}
     formula_bindings_by_action: dict[tuple[str, int], list[SkillFormulaBindingIR]] = {}
     for formula_binding in skill_formula_bindings:
         formula_bindings_by_action.setdefault((formula_binding.action_id, formula_binding.level), []).append(formula_binding)
+    bounce_policy_by_action = {(policy.action_id, policy.level): policy for policy in bounce_policies}
     phases_by_binding: dict[str, list[AbilityPhaseIR]] = {}
     for phase in phases:
         phases_by_binding.setdefault(phase.binding_id, []).append(phase)
@@ -2647,6 +2700,7 @@ def _lower_action_execution_ir(
         action_profiles = _hit_profiles_from_definition(
             definition,
             tuple(formula_bindings_by_action.get((definition.action_id, definition.level), ())),
+            bounce_policy_by_action.get((definition.action_id, definition.level)),
         )
         profiles.extend(action_profiles)
         binding = binding_by_action.get((definition.action_id, definition.level))
@@ -2955,7 +3009,9 @@ def _damage_emission_blocked_reason(
 
 def _damage_emission_target_group_blocked_reason(target_alias: str | None, target_group: str) -> str:
     if target_alias in {"AbilityTargetEntity", "CurrentActionTarget"}:
-        return "" if target_group in {"primary", "selected"} else f"damage_target_group_mismatch:{target_alias}:{target_group}"
+        if target_group in {"primary", "selected"} or target_group.startswith("bounce:"):
+            return ""
+        return f"damage_target_group_mismatch:{target_alias}:{target_group}"
     if target_alias == "AbilityTargetAdjoinEntity":
         return "" if target_group == "adjacent" else f"damage_target_group_mismatch:{target_alias}:{target_group}"
     if target_alias == "AllEnemy":
@@ -3045,7 +3101,7 @@ def _action_event_from_definition(
     )
     has_attack_windows = _action_definition_is_attack(definition)
     binding_blocked_reason = _binding_blocked_reason(binding, phases)
-    target_blocked_reason = _target_blocked_reason(definition.target_mode)
+    target_blocked_reason = _action_event_target_blocked_reason(definition, hit_profiles)
     blocked_reason = ",".join(reason for reason in (binding_blocked_reason, target_blocked_reason) if reason)
     status = "blocked" if blocked_reason else "lowered"
     source = binding.source if binding and binding.coverage_status == "executable" else definition.source
@@ -3129,13 +3185,22 @@ def _action_event_from_definition(
     )
 
 
+def _action_event_target_blocked_reason(definition: ActionDefinitionIR, hit_profiles: list[HitProfileIR]) -> str:
+    if definition.target_mode == "bounce" and any(
+        profile.coverage_status == "executable" and profile.bounce_policy_id for profile in hit_profiles
+    ):
+        return ""
+    return _target_blocked_reason(definition.target_mode)
+
+
 def _hit_profiles_from_definition(
     definition: ActionDefinitionIR,
     skill_formula_bindings: tuple[SkillFormulaBindingIR, ...] = (),
+    bounce_policy: BouncePolicyIR | None = None,
 ) -> list[HitProfileIR]:
     if definition.damage_kind != "hp_damage":
         return []
-    formula_hit_profiles = _hit_profiles_from_skill_formula_bindings(definition, skill_formula_bindings)
+    formula_hit_profiles = _hit_profiles_from_skill_formula_bindings(definition, skill_formula_bindings, bounce_policy)
     if formula_hit_profiles:
         return formula_hit_profiles
     groups = _hit_target_groups(definition.target_mode)
@@ -3175,9 +3240,12 @@ def _hit_profiles_from_definition(
 def _hit_profiles_from_skill_formula_bindings(
     definition: ActionDefinitionIR,
     skill_formula_bindings: tuple[SkillFormulaBindingIR, ...],
+    bounce_policy: BouncePolicyIR | None = None,
 ) -> list[HitProfileIR]:
     if definition.damage_formula_family != "direct":
         return []
+    if definition.target_mode == "bounce":
+        return _bounce_hit_profiles_from_skill_formula_bindings(definition, skill_formula_bindings, bounce_policy)
     selected: list[SkillFormulaBindingIR] = []
     seen: set[tuple[int, str]] = set()
     for binding in sorted(skill_formula_bindings, key=lambda item: (item.sequence_order, item.param_index, item.binding_id)):
@@ -3223,6 +3291,83 @@ def _hit_profiles_from_skill_formula_bindings(
     return profiles
 
 
+def _bounce_hit_profiles_from_skill_formula_bindings(
+    definition: ActionDefinitionIR,
+    skill_formula_bindings: tuple[SkillFormulaBindingIR, ...],
+    bounce_policy: BouncePolicyIR | None,
+) -> list[HitProfileIR]:
+    direct_bindings = [
+        binding
+        for binding in sorted(skill_formula_bindings, key=lambda item: (item.sequence_order, item.param_index, item.binding_id))
+        if binding.formula_role == "direct_damage"
+    ]
+    primary_binding = next((binding for binding in direct_bindings if binding.target_group_hint != "random"), None)
+    bounce_binding = next((binding for binding in direct_bindings if binding.target_group_hint == "random"), primary_binding)
+    if primary_binding is None and bounce_binding is None:
+        return []
+    policy_blocked_reason = _bounce_policy_blocked_reason(bounce_policy)
+    entries: list[tuple[str, SkillFormulaBindingIR | None, int]] = []
+    entries.append(("primary", primary_binding or bounce_binding, 0))
+    bounce_count = bounce_policy.bounce_count if bounce_policy and bounce_policy.coverage_status == "executable" else 0
+    for index in range(bounce_count):
+        entries.append((f"bounce:{index}", bounce_binding, index + 1))
+    if not bounce_count and bounce_binding is not None:
+        entries.append(("bounce:0", bounce_binding, 1))
+    profiles: list[HitProfileIR] = []
+    for hit_index, (target_group, binding, sequence_order) in enumerate(entries):
+        blocked_reason = policy_blocked_reason if target_group.startswith("bounce:") else ""
+        if binding is None:
+            blocked_reason = blocked_reason or "bounce_skill_formula_binding_missing"
+            source = definition.source
+            multiplier_expr = _param_multiplier_expr(definition.param_list, 0)
+            multiplier_source = _param_multiplier_source(definition, 0)
+            target_selection_policy: dict[str, Any] = {}
+        else:
+            if binding.coverage_status != "executable":
+                blocked_reason = blocked_reason or binding.blocked_reason or f"skill_formula_binding_not_executable:{binding.coverage_status}"
+            param_reason = _param_index_blocked_reason(definition.param_list, binding.param_index)
+            if param_reason and not blocked_reason:
+                blocked_reason = param_reason
+            source = binding.source
+            multiplier_expr = _param_multiplier_expr(definition.param_list, binding.param_index)
+            multiplier_source = _param_multiplier_source(definition, binding.param_index, binding)
+            target_selection_policy = {
+                "target_group_hint": binding.target_group_hint,
+                "formula_slot_id": binding.formula_slot_id,
+                "skill_formula_binding_id": binding.binding_id,
+            }
+        if bounce_policy is not None:
+            target_selection_policy = {
+                **target_selection_policy,
+                "bounce_policy": bounce_policy.to_json(),
+            }
+        profiles.append(
+            HitProfileIR(
+                hit_profile_id=(
+                    f"hit_profile:{definition.action_id}:{definition.level}:"
+                    f"{hit_index}:{target_group}:slot:{sequence_order}"
+                ),
+                action_id=definition.action_id,
+                level=definition.level,
+                hit_index=hit_index,
+                target_group=target_group,
+                multiplier_expr=multiplier_expr,
+                multiplier_source=multiplier_source,
+                stance_expr=_stance_expr(definition.show_stance_list),
+                stance_source=_stance_source(definition),
+                damage_formula_family=definition.damage_formula_family,
+                element_type=definition.element_type,
+                source=source,
+                coverage_status="blocked" if blocked_reason else "executable",
+                blocked_reason=blocked_reason,
+                numeric_fidelity_status="trusted_for_current_scope" if not blocked_reason else "blocked",
+                bounce_policy_id=bounce_policy.bounce_policy_id if bounce_policy is not None else "",
+                target_selection_policy=target_selection_policy,
+            )
+        )
+    return profiles
+
+
 def _target_group_from_formula_binding(
     definition: ActionDefinitionIR,
     binding: SkillFormulaBindingIR,
@@ -3233,7 +3378,7 @@ def _target_group_from_formula_binding(
     if definition.target_mode in {"single", "aoe"}:
         return "selected"
     if definition.target_mode in {"bounce", "unknown"}:
-        return definition.target_mode
+        return "bounce" if hint == "random" else "primary"
     return "selected"
 
 
@@ -3245,6 +3390,14 @@ def _hit_target_groups(target_mode: str) -> tuple[str, ...]:
     if target_mode in {"bounce", "unknown"}:
         return (target_mode,)
     return ()
+
+
+def _bounce_policy_blocked_reason(policy: BouncePolicyIR | None) -> str:
+    if policy is None:
+        return "bounce_policy_missing_from_character_data_card"
+    if policy.coverage_status != "executable":
+        return policy.blocked_reason or f"bounce_policy_not_executable:{policy.coverage_status}"
+    return ""
 
 
 def _hit_profile_blocked_reason(definition: ActionDefinitionIR, target_group: str) -> str:

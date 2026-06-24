@@ -189,6 +189,7 @@ class CharacterDataCardIR:
     profile_id: str
     skill_ids: tuple[str, ...]
     skill_formula_binding_ids: tuple[str, ...]
+    bounce_policy_ids: tuple[str, ...]
     source: IRSource
     coverage_status: CoverageStatus = "blocked"
     blocked_reason: str = ""
@@ -200,6 +201,47 @@ class CharacterDataCardIR:
             "profile_id": self.profile_id,
             "skill_ids": list(self.skill_ids),
             "skill_formula_binding_ids": list(self.skill_formula_binding_ids),
+            "bounce_policy_ids": list(self.bounce_policy_ids),
+            "source": self.source.to_json(),
+            "coverage_status": self.coverage_status,
+            "blocked_reason": self.blocked_reason,
+        }
+
+
+@dataclass(frozen=True)
+class BouncePolicyIR:
+    bounce_policy_id: str
+    character_data_card_id: str
+    action_id: str
+    level: int
+    bounce_count: int
+    initial_target_group: str
+    bounce_target_group: str
+    candidate_scope: str
+    selection_strategy: str
+    live_target_priority: bool
+    continue_on_all_defeated: bool
+    allow_repeat_after_all_hit: bool
+    rng_source_kind: str
+    source: IRSource
+    coverage_status: CoverageStatus = "blocked"
+    blocked_reason: str = ""
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "bounce_policy_id": self.bounce_policy_id,
+            "character_data_card_id": self.character_data_card_id,
+            "action_id": self.action_id,
+            "level": self.level,
+            "bounce_count": self.bounce_count,
+            "initial_target_group": self.initial_target_group,
+            "bounce_target_group": self.bounce_target_group,
+            "candidate_scope": self.candidate_scope,
+            "selection_strategy": self.selection_strategy,
+            "live_target_priority": self.live_target_priority,
+            "continue_on_all_defeated": self.continue_on_all_defeated,
+            "allow_repeat_after_all_hit": self.allow_repeat_after_all_hit,
+            "rng_source_kind": self.rng_source_kind,
             "source": self.source.to_json(),
             "coverage_status": self.coverage_status,
             "blocked_reason": self.blocked_reason,
@@ -247,6 +289,8 @@ class HitProfileIR:
     coverage_status: CoverageStatus = "audit_only"
     blocked_reason: str = ""
     numeric_fidelity_status: str = "structural_only"
+    bounce_policy_id: str = ""
+    target_selection_policy: dict[str, JSONValue] = field(default_factory=dict)
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -265,6 +309,8 @@ class HitProfileIR:
             "coverage_status": self.coverage_status,
             "blocked_reason": self.blocked_reason,
             "numeric_fidelity_status": self.numeric_fidelity_status,
+            "bounce_policy_id": self.bounce_policy_id,
+            "target_selection_policy": self.target_selection_policy,
         }
 
 
@@ -287,6 +333,7 @@ class SkillFormulaBindingIR:
     source: IRSource
     coverage_status: CoverageStatus = "blocked"
     blocked_reason: str = ""
+    bounce_policy_id: str = ""
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -307,6 +354,7 @@ class SkillFormulaBindingIR:
             "source": self.source.to_json(),
             "coverage_status": self.coverage_status,
             "blocked_reason": self.blocked_reason,
+            "bounce_policy_id": self.bounce_policy_id,
         }
 
 
@@ -1144,6 +1192,7 @@ class CanonicalIR:
     entities: tuple[RuleEntity, ...] = ()
     avatar_profiles: tuple[AvatarProfileIR, ...] = ()
     character_data_cards: tuple[CharacterDataCardIR, ...] = ()
+    bounce_policies: tuple[BouncePolicyIR, ...] = ()
     combatant_profiles: tuple[CombatantProfileIR, ...] = ()
     action_definitions: tuple[ActionDefinitionIR, ...] = ()
     action_ability_bindings: tuple[ActionAbilityBindingIR, ...] = ()
@@ -1187,6 +1236,7 @@ class CanonicalIR:
             "entities": [entity.to_json() for entity in self.entities],
             "avatar_profiles": [profile.to_json() for profile in self.avatar_profiles],
             "character_data_cards": [card.to_json() for card in self.character_data_cards],
+            "bounce_policies": [policy.to_json() for policy in self.bounce_policies],
             "combatant_profiles": [profile.to_json() for profile in self.combatant_profiles],
             "action_definitions": [definition.to_json() for definition in self.action_definitions],
             "action_ability_bindings": [binding.to_json() for binding in self.action_ability_bindings],

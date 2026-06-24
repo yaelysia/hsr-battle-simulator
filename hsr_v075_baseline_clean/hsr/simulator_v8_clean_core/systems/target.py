@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+import hashlib
+from dataclasses import dataclass, field
 
-from ..core.model import BattleState, JSONValue, TargetResolution
+from ..core.model import BattleState, JSONValue, RNGEvent, TargetResolution
 
 
 @dataclass(frozen=True)
@@ -10,6 +11,16 @@ class TargetingResult:
     resolution: TargetResolution
     ok: bool
     errors: tuple[str, ...] = ()
+    rng_events: tuple[RNGEvent, ...] = ()
+
+
+@dataclass(frozen=True)
+class BounceTargetResult:
+    ok: bool
+    target_id: str = ""
+    rng_event: RNGEvent | None = None
+    metadata: dict[str, JSONValue] = field(default_factory=dict)
+    error: str = ""
 
 
 @dataclass(frozen=True)
@@ -21,6 +32,7 @@ class TargetPolicy:
     allow_defeated: bool = False
     target_mode: str = "single"
     selection_mode: str = "explicit"
+    bounce_policy: dict[str, JSONValue] = field(default_factory=dict)
 
 
 class TargetSystem:
@@ -37,7 +49,7 @@ class TargetSystem:
         explicit = self.resolve_explicit_targets(state, actor_id, target_ids, policy=policy)
         if not explicit.ok:
             return explicit
-        blocked_reason = _target_mode_blocked_reason(policy.target_mode)
+        blocked_reason = _target_mode_blocked_reason(policy)
         if blocked_reason:
             resolution = TargetResolution(
                 requested=explicit.resolution.requested,
@@ -150,6 +162,84 @@ class TargetSystem:
             if unit.side != actor.side and (allow_defeated or unit.hp > 0)
         )
 
+    def resolve_bounce_hit_target(
+        self,
+        state: BattleState,
+        *,
+        actor_id: str,
+        primary_target_id: str,
+        bounce_policy: dict[str, JSONValue],
+        hit_index: int,
+        previous_hit_targets: tuple[str, ...],
+        action_id: str,
+        action_level: int,
+    ) -> BounceTargetResult:
+        actor = state.units.get(actor_id)
+        if actor is None:
+            return BounceTargetResult(ok=False, error="unknown_actor")
+        if str(bounce_policy.get("coverage_status") or "") != "executable":
+            return BounceTargetResult(ok=False, error="bounce_policy_not_executable", metadata={"bounce_policy": bounce_policy})
+        live_candidates = tuple(
+            unit_id
+            for unit_id, unit in sorted(state.units.items())
+            if unit.side != actor.side and unit.hp > 0
+        )
+        all_candidates = tuple(
+            unit_id
+            for unit_id, unit in sorted(state.units.items())
+            if unit.side != actor.side
+        )
+        selection_strategy = str(bounce_policy.get("selection_strategy") or "")
+        candidate_pool = live_candidates
+        candidate_pool_reason = "live_targets"
+        if live_candidates and selection_strategy == "prefer_unhit_then_random":
+            unhit = tuple(unit_id for unit_id in live_candidates if unit_id not in set(previous_hit_targets))
+            if unhit:
+                candidate_pool = unhit
+                candidate_pool_reason = "live_unhit_targets"
+        if not candidate_pool:
+            if not bool(bounce_policy.get("continue_on_all_defeated")):
+                return BounceTargetResult(
+                    ok=False,
+                    error="bounce_no_live_target_and_continuation_not_admitted",
+                    metadata={"bounce_policy": bounce_policy},
+                )
+            candidate_pool = all_candidates or (primary_target_id,)
+            candidate_pool_reason = "all_targets_defeated_continue_sequence"
+        event_id = f"rng:{state.event_index}:{actor_id}:{action_id}:{action_level}:bounce:{hit_index}"
+        roll = _deterministic_roll(state.rng_state, event_id, tuple(candidate_pool), tuple(previous_hit_targets))
+        selected_index = min(len(candidate_pool) - 1, int(roll * len(candidate_pool))) if candidate_pool else 0
+        selected = candidate_pool[selected_index]
+        result = {
+            "selected_target_id": selected,
+            "candidate_pool": list(candidate_pool),
+            "candidate_pool_reason": candidate_pool_reason,
+            "roll": roll,
+            "selected_index": selected_index,
+            "hit_index": hit_index,
+            "selection_strategy": selection_strategy,
+            "live_target_priority": bool(bounce_policy.get("live_target_priority")),
+            "continue_on_all_defeated": bool(bounce_policy.get("continue_on_all_defeated")),
+            "previous_hit_targets": list(previous_hit_targets),
+            "bounce_policy_id": str(bounce_policy.get("bounce_policy_id") or ""),
+        }
+        rng_event = RNGEvent(
+            rng_type="bounce_target",
+            source="target_system",
+            event_id=event_id,
+            before_state=state.rng_state,
+            after_state=state.rng_state,
+            result=result,
+            metadata={
+                "actor_id": actor_id,
+                "action_id": action_id,
+                "action_level": action_level,
+                "primary_target_id": primary_target_id,
+                "source_trace": bounce_policy.get("source", {}),
+            },
+        )
+        return BounceTargetResult(ok=True, target_id=selected, rng_event=rng_event, metadata=result)
+
 
 def _policy_allows(actor_id: str, actor_side: str, target_id: str, target_side: str, policy: TargetPolicy) -> bool:
     if target_id == actor_id:
@@ -168,6 +258,7 @@ def _policy_metadata(policy: TargetPolicy) -> dict[str, JSONValue]:
         "allow_defeated": policy.allow_defeated,
         "target_mode": policy.target_mode,
         "selection_mode": policy.selection_mode,
+        "bounce_policy": policy.bounce_policy,
     }
 
 
@@ -183,17 +274,29 @@ def _target_groups(
         primary = legal[0]
         adjacent = _adjacent_units(state, actor_id, primary, legal)
         return {"primary": (primary,), "adjacent": adjacent, "selected": (primary, *adjacent)}
+    if policy.target_mode == "bounce":
+        primary = legal[0]
+        return {"primary": (primary,), "selected": (primary,)}
     return {"selected": legal}
 
 
-def _target_mode_blocked_reason(target_mode: str) -> str:
-    if target_mode == "bounce":
-        return "bounce_not_executable"
-    if target_mode == "unknown":
+def _target_mode_blocked_reason(policy: TargetPolicy) -> str:
+    if policy.target_mode == "bounce":
+        if str(policy.bounce_policy.get("coverage_status") or "") == "executable":
+            return ""
+        reason = str(policy.bounce_policy.get("blocked_reason") or "bounce_policy_not_executable")
+        return reason
+    if policy.target_mode == "unknown":
         return "unknown_target_mode_not_executable"
-    if target_mode not in {"single", "aoe", "blast", "self_or_team"}:
-        return f"unsupported_target_mode:{target_mode}"
+    if policy.target_mode not in {"single", "aoe", "blast", "self_or_team"}:
+        return f"unsupported_target_mode:{policy.target_mode}"
     return ""
+
+
+def _deterministic_roll(rng_state: str, event_id: str, candidates: tuple[str, ...], previous: tuple[str, ...]) -> float:
+    raw = "|".join((rng_state, event_id, ",".join(candidates), ",".join(previous)))
+    digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()
+    return int(digest[:12], 16) / float(0xFFFFFFFFFFFF)
 
 
 def _adjacent_units(
