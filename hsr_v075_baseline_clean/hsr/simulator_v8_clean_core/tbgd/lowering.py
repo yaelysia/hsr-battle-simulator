@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .coverage import classify_opcode
+from .character_cards import build_character_card_ir
 from .paths import relative_source_path
 from .. import BASELINE_VERSION
 from ..rules.ir import (
@@ -186,10 +187,16 @@ class TBGDLowering:
             entities.extend(self._lower_entity_table(relative_path, spec))
             table_stats[relative_path] = self._table_stats(relative_path, spec[1])
         entities = list(_dedupe_entities(entities).values())
-        avatar_profiles = self._lower_avatar_profiles()
+        character_cards = build_character_card_ir(
+            self.tbgd_root,
+            max_records_per_table=self.limits.max_records_per_table,
+            skill_tables=ACTION_DEFINITION_TABLES,
+        )
+        avatar_profiles = character_cards.avatar_profiles
+        character_data_cards = character_cards.character_data_cards
+        skill_formula_bindings = character_cards.skill_formula_bindings
         combatant_profiles = self._lower_combatant_profiles()
         action_definitions = list(self._lower_action_definitions().values())
-        skill_formula_bindings = self._lower_skill_formula_bindings()
         (
             action_ability_bindings,
             ability_phases,
@@ -198,6 +205,11 @@ class TBGDLowering:
             ability_task_conditions,
             ability_task_formulas,
         ) = self._lower_action_ability_bindings(action_definitions)
+        ability_task_effects = _attach_status_formula_bindings_to_add_modifier_effects(
+            ability_task_effects,
+            ability_tasks,
+            skill_formula_bindings,
+        )
         effects.extend(ability_task_effects)
         conditions.extend(ability_task_conditions)
         formulas.extend(ability_task_formulas)
@@ -205,6 +217,7 @@ class TBGDLowering:
             action_definitions,
             action_ability_bindings,
             ability_phases,
+            skill_formula_bindings,
         )
         damage_emissions = _lower_damage_emissions(
             ability_tasks,
@@ -279,6 +292,7 @@ class TBGDLowering:
             version=BASELINE_VERSION,
             entities=tuple(entities),
             avatar_profiles=tuple(avatar_profiles),
+            character_data_cards=tuple(character_data_cards),
             combatant_profiles=tuple(combatant_profiles),
             action_definitions=tuple(action_definitions),
             action_ability_bindings=tuple(action_ability_bindings),
@@ -363,6 +377,11 @@ class TBGDLowering:
                     "executable_count": sum(1 for profile in avatar_profiles if profile.coverage_status == "executable"),
                     "blocked_count": sum(1 for profile in avatar_profiles if profile.coverage_status == "blocked"),
                 },
+                "character_data_card_status": {
+                    "lowered_count": len(character_data_cards),
+                    "executable_count": sum(1 for card in character_data_cards if card.coverage_status == "executable"),
+                    "blocked_count": sum(1 for card in character_data_cards if card.coverage_status == "blocked"),
+                },
                 "combatant_profile_status": {
                     "lowered_count": len(combatant_profiles),
                     "executable_count": sum(1 for profile in combatant_profiles if profile.coverage_status == "executable"),
@@ -412,70 +431,6 @@ class TBGDLowering:
             )
         ]
 
-    def _lower_avatar_profiles(self) -> list[AvatarProfileIR]:
-        promotion_rows_by_avatar: dict[str, list[dict[str, Any]]] = {}
-        for relative_path in ("ExcelOutput/AvatarPromotionConfig.json", "ExcelOutput/AvatarPromotionConfigLD.json"):
-            path = self.tbgd_root / relative_path
-            if not path.exists():
-                continue
-            try:
-                data = json.loads(path.read_text(encoding="utf-8"))
-            except Exception:
-                continue
-            if not isinstance(data, list):
-                continue
-            for row in data:
-                if isinstance(row, dict) and row.get("AvatarID") is not None:
-                    promotion_rows_by_avatar.setdefault(str(row["AvatarID"]), []).append(row)
-
-        profiles: list[AvatarProfileIR] = []
-        for relative_path in ("ExcelOutput/AvatarConfig.json", "ExcelOutput/AvatarConfigLD.json"):
-            path = self.tbgd_root / relative_path
-            if not path.exists():
-                continue
-            try:
-                data = json.loads(path.read_text(encoding="utf-8"))
-            except Exception:
-                continue
-            if not isinstance(data, list):
-                continue
-            for row_index, row in enumerate(_limit_sequence(data, self.limits.max_records_per_table)):
-                if not isinstance(row, dict) or row.get("AvatarID") is None:
-                    continue
-                avatar_id = str(row["AvatarID"])
-                promotion_rows = promotion_rows_by_avatar.get(avatar_id, [])
-                base_stats_by_promotion = _avatar_base_stats_by_promotion(promotion_rows)
-                skill_ids = tuple(str(skill_id) for skill_id in row.get("SkillList") or ())
-                blocked_reason = ""
-                if not skill_ids:
-                    blocked_reason = "avatar_skill_list_missing"
-                elif not base_stats_by_promotion:
-                    blocked_reason = "avatar_promotion_base_stats_missing"
-                profiles.append(
-                    AvatarProfileIR(
-                        avatar_profile_id=f"avatar_profile:{avatar_id}",
-                        avatar_id=avatar_id,
-                        base_type=str(row.get("AvatarBaseType") or ""),
-                        damage_type=str(row.get("DamageType") or ""),
-                        skill_ids=skill_ids,
-                        base_stats_by_promotion=base_stats_by_promotion,
-                        source=IRSource(
-                            source_path=relative_path,
-                            raw_type=Path(relative_path).stem,
-                            raw_id=avatar_id,
-                            evidence={
-                                "row_index": row_index,
-                                "skill_list": _json_safe(row.get("SkillList")),
-                                "json_path": str(row.get("JsonPath") or ""),
-                                "promotion_row_count": len(promotion_rows),
-                            },
-                        ),
-                        coverage_status="blocked" if blocked_reason else "executable",
-                        blocked_reason=blocked_reason,
-                    )
-                )
-        return profiles
-
     def _lower_combatant_profiles(self) -> list[CombatantProfileIR]:
         monster_rows = self._rows_by_id("ExcelOutput/MonsterConfig.json", "MonsterID")
         template_rows = self._rows_by_id("ExcelOutput/MonsterTemplateConfig.json", "MonsterTemplateID")
@@ -487,34 +442,6 @@ class TBGDLowering:
         for template_id, template_row in sorted(template_rows.items()):
             profiles.append(_combatant_profile_from_template(template_id, template_row))
         return profiles
-
-    def _lower_skill_formula_bindings(self) -> list[SkillFormulaBindingIR]:
-        text_map = _load_text_map(self.tbgd_root)
-        bindings: list[SkillFormulaBindingIR] = []
-        for relative_path, entity_type, id_key in ACTION_DEFINITION_TABLES:
-            path = self.tbgd_root / relative_path
-            if not path.exists():
-                continue
-            try:
-                data = json.loads(path.read_text(encoding="utf-8"))
-            except Exception:
-                continue
-            if not isinstance(data, list):
-                continue
-            for row_index, row in enumerate(_limit_sequence(data, self.limits.max_records_per_table)):
-                if not isinstance(row, dict) or id_key not in row:
-                    continue
-                bindings.extend(
-                    _skill_formula_bindings_from_row(
-                        relative_path=relative_path,
-                        entity_type=entity_type,
-                        id_key=id_key,
-                        row_index=row_index,
-                        row=row,
-                        text_map=text_map,
-                    )
-                )
-        return bindings
 
     def _lower_break_base_damage(self) -> list[BreakBaseDamageIR]:
         relative_path = "ExcelOutput/AvatarBreakDamage.json"
@@ -2343,228 +2270,6 @@ def _combatant_profile_from_template(template_id: str, template_row: dict[str, A
     )
 
 
-SKILL_TEXT_BASIS_WORDS: dict[str, str] = {
-    "攻击力": "attack",
-    "生命上限": "max_hp",
-    "防御力": "defense",
-}
-
-SKILL_TEXT_DAMAGE_BINDING_PATTERNS: tuple[re.Pattern[str], ...] = (
-    re.compile(
-        r"(?P<matched>(?:造成|受到|附加|追加)[^。；\n]{0,120}?等同于[^。；\n]{0,80}?"
-        r"#(?P<param_index>\d+)(?:\[[^\]]+\])?%?[^。；\n]{0,50}?"
-        r"(?P<basis>攻击力|生命上限|防御力)[^。；\n]{0,120}?伤害)"
-    ),
-    re.compile(
-        r"(?P<matched>(?:造成|受到|附加|追加)[^。；\n]{0,120}?等同于[^。；\n]{0,50}?"
-        r"(?P<basis>攻击力|生命上限|防御力)[^。；\n]{0,50}?"
-        r"#(?P<param_index>\d+)(?:\[[^\]]+\])?%?[^。；\n]{0,120}?伤害)"
-    ),
-)
-
-
-def _load_text_map(tbgd_root: Path) -> dict[str, str]:
-    for relative_path in ("TextMap/TextMapCHS.json", "TextMap/TextMapCN.json"):
-        path = tbgd_root / relative_path
-        if not path.exists():
-            continue
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            continue
-        if isinstance(data, dict):
-            return {str(key): str(value) for key, value in data.items() if isinstance(value, str)}
-    return {}
-
-
-def _avatar_base_stats_by_promotion(rows: list[dict[str, Any]]) -> dict[str, JSONValue]:
-    result: dict[str, JSONValue] = {}
-    for index, row in enumerate(rows):
-        if not isinstance(row, dict):
-            continue
-        max_level = row.get("MaxLevel")
-        key = str(max_level if isinstance(max_level, int) else index)
-        stats = {
-            "max_level": _json_safe(row.get("MaxLevel")),
-            "attack_base": _value_field(row.get("AttackBase")),
-            "attack_add": _value_field(row.get("AttackAdd")),
-            "defense_base": _value_field(row.get("DefenceBase")),
-            "defense_add": _value_field(row.get("DefenceAdd")),
-            "hp_base": _value_field(row.get("HPBase")),
-            "hp_add": _value_field(row.get("HPAdd")),
-            "speed_base": _value_field(row.get("SpeedBase")),
-            "critical_chance": _value_field(row.get("CriticalChance")),
-            "critical_damage": _value_field(row.get("CriticalDamage")),
-            "base_aggro": _value_field(row.get("BaseAggro")),
-        }
-        if any(isinstance(value, (int, float)) for value in stats.values()):
-            result[key] = stats
-    return result
-
-
-def _skill_formula_bindings_from_row(
-    *,
-    relative_path: str,
-    entity_type: str,
-    id_key: str,
-    row_index: int,
-    row: dict[str, Any],
-    text_map: dict[str, str],
-) -> list[SkillFormulaBindingIR]:
-    raw_id = str(row[id_key])
-    action_id = f"{entity_type}:{raw_id}"
-    level = int(_number_value(row.get("Level"), 1.0))
-    text_hash = _text_hash(row.get("SkillDesc"))
-    skill_text = text_map.get(text_hash, "") if text_hash else ""
-    normalized_text = _normalize_skill_text(skill_text)
-    param_list = tuple(_list_json_values(row.get("ParamList")))
-    matches = _skill_formula_text_matches(normalized_text)
-    bindings: list[SkillFormulaBindingIR] = []
-    for match_index, match in enumerate(matches):
-        param_index = int(match["param_index"]) - 1
-        basis_word = str(match["basis_word"])
-        param_value = param_list[param_index] if 0 <= param_index < len(param_list) else None
-        blocked_reason = ""
-        if param_index < 0:
-            blocked_reason = "skill_text_param_index_invalid"
-        elif param_index >= len(param_list):
-            blocked_reason = "skill_text_param_index_out_of_range"
-        elif not isinstance(_value_field(param_value), (int, float)):
-            blocked_reason = "skill_text_param_value_not_numeric"
-        stat = SKILL_TEXT_BASIS_WORDS.get(basis_word, "")
-        if not stat and not blocked_reason:
-            blocked_reason = "skill_text_scaling_basis_not_supported"
-        role = _skill_formula_role(str(match["matched_text"]))
-        source = IRSource(
-            source_path=relative_path,
-            raw_type=Path(relative_path).stem,
-            raw_id=raw_id,
-            evidence={
-                "row_index": row_index,
-                "id_key": id_key,
-                "level": level,
-                "skill_desc_hash": text_hash,
-                "matched_text": str(match["matched_text"]),
-                "basis_word": basis_word,
-                "param_ref": f"ParamList[{param_index}]",
-                "match_index": match_index,
-                "parser": "skill_text_damage_basis_v0_261",
-            },
-        )
-        if blocked_reason:
-            scaling_basis_expr: dict[str, JSONValue] = {
-                "kind": "missing",
-                "supported": False,
-                "reason": blocked_reason,
-                "source_trace": source.to_json(),
-            }
-        else:
-            scaling_basis_expr = {
-                "kind": "unit_stat",
-                "unit_ref": "attacker",
-                "stat": stat,
-                "source_kind": "skill_text_param_binding",
-                "admission_status": "executable",
-                "param_index": param_index,
-                "param_value": _json_safe(param_value),
-                "text_hash": text_hash,
-                "matched_text": str(match["matched_text"]),
-                "source_trace": source.to_json(),
-            }
-        bindings.append(
-            SkillFormulaBindingIR(
-                binding_id=f"skill_formula_binding:{action_id}:{level}:{role}:param:{param_index}:{match_index}",
-                action_id=action_id,
-                level=level,
-                param_index=param_index,
-                formula_role=role,
-                param_value=_json_safe(param_value),
-                scaling_basis_expr=scaling_basis_expr,
-                text_hash=text_hash,
-                skill_text=skill_text,
-                matched_text=str(match["matched_text"]),
-                source=source,
-                coverage_status="blocked" if blocked_reason else "executable",
-                blocked_reason=blocked_reason,
-            )
-        )
-    if not bindings and param_list:
-        source = IRSource(
-            source_path=relative_path,
-            raw_type=Path(relative_path).stem,
-            raw_id=raw_id,
-            evidence={
-                "row_index": row_index,
-                "id_key": id_key,
-                "level": level,
-                "skill_desc_hash": text_hash,
-                "parser": "skill_text_damage_basis_v0_261",
-                "reason": "no supported damage scaling phrase found in skill text",
-            },
-        )
-        bindings.append(
-            SkillFormulaBindingIR(
-                binding_id=f"skill_formula_binding:{action_id}:{level}:direct_damage:param:0:blocked",
-                action_id=action_id,
-                level=level,
-                param_index=0,
-                formula_role="direct_damage",
-                param_value=_json_safe(param_list[0]),
-                scaling_basis_expr={
-                    "kind": "missing",
-                    "supported": False,
-                    "reason": "skill_text_scaling_basis_binding_missing",
-                    "source_trace": source.to_json(),
-                },
-                text_hash=text_hash,
-                skill_text=skill_text,
-                matched_text="",
-                source=source,
-                coverage_status="blocked",
-                blocked_reason="skill_text_scaling_basis_binding_missing",
-            )
-        )
-    return bindings
-
-
-def _text_hash(value: Any) -> str:
-    if isinstance(value, dict) and value.get("Hash") is not None:
-        return str(value["Hash"])
-    return ""
-
-
-def _normalize_skill_text(text: str) -> str:
-    normalized = re.sub(r"<[^>]+>", "", text)
-    return normalized.replace("\\n", "。").replace("\n", "。")
-
-
-def _skill_formula_text_matches(text: str) -> list[dict[str, str]]:
-    matches: list[dict[str, str]] = []
-    seen: set[tuple[str, str, str]] = set()
-    for pattern in SKILL_TEXT_DAMAGE_BINDING_PATTERNS:
-        for match in pattern.finditer(text):
-            key = (match.group("param_index"), match.group("basis"), match.group("matched"))
-            if key in seen:
-                continue
-            seen.add(key)
-            matches.append(
-                {
-                    "param_index": match.group("param_index"),
-                    "basis_word": match.group("basis"),
-                    "matched_text": match.group("matched"),
-                }
-            )
-    return matches
-
-
-def _skill_formula_role(matched_text: str) -> str:
-    if "持续伤害" in matched_text:
-        return "dot_damage"
-    if "附加伤害" in matched_text:
-        return "additional_damage"
-    return "direct_damage"
-
-
 def _monster_profile_stats(monster_row: dict[str, Any], template_row: dict[str, Any]) -> dict[str, Any]:
     template_stats = _monster_template_profile_stats(template_row)
     if template_stats.get("blocked_reason"):
@@ -2690,7 +2395,7 @@ def _action_definition_from_row(
             "row_index": row_index,
             "id_key": id_key,
             "level": level,
-            "skill_desc_hash": _text_hash(row.get("SkillDesc")),
+            "skill_desc_hash": _hash_ref(row.get("SkillDesc")),
             "skill_trigger_key": str(row.get("SkillTriggerKey") or ""),
             "resource_mapping": {
                 "BPNeed": "skill_point_cost_if_positive",
@@ -2726,6 +2431,12 @@ def _action_definition_from_row(
         element_type=element_type,
         source_mode=_source_mode(attack_type),
     )
+
+
+def _hash_ref(value: Any) -> str:
+    if isinstance(value, dict) and value.get("Hash") is not None:
+        return str(value["Hash"])
+    return ""
 
 
 def _blocked_action_binding(
@@ -2921,15 +2632,22 @@ def _lower_action_execution_ir(
     definitions: list[ActionDefinitionIR],
     bindings: list[ActionAbilityBindingIR],
     phases: list[AbilityPhaseIR],
+    skill_formula_bindings: list[SkillFormulaBindingIR],
 ) -> tuple[list[ActionEventIR], list[HitProfileIR]]:
     binding_by_action = {(binding.action_id, binding.level): binding for binding in bindings}
+    formula_bindings_by_action: dict[tuple[str, int], list[SkillFormulaBindingIR]] = {}
+    for formula_binding in skill_formula_bindings:
+        formula_bindings_by_action.setdefault((formula_binding.action_id, formula_binding.level), []).append(formula_binding)
     phases_by_binding: dict[str, list[AbilityPhaseIR]] = {}
     for phase in phases:
         phases_by_binding.setdefault(phase.binding_id, []).append(phase)
     events: list[ActionEventIR] = []
     profiles: list[HitProfileIR] = []
     for definition in definitions:
-        action_profiles = _hit_profiles_from_definition(definition)
+        action_profiles = _hit_profiles_from_definition(
+            definition,
+            tuple(formula_bindings_by_action.get((definition.action_id, definition.level), ())),
+        )
         profiles.extend(action_profiles)
         binding = binding_by_action.get((definition.action_id, definition.level))
         binding_phases = tuple(sorted(
@@ -2990,6 +2708,61 @@ def _lower_damage_emissions(
     return emissions
 
 
+def _attach_status_formula_bindings_to_add_modifier_effects(
+    effects: list[EffectIR],
+    tasks: list[AbilityTaskIR],
+    skill_formula_bindings: list[SkillFormulaBindingIR],
+) -> list[EffectIR]:
+    dot_bindings_by_action: dict[tuple[str, int], list[SkillFormulaBindingIR]] = {}
+    for binding in skill_formula_bindings:
+        if binding.formula_role != "dot_damage":
+            continue
+        if binding.coverage_status != "executable":
+            continue
+        dot_bindings_by_action.setdefault((binding.action_id, binding.level), []).append(binding)
+    if not dot_bindings_by_action:
+        return effects
+
+    task_by_effect_id = {task.effect_id: task for task in tasks if task.effect_id}
+    updated: list[EffectIR] = []
+    for effect in effects:
+        if effect.opcode != "AddModifier":
+            updated.append(effect)
+            continue
+        task = task_by_effect_id.get(effect.effect_id)
+        if task is None:
+            updated.append(effect)
+            continue
+        bindings = tuple(sorted(
+            dot_bindings_by_action.get((task.action_id, task.level), ()),
+            key=lambda item: (item.sequence_order, item.param_index, item.binding_id),
+        ))
+        if not bindings:
+            updated.append(effect)
+            continue
+        payload = dict(effect.payload)
+        standard = dict(payload.get("standard")) if isinstance(payload.get("standard"), dict) else {}
+        standard["status_formula_bindings"] = [binding.to_json() for binding in bindings]
+        standard["status_formula_binding_source"] = {
+            "source_kind": "character_data_card_status_formula_slots",
+            "action_id": task.action_id,
+            "action_level": task.level,
+            "task_id": task.task_id,
+            "binding_count": len(bindings),
+        }
+        payload["standard"] = standard
+        updated.append(
+            EffectIR(
+                effect_id=effect.effect_id,
+                opcode=effect.opcode,
+                payload=payload,
+                source=effect.source,
+                coverage_status=effect.coverage_status,
+            )
+        )
+    return updated
+
+
 def _lower_toughness_emissions(
     tasks: list[AbilityTaskIR],
     effects: list[EffectIR],
@@ -3046,6 +2819,8 @@ def _direct_damage_binding_lookup(
     for binding in sorted(bindings, key=lambda item: item.binding_id):
         if binding.formula_role != "direct_damage":
             continue
+        if not binding.character_data_card_id:
+            continue
         key = (binding.action_id, binding.level, binding.param_index)
         existing = lookup.get(key)
         if existing is None or (
@@ -3095,7 +2870,7 @@ def _damage_scaling_basis_expr(
         return {
             "kind": "missing",
             "supported": False,
-            "reason": "skill_text_scaling_basis_binding_missing",
+            "reason": "character_data_card_skill_formula_missing",
             "param_index": param_index,
             "source_trace": {
                 "task_source": task.source.to_json(),
@@ -3109,7 +2884,7 @@ def _damage_scaling_basis_expr(
         return {
             "kind": "missing",
             "supported": False,
-            "reason": binding.blocked_reason or f"skill_text_binding_{binding.coverage_status}",
+            "reason": binding.blocked_reason or f"character_data_card_skill_formula_{binding.coverage_status}",
             "param_index": param_index,
             "source_trace": {
                 "task_source": task.source.to_json(),
@@ -3118,6 +2893,7 @@ def _damage_scaling_basis_expr(
                 "hit_profile_id": profile.hit_profile_id,
                 "hit_profile_source": profile.source.to_json(),
                 "skill_formula_binding": binding.to_json(),
+                "character_data_card_id": binding.character_data_card_id,
             },
         }
     basis_expr = dict(binding.scaling_basis_expr)
@@ -3132,6 +2908,7 @@ def _damage_scaling_basis_expr(
         "hit_profile_id": profile.hit_profile_id,
         "hit_profile_source": profile.source.to_json(),
         "skill_formula_binding": binding.to_json(),
+        "character_data_card_id": binding.character_data_card_id,
     }
     return basis_expr
 
@@ -3171,7 +2948,7 @@ def _damage_emission_blocked_reason(
     if profile.multiplier_expr.get("kind") != "fixed":
         return "damage_emission_scaling_ratio_not_fixed"
     if scaling_basis_expr.get("kind") != "unit_stat" or scaling_basis_expr.get("admission_status") != "executable":
-        reason = str(scaling_basis_expr.get("reason") or "skill_text_scaling_basis_binding_missing")
+        reason = str(scaling_basis_expr.get("reason") or "character_data_card_skill_formula_missing")
         return f"damage_scaling_basis_not_admitted:{reason}"
     return ""
 
@@ -3352,15 +3129,27 @@ def _action_event_from_definition(
     )
 
 
-def _hit_profiles_from_definition(definition: ActionDefinitionIR) -> list[HitProfileIR]:
+def _hit_profiles_from_definition(
+    definition: ActionDefinitionIR,
+    skill_formula_bindings: tuple[SkillFormulaBindingIR, ...] = (),
+) -> list[HitProfileIR]:
     if definition.damage_kind != "hp_damage":
         return []
+    formula_hit_profiles = _hit_profiles_from_skill_formula_bindings(definition, skill_formula_bindings)
+    if formula_hit_profiles:
+        return formula_hit_profiles
     groups = _hit_target_groups(definition.target_mode)
     if not groups:
         groups = (definition.target_mode or "unknown",)
     profiles: list[HitProfileIR] = []
     for hit_index, target_group in enumerate(groups):
         blocked_reason = _hit_profile_blocked_reason(definition, target_group)
+        if (
+            not blocked_reason
+            and definition.action_id.startswith("avatar_skill:")
+            and definition.damage_formula_family == "direct"
+        ):
+            blocked_reason = "skill_text_scaling_basis_binding_missing"
         profiles.append(
             HitProfileIR(
                 hit_profile_id=f"hit_profile:{definition.action_id}:{definition.level}:{hit_index}:{target_group}",
@@ -3368,8 +3157,8 @@ def _hit_profiles_from_definition(definition: ActionDefinitionIR) -> list[HitPro
                 level=definition.level,
                 hit_index=hit_index,
                 target_group=target_group,
-                multiplier_expr=_param_multiplier_expr(definition.param_list),
-                multiplier_source=_param_multiplier_source(definition),
+                multiplier_expr=_param_multiplier_expr(definition.param_list, 0),
+                multiplier_source=_param_multiplier_source(definition, 0),
                 stance_expr=_stance_expr(definition.show_stance_list),
                 stance_source=_stance_source(definition),
                 damage_formula_family=definition.damage_formula_family,
@@ -3381,6 +3170,71 @@ def _hit_profiles_from_definition(definition: ActionDefinitionIR) -> list[HitPro
             )
         )
     return profiles
+
+
+def _hit_profiles_from_skill_formula_bindings(
+    definition: ActionDefinitionIR,
+    skill_formula_bindings: tuple[SkillFormulaBindingIR, ...],
+) -> list[HitProfileIR]:
+    if definition.damage_formula_family != "direct":
+        return []
+    selected: list[SkillFormulaBindingIR] = []
+    seen: set[tuple[int, str]] = set()
+    for binding in sorted(skill_formula_bindings, key=lambda item: (item.sequence_order, item.param_index, item.binding_id)):
+        if binding.formula_role != "direct_damage":
+            continue
+        target_group = _target_group_from_formula_binding(definition, binding)
+        key = (binding.param_index, target_group)
+        if key in seen:
+            continue
+        seen.add(key)
+        selected.append(binding)
+    profiles: list[HitProfileIR] = []
+    for hit_index, binding in enumerate(selected):
+        target_group = _target_group_from_formula_binding(definition, binding)
+        blocked_reason = _hit_profile_blocked_reason(definition, target_group)
+        if binding.coverage_status != "executable":
+            blocked_reason = binding.blocked_reason or f"skill_formula_binding_not_executable:{binding.coverage_status}"
+        param_reason = _param_index_blocked_reason(definition.param_list, binding.param_index)
+        if param_reason and not blocked_reason:
+            blocked_reason = param_reason
+        profiles.append(
+            HitProfileIR(
+                hit_profile_id=(
+                    f"hit_profile:{definition.action_id}:{definition.level}:"
+                    f"{hit_index}:{target_group}:slot:{binding.sequence_order}"
+                ),
+                action_id=definition.action_id,
+                level=definition.level,
+                hit_index=hit_index,
+                target_group=target_group,
+                multiplier_expr=_param_multiplier_expr(definition.param_list, binding.param_index),
+                multiplier_source=_param_multiplier_source(definition, binding.param_index, binding),
+                stance_expr=_stance_expr(definition.show_stance_list),
+                stance_source=_stance_source(definition),
+                damage_formula_family=definition.damage_formula_family,
+                element_type=definition.element_type,
+                source=binding.source,
+                coverage_status="blocked" if blocked_reason else "executable",
+                blocked_reason=blocked_reason,
+                numeric_fidelity_status=_numeric_fidelity_status(definition, target_group),
+            )
+        )
+    return profiles
+
+
+def _target_group_from_formula_binding(
+    definition: ActionDefinitionIR,
+    binding: SkillFormulaBindingIR,
+) -> str:
+    hint = binding.target_group_hint
+    if definition.target_mode == "blast":
+        return "adjacent" if hint == "adjacent" else "primary"
+    if definition.target_mode in {"single", "aoe"}:
+        return "selected"
+    if definition.target_mode in {"bounce", "unknown"}:
+        return definition.target_mode
+    return "selected"
 
 
 def _hit_target_groups(target_mode: str) -> tuple[str, ...]:
@@ -3399,34 +3253,51 @@ def _hit_profile_blocked_reason(definition: ActionDefinitionIR, target_group: st
         return target_reason
     if definition.damage_formula_family not in {"direct", "true_damage", "hp_loss", "elation"}:
         return f"damage_formula_family_not_executable:{definition.damage_formula_family}"
-    if not _param_multiplier_is_fixed(definition.param_list):
-        return "param_list_multiplier_not_fixed"
     if target_group in {"adjacent", "selected"} and definition.target_mode in {"aoe", "blast"}:
         return ""
     return ""
 
 
-def _param_multiplier_expr(param_list: tuple[Any, ...]) -> dict[str, Any]:
+def _param_multiplier_expr(param_list: tuple[Any, ...], param_index: int = 0) -> dict[str, Any]:
     if not param_list:
         return {"kind": "missing", "blocked_reason": "missing_param_list"}
-    first = param_list[0]
-    value = _number_value(first, 0.0)
-    if _param_multiplier_is_fixed(param_list):
+    if param_index < 0 or param_index >= len(param_list):
+        return {"kind": "missing", "blocked_reason": "param_list_index_out_of_range", "param_index": param_index}
+    item = param_list[param_index]
+    value = _number_value(item, 0.0)
+    if _param_value_is_fixed(item):
         return {"kind": "fixed", "value": value}
-    return {"kind": "unsupported", "raw": _json_safe(first), "blocked_reason": "param_list_multiplier_not_fixed"}
+    return {"kind": "unsupported", "raw": _json_safe(item), "blocked_reason": "param_list_multiplier_not_fixed"}
 
 
-def _param_multiplier_source(definition: ActionDefinitionIR) -> dict[str, Any]:
-    first = definition.param_list[0] if definition.param_list else None
-    return {
-        "raw_path": "ParamList[0]",
-        "raw_value": _json_safe(first),
+def _param_multiplier_source(
+    definition: ActionDefinitionIR,
+    param_index: int = 0,
+    binding: SkillFormulaBindingIR | None = None,
+) -> dict[str, Any]:
+    item = definition.param_list[param_index] if 0 <= param_index < len(definition.param_list) else None
+    source = {
+        "raw_path": f"ParamList[{param_index}]",
+        "raw_value": _json_safe(item),
         "param_list_count": len(definition.param_list),
-        "multi_param_list_not_implemented": len(definition.param_list) > 1,
+        "multi_param_list_not_implemented": False,
         "show_damage_count": len(definition.show_damage_list),
         "show_damage_audit_only": bool(definition.show_damage_list),
+        "source_kind": "character_data_card_skill_formula" if binding else "action_definition_param_list",
         "source": definition.source.to_json(),
     }
+    if binding is not None:
+        source.update(
+            {
+                "skill_formula_binding_id": binding.binding_id,
+                "formula_slot_id": binding.formula_slot_id,
+                "sequence_order": binding.sequence_order,
+                "target_group_hint": binding.target_group_hint,
+                "character_data_card_id": binding.character_data_card_id,
+                "skill_formula_binding_source": binding.source.to_json(),
+            }
+        )
+    return source
 
 
 def _stance_expr(show_stance_list: tuple[Any, ...]) -> dict[str, Any]:
@@ -3456,9 +3327,23 @@ def _param_multiplier_is_fixed(param_list: tuple[Any, ...]) -> bool:
     if not param_list:
         return False
     first = param_list[0]
-    if isinstance(first, dict):
-        return isinstance(first.get("Value"), (int, float))
-    return isinstance(first, (int, float))
+    return _param_value_is_fixed(first)
+
+
+def _param_value_is_fixed(value: Any) -> bool:
+    if isinstance(value, dict):
+        return isinstance(value.get("Value"), (int, float))
+    return isinstance(value, (int, float))
+
+
+def _param_index_blocked_reason(param_list: tuple[Any, ...], param_index: int) -> str:
+    if param_index < 0:
+        return "param_list_index_invalid"
+    if param_index >= len(param_list):
+        return "param_list_index_out_of_range"
+    if not _param_value_is_fixed(param_list[param_index]):
+        return "param_list_multiplier_not_fixed"
+    return ""
 
 
 def _numeric_fidelity_status(definition: ActionDefinitionIR, target_group: str) -> str:
@@ -3785,7 +3670,11 @@ def _status_callback_task_admission(event: str, opcode: str, task: dict[str, Any
             extra_damage_percentage = _numeric_expr_summary(attack_property.get("ExtraDamagePercentage"))
             if not _numeric_expr_can_be_runtime_bound(damage_value):
                 if _numeric_expr_can_be_runtime_bound(damage_percentage):
-                    return "blocked", "dot_damage_percentage_basis_not_admitted"
+                    if extra_formula_type and extra_formula_type != "ByDefence":
+                        return "blocked", f"dot_extra_formula_type_not_admitted:{extra_formula_type}"
+                    if extra_formula_type == "ByDefence" and not _numeric_expr_can_be_runtime_bound(extra_damage_percentage):
+                        return "blocked", f"dot_extra_damage_percentage_not_executable:{extra_damage_percentage.get('reason') or extra_damage_percentage.get('kind')}"
+                    return "executable", ""
                 return "blocked", f"dot_damage_value_not_executable:{damage_value.get('reason') or damage_value.get('kind')}"
             if extra_formula_type and extra_formula_type != "ByDefence":
                 return "blocked", f"dot_extra_formula_type_not_admitted:{extra_formula_type}"
@@ -3813,7 +3702,10 @@ def _status_callback_task_admission(event: str, opcode: str, task: dict[str, Any
 
 
 def _status_callback_source_admitted(relative_path: str) -> bool:
-    return relative_path == "Config/ConfigGlobalModifier/GlobalModifier_Common_Specific.json"
+    return (
+        relative_path == "Config/ConfigGlobalModifier/GlobalModifier_Common_Specific.json"
+        or (_queue_source_candidate(relative_path) and not _queue_source_blocked(relative_path))
+    )
 
 
 def _status_callback_task_source_admitted(relative_path: str, event: str, opcode: str) -> bool:
@@ -3875,9 +3767,10 @@ def _status_damage_emission_from_task(
             "kind": "dot_attack_property",
             "damage_percentage": _numeric_expr_summary(attack_property.get("DamagePercentage")),
             "damage_percentage_basis": {
-                "kind": "missing",
-                "supported": False,
-                "reason": "dot_damage_percentage_basis_not_admitted",
+                "kind": "status_formula_binding",
+                "supported": True,
+                "formula_role": "dot_damage",
+                "reason": "resolved_from_status_instance_formula_bindings",
             },
             "damage_value": _numeric_expr_summary(attack_property.get("DamageValue")),
             "formula_type": str(attack_property.get("FormulaType") or ""),

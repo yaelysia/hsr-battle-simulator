@@ -109,8 +109,14 @@ class DotFormula:
                     percentage_eval.blocked_reason or "dot_damage_percentage_numeric_evaluation_failed",
                     emission.source.to_json(),
                     numeric_evaluations,
+            )
+            basis_expr = _dot_damage_percentage_basis_expr(scaling, formula_input.status_detail)
+            if basis_expr.get("kind") == "missing" and basis_expr.get("reason"):
+                return _blocked_with_evaluations(
+                    str(basis_expr.get("reason")),
+                    emission.source.to_json(),
+                    numeric_evaluations,
                 )
-            basis_expr = _json_dict(scaling.get("damage_percentage_basis"))
             basis_result = resolve_scaling_basis(
                 formula_input.state,
                 attacker_id=formula_input.caster_id,
@@ -235,6 +241,50 @@ def _dot_binding_sources(state: BattleState, detail: dict[str, JSONValue]) -> tu
     if store_source.get("entries"):
         sources.append(store_source)
     return tuple(sources)
+
+
+def _dot_damage_percentage_basis_expr(
+    scaling: dict[str, JSONValue],
+    status_detail: dict[str, JSONValue],
+) -> dict[str, JSONValue]:
+    basis_expr = _json_dict(scaling.get("damage_percentage_basis"))
+    if basis_expr.get("kind") != "status_formula_binding":
+        return basis_expr
+    for binding in _status_formula_bindings(status_detail):
+        if binding.get("formula_role") != "dot_damage":
+            continue
+        if binding.get("coverage_status") != "executable":
+            continue
+        expr = _json_dict(binding.get("scaling_basis_expr"))
+        if not expr:
+            continue
+        source_trace = _json_dict(expr.get("source_trace"))
+        expr = dict(expr)
+        expr["source_trace"] = {
+            **source_trace,
+            "status_formula_binding": binding,
+            "status_instance_id": str(status_detail.get("instance_id") or ""),
+        }
+        return expr
+    return {
+        "kind": "missing",
+        "supported": False,
+        "reason": "dot_status_formula_binding_missing",
+        "source_trace": {
+            "status_instance_id": str(status_detail.get("instance_id") or ""),
+            "requested_basis": basis_expr,
+        },
+    }
+
+
+def _status_formula_bindings(status_detail: dict[str, JSONValue]) -> tuple[dict[str, JSONValue], ...]:
+    bindings = status_detail.get("formula_bindings")
+    if not isinstance(bindings, list):
+        source_trace = _json_dict(status_detail.get("source_trace"))
+        bindings = source_trace.get("status_formula_bindings")
+    if not isinstance(bindings, list):
+        return ()
+    return tuple(item for item in bindings if isinstance(item, dict))
 
 
 def _expr_admitted(expression: dict[str, JSONValue]) -> bool:

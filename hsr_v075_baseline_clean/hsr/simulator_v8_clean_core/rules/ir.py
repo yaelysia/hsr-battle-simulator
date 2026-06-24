@@ -183,6 +183,30 @@ class AvatarProfileIR:
 
 
 @dataclass(frozen=True)
+class CharacterDataCardIR:
+    card_id: str
+    entity_ref: str
+    profile_id: str
+    skill_ids: tuple[str, ...]
+    skill_formula_binding_ids: tuple[str, ...]
+    source: IRSource
+    coverage_status: CoverageStatus = "blocked"
+    blocked_reason: str = ""
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "card_id": self.card_id,
+            "entity_ref": self.entity_ref,
+            "profile_id": self.profile_id,
+            "skill_ids": list(self.skill_ids),
+            "skill_formula_binding_ids": list(self.skill_formula_binding_ids),
+            "source": self.source.to_json(),
+            "coverage_status": self.coverage_status,
+            "blocked_reason": self.blocked_reason,
+        }
+
+
+@dataclass(frozen=True)
 class ActionPhaseStepIR:
     kind: str
     phase: str
@@ -247,10 +271,14 @@ class HitProfileIR:
 @dataclass(frozen=True)
 class SkillFormulaBindingIR:
     binding_id: str
+    character_data_card_id: str
+    formula_slot_id: str
     action_id: str
     level: int
     param_index: int
+    sequence_order: int
     formula_role: str
+    target_group_hint: str
     param_value: JSONValue
     scaling_basis_expr: dict[str, JSONValue]
     text_hash: str
@@ -263,10 +291,14 @@ class SkillFormulaBindingIR:
     def to_json(self) -> dict[str, JSONValue]:
         return {
             "binding_id": self.binding_id,
+            "character_data_card_id": self.character_data_card_id,
+            "formula_slot_id": self.formula_slot_id,
             "action_id": self.action_id,
             "level": self.level,
             "param_index": self.param_index,
+            "sequence_order": self.sequence_order,
             "formula_role": self.formula_role,
+            "target_group_hint": self.target_group_hint,
             "param_value": self.param_value,
             "scaling_basis_expr": self.scaling_basis_expr,
             "text_hash": self.text_hash,
@@ -1111,6 +1143,7 @@ class CanonicalIR:
     version: str
     entities: tuple[RuleEntity, ...] = ()
     avatar_profiles: tuple[AvatarProfileIR, ...] = ()
+    character_data_cards: tuple[CharacterDataCardIR, ...] = ()
     combatant_profiles: tuple[CombatantProfileIR, ...] = ()
     action_definitions: tuple[ActionDefinitionIR, ...] = ()
     action_ability_bindings: tuple[ActionAbilityBindingIR, ...] = ()
@@ -1153,6 +1186,7 @@ class CanonicalIR:
             "metadata": self.metadata,
             "entities": [entity.to_json() for entity in self.entities],
             "avatar_profiles": [profile.to_json() for profile in self.avatar_profiles],
+            "character_data_cards": [card.to_json() for card in self.character_data_cards],
             "combatant_profiles": [profile.to_json() for profile in self.combatant_profiles],
             "action_definitions": [definition.to_json() for definition in self.action_definitions],
             "action_ability_bindings": [binding.to_json() for binding in self.action_ability_bindings],

@@ -565,7 +565,7 @@ def _status_ledger_case(
     from ..core.executor import CombatExecutor
 
     effect = _select_status_damage_bonus_effect(ir, rules)
-    definition = _select_executable_damage_emission_definition(ir, rules)
+    definition = _select_character_card_damage_definition(ir, rules) or _select_executable_damage_emission_definition(ir, rules)
     if effect is None or definition is None:
         return {"transition": None, "before": base_state, "after": base_state, "error": "missing status ledger inputs"}
     command = replace(
@@ -592,6 +592,20 @@ def _status_ledger_case(
             "source_trace": effect.source.to_json(),
         },
     }
+
+
+def _select_character_card_damage_definition(ir: CanonicalIR, rules: RuleBook):
+    for emission in sorted(ir.damage_emissions, key=lambda item: item.damage_emission_id):
+        if emission.coverage_status != "executable" or emission.damage_formula_family != "direct":
+            continue
+        if emission.scaling_basis_expr.get("source_kind") != "character_data_card_skill_formula":
+            continue
+        definition = rules.action_definition(emission.action_id, emission.level)
+        if definition is None:
+            continue
+        if definition.damage_kind == "hp_damage" and definition.damage_formula_family == "direct":
+            return definition
+    return None
 
 
 def _mark_effect_case(case: dict[str, Any], selection_mode: str, mechanism: str) -> dict[str, Any]:

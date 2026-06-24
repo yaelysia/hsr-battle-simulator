@@ -14,7 +14,8 @@ from ..rules.ir import CanonicalIR, SkillFormulaBindingIR
 from ..rules.rulebook import RuleBook
 from ..scenarios.build_state import ScenarioStateBuilder
 from ..scenarios.loader import ScenarioLoader
-from ..tbgd.lowering import TBGDLowering, _skill_formula_bindings_from_row
+from ..tbgd.character_cards import skill_formula_bindings_from_row
+from ..tbgd.lowering import TBGDLowering
 from ..tbgd.paths import find_tbgd_root
 from .io import write_json
 from .static_checks import run_static_checks
@@ -52,7 +53,7 @@ def run_validation(package_root: Path, tbgd_root: Path, output_dir: Path) -> dic
             "tbgd_root": tbgd_root.as_posix(),
             "selection_policy": (
                 "Structured selection by executable DamageEmissionIR whose scaling basis source_kind is "
-                "skill_text_param_binding; no character name, action id, file name, or hash fixed selector."
+                "character_data_card_skill_formula; no character name, action id, file name, or hash fixed selector."
             ),
             "skill_formula_binding_counts": _binding_counts(ir),
             "avatar_profile_count": len(ir.avatar_profiles),
@@ -89,7 +90,7 @@ def _execute_direct_skill_text_case(ir: CanonicalIR, rules: RuleBook, state, com
     for emission in _sorted_emissions(ir.damage_emissions):
         if emission.damage_formula_family != "direct" or emission.coverage_status != "executable":
             continue
-        if emission.scaling_basis_expr.get("source_kind") != "skill_text_param_binding":
+        if emission.scaling_basis_expr.get("source_kind") != "character_data_card_skill_formula":
             continue
         definition = rules.action_definition(emission.action_id, emission.level)
         if definition is None:
@@ -110,7 +111,7 @@ def _execute_direct_skill_text_case(ir: CanonicalIR, rules: RuleBook, state, com
             case["selected_binding"] = _binding_for_emission(rules, emission)
             case["selection"] = {
                 "selection_mode": "structured_predicate",
-                "reason": "executable direct damage with skill_text_param_binding scaling basis",
+                "reason": "executable direct damage with character data card formula basis",
                 "source_trace": emission.scaling_basis_expr.get("source_trace"),
             }
             return case
@@ -162,7 +163,8 @@ def _ir_shape_checks(ir: CanonicalIR, rules: RuleBook) -> dict[str, Any]:
             for emission in executable_direct
         ),
         "executable_direct_has_skill_text_source": all(
-            emission.scaling_basis_expr.get("source_kind") == "skill_text_param_binding"
+            emission.scaling_basis_expr.get("source_kind") == "character_data_card_skill_formula"
+            and bool(emission.scaling_basis_expr.get("character_data_card_id"))
             for emission in executable_direct
         ),
         "avatar_profile_exists": any(profile.coverage_status == "executable" for profile in ir.avatar_profiles),
@@ -206,7 +208,7 @@ def _direct_runtime_checks(rules: RuleBook, before_state, case: dict[str, Any]) 
             .get("source_trace", {})
             .get("scaling_basis", {})
             .get("source_kind")
-            == "skill_text_param_binding"
+            == "character_data_card_skill_formula"
             for mutation in damage_mutations
         ),
     }
@@ -223,7 +225,7 @@ def _dot_binding_checks(binding: SkillFormulaBindingIR | None) -> dict[str, Any]
         "dot_text_binding_found": isinstance(binding, SkillFormulaBindingIR),
         "dot_text_binding_executable": isinstance(binding, SkillFormulaBindingIR) and binding.coverage_status == "executable",
         "dot_binding_has_basis": isinstance(binding, SkillFormulaBindingIR)
-        and binding.scaling_basis_expr.get("source_kind") == "skill_text_param_binding",
+        and binding.scaling_basis_expr.get("source_kind") == "character_data_card_skill_formula",
         "dot_binding_role_is_not_runtime_claim": isinstance(binding, SkillFormulaBindingIR)
         and binding.formula_role == "dot_damage",
     }
@@ -265,13 +267,14 @@ def _synthetic_negative_bindings() -> dict[str, Any]:
     }
     result: dict[str, Any] = {}
     for name, row in cases.items():
-        bindings = _skill_formula_bindings_from_row(
+        bindings = skill_formula_bindings_from_row(
             relative_path="synthetic_negative/AvatarSkillConfig.json",
             entity_type="avatar_skill",
             id_key="SkillID",
             row_index=0,
             row=row,
             text_map=text_map,
+            skill_to_card={"1": "character_data_card:avatar:synthetic"},
         )
         result[name] = [binding.to_json() for binding in bindings]
     return result

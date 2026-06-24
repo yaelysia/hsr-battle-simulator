@@ -27,6 +27,7 @@ class StatusInstance:
     max_stacks: int | None = None
     duration: float | None = None
     dynamic_values: dict[str, JSONValue] = field(default_factory=dict)
+    formula_bindings: tuple[dict[str, JSONValue], ...] = ()
     source_trace: dict[str, JSONValue] = field(default_factory=dict)
     modifiers: tuple[dict[str, JSONValue], ...] = ()
     trigger_ids_by_event: dict[str, tuple[str, ...]] = field(default_factory=dict)
@@ -53,6 +54,7 @@ class StatusInstance:
             "max_stacks": self.max_stacks,
             "duration": self.duration,
             "dynamic_values": self.dynamic_values,
+            "formula_bindings": [dict(item) for item in self.formula_bindings],
             "source_trace": self.source_trace,
             "modifiers": list(self.modifiers),
             "trigger_ids_by_event": {
@@ -223,6 +225,7 @@ class StatusSystem:
             {"effect_id": effect.effect_id, "effect_source": effect.source.to_json()},
         )
         modifiers, unsupported = _runtime_modifiers(definition, resolved_dynamic_values)
+        formula_bindings = _status_formula_bindings(standard)
         before_details = _status_details(unit_flags=state.units[target_id].flags)
         existing_detail = _matching_status_detail(before_details, target_id, modifier_name, effect.effect_id, source_id)
         duration_admission = _runtime_duration_admission(standard, definition, effect)
@@ -241,12 +244,15 @@ class StatusSystem:
             max_stacks=_optional_int(standard.get("max_layer")),
             duration=duration,
             dynamic_values=resolved_dynamic_values,
+            formula_bindings=formula_bindings,
             source_trace={
                 "effect_id": effect.effect_id,
                 "effect_source": effect.source.to_json(),
                 "modifier_name": modifier_name,
                 "modifier_definition": definition.source.to_json(),
                 "duration_admission": duration_admission,
+                "status_formula_bindings": [dict(item) for item in formula_bindings],
+                "status_formula_binding_source": _json_safe(standard.get("status_formula_binding_source", {})),
             },
             modifiers=tuple(modifiers),
             trigger_ids_by_event=_trigger_ids_by_event(self.rules, modifier_name),
@@ -857,6 +863,17 @@ def _resolve_dynamic_values(
     values["__by_hash"] = by_hash
     values["__evaluations"] = evaluations
     return values
+
+
+def _status_formula_bindings(standard: dict[str, JSONValue]) -> tuple[dict[str, JSONValue], ...]:
+    bindings = standard.get("status_formula_bindings")
+    if not isinstance(bindings, list):
+        return ()
+    result: list[dict[str, JSONValue]] = []
+    for item in bindings:
+        if isinstance(item, dict):
+            result.append(_json_safe(item))
+    return tuple(result)
 
 
 def _runtime_modifiers(

@@ -10,6 +10,7 @@ from .ir import (
     ActionDelayEmissionIR,
     ActionEventIR,
     AvatarProfileIR,
+    CharacterDataCardIR,
     BreakBaseDamageIR,
     BreakDamageEmissionIR,
     BreakStatusEmissionIR,
@@ -55,6 +56,16 @@ class RuleBook:
             self,
             "_avatar_profiles",
             {profile.avatar_id: profile for profile in self.ir.avatar_profiles},
+        )
+        object.__setattr__(
+            self,
+            "_character_data_cards",
+            {card.card_id: card for card in self.ir.character_data_cards},
+        )
+        object.__setattr__(
+            self,
+            "_character_data_cards_by_entity_ref",
+            {card.entity_ref: card for card in self.ir.character_data_cards},
         )
         object.__setattr__(
             self,
@@ -549,6 +560,12 @@ class RuleBook:
 
     def avatar_profile(self, avatar_id: str) -> AvatarProfileIR | None:
         return self._avatar_profiles.get(avatar_id)
+
+    def character_data_card(self, card_id: str) -> CharacterDataCardIR | None:
+        return self._character_data_cards.get(card_id)
+
+    def character_data_card_for_entity(self, entity_ref: str) -> CharacterDataCardIR | None:
+        return self._character_data_cards_by_entity_ref.get(entity_ref)
 
     def require_combatant_profile(self, entity_id: str) -> CombatantProfileIR:
         profile = self.combatant_profile(entity_id)
