@@ -316,7 +316,10 @@ def _select_non_ultimate_action_for_callback_source(ir, rules: RuleBook, callbac
 
 def _state_with_extra_turn_listener(rules: RuleBook, callback: StatusCallbackIR, death_callback: StatusCallbackIR) -> BattleState:
     action_dynamic_keys = _dynamic_values_written_by_callback(rules, death_callback)
-    status_dynamic_values = _initial_status_dynamic_values(rules, callback, exclude_keys=action_dynamic_keys)
+    status_dynamic_values = {
+        **_initial_status_dynamic_values(rules, death_callback, exclude_keys=action_dynamic_keys),
+        **_initial_status_dynamic_values(rules, callback, exclude_keys=action_dynamic_keys),
+    }
     actor = UnitState(
         unit_id="ally:actor",
         side="ally",

@@ -519,8 +519,8 @@ def _evaluate_condition_payload(
     if opcode == "AlwaysTrue":
         return _condition_result(True, condition_id, opcode, "condition_true", {}, source_trace)
     if opcode == "ByCurrentSkillType":
-        expected = payload.get("SkillType")
-        actual = (context.event_payload or {}).get("SkillType")
+        expected = payload.get("SkillType") or "Normal"
+        actual = (context.event_payload or {}).get("SkillType") or (context.event_payload or {}).get("skill_type")
         return _condition_result(
             expected == actual,
             condition_id,

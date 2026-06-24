@@ -255,6 +255,7 @@ class QueueTargetResolver:
             return _nonempty_tuple(detail.get("owner_id"))
         if alias in {"ParamEntity", "CurrentActionTarget", "AbilityTargetEntity"}:
             return _first_nonempty_tuple(
+                payload.get("param_entity_id"),
                 payload.get("current_hit_target_id"),
                 payload.get("primary_target_id"),
                 payload.get("target_id"),

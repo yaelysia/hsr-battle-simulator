@@ -60,6 +60,7 @@ from ..rules.ir import (
 ENTITY_TABLES: dict[str, tuple[str, str, tuple[str, ...]]] = {
     "ExcelOutput/AvatarConfig.json": ("avatar", "AvatarID", ("DamageType", "SPNeed", "SkillList", "AvatarBaseType", "Rarity", "JsonPath")),
     "ExcelOutput/AvatarConfigLD.json": ("avatar", "AvatarID", ("DamageType", "SPNeed", "SkillList", "AvatarBaseType", "Rarity", "JsonPath")),
+    "ExcelOutput/AvatarConfigEnhanced.json": ("avatar", "AvatarID", ("EnhancedID", "SPNeed", "SkillList", "RankIDList", "JsonPath", "AIPath")),
     "ExcelOutput/AvatarSkillConfig.json": (
         "avatar_skill",
         "SkillID",
@@ -453,6 +454,23 @@ class TBGDLowering:
                     evidence={
                         "reason": "TBGD raw constant source not admitted yet; recorded as explicit engine convention instead of TBGD source",
                         "operation": "after an admitted ultimate action executes, set actor energy to 0",
+                    },
+                ),
+                coverage_status="executable",
+            ),
+            ResourceRuleIR(
+                resource_rule_id="resource_rule:engine_convention:kill_energy_gain_10",
+                rule_kind="kill_energy_gain",
+                operation="add_10_energy_to_kill_credit_owner_on_unit_defeated",
+                source_kind="engine_convention",
+                source=IRSource(
+                    source_path="simulator_v8_clean_core/resource_engine_convention",
+                    raw_type="ResourceEngineConvention",
+                    raw_id="kill_energy_gain_10",
+                    evidence={
+                        "reason": "Common caused-kill energy gain is recorded as an explicit engine convention until a raw TBGD constant source is admitted.",
+                        "operation": "when a unit.defeated event credits a living actor, add 10 energy capped by max energy",
+                        "energy_gain": 10,
                     },
                 ),
                 coverage_status="executable",
@@ -878,21 +896,25 @@ class TBGDLowering:
         for definition in definitions:
             definitions_by_action.setdefault(definition.action_id, []).append(definition)
         rows: list[CombatantActionSetIR] = []
-        for relative_path, entity_type, id_key in (
-            ("ExcelOutput/AvatarConfig.json", "avatar", "AvatarID"),
-            ("ExcelOutput/AvatarConfigLD.json", "avatar", "AvatarID"),
-            ("ExcelOutput/MonsterConfig.json", "monster", "MonsterID"),
+        for relative_path, entity_type, id_key, config_rows in (
+            ("ExcelOutput/AvatarConfig.json", "avatar", "AvatarID", self._avatar_config_rows_prefer_enhanced()),
+            ("ExcelOutput/MonsterConfig.json", "monster", "MonsterID", None),
         ):
             path = self.tbgd_root / relative_path
-            if not path.exists():
-                continue
-            try:
-                data = json.loads(path.read_text(encoding="utf-8"))
-            except Exception:
-                continue
-            if not isinstance(data, list):
-                continue
-            for row_index, row in enumerate(_limit_sequence(data, self.limits.max_records_per_table)):
+            if config_rows is None:
+                if not path.exists():
+                    continue
+                try:
+                    data = json.loads(path.read_text(encoding="utf-8"))
+                except Exception:
+                    continue
+                if not isinstance(data, list):
+                    continue
+                config_rows = [
+                    (relative_path, row_index, row)
+                    for row_index, row in enumerate(_limit_sequence(data, self.limits.max_records_per_table))
+                ]
+            for source_relative_path, row_index, row in config_rows:
                 if not isinstance(row, dict) or id_key not in row:
                     continue
                 raw_id = str(row[id_key])
@@ -921,13 +943,19 @@ class TBGDLowering:
                         entity_ref=f"{entity_type}:{raw_id}",
                         skill_index_map=skill_index_map,
                         source=IRSource(
-                            source_path=relative_path,
-                            raw_type=Path(relative_path).stem,
+                            source_path=source_relative_path,
+                            raw_type=Path(source_relative_path).stem,
                             raw_id=raw_id,
                             evidence={
                                 "row_index": row_index,
                                 "id_key": id_key,
                                 "skill_list": _json_safe(skills),
+                                "version_kind": str(row.get("_v8_version_kind") or "base"),
+                                "base_source_path": str(row.get("_v8_base_source_path") or source_relative_path),
+                                "base_skill_list": _json_safe(row.get("_v8_base_skill_list") or []),
+                                "enhanced_source_path": str(row.get("_v8_enhanced_source_path") or ""),
+                                "enhanced_id": _json_safe(row.get("_v8_enhanced_id")),
+                                "enhanced_overrides_base": str(row.get("_v8_version_kind") or "base") == "enhanced",
                             },
                         ),
                         coverage_status=coverage_status,
@@ -947,6 +975,79 @@ class TBGDLowering:
         for row in _limit_sequence(data, self.limits.max_records_per_table):
             if isinstance(row, dict) and id_key in row:
                 rows[str(row[id_key])] = row
+        return rows
+
+    def _avatar_config_rows_prefer_enhanced(self) -> list[tuple[str, int, dict[str, Any]]]:
+        base_rows: list[tuple[str, int, dict[str, Any]]] = []
+        for relative_path in ("ExcelOutput/AvatarConfig.json", "ExcelOutput/AvatarConfigLD.json"):
+            path = self.tbgd_root / relative_path
+            if not path.exists():
+                continue
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if not isinstance(data, list):
+                continue
+            for row_index, row in enumerate(_limit_sequence(data, self.limits.max_records_per_table)):
+                if isinstance(row, dict) and row.get("AvatarID") is not None:
+                    copied = dict(row)
+                    copied["_v8_version_kind"] = "base"
+                    copied["_v8_base_source_path"] = relative_path
+                    copied["_v8_base_row_index"] = row_index
+                    copied["_v8_base_skill_list"] = _json_safe(row.get("SkillList") or [])
+                    base_rows.append((relative_path, row_index, copied))
+
+        enhanced_rows: list[tuple[str, int, dict[str, Any]]] = []
+        enhanced_relative = "ExcelOutput/AvatarConfigEnhanced.json"
+        enhanced_path = self.tbgd_root / enhanced_relative
+        if enhanced_path.exists():
+            try:
+                enhanced_data = json.loads(enhanced_path.read_text(encoding="utf-8"))
+            except Exception:
+                enhanced_data = []
+            if isinstance(enhanced_data, list):
+                for row_index, row in enumerate(_limit_sequence(enhanced_data, self.limits.max_records_per_table)):
+                    if isinstance(row, dict) and row.get("AvatarID") is not None:
+                        enhanced_rows.append((enhanced_relative, row_index, dict(row)))
+
+        enhanced_by_avatar = {str(row["AvatarID"]): (relative_path, row_index, row) for relative_path, row_index, row in enhanced_rows}
+        rows: list[tuple[str, int, dict[str, Any]]] = []
+        seen: set[str] = set()
+        for base_relative, base_index, base_row in base_rows:
+            avatar_id = str(base_row["AvatarID"])
+            enhanced = enhanced_by_avatar.get(avatar_id)
+            if enhanced is None:
+                rows.append((base_relative, base_index, base_row))
+                seen.add(avatar_id)
+                continue
+            enhanced_relative_path, enhanced_index, enhanced_row = enhanced
+            merged = {**base_row, **enhanced_row}
+            for key in ("DamageType", "AvatarBaseType", "Rarity"):
+                if not merged.get(key):
+                    merged[key] = base_row.get(key)
+            merged["_v8_version_kind"] = "enhanced"
+            merged["_v8_base_source_path"] = base_relative
+            merged["_v8_base_row_index"] = base_index
+            merged["_v8_base_skill_list"] = _json_safe(base_row.get("SkillList") or [])
+            merged["_v8_enhanced_source_path"] = enhanced_relative_path
+            merged["_v8_enhanced_row_index"] = enhanced_index
+            merged["_v8_enhanced_id"] = enhanced_row.get("EnhancedID")
+            merged["_v8_enhanced_skill_list"] = _json_safe(enhanced_row.get("SkillList") or [])
+            rows.append((enhanced_relative_path, enhanced_index, merged))
+            seen.add(avatar_id)
+
+        for enhanced_relative_path, enhanced_index, enhanced_row in enhanced_rows:
+            avatar_id = str(enhanced_row["AvatarID"])
+            if avatar_id in seen:
+                continue
+            copied = dict(enhanced_row)
+            copied["_v8_version_kind"] = "enhanced"
+            copied["_v8_enhanced_source_path"] = enhanced_relative_path
+            copied["_v8_enhanced_row_index"] = enhanced_index
+            copied["_v8_enhanced_id"] = enhanced_row.get("EnhancedID")
+            copied["_v8_enhanced_skill_list"] = _json_safe(enhanced_row.get("SkillList") or [])
+            rows.append((enhanced_relative_path, enhanced_index, copied))
         return rows
 
     def _lower_action_ability_bindings(
@@ -1097,25 +1198,24 @@ class TBGDLowering:
 
     def _avatar_configs_by_skill_id(self) -> dict[str, list[dict[str, Any]]]:
         result: dict[str, list[dict[str, Any]]] = {}
-        for relative_path in ("ExcelOutput/AvatarConfig.json", "ExcelOutput/AvatarConfigLD.json"):
-            path = self.tbgd_root / relative_path
-            if not path.exists():
+        for relative_path, index, row in self._avatar_config_rows_prefer_enhanced():
+            if not isinstance(row, dict):
                 continue
-            data = json.loads(path.read_text(encoding="utf-8"))
-            if not isinstance(data, list):
-                continue
-            for index, row in enumerate(data):
-                if not isinstance(row, dict):
-                    continue
-                for skill_id in row.get("SkillList") or []:
-                    config = {
-                        "relative_path": relative_path,
-                        "row_index": index,
-                        "avatar_id": row.get("AvatarID"),
-                        "json_path": row.get("JsonPath"),
-                        "skill_list": row.get("SkillList"),
-                    }
-                    result.setdefault(str(skill_id), []).append(config)
+            for skill_id in row.get("SkillList") or []:
+                config = {
+                    "relative_path": relative_path,
+                    "row_index": index,
+                    "avatar_id": row.get("AvatarID"),
+                    "json_path": row.get("JsonPath"),
+                    "skill_list": row.get("SkillList"),
+                    "version_kind": row.get("_v8_version_kind") or "base",
+                    "base_source_path": row.get("_v8_base_source_path") or relative_path,
+                    "base_skill_list": row.get("_v8_base_skill_list") or [],
+                    "enhanced_source_path": row.get("_v8_enhanced_source_path") or "",
+                    "enhanced_id": row.get("_v8_enhanced_id"),
+                    "enhanced_skill_list": row.get("_v8_enhanced_skill_list") or [],
+                }
+                result.setdefault(str(skill_id), []).append(config)
         return result
 
     def _avatar_action_binding(
@@ -1602,7 +1702,7 @@ class TBGDLowering:
                     event == "OnListenTurnEnd"
                     and any(task.coverage_status == "executable" for task in callback_lowered.status_callback_tasks)
                 ) or has_executable_queue_intent or (
-                    event in {"OnTriggerDeath", "OnTriggerDeathrattle", "OnAfterSkillUse"}
+                    event in {"OnTriggerDeath", "OnListenCharacterDie", "OnTriggerDeathrattle", "OnAfterSkillUse"}
                     and has_executable_callback_task
                 )
                 status = (
@@ -1698,21 +1798,24 @@ class TBGDLowering:
             return lowered
         opcode = _short_gamecore_type(task.get("$type"))
         task_id = f"status_callback_task:{relative}:{modifier_name}:{callback_index}:{task_path}:{opcode}"
+        evidence: dict[str, Any] = {
+            "callback_id": callback_id,
+            "callback_index": callback_index,
+            "event": event,
+            "task_index": task_index,
+            "task_path": task_path,
+            "branch": branch,
+            "parent_task_id": parent_task_id,
+            "opcode": opcode,
+            "task": _json_safe(task),
+        }
+        if opcode == "Retarget":
+            evidence["retarget"] = _retarget_task_evidence(task)
         source = IRSource(
             source_path=relative,
             raw_type=map_name,
             raw_id=modifier_name,
-            evidence={
-                "callback_id": callback_id,
-                "callback_index": callback_index,
-                "event": event,
-                "task_index": task_index,
-                "task_path": task_path,
-                "branch": branch,
-                "parent_task_id": parent_task_id,
-                "opcode": opcode,
-                "task": _json_safe(task),
-            },
+            evidence=evidence,
         )
         if opcode == "PredicateTaskList":
             condition = self._lower_condition(task.get("Predicate"), source, task_index)
@@ -1778,8 +1881,33 @@ class TBGDLowering:
             )
             return lowered
 
+        retarget_condition = self._lower_condition(task.get("Predicate"), source, task_index) if opcode == "Retarget" else None
+        if retarget_condition:
+            lowered.conditions.append(retarget_condition)
+
         effect_id = f"effect:{relative}:{modifier_name}:{callback_index}:{branch}:{task_index}:{opcode}"
-        coverage_status, blocked_reason = _status_callback_task_admission(event, opcode, task)
+        child_task_ids: list[str] = []
+        for child_index, child in enumerate(task.get("TaskList") or []):
+            child_lowered = self._lower_status_callback_task_tree(
+                child,
+                relative=relative,
+                map_name=map_name,
+                modifier_name=modifier_name,
+                callback_id=callback_id,
+                event=event,
+                callback_index=callback_index,
+                task_index=child_index,
+                task_path=f"{task_path}.TaskList[{child_index}]",
+                branch=f"{branch}:task_list",
+                parent_task_id=task_id,
+                queue_priority_lookup=queue_priority_lookup,
+            )
+            lowered.merge(child_lowered)
+            child_task_ids.extend(item.task_id for item in child_lowered.status_callback_tasks if item.parent_task_id == task_id)
+        if opcode == "Retarget":
+            coverage_status, blocked_reason = _retarget_task_status(retarget_condition, child_task_ids)
+        else:
+            coverage_status, blocked_reason = _status_callback_task_admission(event, opcode, task)
         source_admitted = (
             _queue_intent_source_admitted(relative)
             if opcode in QUEUE_INTENT_OPCODES
@@ -1798,13 +1926,29 @@ class TBGDLowering:
                 task_path=task_path,
                 branch=branch,
                 opcode=opcode,
-                effect_id=effect_id,
+                effect_id="" if opcode == "Retarget" else effect_id,
+                condition_id=retarget_condition.condition_id if retarget_condition else "",
                 parent_task_id=parent_task_id,
+                child_task_ids=tuple(child_task_ids),
                 source=source,
                 coverage_status=coverage_status,
                 blocked_reason=blocked_reason,
             )
         )
+        if opcode not in QUEUE_INTENT_OPCODES and opcode not in {"DamageByAttackProperty", "ModifyActionDelay", "SetActionDelay", "Retarget"}:
+            payload = _effect_payload(task, opcode, modifier_name)
+            effect_status = _effect_coverage_status(opcode, payload)
+            lowered.effects.append(
+                EffectIR(
+                    effect_id=effect_id,
+                    opcode=opcode,
+                    payload=payload,
+                    source=source,
+                    coverage_status=effect_status,
+                )
+            )
+            lowered.formulas.extend(self._extract_formulas(task, source, effect_id))
+            lowered.formulas.extend(_damage_family_evidence(task, opcode, source, effect_id))
         if opcode == "DamageByAttackProperty":
             emission = _status_damage_emission_from_task(
                 callback_id=callback_id,
@@ -1913,8 +2057,9 @@ class TBGDLowering:
         opcode = _short_gamecore_type(predicate.get("$type"))
         payload = _compact_payload(predicate)
         status = "executable" if _condition_payload_executable(opcode, payload) else classify_opcode(opcode)
+        condition_path = str(source.evidence.get("task_path", task_index)) if isinstance(source.evidence, dict) else str(task_index)
         return ConditionIR(
-            condition_id=f"condition:{source.source_path}:{source.raw_id}:{source.evidence.get('callback_index')}:{task_index}:{opcode}",
+            condition_id=f"condition:{source.source_path}:{source.raw_id}:{source.evidence.get('callback_index')}:{condition_path}:{opcode}",
             opcode=opcode,
             payload=payload,
             source=source,
@@ -2824,6 +2969,8 @@ def _avatar_ability_path_from_character_path(character_path: str) -> str:
         ability_name = name.replace("_Config.json", "_Ability.json")
     else:
         ability_name = f"{path.stem}_Ability.json"
+    if "Advanced" in path.parts:
+        return f"Config/ConfigAbility/Avatar/Advanced/{ability_name}"
     return f"Config/ConfigAbility/Avatar/{ability_name}"
 
 
@@ -3998,6 +4145,42 @@ def _predicate_task_status(condition: ConditionIR | None) -> tuple[str, str]:
     return "lowered", ""
 
 
+def _retarget_task_evidence(task: dict[str, Any]) -> dict[str, Any]:
+    target_alias = _target_alias(task.get("TargetType")) or ""
+    return {
+        "target_alias": target_alias,
+        "include_limbo": bool(task.get("IncludeLimbo")) if isinstance(task.get("IncludeLimbo"), bool) else False,
+        "max_number_expr": _numeric_expr_summary(task.get("MaxNumber")),
+        "candidate_policy": _retarget_candidate_policy(target_alias),
+    }
+
+
+def _retarget_candidate_policy(target_alias: str) -> dict[str, Any]:
+    if target_alias == "ParamEntityAttackTargetList.SortByHP":
+        return {
+            "candidate_source": "event.param_entity_attack_target_ids_or_action_targets",
+            "sort": "hp_ascending",
+            "alive_targets_first": True,
+            "fallback": "lowest_hp_alive_enemy_of_status_owner",
+            "admission_status": "executable",
+        }
+    return {
+        "candidate_source": target_alias,
+        "admission_status": "blocked",
+        "blocked_reason": f"retarget_alias_not_admitted:{target_alias or 'missing'}",
+    }
+
+
+def _retarget_task_status(condition: ConditionIR | None, child_task_ids: list[str]) -> tuple[str, str]:
+    if condition is None:
+        return "blocked", "missing_retarget_condition"
+    if condition.coverage_status != "executable":
+        return "blocked", f"condition_not_executable:{condition.coverage_status}:{condition.opcode}"
+    if not child_task_ids:
+        return "blocked", "retarget_child_task_missing"
+    return "executable", ""
+
+
 def _status_callback_task_admission(event: str, opcode: str, task: dict[str, Any]) -> tuple[str, str]:
     if opcode in QUEUE_INTENT_OPCODES:
         actor_target_alias = _queue_actor_target_alias(task, opcode)
@@ -4017,7 +4200,7 @@ def _status_callback_task_admission(event: str, opcode: str, task: dict[str, Any
         if blocked_reason == "queue_intent_source_mode_not_admitted":
             return "executable", ""
         return coverage_status, blocked_reason
-    if event in {"OnTriggerDeath", "OnTriggerDeathrattle", "OnAfterSkillUse"} and opcode in {"SetDynamicValue", "AddModifier"}:
+    if event in {"OnTriggerDeath", "OnTriggerDeathrattle", "OnAfterSkillUse", "OnListenAfterAttack"} and opcode in {"SetDynamicValue", "AddModifier"}:
         payload = _effect_payload(task, opcode, "")
         coverage = _effect_coverage_status(opcode, payload)
         if coverage == "executable":
@@ -4100,6 +4283,8 @@ def _status_callback_source_mode(relative_path: str) -> str:
 
 
 def _status_callback_scope_kind(event: str) -> str:
+    if event == "OnListenCharacterDie":
+        return "owner_local"
     if event.startswith("OnListen"):
         return "global_listener"
     if event.startswith("OnBeing") or "BeingHit" in event or "BeingAttacked" in event:
@@ -4344,7 +4529,19 @@ def _queue_skill_index_expr(task: dict[str, Any], opcode: str) -> dict[str, Any]
                 "supported": True,
                 "source_field": "PrepareAbilityName",
                 "opcode": opcode,
-                "action_selection": "route_or_source_selected_non_ultimate_action",
+                "action_selection": "route_or_source_selected_action",
+            }
+        skill_type = _queue_skill_type_action_selection(task)
+        if skill_type:
+            return {
+                "kind": "skill_type",
+                "value": skill_type["skill_type"],
+                "supported": skill_type["skill_index"] is not None,
+                "source_field": "SkillType",
+                "opcode": opcode,
+                "skill_index": skill_type["skill_index"],
+                "action_kind": skill_type["action_kind"],
+                "source_basis": skill_type["source_basis"],
             }
         expr = _numeric_expr_summary(task.get("SkillIndex"))
         expr["source_field"] = "SkillIndex"
@@ -4370,7 +4567,9 @@ def _queue_priority_source(
     }.get(opcode, "InsertPriority")
     priority_table = "InsertActionPriority" if opcode == "TurnInsertAction" else "InsertAbilityPriority"
     priority_key = task.get(key)
-    if priority_key is None and opcode == "TurnInsertAction" and _queue_prepare_ability_name(task):
+    if priority_key is None and opcode == "TurnInsertAction" and (
+        _queue_prepare_ability_name(task) or _queue_skill_type_action_selection(task)
+    ):
         priority_key = "PROG_Default"
     priority = queue_priority_lookup.get((priority_table, str(priority_key))) if priority_key is not None else None
     if priority is not None:
@@ -4401,8 +4600,22 @@ def _queue_abort_policy(task: dict[str, Any]) -> dict[str, Any]:
         "TargetAliveState": _json_safe(task.get("TargetAliveState")),
         "CanRunOnUnselectableTarget": _json_safe(task.get("CanRunOnUnselectableTarget")),
         "ShowInActionBar": _json_safe(task.get("ShowInActionBar")),
+        "IgnoreBPDec": _json_safe(task.get("IgnoreBPDec")),
+        "CustomTag": _json_safe(task.get("CustomTag")),
+        "PreCheck": _json_safe(task.get("PreCheck")),
     }
-    return {key: value for key, value in fields.items() if value not in (None, [], {})}
+    policy = {key: value for key, value in fields.items() if value not in (None, [], {})}
+    if policy.get("IgnoreBPDec") is True:
+        policy["resource_policy"] = {
+            "ignore_skill_point_delta": True,
+            "ignore_energy_gain": True,
+            "source_field": "IgnoreBPDec",
+            "source_basis": "tbgd_turn_insert_action_ignore_bp_dec",
+        }
+    insert_once_policy = _queue_insert_once_policy(task)
+    if insert_once_policy:
+        policy["insert_once_policy"] = insert_once_policy
+    return policy
 
 
 def _queue_prepare_ability_name(task: dict[str, Any]) -> str:
@@ -4410,11 +4623,76 @@ def _queue_prepare_ability_name(task: dict[str, Any]) -> str:
     return value if isinstance(value, str) and value else ""
 
 
+def _queue_insert_once_policy(task: dict[str, Any]) -> dict[str, Any]:
+    precheck = task.get("PreCheck")
+    if not isinstance(precheck, dict):
+        return {}
+    if precheck.get("GMPGDEINODK") != "SameTagInsertUnusedCount":
+        return {}
+    max_count = _numeric_expr_summary(precheck.get("HOCMHABKLGJ"))
+    custom_tag = _value_field(task.get("CustomTag"))
+    used_modifiers: list[str] = []
+    for abort_task in task.get("OnInsertAbort", ()) if isinstance(task.get("OnInsertAbort"), list) else ():
+        if not isinstance(abort_task, dict):
+            continue
+        opcode = str(abort_task.get("$type") or "").rsplit(".", 1)[-1]
+        if opcode != "AddModifier":
+            continue
+        modifier_name = _value_field(abort_task.get("ModifierName"))
+        if isinstance(modifier_name, str) and modifier_name:
+            used_modifiers.append(modifier_name)
+    return {
+        "kind": "same_tag_insert_unused_count",
+        "max_count_expr": max_count,
+        "custom_tag": custom_tag if isinstance(custom_tag, str) else "",
+        "used_modifier_names": used_modifiers,
+        "source_field": "PreCheck",
+        "source_basis": "tbgd_turn_insert_action_same_tag_insert_unused_count",
+    }
+
+
+def _queue_skill_type_action_selection(task: dict[str, Any]) -> dict[str, Any] | None:
+    value = _value_field(task.get("SkillType"))
+    if not isinstance(value, str) or not value:
+        return None
+    normalized = value.lower()
+    if normalized in {"normal", "controlskill01"}:
+        return {
+            "skill_type": value,
+            "skill_index": 0,
+            "action_kind": "basic",
+            "source_basis": "tbgd_turn_insert_action_skill_type",
+        }
+    if normalized in {"skill", "controlskill02"}:
+        return {
+            "skill_type": value,
+            "skill_index": 1,
+            "action_kind": "skill",
+            "source_basis": "tbgd_turn_insert_action_skill_type",
+        }
+    if normalized in {"ultra", "ultimate", "controlskill03"}:
+        return {
+            "skill_type": value,
+            "skill_index": 2,
+            "action_kind": "ultimate",
+            "source_basis": "tbgd_turn_insert_action_skill_type",
+        }
+    return {
+        "skill_type": value,
+        "skill_index": None,
+        "action_kind": "unknown",
+        "source_basis": "tbgd_turn_insert_action_skill_type_not_admitted",
+    }
+
+
 def _queue_action_ref_or_ability_name(task: dict[str, Any], opcode: str) -> Any:
     if opcode == "TurnInsertAction":
         prepared = _queue_prepare_ability_name(task)
         if prepared:
             return prepared
+        skill_type = _queue_skill_type_action_selection(task)
+        if skill_type:
+            return f"skill_type:{skill_type['skill_type']}"
     return _value_field(task.get("AbilityName"))
 
 
@@ -4422,7 +4700,7 @@ def _queue_actor_target_alias(task: dict[str, Any], opcode: str) -> str | None:
     alias = _target_alias(task.get("TargetType"))
     if alias:
         return alias
-    if opcode == "TurnInsertAction" and _queue_prepare_ability_name(task):
+    if opcode == "TurnInsertAction" and (_queue_prepare_ability_name(task) or _queue_skill_type_action_selection(task)):
         return "ModifierOwnerEntity"
     return None
 
@@ -4457,7 +4735,10 @@ def _queue_intent_admission(
     if priority_source.get("priority_ordering_admitted") is not True:
         return "blocked", str(priority_source.get("reason") or "queue_priority_not_admitted")
     if abort_policy.get("OnInsertAbort"):
-        if not (opcode == "TurnInsertAction" and _queue_prepare_ability_name(task)):
+        if not (
+            opcode == "TurnInsertAction"
+            and (_queue_prepare_ability_name(task) or _queue_skill_type_action_selection(task))
+        ):
             return "blocked", "queue_abort_policy_not_admitted"
     if opcode == "TurnInsertAbility":
         if not isinstance(ability_name, str) or not ability_name:
@@ -4466,6 +4747,10 @@ def _queue_intent_admission(
     if opcode == "TurnInsertAction":
         if _queue_prepare_ability_name(task):
             return "executable", ""
+        if skill_index_expr.get("kind") == "skill_type":
+            if isinstance(skill_index_expr.get("skill_index"), int):
+                return "executable", ""
+            return "blocked", f"queue_insert_action_skill_type_not_admitted:{skill_index_expr.get('value') or 'missing'}"
         if skill_index_expr.get("kind") != "fixed":
             return "blocked", f"queue_insert_action_skill_index_not_admitted:{skill_index_expr.get('kind') or 'missing'}"
         return "executable", ""
@@ -4676,12 +4961,33 @@ def _queue_resolution_from_intent(
                 resolved_kind="extra_turn_action_choice",
                 resolved_ids={
                     "prepare_ability_name": intent.action_ref_or_ability_name,
-                    "action_selection": "route_or_source_selected_non_ultimate_action",
+                    "action_selection": "route_or_source_selected_action",
                     "skill_index_expr": _json_safe(intent.skill_index_expr),
                 },
                 source=source,
                 coverage_status="executable",
                 blocked_reason="",
+            )
+        if intent.skill_index_expr.get("kind") == "skill_type":
+            skill_index = intent.skill_index_expr.get("skill_index")
+            if not isinstance(skill_index, int):
+                reason = f"queue_insert_action_skill_type_not_admitted:{intent.skill_index_expr.get('value') or 'missing'}"
+                return QueueResolutionIR(
+                    queue_resolution_id=resolution_id,
+                    queue_intent_id=intent.queue_intent_id,
+                    action_or_ability_ref=intent.action_ref_or_ability_name,
+                    resolved_kind="insert_action_not_admitted",
+                    resolved_ids={"skill_index_expr": _json_safe(intent.skill_index_expr)},
+                    source=source,
+                    coverage_status="blocked",
+                    blocked_reason=reason,
+                )
+            return _queue_action_definition_resolution(
+                intent,
+                source,
+                resolution_id,
+                str(skill_index),
+                combatant_action_sets,
             )
         if intent.skill_index_expr.get("kind") != "fixed":
             reason = f"queue_insert_action_skill_index_not_admitted:{intent.skill_index_expr.get('kind') or 'missing'}"
@@ -4708,58 +5014,12 @@ def _queue_resolution_from_intent(
                 blocked_reason="queue_insert_action_skill_index_value_missing",
             )
         skill_index_key = str(int(skill_index_value))
-        candidates: list[dict[str, Any]] = []
-        for action_set in sorted(combatant_action_sets, key=lambda item: item.combatant_action_set_id):
-            if action_set.coverage_status != "executable":
-                continue
-            entry = action_set.skill_index_map.get(skill_index_key)
-            if not isinstance(entry, dict) or entry.get("coverage_status") != "executable":
-                continue
-            action_ref = entry.get("action_ref")
-            default_level = entry.get("default_level")
-            if not isinstance(action_ref, str) or not isinstance(default_level, int):
-                continue
-            candidates.append(
-                {
-                    "combatant_action_set_id": action_set.combatant_action_set_id,
-                    "entity_ref": action_set.entity_ref,
-                    "skill_index": skill_index_key,
-                    "action_ref": action_ref,
-                    "action_level": default_level,
-                    "skill_id": entry.get("skill_id"),
-                    "source": action_set.source.to_json(),
-                }
-            )
-        action_set_count = sum(1 for action_set in combatant_action_sets if action_set.coverage_status == "executable")
-        if not candidates:
-            return QueueResolutionIR(
-                queue_resolution_id=resolution_id,
-                queue_intent_id=intent.queue_intent_id,
-                action_or_ability_ref=f"skill_index:{skill_index_key}",
-                resolved_kind="insert_action_not_admitted",
-                resolved_ids={
-                    "skill_index_expr": _json_safe(intent.skill_index_expr),
-                    "skill_index": skill_index_key,
-                    "executable_action_set_count": action_set_count,
-                },
-                source=source,
-                coverage_status="blocked",
-                blocked_reason=f"queue_insert_action_no_action_set_candidate:{skill_index_key}",
-            )
-        return QueueResolutionIR(
-            queue_resolution_id=resolution_id,
-            queue_intent_id=intent.queue_intent_id,
-            action_or_ability_ref=f"skill_index:{skill_index_key}",
-            resolved_kind="action_definition",
-            resolved_ids={
-                "skill_index_expr": _json_safe(intent.skill_index_expr),
-                "skill_index": skill_index_key,
-                "action_set_candidates": candidates,
-                "executable_action_set_count": action_set_count,
-            },
-            source=source,
-            coverage_status="executable",
-            blocked_reason="",
+        return _queue_action_definition_resolution(
+            intent,
+            source,
+            resolution_id,
+            skill_index_key,
+            combatant_action_sets,
         )
     if intent.opcode == "TurnInsertAssistantAbility":
         return QueueResolutionIR(
@@ -4781,6 +5041,68 @@ def _queue_resolution_from_intent(
         source=source,
         coverage_status="blocked",
         blocked_reason=f"queue_opcode_not_admitted:{intent.opcode}",
+    )
+
+
+def _queue_action_definition_resolution(
+    intent: QueueIntentIR,
+    source: IRSource,
+    resolution_id: str,
+    skill_index_key: str,
+    combatant_action_sets: list[CombatantActionSetIR],
+) -> QueueResolutionIR:
+    candidates: list[dict[str, Any]] = []
+    for action_set in sorted(combatant_action_sets, key=lambda item: item.combatant_action_set_id):
+        if action_set.coverage_status != "executable":
+            continue
+        entry = action_set.skill_index_map.get(skill_index_key)
+        if not isinstance(entry, dict) or entry.get("coverage_status") != "executable":
+            continue
+        action_ref = entry.get("action_ref")
+        default_level = entry.get("default_level")
+        if not isinstance(action_ref, str) or not isinstance(default_level, int):
+            continue
+        candidates.append(
+            {
+                "combatant_action_set_id": action_set.combatant_action_set_id,
+                "entity_ref": action_set.entity_ref,
+                "skill_index": skill_index_key,
+                "action_ref": action_ref,
+                "action_level": default_level,
+                "skill_id": entry.get("skill_id"),
+                "source": action_set.source.to_json(),
+            }
+        )
+    action_set_count = sum(1 for action_set in combatant_action_sets if action_set.coverage_status == "executable")
+    if not candidates:
+        return QueueResolutionIR(
+            queue_resolution_id=resolution_id,
+            queue_intent_id=intent.queue_intent_id,
+            action_or_ability_ref=f"skill_index:{skill_index_key}",
+            resolved_kind="insert_action_not_admitted",
+            resolved_ids={
+                "skill_index_expr": _json_safe(intent.skill_index_expr),
+                "skill_index": skill_index_key,
+                "executable_action_set_count": action_set_count,
+            },
+            source=source,
+            coverage_status="blocked",
+            blocked_reason=f"queue_insert_action_no_action_set_candidate:{skill_index_key}",
+        )
+    return QueueResolutionIR(
+        queue_resolution_id=resolution_id,
+        queue_intent_id=intent.queue_intent_id,
+        action_or_ability_ref=f"skill_index:{skill_index_key}",
+        resolved_kind="action_definition",
+        resolved_ids={
+            "skill_index_expr": _json_safe(intent.skill_index_expr),
+            "skill_index": skill_index_key,
+            "action_set_candidates": candidates,
+            "executable_action_set_count": action_set_count,
+        },
+        source=source,
+        coverage_status="executable",
+        blocked_reason="",
     )
 
 
@@ -4909,8 +5231,8 @@ def _lower_extra_action_policies(
                 queue_intent_id=window.queue_intent_id,
                 queue_window_id=window.queue_window_id,
                 source_kind="true_extra_turn",
-                action_selection_kind="route_or_source_selected_non_ultimate_action",
-                allowed_action_kinds=("basic", "skill"),
+                action_selection_kind="route_or_source_selected_action",
+                allowed_action_kinds=("basic", "skill", "ultimate"),
                 fixed_action_ref="",
                 lifecycle_policy_id=lifecycle.queue_lifecycle_policy_id if lifecycle is not None else "",
                 source_basis=source_basis,
@@ -5074,7 +5396,7 @@ def _queue_window_family(intent: QueueIntentIR) -> tuple[str, dict[str, Any]]:
             "extra_turn_basis_status": "admitted",
             "source_basis": "structured_turn_insert_action_prepare_ability",
             "prepare_ability_name": intent.action_ref_or_ability_name,
-            "action_selection_policy": "route_or_source_selected_non_ultimate_action",
+            "action_selection_policy": "route_or_source_selected_action",
         }
     if intent.queue_kind == "turn_insert_action":
         return "insert_action", basis
@@ -5146,7 +5468,7 @@ def _queue_window_policy(
                 "lifecycle_policy_admitted": lifecycle_admitted,
                 "turn_lifecycle_policy": "admitted_from_queue_lifecycle_policy" if lifecycle_admitted else "blocked_until_extra_turn_lifecycle_source_admitted",
                 "duration_tick_policy": "ActionPhaseEnd_from_OneMore_LifeStepMoment" if lifecycle_admitted else "blocked_until_extra_turn_lifecycle_source_admitted",
-                "action_selection_policy": "source_or_route_selected_non_ultimate_action_required",
+                "action_selection_policy": "source_or_route_selected_action_required",
                 "action_selection_admitted": lifecycle_admitted and resolution is not None and resolution.coverage_status == "executable",
                 "extra_turn_source_basis": _json_safe(extra_turn_source_basis),
             }
@@ -5193,7 +5515,8 @@ def _condition_payload_executable(opcode: str, payload: dict[str, Any]) -> bool:
     if opcode == "AlwaysTrue":
         return True
     if opcode == "ByCurrentSkillType":
-        return isinstance(payload.get("SkillType"), str)
+        value = payload.get("SkillType")
+        return value is None or isinstance(value, str)
     if opcode == "ByAttackType":
         return isinstance(payload.get("AttackTypes"), list)
     if opcode == "ByTargetTeam":

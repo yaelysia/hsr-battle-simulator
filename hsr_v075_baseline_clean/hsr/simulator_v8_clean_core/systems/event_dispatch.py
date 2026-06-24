@@ -534,8 +534,12 @@ SCOPE_PRIORITY = {
 
 
 CANONICAL_EVENT_ALIASES: dict[str, tuple[tuple[str, str, str], ...]] = {
+    "action.after_attack": (
+        ("OnListenAfterAttack", "global_listener", ""),
+    ),
     "unit.defeated": (
         ("OnTriggerDeath", "owner_local", ""),
+        ("OnListenCharacterDie", "owner_local", ""),
         ("OnTriggerDeathrattle", "owner_local", ""),
     ),
     "damage.hit": (
@@ -654,7 +658,7 @@ def _scope_kind_for_callback_event(event: GameEvent, callback_event: str) -> str
         return "per_hit_target_local"
     if callback_event in {"OnBeforeSkillUse", "OnBeforeAttack", "OnAfterAttack", "OnAfterSkillUse"}:
         return "actor_local"
-    if callback_event in {"OnTriggerDeath", "OnTriggerDeathrattle"}:
+    if callback_event in {"OnTriggerDeath", "OnListenCharacterDie", "OnTriggerDeathrattle"}:
         return "owner_local"
     if callback_event in {"OnStack", "OnPhase1"}:
         return "status_local"
@@ -696,6 +700,12 @@ def _match_callback_to_event(
     unit_id = str(detail.get("owner_id") or event.target_id or "")
     modifier_name = str(detail.get("modifier_name") or callback.modifier_name)
     scope_kind = callback.scope_kind or _event_scope_kind(event)
+    if event.event_type == "unit.defeated" and alias.callback_event in {
+        "OnTriggerDeath",
+        "OnListenCharacterDie",
+        "OnTriggerDeathrattle",
+    }:
+        scope_kind = alias.scope_kind
     status_instance_id = str(detail.get("instance_id") or "")
     scope_ok, scope_reason = _scope_matches(event, scope_kind, detail, explicit=explicit)
     status = "matched"
@@ -712,7 +722,7 @@ def _match_callback_to_event(
     elif callback.admission_status != "executable":
         status = "blocked"
         reason = callback.blocking_dependency or f"listener_not_admitted:{callback.admission_status}"
-    elif scope_kind == "global_listener" and not explicit:
+    elif scope_kind == "global_listener" and not explicit and not _global_listener_auto_admitted(event, callback, alias):
         status = "blocked"
         reason = "global_listener_auto_execution_not_admitted"
     if status == "skipped" and not explicit:
@@ -732,6 +742,15 @@ def _match_callback_to_event(
         order_key=_listener_order_key(state, scope_kind, unit_id, status_order, callback),
         event_alias=alias.to_json(),
         blocked_category=_blocked_category(reason),
+    )
+
+
+def _global_listener_auto_admitted(event: GameEvent, callback: StatusCallbackIR, alias: EventAlias) -> bool:
+    return (
+        event.event_type == "action.after_attack"
+        and alias.callback_event == "OnListenAfterAttack"
+        and callback.event == "OnListenAfterAttack"
+        and alias.admission_status == "executable"
     )
 
 

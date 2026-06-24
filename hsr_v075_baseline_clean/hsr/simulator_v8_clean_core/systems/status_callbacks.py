@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from ..core.model import BattleState, GameEvent, JSONValue, Mutation
 from ..core.reducer import MutationReducer
@@ -195,6 +195,8 @@ class StatusCallbackSystem:
     ) -> StatusCallbackExecutionResult:
         if task.opcode == "PredicateTaskList":
             return self._execute_predicate_task(state, callback, task, detail, trigger_event, tasks, damage_window_ledger)
+        if task.opcode == "Retarget":
+            return self._execute_retarget_task(state, callback, task, detail, trigger_event, tasks, damage_window_ledger)
         delay_emissions = [
             emission
             for emission in self.rules.action_delay_emissions_for_callback(callback.callback_id)
@@ -328,6 +330,108 @@ class StatusCallbackSystem:
             records.extend(child_result.records)
             events.extend(child_result.events)
             errors.extend(child_result.errors)
+        return StatusCallbackExecutionResult(
+            ok=not errors,
+            after_state=current_state,
+            mutations=tuple(mutations),
+            records=tuple(records),
+            events=tuple(events),
+            errors=tuple(errors),
+        )
+
+    def _execute_retarget_task(
+        self,
+        state: BattleState,
+        callback: StatusCallbackIR,
+        task: StatusCallbackTaskIR,
+        detail: dict[str, JSONValue],
+        trigger_event: GameEvent | None,
+        tasks: dict[str, StatusCallbackTaskIR],
+        damage_window_ledger: DamageWindowLedger | None,
+    ) -> StatusCallbackExecutionResult:
+        if task.coverage_status != "executable":
+            reason = task.blocked_reason or f"retarget_task_not_executable:{task.coverage_status}"
+            return StatusCallbackExecutionResult(
+                ok=False,
+                after_state=state,
+                records=(_task_blocked_record(callback, task, detail, reason),),
+                errors=(reason,),
+            )
+        condition = self.rules.condition(task.condition_id) if task.condition_id else None
+        if condition is None:
+            reason = "missing_retarget_condition"
+            return StatusCallbackExecutionResult(
+                ok=False,
+                after_state=state,
+                records=(_task_blocked_record(callback, task, detail, reason),),
+                errors=(reason,),
+            )
+        candidates = _retarget_candidates(state, task, detail, trigger_event)
+        if not candidates:
+            return StatusCallbackExecutionResult(
+                ok=True,
+                after_state=state,
+                records=(
+                    _task_blocked_record(
+                        callback,
+                        task,
+                        detail,
+                        "retarget_candidate_missing",
+                        ok=True,
+                        selected_child_ids=(),
+                    ),
+                ),
+            )
+        max_number = _retarget_max_number(task)
+        current_state = state
+        mutations: list[Mutation] = []
+        records: list[dict[str, JSONValue]] = []
+        events: list[GameEvent] = []
+        errors: list[str] = []
+        selected_count = 0
+        for candidate_id in candidates:
+            retarget_event = _retarget_event(trigger_event, candidate_id)
+            result = self.evaluator.evaluate_condition_result(
+                condition,
+                _condition_context(current_state, detail, retarget_event),
+            )
+            records.append(
+                _task_blocked_record(
+                    callback,
+                    task,
+                    detail,
+                    "" if result.ok else f"blocked_condition:{condition.condition_id}:{result.reason}",
+                    ok=result.ok,
+                    condition_result=result.to_json(),
+                    selected_child_ids=task.child_task_ids if result.ok and result.result else (),
+                )
+            )
+            if not result.ok or result.result is not True:
+                continue
+            selected_count += 1
+            for child_id in task.child_task_ids:
+                child = tasks.get(child_id)
+                if child is None:
+                    reason = f"missing_child_task:{child_id}"
+                    records.append(_task_blocked_record(callback, task, detail, reason))
+                    errors.append(reason)
+                    continue
+                child_result = self._execute_task(
+                    current_state,
+                    callback,
+                    child,
+                    detail,
+                    retarget_event,
+                    tasks,
+                    damage_window_ledger,
+                )
+                current_state = child_result.after_state
+                mutations.extend(child_result.mutations)
+                records.extend(child_result.records)
+                events.extend(child_result.events)
+                errors.extend(child_result.errors)
+            if selected_count >= max_number:
+                break
         return StatusCallbackExecutionResult(
             ok=not errors,
             after_state=current_state,
@@ -824,6 +928,11 @@ class StatusCallbackSystem:
                 records.append(_queue_intent_blocked_record(callback, task, detail, intent, reason))
                 errors.append(reason)
                 continue
+            precheck_reason = _queue_insert_precheck_blocked(current_state, intent, target_resolution.actor_id)
+            if precheck_reason:
+                records.append(_queue_intent_blocked_record(callback, task, detail, intent, precheck_reason))
+                errors.append(precheck_reason)
+                continue
             lifecycle_policy_id = ""
             extra_action_policy_id = ""
             if isinstance(window.window_policy, dict):
@@ -835,6 +944,7 @@ class StatusCallbackSystem:
                 "queue_window_source": window.source.to_json(),
                 "queue_lifecycle_policy_id": lifecycle_policy_id,
                 "extra_action_policy_id": extra_action_policy_id,
+                "queue_intent_resource_policy": _queue_resource_policy(intent),
                 "status_callback_source": callback.source.to_json(),
                 "status_task_source": task.source.to_json(),
                 "status_instance_source": _json_dict(detail.get("source_trace")),
@@ -933,6 +1043,130 @@ class StatusCallbackSystem:
             ),
             errors=(blocked_reason,),
         )
+
+
+def _queue_resource_policy(intent: QueueIntentIR) -> dict[str, JSONValue]:
+    policy = intent.abort_policy.get("resource_policy") if isinstance(intent.abort_policy, dict) else None
+    return policy if isinstance(policy, dict) else {}
+
+
+def _queue_insert_precheck_blocked(state: BattleState, intent: QueueIntentIR, actor_id: str) -> str:
+    policy = intent.abort_policy.get("insert_once_policy") if isinstance(intent.abort_policy, dict) else None
+    if not isinstance(policy, dict):
+        return ""
+    if policy.get("kind") != "same_tag_insert_unused_count":
+        return ""
+    used_modifiers = tuple(str(item) for item in policy.get("used_modifier_names", ()) if isinstance(item, str) and item)
+    if not used_modifiers:
+        return "queue_insert_precheck_used_marker_missing"
+    actor = state.units.get(actor_id)
+    if actor is None:
+        return "queue_insert_precheck_actor_missing"
+    active_modifiers = set(actor.statuses)
+    detail_modifiers = {
+        str(detail.get("modifier_name") or "")
+        for detail in actor.flags.get("status_details", ())
+        if isinstance(detail, dict)
+    }
+    for modifier_name in used_modifiers:
+        if modifier_name in active_modifiers or f"modifier:{modifier_name}" in active_modifiers or modifier_name in detail_modifiers:
+            return "queue_insert_precheck_same_tag_already_used"
+    return ""
+
+
+def _retarget_candidates(
+    state: BattleState,
+    task: StatusCallbackTaskIR,
+    detail: dict[str, JSONValue],
+    trigger_event: GameEvent | None,
+) -> tuple[str, ...]:
+    evidence = task.source.evidence.get("retarget") if isinstance(task.source.evidence, dict) else None
+    if not isinstance(evidence, dict):
+        return ()
+    alias = str(evidence.get("target_alias") or "")
+    if alias != "ParamEntityAttackTargetList.SortByHP":
+        return ()
+    payload = trigger_event.payload if trigger_event is not None and isinstance(trigger_event.payload, dict) else {}
+    candidates = _unique_ids(
+        payload.get("param_entity_attack_target_ids"),
+        payload.get("selected_target_ids"),
+        payload.get("target_ids"),
+        payload.get("current_hit_target_id"),
+        payload.get("primary_target_id"),
+        payload.get("target_id"),
+    )
+    candidates = tuple(unit_id for unit_id in candidates if unit_id in state.units)
+    alive_candidates = tuple(unit_id for unit_id in candidates if _unit_alive(state, unit_id))
+    if not alive_candidates:
+        alive_candidates = _alive_enemy_ids_for_status_owner(state, detail)
+    return tuple(sorted(alive_candidates, key=lambda unit_id: (_hp_ratio(state, unit_id), state.units[unit_id].hp, unit_id)))
+
+
+def _retarget_max_number(task: StatusCallbackTaskIR) -> int:
+    evidence = task.source.evidence.get("retarget") if isinstance(task.source.evidence, dict) else None
+    expr = evidence.get("max_number_expr") if isinstance(evidence, dict) else None
+    if isinstance(expr, dict) and expr.get("kind") == "fixed":
+        value = expr.get("value")
+        if isinstance(value, (int, float)) and value > 0:
+            return int(value)
+    return 1
+
+
+def _retarget_event(event: GameEvent | None, target_id: str) -> GameEvent:
+    payload = dict(event.payload) if event is not None and isinstance(event.payload, dict) else {}
+    payload.update(
+        {
+            "param_entity_id": target_id,
+            "current_hit_target_id": target_id,
+            "target_id": target_id,
+            "retargeted": True,
+            "retarget_source_event_id": event.event_id if event is not None else "",
+        }
+    )
+    return GameEvent(
+        event.event_type if event is not None else "status.retarget",
+        source_id=event.source_id if event is not None else "",
+        target_id=target_id,
+        event_id=f"{event.event_id}:retarget:{target_id}" if event is not None and event.event_id else f"event:retarget:{target_id}",
+        window=event.window if event is not None else "Retarget",
+        process_only=True,
+        payload=payload,
+    )
+
+
+def _unique_ids(*values: object) -> tuple[str, ...]:
+    result: list[str] = []
+    for value in values:
+        if isinstance(value, str):
+            if value and value not in result:
+                result.append(value)
+        elif isinstance(value, (list, tuple)):
+            for item in value:
+                if isinstance(item, str) and item and item not in result:
+                    result.append(item)
+    return tuple(result)
+
+
+def _unit_alive(state: BattleState, unit_id: str) -> bool:
+    unit = state.units.get(unit_id)
+    return unit is not None and unit.hp > 0
+
+
+def _alive_enemy_ids_for_status_owner(state: BattleState, detail: dict[str, JSONValue]) -> tuple[str, ...]:
+    owner_id = str(detail.get("owner_id") or "")
+    owner = state.units.get(owner_id)
+    if owner is None:
+        return ()
+    return tuple(
+        unit_id
+        for unit_id, unit in state.units.items()
+        if unit.side != owner.side and unit.hp > 0
+    )
+
+
+def _hp_ratio(state: BattleState, unit_id: str) -> float:
+    unit = state.units[unit_id]
+    return float(unit.hp / unit.max_hp) if unit.max_hp > 0 else float("inf")
 
 
 def _status_damage_binding_sources(
@@ -1330,7 +1564,7 @@ def _condition_context(
     target_id = _first_payload_str(payload, ("current_hit_target_id", "primary_target_id", "target_id")) or (
         str(event.target_id or "") if event is not None else ""
     )
-    param_entity_id = target_id or owner_id
+    param_entity_id = _first_payload_str(payload, ("param_entity_id",)) or target_id or owner_id
     unit_ids = tuple(unit_id for unit_id in (owner_id, caster_id, param_entity_id) if unit_id)
     return EvaluationContext(
         state=state,
@@ -1361,7 +1595,7 @@ def _effect_context(
     target_id = _first_payload_str(payload, ("current_hit_target_id", "primary_target_id", "target_id")) or (
         str(event.target_id or "") if event is not None else ""
     )
-    param_entity_id = target_id or owner_id
+    param_entity_id = _first_payload_str(payload, ("param_entity_id",)) or target_id or owner_id
     unit_ids = tuple(unit_id for unit_id in (owner_id, caster_id, param_entity_id) if unit_id)
     return EffectExecutionContext(
         state=state,

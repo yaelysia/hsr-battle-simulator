@@ -72,6 +72,7 @@ def build_character_card_ir(
     text_map = _load_text_map(tbgd_root)
     skill_formula_bindings: list[SkillFormulaBindingIR] = []
     bounce_policies: list[BouncePolicyIR] = []
+    skill_param_slots: list[CharacterMechanismSlotIR] = []
     for relative_path, entity_type, id_key in skill_tables:
         skill_formula_bindings.extend(
             _skill_formula_bindings_for_table(
@@ -80,6 +81,16 @@ def build_character_card_ir(
                 entity_type=entity_type,
                 id_key=id_key,
                 text_map=text_map,
+                skill_to_card=skill_to_card,
+                max_records_per_table=max_records_per_table,
+            )
+        )
+        skill_param_slots.extend(
+            _skill_param_slots_for_table(
+                tbgd_root,
+                relative_path=relative_path,
+                entity_type=entity_type,
+                id_key=id_key,
                 skill_to_card=skill_to_card,
                 max_records_per_table=max_records_per_table,
             )
@@ -134,6 +145,7 @@ def build_character_card_ir(
     mechanism_slots: list[CharacterMechanismSlotIR] = []
     mechanism_slots.extend(_formula_mechanism_slot(binding) for binding in skill_formula_bindings)
     mechanism_slots.extend(_bounce_mechanism_slot(policy) for policy in bounce_policies)
+    mechanism_slots.extend(skill_param_slots)
     mechanism_slots.extend(trace_slots)
     mechanism_slot_ids_by_card: dict[str, list[str]] = {}
     for slot in mechanism_slots:
@@ -175,6 +187,15 @@ def build_character_card_ir(
                     evidence={
                         "row_index": row_index,
                         "skill_list": _json_safe(row.get("SkillList")),
+                        "version_kind": str(row.get("_character_card_version_kind") or "base"),
+                        "base_source_path": str(row.get("_character_card_base_source_path") or relative_path),
+                        "base_row_index": _json_safe(row.get("_character_card_base_row_index")),
+                        "base_skill_list": _json_safe(row.get("_character_card_base_skill_list") or []),
+                        "enhanced_source_path": str(row.get("_character_card_enhanced_source_path") or ""),
+                        "enhanced_row_index": _json_safe(row.get("_character_card_enhanced_row_index")),
+                        "enhanced_id": _json_safe(row.get("_character_card_enhanced_id")),
+                        "enhanced_skill_list": _json_safe(row.get("_character_card_enhanced_skill_list") or []),
+                        "enhanced_overrides_base": str(row.get("_character_card_version_kind") or "base") == "enhanced",
                         "profile_id": profile.avatar_profile_id,
                         "skill_formula_binding_count": len(binding_ids),
                         "bounce_policy_count": len(bounce_policy_ids),
@@ -654,7 +675,7 @@ def skill_formula_bindings_from_row(
 
 
 def _avatar_rows(tbgd_root: Path, *, max_records_per_table: int | None) -> list[tuple[str, int, dict[str, Any]]]:
-    rows: list[tuple[str, int, dict[str, Any]]] = []
+    base_rows: list[tuple[str, int, dict[str, Any]]] = []
     for relative_path in ("ExcelOutput/AvatarConfig.json", "ExcelOutput/AvatarConfigLD.json"):
         path = tbgd_root / relative_path
         if not path.exists():
@@ -667,7 +688,66 @@ def _avatar_rows(tbgd_root: Path, *, max_records_per_table: int | None) -> list[
             continue
         for row_index, row in enumerate(_limit_sequence(data, max_records_per_table)):
             if isinstance(row, dict) and row.get("AvatarID") is not None:
-                rows.append((relative_path, row_index, row))
+                copied = dict(row)
+                copied["_character_card_version_kind"] = "base"
+                copied["_character_card_base_source_path"] = relative_path
+                copied["_character_card_base_row_index"] = row_index
+                base_rows.append((relative_path, row_index, copied))
+    enhanced_rows = _enhanced_avatar_rows(tbgd_root, max_records_per_table=max_records_per_table)
+    enhanced_by_avatar = {str(row["AvatarID"]): (relative_path, row_index, row) for relative_path, row_index, row in enhanced_rows}
+    rows: list[tuple[str, int, dict[str, Any]]] = []
+    seen: set[str] = set()
+    for base_relative_path, base_row_index, base_row in base_rows:
+        avatar_id = str(base_row["AvatarID"])
+        enhanced = enhanced_by_avatar.get(avatar_id)
+        if enhanced is None:
+            rows.append((base_relative_path, base_row_index, base_row))
+            seen.add(avatar_id)
+            continue
+        enhanced_relative_path, enhanced_row_index, enhanced_row = enhanced
+        merged = {**base_row, **enhanced_row}
+        for key in ("DamageType", "AvatarBaseType", "Rarity"):
+            if not merged.get(key):
+                merged[key] = base_row.get(key)
+        merged["_character_card_version_kind"] = "enhanced"
+        merged["_character_card_base_source_path"] = base_relative_path
+        merged["_character_card_base_row_index"] = base_row_index
+        merged["_character_card_base_skill_list"] = _json_safe(base_row.get("SkillList") or [])
+        merged["_character_card_enhanced_source_path"] = enhanced_relative_path
+        merged["_character_card_enhanced_row_index"] = enhanced_row_index
+        merged["_character_card_enhanced_id"] = enhanced_row.get("EnhancedID")
+        merged["_character_card_enhanced_skill_list"] = _json_safe(enhanced_row.get("SkillList") or [])
+        rows.append((enhanced_relative_path, enhanced_row_index, merged))
+        seen.add(avatar_id)
+    for enhanced_relative_path, enhanced_row_index, enhanced_row in enhanced_rows:
+        avatar_id = str(enhanced_row["AvatarID"])
+        if avatar_id in seen:
+            continue
+        copied = dict(enhanced_row)
+        copied["_character_card_version_kind"] = "enhanced"
+        copied["_character_card_enhanced_source_path"] = enhanced_relative_path
+        copied["_character_card_enhanced_row_index"] = enhanced_row_index
+        copied["_character_card_enhanced_id"] = enhanced_row.get("EnhancedID")
+        copied["_character_card_enhanced_skill_list"] = _json_safe(enhanced_row.get("SkillList") or [])
+        rows.append((enhanced_relative_path, enhanced_row_index, copied))
+    return rows
+
+
+def _enhanced_avatar_rows(tbgd_root: Path, *, max_records_per_table: int | None) -> list[tuple[str, int, dict[str, Any]]]:
+    relative_path = "ExcelOutput/AvatarConfigEnhanced.json"
+    path = tbgd_root / relative_path
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    if not isinstance(data, list):
+        return []
+    rows: list[tuple[str, int, dict[str, Any]]] = []
+    for row_index, row in enumerate(_limit_sequence(data, max_records_per_table)):
+        if isinstance(row, dict) and row.get("AvatarID") is not None:
+            rows.append((relative_path, row_index, dict(row)))
     return rows
 
 
@@ -734,6 +814,87 @@ def _skill_formula_bindings_for_table(
             )
         )
     return bindings
+
+
+def _skill_param_slots_for_table(
+    tbgd_root: Path,
+    *,
+    relative_path: str,
+    entity_type: str,
+    id_key: str,
+    skill_to_card: dict[str, str],
+    max_records_per_table: int | None,
+) -> list[CharacterMechanismSlotIR]:
+    if entity_type != "avatar_skill":
+        return []
+    path = tbgd_root / relative_path
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    if not isinstance(data, list):
+        return []
+    slots: list[CharacterMechanismSlotIR] = []
+    for row_index, row in enumerate(_limit_sequence(data, max_records_per_table)):
+        if not isinstance(row, dict) or id_key not in row:
+            continue
+        raw_id = str(row[id_key])
+        card_id = skill_to_card.get(raw_id, "")
+        if not card_id:
+            continue
+        level = int(_number_value(row.get("Level"), 1.0))
+        param_list = _list_json_values(row.get("ParamList"))
+        for param_index, param_value in enumerate(param_list):
+            blocked_reason = ""
+            if not isinstance(_value_field(param_value), (int, float)):
+                blocked_reason = "skill_param_value_not_numeric"
+            source = IRSource(
+                source_path=relative_path,
+                raw_type=Path(relative_path).stem,
+                raw_id=raw_id,
+                evidence={
+                    "row_index": row_index,
+                    "id_key": id_key,
+                    "level": level,
+                    "skill_trigger_key": str(row.get("SkillTriggerKey") or ""),
+                    "skill_effect": str(row.get("SkillEffect") or ""),
+                    "attack_type": str(row.get("AttackType") or ""),
+                    "param_ref": f"ParamList[{param_index}]",
+                    "param_value": _json_safe(param_value),
+                    "character_data_card_id": card_id,
+                    "builder": "character_data_card_skill_param_slot_v0_266",
+                },
+            )
+            slots.append(
+                CharacterMechanismSlotIR(
+                    mechanism_slot_id=f"character_mechanism_slot:{card_id}:skill_param:{raw_id}:{level}:{param_index}",
+                    character_data_card_id=card_id,
+                    mechanism_kind="skill_param_slot",
+                    runtime_system="character_data_card_builder",
+                    linked_ir_ids={
+                        "action_id": f"{entity_type}:{raw_id}",
+                        "level": level,
+                        "param_index": param_index,
+                    },
+                    activation={"kind": "character_card_evidence_only"},
+                    semantics={
+                        "skill_id": raw_id,
+                        "level": level,
+                        "param_index": param_index,
+                        "param_ref": f"ParamList[{param_index}]",
+                        "param_value": _json_safe(param_value),
+                        "skill_trigger_key": str(row.get("SkillTriggerKey") or ""),
+                        "skill_effect": str(row.get("SkillEffect") or ""),
+                        "attack_type": str(row.get("AttackType") or ""),
+                    },
+                    source=source,
+                    coverage_status="blocked" if blocked_reason else "executable",
+                    blocked_reason=blocked_reason,
+                )
+            )
+    return slots
 
 
 def _bounce_policies_for_table(
@@ -886,6 +1047,15 @@ def _avatar_profile_from_row(
                 "row_index": row_index,
                 "skill_list": _json_safe(row.get("SkillList")),
                 "json_path": str(row.get("JsonPath") or ""),
+                "version_kind": str(row.get("_character_card_version_kind") or "base"),
+                "base_source_path": str(row.get("_character_card_base_source_path") or relative_path),
+                "base_row_index": _json_safe(row.get("_character_card_base_row_index")),
+                "base_skill_list": _json_safe(row.get("_character_card_base_skill_list") or []),
+                "enhanced_source_path": str(row.get("_character_card_enhanced_source_path") or ""),
+                "enhanced_row_index": _json_safe(row.get("_character_card_enhanced_row_index")),
+                "enhanced_id": _json_safe(row.get("_character_card_enhanced_id")),
+                "enhanced_skill_list": _json_safe(row.get("_character_card_enhanced_skill_list") or []),
+                "enhanced_overrides_base": str(row.get("_character_card_version_kind") or "base") == "enhanced",
                 "promotion_row_count": len(promotion_rows),
                 "builder": "character_data_card_v0_262",
             },

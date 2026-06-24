@@ -914,6 +914,12 @@ class RuleBook:
             raise KeyError("missing ultimate energy cost resource rule")
         return rules[0]
 
+    def default_kill_energy_gain_rule(self) -> ResourceRuleIR:
+        rules = self.resource_rules_by_kind("kill_energy_gain")
+        if not rules:
+            raise KeyError("missing kill energy gain resource rule")
+        return rules[0]
+
     def super_break_emission(self, emission_id: str) -> SuperBreakEmissionIR | None:
         return self._super_break_emissions.get(emission_id)
 

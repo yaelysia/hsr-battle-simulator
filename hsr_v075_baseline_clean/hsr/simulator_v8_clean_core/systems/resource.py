@@ -94,6 +94,46 @@ class ResourceSystem:
             mutation_id=f"mutation:ultimate_energy_cost:{state.event_index}:{unit_id}",
         )
 
+    def gain_kill_energy(
+        self,
+        state: BattleState,
+        unit_id: str,
+        rule: ResourceRuleIR,
+        *,
+        defeated_event_payload: dict[str, JSONValue],
+        metadata: dict[str, JSONValue] | None = None,
+    ) -> Mutation:
+        unit = state.units[unit_id]
+        gain = 10.0
+        cap = unit.max_energy if unit.max_energy > 0 else unit.energy + gain
+        after = max(0.0, min(cap, unit.energy + gain))
+        damage_event_id = str(defeated_event_payload.get("damage_event_id") or defeated_event_payload.get("damage_packet_id") or "")
+        return Mutation(
+            op="set",
+            path=("units", unit_id, "energy"),
+            before=unit.energy,
+            after=after,
+            reason="apply common caused-kill energy gain",
+            source="combat_executor.resources",
+            metadata={
+                **(metadata or {}),
+                "resource_operation": "kill_energy_gain",
+                "resource_rule_id": rule.resource_rule_id,
+                "resource_rule_kind": rule.rule_kind,
+                "resource_rule_operation": rule.operation,
+                "resource_rule_source_kind": rule.source_kind,
+                "resource_rule_source": rule.source.to_json(),
+                "before_energy": unit.energy,
+                "after_energy": after,
+                "energy_gain": gain,
+                "defeated_event_payload": defeated_event_payload,
+                "kill_credit_owner_id": str(defeated_event_payload.get("kill_credit_owner_id") or ""),
+                "kill_credit_source_id": str(defeated_event_payload.get("kill_credit_source_id") or ""),
+                "kill_credit_source_kind": str(defeated_event_payload.get("kill_credit_source_kind") or ""),
+            },
+            mutation_id=f"mutation:kill_energy_gain:{state.event_index}:{unit_id}:{damage_event_id}",
+        )
+
     def plan_action_resources(self, state: BattleState, actor_id: str, plan: ResourcePlan) -> ResourcePlanResult:
         errors: list[str] = []
         mutations: list[Mutation] = []

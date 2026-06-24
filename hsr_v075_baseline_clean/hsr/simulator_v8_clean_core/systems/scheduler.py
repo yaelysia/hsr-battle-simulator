@@ -814,7 +814,10 @@ class CombatScheduler:
                 return "extra_turn_action_policy_missing"
             if extra_policy.coverage_status != "executable":
                 return extra_policy.blocked_reason or f"extra_turn_action_policy_not_executable:{extra_policy.coverage_status}"
-            if extra_policy.action_selection_kind == "route_or_source_selected_non_ultimate_action":
+            if extra_policy.action_selection_kind in {
+                "route_or_source_selected_action",
+                "route_or_source_selected_non_ultimate_action",
+            }:
                 if command is None:
                     return "extra_turn_route_action_choice_missing"
                 if command.actor_id != actor_id:
@@ -834,12 +837,12 @@ class CombatScheduler:
             return "queue_action_event_missing"
         if action_event.coverage_status in {"blocked", "audit_only", "discovered_only", "unsupported"}:
             return f"queue_action_event_not_admitted:{action_event.coverage_status}"
-        if window_family == "extra_turn":
-            if _is_ultimate_definition(definition.attack_type, definition.skill_effect):
-                return "extra_turn_ultimate_action_not_allowed"
-            if not _is_basic_or_skill_definition(definition.attack_type, definition.skill_effect):
+        if window_family == "extra_turn" and extra_policy is not None:
+            allowed = set(extra_policy.allowed_action_kinds)
+            if allowed and not _action_kind_allowed(definition.attack_type, definition.skill_effect, allowed):
                 return "extra_turn_action_kind_not_admitted"
-        if definition.bp_need > state.skill_points:
+        resource_policy = _queue_entry_resource_policy(plan)
+        if resource_policy.get("ignore_skill_point_delta") is not True and definition.bp_need > state.skill_points:
             return "queue_action_resource_preflight_failed:insufficient_skill_points"
         if plan.queue_intent_id.startswith("manual_ultimate:"):
             actor = state.units[actor_id]
@@ -1388,6 +1391,12 @@ def _is_extra_turn_action_choice_plan(plan: QueueDrainPlan, resolution: QueueRes
     return window_family == "extra_turn" and resolution.resolved_kind == "extra_turn_action_choice"
 
 
+def _queue_entry_resource_policy(plan: QueueDrainPlan) -> dict[str, JSONValue]:
+    source_trace = plan.queue_entry.get("source_trace") if isinstance(plan.queue_entry.get("source_trace"), dict) else {}
+    policy = source_trace.get("queue_intent_resource_policy") if isinstance(source_trace, dict) else None
+    return policy if isinstance(policy, dict) else {}
+
+
 def _phases_for_graph(rules: RuleBook, graph_id: str) -> tuple[AbilityPhaseIR, ...]:
     graph = rules.standalone_ability_graph(graph_id)
     if graph is None:
@@ -1418,3 +1427,16 @@ def _is_ultimate_definition(attack_type: str, skill_effect: str) -> bool:
 def _is_basic_or_skill_definition(attack_type: str, skill_effect: str) -> bool:
     text = f"{attack_type} {skill_effect}".lower()
     return any(token in text for token in ("normal", "basic", "bpskill", "skill"))
+
+
+def _action_kind_allowed(attack_type: str, skill_effect: str, allowed: set[str]) -> bool:
+    normalized = {item.lower() for item in allowed}
+    if "ultimate" in normalized and _is_ultimate_definition(attack_type, skill_effect):
+        return True
+    if {"basic", "skill"} & normalized and _is_basic_or_skill_definition(attack_type, skill_effect):
+        text = f"{attack_type} {skill_effect}".lower()
+        if "basic" in normalized and any(token in text for token in ("normal", "basic")):
+            return True
+        if "skill" in normalized and any(token in text for token in ("bpskill", "skill")):
+            return True
+    return False

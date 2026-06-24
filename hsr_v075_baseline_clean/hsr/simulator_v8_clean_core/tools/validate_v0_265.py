@@ -482,6 +482,7 @@ def _action_state() -> BattleState:
 
 
 def _select_card_extra_turn_queue_slot(rules: RuleBook, card: CharacterDataCardIR) -> CharacterMechanismSlotIR:
+    candidates: list[CharacterMechanismSlotIR] = []
     for slot in rules.character_mechanism_slots_for_card(card.card_id):
         if slot.mechanism_kind != "queue_intent":
             continue
@@ -492,7 +493,14 @@ def _select_card_extra_turn_queue_slot(rules: RuleBook, card: CharacterDataCardI
         intent_id = slot.linked_ir_ids.get("queue_intent_id")
         if not isinstance(intent_id, str) or rules.queue_intent(intent_id) is None:
             continue
-        return slot
+        candidates.append(slot)
+    for slot in candidates:
+        intent = rules.queue_intent(str(slot.linked_ir_ids["queue_intent_id"]))
+        callback = rules.status_callback(intent.callback_id) if intent is not None else None
+        if callback is not None and callback.event == "OnAfterSkillUse":
+            return slot
+    if candidates:
+        return candidates[0]
     raise RuntimeError("Seele card has no executable extra-turn queue intent slot")
 
 
