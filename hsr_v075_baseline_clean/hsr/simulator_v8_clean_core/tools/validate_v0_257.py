@@ -78,15 +78,32 @@ def main(argv: list[str] | None = None) -> int:
 
 def _damage_family_matrix(ir) -> dict[str, Any]:
     damage_counts = _count_by_family(ir.damage_emissions)
+    direct_basis_debt = _direct_scaling_basis_debt_count(ir)
+    if direct_basis_debt:
+        damage_counts["direct"]["executable_requires_skill_text_binding"] = direct_basis_debt
     status_damage_counts = _count_by_family(ir.status_damage_emissions)
     super_break_counts = _count_by_family(ir.super_break_emissions)
     formula_counts = _mechanic_formula_counts(ir)
     rows = {
         "direct": _family_entry(
             "direct",
-            semantic_status="trusted_for_current_scope" if damage_counts["direct"]["executable"] > 0 else "blocked",
+            semantic_status=(
+                "blocked"
+                if direct_basis_debt
+                else "trusted_for_current_scope" if damage_counts["direct"]["executable"] > 0 else "blocked"
+            ),
             source_counts=damage_counts["direct"],
-            blocking_dependency="" if damage_counts["direct"]["executable"] > 0 else "executable_damage_emission_missing",
+            blocking_dependency=(
+                "direct_scaling_basis_requires_skill_text_param_binding"
+                if direct_basis_debt
+                else "" if damage_counts["direct"]["executable"] > 0 else "executable_damage_emission_missing"
+            ),
+            notes=(
+                "Direct runtime formula is generic, but current executable direct emissions still carry an explicit "
+                "current-scope attack basis that must be replaced by skill text/ParamList scaling-basis admission."
+                if direct_basis_debt
+                else ""
+            ),
         ),
         "dot": _family_entry(
             "dot",
@@ -176,6 +193,17 @@ def _count_by_family(items: tuple[Any, ...]) -> dict[str, dict[str, int]]:
 
 def _statusless_counts(items: tuple[Any, ...]) -> dict[str, int]:
     return dict(Counter(str(getattr(item, "coverage_status", "") or "unknown") for item in items))
+
+
+def _direct_scaling_basis_debt_count(ir) -> int:
+    return sum(
+        1
+        for emission in ir.damage_emissions
+        if emission.damage_formula_family == "direct"
+        and emission.coverage_status == "executable"
+        and isinstance(emission.scaling_basis_expr, dict)
+        and emission.scaling_basis_expr.get("requires_skill_text_binding") is True
+    )
 
 
 def _merge_counts(*values: dict[str, int]) -> dict[str, int]:
