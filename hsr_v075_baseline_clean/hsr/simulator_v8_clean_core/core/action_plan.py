@@ -102,6 +102,7 @@ class DamagePlan:
     damage_formula_family: str
     multiplier_source: object
     scaling_ratio: float
+    scaling_basis: dict[str, object]
     hit_source_trace: dict[str, object]
     numeric_fidelity_status: str = "unknown"
     primary_action_target_id: str | None = None
@@ -119,6 +120,7 @@ class DamagePlan:
             "damage_formula_family": self.damage_formula_family,
             "multiplier_source": self.multiplier_source,
             "scaling_ratio": self.scaling_ratio,
+            "scaling_basis": self.scaling_basis,
             "hit_source_trace": self.hit_source_trace,
             "numeric_fidelity_status": self.numeric_fidelity_status,
             "primary_action_target_id": self.primary_action_target_id,
@@ -366,6 +368,7 @@ def _damage_plan_from_emissions(
                     damage_formula_family=profile.damage_formula_family,
                     multiplier_source=profile.multiplier_source,
                     scaling_ratio=scaling_ratio,
+                    scaling_basis=emission.scaling_basis_expr,
                     hit_source_trace=profile.source.to_json(),
                     numeric_fidelity_status=profile.numeric_fidelity_status,
                     primary_action_target_id=primary_action_target_id,

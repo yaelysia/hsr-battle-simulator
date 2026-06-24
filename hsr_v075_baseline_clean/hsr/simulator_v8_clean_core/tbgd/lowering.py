@@ -2649,6 +2649,7 @@ def _lower_damage_emissions(
                         damage_formula_family=profile.damage_formula_family if profile else "unknown",
                         element_type=profile.element_type if profile else None,
                         scaling_ratio_expr=profile.multiplier_expr if profile else {"kind": "missing", "blocked_reason": "missing_hit_profile"},
+                        scaling_basis_expr=_damage_scaling_basis_expr(task, effect, profile),
                         source=source,
                         coverage_status="blocked" if blocked_reason else "executable",
                         blocked_reason=blocked_reason,
@@ -2725,6 +2726,39 @@ def _damage_emission_source(
             "hit_profile_source": profile.source.to_json() if profile else None,
         },
     )
+
+
+def _damage_scaling_basis_expr(
+    task: AbilityTaskIR,
+    effect: EffectIR | None,
+    profile: HitProfileIR | None,
+) -> dict[str, Any]:
+    if profile is None or profile.damage_formula_family != "direct":
+        return {
+            "kind": "missing",
+            "supported": False,
+            "reason": "damage_scaling_basis_not_applicable",
+        }
+    payload = effect.payload if effect else {}
+    return {
+        "kind": "unit_stat",
+        "unit_ref": "attacker",
+        "stat": "attack",
+        "source_kind": "current_direct_damage_admission",
+        "admission_status": "explicit_current_scope",
+        "requires_skill_text_binding": True,
+        "source_trace": {
+            "task_source": task.source.to_json(),
+            "effect_id": task.effect_id,
+            "target_alias": _target_alias(payload.get("TargetType")),
+            "hit_profile_id": profile.hit_profile_id,
+            "hit_profile_source": profile.source.to_json(),
+            "note": (
+                "Direct damage no longer hardcodes attack inside formula. "
+                "This explicit current-scope basis must be replaced by skill text/ParamList binding when character-specific scaling is admitted."
+            ),
+        },
+    }
 
 
 def _damage_emission_blocked_reason(
@@ -3363,7 +3397,7 @@ def _status_callback_task_admission(event: str, opcode: str, task: dict[str, Any
             extra_damage_percentage = _numeric_expr_summary(attack_property.get("ExtraDamagePercentage"))
             if not _numeric_expr_can_be_runtime_bound(damage_value):
                 if _numeric_expr_can_be_runtime_bound(damage_percentage):
-                    return "blocked", "dot_damage_percentage_base_not_admitted"
+                    return "blocked", "dot_damage_percentage_basis_not_admitted"
                 return "blocked", f"dot_damage_value_not_executable:{damage_value.get('reason') or damage_value.get('kind')}"
             if extra_formula_type and extra_formula_type != "ByDefence":
                 return "blocked", f"dot_extra_formula_type_not_admitted:{extra_formula_type}"
@@ -3452,6 +3486,11 @@ def _status_damage_emission_from_task(
         scaling_expr = {
             "kind": "dot_attack_property",
             "damage_percentage": _numeric_expr_summary(attack_property.get("DamagePercentage")),
+            "damage_percentage_basis": {
+                "kind": "missing",
+                "supported": False,
+                "reason": "dot_damage_percentage_basis_not_admitted",
+            },
             "damage_value": _numeric_expr_summary(attack_property.get("DamageValue")),
             "formula_type": str(attack_property.get("FormulaType") or ""),
             "extra_formula_type": str(attack_property.get("ExtraFormulaType") or ""),

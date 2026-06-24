@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 
 from ..core.model import BattleState, JSONValue, RNGEvent, UnitState
 from ..rules.ir import ActionDefinitionIR
+from .scaling_basis import resolve_scaling_basis
 
 
 @dataclass(frozen=True)
@@ -113,6 +114,7 @@ class DamageFormulaInput:
     attack_type: str
     element_type: str | None
     scaling_ratio: float
+    scaling_basis: dict[str, JSONValue] = field(default_factory=dict)
     source_trace: dict[str, JSONValue] = field(default_factory=dict)
     crit_mode: str | None = None
 
@@ -128,6 +130,7 @@ class DamageFormulaResult:
     scaling_stat: str
     scaling_value: float
     scaling_ratio: float
+    scaling_basis: dict[str, JSONValue]
     flat_damage: float
     base_damage: float
     crit_resolution: CritResolution
@@ -154,6 +157,7 @@ class DamageFormulaResult:
                 "stat": self.scaling_stat,
                 "value": self.scaling_value,
                 "ratio": self.scaling_ratio,
+                "basis_result": self.scaling_basis,
                 "flat_damage": self.flat_damage,
                 "base_damage": self.base_damage,
             },
@@ -184,7 +188,16 @@ class DirectDamageFormula:
 
         scaling_ratio = formula_input.scaling_ratio
         flat_damage = 0.0
-        scaling_value = actor.attack
+        basis_result = resolve_scaling_basis(
+            state,
+            attacker_id=formula_input.attacker_id,
+            target_id=formula_input.target_id,
+            basis=formula_input.scaling_basis,
+            source_trace=formula_input.source_trace,
+        )
+        if not basis_result.ok or basis_result.value is None:
+            raise ValueError(basis_result.blocked_reason or "scaling_basis_not_admitted")
+        scaling_value = basis_result.value
         base_damage = max(0.0, scaling_value * scaling_ratio + flat_damage)
 
         crit_resolution, rng_event, crit_bucket = _resolve_crit(formula_input, actor)
@@ -224,9 +237,10 @@ class DirectDamageFormula:
             action_definition_id=action_definition.definition_id,
             attack_type=formula_input.attack_type,
             element_type=element,
-            scaling_stat="attack",
+            scaling_stat=basis_result.stat,
             scaling_value=scaling_value,
             scaling_ratio=scaling_ratio,
+            scaling_basis=basis_result.to_json(),
             flat_damage=flat_damage,
             base_damage=base_damage,
             crit_resolution=crit_resolution,

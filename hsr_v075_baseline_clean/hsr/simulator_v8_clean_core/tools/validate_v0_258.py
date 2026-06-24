@@ -36,6 +36,7 @@ def run_validation(package_root: Path, tbgd_root: Path, output_dir: Path) -> dic
     by_defence = _execute_dot_case(rules, by_defence_case, target_hp=500.0) if by_defence_case else _blocked_missing_by_defence()
     unbound = _unbound_dynamic_case(rules, dot_case)
     unsupported_extra = _unsupported_extra_formula_case(rules, dot_case)
+    percentage_basis = _percentage_basis_formula_case(rules, dot_case)
     order_case = _dot_order_case(rules, dot_case)
     family_matrix = _damage_family_matrix(ir, positive)
     static_result = run_static_checks(package_root)
@@ -45,6 +46,7 @@ def run_validation(package_root: Path, tbgd_root: Path, output_dir: Path) -> dic
         "by_defence_extra": by_defence["checks"],
         "unbound_dynamic": unbound["checks"],
         "unsupported_extra_formula": unsupported_extra["checks"],
+        "generic_percentage_basis": percentage_basis["checks"],
         "dot_order": order_case["checks"],
         "family_matrix": _matrix_checks(family_matrix),
         "static": {"ok": static_result.ok, "checks": {"static_checks": static_result.ok}},
@@ -70,6 +72,7 @@ def run_validation(package_root: Path, tbgd_root: Path, output_dir: Path) -> dic
         "negative_cases": {
             "unbound_dynamic": unbound,
             "unsupported_extra_formula": unsupported_extra,
+            "generic_percentage_basis": percentage_basis,
             "dot_order": order_case,
         },
         "damage_family_matrix": family_matrix,
@@ -223,6 +226,57 @@ def _unsupported_extra_formula_case(rules: RuleBook, case: dict[str, Any]) -> di
     }
     checks["ok"] = all(checks.values())
     return {"checks": checks, "formula_result": formula_result.to_json(), "selection_mode": "synthetic_negative"}
+
+
+def _percentage_basis_formula_case(rules: RuleBook, case: dict[str, Any]) -> dict[str, Any]:
+    emission: StatusDamageEmissionIR = case["emission"]
+    synthetic_emission = replace(
+        emission,
+        scaling_expr={
+            **emission.scaling_expr,
+            "damage_value": {"kind": "missing", "supported": False, "reason": "formula_capability_case_uses_percentage"},
+            "damage_percentage": {"kind": "fixed", "value": 0.25, "supported": True},
+            "damage_percentage_basis": {
+                "kind": "unit_stat",
+                "unit_ref": "attacker",
+                "stat": "defense",
+                "source_kind": "formula_capability_case_explicit_basis",
+                "source_trace": {"selection_mode": "formula_capability_not_mechanic_coverage"},
+            },
+            "extra_formula_type": "",
+            "extra_damage_percentage": {"kind": "missing", "supported": False, "reason": "not_used"},
+        },
+    )
+    state = _state_for_emission(rules, emission, target_hp=500.0, bind_dynamic=True)
+    detail = state.units["enemy:dot_target"].flags["status_details"][0]
+    formula_result = DotFormula().calculate(
+        DotFormulaInput(
+            state=state,
+            caster_id="ally:dot_caster",
+            target_id="enemy:dot_target",
+            status_detail=detail,
+            emission=synthetic_emission,
+            source_trace={"selection_mode": "formula_capability_not_mechanic_coverage"},
+        )
+    )
+    applied_terms = formula_result.dot_ledger.get("applied_terms", []) if isinstance(formula_result.dot_ledger, dict) else []
+    basis_terms = [
+        term
+        for term in applied_terms
+        if isinstance(term, dict) and term.get("key") == "DamagePercentage"
+    ]
+    checks = {
+        "formula_ok": formula_result.ok,
+        "uses_non_attack_basis": bool(basis_terms and basis_terms[0].get("base_stat") == "defense"),
+        "final_damage_from_explicit_basis": abs(float(formula_result.final_damage) - 20.0) < 0.000001,
+        "selection_mode_not_mechanic_coverage": True,
+    }
+    checks["ok"] = all(checks.values())
+    return {
+        "checks": checks,
+        "formula_result": formula_result.to_json(),
+        "selection_mode": "formula_capability_not_mechanic_coverage",
+    }
 
 
 def _dot_order_case(rules: RuleBook, case: dict[str, Any]) -> dict[str, Any]:
@@ -406,7 +460,8 @@ def _damage_family_matrix(ir, positive_case: dict[str, Any]) -> dict[str, Any]:
             "" if positive_case["checks"]["ok"] else "ordinary_dot_positive_case_failed",
             trusted_scope="AttackType=DOT OnPhase1 StatusDamageEmissionIR using DamageValue and admitted ByDefence extra formula.",
             blocked_formula_branches={
-                "damage_percentage": "damage_percentage_base_not_admitted",
+                "damage_percentage_without_basis": "damage_percentage_basis_not_admitted",
+                "damage_percentage_with_explicit_basis": "generic_formula_interface_available_not_counted_as_mechanic_coverage",
                 "other_extra_formula": "extra_formula_type_not_supported",
             },
         ),

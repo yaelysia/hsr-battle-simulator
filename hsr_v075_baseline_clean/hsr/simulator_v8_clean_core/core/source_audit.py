@@ -363,6 +363,14 @@ class RuntimeSourceAuditor:
                 violations.append(_violation(mutation, "hit_profile_missing", details={"hit_profile_id": hit_profile_id}))
             else:
                 _audit_source(profile.source, profile.coverage_status, mutation, violations, check_status=False)
+        if metadata.get("damage_formula_family") == "direct":
+            formula_result = metadata.get("formula_result")
+            scaling = formula_result.get("scaling") if isinstance(formula_result, dict) else None
+            basis_result = scaling.get("basis_result") if isinstance(scaling, dict) else None
+            if not isinstance(basis_result, dict):
+                violations.append(_violation(mutation, "scaling_basis_result_missing", missing_field="formula_result.scaling.basis_result"))
+            elif basis_result.get("ok") is not True:
+                violations.append(_violation(mutation, "scaling_basis_result_not_ok", details={"basis_result": basis_result}))
         return _trace(mutation, records, {"damage_emission_id": emission_id or "", "source_task_id": task_id or "", "hit_profile_id": hit_profile_id or ""})
 
     def _audit_break_damage_mutation(

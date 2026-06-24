@@ -230,6 +230,7 @@ class DamageEmissionIR:
     damage_formula_family: str
     element_type: str | None
     scaling_ratio_expr: dict[str, JSONValue]
+    scaling_basis_expr: dict[str, JSONValue]
     source: IRSource
     coverage_status: CoverageStatus = "blocked"
     blocked_reason: str = ""
@@ -246,6 +247,7 @@ class DamageEmissionIR:
             "damage_formula_family": self.damage_formula_family,
             "element_type": self.element_type,
             "scaling_ratio_expr": self.scaling_ratio_expr,
+            "scaling_basis_expr": self.scaling_basis_expr,
             "source": self.source.to_json(),
             "coverage_status": self.coverage_status,
             "blocked_reason": self.blocked_reason,

@@ -186,12 +186,28 @@ def _direct_damage_transition(rules: RuleBook, state, command) -> tuple[BattleTr
         action_definition=action_definition,
         hit_profile_id=hit_profile.hit_profile_id if hit_profile is not None else "",
         scaling_ratio=scaling_ratio,
+        scaling_basis={
+            "kind": "unit_stat",
+            "unit_ref": "attacker",
+            "stat": "attack",
+            "source_kind": "validation_current_scope_input",
+            "source_trace": {
+                "selection_mode": "validation_packet_explicit_scaling_basis",
+                "action_definition_source": source_trace,
+            },
+        },
         hit_source_trace=hit_profile.source.to_json() if hit_profile is not None else {},
         source_trace=source_trace,
         metadata={
             "validation": "v0_207_follow_up_attack_type_direct_damage",
             "hit_profile_id": hit_profile.hit_profile_id if hit_profile is not None else "",
             "scaling_ratio": scaling_ratio,
+            "scaling_basis": {
+                "kind": "unit_stat",
+                "unit_ref": "attacker",
+                "stat": "attack",
+                "source_kind": "validation_current_scope_input",
+            },
             "hit_source_trace": hit_profile.source.to_json() if hit_profile is not None else {},
         },
     )

@@ -6,6 +6,7 @@ from ..core.model import BattleState, JSONValue
 from ..rules.evaluator import NumericEvaluationContext, NumericEvaluationResult, RuleEvaluator
 from ..rules.ir import StatusDamageEmissionIR
 from .dynamic_values import binding_source_from_status_detail, binding_source_from_store, store_from_state
+from .scaling_basis import resolve_scaling_basis
 
 
 @dataclass(frozen=True)
@@ -42,6 +43,9 @@ class DotFormulaResult:
     @property
     def primary_numeric_evaluation(self) -> dict[str, JSONValue]:
         value = self.numeric_evaluations.get("damage_value")
+        if isinstance(value, dict) and value.get("ok") is True:
+            return value
+        value = self.numeric_evaluations.get("damage_percentage")
         return value if isinstance(value, dict) else {}
 
 
@@ -70,7 +74,21 @@ class DotFormula:
         evaluator = RuleEvaluator()
         damage_value_expr = _json_dict(scaling.get("damage_value"))
         base_eval = evaluator.evaluate_numeric(damage_value_expr, context)
-        if not base_eval.ok or base_eval.value is None:
+        numeric_evaluations: dict[str, JSONValue] = {"damage_value": base_eval.to_json()}
+        terms: list[dict[str, JSONValue]] = []
+        if base_eval.ok and base_eval.value is not None:
+            base_damage = max(0.0, float(base_eval.value))
+            terms.append(
+                {
+                    "bucket": "base_damage",
+                    "key": "DamageValue",
+                    "applied": True,
+                    "value": base_damage,
+                    "source": "AttackProperty.DamageValue",
+                    "numeric_evaluation": base_eval.to_json(),
+                }
+            )
+        else:
             if _expr_admitted(damage_value_expr):
                 return _blocked_with_eval(
                     base_eval.blocked_reason or "dot_damage_value_numeric_evaluation_failed",
@@ -78,34 +96,66 @@ class DotFormula:
                     base_eval,
                 )
             percentage_expr = _json_dict(scaling.get("damage_percentage"))
-            if _expr_admitted(percentage_expr):
+            if not _expr_admitted(percentage_expr):
                 return _blocked_with_eval(
-                    "dot_damage_percentage_base_not_admitted",
+                    base_eval.blocked_reason or "dot_damage_value_numeric_evaluation_failed",
                     emission.source.to_json(),
                     base_eval,
-                    percentage_expr=percentage_expr,
                 )
-            return _blocked_with_eval(
-                base_eval.blocked_reason or "dot_damage_value_numeric_evaluation_failed",
-                emission.source.to_json(),
-                base_eval,
+            percentage_eval = evaluator.evaluate_numeric(percentage_expr, context)
+            numeric_evaluations["damage_percentage"] = percentage_eval.to_json()
+            if not percentage_eval.ok or percentage_eval.value is None:
+                return _blocked_with_evaluations(
+                    percentage_eval.blocked_reason or "dot_damage_percentage_numeric_evaluation_failed",
+                    emission.source.to_json(),
+                    numeric_evaluations,
+                )
+            basis_expr = _json_dict(scaling.get("damage_percentage_basis"))
+            basis_result = resolve_scaling_basis(
+                formula_input.state,
+                attacker_id=formula_input.caster_id,
+                target_id=formula_input.target_id,
+                basis=basis_expr,
+                source_trace={
+                    **formula_input.source_trace,
+                    "status_damage_source": emission.source.to_json(),
+                    "damage_percentage": percentage_expr,
+                },
+            )
+            numeric_evaluations["damage_percentage_basis"] = basis_result.to_json()
+            if not basis_result.ok or basis_result.value is None:
+                return _blocked_with_evaluations(
+                    basis_result.blocked_reason or "dot_damage_percentage_basis_not_admitted",
+                    emission.source.to_json(),
+                    numeric_evaluations,
+                )
+            base_damage = max(0.0, float(basis_result.value) * float(percentage_eval.value))
+            terms.extend(
+                (
+                    {
+                        "bucket": "base_damage",
+                        "key": "DamageValue",
+                        "applied": False,
+                        "skipped_reason": "damage_value_missing_percentage_path_used",
+                        "source": "AttackProperty.DamageValue",
+                    },
+                    {
+                        "bucket": "base_damage",
+                        "key": "DamagePercentage",
+                        "applied": True,
+                        "base_stat": basis_result.stat,
+                        "base_value": basis_result.value,
+                        "ratio": float(percentage_eval.value),
+                        "value": base_damage,
+                        "source": "AttackProperty.DamagePercentage",
+                        "numeric_evaluation": percentage_eval.to_json(),
+                        "basis_result": basis_result.to_json(),
+                    },
+                )
             )
 
-        base_damage = max(0.0, float(base_eval.value))
-        numeric_evaluations: dict[str, JSONValue] = {"damage_value": base_eval.to_json()}
-        terms: list[dict[str, JSONValue]] = [
-            {
-                "bucket": "base_damage",
-                "key": "DamageValue",
-                "applied": True,
-                "value": base_damage,
-                "source": "AttackProperty.DamageValue",
-                "numeric_evaluation": base_eval.to_json(),
-            }
-        ]
-
         percentage_expr = _json_dict(scaling.get("damage_percentage"))
-        if _expr_admitted(percentage_expr):
+        if _expr_admitted(percentage_expr) and "damage_percentage" not in numeric_evaluations:
             terms.append(
                 {
                     "bucket": "base_damage",
@@ -216,6 +266,28 @@ def _blocked_with_eval(
         evaluations["extra_damage_percentage"] = extra_eval.to_json()
     if percentage_expr is not None:
         evaluations["damage_percentage"] = {"ok": False, "expression": percentage_expr, "blocked_reason": reason}
+    return DotFormulaResult(
+        ok=False,
+        base_damage=0.0,
+        extra_damage=0.0,
+        final_damage=0.0,
+        numeric_evaluations=evaluations,
+        dot_ledger={
+            "formula_family": "dot",
+            "terms": [],
+            "applied_terms": [],
+            "skipped_terms": [{"bucket": "dot", "key": "formula", "skipped_reason": reason}],
+            "source_trace": source_trace,
+        },
+        blocked_reason=reason,
+    )
+
+
+def _blocked_with_evaluations(
+    reason: str,
+    source_trace: dict[str, JSONValue],
+    evaluations: dict[str, JSONValue],
+) -> DotFormulaResult:
     return DotFormulaResult(
         ok=False,
         base_damage=0.0,

@@ -196,6 +196,7 @@ class DamagePacket:
     source_task_id: str = ""
     hit_profile_id: str = ""
     scaling_ratio: float | None = None
+    scaling_basis: dict[str, JSONValue] = field(default_factory=dict)
     hit_source_trace: dict[str, JSONValue] = field(default_factory=dict)
     source_trace: dict[str, JSONValue] = field(default_factory=dict)
     source_frame: DamageSourceFrame | None = None
@@ -228,6 +229,7 @@ class DamagePacket:
             "source_task_id": self.source_task_id,
             "hit_profile_id": self.hit_profile_id,
             "scaling_ratio": self.scaling_ratio,
+            "scaling_basis": self.scaling_basis,
             "hit_source_trace": self.hit_source_trace,
             "source_trace": self.source_trace,
             "source_frame": source_frame_for_packet(self).to_json(),
@@ -408,6 +410,7 @@ class DamageSystem:
                     attack_type=packet.attack_type,
                     element_type=packet.element_type,
                     scaling_ratio=packet.scaling_ratio,
+                    scaling_basis=packet.scaling_basis,
                     source_trace=packet.source_trace,
                     crit_mode=_metadata_str(packet.metadata, "crit_mode"),
                 )

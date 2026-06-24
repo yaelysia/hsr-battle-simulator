@@ -847,6 +847,7 @@ def _damage_packet(
         source_task_id=damage_plan.source_task_id,
         hit_profile_id=damage_plan.hit_profile_id,
         scaling_ratio=damage_plan.scaling_ratio,
+        scaling_basis=damage_plan.scaling_basis,
         hit_source_trace=damage_plan.hit_source_trace,
         source_frame=DamageSourceFrame(
             owner_id=command.actor_id,
@@ -878,6 +879,7 @@ def _damage_packet(
             "target_group": damage_plan.target_group,
             "multiplier_source": damage_plan.multiplier_source,
             "scaling_ratio": damage_plan.scaling_ratio,
+            "scaling_basis": damage_plan.scaling_basis,
             "hit_source_trace": damage_plan.hit_source_trace,
             "numeric_fidelity_status": damage_plan.numeric_fidelity_status,
             "multi_hit_not_implemented": True,
