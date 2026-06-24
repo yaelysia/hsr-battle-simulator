@@ -9,6 +9,7 @@ from .ir import (
     ActionDefinitionIR,
     ActionDelayEmissionIR,
     ActionEventIR,
+    AvatarProfileIR,
     BreakBaseDamageIR,
     BreakDamageEmissionIR,
     BreakStatusEmissionIR,
@@ -30,6 +31,7 @@ from .ir import (
     ResourceRuleIR,
     RuleEntity,
     SkillContinuationIR,
+    SkillFormulaBindingIR,
     StandaloneAbilityGraphIR,
     StatusCallbackIR,
     StatusCallbackTaskIR,
@@ -49,6 +51,11 @@ class RuleBook:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "_entities", {entity.entity_id: entity for entity in self.ir.entities})
+        object.__setattr__(
+            self,
+            "_avatar_profiles",
+            {profile.avatar_id: profile for profile in self.ir.avatar_profiles},
+        )
         object.__setattr__(
             self,
             "_combatant_profiles",
@@ -123,6 +130,25 @@ class RuleBook:
             {
                 key: tuple(sorted(value, key=lambda item: (item.hit_index, item.target_group, item.hit_profile_id)))
                 for key, value in hit_profiles_by_action.items()
+            },
+        )
+        skill_formula_bindings_by_action_param_role: dict[tuple[str, int, int, str], list[SkillFormulaBindingIR]] = {}
+        for binding in self.ir.skill_formula_bindings:
+            skill_formula_bindings_by_action_param_role.setdefault(
+                (binding.action_id, binding.level, binding.param_index, binding.formula_role),
+                [],
+            ).append(binding)
+        object.__setattr__(
+            self,
+            "_skill_formula_bindings",
+            {binding.binding_id: binding for binding in self.ir.skill_formula_bindings},
+        )
+        object.__setattr__(
+            self,
+            "_skill_formula_bindings_by_action_param_role",
+            {
+                key: tuple(sorted(value, key=lambda item: item.binding_id))
+                for key, value in skill_formula_bindings_by_action_param_role.items()
             },
         )
         damage_emissions_by_action: dict[tuple[str, int], list[DamageEmissionIR]] = {}
@@ -521,6 +547,9 @@ class RuleBook:
     def combatant_profile(self, entity_id: str) -> CombatantProfileIR | None:
         return self._combatant_profiles.get(entity_id)
 
+    def avatar_profile(self, avatar_id: str) -> AvatarProfileIR | None:
+        return self._avatar_profiles.get(avatar_id)
+
     def require_combatant_profile(self, entity_id: str) -> CombatantProfileIR:
         profile = self.combatant_profile(entity_id)
         if profile is None:
@@ -586,6 +615,21 @@ class RuleBook:
 
     def hit_profile(self, hit_profile_id: str) -> HitProfileIR | None:
         return self._hit_profiles.get(hit_profile_id)
+
+    def skill_formula_binding(self, binding_id: str) -> SkillFormulaBindingIR | None:
+        return self._skill_formula_bindings.get(binding_id)
+
+    def skill_formula_bindings_for_action_param(
+        self,
+        action_id: str,
+        level: int,
+        param_index: int,
+        formula_role: str,
+    ) -> tuple[SkillFormulaBindingIR, ...]:
+        return self._skill_formula_bindings_by_action_param_role.get(
+            (action_id, level, param_index, formula_role),
+            (),
+        )
 
     def damage_emission(self, damage_emission_id: str) -> DamageEmissionIR | None:
         return self._damage_emissions.get(damage_emission_id)

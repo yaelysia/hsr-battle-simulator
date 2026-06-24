@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import base64
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,7 @@ from ..rules.ir import (
     ActionDelayEmissionIR,
     ActionEventIR,
     ActionPhaseStepIR,
+    AvatarProfileIR,
     BreakBaseDamageIR,
     BreakDamageEmissionIR,
     BreakStatusEmissionIR,
@@ -39,6 +41,7 @@ from ..rules.ir import (
     ResourceRuleIR,
     RuleEntity,
     SkillContinuationIR,
+    SkillFormulaBindingIR,
     StandaloneAbilityGraphIR,
     StatusCallbackIR,
     StatusCallbackTaskIR,
@@ -183,8 +186,10 @@ class TBGDLowering:
             entities.extend(self._lower_entity_table(relative_path, spec))
             table_stats[relative_path] = self._table_stats(relative_path, spec[1])
         entities = list(_dedupe_entities(entities).values())
+        avatar_profiles = self._lower_avatar_profiles()
         combatant_profiles = self._lower_combatant_profiles()
         action_definitions = list(self._lower_action_definitions().values())
+        skill_formula_bindings = self._lower_skill_formula_bindings()
         (
             action_ability_bindings,
             ability_phases,
@@ -205,6 +210,7 @@ class TBGDLowering:
             ability_tasks,
             ability_task_effects,
             hit_profiles,
+            skill_formula_bindings,
         )
         toughness_emissions = _lower_toughness_emissions(
             ability_tasks,
@@ -272,6 +278,7 @@ class TBGDLowering:
         return CanonicalIR(
             version=BASELINE_VERSION,
             entities=tuple(entities),
+            avatar_profiles=tuple(avatar_profiles),
             combatant_profiles=tuple(combatant_profiles),
             action_definitions=tuple(action_definitions),
             action_ability_bindings=tuple(action_ability_bindings),
@@ -279,6 +286,7 @@ class TBGDLowering:
             ability_tasks=tuple(ability_tasks),
             action_events=tuple(action_events),
             hit_profiles=tuple(hit_profiles),
+            skill_formula_bindings=tuple(skill_formula_bindings),
             damage_emissions=tuple(damage_emissions),
             toughness_emissions=tuple(toughness_emissions),
             break_templates=tuple(break_templates),
@@ -348,6 +356,12 @@ class TBGDLowering:
                     "timeline_rule_count": len(timeline_rules),
                     "resource_rule_count": len(resource_rules),
                     "super_break_emission_count": len(super_break_emissions),
+                    "skill_formula_binding_count": len(skill_formula_bindings),
+                },
+                "avatar_profile_status": {
+                    "lowered_count": len(avatar_profiles),
+                    "executable_count": sum(1 for profile in avatar_profiles if profile.coverage_status == "executable"),
+                    "blocked_count": sum(1 for profile in avatar_profiles if profile.coverage_status == "blocked"),
                 },
                 "combatant_profile_status": {
                     "lowered_count": len(combatant_profiles),
@@ -398,6 +412,70 @@ class TBGDLowering:
             )
         ]
 
+    def _lower_avatar_profiles(self) -> list[AvatarProfileIR]:
+        promotion_rows_by_avatar: dict[str, list[dict[str, Any]]] = {}
+        for relative_path in ("ExcelOutput/AvatarPromotionConfig.json", "ExcelOutput/AvatarPromotionConfigLD.json"):
+            path = self.tbgd_root / relative_path
+            if not path.exists():
+                continue
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if not isinstance(data, list):
+                continue
+            for row in data:
+                if isinstance(row, dict) and row.get("AvatarID") is not None:
+                    promotion_rows_by_avatar.setdefault(str(row["AvatarID"]), []).append(row)
+
+        profiles: list[AvatarProfileIR] = []
+        for relative_path in ("ExcelOutput/AvatarConfig.json", "ExcelOutput/AvatarConfigLD.json"):
+            path = self.tbgd_root / relative_path
+            if not path.exists():
+                continue
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if not isinstance(data, list):
+                continue
+            for row_index, row in enumerate(_limit_sequence(data, self.limits.max_records_per_table)):
+                if not isinstance(row, dict) or row.get("AvatarID") is None:
+                    continue
+                avatar_id = str(row["AvatarID"])
+                promotion_rows = promotion_rows_by_avatar.get(avatar_id, [])
+                base_stats_by_promotion = _avatar_base_stats_by_promotion(promotion_rows)
+                skill_ids = tuple(str(skill_id) for skill_id in row.get("SkillList") or ())
+                blocked_reason = ""
+                if not skill_ids:
+                    blocked_reason = "avatar_skill_list_missing"
+                elif not base_stats_by_promotion:
+                    blocked_reason = "avatar_promotion_base_stats_missing"
+                profiles.append(
+                    AvatarProfileIR(
+                        avatar_profile_id=f"avatar_profile:{avatar_id}",
+                        avatar_id=avatar_id,
+                        base_type=str(row.get("AvatarBaseType") or ""),
+                        damage_type=str(row.get("DamageType") or ""),
+                        skill_ids=skill_ids,
+                        base_stats_by_promotion=base_stats_by_promotion,
+                        source=IRSource(
+                            source_path=relative_path,
+                            raw_type=Path(relative_path).stem,
+                            raw_id=avatar_id,
+                            evidence={
+                                "row_index": row_index,
+                                "skill_list": _json_safe(row.get("SkillList")),
+                                "json_path": str(row.get("JsonPath") or ""),
+                                "promotion_row_count": len(promotion_rows),
+                            },
+                        ),
+                        coverage_status="blocked" if blocked_reason else "executable",
+                        blocked_reason=blocked_reason,
+                    )
+                )
+        return profiles
+
     def _lower_combatant_profiles(self) -> list[CombatantProfileIR]:
         monster_rows = self._rows_by_id("ExcelOutput/MonsterConfig.json", "MonsterID")
         template_rows = self._rows_by_id("ExcelOutput/MonsterTemplateConfig.json", "MonsterTemplateID")
@@ -409,6 +487,34 @@ class TBGDLowering:
         for template_id, template_row in sorted(template_rows.items()):
             profiles.append(_combatant_profile_from_template(template_id, template_row))
         return profiles
+
+    def _lower_skill_formula_bindings(self) -> list[SkillFormulaBindingIR]:
+        text_map = _load_text_map(self.tbgd_root)
+        bindings: list[SkillFormulaBindingIR] = []
+        for relative_path, entity_type, id_key in ACTION_DEFINITION_TABLES:
+            path = self.tbgd_root / relative_path
+            if not path.exists():
+                continue
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if not isinstance(data, list):
+                continue
+            for row_index, row in enumerate(_limit_sequence(data, self.limits.max_records_per_table)):
+                if not isinstance(row, dict) or id_key not in row:
+                    continue
+                bindings.extend(
+                    _skill_formula_bindings_from_row(
+                        relative_path=relative_path,
+                        entity_type=entity_type,
+                        id_key=id_key,
+                        row_index=row_index,
+                        row=row,
+                        text_map=text_map,
+                    )
+                )
+        return bindings
 
     def _lower_break_base_damage(self) -> list[BreakBaseDamageIR]:
         relative_path = "ExcelOutput/AvatarBreakDamage.json"
@@ -2237,6 +2343,228 @@ def _combatant_profile_from_template(template_id: str, template_row: dict[str, A
     )
 
 
+SKILL_TEXT_BASIS_WORDS: dict[str, str] = {
+    "攻击力": "attack",
+    "生命上限": "max_hp",
+    "防御力": "defense",
+}
+
+SKILL_TEXT_DAMAGE_BINDING_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(
+        r"(?P<matched>(?:造成|受到|附加|追加)[^。；\n]{0,120}?等同于[^。；\n]{0,80}?"
+        r"#(?P<param_index>\d+)(?:\[[^\]]+\])?%?[^。；\n]{0,50}?"
+        r"(?P<basis>攻击力|生命上限|防御力)[^。；\n]{0,120}?伤害)"
+    ),
+    re.compile(
+        r"(?P<matched>(?:造成|受到|附加|追加)[^。；\n]{0,120}?等同于[^。；\n]{0,50}?"
+        r"(?P<basis>攻击力|生命上限|防御力)[^。；\n]{0,50}?"
+        r"#(?P<param_index>\d+)(?:\[[^\]]+\])?%?[^。；\n]{0,120}?伤害)"
+    ),
+)
+
+
+def _load_text_map(tbgd_root: Path) -> dict[str, str]:
+    for relative_path in ("TextMap/TextMapCHS.json", "TextMap/TextMapCN.json"):
+        path = tbgd_root / relative_path
+        if not path.exists():
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if isinstance(data, dict):
+            return {str(key): str(value) for key, value in data.items() if isinstance(value, str)}
+    return {}
+
+
+def _avatar_base_stats_by_promotion(rows: list[dict[str, Any]]) -> dict[str, JSONValue]:
+    result: dict[str, JSONValue] = {}
+    for index, row in enumerate(rows):
+        if not isinstance(row, dict):
+            continue
+        max_level = row.get("MaxLevel")
+        key = str(max_level if isinstance(max_level, int) else index)
+        stats = {
+            "max_level": _json_safe(row.get("MaxLevel")),
+            "attack_base": _value_field(row.get("AttackBase")),
+            "attack_add": _value_field(row.get("AttackAdd")),
+            "defense_base": _value_field(row.get("DefenceBase")),
+            "defense_add": _value_field(row.get("DefenceAdd")),
+            "hp_base": _value_field(row.get("HPBase")),
+            "hp_add": _value_field(row.get("HPAdd")),
+            "speed_base": _value_field(row.get("SpeedBase")),
+            "critical_chance": _value_field(row.get("CriticalChance")),
+            "critical_damage": _value_field(row.get("CriticalDamage")),
+            "base_aggro": _value_field(row.get("BaseAggro")),
+        }
+        if any(isinstance(value, (int, float)) for value in stats.values()):
+            result[key] = stats
+    return result
+
+
+def _skill_formula_bindings_from_row(
+    *,
+    relative_path: str,
+    entity_type: str,
+    id_key: str,
+    row_index: int,
+    row: dict[str, Any],
+    text_map: dict[str, str],
+) -> list[SkillFormulaBindingIR]:
+    raw_id = str(row[id_key])
+    action_id = f"{entity_type}:{raw_id}"
+    level = int(_number_value(row.get("Level"), 1.0))
+    text_hash = _text_hash(row.get("SkillDesc"))
+    skill_text = text_map.get(text_hash, "") if text_hash else ""
+    normalized_text = _normalize_skill_text(skill_text)
+    param_list = tuple(_list_json_values(row.get("ParamList")))
+    matches = _skill_formula_text_matches(normalized_text)
+    bindings: list[SkillFormulaBindingIR] = []
+    for match_index, match in enumerate(matches):
+        param_index = int(match["param_index"]) - 1
+        basis_word = str(match["basis_word"])
+        param_value = param_list[param_index] if 0 <= param_index < len(param_list) else None
+        blocked_reason = ""
+        if param_index < 0:
+            blocked_reason = "skill_text_param_index_invalid"
+        elif param_index >= len(param_list):
+            blocked_reason = "skill_text_param_index_out_of_range"
+        elif not isinstance(_value_field(param_value), (int, float)):
+            blocked_reason = "skill_text_param_value_not_numeric"
+        stat = SKILL_TEXT_BASIS_WORDS.get(basis_word, "")
+        if not stat and not blocked_reason:
+            blocked_reason = "skill_text_scaling_basis_not_supported"
+        role = _skill_formula_role(str(match["matched_text"]))
+        source = IRSource(
+            source_path=relative_path,
+            raw_type=Path(relative_path).stem,
+            raw_id=raw_id,
+            evidence={
+                "row_index": row_index,
+                "id_key": id_key,
+                "level": level,
+                "skill_desc_hash": text_hash,
+                "matched_text": str(match["matched_text"]),
+                "basis_word": basis_word,
+                "param_ref": f"ParamList[{param_index}]",
+                "match_index": match_index,
+                "parser": "skill_text_damage_basis_v0_261",
+            },
+        )
+        if blocked_reason:
+            scaling_basis_expr: dict[str, JSONValue] = {
+                "kind": "missing",
+                "supported": False,
+                "reason": blocked_reason,
+                "source_trace": source.to_json(),
+            }
+        else:
+            scaling_basis_expr = {
+                "kind": "unit_stat",
+                "unit_ref": "attacker",
+                "stat": stat,
+                "source_kind": "skill_text_param_binding",
+                "admission_status": "executable",
+                "param_index": param_index,
+                "param_value": _json_safe(param_value),
+                "text_hash": text_hash,
+                "matched_text": str(match["matched_text"]),
+                "source_trace": source.to_json(),
+            }
+        bindings.append(
+            SkillFormulaBindingIR(
+                binding_id=f"skill_formula_binding:{action_id}:{level}:{role}:param:{param_index}:{match_index}",
+                action_id=action_id,
+                level=level,
+                param_index=param_index,
+                formula_role=role,
+                param_value=_json_safe(param_value),
+                scaling_basis_expr=scaling_basis_expr,
+                text_hash=text_hash,
+                skill_text=skill_text,
+                matched_text=str(match["matched_text"]),
+                source=source,
+                coverage_status="blocked" if blocked_reason else "executable",
+                blocked_reason=blocked_reason,
+            )
+        )
+    if not bindings and param_list:
+        source = IRSource(
+            source_path=relative_path,
+            raw_type=Path(relative_path).stem,
+            raw_id=raw_id,
+            evidence={
+                "row_index": row_index,
+                "id_key": id_key,
+                "level": level,
+                "skill_desc_hash": text_hash,
+                "parser": "skill_text_damage_basis_v0_261",
+                "reason": "no supported damage scaling phrase found in skill text",
+            },
+        )
+        bindings.append(
+            SkillFormulaBindingIR(
+                binding_id=f"skill_formula_binding:{action_id}:{level}:direct_damage:param:0:blocked",
+                action_id=action_id,
+                level=level,
+                param_index=0,
+                formula_role="direct_damage",
+                param_value=_json_safe(param_list[0]),
+                scaling_basis_expr={
+                    "kind": "missing",
+                    "supported": False,
+                    "reason": "skill_text_scaling_basis_binding_missing",
+                    "source_trace": source.to_json(),
+                },
+                text_hash=text_hash,
+                skill_text=skill_text,
+                matched_text="",
+                source=source,
+                coverage_status="blocked",
+                blocked_reason="skill_text_scaling_basis_binding_missing",
+            )
+        )
+    return bindings
+
+
+def _text_hash(value: Any) -> str:
+    if isinstance(value, dict) and value.get("Hash") is not None:
+        return str(value["Hash"])
+    return ""
+
+
+def _normalize_skill_text(text: str) -> str:
+    normalized = re.sub(r"<[^>]+>", "", text)
+    return normalized.replace("\\n", "。").replace("\n", "。")
+
+
+def _skill_formula_text_matches(text: str) -> list[dict[str, str]]:
+    matches: list[dict[str, str]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for pattern in SKILL_TEXT_DAMAGE_BINDING_PATTERNS:
+        for match in pattern.finditer(text):
+            key = (match.group("param_index"), match.group("basis"), match.group("matched"))
+            if key in seen:
+                continue
+            seen.add(key)
+            matches.append(
+                {
+                    "param_index": match.group("param_index"),
+                    "basis_word": match.group("basis"),
+                    "matched_text": match.group("matched"),
+                }
+            )
+    return matches
+
+
+def _skill_formula_role(matched_text: str) -> str:
+    if "持续伤害" in matched_text:
+        return "dot_damage"
+    if "附加伤害" in matched_text:
+        return "additional_damage"
+    return "direct_damage"
+
+
 def _monster_profile_stats(monster_row: dict[str, Any], template_row: dict[str, Any]) -> dict[str, Any]:
     template_stats = _monster_template_profile_stats(template_row)
     if template_stats.get("blocked_reason"):
@@ -2362,6 +2690,7 @@ def _action_definition_from_row(
             "row_index": row_index,
             "id_key": id_key,
             "level": level,
+            "skill_desc_hash": _text_hash(row.get("SkillDesc")),
             "skill_trigger_key": str(row.get("SkillTriggerKey") or ""),
             "resource_mapping": {
                 "BPNeed": "skill_point_cost_if_positive",
@@ -2615,8 +2944,10 @@ def _lower_damage_emissions(
     tasks: list[AbilityTaskIR],
     effects: list[EffectIR],
     hit_profiles: list[HitProfileIR],
+    skill_formula_bindings: list[SkillFormulaBindingIR],
 ) -> list[DamageEmissionIR]:
     effect_by_id = {effect.effect_id: effect for effect in effects}
+    direct_basis_bindings = _direct_damage_binding_lookup(skill_formula_bindings)
     profiles_by_action: dict[tuple[str, int], list[HitProfileIR]] = {}
     tasks_by_action: dict[tuple[str, int], list[AbilityTaskIR]] = {}
     for profile in hit_profiles:
@@ -2635,7 +2966,8 @@ def _lower_damage_emissions(
             effect = effect_by_id.get(task.effect_id)
             target_profiles = action_profiles or (None,)
             for profile in target_profiles:
-                blocked_reason = _damage_emission_blocked_reason(task, effect, profile)
+                scaling_basis_expr = _damage_scaling_basis_expr(task, effect, profile, direct_basis_bindings)
+                blocked_reason = _damage_emission_blocked_reason(task, effect, profile, scaling_basis_expr)
                 source = _damage_emission_source(task, effect, profile)
                 emissions.append(
                     DamageEmissionIR(
@@ -2649,7 +2981,7 @@ def _lower_damage_emissions(
                         damage_formula_family=profile.damage_formula_family if profile else "unknown",
                         element_type=profile.element_type if profile else None,
                         scaling_ratio_expr=profile.multiplier_expr if profile else {"kind": "missing", "blocked_reason": "missing_hit_profile"},
-                        scaling_basis_expr=_damage_scaling_basis_expr(task, effect, profile),
+                        scaling_basis_expr=scaling_basis_expr,
                         source=source,
                         coverage_status="blocked" if blocked_reason else "executable",
                         blocked_reason=blocked_reason,
@@ -2707,6 +3039,22 @@ def _damage_emission_id(task: AbilityTaskIR, profile: HitProfileIR | None) -> st
     return f"damage_emission:{task.task_id}:{hit_id}"
 
 
+def _direct_damage_binding_lookup(
+    bindings: list[SkillFormulaBindingIR],
+) -> dict[tuple[str, int, int], SkillFormulaBindingIR]:
+    lookup: dict[tuple[str, int, int], SkillFormulaBindingIR] = {}
+    for binding in sorted(bindings, key=lambda item: item.binding_id):
+        if binding.formula_role != "direct_damage":
+            continue
+        key = (binding.action_id, binding.level, binding.param_index)
+        existing = lookup.get(key)
+        if existing is None or (
+            existing.coverage_status != "executable" and binding.coverage_status == "executable"
+        ):
+            lookup[key] = binding
+    return lookup
+
+
 def _damage_emission_source(
     task: AbilityTaskIR,
     effect: EffectIR | None,
@@ -2732,6 +3080,7 @@ def _damage_scaling_basis_expr(
     task: AbilityTaskIR,
     effect: EffectIR | None,
     profile: HitProfileIR | None,
+    direct_basis_bindings: dict[tuple[str, int, int], SkillFormulaBindingIR],
 ) -> dict[str, Any]:
     if profile is None or profile.damage_formula_family != "direct":
         return {
@@ -2740,31 +3089,67 @@ def _damage_scaling_basis_expr(
             "reason": "damage_scaling_basis_not_applicable",
         }
     payload = effect.payload if effect else {}
-    return {
-        "kind": "unit_stat",
-        "unit_ref": "attacker",
-        "stat": "attack",
-        "source_kind": "current_direct_damage_admission",
-        "admission_status": "explicit_current_scope",
-        "requires_skill_text_binding": True,
-        "source_trace": {
-            "task_source": task.source.to_json(),
-            "effect_id": task.effect_id,
-            "target_alias": _target_alias(payload.get("TargetType")),
-            "hit_profile_id": profile.hit_profile_id,
-            "hit_profile_source": profile.source.to_json(),
-            "note": (
-                "Direct damage no longer hardcodes attack inside formula. "
-                "This explicit current-scope basis must be replaced by skill text/ParamList binding when character-specific scaling is admitted."
-            ),
-        },
+    param_index = _hit_profile_param_index(profile)
+    binding = direct_basis_bindings.get((task.action_id, task.level, param_index))
+    if binding is None:
+        return {
+            "kind": "missing",
+            "supported": False,
+            "reason": "skill_text_scaling_basis_binding_missing",
+            "param_index": param_index,
+            "source_trace": {
+                "task_source": task.source.to_json(),
+                "effect_id": task.effect_id,
+                "target_alias": _target_alias(payload.get("TargetType")),
+                "hit_profile_id": profile.hit_profile_id,
+                "hit_profile_source": profile.source.to_json(),
+            },
+        }
+    if binding.coverage_status != "executable":
+        return {
+            "kind": "missing",
+            "supported": False,
+            "reason": binding.blocked_reason or f"skill_text_binding_{binding.coverage_status}",
+            "param_index": param_index,
+            "source_trace": {
+                "task_source": task.source.to_json(),
+                "effect_id": task.effect_id,
+                "target_alias": _target_alias(payload.get("TargetType")),
+                "hit_profile_id": profile.hit_profile_id,
+                "hit_profile_source": profile.source.to_json(),
+                "skill_formula_binding": binding.to_json(),
+            },
+        }
+    basis_expr = dict(binding.scaling_basis_expr)
+    source_trace = basis_expr.get("source_trace")
+    if not isinstance(source_trace, dict):
+        source_trace = {}
+    basis_expr["source_trace"] = {
+        **source_trace,
+        "task_source": task.source.to_json(),
+        "effect_id": task.effect_id,
+        "target_alias": _target_alias(payload.get("TargetType")),
+        "hit_profile_id": profile.hit_profile_id,
+        "hit_profile_source": profile.source.to_json(),
+        "skill_formula_binding": binding.to_json(),
     }
+    return basis_expr
+
+
+def _hit_profile_param_index(profile: HitProfileIR) -> int:
+    source = profile.multiplier_source
+    raw_path = str(source.get("raw_path") or "")
+    match = re.search(r"ParamList\[(\d+)\]", raw_path)
+    if match:
+        return int(match.group(1))
+    return 0
 
 
 def _damage_emission_blocked_reason(
     task: AbilityTaskIR,
     effect: EffectIR | None,
     profile: HitProfileIR | None,
+    scaling_basis_expr: dict[str, Any],
 ) -> str:
     if effect is None:
         return "damage_emission_effect_missing"
@@ -2785,6 +3170,9 @@ def _damage_emission_blocked_reason(
         return f"damage_emission_family_not_executable:{profile.damage_formula_family}"
     if profile.multiplier_expr.get("kind") != "fixed":
         return "damage_emission_scaling_ratio_not_fixed"
+    if scaling_basis_expr.get("kind") != "unit_stat" or scaling_basis_expr.get("admission_status") != "executable":
+        reason = str(scaling_basis_expr.get("reason") or "skill_text_scaling_basis_binding_missing")
+        return f"damage_scaling_basis_not_admitted:{reason}"
     return ""
 
 

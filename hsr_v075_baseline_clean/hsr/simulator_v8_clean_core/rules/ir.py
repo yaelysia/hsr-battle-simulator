@@ -157,6 +157,32 @@ class CombatantProfileIR:
 
 
 @dataclass(frozen=True)
+class AvatarProfileIR:
+    avatar_profile_id: str
+    avatar_id: str
+    base_type: str
+    damage_type: str
+    skill_ids: tuple[str, ...]
+    base_stats_by_promotion: dict[str, JSONValue]
+    source: IRSource
+    coverage_status: CoverageStatus = "blocked"
+    blocked_reason: str = ""
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "avatar_profile_id": self.avatar_profile_id,
+            "avatar_id": self.avatar_id,
+            "base_type": self.base_type,
+            "damage_type": self.damage_type,
+            "skill_ids": list(self.skill_ids),
+            "base_stats_by_promotion": self.base_stats_by_promotion,
+            "source": self.source.to_json(),
+            "coverage_status": self.coverage_status,
+            "blocked_reason": self.blocked_reason,
+        }
+
+
+@dataclass(frozen=True)
 class ActionPhaseStepIR:
     kind: str
     phase: str
@@ -215,6 +241,40 @@ class HitProfileIR:
             "coverage_status": self.coverage_status,
             "blocked_reason": self.blocked_reason,
             "numeric_fidelity_status": self.numeric_fidelity_status,
+        }
+
+
+@dataclass(frozen=True)
+class SkillFormulaBindingIR:
+    binding_id: str
+    action_id: str
+    level: int
+    param_index: int
+    formula_role: str
+    param_value: JSONValue
+    scaling_basis_expr: dict[str, JSONValue]
+    text_hash: str
+    skill_text: str
+    matched_text: str
+    source: IRSource
+    coverage_status: CoverageStatus = "blocked"
+    blocked_reason: str = ""
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "binding_id": self.binding_id,
+            "action_id": self.action_id,
+            "level": self.level,
+            "param_index": self.param_index,
+            "formula_role": self.formula_role,
+            "param_value": self.param_value,
+            "scaling_basis_expr": self.scaling_basis_expr,
+            "text_hash": self.text_hash,
+            "skill_text": self.skill_text,
+            "matched_text": self.matched_text,
+            "source": self.source.to_json(),
+            "coverage_status": self.coverage_status,
+            "blocked_reason": self.blocked_reason,
         }
 
 
@@ -1050,6 +1110,7 @@ class ResourceRuleIR:
 class CanonicalIR:
     version: str
     entities: tuple[RuleEntity, ...] = ()
+    avatar_profiles: tuple[AvatarProfileIR, ...] = ()
     combatant_profiles: tuple[CombatantProfileIR, ...] = ()
     action_definitions: tuple[ActionDefinitionIR, ...] = ()
     action_ability_bindings: tuple[ActionAbilityBindingIR, ...] = ()
@@ -1057,6 +1118,7 @@ class CanonicalIR:
     ability_tasks: tuple[AbilityTaskIR, ...] = ()
     action_events: tuple[ActionEventIR, ...] = ()
     hit_profiles: tuple[HitProfileIR, ...] = ()
+    skill_formula_bindings: tuple[SkillFormulaBindingIR, ...] = ()
     damage_emissions: tuple[DamageEmissionIR, ...] = ()
     toughness_emissions: tuple[ToughnessEmissionIR, ...] = ()
     break_templates: tuple[BreakTemplateIR, ...] = ()
@@ -1090,6 +1152,7 @@ class CanonicalIR:
             "version": self.version,
             "metadata": self.metadata,
             "entities": [entity.to_json() for entity in self.entities],
+            "avatar_profiles": [profile.to_json() for profile in self.avatar_profiles],
             "combatant_profiles": [profile.to_json() for profile in self.combatant_profiles],
             "action_definitions": [definition.to_json() for definition in self.action_definitions],
             "action_ability_bindings": [binding.to_json() for binding in self.action_ability_bindings],
@@ -1097,6 +1160,7 @@ class CanonicalIR:
             "ability_tasks": [task.to_json() for task in self.ability_tasks],
             "action_events": [event.to_json() for event in self.action_events],
             "hit_profiles": [profile.to_json() for profile in self.hit_profiles],
+            "skill_formula_bindings": [binding.to_json() for binding in self.skill_formula_bindings],
             "damage_emissions": [emission.to_json() for emission in self.damage_emissions],
             "toughness_emissions": [emission.to_json() for emission in self.toughness_emissions],
             "break_templates": [template.to_json() for template in self.break_templates],
