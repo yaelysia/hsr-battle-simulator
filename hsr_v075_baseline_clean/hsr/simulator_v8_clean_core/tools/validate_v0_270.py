@@ -11,6 +11,7 @@ from ..core.model import ActionCommand, BattleState, GameEvent, UnitState
 from ..core.source_audit import RuntimeSourceAuditor
 from ..rules.ir import CharacterDataCardIR
 from ..rules.rulebook import RuleBook
+from ..systems.scheduler import CombatScheduler
 from ..systems.effect import EffectRegistry
 from ..systems.event_dispatch import EventDispatchSystem
 from ..systems.status import StatusSystem
@@ -32,6 +33,7 @@ RANK01_MODIFIER = "MAvatar_Seele_Rank01"
 RANK06_LISTENER = "MAvatar_Seele_Rank06"
 RANK06_DAMAGE_LISTENER = "MAvatar_Advanced_Seele_Rank06_Skill03Damage"
 RANK06_FLAG = "MAvatar_Advanced_Seele_Rank06_Flag"
+SEELE_AMPLIFICATION_BUFF = "MAvatar_Advanced_Seele_00_Passive_DamageUp"
 
 
 def run_validation(package_root: Path, tbgd_root: Path, output_dir: Path) -> dict[str, object]:
@@ -114,6 +116,8 @@ def _source_case(rules: RuleBook, card: CharacterDataCardIR) -> dict[str, Any]:
         and callback.source.source_path == ADVANCED_SEELE_ABILITY_PATH
         and callback.modifier_name in {RANK06_LISTENER, RANK06_DAMAGE_LISTENER, RANK06_FLAG}
     ]
+    rank6_flag_status = rules.status_entity_for_modifier(RANK06_FLAG)
+    amplification_status = rules.status_entity_for_modifier(SEELE_AMPLIFICATION_BUFF)
     checks = {
         "card_uses_enhanced_version": card.source.evidence.get("version_kind") == "enhanced",
         "e6_prefix_enables_all_enhanced_ranks": tuple(slot.rank_id for slot in eidolons) == ENHANCED_SEELE_RANK_IDS,
@@ -123,6 +127,14 @@ def _source_case(rules: RuleBook, card: CharacterDataCardIR) -> dict[str, Any]:
         "rank1_damage_modifier_terms": any(
             {"Attacker_CriticalChance", "Defender_DefenceAddedRatio"}.issubset({term.get("field") for term in modifier.modifier_terms})
             for modifier in rank1_modifiers
+        ),
+        "rank6_flag_status_config_debuff": (
+            rank6_flag_status is not None
+            and rank6_flag_status.fields.get("StatusType") == "Debuff"
+        ),
+        "amplification_status_config_buff": (
+            amplification_status is not None
+            and amplification_status.fields.get("StatusType") == "Buff"
         ),
         "rank6_callbacks_lowered": {"OnAfterSkillUse", "OnAfterHitAll", "OnAfterBeingAttacked", "OnBeforeDying"}.issubset(
             {callback.event for callback in rank6_callbacks}
@@ -208,10 +220,13 @@ def _eidolon_six_case(rules: RuleBook, card: CharacterDataCardIR) -> dict[str, A
     true_damage = _dispatch_rank6_being_attacked_case(rules, ultimate["after_state"])
     missing_dynamic = _dispatch_rank6_missing_dynamic_case(rules, ultimate["after_state"])
     cleanup = _dispatch_rank6_cleanup_case(rules, ultimate["after_state"])
+    lifecycle = _rank6_flag_debuff_lifecycle_case(rules, ultimate["after_state"])
     checks = {
         "ultimate_transition": ultimate["checks"]["ok"],
         "ultimate_applies_flag": ultimate["checks"]["flag_present"],
         "ultimate_flag_duration_three": ultimate["checks"]["flag_duration_three"],
+        "ultimate_flag_is_debuff": ultimate["checks"]["flag_is_debuff"],
+        "ultimate_amplification_is_buff": ultimate["checks"]["amplification_is_buff"],
         "ultimate_flag_dynamic_value_bound": ultimate["checks"]["flag_dynamic_value_bound"],
         "non_ultimate_transition": non_ultimate["checks"]["ok"],
         "non_ultimate_no_flag": non_ultimate["checks"]["no_flag"],
@@ -221,6 +236,7 @@ def _eidolon_six_case(rules: RuleBook, card: CharacterDataCardIR) -> dict[str, A
         "missing_dynamic_state_unchanged": missing_dynamic["checks"]["state_unchanged"],
         "cleanup_transition": cleanup["checks"]["ok"],
         "cleanup_removed_flag": cleanup["checks"]["flag_removed"],
+        "unit_status_lifecycle": lifecycle["checks"]["ok"],
     }
     checks["ok"] = all(value for key, value in checks.items() if key != "ok")
     return {
@@ -230,6 +246,7 @@ def _eidolon_six_case(rules: RuleBook, card: CharacterDataCardIR) -> dict[str, A
         "true_damage": true_damage,
         "missing_dynamic": missing_dynamic,
         "cleanup": cleanup,
+        "debuff_lifecycle": lifecycle,
     }
 
 
@@ -249,12 +266,19 @@ def _execute_rank6_ultimate_flag_case(rules: RuleBook, card: CharacterDataCardIR
     after, transition = CombatExecutor(rules).execute(command, state)
     audit = RuntimeSourceAuditor(rules).validate_transition(transition)
     flag = _status_detail(after, "enemy:target", RANK06_FLAG)
+    amplification = _status_detail(after, "ally:seele", SEELE_AMPLIFICATION_BUFF)
     damage_value = _status_dynamic_value(flag, "MDF_Rank06_DamageValue")
     checks = {
         **_transition_checks(transition, state),
         "source_audit": audit.ok,
         "flag_present": bool(flag),
         "flag_duration_three": _number(flag.get("remaining_duration")) == 3.0 and _number(flag.get("duration")) == 3.0 if flag else False,
+        "flag_is_debuff": flag.get("status_type") == "Debuff" and flag.get("status_category") == "debuff" if flag else False,
+        "amplification_present": bool(amplification),
+        "amplification_is_buff": (
+            amplification.get("status_type") == "Buff" and amplification.get("status_category") == "buff"
+            if amplification else False
+        ),
         "flag_dynamic_value_bound": damage_value is not None and damage_value > 0,
         "flag_callback_hash_bound": _status_dynamic_hash_value(flag, "-1585805301") == damage_value if flag else False,
     }
@@ -394,6 +418,59 @@ def _dispatch_rank6_cleanup_case(rules: RuleBook, state: BattleState) -> dict[st
     }
 
 
+def _rank6_flag_debuff_lifecycle_case(rules: RuleBook, state: BattleState) -> dict[str, Any]:
+    initial_flag = _status_detail(state, "enemy:target", RANK06_FLAG)
+    initial_amplification = _status_detail(state, "ally:seele", SEELE_AMPLIFICATION_BUFF)
+    initial_flag_duration = _number(initial_flag.get("remaining_duration"))
+    initial_amplification_duration = _number(initial_amplification.get("remaining_duration"))
+
+    ally_turn_state = _with_active_turn(state, "ally:seele")
+    ally_result = CombatScheduler(rules).end_current_turn(ally_turn_state)
+    ally_audit = RuntimeSourceAuditor(rules).validate_transition(ally_result.transition)
+    ally_detail = _status_detail(ally_result.after_state, "enemy:target", RANK06_FLAG)
+    ally_amplification = _status_detail(ally_result.after_state, "ally:seele", SEELE_AMPLIFICATION_BUFF)
+
+    enemy_turn_state = _with_active_turn(state, "enemy:target")
+    enemy_result = CombatScheduler(rules).end_current_turn(enemy_turn_state)
+    enemy_audit = RuntimeSourceAuditor(rules).validate_transition(enemy_result.transition)
+    enemy_detail = _status_detail(enemy_result.after_state, "enemy:target", RANK06_FLAG)
+    enemy_amplification = _status_detail(enemy_result.after_state, "ally:seele", SEELE_AMPLIFICATION_BUFF)
+    enemy_mutations = tuple(
+        mutation
+        for mutation in enemy_result.transition.transaction.mutations
+        if mutation.source == "status_system" and mutation.metadata.get("operation") == "tick"
+    )
+    ally_transition_checks = _transition_checks(ally_result.transition, ally_turn_state)
+    enemy_transition_checks = _transition_checks(enemy_result.transition, enemy_turn_state)
+    checks = {
+        "ally_turn_transition": all(ally_transition_checks.values()),
+        "ally_turn_source_audit": ally_audit.ok,
+        "ally_turn_does_not_tick_enemy_debuff": _number(ally_detail.get("remaining_duration")) == initial_flag_duration,
+        "ally_turn_ticks_own_buff": (
+            initial_amplification_duration is not None
+            and _number(ally_amplification.get("remaining_duration")) == initial_amplification_duration - 1
+        ),
+        "enemy_turn_transition": all(enemy_transition_checks.values()),
+        "enemy_turn_source_audit": enemy_audit.ok,
+        "enemy_turn_ticks_debuff": bool(enemy_mutations),
+        "enemy_turn_remaining_duration_two": (
+            initial_flag_duration is not None
+            and _number(enemy_detail.get("remaining_duration")) == initial_flag_duration - 1
+        ),
+        "enemy_turn_flag_still_debuff": enemy_detail.get("status_category") == "debuff",
+        "enemy_turn_does_not_tick_ally_buff": _number(enemy_amplification.get("remaining_duration")) == initial_amplification_duration,
+        "ally_amplification_is_buff": ally_amplification.get("status_category") == "buff",
+    }
+    checks["ok"] = all(value for key, value in checks.items() if key != "ok")
+    return {
+        "checks": checks,
+        "ally_turn_source_audit": ally_audit.to_json(),
+        "enemy_turn_source_audit": enemy_audit.to_json(),
+        "ally_turn_transition": ally_result.transition.to_json(),
+        "enemy_turn_transition": enemy_result.transition.to_json(),
+    }
+
+
 def _dispatch_damage_hit(rules: RuleBook, state: BattleState):
     event = GameEvent(
         "damage.hit",
@@ -416,6 +493,17 @@ def _dispatch_damage_hit(rules: RuleBook, state: BattleState):
         },
     )
     return EventDispatchSystem(rules, EffectRegistry(StatusSystem(rules))).dispatch_event(state, event=event)
+
+
+def _with_active_turn(state: BattleState, actor_id: str) -> BattleState:
+    return replace(
+        state,
+        global_flags={
+            **state.global_flags,
+            "turn_owner_id": actor_id,
+            "active_turn": {"actor_id": actor_id, "turn_kind": "regular"},
+        },
+    )
 
 
 def _event_transition(
@@ -450,6 +538,7 @@ def _state_with_target(
 ) -> BattleState:
     state = _build_result_for_eidolon_level(rules, eidolon_level).state
     actor = state.units["ally:seele"]
+    card = _seele_card(rules)
     target = UnitState(
         unit_id=enemy_id,
         side="enemy",
@@ -469,6 +558,10 @@ def _state_with_target(
                 actor,
                 energy=120.0,
                 max_energy=120.0,
+                flags={
+                    **actor.flags,
+                    "skill_levels_by_trigger_key": _skill_levels_by_trigger_key(card),
+                },
                 resources={"critical_chance": 0.0, "critical_damage": 0.5},
             ),
             enemy_id: target,
@@ -476,6 +569,22 @@ def _state_with_target(
         skill_points=5,
         max_skill_points=5,
     )
+
+
+def _skill_levels_by_trigger_key(card: CharacterDataCardIR) -> dict[str, int]:
+    actions = card.action_set.get("actions") if isinstance(card.action_set, dict) else None
+    if not isinstance(actions, list):
+        return {}
+    levels: dict[str, int] = {}
+    for action in actions:
+        if not isinstance(action, dict):
+            continue
+        trigger_key = action.get("skill_trigger_key")
+        level = action.get("level")
+        if not isinstance(trigger_key, str) or not trigger_key or not isinstance(level, int):
+            continue
+        levels[trigger_key] = max(levels.get(trigger_key, 0), level)
+    return levels
 
 
 def _status_detail(state: BattleState, unit_id: str, modifier_name: str) -> dict[str, Any]:

@@ -5,6 +5,7 @@ import json
 from typing import Any
 
 from ..core.model import BattleState, JSONValue
+from ..rules.rulebook import RuleBook
 
 
 def empty_dynamic_value_store() -> dict[str, JSONValue]:
@@ -92,6 +93,171 @@ def status_binding_sources(state: BattleState, unit_ids: tuple[str, ...]) -> tup
             if source is not None:
                 sources.append(source)
     return tuple(sources)
+
+
+def character_skill_param_binding_sources(
+    rules: RuleBook,
+    state: BattleState,
+    unit_ids: tuple[str, ...],
+    *,
+    action_level: int | None = None,
+    current_action_trigger_key: str | None = None,
+) -> tuple[dict[str, JSONValue], ...]:
+    sources: list[dict[str, JSONValue]] = []
+    seen: set[str] = set()
+    for unit_id in unit_ids:
+        if unit_id in seen:
+            continue
+        seen.add(unit_id)
+        unit = state.units.get(unit_id)
+        if unit is None:
+            continue
+        source = character_skill_param_binding_source(
+            rules,
+            state,
+            unit_id,
+            action_level=action_level,
+            current_action_trigger_key=current_action_trigger_key,
+        )
+        if source is not None:
+            sources.append(source)
+    return tuple(sources)
+
+
+def character_skill_param_binding_source(
+    rules: RuleBook,
+    state: BattleState,
+    unit_id: str,
+    *,
+    action_level: int | None = None,
+    current_action_trigger_key: str | None = None,
+) -> dict[str, JSONValue] | None:
+    unit = state.units.get(unit_id)
+    if unit is None:
+        return None
+    card_id = unit.flags.get("character_data_card_id")
+    card = rules.character_data_card(str(card_id)) if isinstance(card_id, str) and card_id else None
+    if card is None:
+        card = rules.character_data_card_for_entity(unit.template_id)
+    if card is None:
+        return None
+    config_bindings = card.source.evidence.get("character_config_dynamic_value_bindings")
+    if not isinstance(config_bindings, dict):
+        return None
+    by_hash = config_bindings.get("by_hash")
+    if not isinstance(by_hash, dict):
+        return None
+
+    skill_levels_by_trigger_key = unit.flags.get("skill_levels_by_trigger_key")
+    if not isinstance(skill_levels_by_trigger_key, dict):
+        skill_levels_by_trigger_key = {}
+    param_slots = tuple(
+        slot
+        for slot in rules.character_mechanism_slots_for_card(card.card_id)
+        if slot.mechanism_kind == "skill_param_slot" and slot.coverage_status == "executable"
+    )
+    entries: dict[str, JSONValue] = {}
+    for raw_hash, binding in by_hash.items():
+        if not isinstance(binding, dict):
+            continue
+        read_info = binding.get("read_info")
+        if not isinstance(read_info, dict):
+            continue
+        if read_info.get("Type") != "SkillParam":
+            continue
+        trigger_key = read_info.get("TriggerKey")
+        param_index = read_info.get("Index")
+        if not isinstance(trigger_key, str) or not isinstance(param_index, int):
+            continue
+        selected_level, level_source = _skill_param_level_for_trigger(
+            trigger_key,
+            action_level=action_level,
+            current_action_trigger_key=current_action_trigger_key,
+            skill_levels_by_trigger_key=skill_levels_by_trigger_key,
+        )
+        if selected_level is None:
+            continue
+        slot = _select_skill_param_slot(param_slots, trigger_key, param_index, selected_level)
+        if slot is None:
+            continue
+        value = _slot_param_value(slot)
+        if value is None:
+            continue
+        entry = {
+            "scope": "character_skill_param",
+            "owner_id": unit_id,
+            "status_id": None,
+            "status_instance_id": None,
+            "effect_id": None,
+            "name": None,
+            "hash": str(raw_hash),
+            "value": value,
+            "source_trace": {
+                "character_data_card_id": card.card_id,
+                "character_data_card_source": card.source.to_json(),
+                "skill_param_slot_id": slot.mechanism_slot_id,
+                "skill_param_slot_source": slot.source.to_json(),
+                "dynamic_value_binding": binding,
+                "skill_level": selected_level,
+                "skill_level_source": level_source,
+            },
+        }
+        entries[_entry_key(entry)] = entry
+    if not entries:
+        return None
+    indexed = _reindex({"entries": entries})
+    return {
+        "source_type": "character_skill_param_slot",
+        "unit_id": unit_id,
+        "character_data_card_id": card.card_id,
+        "entries": indexed["entries"],
+        "by_hash": indexed["by_hash"],
+        "by_name": indexed["by_name"],
+    }
+
+
+def _skill_param_level_for_trigger(
+    trigger_key: str,
+    *,
+    action_level: int | None,
+    current_action_trigger_key: str | None,
+    skill_levels_by_trigger_key: dict[object, object],
+) -> tuple[int | None, str]:
+    configured_level = skill_levels_by_trigger_key.get(trigger_key)
+    if isinstance(configured_level, int):
+        return configured_level, "unit.skill_levels_by_trigger_key"
+    if trigger_key == current_action_trigger_key and isinstance(action_level, int):
+        return action_level, "current_action_level"
+    return None, "skill_level_missing_for_trigger_key"
+
+
+def _select_skill_param_slot(
+    slots: tuple[Any, ...],
+    trigger_key: str,
+    param_index: int,
+    action_level: int,
+) -> Any | None:
+    matches = [
+        slot
+        for slot in slots
+        if slot.semantics.get("skill_trigger_key") == trigger_key
+        and slot.semantics.get("param_index") == param_index
+    ]
+    if not matches:
+        return None
+    level_matches = [slot for slot in matches if slot.semantics.get("level") == action_level]
+    if not level_matches:
+        return None
+    return sorted(level_matches, key=lambda item: str(item.mechanism_slot_id))[0]
+
+
+def _slot_param_value(slot: Any) -> float | None:
+    value = slot.semantics.get("param_value")
+    if isinstance(value, dict):
+        value = value.get("Value")
+    if isinstance(value, (int, float)):
+        return float(value)
+    return None
 
 
 def binding_source_from_status_detail(

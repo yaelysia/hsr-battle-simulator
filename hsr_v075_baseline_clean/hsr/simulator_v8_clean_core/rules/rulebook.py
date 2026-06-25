@@ -58,18 +58,31 @@ class RuleBook:
     def __post_init__(self) -> None:
         object.__setattr__(self, "_entities", {entity.entity_id: entity for entity in self.ir.entities})
         modifier_definitions_by_name: dict[str, list[RuleEntity]] = {}
+        status_entities_by_modifier: dict[str, list[RuleEntity]] = {}
         for entity in self.ir.entities:
-            if entity.entity_type != "modifier_definition":
-                continue
             modifier_name = entity.fields.get("modifier_name")
-            if isinstance(modifier_name, str) and modifier_name:
+            if not isinstance(modifier_name, str) or not modifier_name:
+                modifier_name = entity.fields.get("ModifierName")
+            if not isinstance(modifier_name, str) or not modifier_name:
+                continue
+            if entity.entity_type == "modifier_definition":
                 modifier_definitions_by_name.setdefault(modifier_name, []).append(entity)
+            elif entity.entity_type == "status":
+                status_entities_by_modifier.setdefault(modifier_name, []).append(entity)
         object.__setattr__(
             self,
             "_modifier_definitions_by_name",
             {
                 key: tuple(sorted(value, key=lambda item: (item.source.source_path, item.entity_id)))
                 for key, value in modifier_definitions_by_name.items()
+            },
+        )
+        object.__setattr__(
+            self,
+            "_status_entities_by_modifier",
+            {
+                key: tuple(sorted(value, key=lambda item: (item.source.source_path, item.entity_id)))
+                for key, value in status_entities_by_modifier.items()
             },
         )
         object.__setattr__(
@@ -1013,3 +1026,12 @@ class RuleBook:
 
     def require_modifier_definition(self, modifier_name: str) -> RuleEntity:
         return self.require_entity(f"modifier_definition:{modifier_name}", {"modifier_definition"})
+
+    def status_entities_for_modifier(self, modifier_name: str) -> tuple[RuleEntity, ...]:
+        return self._status_entities_by_modifier.get(modifier_name, ())
+
+    def status_entity_for_modifier(self, modifier_name: str) -> RuleEntity | None:
+        entities = self.status_entities_for_modifier(modifier_name)
+        if entities:
+            return entities[0]
+        return None

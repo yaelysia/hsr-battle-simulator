@@ -19,6 +19,7 @@ from ..rules.ir import AbilityPhaseIR, IRSource, QueueResolutionIR
 from ..rules.rulebook import RuleBook
 from .ability import AbilityTaskSystem
 from .effect import EffectRegistry
+from .event_dispatch import EventDispatchSystem
 from .queue import QUEUE_WINDOW_FAMILY_ORDER, QueueDrainPlan, QueueEntry, QueueSystem
 from .resource import ResourceSystem
 from .status import StatusSystem
@@ -57,6 +58,7 @@ class CombatScheduler:
         self.status = StatusSystem(rules)
         self.effects = EffectRegistry(self.status)
         self.ability_tasks = AbilityTaskSystem(rules, self.effects, reducer=self.reducer)
+        self.event_dispatcher = EventDispatchSystem(rules, self.effects, reducer=self.reducer)
 
     def initialize_timeline(
         self,
@@ -502,8 +504,43 @@ class CombatScheduler:
             return self._blocked(state, "timeline:turn_end", "active_turn_missing", {"active_turn": active_turn})
         rule = self.rules.default_timeline_rule()
         lifecycle = self._apply_status_lifecycle_tick(state, "ModifierPhase1End", actor_id=actor_id)
-        result = self.timeline.end_turn(lifecycle.after_state, actor_id, rule, turn_kind="regular")
-        after = self.reducer.apply_all(lifecycle.after_state, result.mutations)
+        turn_end_dispatch_enabled = lifecycle.after_state.global_flags.get("admit_turn_end_listener_dispatch") is True
+        if turn_end_dispatch_enabled:
+            turn_end_event = GameEvent(
+                "turn.end",
+                source_id=actor_id,
+                event_id=f"event:{lifecycle.after_state.event_index}:turn_end_dispatch:{actor_id}",
+                window="turn.end",
+                process_only=True,
+                payload={
+                    "actor_id": actor_id,
+                    "listener_scope": "global_listener",
+                    "life_step_moment": "ModifierPhase1End",
+                },
+            )
+            dispatch = self.event_dispatcher.dispatch_event(lifecycle.after_state, event=turn_end_event)
+        else:
+            dispatch = self.event_dispatcher.dispatch_blocked(
+                lifecycle.after_state,
+                event=GameEvent(
+                    "turn.end",
+                    source_id=actor_id,
+                    event_id=f"event:{lifecycle.after_state.event_index}:turn_end_dispatch_blocked:{actor_id}",
+                    window="turn.end",
+                    process_only=True,
+                    payload={
+                        "actor_id": actor_id,
+                        "listener_scope": "global_listener",
+                        "life_step_moment": "ModifierPhase1End",
+                    },
+                ),
+                listener_kind="listener_dispatch",
+                scope="global_listener",
+                reason="turn_end_listener_dispatch_requires_explicit_admission",
+                metadata={"actor_id": actor_id, "life_step_moment": "ModifierPhase1End"},
+            )
+        result = self.timeline.end_turn(dispatch.after_state, actor_id, rule, turn_kind="regular")
+        after = self.reducer.apply_all(dispatch.after_state, result.mutations)
         return SchedulerStepResult(
             after,
             _transition(
@@ -511,10 +548,11 @@ class CombatScheduler:
                 after_state=after,
                 action_id="timeline:end_current_turn",
                 actor_id=actor_id,
-                events=(*lifecycle.events, *result.events),
-                mutations=(*lifecycle.mutations, *result.mutations),
+                events=(*lifecycle.events, *dispatch.events, *result.events),
+                mutations=(*lifecycle.mutations, *dispatch.mutations, *result.mutations),
                 records=(
                     *lifecycle.records,
+                    *dispatch.records,
                     *_mutation_records("turn_end", result.mutations, result.plan),
                 ),
                 coverage={
@@ -538,7 +576,9 @@ class CombatScheduler:
         current = state
         mutations: list[Mutation] = []
         records: list[dict[str, JSONValue]] = []
-        for unit_id in sorted(tuple(current.units)):
+        for unit_id in (actor_id,):
+            if unit_id not in current.units:
+                continue
             details = tuple(
                 item
                 for item in current.units[unit_id].flags.get("status_details", ())

@@ -39,6 +39,27 @@ SKILL_TEXT_BASIS_WORDS: dict[str, str] = {
     "防御力": "defense",
 }
 
+TRACE_STATIC_STAT_PROPERTY_MAP: dict[str, tuple[str, str]] = {
+    "AttackAddedRatio": ("base_stat_ratio", "attack"),
+    "HPAddedRatio": ("base_stat_ratio", "max_hp"),
+    "DefenceAddedRatio": ("base_stat_ratio", "defense"),
+    "SpeedDelta": ("base_stat_delta", "speed"),
+    "CriticalChanceBase": ("resource_delta", "critical_chance"),
+    "CriticalDamageBase": ("resource_delta", "critical_damage"),
+    "BreakDamageAddedRatioBase": ("resource_delta", "break_damage_added_ratio"),
+    "StatusProbabilityBase": ("resource_delta", "effect_hit_rate"),
+    "StatusResistanceBase": ("resource_delta", "effect_resistance"),
+    "AllDamageTypeAddedRatio": ("resource_delta", "damage_added_ratio"),
+    "PhysicalAddedRatio": ("resource_delta", "Physical_damage_added_ratio"),
+    "FireAddedRatio": ("resource_delta", "Fire_damage_added_ratio"),
+    "IceAddedRatio": ("resource_delta", "Ice_damage_added_ratio"),
+    "ThunderAddedRatio": ("resource_delta", "Thunder_damage_added_ratio"),
+    "WindAddedRatio": ("resource_delta", "Wind_damage_added_ratio"),
+    "QuantumAddedRatio": ("resource_delta", "Quantum_damage_added_ratio"),
+    "ImaginaryAddedRatio": ("resource_delta", "Imaginary_damage_added_ratio"),
+    "ElationDamageAddedRatioBase": ("resource_delta", "elation_damage_added_ratio"),
+}
+
 SKILL_TEXT_DAMAGE_BINDING_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(
         r"(?P<matched>(?:造成|受到|附加|追加)[^。；\n]{0,120}?等同于[^。；\n]{0,80}?"
@@ -204,6 +225,9 @@ def build_character_card_ir(
                         "enhanced_id": _json_safe(row.get("_character_card_enhanced_id")),
                         "enhanced_skill_list": _json_safe(row.get("_character_card_enhanced_skill_list") or []),
                         "enhanced_overrides_base": str(row.get("_character_card_version_kind") or "base") == "enhanced",
+                        "character_config_dynamic_value_bindings": _json_safe(
+                            row.get("_character_config_dynamic_value_bindings") or {}
+                        ),
                         "profile_id": profile.avatar_profile_id,
                         "skill_formula_binding_count": len(binding_ids),
                         "bounce_policy_count": len(bounce_policy_ids),
@@ -398,21 +422,30 @@ def _bounce_mechanism_slot(policy: BouncePolicyIR) -> CharacterMechanismSlotIR:
 
 def _eidolon_mechanism_slot(slot: CharacterEidolonSlotIR) -> CharacterMechanismSlotIR:
     mechanism_slot_id = slot.linked_mechanism_slot_ids[0]
-    has_effect_source = bool(
-        slot.semantics.get("rank_ability")
-        or slot.semantics.get("skill_add_level_list")
-        or slot.semantics.get("extra_effect_id_list")
-    )
-    blocked_reason = (
-        "eidolon_effect_runtime_admission_pending_v0_267"
-        if has_effect_source
-        else "eidolon_slot_has_no_runtime_effect_source"
-    )
+    skill_add_level_list = slot.semantics.get("skill_add_level_list")
+    rank_ability = slot.semantics.get("rank_ability")
+    extra_effect_id_list = slot.semantics.get("extra_effect_id_list")
+    if isinstance(skill_add_level_list, dict) and skill_add_level_list:
+        coverage_status = "executable"
+        blocked_reason = ""
+        runtime_system = "character_card_assembly.skill_level_bonus"
+    elif isinstance(rank_ability, (list, tuple)) and rank_ability:
+        coverage_status = "executable"
+        blocked_reason = ""
+        runtime_system = "event_dispatch_or_effect_registry"
+    elif isinstance(extra_effect_id_list, (list, tuple)) and extra_effect_id_list:
+        coverage_status = "blocked"
+        blocked_reason = "eidolon_extra_effect_id_runtime_admission_pending"
+        runtime_system = "event_dispatch_or_effect_registry"
+    else:
+        coverage_status = "blocked"
+        blocked_reason = "eidolon_slot_has_no_runtime_effect_source"
+        runtime_system = "character_card_assembly"
     return CharacterMechanismSlotIR(
         mechanism_slot_id=mechanism_slot_id,
         character_data_card_id=slot.character_data_card_id,
         mechanism_kind="eidolon_rank_effect",
-        runtime_system="character_card_assembly",
+        runtime_system=runtime_system,
         linked_ir_ids={
             "eidolon_slot_id": slot.eidolon_slot_id,
             "rank_id": slot.rank_id,
@@ -426,9 +459,37 @@ def _eidolon_mechanism_slot(slot: CharacterEidolonSlotIR) -> CharacterMechanismS
         },
         semantics=slot.semantics,
         source=slot.source,
-        coverage_status="blocked",
+        coverage_status=coverage_status,
         blocked_reason=blocked_reason,
     )
+
+
+def _trace_static_stat_terms(status_add_list: list[Any]) -> tuple[list[dict[str, JSONValue]], str]:
+    mapped: list[dict[str, JSONValue]] = []
+    for index, item in enumerate(status_add_list):
+        if not isinstance(item, dict):
+            return mapped, "trace_static_stat_item_not_object"
+        property_type = str(item.get("PropertyType") or "")
+        raw_value = _value_field(item.get("Value"))
+        if property_type not in TRACE_STATIC_STAT_PROPERTY_MAP:
+            return mapped, f"trace_static_stat_property_not_admitted:{property_type or 'missing'}"
+        if not isinstance(raw_value, (int, float)):
+            return mapped, f"trace_static_stat_value_not_numeric:{property_type}"
+        value = float(raw_value)
+        application_kind, target_key = TRACE_STATIC_STAT_PROPERTY_MAP[property_type]
+        mapped.append(
+            {
+                "index": index,
+                "property_type": property_type,
+                "application_kind": application_kind,
+                "target_key": target_key,
+                "value": value,
+                "raw_path": f"StatusAddList[{index}]",
+            }
+        )
+    if not mapped:
+        return mapped, "trace_static_stat_terms_missing"
+    return mapped, ""
 
 
 def _trace_nodes_and_slots(
@@ -482,6 +543,7 @@ def _trace_nodes_and_slots(
             if isinstance(status_add_list, list) and status_add_list:
                 slot_id = f"character_mechanism_slot:{card_id}:trace:{point_id}:{level}:static_status_add"
                 linked_slot_ids.append(slot_id)
+                mapped_terms, blocked_reason = _trace_static_stat_terms(status_add_list)
                 slots.append(
                     CharacterMechanismSlotIR(
                         mechanism_slot_id=slot_id,
@@ -496,11 +558,12 @@ def _trace_nodes_and_slots(
                         },
                         semantics={
                             "status_add_list": _json_safe(status_add_list),
+                            "mapped_terms": mapped_terms,
                             "application_boundary": "character_panel_assembly",
                         },
                         source=source,
-                        coverage_status="blocked",
-                        blocked_reason="avatar_panel_trace_stat_application_pending",
+                        coverage_status="blocked" if blocked_reason else "executable",
+                        blocked_reason=blocked_reason,
                     )
                 )
             ability_name = str(row.get("AbilityName") or "")

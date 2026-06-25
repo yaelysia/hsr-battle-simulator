@@ -8,7 +8,12 @@ from ..core.settlement import SettlementRecord
 from ..rules.evaluator import EvaluationContext, RuleEvaluator
 from ..rules.ir import AbilityPhaseIR, AbilityTaskIR, ActionDefinitionIR, IRSource
 from ..rules.rulebook import RuleBook
-from .dynamic_values import binding_source_from_store, status_binding_sources, store_from_state
+from .dynamic_values import (
+    binding_source_from_store,
+    character_skill_param_binding_sources,
+    status_binding_sources,
+    store_from_state,
+)
 from .effect import EffectExecutionContext, EffectRegistry
 
 
@@ -276,7 +281,14 @@ class AbilityTaskSystem:
                 owner_id=command.actor_id,
                 param_entity_id=primary_target or command.actor_id,
                 current_action_target_id=primary_target,
-                binding_sources=_binding_sources(state, command.actor_id, primary_target),
+                binding_sources=_binding_sources(
+                    self.rules,
+                    state,
+                    command.actor_id,
+                    primary_target,
+                    action_level=command.action_level,
+                    current_action_trigger_key=_action_trigger_key(action_definition),
+                ),
             ),
         )
         after = self.reducer.apply_all(state, result.mutations)
@@ -320,7 +332,14 @@ class AbilityTaskSystem:
                 param_entity_id=primary_target or command.actor_id,
                 current_action_target_id=primary_target,
                 event_payload=_event_payload(command, action_definition, primary_target, target_resolution),
-                binding_sources=_binding_sources(state, command.actor_id, primary_target),
+                binding_sources=_binding_sources(
+                    self.rules,
+                    state,
+                    command.actor_id,
+                    primary_target,
+                    action_level=command.action_level,
+                    current_action_trigger_key=_action_trigger_key(action_definition),
+                ),
             ),
         )
         if not result.ok or result.result is None:
@@ -424,12 +443,28 @@ def _event_payload(
 
 
 def _binding_sources(
+    rules: RuleBook,
     state: BattleState,
     actor_id: str,
     primary_target: str | None,
+    *,
+    action_level: int | None = None,
+    current_action_trigger_key: str | None = None,
 ) -> tuple[dict[str, JSONValue], ...]:
     unit_ids = tuple(dict.fromkeys(unit_id for unit_id in (actor_id, primary_target) if unit_id))
     return (
         binding_source_from_store(store_from_state(state)),
+        *character_skill_param_binding_sources(
+            rules,
+            state,
+            (actor_id,),
+            action_level=action_level,
+            current_action_trigger_key=current_action_trigger_key,
+        ),
         *status_binding_sources(state, unit_ids),
     )
+
+
+def _action_trigger_key(action_definition: ActionDefinitionIR) -> str:
+    value = action_definition.source.evidence.get("skill_trigger_key")
+    return str(value) if isinstance(value, str) else ""

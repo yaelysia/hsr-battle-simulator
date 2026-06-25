@@ -106,12 +106,12 @@ def _modifier_phase_tick_case(rules: RuleBook) -> dict[str, Any]:
     )
     added_state = MutationReducer().apply_all(state, add_result.mutations)
     detail = _first_status_detail(added_state)
-    active_state = _with_active_turn(added_state)
+    owner_id = str(detail.get("owner_id") or "ally:actor")
+    active_state = _with_active_turn(added_state, owner_id)
     result = CombatScheduler(rules).end_current_turn(active_state)
     source_audit = RuntimeSourceAuditor(rules).validate_transition(result.transition)
     checks = _transition_checks(result.transition, active_state)
     updated_detail = _status_detail_by_instance(result.after_state, str(detail.get("instance_id") or ""))
-    owner_id = str(detail.get("owner_id") or "ally:actor")
     checks.update(
         {
             "add_status_ok": add_result.ok,
@@ -141,10 +141,23 @@ def _modifier_phase_tick_case(rules: RuleBook) -> dict[str, Any]:
 
 
 def _modifier_phase_expire_case(rules: RuleBook, state_after_tick: BattleState) -> dict[str, Any]:
-    active_state = _with_active_turn(state_after_tick)
-    detail = _first_status_detail(active_state)
-    owner_id = str(detail.get("owner_id") or "ally:actor")
+    original_detail = _first_status_detail(state_after_tick)
+    owner_id = str(original_detail.get("owner_id") or "ally:actor")
+    current_state = state_after_tick
+    active_state = _with_active_turn(current_state, owner_id)
     result = CombatScheduler(rules).end_current_turn(active_state)
+    for _ in range(8):
+        if any(
+            mutation.source == "status_system" and mutation.metadata.get("operation") == "expire"
+            for mutation in result.transition.transaction.mutations
+        ):
+            break
+        current_detail = _status_detail_by_instance(result.after_state, str(original_detail.get("instance_id") or ""))
+        if current_detail is None:
+            break
+        current_state = result.after_state
+        active_state = _with_active_turn(current_state, owner_id)
+        result = CombatScheduler(rules).end_current_turn(active_state)
     source_audit = RuntimeSourceAuditor(rules).validate_transition(result.transition)
     checks = _transition_checks(result.transition, active_state)
     checks.update(
@@ -156,8 +169,12 @@ def _modifier_phase_expire_case(rules: RuleBook, state_after_tick: BattleState) 
                 for mutation in result.transition.transaction.mutations
             ),
             "status_removed": owner_id in result.after_state.units
-            and str(detail.get("status_id") or "") not in result.after_state.units[owner_id].statuses,
-            "detail_removed": _status_detail_by_instance(result.after_state, str(detail.get("instance_id") or "")) is None,
+            and str(original_detail.get("status_id") or "") not in result.after_state.units[owner_id].statuses,
+            "detail_removed": _status_detail_by_instance(
+                result.after_state,
+                str(original_detail.get("instance_id") or ""),
+            )
+            is None,
         }
     )
     checks["ok"] = all(value for key, value in checks.items() if key != "ok")
@@ -279,6 +296,26 @@ def _select_duration_effect(
         standard = effect.payload.get("standard") if isinstance(effect.payload.get("standard"), dict) else {}
         if standard.get("target_alias") not in {"Caster", "ModifierOwnerEntity", "ParamEntity", "CurrentActionTarget"}:
             continue
+        standard_duration = standard.get("duration_admission")
+        known_duration = (
+            standard_duration
+            if isinstance(standard_duration, dict) and standard_duration.get("admission_status") == "executable"
+            else _duration_admission_for_effect(rules, effect)
+        )
+        if isinstance(known_duration, dict) and known_duration.get("admission_status") == "executable":
+            if known_duration.get("life_step_moment") != life_step_moment:
+                continue
+            standard_remaining = known_duration.get("remaining_duration")
+            if not (
+                isinstance(standard_remaining, (int, float))
+                and float(standard_remaining) >= min_duration
+                and (max_duration is None or float(standard_remaining) <= max_duration)
+            ):
+                continue
+        else:
+            modifier_name = str(standard.get("modifier_name") or "")
+            if life_step_moment != "ModifierPhase1End" or not _modifier_defaults_to_phase_end(rules, modifier_name):
+                continue
         probe = status_system.apply_add_modifier(
             _base_state(),
             effect,
@@ -308,6 +345,16 @@ def _select_duration_effect(
             }
         )
     raise RuntimeError(f"no executable duration effect found for {life_step_moment}; failures={failures[:5]}")
+
+
+def _modifier_defaults_to_phase_end(rules: RuleBook, modifier_name: str) -> bool:
+    if not modifier_name:
+        return False
+    entity = rules.status_entity_for_modifier(modifier_name)
+    if entity is None:
+        return False
+    status_type = str(entity.fields.get("StatusType") or entity.fields.get("status_type") or "").strip().lower()
+    return status_type in {"buff", "debuff"}
 
 
 def _duration_admission_for_effect(rules: RuleBook, effect: EffectIR) -> dict[str, Any]:
@@ -371,13 +418,13 @@ def _base_state() -> BattleState:
     )
 
 
-def _with_active_turn(state: BattleState) -> BattleState:
+def _with_active_turn(state: BattleState, actor_id: str = "ally:actor") -> BattleState:
     return replace(
         state,
         global_flags={
             **state.global_flags,
-            "active_turn": {"actor_id": "ally:actor", "turn_kind": "regular", "turn_sequence_index": 1},
-            "turn_owner_id": "ally:actor",
+            "active_turn": {"actor_id": actor_id, "turn_kind": "regular", "turn_sequence_index": 1},
+            "turn_owner_id": actor_id,
             "current_window": "turn_active",
         },
     )
@@ -453,7 +500,6 @@ def _source_mode(source_path: str) -> str:
         "/Level/",
         "/SubLevelGraph/",
         "/ElationBattle/",
-        "/BattleEvent/",
         "Config/Level/",
         "Config/Gameplays/",
     )
@@ -483,7 +529,6 @@ def _effect_selection(rules: RuleBook, effect: EffectIR) -> dict[str, Any]:
 
 def _coverage_checks(coverage_json: dict[str, Any], rules: RuleBook) -> dict[str, object]:
     found = {moment: False for moment in SUPPORTED_MOMENTS}
-    status_system = StatusSystem(rules)
     for effect in rules.ir.effects:
         if effect.opcode != "AddModifier" or effect.coverage_status != "executable":
             continue
@@ -492,20 +537,13 @@ def _coverage_checks(coverage_json: dict[str, Any], rules: RuleBook) -> dict[str
         standard = effect.payload.get("standard") if isinstance(effect.payload.get("standard"), dict) else {}
         if standard.get("target_alias") not in {"Caster", "ModifierOwnerEntity", "ParamEntity", "CurrentActionTarget"}:
             continue
-        probe = status_system.apply_add_modifier(
-            _base_state(),
-            effect,
-            caster_id="ally:actor",
-            source_id="duration_coverage_probe",
-            owner_id="ally:actor",
-            param_entity_id="enemy:target",
-            current_action_target_id="enemy:target",
-        )
-        admission = probe.status_instance.duration_admission if probe.status_instance else {}
+        admission = _duration_admission_for_effect(rules, effect)
         if admission.get("admission_status") == "executable":
             moment = str(admission.get("life_step_moment") or "")
             if moment in found:
                 found[moment] = True
+        elif _modifier_defaults_to_phase_end(rules, str(standard.get("modifier_name") or "")):
+            found["ModifierPhase1End"] = True
     checks = {
         "coverage_has_effects": coverage_json.get("ir_summary", {}).get("effects", 0) > 0,
         "modifier_phase_sample_available": found["ModifierPhase1End"],

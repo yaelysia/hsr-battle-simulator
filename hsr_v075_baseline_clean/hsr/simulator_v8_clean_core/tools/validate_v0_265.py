@@ -372,8 +372,17 @@ def _trace_and_eidolon_case(rules: RuleBook, card: CharacterDataCardIR) -> dict[
         "trace_slots_present": bool(trace_slots),
         "trace_toggle_enables_slots": bool(active_with_trace),
         "trace_toggle_disables_slots": not active_without_trace,
-        "trace_unimplemented_runtime_slots_have_blocker": all(
-            slot.coverage_status != "executable" and bool(slot.blocked_reason) for slot in trace_slots
+        "trace_static_stat_slots_admitted_or_blocked_with_reason": all(
+            (
+                slot.mechanism_kind == "trace_static_stat_bonus"
+                and slot.coverage_status == "executable"
+                and not slot.blocked_reason
+            )
+            or (
+                slot.coverage_status != "executable"
+                and bool(slot.blocked_reason)
+            )
+            for slot in trace_slots
         ),
         "eidolon_interface_has_six_slots": len(eidolons) == 6,
         "eidolon_prefix_slots_have_sources": all(
@@ -383,8 +392,16 @@ def _trace_and_eidolon_case(rules: RuleBook, card: CharacterDataCardIR) -> dict[
             and slot.linked_mechanism_slot_ids
             for slot in eidolons
         ),
-        "eidolon_runtime_effect_slots_still_blocked": all(
-            slot.coverage_status != "executable" and bool(slot.blocked_reason)
+        "eidolon_runtime_effect_slots_classified": all(
+            (
+                slot.coverage_status == "executable"
+                and slot.runtime_system
+                and not slot.blocked_reason
+            )
+            or (
+                slot.coverage_status != "executable"
+                and bool(slot.blocked_reason)
+            )
             for slot in slots
             if slot.mechanism_kind == "eidolon_rank_effect"
         ),

@@ -41,6 +41,9 @@ class StatusInstance:
     stack_policy: str = "single_instance"
     refresh_policy: str = "replace_partial"
     lifecycle_state: str = "active"
+    status_type: str = "Unknown"
+    status_category: str = "unknown"
+    can_dispel: bool | None = None
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -71,6 +74,9 @@ class StatusInstance:
             "stack_policy": self.stack_policy,
             "refresh_policy": self.refresh_policy,
             "lifecycle_state": self.lifecycle_state,
+            "status_type": self.status_type,
+            "status_category": self.status_category,
+            "can_dispel": self.can_dispel,
         }
 
 
@@ -228,7 +234,14 @@ class StatusSystem:
         formula_bindings = _status_formula_bindings(standard)
         before_details = _status_details(unit_flags=state.units[target_id].flags)
         existing_detail = _matching_status_detail(before_details, target_id, modifier_name, effect.effect_id, source_id)
-        duration_admission = _runtime_duration_admission(standard, definition, effect, binding_sources)
+        status_metadata = _status_metadata(self.rules, modifier_name)
+        duration_admission = _runtime_duration_admission(
+            standard,
+            definition,
+            effect,
+            binding_sources,
+            status_metadata=status_metadata,
+        )
         application_operation, partial_reasons = _application_semantics(standard, existing_detail, duration_admission)
         unsupported = [*unsupported, *partial_reasons]
         duration = _status_instance_duration_value(duration_admission)
@@ -250,6 +263,7 @@ class StatusSystem:
                 "effect_source": effect.source.to_json(),
                 "modifier_name": modifier_name,
                 "modifier_definition": definition.source.to_json(),
+                "status_config": status_metadata.get("source"),
                 "duration_admission": duration_admission,
                 "status_formula_bindings": [dict(item) for item in formula_bindings],
                 "status_formula_binding_source": _json_safe(standard.get("status_formula_binding_source", {})),
@@ -266,6 +280,9 @@ class StatusSystem:
             stack_policy="unsupported_partial" if any(reason.startswith("stack_unsupported") for reason in unsupported) else "single_instance",
             refresh_policy="unsupported_partial" if any(reason.startswith("refresh_unsupported") for reason in unsupported) else "replace_partial",
             lifecycle_state="active_partial" if partial_reasons else "active",
+            status_type=str(status_metadata.get("status_type") or "Unknown"),
+            status_category=str(status_metadata.get("status_category") or "unknown"),
+            can_dispel=status_metadata.get("can_dispel") if isinstance(status_metadata.get("can_dispel"), bool) else None,
         )
         plan = StatusLifecyclePlan(
             operation=application_operation,
@@ -1054,6 +1071,8 @@ def _runtime_duration_admission(
     definition: RuleEntity,
     effect: EffectIR,
     binding_sources: tuple[dict[str, JSONValue], ...] = (),
+    *,
+    status_metadata: dict[str, JSONValue] | None = None,
 ) -> dict[str, JSONValue]:
     source_mode = _duration_source_mode(effect.source.source_path)
     if source_mode != "mainline":
@@ -1074,6 +1093,10 @@ def _runtime_duration_admission(
         source_trace={"effect_id": effect.effect_id, "effect_source": effect.source.to_json()},
         binding_sources=binding_sources,
     )
+    combined_standard = _admit_default_unit_status_lifecycle(
+        combined_standard,
+        status_metadata=status_metadata or {},
+    )
     if combined_standard.get("admission_status") == "executable":
         return combined_standard
     if not _is_missing_numeric_expr(standard_lifetime):
@@ -1085,9 +1108,45 @@ def _runtime_duration_admission(
         source_trace={"modifier_definition": definition.source.to_json()},
         binding_sources=binding_sources,
     )
+    combined_definition = _admit_default_unit_status_lifecycle(
+        combined_definition,
+        status_metadata=status_metadata or {},
+    )
     if combined_definition.get("admission_status") == "executable":
         return combined_definition
     return combined_standard if combined_standard.get("admission_status") != "not_applicable" else combined_definition
+
+
+def _admit_default_unit_status_lifecycle(
+    admission: dict[str, JSONValue],
+    *,
+    status_metadata: dict[str, JSONValue],
+) -> dict[str, JSONValue]:
+    if admission.get("admission_status") != "blocked":
+        return admission
+    if admission.get("blocked_reason") != "life_step_moment_missing":
+        return admission
+    status_category = str(status_metadata.get("status_category") or "")
+    if status_category not in {"buff", "debuff"}:
+        return admission
+    if _number_or_none(admission.get("remaining_duration")) is None:
+        return admission
+    source_trace = admission.get("source_trace") if isinstance(admission.get("source_trace"), dict) else {}
+    return {
+        **admission,
+        "admission_status": "executable",
+        "blocked_reason": "",
+        "life_step_moment": "ModifierPhase1End",
+        "source_trace": {
+            **source_trace,
+            "default_life_step_moment": {
+                "rule": "unit_status_defaults_to_modifier_phase_end",
+                "status_type": status_metadata.get("status_type"),
+                "status_category": status_category,
+                "status_config": status_metadata.get("source"),
+            },
+        },
+    }
 
 
 def _duration_admission_from_expr(
@@ -1304,6 +1363,36 @@ def _application_semantics(
 
 def _is_missing_numeric_expr(expr: object) -> bool:
     return isinstance(expr, dict) and expr.get("kind") == "missing"
+
+
+def _status_metadata(rules: RuleBook, modifier_name: str) -> dict[str, JSONValue]:
+    entity = rules.status_entity_for_modifier(modifier_name)
+    if entity is None:
+        return {
+            "status_type": "Unknown",
+            "status_category": "unknown",
+            "can_dispel": None,
+            "source": None,
+        }
+    status_type = str(entity.fields.get("StatusType") or entity.fields.get("status_type") or "Unknown")
+    can_dispel = entity.fields.get("CanDispel")
+    return {
+        "status_type": status_type,
+        "status_category": _status_category(status_type),
+        "can_dispel": can_dispel if isinstance(can_dispel, bool) else None,
+        "source": entity.source.to_json(),
+    }
+
+
+def _status_category(status_type: str) -> str:
+    normalized = status_type.strip().lower()
+    if normalized == "buff":
+        return "buff"
+    if normalized == "debuff":
+        return "debuff"
+    if normalized == "other":
+        return "other"
+    return "unknown"
 
 
 def _json_safe(value: object) -> JSONValue:

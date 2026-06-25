@@ -92,6 +92,11 @@ ENTITY_TABLES: dict[str, tuple[str, str, tuple[str, ...]]] = {
         "SkillID",
         ("SkillTriggerKey", "SkillEffect", "AttackType", "MaxLevel"),
     ),
+    "ExcelOutput/AvatarStatusConfig.json": (
+        "status",
+        "StatusID",
+        ("ModifierName", "StatusType", "CanDispel", "ReadParamList", "TagList"),
+    ),
     "ExcelOutput/AvatarStatusConfigLD.json": (
         "status",
         "StatusID",
@@ -1703,6 +1708,21 @@ class TBGDLowering:
                     for task in callback_lowered.status_callback_tasks
                     if task.callback_id == callback_id
                 )
+                foundational_events = {
+                    "OnBeforeSkillUse",
+                    "OnBeforeHit",
+                    "OnAfterAttack",
+                    "OnActionEnd",
+                    "OnCreate",
+                    "OnDestroy",
+                    "OnEnterBattle",
+                    "OnListenTurnEnd",
+                    "OnBeforeInsertActionPrepare",
+                    "OnInsertActionStart",
+                    "OnInsertActionFinish",
+                    "OnListenInsertAbilityFinish",
+                    "OnCustomEvent",
+                }
                 admitted_event = event in {"OnStack", "OnPhase1"} or (
                     event == "OnListenTurnEnd"
                     and any(task.coverage_status == "executable" for task in callback_lowered.status_callback_tasks)
@@ -1717,6 +1737,7 @@ class TBGDLowering:
                         "OnAfterSkillUse",
                         "OnBeforeDying",
                         "OnListenAllowAction",
+                        *foundational_events,
                     }
                     and has_executable_callback_task
                 )
@@ -4280,6 +4301,22 @@ def _retarget_task_status(condition: ConditionIR | None, child_task_ids: list[st
 
 
 def _status_callback_task_admission(event: str, opcode: str, task: dict[str, Any]) -> tuple[str, str]:
+    foundational_effect_events = {
+        "OnBeforeSkillUse",
+        "OnBeforeAttack",
+        "OnAfterAttack",
+        "OnAfterSkillUse",
+        "OnActionEnd",
+        "OnCreate",
+        "OnDestroy",
+        "OnEnterBattle",
+        "OnListenTurnEnd",
+        "OnBeforeInsertActionPrepare",
+        "OnInsertActionStart",
+        "OnInsertActionFinish",
+        "OnListenInsertAbilityFinish",
+        "OnCustomEvent",
+    }
     if opcode in QUEUE_INTENT_OPCODES:
         actor_target_alias = _queue_actor_target_alias(task, opcode)
         ability_target_alias = _queue_ability_target_alias(task, opcode)
@@ -4304,13 +4341,22 @@ def _status_callback_task_admission(event: str, opcode: str, task: dict[str, Any
         if coverage == "executable":
             return "executable", ""
         return "blocked", _effect_blocked_reason(opcode, payload, coverage)
-    if event in {"OnTriggerDeath", "OnTriggerDeathrattle", "OnAfterSkillUse", "OnListenAfterAttack"} and opcode in {"SetDynamicValue", "AddModifier"}:
+    if (
+        event in {
+            "OnTriggerDeath",
+            "OnTriggerDeathrattle",
+            "OnAfterSkillUse",
+            "OnListenAfterAttack",
+            *foundational_effect_events,
+        }
+        and opcode in {"SetDynamicValue", "AddModifier", "RemoveModifier", "RemoveSelfModifier"}
+    ):
         payload = _effect_payload(task, opcode, "")
         coverage = _effect_coverage_status(opcode, payload)
         if coverage == "executable":
             return "executable", ""
         return "blocked", _effect_blocked_reason(opcode, payload, coverage)
-    if event == "OnBeforeHitAll" and opcode == "ModifyDamageData":
+    if event in {"OnBeforeHitAll", "OnBeforeHit"} and opcode == "ModifyDamageData":
         terms = _damage_modifier_terms(task)
         unsupported = [term for term in terms if term.get("coverage_status") != "executable"]
         if unsupported:
@@ -4319,7 +4365,7 @@ def _status_callback_task_admission(event: str, opcode: str, task: dict[str, Any
         if not terms:
             return "blocked", "modify_damage_data_fields_missing"
         return "executable", ""
-    if event == "OnAfterHitAll" and opcode in {"SetDynamicValue", "SetDynamicValueByDamageDataProperty"}:
+    if event in {"OnAfterHitAll", "OnAfterHit"} and opcode in {"SetDynamicValue", "SetDynamicValueByDamageDataProperty"}:
         if opcode == "SetDynamicValueByDamageDataProperty":
             dynamic_key = _value_field(task.get("DynamicKey"))
             property_name = _value_field(task.get("Property"))
@@ -4434,18 +4480,28 @@ def _status_callback_source_mode(relative_path: str) -> str:
 def _status_callback_scope_kind(event: str) -> str:
     if event in {"OnListenCharacterDie", "OnListenAllowAction"}:
         return "owner_local"
-    if event in {"OnBeforeHitAll", "OnAfterHitAll", "OnAfterSkillUse"}:
+    if event in {
+        "OnBeforeHitAll",
+        "OnAfterHitAll",
+        "OnAfterSkillUse",
+        "OnBeforeSkillUse",
+        "OnBeforeAttack",
+        "OnAfterAttack",
+        "OnActionEnd",
+        "OnBeforeInsertActionPrepare",
+        "OnInsertActionStart",
+        "OnInsertActionFinish",
+        "OnListenInsertAbilityFinish",
+    }:
         return "actor_local"
+    if event in {"OnCreate", "OnDestroy", "OnStack", "OnPhase1"}:
+        return "status_local"
     if event.startswith("OnListen"):
         return "global_listener"
     if event.startswith("OnBeing") or "BeingHit" in event or "BeingAttacked" in event:
         return "being_hit_target_local"
     if "Hit" in event:
         return "per_hit_target_local"
-    if event in {"OnBeforeSkillUse", "OnBeforeAttack", "OnAfterAttack", "OnAfterSkillUse"}:
-        return "actor_local"
-    if event in {"OnStack", "OnPhase1"}:
-        return "status_local"
     return "owner_local"
 
 

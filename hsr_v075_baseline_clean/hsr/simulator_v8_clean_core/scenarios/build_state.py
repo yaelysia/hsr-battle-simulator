@@ -39,6 +39,7 @@ class ScenarioStateBuilder:
             if unit.position is not None:
                 flags["position"] = unit.position
             entity = self.rules.require_entity(unit.entity_ref)
+            card = None
             if unit.eidolon_level < 0 or unit.eidolon_level > 6:
                 raise ValueError(f"unit {unit.unit_id}: eidolon_level must be between 0 and 6")
             if entity.entity_type == "avatar":
@@ -83,7 +84,18 @@ class ScenarioStateBuilder:
                 if isinstance(weaknesses, list):
                     flags["weaknesses"] = tuple(str(item) for item in weaknesses)
             resources = _resources_with_profile_resistances(panel, profile)
+            trace_activation = _trace_runtime_activation(self.rules, card, flags)
+            flags.update(trace_activation["flags"])
+            for key, delta in trace_activation["resource_deltas"].items():
+                resources[key] = float(resources.get(key, 0.0)) + float(delta)
             max_hp = _panel_or_profile_value(panel, "max_hp", profile_values, required=entity.entity_type in {"monster", "monster_template"})
+            attack = _panel_or_profile_value(panel, "attack", profile_values, required=entity.entity_type in {"monster", "monster_template"})
+            defense = _panel_or_profile_value(panel, "defense", profile_values, required=entity.entity_type in {"monster", "monster_template"})
+            speed = _panel_or_profile_value(panel, "speed", profile_values, required=entity.entity_type in {"monster", "monster_template"})
+            max_hp = _apply_trace_base_stat(max_hp, "max_hp", trace_activation)
+            attack = _apply_trace_base_stat(attack, "attack", trace_activation)
+            defense = _apply_trace_base_stat(defense, "defense", trace_activation)
+            speed = _apply_trace_base_stat(speed, "speed", trace_activation)
             hp = panel.hp if _panel_has(panel, "hp") and panel.hp is not None else max_hp
             units[unit.unit_id] = UnitState(
                 unit_id=unit.unit_id,
@@ -92,9 +104,9 @@ class ScenarioStateBuilder:
                 level=unit.level,
                 max_hp=max_hp,
                 hp=hp,
-                attack=_panel_or_profile_value(panel, "attack", profile_values, required=entity.entity_type in {"monster", "monster_template"}),
-                defense=_panel_or_profile_value(panel, "defense", profile_values, required=entity.entity_type in {"monster", "monster_template"}),
-                speed=_panel_or_profile_value(panel, "speed", profile_values, required=entity.entity_type in {"monster", "monster_template"}),
+                attack=attack,
+                defense=defense,
+                speed=speed,
                 energy=panel.energy,
                 max_energy=panel.max_energy,
                 toughness=_panel_or_profile_value(panel, "toughness", profile_values, required=entity.entity_type in {"monster", "monster_template"}),
@@ -133,6 +145,143 @@ class ScenarioStateBuilder:
             for step in scenario.route
         )
         return ScenarioBuildResult(state=state, commands=commands, source_traces=tuple(source_traces))
+
+
+def _trace_runtime_activation(rules: RuleBook, card: object | None, flags: dict[str, Any]) -> dict[str, Any]:
+    if card is None:
+        return {"flags": {}, "base_stat_ratios": {}, "base_stat_deltas": {}, "resource_deltas": {}}
+    card_id = str(getattr(card, "card_id", ""))
+    if not card_id:
+        return {"flags": {}, "base_stat_ratios": {}, "base_stat_deltas": {}, "resource_deltas": {}}
+    explicit_enabled = set(_string_items(flags.get("enabled_trace_node_ids")))
+    disabled = set(_string_items(flags.get("disabled_trace_node_ids")))
+    nodes = rules.character_trace_nodes_for_card(card_id)
+    slots_by_id = {slot.mechanism_slot_id: slot for slot in rules.character_mechanism_slots_for_card(card_id)}
+    enabled_node_ids: list[str] = []
+    applied_terms: list[dict[str, Any]] = []
+    blocked_slots: list[dict[str, Any]] = []
+    base_stat_ratios: dict[str, float] = {}
+    base_stat_deltas: dict[str, float] = {}
+    resource_deltas: dict[str, float] = {}
+    source_traces: list[dict[str, Any]] = []
+    for node in nodes:
+        default_enabled = any(
+            bool((slots_by_id.get(slot_id) and slots_by_id[slot_id].activation.get("default_enabled") is True))
+            for slot_id in node.linked_mechanism_slot_ids
+        )
+        enabled = node.trace_node_id in explicit_enabled or (default_enabled and node.trace_node_id not in disabled)
+        if not enabled:
+            continue
+        enabled_node_ids.append(node.trace_node_id)
+        source_traces.append(node.source.to_json())
+        for slot_id in node.linked_mechanism_slot_ids:
+            slot = slots_by_id.get(slot_id)
+            if slot is None or slot.mechanism_kind != "trace_static_stat_bonus":
+                continue
+            if slot.coverage_status != "executable":
+                blocked_slots.append(
+                    {
+                        "trace_node_id": node.trace_node_id,
+                        "mechanism_slot_id": slot_id,
+                        "blocked_reason": slot.blocked_reason or f"trace_slot_not_executable:{slot.coverage_status}",
+                        "source": slot.source.to_json(),
+                    }
+                )
+                continue
+            for term in _dict_items(slot.semantics.get("mapped_terms")):
+                kind = str(term.get("application_kind") or "")
+                key = str(term.get("target_key") or "")
+                value = _float_or_none(term.get("value"))
+                if value is None or not key:
+                    blocked_slots.append(
+                        {
+                            "trace_node_id": node.trace_node_id,
+                            "mechanism_slot_id": slot_id,
+                            "blocked_reason": "trace_static_stat_term_invalid",
+                            "term": term,
+                            "source": slot.source.to_json(),
+                        }
+                    )
+                    continue
+                applied_terms.append(
+                    {
+                        "trace_node_id": node.trace_node_id,
+                        "mechanism_slot_id": slot_id,
+                        "application_kind": kind,
+                        "target_key": key,
+                        "value": value,
+                        "source": slot.source.to_json(),
+                    }
+                )
+                if kind == "base_stat_ratio":
+                    base_stat_ratios[key] = base_stat_ratios.get(key, 0.0) + value
+                elif kind == "base_stat_delta":
+                    base_stat_deltas[key] = base_stat_deltas.get(key, 0.0) + value
+                elif kind == "resource_delta":
+                    resource_deltas[key] = resource_deltas.get(key, 0.0) + value
+                else:
+                    blocked_slots.append(
+                        {
+                            "trace_node_id": node.trace_node_id,
+                            "mechanism_slot_id": slot_id,
+                            "blocked_reason": f"trace_static_stat_application_kind_not_admitted:{kind}",
+                            "term": term,
+                            "source": slot.source.to_json(),
+                        }
+                    )
+    trace_flags: dict[str, Any] = {
+        "trace_activation_policy": {
+            "kind": "trace_toggle",
+            "explicit_enabled_trace_node_ids": tuple(sorted(explicit_enabled)),
+            "disabled_trace_node_ids": tuple(sorted(disabled)),
+            "default_unlock_respected": True,
+        },
+        "enabled_trace_node_ids": tuple(enabled_node_ids),
+        "trace_source_traces": tuple(source_traces),
+    }
+    if applied_terms:
+        trace_flags["trace_static_stat_bonus_terms"] = tuple(applied_terms)
+    if blocked_slots:
+        trace_flags["trace_static_stat_blocked_slots"] = tuple(blocked_slots)
+    if base_stat_ratios or base_stat_deltas:
+        trace_flags["trace_panel_adjustments"] = {
+            "base_stat_ratios": dict(sorted(base_stat_ratios.items())),
+            "base_stat_deltas": dict(sorted(base_stat_deltas.items())),
+        }
+    if resource_deltas:
+        trace_flags["trace_resource_adjustments"] = dict(sorted(resource_deltas.items()))
+    return {
+        "flags": trace_flags,
+        "base_stat_ratios": base_stat_ratios,
+        "base_stat_deltas": base_stat_deltas,
+        "resource_deltas": resource_deltas,
+    }
+
+
+def _apply_trace_base_stat(value: float, key: str, activation: dict[str, Any]) -> float:
+    ratio = float(activation["base_stat_ratios"].get(key, 0.0))
+    delta = float(activation["base_stat_deltas"].get(key, 0.0))
+    return max(0.0, value * (1.0 + ratio) + delta)
+
+
+def _string_items(value: object) -> tuple[str, ...]:
+    if isinstance(value, str):
+        return (value,) if value else ()
+    if isinstance(value, (list, tuple, set)):
+        return tuple(str(item) for item in value if str(item))
+    return ()
+
+
+def _dict_items(value: object) -> tuple[dict[str, Any], ...]:
+    if not isinstance(value, (list, tuple)):
+        return ()
+    return tuple(item for item in value if isinstance(item, dict))
+
+
+def _float_or_none(value: object) -> float | None:
+    if isinstance(value, (int, float)):
+        return float(value)
+    return None
 
 
 def _profile_values(profile: CombatantProfileIR | None) -> dict[str, float]:

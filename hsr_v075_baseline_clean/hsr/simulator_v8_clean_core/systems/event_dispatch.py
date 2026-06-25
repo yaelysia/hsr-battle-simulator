@@ -536,9 +536,37 @@ SCOPE_PRIORITY = {
 CANONICAL_EVENT_ALIASES: dict[str, tuple[tuple[str, str, str], ...]] = {
     "turn.begin": (
         ("OnListenAllowAction", "owner_local", ""),
+        ("OnEnterBattle", "owner_local", "event_alias_missing:on_enter_battle_requires_battle_start_event"),
+    ),
+    "turn.end": (
+        ("OnListenTurnEnd", "global_listener", ""),
+    ),
+    "action.window.before_skill_use": (
+        ("OnBeforeSkillUse", "actor_local", ""),
+    ),
+    "action.window.before_attack": (
+        ("OnBeforeAttack", "actor_local", ""),
+    ),
+    "action.window.after_attack": (
+        ("OnAfterAttack", "actor_local", ""),
+    ),
+    "action.window.after_skill_use": (
+        ("OnAfterSkillUse", "actor_local", ""),
     ),
     "action.after_attack": (
         ("OnListenAfterAttack", "global_listener", ""),
+        ("OnAfterAttack", "actor_local", ""),
+    ),
+    "action.end": (
+        ("OnActionEnd", "actor_local", ""),
+    ),
+    "queue.action.before": (
+        ("OnBeforeInsertActionPrepare", "actor_local", ""),
+        ("OnInsertActionStart", "actor_local", ""),
+    ),
+    "queue.action.after": (
+        ("OnInsertActionFinish", "actor_local", ""),
+        ("OnListenInsertAbilityFinish", "actor_local", ""),
     ),
     "unit.defeated": (
         ("OnTriggerDeath", "owner_local", ""),
@@ -549,7 +577,9 @@ CANONICAL_EVENT_ALIASES: dict[str, tuple[tuple[str, str, str], ...]] = {
         ("OnBeforeDying", "owner_local", ""),
     ),
     "damage.hit": (
+        ("OnBeforeHit", "per_hit_target_local", "event_alias_missing:on_before_hit_requires_pre_damage_event"),
         ("OnAfterHitAll", "actor_local", ""),
+        ("OnAfterHit", "per_hit_target_local", ""),
         ("OnAfterBeingAttacked", "being_hit_target_local", ""),
         ("OnHit", "per_hit_target_local", "downstream_intent_missing:per_hit_listener_execution_not_admitted"),
         ("OnBeingHit", "being_hit_target_local", "downstream_intent_missing:being_hit_listener_execution_not_admitted"),
@@ -563,6 +593,14 @@ CANONICAL_EVENT_ALIASES: dict[str, tuple[tuple[str, str, str], ...]] = {
     ),
     "status.callback": (
         ("OnPhase1", "status_local", "event_alias_missing:status_callback_requires_explicit_callback_event"),
+        ("OnCreate", "status_local", "event_alias_missing:on_create_requires_status_create_event"),
+        ("OnDestroy", "status_local", "event_alias_missing:on_destroy_requires_status_destroy_event"),
+    ),
+    "custom.event": (
+        ("OnCustomEvent", "owner_local", "event_alias_missing:custom_event_source_not_admitted"),
+    ),
+    "wave.monster": (
+        ("OnWaveMonster", "global_listener", "downstream_intent_missing:wave_system_not_implemented"),
     ),
 }
 
@@ -655,7 +693,19 @@ def _scope_kind_for_callback_event(event: GameEvent, callback_event: str) -> str
         return explicit
     if callback_event == "OnListenAllowAction":
         return "owner_local"
-    if callback_event in {"OnBeforeHitAll", "OnAfterHitAll", "OnAfterSkillUse"}:
+    if callback_event in {
+        "OnBeforeHitAll",
+        "OnAfterHitAll",
+        "OnAfterSkillUse",
+        "OnBeforeSkillUse",
+        "OnBeforeAttack",
+        "OnAfterAttack",
+        "OnActionEnd",
+        "OnBeforeInsertActionPrepare",
+        "OnInsertActionStart",
+        "OnInsertActionFinish",
+        "OnListenInsertAbilityFinish",
+    }:
         return "actor_local"
     if callback_event.startswith("OnListen"):
         return "global_listener"
@@ -674,7 +724,7 @@ def _scope_kind_for_callback_event(event: GameEvent, callback_event: str) -> str
         return "owner_local"
     if callback_event == "OnBeforeDying":
         return "owner_local"
-    if callback_event in {"OnStack", "OnPhase1"}:
+    if callback_event in {"OnStack", "OnPhase1", "OnCreate", "OnDestroy"}:
         return "status_local"
     return _event_scope_kind(event)
 
@@ -764,6 +814,11 @@ def _global_listener_auto_admitted(event: GameEvent, callback: StatusCallbackIR,
         event.event_type == "action.after_attack"
         and alias.callback_event == "OnListenAfterAttack"
         and callback.event == "OnListenAfterAttack"
+        and alias.admission_status == "executable"
+    ) or (
+        event.event_type == "turn.end"
+        and alias.callback_event == "OnListenTurnEnd"
+        and callback.event == "OnListenTurnEnd"
         and alias.admission_status == "executable"
     )
 

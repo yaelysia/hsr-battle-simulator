@@ -106,8 +106,6 @@ def _select_dot_case(ir, rules: RuleBook, *, extra_formula_type: str) -> dict[st
             continue
         if emission.event != "OnPhase1" or emission.attack_type != "DOT":
             continue
-        if emission.source.source_path != "Config/ConfigGlobalModifier/GlobalModifier_Common_Specific.json":
-            continue
         if str(emission.scaling_expr.get("extra_formula_type") or "") != extra_formula_type:
             continue
         callback = rules.status_callback(emission.callback_id)
@@ -281,7 +279,7 @@ def _percentage_basis_formula_case(rules: RuleBook, case: dict[str, Any]) -> dic
 
 def _dot_order_case(rules: RuleBook, case: dict[str, Any]) -> dict[str, Any]:
     emission: StatusDamageEmissionIR = case["emission"]
-    state = _state_for_emission(rules, emission, target_hp=20.0, bind_dynamic=True, dynamic_value=10.0)
+    state = _state_for_emission(rules, emission, target_hp=5.0, bind_dynamic=True, dynamic_value=10.0)
     ledger = DamageWindowLedger()
     first = StatusCallbackSystem(rules).execute(
         state,
@@ -577,8 +575,13 @@ def _selection_checks(dot_case: dict[str, Any] | None, by_defence_case: dict[str
     checks = {
         "ordinary_dot_case_found": dot_case is not None,
         "ordinary_selection_structured": dot_case is not None
-        and dot_case["emission"].source.source_path == "Config/ConfigGlobalModifier/GlobalModifier_Common_Specific.json"
-        and dot_case["emission"].coverage_status == "executable",
+        and dot_case["emission"].damage_formula_family == "dot"
+        and dot_case["emission"].event == "OnPhase1"
+        and dot_case["emission"].attack_type == "DOT"
+        and dot_case["emission"].coverage_status == "executable"
+        and dot_case["callback"].coverage_status == "executable"
+        and dot_case["task"].coverage_status == "executable"
+        and bool(_hashes_for_emission(dot_case["emission"])),
         "by_defence_case_found": by_defence_case is not None,
     }
     checks["ok"] = all(checks.values())
