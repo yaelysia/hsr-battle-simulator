@@ -48,6 +48,7 @@ class CombatExecutor:
 
     def execute(self, command: ActionCommand, state: BattleState) -> tuple[BattleState, BattleTransition]:
         before = state.snapshot()
+        command = _command_with_character_card_level_bonus(command, state, self.rules)
         action_definition = self.rules.require_action_definition(command.action_id, command.action_level)
         action_event_ir = self.rules.require_action_event(command.action_id, command.action_level)
         action_binding = self.rules.action_ability_binding(command.action_id, command.action_level)
@@ -67,6 +68,7 @@ class CombatExecutor:
             "action_event_id": action_event_ir.action_event_id,
             "source_trace": action_definition_trace,
             "action_event_source_trace": action_event_ir.source.to_json(),
+            "effective_action_level_source": command.metadata.get("effective_action_level_source", {}),
         }
         action_event = GameEvent(
             "action.requested",
@@ -1128,6 +1130,46 @@ def _toughness_packet(command: ActionCommand, toughness_plan: ToughnessPlan) -> 
             "source_trace": toughness_plan.source_trace,
         },
     )
+
+
+def _command_with_character_card_level_bonus(
+    command: ActionCommand,
+    state: BattleState,
+    rules: RuleBook,
+) -> ActionCommand:
+    unit = state.units.get(command.actor_id)
+    if unit is None:
+        return command
+    bonuses = unit.flags.get("eidolon_skill_level_bonus_by_action_id")
+    if not isinstance(bonuses, dict):
+        return command
+    raw_bonus = bonuses.get(command.action_id)
+    if not isinstance(raw_bonus, (int, float)) or raw_bonus <= 0:
+        return command
+    levels = rules.action_levels(command.action_id)
+    if not levels:
+        return command
+    requested_level = command.action_level
+    effective_level = min(max(levels), requested_level + int(raw_bonus))
+    if effective_level == requested_level:
+        return command
+    sources = unit.flags.get("eidolon_skill_level_bonus_sources")
+    source_payload = sources.get(command.action_id, []) if isinstance(sources, dict) else []
+    metadata = {
+        **command.metadata,
+        "requested_action_level": requested_level,
+        "effective_action_level": effective_level,
+        "effective_action_level_bonus": int(raw_bonus),
+        "effective_action_level_source": {
+            "source_kind": "character_data_card_eidolon_skill_level_bonus",
+            "action_id": command.action_id,
+            "requested_level": requested_level,
+            "effective_level": effective_level,
+            "bonus": int(raw_bonus),
+            "sources": source_payload if isinstance(source_payload, list) else [],
+        },
+    }
+    return replace(command, action_level=effective_level, metadata=metadata)
 
 
 def _damage_metadata(command: ActionCommand) -> dict[str, JSONValue]:

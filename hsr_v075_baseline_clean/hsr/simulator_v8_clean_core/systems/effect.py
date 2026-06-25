@@ -953,6 +953,14 @@ def _resolve_formula_amount(
         if scale_basis == "max_skill_points":
             details["base_value"] = state.max_skill_points
             return state.max_skill_points * raw_value, details, ""
+        if scale_basis == "max_energy":
+            if target_id is None:
+                return 0.0, details, "unsupported_formula:resource_target_missing_for_max_energy"
+            unit = state.units.get(target_id)
+            if unit is None:
+                return 0.0, details, f"unsupported_formula:resource_target_missing:{target_id}"
+            details["base_value"] = unit.max_energy
+            return unit.max_energy * raw_value, details, ""
         if scale_basis == "flat":
             details["base_value"] = 1.0
             return raw_value, details, ""

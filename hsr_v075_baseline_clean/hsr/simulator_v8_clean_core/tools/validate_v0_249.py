@@ -515,7 +515,7 @@ def _effect_positive_checks(cases: dict[str, dict[str, Any]]) -> dict[str, Any]:
         }
     heal_record = _first_record(cases["heal_new_formula"]["transition"], "heal")
     shield_record = _first_record(cases["shield_new_formula"]["transition"], "shield")
-    sp_record = _first_record(cases["modify_sp_new_branch"]["transition"], "resource_delta")
+    energy_record = _first_record(cases["modify_sp_new_branch"]["transition"], "resource_delta")
     hp_loss_record = _first_record(cases["hp_loss_floor"]["transition"], "hp_loss")
     checks["heal_new_formula_base"] = _formula_base(cases["heal_new_formula"]["transition"]) in {"caster.max_hp", "target.max_hp"}
     checks["shield_new_formula_base"] = _formula_base(cases["shield_new_formula"]["transition"]) in {
@@ -523,8 +523,8 @@ def _effect_positive_checks(cases: dict[str, dict[str, Any]]) -> dict[str, Any]:
         "caster.defense",
         "target.max_hp",
     }
-    checks["modify_sp_new_resource_record"] = bool(sp_record) and sp_record.get("resource") == "skill_points"
-    checks["modify_sp_new_scale_or_set"] = _sp_formula_detail(cases["modify_sp_new_branch"]["transition"]) in {"max_skill_points", "set"}
+    checks["modify_sp_new_resource_record"] = bool(energy_record) and energy_record.get("resource") == "energy"
+    checks["modify_sp_new_scale_or_set"] = _sp_formula_detail(cases["modify_sp_new_branch"]["transition"]) in {"max_energy", "set"}
     checks["hp_loss_record_present"] = bool(hp_loss_record)
     checks["hp_loss_floor_policy"] = _hp_loss_rounding_policy(cases["hp_loss_floor"]["transition"]) == "floor_from_tbgd_flag"
     checks["hp_loss_no_direct_multiplier_ledger"] = _hp_loss_no_direct_ledger(cases["hp_loss_floor"]["transition"])
@@ -555,7 +555,7 @@ def _actionability_matrix(
         "condition_vm_common": _fixed_now_entry(_condition_checks(condition_cases)["ok"], "ByAnd/ByAny/ByCompareDynamicValue/ByCompareModifierValue/ByCompareHPRatio are evaluated conservatively"),
         "heal_formula_current_scope": _fixed_now_entry(effect_cases["heal_new_formula"]["checks"]["ok"], "HealByTargetMaxHP/HealByHealerMaxHP current fixed/status-bound numeric scope is executable"),
         "shield_formula_current_scope": _fixed_now_entry(effect_cases["shield_new_formula"]["checks"]["ok"], "ShieldByCasterMaxHP/ShieldByCasterDefence/ShieldByTargetMaxHP current fixed/status-bound numeric scope is executable"),
-        "modify_sp_new_current_scope": _fixed_now_entry(effect_cases["modify_sp_new_branch"]["checks"]["ok"], "ModifySPNew fixed/status-bound add/set/max-ratio current scope is executable"),
+        "modify_sp_new_current_scope": _fixed_now_entry(effect_cases["modify_sp_new_branch"]["checks"]["ok"], "ModifySPNew fixed/status-bound energy add/set/max-ratio current scope is executable"),
         "hp_loss_floor": _fixed_now_entry(effect_cases["hp_loss_floor"]["checks"]["ok"], "LoseHPByRatio Floor=true applies floor rounding without direct multiplier ledger"),
         "unsupported_dynamic_or_formula_negatives": _fixed_now_entry(_negative_checks(negative_cases)["ok"], "Unbound dynamic numeric paths remain blocked and do not mutate state"),
         "true_damage": _wait_entry("requires admitted executable TBGD true-damage emission/effect source"),
@@ -657,7 +657,7 @@ def _select_modify_sp_effect(ir) -> EffectIR:
         lambda effect, standard: effect.opcode == "ModifySPNew"
         and _has_dynamic_numeric(standard)
         and (
-            standard.get("scale_basis") == "max_skill_points"
+            standard.get("scale_basis") == "max_energy"
             or standard.get("operation") == "set"
             or standard.get("formula_type") in {"SetValue", "FixedSetValue", "AddMaxSPRatio", "FixedAddMaxSPRatio", "SetMaxSPRatio", "FixedSetMaxSPRatio"}
         ),

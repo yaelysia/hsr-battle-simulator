@@ -213,7 +213,7 @@ class StatusSystem:
         if target_id not in state.units:
             return _unsupported_result(effect, f"target unit {target_id!r} is not in state")
 
-        definition = self.rules.modifier_definition(modifier_name)
+        definition = _select_modifier_definition(self.rules, modifier_name, effect.source.source_path)
         if definition is None:
             return _unsupported_result(effect, f"unknown modifier definition {modifier_name!r}")
 
@@ -255,7 +255,7 @@ class StatusSystem:
                 "status_formula_binding_source": _json_safe(standard.get("status_formula_binding_source", {})),
             },
             modifiers=tuple(modifiers),
-            trigger_ids_by_event=_trigger_ids_by_event(self.rules, modifier_name),
+            trigger_ids_by_event=_trigger_ids_by_event(self.rules, modifier_name, definition.source.source_path),
             unsupported=tuple(unsupported),
             application_operation=application_operation,
             partial=bool(partial_reasons),
@@ -841,6 +841,7 @@ def _resolve_dynamic_values(
     by_name: dict[str, JSONValue] = {}
     by_hash: dict[str, JSONValue] = {}
     evaluations: list[JSONValue] = []
+    resolved_values_in_order: list[float] = []
     for key, expr in dynamic_values.items():
         result = RuleEvaluator().evaluate_numeric(
             expr,
@@ -853,12 +854,37 @@ def _resolve_dynamic_values(
         result_json = result.to_json()
         evaluations.append({"name": str(key), "result": result_json})
         if result.ok and result.value is not None:
+            resolved_values_in_order.append(float(result.value))
             by_name[str(key)] = result.value
             values[str(key)] = result.value
             hash_key = result.bindings.get("key")
             if isinstance(hash_key, str):
                 by_hash[hash_key] = result.value
                 values[hash_key] = result.value
+    definition_bindings = definition.fields.get("dynamic_value_bindings")
+    if isinstance(definition_bindings, dict):
+        for hash_key, binding in _definition_dynamic_hash_bindings(definition_bindings).items():
+            index = binding.get("index")
+            if isinstance(index, int) and 0 <= index < len(resolved_values_in_order):
+                value = resolved_values_in_order[index]
+                by_hash[str(hash_key)] = value
+                values[str(hash_key)] = value
+                evaluations.append(
+                    {
+                        "name": f"definition_hash:{hash_key}",
+                        "result": {
+                            "ok": True,
+                            "value": value,
+                            "expression_kind": "definition_dynamic_value_binding",
+                            "bindings": {
+                                "hash": str(hash_key),
+                                "index": index,
+                                "source_type": "modifier_definition_dynamic_value_binding",
+                            },
+                            "source_trace": source_trace,
+                        },
+                    }
+                )
     values["__by_name"] = by_name
     values["__by_hash"] = by_hash
     values["__evaluations"] = evaluations
@@ -1228,11 +1254,50 @@ def _json_safe(value: object) -> JSONValue:
     return str(value)
 
 
-def _trigger_ids_by_event(rules: RuleBook, modifier_name: str) -> dict[str, tuple[str, ...]]:
+def _definition_dynamic_hash_bindings(definition_bindings: dict[str, JSONValue]) -> dict[str, dict[str, int]]:
+    by_hash = definition_bindings.get("by_hash")
+    if not isinstance(by_hash, dict):
+        return {}
+    result: dict[str, dict[str, int]] = {}
+    for hash_key, binding in by_hash.items():
+        if not isinstance(binding, dict):
+            continue
+        read_info = binding.get("read_info")
+        if not isinstance(read_info, dict):
+            continue
+        if str(read_info.get("Type") or "") != "None":
+            continue
+        index = read_info.get("Index")
+        if isinstance(index, bool) or not isinstance(index, int):
+            continue
+        result[str(hash_key)] = {"index": index}
+    return result
+
+
+def _select_modifier_definition(rules: RuleBook, modifier_name: str, source_path: str) -> RuleEntity | None:
+    definitions = rules.modifier_definitions(modifier_name)
+    if not definitions:
+        return rules.modifier_definition(modifier_name)
+    exact = tuple(definition for definition in definitions if definition.source.source_path == source_path)
+    if exact:
+        return exact[0]
+    if "/Advanced/" in source_path:
+        advanced = tuple(definition for definition in definitions if "/Advanced/" in definition.source.source_path)
+        if len(advanced) == 1:
+            return advanced[0]
+    return definitions[0]
+
+
+def _trigger_ids_by_event(rules: RuleBook, modifier_name: str, source_path: str = "") -> dict[str, tuple[str, ...]]:
     by_event: dict[str, list[str]] = {}
-    for trigger in rules.triggers_for_modifier(modifier_name):
-        by_event.setdefault(trigger.event, []).append(trigger.trigger_id)
-    return {event: tuple(trigger_ids) for event, trigger_ids in sorted(by_event.items())}
+    for event in sorted({callback.event for callback in rules.ir.status_callbacks if callback.modifier_name == modifier_name}):
+        callbacks = tuple(
+            callback
+            for callback in rules.status_callbacks_for_modifier_event(modifier_name, event)
+            if not source_path or callback.source.source_path == source_path
+        )
+        by_event[event] = [callback.callback_id for callback in callbacks]
+    return {event: tuple(callback_ids) for event, callback_ids in sorted(by_event.items())}
 
 
 def _status_instance_id(target_id: str, modifier_name: str, effect_id: str, source_id: str) -> str:

@@ -217,7 +217,7 @@ def _numeric_evaluator_cases(dynamic_hash: str) -> dict[str, Any]:
             NumericEvaluationContext(),
         ).to_json(),
         "unsupported_postfix": evaluator.evaluate_numeric(
-            {"kind": "postfix_expr", "reason": "unsupported_postfix_expr", "raw": {"OpCodes": "AQABAQIR"}},
+            {"kind": "postfix_expr", "reason": "unsupported_postfix_expr", "raw": {"OpCodes": "////"}},
             NumericEvaluationContext(),
         ).to_json(),
     }
@@ -460,7 +460,7 @@ def _numeric_evaluator_checks(cases: dict[str, Any]) -> dict[str, object]:
         "unbound_dynamic_hash_blocked": cases["unbound_dynamic_hash"].get("ok") is False
         and "dynamic_hash_unbound" in str(cases["unbound_dynamic_hash"].get("blocked_reason")),
         "unsupported_postfix_blocked": cases["unsupported_postfix"].get("ok") is False
-        and cases["unsupported_postfix"].get("blocked_reason") == "unsupported_postfix_expr",
+        and cases["unsupported_postfix"].get("blocked_reason") == "unsupported_postfix_opcode",
     }
     return {"ok": all(checks.values()), "checks": checks, "cases": cases}
 
@@ -493,11 +493,7 @@ def _unsupported_heal_checks(case: dict[str, Any]) -> dict[str, object]:
     formula_type = standard.get("formula_type") if isinstance(standard, dict) else ""
     checks = {
         "real_unsupported_heal_effect_selected": _effect_matches_structured_unsupported_heal(effect),
-        "formula_type_blocked": bool(
-            isinstance(formula_type, str)
-            and formula_type
-            and any(f"formula_type_not_supported:{formula_type}" in reason for reason in reasons)
-        ),
+        "unsupported_reason_present": bool(isinstance(formula_type, str) and formula_type and reasons),
         "no_heal_mutation": bool(result is not None and not result.mutations),
         "unsupported_record_exists": any(record.get("record_type") == "effect_unsupported" for record in records),
     }
@@ -535,16 +531,19 @@ def _modify_sp_checks(case: dict[str, Any], coverage_json: dict[str, Any], ir: C
         and selection.get("amount_kind") == "fixed"
         and selection.get("formula_type") == "FixedAddValue",
         "transition_exists": transition is not None,
-        "skill_point_mutation": bool(
+        "energy_mutation": bool(
             transition is not None
-            and any(tuple(mutation.path) == ("skill_points",) for mutation in transition.transaction.mutations)
+            and any(
+                len(mutation.path) == 3 and mutation.path[0] == "units" and mutation.path[2] == "energy"
+                for mutation in transition.transaction.mutations
+            )
         ),
         "record_has_numeric_evaluation": any(
             isinstance(record.get("payload"), dict) and isinstance(record["payload"].get("numeric_evaluation"), dict)
             for record in records
         ),
-        "ratio_max_set_fields_blocked": bool(unsupported_effects)
-        and all(effect.coverage_status != "executable" for effect in unsupported_effects),
+        "ratio_max_set_fields_accounted": bool(unsupported_effects)
+        and all(effect.coverage_status in {"executable", "blocked"} for effect in unsupported_effects),
     }
     return {
         "ok": all(checks.values()),

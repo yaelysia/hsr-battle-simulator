@@ -871,7 +871,7 @@ def _resource_delta_trust_entry(case: dict[str, Any] | None) -> dict[str, Any]:
             True,
             False,
             TRUSTED,
-            "ModifySPNew fixed skill point delta is selected from real executable TBGD EffectIR; ratio/max/set SP operations remain blocked",
+            "ModifySPNew fixed energy delta is selected from real executable TBGD EffectIR; ratio/max/set energy operations remain blocked",
         )
     if _has_transition(case):
         return _trust_entry(

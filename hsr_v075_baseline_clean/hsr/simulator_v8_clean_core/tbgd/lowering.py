@@ -2505,7 +2505,7 @@ def _modifier_definition_entity(
         "stack_properties": _stack_property_summaries(modifier),
     }
     return RuleEntity(
-        entity_id=f"modifier_definition:{modifier_name}",
+        entity_id=f"modifier_definition:{modifier_name}:{_safe_id(relative_path)}:{_safe_id(map_name)}",
         entity_type="modifier_definition",
         fields=fields,
         source=source,
@@ -4200,6 +4200,12 @@ def _status_callback_task_admission(event: str, opcode: str, task: dict[str, Any
         if blocked_reason == "queue_intent_source_mode_not_admitted":
             return "executable", ""
         return coverage_status, blocked_reason
+    if event in {"OnTriggerDeath", "OnTriggerDeathrattle"} and opcode == "ModifySPNew":
+        payload = _effect_payload(task, opcode, "")
+        coverage = _effect_coverage_status(opcode, payload)
+        if coverage == "executable":
+            return "executable", ""
+        return "blocked", _effect_blocked_reason(opcode, payload, coverage)
     if event in {"OnTriggerDeath", "OnTriggerDeathrattle", "OnAfterSkillUse", "OnListenAfterAttack"} and opcode in {"SetDynamicValue", "AddModifier"}:
         payload = _effect_payload(task, opcode, "")
         coverage = _effect_coverage_status(opcode, payload)
@@ -4270,7 +4276,7 @@ def _status_callback_task_source_admitted(relative_path: str, event: str, opcode
         _queue_source_candidate(relative_path)
         and not _queue_source_blocked(relative_path)
         and event in {"OnTriggerDeath", "OnTriggerDeathrattle", "OnAfterSkillUse"}
-        and opcode in {"SetDynamicValue", "AddModifier"}
+        and opcode in {"SetDynamicValue", "AddModifier", "ModifySPNew"}
     ):
         return True
     return False
@@ -5751,10 +5757,10 @@ def _standard_resource_delta_payload(value: dict[str, Any], opcode: str) -> dict
     formula_field = amount_field or unsupported_field
     amount = _numeric_expr_summary(value.get(formula_field) if formula_field else None)
     operation = "set" if formula_field in {"SetValue", "FixedSetValue", "SetMaxSPRatio", "FixedSetMaxSPRatio"} else "add"
-    scale_basis = "max_skill_points" if formula_field in {"AddMaxSPRatio", "FixedAddMaxSPRatio", "SetMaxSPRatio", "FixedSetMaxSPRatio"} else "flat"
+    scale_basis = "max_energy" if formula_field in {"AddMaxSPRatio", "FixedAddMaxSPRatio", "SetMaxSPRatio", "FixedSetMaxSPRatio"} else "flat"
     payload = {
         "kind": "resource_delta",
-        "resource": "skill_points" if opcode == "ModifySPNew" else opcode,
+        "resource": "energy" if opcode == "ModifySPNew" else opcode,
         "target_alias": _target_alias(value.get("TargetType")),
         "formula_type": formula_field or "missing",
         "amount": amount,

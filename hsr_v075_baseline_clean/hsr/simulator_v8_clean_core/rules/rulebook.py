@@ -56,6 +56,21 @@ class RuleBook:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "_entities", {entity.entity_id: entity for entity in self.ir.entities})
+        modifier_definitions_by_name: dict[str, list[RuleEntity]] = {}
+        for entity in self.ir.entities:
+            if entity.entity_type != "modifier_definition":
+                continue
+            modifier_name = entity.fields.get("modifier_name")
+            if isinstance(modifier_name, str) and modifier_name:
+                modifier_definitions_by_name.setdefault(modifier_name, []).append(entity)
+        object.__setattr__(
+            self,
+            "_modifier_definitions_by_name",
+            {
+                key: tuple(sorted(value, key=lambda item: (item.source.source_path, item.entity_id)))
+                for key, value in modifier_definitions_by_name.items()
+            },
+        )
         object.__setattr__(
             self,
             "_avatar_profiles",
@@ -964,7 +979,13 @@ class RuleBook:
     def triggers_for_modifier_event(self, modifier_name: str, event: str) -> tuple[TriggerIR, ...]:
         return self._triggers_by_modifier_event.get((modifier_name, event), ())
 
+    def modifier_definitions(self, modifier_name: str) -> tuple[RuleEntity, ...]:
+        return self._modifier_definitions_by_name.get(modifier_name, ())
+
     def modifier_definition(self, modifier_name: str) -> RuleEntity | None:
+        definitions = self.modifier_definitions(modifier_name)
+        if definitions:
+            return definitions[0]
         return self.entity(f"modifier_definition:{modifier_name}")
 
     def require_modifier_definition(self, modifier_name: str) -> RuleEntity:
