@@ -69,10 +69,12 @@ class ResourceSystem:
         unit_id: str,
         rule: ResourceRuleIR,
         *,
+        post_use_energy_gain: float = 0.0,
         metadata: dict[str, JSONValue] | None = None,
     ) -> Mutation:
         unit = state.units[unit_id]
-        after = 0.0
+        cap = unit.max_energy if unit.max_energy > 0 else post_use_energy_gain
+        after = max(0.0, min(cap, post_use_energy_gain))
         return Mutation(
             op="set",
             path=("units", unit_id, "energy"),
@@ -90,6 +92,7 @@ class ResourceSystem:
                 "resource_rule_source": rule.source.to_json(),
                 "before_energy": unit.energy,
                 "after_energy": after,
+                "post_use_energy_gain": post_use_energy_gain,
             },
             mutation_id=f"mutation:ultimate_energy_cost:{state.event_index}:{unit_id}",
         )

@@ -443,17 +443,17 @@ class TBGDLowering:
     def _lower_resource_rules(self) -> list[ResourceRuleIR]:
         return [
             ResourceRuleIR(
-                resource_rule_id="resource_rule:engine_convention:ultimate_energy_cost_to_zero",
+                resource_rule_id="resource_rule:engine_convention:ultimate_energy_cost_then_action_spbase",
                 rule_kind="ultimate_energy_cost",
-                operation="set_actor_energy_to_zero_after_admitted_ultimate_execution",
+                operation="set_actor_energy_to_action_spbase_after_admitted_ultimate_execution",
                 source_kind="engine_convention",
                 source=IRSource(
                     source_path="simulator_v8_clean_core/resource_engine_convention",
                     raw_type="ResourceEngineConvention",
-                    raw_id="ultimate_energy_cost_to_zero",
+                    raw_id="ultimate_energy_cost_then_action_spbase",
                     evidence={
-                        "reason": "TBGD raw constant source not admitted yet; recorded as explicit engine convention instead of TBGD source",
-                        "operation": "after an admitted ultimate action executes, set actor energy to 0",
+                        "reason": "Ultimate preflight consumes full energy, then admitted action SPBase is preserved as post-use energy gain.",
+                        "operation": "after an admitted ultimate action executes, set actor energy to ActionDefinitionIR.sp_base",
                     },
                 ),
                 coverage_status="executable",

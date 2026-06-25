@@ -162,7 +162,7 @@ class CombatScheduler:
                 "dequeue_before_execute": True,
                 "drain_via_scheduler": True,
                 "energy_preflight_admitted": True,
-                "energy_cost_policy": "set_actor_energy_to_zero_after_admitted_execution",
+                "energy_cost_policy": "set_actor_energy_to_action_spbase_after_admitted_execution",
                 "resource_rule_id": self.rules.default_ultimate_energy_cost_rule().resource_rule_id,
             },
             target_resolution=target_resolution,
@@ -753,6 +753,8 @@ class CombatScheduler:
                             "resource_rule_id": energy_mutation.metadata.get("resource_rule_id"),
                             "before_energy": energy_mutation.before,
                             "after_energy": energy_mutation.after,
+                            "post_use_energy_gain": energy_mutation.metadata.get("post_use_energy_gain"),
+                            "post_use_energy_gain_source": energy_mutation.metadata.get("post_use_energy_gain_source"),
                         },
                         trace=energy_mutation.metadata.get("source_trace") if isinstance(energy_mutation.metadata.get("source_trace"), dict) else {},
                     ).to_json()
@@ -1019,15 +1021,19 @@ class CombatScheduler:
             "queue_parent": command.metadata.get("queue_parent") if isinstance(command.metadata.get("queue_parent"), dict) else {},
             "resource_rule_source": rule.source.to_json(),
         }
+        post_use_energy_gain = max(0.0, float(definition.sp_base))
         return self.resources.spend_ultimate_energy(
             state,
             command.actor_id,
             rule,
+            post_use_energy_gain=post_use_energy_gain,
             metadata={
                 "action_id": command.action_id,
                 "action_level": command.action_level,
                 "definition_id": definition.definition_id,
                 "action_event_id": action_event.action_event_id,
+                "action_sp_base": post_use_energy_gain,
+                "post_use_energy_gain_source": "ActionDefinitionIR.sp_base",
                 "queue_parent": command.metadata.get("queue_parent") if isinstance(command.metadata.get("queue_parent"), dict) else {},
                 "queue_intent_id": plan.queue_intent_id,
                 "queue_resolution_id": plan.queue_resolution_id,

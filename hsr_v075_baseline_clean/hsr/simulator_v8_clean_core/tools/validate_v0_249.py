@@ -466,6 +466,8 @@ def _effect_transition(
 def _ultimate_energy_checks(case: dict[str, Any], rules: RuleBook) -> dict[str, Any]:
     rule = rules.default_ultimate_energy_cost_rule()
     mutation = _ultimate_energy_mutation_json(case)
+    selected_action = case.get("selected_action", {})
+    expected_after = float(selected_action.get("sp_base", 0.0)) if isinstance(selected_action, dict) else 0.0
     records = case["drain_transition"].get("settlement", {}).get("records", ())
     energy_records = [record for record in records if isinstance(record, dict) and record.get("record_type") == "ultimate_energy_cost"]
     checks = {
@@ -475,7 +477,11 @@ def _ultimate_energy_checks(case: dict[str, Any], rules: RuleBook) -> dict[str, 
         "resource_rule_engine_convention": rule.source_kind == "engine_convention",
         "energy_mutation_present": isinstance(mutation, dict),
         "energy_mutation_source": isinstance(mutation, dict) and mutation.get("source") == "combat_executor.resources",
-        "energy_set_to_zero": isinstance(mutation, dict) and float(mutation.get("after", -1.0)) == 0.0,
+        "energy_set_to_action_spbase": isinstance(mutation, dict) and float(mutation.get("after", -1.0)) == expected_after,
+        "energy_action_spbase_positive": expected_after > 0.0,
+        "post_use_gain_metadata": isinstance(mutation, dict)
+        and float(mutation.get("metadata", {}).get("post_use_energy_gain", -1.0)) == expected_after
+        and mutation.get("metadata", {}).get("post_use_energy_gain_source") == "ActionDefinitionIR.sp_base",
         "energy_was_positive": isinstance(mutation, dict) and float(mutation.get("before", 0.0)) > 0.0,
         "resource_rule_id_on_mutation": isinstance(mutation, dict)
         and mutation.get("metadata", {}).get("resource_rule_id") == rule.resource_rule_id,
@@ -551,7 +557,7 @@ def _actionability_matrix(
     rules: RuleBook,
 ) -> dict[str, Any]:
     entries = {
-        "ultimate_energy_cost": _fixed_now_entry(_ultimate_energy_checks(ultimate_case, rules)["ok"], "Manual admitted ultimate spends all actor energy through ResourceRuleIR engine convention"),
+        "ultimate_energy_cost": _fixed_now_entry(_ultimate_energy_checks(ultimate_case, rules)["ok"], "Manual admitted ultimate consumes full preflight energy and preserves the action SPBase post-use energy through ResourceRuleIR"),
         "condition_vm_common": _fixed_now_entry(_condition_checks(condition_cases)["ok"], "ByAnd/ByAny/ByCompareDynamicValue/ByCompareModifierValue/ByCompareHPRatio are evaluated conservatively"),
         "heal_formula_current_scope": _fixed_now_entry(effect_cases["heal_new_formula"]["checks"]["ok"], "HealByTargetMaxHP/HealByHealerMaxHP current fixed/status-bound numeric scope is executable"),
         "shield_formula_current_scope": _fixed_now_entry(effect_cases["shield_new_formula"]["checks"]["ok"], "ShieldByCasterMaxHP/ShieldByCasterDefence/ShieldByTargetMaxHP current fixed/status-bound numeric scope is executable"),
