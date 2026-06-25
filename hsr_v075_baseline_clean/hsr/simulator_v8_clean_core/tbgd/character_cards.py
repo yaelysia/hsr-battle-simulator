@@ -577,6 +577,10 @@ def _eidolon_slots_from_avatar_row(
             "skill_add_level_list": _json_safe(rank_row.get("SkillAddLevelList") or {}),
             "extra_effect_id_list": _json_safe(rank_row.get("ExtraEffectIDList") or []),
             "param_values": _json_safe(_param_values(rank_row.get("Param") or [])),
+            "dynamic_value_bindings": _eidolon_dynamic_value_bindings_for_rank(
+                row.get("_character_config_dynamic_value_bindings"),
+                index + 1,
+            ),
             "effect_application_boundary": "character_mechanism_slot",
             "runtime_effects_are_not_implicit": True,
         }
@@ -607,6 +611,7 @@ def _eidolon_slots_from_avatar_row(
                         "skill_add_level_list": _json_safe(rank_row.get("SkillAddLevelList") or {}),
                         "extra_effect_id_list": _json_safe(rank_row.get("ExtraEffectIDList") or []),
                         "param_values": semantics["param_values"],
+                        "dynamic_value_bindings": semantics["dynamic_value_bindings"],
                         "builder": "character_eidolon_interface_v0_267",
                     },
                 ),
@@ -622,6 +627,42 @@ def _eidolon_slots_from_avatar_row(
             )
         )
     return slots
+
+
+def _eidolon_dynamic_value_bindings_for_rank(value: object, rank: int) -> dict[str, JSONValue]:
+    if not isinstance(value, dict):
+        return {"by_hash": {}, "rank": rank}
+    by_hash = value.get("by_hash")
+    if not isinstance(by_hash, dict):
+        return {"by_hash": {}, "rank": rank, "source_path": _json_safe(value.get("source_path"))}
+    trigger_key = f"Rank{rank:02d}"
+    result: dict[str, JSONValue] = {}
+    for raw_hash, item in by_hash.items():
+        if not isinstance(item, dict):
+            continue
+        read_info = item.get("read_info")
+        if not isinstance(read_info, dict):
+            continue
+        if read_info.get("Type") != "SkillRank" or read_info.get("TriggerKey") != trigger_key:
+            continue
+        index = read_info.get("Index")
+        if not isinstance(index, int):
+            continue
+        result[str(raw_hash)] = {
+            "hash": str(raw_hash),
+            "rank": rank,
+            "trigger_key": trigger_key,
+            "param_index": index,
+            "read_info": _json_safe(read_info),
+            "source_path": _json_safe(item.get("source_path")),
+            "raw_path": _json_safe(item.get("raw_path")),
+        }
+    return {
+        "by_hash": result,
+        "rank": rank,
+        "trigger_key": trigger_key,
+        "source_path": _json_safe(value.get("source_path")),
+    }
 
 
 def skill_formula_bindings_from_row(
@@ -781,7 +822,7 @@ def _avatar_rows(tbgd_root: Path, *, max_records_per_table: int | None) -> list[
             continue
         for row_index, row in enumerate(_limit_sequence(data, max_records_per_table)):
             if isinstance(row, dict) and row.get("AvatarID") is not None:
-                copied = dict(row)
+                copied = _augment_avatar_row_with_config_dynamic_values(tbgd_root, dict(row))
                 copied["_character_card_version_kind"] = "base"
                 copied["_character_card_base_source_path"] = relative_path
                 copied["_character_card_base_row_index"] = row_index
@@ -798,7 +839,7 @@ def _avatar_rows(tbgd_root: Path, *, max_records_per_table: int | None) -> list[
             seen.add(avatar_id)
             continue
         enhanced_relative_path, enhanced_row_index, enhanced_row = enhanced
-        merged = {**base_row, **enhanced_row}
+        merged = _augment_avatar_row_with_config_dynamic_values(tbgd_root, {**base_row, **enhanced_row})
         for key in ("DamageType", "AvatarBaseType", "Rarity"):
             if not merged.get(key):
                 merged[key] = base_row.get(key)
@@ -816,7 +857,7 @@ def _avatar_rows(tbgd_root: Path, *, max_records_per_table: int | None) -> list[
         avatar_id = str(enhanced_row["AvatarID"])
         if avatar_id in seen:
             continue
-        copied = dict(enhanced_row)
+        copied = _augment_avatar_row_with_config_dynamic_values(tbgd_root, dict(enhanced_row))
         copied["_character_card_version_kind"] = "enhanced"
         copied["_character_card_enhanced_source_path"] = enhanced_relative_path
         copied["_character_card_enhanced_row_index"] = enhanced_row_index
@@ -824,6 +865,36 @@ def _avatar_rows(tbgd_root: Path, *, max_records_per_table: int | None) -> list[
         copied["_character_card_enhanced_skill_list"] = _json_safe(enhanced_row.get("SkillList") or [])
         rows.append((enhanced_relative_path, enhanced_row_index, copied))
     return rows
+
+
+def _augment_avatar_row_with_config_dynamic_values(tbgd_root: Path, row: dict[str, Any]) -> dict[str, Any]:
+    json_path = row.get("JsonPath")
+    if not isinstance(json_path, str) or not json_path:
+        row["_character_config_dynamic_value_bindings"] = {"by_hash": {}, "source_path": ""}
+        return row
+    config_path = tbgd_root / json_path
+    if not config_path.exists():
+        row["_character_config_dynamic_value_bindings"] = {"by_hash": {}, "source_path": json_path, "blocked_reason": "character_config_missing"}
+        return row
+    try:
+        data = json.loads(config_path.read_text(encoding="utf-8"))
+    except Exception:
+        row["_character_config_dynamic_value_bindings"] = {"by_hash": {}, "source_path": json_path, "blocked_reason": "character_config_unreadable"}
+        return row
+    floats = data.get("DynamicValues", {}).get("Floats") if isinstance(data, dict) else None
+    by_hash: dict[str, JSONValue] = {}
+    if isinstance(floats, dict):
+        for raw_hash, item in floats.items():
+            if not isinstance(item, dict):
+                continue
+            by_hash[str(raw_hash)] = {
+                "hash": str(raw_hash),
+                "read_info": _json_safe(item.get("ReadInfo")),
+                "source_path": json_path,
+                "raw_path": f"DynamicValues.Floats[{raw_hash}]",
+            }
+    row["_character_config_dynamic_value_bindings"] = {"by_hash": by_hash, "source_path": json_path}
+    return row
 
 
 def _avatar_rank_rows_by_id(

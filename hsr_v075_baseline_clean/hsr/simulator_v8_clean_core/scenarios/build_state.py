@@ -220,6 +220,7 @@ def _eidolon_runtime_activation(eidolon_slots: tuple[object, ...]) -> dict[str, 
                             "slot": slot,
                             "ability_name": item,
                             "param_values": tuple(_number_items(semantics.get("param_values"))),
+                            "dynamic_value_bindings": semantics.get("dynamic_value_bindings"),
                         }
                     )
         skill_add_level_list = semantics.get("skill_add_level_list")
@@ -371,19 +372,17 @@ def _eidolon_startup_dynamic_values(
 ) -> tuple[dict[str, float], dict[str, object]]:
     if not isinstance(standard, dict):
         return {}, {"admission_status": "not_applicable", "reason": "standard_payload_missing"}
+    params = tuple(_number_items(spec.get("param_values")))
+    configured_bindings = spec.get("dynamic_value_bindings")
+    configured_by_hash = configured_bindings.get("by_hash") if isinstance(configured_bindings, dict) else None
+    if not isinstance(configured_by_hash, dict):
+        configured_by_hash = {}
     requests = standard.get("dynamic_value_requests")
     if not isinstance(requests, dict) or not requests:
+        if configured_by_hash:
+            return _eidolon_configured_dynamic_values(params, configured_by_hash, spec)
         return {}, {"admission_status": "not_applicable", "reason": "no_dynamic_value_requests"}
-    params = tuple(_number_items(spec.get("param_values")))
     request_items = [(str(name), request) for name, request in requests.items() if isinstance(request, dict)]
-    if len(params) != len(request_items):
-        return {}, {
-            "admission_status": "blocked",
-            "blocked_reason": "eidolon_rank_param_count_does_not_match_dynamic_value_requests",
-            "param_count": len(params),
-            "request_count": len(request_items),
-            "request_names": [name for name, _ in request_items],
-        }
     dynamic_values: dict[str, float] = {}
     bindings: list[dict[str, object]] = []
     for index, (name, request) in enumerate(request_items):
@@ -394,13 +393,101 @@ def _eidolon_startup_dynamic_values(
                 "blocked_reason": "eidolon_dynamic_value_request_hash_missing",
                 "request_name": name,
             }
-        value = float(params[index])
+        configured = configured_by_hash.get(str(raw_hash))
+        param_index = index
+        binding_source_kind = "eidolon_rank_param_request_order"
+        if isinstance(configured, dict):
+            configured_index = configured.get("param_index")
+            if not isinstance(configured_index, int):
+                return {}, {
+                    "admission_status": "blocked",
+                    "blocked_reason": "eidolon_dynamic_value_binding_param_index_missing",
+                    "request_name": name,
+                    "hash": str(raw_hash),
+                    "binding": configured,
+                }
+            param_index = configured_index
+            binding_source_kind = "character_config_dynamic_value_read_info"
+        elif len(params) != len(request_items):
+            return {}, {
+                "admission_status": "blocked",
+                "blocked_reason": "eidolon_rank_param_binding_missing",
+                "param_count": len(params),
+                "request_count": len(request_items),
+                "request_names": [item_name for item_name, _ in request_items],
+                "hash": str(raw_hash),
+            }
+        if param_index < 0 or param_index >= len(params):
+            return {}, {
+                "admission_status": "blocked",
+                "blocked_reason": "eidolon_dynamic_value_binding_param_index_out_of_range",
+                "request_name": name,
+                "hash": str(raw_hash),
+                "param_index": param_index,
+                "param_count": len(params),
+            }
+        value = float(params[param_index])
         dynamic_values[name] = value
         dynamic_values[str(raw_hash)] = value
-        bindings.append({"name": name, "hash": str(raw_hash), "param_index": index, "value": value})
+        bindings.append(
+            {
+                "name": name,
+                "hash": str(raw_hash),
+                "param_index": param_index,
+                "value": value,
+                "binding_source_kind": binding_source_kind,
+                "binding_source": configured if isinstance(configured, dict) else {},
+            }
+        )
     return dynamic_values, {
         "admission_status": "executable",
         "source_kind": "eidolon_rank_param_to_rank_ability_dynamic_value_request",
+        "bindings": bindings,
+        "eidolon_slot_id": str(getattr(spec.get("slot"), "eidolon_slot_id", "")),
+        "rank_id": str(getattr(spec.get("slot"), "rank_id", "")),
+    }
+
+
+def _eidolon_configured_dynamic_values(
+    params: tuple[float, ...],
+    configured_by_hash: dict[str, object],
+    spec: dict[str, Any],
+) -> tuple[dict[str, float], dict[str, object]]:
+    dynamic_values: dict[str, float] = {}
+    bindings: list[dict[str, object]] = []
+    for hash_key, configured in configured_by_hash.items():
+        if not isinstance(configured, dict):
+            continue
+        param_index = configured.get("param_index")
+        if not isinstance(param_index, int):
+            return {}, {
+                "admission_status": "blocked",
+                "blocked_reason": "eidolon_configured_dynamic_value_param_index_missing",
+                "hash": str(hash_key),
+                "binding": configured,
+            }
+        if param_index < 0 or param_index >= len(params):
+            return {}, {
+                "admission_status": "blocked",
+                "blocked_reason": "eidolon_configured_dynamic_value_param_index_out_of_range",
+                "hash": str(hash_key),
+                "param_index": param_index,
+                "param_count": len(params),
+            }
+        value = float(params[param_index])
+        dynamic_values[str(hash_key)] = value
+        bindings.append(
+            {
+                "hash": str(hash_key),
+                "param_index": param_index,
+                "value": value,
+                "binding_source_kind": "character_config_dynamic_value_read_info",
+                "binding_source": configured,
+            }
+        )
+    return dynamic_values, {
+        "admission_status": "executable",
+        "source_kind": "eidolon_rank_param_to_rank_ability_configured_dynamic_values",
         "bindings": bindings,
         "eidolon_slot_id": str(getattr(spec.get("slot"), "eidolon_slot_id", "")),
         "rank_id": str(getattr(spec.get("slot"), "rank_id", "")),

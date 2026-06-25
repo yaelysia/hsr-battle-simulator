@@ -416,6 +416,7 @@ class DamageSystem:
                     scaling_basis=packet.scaling_basis,
                     source_trace=packet.source_trace,
                     crit_mode=_metadata_str(packet.metadata, "crit_mode"),
+                    direct_modifier_terms=_direct_modifier_terms_from_metadata(packet.metadata),
                 )
             )
         except ValueError as exc:
@@ -832,6 +833,13 @@ def _metadata_str(metadata: dict[str, JSONValue], key: str) -> str | None:
     return str(value) if isinstance(value, str) else None
 
 
+def _direct_modifier_terms_from_metadata(metadata: dict[str, JSONValue]) -> tuple[dict[str, JSONValue], ...]:
+    value = metadata.get("direct_modifier_terms")
+    if not isinstance(value, list):
+        return ()
+    return tuple(item for item in value if isinstance(item, dict))
+
+
 def source_frame_for_packet(packet: DamagePacket) -> DamageSourceFrame:
     if packet.source_frame is not None:
         return packet.source_frame
@@ -964,6 +972,8 @@ def _damage_hit_event(
             "primary_action_target_id": packet.metadata.get("primary_action_target_id"),
             "hit_index": packet.metadata.get("hit_index"),
             "target_group": packet.metadata.get("target_group"),
+            "damage_custom_name": packet.metadata.get("damage_custom_name"),
+            "custom_name": packet.metadata.get("damage_custom_name"),
             "amount": amount,
             "target_before_hp": before_hp,
             "target_after_hp": after_hp,
@@ -1027,6 +1037,8 @@ def _damage_defeat_event(
             "primary_target_id": packet.metadata.get("primary_action_target_id") or packet.target_id,
             "hit_index": packet.metadata.get("hit_index"),
             "target_group": packet.metadata.get("target_group"),
+            "damage_custom_name": packet.metadata.get("damage_custom_name"),
+            "custom_name": packet.metadata.get("damage_custom_name"),
             "amount": amount,
             "target_before_hp": before_hp,
             "target_after_hp": after_hp,

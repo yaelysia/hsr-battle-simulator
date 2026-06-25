@@ -78,6 +78,7 @@ EXECUTABLE_CONDITION_OPCODES = {
     "ByCompareDynamicValue",
     "ByCompareHPRatio",
     "ByCompareModifierValue",
+    "ByCompareDamageCustomName",
     "ByCompareTarget",
     "ByCurrentSkillType",
     "ByIsContainModifier",
@@ -738,6 +739,24 @@ def _evaluate_condition_payload(
             opcode,
             "target_identity_compared",
             {"left_target_id": left_id, "right_target_id": right_id},
+            source_trace,
+        )
+    if opcode == "ByCompareDamageCustomName":
+        expected = _value_field(payload.get("CustomName"))
+        if not isinstance(expected, str) or not expected:
+            return _condition_blocked(condition_id, opcode, "damage_custom_name_missing", {"payload": payload}, source_trace)
+        event_payload = context.event_payload or {}
+        actual = (
+            event_payload.get("damage_custom_name")
+            or event_payload.get("custom_name")
+            or event_payload.get("CustomName")
+        )
+        return _condition_result(
+            str(actual) == expected,
+            condition_id,
+            opcode,
+            "damage_custom_name_compared",
+            {"expected": expected, "actual": actual},
             source_trace,
         )
     if opcode in {"ByAnd", "ByAny"}:

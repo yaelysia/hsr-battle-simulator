@@ -545,7 +545,12 @@ CANONICAL_EVENT_ALIASES: dict[str, tuple[tuple[str, str, str], ...]] = {
         ("OnListenCharacterDie", "owner_local", ""),
         ("OnTriggerDeathrattle", "owner_local", ""),
     ),
+    "unit.before_dying": (
+        ("OnBeforeDying", "owner_local", ""),
+    ),
     "damage.hit": (
+        ("OnAfterHitAll", "actor_local", ""),
+        ("OnAfterBeingAttacked", "being_hit_target_local", ""),
         ("OnHit", "per_hit_target_local", "downstream_intent_missing:per_hit_listener_execution_not_admitted"),
         ("OnBeingHit", "being_hit_target_local", "downstream_intent_missing:being_hit_listener_execution_not_admitted"),
     ),
@@ -650,6 +655,8 @@ def _scope_kind_for_callback_event(event: GameEvent, callback_event: str) -> str
         return explicit
     if callback_event == "OnListenAllowAction":
         return "owner_local"
+    if callback_event in {"OnBeforeHitAll", "OnAfterHitAll", "OnAfterSkillUse"}:
+        return "actor_local"
     if callback_event.startswith("OnListen"):
         return "global_listener"
     if (
@@ -664,6 +671,8 @@ def _scope_kind_for_callback_event(event: GameEvent, callback_event: str) -> str
     if callback_event in {"OnBeforeSkillUse", "OnBeforeAttack", "OnAfterAttack", "OnAfterSkillUse"}:
         return "actor_local"
     if callback_event in {"OnTriggerDeath", "OnListenCharacterDie", "OnTriggerDeathrattle"}:
+        return "owner_local"
+    if callback_event == "OnBeforeDying":
         return "owner_local"
     if callback_event in {"OnStack", "OnPhase1"}:
         return "status_local"

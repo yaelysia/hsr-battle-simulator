@@ -89,6 +89,34 @@ class EffectIR:
 
 
 @dataclass(frozen=True)
+class DamageModifierIR:
+    damage_modifier_id: str
+    callback_id: str
+    source_task_id: str
+    modifier_name: str
+    event: str
+    target_alias: str
+    modifier_terms: tuple[dict[str, JSONValue], ...]
+    source: IRSource
+    coverage_status: CoverageStatus = "blocked"
+    blocked_reason: str = ""
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "damage_modifier_id": self.damage_modifier_id,
+            "callback_id": self.callback_id,
+            "source_task_id": self.source_task_id,
+            "modifier_name": self.modifier_name,
+            "event": self.event,
+            "target_alias": self.target_alias,
+            "modifier_terms": list(self.modifier_terms),
+            "source": self.source.to_json(),
+            "coverage_status": self.coverage_status,
+            "blocked_reason": self.blocked_reason,
+        }
+
+
+@dataclass(frozen=True)
 class TriggerIR:
     trigger_id: str
     event: str
@@ -1301,6 +1329,7 @@ class CanonicalIR:
     hit_profiles: tuple[HitProfileIR, ...] = ()
     skill_formula_bindings: tuple[SkillFormulaBindingIR, ...] = ()
     damage_emissions: tuple[DamageEmissionIR, ...] = ()
+    damage_modifiers: tuple[DamageModifierIR, ...] = ()
     toughness_emissions: tuple[ToughnessEmissionIR, ...] = ()
     break_templates: tuple[BreakTemplateIR, ...] = ()
     break_base_damage: tuple[BreakBaseDamageIR, ...] = ()
@@ -1348,6 +1377,7 @@ class CanonicalIR:
             "hit_profiles": [profile.to_json() for profile in self.hit_profiles],
             "skill_formula_bindings": [binding.to_json() for binding in self.skill_formula_bindings],
             "damage_emissions": [emission.to_json() for emission in self.damage_emissions],
+            "damage_modifiers": [modifier.to_json() for modifier in self.damage_modifiers],
             "toughness_emissions": [emission.to_json() for emission in self.toughness_emissions],
             "break_templates": [template.to_json() for template in self.break_templates],
             "break_base_damage": [item.to_json() for item in self.break_base_damage],

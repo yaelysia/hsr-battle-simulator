@@ -228,10 +228,10 @@ class StatusSystem:
         formula_bindings = _status_formula_bindings(standard)
         before_details = _status_details(unit_flags=state.units[target_id].flags)
         existing_detail = _matching_status_detail(before_details, target_id, modifier_name, effect.effect_id, source_id)
-        duration_admission = _runtime_duration_admission(standard, definition, effect)
+        duration_admission = _runtime_duration_admission(standard, definition, effect, binding_sources)
         application_operation, partial_reasons = _application_semantics(standard, existing_detail, duration_admission)
         unsupported = [*unsupported, *partial_reasons]
-        duration = _admitted_duration_value(duration_admission)
+        duration = _status_instance_duration_value(duration_admission)
         life_step_moment = str(duration_admission.get("life_step_moment") or "")
         status_instance = StatusInstance(
             instance_id=_status_instance_id(target_id, modifier_name, effect.effect_id, source_id),
@@ -834,14 +834,32 @@ def _resolve_dynamic_values(
         "__definition_bindings": _json_safe(definition.fields.get("dynamic_value_bindings", {})),
         "__dynamic_value_requests": _json_safe(standard.get("dynamic_value_requests", {})),
     }
-    dynamic_values = standard.get("dynamic_values")
-    if not isinstance(dynamic_values, dict):
-        return values
     bindings = _numeric_bindings(runtime_bindings)
     by_name: dict[str, JSONValue] = {}
     by_hash: dict[str, JSONValue] = {}
     evaluations: list[JSONValue] = []
     resolved_values_in_order: list[float] = []
+    for key, value in bindings.items():
+        by_hash[str(key)] = value
+        values[str(key)] = value
+        evaluations.append(
+            {
+                "name": f"runtime_binding:{key}",
+                "result": {
+                    "ok": True,
+                    "value": value,
+                    "expression_kind": "runtime_dynamic_value_binding",
+                    "bindings": {"hash": str(key), "source_type": "runtime_add_modifier_binding"},
+                    "source_trace": source_trace,
+                },
+            }
+        )
+    dynamic_values = standard.get("dynamic_values")
+    if not isinstance(dynamic_values, dict):
+        values["__by_name"] = by_name
+        values["__by_hash"] = by_hash
+        values["__evaluations"] = evaluations
+        return values
     for key, expr in dynamic_values.items():
         result = RuleEvaluator().evaluate_numeric(
             expr,
@@ -885,6 +903,30 @@ def _resolve_dynamic_values(
                         },
                     }
                 )
+    callback_bindings = definition.fields.get("callback_dynamic_hashes")
+    callback_hashes = _definition_callback_dynamic_hashes(callback_bindings)
+    if len(resolved_values_in_order) == 1 and len(callback_hashes) == 1:
+        hash_key, binding = next(iter(callback_hashes.items()))
+        if str(hash_key) not in by_hash:
+            value = resolved_values_in_order[0]
+            by_hash[str(hash_key)] = value
+            values[str(hash_key)] = value
+            evaluations.append(
+                {
+                    "name": f"callback_hash:{hash_key}",
+                    "result": {
+                        "ok": True,
+                        "value": value,
+                        "expression_kind": "single_status_dynamic_value_callback_hash_binding",
+                        "bindings": {
+                            "hash": str(hash_key),
+                            "source_type": "modifier_callback_dynamic_hash_single_binding",
+                            "binding": _json_safe(binding),
+                        },
+                        "source_trace": source_trace,
+                    },
+                }
+            )
     values["__by_name"] = by_name
     values["__by_hash"] = by_hash
     values["__evaluations"] = evaluations
@@ -1011,6 +1053,7 @@ def _runtime_duration_admission(
     standard: dict[str, JSONValue],
     definition: RuleEntity,
     effect: EffectIR,
+    binding_sources: tuple[dict[str, JSONValue], ...] = (),
 ) -> dict[str, JSONValue]:
     source_mode = _duration_source_mode(effect.source.source_path)
     if source_mode != "mainline":
@@ -1029,6 +1072,7 @@ def _runtime_duration_admission(
         standard_moment or definition_moment,
         source_kind="effect",
         source_trace={"effect_id": effect.effect_id, "effect_source": effect.source.to_json()},
+        binding_sources=binding_sources,
     )
     if combined_standard.get("admission_status") == "executable":
         return combined_standard
@@ -1039,6 +1083,7 @@ def _runtime_duration_admission(
         definition_moment,
         source_kind="modifier_definition",
         source_trace={"modifier_definition": definition.source.to_json()},
+        binding_sources=binding_sources,
     )
     if combined_definition.get("admission_status") == "executable":
         return combined_definition
@@ -1051,8 +1096,12 @@ def _duration_admission_from_expr(
     *,
     source_kind: str,
     source_trace: dict[str, JSONValue],
+    binding_sources: tuple[dict[str, JSONValue], ...] = (),
 ) -> dict[str, JSONValue]:
-    result = RuleEvaluator().evaluate_numeric(lifetime_expr, NumericEvaluationContext(source_trace=source_trace))
+    result = RuleEvaluator().evaluate_numeric(
+        lifetime_expr,
+        NumericEvaluationContext(binding_sources=binding_sources, source_trace=source_trace),
+    )
     if _is_missing_numeric_expr(lifetime_expr):
         return {
             "admission_status": "not_applicable",
@@ -1071,7 +1120,7 @@ def _duration_admission_from_expr(
             "source_trace": source_trace,
             "numeric_evaluation": result.to_json(),
         }
-    if result.expression_kind != "fixed":
+    if result.expression_kind not in {"fixed", "dynamic_hash", "postfix_expr"}:
         return {
             "admission_status": "blocked",
             "blocked_reason": f"lifetime_not_fixed:{result.expression_kind}",
@@ -1095,6 +1144,7 @@ def _duration_admission_from_expr(
             "admission_status": "blocked",
             "blocked_reason": reason,
             "life_step_moment": life_step_moment,
+            "remaining_duration": float(result.value),
             "source_kind": source_kind,
             "source_trace": source_trace,
             "numeric_evaluation": result.to_json(),
@@ -1115,6 +1165,18 @@ def _admitted_duration_value(duration_admission: dict[str, JSONValue]) -> float 
         return None
     value = duration_admission.get("remaining_duration")
     return float(value) if isinstance(value, (int, float)) else None
+
+
+def _status_instance_duration_value(duration_admission: dict[str, JSONValue]) -> float | None:
+    value = _admitted_duration_value(duration_admission)
+    if value is not None:
+        return value
+    if duration_admission.get("admission_status") == "blocked":
+        reason = str(duration_admission.get("blocked_reason") or "")
+        if reason.startswith("life_step_moment_missing") or reason.startswith("unsupported_life_step_moment"):
+            raw_value = duration_admission.get("remaining_duration")
+            return float(raw_value) if isinstance(raw_value, (int, float)) else None
+    return None
 
 
 def _duration_source_mode(source_path: str) -> str:
@@ -1271,6 +1333,20 @@ def _definition_dynamic_hash_bindings(definition_bindings: dict[str, JSONValue])
         if isinstance(index, bool) or not isinstance(index, int):
             continue
         result[str(hash_key)] = {"index": index}
+    return result
+
+
+def _definition_callback_dynamic_hashes(callback_bindings: object) -> dict[str, dict[str, JSONValue]]:
+    if not isinstance(callback_bindings, dict):
+        return {}
+    by_hash = callback_bindings.get("by_hash")
+    if not isinstance(by_hash, dict):
+        return {}
+    result: dict[str, dict[str, JSONValue]] = {}
+    for hash_key, binding in by_hash.items():
+        if not isinstance(binding, dict):
+            continue
+        result[str(hash_key)] = _json_safe(binding)
     return result
 
 

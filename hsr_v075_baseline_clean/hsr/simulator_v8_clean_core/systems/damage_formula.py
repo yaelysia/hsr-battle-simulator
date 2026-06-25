@@ -117,6 +117,7 @@ class DamageFormulaInput:
     scaling_basis: dict[str, JSONValue] = field(default_factory=dict)
     source_trace: dict[str, JSONValue] = field(default_factory=dict)
     crit_mode: str | None = None
+    direct_modifier_terms: tuple[dict[str, JSONValue], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -202,7 +203,7 @@ class DirectDamageFormula:
 
         crit_resolution, rng_event, crit_bucket = _resolve_crit(formula_input, actor)
         damage_bonus_mult, damage_bonus_bucket = _damage_bonus_bucket(actor, element)
-        def_mult, defense_bucket = _defense_bucket(actor, target)
+        def_mult, defense_bucket = _defense_bucket(actor, target, formula_input)
         res_mult, resistance_bucket = _resistance_bucket(actor, target, element)
         damage_taken_mult, damage_taken_bucket = _damage_taken_bucket(target)
         damage_reduction_mult, damage_reduction_bucket = _damage_reduction_bucket(target)
@@ -258,7 +259,9 @@ class DirectDamageFormula:
 
 
 def _resolve_crit(formula_input: DamageFormulaInput, actor: UnitState) -> tuple[CritResolution, RNGEvent, DamageFormulaBucket]:
-    crit_rate = _clamp(_resource(actor, "critical_chance"), 0.0, 1.0)
+    crit_modifier_terms = _direct_modifier_terms(formula_input, bucket="crit", key="critical_chance")
+    crit_bonus = sum(float(term.get("value") or 0.0) for term in crit_modifier_terms)
+    crit_rate = _clamp(_resource(actor, "critical_chance") + crit_bonus, 0.0, 1.0)
     crit_damage = _resource(actor, "critical_damage")
     event_id = (
         f"rng:{formula_input.state.event_index}:"
@@ -319,8 +322,9 @@ def _resolve_crit(formula_input: DamageFormulaInput, actor: UnitState) -> tuple[
         applied_terms=(
             _applied_term("actor.resources", actor.unit_id, "crit", "critical_chance", "actor", "always", crit_rate, "crit_rate_clamped", "resources.critical_chance"),
             _applied_term("actor.resources", actor.unit_id, "crit", "critical_damage", "actor", "is_crit" if is_crit else "not_crit", crit_damage, "crit_damage_available", "resources.critical_damage"),
+            *tuple(_direct_modifier_applied_term(term, "crit") for term in crit_modifier_terms),
         ),
-        metadata=resolution.to_json(),
+        metadata={**resolution.to_json(), "direct_modifier_bonus": crit_bonus},
     )
     return resolution, rng_event, bucket
 
@@ -350,9 +354,11 @@ def _damage_bonus_bucket(actor: UnitState, element: str | None) -> tuple[float, 
     )
 
 
-def _defense_bucket(actor: UnitState, target: UnitState) -> tuple[float, DamageFormulaBucket]:
+def _defense_bucket(actor: UnitState, target: UnitState, formula_input: DamageFormulaInput) -> tuple[float, DamageFormulaBucket]:
     resource_def_reduction = _resource(target, "def_reduction")
     resource_def_ignore = _resource(actor, "def_ignore")
+    direct_terms = _direct_modifier_terms(formula_input, bucket="defense", key="defender_defence_added_ratio")
+    defender_added_ratio = sum(float(term.get("value") or 0.0) for term in direct_terms)
     status_def_reduction, target_status_terms, target_skipped_terms = _status_modifier_terms(
         target,
         source_type="target.status",
@@ -367,12 +373,13 @@ def _defense_bucket(actor: UnitState, target: UnitState) -> tuple[float, DamageF
     )
     def_reduction = resource_def_reduction + status_def_reduction
     def_ignore = resource_def_ignore + status_def_ignore
-    effective_def = max(0.0, target.defense * (1.0 - def_reduction - def_ignore))
+    effective_def = max(0.0, target.defense * (1.0 + defender_added_ratio - def_reduction - def_ignore))
     multiplier = 1.0 if effective_def <= 0 else 1.0 - effective_def / (effective_def + 200.0 + 10.0 * actor.level)
     terms = (
         _applied_term("target.stats", target.unit_id, "defense", "defense", "target", "always", target.defense, "base_target_defense", "unit.defense"),
         _applied_term("target.resources", target.unit_id, "defense", "def_reduction", "target", "always", resource_def_reduction, _neutral_reason(resource_def_reduction), "resources.def_reduction"),
         _applied_term("actor.resources", actor.unit_id, "defense", "def_ignore", "actor", "always", resource_def_ignore, _neutral_reason(resource_def_ignore), "resources.def_ignore"),
+        *tuple(_direct_modifier_applied_term(term, "defense") for term in direct_terms),
         *target_status_terms,
         *actor_status_terms,
     )
@@ -386,6 +393,7 @@ def _defense_bucket(actor: UnitState, target: UnitState) -> tuple[float, DamageF
             "actor_level": actor.level,
             "status_def_reduction": status_def_reduction,
             "status_def_ignore": status_def_ignore,
+            "direct_defender_added_ratio": defender_added_ratio,
         },
     )
 
@@ -570,6 +578,38 @@ def _status_details(unit: UnitState) -> tuple[dict[str, JSONValue], ...]:
     if not isinstance(raw_details, (list, tuple)):
         return ()
     return tuple(item for item in raw_details if isinstance(item, dict))
+
+
+def _direct_modifier_terms(
+    formula_input: DamageFormulaInput,
+    *,
+    bucket: str,
+    key: str,
+) -> tuple[dict[str, JSONValue], ...]:
+    terms: list[dict[str, JSONValue]] = []
+    for item in formula_input.direct_modifier_terms:
+        if not isinstance(item, dict):
+            continue
+        if item.get("bucket") != bucket or item.get("key") != key:
+            continue
+        if not isinstance(item.get("value"), (int, float)):
+            continue
+        terms.append(item)
+    return tuple(terms)
+
+
+def _direct_modifier_applied_term(term: dict[str, JSONValue], bucket: str) -> ModifierTerm:
+    return _applied_term(
+        str(term.get("source_type") or "damage_modifier_ir"),
+        str(term.get("source_id") or term.get("damage_modifier_id") or ""),
+        bucket,
+        str(term.get("key") or ""),
+        str(term.get("scope") or ""),
+        str(term.get("condition") or "condition_passed"),
+        float(term.get("value") or 0.0),
+        str(term.get("applied_reason") or "damage_modifier_applied"),
+        str(term.get("raw_path") or term.get("field") or ""),
+    )
 
 
 def _deterministic_roll(

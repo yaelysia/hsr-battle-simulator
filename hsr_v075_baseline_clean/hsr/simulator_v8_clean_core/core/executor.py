@@ -15,11 +15,13 @@ from .model import (
 )
 from .reducer import MutationReducer
 from .settlement import SettlementRecord
+from ..rules.evaluator import EvaluationContext, NumericEvaluationContext, RuleEvaluator
 from ..rules.ir import ActionDefinitionIR
 from ..rules.rulebook import RuleBook
 from ..systems.ability import AbilityTaskExecutionResult, AbilityTaskSystem
 from ..systems.break_system import BreakApplicationResult, BreakSystem
 from ..systems.damage import DamagePacket, DamageSystem, DamageSourceFrame, DamageWindowLedger
+from ..systems.dynamic_values import binding_source_from_store, status_binding_sources, store_from_state
 from ..systems.effect import EffectRegistry
 from ..systems.resource import ResourcePlan, ResourceSystem
 from ..systems.status import StatusSystem
@@ -211,8 +213,21 @@ class CombatExecutor:
                             "action_id": command.action_id,
                             "action_level": command.action_level,
                             "actor_id": command.actor_id,
+                            "attacker_id": command.actor_id,
+                            "damage_attacker_id": command.actor_id,
                             "selected_target_ids": list(target_result.resolution.selected),
+                            "target_ids": list(target_result.resolution.selected),
                             "primary_action_target_id": action_execution_plan.primary_action_target_id,
+                            "primary_target_id": action_execution_plan.primary_action_target_id,
+                            "current_hit_target_id": action_execution_plan.primary_action_target_id,
+                            "target_id": action_execution_plan.primary_action_target_id,
+                            "attack_type": action_definition.attack_type,
+                            "AttackType": action_definition.attack_type,
+                            "skill_type": _condition_skill_type(action_definition),
+                            "SkillType": _condition_skill_type(action_definition),
+                            "skill_effect": action_definition.skill_effect,
+                            "is_current_skill_active": True,
+                            "is_insert_action": _metadata_bool(command.metadata, "is_insert_action", False),
                         },
                     )
                     trigger_result = self.event_dispatcher.dispatch_action_window(
@@ -228,6 +243,15 @@ class CombatExecutor:
                     trigger_results.append(trigger_result)
                     ordered_mutations.extend(trigger_result.mutations)
                     runtime_records.extend(trigger_result.records)
+                    listener_result = self.event_dispatcher.dispatch_event(
+                        current_state,
+                        event=dispatch_event,
+                        damage_window_ledger=damage_window_ledger,
+                    )
+                    current_state = listener_result.after_state
+                    trigger_results.append(listener_result)
+                    ordered_mutations.extend(listener_result.mutations)
+                    runtime_records.extend(listener_result.records)
                     continue
                 if step.kind == "damage":
                     if not action_execution_plan.damage_plan:
@@ -324,6 +348,22 @@ class CombatExecutor:
                         )
                         if damage_packet is None:
                             continue
+                        modifier_terms, modifier_records = _collect_direct_damage_modifiers(
+                            current_state,
+                            self.rules,
+                            command.actor_id,
+                            damage_packet.target_id,
+                            damage_packet,
+                        )
+                        if modifier_terms or modifier_records:
+                            damage_packet = replace(
+                                damage_packet,
+                                metadata={
+                                    **damage_packet.metadata,
+                                    "direct_modifier_terms": [term for term in modifier_terms],
+                                },
+                            )
+                            runtime_records.extend(modifier_records)
                         damage_result = self.damage.apply_packet(
                             current_state,
                             damage_packet,
@@ -1046,6 +1086,7 @@ def _damage_packet(
             "damage_source_kind": "primary_action_damage",
             "damage_sequence_id": f"action:{command.actor_id}:{command.action_id}:level:{command.action_level}",
             "can_continue_after_lethal": True,
+            "damage_custom_name": _damage_custom_name_from_trace(damage_plan.hit_source_trace),
             "hit_index": damage_plan.hit_index,
             "damage_emission_id": damage_plan.damage_emission_id,
             "source_task_id": damage_plan.source_task_id,
@@ -1077,9 +1118,201 @@ def _damage_packet(
     )
 
 
+def _collect_direct_damage_modifiers(
+    state: BattleState,
+    rules: RuleBook,
+    actor_id: str,
+    target_id: str,
+    packet: DamagePacket,
+) -> tuple[tuple[dict[str, JSONValue], ...], tuple[dict[str, JSONValue], ...]]:
+    if packet.damage_formula_family != "direct":
+        return (), ()
+    actor = state.units.get(actor_id)
+    target = state.units.get(target_id)
+    if actor is None or target is None:
+        return (), ()
+    details = actor.flags.get("status_details", ())
+    if not isinstance(details, (list, tuple)):
+        return (), ()
+    evaluator = RuleEvaluator()
+    terms: list[dict[str, JSONValue]] = []
+    records: list[dict[str, JSONValue]] = []
+    event_payload = {
+        **packet.metadata,
+        "target_id": target_id,
+        "current_hit_target_id": target_id,
+        "param_entity_id": target_id,
+        "damage_custom_name": packet.metadata.get("damage_custom_name"),
+        "attack_type": packet.attack_type,
+        "AttackType": packet.attack_type,
+        "SkillType": packet.metadata.get("SkillType"),
+        "skill_type": packet.metadata.get("skill_type"),
+    }
+    for detail in details:
+        if not isinstance(detail, dict):
+            continue
+        modifier_name = str(detail.get("modifier_name") or "")
+        owner_id = str(detail.get("owner_id") or actor_id)
+        callback_ids = _trigger_ids_for_detail_event(detail, "OnBeforeHitAll")
+        callbacks = rules.status_callbacks_for_modifier_event_scope(modifier_name, "OnBeforeHitAll", "actor_local")
+        if callback_ids is not None:
+            callbacks = tuple(callback for callback in callbacks if callback.callback_id in callback_ids)
+        for callback in callbacks:
+            callback_terms, callback_records = _collect_callback_damage_modifiers(
+                state,
+                rules,
+                evaluator,
+                callback_id=callback.callback_id,
+                actor_id=actor_id,
+                owner_id=owner_id,
+                target_id=target_id,
+                detail=detail,
+                event_payload=event_payload,
+            )
+            terms.extend(callback_terms)
+            records.extend(callback_records)
+    return tuple(terms), tuple(records)
+
+
+def _collect_callback_damage_modifiers(
+    state: BattleState,
+    rules: RuleBook,
+    evaluator: RuleEvaluator,
+    *,
+    callback_id: str,
+    actor_id: str,
+    owner_id: str,
+    target_id: str,
+    detail: dict[str, JSONValue],
+    event_payload: dict[str, JSONValue],
+) -> tuple[tuple[dict[str, JSONValue], ...], tuple[dict[str, JSONValue], ...]]:
+    tasks = {task.task_id: task for task in rules.status_callback_tasks_for_callback(callback_id)}
+    roots = tuple(sorted((task for task in tasks.values() if not task.parent_task_id), key=lambda item: (item.task_index, item.task_id)))
+    terms: list[dict[str, JSONValue]] = []
+    records: list[dict[str, JSONValue]] = []
+    binding_sources = (
+        *status_binding_sources(state, tuple(unit_id for unit_id in (actor_id, owner_id, target_id) if unit_id)),
+        binding_source_from_store(store_from_state(state)),
+    )
+    for root in roots:
+        selected_ids: tuple[str, ...]
+        condition_result: dict[str, JSONValue] = {}
+        if root.opcode == "PredicateTaskList":
+            condition = rules.condition(root.condition_id) if root.condition_id else None
+            if condition is None:
+                records.append(_damage_modifier_record(root.task_id, "blocked", "missing_predicate_condition", {}, ()))
+                continue
+            result = evaluator.evaluate_condition_result(
+                condition,
+                EvaluationContext(
+                    state=state,
+                    actor_id=actor_id,
+                    owner_id=owner_id,
+                    target_id=target_id,
+                    param_entity_id=target_id,
+                    current_action_target_id=target_id,
+                    status_detail=detail,
+                    event_payload=dict(event_payload),
+                    binding_sources=binding_sources,
+                ),
+            )
+            condition_result = result.to_json()
+            if not result.ok or result.result is None:
+                records.append(_damage_modifier_record(root.task_id, "blocked", result.reason, condition_result, ()))
+                continue
+            if not result.result:
+                records.append(_damage_modifier_record(root.task_id, "skipped", "condition_false", condition_result, ()))
+                continue
+            selected_ids = root.success_task_ids
+        else:
+            selected_ids = (root.task_id,)
+        for child_id in selected_ids:
+            child = tasks.get(child_id)
+            if child is None:
+                continue
+            for modifier in rules.damage_modifiers_for_callback(callback_id):
+                if modifier.source_task_id != child.task_id:
+                    continue
+                if modifier.coverage_status != "executable":
+                    records.append(_damage_modifier_record(child.task_id, "blocked", modifier.blocked_reason or "damage_modifier_not_executable", condition_result, (modifier.to_json(),)))
+                    continue
+                applied_terms: list[dict[str, JSONValue]] = []
+                for term in modifier.modifier_terms:
+                    evaluation = evaluator.evaluate_numeric(
+                        term.get("numeric_expr"),
+                        NumericEvaluationContext(
+                            binding_sources=binding_sources,
+                            source_trace=modifier.source.to_json(),
+                        ),
+                    )
+                    if not evaluation.ok or evaluation.value is None:
+                        records.append(_damage_modifier_record(child.task_id, "blocked", evaluation.blocked_reason or "damage_modifier_numeric_blocked", condition_result, (modifier.to_json(),)))
+                        continue
+                    applied = {
+                        **term,
+                        "value": evaluation.value,
+                        "source_type": "damage_modifier_ir",
+                        "source_id": modifier.damage_modifier_id,
+                        "damage_modifier_id": modifier.damage_modifier_id,
+                        "callback_id": callback_id,
+                        "source_task_id": child.task_id,
+                        "condition": "OnBeforeHitAll_condition_passed",
+                        "numeric_evaluation": evaluation.to_json(),
+                        "source_trace": modifier.source.to_json(),
+                    }
+                    terms.append(applied)
+                    applied_terms.append(applied)
+                records.append(_damage_modifier_record(child.task_id, "applied" if applied_terms else "skipped", "", condition_result, tuple(applied_terms)))
+    return tuple(terms), tuple(records)
+
+
+def _damage_modifier_record(
+    task_id: str,
+    status: str,
+    reason: str,
+    condition_result: dict[str, JSONValue],
+    terms: tuple[dict[str, JSONValue], ...],
+) -> dict[str, JSONValue]:
+    return SettlementRecord(
+        record_type="damage_modifier",
+        source="damage_modifier_system",
+        process_only=True,
+        payload={
+            "task_id": task_id,
+            "status": status,
+            "reason": reason,
+            "condition_result": condition_result,
+            "terms": list(terms),
+        },
+        trace={
+            "task_id": task_id,
+            "terms": [term.get("source_trace") for term in terms],
+        },
+    ).to_json()
+
+
+def _trigger_ids_for_detail_event(detail: dict[str, JSONValue], event: str) -> tuple[str, ...] | None:
+    mapping = detail.get("trigger_ids_by_event")
+    if not isinstance(mapping, dict):
+        return None
+    value = mapping.get(event)
+    if not isinstance(value, list):
+        return None
+    return tuple(str(item) for item in value if isinstance(item, str) and item)
+
+
 def _bounce_policy_from_damage_plan(damage_plan: DamagePlan) -> dict[str, JSONValue]:
     policy = (damage_plan.target_selection_policy or {}).get("bounce_policy")
     return policy if isinstance(policy, dict) else {}
+
+
+def _damage_custom_name_from_trace(trace: dict[str, object]) -> str:
+    evidence = trace.get("evidence")
+    if isinstance(evidence, dict):
+        value = evidence.get("damage_custom_name")
+        if isinstance(value, str):
+            return value
+    return ""
 
 
 def _toughness_plans_for_damage_plan(

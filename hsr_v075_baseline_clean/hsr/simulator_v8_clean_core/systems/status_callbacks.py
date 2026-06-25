@@ -10,7 +10,7 @@ from ..rules.ir import ActionDelayEmissionIR, QueueIntentIR, StatusCallbackIR, S
 from ..rules.rulebook import RuleBook
 from .damage import DamagePacket, DamageSourceFrame, DamageSystem, DamageWindowLedger
 from .dot_formula import DotFormula, DotFormulaInput
-from .dynamic_values import binding_source_from_store, find_status_detail, status_binding_sources, store_from_state
+from .dynamic_values import binding_source_from_store, find_status_detail, status_binding_sources, store_from_state, upsert_dynamic_value
 from .effect import EffectExecutionContext, EffectRegistry
 from .queue import QueueEntry, QueueSystem, QueueTargetResolver
 from .status import StatusSystem
@@ -255,6 +255,8 @@ class StatusCallbackSystem:
             return self._execute_delay_emissions(state, callback, task, detail, tuple(delay_emissions))
         if queue_intents:
             return self._execute_queue_intents(state, callback, task, detail, trigger_event, tuple(queue_intents))
+        if task.opcode == "SetDynamicValueByDamageDataProperty":
+            return self._execute_set_dynamic_value_by_damage_data_property(state, callback, task, detail, trigger_event, tasks)
         if task.effect_id:
             return self._execute_effect_task(state, callback, task, detail, trigger_event, damage_window_ledger)
         return StatusCallbackExecutionResult(
@@ -502,6 +504,9 @@ class StatusCallbackSystem:
                 records=(_task_blocked_record(callback, task, detail, reason),),
                 errors=(reason,),
             )
+        list_result = self._execute_list_target_effect_task(state, callback, task, detail, trigger_event, damage_window_ledger, effect)
+        if list_result is not None:
+            return list_result
         coverage = self.effect_registry.coverage(effect)
         if coverage != "executable":
             reason = f"effect_not_executable:{coverage}"
@@ -539,6 +544,70 @@ class StatusCallbackSystem:
             records=records,
             events=result.events,
             errors=result.unsupported,
+        )
+
+    def _execute_list_target_effect_task(
+        self,
+        state: BattleState,
+        callback: StatusCallbackIR,
+        task: StatusCallbackTaskIR,
+        detail: dict[str, JSONValue],
+        trigger_event: GameEvent | None,
+        damage_window_ledger: DamageWindowLedger | None,
+        effect,
+    ) -> StatusCallbackExecutionResult | None:
+        standard = effect.payload.get("standard") if isinstance(effect.payload, dict) else None
+        if not isinstance(standard, dict):
+            return None
+        alias = standard.get("target_alias")
+        if alias not in {"ParamEntitySkillTargetEntityList", "AllEnemyWithUnSelectable"}:
+            return None
+        target_ids = _list_alias_targets(state, detail, trigger_event, str(alias))
+        if not target_ids:
+            reason = f"list_target_alias_unresolved:{alias}"
+            return StatusCallbackExecutionResult(
+                ok=False,
+                after_state=state,
+                records=(_task_blocked_record(callback, task, detail, reason),),
+                errors=(reason,),
+            )
+        current_state = state
+        mutations: list[Mutation] = []
+        records: list[dict[str, JSONValue]] = []
+        events: list[GameEvent] = []
+        errors: list[str] = []
+        for target_id in target_ids:
+            patched_standard = {**standard, "target_alias": "ParamEntity"}
+            patched_effect = replace(effect, payload={**effect.payload, "standard": patched_standard})
+            context = _effect_context(current_state, task, detail, trigger_event, damage_window_ledger)
+            context = replace(context, param_entity_id=target_id, current_action_target_id=target_id)
+            result = self.effect_registry.execute(patched_effect, context)
+            current_state = self.reducer.apply_all(current_state, result.mutations)
+            mutations.extend(result.mutations)
+            records.extend(result.records)
+            events.extend(result.events)
+            errors.extend(result.unsupported)
+        summary = _task_blocked_record(
+            callback,
+            task,
+            detail,
+            ",".join(errors),
+            ok=not errors,
+            mutation_count=len(mutations),
+            record_count=len(records),
+        )
+        payload = summary.get("payload")
+        if isinstance(payload, dict):
+            payload["target_alias"] = str(alias)
+            payload["resolved_target_ids"] = list(target_ids)
+        records.append(summary)
+        return StatusCallbackExecutionResult(
+            ok=not errors,
+            after_state=current_state,
+            mutations=tuple(mutations),
+            records=tuple(records),
+            events=tuple(events),
+            errors=tuple(errors),
         )
 
     def _execute_damage_emissions(
@@ -581,6 +650,63 @@ class StatusCallbackSystem:
                 reason = "status_damage_actor_or_target_missing"
                 records.append(_status_damage_blocked_record(callback, task, detail, emission, reason, evaluation=evaluation))
                 errors.append(reason)
+                continue
+            if emission.damage_formula_family == "true_damage":
+                packet = DamagePacket(
+                    attacker_id=caster_id,
+                    target_id=target_id,
+                    attack_type=emission.attack_type,
+                    damage_formula_family="true_damage",
+                    amount=float(evaluation.value),
+                    element_type=emission.element_type,
+                    status_damage_emission_id=emission.status_damage_emission_id,
+                    status_callback_id=callback.callback_id,
+                    status_instance_id=str(detail.get("instance_id") or ""),
+                    modifier_name=callback.modifier_name,
+                    source_task_id=task.task_id,
+                    source_frame=DamageSourceFrame(
+                        owner_id=caster_id,
+                        source_id=f"status_damage:{emission.status_damage_emission_id}",
+                        source_kind="status_true_damage",
+                        sequence_id=f"status_damage:{str(detail.get('instance_id') or '')}:{emission.status_damage_emission_id}",
+                        target_id=target_id,
+                        can_continue_after_lethal=False,
+                        source_trace={
+                            "status_damage_source": emission.source.to_json(),
+                            "status_callback_source": callback.source.to_json(),
+                            "status_task_source": task.source.to_json(),
+                            "status_instance_source": _json_dict(detail.get("source_trace")),
+                        },
+                    ),
+                    source_trace={
+                        "status_damage_source": emission.source.to_json(),
+                        "status_callback_source": callback.source.to_json(),
+                        "status_task_source": task.source.to_json(),
+                        "status_instance_source": _json_dict(detail.get("source_trace")),
+                    },
+                    metadata={
+                        "damage_formula_family": "true_damage",
+                        "record_type": "true_damage",
+                        "status_damage_emission_id": emission.status_damage_emission_id,
+                        "status_callback_id": callback.callback_id,
+                        "status_instance_id": str(detail.get("instance_id") or ""),
+                        "modifier_name": callback.modifier_name,
+                        "source_task_id": task.task_id,
+                        "numeric_evaluation": evaluation.to_json(),
+                        "normal_multiplier_terms": [],
+                        "bypasses_normal_multipliers": True,
+                    },
+                )
+                damage_result = self.damage.apply_packet(
+                    current_state,
+                    packet,
+                    window_ledger=damage_window_ledger,
+                )
+                current_state = self.reducer.apply_all(current_state, damage_result.mutations)
+                mutations.extend(damage_result.mutations)
+                records.extend(damage_result.records)
+                events.extend(damage_result.events)
+                errors.extend(damage_result.errors)
                 continue
             break_template_id = _break_template_id_from_detail(detail)
             if not break_template_id:
@@ -662,6 +788,116 @@ class StatusCallbackSystem:
             records=tuple(records),
             events=tuple(events),
             errors=tuple(errors),
+        )
+
+    def _execute_set_dynamic_value_by_damage_data_property(
+        self,
+        state: BattleState,
+        callback: StatusCallbackIR,
+        task: StatusCallbackTaskIR,
+        detail: dict[str, JSONValue],
+        trigger_event: GameEvent | None,
+        tasks: dict[str, StatusCallbackTaskIR],
+    ) -> StatusCallbackExecutionResult:
+        payload = task.source.evidence.get("task") if isinstance(task.source.evidence, dict) else None
+        if not isinstance(payload, dict):
+            reason = "set_dynamic_value_damage_property_payload_missing"
+            return StatusCallbackExecutionResult(
+                ok=False,
+                after_state=state,
+                records=(_task_blocked_record(callback, task, detail, reason),),
+                errors=(reason,),
+            )
+        dynamic_key = _value_field(payload.get("DynamicKey"))
+        property_name = _value_field(payload.get("Property"))
+        if not isinstance(dynamic_key, str) or not dynamic_key:
+            reason = "dynamic_value_name_required"
+            return StatusCallbackExecutionResult(ok=False, after_state=state, records=(_task_blocked_record(callback, task, detail, reason),), errors=(reason,))
+        if property_name not in {"Result_FinalDamageBase", "Result_FinalDamage"}:
+            reason = f"damage_data_property_not_admitted:{property_name}"
+            return StatusCallbackExecutionResult(ok=False, after_state=state, records=(_task_blocked_record(callback, task, detail, reason),), errors=(reason,))
+        event_payload = trigger_event.payload if trigger_event is not None and isinstance(trigger_event.payload, dict) else {}
+        value = _damage_property_value(event_payload, str(property_name))
+        if value is None:
+            reason = f"damage_data_property_missing:{property_name}"
+            return StatusCallbackExecutionResult(ok=False, after_state=state, records=(_task_blocked_record(callback, task, detail, reason),), errors=(reason,))
+        owner_id = str(detail.get("owner_id") or "")
+        store_before = store_from_state(state)
+        source_trace = {
+                "status_callback_source": callback.source.to_json(),
+                "status_task_source": task.source.to_json(),
+                "status_instance_source": _json_dict(detail.get("source_trace")),
+                "trigger_event": trigger_event.to_json() if trigger_event is not None else {},
+        }
+        aliases = _dynamic_hash_aliases_for_damage_property_task(task, tasks)
+        store_after = store_before
+        if aliases:
+            for alias in aliases:
+                store_after = upsert_dynamic_value(
+                    store_after,
+                    scope="status_callback",
+                    owner_id=owner_id,
+                    value=float(value),
+                    value_name=dynamic_key,
+                    hash_key=alias.get("hash"),
+                    status_id=str(detail.get("status_id") or ""),
+                    status_instance_id=str(detail.get("instance_id") or ""),
+                    effect_id=task.task_id,
+                    source_trace={**source_trace, "dynamic_hash_alias": alias},
+                )
+        else:
+            store_after = upsert_dynamic_value(
+                store_after,
+                scope="status_callback",
+                owner_id=owner_id,
+                value=float(value),
+                value_name=dynamic_key,
+                status_id=str(detail.get("status_id") or ""),
+                status_instance_id=str(detail.get("instance_id") or ""),
+                effect_id=task.task_id,
+                source_trace=source_trace,
+            )
+        mutation = Mutation(
+            op="set",
+            path=("global_flags", "dynamic_value_store"),
+            before=store_before,
+            after=store_after,
+            reason="set dynamic value from damage data property",
+            source="status_callback_system",
+            metadata={
+                "callback_id": callback.callback_id,
+                "task_id": task.task_id,
+                "modifier_name": callback.modifier_name,
+                "dynamic_key": dynamic_key,
+                "dynamic_hash_aliases": aliases,
+                "property": property_name,
+                "value": float(value),
+                "source_trace": source_trace,
+            },
+        )
+        after_state = self.reducer.apply_all(state, (mutation,))
+        return StatusCallbackExecutionResult(
+            ok=True,
+            after_state=after_state,
+            mutations=(mutation,),
+            records=(
+                SettlementRecord(
+                    record_type="dynamic_value_store",
+                    source="status_callback_system",
+                    mutation_id=mutation.stable_id(),
+                    process_only=False,
+                    payload={
+                        "callback_id": callback.callback_id,
+                        "task_id": task.task_id,
+                        "modifier_name": callback.modifier_name,
+                        "dynamic_key": dynamic_key,
+                        "dynamic_hash_aliases": aliases,
+                        "property": property_name,
+                        "value": float(value),
+                    },
+                    trace=mutation.metadata.get("source_trace", {}),
+                ).to_json(),
+            ),
         )
 
     def _execute_dot_damage_emission(
@@ -884,6 +1120,21 @@ class StatusCallbackSystem:
                 bindings={},
                 source_trace=emission.source.to_json(),
                 blocked_reason="actor_or_target_missing",
+            )
+        if emission.damage_formula_family == "true_damage":
+            sources = (
+                *status_binding_sources(state, tuple(unit_id for unit_id in (caster_id, target_id) if unit_id)),
+                binding_source_from_store(store_from_state(state)),
+            )
+            return RuleEvaluator().evaluate_numeric(
+                emission.scaling_expr,
+                NumericEvaluationContext(
+                    binding_sources=sources,
+                    source_trace={
+                        "status_damage_source": emission.source.to_json(),
+                        "status_instance_source": _json_dict(detail.get("source_trace")),
+                    },
+                ),
             )
         break_base = self.rules.break_base_damage(actor.level)
         if break_base is None or break_base.coverage_status != "executable":
@@ -1715,6 +1966,119 @@ def _first_payload_str(payload: dict[str, JSONValue], keys: tuple[str, ...]) -> 
         if isinstance(value, str) and value:
             return value
     return ""
+
+
+def _list_alias_targets(
+    state: BattleState,
+    detail: dict[str, JSONValue],
+    event: GameEvent | None,
+    alias: str,
+) -> tuple[str, ...]:
+    payload = event.payload if event is not None and isinstance(event.payload, dict) else {}
+    if alias == "ParamEntitySkillTargetEntityList":
+        for key in ("selected_target_ids", "target_ids", "skill_target_ids", "requested_target_ids"):
+            value = payload.get(key)
+            if isinstance(value, (list, tuple)):
+                result = tuple(str(item) for item in value if isinstance(item, str) and item in state.units)
+                if result:
+                    return result
+        fallback = _first_payload_str(payload, ("current_hit_target_id", "primary_target_id", "target_id"))
+        return (fallback,) if fallback and fallback in state.units else ()
+    if alias == "AllEnemyWithUnSelectable":
+        owner_id = str(detail.get("owner_id") or detail.get("caster_id") or "")
+        owner = state.units.get(owner_id)
+        if owner is None:
+            return ()
+        return tuple(
+            unit_id
+            for unit_id, unit in state.units.items()
+            if unit.side != owner.side
+        )
+    return ()
+
+
+def _value_field(value: object) -> object:
+    if isinstance(value, dict) and "Value" in value:
+        return value.get("Value")
+    return value
+
+
+def _damage_property_value(payload: dict[str, JSONValue], property_name: str) -> float | None:
+    candidates: tuple[object, ...]
+    if property_name == "Result_FinalDamageBase":
+        candidates = (
+            payload.get("final_damage"),
+            payload.get("amount"),
+            (payload.get("formula_result") if isinstance(payload.get("formula_result"), dict) else {}).get("final_damage"),
+        )
+    elif property_name == "Result_FinalDamage":
+        candidates = (
+            payload.get("final_damage"),
+            payload.get("amount"),
+        )
+    else:
+        candidates = ()
+    for value in candidates:
+        if isinstance(value, (int, float)):
+            return float(value)
+    return None
+
+
+def _dynamic_hash_aliases_for_damage_property_task(
+    task: StatusCallbackTaskIR,
+    tasks: dict[str, StatusCallbackTaskIR],
+) -> tuple[dict[str, JSONValue], ...]:
+    if not task.parent_task_id:
+        return ()
+    parent = tasks.get(task.parent_task_id)
+    if parent is None:
+        return ()
+    sibling_ids = _parent_child_sequence(parent, task.task_id)
+    if not sibling_ids:
+        return ()
+    try:
+        task_index = sibling_ids.index(task.task_id)
+    except ValueError:
+        return ()
+    for sibling_id in sibling_ids[task_index + 1 :]:
+        sibling = tasks.get(sibling_id)
+        if sibling is None or sibling.opcode != "SetDynamicValue":
+            continue
+        payload = sibling.source.evidence.get("task") if isinstance(sibling.source.evidence, dict) else None
+        if not isinstance(payload, dict):
+            continue
+        hashes = _numeric_dynamic_hashes(payload.get("Value"))
+        if not hashes:
+            continue
+        return (
+            {
+                "hash": str(hashes[0]),
+                "source_kind": "same_predicate_branch_following_set_dynamic_value",
+                "source_task_id": sibling.task_id,
+                "source_task_opcode": sibling.opcode,
+                "raw_path": "Value.PostfixExpr.DynamicHashes[0]",
+            },
+        )
+    return ()
+
+
+def _parent_child_sequence(parent: StatusCallbackTaskIR, task_id: str) -> tuple[str, ...]:
+    for candidate in (parent.success_task_ids, parent.failed_task_ids, parent.child_task_ids):
+        if task_id in candidate:
+            return tuple(candidate)
+    return ()
+
+
+def _numeric_dynamic_hashes(value: object) -> tuple[int, ...]:
+    if not isinstance(value, dict):
+        return ()
+    postfix = value.get("PostfixExpr")
+    if not isinstance(postfix, dict):
+        return ()
+    hashes = postfix.get("DynamicHashes")
+    if not isinstance(hashes, list):
+        return ()
+    return tuple(item for item in hashes if isinstance(item, int))
 
 
 def _trigger_ids_for_event(detail: dict[str, JSONValue], event: str) -> tuple[str, ...] | None:

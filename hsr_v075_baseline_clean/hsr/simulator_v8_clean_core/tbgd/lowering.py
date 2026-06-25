@@ -32,6 +32,7 @@ from ..rules.ir import (
     CombatantProfileIR,
     ConditionIR,
     DamageEmissionIR,
+    DamageModifierIR,
     EffectIR,
     ExtraActionPolicyIR,
     FormulaIR,
@@ -173,6 +174,7 @@ class TBGDLowering:
         status_callbacks: list[StatusCallbackIR] = []
         status_callback_tasks: list[StatusCallbackTaskIR] = []
         status_damage_emissions: list[StatusDamageEmissionIR] = []
+        damage_modifiers: list[DamageModifierIR] = []
         action_delay_emissions: list[ActionDelayEmissionIR] = []
         queue_intents: list[QueueIntentIR] = []
         skill_continuations: list[SkillContinuationIR] = []
@@ -258,6 +260,7 @@ class TBGDLowering:
             status_callbacks.extend(lowered.status_callbacks)
             status_callback_tasks.extend(lowered.status_callback_tasks)
             status_damage_emissions.extend(lowered.status_damage_emissions)
+            damage_modifiers.extend(lowered.damage_modifiers)
             action_delay_emissions.extend(lowered.action_delay_emissions)
             queue_intents.extend(lowered.queue_intents)
             skill_continuations.extend(lowered.skill_continuations)
@@ -298,6 +301,7 @@ class TBGDLowering:
             skill_formula_bindings=skill_formula_bindings,
             action_ability_bindings=action_ability_bindings,
             status_callbacks=status_callbacks,
+            damage_modifiers=damage_modifiers,
             queue_intents=queue_intents,
             queue_windows=queue_windows,
             extra_action_policies=extra_action_policies,
@@ -335,6 +339,7 @@ class TBGDLowering:
             status_callbacks=tuple(status_callbacks),
             status_callback_tasks=tuple(status_callback_tasks),
             status_damage_emissions=tuple(status_damage_emissions),
+            damage_modifiers=tuple(damage_modifiers),
             action_delay_emissions=tuple(action_delay_emissions),
             queue_intents=tuple(queue_intents),
             queue_resolutions=tuple(queue_resolutions),
@@ -1702,7 +1707,17 @@ class TBGDLowering:
                     event == "OnListenTurnEnd"
                     and any(task.coverage_status == "executable" for task in callback_lowered.status_callback_tasks)
                 ) or has_executable_queue_intent or (
-                    event in {"OnTriggerDeath", "OnListenCharacterDie", "OnTriggerDeathrattle", "OnAfterSkillUse", "OnListenAllowAction"}
+                    event in {
+                        "OnTriggerDeath",
+                        "OnListenCharacterDie",
+                        "OnTriggerDeathrattle",
+                        "OnBeforeHitAll",
+                        "OnAfterHitAll",
+                        "OnAfterBeingAttacked",
+                        "OnAfterSkillUse",
+                        "OnBeforeDying",
+                        "OnListenAllowAction",
+                    }
                     and has_executable_callback_task
                 )
                 status = (
@@ -1935,7 +1950,13 @@ class TBGDLowering:
                 blocked_reason=blocked_reason,
             )
         )
-        if opcode not in QUEUE_INTENT_OPCODES and opcode not in {"DamageByAttackProperty", "ModifyActionDelay", "SetActionDelay", "Retarget"}:
+        if opcode not in QUEUE_INTENT_OPCODES and opcode not in {
+            "DamageByAttackProperty",
+            "ModifyActionDelay",
+            "SetActionDelay",
+            "Retarget",
+            "ModifyDamageData",
+        }:
             payload = _effect_payload(task, opcode, modifier_name)
             effect_status = _effect_coverage_status(opcode, payload)
             lowered.effects.append(
@@ -1960,6 +1981,17 @@ class TBGDLowering:
             )
             if emission is not None:
                 lowered.status_damage_emissions.append(emission)
+        if opcode == "ModifyDamageData":
+            lowered.damage_modifiers.append(
+                _damage_modifier_from_task(
+                    callback_id=callback_id,
+                    task_id=task_id,
+                    modifier_name=modifier_name,
+                    event=event,
+                    task=task,
+                    source=source,
+                )
+            )
         if opcode in {"ModifyActionDelay", "SetActionDelay"}:
             lowered.action_delay_emissions.append(
                 _action_delay_emission_from_task(
@@ -2213,6 +2245,7 @@ class _LoweredAbility:
     status_callbacks: list[StatusCallbackIR] = field(default_factory=list)
     status_callback_tasks: list[StatusCallbackTaskIR] = field(default_factory=list)
     status_damage_emissions: list[StatusDamageEmissionIR] = field(default_factory=list)
+    damage_modifiers: list[DamageModifierIR] = field(default_factory=list)
     action_delay_emissions: list[ActionDelayEmissionIR] = field(default_factory=list)
     queue_intents: list[QueueIntentIR] = field(default_factory=list)
     skill_continuations: list[SkillContinuationIR] = field(default_factory=list)
@@ -2227,6 +2260,7 @@ class _LoweredAbility:
         self.status_callbacks.extend(other.status_callbacks)
         self.status_callback_tasks.extend(other.status_callback_tasks)
         self.status_damage_emissions.extend(other.status_damage_emissions)
+        self.damage_modifiers.extend(other.damage_modifiers)
         self.action_delay_emissions.extend(other.action_delay_emissions)
         self.queue_intents.extend(other.queue_intents)
         self.skill_continuations.extend(other.skill_continuations)
@@ -2276,6 +2310,7 @@ def _character_runtime_mechanism_slots(
     skill_formula_bindings: list[SkillFormulaBindingIR],
     action_ability_bindings: list[ActionAbilityBindingIR],
     status_callbacks: list[StatusCallbackIR],
+    damage_modifiers: list[DamageModifierIR],
     queue_intents: list[QueueIntentIR],
     queue_windows: list[QueueWindowIR],
     extra_action_policies: list[ExtraActionPolicyIR],
@@ -2327,6 +2362,35 @@ def _character_runtime_mechanism_slots(
                 source=callback.source,
                 coverage_status=callback.coverage_status,
                 blocked_reason=callback.blocked_reason,
+            )
+        )
+    for modifier in damage_modifiers:
+        card_id = callback_to_card.get(modifier.callback_id) or ability_file_to_card.get(modifier.source.source_path, "")
+        if not card_id:
+            continue
+        slots.append(
+            CharacterMechanismSlotIR(
+                mechanism_slot_id=f"character_mechanism_slot:{card_id}:damage_modifier:{modifier.damage_modifier_id}",
+                character_data_card_id=card_id,
+                mechanism_kind="damage_modifier",
+                runtime_system="damage_formula",
+                linked_ir_ids={
+                    "damage_modifier_id": modifier.damage_modifier_id,
+                    "callback_id": modifier.callback_id,
+                    "source_task_id": modifier.source_task_id,
+                    "modifier_name": modifier.modifier_name,
+                },
+                activation={
+                    "kind": "status_callback_task",
+                    "event": modifier.event,
+                    "target_alias": modifier.target_alias,
+                },
+                semantics={
+                    "modifier_terms": list(modifier.modifier_terms),
+                },
+                source=modifier.source,
+                coverage_status=modifier.coverage_status,
+                blocked_reason=modifier.blocked_reason,
             )
         )
     intent_to_card: dict[str, str] = {}
@@ -2501,6 +2565,7 @@ def _modifier_definition_entity(
         "behavior_flags": _json_safe(modifier.get("BehaviorFlagList", [])),
         "dynamic_values": _json_safe(modifier.get("DynamicValues", {})),
         "dynamic_value_bindings": _dynamic_value_bindings(modifier.get("DynamicValues")),
+        "callback_dynamic_hashes": _callback_dynamic_hashes(modifier),
         "callback_events": _callback_events(modifier),
         "stack_properties": _stack_property_summaries(modifier),
     }
@@ -2522,6 +2587,36 @@ def _callback_events(modifier: dict[str, Any]) -> list[str]:
         if isinstance(callback, dict):
             events.append(str(callback.get("Event") or "UnknownEvent"))
     return events
+
+
+def _callback_dynamic_hashes(modifier: dict[str, Any]) -> dict[str, Any]:
+    callbacks = modifier.get("_CallbackList")
+    hashes: dict[str, dict[str, Any]] = {}
+    if not isinstance(callbacks, list):
+        return {"by_hash": {}}
+
+    def walk(value: Any, path: str) -> None:
+        if isinstance(value, dict):
+            dynamic_hashes = value.get("DynamicHashes")
+            if isinstance(dynamic_hashes, list):
+                for index, raw_hash in enumerate(dynamic_hashes):
+                    if isinstance(raw_hash, int):
+                        hashes.setdefault(
+                            str(raw_hash),
+                            {
+                                "hash": str(raw_hash),
+                                "raw_path": f"{path}.DynamicHashes[{index}]",
+                                "source_kind": "modifier_callback_dynamic_hash",
+                            },
+                        )
+            for key, item in value.items():
+                walk(item, f"{path}.{key}" if path else str(key))
+        elif isinstance(value, list):
+            for index, item in enumerate(value):
+                walk(item, f"{path}[{index}]")
+
+    walk(callbacks, "_CallbackList")
+    return {"by_hash": hashes}
 
 
 def _stack_property_summaries(modifier: dict[str, Any]) -> list[dict[str, Any]]:
@@ -3263,6 +3358,7 @@ def _damage_emission_source(
             "task_id": task.task_id,
             "effect_id": task.effect_id,
             "target_alias": _target_alias(payload.get("TargetType")),
+            "damage_custom_name": _attack_property_custom_name(payload),
             "hit_profile_id": profile.hit_profile_id if profile else "",
             "hit_profile_source": profile.source.to_json() if profile else None,
         },
@@ -3990,6 +4086,7 @@ DYNAMIC_VALUE_OPCODES = {"SetDynamicValue", "SetDynamicValueByModifierValue"}
 DAMAGE_EMISSION_OPCODES = {"DamageByAttackProperty"}
 HP_LOSS_OPCODES = {"LoseHPByRatio"}
 EXECUTABLE_TARGET_ALIASES = {"Caster", "ModifierOwnerEntity", "ParamEntity", "CurrentActionTarget"}
+STATUS_CALLBACK_LIST_TARGET_ALIASES = {"ParamEntitySkillTargetEntityList", "AllEnemyWithUnSelectable"}
 DAMAGE_EMISSION_TARGET_ALIASES = {
     "AbilityTargetEntity",
     "AbilityTargetAdjoinEntity",
@@ -4005,6 +4102,7 @@ EXECUTABLE_CONDITION_OPCODES = {
     "ByCompareDynamicValue",
     "ByCompareHPRatio",
     "ByCompareModifierValue",
+    "ByCompareDamageCustomName",
     "ByCompareTarget",
     "ByCurrentSkillType",
     "ByIsContainModifier",
@@ -4050,7 +4148,7 @@ def _effect_coverage_status(opcode: str, payload: dict[str, Any]) -> str:
             return "blocked"
         if not standard.get("modifier_name"):
             return "blocked"
-        if standard.get("target_alias") in EXECUTABLE_TARGET_ALIASES:
+        if standard.get("target_alias") in EXECUTABLE_TARGET_ALIASES | STATUS_CALLBACK_LIST_TARGET_ALIASES:
             return "executable"
         return "blocked"
     if opcode in REMOVE_MODIFIER_OPCODES:
@@ -4059,7 +4157,7 @@ def _effect_coverage_status(opcode: str, payload: dict[str, Any]) -> str:
             return "blocked"
         has_modifier = isinstance(standard.get("modifier_name"), str) and bool(standard.get("modifier_name"))
         has_status = isinstance(standard.get("status_id"), str) and bool(standard.get("status_id"))
-        if (has_modifier or has_status) and standard.get("target_alias") in EXECUTABLE_TARGET_ALIASES:
+        if (has_modifier or has_status) and standard.get("target_alias") in EXECUTABLE_TARGET_ALIASES | STATUS_CALLBACK_LIST_TARGET_ALIASES:
             return "executable"
         return "blocked"
     if opcode in HEAL_OPCODES | SHIELD_OPCODES:
@@ -4212,6 +4310,46 @@ def _status_callback_task_admission(event: str, opcode: str, task: dict[str, Any
         if coverage == "executable":
             return "executable", ""
         return "blocked", _effect_blocked_reason(opcode, payload, coverage)
+    if event == "OnBeforeHitAll" and opcode == "ModifyDamageData":
+        terms = _damage_modifier_terms(task)
+        unsupported = [term for term in terms if term.get("coverage_status") != "executable"]
+        if unsupported:
+            reason = str(unsupported[0].get("blocked_reason") or "modify_damage_data_term_not_executable")
+            return "blocked", reason
+        if not terms:
+            return "blocked", "modify_damage_data_fields_missing"
+        return "executable", ""
+    if event == "OnAfterHitAll" and opcode in {"SetDynamicValue", "SetDynamicValueByDamageDataProperty"}:
+        if opcode == "SetDynamicValueByDamageDataProperty":
+            dynamic_key = _value_field(task.get("DynamicKey"))
+            property_name = _value_field(task.get("Property"))
+            if not isinstance(dynamic_key, str) or not dynamic_key:
+                return "blocked", "dynamic_value_name_required"
+            if property_name not in {"Result_FinalDamageBase", "Result_FinalDamage"}:
+                return "blocked", f"damage_data_property_not_admitted:{property_name}"
+            return "executable", ""
+        payload = _effect_payload(task, opcode, "")
+        coverage = _effect_coverage_status(opcode, payload)
+        if coverage == "executable":
+            return "executable", ""
+        return "blocked", _effect_blocked_reason(opcode, payload, coverage)
+    if event == "OnAfterBeingAttacked" and opcode == "DamageByAttackProperty":
+        attack_property = task.get("AttackProperty")
+        if not isinstance(attack_property, dict):
+            return "blocked", "attack_property_missing"
+        attack_type = str(attack_property.get("AttackType") or task.get("AttackType") or "")
+        if attack_type != "TrueDamage":
+            return "blocked", f"being_attacked_damage_attack_type_not_admitted:{attack_type}"
+        damage_value = _numeric_expr_summary(attack_property.get("DamageValue"))
+        if not _numeric_expr_can_be_runtime_bound(damage_value):
+            return "blocked", f"true_damage_value_not_executable:{damage_value.get('reason') or damage_value.get('kind')}"
+        return "executable", ""
+    if event == "OnBeforeDying" and opcode == "RemoveModifier":
+        payload = _effect_payload(task, opcode, "")
+        coverage = _effect_coverage_status(opcode, payload)
+        if coverage == "executable":
+            return "executable", ""
+        return "blocked", _effect_blocked_reason(opcode, payload, coverage)
     if event == "OnListenAllowAction" and opcode == "RemoveSelfModifier":
         return "executable", ""
     if event not in {"OnStack", "OnPhase1", "OnListenTurnEnd"}:
@@ -4265,6 +4403,7 @@ def _status_callback_task_admission(event: str, opcode: str, task: dict[str, Any
 def _status_callback_source_admitted(relative_path: str) -> bool:
     return (
         relative_path == "Config/ConfigGlobalModifier/GlobalModifier_Common_Specific.json"
+        or _mainline_avatar_ability_source(relative_path)
         or (_queue_source_candidate(relative_path) and not _queue_source_blocked(relative_path))
     )
 
@@ -4284,6 +4423,8 @@ def _status_callback_task_source_admitted(relative_path: str, event: str, opcode
 
 def _status_callback_source_mode(relative_path: str) -> str:
     if _status_callback_source_admitted(relative_path):
+        if _mainline_avatar_ability_source(relative_path):
+            return "mainline_avatar_ability"
         return "mainline_global_modifier"
     if "Rogue" in relative_path or "Activity" in relative_path or "GridFight" in relative_path:
         return "special_mode_audit_only"
@@ -4293,6 +4434,8 @@ def _status_callback_source_mode(relative_path: str) -> str:
 def _status_callback_scope_kind(event: str) -> str:
     if event in {"OnListenCharacterDie", "OnListenAllowAction"}:
         return "owner_local"
+    if event in {"OnBeforeHitAll", "OnAfterHitAll", "OnAfterSkillUse"}:
+        return "actor_local"
     if event.startswith("OnListen"):
         return "global_listener"
     if event.startswith("OnBeing") or "BeingHit" in event or "BeingAttacked" in event:
@@ -4304,6 +4447,23 @@ def _status_callback_scope_kind(event: str) -> str:
     if event in {"OnStack", "OnPhase1"}:
         return "status_local"
     return "owner_local"
+
+
+def _mainline_avatar_ability_source(relative_path: str) -> bool:
+    if not relative_path.startswith("Config/ConfigAbility/Avatar/"):
+        return False
+    blocked_tokens = (
+        "/Activity/",
+        "/Rogue/",
+        "/GridFight/",
+        "/ElationBattle/",
+        "/Fate/",
+        "/Story/",
+        "/Level/",
+        "/SubLevelGraph/",
+        "/TrialPlayer/",
+    )
+    return not any(token in relative_path for token in blocked_tokens)
 
 
 def _status_damage_emission_from_task(
@@ -4324,6 +4484,10 @@ def _status_damage_emission_from_task(
         damage_formula_family = "break"
         scaling_expr = _numeric_expr_summary(attack_property.get("BreakDamagePercentage"))
         element_type = None
+    elif attack_type == "TrueDamage":
+        damage_formula_family = "true_damage"
+        scaling_expr = _numeric_expr_summary(attack_property.get("DamageValue"))
+        element_type = _attack_property_element_type(attack_property)
     elif attack_type == "DOT":
         damage_formula_family = "dot"
         scaling_expr = {
@@ -4361,6 +4525,88 @@ def _status_damage_emission_from_task(
         coverage_status=coverage_status,
         blocked_reason=blocked_reason,
     )
+
+
+def _damage_modifier_from_task(
+    *,
+    callback_id: str,
+    task_id: str,
+    modifier_name: str,
+    event: str,
+    task: dict[str, Any],
+    source: IRSource,
+) -> DamageModifierIR:
+    terms = tuple(_damage_modifier_terms(task))
+    coverage_status, blocked_reason = _status_callback_task_admission(event, "ModifyDamageData", task)
+    if coverage_status == "executable" and not _status_callback_source_admitted(source.source_path):
+        coverage_status = "blocked"
+        blocked_reason = "status_callback_source_mode_not_admitted"
+    return DamageModifierIR(
+        damage_modifier_id=f"damage_modifier:{callback_id}:{task_id}",
+        callback_id=callback_id,
+        source_task_id=task_id,
+        modifier_name=modifier_name,
+        event=event,
+        target_alias="ParamEntity",
+        modifier_terms=terms,
+        source=source,
+        coverage_status=coverage_status,
+        blocked_reason=blocked_reason,
+    )
+
+
+def _damage_modifier_terms(task: dict[str, Any]) -> list[dict[str, Any]]:
+    terms: list[dict[str, Any]] = []
+    supported_fields = {
+        "Attacker_CriticalChance": ("crit", "critical_chance", "attacker"),
+        "Defender_DefenceAddedRatio": ("defense", "defender_defence_added_ratio", "defender"),
+    }
+    ignored = {"$type", "TaskList", "SuccessTaskList", "FailedTaskList", "CallbackConfig"}
+    for field, value in task.items():
+        if field in ignored:
+            continue
+        bucket_info = supported_fields.get(field)
+        expr = _numeric_expr_summary(value)
+        if bucket_info is None:
+            terms.append(
+                {
+                    "field": field,
+                    "bucket": "unknown",
+                    "key": field,
+                    "scope": "unknown",
+                    "numeric_expr": expr,
+                    "coverage_status": "blocked",
+                    "blocked_reason": f"modify_damage_data_field_not_admitted:{field}",
+                }
+            )
+            continue
+        bucket, key, scope = bucket_info
+        if not _numeric_expr_can_be_runtime_bound(expr):
+            terms.append(
+                {
+                    "field": field,
+                    "bucket": bucket,
+                    "key": key,
+                    "scope": scope,
+                    "numeric_expr": expr,
+                    "coverage_status": "blocked",
+                    "blocked_reason": str(expr.get("reason") or f"modify_damage_data_value_not_executable:{field}"),
+                }
+            )
+            continue
+        terms.append(
+            {
+                "field": field,
+                "bucket": bucket,
+                "key": key,
+                "scope": scope,
+                "target_alias": "ParamEntity",
+                "numeric_expr": expr,
+                "coverage_status": "executable",
+                "blocked_reason": "",
+            }
+        )
+    return terms
 
 
 def _action_delay_emission_from_task(
@@ -5553,6 +5799,8 @@ def _condition_payload_executable(opcode: str, payload: dict[str, Any]) -> bool:
         )
     if opcode == "ByCompareTarget":
         return _target_alias(payload.get("TargetType")) in EXECUTABLE_TARGET_ALIASES and _target_alias(payload.get("CompareType")) in EXECUTABLE_TARGET_ALIASES
+    if opcode == "ByCompareDamageCustomName":
+        return isinstance(_value_field(payload.get("CustomName")), str)
     if opcode in {"ByAnd", "ByAny"}:
         predicates = payload.get("PredicateList")
         return isinstance(predicates, list) and all(_raw_condition_payload_executable(item) for item in predicates)
@@ -6066,6 +6314,14 @@ def _attack_property_element_type(attack_property: dict[str, Any]) -> str | None
         if isinstance(element, str) and element:
             return element
     return _display_element_type(attack_property)
+
+
+def _attack_property_custom_name(payload: dict[str, Any]) -> str:
+    attack_property = payload.get("AttackProperty")
+    if not isinstance(attack_property, dict):
+        return ""
+    value = _value_field(attack_property.get("CustomName"))
+    return value if isinstance(value, str) else ""
 
 
 def _iter_task_tree(value: Any, *, prefix: str) -> list[tuple[str, dict[str, Any]]]:

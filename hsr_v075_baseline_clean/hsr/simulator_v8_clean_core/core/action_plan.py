@@ -375,7 +375,7 @@ def _damage_plan_from_emissions(
                     multiplier_source=profile.multiplier_source,
                     scaling_ratio=scaling_ratio,
                     scaling_basis=emission.scaling_basis_expr,
-                    hit_source_trace=profile.source.to_json(),
+                    hit_source_trace=emission.source.to_json(),
                     numeric_fidelity_status=profile.numeric_fidelity_status,
                     primary_action_target_id=primary_action_target_id,
                     blocked_reason=profile.blocked_reason,

@@ -24,6 +24,7 @@ from .ir import (
     CombatantProfileIR,
     ConditionIR,
     DamageEmissionIR,
+    DamageModifierIR,
     EffectIR,
     ExtraActionPolicyIR,
     FormulaIR,
@@ -159,6 +160,22 @@ class RuleBook:
             self,
             "_action_definitions",
             {(definition.action_id, definition.level): definition for definition in self.ir.action_definitions},
+        )
+        damage_modifiers_by_callback: dict[str, list[DamageModifierIR]] = {}
+        for modifier in self.ir.damage_modifiers:
+            damage_modifiers_by_callback.setdefault(modifier.callback_id, []).append(modifier)
+        object.__setattr__(
+            self,
+            "_damage_modifiers",
+            {modifier.damage_modifier_id: modifier for modifier in self.ir.damage_modifiers},
+        )
+        object.__setattr__(
+            self,
+            "_damage_modifiers_by_callback",
+            {
+                key: tuple(sorted(value, key=lambda item: (item.source_task_id, item.damage_modifier_id)))
+                for key, value in damage_modifiers_by_callback.items()
+            },
         )
         object.__setattr__(
             self,
@@ -844,6 +861,12 @@ class RuleBook:
 
     def status_damage_emissions_for_callback(self, callback_id: str) -> tuple[StatusDamageEmissionIR, ...]:
         return self._status_damage_emissions_by_callback.get(callback_id, ())
+
+    def damage_modifier(self, damage_modifier_id: str) -> DamageModifierIR | None:
+        return self._damage_modifiers.get(damage_modifier_id)
+
+    def damage_modifiers_for_callback(self, callback_id: str) -> tuple[DamageModifierIR, ...]:
+        return self._damage_modifiers_by_callback.get(callback_id, ())
 
     def action_delay_emission(self, emission_id: str) -> ActionDelayEmissionIR | None:
         return self._action_delay_emissions.get(emission_id)

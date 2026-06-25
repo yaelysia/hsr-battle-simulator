@@ -309,6 +309,8 @@ class RuntimeSourceAuditor:
         _require_dict(mutation, metadata, "source_frame", violations)
         if metadata.get("damage_formula_family") == "dot" and metadata.get("status_damage_emission_id"):
             return self._audit_status_dot_damage_mutation(mutation, records, violations)
+        if metadata.get("damage_formula_family") == "true_damage" and metadata.get("status_damage_emission_id"):
+            return self._audit_status_true_damage_mutation(mutation, records, violations)
         if metadata.get("damage_formula_family") == "break" and metadata.get("status_damage_emission_id"):
             return self._audit_status_callback_damage_mutation(mutation, records, violations)
         if metadata.get("damage_formula_family") == "break":
@@ -575,6 +577,69 @@ class RuntimeSourceAuditor:
             },
         )
 
+    def _audit_status_true_damage_mutation(
+        self,
+        mutation: Mutation,
+        records: tuple[dict[str, JSONValue], ...],
+        violations: list[SourceAuditViolation],
+    ) -> dict[str, JSONValue]:
+        metadata = mutation.metadata
+        emission_id = _required_str(mutation, metadata, "status_damage_emission_id", violations)
+        callback_id = _required_str(mutation, metadata, "status_callback_id", violations)
+        task_id = _required_str(mutation, metadata, "source_task_id", violations)
+        _required_str(mutation, metadata, "status_instance_id", violations)
+        _required_str(mutation, metadata, "modifier_name", violations)
+        _require_dict(mutation, metadata, "source_trace", violations)
+        evaluation = metadata.get("numeric_evaluation")
+        if not isinstance(evaluation, dict):
+            violations.append(_violation(mutation, "numeric_evaluation_missing", missing_field="numeric_evaluation"))
+        elif evaluation.get("ok") is False:
+            violations.append(_violation(mutation, "mutation_has_failed_numeric_evaluation", details={"numeric_evaluation": evaluation}))
+        elif evaluation.get("ok") is True:
+            _audit_dynamic_numeric_binding(mutation, evaluation, violations)
+        if callback_id:
+            callback = self.rules.status_callback(callback_id)
+            if callback is None:
+                violations.append(_violation(mutation, "status_callback_missing", details={"status_callback_id": callback_id}))
+            else:
+                _audit_source(callback.source, callback.coverage_status, mutation, violations, executable_required=True)
+        if task_id:
+            task = self.rules.status_callback_task(task_id)
+            if task is None:
+                violations.append(_violation(mutation, "status_callback_task_missing", details={"source_task_id": task_id}))
+            else:
+                _audit_source(task.source, task.coverage_status, mutation, violations, executable_required=True)
+                if callback_id and task.callback_id != callback_id:
+                    violations.append(_violation(mutation, "status_callback_task_callback_mismatch", details={"expected": task.callback_id, "actual": callback_id}))
+        if emission_id:
+            emission = self.rules.status_damage_emission(emission_id)
+            if emission is None:
+                violations.append(_violation(mutation, "status_damage_emission_missing", details={"status_damage_emission_id": emission_id}))
+            else:
+                _audit_source(emission.source, emission.coverage_status, mutation, violations, executable_required=True)
+                if emission.damage_formula_family != "true_damage":
+                    violations.append(
+                        _violation(
+                            mutation,
+                            "status_damage_family_mismatch",
+                            details={"expected": "true_damage", "actual": emission.damage_formula_family},
+                        )
+                    )
+                if callback_id and emission.callback_id != callback_id:
+                    violations.append(_violation(mutation, "status_damage_callback_mismatch", details={"expected": emission.callback_id, "actual": callback_id}))
+                if task_id and emission.source_task_id != task_id:
+                    violations.append(_violation(mutation, "status_damage_task_mismatch", details={"expected": emission.source_task_id, "actual": task_id}))
+        return _trace(
+            mutation,
+            records,
+            {
+                "status_damage_emission_id": emission_id or "",
+                "status_callback_id": callback_id or "",
+                "source_task_id": task_id or "",
+                "damage_formula_family": "true_damage",
+            },
+        )
+
     def _audit_super_break_damage_mutation(
         self,
         mutation: Mutation,
@@ -776,6 +841,8 @@ class RuntimeSourceAuditor:
         violations: list[SourceAuditViolation],
     ) -> dict[str, JSONValue]:
         metadata = mutation.metadata
+        if metadata.get("dynamic_key") or metadata.get("property"):
+            return self._audit_status_callback_dynamic_value_mutation(mutation, records, violations)
         callback_id = _required_str(mutation, metadata, "callback_id", violations)
         task_id = _required_str(mutation, metadata, "task_id", violations)
         delay_id = _required_str(mutation, metadata, "action_delay_emission_id", violations)
@@ -818,6 +885,53 @@ class RuntimeSourceAuditor:
                 "callback_id": callback_id or "",
                 "task_id": task_id or "",
                 "action_delay_emission_id": delay_id or "",
+            },
+        )
+
+    def _audit_status_callback_dynamic_value_mutation(
+        self,
+        mutation: Mutation,
+        records: tuple[dict[str, JSONValue], ...],
+        violations: list[SourceAuditViolation],
+    ) -> dict[str, JSONValue]:
+        metadata = mutation.metadata
+        callback_id = _required_str(mutation, metadata, "callback_id", violations)
+        task_id = _required_str(mutation, metadata, "task_id", violations)
+        _required_str(mutation, metadata, "dynamic_key", violations)
+        _require_dict(mutation, metadata, "source_trace", violations)
+        if callback_id:
+            callback = self.rules.status_callback(callback_id)
+            if callback is None:
+                violations.append(_violation(mutation, "status_callback_missing", details={"callback_id": callback_id}))
+            else:
+                _audit_source(callback.source, callback.coverage_status, mutation, violations, executable_required=True)
+        if task_id:
+            task = self.rules.status_callback_task(task_id)
+            if task is None:
+                violations.append(_violation(mutation, "status_callback_task_missing", details={"task_id": task_id}))
+            else:
+                _audit_source(task.source, task.coverage_status, mutation, violations, executable_required=True)
+                if callback_id and task.callback_id != callback_id:
+                    violations.append(_violation(mutation, "status_callback_task_callback_mismatch", details={"expected": task.callback_id, "actual": callback_id}))
+        for alias in metadata.get("dynamic_hash_aliases", ()):
+            if not isinstance(alias, dict):
+                continue
+            alias_task_id = _first_str(alias.get("source_task_id"))
+            if not alias_task_id:
+                continue
+            task = self.rules.status_callback_task(alias_task_id)
+            if task is None:
+                violations.append(_violation(mutation, "dynamic_hash_alias_task_missing", details={"source_task_id": alias_task_id}))
+            else:
+                _audit_source(task.source, task.coverage_status, mutation, violations, executable_required=True)
+        return _trace(
+            mutation,
+            records,
+            {
+                "callback_id": callback_id or "",
+                "task_id": task_id or "",
+                "dynamic_key": str(metadata.get("dynamic_key") or ""),
+                "property": str(metadata.get("property") or ""),
             },
         )
 
