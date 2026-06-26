@@ -34,6 +34,7 @@ class ScenarioStateBuilder:
         source_traces = list(validation.source_traces)
         eidolon_startup_specs: list[dict[str, Any]] = []
         trace_startup_specs: list[dict[str, Any]] = []
+        passive_startup_specs: list[dict[str, Any]] = []
         for unit in scenario.units:
             panel = unit.panel
             flags = dict(panel.flags)
@@ -68,6 +69,12 @@ class ScenarioStateBuilder:
                 elif unit.eidolon_level:
                     raise ValueError(f"unit {unit.unit_id}: eidolon_level requires a character data card")
             profile = self.rules.combatant_profile(unit.entity_ref) if entity.entity_type in {"monster", "monster_template"} else None
+            monster_card = None
+            if entity.entity_type == "monster":
+                monster_card = self.rules.monster_data_card_for_entity(unit.entity_ref)
+                if monster_card is not None:
+                    flags["monster_data_card_id"] = monster_card.card_id
+                    flags["monster_passive_mechanism_slot_ids"] = tuple(monster_card.passive_mechanism_slot_ids)
             profile_values = _profile_values(profile)
             panel_overrides = _panel_overrides(panel, profile_values)
             if profile is not None:
@@ -89,6 +96,10 @@ class ScenarioStateBuilder:
             flags.update(trace_activation["flags"])
             for startup_spec in trace_activation["startup_specs"]:
                 trace_startup_specs.append({"unit_id": unit.unit_id, **startup_spec})
+            passive_activation = _passive_runtime_activation(self.rules, monster_card)
+            flags.update(passive_activation["flags"])
+            for startup_spec in passive_activation["startup_specs"]:
+                passive_startup_specs.append({"unit_id": unit.unit_id, **startup_spec})
             for key, delta in trace_activation["resource_deltas"].items():
                 resources[key] = float(resources.get(key, 0.0)) + float(delta)
             max_hp = _panel_or_profile_value(panel, "max_hp", profile_values, required=entity.entity_type in {"monster", "monster_template"})
@@ -136,7 +147,7 @@ class ScenarioStateBuilder:
         state, startup_traces = _apply_startup_ability_effects(
             state,
             self.rules,
-            [*eidolon_startup_specs, *trace_startup_specs],
+            [*eidolon_startup_specs, *trace_startup_specs, *passive_startup_specs],
         )
         source_traces.extend(startup_traces)
         commands = tuple(
@@ -290,6 +301,73 @@ def _trace_runtime_activation(rules: RuleBook, card: object | None, flags: dict[
         "resource_deltas": resource_deltas,
         "startup_specs": startup_specs,
     }
+
+
+def _passive_runtime_activation(rules: RuleBook, card: object | None) -> dict[str, Any]:
+    if card is None:
+        return {"flags": {}, "startup_specs": []}
+    card_id = str(getattr(card, "card_id", ""))
+    if not card_id:
+        return {"flags": {}, "startup_specs": []}
+    slots = rules.passive_mechanism_slots_for_card(card_id)
+    enabled_slot_ids: list[str] = []
+    blocked_slots: list[dict[str, Any]] = []
+    source_traces: list[dict[str, Any]] = []
+    startup_specs: list[dict[str, Any]] = []
+    for slot in slots:
+        source_traces.append(slot.source.to_json())
+        if slot.coverage_status != "executable":
+            blocked_slots.append(
+                {
+                    "passive_slot_id": slot.passive_slot_id,
+                    "blocked_reason": slot.blocked_reason or f"passive_slot_not_executable:{slot.coverage_status}",
+                    "source": slot.source.to_json(),
+                }
+            )
+            continue
+        startup_admission = slot.semantics.get("startup_admission")
+        if not isinstance(startup_admission, dict) or startup_admission.get("admission_status") != "executable":
+            blocked_slots.append(
+                {
+                    "passive_slot_id": slot.passive_slot_id,
+                    "blocked_reason": "passive_startup_admission_not_executable",
+                    "source": slot.source.to_json(),
+                }
+            )
+            continue
+        ability_name = str(slot.semantics.get("ability_name") or slot.linked_ir_ids.get("ability_name") or "")
+        admitted_task_ids = tuple(
+            str(item.get("task_id"))
+            for item in _dict_items(startup_admission.get("admitted_tasks"))
+            if item.get("task_id")
+        )
+        enabled_slot_ids.append(slot.passive_slot_id)
+        startup_specs.append(
+            {
+                "kind": "monster_passive_startup_ability",
+                "slot": slot,
+                "slot_id": slot.passive_slot_id,
+                "slot_id_field": "passive_slot_id",
+                "ability_name": ability_name,
+                "param_values": (),
+                "dynamic_value_bindings": {},
+                "dynamic_value_binding_mode": "no_dynamic_values_admitted",
+                "admitted_task_ids": admitted_task_ids,
+            }
+        )
+    flags: dict[str, Any] = {
+        "passive_activation_policy": {
+            "kind": "monster_ability_name_list_startup",
+            "source_field": "MonsterConfig.AbilityNameList",
+            "event_trigger_execution_admitted": False,
+        },
+        "passive_source_traces": tuple(source_traces),
+    }
+    if enabled_slot_ids:
+        flags["enabled_passive_mechanism_slot_ids"] = tuple(enabled_slot_ids)
+    if blocked_slots:
+        flags["blocked_passive_mechanism_slots"] = tuple(blocked_slots)
+    return {"flags": flags, "startup_specs": startup_specs}
 
 
 def _apply_trace_base_stat(value: float, key: str, activation: dict[str, Any]) -> float:
@@ -478,9 +556,12 @@ def _apply_startup_ability_effects(
             )
             continue
         graph = graphs[0]
+        admitted_task_ids = set(_string_items(spec.get("admitted_task_ids")))
         applied_count = 0
         for phase_id in graph.phase_ids:
             for task in rules.ability_tasks_for_phase(phase_id):
+                if admitted_task_ids and task.task_id not in admitted_task_ids:
+                    continue
                 if task.callback_kind != "OnStart" or task.parent_task_id or task.opcode != "AddModifier" or not task.effect_id:
                     continue
                 effect = rules.effect(task.effect_id)

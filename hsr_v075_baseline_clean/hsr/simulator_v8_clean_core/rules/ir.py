@@ -269,6 +269,7 @@ class MonsterDataCardIR:
     blocked_reason: str = ""
     schema_version: str = "v0_277"
     display: dict[str, JSONValue] = field(default_factory=dict)
+    passive_mechanism_slot_ids: tuple[str, ...] = ()
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -285,6 +286,7 @@ class MonsterDataCardIR:
             "skill_slots": [dict(slot) for slot in self.skill_slots],
             "ai_policy": self.ai_policy,
             "action_sequence": [dict(step) for step in self.action_sequence],
+            "passive_mechanism_slot_ids": list(self.passive_mechanism_slot_ids),
             "summon_refs": list(self.summon_refs),
             "raw_parameter_blocks": self.raw_parameter_blocks,
             "card_contract": self.card_contract,
@@ -311,6 +313,38 @@ class CharacterMechanismSlotIR:
         return {
             "mechanism_slot_id": self.mechanism_slot_id,
             "character_data_card_id": self.character_data_card_id,
+            "mechanism_kind": self.mechanism_kind,
+            "runtime_system": self.runtime_system,
+            "linked_ir_ids": self.linked_ir_ids,
+            "activation": self.activation,
+            "semantics": self.semantics,
+            "source": self.source.to_json(),
+            "coverage_status": self.coverage_status,
+            "blocked_reason": self.blocked_reason,
+        }
+
+
+@dataclass(frozen=True)
+class PassiveMechanismSlotIR:
+    passive_slot_id: str
+    data_card_id: str
+    data_card_kind: str
+    owner_entity_ref: str
+    mechanism_kind: str
+    runtime_system: str
+    linked_ir_ids: dict[str, JSONValue]
+    activation: dict[str, JSONValue]
+    semantics: dict[str, JSONValue]
+    source: IRSource
+    coverage_status: CoverageStatus = "blocked"
+    blocked_reason: str = ""
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "passive_slot_id": self.passive_slot_id,
+            "data_card_id": self.data_card_id,
+            "data_card_kind": self.data_card_kind,
+            "owner_entity_ref": self.owner_entity_ref,
             "mechanism_kind": self.mechanism_kind,
             "runtime_system": self.runtime_system,
             "linked_ir_ids": self.linked_ir_ids,
@@ -1370,6 +1404,7 @@ class CanonicalIR:
     character_data_cards: tuple[CharacterDataCardIR, ...] = ()
     monster_data_cards: tuple[MonsterDataCardIR, ...] = ()
     character_mechanism_slots: tuple[CharacterMechanismSlotIR, ...] = ()
+    passive_mechanism_slots: tuple[PassiveMechanismSlotIR, ...] = ()
     character_trace_nodes: tuple[CharacterTraceNodeIR, ...] = ()
     character_eidolon_slots: tuple[CharacterEidolonSlotIR, ...] = ()
     bounce_policies: tuple[BouncePolicyIR, ...] = ()
@@ -1419,6 +1454,7 @@ class CanonicalIR:
             "character_data_cards": [card.to_json() for card in self.character_data_cards],
             "monster_data_cards": [card.to_json() for card in self.monster_data_cards],
             "character_mechanism_slots": [slot.to_json() for slot in self.character_mechanism_slots],
+            "passive_mechanism_slots": [slot.to_json() for slot in self.passive_mechanism_slots],
             "character_trace_nodes": [node.to_json() for node in self.character_trace_nodes],
             "character_eidolon_slots": [slot.to_json() for slot in self.character_eidolon_slots],
             "bounce_policies": [policy.to_json() for policy in self.bounce_policies],

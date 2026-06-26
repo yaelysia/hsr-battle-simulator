@@ -1,4 +1,4 @@
-# v8 怪物卡规范 v0_280
+# v8 怪物卡规范 v0_281
 
 怪物卡是 TBGD 到 Canonical IR 的数据卡层，不是运行时规则系统，也不是敌方 AI 执行器。
 
@@ -22,6 +22,7 @@
 - `Config/ConfigAI/*.json`：AI 结构审计，第一版只 admission `UseSequencedSkill` 固定序列。
 - `Config/ConfigCharacter/Monster/*.json`：技能 trigger key、目标信息、入口 ability 与技能 ability 列表。
 - `Config/ConfigAbility/Monster/**/*.json`：怪物 ability phase、task、effect、动态值读取路径。
+- `MonsterConfig.AbilityNameList`：怪物被动入口；只作为被动来源，不与技能 `ModifierList` 混用。
 
 ## 动作与技能执行边界
 
@@ -42,6 +43,22 @@ v0_280 起普通怪物技能与 ILBattle 怪物技能必须分命名空间：
 
 当前只接通显式 route/命令指定怪物释放某个 `monster_skill:<SkillID>` 的执行；敌方自动决策、自动选目标、复杂 AI、波次驱动仍未 admission。
 
+## 被动槽位与执行边界
+
+v0_281 起怪物被动进入通用 `PassiveMechanismSlotIR`：
+
+- 怪物被动来源只承认 `MonsterConfig.AbilityNameList`。
+- `MonsterSkill.ModifierList` 属于技能附带效果来源，本阶段不作为被动来源。
+- ability name 必须唯一定位到 `Config/ConfigAbility/Monster/**/*.json`；缺失或歧义必须 blocked。
+- 第一阶段只 admission 根级 `OnStart` 下的 `AddModifier`，且目标别名只允许 `Caster` / `ModifierOwnerEntity`。
+- AddModifier 若请求动态值但没有结构化绑定，必须 blocked，不允许自造默认值。
+- 将要添加的 modifier 若带事件 trigger，必须 blocked，避免事件类被动在未 admission 时被现有事件分发系统误执行。
+- 事件触发、阶段、召唤、锁血、插队、波次相关被动只降槽位和覆盖报告，不产生 mutation。
+
+成功 admission 的开场常驻被动由 scenario 构建阶段转成 startup spec，并复用：
+
+`StandaloneAbilityGraphIR -> AbilityTaskIR -> EffectIR(AddModifier) -> StatusSystem.apply_add_modifier`
+
 ## 卡内容
 
 `MonsterDataCardIR` 必须保留：
@@ -49,6 +66,7 @@ v0_280 起普通怪物技能与 ILBattle 怪物技能必须分命名空间：
 - 身份：`monster_id`、`template_id`、`rank`、`entity_ref`。
 - 通用引用：`profile_id`、`action_set_id`。
 - 技能：原始 `SkillList` 顺序、`SkillID`、`action_ref`、`SkillTriggerKey`、同 trigger key 技能组。
+- 被动：`passive_mechanism_slot_ids`、AbilityNameList raw path、ability graph 绑定、startup admission、blocked 原因。
 - AI：`ai_path`、AI task type 摘要、固定序列 admission 状态、复杂 AI blocked 原因。
 - 行动序列：序列来源、序列下标、原始混淆字段、技能 ID、是否在 SkillList 内、技能定义是否存在。
 - 参数块：`CustomValues`、`DynamicValues`、`OverrideSkillParams` 等保持 raw block，不解释混淆字段含义。
@@ -71,6 +89,8 @@ v0_280 起普通怪物技能与 ILBattle 怪物技能必须分命名空间：
 - 禁止按怪物名、固定 MonsterID、固定 SkillID、固定 AIPath 白名单驱动 runtime。
 - 禁止按 TextMap 名称、技能名、描述文本驱动 runtime。
 - 禁止把复杂 AIPath 简化成固定序列执行。
+- 禁止把技能 `ModifierList` 当作被动来源。
+- 禁止让带事件 trigger 的被动状态在事件类被动 admission 前进入可触发状态。
 - 禁止把混淆字段名改成自造语义后作为规则来源。
 - 禁止用观测结果或旧 v7 行为补怪物技能、目标选择、倍率或 AI。
 - 禁止在敌方自动行动未接通时产生怪物伤害 mutation；只有 route/命令明确指定动作和目标，且 action definition、ability binding、公式、目标、伤害/削韧 emission 全部来源审计通过时，才允许产生 mutation。

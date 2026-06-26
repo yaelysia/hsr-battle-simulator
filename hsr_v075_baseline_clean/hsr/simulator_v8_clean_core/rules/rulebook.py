@@ -15,6 +15,7 @@ from .ir import (
     CharacterTraceNodeIR,
     CharacterDataCardIR,
     MonsterDataCardIR,
+    PassiveMechanismSlotIR,
     BreakBaseDamageIR,
     BreakDamageEmissionIR,
     BreakStatusEmissionIR,
@@ -125,6 +126,32 @@ class RuleBook:
             {
                 key: tuple(sorted(value, key=lambda item: item.mechanism_slot_id))
                 for key, value in mechanism_slots_by_card.items()
+            },
+        )
+        passive_slots_by_card: dict[str, list[PassiveMechanismSlotIR]] = {}
+        passive_slots_by_owner: dict[str, list[PassiveMechanismSlotIR]] = {}
+        for slot in self.ir.passive_mechanism_slots:
+            passive_slots_by_card.setdefault(slot.data_card_id, []).append(slot)
+            passive_slots_by_owner.setdefault(slot.owner_entity_ref, []).append(slot)
+        object.__setattr__(
+            self,
+            "_passive_mechanism_slots",
+            {slot.passive_slot_id: slot for slot in self.ir.passive_mechanism_slots},
+        )
+        object.__setattr__(
+            self,
+            "_passive_mechanism_slots_by_card",
+            {
+                key: tuple(sorted(value, key=lambda item: item.passive_slot_id))
+                for key, value in passive_slots_by_card.items()
+            },
+        )
+        object.__setattr__(
+            self,
+            "_passive_mechanism_slots_by_owner",
+            {
+                key: tuple(sorted(value, key=lambda item: item.passive_slot_id))
+                for key, value in passive_slots_by_owner.items()
             },
         )
         trace_nodes_by_card: dict[str, list[CharacterTraceNodeIR]] = {}
@@ -702,6 +729,15 @@ class RuleBook:
 
     def character_mechanism_slots_for_card(self, card_id: str) -> tuple[CharacterMechanismSlotIR, ...]:
         return self._character_mechanism_slots_by_card.get(card_id, ())
+
+    def passive_mechanism_slot(self, passive_slot_id: str) -> PassiveMechanismSlotIR | None:
+        return self._passive_mechanism_slots.get(passive_slot_id)
+
+    def passive_mechanism_slots_for_card(self, data_card_id: str) -> tuple[PassiveMechanismSlotIR, ...]:
+        return self._passive_mechanism_slots_by_card.get(data_card_id, ())
+
+    def passive_mechanism_slots_for_owner(self, owner_entity_ref: str) -> tuple[PassiveMechanismSlotIR, ...]:
+        return self._passive_mechanism_slots_by_owner.get(owner_entity_ref, ())
 
     def character_trace_node(self, trace_node_id: str) -> CharacterTraceNodeIR | None:
         return self._character_trace_nodes.get(trace_node_id)

@@ -39,6 +39,7 @@ from ..rules.ir import (
     FormulaIR,
     HitProfileIR,
     IRSource,
+    PassiveMechanismSlotIR,
     QueueIntentIR,
     QueueLifecyclePolicyIR,
     QueuePriorityIR,
@@ -235,6 +236,7 @@ class TBGDLowering:
             max_records_per_table=self.limits.max_records_per_table,
         )
         monster_data_cards = monster_cards.monster_data_cards
+        passive_mechanism_slots = list(monster_cards.passive_mechanism_slots)
         skill_formula_bindings = [*skill_formula_bindings, *monster_cards.skill_formula_bindings]
         combatant_profiles = self._lower_combatant_profiles()
         action_definitions = list(self._lower_action_definitions().values())
@@ -314,6 +316,13 @@ class TBGDLowering:
             ability_tasks=ability_tasks,
             effects=effects,
         )
+        passive_mechanism_slots = _admit_passive_startup_slots(
+            passive_mechanism_slots,
+            standalone_graphs=standalone_ability_graphs,
+            ability_tasks=ability_tasks,
+            effects=effects,
+            triggers=triggers,
+        )
         skill_continuations = _skill_continuations_from_ability_tasks(ability_tasks)
         combatant_action_sets = self._lower_combatant_action_sets(action_definitions)
         queue_resolutions = _lower_queue_resolutions(
@@ -357,6 +366,7 @@ class TBGDLowering:
             character_data_cards=tuple(character_data_cards),
             monster_data_cards=tuple(monster_data_cards),
             character_mechanism_slots=tuple(character_mechanism_slots),
+            passive_mechanism_slots=tuple(passive_mechanism_slots),
             character_trace_nodes=tuple(character_trace_nodes),
             character_eidolon_slots=tuple(character_eidolon_slots),
             bounce_policies=tuple(bounce_policies),
@@ -441,6 +451,10 @@ class TBGDLowering:
                     "skill_formula_binding_count": len(skill_formula_bindings),
                     "bounce_policy_count": len(bounce_policies),
                     "character_mechanism_slot_count": len(character_mechanism_slots),
+                    "passive_mechanism_slot_count": len(passive_mechanism_slots),
+                    "executable_passive_mechanism_slot_count": sum(
+                        1 for slot in passive_mechanism_slots if slot.coverage_status == "executable"
+                    ),
                     "character_trace_node_count": len(character_trace_nodes),
                     "character_eidolon_slot_count": len(character_eidolon_slots),
                 },
@@ -3212,6 +3226,215 @@ def _trace_startup_dynamic_binding_admission(
         "admission_status": "executable",
         "source_kind": "trace_skill_tree_param_to_startup_ability_dynamic_value_request",
         "bindings": bindings,
+    }
+
+
+def _admit_passive_startup_slots(
+    slots: list[PassiveMechanismSlotIR],
+    *,
+    standalone_graphs: list[StandaloneAbilityGraphIR],
+    ability_tasks: list[AbilityTaskIR],
+    effects: list[EffectIR],
+    triggers: list[TriggerIR],
+) -> list[PassiveMechanismSlotIR]:
+    graphs_by_name: dict[str, list[StandaloneAbilityGraphIR]] = {}
+    for graph in standalone_graphs:
+        graphs_by_name.setdefault(graph.ability_name, []).append(graph)
+    tasks_by_phase: dict[str, list[AbilityTaskIR]] = {}
+    for task in ability_tasks:
+        tasks_by_phase.setdefault(task.phase_id, []).append(task)
+    effects_by_id = {effect.effect_id: effect for effect in effects}
+    modifiers_with_triggers = _modifier_names_with_triggers(triggers)
+    admitted: list[PassiveMechanismSlotIR] = []
+    for slot in slots:
+        if slot.mechanism_kind != "monster_ability_list_passive":
+            admitted.append(slot)
+            continue
+        admitted.append(
+            _admit_passive_startup_slot(
+                slot,
+                graphs_by_name=graphs_by_name,
+                tasks_by_phase=tasks_by_phase,
+                effects_by_id=effects_by_id,
+                modifiers_with_triggers=modifiers_with_triggers,
+            )
+        )
+    return admitted
+
+
+def _admit_passive_startup_slot(
+    slot: PassiveMechanismSlotIR,
+    *,
+    graphs_by_name: dict[str, list[StandaloneAbilityGraphIR]],
+    tasks_by_phase: dict[str, list[AbilityTaskIR]],
+    effects_by_id: dict[str, EffectIR],
+    modifiers_with_triggers: set[str],
+) -> PassiveMechanismSlotIR:
+    semantics = dict(slot.semantics)
+    ability_name = str(semantics.get("ability_name") or slot.linked_ir_ids.get("ability_name") or "")
+    if slot.coverage_status == "blocked":
+        return _passive_startup_blocked_slot(
+            slot,
+            slot.blocked_reason or "monster_passive_slot_not_lowered",
+            {
+                **semantics,
+                "startup_admission": {
+                    "admission_status": "blocked",
+                    "blocked_reason": slot.blocked_reason or "monster_passive_slot_not_lowered",
+                    "ability_name": ability_name,
+                },
+            },
+        )
+    if not ability_name:
+        return _passive_startup_blocked_slot(slot, "monster_passive_ability_name_missing", semantics)
+
+    expected_path = str(slot.linked_ir_ids.get("ability_file_path") or "")
+    graph_candidates = tuple(sorted(graphs_by_name.get(ability_name, ()), key=lambda item: item.standalone_ability_graph_id))
+    if expected_path:
+        graph_candidates = tuple(graph for graph in graph_candidates if graph.source.source_path == expected_path)
+    executable_graphs = tuple(
+        graph for graph in graph_candidates if graph.coverage_status == "executable" and graph.source_mode == "mainline_monster"
+    )
+    if len(executable_graphs) != 1:
+        reason = "monster_passive_startup_graph_missing_or_ambiguous"
+        if graph_candidates and not executable_graphs:
+            reason = "monster_passive_startup_graph_not_executable"
+        return _passive_startup_blocked_slot(
+            slot,
+            reason,
+            {
+                **semantics,
+                "startup_admission": {
+                    "admission_status": "blocked",
+                    "blocked_reason": reason,
+                    "ability_name": ability_name,
+                    "expected_ability_file_path": expected_path,
+                    "candidate_graph_ids": [graph.standalone_ability_graph_id for graph in graph_candidates],
+                    "candidate_graph_statuses": [graph.coverage_status for graph in graph_candidates],
+                    "candidate_graph_source_modes": [graph.source_mode for graph in graph_candidates],
+                },
+            },
+        )
+    graph = executable_graphs[0]
+    candidate_tasks = tuple(
+        task
+        for phase_id in graph.phase_ids
+        for task in tasks_by_phase.get(phase_id, ())
+        if task.callback_kind == "OnStart"
+        and not task.parent_task_id
+        and task.opcode == "AddModifier"
+        and task.effect_id
+    )
+    if not candidate_tasks:
+        return _passive_startup_blocked_slot(
+            slot,
+            "monster_passive_startup_on_start_add_modifier_missing",
+            {
+                **semantics,
+                "startup_admission": {
+                    "admission_status": "blocked",
+                    "blocked_reason": "monster_passive_startup_on_start_add_modifier_missing",
+                    "standalone_ability_graph_id": graph.standalone_ability_graph_id,
+                },
+            },
+        )
+
+    admitted_tasks: list[dict[str, JSONValue]] = []
+    blocked_tasks: list[dict[str, JSONValue]] = []
+    for task in candidate_tasks:
+        effect = effects_by_id.get(task.effect_id)
+        if effect is None:
+            blocked_tasks.append({"task_id": task.task_id, "blocked_reason": "monster_passive_startup_effect_missing"})
+            continue
+        effect_reason = _passive_startup_effect_blocked_reason(effect, modifiers_with_triggers)
+        if effect_reason:
+            blocked_tasks.append(
+                {
+                    "task_id": task.task_id,
+                    "effect_id": effect.effect_id,
+                    "blocked_reason": effect_reason,
+                    "effect_coverage_status": effect.coverage_status,
+                }
+            )
+            continue
+        admitted_tasks.append({"task_id": task.task_id, "effect_id": effect.effect_id})
+    if not admitted_tasks:
+        return _passive_startup_blocked_slot(
+            slot,
+            "monster_passive_startup_no_admitted_on_start_add_modifier",
+            {
+                **semantics,
+                "startup_admission": {
+                    "admission_status": "blocked",
+                    "blocked_reason": "monster_passive_startup_no_admitted_on_start_add_modifier",
+                    "standalone_ability_graph_id": graph.standalone_ability_graph_id,
+                    "blocked_tasks": blocked_tasks,
+                },
+            },
+        )
+    return replace(
+        slot,
+        linked_ir_ids={
+            **slot.linked_ir_ids,
+            "standalone_ability_graph_id": graph.standalone_ability_graph_id,
+            "admitted_task_ids": [str(item["task_id"]) for item in admitted_tasks],
+            "admitted_effect_ids": [str(item["effect_id"]) for item in admitted_tasks],
+        },
+        semantics={
+            **semantics,
+            "startup_admission": {
+                "admission_status": "executable",
+                "startup_kind": "monster_passive_on_start_add_modifier",
+                "standalone_ability_graph_id": graph.standalone_ability_graph_id,
+                "admitted_tasks": admitted_tasks,
+                "blocked_tasks": blocked_tasks,
+                "event_trigger_execution_admitted": False,
+            },
+        },
+        activation={
+            **slot.activation,
+            "kind": "monster_passive_startup_ability",
+        },
+        coverage_status="executable",
+        blocked_reason="",
+    )
+
+
+def _passive_startup_blocked_slot(
+    slot: PassiveMechanismSlotIR,
+    reason: str,
+    semantics: dict[str, JSONValue],
+) -> PassiveMechanismSlotIR:
+    return replace(slot, semantics=semantics, coverage_status="blocked", blocked_reason=reason)
+
+
+def _passive_startup_effect_blocked_reason(effect: EffectIR, modifiers_with_triggers: set[str]) -> str:
+    if effect.opcode != "AddModifier":
+        return f"monster_passive_startup_effect_opcode_not_add_modifier:{effect.opcode}"
+    if effect.coverage_status != "executable":
+        return f"monster_passive_startup_effect_not_executable:{effect.coverage_status}"
+    standard = effect.payload.get("standard")
+    if not isinstance(standard, dict):
+        return "monster_passive_startup_effect_standard_payload_missing"
+    modifier_name = standard.get("modifier_name")
+    if not isinstance(modifier_name, str) or not modifier_name:
+        return "monster_passive_startup_effect_modifier_name_missing"
+    target_alias = standard.get("target_alias")
+    if target_alias not in {"Caster", "ModifierOwnerEntity"}:
+        return f"monster_passive_startup_effect_target_alias_not_admitted:{target_alias}"
+    requests = standard.get("dynamic_value_requests")
+    if requests:
+        return "monster_passive_startup_dynamic_value_request_not_admitted"
+    if modifier_name in modifiers_with_triggers:
+        return "monster_passive_startup_modifier_has_event_triggers"
+    return ""
+
+
+def _modifier_names_with_triggers(triggers: list[TriggerIR]) -> set[str]:
+    return {
+        str(trigger.source.raw_id)
+        for trigger in triggers
+        if isinstance(trigger.source.raw_id, str) and trigger.source.raw_id
     }
 
 

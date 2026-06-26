@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from ..rules.ir import IRSource, JSONValue, MonsterDataCardIR, SkillFormulaBindingIR
+from ..rules.ir import IRSource, JSONValue, MonsterDataCardIR, PassiveMechanismSlotIR, SkillFormulaBindingIR
 
 
 MONSTER_CONFIG_PATH = "ExcelOutput/MonsterConfig.json"
@@ -39,6 +39,7 @@ COMPLEX_AI_TASKS: frozenset[str] = frozenset(
 class MonsterCardBuildResult:
     monster_data_cards: list[MonsterDataCardIR]
     skill_formula_bindings: list[SkillFormulaBindingIR]
+    passive_mechanism_slots: list[PassiveMechanismSlotIR]
 
 
 @dataclass(frozen=True)
@@ -80,11 +81,24 @@ def build_monster_card_ir(
             )
         )
     text_maps = _load_display_text_maps(tbgd_root)
+    ability_name_index = _monster_ability_name_index(tbgd_root)
 
     cards: list[MonsterDataCardIR] = []
     skill_formula_bindings: dict[str, SkillFormulaBindingIR] = {}
+    passive_mechanism_slots: dict[str, PassiveMechanismSlotIR] = {}
     for monster_id, monster_record in sorted(monster_rows.items()):
-        card = _monster_card(tbgd_root, monster_id, monster_record, template_rows, skill_rows, text_maps)
+        passive_slots = _passive_slots_for_monster(monster_id, monster_record, ability_name_index)
+        for slot in passive_slots:
+            passive_mechanism_slots.setdefault(slot.passive_slot_id, slot)
+        card = _monster_card(
+            tbgd_root,
+            monster_id,
+            monster_record,
+            template_rows,
+            skill_rows,
+            text_maps,
+            passive_slot_ids=tuple(slot.passive_slot_id for slot in passive_slots),
+        )
         cards.append(card)
         for binding in _skill_formula_bindings_for_monster(
             tbgd_root,
@@ -97,6 +111,7 @@ def build_monster_card_ir(
     return MonsterCardBuildResult(
         monster_data_cards=cards,
         skill_formula_bindings=list(skill_formula_bindings.values()),
+        passive_mechanism_slots=list(passive_mechanism_slots.values()),
     )
 
 
@@ -107,6 +122,7 @@ def _monster_card(
     template_rows: dict[str, _RowRecord],
     skill_rows: dict[str, _RowRecord],
     text_maps: dict[str, dict[str, str]],
+    passive_slot_ids: tuple[str, ...] = (),
 ) -> MonsterDataCardIR:
     monster_row = monster_record.row
     template_id = str(monster_row.get("MonsterTemplateID") or "")
@@ -171,7 +187,7 @@ def _monster_card(
                     "dynamic_values": "DynamicValues",
                     "override_skill_params": "OverrideSkillParams",
                 },
-                "builder": "monster_data_card_v0_280",
+                "builder": "monster_data_card_v0_281",
                 "runtime_execution_admitted": False,
                 "manual_route_action_execution_admitted": "depends_on_action_ir",
                 "enemy_ai_runtime_execution_admitted": False,
@@ -179,6 +195,8 @@ def _monster_card(
         ),
         coverage_status="blocked" if blocked_reasons else "lowered",
         blocked_reason=";".join(blocked_reasons),
+        schema_version="v0_281",
+        passive_mechanism_slot_ids=passive_slot_ids,
     )
 
 
@@ -242,6 +260,104 @@ def _skill_slots(
             slot["same_trigger_skill_ids"] = [
                 str(slots[index].get("skill_id")) for index in trigger_groups.get(trigger_key, ())
             ]
+    return slots
+
+
+def _monster_ability_name_index(tbgd_root: Path) -> dict[str, tuple[str, ...]]:
+    root = tbgd_root / "Config/ConfigAbility/Monster"
+    indexed: dict[str, list[str]] = {}
+    if not root.exists():
+        return {}
+    for path in sorted(root.rglob("*.json")):
+        if path.name.endswith(".layout.json"):
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if not isinstance(data, dict):
+            continue
+        ability_list = data.get("AbilityList")
+        if not isinstance(ability_list, list):
+            continue
+        relative = path.relative_to(tbgd_root).as_posix()
+        for ability in ability_list:
+            if not isinstance(ability, dict):
+                continue
+            name = ability.get("Name") or ability.get("AbilityName")
+            if isinstance(name, str) and name:
+                indexed.setdefault(name, []).append(relative)
+    return {name: tuple(paths) for name, paths in indexed.items()}
+
+
+def _passive_slots_for_monster(
+    monster_id: str,
+    monster_record: _RowRecord,
+    ability_name_index: dict[str, tuple[str, ...]],
+) -> list[PassiveMechanismSlotIR]:
+    raw_abilities = monster_record.row.get("AbilityNameList")
+    if not isinstance(raw_abilities, list):
+        return []
+    slots: list[PassiveMechanismSlotIR] = []
+    card_id = f"monster_data_card:monster:{monster_id}"
+    owner_entity_ref = f"monster:{monster_id}"
+    for index, raw_name in enumerate(raw_abilities):
+        ability_name = raw_name if isinstance(raw_name, str) else ""
+        paths = tuple(sorted(ability_name_index.get(ability_name, ()))) if ability_name else ()
+        blocked_reason = ""
+        if not ability_name:
+            blocked_reason = "monster_passive_ability_name_invalid"
+        elif not paths:
+            blocked_reason = "monster_passive_ability_missing"
+        elif len(paths) > 1:
+            blocked_reason = "monster_passive_ability_ambiguous"
+        source = IRSource(
+            source_path=monster_record.relative_path,
+            raw_type=Path(monster_record.relative_path).stem,
+            raw_id=monster_id,
+            evidence={
+                "row_index": monster_record.row_index,
+                "raw_path": f"AbilityNameList[{index}]",
+                "ability_name": ability_name,
+                "ability_file_paths": list(paths),
+                "ability_resolution_status": "unique" if len(paths) == 1 else "blocked",
+                "builder": "monster_passive_slot_v0_281",
+            },
+        )
+        slot_id = f"passive_mechanism_slot:monster:{monster_id}:ability:{index}:{_safe_id(ability_name)}"
+        slots.append(
+            PassiveMechanismSlotIR(
+                passive_slot_id=slot_id,
+                data_card_id=card_id,
+                data_card_kind="monster",
+                owner_entity_ref=owner_entity_ref,
+                mechanism_kind="monster_ability_list_passive",
+                runtime_system="startup_status_system",
+                linked_ir_ids={
+                    "monster_id": monster_id,
+                    "ability_name": ability_name,
+                    "ability_file_path": paths[0] if len(paths) == 1 else "",
+                    "ability_file_paths": list(paths),
+                },
+                activation={
+                    "kind": "monster_passive_startup_ability_candidate",
+                    "source_field": "AbilityNameList",
+                    "source_index": index,
+                    "default_enabled": True,
+                    "callback_kind": "OnStart",
+                },
+                semantics={
+                    "ability_name": ability_name,
+                    "ability_file_paths": list(paths),
+                    "admission_policy": "only_root_on_start_add_modifier_without_dynamic_or_event_trigger_v0_281",
+                    "event_trigger_execution_admitted": False,
+                    "source_field": "AbilityNameList",
+                },
+                source=source,
+                coverage_status="blocked" if blocked_reason else "lowered",
+                blocked_reason=blocked_reason,
+            )
+        )
     return slots
 
 
@@ -559,7 +675,7 @@ def _raw_parameter_blocks(monster_row: dict[str, Any], template_row: dict[str, A
 
 def _monster_data_card_contract() -> dict[str, JSONValue]:
     return {
-        "schema_version": "v0_280",
+        "schema_version": "v0_281",
         "runtime_boundary": {
             "runtime_reads": "Canonical IR only",
             "raw_tbgd_allowed_in_runtime": False,
@@ -585,6 +701,13 @@ def _monster_data_card_contract() -> dict[str, JSONValue]:
             "skill_trigger_key_one_to_one_required": False,
             "sequence_skill_must_have_skill_definition": True,
             "sequence_skill_must_be_in_skill_list": True,
+        },
+        "passive_policy": {
+            "passive_source_field": "MonsterConfig.AbilityNameList",
+            "skill_modifier_list_is_not_passive_source": True,
+            "first_executable_scope": "root OnStart AddModifier only",
+            "event_trigger_execution_admitted": False,
+            "complex_passive_execution_allowed": False,
         },
         "stage_boundary": {
             "stage_level_and_hard_level_group_assembly_admitted": False,
@@ -740,6 +863,12 @@ def _limit_sequence(items: list[Any], limit: int | None) -> list[Any]:
     if limit is None:
         return items
     return items[: max(0, limit)]
+
+
+def _safe_id(value: str) -> str:
+    text = "".join(ch if ch.isalnum() else "_" for ch in str(value))
+    text = "_".join(part for part in text.split("_") if part)
+    return text[:160] or "missing"
 
 
 def _number_value(value: Any, default: float) -> float:

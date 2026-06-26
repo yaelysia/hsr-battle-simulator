@@ -1399,13 +1399,20 @@
         "display_text_source": "TextMap CHS/EN at card build time only",
         "missing_display_text_blocks_execution": false
       },
+      "passive_policy": {
+        "complex_passive_execution_allowed": false,
+        "event_trigger_execution_admitted": false,
+        "first_executable_scope": "root OnStart AddModifier only",
+        "passive_source_field": "MonsterConfig.AbilityNameList",
+        "skill_modifier_list_is_not_passive_source": true
+      },
       "runtime_boundary": {
         "monster_name_special_case_allowed": false,
         "raw_tbgd_allowed_in_runtime": false,
         "runtime_reads": "Canonical IR only",
         "text_map_allowed_in_runtime": false
       },
-      "schema_version": "v0_280",
+      "schema_version": "v0_281",
       "skill_policy": {
         "sequence_skill_must_be_in_skill_list": true,
         "sequence_skill_must_have_skill_definition": true,
@@ -1436,6 +1443,7 @@
     },
     "entity_ref": "monster:1002011",
     "monster_id": "1002011",
+    "passive_mechanism_slot_ids": [],
     "profile_id": "combatant_profile:monster:1002011",
     "rank": "MinionLv2",
     "raw_parameter_blocks": {
@@ -1551,7 +1559,7 @@
         "stance_type": "Ice"
       }
     },
-    "schema_version": "v0_277",
+    "schema_version": "v0_281",
     "skill_ids": [
       "100201101"
     ],
@@ -1623,7 +1631,7 @@
     ],
     "source": {
       "evidence": {
-        "builder": "monster_data_card_v0_280",
+        "builder": "monster_data_card_v0_281",
         "enemy_ai_runtime_execution_admitted": false,
         "manual_route_action_execution_admitted": "depends_on_action_ir",
         "raw_paths": {
