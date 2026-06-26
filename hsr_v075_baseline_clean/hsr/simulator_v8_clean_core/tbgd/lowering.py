@@ -9,6 +9,7 @@ from typing import Any
 
 from .coverage import classify_opcode
 from .character_cards import build_character_card_ir
+from .monster_cards import build_monster_card_ir
 from .paths import relative_source_path
 from .. import BASELINE_VERSION
 from ..rules.ir import (
@@ -210,6 +211,11 @@ class TBGDLowering:
         character_eidolon_slots = character_cards.character_eidolon_slots
         skill_formula_bindings = character_cards.skill_formula_bindings
         bounce_policies = character_cards.bounce_policies
+        monster_cards = build_monster_card_ir(
+            self.tbgd_root,
+            max_records_per_table=self.limits.max_records_per_table,
+        )
+        monster_data_cards = monster_cards.monster_data_cards
         combatant_profiles = self._lower_combatant_profiles()
         action_definitions = list(self._lower_action_definitions().values())
         (
@@ -329,6 +335,7 @@ class TBGDLowering:
             entities=tuple(entities),
             avatar_profiles=tuple(avatar_profiles),
             character_data_cards=tuple(character_data_cards),
+            monster_data_cards=tuple(monster_data_cards),
             character_mechanism_slots=tuple(character_mechanism_slots),
             character_trace_nodes=tuple(character_trace_nodes),
             character_eidolon_slots=tuple(character_eidolon_slots),
@@ -426,6 +433,15 @@ class TBGDLowering:
                     "lowered_count": len(character_data_cards),
                     "executable_count": sum(1 for card in character_data_cards if card.coverage_status == "executable"),
                     "blocked_count": sum(1 for card in character_data_cards if card.coverage_status == "blocked"),
+                },
+                "monster_data_card_status": {
+                    "lowered_count": len(monster_data_cards),
+                    "sequence_admitted_count": sum(
+                        1
+                        for card in monster_data_cards
+                        if card.ai_policy.get("admission_status") == "executable"
+                    ),
+                    "blocked_count": sum(1 for card in monster_data_cards if card.coverage_status == "blocked"),
                 },
                 "combatant_profile_status": {
                     "lowered_count": len(combatant_profiles),

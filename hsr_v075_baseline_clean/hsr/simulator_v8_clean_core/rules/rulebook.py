@@ -14,6 +14,7 @@ from .ir import (
     CharacterMechanismSlotIR,
     CharacterTraceNodeIR,
     CharacterDataCardIR,
+    MonsterDataCardIR,
     BreakBaseDamageIR,
     BreakDamageEmissionIR,
     BreakStatusEmissionIR,
@@ -99,6 +100,16 @@ class RuleBook:
             self,
             "_character_data_cards_by_entity_ref",
             {card.entity_ref: card for card in self.ir.character_data_cards},
+        )
+        object.__setattr__(
+            self,
+            "_monster_data_cards",
+            {card.card_id: card for card in self.ir.monster_data_cards},
+        )
+        object.__setattr__(
+            self,
+            "_monster_data_cards_by_entity_ref",
+            {card.entity_ref: card for card in self.ir.monster_data_cards},
         )
         mechanism_slots_by_card: dict[str, list[CharacterMechanismSlotIR]] = {}
         for slot in self.ir.character_mechanism_slots:
@@ -679,6 +690,12 @@ class RuleBook:
 
     def character_data_card_for_entity(self, entity_ref: str) -> CharacterDataCardIR | None:
         return self._character_data_cards_by_entity_ref.get(entity_ref)
+
+    def monster_data_card(self, card_id: str) -> MonsterDataCardIR | None:
+        return self._monster_data_cards.get(card_id)
+
+    def monster_data_card_for_entity(self, entity_ref: str) -> MonsterDataCardIR | None:
+        return self._monster_data_cards_by_entity_ref.get(entity_ref)
 
     def character_mechanism_slot(self, mechanism_slot_id: str) -> CharacterMechanismSlotIR | None:
         return self._character_mechanism_slots.get(mechanism_slot_id)

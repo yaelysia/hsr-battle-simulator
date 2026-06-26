@@ -249,6 +249,50 @@ class CharacterDataCardIR:
 
 
 @dataclass(frozen=True)
+class MonsterDataCardIR:
+    card_id: str
+    entity_ref: str
+    monster_id: str
+    template_id: str
+    rank: str
+    profile_id: str
+    action_set_id: str
+    skill_ids: tuple[str, ...]
+    skill_slots: tuple[dict[str, JSONValue], ...]
+    ai_policy: dict[str, JSONValue]
+    action_sequence: tuple[dict[str, JSONValue], ...]
+    summon_refs: tuple[str, ...]
+    raw_parameter_blocks: dict[str, JSONValue]
+    card_contract: dict[str, JSONValue]
+    source: IRSource
+    coverage_status: CoverageStatus = "blocked"
+    blocked_reason: str = ""
+    schema_version: str = "v0_277"
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "card_id": self.card_id,
+            "schema_version": self.schema_version,
+            "entity_ref": self.entity_ref,
+            "monster_id": self.monster_id,
+            "template_id": self.template_id,
+            "rank": self.rank,
+            "profile_id": self.profile_id,
+            "action_set_id": self.action_set_id,
+            "skill_ids": list(self.skill_ids),
+            "skill_slots": [dict(slot) for slot in self.skill_slots],
+            "ai_policy": self.ai_policy,
+            "action_sequence": [dict(step) for step in self.action_sequence],
+            "summon_refs": list(self.summon_refs),
+            "raw_parameter_blocks": self.raw_parameter_blocks,
+            "card_contract": self.card_contract,
+            "source": self.source.to_json(),
+            "coverage_status": self.coverage_status,
+            "blocked_reason": self.blocked_reason,
+        }
+
+
+@dataclass(frozen=True)
 class CharacterMechanismSlotIR:
     mechanism_slot_id: str
     character_data_card_id: str
@@ -1316,6 +1360,7 @@ class CanonicalIR:
     entities: tuple[RuleEntity, ...] = ()
     avatar_profiles: tuple[AvatarProfileIR, ...] = ()
     character_data_cards: tuple[CharacterDataCardIR, ...] = ()
+    monster_data_cards: tuple[MonsterDataCardIR, ...] = ()
     character_mechanism_slots: tuple[CharacterMechanismSlotIR, ...] = ()
     character_trace_nodes: tuple[CharacterTraceNodeIR, ...] = ()
     character_eidolon_slots: tuple[CharacterEidolonSlotIR, ...] = ()
@@ -1364,6 +1409,7 @@ class CanonicalIR:
             "entities": [entity.to_json() for entity in self.entities],
             "avatar_profiles": [profile.to_json() for profile in self.avatar_profiles],
             "character_data_cards": [card.to_json() for card in self.character_data_cards],
+            "monster_data_cards": [card.to_json() for card in self.monster_data_cards],
             "character_mechanism_slots": [slot.to_json() for slot in self.character_mechanism_slots],
             "character_trace_nodes": [node.to_json() for node in self.character_trace_nodes],
             "character_eidolon_slots": [slot.to_json() for slot in self.character_eidolon_slots],
