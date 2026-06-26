@@ -5,9 +5,10 @@ from dataclasses import dataclass
 from ..core.model import ActionCommand, BattleState, GameEvent, JSONValue, Mutation, TargetResolution
 from ..core.reducer import MutationReducer
 from ..core.settlement import SettlementRecord
-from ..rules.evaluator import EvaluationContext, RuleEvaluator
+from ..rules.evaluator import EvaluationContext, NumericEvaluationContext, RuleEvaluator
 from ..rules.ir import AbilityPhaseIR, AbilityTaskIR, ActionDefinitionIR, IRSource
 from ..rules.rulebook import RuleBook
+from .damage import DamagePacket, DamageSourceFrame, DamageSystem, DamageWindowLedger
 from .dynamic_values import (
     binding_source_from_store,
     character_skill_param_binding_sources,
@@ -35,11 +36,13 @@ class AbilityTaskSystem:
         effect_registry: EffectRegistry,
         evaluator: RuleEvaluator | None = None,
         reducer: MutationReducer | None = None,
+        damage: DamageSystem | None = None,
     ) -> None:
         self.rules = rules
         self.effect_registry = effect_registry
         self.evaluator = evaluator or RuleEvaluator()
         self.reducer = reducer or MutationReducer()
+        self.damage = damage or DamageSystem()
 
     def execute_callback(
         self,
@@ -121,6 +124,7 @@ class AbilityTaskSystem:
         target_ids: tuple[str, ...],
         queue_entry: dict[str, JSONValue],
         queue_resolution: dict[str, JSONValue],
+        depth: int = 0,
     ) -> AbilityTaskExecutionResult:
         if not phases:
             return AbilityTaskExecutionResult(
@@ -175,6 +179,8 @@ class AbilityTaskSystem:
                 "queue_intent_id": str(queue_entry.get("queue_intent_id") or ""),
                 "queue_resolution_id": str(queue_resolution.get("queue_resolution_id") or ""),
                 "standalone_ability_name": ability_name,
+                "standalone_depth": depth,
+                "is_insert_action": True,
             },
         )
         target_resolution = TargetResolution(
@@ -250,6 +256,24 @@ class AbilityTaskSystem:
                 primary_target=primary_target,
                 target_resolution=target_resolution,
             )
+        if task.opcode == "TriggerAbility":
+            return self._execute_trigger_ability_task(
+                state,
+                task,
+                command=command,
+                action_definition=action_definition,
+                primary_target=primary_target,
+                target_resolution=target_resolution,
+            )
+        if self.rules.damage_emissions_for_task(task.task_id):
+            return self._execute_damage_task(
+                state,
+                task,
+                command=command,
+                action_definition=action_definition,
+                primary_target=primary_target,
+                target_resolution=target_resolution,
+            )
         if task.coverage_status != "executable":
             record = _task_process_record(task, ok=False, blocked_reason=task.blocked_reason or "task_not_executable")
             return state, [], [record]
@@ -306,6 +330,216 @@ class AbilityTaskSystem:
             )
         )
         return after, list(result.mutations), records
+
+    def _execute_trigger_ability_task(
+        self,
+        state: BattleState,
+        task: AbilityTaskIR,
+        *,
+        command: ActionCommand,
+        action_definition: ActionDefinitionIR,
+        primary_target: str | None,
+        target_resolution: TargetResolution,
+    ) -> tuple[BattleState, list[Mutation], list[dict[str, JSONValue]]]:
+        if task.coverage_status != "executable":
+            return state, [], [_task_process_record(task, ok=False, blocked_reason=task.blocked_reason or "task_not_executable")]
+        effect = self.rules.effect(task.effect_id) if task.effect_id else None
+        standard = effect.payload.get("standard") if effect is not None else None
+        if effect is None or not isinstance(standard, dict):
+            return state, [], [_task_process_record(task, ok=False, blocked_reason="trigger_ability_effect_missing")]
+        ability_name = standard.get("ability_name")
+        if not isinstance(ability_name, str) or not ability_name:
+            return state, [], [_task_process_record(task, ok=False, blocked_reason="trigger_ability_name_missing", effect_id=effect.effect_id, effect_opcode=effect.opcode)]
+        if not command.action_id.startswith("standalone_ability:"):
+            action_phase_names = {
+                phase.ability_name
+                for phase in self.rules.ability_phases_for_action(command.action_id, command.action_level)
+            }
+            if ability_name in action_phase_names:
+                return state, [], [
+                    _task_process_record(
+                        task,
+                        ok=True,
+                        blocked_reason="trigger_ability_child_already_bound_to_action",
+                        effect_id=effect.effect_id,
+                        effect_opcode=effect.opcode,
+                        effect_coverage="executable",
+                    )
+                ]
+        depth = int(command.metadata.get("standalone_depth") or 0)
+        if depth >= 4:
+            return state, [], [_task_process_record(task, ok=False, blocked_reason="trigger_ability_depth_limit", effect_id=effect.effect_id, effect_opcode=effect.opcode)]
+        graphs = self.rules.standalone_ability_graphs_by_name(ability_name)
+        if not graphs:
+            return state, [], [_task_process_record(task, ok=False, blocked_reason=f"standalone_ability_graph_missing:{ability_name}", effect_id=effect.effect_id, effect_opcode=effect.opcode)]
+        source_path = task.source.source_path
+        same_source = tuple(graph for graph in graphs if graph.source.source_path == source_path)
+        selected_graphs = same_source or graphs
+        if len(selected_graphs) != 1:
+            return state, [], [_task_process_record(task, ok=False, blocked_reason=f"standalone_ability_graph_ambiguous:{ability_name}", effect_id=effect.effect_id, effect_opcode=effect.opcode)]
+        graph = selected_graphs[0]
+        phases = tuple(
+            phase
+            for phase_id in graph.phase_ids
+            if (phase := self.rules.ability_phase(phase_id)) is not None
+        )
+        result = self.execute_standalone(
+            state,
+            phases=phases,
+            actor_id=command.actor_id,
+            target_ids=target_resolution.selected,
+            queue_entry={
+                "entry_id": command.metadata.get("parent_queue_entry_id") or "",
+                "queue_name": command.queue_name,
+                "queue_intent_id": command.metadata.get("queue_intent_id") or "",
+                "trigger_task_id": task.task_id,
+            },
+            queue_resolution={
+                "queue_resolution_id": command.metadata.get("queue_resolution_id") or "",
+                "trigger_task_id": task.task_id,
+                "trigger_ability_name": ability_name,
+            },
+            depth=depth + 1,
+        )
+        records = list(result.records)
+        records.append(
+            _task_process_record(
+                task,
+                ok=not result.errors if hasattr(result, "errors") else True,
+                effect_id=effect.effect_id,
+                effect_opcode=effect.opcode,
+                effect_coverage="executable",
+                mutation_count=len(result.mutations),
+                record_count=len(result.records),
+            )
+        )
+        return result.after_state, list(result.mutations), records
+
+    def _execute_damage_task(
+        self,
+        state: BattleState,
+        task: AbilityTaskIR,
+        *,
+        command: ActionCommand,
+        action_definition: ActionDefinitionIR,
+        primary_target: str | None,
+        target_resolution: TargetResolution,
+    ) -> tuple[BattleState, list[Mutation], list[dict[str, JSONValue]]]:
+        emissions = tuple(
+            emission
+            for emission in self.rules.damage_emissions_for_task(task.task_id)
+            if emission.action_id == task.action_id and emission.level == task.level
+        )
+        if not emissions:
+            return state, [], [_task_process_record(task, ok=False, blocked_reason="damage_emission_missing")]
+        current = state
+        mutations: list[Mutation] = []
+        records: list[dict[str, JSONValue]] = []
+        ledger = DamageWindowLedger()
+        for emission in emissions:
+            if emission.coverage_status != "executable":
+                records.append(
+                    _task_process_record(
+                        task,
+                        ok=False,
+                        blocked_reason=emission.blocked_reason or f"damage_emission_not_executable:{emission.coverage_status}",
+                    )
+                )
+                continue
+            profile = self.rules.hit_profile(emission.hit_profile_id)
+            if profile is None or profile.coverage_status != "executable":
+                records.append(
+                    _task_process_record(
+                        task,
+                        ok=False,
+                        blocked_reason="hit_profile_missing_or_not_executable",
+                    )
+                )
+                continue
+            ratio_eval = self.evaluator.evaluate_numeric(
+                emission.scaling_ratio_expr,
+                NumericEvaluationContext(
+                    binding_sources=(
+                        *_binding_sources(
+                            self.rules,
+                            current,
+                            command.actor_id,
+                            primary_target,
+                            action_level=command.action_level,
+                            current_action_trigger_key=_action_trigger_key(action_definition),
+                        ),
+                        *_expression_binding_sources(emission.scaling_ratio_expr),
+                    ),
+                    source_trace=emission.source.to_json(),
+                ),
+            )
+            if not ratio_eval.ok or ratio_eval.value is None:
+                records.append(
+                    _task_process_record(
+                        task,
+                        ok=False,
+                        blocked_reason=f"damage_scaling_ratio_blocked:{ratio_eval.blocked_reason}",
+                    )
+                )
+                continue
+            target_ids = _damage_targets_for_emission(emission.target_group, target_resolution)
+            if not target_ids:
+                records.append(_task_process_record(task, ok=False, blocked_reason="damage_target_missing"))
+                continue
+            for target_id in target_ids:
+                packet = DamagePacket(
+                    attacker_id=command.actor_id,
+                    target_id=target_id,
+                    attack_type=action_definition.attack_type,
+                    damage_formula_family=emission.damage_formula_family,
+                    damage_kind="hp_damage",
+                    element_type=emission.element_type,
+                    action_definition=action_definition,
+                    damage_emission_id=emission.damage_emission_id,
+                    source_task_id=task.task_id,
+                    hit_profile_id=profile.hit_profile_id,
+                    scaling_ratio=ratio_eval.value,
+                    scaling_basis=emission.scaling_basis_expr,
+                    hit_source_trace=profile.source.to_json(),
+                    source_trace=emission.source.to_json(),
+                    source_frame=DamageSourceFrame(
+                        owner_id=command.actor_id,
+                        source_id=task.task_id,
+                        source_kind="standalone_ability_damage",
+                        sequence_id=f"{command.action_id}:{task.task_id}",
+                        target_id=target_id,
+                        can_continue_after_lethal=True,
+                        source_trace=emission.source.to_json(),
+                    ),
+                    metadata={
+                        **command.metadata,
+                        "SkillType": action_definition.skill_effect,
+                        "skill_type": action_definition.skill_effect,
+                        "attack_type": action_definition.attack_type,
+                        "is_insert_action": True,
+                        "primary_action_target_id": primary_target,
+                        "hit_index": profile.hit_index,
+                        "target_group": emission.target_group,
+                        "numeric_evaluation": ratio_eval.to_json(),
+                    },
+                )
+                damage_result = self.damage.apply_packet(current, packet, window_ledger=ledger)
+                current = self.reducer.apply_all(current, damage_result.mutations)
+                mutations.extend(damage_result.mutations)
+                records.extend(damage_result.records)
+                records.append(
+                    _task_process_record(
+                        task,
+                        ok=damage_result.ok,
+                        blocked_reason=",".join(damage_result.errors),
+                        effect_id=task.effect_id,
+                        effect_opcode=task.opcode,
+                        effect_coverage="executable",
+                        mutation_count=len(damage_result.mutations),
+                        record_count=len(damage_result.records),
+                    )
+                )
+        return current, mutations, records
 
     def _execute_predicate_task(
         self,
@@ -468,3 +702,19 @@ def _binding_sources(
 def _action_trigger_key(action_definition: ActionDefinitionIR) -> str:
     value = action_definition.source.evidence.get("skill_trigger_key")
     return str(value) if isinstance(value, str) else ""
+
+
+def _damage_targets_for_emission(
+    target_group: str,
+    target_resolution: TargetResolution,
+) -> tuple[str, ...]:
+    if target_group in {"selected", "primary", "single", "aoe"}:
+        return tuple(target_resolution.selected)
+    return ()
+
+
+def _expression_binding_sources(expression: object) -> tuple[dict[str, JSONValue], ...]:
+    if not isinstance(expression, dict):
+        return ()
+    source = expression.get("binding_source")
+    return (source,) if isinstance(source, dict) else ()

@@ -230,6 +230,21 @@ class StatusSystem:
             binding_sources,
             {"effect_id": effect.effect_id, "effect_source": effect.source.to_json()},
         )
+        on_create_dynamic_values = _on_create_define_dynamic_values(
+            self.rules,
+            modifier_name,
+            definition.source.source_path,
+            state,
+            target_id=target_id,
+            caster_id=caster_id,
+            owner_id=target_id,
+            param_entity_id=param_entity_id,
+            current_action_target_id=current_action_target_id,
+            binding_sources=binding_sources,
+            source_trace={"effect_id": effect.effect_id, "effect_source": effect.source.to_json()},
+        )
+        if on_create_dynamic_values:
+            resolved_dynamic_values = _merge_dynamic_values(resolved_dynamic_values, on_create_dynamic_values)
         modifiers, unsupported = _runtime_modifiers(definition, resolved_dynamic_values)
         formula_bindings = _status_formula_bindings(standard)
         before_details = _status_details(unit_flags=state.units[target_id].flags)
@@ -948,6 +963,93 @@ def _resolve_dynamic_values(
     values["__by_hash"] = by_hash
     values["__evaluations"] = evaluations
     return values
+
+
+def _on_create_define_dynamic_values(
+    rules: RuleBook,
+    modifier_name: str,
+    source_path: str,
+    state: BattleState,
+    *,
+    target_id: str,
+    caster_id: str,
+    owner_id: str,
+    param_entity_id: str | None,
+    current_action_target_id: str | None,
+    binding_sources: tuple[dict[str, JSONValue], ...],
+    source_trace: dict[str, JSONValue],
+) -> dict[str, JSONValue]:
+    values: dict[str, JSONValue] = {"__by_name": {}, "__by_hash": {}, "__evaluations": []}
+    for callback in rules.status_callbacks_for_modifier_event(modifier_name, "OnCreate"):
+        if callback.source.source_path != source_path:
+            continue
+        for task in rules.status_callback_tasks_for_callback(callback.callback_id):
+            if task.parent_task_id or task.opcode != "DefineDynamicValue" or not task.effect_id:
+                continue
+            effect = rules.effect(task.effect_id)
+            standard = effect.payload.get("standard") if effect is not None else None
+            if effect is None or not isinstance(standard, dict):
+                continue
+            target_alias = standard.get("target_alias")
+            resolved_target = _resolve_target_alias(
+                target_alias,
+                caster_id=caster_id,
+                owner_id=owner_id,
+                param_entity_id=param_entity_id,
+                current_action_target_id=current_action_target_id,
+            )
+            if resolved_target != target_id:
+                continue
+            value_name = standard.get("value_name")
+            if not isinstance(value_name, str) or not value_name:
+                continue
+            result = RuleEvaluator().evaluate_numeric(
+                standard.get("value_expr"),
+                NumericEvaluationContext(
+                    dynamic_values={},
+                    binding_sources=binding_sources,
+                    source_trace={
+                        **source_trace,
+                        "on_create_callback_id": callback.callback_id,
+                        "on_create_task_id": task.task_id,
+                        "effect_source": effect.source.to_json(),
+                        "partial_admission": "on_create_define_dynamic_value_only",
+                    },
+                ),
+            )
+            evaluations = list(values.get("__evaluations") or [])
+            evaluations.append({"name": value_name, "result": result.to_json()})
+            values["__evaluations"] = evaluations
+            if not result.ok or result.value is None:
+                continue
+            by_name = dict(values.get("__by_name") or {})
+            by_hash = dict(values.get("__by_hash") or {})
+            values[value_name] = float(result.value)
+            by_name[value_name] = float(result.value)
+            value_hash = standard.get("hash")
+            if isinstance(value_hash, (str, int)):
+                values[str(value_hash)] = float(result.value)
+                by_hash[str(value_hash)] = float(result.value)
+            values["__by_name"] = by_name
+            values["__by_hash"] = by_hash
+    return values
+
+
+def _merge_dynamic_values(
+    base: dict[str, JSONValue],
+    extra: dict[str, JSONValue],
+) -> dict[str, JSONValue]:
+    merged = dict(base)
+    for key, value in extra.items():
+        if key in {"__by_name", "__by_hash"}:
+            current = dict(merged.get(key) or {})
+            current.update(value if isinstance(value, dict) else {})
+            merged[key] = current
+        elif key == "__evaluations":
+            merged[key] = [*(merged.get(key) if isinstance(merged.get(key), list) else []), *(value if isinstance(value, list) else [])]
+        elif key not in merged:
+            merged[key] = value
+    return merged
 
 
 def _status_formula_bindings(standard: dict[str, JSONValue]) -> tuple[dict[str, JSONValue], ...]:

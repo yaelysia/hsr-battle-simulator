@@ -78,14 +78,18 @@ EXECUTABLE_CONDITION_OPCODES = {
     "ByCompareDynamicValue",
     "ByCompareHPRatio",
     "ByCompareModifierValue",
+    "ByCompareMonsterID",
     "ByCompareDamageCustomName",
     "ByCompareTarget",
+    "ByContainBehaviorFlag",
+    "ByContainsParamFlag",
     "ByCurrentSkillType",
     "ByIsContainModifier",
     "ByHaveEnemyAlive",
     "ByIsCurrentSkillActive",
     "ByIsInsertAction",
     "ByNot",
+    "ByTargetListIntersects",
     "ByTargetTeam",
 }
 
@@ -578,6 +582,41 @@ def _evaluate_condition_payload(
             {"target_id": target_id, "modifier_name": modifier_name, "contains": contains},
             source_trace,
         )
+    if opcode == "ByContainBehaviorFlag":
+        target_id, target_details = _resolve_condition_target(payload.get("TargetType"), context)
+        if target_id is None:
+            return _condition_blocked(condition_id, opcode, "target_alias_unresolved", target_details, source_trace)
+        flag = payload.get("Flag")
+        if not isinstance(flag, str) or not flag:
+            return _condition_blocked(condition_id, opcode, "behavior_flag_missing", {"payload": payload}, source_trace)
+        matched = _unit_has_behavior_flag(context, target_id, flag)
+        if payload.get("Inverse") is True:
+            matched = not matched
+        return _condition_result(
+            matched,
+            condition_id,
+            opcode,
+            "behavior_flag_checked",
+            {"target_id": target_id, "flag": flag, "inverse": payload.get("Inverse") is True},
+            source_trace,
+        )
+    if opcode == "ByContainsParamFlag":
+        flag = payload.get("Flag")
+        if not isinstance(flag, str) or not flag:
+            return _condition_blocked(condition_id, opcode, "param_flag_missing", {"payload": payload}, source_trace)
+        event_payload = context.event_payload or {}
+        flags = _payload_flags(event_payload)
+        matched = flag in flags or event_payload.get(flag) is True
+        if payload.get("Inverse") is True:
+            matched = not matched
+        return _condition_result(
+            matched,
+            condition_id,
+            opcode,
+            "param_flag_checked",
+            {"flag": flag, "flags": sorted(flags), "inverse": payload.get("Inverse") is True},
+            source_trace,
+        )
     if opcode == "ByIsInsertAction":
         payload_value = (context.event_payload or {}).get("is_insert_action")
         matched = payload_value is True
@@ -741,6 +780,33 @@ def _evaluate_condition_payload(
             {"left_target_id": left_id, "right_target_id": right_id},
             source_trace,
         )
+    if opcode == "ByCompareMonsterID":
+        target_id, target_details = _resolve_condition_target(payload.get("TargetType"), context)
+        if target_id is None:
+            return _condition_blocked(condition_id, opcode, "target_alias_unresolved", target_details, source_trace)
+        unit = _state_unit(context, target_id)
+        if unit is None:
+            return _condition_blocked(condition_id, opcode, "target_unit_missing", {"target_id": target_id}, source_trace)
+        expected = evaluator.evaluate_numeric(
+            payload.get("TargetMonsterID"),
+            NumericEvaluationContext(
+                dynamic_values=context.dynamic_values,
+                binding_sources=context.binding_sources,
+                source_trace=source_trace,
+            ),
+        )
+        if not expected.ok or expected.value is None:
+            return _condition_blocked(
+                condition_id,
+                opcode,
+                f"target_monster_id_blocked:{expected.blocked_reason}",
+                {"numeric_evaluation": expected.to_json()},
+                source_trace,
+            )
+        actual = _unit_monster_id(unit)
+        if actual is None:
+            return _condition_blocked(condition_id, opcode, "target_monster_id_missing", {"target_id": target_id}, source_trace)
+        return _comparison_condition(condition_id, opcode, float(actual), payload.get("CompareType") or "Equal", expected.value, source_trace)
     if opcode == "ByCompareDamageCustomName":
         expected = _value_field(payload.get("CustomName"))
         if not isinstance(expected, str) or not expected:
@@ -757,6 +823,36 @@ def _evaluate_condition_payload(
             opcode,
             "damage_custom_name_compared",
             {"expected": expected, "actual": actual},
+            source_trace,
+        )
+    if opcode == "ByTargetListIntersects":
+        first_id, first_details = _resolve_condition_target(payload.get("FirstTargetType"), context)
+        if first_id is None:
+            return _condition_blocked(condition_id, opcode, "first_target_alias_unresolved", first_details, source_trace)
+        second_alias = _target_alias(payload.get("SecondTargetType"))
+        second_targets = _target_list_for_alias(second_alias, context)
+        if second_targets is None:
+            return _condition_blocked(
+                condition_id,
+                opcode,
+                f"second_target_list_alias_not_supported:{second_alias or 'missing'}",
+                {"payload": payload},
+                source_trace,
+            )
+        matched = first_id in second_targets
+        if payload.get("Inverse") is True:
+            matched = not matched
+        return _condition_result(
+            matched,
+            condition_id,
+            opcode,
+            "target_list_intersection_checked",
+            {
+                "first_target_id": first_id,
+                "second_alias": second_alias,
+                "second_target_ids": sorted(second_targets),
+                "inverse": payload.get("Inverse") is True,
+            },
             source_trace,
         )
     if opcode in {"ByAnd", "ByAny"}:
@@ -952,6 +1048,80 @@ def _unit_has_modifier(context: EvaluationContext, unit_id: str, modifier_name: 
         if detail.get("modifier_name") == modifier_name or detail.get("status_id") == f"modifier:{modifier_name}":
             return True
     return False
+
+
+def _unit_has_behavior_flag(context: EvaluationContext, unit_id: str, flag: str) -> bool:
+    unit = _state_unit(context, unit_id)
+    if unit is None:
+        return False
+    flags = getattr(unit, "flags", {})
+    if not isinstance(flags, dict):
+        return False
+    if flag == "Break" and bool(flags.get("broken", False)):
+        return True
+    direct = flags.get(flag)
+    if direct is True:
+        return True
+    for key in ("behavior_flags", "control_flags", "status_flags"):
+        values = flags.get(key)
+        if isinstance(values, (list, tuple, set)) and flag in {str(item) for item in values}:
+            return True
+    statuses = getattr(unit, "statuses", ())
+    if isinstance(statuses, (list, tuple, set)) and flag in {str(item) for item in statuses}:
+        return True
+    details = flags.get("status_details", ())
+    if isinstance(details, (list, tuple)):
+        for detail in details:
+            if not isinstance(detail, dict):
+                continue
+            if detail.get("modifier_name") == flag or detail.get("status_id") == flag or detail.get("status_id") == f"modifier:{flag}":
+                return True
+            detail_flags = detail.get("behavior_flags")
+            if isinstance(detail_flags, (list, tuple, set)) and flag in {str(item) for item in detail_flags}:
+                return True
+    return False
+
+
+def _payload_flags(payload: dict[str, Any]) -> set[str]:
+    result: set[str] = set()
+    for key in ("param_flags", "flags", "ParamFlags", "FlagList"):
+        values = payload.get(key)
+        if isinstance(values, str) and values:
+            result.add(values)
+        elif isinstance(values, (list, tuple, set)):
+            result.update(str(item) for item in values if isinstance(item, (str, int)))
+    return result
+
+
+def _target_list_for_alias(alias: str | None, context: EvaluationContext) -> set[str] | None:
+    payload = context.event_payload or {}
+    if alias == "GridFight_AllBackEnd":
+        values = (
+            payload.get("gridfight_backend_target_ids")
+            or payload.get("backend_target_ids")
+            or payload.get("GridFight_AllBackEnd")
+            or ()
+        )
+        if isinstance(values, str):
+            return {values} if values else set()
+        if isinstance(values, (list, tuple, set)):
+            return {str(item) for item in values if isinstance(item, (str, int))}
+        return set()
+    return None
+
+
+def _unit_monster_id(unit: Any) -> int | None:
+    flags = getattr(unit, "flags", {})
+    if isinstance(flags, dict):
+        for key in ("monster_id", "MonsterID"):
+            value = flags.get(key)
+            if isinstance(value, int):
+                return value
+            if isinstance(value, str) and value.isdigit():
+                return int(value)
+    template_id = str(getattr(unit, "template_id", "") or "")
+    tail = template_id.rsplit(":", 1)[-1]
+    return int(tail) if tail.isdigit() else None
 
 
 def _modifier_value_for_condition(

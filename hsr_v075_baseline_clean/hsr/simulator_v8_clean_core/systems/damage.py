@@ -962,6 +962,9 @@ def _damage_hit_event(
         payload={
             "record_type": record_type,
             "attacker_id": packet.attacker_id,
+            "actor_id": packet.attacker_id,
+            "param_entity_id": packet.attacker_id,
+            "damage_attacker_id": packet.attacker_id,
             "damage_source_owner_id": source_frame.owner_id,
             "damage_source_id": source_frame.source_id,
             "damage_source_kind": source_frame.source_kind,
@@ -970,6 +973,8 @@ def _damage_hit_event(
             "target_id": packet.target_id,
             "current_hit_target_id": packet.target_id,
             "primary_action_target_id": packet.metadata.get("primary_action_target_id"),
+            "selected_target_ids": [packet.target_id],
+            "target_ids": [packet.target_id],
             "hit_index": packet.metadata.get("hit_index"),
             "target_group": packet.metadata.get("target_group"),
             "damage_custom_name": packet.metadata.get("damage_custom_name"),

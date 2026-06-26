@@ -387,8 +387,19 @@ def _skill_formula_bindings_for_monster(
         dynamic_by_index = dynamic_values.get(trigger_key, {})
         if not trigger_key or not dynamic_by_index:
             continue
-        action_id = f"monster_skill:{skill_id}"
         level = int(_number_value(row.get("Level"), 1.0))
+        action_refs: list[tuple[str, int, str, str]] = [
+            (f"monster_skill:{skill_id}", level, "monster_skill_action", ""),
+        ]
+        for ability_name in _standalone_ability_names_for_trigger(character_config, trigger_key):
+            action_refs.append(
+                (
+                    f"standalone_ability:{ability_name}",
+                    0,
+                    "monster_skill_trigger_standalone_ability",
+                    ability_name,
+                )
+            )
         for param_index, dynamic_source in sorted(dynamic_by_index.items()):
             param_value = param_list[param_index] if 0 <= param_index < len(param_list) else None
             blocked_reason = ""
@@ -398,77 +409,80 @@ def _skill_formula_bindings_for_monster(
                 blocked_reason = "monster_skill_param_index_out_of_range"
             elif not isinstance(_value_field(param_value), (int, float)):
                 blocked_reason = "monster_skill_param_value_not_numeric"
-            source = IRSource(
-                source_path=json_config,
-                raw_type="MonsterSkillFormulaBinding",
-                raw_id=skill_id,
-                evidence={
-                    "monster_id": card.monster_id,
-                    "monster_data_card_id": card.card_id,
-                    "owner_entity_ref": card.entity_ref,
-                    "monster_source": _source_trace(monster_record),
-                    "template_source": _source_trace(template_record),
-                    "skill_source": _source_trace(skill_record),
-                    "skill_index": skill_index,
-                    "skill_trigger_key": trigger_key,
-                    "param_ref": f"ParamList[{param_index}]",
-                    "param_value": _json_safe(param_value),
-                    "dynamic_hash": dynamic_source.get("hash"),
-                    "dynamic_value_source": dynamic_source,
-                    "basis_source_kind": "tbgd_opcode_semantics:DamageByAttackProperty",
-                    "builder": "monster_skill_formula_binding_v0_280",
-                },
-            )
-            if blocked_reason:
-                scaling_basis_expr: dict[str, JSONValue] = {
-                    "kind": "missing",
-                    "supported": False,
-                    "reason": blocked_reason,
-                    "source_trace": source.to_json(),
-                }
-            else:
-                scaling_basis_expr = {
-                    "kind": "unit_stat",
-                    "unit_ref": "attacker",
-                    "stat": "attack",
-                    "source_kind": "monster_damage_by_attack_property_opcode_admission",
-                    "admission_status": "executable",
-                    "data_card_id": card.card_id,
-                    "data_card_kind": "monster",
-                    "owner_entity_ref": card.entity_ref,
-                    "param_index": param_index,
-                    "param_value": _json_safe(param_value),
-                    "dynamic_hash": dynamic_source.get("hash"),
-                    "raw_opcode": "DamageByAttackProperty",
-                    "source_trace": source.to_json(),
-                }
-            bindings.append(
-                SkillFormulaBindingIR(
-                    binding_id=(
-                        f"skill_formula_binding:{action_id}:{level}:"
-                        f"direct_damage:param:{param_index}:monster"
-                    ),
-                    character_data_card_id="",
-                    data_card_id=card.card_id,
-                    data_card_kind="monster",
-                    owner_entity_ref=card.entity_ref,
-                    formula_slot_id=f"formula_slot:{action_id}:{level}:direct_damage:monster:{param_index}",
-                    action_id=action_id,
-                    level=level,
-                    param_index=param_index,
-                    sequence_order=param_index,
-                    formula_role="direct_damage",
-                    target_group_hint="",
-                    param_value=_json_safe(param_value),
-                    scaling_basis_expr=scaling_basis_expr,
-                    text_hash="",
-                    skill_text="",
-                    matched_text="DamageByAttackProperty.DamagePercentage",
-                    source=source,
-                    coverage_status="blocked" if blocked_reason else "executable",
-                    blocked_reason=blocked_reason,
+            for action_id, action_level, action_source_kind, standalone_ability_name in action_refs:
+                source = IRSource(
+                    source_path=json_config,
+                    raw_type="MonsterSkillFormulaBinding",
+                    raw_id=skill_id,
+                    evidence={
+                        "monster_id": card.monster_id,
+                        "monster_data_card_id": card.card_id,
+                        "owner_entity_ref": card.entity_ref,
+                        "monster_source": _source_trace(monster_record),
+                        "template_source": _source_trace(template_record),
+                        "skill_source": _source_trace(skill_record),
+                        "skill_index": skill_index,
+                        "skill_trigger_key": trigger_key,
+                        "action_source_kind": action_source_kind,
+                        "standalone_ability_name": standalone_ability_name,
+                        "param_ref": f"ParamList[{param_index}]",
+                        "param_value": _json_safe(param_value),
+                        "dynamic_hash": dynamic_source.get("hash"),
+                        "dynamic_value_source": dynamic_source,
+                        "basis_source_kind": "tbgd_opcode_semantics:DamageByAttackProperty",
+                        "builder": "monster_skill_formula_binding_v0_282",
+                    },
                 )
-            )
+                if blocked_reason:
+                    scaling_basis_expr: dict[str, JSONValue] = {
+                        "kind": "missing",
+                        "supported": False,
+                        "reason": blocked_reason,
+                        "source_trace": source.to_json(),
+                    }
+                else:
+                    scaling_basis_expr = {
+                        "kind": "unit_stat",
+                        "unit_ref": "attacker",
+                        "stat": "attack",
+                        "source_kind": "monster_damage_by_attack_property_opcode_admission",
+                        "admission_status": "executable",
+                        "data_card_id": card.card_id,
+                        "data_card_kind": "monster",
+                        "owner_entity_ref": card.entity_ref,
+                        "param_index": param_index,
+                        "param_value": _json_safe(param_value),
+                        "dynamic_hash": dynamic_source.get("hash"),
+                        "raw_opcode": "DamageByAttackProperty",
+                        "source_trace": source.to_json(),
+                    }
+                bindings.append(
+                    SkillFormulaBindingIR(
+                        binding_id=(
+                            f"skill_formula_binding:{action_id}:{action_level}:"
+                            f"direct_damage:param:{param_index}:monster"
+                        ),
+                        character_data_card_id="",
+                        data_card_id=card.card_id,
+                        data_card_kind="monster",
+                        owner_entity_ref=card.entity_ref,
+                        formula_slot_id=f"formula_slot:{action_id}:{action_level}:direct_damage:monster:{param_index}",
+                        action_id=action_id,
+                        level=action_level,
+                        param_index=param_index,
+                        sequence_order=param_index,
+                        formula_role="direct_damage",
+                        target_group_hint="",
+                        param_value=_json_safe(param_value),
+                        scaling_basis_expr=scaling_basis_expr,
+                        text_hash="",
+                        skill_text="",
+                        matched_text="DamageByAttackProperty.DamagePercentage",
+                        source=source,
+                        coverage_status="blocked" if blocked_reason else "executable",
+                        blocked_reason=blocked_reason,
+                    )
+                )
     return bindings
 
 
@@ -501,6 +515,85 @@ def _skill_param_dynamic_values_by_trigger(
             "raw_path": f"DynamicValues.Floats[{raw_hash}].ReadInfo",
         }
     return result
+
+
+def _standalone_ability_names_for_trigger(character_config: dict[str, Any], trigger_key: str) -> tuple[str, ...]:
+    names: list[str] = []
+    skill_entry = _skill_entry_for_trigger(character_config, trigger_key)
+    if isinstance(skill_entry, dict):
+        names.extend(_ability_names_from_value(skill_entry.get("EntryAbility")))
+    skill_ability_list = character_config.get("SkillAbilityList")
+    matched: Any = None
+    if isinstance(skill_ability_list, dict):
+        matched = skill_ability_list.get(trigger_key)
+        if matched is None:
+            for key, value in skill_ability_list.items():
+                if str(key) == trigger_key:
+                    matched = value
+                    break
+    elif isinstance(skill_ability_list, list):
+        for item in skill_ability_list:
+            if not isinstance(item, dict):
+                continue
+            item_keys = {
+                str(item.get("Name") or ""),
+                str(item.get("SkillName") or ""),
+                str(item.get("Skill") or ""),
+                str(item.get("SkillTriggerKey") or ""),
+            }
+            if trigger_key in item_keys:
+                matched = item
+                break
+    names.extend(_ability_names_from_value(matched))
+    return tuple(dict.fromkeys(name for name in names if name))
+
+
+def _skill_entry_for_trigger(character_config: dict[str, Any], trigger_key: str) -> dict[str, Any] | None:
+    skill_list = character_config.get("SkillList")
+    if isinstance(skill_list, list):
+        for item in skill_list:
+            if not isinstance(item, dict):
+                continue
+            names = {
+                str(item.get("Name") or ""),
+                str(item.get("SkillName") or ""),
+                str(item.get("Skill") or ""),
+                str(item.get("SkillTriggerKey") or ""),
+            }
+            if trigger_key in names:
+                return item
+    if isinstance(skill_list, dict):
+        item = skill_list.get(trigger_key)
+        if isinstance(item, dict):
+            return item
+        for key, value in skill_list.items():
+            if str(key) == trigger_key and isinstance(value, dict):
+                return value
+    return None
+
+
+def _ability_names_from_value(value: Any) -> list[str]:
+    names: list[str] = []
+    if isinstance(value, str):
+        names.append(value)
+    elif isinstance(value, list):
+        for item in value:
+            names.extend(_ability_names_from_value(item))
+    elif isinstance(value, dict):
+        for key in ("AbilityName", "Name", "PhaseAbility", "PhaseAbilityName", "EntryAbility"):
+            item = value.get(key)
+            if isinstance(item, str):
+                names.append(item)
+            elif isinstance(item, dict):
+                nested = _value_field(item)
+                if isinstance(nested, str):
+                    names.append(nested)
+        for key in ("AbilityList", "AbilityNameList", "PhaseList", "PhaseAbilityList"):
+            names.extend(_ability_names_from_value(value.get(key)))
+        if not names:
+            for item in value.values():
+                names.extend(_ability_names_from_value(item))
+    return names
 
 
 def _action_sequence(
