@@ -956,14 +956,26 @@ class TBGDLowering:
                 skill_index_map: dict[str, JSONValue] = {}
                 for index, skill_id in enumerate(skills):
                     action_ref = f"avatar_skill:{skill_id}" if entity_type == "avatar" else f"monster_skill:{skill_id}"
-                    levels = sorted({definition.level for definition in definitions_by_action.get(action_ref, ())})
+                    candidate_definitions = definitions_by_action.get(action_ref, ())
+                    compatible_definitions = _compatible_action_definitions_for_combatant_action_set(
+                        entity_type,
+                        candidate_definitions,
+                    )
+                    levels = sorted({definition.level for definition in compatible_definitions})
+                    blocked_reason = ""
+                    if not levels:
+                        blocked_reason = (
+                            "action_definition_source_mismatch_for_monster_config_skill"
+                            if entity_type == "monster" and candidate_definitions
+                            else "action_definition_missing_for_skill"
+                        )
                     skill_index_map[str(index)] = {
                         "skill_id": str(skill_id),
                         "action_ref": action_ref,
                         "levels": levels,
                         "default_level": levels[-1] if levels else None,
                         "coverage_status": "executable" if levels else "blocked",
-                        "blocked_reason": "" if levels else "action_definition_missing_for_skill",
+                        "blocked_reason": blocked_reason,
                     }
                 coverage_status = "executable" if any(
                     isinstance(item, dict) and item.get("coverage_status") == "executable"
@@ -2996,6 +3008,23 @@ def _combatant_profile_from_monster(
         source=source,
         coverage_status="blocked" if blocked_reason else "executable",
         blocked_reason=blocked_reason,
+    )
+
+
+def _compatible_action_definitions_for_combatant_action_set(
+    entity_type: str,
+    definitions: tuple[ActionDefinitionIR, ...] | list[ActionDefinitionIR],
+) -> tuple[ActionDefinitionIR, ...]:
+    if entity_type != "monster":
+        return tuple(definitions)
+    return tuple(
+        definition
+        for definition in definitions
+        if definition.source.source_path
+        in {
+            "ExcelOutput/MonsterSkillConfig.json",
+            "ExcelOutput/MonsterSkillUniqueConfig.json",
+        }
     )
 
 

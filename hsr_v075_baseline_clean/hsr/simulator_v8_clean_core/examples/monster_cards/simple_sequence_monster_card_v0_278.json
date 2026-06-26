@@ -1,0 +1,809 @@
+{
+  "action_execution_boundary": {
+    "ability_binding_admitted": false,
+    "action_set_id": "combatant_action_set:monster:1002011",
+    "damage_mutation_allowed_from_this_card_in_v0_278": false,
+    "linked_action_set": {
+      "blocked_reason": "combatant_action_set_has_no_executable_actions",
+      "combatant_action_set_id": "combatant_action_set:monster:1002011",
+      "coverage_status": "blocked",
+      "entity_ref": "monster:1002011",
+      "skill_index_map": {
+        "0": {
+          "action_ref": "monster_skill:100201101",
+          "blocked_reason": "action_definition_source_mismatch_for_monster_config_skill",
+          "coverage_status": "blocked",
+          "default_level": null,
+          "levels": [],
+          "skill_id": "100201101"
+        }
+      },
+      "source": {
+        "evidence": {
+          "base_skill_list": [],
+          "base_source_path": "ExcelOutput/MonsterConfig.json",
+          "enhanced_id": null,
+          "enhanced_overrides_base": false,
+          "enhanced_source_path": "",
+          "id_key": "MonsterID",
+          "row_index": 0,
+          "skill_list": [
+            100201101
+          ],
+          "version_kind": "base"
+        },
+        "raw_id": "1002011",
+        "raw_type": "MonsterConfig",
+        "source_path": "ExcelOutput/MonsterConfig.json"
+      }
+    },
+    "monster_skill_action_definition_from_monster_skill_config_admitted": false
+  },
+  "ai_and_sequence": {
+    "action_sequence": [
+      {
+        "action_ref": "monster_skill:100201101",
+        "blocked_reason": "",
+        "coverage_status": "lowered",
+        "in_skill_list": true,
+        "raw_item": {
+          "MNAHFIGOHML": 100201101
+        },
+        "raw_key": "MNAHFIGOHML",
+        "sequence_index": 0,
+        "sequence_kind": "template_default",
+        "skill_definition_exists": true,
+        "skill_id": "100201101",
+        "skill_list_index": 0,
+        "source_trace": {
+          "raw_id": "1002011",
+          "raw_path": "AISkillSequence",
+          "raw_type": "MonsterTemplateConfig",
+          "row_index": 0,
+          "source_path": "ExcelOutput/MonsterTemplateConfig.json"
+        }
+      }
+    ],
+    "ai_policy": {
+      "admission_status": "executable",
+      "admitted_task": "RPG.GameCore.UseSequencedSkill",
+      "ai_name": "Monster_Common_SequenceThree",
+      "ai_path": "Config/ConfigAI/Monster_Common_SequenceThree_AI.json",
+      "blocked_reason": "",
+      "complex_task_types": [],
+      "coverage_status": "lowered",
+      "policy_kind": "fixed_skill_sequence",
+      "runtime_execution_admitted": false,
+      "source_trace": {
+        "raw_id": "Monster_Common_SequenceThree_AI",
+        "raw_type": "ConfigAI",
+        "source_path": "Config/ConfigAI/Monster_Common_SequenceThree_AI.json"
+      },
+      "task_types": [
+        "RPG.GameCore.AIDecisionConfig",
+        "RPG.GameCore.AIVariableBool",
+        "RPG.GameCore.AIVariableString",
+        "RPG.GameCore.ChoseSequencedSkillAxis",
+        "RPG.GameCore.SequenceConfig",
+        "RPG.GameCore.UseSequencedSkill"
+      ]
+    },
+    "enemy_turn_runtime_execution_admitted": false,
+    "selected_sequence_step": {
+      "action_ref": "monster_skill:100201101",
+      "blocked_reason": "",
+      "coverage_status": "lowered",
+      "in_skill_list": true,
+      "raw_item": {
+        "MNAHFIGOHML": 100201101
+      },
+      "raw_key": "MNAHFIGOHML",
+      "sequence_index": 0,
+      "sequence_kind": "template_default",
+      "skill_definition_exists": true,
+      "skill_id": "100201101",
+      "skill_list_index": 0,
+      "source_trace": {
+        "raw_id": "1002011",
+        "raw_path": "AISkillSequence",
+        "raw_type": "MonsterTemplateConfig",
+        "row_index": 0,
+        "source_path": "ExcelOutput/MonsterTemplateConfig.json"
+      }
+    },
+    "target_selection_admitted": false
+  },
+  "identity": {
+    "card_id": "monster_data_card:monster:1002011",
+    "entity_ref": "monster:1002011",
+    "monster_id": "1002011",
+    "rank": "MinionLv2",
+    "template_id": "1002011"
+  },
+  "monster_data_card_ir": {
+    "action_sequence": [
+      {
+        "action_ref": "monster_skill:100201101",
+        "blocked_reason": "",
+        "coverage_status": "lowered",
+        "in_skill_list": true,
+        "raw_item": {
+          "MNAHFIGOHML": 100201101
+        },
+        "raw_key": "MNAHFIGOHML",
+        "sequence_index": 0,
+        "sequence_kind": "template_default",
+        "skill_definition_exists": true,
+        "skill_id": "100201101",
+        "skill_list_index": 0,
+        "source_trace": {
+          "raw_id": "1002011",
+          "raw_path": "AISkillSequence",
+          "raw_type": "MonsterTemplateConfig",
+          "row_index": 0,
+          "source_path": "ExcelOutput/MonsterTemplateConfig.json"
+        }
+      }
+    ],
+    "action_set_id": "combatant_action_set:monster:1002011",
+    "ai_policy": {
+      "admission_status": "executable",
+      "admitted_task": "RPG.GameCore.UseSequencedSkill",
+      "ai_name": "Monster_Common_SequenceThree",
+      "ai_path": "Config/ConfigAI/Monster_Common_SequenceThree_AI.json",
+      "blocked_reason": "",
+      "complex_task_types": [],
+      "coverage_status": "lowered",
+      "policy_kind": "fixed_skill_sequence",
+      "runtime_execution_admitted": false,
+      "source_trace": {
+        "raw_id": "Monster_Common_SequenceThree_AI",
+        "raw_type": "ConfigAI",
+        "source_path": "Config/ConfigAI/Monster_Common_SequenceThree_AI.json"
+      },
+      "task_types": [
+        "RPG.GameCore.AIDecisionConfig",
+        "RPG.GameCore.AIVariableBool",
+        "RPG.GameCore.AIVariableString",
+        "RPG.GameCore.ChoseSequencedSkillAxis",
+        "RPG.GameCore.SequenceConfig",
+        "RPG.GameCore.UseSequencedSkill"
+      ]
+    },
+    "blocked_reason": "",
+    "card_contract": {
+      "ai_policy": {
+        "complex_ai_execution_allowed": false,
+        "first_admitted_policy": "UseSequencedSkill with TBGD AISkillSequence",
+        "runtime_execution_admitted": false,
+        "target_selection_is_not_admitted": true
+      },
+      "runtime_boundary": {
+        "monster_name_special_case_allowed": false,
+        "raw_tbgd_allowed_in_runtime": false,
+        "runtime_reads": "Canonical IR only",
+        "text_map_allowed_in_runtime": false
+      },
+      "schema_version": "v0_277",
+      "skill_policy": {
+        "sequence_skill_must_be_in_skill_list": true,
+        "sequence_skill_must_have_skill_definition": true,
+        "skill_list_order_preserved": true,
+        "skill_trigger_key_one_to_one_required": false
+      },
+      "stage_boundary": {
+        "stage_binding_deferred": true,
+        "stage_level_and_hard_level_group_assembly_admitted": false
+      }
+    },
+    "card_id": "monster_data_card:monster:1002011",
+    "coverage_status": "lowered",
+    "entity_ref": "monster:1002011",
+    "monster_id": "1002011",
+    "profile_id": "combatant_profile:monster:1002011",
+    "rank": "MinionLv2",
+    "raw_parameter_blocks": {
+      "monster_config": {
+        "ability_name_list": [],
+        "attack_modify_ratio": {
+          "Value": 1
+        },
+        "custom_value_tags": [
+          "W1_Ice"
+        ],
+        "custom_values": [],
+        "damage_type_resistance": [
+          {
+            "DamageType": "Physical",
+            "Value": {
+              "Value": 0.2
+            }
+          },
+          {
+            "DamageType": "Ice",
+            "Value": {
+              "Value": 0.2
+            }
+          },
+          {
+            "DamageType": "Wind",
+            "Value": {
+              "Value": 0.2
+            }
+          },
+          {
+            "DamageType": "Quantum",
+            "Value": {
+              "Value": 0.2
+            }
+          },
+          {
+            "DamageType": "Imaginary",
+            "Value": {
+              "Value": 0.2
+            }
+          }
+        ],
+        "debuff_resist": [
+          {
+            "Key": "STAT_CTRL_Frozen",
+            "Value": {
+              "Value": 1
+            }
+          }
+        ],
+        "defense_modify_ratio": {
+          "Value": 1
+        },
+        "dynamic_values": [],
+        "hard_level_group": 1,
+        "hp_modify_ratio": {
+          "Value": 1
+        },
+        "override_skill_params": [],
+        "speed_modify_ratio": {
+          "Value": 1
+        },
+        "speed_modify_value": null,
+        "stance_modify_ratio": {
+          "Value": 1
+        },
+        "stance_modify_value": null,
+        "weaknesses": [
+          "Fire",
+          "Thunder"
+        ]
+      },
+      "template_config": {
+        "ai_path": "Config/ConfigAI/Monster_Common_SequenceThree_AI.json",
+        "ai_skill_sequence": [
+          {
+            "MNAHFIGOHML": 100201101
+          }
+        ],
+        "base_stats": {
+          "attack": {
+            "Value": 18
+          },
+          "critical_damage": {
+            "Value": 0.2
+          },
+          "defense": {
+            "Value": 210
+          },
+          "hp": {
+            "Value": 69.75
+          },
+          "speed": {
+            "Value": 100
+          },
+          "stance": {
+            "Value": 60
+          },
+          "status_resistance": {
+            "Value": 0.2
+          }
+        },
+        "initial_delay_ratio": {
+          "Value": 1
+        },
+        "json_config": "Config/ConfigCharacter/Monster/Monster_W1_CocoliaP1_01_Config.json",
+        "minimum_fatigue_ratio": {
+          "Value": 0.2
+        },
+        "rank": "MinionLv2",
+        "stance_type": "Ice"
+      }
+    },
+    "schema_version": "v0_277",
+    "skill_ids": [
+      "100201101"
+    ],
+    "skill_slots": [
+      {
+        "action_ref": "monster_skill:100201101",
+        "ai_cd": 1,
+        "ai_icd": 1,
+        "attack_type": "Normal",
+        "blocked_reason": "",
+        "coverage_status": "lowered",
+        "damage_type": "Ice",
+        "delay_ratio": {
+          "Value": 1
+        },
+        "extra_effect_id_list": [],
+        "is_threat": null,
+        "modifier_list": [],
+        "param_list": [
+          {
+            "Value": 2
+          }
+        ],
+        "phase_list": [
+          1
+        ],
+        "same_trigger_skill_ids": [
+          "100201101"
+        ],
+        "skill_id": "100201101",
+        "skill_trigger_key": "Skill04",
+        "slot_index": 0,
+        "source_trace": {
+          "raw_id": "100201101",
+          "raw_type": "MonsterSkillConfig",
+          "row_index": 0,
+          "source_path": "ExcelOutput/MonsterSkillConfig.json"
+        },
+        "sp_hit_base": {
+          "Value": 10
+        },
+        "trigger_key_alias_count": 1
+      }
+    ],
+    "source": {
+      "evidence": {
+        "builder": "monster_data_card_v0_277",
+        "raw_paths": {
+          "custom_values": "CustomValues",
+          "damage_resistances": "DamageTypeResistance",
+          "debuff_resistances": "DebuffResist",
+          "dynamic_values": "DynamicValues",
+          "override_ai_path": "OverrideAIPath",
+          "override_ai_sequence": "OverrideAISkillSequence",
+          "override_skill_params": "OverrideSkillParams",
+          "skill_list": "SkillList",
+          "summons": "SummonIDList",
+          "template_id": "MonsterTemplateID",
+          "weaknesses": "StanceWeakList"
+        },
+        "row_index": 0,
+        "runtime_execution_admitted": false,
+        "template_id": "1002011",
+        "template_source": {
+          "raw_id": "1002011",
+          "raw_type": "MonsterTemplateConfig",
+          "row_index": 0,
+          "source_path": "ExcelOutput/MonsterTemplateConfig.json"
+        }
+      },
+      "raw_id": "1002011",
+      "raw_type": "MonsterConfig",
+      "source_path": "ExcelOutput/MonsterConfig.json"
+    },
+    "summon_refs": [],
+    "template_id": "1002011"
+  },
+  "panel_source": {
+    "linked_profile": {
+      "base_stats": {
+        "attack": 18.0,
+        "defense": 210.0,
+        "max_hp": 69.75,
+        "speed": 100.0
+      },
+      "blocked_reason": "",
+      "coverage_status": "executable",
+      "entity_id": "monster:1002011",
+      "entity_type": "monster",
+      "profile_id": "combatant_profile:monster:1002011",
+      "resistances": {
+        "Ice": 0.2,
+        "Imaginary": 0.2,
+        "Physical": 0.2,
+        "Quantum": 0.2,
+        "Wind": 0.2
+      },
+      "source": {
+        "evidence": {
+          "entity_id": "monster:1002011",
+          "raw_paths": {
+            "attack_modify_ratio": "AttackModifyRatio",
+            "defense_modify_ratio": "DefenceModifyRatio",
+            "hp_modify_ratio": "HPModifyRatio",
+            "resistances": "DamageTypeResistance",
+            "speed_modify_ratio": "SpeedModifyRatio",
+            "stance_modify_ratio": "StanceModifyRatio",
+            "template_id": "MonsterTemplateID",
+            "weaknesses": "StanceWeakList"
+          },
+          "template_id": "1002011",
+          "template_source_path": "ExcelOutput/MonsterTemplateConfig.json"
+        },
+        "raw_id": "1002011",
+        "raw_type": "MonsterConfig",
+        "source_path": "ExcelOutput/MonsterConfig.json"
+      },
+      "template_id": "monster_template:1002011",
+      "toughness_profile": {
+        "current_toughness": 60.0,
+        "max_toughness": 60.0,
+        "stance_base": 60.0,
+        "stance_modify_ratio": 1.0,
+        "stance_type": "Ice"
+      },
+      "weaknesses": [
+        "Fire",
+        "Thunder"
+      ]
+    },
+    "monster_modify_ratios": {
+      "attack_modify_ratio": {
+        "Value": 1
+      },
+      "defense_modify_ratio": {
+        "Value": 1
+      },
+      "hp_modify_ratio": {
+        "Value": 1
+      },
+      "speed_modify_ratio": {
+        "Value": 1
+      },
+      "speed_modify_value": null,
+      "stance_modify_ratio": {
+        "Value": 1
+      },
+      "stance_modify_value": null
+    },
+    "profile_id": "combatant_profile:monster:1002011",
+    "stage_level_and_hard_level_group_admitted": false,
+    "template_base_stats": {
+      "attack": {
+        "Value": 18
+      },
+      "critical_damage": {
+        "Value": 0.2
+      },
+      "defense": {
+        "Value": 210
+      },
+      "hp": {
+        "Value": 69.75
+      },
+      "speed": {
+        "Value": 100
+      },
+      "stance": {
+        "Value": 60
+      },
+      "status_resistance": {
+        "Value": 0.2
+      }
+    }
+  },
+  "raw_parameter_blocks": {
+    "monster_config": {
+      "ability_name_list": [],
+      "attack_modify_ratio": {
+        "Value": 1
+      },
+      "custom_value_tags": [
+        "W1_Ice"
+      ],
+      "custom_values": [],
+      "damage_type_resistance": [
+        {
+          "DamageType": "Physical",
+          "Value": {
+            "Value": 0.2
+          }
+        },
+        {
+          "DamageType": "Ice",
+          "Value": {
+            "Value": 0.2
+          }
+        },
+        {
+          "DamageType": "Wind",
+          "Value": {
+            "Value": 0.2
+          }
+        },
+        {
+          "DamageType": "Quantum",
+          "Value": {
+            "Value": 0.2
+          }
+        },
+        {
+          "DamageType": "Imaginary",
+          "Value": {
+            "Value": 0.2
+          }
+        }
+      ],
+      "debuff_resist": [
+        {
+          "Key": "STAT_CTRL_Frozen",
+          "Value": {
+            "Value": 1
+          }
+        }
+      ],
+      "defense_modify_ratio": {
+        "Value": 1
+      },
+      "dynamic_values": [],
+      "hard_level_group": 1,
+      "hp_modify_ratio": {
+        "Value": 1
+      },
+      "override_skill_params": [],
+      "speed_modify_ratio": {
+        "Value": 1
+      },
+      "speed_modify_value": null,
+      "stance_modify_ratio": {
+        "Value": 1
+      },
+      "stance_modify_value": null,
+      "weaknesses": [
+        "Fire",
+        "Thunder"
+      ]
+    },
+    "template_config": {
+      "ai_path": "Config/ConfigAI/Monster_Common_SequenceThree_AI.json",
+      "ai_skill_sequence": [
+        {
+          "MNAHFIGOHML": 100201101
+        }
+      ],
+      "base_stats": {
+        "attack": {
+          "Value": 18
+        },
+        "critical_damage": {
+          "Value": 0.2
+        },
+        "defense": {
+          "Value": 210
+        },
+        "hp": {
+          "Value": 69.75
+        },
+        "speed": {
+          "Value": 100
+        },
+        "stance": {
+          "Value": 60
+        },
+        "status_resistance": {
+          "Value": 0.2
+        }
+      },
+      "initial_delay_ratio": {
+        "Value": 1
+      },
+      "json_config": "Config/ConfigCharacter/Monster/Monster_W1_CocoliaP1_01_Config.json",
+      "minimum_fatigue_ratio": {
+        "Value": 0.2
+      },
+      "rank": "MinionLv2",
+      "stance_type": "Ice"
+    }
+  },
+  "schema_version": "v8_complete_monster_example_card_v0_278",
+  "selection_policy": {
+    "fixed_monster_id_used_for_selection": false,
+    "mode": "structured_predicate",
+    "predicate": [
+      "template source is ExcelOutput/MonsterTemplateConfig.json",
+      "MonsterDataCardIR.coverage_status is lowered",
+      "AI policy admission_status is executable fixed_skill_sequence",
+      "exactly one SkillList entry and one AISkillSequence step",
+      "no summon refs",
+      "no CustomValues/DynamicValues/OverrideSkillParams/AbilityNameList",
+      "sequence skill exists in SkillList and MonsterSkillConfig/MonsterSkillUniqueConfig"
+    ]
+  },
+  "skill_section": {
+    "selected_skill_slot": {
+      "action_ref": "monster_skill:100201101",
+      "ai_cd": 1,
+      "ai_icd": 1,
+      "attack_type": "Normal",
+      "blocked_reason": "",
+      "coverage_status": "lowered",
+      "damage_type": "Ice",
+      "delay_ratio": {
+        "Value": 1
+      },
+      "extra_effect_id_list": [],
+      "is_threat": null,
+      "modifier_list": [],
+      "param_list": [
+        {
+          "Value": 2
+        }
+      ],
+      "phase_list": [
+        1
+      ],
+      "same_trigger_skill_ids": [
+        "100201101"
+      ],
+      "skill_id": "100201101",
+      "skill_trigger_key": "Skill04",
+      "slot_index": 0,
+      "source_trace": {
+        "raw_id": "100201101",
+        "raw_type": "MonsterSkillConfig",
+        "row_index": 0,
+        "source_path": "ExcelOutput/MonsterSkillConfig.json"
+      },
+      "sp_hit_base": {
+        "Value": 10
+      },
+      "trigger_key_alias_count": 1
+    },
+    "skill_ids": [
+      "100201101"
+    ],
+    "skill_slots": [
+      {
+        "action_ref": "monster_skill:100201101",
+        "ai_cd": 1,
+        "ai_icd": 1,
+        "attack_type": "Normal",
+        "blocked_reason": "",
+        "coverage_status": "lowered",
+        "damage_type": "Ice",
+        "delay_ratio": {
+          "Value": 1
+        },
+        "extra_effect_id_list": [],
+        "is_threat": null,
+        "modifier_list": [],
+        "param_list": [
+          {
+            "Value": 2
+          }
+        ],
+        "phase_list": [
+          1
+        ],
+        "same_trigger_skill_ids": [
+          "100201101"
+        ],
+        "skill_id": "100201101",
+        "skill_trigger_key": "Skill04",
+        "slot_index": 0,
+        "source_trace": {
+          "raw_id": "100201101",
+          "raw_type": "MonsterSkillConfig",
+          "row_index": 0,
+          "source_path": "ExcelOutput/MonsterSkillConfig.json"
+        },
+        "sp_hit_base": {
+          "Value": 10
+        },
+        "trigger_key_alias_count": 1
+      }
+    ],
+    "trigger_key_one_to_one_required": false
+  },
+  "source_trace": {
+    "ai": {
+      "raw_id": "Monster_Common_SequenceThree_AI",
+      "raw_type": "ConfigAI",
+      "source_path": "Config/ConfigAI/Monster_Common_SequenceThree_AI.json"
+    },
+    "card": {
+      "evidence": {
+        "builder": "monster_data_card_v0_277",
+        "raw_paths": {
+          "custom_values": "CustomValues",
+          "damage_resistances": "DamageTypeResistance",
+          "debuff_resistances": "DebuffResist",
+          "dynamic_values": "DynamicValues",
+          "override_ai_path": "OverrideAIPath",
+          "override_ai_sequence": "OverrideAISkillSequence",
+          "override_skill_params": "OverrideSkillParams",
+          "skill_list": "SkillList",
+          "summons": "SummonIDList",
+          "template_id": "MonsterTemplateID",
+          "weaknesses": "StanceWeakList"
+        },
+        "row_index": 0,
+        "runtime_execution_admitted": false,
+        "template_id": "1002011",
+        "template_source": {
+          "raw_id": "1002011",
+          "raw_type": "MonsterTemplateConfig",
+          "row_index": 0,
+          "source_path": "ExcelOutput/MonsterTemplateConfig.json"
+        }
+      },
+      "raw_id": "1002011",
+      "raw_type": "MonsterConfig",
+      "source_path": "ExcelOutput/MonsterConfig.json"
+    },
+    "sequence": {
+      "raw_id": "1002011",
+      "raw_path": "AISkillSequence",
+      "raw_type": "MonsterTemplateConfig",
+      "row_index": 0,
+      "source_path": "ExcelOutput/MonsterTemplateConfig.json"
+    },
+    "skill": {
+      "raw_id": "100201101",
+      "raw_type": "MonsterSkillConfig",
+      "row_index": 0,
+      "source_path": "ExcelOutput/MonsterSkillConfig.json"
+    },
+    "template": {
+      "raw_id": "1002011",
+      "raw_type": "MonsterTemplateConfig",
+      "row_index": 0,
+      "source_path": "ExcelOutput/MonsterTemplateConfig.json"
+    }
+  },
+  "weakness_and_resistance": {
+    "damage_type_resistance": [
+      {
+        "DamageType": "Physical",
+        "Value": {
+          "Value": 0.2
+        }
+      },
+      {
+        "DamageType": "Ice",
+        "Value": {
+          "Value": 0.2
+        }
+      },
+      {
+        "DamageType": "Wind",
+        "Value": {
+          "Value": 0.2
+        }
+      },
+      {
+        "DamageType": "Quantum",
+        "Value": {
+          "Value": 0.2
+        }
+      },
+      {
+        "DamageType": "Imaginary",
+        "Value": {
+          "Value": 0.2
+        }
+      }
+    ],
+    "debuff_resist": [
+      {
+        "Key": "STAT_CTRL_Frozen",
+        "Value": {
+          "Value": 1
+        }
+      }
+    ],
+    "weaknesses": [
+      "Fire",
+      "Thunder"
+    ]
+  }
+}
