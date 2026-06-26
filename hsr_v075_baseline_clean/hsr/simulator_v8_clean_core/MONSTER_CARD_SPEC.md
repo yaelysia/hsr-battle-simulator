@@ -1,4 +1,4 @@
-# v8 怪物卡规范 v0_277
+# v8 怪物卡规范 v0_280
 
 怪物卡是 TBGD 到 Canonical IR 的数据卡层，不是运行时规则系统，也不是敌方 AI 执行器。
 
@@ -14,12 +14,33 @@
 
 ## 来源
 
-第一版怪物卡只 admission 以下来源：
+怪物卡当前 admission 以下来源：
 
 - `ExcelOutput/MonsterConfig.json`：怪物实例、技能列表、弱点、抗性、召唤、覆盖参数、Override AI。
 - `ExcelOutput/MonsterTemplateConfig.json` 与 `MonsterTemplateUniqueConfig.json`：模板、Rank、基础面板、JsonConfig、默认 AIPath、默认 AISkillSequence。
 - `ExcelOutput/MonsterSkillConfig.json` 与 `MonsterSkillUniqueConfig.json`：技能定义、trigger key、伤害类型、phase、参数。
 - `Config/ConfigAI/*.json`：AI 结构审计，第一版只 admission `UseSequencedSkill` 固定序列。
+- `Config/ConfigCharacter/Monster/*.json`：技能 trigger key、目标信息、入口 ability 与技能 ability 列表。
+- `Config/ConfigAbility/Monster/**/*.json`：怪物 ability phase、task、effect、动态值读取路径。
+
+## 动作与技能执行边界
+
+v0_280 起普通怪物技能与 ILBattle 怪物技能必须分命名空间：
+
+- `monster_skill:<SkillID>` 只代表 `MonsterSkillConfig` / `MonsterSkillUniqueConfig`。
+- `ilbattle_monster_skill:<ID>` 只代表 `ILBattleMonsterSkill`。
+- 怪物 action set 只能引用同源普通怪物技能动作，不能因为 ID 相同借用 ILBattle action definition。
+
+普通怪物技能可执行纵切只 admission 以下链路：
+
+- `MonsterConfig.SkillList -> SkillID -> monster_skill:<SkillID>`。
+- `MonsterTemplate.JsonConfig -> ConfigCharacter/Monster -> SkillTriggerKey -> EntryAbility/SkillAbilityList`。
+- ability name 通过结构化索引唯一定位 `ConfigAbility/Monster/**/*.json`；缺失或歧义必须 blocked。
+- `DamageByAttackProperty.AttackProperty.DamagePercentage` 作为直接伤害倍率来源。
+- `DynamicValues.Floats[*].ReadInfo.Type=SkillParam` 绑定到 `MonsterSkillConfig.ParamList[Index]`。
+- `SPHitRatio * MonsterSkillConfig.SPHitBase` 作为削韧来源。
+
+当前只接通显式 route/命令指定怪物释放某个 `monster_skill:<SkillID>` 的执行；敌方自动决策、自动选目标、复杂 AI、波次驱动仍未 admission。
 
 ## 卡内容
 
@@ -43,7 +64,7 @@
 - 行动序列来自 `MonsterConfig.OverrideAISkillSequence`，没有 override 时来自模板 `AISkillSequence`。
 - 序列技能必须能在对应 `SkillList` 和怪物技能表中找到。
 
-满足条件时，只表示固定序列来源已 admission；不表示敌方回合运行时已接通。敌方实际出手、目标选择和推演枚举后续单独实现。
+满足条件时，只表示固定序列来源已 admission；不表示敌方回合运行时已接通。敌方实际出手、目标选择和推演枚举后续单独实现。v0_280 允许测试 route 显式指定怪物动作和目标来验证普通怪物技能执行链路，但不能把这一步伪装成敌方 AI。
 
 ## 禁止项
 
@@ -52,4 +73,4 @@
 - 禁止把复杂 AIPath 简化成固定序列执行。
 - 禁止把混淆字段名改成自造语义后作为规则来源。
 - 禁止用观测结果或旧 v7 行为补怪物技能、目标选择、倍率或 AI。
-- 禁止在敌方行动未接通时产生怪物伤害 mutation。
+- 禁止在敌方自动行动未接通时产生怪物伤害 mutation；只有 route/命令明确指定动作和目标，且 action definition、ability binding、公式、目标、伤害/削韧 emission 全部来源审计通过时，才允许产生 mutation。

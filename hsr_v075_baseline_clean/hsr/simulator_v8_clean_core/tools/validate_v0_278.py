@@ -203,11 +203,22 @@ def _monster_action_set_source_mismatch_case(rules: RuleBook, card: MonsterDataC
         first_action = action_set.skill_index_map.get("0")
         if not isinstance(first_action, dict):
             first_action = {}
+    action_ref = str(first_action.get("action_ref") or "")
+    skill_id = action_ref.split(":", 1)[1] if ":" in action_ref else ""
+    ordinary_definition = rules.action_definition(action_ref, 1) if action_ref else None
+    ilbattle_definition = rules.action_definition(f"ilbattle_monster_skill:{skill_id}", 1) if skill_id else None
     checks = {
         "action_set_exists": action_set is not None,
-        "monster_skill_action_not_executable_from_ilbattle_collision": first_action.get("coverage_status") == "blocked",
-        "source_mismatch_reason_recorded": first_action.get("blocked_reason")
-        == "action_definition_source_mismatch_for_monster_config_skill",
+        "action_set_uses_ordinary_monster_skill_namespace": action_ref.startswith("monster_skill:"),
+        "monster_skill_action_admitted_from_ordinary_source": first_action.get("coverage_status") == "executable",
+        "ordinary_action_definition_source_is_monster_skill_config": bool(
+            ordinary_definition
+            and ordinary_definition.source.source_path
+            in {"ExcelOutput/MonsterSkillConfig.json", "ExcelOutput/MonsterSkillUniqueConfig.json"}
+        ),
+        "ilbattle_collision_kept_in_separate_namespace": ilbattle_definition is None
+        or ilbattle_definition.action_id.startswith("ilbattle_monster_skill:"),
+        "action_set_does_not_use_ilbattle_namespace": not action_ref.startswith("ilbattle_monster_skill:"),
         "card_skill_source_is_monster_skill_config": card.skill_slots[0].get("source_trace", {}).get("source_path")
         in {"ExcelOutput/MonsterSkillConfig.json", "ExcelOutput/MonsterSkillUniqueConfig.json"},
     }
@@ -217,6 +228,8 @@ def _monster_action_set_source_mismatch_case(rules: RuleBook, card: MonsterDataC
         "selected_monster_id": card.monster_id,
         "action_set": action_set.to_json() if action_set else {},
         "first_action_set_slot": first_action,
+        "ordinary_definition_source": ordinary_definition.source.to_json() if ordinary_definition else {},
+        "ilbattle_definition_source": ilbattle_definition.source.to_json() if ilbattle_definition else {},
     }
 
 

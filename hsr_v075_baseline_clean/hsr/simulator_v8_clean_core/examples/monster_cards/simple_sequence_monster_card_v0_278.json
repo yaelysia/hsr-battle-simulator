@@ -4,17 +4,19 @@
     "action_set_id": "combatant_action_set:monster:1002011",
     "damage_mutation_allowed_from_this_card_in_v0_278": false,
     "linked_action_set": {
-      "blocked_reason": "combatant_action_set_has_no_executable_actions",
+      "blocked_reason": "",
       "combatant_action_set_id": "combatant_action_set:monster:1002011",
-      "coverage_status": "blocked",
+      "coverage_status": "executable",
       "entity_ref": "monster:1002011",
       "skill_index_map": {
         "0": {
           "action_ref": "monster_skill:100201101",
-          "blocked_reason": "action_definition_source_mismatch_for_monster_config_skill",
-          "coverage_status": "blocked",
-          "default_level": null,
-          "levels": [],
+          "blocked_reason": "",
+          "coverage_status": "executable",
+          "default_level": 1,
+          "levels": [
+            1
+          ],
           "skill_id": "100201101"
         }
       },
@@ -72,6 +74,8 @@
       "blocked_reason": "",
       "complex_task_types": [],
       "coverage_status": "lowered",
+      "enemy_ai_runtime_execution_admitted": false,
+      "manual_route_action_execution_admitted": "depends_on_action_ir",
       "policy_kind": "fixed_skill_sequence",
       "runtime_execution_admitted": false,
       "source_trace": {
@@ -171,6 +175,8 @@
       "blocked_reason": "",
       "complex_task_types": [],
       "coverage_status": "lowered",
+      "enemy_ai_runtime_execution_admitted": false,
+      "manual_route_action_execution_admitted": "depends_on_action_ir",
       "policy_kind": "fixed_skill_sequence",
       "runtime_execution_admitted": false,
       "source_trace": {
@@ -191,7 +197,9 @@
     "card_contract": {
       "ai_policy": {
         "complex_ai_execution_allowed": false,
+        "enemy_ai_runtime_execution_admitted": false,
         "first_admitted_policy": "UseSequencedSkill with TBGD AISkillSequence",
+        "manual_route_action_execution_admitted": "depends_on_action_ir",
         "runtime_execution_admitted": false,
         "target_selection_is_not_admitted": true
       },
@@ -207,7 +215,7 @@
         "runtime_reads": "Canonical IR only",
         "text_map_allowed_in_runtime": false
       },
-      "schema_version": "v0_277",
+      "schema_version": "v0_280",
       "skill_policy": {
         "sequence_skill_must_be_in_skill_list": true,
         "sequence_skill_must_have_skill_definition": true,
@@ -425,7 +433,9 @@
     ],
     "source": {
       "evidence": {
-        "builder": "monster_data_card_v0_277",
+        "builder": "monster_data_card_v0_280",
+        "enemy_ai_runtime_execution_admitted": false,
+        "manual_route_action_execution_admitted": "depends_on_action_ir",
         "raw_paths": {
           "custom_values": "CustomValues",
           "damage_resistances": "DamageTypeResistance",
@@ -827,7 +837,9 @@
     },
     "card": {
       "evidence": {
-        "builder": "monster_data_card_v0_277",
+        "builder": "monster_data_card_v0_280",
+        "enemy_ai_runtime_execution_admitted": false,
+        "manual_route_action_execution_admitted": "depends_on_action_ir",
         "raw_paths": {
           "custom_values": "CustomValues",
           "damage_resistances": "DamageTypeResistance",

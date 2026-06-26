@@ -104,9 +104,19 @@ ENTITY_TABLES: dict[str, tuple[str, str, tuple[str, ...]]] = {
         ("ModifierName", "StatusType", "CanDispel", "ReadParamList", "TagList"),
     ),
     "ExcelOutput/ILBattleMonsterSkill.json": (
-        "monster_skill",
+        "ilbattle_monster_skill",
         "ID",
         ("SkillTriggerKey", "AttackType", "InitialCD", "CoolDown", "ParamList"),
+    ),
+    "ExcelOutput/MonsterSkillConfig.json": (
+        "monster_skill",
+        "SkillID",
+        ("SkillTriggerKey", "DamageType", "AttackType", "SPHitBase", "ParamList", "PhaseList"),
+    ),
+    "ExcelOutput/MonsterSkillUniqueConfig.json": (
+        "monster_skill",
+        "SkillID",
+        ("SkillTriggerKey", "DamageType", "AttackType", "SPHitBase", "ParamList", "PhaseList"),
     ),
     "ExcelOutput/MonsterConfig.json": (
         "monster",
@@ -141,7 +151,16 @@ ACTION_DEFINITION_TABLES: tuple[tuple[str, str, str], ...] = (
     ("ExcelOutput/AvatarSkillConfigLD.json", "avatar_skill", "SkillID"),
     ("ExcelOutput/CommonAvatarSkillConfig.json", "avatar_skill", "SkillID"),
     ("ExcelOutput/CommonActiveSkillConfig.json", "active_skill", "SkillID"),
-    ("ExcelOutput/ILBattleMonsterSkill.json", "monster_skill", "ID"),
+    ("ExcelOutput/MonsterSkillConfig.json", "monster_skill", "SkillID"),
+    ("ExcelOutput/MonsterSkillUniqueConfig.json", "monster_skill", "SkillID"),
+    ("ExcelOutput/ILBattleMonsterSkill.json", "ilbattle_monster_skill", "ID"),
+)
+
+CHARACTER_ACTION_DEFINITION_TABLES: tuple[tuple[str, str, str], ...] = (
+    ("ExcelOutput/AvatarSkillConfig.json", "avatar_skill", "SkillID"),
+    ("ExcelOutput/AvatarSkillConfigLD.json", "avatar_skill", "SkillID"),
+    ("ExcelOutput/CommonAvatarSkillConfig.json", "avatar_skill", "SkillID"),
+    ("ExcelOutput/CommonActiveSkillConfig.json", "active_skill", "SkillID"),
 )
 
 
@@ -202,7 +221,7 @@ class TBGDLowering:
         character_cards = build_character_card_ir(
             self.tbgd_root,
             max_records_per_table=self.limits.max_records_per_table,
-            skill_tables=ACTION_DEFINITION_TABLES,
+            skill_tables=CHARACTER_ACTION_DEFINITION_TABLES,
         )
         avatar_profiles = character_cards.avatar_profiles
         character_data_cards = character_cards.character_data_cards
@@ -216,6 +235,7 @@ class TBGDLowering:
             max_records_per_table=self.limits.max_records_per_table,
         )
         monster_data_cards = monster_cards.monster_data_cards
+        skill_formula_bindings = [*skill_formula_bindings, *monster_cards.skill_formula_bindings]
         combatant_profiles = self._lower_combatant_profiles()
         action_definitions = list(self._lower_action_definitions().values())
         (
@@ -1107,6 +1127,9 @@ class TBGDLowering:
     ]:
         avatar_skill_rows = self._avatar_skill_rows_by_skill_id()
         avatar_configs = self._avatar_configs_by_skill_id()
+        monster_skill_rows = self._monster_skill_rows_by_skill_id()
+        monster_configs = self._monster_configs_by_skill_id()
+        monster_ability_file_index: dict[str, tuple[str, ...]] | None = None
         ability_file_cache: dict[str, dict[str, Any] | None] = {}
         bindings: list[ActionAbilityBindingIR] = []
         phases: list[AbilityPhaseIR] = []
@@ -1121,6 +1144,16 @@ class TBGDLowering:
                     avatar_skill_rows.get(definition.source.raw_id, {}),
                     avatar_configs.get(definition.source.raw_id, []),
                     ability_file_cache,
+                )
+            elif definition.action_id.startswith("monster_skill:"):
+                if monster_ability_file_index is None:
+                    monster_ability_file_index = self._monster_ability_file_index()
+                binding, binding_phases, lowered_tasks = self._monster_action_binding(
+                    definition,
+                    monster_skill_rows.get(definition.source.raw_id, {}),
+                    monster_configs.get(definition.source.raw_id, []),
+                    ability_file_cache,
+                    monster_ability_file_index,
                 )
             else:
                 binding, binding_phases, lowered_tasks = _blocked_action_binding(definition, "non_avatar_ability_binding_not_executable")
@@ -1226,7 +1259,7 @@ class TBGDLowering:
 
     def _avatar_skill_rows_by_skill_id(self) -> dict[str, dict[str, Any]]:
         rows: dict[str, dict[str, Any]] = {}
-        for relative_path, _, id_key in ACTION_DEFINITION_TABLES:
+        for relative_path, _, id_key in CHARACTER_ACTION_DEFINITION_TABLES:
             if "AvatarSkillConfig" not in relative_path and "CommonAvatarSkillConfig" not in relative_path:
                 continue
             path = self.tbgd_root / relative_path
@@ -1261,6 +1294,94 @@ class TBGDLowering:
                 }
                 result.setdefault(str(skill_id), []).append(config)
         return result
+
+    def _monster_skill_rows_by_skill_id(self) -> dict[str, dict[str, Any]]:
+        rows: dict[str, dict[str, Any]] = {}
+        for relative_path in ("ExcelOutput/MonsterSkillConfig.json", "ExcelOutput/MonsterSkillUniqueConfig.json"):
+            path = self.tbgd_root / relative_path
+            if not path.exists():
+                continue
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if not isinstance(data, list):
+                continue
+            for row_index, row in enumerate(_limit_sequence(data, self.limits.max_records_per_table)):
+                if isinstance(row, dict) and row.get("SkillID") is not None:
+                    copied = dict(row)
+                    copied["_v8_source_path"] = relative_path
+                    copied["_v8_row_index"] = row_index
+                    rows[str(row["SkillID"])] = copied
+        return rows
+
+    def _monster_configs_by_skill_id(self) -> dict[str, list[dict[str, Any]]]:
+        template_rows: dict[str, dict[str, Any]] = {}
+        for relative_path in ("ExcelOutput/MonsterTemplateConfig.json", "ExcelOutput/MonsterTemplateUniqueConfig.json"):
+            path = self.tbgd_root / relative_path
+            if not path.exists():
+                continue
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if not isinstance(data, list):
+                continue
+            for row_index, row in enumerate(_limit_sequence(data, self.limits.max_records_per_table)):
+                if isinstance(row, dict) and row.get("MonsterTemplateID") is not None:
+                    copied = dict(row)
+                    copied["_v8_source_path"] = relative_path
+                    copied["_v8_row_index"] = row_index
+                    template_rows[str(row["MonsterTemplateID"])] = copied
+
+        result: dict[str, list[dict[str, Any]]] = {}
+        path = self.tbgd_root / "ExcelOutput/MonsterConfig.json"
+        if not path.exists():
+            return result
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return result
+        if not isinstance(data, list):
+            return result
+        for row_index, row in enumerate(_limit_sequence(data, self.limits.max_records_per_table)):
+            if not isinstance(row, dict) or row.get("MonsterID") is None:
+                continue
+            template_id = str(row.get("MonsterTemplateID") or "")
+            template_row = template_rows.get(template_id, {})
+            config = {
+                "relative_path": "ExcelOutput/MonsterConfig.json",
+                "row_index": row_index,
+                "monster_id": row.get("MonsterID"),
+                "template_id": template_id,
+                "json_path": template_row.get("JsonConfig"),
+                "skill_list": row.get("SkillList") or [],
+                "template_source_path": template_row.get("_v8_source_path") or "",
+                "template_row_index": template_row.get("_v8_row_index"),
+            }
+            for skill_id in row.get("SkillList") or []:
+                result.setdefault(str(skill_id), []).append(config)
+        return result
+
+    def _monster_ability_file_index(self) -> dict[str, tuple[str, ...]]:
+        indexed: dict[str, list[str]] = {}
+        roots = (
+            self.tbgd_root / "Config/ConfigAbility/Monster",
+        )
+        for root in roots:
+            if not root.exists():
+                continue
+            for path in sorted(root.rglob("*.json")):
+                try:
+                    data = json.loads(path.read_text(encoding="utf-8"))
+                except Exception:
+                    continue
+                if not isinstance(data, dict):
+                    continue
+                relative_path = relative_source_path(self.tbgd_root, path)
+                for ability_name in _ability_map(data):
+                    indexed.setdefault(ability_name, []).append(relative_path)
+        return {name: tuple(paths) for name, paths in indexed.items()}
 
     def _avatar_action_binding(
         self,
@@ -1376,6 +1497,163 @@ class TBGDLowering:
                 },
                 phase_ids=tuple(phase.phase_id for phase in binding_phases),
                 source_mode="mainline_avatar",
+                source=source,
+                coverage_status=coverage_status,
+                blocked_reason=blocked_reason,
+            ),
+            binding_phases,
+            lowered,
+        )
+
+    def _monster_action_binding(
+        self,
+        definition: ActionDefinitionIR,
+        skill_row: dict[str, Any],
+        monster_configs: list[dict[str, Any]],
+        ability_file_cache: dict[str, dict[str, Any] | None],
+        ability_file_index: dict[str, tuple[str, ...]],
+    ) -> tuple[ActionAbilityBindingIR, list[AbilityPhaseIR], "_LoweredAbility"]:
+        skill_trigger_key = str(skill_row.get("SkillTriggerKey") or definition.source.evidence.get("skill_trigger_key") or "")
+        if not skill_trigger_key:
+            return _blocked_action_binding(definition, "missing_monster_skill_trigger_key")
+        mainline_configs = [
+            config
+            for config in monster_configs
+            if isinstance(config.get("json_path"), str)
+            and str(config.get("json_path") or "").startswith("Config/ConfigCharacter/Monster/")
+        ]
+        if not mainline_configs:
+            return _blocked_action_binding(definition, "missing_mainline_monster_config")
+        monster_config = sorted(
+            mainline_configs,
+            key=lambda item: (str(item.get("json_path") or ""), str(item.get("monster_id") or "")),
+        )[0]
+        character_path = str(monster_config.get("json_path") or "")
+        character_config = self._read_json_dict(character_path)
+        if character_config is None:
+            return _blocked_action_binding(definition, "monster_character_config_not_readable", character_path)
+        skill_config = _skill_config_by_name(character_config, skill_trigger_key)
+        if not skill_config:
+            return _blocked_action_binding(definition, "monster_skill_trigger_key_not_in_character_config", character_path)
+        entry_ability = str(skill_config.get("EntryAbility") or "")
+        ability_names = _ability_names_for_skill(character_config, skill_trigger_key, entry_ability)
+        if not entry_ability or not ability_names:
+            return _blocked_action_binding(definition, "missing_monster_entry_ability_or_skill_ability_list", character_path)
+
+        resolved_paths, missing_names, ambiguous_names = _resolve_monster_ability_paths(ability_names, ability_file_index)
+        combined_ability_map: dict[str, dict[str, Any]] = {}
+        for ability_path in resolved_paths.values():
+            ability_data = ability_file_cache.setdefault(ability_path, self._read_json_dict(ability_path))
+            if ability_data is None:
+                continue
+            combined_ability_map.update(_ability_map(ability_data))
+        expanded_names = _expand_triggered_ability_names(ability_names, combined_ability_map)
+        if tuple(expanded_names) != tuple(ability_names):
+            ability_names = expanded_names
+            resolved_paths, missing_names, ambiguous_names = _resolve_monster_ability_paths(ability_names, ability_file_index)
+
+        binding_id = f"action_binding:{definition.action_id}:{definition.level}"
+        binding_phases: list[AbilityPhaseIR] = []
+        lowered = _LoweredAbility()
+        unreadable_paths: list[str] = []
+        for phase_index, ability_name in enumerate(ability_names):
+            ability_path = resolved_paths.get(ability_name, "")
+            if not ability_path:
+                continue
+            ability_data = ability_file_cache.setdefault(ability_path, self._read_json_dict(ability_path))
+            if ability_data is None:
+                unreadable_paths.append(ability_path)
+                continue
+            ability_map = _ability_map(ability_data)
+            ability = ability_map.get(ability_name)
+            if not isinstance(ability, dict):
+                missing_names.append(ability_name)
+                continue
+            source = IRSource(
+                source_path=ability_path,
+                raw_type="AbilityList",
+                raw_id=ability_name,
+                evidence={
+                    "action_id": definition.action_id,
+                    "level": definition.level,
+                    "phase_index": phase_index,
+                    "skill_trigger_key": skill_trigger_key,
+                    "entry_ability": entry_ability,
+                    "monster_id": _json_safe(monster_config.get("monster_id")),
+                    "template_id": _json_safe(monster_config.get("template_id")),
+                    "character_config_path": character_path,
+                },
+            )
+            phase_id = f"ability_phase:{definition.action_id}:{definition.level}:{phase_index}:{ability_name}"
+            phase_lowered = self._lower_ability_phase_tasks(
+                definition=definition,
+                phase_id=phase_id,
+                ability_name=ability_name,
+                ability=ability,
+                ability_path=ability_path,
+            )
+            lowered.merge(phase_lowered)
+            binding_phases.append(
+                AbilityPhaseIR(
+                    phase_id=phase_id,
+                    binding_id=binding_id,
+                    action_id=definition.action_id,
+                    level=definition.level,
+                    ability_name=ability_name,
+                    phase_index=phase_index,
+                    target_info=_json_safe(ability.get("TargetInfo")) if isinstance(ability.get("TargetInfo"), dict) else {},
+                    opcode_summary=_ability_opcode_summary(ability),
+                    callback_summaries=_ability_callback_summaries(ability),
+                    source=source,
+                    coverage_status="lowered",
+                    blocked_reason="",
+                    task_ids=tuple(task.task_id for task in phase_lowered.ability_tasks),
+                )
+            )
+        blocking_reasons = []
+        if missing_names:
+            blocking_reasons.append("missing_monster_ability_name")
+        if ambiguous_names:
+            blocking_reasons.append("ambiguous_monster_ability_name")
+        if unreadable_paths:
+            blocking_reasons.append("monster_ability_file_not_readable")
+        if not binding_phases:
+            blocking_reasons.append("missing_monster_ability_phase_in_ability_file")
+        blocked_reason = ";".join(dict.fromkeys(blocking_reasons))
+        coverage_status = "blocked" if blocked_reason else "executable"
+        source = IRSource(
+            source_path=character_path,
+            raw_type="MonsterCharacterConfig",
+            raw_id=skill_trigger_key,
+            evidence={
+                "action_id": definition.action_id,
+                "level": definition.level,
+                "monster_config": _json_safe(monster_config),
+                "skill_trigger_key": skill_trigger_key,
+                "entry_ability": entry_ability,
+                "ability_file_paths": sorted(set(resolved_paths.values())),
+                "missing_ability_names": list(missing_names),
+                "ambiguous_ability_names": ambiguous_names,
+                "unreadable_ability_paths": unreadable_paths,
+                "trigger_expanded_ability_names": ability_names,
+            },
+        )
+        return (
+            ActionAbilityBindingIR(
+                binding_id=binding_id,
+                action_id=definition.action_id,
+                level=definition.level,
+                skill_trigger_key=skill_trigger_key,
+                skill_name=str(skill_config.get("Name") or skill_trigger_key),
+                entry_ability=entry_ability,
+                ability_names=tuple(ability_names),
+                config_source={
+                    "monster_config": _json_safe(monster_config),
+                    "character_config_path": character_path,
+                    "ability_file_paths": sorted(set(resolved_paths.values())),
+                },
+                phase_ids=tuple(phase.phase_id for phase in binding_phases),
+                source_mode="mainline_monster",
                 source=source,
                 coverage_status=coverage_status,
                 blocked_reason=blocked_reason,
@@ -1620,6 +1898,7 @@ class TBGDLowering:
 
     def _lower_action_definitions(self) -> dict[tuple[str, int], ActionDefinitionIR]:
         definitions: dict[tuple[str, int], ActionDefinitionIR] = {}
+        monster_target_sources = self._monster_skill_target_mode_sources()
         for relative_path, entity_type, id_key in ACTION_DEFINITION_TABLES:
             path = self.tbgd_root / relative_path
             if not path.exists():
@@ -1630,9 +1909,141 @@ class TBGDLowering:
             for index, row in enumerate(_limit_sequence(data, self.limits.max_records_per_table)):
                 if not isinstance(row, dict) or id_key not in row:
                     continue
-                definition = _action_definition_from_row(relative_path, entity_type, id_key, index, row)
+                raw_id = str(row[id_key])
+                definition = _action_definition_from_row(
+                    relative_path,
+                    entity_type,
+                    id_key,
+                    index,
+                    row,
+                    monster_target_source=monster_target_sources.get(raw_id)
+                    if entity_type == "monster_skill"
+                    else None,
+                )
                 definitions[(definition.action_id, definition.level)] = definition
         return definitions
+
+    def _monster_skill_target_mode_sources(self) -> dict[str, dict[str, Any]]:
+        skill_rows: dict[str, dict[str, Any]] = {}
+        for relative_path in ("ExcelOutput/MonsterSkillConfig.json", "ExcelOutput/MonsterSkillUniqueConfig.json"):
+            path = self.tbgd_root / relative_path
+            if not path.exists():
+                continue
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if not isinstance(data, list):
+                continue
+            for row_index, row in enumerate(_limit_sequence(data, self.limits.max_records_per_table)):
+                if isinstance(row, dict) and row.get("SkillID") is not None:
+                    copied = dict(row)
+                    copied["_v8_source_path"] = relative_path
+                    copied["_v8_row_index"] = row_index
+                    skill_rows[str(row["SkillID"])] = copied
+
+        template_rows: dict[str, dict[str, Any]] = {}
+        for relative_path in ("ExcelOutput/MonsterTemplateConfig.json", "ExcelOutput/MonsterTemplateUniqueConfig.json"):
+            path = self.tbgd_root / relative_path
+            if not path.exists():
+                continue
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if not isinstance(data, list):
+                continue
+            for row_index, row in enumerate(_limit_sequence(data, self.limits.max_records_per_table)):
+                if isinstance(row, dict) and row.get("MonsterTemplateID") is not None:
+                    copied = dict(row)
+                    copied["_v8_source_path"] = relative_path
+                    copied["_v8_row_index"] = row_index
+                    template_rows[str(row["MonsterTemplateID"])] = copied
+
+        result: dict[str, dict[str, Any]] = {}
+        path = self.tbgd_root / "ExcelOutput/MonsterConfig.json"
+        if not path.exists():
+            return result
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return result
+        if not isinstance(data, list):
+            return result
+        for row_index, row in enumerate(_limit_sequence(data, self.limits.max_records_per_table)):
+            if not isinstance(row, dict) or row.get("MonsterID") is None:
+                continue
+            template_id = str(row.get("MonsterTemplateID") or "")
+            template_row = template_rows.get(template_id, {})
+            json_config = str(template_row.get("JsonConfig") or "")
+            if not json_config:
+                continue
+            character_config = self._read_json_dict(json_config)
+            if character_config is None:
+                continue
+            skill_ids = row.get("SkillList") if isinstance(row.get("SkillList"), list) else []
+            for skill_id_value in skill_ids:
+                skill_id = str(skill_id_value)
+                skill_row = skill_rows.get(skill_id, {})
+                trigger_key = str(skill_row.get("SkillTriggerKey") or "")
+                if not trigger_key:
+                    continue
+                skill_config = _skill_config_by_name(character_config, trigger_key)
+                if not skill_config:
+                    continue
+                target_info = skill_config.get("TargetInfo")
+                target_type = str(target_info.get("TargetType") or "") if isinstance(target_info, dict) else ""
+                target_mode = _monster_target_mode(target_type)
+                source = {
+                    "target_mode": target_mode,
+                    "target_type": target_type,
+                    "skill_trigger_key": trigger_key,
+                    "monster_id": str(row.get("MonsterID") or ""),
+                    "template_id": template_id,
+                    "character_config_path": json_config,
+                    "target_info": _json_safe(target_info) if isinstance(target_info, dict) else {},
+                    "source_trace": {
+                        "monster_config": {
+                            "source_path": "ExcelOutput/MonsterConfig.json",
+                            "raw_type": "MonsterConfig",
+                            "raw_id": str(row.get("MonsterID") or ""),
+                            "row_index": row_index,
+                            "raw_path": "SkillList",
+                        },
+                        "template_config": {
+                            "source_path": str(template_row.get("_v8_source_path") or ""),
+                            "raw_type": Path(str(template_row.get("_v8_source_path") or "")).stem,
+                            "raw_id": template_id,
+                            "row_index": template_row.get("_v8_row_index"),
+                            "raw_path": "JsonConfig",
+                        },
+                        "character_config": {
+                            "source_path": json_config,
+                            "raw_type": "MonsterCharacterConfig",
+                            "raw_id": trigger_key,
+                            "raw_path": "SkillList.TargetInfo",
+                        },
+                    },
+                    "coverage_status": "blocked" if target_mode == "unknown" else "lowered",
+                    "blocked_reason": "" if target_mode != "unknown" else f"unsupported_monster_target_type:{target_type}",
+                    "monster_count": 1,
+                }
+                existing = result.get(skill_id)
+                if existing is not None:
+                    if existing.get("target_mode") != target_mode or existing.get("target_type") != target_type:
+                        result[skill_id] = {
+                            **existing,
+                            "target_mode": "unknown",
+                            "coverage_status": "blocked",
+                            "blocked_reason": "monster_skill_target_mode_conflict",
+                            "conflicting_target_source": source,
+                            "monster_count": int(existing.get("monster_count") or 1) + 1,
+                        }
+                    else:
+                        existing["monster_count"] = int(existing.get("monster_count") or 1) + 1
+                else:
+                    result[skill_id] = source
+        return result
 
     def _table_stats(self, relative_path: str, id_key: str) -> dict[str, Any]:
         path = self.tbgd_root / relative_path
@@ -3171,13 +3582,28 @@ def _action_definition_from_row(
     id_key: str,
     row_index: int,
     row: dict[str, Any],
+    *,
+    monster_target_source: dict[str, Any] | None = None,
 ) -> ActionDefinitionIR:
     raw_id = str(row[id_key])
     action_id = f"{entity_type}:{raw_id}"
     level = int(_number_value(row.get("Level"), 1.0))
-    skill_effect = str(row.get("SkillEffect") or row.get("AttackType") or "Unknown")
+    monster_target_mode = str((monster_target_source or {}).get("target_mode") or "")
+    skill_effect = (
+        _skill_effect_from_target_mode(monster_target_mode)
+        if entity_type == "monster_skill"
+        else str(row.get("SkillEffect") or row.get("AttackType") or "Unknown")
+    )
     attack_type = str(row.get("AttackType") or "Unknown")
-    element_type = str(row["StanceDamageType"]) if row.get("StanceDamageType") is not None else None
+    element_type = (
+        str(row["StanceDamageType"])
+        if row.get("StanceDamageType") is not None
+        else str(row["DamageType"])
+        if row.get("DamageType") is not None
+        else None
+    )
+    target_mode = monster_target_mode or _target_mode(skill_effect)
+    source_mode = "mainline_monster" if entity_type == "monster_skill" else _source_mode(attack_type)
     source = IRSource(
         source_path=relative_path,
         raw_type=Path(relative_path).stem,
@@ -3188,6 +3614,9 @@ def _action_definition_from_row(
             "level": level,
             "skill_desc_hash": _hash_ref(row.get("SkillDesc")),
             "skill_trigger_key": str(row.get("SkillTriggerKey") or ""),
+            "damage_type": str(row.get("DamageType") or ""),
+            "sp_hit_base": _json_safe(row.get("SPHitBase")),
+            "monster_target_source": _json_safe(monster_target_source or {}),
             "resource_mapping": {
                 "BPNeed": "skill_point_cost_if_positive",
                 "BPAdd": "skill_point_gain_if_positive",
@@ -3206,7 +3635,7 @@ def _action_definition_from_row(
         level=level,
         attack_type=attack_type,
         skill_effect=skill_effect,
-        target_mode=_target_mode(skill_effect),
+        target_mode=target_mode,
         bp_need=_number_value(row.get("BPNeed"), 0.0),
         bp_add=_number_value(row.get("BPAdd"), 0.0),
         sp_base=_number_value(row.get("SPBase"), 0.0),
@@ -3220,7 +3649,7 @@ def _action_definition_from_row(
         damage_kind=_damage_kind(skill_effect),
         damage_formula_family=_damage_formula_family(attack_type, skill_effect),
         element_type=element_type,
-        source_mode=_source_mode(attack_type),
+        source_mode=source_mode,
     )
 
 
@@ -3382,6 +3811,25 @@ def _ability_names_from_value(value: Any) -> list[str]:
             for item in value.values():
                 names.extend(_ability_names_from_value(item))
     return names
+
+
+def _resolve_monster_ability_paths(
+    ability_names: list[str],
+    ability_file_index: dict[str, tuple[str, ...]],
+) -> tuple[dict[str, str], list[str], dict[str, list[str]]]:
+    resolved: dict[str, str] = {}
+    missing: list[str] = []
+    ambiguous: dict[str, list[str]] = {}
+    for ability_name in ability_names:
+        paths = tuple(ability_file_index.get(ability_name, ()))
+        if not paths:
+            missing.append(ability_name)
+            continue
+        if len(paths) > 1:
+            ambiguous[ability_name] = list(paths)
+            continue
+        resolved[ability_name] = paths[0]
+    return resolved, missing, ambiguous
 
 
 def _avatar_ability_path_from_character_path(character_path: str) -> str:
@@ -3638,7 +4086,7 @@ def _lower_toughness_emissions(
                         hit_profile_id=profile.hit_profile_id if profile else "",
                         target_group=profile.target_group if profile else "unknown",
                         element_type=profile.element_type if profile else None,
-                        toughness_amount_expr=_toughness_amount_expr(effect),
+                        toughness_amount_expr=_toughness_amount_expr(effect, profile),
                         source=_toughness_emission_source(task, effect, profile),
                         coverage_status="blocked" if blocked_reason else "executable",
                         blocked_reason=blocked_reason,
@@ -3659,7 +4107,7 @@ def _direct_damage_binding_lookup(
     for binding in sorted(bindings, key=lambda item: item.binding_id):
         if binding.formula_role != "direct_damage":
             continue
-        if not binding.character_data_card_id:
+        if not _formula_binding_data_card_id(binding):
             continue
         key = (binding.action_id, binding.level, binding.param_index)
         existing = lookup.get(key)
@@ -3668,6 +4116,47 @@ def _direct_damage_binding_lookup(
         ):
             lookup[key] = binding
     return lookup
+
+
+def _formula_binding_data_card_id(binding: SkillFormulaBindingIR) -> str:
+    return binding.data_card_id or binding.character_data_card_id
+
+
+def _skill_formula_source_kind(binding: SkillFormulaBindingIR | None) -> str:
+    if binding is None:
+        return "action_definition_param_list"
+    if binding.data_card_kind == "monster":
+        return "monster_data_card_skill_formula"
+    return "character_data_card_skill_formula"
+
+
+def _monster_damage_percentage_hash_mismatch(
+    effect: EffectIR | None,
+    binding: SkillFormulaBindingIR,
+) -> str:
+    if (binding.data_card_kind or "") != "monster":
+        return ""
+    effect_hash = _damage_percentage_dynamic_hash(effect)
+    if effect_hash is None:
+        return "monster_damage_percentage_dynamic_hash_missing"
+    binding_hash = binding.scaling_basis_expr.get("dynamic_hash")
+    if binding_hash is None:
+        binding_hash = binding.source.evidence.get("dynamic_hash")
+    if str(binding_hash) != str(effect_hash):
+        return "monster_damage_percentage_dynamic_hash_mismatch"
+    return ""
+
+
+def _damage_percentage_dynamic_hash(effect: EffectIR | None) -> int | None:
+    if effect is None:
+        return None
+    attack_property = effect.payload.get("AttackProperty") if isinstance(effect.payload, dict) else None
+    if not isinstance(attack_property, dict):
+        return None
+    expr = _numeric_expr_summary(attack_property.get("DamagePercentage"))
+    if expr.get("kind") == "dynamic_hash" and isinstance(expr.get("hash"), int):
+        return int(expr["hash"])
+    return None
 
 
 def _damage_emission_source(
@@ -3735,6 +4224,24 @@ def _damage_scaling_basis_expr(
                 "hit_profile_source": profile.source.to_json(),
                 "skill_formula_binding": binding.to_json(),
                 "character_data_card_id": binding.character_data_card_id,
+                "data_card_id": _formula_binding_data_card_id(binding),
+            },
+        }
+    hash_mismatch = _monster_damage_percentage_hash_mismatch(effect, binding)
+    if hash_mismatch:
+        return {
+            "kind": "missing",
+            "supported": False,
+            "reason": hash_mismatch,
+            "param_index": param_index,
+            "source_trace": {
+                "task_source": task.source.to_json(),
+                "effect_id": task.effect_id,
+                "target_alias": _target_alias(payload.get("TargetType")),
+                "hit_profile_id": profile.hit_profile_id,
+                "hit_profile_source": profile.source.to_json(),
+                "skill_formula_binding": binding.to_json(),
+                "data_card_id": _formula_binding_data_card_id(binding),
             },
         }
     basis_expr = dict(binding.scaling_basis_expr)
@@ -3750,6 +4257,7 @@ def _damage_scaling_basis_expr(
         "hit_profile_source": profile.source.to_json(),
         "skill_formula_binding": binding.to_json(),
         "character_data_card_id": binding.character_data_card_id,
+        "data_card_id": _formula_binding_data_card_id(binding),
     }
     return basis_expr
 
@@ -3829,7 +4337,7 @@ def _toughness_emission_source(
             "hit_profile_id": profile.hit_profile_id if profile else "",
             "hit_profile_source": profile.source.to_json() if profile else None,
             "stance_source": profile.stance_source if profile else {},
-            "toughness_amount_source": _toughness_amount_expr(effect),
+            "toughness_amount_source": _toughness_amount_expr(effect, profile),
             "attack_property": _json_safe(payload.get("AttackProperty")) if isinstance(payload, dict) else {},
         },
     )
@@ -3855,25 +4363,74 @@ def _toughness_emission_blocked_reason(
         return target_group_reason.replace("damage_", "toughness_", 1)
     if profile.coverage_status != "executable":
         return f"hit_profile_not_executable:{profile.blocked_reason or profile.coverage_status}"
-    amount_expr = _toughness_amount_expr(effect)
+    amount_expr = _toughness_amount_expr(effect, profile)
     if not _numeric_expr_can_be_runtime_bound(amount_expr):
         return amount_expr.get("reason") or amount_expr.get("blocked_reason") or "toughness_amount_not_executable"
     return ""
 
 
-def _toughness_amount_expr(effect: EffectIR | None) -> dict[str, Any]:
+def _toughness_amount_expr(effect: EffectIR | None, profile: HitProfileIR | None = None) -> dict[str, Any]:
     if effect is None:
         return {"kind": "missing", "reason": "toughness_emission_effect_missing"}
     attack_property = effect.payload.get("AttackProperty") if isinstance(effect.payload, dict) else None
     if not isinstance(attack_property, dict):
         return {"kind": "missing", "reason": "toughness_emission_attack_property_missing"}
     if "StanceValue" not in attack_property:
-        return {"kind": "missing", "reason": "attack_property_stance_value_missing"}
+        return _monster_sp_hit_toughness_amount_expr(effect, profile, attack_property)
     expr = _numeric_expr_summary(attack_property.get("StanceValue"))
     return {
         **expr,
         "raw_path": "AttackProperty.StanceValue",
         "source_kind": "ability_task_attack_property_stance_value",
+    }
+
+
+def _monster_sp_hit_toughness_amount_expr(
+    effect: EffectIR,
+    profile: HitProfileIR | None,
+    attack_property: dict[str, Any],
+) -> dict[str, Any]:
+    if profile is None:
+        return {"kind": "missing", "reason": "attack_property_stance_value_missing"}
+    action_source = profile.stance_source.get("source") if isinstance(profile.stance_source, dict) else None
+    if not isinstance(action_source, dict):
+        action_source = profile.source.to_json()
+    action_evidence = action_source.get("evidence") if isinstance(action_source, dict) else {}
+    sp_hit_base_raw = action_evidence.get("sp_hit_base") if isinstance(action_evidence, dict) else None
+    sp_hit_base = _number_value(sp_hit_base_raw, float("nan"))
+    sp_hit_ratio_expr = _numeric_expr_summary(attack_property.get("SPHitRatio"))
+    sp_hit_ratio = _fixed_expr_value(sp_hit_ratio_expr)
+    if not isinstance(sp_hit_base, float) or sp_hit_base != sp_hit_base:
+        return {
+            "kind": "missing",
+            "reason": "attack_property_stance_value_missing",
+            "secondary_reason": "monster_sp_hit_base_missing",
+            "raw_path": "ActionDefinition.source.evidence.sp_hit_base",
+            "source_kind": "monster_skill_sp_hit_base",
+            "source_trace": action_source,
+        }
+    if sp_hit_ratio is None:
+        return {
+            "kind": "missing",
+            "reason": "monster_sp_hit_ratio_not_fixed",
+            "raw_path": "AttackProperty.SPHitRatio",
+            "source_kind": "monster_skill_sp_hit_ratio",
+            "sp_hit_ratio_expr": sp_hit_ratio_expr,
+            "source_trace": effect.source.to_json(),
+        }
+    return {
+        "kind": "fixed",
+        "value": sp_hit_base * sp_hit_ratio,
+        "source_kind": "monster_skill_sp_hit_base_times_attack_property_sp_hit_ratio",
+        "raw_path": "MonsterSkillConfig.SPHitBase * AttackProperty.SPHitRatio",
+        "sp_hit_base": sp_hit_base,
+        "sp_hit_base_raw": _json_safe(sp_hit_base_raw),
+        "sp_hit_ratio": sp_hit_ratio,
+        "sp_hit_ratio_expr": sp_hit_ratio_expr,
+        "source_trace": {
+            "action_definition": action_source,
+            "effect": effect.source.to_json(),
+        },
     }
 
 
@@ -4223,7 +4780,7 @@ def _param_multiplier_source(
         "multi_param_list_not_implemented": False,
         "show_damage_count": len(definition.show_damage_list),
         "show_damage_audit_only": bool(definition.show_damage_list),
-        "source_kind": "character_data_card_skill_formula" if binding else "action_definition_param_list",
+        "source_kind": _skill_formula_source_kind(binding) if binding else "action_definition_param_list",
         "source": definition.source.to_json(),
     }
     if binding is not None:
@@ -4234,6 +4791,9 @@ def _param_multiplier_source(
                 "sequence_order": binding.sequence_order,
                 "target_group_hint": binding.target_group_hint,
                 "character_data_card_id": binding.character_data_card_id,
+                "data_card_id": _formula_binding_data_card_id(binding),
+                "data_card_kind": binding.data_card_kind,
+                "owner_entity_ref": binding.owner_entity_ref,
                 "skill_formula_binding_source": binding.source.to_json(),
             }
         )
@@ -4341,6 +4901,30 @@ def _target_mode(skill_effect: str) -> str:
     if normalized == "enhance":
         return "self_or_team"
     return "unknown"
+
+
+def _monster_target_mode(target_type: str) -> str:
+    if target_type == "AllEnemy":
+        return "aoe"
+    if target_type == "EnemySelect":
+        return "single"
+    if target_type in {"Caster", "FriendSelect", "AllTeamMember"}:
+        return "self_or_team"
+    return "unknown"
+
+
+def _skill_effect_from_target_mode(target_mode: str) -> str:
+    if target_mode == "aoe":
+        return "AoeAttack"
+    if target_mode == "single":
+        return "SingleAttack"
+    if target_mode == "blast":
+        return "Blast"
+    if target_mode == "bounce":
+        return "Bounce"
+    if target_mode == "self_or_team":
+        return "Enhance"
+    return "Unknown"
 
 
 def _damage_kind(skill_effect: str) -> str:

@@ -504,11 +504,17 @@ class SkillFormulaBindingIR:
     coverage_status: CoverageStatus = "blocked"
     blocked_reason: str = ""
     bounce_policy_id: str = ""
+    data_card_id: str = ""
+    data_card_kind: str = ""
+    owner_entity_ref: str = ""
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
             "binding_id": self.binding_id,
             "character_data_card_id": self.character_data_card_id,
+            "data_card_id": self.data_card_id or self.character_data_card_id,
+            "data_card_kind": self.data_card_kind or ("character" if self.character_data_card_id else ""),
+            "owner_entity_ref": self.owner_entity_ref,
             "formula_slot_id": self.formula_slot_id,
             "action_id": self.action_id,
             "level": self.level,

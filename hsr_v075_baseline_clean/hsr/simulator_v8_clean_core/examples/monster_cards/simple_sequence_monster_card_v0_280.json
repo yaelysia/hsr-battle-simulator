@@ -1,0 +1,1697 @@
+{
+  "action": {
+    "ability_binding": {
+      "ability_names": [
+        "Monster_Boss_Cocolia_P1_Weapon_Skill04_Phase01",
+        "Monster_Boss_Cocolia_P1_Weapon_Skill04_Phase02"
+      ],
+      "action_id": "monster_skill:100201101",
+      "binding_id": "action_binding:monster_skill:100201101:1",
+      "blocked_reason": "",
+      "config_source": {
+        "ability_file_paths": [
+          "Config/ConfigAbility/Monster/Monster_W1_CocoliaP1_01_Ability.json"
+        ],
+        "character_config_path": "Config/ConfigCharacter/Monster/Monster_W1_CocoliaP1_01_Config.json",
+        "monster_config": {
+          "json_path": "Config/ConfigCharacter/Monster/Monster_W1_CocoliaP1_01_Config.json",
+          "monster_id": 1002011,
+          "relative_path": "ExcelOutput/MonsterConfig.json",
+          "row_index": 0,
+          "skill_list": [
+            100201101
+          ],
+          "template_id": "1002011",
+          "template_row_index": 0,
+          "template_source_path": "ExcelOutput/MonsterTemplateConfig.json"
+        }
+      },
+      "coverage_status": "executable",
+      "entry_ability": "Monster_Boss_Cocolia_P1_Weapon_Skill04_Phase01",
+      "level": 1,
+      "phase_ids": [
+        "ability_phase:monster_skill:100201101:1:0:Monster_Boss_Cocolia_P1_Weapon_Skill04_Phase01",
+        "ability_phase:monster_skill:100201101:1:1:Monster_Boss_Cocolia_P1_Weapon_Skill04_Phase02"
+      ],
+      "skill_name": "Skill04",
+      "skill_trigger_key": "Skill04",
+      "source": {
+        "evidence": {
+          "ability_file_paths": [
+            "Config/ConfigAbility/Monster/Monster_W1_CocoliaP1_01_Ability.json"
+          ],
+          "action_id": "monster_skill:100201101",
+          "ambiguous_ability_names": {},
+          "entry_ability": "Monster_Boss_Cocolia_P1_Weapon_Skill04_Phase01",
+          "level": 1,
+          "missing_ability_names": [],
+          "monster_config": {
+            "json_path": "Config/ConfigCharacter/Monster/Monster_W1_CocoliaP1_01_Config.json",
+            "monster_id": 1002011,
+            "relative_path": "ExcelOutput/MonsterConfig.json",
+            "row_index": 0,
+            "skill_list": [
+              100201101
+            ],
+            "template_id": "1002011",
+            "template_row_index": 0,
+            "template_source_path": "ExcelOutput/MonsterTemplateConfig.json"
+          },
+          "skill_trigger_key": "Skill04",
+          "trigger_expanded_ability_names": [
+            "Monster_Boss_Cocolia_P1_Weapon_Skill04_Phase01",
+            "Monster_Boss_Cocolia_P1_Weapon_Skill04_Phase02"
+          ],
+          "unreadable_ability_paths": []
+        },
+        "raw_id": "Skill04",
+        "raw_type": "MonsterCharacterConfig",
+        "source_path": "Config/ConfigCharacter/Monster/Monster_W1_CocoliaP1_01_Config.json"
+      },
+      "source_mode": "mainline_monster"
+    },
+    "action_ref": "monster_skill:100201101",
+    "action_set": {
+      "blocked_reason": "",
+      "combatant_action_set_id": "combatant_action_set:monster:1002011",
+      "coverage_status": "executable",
+      "entity_ref": "monster:1002011",
+      "skill_index_map": {
+        "0": {
+          "action_ref": "monster_skill:100201101",
+          "blocked_reason": "",
+          "coverage_status": "executable",
+          "default_level": 1,
+          "levels": [
+            1
+          ],
+          "skill_id": "100201101"
+        }
+      },
+      "source": {
+        "evidence": {
+          "base_skill_list": [],
+          "base_source_path": "ExcelOutput/MonsterConfig.json",
+          "enhanced_id": null,
+          "enhanced_overrides_base": false,
+          "enhanced_source_path": "",
+          "id_key": "MonsterID",
+          "row_index": 0,
+          "skill_list": [
+            100201101
+          ],
+          "version_kind": "base"
+        },
+        "raw_id": "1002011",
+        "raw_type": "MonsterConfig",
+        "source_path": "ExcelOutput/MonsterConfig.json"
+      }
+    },
+    "damage_emissions": [
+      {
+        "action_id": "monster_skill:100201101",
+        "blocked_reason": "",
+        "coverage_status": "executable",
+        "damage_emission_id": "damage_emission:ability_task:ability_phase:monster_skill:100201101:1:1:Monster_Boss_Cocolia_P1_Weapon_Skill04_Phase02:OnStart:OnStart[5]:DamageByAttackProperty:hit_profile:monster_skill:100201101:1:0:selected:slot:0",
+        "damage_formula_family": "direct",
+        "element_type": "Ice",
+        "hit_profile_id": "hit_profile:monster_skill:100201101:1:0:selected:slot:0",
+        "level": 1,
+        "phase_id": "ability_phase:monster_skill:100201101:1:1:Monster_Boss_Cocolia_P1_Weapon_Skill04_Phase02",
+        "scaling_basis_expr": {
+          "admission_status": "executable",
+          "data_card_id": "monster_data_card:monster:1002011",
+          "data_card_kind": "monster",
+          "dynamic_hash": "-190305622",
+          "kind": "unit_stat",
+          "owner_entity_ref": "monster:1002011",
+          "param_index": 0,
+          "param_value": {
+            "Value": 2
+          },
+          "raw_opcode": "DamageByAttackProperty",
+          "source_kind": "monster_damage_by_attack_property_opcode_admission",
+          "source_trace": {
+            "character_data_card_id": "",
+            "data_card_id": "monster_data_card:monster:1002011",
+            "effect_id": "effect:ability_task:ability_phase:monster_skill:100201101:1:1:Monster_Boss_Cocolia_P1_Weapon_Skill04_Phase02:OnStart:OnStart[5]:DamageByAttackProperty",
+            "evidence": {
+              "basis_source_kind": "tbgd_opcode_semantics:DamageByAttackProperty",
+              "builder": "monster_skill_formula_binding_v0_280",
+              "dynamic_hash": "-190305622",
+              "dynamic_value_source": {
+                "hash": "-190305622",
+                "param_index": 0,
+                "raw_path": "DynamicValues.Floats[-190305622].ReadInfo",
+                "read_info": {
+                  "Index": 0,
+                  "TriggerKey": "Skill04",
+                  "Type": "SkillParam"
+                },
+                "source_path": "Config/ConfigCharacter/Monster/Monster_W1_CocoliaP1_01_Config.json",
+                "trigger_key": "Skill04"
+              },
+              "monster_data_card_id": "monster_data_card:monster:1002011",
+              "monster_id": "1002011",
+              "monster_source": {
+                "raw_id": "1002011",
+                "raw_type": "MonsterConfig",
+                "row_index": 0,
+                "source_path": "ExcelOutput/MonsterConfig.json"
+              },
+              "owner_entity_ref": "monster:1002011",
+              "param_ref": "ParamList[0]",
+              "param_value": {
+                "Value": 2
+              },
+              "skill_index": 0,
+              "skill_source": {
+                "raw_id": "100201101",
+                "raw_type": "MonsterSkillConfig",
+                "row_index": 0,
+                "source_path": "ExcelOutput/MonsterSkillConfig.json"
+              },
+              "skill_trigger_key": "Skill04",
+              "template_source": {
+                "raw_id": "1002011",
+                "raw_type": "MonsterTemplateConfig",
+                "row_index": 0,
+                "source_path": "ExcelOutput/MonsterTemplateConfig.json"
+              }
+            },
+            "hit_profile_id": "hit_profile:monster_skill:100201101:1:0:selected:slot:0",
+            "hit_profile_source": {
+              "evidence": {
+                "basis_source_kind": "tbgd_opcode_semantics:DamageByAttackProperty",
+                "builder": "monster_skill_formula_binding_v0_280",
+                "dynamic_hash": "-190305622",
+                "dynamic_value_source": {
+                  "hash": "-190305622",
+                  "param_index": 0,
+                  "raw_path": "DynamicValues.Floats[-190305622].ReadInfo",
+                  "read_info": {
+                    "Index": 0,
+                    "TriggerKey": "Skill04",
+                    "Type": "SkillParam"
+                  },
+                  "source_path": "Config/ConfigCharacter/Monster/Monster_W1_CocoliaP1_01_Config.json",
+                  "trigger_key": "Skill04"
+                },
+                "monster_data_card_id": "monster_data_card:monster:1002011",
+                "monster_id": "1002011",
+                "monster_source": {
+                  "raw_id": "1002011",
+                  "raw_type": "MonsterConfig",
+                  "row_index": 0,
+                  "source_path": "ExcelOutput/MonsterConfig.json"
+                },
+                "owner_entity_ref": "monster:1002011",
+                "param_ref": "ParamList[0]",
+                "param_value": {
+                  "Value": 2
+                },
+                "skill_index": 0,
+                "skill_source": {
+                  "raw_id": "100201101",
+                  "raw_type": "MonsterSkillConfig",
+                  "row_index": 0,
+                  "source_path": "ExcelOutput/MonsterSkillConfig.json"
+                },
+                "skill_trigger_key": "Skill04",
+                "template_source": {
+                  "raw_id": "1002011",
+                  "raw_type": "MonsterTemplateConfig",
+                  "row_index": 0,
+                  "source_path": "ExcelOutput/MonsterTemplateConfig.json"
+                }
+              },
+              "raw_id": "100201101",
+              "raw_type": "MonsterSkillFormulaBinding",
+              "source_path": "Config/ConfigCharacter/Monster/Monster_W1_CocoliaP1_01_Config.json"
+            },
+            "raw_id": "100201101",
+            "raw_type": "MonsterSkillFormulaBinding",
+            "skill_formula_binding": {
+              "action_id": "monster_skill:100201101",
+              "binding_id": "skill_formula_binding:monster_skill:100201101:1:direct_damage:param:0:monster",
+              "blocked_reason": "",
+              "bounce_policy_id": "",
+              "character_data_card_id": "",
+              "coverage_status": "executable",
+              "data_card_id": "monster_data_card:monster:1002011",
+              "data_card_kind": "monster",
+              "formula_role": "direct_damage",
+              "formula_slot_id": "formula_slot:monster_skill:100201101:1:direct_damage:monster:0",
+              "level": 1,
+              "matched_text": "DamageByAttackProperty.DamagePercentage",
+              "owner_entity_ref": "monster:1002011",
+              "param_index": 0,
+              "param_value": {
+                "Value": 2
+              },
+              "scaling_basis_expr": {
+                "admission_status": "executable",
+                "data_card_id": "monster_data_card:monster:1002011",
+                "data_card_kind": "monster",
+                "dynamic_hash": "-190305622",
+                "kind": "unit_stat",
+                "owner_entity_ref": "monster:1002011",
+                "param_index": 0,
+                "param_value": {
+                  "Value": 2
+                },
+                "raw_opcode": "DamageByAttackProperty",
+                "source_kind": "monster_damage_by_attack_property_opcode_admission",
+                "source_trace": {
+                  "evidence": {
+                    "basis_source_kind": "tbgd_opcode_semantics:DamageByAttackProperty",
+                    "builder": "monster_skill_formula_binding_v0_280",
+                    "dynamic_hash": "-190305622",
+                    "dynamic_value_source": {
+                      "hash": "-190305622",
+                      "param_index": 0,
+                      "raw_path": "DynamicValues.Floats[-190305622].ReadInfo",
+                      "read_info": {
+                        "Index": 0,
+                        "TriggerKey": "Skill04",
+                        "Type": "SkillParam"
+                      },
+                      "source_path": "Config/ConfigCharacter/Monster/Monster_W1_CocoliaP1_01_Config.json",
+                      "trigger_key": "Skill04"
+                    },
+                    "monster_data_card_id": "monster_data_card:monster:1002011",
+                    "monster_id": "1002011",
+                    "monster_source": {
+                      "raw_id": "1002011",
+                      "raw_type": "MonsterConfig",
+                      "row_index": 0,
+                      "source_path": "ExcelOutput/MonsterConfig.json"
+                    },
+                    "owner_entity_ref": "monster:1002011",
+                    "param_ref": "ParamList[0]",
+                    "param_value": {
+                      "Value": 2
+                    },
+                    "skill_index": 0,
+                    "skill_source": {
+                      "raw_id": "100201101",
+                      "raw_type": "MonsterSkillConfig",
+                      "row_index": 0,
+                      "source_path": "ExcelOutput/MonsterSkillConfig.json"
+                    },
+                    "skill_trigger_key": "Skill04",
+                    "template_source": {
+                      "raw_id": "1002011",
+                      "raw_type": "MonsterTemplateConfig",
+                      "row_index": 0,
+                      "source_path": "ExcelOutput/MonsterTemplateConfig.json"
+                    }
+                  },
+                  "raw_id": "100201101",
+                  "raw_type": "MonsterSkillFormulaBinding",
+                  "source_path": "Config/ConfigCharacter/Monster/Monster_W1_CocoliaP1_01_Config.json"
+                },
+                "stat": "attack",
+                "unit_ref": "attacker"
+              },
+              "sequence_order": 0,
+              "skill_text": "",
+              "source": {
+                "evidence": {
+                  "basis_source_kind": "tbgd_opcode_semantics:DamageByAttackProperty",
+                  "builder": "monster_skill_formula_binding_v0_280",
+                  "dynamic_hash": "-190305622",
+                  "dynamic_value_source": {
+                    "hash": "-190305622",
+                    "param_index": 0,
+                    "raw_path": "DynamicValues.Floats[-190305622].ReadInfo",
+                    "read_info": {
+                      "Index": 0,
+                      "TriggerKey": "Skill04",
+                      "Type": "SkillParam"
+                    },
+                    "source_path": "Config/ConfigCharacter/Monster/Monster_W1_CocoliaP1_01_Config.json",
+                    "trigger_key": "Skill04"
+                  },
+                  "monster_data_card_id": "monster_data_card:monster:1002011",
+                  "monster_id": "1002011",
+                  "monster_source": {
+                    "raw_id": "1002011",
+                    "raw_type": "MonsterConfig",
+                    "row_index": 0,
+                    "source_path": "ExcelOutput/MonsterConfig.json"
+                  },
+                  "owner_entity_ref": "monster:1002011",
+                  "param_ref": "ParamList[0]",
+                  "param_value": {
+                    "Value": 2
+                  },
+                  "skill_index": 0,
+                  "skill_source": {
+                    "raw_id": "100201101",
+                    "raw_type": "MonsterSkillConfig",
+                    "row_index": 0,
+                    "source_path": "ExcelOutput/MonsterSkillConfig.json"
+                  },
+                  "skill_trigger_key": "Skill04",
+                  "template_source": {
+                    "raw_id": "1002011",
+                    "raw_type": "MonsterTemplateConfig",
+                    "row_index": 0,
+                    "source_path": "ExcelOutput/MonsterTemplateConfig.json"
+                  }
+                },
+                "raw_id": "100201101",
+                "raw_type": "MonsterSkillFormulaBinding",
+                "source_path": "Config/ConfigCharacter/Monster/Monster_W1_CocoliaP1_01_Config.json"
+              },
+              "target_group_hint": "",
+              "text_hash": ""
+            },
+            "source_path": "Config/ConfigCharacter/Monster/Monster_W1_CocoliaP1_01_Config.json",
+            "target_alias": "AllEnemy",
+            "task_source": {
+              "evidence": {
+                "action_id": "monster_skill:100201101",
+                "branch": "root",
+                "callback_kind": "OnStart",
+                "level": 1,
+                "parent_task_id": "",
+                "phase_id": "ability_phase:monster_skill:100201101:1:1:Monster_Boss_Cocolia_P1_Weapon_Skill04_Phase02",
+                "task_index": 5,
+                "task_path": "OnStart[5]"
+              },
+              "raw_id": "Monster_Boss_Cocolia_P1_Weapon_Skill04_Phase02",
+              "raw_type": "AbilityTask",
+              "source_path": "Config/ConfigAbility/Monster/Monster_W1_CocoliaP1_01_Ability.json"
+            }
+          },
+          "stat": "attack",
+          "unit_ref": "attacker"
+        },
+        "scaling_ratio_expr": {
+          "kind": "fixed",
+          "value": 2.0
+        },
+        "source": {
+          "evidence": {
+            "action_id": "monster_skill:100201101",
+            "branch": "root",
+            "callback_kind": "OnStart",
+            "damage_custom_name": "",
+            "effect_id": "effect:ability_task:ability_phase:monster_skill:100201101:1:1:Monster_Boss_Cocolia_P1_Weapon_Skill04_Phase02:OnStart:OnStart[5]:DamageByAttackProperty",
+            "hit_profile_id": "hit_profile:monster_skill:100201101:1:0:selected:slot:0",
+            "hit_profile_source": {
+              "evidence": {
+                "basis_source_kind": "tbgd_opcode_semantics:DamageByAttackProperty",
+                "builder": "monster_skill_formula_binding_v0_280",
+                "dynamic_hash": "-190305622",
+                "dynamic_value_source": {
+                  "hash": "-190305622",
+                  "param_index": 0,
+                  "raw_path": "DynamicValues.Floats[-190305622].ReadInfo",
+                  "read_info": {
+                    "Index": 0,
+                    "TriggerKey": "Skill04",
+                    "Type": "SkillParam"
+                  },
+                  "source_path": "Config/ConfigCharacter/Monster/Monster_W1_CocoliaP1_01_Config.json",
+                  "trigger_key": "Skill04"
+                },
+                "monster_data_card_id": "monster_data_card:monster:1002011",
+                "monster_id": "1002011",
+                "monster_source": {
+                  "raw_id": "1002011",
+                  "raw_type": "MonsterConfig",
+                  "row_index": 0,
+                  "source_path": "ExcelOutput/MonsterConfig.json"
+                },
+                "owner_entity_ref": "monster:1002011",
+                "param_ref": "ParamList[0]",
+                "param_value": {
+                  "Value": 2
+                },
+                "skill_index": 0,
+                "skill_source": {
+                  "raw_id": "100201101",
+                  "raw_type": "MonsterSkillConfig",
+                  "row_index": 0,
+                  "source_path": "ExcelOutput/MonsterSkillConfig.json"
+                },
+                "skill_trigger_key": "Skill04",
+                "template_source": {
+                  "raw_id": "1002011",
+                  "raw_type": "MonsterTemplateConfig",
+                  "row_index": 0,
+                  "source_path": "ExcelOutput/MonsterTemplateConfig.json"
+                }
+              },
+              "raw_id": "100201101",
+              "raw_type": "MonsterSkillFormulaBinding",
+              "source_path": "Config/ConfigCharacter/Monster/Monster_W1_CocoliaP1_01_Config.json"
+            },
+            "level": 1,
+            "parent_task_id": "",
+            "phase_id": "ability_phase:monster_skill:100201101:1:1:Monster_Boss_Cocolia_P1_Weapon_Skill04_Phase02",
+            "target_alias": "AllEnemy",
+            "task_id": "ability_task:ability_phase:monster_skill:100201101:1:1:Monster_Boss_Cocolia_P1_Weapon_Skill04_Phase02:OnStart:OnStart[5]:DamageByAttackProperty",
+            "task_index": 5,
+            "task_path": "OnStart[5]"
+          },
+          "raw_id": "DamageByAttackProperty",
+          "raw_type": "AbilityDamageEmission",
+          "source_path": "Config/ConfigAbility/Monster/Monster_W1_CocoliaP1_01_Ability.json"
+        },
+        "source_task_id": "ability_task:ability_phase:monster_skill:100201101:1:1:Monster_Boss_Cocolia_P1_Weapon_Skill04_Phase02:OnStart:OnStart[5]:DamageByAttackProperty",
+        "target_group": "selected"
+      }
+    ],
+    "definition": {
+      "action_id": "monster_skill:100201101",
+      "attack_type": "Normal",
+      "bp_add": 0.0,
+      "bp_need": 0.0,
+      "coverage_status": "executable",
+      "damage_formula_family": "direct",
+      "damage_kind": "hp_damage",
+      "definition_id": "action_def:monster_skill:100201101:1",
+      "element_type": "Ice",
+      "level": 1,
+      "param_list": [
+        {
+          "Value": 2
+        }
+      ],
+      "show_damage_list": [],
+      "show_stance_list": [],
+      "skill_effect": "AoeAttack",
+      "source": {
+        "evidence": {
+          "damage_type": "Ice",
+          "id_key": "SkillID",
+          "level": 1,
+          "monster_target_source": {
+            "blocked_reason": "",
+            "character_config_path": "Config/ConfigCharacter/Monster/Monster_W1_CocoliaP1_01_Config.json",
+            "coverage_status": "lowered",
+            "monster_count": 2,
+            "monster_id": "1002011",
+            "skill_trigger_key": "Skill04",
+            "source_trace": {
+              "character_config": {
+                "raw_id": "Skill04",
+                "raw_path": "SkillList.TargetInfo",
+                "raw_type": "MonsterCharacterConfig",
+                "source_path": "Config/ConfigCharacter/Monster/Monster_W1_CocoliaP1_01_Config.json"
+              },
+              "monster_config": {
+                "raw_id": "1002011",
+                "raw_path": "SkillList",
+                "raw_type": "MonsterConfig",
+                "row_index": 0,
+                "source_path": "ExcelOutput/MonsterConfig.json"
+              },
+              "template_config": {
+                "raw_id": "1002011",
+                "raw_path": "JsonConfig",
+                "raw_type": "MonsterTemplateConfig",
+                "row_index": 0,
+                "source_path": "ExcelOutput/MonsterTemplateConfig.json"
+              }
+            },
+            "target_info": {
+              "TargetType": "AllEnemy"
+            },
+            "target_mode": "aoe",
+            "target_type": "AllEnemy",
+            "template_id": "1002011"
+          },
+          "resource_mapping": {
+            "BPAdd": "skill_point_gain_if_positive",
+            "BPNeed": "skill_point_cost_if_positive",
+            "SPBase": "energy_gain"
+          },
+          "row_index": 0,
+          "skill_desc_hash": "2506186724985781422",
+          "skill_trigger_key": "Skill04",
+          "sp_hit_base": {
+            "Value": 10
+          },
+          "taxonomy": {
+            "attack_type": "raw TBGD AttackType; follow-up is an attack type axis",
+            "damage_formula_family": "formula family axis; follow-up is not a damage family",
+            "element_type": "raw TBGD StanceDamageType when present"
+          }
+        },
+        "raw_id": "100201101",
+        "raw_type": "MonsterSkillConfig",
+        "source_path": "ExcelOutput/MonsterSkillConfig.json"
+      },
+      "source_mode": "mainline_monster",
+      "sp_base": 0.0,
+      "sp_multiple_ratio": 0.0,
+      "stance_damage_type": "Ice",
+      "target_mode": "aoe"
+    },
+    "formula_bindings": [
+      {
+        "action_id": "monster_skill:100201101",
+        "binding_id": "skill_formula_binding:monster_skill:100201101:1:direct_damage:param:0:monster",
+        "blocked_reason": "",
+        "bounce_policy_id": "",
+        "character_data_card_id": "",
+        "coverage_status": "executable",
+        "data_card_id": "monster_data_card:monster:1002011",
+        "data_card_kind": "monster",
+        "formula_role": "direct_damage",
+        "formula_slot_id": "formula_slot:monster_skill:100201101:1:direct_damage:monster:0",
+        "level": 1,
+        "matched_text": "DamageByAttackProperty.DamagePercentage",
+        "owner_entity_ref": "monster:1002011",
+        "param_index": 0,
+        "param_value": {
+          "Value": 2
+        },
+        "scaling_basis_expr": {
+          "admission_status": "executable",
+          "data_card_id": "monster_data_card:monster:1002011",
+          "data_card_kind": "monster",
+          "dynamic_hash": "-190305622",
+          "kind": "unit_stat",
+          "owner_entity_ref": "monster:1002011",
+          "param_index": 0,
+          "param_value": {
+            "Value": 2
+          },
+          "raw_opcode": "DamageByAttackProperty",
+          "source_kind": "monster_damage_by_attack_property_opcode_admission",
+          "source_trace": {
+            "evidence": {
+              "basis_source_kind": "tbgd_opcode_semantics:DamageByAttackProperty",
+              "builder": "monster_skill_formula_binding_v0_280",
+              "dynamic_hash": "-190305622",
+              "dynamic_value_source": {
+                "hash": "-190305622",
+                "param_index": 0,
+                "raw_path": "DynamicValues.Floats[-190305622].ReadInfo",
+                "read_info": {
+                  "Index": 0,
+                  "TriggerKey": "Skill04",
+                  "Type": "SkillParam"
+                },
+                "source_path": "Config/ConfigCharacter/Monster/Monster_W1_CocoliaP1_01_Config.json",
+                "trigger_key": "Skill04"
+              },
+              "monster_data_card_id": "monster_data_card:monster:1002011",
+              "monster_id": "1002011",
+              "monster_source": {
+                "raw_id": "1002011",
+                "raw_type": "MonsterConfig",
+                "row_index": 0,
+                "source_path": "ExcelOutput/MonsterConfig.json"
+              },
+              "owner_entity_ref": "monster:1002011",
+              "param_ref": "ParamList[0]",
+              "param_value": {
+                "Value": 2
+              },
+              "skill_index": 0,
+              "skill_source": {
+                "raw_id": "100201101",
+                "raw_type": "MonsterSkillConfig",
+                "row_index": 0,
+                "source_path": "ExcelOutput/MonsterSkillConfig.json"
+              },
+              "skill_trigger_key": "Skill04",
+              "template_source": {
+                "raw_id": "1002011",
+                "raw_type": "MonsterTemplateConfig",
+                "row_index": 0,
+                "source_path": "ExcelOutput/MonsterTemplateConfig.json"
+              }
+            },
+            "raw_id": "100201101",
+            "raw_type": "MonsterSkillFormulaBinding",
+            "source_path": "Config/ConfigCharacter/Monster/Monster_W1_CocoliaP1_01_Config.json"
+          },
+          "stat": "attack",
+          "unit_ref": "attacker"
+        },
+        "sequence_order": 0,
+        "skill_text": "",
+        "source": {
+          "evidence": {
+            "basis_source_kind": "tbgd_opcode_semantics:DamageByAttackProperty",
+            "builder": "monster_skill_formula_binding_v0_280",
+            "dynamic_hash": "-190305622",
+            "dynamic_value_source": {
+              "hash": "-190305622",
+              "param_index": 0,
+              "raw_path": "DynamicValues.Floats[-190305622].ReadInfo",
+              "read_info": {
+                "Index": 0,
+                "TriggerKey": "Skill04",
+                "Type": "SkillParam"
+              },
+              "source_path": "Config/ConfigCharacter/Monster/Monster_W1_CocoliaP1_01_Config.json",
+              "trigger_key": "Skill04"
+            },
+            "monster_data_card_id": "monster_data_card:monster:1002011",
+            "monster_id": "1002011",
+            "monster_source": {
+              "raw_id": "1002011",
+              "raw_type": "MonsterConfig",
+              "row_index": 0,
+              "source_path": "ExcelOutput/MonsterConfig.json"
+            },
+            "owner_entity_ref": "monster:1002011",
+            "param_ref": "ParamList[0]",
+            "param_value": {
+              "Value": 2
+            },
+            "skill_index": 0,
+            "skill_source": {
+              "raw_id": "100201101",
+              "raw_type": "MonsterSkillConfig",
+              "row_index": 0,
+              "source_path": "ExcelOutput/MonsterSkillConfig.json"
+            },
+            "skill_trigger_key": "Skill04",
+            "template_source": {
+              "raw_id": "1002011",
+              "raw_type": "MonsterTemplateConfig",
+              "row_index": 0,
+              "source_path": "ExcelOutput/MonsterTemplateConfig.json"
+            }
+          },
+          "raw_id": "100201101",
+          "raw_type": "MonsterSkillFormulaBinding",
+          "source_path": "Config/ConfigCharacter/Monster/Monster_W1_CocoliaP1_01_Config.json"
+        },
+        "target_group_hint": "",
+        "text_hash": ""
+      }
+    ],
+    "hit_profiles": [
+      {
+        "action_id": "monster_skill:100201101",
+        "blocked_reason": "",
+        "bounce_policy_id": "",
+        "coverage_status": "executable",
+        "damage_formula_family": "direct",
+        "element_type": "Ice",
+        "hit_index": 0,
+        "hit_profile_id": "hit_profile:monster_skill:100201101:1:0:selected:slot:0",
+        "level": 1,
+        "multiplier_expr": {
+          "kind": "fixed",
+          "value": 2.0
+        },
+        "multiplier_source": {
+          "character_data_card_id": "",
+          "data_card_id": "monster_data_card:monster:1002011",
+          "data_card_kind": "monster",
+          "formula_slot_id": "formula_slot:monster_skill:100201101:1:direct_damage:monster:0",
+          "multi_param_list_not_implemented": false,
+          "owner_entity_ref": "monster:1002011",
+          "param_list_count": 1,
+          "raw_path": "ParamList[0]",
+          "raw_value": {
+            "Value": 2
+          },
+          "sequence_order": 0,
+          "show_damage_audit_only": false,
+          "show_damage_count": 0,
+          "skill_formula_binding_id": "skill_formula_binding:monster_skill:100201101:1:direct_damage:param:0:monster",
+          "skill_formula_binding_source": {
+            "evidence": {
+              "basis_source_kind": "tbgd_opcode_semantics:DamageByAttackProperty",
+              "builder": "monster_skill_formula_binding_v0_280",
+              "dynamic_hash": "-190305622",
+              "dynamic_value_source": {
+                "hash": "-190305622",
+                "param_index": 0,
+                "raw_path": "DynamicValues.Floats[-190305622].ReadInfo",
+                "read_info": {
+                  "Index": 0,
+                  "TriggerKey": "Skill04",
+                  "Type": "SkillParam"
+                },
+                "source_path": "Config/ConfigCharacter/Monster/Monster_W1_CocoliaP1_01_Config.json",
+                "trigger_key": "Skill04"
+              },
+              "monster_data_card_id": "monster_data_card:monster:1002011",
+              "monster_id": "1002011",
+              "monster_source": {
+                "raw_id": "1002011",
+                "raw_type": "MonsterConfig",
+                "row_index": 0,
+                "source_path": "ExcelOutput/MonsterConfig.json"
+              },
+              "owner_entity_ref": "monster:1002011",
+              "param_ref": "ParamList[0]",
+              "param_value": {
+                "Value": 2
+              },
+              "skill_index": 0,
+              "skill_source": {
+                "raw_id": "100201101",
+                "raw_type": "MonsterSkillConfig",
+                "row_index": 0,
+                "source_path": "ExcelOutput/MonsterSkillConfig.json"
+              },
+              "skill_trigger_key": "Skill04",
+              "template_source": {
+                "raw_id": "1002011",
+                "raw_type": "MonsterTemplateConfig",
+                "row_index": 0,
+                "source_path": "ExcelOutput/MonsterTemplateConfig.json"
+              }
+            },
+            "raw_id": "100201101",
+            "raw_type": "MonsterSkillFormulaBinding",
+            "source_path": "Config/ConfigCharacter/Monster/Monster_W1_CocoliaP1_01_Config.json"
+          },
+          "source": {
+            "evidence": {
+              "damage_type": "Ice",
+              "id_key": "SkillID",
+              "level": 1,
+              "monster_target_source": {
+                "blocked_reason": "",
+                "character_config_path": "Config/ConfigCharacter/Monster/Monster_W1_CocoliaP1_01_Config.json",
+                "coverage_status": "lowered",
+                "monster_count": 2,
+                "monster_id": "1002011",
+                "skill_trigger_key": "Skill04",
+                "source_trace": {
+                  "character_config": {
+                    "raw_id": "Skill04",
+                    "raw_path": "SkillList.TargetInfo",
+                    "raw_type": "MonsterCharacterConfig",
+                    "source_path": "Config/ConfigCharacter/Monster/Monster_W1_CocoliaP1_01_Config.json"
+                  },
+                  "monster_config": {
+                    "raw_id": "1002011",
+                    "raw_path": "SkillList",
+                    "raw_type": "MonsterConfig",
+                    "row_index": 0,
+                    "source_path": "ExcelOutput/MonsterConfig.json"
+                  },
+                  "template_config": {
+                    "raw_id": "1002011",
+                    "raw_path": "JsonConfig",
+                    "raw_type": "MonsterTemplateConfig",
+                    "row_index": 0,
+                    "source_path": "ExcelOutput/MonsterTemplateConfig.json"
+                  }
+                },
+                "target_info": {
+                  "TargetType": "AllEnemy"
+                },
+                "target_mode": "aoe",
+                "target_type": "AllEnemy",
+                "template_id": "1002011"
+              },
+              "resource_mapping": {
+                "BPAdd": "skill_point_gain_if_positive",
+                "BPNeed": "skill_point_cost_if_positive",
+                "SPBase": "energy_gain"
+              },
+              "row_index": 0,
+              "skill_desc_hash": "2506186724985781422",
+              "skill_trigger_key": "Skill04",
+              "sp_hit_base": {
+                "Value": 10
+              },
+              "taxonomy": {
+                "attack_type": "raw TBGD AttackType; follow-up is an attack type axis",
+                "damage_formula_family": "formula family axis; follow-up is not a damage family",
+                "element_type": "raw TBGD StanceDamageType when present"
+              }
+            },
+            "raw_id": "100201101",
+            "raw_type": "MonsterSkillConfig",
+            "source_path": "ExcelOutput/MonsterSkillConfig.json"
+          },
+          "source_kind": "monster_data_card_skill_formula",
+          "target_group_hint": ""
+        },
+        "numeric_fidelity_status": "structural_only",
+        "source": {
+          "evidence": {
+            "basis_source_kind": "tbgd_opcode_semantics:DamageByAttackProperty",
+            "builder": "monster_skill_formula_binding_v0_280",
+            "dynamic_hash": "-190305622",
+            "dynamic_value_source": {
+              "hash": "-190305622",
+              "param_index": 0,
+              "raw_path": "DynamicValues.Floats[-190305622].ReadInfo",
+              "read_info": {
+                "Index": 0,
+                "TriggerKey": "Skill04",
+                "Type": "SkillParam"
+              },
+              "source_path": "Config/ConfigCharacter/Monster/Monster_W1_CocoliaP1_01_Config.json",
+              "trigger_key": "Skill04"
+            },
+            "monster_data_card_id": "monster_data_card:monster:1002011",
+            "monster_id": "1002011",
+            "monster_source": {
+              "raw_id": "1002011",
+              "raw_type": "MonsterConfig",
+              "row_index": 0,
+              "source_path": "ExcelOutput/MonsterConfig.json"
+            },
+            "owner_entity_ref": "monster:1002011",
+            "param_ref": "ParamList[0]",
+            "param_value": {
+              "Value": 2
+            },
+            "skill_index": 0,
+            "skill_source": {
+              "raw_id": "100201101",
+              "raw_type": "MonsterSkillConfig",
+              "row_index": 0,
+              "source_path": "ExcelOutput/MonsterSkillConfig.json"
+            },
+            "skill_trigger_key": "Skill04",
+            "template_source": {
+              "raw_id": "1002011",
+              "raw_type": "MonsterTemplateConfig",
+              "row_index": 0,
+              "source_path": "ExcelOutput/MonsterTemplateConfig.json"
+            }
+          },
+          "raw_id": "100201101",
+          "raw_type": "MonsterSkillFormulaBinding",
+          "source_path": "Config/ConfigCharacter/Monster/Monster_W1_CocoliaP1_01_Config.json"
+        },
+        "stance_expr": {
+          "blocked_reason": "show_stance_not_present",
+          "kind": "missing"
+        },
+        "stance_source": {
+          "raw_path": "ShowStanceList[0]",
+          "raw_value": null,
+          "show_stance_audit_only": false,
+          "show_stance_count": 0,
+          "source": {
+            "evidence": {
+              "damage_type": "Ice",
+              "id_key": "SkillID",
+              "level": 1,
+              "monster_target_source": {
+                "blocked_reason": "",
+                "character_config_path": "Config/ConfigCharacter/Monster/Monster_W1_CocoliaP1_01_Config.json",
+                "coverage_status": "lowered",
+                "monster_count": 2,
+                "monster_id": "1002011",
+                "skill_trigger_key": "Skill04",
+                "source_trace": {
+                  "character_config": {
+                    "raw_id": "Skill04",
+                    "raw_path": "SkillList.TargetInfo",
+                    "raw_type": "MonsterCharacterConfig",
+                    "source_path": "Config/ConfigCharacter/Monster/Monster_W1_CocoliaP1_01_Config.json"
+                  },
+                  "monster_config": {
+                    "raw_id": "1002011",
+                    "raw_path": "SkillList",
+                    "raw_type": "MonsterConfig",
+                    "row_index": 0,
+                    "source_path": "ExcelOutput/MonsterConfig.json"
+                  },
+                  "template_config": {
+                    "raw_id": "1002011",
+                    "raw_path": "JsonConfig",
+                    "raw_type": "MonsterTemplateConfig",
+                    "row_index": 0,
+                    "source_path": "ExcelOutput/MonsterTemplateConfig.json"
+                  }
+                },
+                "target_info": {
+                  "TargetType": "AllEnemy"
+                },
+                "target_mode": "aoe",
+                "target_type": "AllEnemy",
+                "template_id": "1002011"
+              },
+              "resource_mapping": {
+                "BPAdd": "skill_point_gain_if_positive",
+                "BPNeed": "skill_point_cost_if_positive",
+                "SPBase": "energy_gain"
+              },
+              "row_index": 0,
+              "skill_desc_hash": "2506186724985781422",
+              "skill_trigger_key": "Skill04",
+              "sp_hit_base": {
+                "Value": 10
+              },
+              "taxonomy": {
+                "attack_type": "raw TBGD AttackType; follow-up is an attack type axis",
+                "damage_formula_family": "formula family axis; follow-up is not a damage family",
+                "element_type": "raw TBGD StanceDamageType when present"
+              }
+            },
+            "raw_id": "100201101",
+            "raw_type": "MonsterSkillConfig",
+            "source_path": "ExcelOutput/MonsterSkillConfig.json"
+          },
+          "stance_damage_type": "Ice"
+        },
+        "target_group": "selected",
+        "target_selection_policy": {}
+      }
+    ],
+    "toughness_emissions": [
+      {
+        "action_id": "monster_skill:100201101",
+        "blocked_reason": "",
+        "coverage_status": "executable",
+        "element_type": "Ice",
+        "hit_profile_id": "hit_profile:monster_skill:100201101:1:0:selected:slot:0",
+        "level": 1,
+        "phase_id": "ability_phase:monster_skill:100201101:1:1:Monster_Boss_Cocolia_P1_Weapon_Skill04_Phase02",
+        "source": {
+          "evidence": {
+            "action_id": "monster_skill:100201101",
+            "attack_property": {
+              "$type": "RPG.GameCore.AttackData",
+              "AttackType": "Normal",
+              "DamagePercentage": {
+                "IsDynamic": true,
+                "PostfixExpr": {
+                  "DynamicHashes": [
+                    -190305622
+                  ],
+                  "FixedValues": [],
+                  "OpCodes": "AQAR"
+                }
+              },
+              "DamageType": {
+                "DamageType": "Ice"
+              },
+              "HitAnimation": "Hit",
+              "HitTimeSlowType": "Impact",
+              "SPHitRatio": {
+                "FixedValue": {
+                  "Value": 1
+                },
+                "IsDynamic": false
+              }
+            },
+            "branch": "root",
+            "callback_kind": "OnStart",
+            "effect_id": "effect:ability_task:ability_phase:monster_skill:100201101:1:1:Monster_Boss_Cocolia_P1_Weapon_Skill04_Phase02:OnStart:OnStart[5]:DamageByAttackProperty",
+            "hit_profile_id": "hit_profile:monster_skill:100201101:1:0:selected:slot:0",
+            "hit_profile_source": {
+              "evidence": {
+                "basis_source_kind": "tbgd_opcode_semantics:DamageByAttackProperty",
+                "builder": "monster_skill_formula_binding_v0_280",
+                "dynamic_hash": "-190305622",
+                "dynamic_value_source": {
+                  "hash": "-190305622",
+                  "param_index": 0,
+                  "raw_path": "DynamicValues.Floats[-190305622].ReadInfo",
+                  "read_info": {
+                    "Index": 0,
+                    "TriggerKey": "Skill04",
+                    "Type": "SkillParam"
+                  },
+                  "source_path": "Config/ConfigCharacter/Monster/Monster_W1_CocoliaP1_01_Config.json",
+                  "trigger_key": "Skill04"
+                },
+                "monster_data_card_id": "monster_data_card:monster:1002011",
+                "monster_id": "1002011",
+                "monster_source": {
+                  "raw_id": "1002011",
+                  "raw_type": "MonsterConfig",
+                  "row_index": 0,
+                  "source_path": "ExcelOutput/MonsterConfig.json"
+                },
+                "owner_entity_ref": "monster:1002011",
+                "param_ref": "ParamList[0]",
+                "param_value": {
+                  "Value": 2
+                },
+                "skill_index": 0,
+                "skill_source": {
+                  "raw_id": "100201101",
+                  "raw_type": "MonsterSkillConfig",
+                  "row_index": 0,
+                  "source_path": "ExcelOutput/MonsterSkillConfig.json"
+                },
+                "skill_trigger_key": "Skill04",
+                "template_source": {
+                  "raw_id": "1002011",
+                  "raw_type": "MonsterTemplateConfig",
+                  "row_index": 0,
+                  "source_path": "ExcelOutput/MonsterTemplateConfig.json"
+                }
+              },
+              "raw_id": "100201101",
+              "raw_type": "MonsterSkillFormulaBinding",
+              "source_path": "Config/ConfigCharacter/Monster/Monster_W1_CocoliaP1_01_Config.json"
+            },
+            "level": 1,
+            "parent_task_id": "",
+            "phase_id": "ability_phase:monster_skill:100201101:1:1:Monster_Boss_Cocolia_P1_Weapon_Skill04_Phase02",
+            "stance_source": {
+              "raw_path": "ShowStanceList[0]",
+              "raw_value": null,
+              "show_stance_audit_only": false,
+              "show_stance_count": 0,
+              "source": {
+                "evidence": {
+                  "damage_type": "Ice",
+                  "id_key": "SkillID",
+                  "level": 1,
+                  "monster_target_source": {
+                    "blocked_reason": "",
+                    "character_config_path": "Config/ConfigCharacter/Monster/Monster_W1_CocoliaP1_01_Config.json",
+                    "coverage_status": "lowered",
+                    "monster_count": 2,
+                    "monster_id": "1002011",
+                    "skill_trigger_key": "Skill04",
+                    "source_trace": {
+                      "character_config": {
+                        "raw_id": "Skill04",
+                        "raw_path": "SkillList.TargetInfo",
+                        "raw_type": "MonsterCharacterConfig",
+                        "source_path": "Config/ConfigCharacter/Monster/Monster_W1_CocoliaP1_01_Config.json"
+                      },
+                      "monster_config": {
+                        "raw_id": "1002011",
+                        "raw_path": "SkillList",
+                        "raw_type": "MonsterConfig",
+                        "row_index": 0,
+                        "source_path": "ExcelOutput/MonsterConfig.json"
+                      },
+                      "template_config": {
+                        "raw_id": "1002011",
+                        "raw_path": "JsonConfig",
+                        "raw_type": "MonsterTemplateConfig",
+                        "row_index": 0,
+                        "source_path": "ExcelOutput/MonsterTemplateConfig.json"
+                      }
+                    },
+                    "target_info": {
+                      "TargetType": "AllEnemy"
+                    },
+                    "target_mode": "aoe",
+                    "target_type": "AllEnemy",
+                    "template_id": "1002011"
+                  },
+                  "resource_mapping": {
+                    "BPAdd": "skill_point_gain_if_positive",
+                    "BPNeed": "skill_point_cost_if_positive",
+                    "SPBase": "energy_gain"
+                  },
+                  "row_index": 0,
+                  "skill_desc_hash": "2506186724985781422",
+                  "skill_trigger_key": "Skill04",
+                  "sp_hit_base": {
+                    "Value": 10
+                  },
+                  "taxonomy": {
+                    "attack_type": "raw TBGD AttackType; follow-up is an attack type axis",
+                    "damage_formula_family": "formula family axis; follow-up is not a damage family",
+                    "element_type": "raw TBGD StanceDamageType when present"
+                  }
+                },
+                "raw_id": "100201101",
+                "raw_type": "MonsterSkillConfig",
+                "source_path": "ExcelOutput/MonsterSkillConfig.json"
+              },
+              "stance_damage_type": "Ice"
+            },
+            "target_alias": "AllEnemy",
+            "task_id": "ability_task:ability_phase:monster_skill:100201101:1:1:Monster_Boss_Cocolia_P1_Weapon_Skill04_Phase02:OnStart:OnStart[5]:DamageByAttackProperty",
+            "task_index": 5,
+            "task_path": "OnStart[5]",
+            "toughness_amount_source": {
+              "kind": "fixed",
+              "raw_path": "MonsterSkillConfig.SPHitBase * AttackProperty.SPHitRatio",
+              "source_kind": "monster_skill_sp_hit_base_times_attack_property_sp_hit_ratio",
+              "source_trace": {
+                "action_definition": {
+                  "evidence": {
+                    "damage_type": "Ice",
+                    "id_key": "SkillID",
+                    "level": 1,
+                    "monster_target_source": {
+                      "blocked_reason": "",
+                      "character_config_path": "Config/ConfigCharacter/Monster/Monster_W1_CocoliaP1_01_Config.json",
+                      "coverage_status": "lowered",
+                      "monster_count": 2,
+                      "monster_id": "1002011",
+                      "skill_trigger_key": "Skill04",
+                      "source_trace": {
+                        "character_config": {
+                          "raw_id": "Skill04",
+                          "raw_path": "SkillList.TargetInfo",
+                          "raw_type": "MonsterCharacterConfig",
+                          "source_path": "Config/ConfigCharacter/Monster/Monster_W1_CocoliaP1_01_Config.json"
+                        },
+                        "monster_config": {
+                          "raw_id": "1002011",
+                          "raw_path": "SkillList",
+                          "raw_type": "MonsterConfig",
+                          "row_index": 0,
+                          "source_path": "ExcelOutput/MonsterConfig.json"
+                        },
+                        "template_config": {
+                          "raw_id": "1002011",
+                          "raw_path": "JsonConfig",
+                          "raw_type": "MonsterTemplateConfig",
+                          "row_index": 0,
+                          "source_path": "ExcelOutput/MonsterTemplateConfig.json"
+                        }
+                      },
+                      "target_info": {
+                        "TargetType": "AllEnemy"
+                      },
+                      "target_mode": "aoe",
+                      "target_type": "AllEnemy",
+                      "template_id": "1002011"
+                    },
+                    "resource_mapping": {
+                      "BPAdd": "skill_point_gain_if_positive",
+                      "BPNeed": "skill_point_cost_if_positive",
+                      "SPBase": "energy_gain"
+                    },
+                    "row_index": 0,
+                    "skill_desc_hash": "2506186724985781422",
+                    "skill_trigger_key": "Skill04",
+                    "sp_hit_base": {
+                      "Value": 10
+                    },
+                    "taxonomy": {
+                      "attack_type": "raw TBGD AttackType; follow-up is an attack type axis",
+                      "damage_formula_family": "formula family axis; follow-up is not a damage family",
+                      "element_type": "raw TBGD StanceDamageType when present"
+                    }
+                  },
+                  "raw_id": "100201101",
+                  "raw_type": "MonsterSkillConfig",
+                  "source_path": "ExcelOutput/MonsterSkillConfig.json"
+                },
+                "effect": {
+                  "evidence": {
+                    "action_id": "monster_skill:100201101",
+                    "branch": "root",
+                    "callback_kind": "OnStart",
+                    "level": 1,
+                    "parent_task_id": "",
+                    "phase_id": "ability_phase:monster_skill:100201101:1:1:Monster_Boss_Cocolia_P1_Weapon_Skill04_Phase02",
+                    "task_index": 5,
+                    "task_path": "OnStart[5]"
+                  },
+                  "raw_id": "Monster_Boss_Cocolia_P1_Weapon_Skill04_Phase02",
+                  "raw_type": "AbilityTask",
+                  "source_path": "Config/ConfigAbility/Monster/Monster_W1_CocoliaP1_01_Ability.json"
+                }
+              },
+              "sp_hit_base": 10.0,
+              "sp_hit_base_raw": {
+                "Value": 10
+              },
+              "sp_hit_ratio": 1.0,
+              "sp_hit_ratio_expr": {
+                "kind": "fixed",
+                "supported": true,
+                "value": 1.0
+              },
+              "value": 10.0
+            }
+          },
+          "raw_id": "DamageByAttackProperty",
+          "raw_type": "AbilityToughnessEmission",
+          "source_path": "Config/ConfigAbility/Monster/Monster_W1_CocoliaP1_01_Ability.json"
+        },
+        "source_task_id": "ability_task:ability_phase:monster_skill:100201101:1:1:Monster_Boss_Cocolia_P1_Weapon_Skill04_Phase02:OnStart:OnStart[5]:DamageByAttackProperty",
+        "target_group": "selected",
+        "toughness_amount_expr": {
+          "kind": "fixed",
+          "raw_path": "MonsterSkillConfig.SPHitBase * AttackProperty.SPHitRatio",
+          "source_kind": "monster_skill_sp_hit_base_times_attack_property_sp_hit_ratio",
+          "source_trace": {
+            "action_definition": {
+              "evidence": {
+                "damage_type": "Ice",
+                "id_key": "SkillID",
+                "level": 1,
+                "monster_target_source": {
+                  "blocked_reason": "",
+                  "character_config_path": "Config/ConfigCharacter/Monster/Monster_W1_CocoliaP1_01_Config.json",
+                  "coverage_status": "lowered",
+                  "monster_count": 2,
+                  "monster_id": "1002011",
+                  "skill_trigger_key": "Skill04",
+                  "source_trace": {
+                    "character_config": {
+                      "raw_id": "Skill04",
+                      "raw_path": "SkillList.TargetInfo",
+                      "raw_type": "MonsterCharacterConfig",
+                      "source_path": "Config/ConfigCharacter/Monster/Monster_W1_CocoliaP1_01_Config.json"
+                    },
+                    "monster_config": {
+                      "raw_id": "1002011",
+                      "raw_path": "SkillList",
+                      "raw_type": "MonsterConfig",
+                      "row_index": 0,
+                      "source_path": "ExcelOutput/MonsterConfig.json"
+                    },
+                    "template_config": {
+                      "raw_id": "1002011",
+                      "raw_path": "JsonConfig",
+                      "raw_type": "MonsterTemplateConfig",
+                      "row_index": 0,
+                      "source_path": "ExcelOutput/MonsterTemplateConfig.json"
+                    }
+                  },
+                  "target_info": {
+                    "TargetType": "AllEnemy"
+                  },
+                  "target_mode": "aoe",
+                  "target_type": "AllEnemy",
+                  "template_id": "1002011"
+                },
+                "resource_mapping": {
+                  "BPAdd": "skill_point_gain_if_positive",
+                  "BPNeed": "skill_point_cost_if_positive",
+                  "SPBase": "energy_gain"
+                },
+                "row_index": 0,
+                "skill_desc_hash": "2506186724985781422",
+                "skill_trigger_key": "Skill04",
+                "sp_hit_base": {
+                  "Value": 10
+                },
+                "taxonomy": {
+                  "attack_type": "raw TBGD AttackType; follow-up is an attack type axis",
+                  "damage_formula_family": "formula family axis; follow-up is not a damage family",
+                  "element_type": "raw TBGD StanceDamageType when present"
+                }
+              },
+              "raw_id": "100201101",
+              "raw_type": "MonsterSkillConfig",
+              "source_path": "ExcelOutput/MonsterSkillConfig.json"
+            },
+            "effect": {
+              "evidence": {
+                "action_id": "monster_skill:100201101",
+                "branch": "root",
+                "callback_kind": "OnStart",
+                "level": 1,
+                "parent_task_id": "",
+                "phase_id": "ability_phase:monster_skill:100201101:1:1:Monster_Boss_Cocolia_P1_Weapon_Skill04_Phase02",
+                "task_index": 5,
+                "task_path": "OnStart[5]"
+              },
+              "raw_id": "Monster_Boss_Cocolia_P1_Weapon_Skill04_Phase02",
+              "raw_type": "AbilityTask",
+              "source_path": "Config/ConfigAbility/Monster/Monster_W1_CocoliaP1_01_Ability.json"
+            }
+          },
+          "sp_hit_base": 10.0,
+          "sp_hit_base_raw": {
+            "Value": 10
+          },
+          "sp_hit_ratio": 1.0,
+          "sp_hit_ratio_expr": {
+            "kind": "fixed",
+            "supported": true,
+            "value": 1.0
+          },
+          "value": 10.0
+        },
+        "toughness_emission_id": "toughness_emission:ability_task:ability_phase:monster_skill:100201101:1:1:Monster_Boss_Cocolia_P1_Weapon_Skill04_Phase02:OnStart:OnStart[5]:DamageByAttackProperty:hit_profile:monster_skill:100201101:1:0:selected:slot:0"
+      }
+    ]
+  },
+  "card": {
+    "action_sequence": [
+      {
+        "action_ref": "monster_skill:100201101",
+        "blocked_reason": "",
+        "coverage_status": "lowered",
+        "in_skill_list": true,
+        "raw_item": {
+          "MNAHFIGOHML": 100201101
+        },
+        "raw_key": "MNAHFIGOHML",
+        "sequence_index": 0,
+        "sequence_kind": "template_default",
+        "skill_definition_exists": true,
+        "skill_id": "100201101",
+        "skill_list_index": 0,
+        "source_trace": {
+          "raw_id": "1002011",
+          "raw_path": "AISkillSequence",
+          "raw_type": "MonsterTemplateConfig",
+          "row_index": 0,
+          "source_path": "ExcelOutput/MonsterTemplateConfig.json"
+        }
+      }
+    ],
+    "action_set_id": "combatant_action_set:monster:1002011",
+    "ai_policy": {
+      "admission_status": "executable",
+      "admitted_task": "RPG.GameCore.UseSequencedSkill",
+      "ai_name": "Monster_Common_SequenceThree",
+      "ai_path": "Config/ConfigAI/Monster_Common_SequenceThree_AI.json",
+      "blocked_reason": "",
+      "complex_task_types": [],
+      "coverage_status": "lowered",
+      "enemy_ai_runtime_execution_admitted": false,
+      "manual_route_action_execution_admitted": "depends_on_action_ir",
+      "policy_kind": "fixed_skill_sequence",
+      "runtime_execution_admitted": false,
+      "source_trace": {
+        "raw_id": "Monster_Common_SequenceThree_AI",
+        "raw_type": "ConfigAI",
+        "source_path": "Config/ConfigAI/Monster_Common_SequenceThree_AI.json"
+      },
+      "task_types": [
+        "RPG.GameCore.AIDecisionConfig",
+        "RPG.GameCore.AIVariableBool",
+        "RPG.GameCore.AIVariableString",
+        "RPG.GameCore.ChoseSequencedSkillAxis",
+        "RPG.GameCore.SequenceConfig",
+        "RPG.GameCore.UseSequencedSkill"
+      ]
+    },
+    "blocked_reason": "",
+    "card_contract": {
+      "ai_policy": {
+        "complex_ai_execution_allowed": false,
+        "enemy_ai_runtime_execution_admitted": false,
+        "first_admitted_policy": "UseSequencedSkill with TBGD AISkillSequence",
+        "manual_route_action_execution_admitted": "depends_on_action_ir",
+        "runtime_execution_admitted": false,
+        "target_selection_is_not_admitted": true
+      },
+      "display_policy": {
+        "display_text_allowed_for_runtime_rules": false,
+        "display_text_allowed_for_ui_and_audit": true,
+        "display_text_source": "TextMap CHS/EN at card build time only",
+        "missing_display_text_blocks_execution": false
+      },
+      "runtime_boundary": {
+        "monster_name_special_case_allowed": false,
+        "raw_tbgd_allowed_in_runtime": false,
+        "runtime_reads": "Canonical IR only",
+        "text_map_allowed_in_runtime": false
+      },
+      "schema_version": "v0_280",
+      "skill_policy": {
+        "sequence_skill_must_be_in_skill_list": true,
+        "sequence_skill_must_have_skill_definition": true,
+        "skill_list_order_preserved": true,
+        "skill_trigger_key_one_to_one_required": false
+      },
+      "stage_boundary": {
+        "stage_binding_deferred": true,
+        "stage_level_and_hard_level_group_assembly_admitted": false
+      }
+    },
+    "card_id": "monster_data_card:monster:1002011",
+    "coverage_status": "lowered",
+    "display": {
+      "display_only": true,
+      "introduction_hash": "9842692892110851210",
+      "localized_introductions": {
+        "CHS": "守护者创造的巨大冰矛，能释放出席卷全场的刺骨霜风。",
+        "EN": "A giant lance of ice created by the guardian. It can unleash a piercing frost wind that sweeps across the field."
+      },
+      "localized_names": {
+        "CHS": "冰锋",
+        "EN": "Ice Edge"
+      },
+      "name_hash": "329737901974927635",
+      "runtime_rule_source": false,
+      "source": "TextMap CHS/EN loaded in monster card builder"
+    },
+    "entity_ref": "monster:1002011",
+    "monster_id": "1002011",
+    "profile_id": "combatant_profile:monster:1002011",
+    "rank": "MinionLv2",
+    "raw_parameter_blocks": {
+      "monster_config": {
+        "ability_name_list": [],
+        "attack_modify_ratio": {
+          "Value": 1
+        },
+        "custom_value_tags": [
+          "W1_Ice"
+        ],
+        "custom_values": [],
+        "damage_type_resistance": [
+          {
+            "DamageType": "Physical",
+            "Value": {
+              "Value": 0.2
+            }
+          },
+          {
+            "DamageType": "Ice",
+            "Value": {
+              "Value": 0.2
+            }
+          },
+          {
+            "DamageType": "Wind",
+            "Value": {
+              "Value": 0.2
+            }
+          },
+          {
+            "DamageType": "Quantum",
+            "Value": {
+              "Value": 0.2
+            }
+          },
+          {
+            "DamageType": "Imaginary",
+            "Value": {
+              "Value": 0.2
+            }
+          }
+        ],
+        "debuff_resist": [
+          {
+            "Key": "STAT_CTRL_Frozen",
+            "Value": {
+              "Value": 1
+            }
+          }
+        ],
+        "defense_modify_ratio": {
+          "Value": 1
+        },
+        "dynamic_values": [],
+        "hard_level_group": 1,
+        "hp_modify_ratio": {
+          "Value": 1
+        },
+        "override_skill_params": [],
+        "speed_modify_ratio": {
+          "Value": 1
+        },
+        "speed_modify_value": null,
+        "stance_modify_ratio": {
+          "Value": 1
+        },
+        "stance_modify_value": null,
+        "weaknesses": [
+          "Fire",
+          "Thunder"
+        ]
+      },
+      "template_config": {
+        "ai_path": "Config/ConfigAI/Monster_Common_SequenceThree_AI.json",
+        "ai_skill_sequence": [
+          {
+            "MNAHFIGOHML": 100201101
+          }
+        ],
+        "base_stats": {
+          "attack": {
+            "Value": 18
+          },
+          "critical_damage": {
+            "Value": 0.2
+          },
+          "defense": {
+            "Value": 210
+          },
+          "hp": {
+            "Value": 69.75
+          },
+          "speed": {
+            "Value": 100
+          },
+          "stance": {
+            "Value": 60
+          },
+          "status_resistance": {
+            "Value": 0.2
+          }
+        },
+        "initial_delay_ratio": {
+          "Value": 1
+        },
+        "json_config": "Config/ConfigCharacter/Monster/Monster_W1_CocoliaP1_01_Config.json",
+        "minimum_fatigue_ratio": {
+          "Value": 0.2
+        },
+        "rank": "MinionLv2",
+        "stance_type": "Ice"
+      }
+    },
+    "schema_version": "v0_277",
+    "skill_ids": [
+      "100201101"
+    ],
+    "skill_slots": [
+      {
+        "action_ref": "monster_skill:100201101",
+        "ai_cd": 1,
+        "ai_icd": 1,
+        "attack_type": "Normal",
+        "blocked_reason": "",
+        "coverage_status": "lowered",
+        "damage_type": "Ice",
+        "delay_ratio": {
+          "Value": 1
+        },
+        "display": {
+          "description_hash": "2506186724985781422",
+          "display_only": true,
+          "localized_descriptions": {
+            "CHS": "对我方全体造成少量冰属性伤害。",
+            "EN": "Deals minor Ice DMG to all targets."
+          },
+          "localized_names": {
+            "CHS": "冰风",
+            "EN": "Icy Wind"
+          },
+          "localized_tags": {
+            "CHS": "群攻",
+            "EN": "AoE ATK"
+          },
+          "localized_types": {
+            "CHS": "技能",
+            "EN": "Ability"
+          },
+          "name_hash": "10030733179492869324",
+          "runtime_rule_source": false,
+          "source": "TextMap CHS/EN loaded in monster card builder",
+          "tag_hash": "13718219806540082081",
+          "type_hash": "4236760374151560033"
+        },
+        "extra_effect_id_list": [],
+        "is_threat": null,
+        "modifier_list": [],
+        "param_list": [
+          {
+            "Value": 2
+          }
+        ],
+        "phase_list": [
+          1
+        ],
+        "same_trigger_skill_ids": [
+          "100201101"
+        ],
+        "skill_id": "100201101",
+        "skill_trigger_key": "Skill04",
+        "slot_index": 0,
+        "source_trace": {
+          "raw_id": "100201101",
+          "raw_type": "MonsterSkillConfig",
+          "row_index": 0,
+          "source_path": "ExcelOutput/MonsterSkillConfig.json"
+        },
+        "sp_hit_base": {
+          "Value": 10
+        },
+        "trigger_key_alias_count": 1
+      }
+    ],
+    "source": {
+      "evidence": {
+        "builder": "monster_data_card_v0_280",
+        "enemy_ai_runtime_execution_admitted": false,
+        "manual_route_action_execution_admitted": "depends_on_action_ir",
+        "raw_paths": {
+          "custom_values": "CustomValues",
+          "damage_resistances": "DamageTypeResistance",
+          "debuff_resistances": "DebuffResist",
+          "dynamic_values": "DynamicValues",
+          "override_ai_path": "OverrideAIPath",
+          "override_ai_sequence": "OverrideAISkillSequence",
+          "override_skill_params": "OverrideSkillParams",
+          "skill_list": "SkillList",
+          "summons": "SummonIDList",
+          "template_id": "MonsterTemplateID",
+          "weaknesses": "StanceWeakList"
+        },
+        "row_index": 0,
+        "runtime_execution_admitted": false,
+        "template_id": "1002011",
+        "template_source": {
+          "raw_id": "1002011",
+          "raw_type": "MonsterTemplateConfig",
+          "row_index": 0,
+          "source_path": "ExcelOutput/MonsterTemplateConfig.json"
+        }
+      },
+      "raw_id": "1002011",
+      "raw_type": "MonsterConfig",
+      "source_path": "ExcelOutput/MonsterConfig.json"
+    },
+    "summon_refs": [],
+    "template_id": "1002011"
+  },
+  "checks": {
+    "checks": {
+      "action_definition_from_monster_skill_config": true,
+      "action_set_uses_monster_skill_namespace": true,
+      "action_target_mode_aoe": true,
+      "binding_executable": true,
+      "binding_source_mode_monster": true,
+      "has_display_name": true,
+      "has_executable_damage_emission": true,
+      "has_executable_formula_binding": true,
+      "has_executable_hit_profile": true,
+      "has_executable_toughness_emission": true,
+      "ok": true
+    },
+    "ok": true
+  },
+  "identity": {
+    "display_name_chs": "冰锋",
+    "display_name_en": "Ice Edge",
+    "entity_ref": "monster:1002011",
+    "monster_id": "1002011",
+    "rank": "MinionLv2",
+    "template_id": "1002011"
+  },
+  "schema_version": "v8_executable_monster_example_card_v0_280",
+  "selection_policy": {
+    "fixed_monster_id_used_for_selection": false,
+    "mode": "structured_predicate",
+    "predicate": [
+      "ordinary MonsterTemplateConfig source",
+      "single SkillList entry and single AISkillSequence step",
+      "fixed sequence AI policy admitted but enemy AI runtime not admitted",
+      "MonsterSkillConfig/MonsterSkillUniqueConfig action source",
+      "mainline monster ability binding executable",
+      "direct damage and toughness emissions executable",
+      "display names exist for UI/audit only"
+    ]
+  }
+}

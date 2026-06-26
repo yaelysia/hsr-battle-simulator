@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from ..rules.ir import IRSource, JSONValue, MonsterDataCardIR
+from ..rules.ir import IRSource, JSONValue, MonsterDataCardIR, SkillFormulaBindingIR
 
 
 MONSTER_CONFIG_PATH = "ExcelOutput/MonsterConfig.json"
@@ -38,6 +38,7 @@ COMPLEX_AI_TASKS: frozenset[str] = frozenset(
 @dataclass(frozen=True)
 class MonsterCardBuildResult:
     monster_data_cards: list[MonsterDataCardIR]
+    skill_formula_bindings: list[SkillFormulaBindingIR]
 
 
 @dataclass(frozen=True)
@@ -81,9 +82,22 @@ def build_monster_card_ir(
     text_maps = _load_display_text_maps(tbgd_root)
 
     cards: list[MonsterDataCardIR] = []
+    skill_formula_bindings: dict[str, SkillFormulaBindingIR] = {}
     for monster_id, monster_record in sorted(monster_rows.items()):
-        cards.append(_monster_card(tbgd_root, monster_id, monster_record, template_rows, skill_rows, text_maps))
-    return MonsterCardBuildResult(monster_data_cards=cards)
+        card = _monster_card(tbgd_root, monster_id, monster_record, template_rows, skill_rows, text_maps)
+        cards.append(card)
+        for binding in _skill_formula_bindings_for_monster(
+            tbgd_root,
+            card=card,
+            monster_record=monster_record,
+            template_record=template_rows.get(card.template_id),
+            skill_rows=skill_rows,
+        ):
+            skill_formula_bindings.setdefault(binding.binding_id, binding)
+    return MonsterCardBuildResult(
+        monster_data_cards=cards,
+        skill_formula_bindings=list(skill_formula_bindings.values()),
+    )
 
 
 def _monster_card(
@@ -157,8 +171,10 @@ def _monster_card(
                     "dynamic_values": "DynamicValues",
                     "override_skill_params": "OverrideSkillParams",
                 },
-                "builder": "monster_data_card_v0_277",
+                "builder": "monster_data_card_v0_280",
                 "runtime_execution_admitted": False,
+                "manual_route_action_execution_admitted": "depends_on_action_ir",
+                "enemy_ai_runtime_execution_admitted": False,
             },
         ),
         coverage_status="blocked" if blocked_reasons else "lowered",
@@ -227,6 +243,148 @@ def _skill_slots(
                 str(slots[index].get("skill_id")) for index in trigger_groups.get(trigger_key, ())
             ]
     return slots
+
+
+def _skill_formula_bindings_for_monster(
+    tbgd_root: Path,
+    *,
+    card: MonsterDataCardIR,
+    monster_record: _RowRecord,
+    template_record: _RowRecord | None,
+    skill_rows: dict[str, _RowRecord],
+) -> list[SkillFormulaBindingIR]:
+    if template_record is None:
+        return []
+    json_config = str(template_record.row.get("JsonConfig") or "")
+    character_config = _read_json_dict(tbgd_root, json_config)
+    if character_config is None:
+        return []
+    dynamic_values = _skill_param_dynamic_values_by_trigger(character_config, json_config)
+    bindings: list[SkillFormulaBindingIR] = []
+    for skill_index, skill_id in enumerate(card.skill_ids):
+        skill_record = skill_rows.get(skill_id)
+        if skill_record is None:
+            continue
+        row = skill_record.row
+        trigger_key = str(row.get("SkillTriggerKey") or "")
+        param_list = row.get("ParamList") if isinstance(row.get("ParamList"), list) else []
+        dynamic_by_index = dynamic_values.get(trigger_key, {})
+        if not trigger_key or not dynamic_by_index:
+            continue
+        action_id = f"monster_skill:{skill_id}"
+        level = int(_number_value(row.get("Level"), 1.0))
+        for param_index, dynamic_source in sorted(dynamic_by_index.items()):
+            param_value = param_list[param_index] if 0 <= param_index < len(param_list) else None
+            blocked_reason = ""
+            if param_index < 0:
+                blocked_reason = "monster_skill_param_index_invalid"
+            elif param_index >= len(param_list):
+                blocked_reason = "monster_skill_param_index_out_of_range"
+            elif not isinstance(_value_field(param_value), (int, float)):
+                blocked_reason = "monster_skill_param_value_not_numeric"
+            source = IRSource(
+                source_path=json_config,
+                raw_type="MonsterSkillFormulaBinding",
+                raw_id=skill_id,
+                evidence={
+                    "monster_id": card.monster_id,
+                    "monster_data_card_id": card.card_id,
+                    "owner_entity_ref": card.entity_ref,
+                    "monster_source": _source_trace(monster_record),
+                    "template_source": _source_trace(template_record),
+                    "skill_source": _source_trace(skill_record),
+                    "skill_index": skill_index,
+                    "skill_trigger_key": trigger_key,
+                    "param_ref": f"ParamList[{param_index}]",
+                    "param_value": _json_safe(param_value),
+                    "dynamic_hash": dynamic_source.get("hash"),
+                    "dynamic_value_source": dynamic_source,
+                    "basis_source_kind": "tbgd_opcode_semantics:DamageByAttackProperty",
+                    "builder": "monster_skill_formula_binding_v0_280",
+                },
+            )
+            if blocked_reason:
+                scaling_basis_expr: dict[str, JSONValue] = {
+                    "kind": "missing",
+                    "supported": False,
+                    "reason": blocked_reason,
+                    "source_trace": source.to_json(),
+                }
+            else:
+                scaling_basis_expr = {
+                    "kind": "unit_stat",
+                    "unit_ref": "attacker",
+                    "stat": "attack",
+                    "source_kind": "monster_damage_by_attack_property_opcode_admission",
+                    "admission_status": "executable",
+                    "data_card_id": card.card_id,
+                    "data_card_kind": "monster",
+                    "owner_entity_ref": card.entity_ref,
+                    "param_index": param_index,
+                    "param_value": _json_safe(param_value),
+                    "dynamic_hash": dynamic_source.get("hash"),
+                    "raw_opcode": "DamageByAttackProperty",
+                    "source_trace": source.to_json(),
+                }
+            bindings.append(
+                SkillFormulaBindingIR(
+                    binding_id=(
+                        f"skill_formula_binding:{action_id}:{level}:"
+                        f"direct_damage:param:{param_index}:monster"
+                    ),
+                    character_data_card_id="",
+                    data_card_id=card.card_id,
+                    data_card_kind="monster",
+                    owner_entity_ref=card.entity_ref,
+                    formula_slot_id=f"formula_slot:{action_id}:{level}:direct_damage:monster:{param_index}",
+                    action_id=action_id,
+                    level=level,
+                    param_index=param_index,
+                    sequence_order=param_index,
+                    formula_role="direct_damage",
+                    target_group_hint="",
+                    param_value=_json_safe(param_value),
+                    scaling_basis_expr=scaling_basis_expr,
+                    text_hash="",
+                    skill_text="",
+                    matched_text="DamageByAttackProperty.DamagePercentage",
+                    source=source,
+                    coverage_status="blocked" if blocked_reason else "executable",
+                    blocked_reason=blocked_reason,
+                )
+            )
+    return bindings
+
+
+def _skill_param_dynamic_values_by_trigger(
+    character_config: dict[str, Any],
+    source_path: str,
+) -> dict[str, dict[int, dict[str, JSONValue]]]:
+    floats = character_config.get("DynamicValues", {}).get("Floats", {})
+    if not isinstance(floats, dict):
+        return {}
+    result: dict[str, dict[int, dict[str, JSONValue]]] = {}
+    for raw_hash, item in floats.items():
+        if not isinstance(item, dict):
+            continue
+        read_info = item.get("ReadInfo")
+        if not isinstance(read_info, dict):
+            continue
+        if read_info.get("Type") != "SkillParam":
+            continue
+        trigger_key = str(read_info.get("TriggerKey") or "")
+        index = read_info.get("Index")
+        if not trigger_key or not isinstance(index, int):
+            continue
+        result.setdefault(trigger_key, {})[index] = {
+            "hash": str(raw_hash),
+            "param_index": index,
+            "trigger_key": trigger_key,
+            "read_info": _json_safe(read_info),
+            "source_path": source_path,
+            "raw_path": f"DynamicValues.Floats[{raw_hash}].ReadInfo",
+        }
+    return result
 
 
 def _action_sequence(
@@ -304,6 +462,8 @@ def _ai_policy(tbgd_root: Path, ai_path: str) -> dict[str, JSONValue]:
             "coverage_status": "blocked",
             "blocked_reason": "monster_ai_path_missing",
             "runtime_execution_admitted": False,
+            "manual_route_action_execution_admitted": "depends_on_action_ir",
+            "enemy_ai_runtime_execution_admitted": False,
         }
     path = tbgd_root / ai_path
     if not path.exists():
@@ -314,6 +474,8 @@ def _ai_policy(tbgd_root: Path, ai_path: str) -> dict[str, JSONValue]:
             "coverage_status": "blocked",
             "blocked_reason": "monster_ai_file_missing",
             "runtime_execution_admitted": False,
+            "manual_route_action_execution_admitted": "depends_on_action_ir",
+            "enemy_ai_runtime_execution_admitted": False,
         }
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -325,6 +487,8 @@ def _ai_policy(tbgd_root: Path, ai_path: str) -> dict[str, JSONValue]:
             "coverage_status": "blocked",
             "blocked_reason": "monster_ai_file_unreadable",
             "runtime_execution_admitted": False,
+            "manual_route_action_execution_admitted": "depends_on_action_ir",
+            "enemy_ai_runtime_execution_admitted": False,
         }
     task_types = sorted(_collect_task_types(data))
     complex_types = sorted(task_type for task_type in task_types if task_type in COMPLEX_AI_TASKS)
@@ -347,6 +511,8 @@ def _ai_policy(tbgd_root: Path, ai_path: str) -> dict[str, JSONValue]:
             "raw_id": Path(ai_path).stem,
         },
         "runtime_execution_admitted": False,
+        "manual_route_action_execution_admitted": "depends_on_action_ir",
+        "enemy_ai_runtime_execution_admitted": False,
     }
 
 
@@ -393,7 +559,7 @@ def _raw_parameter_blocks(monster_row: dict[str, Any], template_row: dict[str, A
 
 def _monster_data_card_contract() -> dict[str, JSONValue]:
     return {
-        "schema_version": "v0_277",
+        "schema_version": "v0_280",
         "runtime_boundary": {
             "runtime_reads": "Canonical IR only",
             "raw_tbgd_allowed_in_runtime": False,
@@ -411,6 +577,8 @@ def _monster_data_card_contract() -> dict[str, JSONValue]:
             "complex_ai_execution_allowed": False,
             "target_selection_is_not_admitted": True,
             "runtime_execution_admitted": False,
+            "manual_route_action_execution_admitted": "depends_on_action_ir",
+            "enemy_ai_runtime_execution_admitted": False,
         },
         "skill_policy": {
             "skill_list_order_preserved": True,
@@ -518,6 +686,17 @@ def _rows_by_id(
     return rows
 
 
+def _read_json_dict(tbgd_root: Path, relative_path: str) -> dict[str, Any] | None:
+    path = tbgd_root / relative_path
+    if not relative_path or not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    return data if isinstance(data, dict) else None
+
+
 def _sequence_skill_id(raw_item: Any) -> tuple[str, str]:
     if not isinstance(raw_item, dict):
         return "", ""
@@ -561,6 +740,21 @@ def _limit_sequence(items: list[Any], limit: int | None) -> list[Any]:
     if limit is None:
         return items
     return items[: max(0, limit)]
+
+
+def _number_value(value: Any, default: float) -> float:
+    if isinstance(value, dict):
+        nested = value.get("Value")
+        return _number_value(nested, default)
+    if isinstance(value, (int, float)):
+        return float(value)
+    return default
+
+
+def _value_field(value: Any) -> Any:
+    if isinstance(value, dict) and "Value" in value:
+        return _json_safe(value.get("Value"))
+    return _json_safe(value)
 
 
 def _json_safe(value: Any) -> JSONValue:
