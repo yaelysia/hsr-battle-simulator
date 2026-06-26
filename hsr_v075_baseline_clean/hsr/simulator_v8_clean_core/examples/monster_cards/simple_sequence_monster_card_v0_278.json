@@ -115,6 +115,23 @@
   },
   "identity": {
     "card_id": "monster_data_card:monster:1002011",
+    "display": {
+      "display_only": true,
+      "introduction_hash": "9842692892110851210",
+      "localized_introductions": {
+        "CHS": "守护者创造的巨大冰矛，能释放出席卷全场的刺骨霜风。",
+        "EN": "A giant lance of ice created by the guardian. It can unleash a piercing frost wind that sweeps across the field."
+      },
+      "localized_names": {
+        "CHS": "冰锋",
+        "EN": "Ice Edge"
+      },
+      "name_hash": "329737901974927635",
+      "runtime_rule_source": false,
+      "source": "TextMap CHS/EN loaded in monster card builder"
+    },
+    "display_name_chs": "冰锋",
+    "display_name_en": "Ice Edge",
     "entity_ref": "monster:1002011",
     "monster_id": "1002011",
     "rank": "MinionLv2",
@@ -178,6 +195,12 @@
         "runtime_execution_admitted": false,
         "target_selection_is_not_admitted": true
       },
+      "display_policy": {
+        "display_text_allowed_for_runtime_rules": false,
+        "display_text_allowed_for_ui_and_audit": true,
+        "display_text_source": "TextMap CHS/EN at card build time only",
+        "missing_display_text_blocks_execution": false
+      },
       "runtime_boundary": {
         "monster_name_special_case_allowed": false,
         "raw_tbgd_allowed_in_runtime": false,
@@ -198,6 +221,21 @@
     },
     "card_id": "monster_data_card:monster:1002011",
     "coverage_status": "lowered",
+    "display": {
+      "display_only": true,
+      "introduction_hash": "9842692892110851210",
+      "localized_introductions": {
+        "CHS": "守护者创造的巨大冰矛，能释放出席卷全场的刺骨霜风。",
+        "EN": "A giant lance of ice created by the guardian. It can unleash a piercing frost wind that sweeps across the field."
+      },
+      "localized_names": {
+        "CHS": "冰锋",
+        "EN": "Ice Edge"
+      },
+      "name_hash": "329737901974927635",
+      "runtime_rule_source": false,
+      "source": "TextMap CHS/EN loaded in monster card builder"
+    },
     "entity_ref": "monster:1002011",
     "monster_id": "1002011",
     "profile_id": "combatant_profile:monster:1002011",
@@ -330,6 +368,31 @@
         "damage_type": "Ice",
         "delay_ratio": {
           "Value": 1
+        },
+        "display": {
+          "description_hash": "2506186724985781422",
+          "display_only": true,
+          "localized_descriptions": {
+            "CHS": "对我方全体造成少量冰属性伤害。",
+            "EN": "Deals minor Ice DMG to all targets."
+          },
+          "localized_names": {
+            "CHS": "冰风",
+            "EN": "Icy Wind"
+          },
+          "localized_tags": {
+            "CHS": "群攻",
+            "EN": "AoE ATK"
+          },
+          "localized_types": {
+            "CHS": "技能",
+            "EN": "Ability"
+          },
+          "name_hash": "10030733179492869324",
+          "runtime_rule_source": false,
+          "source": "TextMap CHS/EN loaded in monster card builder",
+          "tag_hash": "13718219806540082081",
+          "type_hash": "4236760374151560033"
         },
         "extra_effect_id_list": [],
         "is_threat": null,
@@ -619,6 +682,8 @@
     ]
   },
   "skill_section": {
+    "selected_skill_name_chs": "冰风",
+    "selected_skill_name_en": "Icy Wind",
     "selected_skill_slot": {
       "action_ref": "monster_skill:100201101",
       "ai_cd": 1,
@@ -629,6 +694,31 @@
       "damage_type": "Ice",
       "delay_ratio": {
         "Value": 1
+      },
+      "display": {
+        "description_hash": "2506186724985781422",
+        "display_only": true,
+        "localized_descriptions": {
+          "CHS": "对我方全体造成少量冰属性伤害。",
+          "EN": "Deals minor Ice DMG to all targets."
+        },
+        "localized_names": {
+          "CHS": "冰风",
+          "EN": "Icy Wind"
+        },
+        "localized_tags": {
+          "CHS": "群攻",
+          "EN": "AoE ATK"
+        },
+        "localized_types": {
+          "CHS": "技能",
+          "EN": "Ability"
+        },
+        "name_hash": "10030733179492869324",
+        "runtime_rule_source": false,
+        "source": "TextMap CHS/EN loaded in monster card builder",
+        "tag_hash": "13718219806540082081",
+        "type_hash": "4236760374151560033"
       },
       "extra_effect_id_list": [],
       "is_threat": null,
@@ -672,6 +762,31 @@
         "damage_type": "Ice",
         "delay_ratio": {
           "Value": 1
+        },
+        "display": {
+          "description_hash": "2506186724985781422",
+          "display_only": true,
+          "localized_descriptions": {
+            "CHS": "对我方全体造成少量冰属性伤害。",
+            "EN": "Deals minor Ice DMG to all targets."
+          },
+          "localized_names": {
+            "CHS": "冰风",
+            "EN": "Icy Wind"
+          },
+          "localized_tags": {
+            "CHS": "群攻",
+            "EN": "AoE ATK"
+          },
+          "localized_types": {
+            "CHS": "技能",
+            "EN": "Ability"
+          },
+          "name_hash": "10030733179492869324",
+          "runtime_rule_source": false,
+          "source": "TextMap CHS/EN loaded in monster card builder",
+          "tag_hash": "13718219806540082081",
+          "type_hash": "4236760374151560033"
         },
         "extra_effect_id_list": [],
         "is_threat": null,

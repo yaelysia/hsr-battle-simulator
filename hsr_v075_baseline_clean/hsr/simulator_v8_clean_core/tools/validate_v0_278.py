@@ -103,6 +103,9 @@ def _complete_example_card(rules: RuleBook, card: MonsterDataCardIR) -> dict[str
             "template_id": card.template_id,
             "rank": card.rank,
             "card_id": card.card_id,
+            "display": card.display,
+            "display_name_chs": _localized(card.display, "localized_names", "CHS"),
+            "display_name_en": _localized(card.display, "localized_names", "EN"),
         },
         "panel_source": {
             "profile_id": card.profile_id,
@@ -128,6 +131,8 @@ def _complete_example_card(rules: RuleBook, card: MonsterDataCardIR) -> dict[str
             "skill_ids": list(card.skill_ids),
             "skill_slots": list(card.skill_slots),
             "selected_skill_slot": skill_slot,
+            "selected_skill_name_chs": _localized(skill_slot.get("display"), "localized_names", "CHS"),
+            "selected_skill_name_en": _localized(skill_slot.get("display"), "localized_names", "EN"),
             "trigger_key_one_to_one_required": False,
         },
         "ai_and_sequence": {
@@ -159,9 +164,15 @@ def _complete_example_card(rules: RuleBook, card: MonsterDataCardIR) -> dict[str
 def _complete_card_case(example_card: dict[str, Any]) -> dict[str, Any]:
     checks = {
         "has_identity": bool(example_card.get("identity", {}).get("monster_id")),
+        "has_display_name": bool(example_card.get("identity", {}).get("display_name_chs"))
+        and bool(example_card.get("identity", {}).get("display_name_en")),
+        "display_is_marked_non_runtime": example_card.get("identity", {}).get("display", {}).get("runtime_rule_source")
+        is False,
         "has_panel_source": bool(example_card.get("panel_source", {}).get("linked_profile")),
         "has_weakness_and_resistance": "weaknesses" in example_card.get("weakness_and_resistance", {}),
         "has_skill_section": bool(example_card.get("skill_section", {}).get("skill_slots")),
+        "has_skill_display_name": bool(example_card.get("skill_section", {}).get("selected_skill_name_chs"))
+        and bool(example_card.get("skill_section", {}).get("selected_skill_name_en")),
         "has_ai_and_sequence": bool(example_card.get("ai_and_sequence", {}).get("action_sequence")),
         "has_action_execution_boundary": bool(example_card.get("action_execution_boundary", {}).get("linked_action_set")),
         "has_source_trace": all(
@@ -233,6 +244,16 @@ def _select_simple_sequence_card(rules: RuleBook) -> MonsterDataCardIR:
         if step.get("in_skill_list") is True and step.get("skill_definition_exists") is True:
             return card
     raise RuntimeError("simple sequence monster card sample not found")
+
+
+def _localized(display: object, key: str, locale: str) -> str:
+    if not isinstance(display, dict):
+        return ""
+    localized = display.get(key)
+    if not isinstance(localized, dict):
+        return ""
+    value = localized.get(locale)
+    return str(value) if value is not None else ""
 
 
 if __name__ == "__main__":

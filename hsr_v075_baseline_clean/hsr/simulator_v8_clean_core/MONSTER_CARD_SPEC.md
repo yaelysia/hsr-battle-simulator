@@ -5,8 +5,10 @@
 ## 边界
 
 - 怪物卡构建层可以读取 TBGD raw 表和 `Config/ConfigAI`。
+- 怪物卡构建层可以读取 TextMap 生成展示名和说明，但这些字段只能用于 UI/审计展示。
 - runtime 只能读取 Canonical IR 中的 `MonsterDataCardIR`、`CombatantProfileIR`、`CombatantActionSetIR` 等结构。
 - runtime 禁止读取 raw TBGD、TextMap、旧 v7、旧 model pack。
+- runtime 禁止按展示名、中文名、英文名、技能文本或说明文字驱动任何规则、目标选择、伤害、AI 或 mutation。
 - 怪物机制不能写进核心系统特判；怪物专属内容必须先进入怪物卡机制/数据槽位，再接通用系统。
 - 缺模板、缺技能、缺序列、复杂 AI 未 admission 时必须 blocked 或 process-only，不能为了让敌方行动可跑而猜规则。
 
@@ -30,6 +32,7 @@
 - 行动序列：序列来源、序列下标、原始混淆字段、技能 ID、是否在 SkillList 内、技能定义是否存在。
 - 参数块：`CustomValues`、`DynamicValues`、`OverrideSkillParams` 等保持 raw block，不解释混淆字段含义。
 - 来源：每个关键段落必须能回到 TBGD source path、raw type、raw id、row index。
+- 展示：中文/英文名、技能名、技能类型、技能标签、技能说明必须标记为 display-only，不得作为 runtime rule source。
 
 ## 第一版 AI admission
 
@@ -45,6 +48,7 @@
 ## 禁止项
 
 - 禁止按怪物名、固定 MonsterID、固定 SkillID、固定 AIPath 白名单驱动 runtime。
+- 禁止按 TextMap 名称、技能名、描述文本驱动 runtime。
 - 禁止把复杂 AIPath 简化成固定序列执行。
 - 禁止把混淆字段名改成自造语义后作为规则来源。
 - 禁止用观测结果或旧 v7 行为补怪物技能、目标选择、倍率或 AI。

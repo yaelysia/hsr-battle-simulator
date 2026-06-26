@@ -17,6 +17,10 @@ MONSTER_SKILL_PATHS: tuple[tuple[str, str], ...] = (
     ("ExcelOutput/MonsterSkillConfig.json", "SkillID"),
     ("ExcelOutput/MonsterSkillUniqueConfig.json", "SkillID"),
 )
+DISPLAY_TEXT_MAPS: tuple[tuple[str, str], ...] = (
+    ("CHS", "TextMap/TextMapCHS.json"),
+    ("EN", "TextMap/TextMapEN.json"),
+)
 
 SEQUENCED_SKILL_TASK = "RPG.GameCore.UseSequencedSkill"
 COMPLEX_AI_TASKS: frozenset[str] = frozenset(
@@ -74,10 +78,11 @@ def build_monster_card_ir(
                 max_records_per_table=max_records_per_table,
             )
         )
+    text_maps = _load_display_text_maps(tbgd_root)
 
     cards: list[MonsterDataCardIR] = []
     for monster_id, monster_record in sorted(monster_rows.items()):
-        cards.append(_monster_card(tbgd_root, monster_id, monster_record, template_rows, skill_rows))
+        cards.append(_monster_card(tbgd_root, monster_id, monster_record, template_rows, skill_rows, text_maps))
     return MonsterCardBuildResult(monster_data_cards=cards)
 
 
@@ -87,6 +92,7 @@ def _monster_card(
     monster_record: _RowRecord,
     template_rows: dict[str, _RowRecord],
     skill_rows: dict[str, _RowRecord],
+    text_maps: dict[str, dict[str, str]],
 ) -> MonsterDataCardIR:
     monster_row = monster_record.row
     template_id = str(monster_row.get("MonsterTemplateID") or "")
@@ -94,7 +100,8 @@ def _monster_card(
     template_row = template_record.row if template_record else {}
     rank = str(template_row.get("Rank") or "")
     skill_ids = tuple(str(skill_id) for skill_id in monster_row.get("SkillList") or ())
-    skill_slots = tuple(_skill_slots(skill_ids, skill_rows))
+    display = _monster_display(monster_row, template_row, text_maps)
+    skill_slots = tuple(_skill_slots(skill_ids, skill_rows, text_maps))
     action_sequence, sequence_status = _action_sequence(monster_record, template_record, skill_ids, skill_rows)
     ai_path = str(monster_row.get("OverrideAIPath") or template_row.get("AIPath") or "")
     ai_policy = _ai_policy(tbgd_root, ai_path)
@@ -119,6 +126,7 @@ def _monster_card(
         monster_id=monster_id,
         template_id=template_id,
         rank=rank,
+        display=display,
         profile_id=f"combatant_profile:monster:{monster_id}",
         action_set_id=f"combatant_action_set:monster:{monster_id}",
         skill_ids=skill_ids,
@@ -161,6 +169,7 @@ def _monster_card(
 def _skill_slots(
     skill_ids: tuple[str, ...],
     skill_rows: dict[str, _RowRecord],
+    text_maps: dict[str, dict[str, str]],
 ) -> list[dict[str, JSONValue]]:
     trigger_key_map: dict[str, list[str]] = {}
     slots: list[dict[str, JSONValue]] = []
@@ -172,6 +181,7 @@ def _skill_slots(
                     "slot_index": index,
                     "skill_id": skill_id,
                     "action_ref": f"monster_skill:{skill_id}",
+                    "display": {},
                     "coverage_status": "blocked",
                     "blocked_reason": "monster_skill_definition_missing",
                 }
@@ -187,6 +197,7 @@ def _skill_slots(
                 "skill_id": skill_id,
                 "action_ref": f"monster_skill:{skill_id}",
                 "skill_trigger_key": trigger_key,
+                "display": _skill_display(row, text_maps),
                 "trigger_key_alias_count": len(trigger_key_map.get(trigger_key, ())),
                 "damage_type": str(row.get("DamageType") or ""),
                 "attack_type": str(row.get("AttackType") or ""),
@@ -389,6 +400,12 @@ def _monster_data_card_contract() -> dict[str, JSONValue]:
             "text_map_allowed_in_runtime": False,
             "monster_name_special_case_allowed": False,
         },
+        "display_policy": {
+            "display_text_source": "TextMap CHS/EN at card build time only",
+            "display_text_allowed_for_runtime_rules": False,
+            "display_text_allowed_for_ui_and_audit": True,
+            "missing_display_text_blocks_execution": False,
+        },
         "ai_policy": {
             "first_admitted_policy": "UseSequencedSkill with TBGD AISkillSequence",
             "complex_ai_execution_allowed": False,
@@ -406,6 +423,76 @@ def _monster_data_card_contract() -> dict[str, JSONValue]:
             "stage_binding_deferred": True,
         },
     }
+
+
+def _monster_display(
+    monster_row: dict[str, Any],
+    template_row: dict[str, Any],
+    text_maps: dict[str, dict[str, str]],
+) -> dict[str, JSONValue]:
+    name_hash = _hash_value(monster_row.get("MonsterName")) or _hash_value(template_row.get("MonsterName"))
+    intro_hash = _hash_value(monster_row.get("MonsterIntroduction"))
+    return {
+        "display_only": True,
+        "runtime_rule_source": False,
+        "source": "TextMap CHS/EN loaded in monster card builder",
+        "name_hash": name_hash,
+        "localized_names": _localized_text(name_hash, text_maps),
+        "introduction_hash": intro_hash,
+        "localized_introductions": _localized_text(intro_hash, text_maps),
+    }
+
+
+def _skill_display(row: dict[str, Any], text_maps: dict[str, dict[str, str]]) -> dict[str, JSONValue]:
+    name_hash = _hash_value(row.get("SkillName"))
+    type_hash = _hash_value(row.get("SkillTypeDesc"))
+    tag_hash = _hash_value(row.get("SkillTag"))
+    desc_hash = _hash_value(row.get("SkillDesc"))
+    return {
+        "display_only": True,
+        "runtime_rule_source": False,
+        "source": "TextMap CHS/EN loaded in monster card builder",
+        "name_hash": name_hash,
+        "localized_names": _localized_text(name_hash, text_maps),
+        "type_hash": type_hash,
+        "localized_types": _localized_text(type_hash, text_maps),
+        "tag_hash": tag_hash,
+        "localized_tags": _localized_text(tag_hash, text_maps),
+        "description_hash": desc_hash,
+        "localized_descriptions": _localized_text(desc_hash, text_maps),
+    }
+
+
+def _load_display_text_maps(tbgd_root: Path) -> dict[str, dict[str, str]]:
+    result: dict[str, dict[str, str]] = {}
+    for locale, relative_path in DISPLAY_TEXT_MAPS:
+        path = tbgd_root / relative_path
+        if not path.exists():
+            result[locale] = {}
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            result[locale] = {}
+            continue
+        result[locale] = {str(key): str(value) for key, value in data.items()} if isinstance(data, dict) else {}
+    return result
+
+
+def _localized_text(hash_value: str, text_maps: dict[str, dict[str, str]]) -> dict[str, JSONValue]:
+    if not hash_value:
+        return {}
+    return {
+        locale: value
+        for locale, text_map in text_maps.items()
+        if (value := text_map.get(hash_value))
+    }
+
+
+def _hash_value(value: Any) -> str:
+    if isinstance(value, dict) and value.get("Hash") is not None:
+        return str(value["Hash"])
+    return ""
 
 
 def _rows_by_id(

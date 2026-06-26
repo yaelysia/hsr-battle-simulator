@@ -274,7 +274,7 @@ def _synthetic_card(
             "AbilityNameList": [],
         },
     )
-    return _monster_card(tbgd_root, monster_id, monster_record, template_rows, skill_rows)
+    return _monster_card(tbgd_root, monster_id, monster_record, template_rows, skill_rows, {})
 
 
 def _synthetic_template_record(template_id: str, sequence_skill_id: int) -> _RowRecord:

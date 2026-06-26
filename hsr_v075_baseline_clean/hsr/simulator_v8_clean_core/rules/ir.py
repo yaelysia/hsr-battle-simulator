@@ -268,6 +268,7 @@ class MonsterDataCardIR:
     coverage_status: CoverageStatus = "blocked"
     blocked_reason: str = ""
     schema_version: str = "v0_277"
+    display: dict[str, JSONValue] = field(default_factory=dict)
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -277,6 +278,7 @@ class MonsterDataCardIR:
             "monster_id": self.monster_id,
             "template_id": self.template_id,
             "rank": self.rank,
+            "display": self.display,
             "profile_id": self.profile_id,
             "action_set_id": self.action_set_id,
             "skill_ids": list(self.skill_ids),
