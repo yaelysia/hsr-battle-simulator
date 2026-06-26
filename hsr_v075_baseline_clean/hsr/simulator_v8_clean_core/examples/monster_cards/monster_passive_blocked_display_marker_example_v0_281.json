@@ -1,0 +1,129 @@
+{
+  "checks": {
+    "checks": {
+      "blocked_flag_visible": true,
+      "blocked_reason_is_partial_startup": true,
+      "blocked_task_is_show_boss_info_bar": true,
+      "card_links_passive_slot": true,
+      "no_startup_trace_applied": true,
+      "not_enabled_flag": true,
+      "ok": true,
+      "slot_blocked": true,
+      "slot_source_is_ability_name_list": true,
+      "status_details_not_added": true,
+      "status_not_added": true
+    },
+    "ok": true
+  },
+  "identity": {
+    "ability_name": "Monster_Common_BossInfoBar",
+    "display": {
+      "display_only": true,
+      "introduction_hash": "5861951648336611690",
+      "localized_introductions": {
+        "CHS": "贝洛伯格的戍卫部队「银鬃铁卫」分队的领导者。\\n战斗中，银鬃尉官会架起巨盾并强化自身。攻击架盾状态下的银鬃尉官，会立即遭到强力的反击。",
+        "EN": "The leader of a squad of Belobog's Silvermane Guards.\\nSilvermane Lieutenants can raise a giant shield during combat and Enhance themselves. Attacking a Silvermane Lieutenant with their shield raised will immediately result in a fierce Counter."
+      },
+      "localized_names": {
+        "CHS": "银鬃尉官",
+        "EN": "Silvermane Lieutenant"
+      },
+      "name_hash": "9874079526424322448",
+      "runtime_rule_source": false,
+      "source": "TextMap CHS/EN loaded in monster card builder"
+    },
+    "entity_ref": "monster:100301004",
+    "monster_id": "100301004",
+    "passive_slot_id": "passive_mechanism_slot:monster:100301004:ability:0:Monster_Common_BossInfoBar"
+  },
+  "passive_startup_traces": [],
+  "schema_version": "v8_monster_passive_blocked_display_marker_example_v0_281",
+  "slot": {
+    "activation": {
+      "callback_kind": "OnStart",
+      "default_enabled": true,
+      "kind": "monster_passive_startup_ability_candidate",
+      "source_field": "AbilityNameList",
+      "source_index": 0
+    },
+    "blocked_reason": "monster_passive_startup_root_on_start_has_unadmitted_tasks",
+    "coverage_status": "blocked",
+    "data_card_id": "monster_data_card:monster:100301004",
+    "data_card_kind": "monster",
+    "linked_ir_ids": {
+      "ability_file_path": "Config/ConfigAbility/Monster/Monster_Common_Ability.json",
+      "ability_file_paths": [
+        "Config/ConfigAbility/Monster/Monster_Common_Ability.json"
+      ],
+      "ability_name": "Monster_Common_BossInfoBar",
+      "monster_id": "100301004"
+    },
+    "mechanism_kind": "monster_ability_list_passive",
+    "owner_entity_ref": "monster:100301004",
+    "passive_slot_id": "passive_mechanism_slot:monster:100301004:ability:0:Monster_Common_BossInfoBar",
+    "runtime_system": "startup_status_system",
+    "semantics": {
+      "ability_file_paths": [
+        "Config/ConfigAbility/Monster/Monster_Common_Ability.json"
+      ],
+      "ability_name": "Monster_Common_BossInfoBar",
+      "admission_policy": "only_root_on_start_add_modifier_without_dynamic_or_event_trigger_v0_281",
+      "event_trigger_execution_admitted": false,
+      "source_field": "AbilityNameList",
+      "startup_admission": {
+        "admission_status": "blocked",
+        "blocked_reason": "monster_passive_startup_root_on_start_has_unadmitted_tasks",
+        "blocked_tasks": [
+          {
+            "blocked_reason": "root_on_start_task_not_admitted:ShowBossInfoBar",
+            "effect_id": "effect:ability_task:standalone_ability_phase:Config_ConfigAbility_Monster_Monster_Common_Ability_json:4:Monster_Common_BossInfoBar:OnStart:OnStart[0]:ShowBossInfoBar",
+            "opcode": "ShowBossInfoBar",
+            "task_id": "ability_task:standalone_ability_phase:Config_ConfigAbility_Monster_Monster_Common_Ability_json:4:Monster_Common_BossInfoBar:OnStart:OnStart[0]:ShowBossInfoBar"
+          }
+        ],
+        "standalone_ability_graph_id": "standalone_ability_graph:Config_ConfigAbility_Monster_Monster_Common_Ability_json:Monster_Common_BossInfoBar"
+      }
+    },
+    "source": {
+      "evidence": {
+        "ability_file_paths": [
+          "Config/ConfigAbility/Monster/Monster_Common_Ability.json"
+        ],
+        "ability_name": "Monster_Common_BossInfoBar",
+        "ability_resolution_status": "unique",
+        "builder": "monster_passive_slot_v0_281",
+        "raw_path": "AbilityNameList[0]",
+        "row_index": 171
+      },
+      "raw_id": "100301004",
+      "raw_type": "MonsterConfig",
+      "source_path": "ExcelOutput/MonsterConfig.json"
+    }
+  },
+  "state_summary": {
+    "blocked_passive_mechanism_slots": [
+      {
+        "blocked_reason": "monster_passive_startup_root_on_start_has_unadmitted_tasks",
+        "passive_slot_id": "passive_mechanism_slot:monster:100301004:ability:0:Monster_Common_BossInfoBar",
+        "source": {
+          "evidence": {
+            "ability_file_paths": [
+              "Config/ConfigAbility/Monster/Monster_Common_Ability.json"
+            ],
+            "ability_name": "Monster_Common_BossInfoBar",
+            "ability_resolution_status": "unique",
+            "builder": "monster_passive_slot_v0_281",
+            "raw_path": "AbilityNameList[0]",
+            "row_index": 171
+          },
+          "raw_id": "100301004",
+          "raw_type": "MonsterConfig",
+          "source_path": "ExcelOutput/MonsterConfig.json"
+        }
+      }
+    ],
+    "enabled_passive_mechanism_slot_ids": [],
+    "status_detail_count": 0,
+    "statuses": []
+  }
+}

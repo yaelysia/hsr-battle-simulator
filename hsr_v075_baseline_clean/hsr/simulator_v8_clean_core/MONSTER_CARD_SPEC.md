@@ -51,9 +51,12 @@ v0_281 起怪物被动进入通用 `PassiveMechanismSlotIR`：
 - `MonsterSkill.ModifierList` 属于技能附带效果来源，本阶段不作为被动来源。
 - ability name 必须唯一定位到 `Config/ConfigAbility/Monster/**/*.json`；缺失或歧义必须 blocked。
 - 第一阶段只 admission 根级 `OnStart` 下的 `AddModifier`，且目标别名只允许 `Caster` / `ModifierOwnerEntity`。
+- 如果根级 `OnStart` 混有本阶段未 admission 的 task，即使其中存在 `AddModifier`，也必须整体 blocked，禁止半截执行。
 - AddModifier 若请求动态值但没有结构化绑定，必须 blocked，不允许自造默认值。
 - 将要添加的 modifier 若带事件 trigger，必须 blocked，避免事件类被动在未 admission 时被现有事件分发系统误执行。
 - 事件触发、阶段、召唤、锁血、插队、波次相关被动只降槽位和覆盖报告，不产生 mutation。
+
+截至 v0_281，真实 `AbilityNameList` 数据中没有满足上述完整 admission 条件的可执行开场常驻被动。`BossInfoBar` 这类信息条 ability 会被标为 blocked/process-only，不进入状态列表。
 
 成功 admission 的开场常驻被动由 scenario 构建阶段转成 startup spec，并复用：
 

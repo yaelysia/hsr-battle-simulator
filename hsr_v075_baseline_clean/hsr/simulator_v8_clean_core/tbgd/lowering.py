@@ -3316,14 +3316,43 @@ def _admit_passive_startup_slot(
             },
         )
     graph = executable_graphs[0]
-    candidate_tasks = tuple(
+    root_on_start_tasks = tuple(
         task
         for phase_id in graph.phase_ids
         for task in tasks_by_phase.get(phase_id, ())
-        if task.callback_kind == "OnStart"
-        and not task.parent_task_id
-        and task.opcode == "AddModifier"
-        and task.effect_id
+        if task.callback_kind == "OnStart" and not task.parent_task_id
+    )
+    unadmitted_root_tasks = tuple(
+        task for task in root_on_start_tasks if task.opcode != "AddModifier" or not task.effect_id
+    )
+    if unadmitted_root_tasks:
+        reason = "monster_passive_startup_root_on_start_has_unadmitted_tasks"
+        return _passive_startup_blocked_slot(
+            slot,
+            reason,
+            {
+                **semantics,
+                "startup_admission": {
+                    "admission_status": "blocked",
+                    "blocked_reason": reason,
+                    "standalone_ability_graph_id": graph.standalone_ability_graph_id,
+                    "blocked_tasks": [
+                        {
+                            "task_id": task.task_id,
+                            "opcode": task.opcode,
+                            "effect_id": task.effect_id,
+                            "blocked_reason": f"root_on_start_task_not_admitted:{task.opcode}",
+                        }
+                        for task in unadmitted_root_tasks
+                    ],
+                },
+            },
+        )
+
+    candidate_tasks = tuple(
+        task
+        for task in root_on_start_tasks
+        if task.opcode == "AddModifier" and task.effect_id
     )
     if not candidate_tasks:
         return _passive_startup_blocked_slot(

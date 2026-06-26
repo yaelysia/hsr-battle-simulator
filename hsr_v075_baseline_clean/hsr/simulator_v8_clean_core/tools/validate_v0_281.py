@@ -31,12 +31,11 @@ def run_validation(
     ir = TBGDLowering(tbgd_root).build()
     rules = RuleBook(ir)
     static_result = run_static_checks(package_root)
-    slot = _select_executable_passive_slot(rules)
-    example_case = _startup_passive_execution_case(package_root.parent, rules, slot)
+    display_marker_case = _display_marker_blocked_case(package_root.parent, rules)
     coverage_case = _coverage_case(rules)
     boundary_case = _boundary_case(rules)
     checks = {
-        "startup_passive_execution": example_case["checks"],
+        "display_marker_blocked": display_marker_case["checks"],
         "coverage": coverage_case["checks"],
         "boundary": boundary_case["checks"],
         "static": {"ok": static_result.ok, "checks": {"static_checks": static_result.ok}},
@@ -50,16 +49,16 @@ def run_validation(
             "sampled": ir.metadata.get("sampled", {}),
         },
         "checks": checks,
-        "startup_passive_execution_case": example_case,
+        "display_marker_blocked_case": display_marker_case,
         "coverage_case": coverage_case,
         "boundary_case": boundary_case,
         "static_checks": static_result.to_json(),
     }
     output_dir.mkdir(parents=True, exist_ok=True)
     write_json(output_dir / "validation_summary_v0_281.json", result)
-    write_json(output_dir / "monster_passive_startup_example_v0_281.json", example_case)
+    write_json(output_dir / "monster_passive_blocked_display_marker_example_v0_281.json", display_marker_case)
     if example_output is not None:
-        write_json(example_output, example_case)
+        write_json(example_output, display_marker_case)
     return result
 
 
@@ -77,23 +76,27 @@ def main(argv: list[str] | None = None) -> int:
     return 0 if result["ok"] else 1
 
 
-def _select_executable_passive_slot(rules: RuleBook) -> PassiveMechanismSlotIR:
+def _select_display_marker_blocked_slot(rules: RuleBook) -> PassiveMechanismSlotIR:
     for slot in rules.ir.passive_mechanism_slots:
-        if slot.data_card_kind != "monster" or slot.coverage_status != "executable":
+        if slot.data_card_kind != "monster" or slot.coverage_status != "blocked":
+            continue
+        if slot.blocked_reason != "monster_passive_startup_root_on_start_has_unadmitted_tasks":
             continue
         startup = slot.semantics.get("startup_admission")
-        if not isinstance(startup, dict) or startup.get("admission_status") != "executable":
+        if not isinstance(startup, dict):
             continue
-        if not startup.get("admitted_tasks"):
+        blocked_tasks = startup.get("blocked_tasks") or ()
+        if not any(isinstance(task, dict) and task.get("opcode") == "ShowBossInfoBar" for task in blocked_tasks):
             continue
         card = rules.monster_data_card(slot.data_card_id)
         if card is None:
             continue
         return slot
-    raise RuntimeError("executable monster passive startup sample not found")
+    raise RuntimeError("blocked display marker passive sample not found")
 
 
-def _startup_passive_execution_case(hsr_root: Path, rules: RuleBook, slot: PassiveMechanismSlotIR) -> dict[str, Any]:
+def _display_marker_blocked_case(hsr_root: Path, rules: RuleBook) -> dict[str, Any]:
+    slot = _select_display_marker_blocked_slot(rules)
     card = rules.monster_data_card(slot.data_card_id)
     if card is None:
         raise RuntimeError(f"monster card missing for {slot.data_card_id}")
@@ -116,6 +119,9 @@ def _startup_passive_execution_case(hsr_root: Path, rules: RuleBook, slot: Passi
     status_details = enemy.flags.get("status_details")
     if not isinstance(status_details, (list, tuple)):
         status_details = ()
+    blocked_slots = enemy.flags.get("blocked_passive_mechanism_slots")
+    if not isinstance(blocked_slots, (list, tuple)):
+        blocked_slots = ()
     passive_traces = [
         trace
         for trace in built.source_traces
@@ -123,29 +129,34 @@ def _startup_passive_execution_case(hsr_root: Path, rules: RuleBook, slot: Passi
         and trace.get("kind") == "monster_passive_startup_ability"
         and trace.get("passive_slot_id") == slot.passive_slot_id
     ]
-    matching_details = [
-        detail
-        for detail in status_details
-        if isinstance(detail, dict)
-        and isinstance(detail.get("source_trace"), dict)
-        and detail["source_trace"].get("effect_id")
-    ]
     checks = {
-        "slot_executable": slot.coverage_status == "executable",
+        "slot_blocked": slot.coverage_status == "blocked",
+        "blocked_reason_is_partial_startup": slot.blocked_reason
+        == "monster_passive_startup_root_on_start_has_unadmitted_tasks",
+        "blocked_task_is_show_boss_info_bar": any(
+            isinstance(task, dict) and task.get("opcode") == "ShowBossInfoBar"
+            for task in (slot.semantics.get("startup_admission") or {}).get("blocked_tasks", ())
+        ),
         "slot_source_is_ability_name_list": slot.source.source_path == "ExcelOutput/MonsterConfig.json"
         and str(slot.source.evidence.get("raw_path", "")).startswith("AbilityNameList["),
         "card_links_passive_slot": slot.passive_slot_id in card.passive_mechanism_slot_ids,
-        "status_id_added": any(str(item).startswith("modifier:") for item in enemy.statuses),
-        "status_details_added": bool(status_details),
-        "startup_trace_applied": any(trace.get("status") == "applied" for trace in passive_traces),
-        "startup_trace_has_mutations": any(int(trace.get("mutation_count") or 0) > 0 for trace in passive_traces),
-        "status_trace_has_effect_source": bool(matching_details),
-        "passive_slot_enabled_flag": slot.passive_slot_id
-        in tuple(enemy.flags.get("enabled_passive_mechanism_slot_ids") or ()),
+        "status_not_added": not any(str(item) == "modifier:MCommon_BOSSInfoBar_Active" for item in enemy.statuses),
+        "status_details_not_added": not any(
+            isinstance(detail, dict) and detail.get("status_id") == "modifier:MCommon_BOSSInfoBar_Active"
+            for detail in status_details
+        ),
+        "no_startup_trace_applied": not passive_traces,
+        "not_enabled_flag": slot.passive_slot_id not in tuple(enemy.flags.get("enabled_passive_mechanism_slot_ids") or ()),
+        "blocked_flag_visible": any(
+            isinstance(item, dict)
+            and item.get("passive_slot_id") == slot.passive_slot_id
+            and item.get("blocked_reason") == "monster_passive_startup_root_on_start_has_unadmitted_tasks"
+            for item in blocked_slots
+        ),
     }
     checks["ok"] = all(value for key, value in checks.items() if key != "ok")
     return {
-        "schema_version": "v8_monster_passive_startup_example_v0_281",
+        "schema_version": "v8_monster_passive_blocked_display_marker_example_v0_281",
         "checks": {"ok": checks["ok"], "checks": checks},
         "identity": {
             "monster_id": card.monster_id,
@@ -159,6 +170,7 @@ def _startup_passive_execution_case(hsr_root: Path, rules: RuleBook, slot: Passi
             "statuses": list(enemy.statuses),
             "status_detail_count": len(status_details),
             "enabled_passive_mechanism_slot_ids": list(enemy.flags.get("enabled_passive_mechanism_slot_ids") or ()),
+            "blocked_passive_mechanism_slots": list(blocked_slots),
         },
         "passive_startup_traces": passive_traces,
     }
@@ -183,11 +195,16 @@ def _coverage_case(rules: RuleBook) -> dict[str, Any]:
             and str(slot.source.evidence.get("raw_path", "")).startswith("AbilityNameList[")
             for slot in slots
         ),
-        "has_executable_startup_passive": by_status.get("executable", 0) > 0,
+        "no_executable_startup_passive_until_real_sample": by_status.get("executable", 0) == 0,
+        "display_marker_startup_blocked": by_blocked.get(
+            "monster_passive_startup_root_on_start_has_unadmitted_tasks", 0
+        )
+        > 0,
         "has_missing_ability_blocked": by_blocked.get("monster_passive_ability_missing", 0) > 0,
         "has_non_startup_or_non_add_modifier_blocked": (
             by_blocked.get("monster_passive_startup_on_start_add_modifier_missing", 0)
             + by_blocked.get("monster_passive_startup_no_admitted_on_start_add_modifier", 0)
+            + by_blocked.get("monster_passive_startup_root_on_start_has_unadmitted_tasks", 0)
         )
         > 0,
         "has_event_trigger_blocked": nested_blocked.get("monster_passive_startup_modifier_has_event_triggers", 0) > 0,

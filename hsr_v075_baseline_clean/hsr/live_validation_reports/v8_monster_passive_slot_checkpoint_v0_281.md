@@ -7,42 +7,46 @@
 - 怪物被动来源只承认 `MonsterConfig.AbilityNameList`。
 - `MonsterSkill.ModifierList` 保持为技能槽字段，不进入被动槽位。
 - 被动 ability name 通过结构化索引唯一定位 `Config/ConfigAbility/Monster/**/*.json`；缺失或歧义 blocked。
-- 第一阶段只 admission 根级 `OnStart + AddModifier` 常驻被动。
-- 被动初始化复用现有链路：
+- 第一阶段只允许根级 `OnStart + AddModifier` 常驻被动进入候选。
+- 如果根级 `OnStart` 混有本阶段未 admission 的 task，即使同一个 ability 里还有 `AddModifier`，也整体 blocked，禁止半截执行。
+- 当前真实数据中没有一个 `AbilityNameList` 槽位满足完整可执行 admission 条件，因此本阶段没有 runtime 被动 mutation。
+- 后续若出现完整 admission 的开场常驻被动，会复用现有链路：
   `StandaloneAbilityGraphIR -> AbilityTaskIR -> EffectIR(AddModifier) -> StatusSystem.apply_add_modifier`。
 - 带事件 trigger 的 modifier 被 blocked，避免事件类被动在未 admission 时进入可触发状态。
-- scenario 构建阶段会把 executable passive slot 转为 startup spec，并只执行 admission 中列出的 task。
+- scenario 构建阶段只会把 executable passive slot 转为 startup spec；当前所有真实怪物 passive slot 都保持 blocked。
 
 ## 样例结果
 
-样例输出：
+纠偏样例输出：
 
-`simulator_v8_clean_core/examples/monster_cards/monster_passive_startup_example_v0_281.json`
+`simulator_v8_clean_core/examples/monster_cards/monster_passive_blocked_display_marker_example_v0_281.json`
 
-当前结构化选择实际选中：
+当前结构化选择实际选中一个反例：
 
 - 怪物：`银鬃尉官 / Silvermane Lieutenant`
 - `MonsterID=100301004`
 - 被动来源：`MonsterConfig.AbilityNameList[0]`
 - ability：`Monster_Common_BossInfoBar`
 - 被动槽位：`passive_mechanism_slot:monster:100301004:ability:0:Monster_Common_BossInfoBar`
-- 初始化结果：挂上 `modifier:MCommon_BOSSInfoBar_Active`
-- startup trace 显示 `status=applied`，`mutation_count=2`
+- 判定结果：blocked。
+- 阻塞原因：根级 `OnStart` 包含 `ShowBossInfoBar`，本阶段未 admission。
+- 初始化结果：不挂 `modifier:MCommon_BOSSInfoBar_Active`，不产生 startup trace，不产生 mutation。
 
-该样例按结构化谓词选择，不按固定 MonsterID、ability name 或展示名选择主路径。
+该反例按结构化谓词选择，不按固定 MonsterID、ability name 或展示名驱动 runtime。
 
 ## 覆盖统计
 
 `validate_v0_281` 当前统计：
 
 - `AbilityNameList` 引用降出的 passive slot：309。
-- executable 开场常驻被动：8。
-- blocked：301。
+- executable 开场常驻被动：0。
+- blocked：309。
 - missing ability：20。
 - ability graph not executable：232。
-- 缺根级 `OnStart/AddModifier`：9。
-- 无可 admission 的 `OnStart/AddModifier`：40。
-- 因 modifier 带事件 trigger 被 blocked 的 task：64。
+- 无可 admission 的 `OnStart/AddModifier`：29。
+- 根级 `OnStart` 混有未 admission task：28。
+- 因 modifier 带事件 trigger 被 blocked 的 task：42。
+- `ShowBossInfoBar` blocked task：9。
 
 ## 验证结果
 
@@ -51,13 +55,14 @@
 ```bash
 cd hsr_v075_baseline_clean/hsr
 PYTHONDONTWRITEBYTECODE=1 python3 -m compileall -q simulator_v8_clean_core simulator_v8_ui
-PYTHONDONTWRITEBYTECODE=1 python3 -m simulator_v8_clean_core.tools.validate_v0_281 --output-dir /tmp/hsr_v8_monster_passive_v0_281 --example-output simulator_v8_clean_core/examples/monster_cards/monster_passive_startup_example_v0_281.json
+PYTHONDONTWRITEBYTECODE=1 python3 -m simulator_v8_clean_core.tools.validate_v0_281 --output-dir /tmp/hsr_v8_monster_passive_v0_281 --example-output simulator_v8_clean_core/examples/monster_cards/monster_passive_blocked_display_marker_example_v0_281.json
 ```
 
 当前已完成：
 
 - `compileall simulator_v8_clean_core` 通过。
 - `validate_v0_281` 通过，`ok=true`。
+- `BossInfoBar` 信息条不再进入状态列表。
 
 ## 未完成
 
