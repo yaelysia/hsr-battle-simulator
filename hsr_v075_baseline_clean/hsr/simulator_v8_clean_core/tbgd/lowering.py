@@ -282,6 +282,12 @@ class TBGDLowering:
         effects.extend(standalone_effects)
         conditions.extend(standalone_conditions)
         formulas.extend(standalone_formulas)
+        character_mechanism_slots = _admit_trace_startup_ability_slots(
+            character_mechanism_slots,
+            standalone_graphs=standalone_ability_graphs,
+            ability_tasks=ability_tasks,
+            effects=effects,
+        )
         skill_continuations = _skill_continuations_from_ability_tasks(ability_tasks)
         combatant_action_sets = self._lower_combatant_action_sets(action_definitions)
         queue_resolutions = _lower_queue_resolutions(
@@ -2515,6 +2521,261 @@ def _character_runtime_mechanism_slots(
     return _dedupe_character_mechanism_slots(slots)
 
 
+def _admit_trace_startup_ability_slots(
+    slots: list[CharacterMechanismSlotIR],
+    *,
+    standalone_graphs: list[StandaloneAbilityGraphIR],
+    ability_tasks: list[AbilityTaskIR],
+    effects: list[EffectIR],
+) -> list[CharacterMechanismSlotIR]:
+    graphs_by_name: dict[str, list[StandaloneAbilityGraphIR]] = {}
+    for graph in standalone_graphs:
+        graphs_by_name.setdefault(graph.ability_name, []).append(graph)
+    tasks_by_phase: dict[str, list[AbilityTaskIR]] = {}
+    for task in ability_tasks:
+        tasks_by_phase.setdefault(task.phase_id, []).append(task)
+    effects_by_id = {effect.effect_id: effect for effect in effects}
+    admitted: list[CharacterMechanismSlotIR] = []
+    for slot in slots:
+        if slot.mechanism_kind != "trace_ability_hook":
+            admitted.append(slot)
+            continue
+        admitted.append(
+            _admit_trace_startup_ability_slot(
+                slot,
+                graphs_by_name=graphs_by_name,
+                tasks_by_phase=tasks_by_phase,
+                effects_by_id=effects_by_id,
+            )
+        )
+    return admitted
+
+
+def _admit_trace_startup_ability_slot(
+    slot: CharacterMechanismSlotIR,
+    *,
+    graphs_by_name: dict[str, list[StandaloneAbilityGraphIR]],
+    tasks_by_phase: dict[str, list[AbilityTaskIR]],
+    effects_by_id: dict[str, EffectIR],
+) -> CharacterMechanismSlotIR:
+    evidence = slot.source.evidence if isinstance(slot.source.evidence, dict) else {}
+    if evidence.get("enhanced_id") is None:
+        return slot
+    semantics = dict(slot.semantics)
+    ability_name = str(semantics.get("ability_name") or slot.linked_ir_ids.get("ability_name") or "")
+    if not ability_name:
+        return _trace_startup_blocked_slot(slot, "trace_ability_name_missing", semantics)
+    graph_candidates = tuple(sorted(graphs_by_name.get(ability_name, ()), key=lambda item: item.standalone_ability_graph_id))
+    executable_graphs = tuple(graph for graph in graph_candidates if graph.coverage_status == "executable")
+    if len(executable_graphs) != 1:
+        reason = "trace_startup_graph_missing_or_ambiguous"
+        if graph_candidates and not executable_graphs:
+            reason = "trace_startup_graph_not_executable"
+        return _trace_startup_blocked_slot(
+            slot,
+            reason,
+            {
+                **semantics,
+                "startup_admission": {
+                    "admission_status": "blocked",
+                    "blocked_reason": reason,
+                    "ability_name": ability_name,
+                    "candidate_graph_ids": [graph.standalone_ability_graph_id for graph in graph_candidates],
+                    "candidate_graph_statuses": [graph.coverage_status for graph in graph_candidates],
+                },
+            },
+        )
+    graph = executable_graphs[0]
+    candidate_tasks = tuple(
+        task
+        for phase_id in graph.phase_ids
+        for task in tasks_by_phase.get(phase_id, ())
+        if task.callback_kind == "OnStart"
+        and not task.parent_task_id
+        and task.opcode == "AddModifier"
+        and task.effect_id
+    )
+    if not candidate_tasks:
+        return _trace_startup_blocked_slot(
+            slot,
+            "trace_startup_on_start_add_modifier_missing",
+            {
+                **semantics,
+                "startup_admission": {
+                    "admission_status": "blocked",
+                    "blocked_reason": "trace_startup_on_start_add_modifier_missing",
+                    "standalone_ability_graph_id": graph.standalone_ability_graph_id,
+                },
+            },
+        )
+    admitted_tasks: list[dict[str, JSONValue]] = []
+    blocked_tasks: list[dict[str, JSONValue]] = []
+    for task in candidate_tasks:
+        effect = effects_by_id.get(task.effect_id)
+        if effect is None:
+            blocked_tasks.append({"task_id": task.task_id, "blocked_reason": "trace_startup_effect_missing"})
+            continue
+        effect_reason = _trace_startup_effect_blocked_reason(effect)
+        if effect_reason:
+            blocked_tasks.append(
+                {
+                    "task_id": task.task_id,
+                    "effect_id": effect.effect_id,
+                    "blocked_reason": effect_reason,
+                    "effect_coverage_status": effect.coverage_status,
+                }
+            )
+            continue
+        dynamic_admission = _trace_startup_dynamic_binding_admission(effect.payload.get("standard"), semantics)
+        if dynamic_admission.get("admission_status") == "blocked":
+            blocked_tasks.append(
+                {
+                    "task_id": task.task_id,
+                    "effect_id": effect.effect_id,
+                    "blocked_reason": str(dynamic_admission.get("blocked_reason") or "trace_dynamic_binding_blocked"),
+                    "dynamic_value_binding": dynamic_admission,
+                }
+            )
+            continue
+        admitted_tasks.append(
+            {
+                "task_id": task.task_id,
+                "effect_id": effect.effect_id,
+                "dynamic_value_binding": _json_safe(dynamic_admission),
+            }
+        )
+    if not admitted_tasks:
+        return _trace_startup_blocked_slot(
+            slot,
+            "trace_startup_no_admitted_on_start_add_modifier",
+            {
+                **semantics,
+                "startup_admission": {
+                    "admission_status": "blocked",
+                    "blocked_reason": "trace_startup_no_admitted_on_start_add_modifier",
+                    "standalone_ability_graph_id": graph.standalone_ability_graph_id,
+                    "blocked_tasks": blocked_tasks,
+                },
+            },
+        )
+    return replace(
+        slot,
+        semantics={
+            **semantics,
+            "startup_admission": {
+                "admission_status": "executable",
+                "startup_kind": "trace_on_start_add_modifier",
+                "standalone_ability_graph_id": graph.standalone_ability_graph_id,
+                "admitted_tasks": admitted_tasks,
+                "blocked_tasks": blocked_tasks,
+            },
+        },
+        coverage_status="executable",
+        blocked_reason="",
+    )
+
+
+def _trace_startup_blocked_slot(
+    slot: CharacterMechanismSlotIR,
+    reason: str,
+    semantics: dict[str, JSONValue],
+) -> CharacterMechanismSlotIR:
+    return replace(
+        slot,
+        semantics=semantics,
+        coverage_status="blocked",
+        blocked_reason=reason,
+    )
+
+
+def _trace_startup_effect_blocked_reason(effect: EffectIR) -> str:
+    if effect.opcode != "AddModifier":
+        return f"trace_startup_effect_opcode_not_add_modifier:{effect.opcode}"
+    if effect.coverage_status != "executable":
+        return f"trace_startup_effect_not_executable:{effect.coverage_status}"
+    standard = effect.payload.get("standard")
+    if not isinstance(standard, dict):
+        return "trace_startup_effect_standard_payload_missing"
+    modifier_name = standard.get("modifier_name")
+    if not isinstance(modifier_name, str) or not modifier_name:
+        return "trace_startup_effect_modifier_name_missing"
+    target_alias = standard.get("target_alias")
+    if target_alias not in {"Caster", "ModifierOwnerEntity"}:
+        return f"trace_startup_effect_target_alias_not_admitted:{target_alias}"
+    return ""
+
+
+def _trace_startup_dynamic_binding_admission(
+    standard: object,
+    semantics: dict[str, JSONValue],
+) -> dict[str, JSONValue]:
+    if not isinstance(standard, dict):
+        return {"admission_status": "blocked", "blocked_reason": "trace_startup_standard_payload_missing"}
+    requests = standard.get("dynamic_value_requests")
+    if not isinstance(requests, dict) or not requests:
+        return {"admission_status": "not_applicable", "reason": "no_dynamic_value_requests"}
+    configured_bindings = semantics.get("dynamic_value_bindings")
+    configured_by_hash = configured_bindings.get("by_hash") if isinstance(configured_bindings, dict) else None
+    if not isinstance(configured_by_hash, dict) or not configured_by_hash:
+        return {
+            "admission_status": "blocked",
+            "blocked_reason": "trace_skill_tree_dynamic_value_bindings_missing",
+        }
+    params = tuple(_number_items(semantics.get("param_values")))
+    bindings: list[dict[str, JSONValue]] = []
+    for name, request in requests.items():
+        if not isinstance(request, dict):
+            continue
+        raw_hash = request.get("hash")
+        if raw_hash is None:
+            return {
+                "admission_status": "blocked",
+                "blocked_reason": "trace_dynamic_value_request_hash_missing",
+                "request_name": str(name),
+            }
+        configured = configured_by_hash.get(str(raw_hash))
+        if not isinstance(configured, dict):
+            return {
+                "admission_status": "blocked",
+                "blocked_reason": "trace_dynamic_value_binding_hash_missing",
+                "request_name": str(name),
+                "hash": str(raw_hash),
+            }
+        param_index = configured.get("param_index")
+        if not isinstance(param_index, int):
+            return {
+                "admission_status": "blocked",
+                "blocked_reason": "trace_dynamic_value_binding_param_index_missing",
+                "request_name": str(name),
+                "hash": str(raw_hash),
+                "binding": _json_safe(configured),
+            }
+        if param_index < 0 or param_index >= len(params):
+            return {
+                "admission_status": "blocked",
+                "blocked_reason": "trace_dynamic_value_binding_param_index_out_of_range",
+                "request_name": str(name),
+                "hash": str(raw_hash),
+                "param_index": param_index,
+                "param_count": len(params),
+            }
+        bindings.append(
+            {
+                "name": str(name),
+                "hash": str(raw_hash),
+                "param_index": param_index,
+                "value": float(params[param_index]),
+                "binding_source_kind": "character_config_skill_tree_param_read_info",
+                "binding_source": _json_safe(configured),
+            }
+        )
+    return {
+        "admission_status": "executable",
+        "source_kind": "trace_skill_tree_param_to_startup_ability_dynamic_value_request",
+        "bindings": bindings,
+    }
+
+
 def _attach_character_runtime_mechanism_slots(
     cards: list[CharacterDataCardIR],
     slots: list[CharacterMechanismSlotIR],
@@ -4074,6 +4335,17 @@ def _number_value(value: Any, default: float) -> float:
     if isinstance(value, (int, float)):
         return float(value)
     return default
+
+
+def _number_items(value: Any) -> tuple[float, ...]:
+    if not isinstance(value, (list, tuple)):
+        return ()
+    result: list[float] = []
+    for item in value:
+        number = _number_value(item, default=float("nan"))
+        if number == number:
+            result.append(number)
+    return tuple(result)
 
 
 def _required_number(row: dict[str, Any], key: str) -> float | None:

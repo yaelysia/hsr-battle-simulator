@@ -1,0 +1,80 @@
+{
+  "global_flags": {
+    "current_window": "idle",
+    "phase": "scenario"
+  },
+  "max_skill_points": 5,
+  "metadata": {
+    "ui_aliases": {
+      "actions": {
+        "avatar_skill:101401": "普攻"
+      },
+      "entities": {
+        "avatar:1014": "我方测试角色",
+        "monster:1002011": "测试敌人"
+      },
+      "units": {
+        "ally:saber": "我方测试角色",
+        "enemy:target": "测试敌人"
+      }
+    }
+  },
+  "rng_state": "deterministic",
+  "route": [
+    {
+      "action_level": 10,
+      "action_ref": "avatar_skill:101401",
+      "actor_id": "ally:saber",
+      "metadata": {
+        "label": "Saber normal attack identity smoke",
+        "reset_actor_av": true
+      },
+      "source": "manual",
+      "target_ids": [
+        "enemy:target"
+      ]
+    }
+  ],
+  "scenario_id": "identity_smoke_v0_204",
+  "skill_points": 3,
+  "units": [
+    {
+      "entity_ref": "avatar:1014",
+      "level": 80,
+      "panel": {
+        "attack": 3200,
+        "defense": 900,
+        "energy": 60,
+        "hp": 3000,
+        "max_energy": 120,
+        "max_hp": 3000,
+        "resources": {
+          "critical_chance": 0.05,
+          "critical_damage": 0.5
+        },
+        "speed": 101
+      },
+      "position": 1,
+      "side": "ally",
+      "unit_id": "ally:saber"
+    },
+    {
+      "entity_ref": "monster:1002011",
+      "level": 80,
+      "panel": {
+        "attack": 1000,
+        "defense": 1000,
+        "hp": 10000,
+        "max_hp": 10000,
+        "max_toughness": 60,
+        "speed": 100,
+        "toughness": 60
+      },
+      "position": 1,
+      "side": "enemy",
+      "unit_id": "enemy:target"
+    }
+  ],
+  "version": "v0_204",
+  "wave_index": 0
+}

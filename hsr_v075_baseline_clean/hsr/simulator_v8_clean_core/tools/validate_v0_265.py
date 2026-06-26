@@ -372,11 +372,18 @@ def _trace_and_eidolon_case(rules: RuleBook, card: CharacterDataCardIR) -> dict[
         "trace_slots_present": bool(trace_slots),
         "trace_toggle_enables_slots": bool(active_with_trace),
         "trace_toggle_disables_slots": not active_without_trace,
-        "trace_static_stat_slots_admitted_or_blocked_with_reason": all(
+        "trace_slots_admitted_or_blocked_with_reason": all(
             (
                 slot.mechanism_kind == "trace_static_stat_bonus"
                 and slot.coverage_status == "executable"
                 and not slot.blocked_reason
+            )
+            or (
+                slot.mechanism_kind == "trace_ability_hook"
+                and slot.coverage_status == "executable"
+                and not slot.blocked_reason
+                and isinstance(slot.semantics.get("startup_admission"), dict)
+                and slot.semantics.get("startup_admission", {}).get("admission_status") == "executable"
             )
             or (
                 slot.coverage_status != "executable"

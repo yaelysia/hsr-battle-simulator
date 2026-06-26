@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>星穹铁道 v8 测试台</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <h1>星穹铁道 v8 测试台</h1>
+        <p id="health">未连接</p>
+      </div>
+      <div class="toolbar">
+        <select id="caseSelect" aria-label="用例"></select>
+        <input id="caseId" type="text" value="identity_smoke_v0_204" aria-label="用例编号">
+        <button id="loadCaseBtn" type="button">加载</button>
+        <button id="saveCaseBtn" type="button">保存</button>
+        <button id="runBtn" type="button">运行</button>
+      </div>
+    </header>
+
+    <main class="battleShell">
+      <aside class="timelinePane">
+        <section class="panelBlock">
+          <div class="sectionTitle">
+            <h2>行动条</h2>
+            <span id="globalAv" class="mutedText">全局行动值 -</span>
+          </div>
+          <div id="timelineList" class="timelineList"></div>
+        </section>
+        <section class="panelBlock">
+          <h2>队列</h2>
+          <div id="queueList" class="queueList"></div>
+        </section>
+        <section class="panelBlock">
+          <h2>路线</h2>
+          <div id="routeList" class="routeList"></div>
+          <div class="routeActions">
+            <button id="undoRouteBtn" type="button">撤销最后一步</button>
+          </div>
+        </section>
+      </aside>
+
+      <section class="battlePane">
+        <div id="message" class="message"></div>
+        <section id="actionPrompt" class="actionPrompt"></section>
+
+        <section class="battlefield" aria-label="战场">
+          <div>
+            <div class="laneHeader">敌方</div>
+            <div id="enemyRow" class="unitRow enemyRow"></div>
+          </div>
+          <div class="fieldDivider"></div>
+          <div>
+            <div class="laneHeader">我方</div>
+            <div id="allyRow" class="unitRow allyRow"></div>
+          </div>
+        </section>
+
+        <section class="advancedArea">
+          <details>
+            <summary>高级：测试用例 JSON</summary>
+            <textarea id="scenarioEditor" spellcheck="false"></textarea>
+          </details>
+          <details>
+            <summary>游戏观测对照 JSON</summary>
+            <textarea id="observationsEditor" spellcheck="false">{}</textarea>
+          </details>
+          <details>
+            <summary>运行选项</summary>
+            <div class="optionGrid">
+              <label><input type="radio" name="mode" value="scheduler" checked> 完整流程</label>
+              <label><input type="radio" name="mode" value="executor"> 只跑动作</label>
+              <label><input id="initTimeline" type="checkbox" checked> 初始化行动条</label>
+              <label><input id="writeTmp" type="checkbox" checked> 写入临时报告</label>
+            </div>
+          </details>
+        </section>
+      </section>
+
+      <aside class="eventPane">
+        <section class="panelBlock">
+          <div class="sectionTitle">
+            <h2>事件回放</h2>
+            <span id="runState" class="mutedText">未运行</span>
+          </div>
+          <div id="eventReplay" class="eventReplay"></div>
+        </section>
+        <section class="panelBlock">
+          <h2>伤害审计</h2>
+          <div id="damageAudit" class="auditList"></div>
+        </section>
+        <section class="panelBlock">
+          <h2>阻塞与来源</h2>
+          <div id="blockedAudit" class="auditList"></div>
+        </section>
+      </aside>
+    </main>
+
+    <section id="detailDrawer" class="detailDrawer" aria-label="详情">
+      <div class="drawerHeader">
+        <div>
+          <h2 id="drawerTitle">详情</h2>
+          <p id="drawerSubtitle"></p>
+        </div>
+        <button id="closeDrawerBtn" type="button">关闭</button>
+      </div>
+      <div id="drawerContent" class="drawerContent"></div>
+    </section>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

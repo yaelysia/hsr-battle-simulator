@@ -98,20 +98,41 @@ v8 最终必须覆盖星穹铁道战斗运行时的核心机制：
 
 ## 阶段目标
 
-v8 里程碑按结果划分：
+v8 当前已推进到：
 
-- `v0_200`：TBGD-first 独立基线，Canonical IR、coverage、snapshot replay 基础可用。
-- `v0_201`：工作流设计冻结。
-- `v0_202`：项目目标与禁止事项冻结。
-- `v0_203`：完整快照规格和 fidelity matrix 可验证。
-- `v0_204`：scenario 与身份解析可用。
-- `v0_205`：target、resource、timeline 基础可用。
-- `v0_206`：direct damage 完整纵切链路可用。
-- `v0_207`：formula 与 modifier ledger 可用。
-- `v0_208`：status lifecycle 可用。
-- `v0_209`：toughness、break、trigger、queue 可用。
-- `v0_210`：DoT、super-break、heal、shield、summon、enemy、wave 可用。
-- `v0_211+`：C0-C8 与更多实战案例重建，并逐步收敛到游戏一致结算。
+```text
+v0_272 global source genericity audit
+```
+
+当前已落地的核心范围：
+
+- TBGD lowering、Canonical IR、RuleBook、coverage/static checks。
+- 完整快照、Mutation replay、transition contract、settlement traceability、source audit。
+- action definition、ability binding、ability phase/task、effect/status callback、event dispatch。
+- target、resource、timeline scheduler、queue/window、extra action 语义的当前可信底座。
+- direct、DoT、hp loss、break、break DoT、super-break、target group、bounce、damage source frame、击杀归因。
+- 普通状态生命周期，buff/debuff 统一按 unit-attached status lifecycle 处理，特殊生命周期必须有显式来源。
+- 动态值绑定、状态实例动态值、DynamicValueStore。
+- 角色数据卡接口、公式槽位、行迹/星魂通用接口，以及加强版希儿示例卡。
+
+当前仍未完整落地的大块：
+
+- 完整角色面板装配：晋阶、行迹全量、装备、光锥、遗器、套装。
+- 更多角色卡人工解释与验证。
+- 敌方 AI、敌方完整行动选择、波次系统。
+- 召唤物、assistant、特殊战斗模式。
+- 光锥、遗器、环境、关卡机制。
+- `OnCustomEvent`、`OnWaveMonster` 等需要真实事件源或波次系统的回调。
+
+后续阶段目标按“可证明来源 + 通用接口 + 负例不改状态”推进，不再以单个版本号提前承诺整块机制已完整。
+
+每个新机制完成时必须同时满足：
+
+- runtime 只读 Canonical IR / 角色卡 IR。
+- 可执行路径有真实 TBGD / 角色卡 source trace。
+- 缺来源、缺条件、缺目标、缺公式时 blocked/process-only 且 snapshot unchanged。
+- 验证样例主路径按结构化谓词选择，不靠固定文件、固定 hash、固定角色或观测结果。
+- 如果该机制只是 `engine_convention`，必须显式标记，不得伪装为 TBGD 来源。
 
 ## 完成定义
 
@@ -126,4 +147,3 @@ v8 只有在满足以下条件时，才算接近最终成品：
 - 未支持机制不会被误判为已支持。
 - 结算数值可以追溯到来源、公式、状态和 mutation。
 - 关键高难案例可以复现，并且差异能定位到具体机制。
-

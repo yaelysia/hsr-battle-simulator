@@ -148,6 +148,10 @@ def build_character_card_ir(
     trace_nodes, trace_slots = _trace_nodes_and_slots(
         tbgd_root,
         avatar_id_to_card=avatar_id_to_card,
+        dynamic_value_bindings_by_avatar_version=_character_config_dynamic_value_bindings_by_avatar_version(
+            tbgd_root,
+            max_records_per_table=max_records_per_table,
+        ),
         max_records_per_table=max_records_per_table,
     )
     trace_nodes = list({node.trace_node_id: node for node in trace_nodes}.values())
@@ -496,6 +500,7 @@ def _trace_nodes_and_slots(
     tbgd_root: Path,
     *,
     avatar_id_to_card: dict[str, str],
+    dynamic_value_bindings_by_avatar_version: dict[tuple[str, str], dict[str, JSONValue]],
     max_records_per_table: int | None,
 ) -> tuple[list[CharacterTraceNodeIR], list[CharacterMechanismSlotIR]]:
     trace_nodes: list[CharacterTraceNodeIR] = []
@@ -519,6 +524,9 @@ def _trace_nodes_and_slots(
                 continue
             point_id = str(row["PointID"])
             level = int(_number_value(row.get("Level"), 1.0))
+            enhanced_id = row.get("EnhancedID")
+            enhanced_key = str(enhanced_id) if enhanced_id is not None else ""
+            config_dynamic_value_bindings = dynamic_value_bindings_by_avatar_version.get((avatar_id, enhanced_key), {})
             trace_node_id = f"character_trace_node:{card_id}:{point_id}:{level}"
             source = IRSource(
                 source_path=relative_path,
@@ -527,6 +535,7 @@ def _trace_nodes_and_slots(
                 evidence={
                     "row_index": row_index,
                     "avatar_id": avatar_id,
+                    "enhanced_id": _json_safe(enhanced_id),
                     "point_id": point_id,
                     "level": level,
                     "point_type": _json_safe(row.get("PointType")),
@@ -584,6 +593,13 @@ def _trace_nodes_and_slots(
                         },
                         semantics={
                             "ability_name": ability_name,
+                            "point_trigger_key": str(row.get("PointTriggerKey") or ""),
+                            "param_values": list(_number_items(row.get("ParamList"))),
+                            "dynamic_value_bindings": _trace_dynamic_value_bindings_for_row(
+                                row,
+                                config_dynamic_value_bindings,
+                            ),
+                            "startup_admission_boundary": "standalone_graph_on_start_add_modifier",
                             "admission_boundary": "must resolve to admitted ability graph/effect before executable",
                         },
                         source=source,
@@ -604,6 +620,79 @@ def _trace_nodes_and_slots(
                 )
             )
     return trace_nodes, slots
+
+
+def _character_config_dynamic_value_bindings_by_avatar_version(
+    tbgd_root: Path,
+    *,
+    max_records_per_table: int | None,
+) -> dict[tuple[str, str], dict[str, JSONValue]]:
+    result: dict[tuple[str, str], dict[str, JSONValue]] = {}
+    for relative_path in (
+        "ExcelOutput/AvatarConfig.json",
+        "ExcelOutput/AvatarConfigLD.json",
+        "ExcelOutput/AvatarConfigEnhanced.json",
+    ):
+        path = tbgd_root / relative_path
+        if not path.exists():
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if not isinstance(data, list):
+            continue
+        for row in _limit_sequence(data, max_records_per_table):
+            if not isinstance(row, dict) or row.get("AvatarID") is None:
+                continue
+            avatar_id = str(row["AvatarID"])
+            enhanced_id = row.get("EnhancedID") if "Enhanced" in relative_path else None
+            enhanced_key = str(enhanced_id) if enhanced_id is not None else ""
+            augmented = _augment_avatar_row_with_config_dynamic_values(tbgd_root, dict(row))
+            bindings = augmented.get("_character_config_dynamic_value_bindings")
+            if isinstance(bindings, dict):
+                result[(avatar_id, enhanced_key)] = _json_safe(bindings)
+    return result
+
+
+def _trace_dynamic_value_bindings_for_row(
+    row: dict[str, Any],
+    config_dynamic_value_bindings: dict[str, JSONValue],
+) -> dict[str, JSONValue]:
+    by_hash = config_dynamic_value_bindings.get("by_hash")
+    if not isinstance(by_hash, dict):
+        return {
+            "by_hash": {},
+            "trigger_key": str(row.get("PointTriggerKey") or ""),
+            "source_path": _json_safe(config_dynamic_value_bindings.get("source_path")),
+        }
+    trigger_key = str(row.get("PointTriggerKey") or "")
+    result: dict[str, JSONValue] = {}
+    for raw_hash, item in by_hash.items():
+        if not isinstance(item, dict):
+            continue
+        read_info = item.get("read_info")
+        if not isinstance(read_info, dict):
+            continue
+        if read_info.get("Type") != "SkillTreeParam" or read_info.get("TriggerKey") != trigger_key:
+            continue
+        index = read_info.get("Index")
+        if not isinstance(index, int):
+            continue
+        result[str(raw_hash)] = {
+            "hash": str(raw_hash),
+            "trigger_key": trigger_key,
+            "param_index": index,
+            "read_info": _json_safe(read_info),
+            "source_path": _json_safe(item.get("source_path")),
+            "raw_path": _json_safe(item.get("raw_path")),
+        }
+    return {
+        "by_hash": result,
+        "trigger_key": trigger_key,
+        "source_path": _json_safe(config_dynamic_value_bindings.get("source_path")),
+        "binding_source_kind": "character_config_skill_tree_param_read_info",
+    }
 
 
 def _eidolon_slots_from_avatar_row(
@@ -1461,6 +1550,17 @@ def _number_value(value: Any, default: float = 0.0) -> float:
     if isinstance(value, (int, float)):
         return float(value)
     return default
+
+
+def _number_items(value: Any) -> tuple[float, ...]:
+    if not isinstance(value, (list, tuple)):
+        return ()
+    result: list[float] = []
+    for item in value:
+        extracted = _value_field(item)
+        if isinstance(extracted, (int, float)):
+            result.append(float(extracted))
+    return tuple(result)
 
 
 def _value_field(value: Any) -> float | int | None:

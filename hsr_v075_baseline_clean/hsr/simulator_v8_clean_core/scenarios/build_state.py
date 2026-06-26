@@ -33,6 +33,7 @@ class ScenarioStateBuilder:
         units = {}
         source_traces = list(validation.source_traces)
         eidolon_startup_specs: list[dict[str, Any]] = []
+        trace_startup_specs: list[dict[str, Any]] = []
         for unit in scenario.units:
             panel = unit.panel
             flags = dict(panel.flags)
@@ -86,6 +87,8 @@ class ScenarioStateBuilder:
             resources = _resources_with_profile_resistances(panel, profile)
             trace_activation = _trace_runtime_activation(self.rules, card, flags)
             flags.update(trace_activation["flags"])
+            for startup_spec in trace_activation["startup_specs"]:
+                trace_startup_specs.append({"unit_id": unit.unit_id, **startup_spec})
             for key, delta in trace_activation["resource_deltas"].items():
                 resources[key] = float(resources.get(key, 0.0)) + float(delta)
             max_hp = _panel_or_profile_value(panel, "max_hp", profile_values, required=entity.entity_type in {"monster", "monster_template"})
@@ -130,8 +133,12 @@ class ScenarioStateBuilder:
             global_flags=global_flags,
             rng_state=scenario.rng_state,
         )
-        state, eidolon_startup_traces = _apply_eidolon_startup_effects(state, self.rules, eidolon_startup_specs)
-        source_traces.extend(eidolon_startup_traces)
+        state, startup_traces = _apply_startup_ability_effects(
+            state,
+            self.rules,
+            [*eidolon_startup_specs, *trace_startup_specs],
+        )
+        source_traces.extend(startup_traces)
         commands = tuple(
             ActionCommand(
                 actor_id=step.actor_id,
@@ -149,10 +156,10 @@ class ScenarioStateBuilder:
 
 def _trace_runtime_activation(rules: RuleBook, card: object | None, flags: dict[str, Any]) -> dict[str, Any]:
     if card is None:
-        return {"flags": {}, "base_stat_ratios": {}, "base_stat_deltas": {}, "resource_deltas": {}}
+        return {"flags": {}, "base_stat_ratios": {}, "base_stat_deltas": {}, "resource_deltas": {}, "startup_specs": []}
     card_id = str(getattr(card, "card_id", ""))
     if not card_id:
-        return {"flags": {}, "base_stat_ratios": {}, "base_stat_deltas": {}, "resource_deltas": {}}
+        return {"flags": {}, "base_stat_ratios": {}, "base_stat_deltas": {}, "resource_deltas": {}, "startup_specs": []}
     explicit_enabled = set(_string_items(flags.get("enabled_trace_node_ids")))
     disabled = set(_string_items(flags.get("disabled_trace_node_ids")))
     nodes = rules.character_trace_nodes_for_card(card_id)
@@ -164,6 +171,7 @@ def _trace_runtime_activation(rules: RuleBook, card: object | None, flags: dict[
     base_stat_deltas: dict[str, float] = {}
     resource_deltas: dict[str, float] = {}
     source_traces: list[dict[str, Any]] = []
+    startup_specs: list[dict[str, Any]] = []
     for node in nodes:
         default_enabled = any(
             bool((slots_by_id.get(slot_id) and slots_by_id[slot_id].activation.get("default_enabled") is True))
@@ -176,6 +184,31 @@ def _trace_runtime_activation(rules: RuleBook, card: object | None, flags: dict[
         source_traces.append(node.source.to_json())
         for slot_id in node.linked_mechanism_slot_ids:
             slot = slots_by_id.get(slot_id)
+            if slot is not None and slot.mechanism_kind == "trace_ability_hook":
+                if slot.coverage_status != "executable":
+                    blocked_slots.append(
+                        {
+                            "trace_node_id": node.trace_node_id,
+                            "mechanism_slot_id": slot_id,
+                            "blocked_reason": slot.blocked_reason or f"trace_slot_not_executable:{slot.coverage_status}",
+                            "source": slot.source.to_json(),
+                        }
+                    )
+                    continue
+                startup_specs.append(
+                    {
+                        "kind": "trace_startup_ability",
+                        "slot": slot,
+                        "slot_id": slot.mechanism_slot_id,
+                        "slot_id_field": "mechanism_slot_id",
+                        "trace_node_id": node.trace_node_id,
+                        "ability_name": str(slot.semantics.get("ability_name") or ""),
+                        "param_values": tuple(_number_items(slot.semantics.get("param_values"))),
+                        "dynamic_value_bindings": slot.semantics.get("dynamic_value_bindings"),
+                        "dynamic_value_binding_mode": "configured_by_hash_required",
+                    }
+                )
+                continue
             if slot is None or slot.mechanism_kind != "trace_static_stat_bonus":
                 continue
             if slot.coverage_status != "executable":
@@ -255,6 +288,7 @@ def _trace_runtime_activation(rules: RuleBook, card: object | None, flags: dict[
         "base_stat_ratios": base_stat_ratios,
         "base_stat_deltas": base_stat_deltas,
         "resource_deltas": resource_deltas,
+        "startup_specs": startup_specs,
     }
 
 
@@ -366,10 +400,14 @@ def _eidolon_runtime_activation(eidolon_slots: tuple[object, ...]) -> dict[str, 
                     startup_ability_names.append(item)
                     startup_specs.append(
                         {
+                            "kind": "eidolon_startup_rank_ability",
                             "slot": slot,
+                            "slot_id": getattr(slot, "eidolon_slot_id", ""),
+                            "slot_id_field": "eidolon_slot_id",
                             "ability_name": item,
                             "param_values": tuple(_number_items(semantics.get("param_values"))),
                             "dynamic_value_bindings": semantics.get("dynamic_value_bindings"),
+                            "dynamic_value_binding_mode": "request_order_fallback",
                         }
                     )
         skill_add_level_list = semantics.get("skill_add_level_list")
@@ -399,7 +437,7 @@ def _eidolon_runtime_activation(eidolon_slots: tuple[object, ...]) -> dict[str, 
     return {"flags": flags, "startup_specs": startup_specs}
 
 
-def _apply_eidolon_startup_effects(
+def _apply_startup_ability_effects(
     state: BattleState,
     rules: RuleBook,
     startup_specs: list[dict[str, Any]],
@@ -415,7 +453,10 @@ def _apply_eidolon_startup_effects(
         unit_id = str(spec.get("unit_id") or "")
         ability_name = str(spec.get("ability_name") or "")
         slot = spec.get("slot")
-        slot_id = str(getattr(slot, "eidolon_slot_id", ""))
+        kind = str(spec.get("kind") or "startup_ability")
+        slot_id = str(spec.get("slot_id") or getattr(slot, "eidolon_slot_id", "") or getattr(slot, "mechanism_slot_id", ""))
+        slot_id_field = str(spec.get("slot_id_field") or "slot_id")
+        trace_node_id = str(spec.get("trace_node_id") or "")
         graphs = tuple(
             graph
             for graph in rules.standalone_ability_graphs_by_name(ability_name)
@@ -423,15 +464,17 @@ def _apply_eidolon_startup_effects(
         )
         if len(graphs) != 1:
             traces.append(
-                {
-                    "kind": "eidolon_startup_rank_ability",
-                    "unit_id": unit_id,
-                    "ability_name": ability_name,
-                    "eidolon_slot_id": slot_id,
-                    "status": "blocked",
-                    "reason": "rank_ability_graph_missing_or_ambiguous",
-                    "graph_count": len(graphs),
-                }
+                _startup_trace_payload(
+                    kind=kind,
+                    unit_id=unit_id,
+                    ability_name=ability_name,
+                    slot_id=slot_id,
+                    slot_id_field=slot_id_field,
+                    trace_node_id=trace_node_id,
+                    status="blocked",
+                    reason="startup_ability_graph_missing_or_ambiguous",
+                    extra={"graph_count": len(graphs)},
+                )
             )
             continue
         graph = graphs[0]
@@ -442,28 +485,46 @@ def _apply_eidolon_startup_effects(
                     continue
                 effect = rules.effect(task.effect_id)
                 if effect is None:
-                    traces.append(_eidolon_startup_blocked_trace(unit_id, ability_name, slot_id, graph, task.task_id, "startup_effect_missing"))
+                    traces.append(
+                        _startup_blocked_trace(
+                            kind,
+                            unit_id,
+                            ability_name,
+                            slot_id,
+                            slot_id_field,
+                            trace_node_id,
+                            graph,
+                            task.task_id,
+                            "startup_effect_missing",
+                        )
+                    )
                     continue
                 coverage = effect_registry.coverage(effect)
                 if coverage != "executable":
                     traces.append(
-                        _eidolon_startup_blocked_trace(
+                        _startup_blocked_trace(
+                            kind,
                             unit_id,
                             ability_name,
                             slot_id,
+                            slot_id_field,
+                            trace_node_id,
                             graph,
                             task.task_id,
                             f"startup_effect_not_executable:{coverage}",
                         )
                     )
                     continue
-                dynamic_values, binding_trace = _eidolon_startup_dynamic_values(effect.payload.get("standard"), spec)
+                dynamic_values, binding_trace = _startup_dynamic_values(effect.payload.get("standard"), spec)
                 if binding_trace.get("admission_status") == "blocked":
                     traces.append(
-                        _eidolon_startup_blocked_trace(
+                        _startup_blocked_trace(
+                            kind,
                             unit_id,
                             ability_name,
                             slot_id,
+                            slot_id_field,
+                            trace_node_id,
                             graph,
                             task.task_id,
                             str(binding_trace.get("blocked_reason") or "startup_dynamic_value_binding_blocked"),
@@ -475,7 +536,7 @@ def _apply_eidolon_startup_effects(
                     current,
                     effect,
                     caster_id=unit_id,
-                    source_id=f"eidolon_startup:{slot_id}:{ability_name}:{task.task_id}",
+                    source_id=f"{kind}:{slot_id}:{ability_name}:{task.task_id}",
                     owner_id=unit_id,
                     param_entity_id=unit_id,
                     current_action_target_id=unit_id,
@@ -485,37 +546,43 @@ def _apply_eidolon_startup_effects(
                 current = reducer.apply_all(current, result.mutations)
                 applied_count += len(result.mutations)
                 traces.append(
-                    {
-                        "kind": "eidolon_startup_rank_ability",
-                        "unit_id": unit_id,
-                        "ability_name": ability_name,
-                        "eidolon_slot_id": slot_id,
-                        "standalone_ability_graph_id": graph.standalone_ability_graph_id,
-                        "task_id": task.task_id,
-                        "effect_id": effect.effect_id,
-                        "status": "applied" if result.ok else "blocked",
-                        "mutation_count": len(result.mutations),
-                        "unsupported": list(result.unsupported),
-                        "dynamic_value_binding": binding_trace,
-                        "source": getattr(slot, "source", None).to_json() if getattr(slot, "source", None) else {},
-                    }
+                    _startup_trace_payload(
+                        kind=kind,
+                        unit_id=unit_id,
+                        ability_name=ability_name,
+                        slot_id=slot_id,
+                        slot_id_field=slot_id_field,
+                        trace_node_id=trace_node_id,
+                        status="applied" if result.ok else "blocked",
+                        extra={
+                            "standalone_ability_graph_id": graph.standalone_ability_graph_id,
+                            "task_id": task.task_id,
+                            "effect_id": effect.effect_id,
+                            "mutation_count": len(result.mutations),
+                            "unsupported": list(result.unsupported),
+                            "dynamic_value_binding": binding_trace,
+                            "source": getattr(slot, "source", None).to_json() if getattr(slot, "source", None) else {},
+                        },
+                    )
                 )
         if applied_count == 0:
             traces.append(
-                {
-                    "kind": "eidolon_startup_rank_ability",
-                    "unit_id": unit_id,
-                    "ability_name": ability_name,
-                    "eidolon_slot_id": slot_id,
-                    "standalone_ability_graph_id": graph.standalone_ability_graph_id,
-                    "status": "blocked",
-                    "reason": "rank_ability_has_no_admitted_on_start_add_modifier",
-                }
+                _startup_trace_payload(
+                    kind=kind,
+                    unit_id=unit_id,
+                    ability_name=ability_name,
+                    slot_id=slot_id,
+                    slot_id_field=slot_id_field,
+                    trace_node_id=trace_node_id,
+                    status="blocked",
+                    reason="startup_ability_has_no_admitted_on_start_add_modifier",
+                    extra={"standalone_ability_graph_id": graph.standalone_ability_graph_id},
+                )
             )
     return current, tuple(traces)
 
 
-def _eidolon_startup_dynamic_values(
+def _startup_dynamic_values(
     standard: object,
     spec: dict[str, Any],
 ) -> tuple[dict[str, float], dict[str, object]]:
@@ -539,28 +606,35 @@ def _eidolon_startup_dynamic_values(
         if raw_hash is None:
             return {}, {
                 "admission_status": "blocked",
-                "blocked_reason": "eidolon_dynamic_value_request_hash_missing",
+                "blocked_reason": "startup_dynamic_value_request_hash_missing",
                 "request_name": name,
             }
         configured = configured_by_hash.get(str(raw_hash))
         param_index = index
-        binding_source_kind = "eidolon_rank_param_request_order"
+        binding_source_kind = "startup_param_request_order"
         if isinstance(configured, dict):
             configured_index = configured.get("param_index")
             if not isinstance(configured_index, int):
                 return {}, {
                     "admission_status": "blocked",
-                    "blocked_reason": "eidolon_dynamic_value_binding_param_index_missing",
+                    "blocked_reason": "startup_dynamic_value_binding_param_index_missing",
                     "request_name": name,
                     "hash": str(raw_hash),
                     "binding": configured,
                 }
             param_index = configured_index
             binding_source_kind = "character_config_dynamic_value_read_info"
+        elif spec.get("dynamic_value_binding_mode") == "configured_by_hash_required":
+            return {}, {
+                "admission_status": "blocked",
+                "blocked_reason": "startup_dynamic_value_binding_hash_missing",
+                "request_name": name,
+                "hash": str(raw_hash),
+            }
         elif len(params) != len(request_items):
             return {}, {
                 "admission_status": "blocked",
-                "blocked_reason": "eidolon_rank_param_binding_missing",
+                "blocked_reason": "startup_param_binding_missing",
                 "param_count": len(params),
                 "request_count": len(request_items),
                 "request_names": [item_name for item_name, _ in request_items],
@@ -569,7 +643,7 @@ def _eidolon_startup_dynamic_values(
         if param_index < 0 or param_index >= len(params):
             return {}, {
                 "admission_status": "blocked",
-                "blocked_reason": "eidolon_dynamic_value_binding_param_index_out_of_range",
+                "blocked_reason": "startup_dynamic_value_binding_param_index_out_of_range",
                 "request_name": name,
                 "hash": str(raw_hash),
                 "param_index": param_index,
@@ -590,8 +664,10 @@ def _eidolon_startup_dynamic_values(
         )
     return dynamic_values, {
         "admission_status": "executable",
-        "source_kind": "eidolon_rank_param_to_rank_ability_dynamic_value_request",
+        "source_kind": f"{str(spec.get('kind') or 'startup_ability')}_param_to_dynamic_value_request",
         "bindings": bindings,
+        "slot_id": str(spec.get("slot_id") or ""),
+        "trace_node_id": str(spec.get("trace_node_id") or ""),
         "eidolon_slot_id": str(getattr(spec.get("slot"), "eidolon_slot_id", "")),
         "rank_id": str(getattr(spec.get("slot"), "rank_id", "")),
     }
@@ -643,6 +719,65 @@ def _eidolon_configured_dynamic_values(
     }
 
 
+def _startup_trace_payload(
+    *,
+    kind: str,
+    unit_id: str,
+    ability_name: str,
+    slot_id: str,
+    slot_id_field: str,
+    trace_node_id: str,
+    status: str,
+    reason: str = "",
+    extra: dict[str, object] | None = None,
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "kind": kind,
+        "unit_id": unit_id,
+        "ability_name": ability_name,
+        "slot_id": slot_id,
+        slot_id_field: slot_id,
+        "status": status,
+    }
+    if trace_node_id:
+        payload["trace_node_id"] = trace_node_id
+    if reason:
+        payload["reason"] = reason
+    if extra:
+        payload.update(extra)
+    return payload
+
+
+def _startup_blocked_trace(
+    kind: str,
+    unit_id: str,
+    ability_name: str,
+    slot_id: str,
+    slot_id_field: str,
+    trace_node_id: str,
+    graph: object,
+    task_id: str,
+    reason: str,
+    *,
+    binding_trace: dict[str, object] | None = None,
+) -> dict[str, object]:
+    return _startup_trace_payload(
+        kind=kind,
+        unit_id=unit_id,
+        ability_name=ability_name,
+        slot_id=slot_id,
+        slot_id_field=slot_id_field,
+        trace_node_id=trace_node_id,
+        status="blocked",
+        reason=reason,
+        extra={
+            "standalone_ability_graph_id": str(getattr(graph, "standalone_ability_graph_id", "")),
+            "task_id": task_id,
+            "dynamic_value_binding": binding_trace or {},
+        },
+    )
+
+
 def _eidolon_startup_blocked_trace(
     unit_id: str,
     ability_name: str,
@@ -653,17 +788,18 @@ def _eidolon_startup_blocked_trace(
     *,
     binding_trace: dict[str, object] | None = None,
 ) -> dict[str, object]:
-    return {
-        "kind": "eidolon_startup_rank_ability",
-        "unit_id": unit_id,
-        "ability_name": ability_name,
-        "eidolon_slot_id": slot_id,
-        "standalone_ability_graph_id": str(getattr(graph, "standalone_ability_graph_id", "")),
-        "task_id": task_id,
-        "status": "blocked",
-        "reason": reason,
-        "dynamic_value_binding": binding_trace or {},
-    }
+    return _startup_blocked_trace(
+        "eidolon_startup_rank_ability",
+        unit_id,
+        ability_name,
+        slot_id,
+        "eidolon_slot_id",
+        "",
+        graph,
+        task_id,
+        reason,
+        binding_trace=binding_trace,
+    )
 
 
 def _number_items(value: object) -> tuple[float, ...]:

@@ -20,10 +20,30 @@ Initial validation:
 
 ```bash
 python3 -m compileall -q simulator_v8_clean_core
-python3 -m simulator_v8_clean_core.tools.validate_v0_200 --output-dir validation_outputs_v0_200
+python3 -m simulator_v8_clean_core.tools.validate_v0_272 --output-dir /tmp/hsr_v8_audit_v0_272
 ```
 
 Constraint documents:
 
 - `PROJECT_GOALS.md`: final product goals, fidelity targets, snapshot requirements, and milestone outcomes.
 - `FORBIDDEN.md`: non-negotiable project red lines.
+
+Current checkpoint:
+
+```text
+v0_272 global source genericity audit
+```
+
+Current shape:
+
+- Runtime consumes Canonical IR and character-card IR, not TextMap or raw TBGD.
+- Character text interpretation belongs to character card construction.
+- Mutating paths must pass settlement traceability, replay, and source audit.
+- `engine_convention` is allowed only when explicitly labeled and audited; it must not masquerade as a TBGD source.
+- Blocked, audit-only, discovered-only, and placeholder sources may produce process records only, not state mutations.
+
+Near-term missing large modules:
+
+- Full character panel assembly, light cones, relics, and equipment composition.
+- More character cards beyond the enhanced Seele example.
+- Enemy AI, wave system, summons/assistants, and special battle modes.

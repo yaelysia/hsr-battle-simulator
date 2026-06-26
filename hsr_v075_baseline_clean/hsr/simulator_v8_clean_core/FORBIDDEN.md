@@ -27,12 +27,18 @@ v8 不为了旧版兼容牺牲最终成品完整性。旧版本没有稳定用�
 
 - runtime 直接读取 TBGD raw schema。
 - runtime 直接按 TBGD 原始字段名判断机制。
+- runtime 读取 TextMap、技能文本或角色文本。
+- runtime 根据角色名、技能名、文件名、固定 action id、固定 hash 判断机制。
 - 使用 `model_pack_v3_0` 补齐 v8 规则。
 - 用观测伤害、旧模拟器输出、手工答案作为规则输入。
 - 在 scenario 里写规则结果。
 - 在测试里写死战斗结算作为模拟逻辑的一部分。
+- 把 `engine_convention` 写成 TBGD 来源。
+- 用数据库中已存在的来源可以证明的规则，却继续保留自造默认值或硬映射。
 
 所有规则必须经过 Canonical IR。
+
+技能文本与参数解释只允许出现在角色数据卡构建层。角色数据卡输出结构化槽位后，runtime 才能消费。
 
 ## 状态与快照红线
 
@@ -64,6 +70,11 @@ v8 不为了旧版兼容牺牲最终成品完整性。旧版本没有稳定用�
 - trigger window 顺序不明确时继续扩展机制。
 - 队列行为不进入 snapshot。
 - RNG 调用不记录事件。
+- 把本该统一的机制拆成特殊路径，例如普通 buff/debuff 生命周期、普通状态 tick/expire、伤害 source frame、资源 mutation、队列 window、事件 listener。
+- 把文本命中、名称相似、文件路径相似当成机制事实。
+- 把角色专属机制写进核心系统；角色专属内容必须进入角色卡槽位，再接通用系统。
+- 把终结技连续段、真额外回合、追击/反击混成同一种“额外行动”。
+- 只按 actor 归因击杀收益；击杀收益必须按具体伤害来源归因。
 
 ## 结算红线
 
@@ -75,6 +86,24 @@ v8 不为了旧版兼容牺牲最终成品完整性。旧版本没有稳定用�
 - settlement record 无法对应 mutation，也没有 process-only 标记。
 - 使用游戏观测值校正公式。
 - 用常数补洞掩盖未知公式或未知状态。
+- blocked、audit-only、discovered-only、placeholder 来源间接产生 mutation。
+- 失败动作、blocked listener、blocked queue、blocked formula、unsupported condition 污染 state。
+
+每个新增 mutation 类机制都必须有至少一个 source audit 样例和至少一个负例。负例必须证明 state unchanged。
+
+## 验证红线
+
+禁止：
+
+- 可信主路径按固定角色名、固定 action id、固定文件名、固定 hash、固定观测值选择样例。
+- 为了让旧 smoke 继续通过而降低 runtime 来源边界。
+- 只验证 replay/字段完整，却不验证机制来源真实。
+- 合并输出目录导致不同阶段验证产物互相覆盖。
+
+允许：
+
+- 用户明确指定的角色卡示例可以在对应验证脚本中点名，例如希儿示例卡；但核心 runtime 仍不得出现角色名特判。
+- synthetic/manual binding 只能用于负例或能力单测，不能作为 trust matrix 主路径。
 
 ## 文档红线
 
@@ -95,4 +124,3 @@ v8 长期文档只保留少数高密度约束文档。普通阶段说明进入 l
 - 把 `__pycache__` 或 `.pyc` 混入提交。
 - 在未说明的情况下引入新依赖。
 - 为追求短期验证通过删除 coverage 或降低静态检查。
-
