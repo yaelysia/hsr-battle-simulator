@@ -28,6 +28,30 @@ turnbasedgamedata-main -> TBGD compiler -> Canonical IR -> Combat Core
 
 旧版兼容不是目标。旧 v7、旧 model pack、旧 CLI、旧 JSON、旧 Python API 都不能阻碍 v8 形成干净内核。
 
+## 当前状态
+
+最近检查点：
+
+```text
+v0_272 global source genericity audit
+```
+
+当前 v8 已经不再只是早期单动作 smoke。已建立的底层范围包括：
+
+- Canonical IR、RuleBook、snapshot/replay、settlement/source audit。
+- action/event/ability task/damage emission/status callback/queue/timeline 等核心骨架。
+- direct、DoT、break、super-break、hp loss、弹射、目标组、多段、击杀归因等伤害底座的当前可信范围。
+- 普通状态生命周期、buff/debuff 共用生命周期、动态值绑定、资源、队列、额外行动语义、事件分发。
+- 角色数据卡边界与加强版希儿示例卡，包含行迹、星魂通用开关/等级提升/监听接口。
+
+仍未完整实现的大块：
+
+- 完整角色面板装配：晋阶、行迹全量、装备、光锥、遗器、套装。
+- 大量角色卡人工解释与验证。
+- 敌方 AI、波次系统、召唤物/assistant 完整行为。
+- 光锥、遗器、环境、关卡机制。
+- 完整 custom event、wave event、特殊玩法机制。
+
 ## 工作区目录
 
 - `turnbasedgamedata-main/`
@@ -96,6 +120,10 @@ hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/FORBIDDEN.md
 - 不允许只记录 applied term，不记录 skipped term。
 - 不允许跳过未知 opcode 后仍标记为 supported。
 - 不允许 `audit_only` 被当成 executable。
+- 不允许 runtime 读取 TextMap 或技能文本。
+- 不允许在内核中解析角色机制文本；文本解释属于角色数据卡构建层。
+- 不允许把 `engine_convention` 伪装成 TBGD 来源。
+- 不允许验证主路径靠固定角色名、固定技能 ID、固定文件名、固定 hash 或固定观测答案运转。
 
 ## v8 审查红线
 
@@ -113,6 +141,20 @@ hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/FORBIDDEN.md
 - 审查结论必须区分“字段完整 / replay 通过”和“机制来源真实 / 语义正确”。前者不能替代后者。
 - 每个阶段必须要回头检查一遍本次修改是否正确，不要给后续审查纠偏添加压力。
 - 每次阶段汇报必须说明：当前做到哪里、距离最小可用战斗纵切还缺什么、距离完整复刻还缺哪些大模块。
+
+## 近期经验教训
+
+以下问题已经多次造成返工，后续必须提前规避：
+
+- 数据库里有答案时，不能用自造默认值、固定映射、观测数值或旧版经验替代。
+- 没有 admission 的机制不能先做成 executable，后面再补来源；应先 blocked/process-only。
+- 同类机制必须合并到底层通用系统，例如 buff/debuff 普通生命周期、伤害 source frame、队列 window、事件 listener、资源 mutation。
+- “能跑”和“机制正确”不是一回事。验证通过只能说明当前样例通过，不能替代来源审计和语义对照。
+- 角色机制不能进入核心系统特判。角色专属内容进入角色数据卡机制槽位，再接通用系统。
+- 技能文本与参数解释只允许在角色数据卡构建层发生；runtime 只读 Canonical IR/角色卡 IR。
+- 额外回合、终结技连续段、追击/反击不是同一类机制，不能只靠名字或文本命中归类。
+- 造成击杀必须按具体伤害来源归因，不只是 actor；同一主行动序列可继续结算，派生/DoT/附加伤害遇到已死目标必须跳过。
+- 如果外部资料或用户机制说明与当前实现冲突，应回到 TBGD/角色卡来源链路重新审查，不能硬补 runtime 特例。
 
 ## 快照与结算目标摘要
 
@@ -151,16 +193,26 @@ settlement record 必须能追溯到 mutation，或明确标记为 process-only 
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 python3 -m compileall -q simulator_v8_clean_core
-PYTHONDONTWRITEBYTECODE=1 python3 -m simulator_v8_clean_core.tools.validate_v0_200 --output-dir validation_outputs_v0_200
+PYTHONDONTWRITEBYTECODE=1 python3 -m simulator_v8_clean_core.tools.validate_v0_225 --output-dir /tmp/hsr_v8_audit_v0_225
+PYTHONDONTWRITEBYTECODE=1 python3 -m simulator_v8_clean_core.tools.validate_v0_245 --output-dir /tmp/hsr_v8_audit_v0_245
+PYTHONDONTWRITEBYTECODE=1 python3 -m simulator_v8_clean_core.tools.validate_v0_257 --output-dir /tmp/hsr_v8_audit_v0_257
+PYTHONDONTWRITEBYTECODE=1 python3 -m simulator_v8_clean_core.tools.validate_v0_258 --output-dir /tmp/hsr_v8_audit_v0_258
+PYTHONDONTWRITEBYTECODE=1 python3 -m simulator_v8_clean_core.tools.validate_v0_264 --output-dir /tmp/hsr_v8_audit_v0_264
+PYTHONDONTWRITEBYTECODE=1 python3 -m simulator_v8_clean_core.tools.validate_v0_266 --output-dir /tmp/hsr_v8_audit_v0_266
+PYTHONDONTWRITEBYTECODE=1 python3 -m simulator_v8_clean_core.tools.validate_v0_270 --output-dir /tmp/hsr_v8_audit_v0_270
+PYTHONDONTWRITEBYTECODE=1 python3 -m simulator_v8_clean_core.tools.validate_v0_271 --output-dir /tmp/hsr_v8_audit_v0_271
+PYTHONDONTWRITEBYTECODE=1 python3 -m simulator_v8_clean_core.tools.validate_v0_272 --output-dir /tmp/hsr_v8_audit_v0_272
 ```
 
-当前 v0_200/v0_202 期望：
+当前期望：
 
 - compileall 通过。
 - validation 输出 `ok=true`。
 - static checks 通过。
 - snapshot replay 通过。
-- v8 runtime 不引用旧 simulator、旧 model pack、legacy adapter、`action_ctx`。
+- source audit 通过。
+- blocked/audit-only/discovered-only 不产生 mutation。
+- v8 runtime 不引用旧 simulator、旧 model pack、legacy adapter、`action_ctx`，不读取 raw TBGD/TextMap。
 
 ## 旧 v7 对照基线
 
