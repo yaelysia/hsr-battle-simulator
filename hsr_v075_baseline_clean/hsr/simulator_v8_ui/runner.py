@@ -213,7 +213,12 @@ class UIRunner:
             "steps": steps,
             "final_snapshot": final_snapshot,
             "battlefield_view": build_battlefield_view(final_snapshot, scenario_data),
-            "action_prompt": build_action_prompt(final_snapshot, scenario_data, action_slots_by_entity),
+            "action_prompt": build_action_prompt(
+                final_snapshot,
+                scenario_data,
+                action_slots_by_entity,
+                enemy_action_candidate=_enemy_action_candidate_for_prompt(scheduler, state),
+            ),
             "event_replay_view": build_event_replay_view(
                 steps,
                 auto_skip_records=auto_skip_records,
@@ -358,6 +363,9 @@ def _prepare_action_prompt_state(
         if active and active.side == "ally":
             break
         if active and active.side == "enemy":
+            candidate = scheduler.enemy_actions.next_candidate(current, active.unit_id)
+            if candidate.status == "available":
+                break
             skip = _skip_enemy_active_turn(current, scheduler=scheduler, actor_id=active.unit_id, attempt=attempt)
             current = skip.state
             transitions.extend(skip.transitions)
@@ -534,6 +542,16 @@ def _current_turn_unit(state: BattleState) -> Any | None:
     if not actor_id:
         return None
     return state.units.get(actor_id)
+
+
+def _enemy_action_candidate_for_prompt(
+    scheduler: CombatScheduler,
+    state: BattleState,
+) -> dict[str, JSONValue]:
+    active = _current_turn_unit(state)
+    if active is None or getattr(active, "side", "") != "enemy":
+        return {}
+    return scheduler.enemy_actions.next_candidate(state, active.unit_id).to_json()
 
 
 def _state_with_unit_flags(

@@ -180,6 +180,8 @@ def build_action_prompt(
     snapshot: dict[str, JSONValue],
     scenario_data: dict[str, Any],
     action_slots_by_entity: dict[str, JSONValue],
+    *,
+    enemy_action_candidate: dict[str, JSONValue] | None = None,
 ) -> dict[str, JSONValue]:
     battlefield = build_battlefield_view(snapshot, scenario_data)
     current_unit_id = str(battlefield.get("current_unit_id") or "")
@@ -192,6 +194,56 @@ def build_action_prompt(
             "reason": "当前没有可行动单位",
             "slots": [],
             "targets": [],
+        }
+    if current_unit.get("side") == "enemy":
+        candidate = _dict(enemy_action_candidate)
+        if candidate.get("status") == "available":
+            action_ref = str(candidate.get("action_ref") or "")
+            action_level = int(candidate.get("action_level") or 0)
+            selectable_ids = set(str(item) for item in _list(candidate.get("selectable_target_ids")) if isinstance(item, str))
+            auto_ids = set(str(item) for item in _list(candidate.get("auto_target_ids")) if isinstance(item, str))
+            targets = [
+                {
+                    "unit_id": unit.get("unit_id"),
+                    "display_name": unit.get("display_name"),
+                    "side": unit.get("side"),
+                    "hp": unit.get("hp"),
+                    "max_hp": unit.get("max_hp"),
+                    "selection_kind": "selectable" if unit.get("unit_id") in selectable_ids else "auto",
+                }
+                for unit in units
+                if unit.get("unit_id") in selectable_ids or unit.get("unit_id") in auto_ids
+            ]
+            slot = {
+                "slot": "enemy_sequence",
+                "label": "固定序列动作",
+                "display_label": _display_name(scenario_data, "actions", action_ref) or "固定序列动作",
+                "available": True,
+                "action_ref": action_ref,
+                "action_level": action_level,
+                "target_mode": candidate.get("target_mode") or "",
+                "selectable_target_ids": list(selectable_ids),
+                "auto_target_ids": list(auto_ids),
+                "source_trace": candidate.get("source_trace") or {},
+            }
+            return {
+                "available": True,
+                "current_unit_id": current_unit_id,
+                "current_unit_name": current_unit.get("display_name", current_unit_id),
+                "entity_ref": current_unit.get("entity_ref") or "",
+                "reason": "",
+                "slots": [slot],
+                "targets": targets,
+                "enemy_action_candidate": candidate,
+            }
+        return {
+            "available": False,
+            "current_unit_id": current_unit_id,
+            "current_unit_name": current_unit.get("display_name", current_unit_id),
+            "reason": f"敌方固定序列候选不可用：{candidate.get('blocked_reason') or '未生成候选'}",
+            "slots": [],
+            "targets": [],
+            "enemy_action_candidate": candidate,
         }
     if current_unit.get("side") != "ally":
         return {

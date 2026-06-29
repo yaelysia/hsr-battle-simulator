@@ -72,6 +72,11 @@ MUTATION_SOURCE_POLICIES: dict[str, dict[str, JSONValue]] = {
         "required_metadata": ["queue_name", "queue_operation", "queue_intent_id", "queue_window_id", "target_resolution", "source_trace"],
         "coverage_required": "executable",
     },
+    "enemy_action_system": {
+        "required_ir": ["MonsterDataCardIR.action_sequence + ActionDefinitionIR"],
+        "required_metadata": ["monster_data_card_id", "sequence_index", "action_id", "action_level", "source_trace"],
+        "coverage_required": "fixed sequence candidate available and action executed successfully",
+    },
     "combat_executor.queue": {
         "required_ir": ["QueueIntentIR + QueuePriorityIR + QueueWindowIR for enqueue; QueueIntentIR + QueueResolutionIR + QueuePriorityIR + QueueWindowIR + QueueWindowPlan for dequeue; extra_turn additionally requires QueueLifecyclePolicyIR + ExtraActionPolicyIR"],
         "required_metadata": ["queue_name", "queue_operation", "queue_intent_id", "queue_window_id", "target_resolution", "source_trace"],
@@ -173,6 +178,8 @@ class RuntimeSourceAuditor:
             return self._audit_effect_mutation(mutation, records, violations)
         if mutation.source in {"queue_system", "combat_executor.queue"}:
             return self._audit_queue_mutation(mutation, records, violations)
+        if mutation.source == "enemy_action_system":
+            return self._audit_enemy_action_mutation(mutation, records, violations)
         violations.append(_violation(mutation, "unsupported_mutation_source", details={"records": list(records)}))
         return _trace(mutation, records, {})
 
@@ -255,6 +262,84 @@ class RuntimeSourceAuditor:
                 "action_event_id": action_event_id or "",
                 "resource_operation": resource_operation,
                 "resource_rule_id": resource_rule_id,
+            },
+        )
+
+    def _audit_enemy_action_mutation(
+        self,
+        mutation: Mutation,
+        records: tuple[dict[str, JSONValue], ...],
+        violations: list[SourceAuditViolation],
+    ) -> dict[str, JSONValue]:
+        metadata = mutation.metadata
+        actor_id = _required_str(mutation, metadata, "actor_id", violations)
+        expected_path = ("units", actor_id, "flags", "enemy_action_sequence_cursor") if actor_id else ()
+        if expected_path and mutation.path != expected_path:
+            violations.append(
+                _violation(
+                    mutation,
+                    "enemy_action_cursor_path_invalid",
+                    details={"expected": list(expected_path), "actual": list(mutation.path)},
+                )
+            )
+        card_id = _required_str(mutation, metadata, "monster_data_card_id", violations)
+        sequence_index = _required_int(mutation, metadata, "sequence_index", violations)
+        action_id = _required_str(mutation, metadata, "action_id", violations)
+        action_level = _required_int(mutation, metadata, "action_level", violations)
+        _require_dict(mutation, metadata, "source_trace", violations)
+        card = self.rules.monster_data_card(card_id) if card_id else None
+        if card is None:
+            violations.append(_violation(mutation, "monster_data_card_missing", details={"monster_data_card_id": card_id}))
+        else:
+            _audit_source(card.source, card.coverage_status, mutation, violations, executable_required=False)
+            if str(card.ai_policy.get("admission_status") or "") != "executable":
+                violations.append(
+                    _violation(
+                        mutation,
+                        "enemy_ai_policy_not_executable",
+                        details={"monster_data_card_id": card.card_id, "ai_policy": card.ai_policy},
+                    )
+                )
+            if sequence_index is None or sequence_index < 0 or sequence_index >= len(card.action_sequence):
+                violations.append(
+                    _violation(
+                        mutation,
+                        "enemy_action_sequence_index_invalid",
+                        details={"sequence_index": sequence_index if sequence_index is not None else -1, "sequence_length": len(card.action_sequence)},
+                    )
+                )
+            elif action_id:
+                step = card.action_sequence[sequence_index]
+                if str(step.get("action_ref") or "") != action_id:
+                    violations.append(
+                        _violation(
+                            mutation,
+                            "enemy_action_sequence_action_mismatch",
+                            details={"expected": step.get("action_ref"), "actual": action_id},
+                        )
+                    )
+                if str(step.get("coverage_status") or "") == "blocked":
+                    violations.append(
+                        _violation(
+                            mutation,
+                            "enemy_action_sequence_step_blocked_produced_mutation",
+                            details={"step": step},
+                        )
+                    )
+        definition = self.rules.action_definition(action_id, action_level) if action_id and action_level is not None else None
+        if definition is None:
+            violations.append(_violation(mutation, "action_definition_missing", details={"action_id": action_id, "level": action_level}))
+        else:
+            _audit_source(definition.source, definition.coverage_status, mutation, violations, executable_required=True)
+        return _trace(
+            mutation,
+            records,
+            {
+                "actor_id": actor_id,
+                "monster_data_card_id": card_id,
+                "sequence_index": sequence_index if sequence_index is not None else -1,
+                "action_id": action_id,
+                "action_level": action_level if action_level is not None else -1,
             },
         )
 

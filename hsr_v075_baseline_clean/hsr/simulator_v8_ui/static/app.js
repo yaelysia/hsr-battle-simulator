@@ -181,7 +181,7 @@ function renderUnitRow(id, units) {
 
 function unitCard(unit) {
   const current = state.report && state.report.battlefield_view && state.report.battlefield_view.current_unit_id === unit.unit_id;
-  const targetable = state.selectedSkill && unit.side === "enemy";
+  const targetable = state.selectedSkill && isPromptTarget(unit.unit_id);
   const hpRatio = Math.max(0, Math.min(1, Number(unit.hp_ratio || 0)));
   return `
     <button class="unitCard ${escapeHtml(unit.side || "")} ${current ? "current" : ""} ${targetable ? "targetable" : ""} ${state.selectedUnitId === unit.unit_id ? "selected" : ""}" type="button" data-unit-id="${escapeHtml(unit.unit_id)}">
@@ -224,10 +224,10 @@ function renderActionPrompt() {
       ${slots.map((slot) => skillButton(slot, selected)).join("")}
     </div>
     ${prompt.reason ? `<p>${escapeHtml(prompt.reason)}</p>` : ""}
-    ${selected ? `<div class="targetHint">已选择 ${escapeHtml(selected.display_label || selected.label)}，请点击敌方目标卡片。</div>` : ""}
+    ${selected ? `<div class="targetHint">已选择 ${escapeHtml(selected.display_label || selected.label)}，请点击目标卡片。</div>` : ""}
   `;
   el("actionPrompt").querySelectorAll("[data-skill-slot]").forEach((button) => {
-    button.addEventListener("click", () => selectSkill(button.dataset.skillSlot));
+    button.addEventListener("click", () => selectSkill(button.dataset.skillSlot).catch((error) => setMessage(error.message, "bad")));
   });
 }
 
@@ -339,11 +339,17 @@ function renderRunState() {
   el("runState").textContent = `${ok ? "通过" : "阻塞"}，${steps.length} 步，阻塞 ${blocked}，缺口 ${gaps}，跳过敌方 ${skips}`;
 }
 
-function selectSkill(slotName) {
+async function selectSkill(slotName) {
   const prompt = (state.report && state.report.action_prompt) || {};
   const slot = (prompt.slots || []).find((item) => item.slot === slotName);
   if (!slot || !slot.available) {
     setMessage(slot ? slot.blocked_reason || "动作槽位未接通" : "找不到动作槽位", "warn");
+    return;
+  }
+  const selectableTargets = (prompt.targets || []).filter((item) => item.selection_kind !== "auto");
+  const autoTargetIds = Array.isArray(slot.auto_target_ids) ? slot.auto_target_ids.filter(Boolean) : [];
+  if (autoTargetIds.length && selectableTargets.length === 0) {
+    await appendRouteStepWithTargets(slot, autoTargetIds, "自动目标组");
     return;
   }
   state.selectedSkill = slot;
@@ -356,8 +362,8 @@ async function handleUnitClick(unitId) {
   const unit = findBattlefieldUnit(unitId);
   if (!unit) return;
   if (state.selectedSkill) {
-    if (unit.side !== "enemy") {
-      setMessage("当前第一版只支持我方手动选择敌方目标", "warn");
+    if (!isPromptTarget(unit.unit_id)) {
+      setMessage("当前单位不是这个动作的合法候选目标", "warn");
       return;
     }
     await appendRouteStep(state.selectedSkill, unit);
@@ -367,6 +373,10 @@ async function handleUnitClick(unitId) {
 }
 
 async function appendRouteStep(slot, targetUnit) {
+  await appendRouteStepWithTargets(slot, [targetUnit.unit_id], targetUnit.display_name || targetUnit.unit_id);
+}
+
+async function appendRouteStepWithTargets(slot, targetIds, targetLabel) {
   const prompt = (state.report && state.report.action_prompt) || {};
   if (!prompt.current_unit_id || !slot.action_ref || !slot.action_level) {
     setMessage("动作槽位未接通，未生成路线", "warn");
@@ -378,14 +388,19 @@ async function appendRouteStep(slot, targetUnit) {
     actor_id: prompt.current_unit_id,
     action_ref: slot.action_ref,
     action_level: Number(slot.action_level),
-    target_ids: [targetUnit.unit_id],
+    target_ids: targetIds,
     source: "manual",
     metadata: {},
   });
   el("scenarioEditor").value = pretty(scenario);
   state.selectedSkill = null;
-  setMessage(`已追加路线：${prompt.current_unit_name} 使用 ${slot.display_label || slot.label} -> ${targetUnit.display_name}`, "ok");
+  setMessage(`已追加路线：${prompt.current_unit_name} 使用 ${slot.display_label || slot.label} -> ${targetLabel}`, "ok");
   await runScenario({ quiet: true });
+}
+
+function isPromptTarget(unitId) {
+  const prompt = (state.report && state.report.action_prompt) || {};
+  return (prompt.targets || []).some((item) => item.unit_id === unitId && item.selection_kind !== "auto");
 }
 
 function undoRouteStep() {

@@ -35,7 +35,93 @@ class TargetPolicy:
     bounce_policy: dict[str, JSONValue] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class TargetEnumerationResult:
+    ok: bool
+    selectable_target_ids: tuple[str, ...] = ()
+    auto_target_ids: tuple[str, ...] = ()
+    blocked_reason: str = ""
+    policy: dict[str, JSONValue] = field(default_factory=dict)
+    metadata: dict[str, JSONValue] = field(default_factory=dict)
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "ok": self.ok,
+            "selectable_target_ids": list(self.selectable_target_ids),
+            "auto_target_ids": list(self.auto_target_ids),
+            "blocked_reason": self.blocked_reason,
+            "policy": self.policy,
+            "metadata": self.metadata,
+        }
+
+
 class TargetSystem:
+    def enumerate_action_targets(
+        self,
+        state: BattleState,
+        actor_id: str,
+        policy: TargetPolicy | None = None,
+    ) -> TargetEnumerationResult:
+        policy = policy or TargetPolicy()
+        actor = state.units.get(actor_id)
+        policy_payload = _policy_metadata(policy)
+        if actor is None:
+            return TargetEnumerationResult(
+                ok=False,
+                blocked_reason="unknown_actor",
+                policy=policy_payload,
+                metadata={"actor_id": actor_id},
+            )
+        blocked_reason = _target_mode_blocked_reason(policy)
+        if blocked_reason:
+            return TargetEnumerationResult(
+                ok=False,
+                blocked_reason=blocked_reason,
+                policy=policy_payload,
+                metadata={"actor_id": actor_id},
+            )
+        if policy.target_mode == "aoe":
+            auto_targets = self.enemies_of(state, actor_id, allow_defeated=policy.allow_defeated)
+            if not auto_targets:
+                return TargetEnumerationResult(
+                    ok=False,
+                    blocked_reason="target_candidates_empty",
+                    policy=policy_payload,
+                    metadata={"actor_id": actor_id, "target_mode": policy.target_mode},
+                )
+            return TargetEnumerationResult(
+                ok=True,
+                auto_target_ids=auto_targets,
+                policy=policy_payload,
+                metadata={"actor_id": actor_id, "target_mode": policy.target_mode},
+            )
+        if policy.target_mode in {"single", "blast", "bounce", "self_or_team"}:
+            selectable = tuple(
+                unit_id
+                for unit_id, unit in sorted(state.units.items())
+                if (policy.allow_defeated or unit.hp > 0)
+                and _policy_allows(actor_id, actor.side, unit_id, unit.side, policy)
+            )
+            if not selectable:
+                return TargetEnumerationResult(
+                    ok=False,
+                    blocked_reason="target_candidates_empty",
+                    policy=policy_payload,
+                    metadata={"actor_id": actor_id, "target_mode": policy.target_mode},
+                )
+            return TargetEnumerationResult(
+                ok=True,
+                selectable_target_ids=selectable,
+                policy=policy_payload,
+                metadata={"actor_id": actor_id, "target_mode": policy.target_mode},
+            )
+        return TargetEnumerationResult(
+            ok=False,
+            blocked_reason=f"unsupported_target_mode:{policy.target_mode}",
+            policy=policy_payload,
+            metadata={"actor_id": actor_id, "target_mode": policy.target_mode},
+        )
+
     def resolve_action_targets(
         self,
         state: BattleState,
