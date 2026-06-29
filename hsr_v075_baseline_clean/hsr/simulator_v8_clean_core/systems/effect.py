@@ -37,6 +37,7 @@ class EffectExecutionContext:
     param_entity_id: str | None = None
     current_action_target_id: str | None = None
     target_resolution: TargetResolution | None = None
+    event_payload: dict[str, JSONValue] | None = None
     dynamic_values: dict[str, float] | None = None
     binding_sources: tuple[dict[str, JSONValue], ...] = ()
     damage_window_ledger: DamageWindowLedger | None = None
@@ -133,6 +134,7 @@ class EffectRegistry:
             param_entity_id=context.param_entity_id,
             current_action_target_id=context.current_action_target_id,
             target_resolution=context.target_resolution,
+            event_payload=context.event_payload,
             dynamic_values=context.dynamic_values,
             binding_sources=_binding_sources(context),
         )
@@ -207,6 +209,8 @@ def _add_modifier_payload_is_executable(effect: EffectIR) -> bool:
     modifier_name = standard.get("modifier_name")
     if not isinstance(modifier_name, str) or not modifier_name:
         return False
+    if standard.get("target_expression_coverage_status") == "executable":
+        return True
     return standard.get("target_alias") in SUPPORTED_ADD_MODIFIER_ALIASES
 
 
@@ -313,6 +317,11 @@ def _effect_payload_blocked_reason(effect: EffectIR) -> str:
         modifier_name = standard.get("modifier_name")
         if not isinstance(modifier_name, str) or not modifier_name:
             return "modifier_name_missing"
+        if standard.get("target_expression_coverage_status") == "executable":
+            return ""
+        target_expression_reason = standard.get("target_expression_blocked_reason")
+        if isinstance(target_expression_reason, str) and target_expression_reason:
+            return target_expression_reason
         if standard.get("target_alias") not in SUPPORTED_ADD_MODIFIER_ALIASES:
             return f"unsupported_or_missing_target_alias:{standard.get('target_alias')}"
     if effect.opcode in {"RemoveModifier", "RemoveSelfModifier"}:

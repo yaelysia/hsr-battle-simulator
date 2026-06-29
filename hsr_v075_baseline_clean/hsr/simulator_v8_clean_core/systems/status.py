@@ -202,6 +202,7 @@ class StatusSystem:
         param_entity_id: str | None = None,
         current_action_target_id: str | None = None,
         target_resolution: TargetResolution | None = None,
+        event_payload: dict[str, JSONValue] | None = None,
         dynamic_values: dict[str, float] | None = None,
         binding_sources: tuple[dict[str, JSONValue], ...] = (),
     ) -> StatusApplicationResult:
@@ -225,6 +226,9 @@ class StatusSystem:
             param_entity_id=param_entity_id,
             current_action_target_id=current_action_target_id,
             target_resolution=target_resolution,
+            event_payload=event_payload,
+            dynamic_values=dynamic_values,
+            binding_sources=binding_sources,
         )
         if target_blocked_reason:
             return _unsupported_result(effect, target_blocked_reason)
@@ -372,6 +376,9 @@ class StatusSystem:
         param_entity_id: str | None,
         current_action_target_id: str | None,
         target_resolution: TargetResolution | None,
+        event_payload: dict[str, JSONValue] | None,
+        dynamic_values: dict[str, float] | None,
+        binding_sources: tuple[dict[str, JSONValue], ...],
     ) -> tuple[tuple[str, ...], str, dict[str, JSONValue]]:
         target_expression_id = standard.get("target_expression_id")
         if isinstance(target_expression_id, str) and target_expression_id and self.rules is not None:
@@ -397,6 +404,9 @@ class StatusSystem:
                 param_entity_id=param_entity_id,
                 current_action_target_id=current_action_target_id,
                 target_resolution=target_resolution,
+                event_payload=event_payload,
+                dynamic_values=dynamic_values,
+                binding_sources=binding_sources,
             )
             trace = result.to_json()
             if not result.ok:

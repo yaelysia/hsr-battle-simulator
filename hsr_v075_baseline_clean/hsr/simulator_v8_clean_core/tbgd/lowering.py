@@ -5722,6 +5722,12 @@ ADD_MODIFIER_TARGET_ALIASES = EXECUTABLE_TARGET_ALIASES | {
     "AllTeammate",
 }
 STATUS_CALLBACK_LIST_TARGET_ALIASES = {"ParamEntitySkillTargetEntityList", "AllEnemyWithUnSelectable"}
+TARGET_EXPRESSION_CONTEXT_ALIASES = {
+    "AllDarkTeam",
+    "SkillTargetEntityList",
+    "ParamEntityList",
+    "TeamFormation",
+}
 DAMAGE_EMISSION_TARGET_ALIASES = {
     "AbilityTargetEntity",
     "AbilityTargetAdjoinEntity",
@@ -5874,7 +5880,7 @@ def _target_expression_from_raw(
     node_type = str(value.get("$type") or "")
     expression_kind = _target_expression_kind(node_type, value)
     alias = _target_alias(value) or ""
-    coverage_status, blocked_reason, admission_batch = _target_expression_admission(expression_kind, alias)
+    coverage_status, blocked_reason, admission_batch = _target_expression_admission(expression_kind, alias, value)
     return TargetExpressionIR(
         target_expression_id=expression_id,
         expression_kind=expression_kind,
@@ -5883,6 +5889,7 @@ def _target_expression_from_raw(
             "field_name": field_name,
             "node_type": node_type,
             "alias": alias,
+            "normalized": _target_expression_normalized_payload(value),
             "raw": _json_safe(value),
         },
         source=IRSource(
@@ -5912,11 +5919,14 @@ def _target_expression_kind(node_type: str, value: dict[str, Any]) -> str:
     return "UnknownTargetExpression"
 
 
-def _target_expression_admission(kind: str, alias: str) -> tuple[str, str, str]:
-    if kind == "TargetAlias" and alias in ADD_MODIFIER_TARGET_ALIASES | EXECUTABLE_TARGET_ALIASES:
+def _target_expression_admission(kind: str, alias: str, raw: dict[str, Any]) -> tuple[str, str, str]:
+    if kind == "TargetAlias" and _target_alias_admitted(alias):
         return "executable", "", "v0_288_target_alias_core"
-    if kind in {"TargetSequence", "TargetFilter", "Retarget"}:
-        return "blocked", f"target_expression_kind_not_admitted:{kind}", "v0_289_target_sequence_filter_retarget"
+    if kind in {"TargetConcat", "TargetSequence", "TargetFilter", "Retarget"}:
+        reason = _target_expression_runtime_blocked_reason(raw)
+        if not reason:
+            return "executable", "", "v0_289_target_sequence_filter_retarget"
+        return "blocked", reason, "v0_289_target_sequence_filter_retarget"
     if kind.startswith("TargetSort"):
         return "blocked", f"target_sort_not_admitted:{kind}", "after_target_sequence_sorting"
     if kind.startswith("TargetFetch"):
@@ -5926,6 +5936,103 @@ def _target_expression_admission(kind: str, alias: str) -> tuple[str, str, str]:
     return "blocked", f"target_expression_not_admitted:{kind or 'missing'}", "later_target_expression_admission"
 
 
+def _target_alias_admitted(alias: str) -> bool:
+    return alias in (
+        ADD_MODIFIER_TARGET_ALIASES
+        | STATUS_CALLBACK_LIST_TARGET_ALIASES
+        | TARGET_EXPRESSION_CONTEXT_ALIASES
+    )
+
+
+def _target_expression_runtime_blocked_reason(raw: dict[str, Any]) -> str:
+    kind = _target_expression_kind(str(raw.get("$type") or ""), raw)
+    if kind == "TargetAlias":
+        alias = _target_alias(raw) or ""
+        return "" if _target_alias_admitted(alias) else f"target_alias_not_admitted:{alias or 'missing'}"
+    if kind == "TargetConcat":
+        targets = raw.get("Targets")
+        if not isinstance(targets, list) or not targets:
+            return "target_concat_children_missing"
+        return _first_target_expression_child_blocked_reason(targets)
+    if kind == "TargetSequence":
+        sequence = raw.get("Sequence")
+        if not isinstance(sequence, list) or not sequence:
+            return "target_sequence_children_missing"
+        return _first_target_expression_child_blocked_reason(sequence)
+    if kind == "TargetFilter":
+        predicate = raw.get("Predicate")
+        if not isinstance(predicate, dict):
+            return "target_filter_predicate_missing"
+        opcode = _short_gamecore_type(predicate.get("$type"))
+        payload = _compact_payload(predicate)
+        if not _condition_payload_executable(opcode, payload):
+            return f"target_filter_condition_not_admitted:{opcode or 'missing'}"
+        target = raw.get("TargetType") or raw.get("Target") or raw.get("Targets")
+        if isinstance(target, dict):
+            return _target_expression_runtime_blocked_reason(target)
+        return ""
+    if kind == "Retarget":
+        if raw.get("ByRandom") is True:
+            return "retarget_random_not_admitted"
+        target = raw.get("TargetType")
+        if not isinstance(target, dict):
+            return "retarget_target_type_missing"
+        reason = _target_expression_runtime_blocked_reason(target)
+        if reason:
+            return reason
+        predicate = raw.get("Predicate")
+        if isinstance(predicate, dict):
+            opcode = _short_gamecore_type(predicate.get("$type"))
+            payload = _compact_payload(predicate)
+            if not _condition_payload_executable(opcode, payload):
+                return f"retarget_condition_not_admitted:{opcode or 'missing'}"
+        max_number = raw.get("MaxNumber")
+        if max_number is not None and not _numeric_expr_can_be_runtime_bound(_numeric_expr_summary(max_number)):
+            return "retarget_max_number_not_executable"
+        return ""
+    if kind.startswith("TargetSort"):
+        return f"target_sort_not_admitted:{kind}"
+    if kind.startswith("TargetFetch"):
+        return f"target_fetch_not_admitted:{kind}"
+    return f"target_expression_kind_not_admitted:{kind or 'missing'}"
+
+
+def _first_target_expression_child_blocked_reason(children: list[Any]) -> str:
+    for child in children:
+        if not isinstance(child, dict):
+            return "target_expression_child_not_object"
+        reason = _target_expression_runtime_blocked_reason(child)
+        if reason:
+            return reason
+    return ""
+
+
+def _target_expression_normalized_payload(raw: dict[str, Any]) -> dict[str, Any]:
+    kind = _target_expression_kind(str(raw.get("$type") or ""), raw)
+    payload: dict[str, Any] = {"expression_kind": kind, "alias": _target_alias(raw) or ""}
+    if kind == "TargetConcat":
+        payload["children"] = [_target_expression_normalized_payload(item) for item in raw.get("Targets") or [] if isinstance(item, dict)]
+    elif kind == "TargetSequence":
+        payload["children"] = [_target_expression_normalized_payload(item) for item in raw.get("Sequence") or [] if isinstance(item, dict)]
+    elif kind == "TargetFilter":
+        predicate = raw.get("Predicate")
+        if isinstance(predicate, dict):
+            opcode = _short_gamecore_type(predicate.get("$type"))
+            predicate_payload = _compact_payload(predicate)
+            payload["predicate"] = {
+                "opcode": opcode,
+                "payload": _json_safe(predicate_payload),
+                "coverage_status": "executable" if _condition_payload_executable(opcode, predicate_payload) else classify_opcode(opcode),
+            }
+    elif kind == "Retarget":
+        target = raw.get("TargetType")
+        if isinstance(target, dict):
+            payload["target"] = _target_expression_normalized_payload(target)
+        payload["by_random"] = bool(raw.get("ByRandom"))
+        payload["max_number"] = _numeric_expr_summary(raw.get("MaxNumber"))
+    return payload
+
+
 def _effect_coverage_status(opcode: str, payload: dict[str, Any]) -> str:
     if opcode == "AddModifier":
         standard = payload.get("standard")
@@ -5933,6 +6040,8 @@ def _effect_coverage_status(opcode: str, payload: dict[str, Any]) -> str:
             return "blocked"
         if not standard.get("modifier_name"):
             return "blocked"
+        if standard.get("target_expression_coverage_status") == "executable":
+            return "executable"
         if standard.get("target_alias") in ADD_MODIFIER_TARGET_ALIASES | STATUS_CALLBACK_LIST_TARGET_ALIASES:
             return "executable"
         return "blocked"
@@ -7651,8 +7760,11 @@ def _effect_blocked_reason(opcode: str, payload: dict[str, Any], coverage_status
     if coverage_status == "blocked":
         if not isinstance(standard, dict):
             return f"effect_payload_not_standardized:{opcode}"
+        target_expression_reason = standard.get("target_expression_blocked_reason")
+        if isinstance(target_expression_reason, str) and target_expression_reason:
+            return target_expression_reason
         target_alias = standard.get("target_alias")
-        if target_alias is not None and target_alias not in EXECUTABLE_TARGET_ALIASES:
+        if target_alias is not None and target_alias not in EXECUTABLE_TARGET_ALIASES | ADD_MODIFIER_TARGET_ALIASES | STATUS_CALLBACK_LIST_TARGET_ALIASES:
             return f"unsupported_target_alias:{target_alias}"
         return f"effect_not_executable:{opcode}"
     return f"effect_coverage_status:{coverage_status}:{opcode}"

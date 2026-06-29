@@ -1963,6 +1963,7 @@ def _effect_context(
         owner_id=owner_id,
         param_entity_id=param_entity_id or None,
         current_action_target_id=target_id or None,
+        event_payload=dict(payload),
         binding_sources=(
             *status_binding_sources(state, unit_ids),
             binding_source_from_store(store_from_state(state)),

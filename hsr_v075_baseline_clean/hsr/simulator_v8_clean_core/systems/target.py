@@ -4,7 +4,8 @@ import hashlib
 from dataclasses import dataclass, field
 
 from ..core.model import BattleState, JSONValue, RNGEvent, TargetResolution
-from ..rules.ir import TargetExpressionIR
+from ..rules.evaluator import EvaluationContext, RuleEvaluator
+from ..rules.ir import ConditionIR, IRSource, TargetExpressionIR
 
 
 @dataclass(frozen=True)
@@ -89,6 +90,9 @@ class TargetSystem:
         param_entity_id: str | None = None,
         current_action_target_id: str | None = None,
         target_resolution: TargetResolution | None = None,
+        event_payload: dict[str, JSONValue] | None = None,
+        dynamic_values: dict[str, float] | None = None,
+        binding_sources: tuple[dict[str, JSONValue], ...] = (),
     ) -> TargetExpressionResult:
         metadata: dict[str, JSONValue] = {
             "target_expression": expression.to_json(),
@@ -97,6 +101,7 @@ class TargetSystem:
             "param_entity_id": param_entity_id,
             "current_action_target_id": current_action_target_id,
             "target_resolution": target_resolution.to_json() if target_resolution else None,
+            "event_payload": event_payload or {},
         }
         if expression.coverage_status != "executable":
             reason = expression.blocked_reason or f"target_expression_not_executable:{expression.coverage_status}"
@@ -108,29 +113,25 @@ class TargetSystem:
                 alias=expression.alias,
                 metadata=metadata,
             )
-        if expression.expression_kind != "TargetAlias":
-            reason = f"target_expression_kind_not_supported:{expression.expression_kind}"
-            return TargetExpressionResult(
-                ok=False,
-                blocked_reason=reason,
-                expression_id=expression.target_expression_id,
-                expression_kind=expression.expression_kind,
-                alias=expression.alias,
-                metadata=metadata,
-            )
-        target_ids, reason = _resolve_target_alias_ids(
+        result = _resolve_expression_payload(
             state,
-            expression.alias,
+            expression.payload.get("raw") if isinstance(expression.payload, dict) else None,
+            expression_kind=expression.expression_kind,
+            alias=expression.alias,
             caster_id=caster_id,
             owner_id=owner_id,
             param_entity_id=param_entity_id,
             current_action_target_id=current_action_target_id,
             target_resolution=target_resolution,
+            event_payload=event_payload or {},
+            dynamic_values=dynamic_values,
+            binding_sources=binding_sources,
         )
-        if reason:
+        metadata["resolution_steps"] = result.steps
+        if result.blocked_reason:
             return TargetExpressionResult(
                 ok=False,
-                blocked_reason=reason,
+                blocked_reason=result.blocked_reason,
                 expression_id=expression.target_expression_id,
                 expression_kind=expression.expression_kind,
                 alias=expression.alias,
@@ -138,7 +139,7 @@ class TargetSystem:
             )
         return TargetExpressionResult(
             ok=True,
-            target_ids=target_ids,
+            target_ids=result.target_ids,
             expression_id=expression.target_expression_id,
             expression_kind=expression.expression_kind,
             alias=expression.alias,
@@ -424,6 +425,305 @@ def _policy_allows(actor_id: str, actor_side: str, target_id: str, target_side: 
     return policy.allow_enemy
 
 
+@dataclass(frozen=True)
+class _ExpressionResolution:
+    target_ids: tuple[str, ...] = ()
+    blocked_reason: str = ""
+    steps: list[JSONValue] = field(default_factory=list)
+
+
+def _resolve_expression_payload(
+    state: BattleState,
+    raw: JSONValue,
+    *,
+    expression_kind: str,
+    alias: str,
+    caster_id: str,
+    owner_id: str | None,
+    param_entity_id: str | None,
+    current_action_target_id: str | None,
+    target_resolution: TargetResolution | None,
+    event_payload: dict[str, JSONValue],
+    dynamic_values: dict[str, float] | None,
+    binding_sources: tuple[dict[str, JSONValue], ...],
+) -> _ExpressionResolution:
+    return _resolve_inline_expression(
+        state,
+        raw,
+        expression_kind=expression_kind,
+        alias=alias,
+        caster_id=caster_id,
+        owner_id=owner_id,
+        param_entity_id=param_entity_id,
+        current_action_target_id=current_action_target_id,
+        target_resolution=target_resolution,
+        event_payload=event_payload,
+        dynamic_values=dynamic_values,
+        binding_sources=binding_sources,
+        previous_targets=(),
+        path="$",
+    )
+
+
+def _resolve_inline_expression(
+    state: BattleState,
+    raw: JSONValue,
+    *,
+    expression_kind: str,
+    alias: str,
+    caster_id: str,
+    owner_id: str | None,
+    param_entity_id: str | None,
+    current_action_target_id: str | None,
+    target_resolution: TargetResolution | None,
+    event_payload: dict[str, JSONValue],
+    dynamic_values: dict[str, float] | None,
+    binding_sources: tuple[dict[str, JSONValue], ...],
+    previous_targets: tuple[str, ...],
+    path: str,
+) -> _ExpressionResolution:
+    if isinstance(raw, dict):
+        expression_kind = _inline_expression_kind(raw) or expression_kind
+        alias = _inline_target_alias(raw) or alias
+    if expression_kind == "TargetAlias":
+        target_ids, reason = _resolve_target_alias_ids(
+            state,
+            alias,
+            caster_id=caster_id,
+            owner_id=owner_id,
+            param_entity_id=param_entity_id,
+            current_action_target_id=current_action_target_id,
+            target_resolution=target_resolution,
+            event_payload=event_payload,
+        )
+        return _inline_result(path, expression_kind, alias, target_ids, reason)
+    if expression_kind in {"TargetConcat", "TargetSequence"}:
+        children = _inline_children(raw, expression_kind)
+        if not children:
+            return _inline_result(path, expression_kind, alias, (), f"target_expression_children_missing:{expression_kind}")
+        selected: tuple[str, ...] = ()
+        steps: list[JSONValue] = []
+        for index, child in enumerate(children):
+            child_kind = _inline_expression_kind(child)
+            child_path = f"{path}.{expression_kind}[{index}]"
+            if child_kind == "TargetFilter":
+                child_result = _resolve_filter_expression(
+                    state,
+                    child,
+                    caster_id=caster_id,
+                    owner_id=owner_id,
+                    param_entity_id=param_entity_id,
+                    current_action_target_id=current_action_target_id,
+                    target_resolution=target_resolution,
+                    event_payload=event_payload,
+                    dynamic_values=dynamic_values,
+                    binding_sources=binding_sources,
+                    candidate_targets=selected,
+                    path=child_path,
+                )
+            else:
+                child_result = _resolve_inline_expression(
+                    state,
+                    child,
+                    expression_kind=child_kind,
+                    alias=_inline_target_alias(child),
+                    caster_id=caster_id,
+                    owner_id=owner_id,
+                    param_entity_id=param_entity_id,
+                    current_action_target_id=current_action_target_id,
+                    target_resolution=target_resolution,
+                    event_payload=event_payload,
+                    dynamic_values=dynamic_values,
+                    binding_sources=binding_sources,
+                    previous_targets=selected,
+                    path=child_path,
+                )
+            steps.extend(child_result.steps)
+            if child_result.blocked_reason:
+                return _inline_result(path, expression_kind, alias, (), child_result.blocked_reason, steps)
+            selected = _dedupe((*selected, *child_result.target_ids))
+        return _inline_result(path, expression_kind, alias, selected, "", steps)
+    if expression_kind == "TargetFilter":
+        return _resolve_filter_expression(
+            state,
+            raw,
+            caster_id=caster_id,
+            owner_id=owner_id,
+            param_entity_id=param_entity_id,
+            current_action_target_id=current_action_target_id,
+            target_resolution=target_resolution,
+            event_payload=event_payload,
+            dynamic_values=dynamic_values,
+            binding_sources=binding_sources,
+            candidate_targets=previous_targets,
+            path=path,
+        )
+    if expression_kind == "Retarget":
+        return _resolve_retarget_expression(
+            state,
+            raw,
+            caster_id=caster_id,
+            owner_id=owner_id,
+            param_entity_id=param_entity_id,
+            current_action_target_id=current_action_target_id,
+            target_resolution=target_resolution,
+            event_payload=event_payload,
+            dynamic_values=dynamic_values,
+            binding_sources=binding_sources,
+            path=path,
+        )
+    return _inline_result(path, expression_kind, alias, (), f"target_expression_kind_not_supported:{expression_kind}")
+
+
+def _resolve_filter_expression(
+    state: BattleState,
+    raw: JSONValue,
+    *,
+    caster_id: str,
+    owner_id: str | None,
+    param_entity_id: str | None,
+    current_action_target_id: str | None,
+    target_resolution: TargetResolution | None,
+    event_payload: dict[str, JSONValue],
+    dynamic_values: dict[str, float] | None,
+    binding_sources: tuple[dict[str, JSONValue], ...],
+    candidate_targets: tuple[str, ...],
+    path: str,
+) -> _ExpressionResolution:
+    if not isinstance(raw, dict):
+        return _inline_result(path, "TargetFilter", "", (), "target_filter_payload_missing")
+    explicit_target = _filter_candidate_expression(raw)
+    steps: list[JSONValue] = []
+    if explicit_target is not None:
+        source_result = _resolve_inline_expression(
+            state,
+            explicit_target,
+            expression_kind=_inline_expression_kind(explicit_target),
+            alias=_inline_target_alias(explicit_target),
+            caster_id=caster_id,
+            owner_id=owner_id,
+            param_entity_id=param_entity_id,
+            current_action_target_id=current_action_target_id,
+            target_resolution=target_resolution,
+            event_payload=event_payload,
+            dynamic_values=dynamic_values,
+            binding_sources=binding_sources,
+            previous_targets=(),
+            path=f"{path}.source",
+        )
+        steps.extend(source_result.steps)
+        if source_result.blocked_reason:
+            return _inline_result(path, "TargetFilter", "", (), source_result.blocked_reason, steps)
+        candidate_targets = source_result.target_ids
+    if not candidate_targets:
+        return _inline_result(path, "TargetFilter", "", (), "target_filter_candidate_missing", steps)
+    predicate = raw.get("Predicate")
+    if not isinstance(predicate, dict):
+        return _inline_result(path, "TargetFilter", "", (), "target_filter_predicate_missing", steps)
+    condition = _condition_from_raw(predicate, path)
+    evaluator = RuleEvaluator()
+    selected: list[str] = []
+    condition_results: list[JSONValue] = []
+    for candidate_id in candidate_targets:
+        result = evaluator.evaluate_condition_result(
+            condition,
+            EvaluationContext(
+                state=state,
+                actor_id=caster_id,
+                target_id=candidate_id,
+                owner_id=owner_id,
+                param_entity_id=candidate_id,
+                current_action_target_id=current_action_target_id or candidate_id,
+                event_payload={**event_payload, "target_id": candidate_id, "param_entity_id": candidate_id},
+                dynamic_values=dynamic_values,
+                binding_sources=binding_sources,
+            ),
+        )
+        condition_results.append(result.to_json())
+        if not result.ok or result.result is None:
+            return _inline_result(
+                path,
+                "TargetFilter",
+                "",
+                (),
+                f"target_filter_condition_blocked:{result.reason}",
+                [*steps, {"condition_results": condition_results}],
+            )
+        if result.result:
+            selected.append(candidate_id)
+    return _inline_result(path, "TargetFilter", "", tuple(selected), "", [*steps, {"condition_results": condition_results}])
+
+
+def _resolve_retarget_expression(
+    state: BattleState,
+    raw: JSONValue,
+    *,
+    caster_id: str,
+    owner_id: str | None,
+    param_entity_id: str | None,
+    current_action_target_id: str | None,
+    target_resolution: TargetResolution | None,
+    event_payload: dict[str, JSONValue],
+    dynamic_values: dict[str, float] | None,
+    binding_sources: tuple[dict[str, JSONValue], ...],
+    path: str,
+) -> _ExpressionResolution:
+    if not isinstance(raw, dict):
+        return _inline_result(path, "Retarget", "", (), "retarget_payload_missing")
+    if raw.get("ByRandom") is True:
+        return _inline_result(path, "Retarget", "", (), "retarget_random_not_admitted")
+    target_expr = raw.get("TargetType")
+    if not isinstance(target_expr, dict):
+        return _inline_result(path, "Retarget", "", (), "retarget_target_type_missing")
+    source_result = _resolve_inline_expression(
+        state,
+        target_expr,
+        expression_kind=_inline_expression_kind(target_expr),
+        alias=_inline_target_alias(target_expr),
+        caster_id=caster_id,
+        owner_id=owner_id,
+        param_entity_id=param_entity_id,
+        current_action_target_id=current_action_target_id,
+        target_resolution=target_resolution,
+        event_payload=event_payload,
+        dynamic_values=dynamic_values,
+        binding_sources=binding_sources,
+        previous_targets=(),
+        path=f"{path}.TargetType",
+    )
+    if source_result.blocked_reason:
+        return _inline_result(path, "Retarget", "", (), source_result.blocked_reason, source_result.steps)
+    candidate_targets = source_result.target_ids
+    steps = list(source_result.steps)
+    predicate = raw.get("Predicate")
+    if isinstance(predicate, dict):
+        filter_result = _resolve_filter_expression(
+            state,
+            {"$type": "RPG.GameCore.TargetFilter", "Predicate": predicate},
+            caster_id=caster_id,
+            owner_id=owner_id,
+            param_entity_id=param_entity_id,
+            current_action_target_id=current_action_target_id,
+            target_resolution=target_resolution,
+            event_payload=event_payload,
+            dynamic_values=dynamic_values,
+            binding_sources=binding_sources,
+            candidate_targets=candidate_targets,
+            path=f"{path}.Predicate",
+        )
+        steps.extend(filter_result.steps)
+        if filter_result.blocked_reason:
+            return _inline_result(path, "Retarget", "", (), filter_result.blocked_reason, steps)
+        candidate_targets = filter_result.target_ids
+    max_number = _fixed_positive_int(raw.get("MaxNumber"))
+    if raw.get("MaxNumber") is not None and max_number is None:
+        return _inline_result(path, "Retarget", "", (), "retarget_max_number_not_fixed_positive", steps)
+    selected = candidate_targets[: max_number or len(candidate_targets)]
+    if not selected:
+        return _inline_result(path, "Retarget", "", (), "retarget_candidate_missing", steps)
+    return _inline_result(path, "Retarget", "", selected, "", steps)
+
+
 def _resolve_target_alias_ids(
     state: BattleState,
     alias: str,
@@ -433,6 +733,7 @@ def _resolve_target_alias_ids(
     param_entity_id: str | None,
     current_action_target_id: str | None,
     target_resolution: TargetResolution | None,
+    event_payload: dict[str, JSONValue],
 ) -> tuple[tuple[str, ...], str]:
     if alias in {"Caster", "ModifierOwnerEntity", "ParamEntity", "CurrentActionTarget", "AbilityTargetEntity"}:
         target_id = _resolve_single_alias(
@@ -448,7 +749,16 @@ def _resolve_target_alias_ids(
         if target_id not in state.units:
             return (), f"target unit {target_id!r} is not in state"
         return (target_id,), ""
-    if alias in {"AllEnemy", "AllTeamMember", "AllLightTeam", "AllTeammate"}:
+    if alias in {"SkillTargetEntityList", "ParamEntitySkillTargetEntityList"}:
+        return _target_ids_from_resolution_or_payload(state, target_resolution, event_payload)
+    if alias == "ParamEntityList":
+        return _target_ids_from_payload(
+            state,
+            event_payload,
+            ("param_entity_ids", "param_entity_list", "param_entities"),
+            missing_reason="param_entity_list_missing",
+        )
+    if alias in {"AllEnemy", "AllTeamMember", "AllLightTeam", "AllDarkTeam", "AllTeammate", "TeamFormation", "AllEnemyWithUnSelectable"}:
         return _resolve_group_alias(state, caster_id, alias)
     return (), f"target_alias_not_admitted:{alias or 'missing'}"
 
@@ -488,15 +798,152 @@ def _resolve_group_alias(
     for unit_id, unit in sorted(state.units.items()):
         if unit.hp <= 0:
             continue
-        if alias == "AllEnemy" and unit.side != caster.side:
+        if alias in {"AllEnemy", "AllEnemyWithUnSelectable"} and unit.side != caster.side:
             targets.append(unit_id)
-        elif alias in {"AllTeamMember", "AllLightTeam"} and unit.side == caster.side:
+        elif alias in {"AllTeamMember", "TeamFormation"} and unit.side == caster.side:
+            targets.append(unit_id)
+        elif alias == "AllLightTeam" and unit.side in {"ally", "summon"}:
+            targets.append(unit_id)
+        elif alias == "AllDarkTeam" and unit.side == "enemy":
             targets.append(unit_id)
         elif alias == "AllTeammate" and unit.side == caster.side and unit_id != caster_id:
             targets.append(unit_id)
     if not targets:
         return (), f"target group empty:{alias}"
     return tuple(dict.fromkeys(targets)), ""
+
+
+def _inline_expression_kind(raw: JSONValue) -> str:
+    if not isinstance(raw, dict):
+        return ""
+    node_type = str(raw.get("$type") or "")
+    if node_type.startswith("RPG.GameCore."):
+        return node_type.removeprefix("RPG.GameCore.")
+    if raw.get("Alias") is not None:
+        return "TargetAlias"
+    return ""
+
+
+def _inline_target_alias(raw: JSONValue) -> str:
+    if isinstance(raw, dict):
+        alias = raw.get("Alias")
+        if isinstance(alias, str):
+            return alias
+    return ""
+
+
+def _inline_children(raw: JSONValue, expression_kind: str) -> tuple[JSONValue, ...]:
+    if not isinstance(raw, dict):
+        return ()
+    key = "Targets" if expression_kind == "TargetConcat" else "Sequence"
+    children = raw.get(key)
+    if not isinstance(children, list):
+        return ()
+    return tuple(item for item in children if isinstance(item, dict))
+
+
+def _filter_candidate_expression(raw: dict[str, JSONValue]) -> JSONValue | None:
+    for key in ("TargetType", "Target", "Targets"):
+        value = raw.get(key)
+        if isinstance(value, dict):
+            return value
+    return None
+
+
+def _condition_from_raw(predicate: dict[str, JSONValue], path: str) -> ConditionIR:
+    opcode = _inline_expression_kind(predicate) or "UnknownCondition"
+    payload = {key: value for key, value in predicate.items() if key != "$type"}
+    return ConditionIR(
+        condition_id=f"inline_target_filter_condition:{path}:{opcode}",
+        opcode=opcode,
+        payload=payload,
+        source=IRSource(
+            source_path="CanonicalIR.TargetExpressionIR.payload",
+            raw_type="TargetFilterPredicate",
+            raw_id=path,
+            evidence={"predicate": predicate},
+        ),
+        coverage_status="executable",
+    )
+
+
+def _target_ids_from_resolution_or_payload(
+    state: BattleState,
+    target_resolution: TargetResolution | None,
+    event_payload: dict[str, JSONValue],
+) -> tuple[tuple[str, ...], str]:
+    if target_resolution is not None and target_resolution.selected:
+        target_ids = _existing_targets(state, target_resolution.selected)
+        if target_ids:
+            return target_ids, ""
+        return (), "skill_target_entity_list_units_missing"
+    return _target_ids_from_payload(
+        state,
+        event_payload,
+        ("selected_target_ids", "skill_target_ids", "target_ids", "requested_target_ids"),
+        missing_reason="skill_target_entity_list_missing",
+    )
+
+
+def _target_ids_from_payload(
+    state: BattleState,
+    event_payload: dict[str, JSONValue],
+    keys: tuple[str, ...],
+    *,
+    missing_reason: str,
+) -> tuple[tuple[str, ...], str]:
+    for key in keys:
+        value = event_payload.get(key)
+        if isinstance(value, (list, tuple)):
+            target_ids = _existing_targets(state, tuple(str(item) for item in value if isinstance(item, str)))
+            if target_ids:
+                return target_ids, ""
+    return (), missing_reason
+
+
+def _existing_targets(state: BattleState, target_ids: tuple[str, ...]) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(target_id for target_id in target_ids if target_id in state.units))
+
+
+def _dedupe(target_ids: tuple[str, ...]) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(target_ids))
+
+
+def _fixed_positive_int(value: JSONValue) -> int | None:
+    if isinstance(value, dict):
+        fixed = value.get("FixedValue")
+        if isinstance(fixed, dict):
+            raw = fixed.get("Value")
+            if isinstance(raw, (int, float)) and raw > 0:
+                return int(raw)
+        raw = value.get("Value")
+        if isinstance(raw, (int, float)) and raw > 0:
+            return int(raw)
+    if isinstance(value, (int, float)) and value > 0:
+        return int(value)
+    return None
+
+
+def _inline_result(
+    path: str,
+    expression_kind: str,
+    alias: str,
+    target_ids: tuple[str, ...],
+    blocked_reason: str,
+    steps: list[JSONValue] | None = None,
+) -> _ExpressionResolution:
+    step: dict[str, JSONValue] = {
+        "path": path,
+        "expression_kind": expression_kind,
+        "alias": alias,
+        "target_ids": list(target_ids),
+        "blocked_reason": blocked_reason,
+    }
+    return _ExpressionResolution(
+        target_ids=target_ids,
+        blocked_reason=blocked_reason,
+        steps=[*(steps or []), step],
+    )
 
 
 def _policy_metadata(policy: TargetPolicy) -> dict[str, JSONValue]:
