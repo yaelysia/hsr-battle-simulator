@@ -136,6 +136,7 @@ class EffectRegistry:
             binding_sources=_binding_sources(context),
         )
         return EffectResult(
+            events=result.events,
             mutations=result.mutations,
             records=result.records,
             unsupported=result.unsupported,
@@ -160,6 +161,7 @@ class EffectRegistry:
             current_action_target_id=context.current_action_target_id,
         )
         return EffectResult(
+            events=result.events,
             mutations=result.mutations,
             records=result.records,
             unsupported=result.unsupported,

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import base64
 import re
+from collections import Counter
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
@@ -51,6 +52,7 @@ from ..rules.ir import (
     SkillFormulaBindingIR,
     StandaloneAbilityGraphIR,
     StatusCallbackIR,
+    StatusEventFamilyIR,
     StatusCallbackTaskIR,
     StatusDamageEmissionIR,
     SuperBreakEmissionIR,
@@ -379,6 +381,7 @@ class TBGDLowering:
         entities = list(_dedupe_entities(entities).values())
         formulas.extend(self._lower_elation_mechanics())
         formulas.extend(self._lower_damage_behavior_templates())
+        status_event_families = _lower_status_event_families(status_callbacks, status_callback_tasks)
 
         return CanonicalIR(
             version=BASELINE_VERSION,
@@ -405,6 +408,7 @@ class TBGDLowering:
             break_base_damage=tuple(break_base_damage),
             break_damage_emissions=tuple(break_damage_emissions),
             break_status_emissions=tuple(break_status_emissions),
+            status_event_families=tuple(status_event_families),
             status_callbacks=tuple(status_callbacks),
             status_callback_tasks=tuple(status_callback_tasks),
             status_damage_emissions=tuple(status_damage_emissions),
@@ -456,6 +460,10 @@ class TBGDLowering:
                     "break_base_damage_count": len(break_base_damage),
                     "break_damage_emission_count": len(break_damage_emissions),
                     "break_status_emission_count": len(break_status_emissions),
+                    "status_event_family_count": len(status_event_families),
+                    "executable_status_event_family_count": sum(
+                        1 for family in status_event_families if family.coverage_status == "executable"
+                    ),
                     "status_callback_count": len(status_callbacks),
                     "status_callback_task_count": len(status_callback_tasks),
                     "status_damage_emission_count": len(status_damage_emissions),
@@ -2803,6 +2811,130 @@ def _entity_raw_id(entity_type: str, id_key: str, row: dict[str, Any]) -> str:
         promotion = row.get("Promotion", 0)
         return f"{row[id_key]}:{promotion}"
     return str(row[id_key])
+
+
+STATUS_EVENT_RUNTIME_SOURCES: dict[str, tuple[str, ...]] = {
+    "OnListenAllowAction": ("turn.begin",),
+    "OnListenTurnEnd": ("turn.end",),
+    "OnBeforeSkillUse": ("action.window.before_skill_use",),
+    "OnBeforeAttack": ("action.window.before_attack",),
+    "OnAfterAttack": ("action.window.after_attack", "action.after_attack"),
+    "OnAfterSkillUse": ("action.window.after_skill_use",),
+    "OnActionEnd": ("action.end",),
+    "OnBeforeInsertActionPrepare": ("queue.action.before",),
+    "OnInsertActionStart": ("queue.action.before",),
+    "OnInsertActionFinish": ("queue.action.after",),
+    "OnListenInsertAbilityFinish": ("queue.action.after",),
+    "OnBeforeHit": ("damage.before_hit",),
+    "OnBeforeHitAll": ("damage.before_hit",),
+    "OnAfterHit": ("damage.hit",),
+    "OnAfterHitAll": ("damage.hit",),
+    "OnAfterBeingAttacked": ("damage.hit",),
+    "OnBeingHit": ("damage.hit",),
+    "OnHit": ("damage.hit", "toughness.hit"),
+    "OnTriggerBreak": ("break.triggered",),
+    "OnBeingBreak": ("break.triggered",),
+    "OnTriggerDeath": ("unit.defeated",),
+    "OnListenCharacterDie": ("unit.defeated",),
+    "OnTriggerDeathrattle": ("unit.defeated",),
+    "OnBeforeDying": ("unit.before_dying",),
+    "OnCreate": ("status.lifecycle",),
+    "OnDestroy": ("status.lifecycle",),
+    "OnStack": ("status.lifecycle",),
+    "OnModifierAdd": ("status.lifecycle",),
+    "OnModifierRemove": ("status.lifecycle",),
+}
+
+
+STATUS_EVENT_BLOCKED_DEPENDENCIES: dict[str, str] = {
+    "OnCustomEvent": "event_source_missing:custom_event_source_not_admitted",
+    "OnWaveMonster": "event_source_missing:wave_system_not_implemented",
+}
+
+
+def _lower_status_event_families(
+    status_callbacks: list[StatusCallbackIR],
+    status_callback_tasks: list[StatusCallbackTaskIR],
+) -> list[StatusEventFamilyIR]:
+    callbacks_by_event: dict[str, list[StatusCallbackIR]] = {}
+    for callback in status_callbacks:
+        callbacks_by_event.setdefault(callback.event, []).append(callback)
+    tasks_by_callback: dict[str, list[StatusCallbackTaskIR]] = {}
+    for task in status_callback_tasks:
+        tasks_by_callback.setdefault(task.callback_id, []).append(task)
+    families: list[StatusEventFamilyIR] = []
+    for event, callbacks in sorted(callbacks_by_event.items()):
+        tasks = [task for callback in callbacks for task in tasks_by_callback.get(callback.callback_id, ())]
+        runtime_sources = STATUS_EVENT_RUNTIME_SOURCES.get(event, ())
+        blocked_dependency = STATUS_EVENT_BLOCKED_DEPENDENCIES.get(event, "")
+        if not runtime_sources and not blocked_dependency:
+            blocked_dependency = f"event_source_missing:{event}"
+        coverage_status = "blocked" if blocked_dependency else "executable"
+        families.append(
+            StatusEventFamilyIR(
+                status_event_family_id=f"status_event_family:{_safe_id(event)}",
+                callback_event=event,
+                event_family=_status_event_family_name(event),
+                default_scope_kind=_status_callback_scope_kind(event),
+                runtime_event_sources=runtime_sources,
+                source_basis="StatusCallbackIR.event",
+                source=IRSource(
+                    source_path="CanonicalIR/status_callbacks",
+                    raw_type="StatusCallbackEventFamily",
+                    raw_id=event,
+                    evidence={
+                        "callback_event": event,
+                        "callback_count": len(callbacks),
+                        "runtime_event_sources": list(runtime_sources),
+                        "blocked_dependency": blocked_dependency,
+                        "source_basis": "lowered from StatusCallbackIR.event values produced by TBGD ability lowering",
+                    },
+                ),
+                callback_count=len(callbacks),
+                executable_callback_count=sum(
+                    1
+                    for callback in callbacks
+                    if callback.coverage_status == "executable" and callback.admission_status == "executable"
+                ),
+                blocked_callback_count=sum(
+                    1
+                    for callback in callbacks
+                    if callback.coverage_status != "executable" or callback.admission_status != "executable"
+                ),
+                task_count=len(tasks),
+                task_opcode_counts=dict(Counter(task.opcode for task in tasks)),
+                source_mode_counts=dict(Counter(callback.source_mode for callback in callbacks)),
+                coverage_status=coverage_status,
+                blocked_reason=blocked_dependency,
+                admission_status=coverage_status,
+                blocking_dependency=blocked_dependency,
+            )
+        )
+    return families
+
+
+def _status_event_family_name(event: str) -> str:
+    if event in {"OnCustomEvent"}:
+        return "custom_event"
+    if event in {"OnWaveMonster"}:
+        return "wave"
+    if event in {"OnCreate", "OnDestroy", "OnStack", "OnModifierAdd", "OnModifierRemove", "OnPhase1"}:
+        return "status_lifecycle"
+    if "Hit" in event or "Attacked" in event:
+        return "hit"
+    if "Break" in event:
+        return "break"
+    if "Death" in event or "Die" in event or "Dying" in event:
+        return "death"
+    if "Insert" in event or "Action" in event:
+        return "action_or_queue"
+    if "Turn" in event or event == "OnListenAllowAction":
+        return "turn"
+    if "HP" in event or "Heal" in event or "Shield" in event or "SP" in event or "Energy" in event:
+        return "resource"
+    if "Rogue" in event or "Elation" in event or "Evolve" in event or "Chess" in event:
+        return "special_mode"
+    return "unadmitted"
 
 
 def _character_runtime_mechanism_slots(

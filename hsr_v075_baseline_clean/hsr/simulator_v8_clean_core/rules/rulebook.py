@@ -44,6 +44,7 @@ from .ir import (
     StatusCallbackIR,
     StatusCallbackTaskIR,
     StatusDamageEmissionIR,
+    StatusEventFamilyIR,
     SuperBreakEmissionIR,
     TimelineRuleIR,
     ToughnessEmissionIR,
@@ -416,6 +417,23 @@ class RuleBook:
             self,
             "_status_callbacks",
             {callback.callback_id: callback for callback in self.ir.status_callbacks},
+        )
+        object.__setattr__(
+            self,
+            "_status_event_families",
+            {family.callback_event: family for family in self.ir.status_event_families},
+        )
+        status_event_families_by_runtime_event: dict[str, list[StatusEventFamilyIR]] = {}
+        for family in self.ir.status_event_families:
+            for runtime_event in family.runtime_event_sources:
+                status_event_families_by_runtime_event.setdefault(runtime_event, []).append(family)
+        object.__setattr__(
+            self,
+            "_status_event_families_by_runtime_event",
+            {
+                key: tuple(sorted(value, key=lambda item: item.callback_event))
+                for key, value in status_event_families_by_runtime_event.items()
+            },
         )
         status_callbacks_by_modifier_event: dict[tuple[str, str], list[StatusCallbackIR]] = {}
         status_callbacks_by_event: dict[str, list[StatusCallbackIR]] = {}
@@ -895,6 +913,15 @@ class RuleBook:
 
     def break_status_emissions_for_template(self, template_id: str) -> tuple[BreakStatusEmissionIR, ...]:
         return self._break_status_emissions_by_template.get(template_id, ())
+
+    def status_event_family(self, callback_event: str) -> StatusEventFamilyIR | None:
+        return self._status_event_families.get(callback_event)
+
+    def status_event_families(self) -> tuple[StatusEventFamilyIR, ...]:
+        return self.ir.status_event_families
+
+    def status_event_families_for_runtime_event(self, runtime_event: str) -> tuple[StatusEventFamilyIR, ...]:
+        return self._status_event_families_by_runtime_event.get(runtime_event, ())
 
     def status_callback(self, callback_id: str) -> StatusCallbackIR | None:
         return self._status_callbacks.get(callback_id)

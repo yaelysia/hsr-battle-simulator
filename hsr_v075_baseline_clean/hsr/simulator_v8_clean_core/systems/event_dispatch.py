@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from ..core.model import ActionCommand, BattleState, GameEvent, JSONValue, Mutation, TargetResolution
 from ..core.reducer import MutationReducer
 from ..core.settlement import SettlementRecord
-from ..rules.ir import ActionDefinitionIR, StatusCallbackIR
+from ..rules.ir import ActionDefinitionIR, StatusCallbackIR, StatusEventFamilyIR
 from ..rules.rulebook import RuleBook
 from .damage import DamageSystem, DamageWindowLedger
 from .effect import EffectRegistry
@@ -67,6 +67,9 @@ class EventAlias:
     source_basis: str
     admission_status: str = "executable"
     blocked_dependency: str = ""
+    status_event_family_id: str = ""
+    event_family: str = ""
+    runtime_event_source: str = ""
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -76,6 +79,9 @@ class EventAlias:
             "admission_status": self.admission_status,
             "blocked_dependency": self.blocked_dependency,
             "blocked_category": _blocked_category(self.blocked_dependency),
+            "status_event_family_id": self.status_event_family_id,
+            "event_family": self.event_family,
+            "runtime_event_source": self.runtime_event_source,
         }
 
 
@@ -176,7 +182,7 @@ class EventDispatchSystem:
     ) -> EventDispatchResult:
         canonical_window = event.window
         tbgd_event = _event_payload_str(event, "tbgd_event") or event.event_type
-        event_aliases = _event_aliases(event)
+        event_aliases = _event_aliases(event, self.rules)
         dispatch_record = _dispatch_record(
             event,
             listener_kind="action_status_window",
@@ -237,7 +243,7 @@ class EventDispatchSystem:
         modifier_name: str | None,
         damage_window_ledger: DamageWindowLedger | None,
     ) -> EventDispatchResult:
-        aliases = _event_aliases(event)
+        aliases = _event_aliases(event, self.rules)
         dispatch_scope = aliases[0].scope_kind if aliases else "unknown"
         dispatch_record = _dispatch_record(
             event,
@@ -456,7 +462,7 @@ class EventDispatchSystem:
             reason=reason,
             metadata=metadata or {},
         )
-        aliases = _event_aliases(event)
+        aliases = _event_aliases(event, self.rules)
         alias = aliases[0] if aliases else EventAlias(
             callback_event="",
             scope_kind=scope,
@@ -605,48 +611,39 @@ CANONICAL_EVENT_ALIASES: dict[str, tuple[tuple[str, str, str], ...]] = {
 }
 
 
-def _event_aliases(event: GameEvent) -> tuple[EventAlias, ...]:
+def _event_aliases(event: GameEvent, rules: RuleBook | None = None) -> tuple[EventAlias, ...]:
     aliases: list[EventAlias] = []
     raw_events = event.payload.get("callback_events")
     if isinstance(raw_events, (list, tuple)):
         for item in raw_events:
             if isinstance(item, str) and item:
-                aliases.append(
-                    EventAlias(
-                        callback_event=item,
-                        scope_kind=_scope_kind_for_callback_event(event, item),
-                        source_basis="event.payload.callback_events",
-                    )
-                )
+                aliases.append(_event_alias_for_callback(event, item, "event.payload.callback_events", rules))
     for key in ("callback_event", "tbgd_event"):
         value = event.payload.get(key)
         if isinstance(value, str) and value:
-            aliases.append(
-                EventAlias(
-                    callback_event=value,
-                    scope_kind=_scope_kind_for_callback_event(event, value),
-                    source_basis=f"event.payload.{key}",
-                )
-            )
+            aliases.append(_event_alias_for_callback(event, value, f"event.payload.{key}", rules))
     if event.window.startswith("On"):
-        aliases.append(
-            EventAlias(
-                callback_event=event.window,
-                scope_kind=_scope_kind_for_callback_event(event, event.window),
-                source_basis="event.window",
-            )
-        )
+        aliases.append(_event_alias_for_callback(event, event.window, "event.window", rules))
     if not aliases:
-        for callback_event, scope_kind, blocked_dependency in CANONICAL_EVENT_ALIASES.get(event.event_type, ()):
-            aliases.append(
-                EventAlias(
-                    callback_event=callback_event,
-                    scope_kind=scope_kind,
-                    source_basis=f"canonical_event_alias:{event.event_type}",
-                    admission_status="blocked" if blocked_dependency else "executable",
-                    blocked_dependency=blocked_dependency,
+        families = rules.status_event_families_for_runtime_event(event.event_type) if rules is not None else ()
+        for family in families:
+            aliases.append(_event_alias_for_family(event, family, f"status_event_family:{event.event_type}"))
+        if not aliases:
+            for callback_event, scope_kind, blocked_dependency in CANONICAL_EVENT_ALIASES.get(event.event_type, ()):
+                family = rules.status_event_family(callback_event) if rules is not None else None
+                if family is not None:
+                    aliases.append(_event_alias_for_family(event, family, f"canonical_event_alias_fallback:{event.event_type}"))
+                    continue
+                aliases.append(
+                    EventAlias(
+                        callback_event=callback_event,
+                        scope_kind=scope_kind,
+                        source_basis=f"canonical_event_alias:{event.event_type}",
+                        admission_status="blocked" if blocked_dependency else "executable",
+                        blocked_dependency=blocked_dependency,
+                        runtime_event_source=event.event_type,
+                    )
                 )
-            )
     deduped: list[EventAlias] = []
     seen: set[tuple[str, str]] = set()
     for alias in aliases:
@@ -668,11 +665,48 @@ def _event_aliases(event: GameEvent) -> tuple[EventAlias, ...]:
     )
 
 
+def _event_alias_for_callback(
+    event: GameEvent,
+    callback_event: str,
+    source_basis: str,
+    rules: RuleBook | None,
+) -> EventAlias:
+    family = rules.status_event_family(callback_event) if rules is not None else None
+    if family is None:
+        return EventAlias(
+            callback_event=callback_event,
+            scope_kind=_scope_kind_for_callback_event(event, callback_event),
+            source_basis=source_basis,
+            admission_status="executable" if rules is None else "blocked",
+            blocked_dependency="" if rules is None else f"status_event_family_missing:{callback_event}",
+            runtime_event_source=event.event_type,
+        )
+    return _event_alias_for_family(event, family, source_basis)
+
+
+def _event_alias_for_family(event: GameEvent, family: StatusEventFamilyIR, source_basis: str) -> EventAlias:
+    blocked_dependency = family.blocking_dependency or family.blocked_reason
+    admission_status = family.admission_status
+    if family.coverage_status != "executable" or family.admission_status != "executable":
+        admission_status = "blocked"
+        blocked_dependency = blocked_dependency or f"status_event_family_not_executable:{family.coverage_status}"
+    return EventAlias(
+        callback_event=family.callback_event,
+        scope_kind=family.default_scope_kind or _scope_kind_for_callback_event(event, family.callback_event),
+        source_basis=source_basis,
+        admission_status=admission_status,
+        blocked_dependency=blocked_dependency,
+        status_event_family_id=family.status_event_family_id,
+        event_family=family.event_family,
+        runtime_event_source=event.event_type,
+    )
+
+
 def _event_scope_kind(event: GameEvent) -> str:
     value = event.payload.get("listener_scope")
     if isinstance(value, str) and value:
         return value
-    if event.event_type in {"damage.hit", "toughness.hit"}:
+    if event.event_type in {"damage.before_hit", "damage.hit", "toughness.hit"}:
         return "per_hit_target_local"
     if event.event_type == "unit.defeated":
         return "owner_local"
@@ -724,7 +758,7 @@ def _scope_kind_for_callback_event(event: GameEvent, callback_event: str) -> str
         return "owner_local"
     if callback_event == "OnBeforeDying":
         return "owner_local"
-    if callback_event in {"OnStack", "OnPhase1", "OnCreate", "OnDestroy"}:
+    if callback_event in {"OnStack", "OnPhase1", "OnCreate", "OnDestroy", "OnModifierAdd", "OnModifierRemove"}:
         return "status_local"
     return _event_scope_kind(event)
 
@@ -851,6 +885,18 @@ def _scope_matches(
         if event.event_type == "unit.defeated":
             return (owner_id == actor_id, "scope_kill_credit_owner_mismatch")
         return (owner_id in {actor_id, primary_target_id, current_hit_target_id}, "scope_owner_not_in_event_context")
+    if scope_kind == "status_local":
+        target_id = str(event.target_id or event.payload.get("target_id") or "")
+        event_modifier = event.payload.get("modifier_name")
+        status_instance_id = str(detail.get("instance_id") or "")
+        event_status_instance_id = event.payload.get("status_instance_id")
+        modifier_ok = not isinstance(event_modifier, str) or not event_modifier or event_modifier == detail.get("modifier_name")
+        instance_ok = (
+            not isinstance(event_status_instance_id, str)
+            or not event_status_instance_id
+            or event_status_instance_id == status_instance_id
+        )
+        return (owner_id == target_id and modifier_ok and instance_ok, "scope_status_local_mismatch")
     return False, f"scope_not_admitted:{scope_kind}"
 
 

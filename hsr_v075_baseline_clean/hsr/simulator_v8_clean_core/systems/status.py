@@ -4,7 +4,7 @@ import hashlib
 import json
 from dataclasses import dataclass, field
 
-from ..core.model import BattleState, JSONValue, Mutation, TargetResolution
+from ..core.model import BattleState, GameEvent, JSONValue, Mutation, TargetResolution
 from ..core.settlement import SettlementRecord
 from ..rules.evaluator import NumericEvaluationContext, RuleEvaluator
 from ..rules.ir import EffectIR, RuleEntity
@@ -117,6 +117,7 @@ class StatusLifecycleResult:
     ok: bool
     operation: str
     mutations: tuple[Mutation, ...] = ()
+    events: tuple[GameEvent, ...] = ()
     records: tuple[dict[str, JSONValue], ...] = ()
     unsupported: tuple[str, ...] = ()
     status_instance: StatusInstance | None = None
@@ -128,6 +129,7 @@ class StatusLifecycleResult:
             "ok": self.ok,
             "operation": self.operation,
             "mutations": [mutation.to_json() for mutation in self.mutations],
+            "events": [event.to_json() for event in self.events],
             "records": list(self.records),
             "unsupported": list(self.unsupported),
             "status_instance": self.status_instance.to_json() if self.status_instance else None,
@@ -140,6 +142,7 @@ class StatusLifecycleResult:
 class StatusApplicationResult:
     ok: bool
     mutations: tuple[Mutation, ...] = ()
+    events: tuple[GameEvent, ...] = ()
     records: tuple[dict[str, JSONValue], ...] = ()
     unsupported: tuple[str, ...] = ()
     status_instance: StatusInstance | None = None
@@ -149,6 +152,7 @@ class StatusApplicationResult:
         return {
             "ok": self.ok,
             "mutations": [mutation.to_json() for mutation in self.mutations],
+            "events": [event.to_json() for event in self.events],
             "records": list(self.records),
             "unsupported": list(self.unsupported),
             "status_instance": self.status_instance.to_json() if self.status_instance else None,
@@ -342,12 +346,14 @@ class StatusSystem:
         for plan in plans:
             lifecycle_results.append(self._apply_lifecycle_plan(state, plan))
         mutations = tuple(mutation for result in lifecycle_results for mutation in result.mutations)
+        events = tuple(event for result in lifecycle_results for event in result.events)
         records = tuple(record for result in lifecycle_results for record in result.records)
         unsupported = tuple(reason for result in lifecycle_results for reason in result.unsupported)
         lifecycle_result = lifecycle_results[-1] if lifecycle_results else None
         return StatusApplicationResult(
             ok=all(result.ok for result in lifecycle_results) if lifecycle_results else False,
             mutations=mutations,
+            events=events,
             records=records,
             unsupported=unsupported,
             status_instance=status_instances[-1] if status_instances else None,
@@ -633,6 +639,11 @@ def _apply_add_lifecycle_plan(state: BattleState, plan: StatusLifecyclePlan) -> 
         ok=True,
         operation=plan.operation,
         mutations=(status_mutation, detail_mutation),
+        events=_status_lifecycle_events(
+            plan,
+            state,
+            mutation_ids=(status_mutation.stable_id(), detail_mutation.stable_id()),
+        ),
         records=(status_id_record, detail_record, legacy_record),
         unsupported=plan.unsupported,
         status_instance=plan.status_instance,
@@ -715,6 +726,11 @@ def _apply_remove_lifecycle_plan(state: BattleState, plan: StatusLifecyclePlan) 
         ok=True,
         operation=plan.operation,
         mutations=(status_mutation, detail_mutation),
+        events=_status_lifecycle_events(
+            plan,
+            state,
+            mutation_ids=(status_mutation.stable_id(), detail_mutation.stable_id()),
+        ),
         records=(status_id_record, detail_record),
         lifecycle_plan=plan,
         lifecycle_state="removed",
@@ -768,6 +784,7 @@ def _apply_tick_lifecycle_plan(state: BattleState, plan: StatusLifecyclePlan) ->
         ok=True,
         operation=plan.operation,
         mutations=(detail_mutation,),
+        events=_status_lifecycle_events(plan, state, mutation_ids=(detail_mutation.stable_id(),)),
         records=(record,),
         lifecycle_plan=plan,
         lifecycle_state="active",
@@ -841,6 +858,11 @@ def _apply_expire_lifecycle_plan(state: BattleState, plan: StatusLifecyclePlan) 
         ok=True,
         operation=plan.operation,
         mutations=(status_mutation, detail_mutation),
+        events=_status_lifecycle_events(
+            plan,
+            state,
+            mutation_ids=(status_mutation.stable_id(), detail_mutation.stable_id()),
+        ),
         records=(status_record, detail_record),
         lifecycle_plan=plan,
         lifecycle_state="expired",
@@ -864,6 +886,72 @@ def _blocked_lifecycle_result(plan: StatusLifecyclePlan, reason: str) -> StatusL
         lifecycle_plan=plan,
         lifecycle_state="blocked",
     )
+
+
+def _status_lifecycle_events(
+    plan: StatusLifecyclePlan,
+    state: BattleState,
+    *,
+    mutation_ids: tuple[str, ...],
+) -> tuple[GameEvent, ...]:
+    callback_events = _status_lifecycle_callback_events(plan)
+    if not callback_events:
+        return ()
+    modifier_name = ""
+    status_instance_id = ""
+    caster_id = ""
+    if plan.status_instance is not None:
+        modifier_name = plan.status_instance.modifier_name
+        status_instance_id = plan.status_instance.instance_id
+        caster_id = plan.status_instance.caster_id
+    if not modifier_name and isinstance(plan.existing_detail, dict):
+        modifier_name = str(plan.existing_detail.get("modifier_name") or "")
+        status_instance_id = str(plan.existing_detail.get("instance_id") or "")
+        caster_id = str(plan.existing_detail.get("caster_id") or "")
+    events: list[GameEvent] = []
+    for callback_event in callback_events:
+        events.append(
+            GameEvent(
+                event_type="status.lifecycle",
+                source_id=caster_id or plan.source,
+                target_id=plan.target_id,
+                event_id=(
+                    f"event:{state.event_index}:status_lifecycle:"
+                    f"{plan.operation}:{plan.target_id}:{_status_id_fragment(plan.status_id)}:{callback_event}"
+                ),
+                window=callback_event,
+                process_only=True,
+                payload={
+                    "callback_event": callback_event,
+                    "listener_scope": "status_local",
+                    "lifecycle_operation": plan.operation,
+                    "target_id": plan.target_id,
+                    "owner_id": plan.target_id,
+                    "modifier_name": modifier_name,
+                    "status_id": plan.status_id,
+                    "status_instance_id": status_instance_id,
+                    "mutation_ids": list(mutation_ids),
+                    "source_trace": plan.source_trace,
+                },
+            )
+        )
+    return tuple(events)
+
+
+def _status_lifecycle_callback_events(plan: StatusLifecyclePlan) -> tuple[str, ...]:
+    if plan.operation == "add":
+        return ("OnCreate", "OnModifierAdd")
+    if plan.operation == "stack":
+        return ("OnStack", "OnModifierAdd")
+    if plan.operation in {"refresh_or_replace_partial", "replace_partial"}:
+        return ("OnModifierAdd",)
+    if plan.operation in {"remove", "expire"}:
+        return ("OnDestroy", "OnModifierRemove")
+    return ()
+
+
+def _status_id_fragment(status_id: str) -> str:
+    return status_id.replace(":", "_").replace("/", "_")
 
 
 def _resolve_target_alias(

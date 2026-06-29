@@ -364,6 +364,45 @@ class CombatExecutor:
                                 },
                             )
                             runtime_records.extend(modifier_records)
+                        before_hit_event = GameEvent(
+                            "damage.before_hit",
+                            source_id=command.actor_id,
+                            target_id=damage_packet.target_id,
+                            event_id=(
+                                f"event:{current_state.event_index}:damage_before_hit:"
+                                f"{command.actor_id}:{damage_packet.target_id}:{damage_plan.hit_index}"
+                            ),
+                            window="OnBeforeHit",
+                            process_only=True,
+                            payload={
+                                **damage_packet.metadata,
+                                "callback_events": ["OnBeforeHitAll", "OnBeforeHit"],
+                                "action_id": command.action_id,
+                                "action_level": command.action_level,
+                                "actor_id": command.actor_id,
+                                "attacker_id": command.actor_id,
+                                "damage_attacker_id": command.actor_id,
+                                "primary_target_id": damage_plan.primary_action_target_id,
+                                "primary_action_target_id": damage_plan.primary_action_target_id,
+                                "current_hit_target_id": damage_packet.target_id,
+                                "target_id": damage_packet.target_id,
+                                "selected_target_ids": list(target_result.resolution.selected),
+                                "target_ids": list(target_result.resolution.selected),
+                                "attack_type": action_definition.attack_type,
+                                "skill_effect": action_definition.skill_effect,
+                                "damage_packet": damage_packet.to_json(),
+                                "source_trace": damage_packet.source_trace,
+                            },
+                        )
+                        dispatch_result = self.event_dispatcher.dispatch_event(
+                            current_state,
+                            event=before_hit_event,
+                            damage_window_ledger=damage_window_ledger,
+                        )
+                        current_state = dispatch_result.after_state
+                        listener_dispatch_results.append(dispatch_result)
+                        ordered_mutations.extend(dispatch_result.mutations)
+                        runtime_records.extend(dispatch_result.records)
                         damage_result = self.damage.apply_packet(
                             current_state,
                             damage_packet,
@@ -467,6 +506,14 @@ class CombatExecutor:
                     ability_task_results.append(ability_result)
                     ordered_mutations.extend(ability_result.mutations)
                     runtime_records.extend(ability_result.records)
+                    for emitted_event in ability_result.events:
+                        if emitted_event.event_type not in {"status.lifecycle", "damage.hit", "toughness.hit", "break.triggered", "unit.defeated"}:
+                            continue
+                        dispatch_result = self.event_dispatcher.dispatch_event(current_state, event=emitted_event)
+                        current_state = dispatch_result.after_state
+                        listener_dispatch_results.append(dispatch_result)
+                        ordered_mutations.extend(dispatch_result.mutations)
+                        runtime_records.extend(dispatch_result.records)
             for hit_target_id in dict.fromkeys(action_hit_targets):
                 after_attack_event = GameEvent(
                     "action.after_attack",

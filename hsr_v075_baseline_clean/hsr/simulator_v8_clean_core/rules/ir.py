@@ -803,6 +803,48 @@ class StatusCallbackTaskIR:
 
 
 @dataclass(frozen=True)
+class StatusEventFamilyIR:
+    status_event_family_id: str
+    callback_event: str
+    event_family: str
+    default_scope_kind: str
+    runtime_event_sources: tuple[str, ...]
+    source_basis: str
+    source: IRSource
+    callback_count: int = 0
+    executable_callback_count: int = 0
+    blocked_callback_count: int = 0
+    task_count: int = 0
+    task_opcode_counts: dict[str, JSONValue] = field(default_factory=dict)
+    source_mode_counts: dict[str, JSONValue] = field(default_factory=dict)
+    coverage_status: CoverageStatus = "blocked"
+    blocked_reason: str = ""
+    admission_status: CoverageStatus = "blocked"
+    blocking_dependency: str = ""
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "status_event_family_id": self.status_event_family_id,
+            "callback_event": self.callback_event,
+            "event_family": self.event_family,
+            "default_scope_kind": self.default_scope_kind,
+            "runtime_event_sources": list(self.runtime_event_sources),
+            "source_basis": self.source_basis,
+            "source": self.source.to_json(),
+            "callback_count": self.callback_count,
+            "executable_callback_count": self.executable_callback_count,
+            "blocked_callback_count": self.blocked_callback_count,
+            "task_count": self.task_count,
+            "task_opcode_counts": dict(sorted(self.task_opcode_counts.items())),
+            "source_mode_counts": dict(sorted(self.source_mode_counts.items())),
+            "coverage_status": self.coverage_status,
+            "blocked_reason": self.blocked_reason,
+            "admission_status": self.admission_status,
+            "blocking_dependency": self.blocking_dependency,
+        }
+
+
+@dataclass(frozen=True)
 class StatusDamageEmissionIR:
     status_damage_emission_id: str
     callback_id: str
@@ -1423,6 +1465,7 @@ class CanonicalIR:
     break_base_damage: tuple[BreakBaseDamageIR, ...] = ()
     break_damage_emissions: tuple[BreakDamageEmissionIR, ...] = ()
     break_status_emissions: tuple[BreakStatusEmissionIR, ...] = ()
+    status_event_families: tuple[StatusEventFamilyIR, ...] = ()
     status_callbacks: tuple[StatusCallbackIR, ...] = ()
     status_callback_tasks: tuple[StatusCallbackTaskIR, ...] = ()
     status_damage_emissions: tuple[StatusDamageEmissionIR, ...] = ()
@@ -1473,6 +1516,7 @@ class CanonicalIR:
             "break_base_damage": [item.to_json() for item in self.break_base_damage],
             "break_damage_emissions": [emission.to_json() for emission in self.break_damage_emissions],
             "break_status_emissions": [emission.to_json() for emission in self.break_status_emissions],
+            "status_event_families": [family.to_json() for family in self.status_event_families],
             "status_callbacks": [callback.to_json() for callback in self.status_callbacks],
             "status_callback_tasks": [task.to_json() for task in self.status_callback_tasks],
             "status_damage_emissions": [emission.to_json() for emission in self.status_damage_emissions],
