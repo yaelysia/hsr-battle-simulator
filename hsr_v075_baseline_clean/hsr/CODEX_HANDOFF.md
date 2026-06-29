@@ -1,455 +1,270 @@
-# HSR Combat Simulator Project Handoff for Codex
+# v8 工程交接手册
 
-## 0. Current status in one paragraph
+## 0. 一句话状态
 
-This project is a Honkai: Star Rail battle simulator / route validator being built toward a general combat solver. The current workspace is based on `hsr_combat_workspace_v0_74`, with a v0.75 foundation-audit layer added locally. The simulator can execute compiled battle cases and exact routes, and the live C0→C8 validation route currently runs successfully. However, it is not yet a fully general simulator assembled from raw team + equipment + relics + stage + enemy data. It currently relies on compiled cases/checkpoints, and the next major work is to refactor the engine into a stricter, observable, data-driven simulator that records full battlefield state and every action settlement.
+当前主线是 `simulator_v8_clean_core`，已经推进到 `v0_289 target expression sequence filter retarget`，最近代码检查点提交是 `f1fe9ce`。v8 已有干净的 Canonical IR、RuleBook、快照/回放/结算/来源审计骨架，并已经接入怪物卡、普通怪物技能、固定序列行动候选、状态监听事件族、mutation-backed 事件源和目标表达式安全子集。下一阶段建议优先补状态系统主体：叠层、刷新、概率、持续时间、tick、DoT tick、控制、抵抗、免疫、驱散。
 
-## 1. Project goal
+## 1. 路径与事实来源
 
-Long-term goal:
-
-```text
-team + light cones + relics + enemy templates + stage rules + technique choices + route/policy
-  -> build initial BattleState
-  -> simulate HSR combat accurately
-  -> output full state/action/damage ledgers
-  -> support route search / solver for target objectives
-```
-
-Primary target scenario:
-
-- Game: Honkai: Star Rail.
-- Scenario: v4.3 Apocalyptic Shadow / Arbitration, Knight 3 style battle.
-- Current validation route: live C0→C8 trace from an observed combat segment.
-- Current team:
-  - Seele, E3, signature light cone `In the Night` S1.
-  - Sparkle, E1, signature light cone `Earthly Escapade` S1.
-  - Tribbie, E1, `Dance! Dance! Dance!` S5.
-  - Dan Heng · Permansor Terrae, E0, `Journey, Forever Peaceful` S1.
-- Current enemies include wave 1 Daybreak Squadron / Titan Vanguard and wave 2 Lance of Fury variants.
-
-The project must not become a hand-tuned spreadsheet. The engine should model state transitions, action queues, buffs/debuffs, resources, damage formula, enemy mechanics, and observable combat state in a reproducible way.
-
-## 2. Fixed workspace layout
-
-Current local fixed workspace:
+项目路径：
 
 ```text
-/mnt/data/hsr_fixed_workspace/
-  current -> /mnt/data/hsr_fixed_workspace/hsr_combat_workspace_v0_74
-  tbgd    -> /mnt/data/hsr_fixed_workspace/turnbasedgamedata-main
+/home/zhangjinhao/code/hsr
 ```
 
-Edit `current/` directly. Do not repeatedly unzip the archive during development. Export a new zip only after a versioned change.
-
-Important project directories:
+主线目录：
 
 ```text
-current/
-  simulator_v7_7/
-    hsr_simulator_prototype_v7_7.py      # current main simulator file
-    hsr_engine/                          # schema/core helpers where present
-    ENGINE_ARCHITECTURE_v7_0.md          # architecture direction
-    README.md
-
-  model_pack_v3_0/
-    MANIFEST.yaml
-    schema/hsr_model_pack_schema_v3_0.yaml
-    rules/combat_rules_v3_0.yaml
-    models/characters/*.yaml
-    models/light_cones/*.yaml
-    models/relic_builds/*.yaml
-    models/enemies/*.yaml
-    teams/seele_sparkle_tribbie_dan_heng_pt.yaml
-    stages/arbitration_4_3_knight_3.yaml
-    battles/arbitration_4_3_knight_3_full_combat.yaml
-    compiled_cases/*.yaml
-
-  live_validation_reports/
-    simulator_workflow_audit_v0_74.md
-    foundation_audit_layer_v0_75.md
-    damage_formula_component_audit_v0_74.md
-
-  validation_outputs_v0_75/
-    c0_to_c8_full_audit_v0_75.json
+hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/
 ```
 
-Raw TurnBasedGameData source:
+本地 UI 测试台：
 
 ```text
-/mnt/data/hsr_fixed_workspace/tbgd
+hsr_v075_baseline_clean/hsr/simulator_v8_ui/
 ```
 
-Use TBGD as source/evidence. Do not directly leak raw opcode/hash schema into the battle engine. Normalize through model pack / IR boundaries.
-
-## 3. Current runtime workflow
-
-The current simulator path is:
+数据库来源：
 
 ```text
-model_pack_v3_0/MANIFEST.yaml
-  -> load compiled_cases/<case>.yaml
-  -> canonicalize_case()
-  -> BattleSimulator(case)
-  -> BattleState.from_case()
-  -> run_route(route)
-  -> resolve_route_step()
-  -> resolve_action()
-  -> resolve_damage_packet() / apply_effect() / run_triggers()
-  -> result JSON
+turnbasedgamedata-main/
 ```
 
-This means the simulator currently consumes a compiled battle case, not raw team/stage/enemy templates.
-
-It can simulate a specified route if the case already contains:
-
-- unit stats/resources/statuses/actions;
-- global SP/AV/checkpoint flags;
-- enemy units/statuses/mechanic flags;
-- triggers;
-- explicit route steps;
-- manually curated checkpoint state.
-
-It does **not** yet cleanly support:
+事实来源链路固定为：
 
 ```text
-input raw team + equipment + relics + stage + enemies + techniques
-  -> automatically build battle-start BattleState
-  -> choose actions dynamically
-  -> fully simulate battle from start
+turnbasedgamedata-main -> TBGD compiler/lowering -> Canonical IR -> Combat Core
 ```
 
-This is the main architectural gap.
+旧 v7：
 
-## 4. Commands to verify current baseline
+```text
+hsr_v075_baseline_clean/hsr/simulator_v7_7/
+```
 
-Run from workspace root:
+旧 v7 只能作为行为参考和数值对照，不能作为 v8 runtime 依赖。旧 `model_pack_v3_0` 也不能作为 v8 规则事实来源。
+
+## 2. 下一线程必读
+
+按这个顺序读，不要一上来扫全项目：
+
+1. `AGENTS.md`
+2. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/README.md`
+3. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/PROJECT_GOALS.md`
+4. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/FORBIDDEN.md`
+5. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/MONSTER_CARD_SPEC.md`
+6. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_status_target_event_database_audit_checkpoint_v0_287.md`
+7. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_ir_checkpoint_v0_288.md`
+8. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_sequence_filter_retarget_checkpoint_v0_289.md`
+
+需要追怪物历史时再读：
+
+- `live_validation_reports/v8_monster_card_admission_checkpoint_v0_277.md`
+- `live_validation_reports/v8_monster_executable_slice_checkpoint_v0_280.md`
+- `live_validation_reports/v8_monster_status_listener_counter_checkpoint_v0_282.md`
+- `live_validation_reports/v8_monster_action_candidate_checkpoint_v0_283.md`
+- `live_validation_reports/v8_monster_skill_attached_status_checkpoint_v0_284.md`
+- `live_validation_reports/v8_status_event_family_checkpoint_v0_285.md`
+- `live_validation_reports/v8_mutation_backed_event_sources_checkpoint_v0_286.md`
+
+## 3. 必须记住的硬约束
+
+- runtime 只能读取 Canonical IR / 数据卡 IR。
+- runtime 禁止读取 raw TBGD、TextMap、技能文本、旧 v7、旧 model pack。
+- TBGD raw schema 只能在 compiler/lowering/discovery/审计工具层读取。
+- UI、TextMap 名称、中文名、英文名、技能说明、游戏观测值只能用于展示或验证，不能作为规则来源。
+- 不允许按角色名、怪物名、技能名、固定 action id、固定 MonsterID、固定文件名、固定 hash、观测数值驱动 runtime。
+- 角色、怪物、光锥、遗器、关卡机制不能写进核心系统特判；专属内容必须进入数据卡机制槽位，再接通用系统。
+- 缺来源、缺条件、缺目标、缺公式、缺事件 payload、缺队列优先级时必须 blocked/process-only，并保持 state unchanged。
+- `audit_only`、`discovered_only`、`blocked`、placeholder 不得产生 mutation。
+- 每个新增 mutation 类机制必须有 source audit 正例和 state unchanged 负例。
+- settlement 不能从日志事后反推，必须由执行路径原生生成。
+- `engine_convention` 必须显式标注，不能伪装成 TBGD 来源。
+- 验证主路径必须按结构化谓词选择，不靠固定角色、怪物、技能、文件或观测答案。
+
+## 4. 当前内核已做到什么
+
+基础层：
+
+- Canonical IR、RuleBook、coverage/static checks。
+- `BattleTransition`、snapshot、Mutation replay、settlement traceability、source audit。
+- action definition、ability binding、ability phase/task、effect、status callback、event dispatch。
+- resource、timeline scheduler、queue/window、extra action 语义。
+
+伤害与资源：
+
+- direct、DoT、hp loss、break、break DoT、super-break。
+- target group、bounce、多段、damage source frame、击杀归因。
+- HP、护盾、能量、战技点、韧性等 mutation-backed 事件源。
+
+状态与事件：
+
+- 普通状态生命周期，buff/debuff 共用 unit-attached status lifecycle。
+- dynamic values、StatusInstance dynamic values、DynamicValueStore。
+- 状态监听事件族矩阵 `StatusEventFamilyIR`。
+- runtime 只执行已有真实事件源、payload、条件、目标、task 全部 admission 的 listener。
+- 银鬃尉官基础反击纵切已打通：技能挂监听状态、受击触发、条件判断、插入反击、执行反击。
+
+角色：
+
+- 角色数据卡边界。
+- 加强版希儿示例卡。
+- 行迹/星魂通用开关、等级提升、监听接口。
+
+怪物：
+
+- `MonsterDataCardIR` 与怪物卡规范。
+- 普通怪物技能与 ILBattle 怪物技能分命名空间：
+  - `monster_skill:<SkillID>`
+  - `ilbattle_monster_skill:<ID>`
+- 普通怪物技能可执行纵切：ability binding、公式绑定、伤害、削韧。
+- 怪物固定序列行动候选：scheduler 轮到敌方时产出候选，但不自动选目标。
+- 怪物技能 `AddModifier` 附带状态纵切。
+
+目标表达式：
+
+- `TargetExpressionIR`。
+- 已支持：简单别名、明确群体、`SkillTargetEntityList`、`ParamEntityList`、`TeamFormation`、`TargetSequence`、`TargetConcat`、确定性 `TargetFilter`、确定性 `Retarget`。
+- `Retarget` 当前只影响本次 effect/callback 的目标解析，不改写整次 action 的主目标。
+
+UI：
+
+- `simulator_v8_ui/` 是零新依赖本地 Web UI。
+- 它只做 scenario 编排、战场式查看、事件回放、审计详情、观测对照。
+- UI 不计算伤害、不补规则、不绕过 blocked、不进入 runtime 规则系统。
+
+## 5. 当前明确没做到什么
+
+状态系统主体还没完整：
+
+- 叠层、刷新、概率、失败分支。
+- 持续时间、tick、expire。
+- DoT tick。
+- 控制、抵抗、免疫、驱散。
+
+目标系统还没完整：
+
+- `TargetSort*`。
+- `TargetFetch*`。
+- 随机目标。
+- 相邻目标。
+- 唯一实体查询。
+- 召唤物/servant 目标。
+- 特殊玩法目标。
+
+角色与装备还没完整：
+
+- 完整角色面板装配。
+- 全角色行迹。
+- 光锥。
+- 内圈/外圈遗器及套装效果。
+
+怪物还没完整：
+
+- 全怪物技能和全怪物被动 admission。
+- 复杂 AIPath。
+- 阶段切换。
+- 召唤。
+- 波次。
+- 关卡倍率。
+
+其他大块：
+
+- summon、assistant、servant 完整行为。
+- 特殊战斗模式。
+- 环境、关卡机制。
+- `OnCustomEvent`、`OnWaveMonster` 等需要真实事件源或波次系统的 callback。
+
+## 6. v0_289 的关键事实
+
+`validate_v0_289` 当前构建结果：
+
+```text
+target_expression_count=243671
+executable=198012
+blocked=45659
+```
+
+新增可执行 composite 统计：
+
+```text
+TargetSequence=128
+Retarget=823
+TargetAlias=197061
+```
+
+正例覆盖：
+
+- `SkillTargetEntityList` 从当前 action target resolution 解析目标列表。
+- `ParamEntityList` 从事件 payload 的参数实体列表解析目标列表。
+- `TeamFormation` 解析为施放者同阵营存活单位，按稳定顺序返回。
+- `TargetSequence` resolver 正例通过。
+- `Retarget` resolver 正例通过。
+- AddModifier runtime 正例通过目标表达式解析后产生 `status_details` mutation。
+
+负例覆盖：
+
+- `TargetSort*` / `TargetFetch*` blocked。
+- unsupported `TargetFilter` condition blocked。
+- 缺 `Retarget.TargetType` blocked。
+- `ParamEntityList` 缺事件 payload blocked。
+- blocked/audit-only/discovered-only 不产生 mutation。
+
+## 7. 推荐下一步
+
+建议下一阶段做状态系统主体，而不是继续扩动作入口。
+
+推荐顺序：
+
+1. `stack/refresh/chance`。
+2. `duration/tick/expire`。
+3. DoT tick。
+4. 控制、抵抗、免疫、驱散。
+
+理由：
+
+- v0_287 已经做过数据库审计矩阵。
+- v0_288/v0_289 已经补了目标表达式底座。
+- 怪物技能、状态监听、AddModifier 已经能把更多状态挂入系统。
+- 现在最大的机制阻塞点是状态自身生命周期和判定语义。
+
+## 8. 推荐验证命令
+
+在 `hsr_v075_baseline_clean/hsr` 下运行：
 
 ```bash
-cd /mnt/data/hsr_fixed_workspace/current
-python3 -m compileall -q simulator_v7_7
-
-python3 simulator_v7_7/hsr_simulator_prototype_v7_7.py \
-  --model-pack model_pack_v3_0 \
-  --validate-model-pack
-
-python3 simulator_v7_7/hsr_simulator_prototype_v7_7.py \
-  --model-pack model_pack_v3_0 \
-  --case-id arbitration_4_3_knight_3_live_c0_to_c8_simulator_only \
-  --route-mode exact \
-  --output validation_outputs_v0_75/c0_to_c8_full_audit_v0_75.json
+PYTHONDONTWRITEBYTECODE=1 python3 -m compileall -q simulator_v8_clean_core simulator_v8_ui
+PYTHONDONTWRITEBYTECODE=1 python3 -m simulator_v8_clean_core.tools.validate_v0_289 --output-dir /tmp/hsr_v8_target_expression_v0_289
+PYTHONDONTWRITEBYTECODE=1 python3 -m simulator_v8_clean_core.tools.validate_v0_288 --output-dir /tmp/hsr_v8_target_expression_v0_288
+PYTHONDONTWRITEBYTECODE=1 python3 -m simulator_v8_clean_core.tools.validate_v0_287 --output-dir /tmp/hsr_v8_status_target_audit_v0_287
+PYTHONDONTWRITEBYTECODE=1 python3 -m simulator_v8_clean_core.tools.validate_v0_286 --output-dir /tmp/hsr_v8_mutation_events_v0_286
+PYTHONDONTWRITEBYTECODE=1 python3 -m simulator_v8_clean_core.tools.validate_v0_284 --output-dir /tmp/hsr_v8_monster_attached_status_v0_284
+git diff --check
 ```
 
-Expected current baseline:
+如果下一步改状态系统，新增验证应至少覆盖：
+
+- 正例：状态叠层、刷新、概率成功/失败、持续时间递减、到期移除。
+- 负例：缺来源、缺 duration、缺 chance source、unsupported stack rule、blocked listener 不产生 mutation。
+- audit：每个状态 mutation 能反查到 status definition、modifier definition、effect/callback、target expression、source trace。
+
+## 9. 工作习惯
+
+- 非必要不要读整个项目。
+- 结构性问题优先用 CodeGraph；文本搜索用 `rg`。
+- 修改用 `apply_patch`。
+- 不要引入新依赖，除非用户明确批准。
+- 验证输出写 `/tmp` 或版本化输出目录，不污染仓库。
+- 有意义结构阶段要更新 `live_validation_reports/`。
+- 每个较大代码变动后创建 git 检查点提交。
+- 阶段汇报要说清：做了什么、没做什么、当前进度、距离最小可用战斗纵切还缺什么、距离完整复刻还缺哪些大模块、验证结果。
+
+## 10. 下个线程接续提示
+
+如果要继续推进，建议开局说清：
 
 ```text
-route_assertions.ok = true
-route steps = 8
-log events = 172
+当前接续 v0_289。先读 CODEX_HANDOFF、README、PROJECT_GOALS、FORBIDDEN、MONSTER_CARD_SPEC 和 v0_287-v0_289 报告。下一步优先做状态系统 stack/refresh/chance，runtime 仍只能读 Canonical IR/数据卡 IR，缺来源或缺条件必须 blocked/state unchanged。
 ```
 
-Known issue:
-
-- `run_validations_v7_7.py` has at least one old route failure where the route expects `dan_heng` but the current action axis next actor is `seele`. Treat this as a separate investigation, not as the v0.75 baseline pass condition.
-
-## 5. Current live validation result
-
-Current case:
-
-```text
-arbitration_4_3_knight_3_live_c0_to_c8_simulator_only
-```
-
-Current route steps:
-
-```text
-1. Sparkle skill -> Seele
-2. Dan Heng basic -> Titan Vanguard
-3. Sparkle ultimate
-4. Tribbie follow-up
-5. Seele skill -> Titan Vanguard
-6. Souldragon shield_action
-7. Titan Vanguard heaven_to_dawn
-8. Daybreak Squadron daybreak_blade
-```
-
-Current key results:
-
-```text
-Tribbie follow-up:
-  Daybreak Squadron: 2312.108210
-  Titan Vanguard:    2080.897389
-  Total:             4393.005600
-  Observed:          4401
-  Error:             about -0.18%
-
-Seele skill:
-  Hit 1: 27496.850523
-  Hit 2: 2966.116652
-  Hit 3: 2966.116652
-  Hit 4: 82490.551568
-  Total: 115919.635395
-  Observed: 109262
-  Error: about +6.09%
-```
-
-Conclusion:
-
-- Tribbie follow-up is now close after fixing Sparkle ultimate Cipher extra damage bonus.
-- Seele skill is still high. Do not assume Tribbie E1 fixes this; adding Tribbie E1 would only make damage higher unless other windows differ.
-
-## 6. Important recent mechanism findings
-
-### Sparkle ultimate Cipher extra damage bonus
-
-C0 state had `damage up 12%`, equivalent to two Sparkle talent stacks. Sparkle ultimate Cipher adds +6% per stack, so C0→C8 should add another:
-
-```text
-2 stacks * 6% = +12% damage bonus
-```
-
-This was added to the live case as part of v0.74:
-
-```yaml
-modifiers:
-  atk_pct: 0.4
-  dmg_bonus_add: 0.12
-```
-
-This fixed Tribbie follow-up from about 3999.60 to 4393.01.
-
-### Tribbie E1 should not be forced into the current route
-
-Tribbie E1 requires the ultimate zone/field to be active and zone additional damage to trigger. Current observed C0→C8 state clearly has:
-
-- `Divine Revelation` / all RES PEN +24% style state;
-- `Busy as Tribbie` / follow-up after ultimate style state.
-
-But current trace does not clearly confirm:
-
-- Tribbie ultimate zone active;
-- zone damage-taken/vulnerability state;
-- zone additional damage trigger.
-
-Therefore do not automatically add E1 true damage to C3/C4. If E1 is enabled later, verify that `total_attack_damage` is correctly carried in trigger context. Do not accidentally base E1 true damage on the zone add-damage packet itself.
-
-### Titan Vanguard armor rule currently modeled
-
-Current understanding:
-
-- Armor reduces damage by 10% while present.
-- One attack action removes at most one armor stack.
-- Additional damage / DoT / true damage should not consume armor unless explicitly proven.
-- Titan Vanguard restores armor to 6/6 after its own action.
-
-## 7. v0.75 foundation-audit layer
-
-The latest local change added observability without changing numeric logic.
-
-Every `route_action_trace[*]` now has:
-
-```text
-before_scene
-action_resolution
-after_scene
-```
-
-### full scene snapshot includes
-
-- global AV, cycle, SP, wave index, global flags;
-- action axis: each unit's remaining AV, absolute AV, speed, interval, alive state, tags;
-- allies/summons/enemies/others with:
-  - HP / max HP / HP%;
-  - shield;
-  - energy / max energy;
-  - toughness / max toughness / broken state;
-  - HP-bar model;
-  - current panel stats;
-  - stat_base / stat_pct / stat_flat / legacy stats;
-  - resistances and weaknesses;
-  - statuses with id, source, stacks, duration, tags, modifiers;
-  - special mechanism flags such as phase, armor, counters, summon binding, enemy AI metadata;
-- queues: ultimate, immediate, interrupt.
-
-### action settlement currently includes
-
-- requested actor/action/timing/targets;
-- damage events;
-- status events;
-- resource events;
-- AV events;
-- mechanism events;
-- all raw events in this action step.
-
-### damage formula ledger currently includes
-
-Each direct damage event attempts to output:
-
-- scaling source and base damage;
-- crit result and crit multiplier;
-- damage bonus bucket and contributing terms;
-- DEF multiplier and contributing terms;
-- RES multiplier and contributing terms;
-- damage-taken bucket;
-- universal reduction bucket;
-- toughness-state bucket;
-- other bucket;
-- final damage.
-
-This is an audit layer. It does not yet make the engine semantically strict; it mainly exposes hidden state and hidden formula contributions.
-
-## 8. Current structural problems
-
-The simulator is not yet sufficiently “simulator-like” for solver work. Main issues:
-
-1. **Compiled-case dependency**
-   - Runtime starts from curated checkpoints.
-   - No clean raw team/stage/enemy assembly pipeline yet.
-
-2. **Status/modifier model is too loose**
-   - Buffs/debuffs use generic dict modifiers like `dmg_bonus_add`, `all_res_pen`, `damage_taken_add`, etc.
-   - There is no strict source -> condition -> bucket -> applied/not-applied ledger as first-class data.
-
-3. **Action settlement is still partly derived from logs**
-   - v0.75 records action_resolution, but this is mostly categorizing existing log events.
-   - Need first-class `ActionSettlement` generated by the engine during resolution.
-
-4. **Action axis / queue system needs stronger types**
-   - Normal turn, ultimate insertion, immediate actions, extra turns, summons, AV advance/delay, speed-change recomputation should be represented explicitly.
-
-5. **Buff/debuff lifecycle needs stronger rules**
-   - Need strict duration types, turn-kind consumption rules, per-hit/per-attack trigger counts, source ownership, wave carry policy.
-
-6. **Enemy mechanics are incomplete**
-   - Enemy intent and special mechanics are not fully normalized.
-   - Some flags exist, but a solver needs exact enemy AI/intent/mechanism state.
-
-7. **RNG / target selection ledger missing**
-   - Crit, effect hit/resist, random target choice, and enemy AI random branches need stable event ids and reproducible policy.
-
-8. **Resource/cost ledger incomplete**
-   - SP, energy, HP cost, special resource cost, free action, refund, kill energy, hit energy all need explicit source and timing.
-
-9. **Character/mechanic fallbacks remain**
-   - Genericity audit flags Souldragon fallback, AttackConvert refresh, break formula calibration, enemy mechanism inventory, generated debuff lowering.
-
-## 9. Recommended next refactor order
-
-Do not immediately chase the Seele damage difference by hand-patching more buffs. First make the engine stricter and more observable.
-
-Recommended order:
-
-### Phase 1: create explicit engine data objects
-
-Split or add explicit structures for:
-
-```text
-SceneSnapshot
-ActionRequest
-ActionSettlement
-DamageSettlement
-StatusChange
-ResourceChange
-AVChange
-MechanismEvent
-ModifierTerm
-ModifierLedger
-RNGEvent
-TargetResolution
-```
-
-The v0.75 audit output can be used as the expected JSON shape, but the data should be produced by the engine directly, not reconstructed from logs after the fact.
-
-### Phase 2: strict modifier system
-
-Create a normalized modifier model:
-
-```text
-status/equipment/relic/lightcone/enemy mechanic
-  -> source id/name
-  -> bucket
-  -> value
-  -> stack rule
-  -> duration rule
-  -> condition predicate
-  -> target/action/packet scope
-  -> applied yes/no with reason
-```
-
-The damage engine should consume only normalized terms and emit a full ledger for every packet.
-
-### Phase 3: state lifecycle and action scheduler
-
-Refactor:
-
-- action lifecycle: turn start, action start, before damage, each packet, after damage, after action, turn end;
-- duration ticking: regular turn vs extra turn vs ultimate vs summon turn;
-- queue scheduler: ultimate/immediate/interrupt/extra-turn/summon;
-- AV changes: speed change, action advance, delay, reset.
-
-### Phase 4: raw battle assembly
-
-Build:
-
-```text
-BattleAssembler(team, light cones, relics, stage, enemies, technique choices)
-  -> BattleState
-```
-
-This should eventually replace curated C0 checkpoint dependency for full-battle simulation. Keep compiled case replay as validation harness.
-
-### Phase 5: resume live damage investigation
-
-After strict ledgers exist, re-check Seele C4 skill:
-
-- Sparkle Cipher +12% should/should not apply to this action?
-- Seele amplified state 88% window correct?
-- Seele quantum RES PEN 25% window correct?
-- Sparkle skill crit damage buff +111.816% window correct?
-- Crit hits 1 and 4 assumption correct?
-- Titan armor / toughness / RES / DEF states correct?
-
-## 10. Coding rules for Codex
-
-Important constraints:
-
-1. Do not convert observed damage numbers into simulation inputs. Observed damage belongs only in trace/diff reports.
-2. Do not solve damage mismatch by adding route-specific hacks unless the mechanism is proven and modeled generically.
-3. Do not bypass the model pack with raw TBGD fields inside the engine. Normalize first.
-4. Preserve current C0→C8 baseline unless intentionally changing a rule:
-   - route assertions should remain ok;
-   - Tribbie follow-up should remain about 4393.0056;
-   - Seele skill current baseline is about 115919.6354 until investigated.
-5. Prefer adding tests and audit ledgers before changing formula behavior.
-6. Keep generated outputs versioned under `validation_outputs_vX_YY/` and reports under `live_validation_reports/`.
-7. When changing schema/behavior, update a short report describing what changed and what command was used to verify it.
-8. Avoid large rewrites without preserving the current exact-route replay path.
-
-## 11. Suggested IDE task prompt for Codex
-
-Use this as the first Codex instruction after opening the workspace:
-
-```text
-Read CODEX_HANDOFF.md, simulator_v7_7/ENGINE_ARCHITECTURE_v7_0.md, live_validation_reports/foundation_audit_layer_v0_75.md, and live_validation_reports/simulator_workflow_audit_v0_74.md.
-
-Goal: refactor the HSR simulator from a compiled-case route executor toward a stricter battle simulator without breaking the current C0→C8 baseline.
-
-First task: introduce explicit settlement/ledger data structures for action resolution and damage modifier terms. Keep the existing CLI and exact route case working. Do not change damage numbers yet. After the refactor, rerun compileall and the C0→C8 exact route, and write a short report under live_validation_reports/.
-```
-
-## 12. Files to read first
-
-Read in this order:
-
-```text
-CODEX_HANDOFF.md
-simulator_v7_7/ENGINE_ARCHITECTURE_v7_0.md
-live_validation_reports/foundation_audit_layer_v0_75.md
-live_validation_reports/simulator_workflow_audit_v0_74.md
-model_pack_v3_0/MANIFEST.yaml
-model_pack_v3_0/README.md
-model_pack_v3_0/compiled_cases/arbitration_4_3_knight_3_live_c0_to_c8_simulator_only.yaml
-simulator_v7_7/hsr_simulator_prototype_v7_7.py
-validation_outputs_v0_75/c0_to_c8_full_audit_v0_75.json
-```
-
+不要从旧 `CODEX_HANDOFF` 的 v7 叙述接续；本文件已经替换为 v8 当前交接手册。

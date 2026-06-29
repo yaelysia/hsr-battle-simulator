@@ -29,6 +29,7 @@ v8 不为了旧版兼容牺牲最终成品完整性。旧版本没有稳定用�
 - runtime 直接按 TBGD 原始字段名判断机制。
 - runtime 读取 TextMap、技能文本或角色文本。
 - runtime 根据角色名、技能名、文件名、固定 action id、固定 hash 判断机制。
+- runtime 根据怪物名、展示名、中文名、英文名、TextMap 名称判断机制。
 - 使用 `model_pack_v3_0` 补齐 v8 规则。
 - 用观测伤害、旧模拟器输出、手工答案作为规则输入。
 - 在 scenario 里写规则结果。
@@ -39,6 +40,8 @@ v8 不为了旧版兼容牺牲最终成品完整性。旧版本没有稳定用�
 所有规则必须经过 Canonical IR。
 
 技能文本与参数解释只允许出现在角色数据卡构建层。角色数据卡输出结构化槽位后，runtime 才能消费。
+
+怪物、技能、状态的中文名/英文名可以进入 UI 和审计展示字段，但这些字段必须标记为 display-only，禁止驱动目标选择、伤害、AI、状态、事件或任何 mutation。
 
 ## 状态与快照红线
 
@@ -73,8 +76,48 @@ v8 不为了旧版兼容牺牲最终成品完整性。旧版本没有稳定用�
 - 把本该统一的机制拆成特殊路径，例如普通 buff/debuff 生命周期、普通状态 tick/expire、伤害 source frame、资源 mutation、队列 window、事件 listener。
 - 把文本命中、名称相似、文件路径相似当成机制事实。
 - 把角色专属机制写进核心系统；角色专属内容必须进入角色卡槽位，再接通用系统。
+- 把怪物专属机制写进核心系统；怪物专属内容必须进入怪物卡机制/数据槽位，再接通用系统。
 - 把终结技连续段、真额外回合、追击/反击混成同一种“额外行动”。
 - 只按 actor 归因击杀收益；击杀收益必须按具体伤害来源归因。
+
+## 目标表达式红线
+
+禁止：
+
+- runtime 绕过 `TargetExpressionIR`，直接按 raw TBGD 字段名、文件名、技能名或展示名解析目标。
+- 缺目标、缺事件 payload、缺当前动作 target resolution、缺参数实体列表时 fallback 到 actor、主目标、全体或空列表后继续执行。
+- `TargetSort*`、`TargetFetch*`、随机 retarget、相邻目标、召唤物目标、servant 目标、唯一实体查询、特殊玩法目标在未 admission 前产生 mutation。
+- `Retarget` 改写整次 action 的主目标；当前只允许影响本次 effect/callback 的目标解析。
+- alias 与 `target_expression_id` 同时存在但解析结果冲突时继续执行。
+- 目标表达式 resolver 失败后仍让 `AddModifier`、callback task、effect 产生部分 mutation。
+
+目标表达式必须从 Canonical IR 中的 `TargetExpressionIR` 读取，解析步骤必须进入 mutation metadata、settlement、source audit 或 replay 中可追踪的位置。
+
+## 怪物与敌方行动红线
+
+禁止：
+
+- 把复杂 AIPath 简化成固定序列执行。
+- 按固定 MonsterID、怪物名、技能 ID、AIPath 白名单驱动 runtime。
+- 把 `MonsterSkill.ModifierList` 当成怪物被动来源。
+- 把 `MonsterConfig.AbilityNameList` 当成完整被动系统；它只是怪物机制入口之一。
+- 怪物自然回合没有明确候选或目标时自动造成伤害。
+- 敌方行动候选生成时推进 action sequence cursor；cursor 只能在匹配候选的标准 `ActionCommand` 成功执行后推进。
+- 普通怪物技能与 `ILBattleMonsterSkill` 共用 action namespace；必须分别使用 `monster_skill:<SkillID>` 与 `ilbattle_monster_skill:<ID>`。
+
+怪物固定序列候选只读展示，不是 AI 决策。目标选择由用户、UI 或后续推演器显式给出。
+
+## 状态监听红线
+
+禁止：
+
+- 带 listener/callback 的状态在 listener admission 不完整时挂成可触发状态。
+- 没有真实 runtime event source 的 callback event 自动触发。
+- 缺事件 payload 字段、缺条件、缺目标、缺队列优先级、缺动态值绑定时执行 callback mutation。
+- before 类监听在无法保证 pending mutation 重算正确时改写同一路径。
+- 将表现、镜头、音效、UI task 当成战斗 mutation。
+
+状态监听可以完整进入事件族矩阵和覆盖报告，但只有事件源、条件、目标、task、来源全部 admission 时才能产生 mutation。
 
 ## 结算红线
 
