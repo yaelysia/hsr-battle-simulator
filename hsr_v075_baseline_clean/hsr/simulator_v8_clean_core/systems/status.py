@@ -4,14 +4,18 @@ import hashlib
 import json
 from dataclasses import dataclass, field
 
-from ..core.model import BattleState, JSONValue, Mutation
+from ..core.model import BattleState, JSONValue, Mutation, TargetResolution
 from ..core.settlement import SettlementRecord
 from ..rules.evaluator import NumericEvaluationContext, RuleEvaluator
 from ..rules.ir import EffectIR, RuleEntity
 from ..rules.rulebook import RuleBook
 
 
-SUPPORTED_ADD_MODIFIER_ALIASES = {"Caster", "ModifierOwnerEntity", "ParamEntity", "CurrentActionTarget"}
+SUPPORTED_EFFECT_TARGET_ALIASES = {"Caster", "ModifierOwnerEntity", "ParamEntity", "CurrentActionTarget"}
+SUPPORTED_ADD_MODIFIER_SINGLE_TARGET_ALIASES = SUPPORTED_EFFECT_TARGET_ALIASES | {"AbilityTargetEntity"}
+SUPPORTED_ADD_MODIFIER_GROUP_TARGET_ALIASES = {"AllEnemy", "AllTeamMember", "AllLightTeam", "AllTeammate"}
+SUPPORTED_ADD_MODIFIER_ALIASES = SUPPORTED_ADD_MODIFIER_SINGLE_TARGET_ALIASES | SUPPORTED_ADD_MODIFIER_GROUP_TARGET_ALIASES
+STRICT_ATTACHED_STATUS_TARGET_ALIASES = {"AbilityTargetEntity"} | SUPPORTED_ADD_MODIFIER_GROUP_TARGET_ALIASES
 SUPPORTED_DURATION_LIFE_STEP_MOMENTS = {"ModifierPhase1End", "ActionPhaseEnd"}
 
 
@@ -192,6 +196,7 @@ class StatusSystem:
         owner_id: str | None = None,
         param_entity_id: str | None = None,
         current_action_target_id: str | None = None,
+        target_resolution: TargetResolution | None = None,
         dynamic_values: dict[str, float] | None = None,
         binding_sources: tuple[dict[str, JSONValue], ...] = (),
     ) -> StatusApplicationResult:
@@ -207,117 +212,145 @@ class StatusSystem:
         if not isinstance(modifier_name, str) or not modifier_name:
             return _unsupported_result(effect, "AddModifier has no modifier_name")
         target_alias = standard.get("target_alias")
-        target_id = _resolve_target_alias(
+        target_ids, target_blocked_reason = _resolve_add_modifier_target_ids(
+            state,
             target_alias,
             caster_id=caster_id,
             owner_id=owner_id,
             param_entity_id=param_entity_id,
             current_action_target_id=current_action_target_id,
+            target_resolution=target_resolution,
         )
-        if target_id is None:
-            return _unsupported_result(effect, f"unsupported_or_missing_target_alias:{target_alias}")
-        if target_id not in state.units:
-            return _unsupported_result(effect, f"target unit {target_id!r} is not in state")
+        if target_blocked_reason:
+            return _unsupported_result(effect, target_blocked_reason)
 
         definition = _select_modifier_definition(self.rules, modifier_name, effect.source.source_path)
         if definition is None:
             return _unsupported_result(effect, f"unknown modifier definition {modifier_name!r}")
 
-        resolved_dynamic_values = _resolve_dynamic_values(
-            standard,
-            definition,
-            dynamic_values,
-            binding_sources,
-            {"effect_id": effect.effect_id, "effect_source": effect.source.to_json()},
-        )
-        on_create_dynamic_values = _on_create_define_dynamic_values(
-            self.rules,
-            modifier_name,
-            definition.source.source_path,
-            state,
-            target_id=target_id,
-            caster_id=caster_id,
-            owner_id=target_id,
-            param_entity_id=param_entity_id,
-            current_action_target_id=current_action_target_id,
-            binding_sources=binding_sources,
-            source_trace={"effect_id": effect.effect_id, "effect_source": effect.source.to_json()},
-        )
-        if on_create_dynamic_values:
-            resolved_dynamic_values = _merge_dynamic_values(resolved_dynamic_values, on_create_dynamic_values)
-        modifiers, unsupported = _runtime_modifiers(definition, resolved_dynamic_values)
-        formula_bindings = _status_formula_bindings(standard)
-        before_details = _status_details(unit_flags=state.units[target_id].flags)
-        existing_detail = _matching_status_detail(before_details, target_id, modifier_name, effect.effect_id, source_id)
-        status_metadata = _status_metadata(self.rules, modifier_name)
-        duration_admission = _runtime_duration_admission(
-            standard,
-            definition,
-            effect,
-            binding_sources,
-            status_metadata=status_metadata,
-        )
-        application_operation, partial_reasons = _application_semantics(standard, existing_detail, duration_admission)
-        unsupported = [*unsupported, *partial_reasons]
-        duration = _status_instance_duration_value(duration_admission)
-        life_step_moment = str(duration_admission.get("life_step_moment") or "")
-        status_instance = StatusInstance(
-            instance_id=_status_instance_id(target_id, modifier_name, effect.effect_id, source_id),
-            status_id=f"modifier:{modifier_name}",
-            modifier_name=modifier_name,
-            owner_id=target_id,
-            source_id=source_id,
-            caster_id=caster_id,
-            stacks=1,
-            max_stacks=_optional_int(standard.get("max_layer")),
-            duration=duration,
-            dynamic_values=resolved_dynamic_values,
-            formula_bindings=formula_bindings,
-            source_trace={
-                "effect_id": effect.effect_id,
-                "effect_source": effect.source.to_json(),
-                "modifier_name": modifier_name,
-                "modifier_definition": definition.source.to_json(),
-                "status_config": status_metadata.get("source"),
-                "duration_admission": duration_admission,
-                "status_formula_bindings": [dict(item) for item in formula_bindings],
-                "status_formula_binding_source": _json_safe(standard.get("status_formula_binding_source", {})),
-            },
-            modifiers=tuple(modifiers),
-            trigger_ids_by_event=_trigger_ids_by_event(self.rules, modifier_name, definition.source.source_path),
-            unsupported=tuple(unsupported),
-            application_operation=application_operation,
-            partial=bool(partial_reasons),
-            remaining_duration=duration,
-            duration_unit=life_step_moment if duration is not None else "permanent_or_unknown",
-            life_step_moment=life_step_moment,
-            duration_admission=duration_admission,
-            stack_policy="unsupported_partial" if any(reason.startswith("stack_unsupported") for reason in unsupported) else "single_instance",
-            refresh_policy="unsupported_partial" if any(reason.startswith("refresh_unsupported") for reason in unsupported) else "replace_partial",
-            lifecycle_state="active_partial" if partial_reasons else "active",
-            status_type=str(status_metadata.get("status_type") or "Unknown"),
-            status_category=str(status_metadata.get("status_category") or "unknown"),
-            can_dispel=status_metadata.get("can_dispel") if isinstance(status_metadata.get("can_dispel"), bool) else None,
-        )
-        plan = StatusLifecyclePlan(
-            operation=application_operation,
-            target_id=target_id,
-            status_id=status_instance.status_id,
-            source="status_system",
-            status_instance=status_instance,
-            before_details=tuple(before_details),
-            existing_detail=existing_detail,
-            unsupported=tuple(unsupported),
-            partial=status_instance.partial,
-            source_trace=status_instance.source_trace,
-        )
-        lifecycle_result = self._apply_lifecycle_plan(state, plan)
+        plans: list[StatusLifecyclePlan] = []
+        lifecycle_results: list[StatusLifecycleResult] = []
+        status_instances: list[StatusInstance] = []
+        target_resolution_trace = target_resolution.to_json() if target_resolution is not None else None
+        strict_target_admission = target_alias in STRICT_ATTACHED_STATUS_TARGET_ALIASES
+        for target_id in target_ids:
+            resolved_dynamic_values = _resolve_dynamic_values(
+                standard,
+                definition,
+                dynamic_values,
+                binding_sources,
+                {"effect_id": effect.effect_id, "effect_source": effect.source.to_json()},
+            )
+            on_create_dynamic_values = _on_create_define_dynamic_values(
+                self.rules,
+                modifier_name,
+                definition.source.source_path,
+                state,
+                target_id=target_id,
+                caster_id=caster_id,
+                owner_id=target_id,
+                param_entity_id=param_entity_id,
+                current_action_target_id=current_action_target_id,
+                binding_sources=binding_sources,
+                source_trace={"effect_id": effect.effect_id, "effect_source": effect.source.to_json()},
+            )
+            if on_create_dynamic_values:
+                resolved_dynamic_values = _merge_dynamic_values(resolved_dynamic_values, on_create_dynamic_values)
+            modifiers, unsupported = _runtime_modifiers(definition, resolved_dynamic_values)
+            formula_bindings = _status_formula_bindings(standard)
+            before_details = _status_details(unit_flags=state.units[target_id].flags)
+            existing_detail = _matching_status_detail(before_details, target_id, modifier_name, effect.effect_id, source_id)
+            status_metadata = _status_metadata(self.rules, modifier_name)
+            duration_admission = _runtime_duration_admission(
+                standard,
+                definition,
+                effect,
+                binding_sources,
+                status_metadata=status_metadata,
+            )
+            application_operation, partial_reasons = _application_semantics(standard, existing_detail, duration_admission)
+            unsupported = [*unsupported, *partial_reasons]
+            trigger_ids_by_event = _trigger_ids_by_event(self.rules, modifier_name, definition.source.source_path)
+            if strict_target_admission:
+                blocked_reason = _strict_attached_status_blocked_reason(
+                    standard=standard,
+                    resolved_dynamic_values=resolved_dynamic_values,
+                    duration_admission=duration_admission,
+                    trigger_ids_by_event=trigger_ids_by_event,
+                    unsupported=tuple(unsupported),
+                )
+                if blocked_reason:
+                    return _unsupported_result(effect, blocked_reason)
+            duration = _status_instance_duration_value(duration_admission)
+            life_step_moment = str(duration_admission.get("life_step_moment") or "")
+            status_instance = StatusInstance(
+                instance_id=_status_instance_id(target_id, modifier_name, effect.effect_id, source_id),
+                status_id=f"modifier:{modifier_name}",
+                modifier_name=modifier_name,
+                owner_id=target_id,
+                source_id=source_id,
+                caster_id=caster_id,
+                stacks=1,
+                max_stacks=_optional_int(standard.get("max_layer")),
+                duration=duration,
+                dynamic_values=resolved_dynamic_values,
+                formula_bindings=formula_bindings,
+                source_trace={
+                    "effect_id": effect.effect_id,
+                    "effect_source": effect.source.to_json(),
+                    "modifier_name": modifier_name,
+                    "modifier_definition": definition.source.to_json(),
+                    "status_config": status_metadata.get("source"),
+                    "target_alias": target_alias if isinstance(target_alias, str) else "",
+                    "resolved_target_ids": list(target_ids),
+                    "target_resolution": target_resolution_trace,
+                    "duration_admission": duration_admission,
+                    "status_formula_bindings": [dict(item) for item in formula_bindings],
+                    "status_formula_binding_source": _json_safe(standard.get("status_formula_binding_source", {})),
+                },
+                modifiers=tuple(modifiers),
+                trigger_ids_by_event=trigger_ids_by_event,
+                unsupported=tuple(unsupported),
+                application_operation=application_operation,
+                partial=bool(partial_reasons),
+                remaining_duration=duration,
+                duration_unit=life_step_moment if duration is not None else "permanent_or_unknown",
+                life_step_moment=life_step_moment,
+                duration_admission=duration_admission,
+                stack_policy="unsupported_partial" if any(reason.startswith("stack_unsupported") for reason in unsupported) else "single_instance",
+                refresh_policy="unsupported_partial" if any(reason.startswith("refresh_unsupported") for reason in unsupported) else "replace_partial",
+                lifecycle_state="active_partial" if partial_reasons else "active",
+                status_type=str(status_metadata.get("status_type") or "Unknown"),
+                status_category=str(status_metadata.get("status_category") or "unknown"),
+                can_dispel=status_metadata.get("can_dispel") if isinstance(status_metadata.get("can_dispel"), bool) else None,
+            )
+            plans.append(
+                StatusLifecyclePlan(
+                    operation=application_operation,
+                    target_id=target_id,
+                    status_id=status_instance.status_id,
+                    source="status_system",
+                    status_instance=status_instance,
+                    before_details=tuple(before_details),
+                    existing_detail=existing_detail,
+                    unsupported=tuple(unsupported),
+                    partial=status_instance.partial,
+                    source_trace=status_instance.source_trace,
+                )
+            )
+            status_instances.append(status_instance)
+        for plan in plans:
+            lifecycle_results.append(self._apply_lifecycle_plan(state, plan))
+        mutations = tuple(mutation for result in lifecycle_results for mutation in result.mutations)
+        records = tuple(record for result in lifecycle_results for record in result.records)
+        unsupported = tuple(reason for result in lifecycle_results for reason in result.unsupported)
+        lifecycle_result = lifecycle_results[-1] if lifecycle_results else None
         return StatusApplicationResult(
-            ok=lifecycle_result.ok,
-            mutations=lifecycle_result.mutations,
-            records=lifecycle_result.records,
-            unsupported=lifecycle_result.unsupported,
-            status_instance=lifecycle_result.status_instance,
+            ok=all(result.ok for result in lifecycle_results) if lifecycle_results else False,
+            mutations=mutations,
+            records=records,
+            unsupported=unsupported,
+            status_instance=status_instances[-1] if status_instances else None,
             lifecycle_result=lifecycle_result,
         )
 
@@ -847,9 +880,90 @@ def _resolve_target_alias(
         return owner_id or caster_id
     if alias == "ParamEntity":
         return param_entity_id
-    if alias == "CurrentActionTarget":
+    if alias in {"CurrentActionTarget", "AbilityTargetEntity"}:
         return current_action_target_id
     return None
+
+
+def _resolve_add_modifier_target_ids(
+    state: BattleState,
+    alias: object,
+    *,
+    caster_id: str,
+    owner_id: str | None,
+    param_entity_id: str | None,
+    current_action_target_id: str | None,
+    target_resolution: TargetResolution | None,
+) -> tuple[tuple[str, ...], str]:
+    if alias in SUPPORTED_ADD_MODIFIER_SINGLE_TARGET_ALIASES:
+        target_id = _resolve_target_alias(
+            alias,
+            caster_id=caster_id,
+            owner_id=owner_id,
+            param_entity_id=param_entity_id,
+            current_action_target_id=current_action_target_id,
+        )
+        if target_id is None and alias == "AbilityTargetEntity" and target_resolution is not None and target_resolution.selected:
+            target_id = target_resolution.selected[0]
+        if target_id is None:
+            return (), f"unsupported_or_missing_target_alias:{alias}"
+        if target_id not in state.units:
+            return (), f"target unit {target_id!r} is not in state"
+        return (target_id,), ""
+    if alias in SUPPORTED_ADD_MODIFIER_GROUP_TARGET_ALIASES:
+        targets, reason = _resolve_add_modifier_group_targets(state, caster_id, str(alias))
+        if reason:
+            return (), reason
+        if not targets:
+            return (), f"target group empty:{alias}"
+        missing = tuple(target_id for target_id in targets if target_id not in state.units)
+        if missing:
+            return (), f"target group contains missing unit:{','.join(missing)}"
+        return targets, ""
+    return (), f"unsupported_or_missing_target_alias:{alias}"
+
+
+def _resolve_add_modifier_group_targets(
+    state: BattleState,
+    caster_id: str,
+    alias: str,
+) -> tuple[tuple[str, ...], str]:
+    caster = state.units.get(caster_id)
+    if caster is None:
+        return (), "caster_missing_for_group_target"
+    targets: list[str] = []
+    for unit_id, unit in sorted(state.units.items()):
+        if unit.hp <= 0:
+            continue
+        if alias == "AllEnemy" and unit.side != caster.side:
+            targets.append(unit_id)
+        elif alias in {"AllTeamMember", "AllLightTeam"} and unit.side == caster.side:
+            targets.append(unit_id)
+        elif alias == "AllTeammate" and unit.side == caster.side and unit_id != caster_id:
+            targets.append(unit_id)
+    return tuple(dict.fromkeys(targets)), ""
+
+
+def _strict_attached_status_blocked_reason(
+    *,
+    standard: dict[str, JSONValue],
+    resolved_dynamic_values: dict[str, JSONValue],
+    duration_admission: dict[str, JSONValue],
+    trigger_ids_by_event: dict[str, tuple[str, ...]],
+    unsupported: tuple[str, ...],
+) -> str:
+    requests = standard.get("dynamic_value_requests")
+    if isinstance(requests, dict):
+        missing = tuple(str(key) for key in requests if str(key) not in resolved_dynamic_values)
+        if missing:
+            return f"attached_status_dynamic_value_unresolved:{','.join(missing)}"
+    if duration_admission.get("admission_status") == "blocked":
+        return f"attached_status_duration_blocked:{duration_admission.get('blocked_reason')}"
+    if any(trigger_ids for trigger_ids in trigger_ids_by_event.values()):
+        return "attached_status_listener_not_admitted"
+    if unsupported:
+        return f"attached_status_partial_not_admitted:{unsupported[0]}"
+    return ""
 
 
 def _resolve_dynamic_values(

@@ -4,7 +4,7 @@ import math
 from dataclasses import dataclass
 from typing import Callable
 
-from ..core.model import BattleState, GameEvent, JSONValue, Mutation
+from ..core.model import BattleState, GameEvent, JSONValue, Mutation, TargetResolution
 from ..core.settlement import SettlementRecord
 from ..rules.evaluator import NumericEvaluationContext, NumericEvaluationResult, RuleEvaluator
 from ..rules.ir import EffectIR
@@ -16,7 +16,7 @@ from .dynamic_values import (
     store_from_state,
     upsert_dynamic_value,
 )
-from .status import SUPPORTED_ADD_MODIFIER_ALIASES, StatusSystem
+from .status import SUPPORTED_ADD_MODIFIER_ALIASES, SUPPORTED_EFFECT_TARGET_ALIASES, StatusSystem
 
 
 @dataclass(frozen=True)
@@ -35,6 +35,7 @@ class EffectExecutionContext:
     owner_id: str | None = None
     param_entity_id: str | None = None
     current_action_target_id: str | None = None
+    target_resolution: TargetResolution | None = None
     dynamic_values: dict[str, float] | None = None
     binding_sources: tuple[dict[str, JSONValue], ...] = ()
     damage_window_ledger: DamageWindowLedger | None = None
@@ -130,6 +131,7 @@ class EffectRegistry:
             owner_id=context.owner_id,
             param_entity_id=context.param_entity_id,
             current_action_target_id=context.current_action_target_id,
+            target_resolution=context.target_resolution,
             dynamic_values=context.dynamic_values,
             binding_sources=_binding_sources(context),
         )
@@ -211,7 +213,7 @@ def _remove_modifier_payload_is_executable(effect: EffectIR) -> bool:
         return False
     has_modifier = isinstance(standard.get("modifier_name"), str) and bool(standard.get("modifier_name"))
     has_status = isinstance(standard.get("status_id"), str) and bool(standard.get("status_id"))
-    return (has_modifier or has_status) and standard.get("target_alias") in SUPPORTED_ADD_MODIFIER_ALIASES
+    return (has_modifier or has_status) and standard.get("target_alias") in SUPPORTED_EFFECT_TARGET_ALIASES
 
 
 def _fixed_payload_is_executable(effect: EffectIR) -> bool:
@@ -220,7 +222,7 @@ def _fixed_payload_is_executable(effect: EffectIR) -> bool:
         return False
     if standard.get("blocked_reason"):
         return False
-    if standard.get("target_alias") not in SUPPORTED_ADD_MODIFIER_ALIASES:
+    if standard.get("target_alias") not in SUPPORTED_EFFECT_TARGET_ALIASES:
         return False
     if not _runtime_numeric_payload_is_executable(standard.get("amount", standard.get("delta"))):
         return False
@@ -236,7 +238,7 @@ def _hp_loss_ratio_payload_is_executable(effect: EffectIR) -> bool:
     if standard.get("blocked_reason"):
         return False
     return (
-        standard.get("target_alias") in SUPPORTED_ADD_MODIFIER_ALIASES
+        standard.get("target_alias") in SUPPORTED_EFFECT_TARGET_ALIASES
         and standard.get("ratio_type") in {"MaxHP", "CurrentHP"}
         and _runtime_numeric_payload_is_executable(standard.get("ratio"))
     )
@@ -258,7 +260,7 @@ def _dynamic_value_payload_is_executable(effect: EffectIR) -> bool:
     standard = effect.payload.get("standard")
     if not isinstance(standard, dict):
         return False
-    dynamic_target_aliases = SUPPORTED_ADD_MODIFIER_ALIASES | {"LevelEntity"}
+    dynamic_target_aliases = SUPPORTED_EFFECT_TARGET_ALIASES | {"LevelEntity"}
     if effect.opcode in {"DefineDynamicValue", "SetDynamicValue"}:
         return (
             standard.get("target_alias") in dynamic_target_aliases
@@ -275,8 +277,8 @@ def _dynamic_value_payload_is_executable(effect: EffectIR) -> bool:
         )
     if effect.opcode == "SetDynamicValueByModifierValue":
         return (
-            standard.get("target_alias") in SUPPORTED_ADD_MODIFIER_ALIASES
-            and standard.get("source_target_alias") in SUPPORTED_ADD_MODIFIER_ALIASES
+            standard.get("target_alias") in SUPPORTED_EFFECT_TARGET_ALIASES
+            and standard.get("source_target_alias") in SUPPORTED_EFFECT_TARGET_ALIASES
             and isinstance(standard.get("source_modifier"), str)
             and bool(standard.get("source_modifier"))
             and standard.get("source_value_name") in {"Layer", "LifeTime"}
@@ -315,24 +317,24 @@ def _effect_payload_blocked_reason(effect: EffectIR) -> str:
         has_status = isinstance(standard.get("status_id"), str) and bool(standard.get("status_id"))
         if not (has_modifier or has_status):
             return "modifier_name_or_status_id_missing"
-        if standard.get("target_alias") not in SUPPORTED_ADD_MODIFIER_ALIASES:
+        if standard.get("target_alias") not in SUPPORTED_EFFECT_TARGET_ALIASES:
             return f"unsupported_or_missing_target_alias:{standard.get('target_alias')}"
     if effect.opcode in {"Heal", "HealHP", "Shield", "InitShield", "StackShield", "ModifyShield", "ResourceDelta", "ModifySPNew"}:
-        if standard.get("target_alias") not in SUPPORTED_ADD_MODIFIER_ALIASES:
+        if standard.get("target_alias") not in SUPPORTED_EFFECT_TARGET_ALIASES:
             return f"unsupported_or_missing_target_alias:{standard.get('target_alias')}"
         if not _runtime_numeric_payload_is_executable(standard.get("amount", standard.get("delta"))):
             return "fixed_or_bound_numeric_required"
         if effect.opcode in {"ResourceDelta", "ModifySPNew"} and not isinstance(standard.get("resource"), str):
             return "resource_missing"
     if effect.opcode == "LoseHPByRatio":
-        if standard.get("target_alias") not in SUPPORTED_ADD_MODIFIER_ALIASES:
+        if standard.get("target_alias") not in SUPPORTED_EFFECT_TARGET_ALIASES:
             return f"unsupported_or_missing_target_alias:{standard.get('target_alias')}"
         if standard.get("ratio_type") not in {"MaxHP", "CurrentHP"}:
             return f"hp_loss_ratio_type_not_supported:{standard.get('ratio_type')}"
         if not _runtime_numeric_payload_is_executable(standard.get("ratio")):
             return "fixed_or_bound_ratio_required"
     if effect.opcode in {"DefineDynamicValue", "SetDynamicValue", "SetDynamicValueByAddValue"}:
-        if standard.get("target_alias") not in SUPPORTED_ADD_MODIFIER_ALIASES | {"LevelEntity"}:
+        if standard.get("target_alias") not in SUPPORTED_EFFECT_TARGET_ALIASES | {"LevelEntity"}:
             return f"unsupported_or_missing_target_alias:{standard.get('target_alias')}"
         if not isinstance(standard.get("value_name"), str) or not standard.get("value_name"):
             return "dynamic_value_name_required"

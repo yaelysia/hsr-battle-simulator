@@ -305,6 +305,7 @@ class AbilityTaskSystem:
                 owner_id=command.actor_id,
                 param_entity_id=primary_target or command.actor_id,
                 current_action_target_id=primary_target,
+                target_resolution=target_resolution,
                 binding_sources=_binding_sources(
                     self.rules,
                     state,

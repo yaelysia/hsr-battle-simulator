@@ -5474,6 +5474,13 @@ DYNAMIC_VALUE_OPCODES = {"DefineDynamicValue", "SetDynamicValue", "SetDynamicVal
 DAMAGE_EMISSION_OPCODES = {"DamageByAttackProperty"}
 HP_LOSS_OPCODES = {"LoseHPByRatio"}
 EXECUTABLE_TARGET_ALIASES = {"Caster", "ModifierOwnerEntity", "ParamEntity", "CurrentActionTarget"}
+ADD_MODIFIER_TARGET_ALIASES = EXECUTABLE_TARGET_ALIASES | {
+    "AbilityTargetEntity",
+    "AllEnemy",
+    "AllTeamMember",
+    "AllLightTeam",
+    "AllTeammate",
+}
 STATUS_CALLBACK_LIST_TARGET_ALIASES = {"ParamEntitySkillTargetEntityList", "AllEnemyWithUnSelectable"}
 DAMAGE_EMISSION_TARGET_ALIASES = {
     "AbilityTargetEntity",
@@ -5546,7 +5553,7 @@ def _effect_coverage_status(opcode: str, payload: dict[str, Any]) -> str:
             return "blocked"
         if not standard.get("modifier_name"):
             return "blocked"
-        if standard.get("target_alias") in EXECUTABLE_TARGET_ALIASES | STATUS_CALLBACK_LIST_TARGET_ALIASES:
+        if standard.get("target_alias") in ADD_MODIFIER_TARGET_ALIASES | STATUS_CALLBACK_LIST_TARGET_ALIASES:
             return "executable"
         return "blocked"
     if opcode in REMOVE_MODIFIER_OPCODES:
