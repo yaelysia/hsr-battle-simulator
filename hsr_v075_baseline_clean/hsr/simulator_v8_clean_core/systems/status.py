@@ -939,15 +939,38 @@ def _status_lifecycle_events(
 
 
 def _status_lifecycle_callback_events(plan: StatusLifecyclePlan) -> tuple[str, ...]:
+    dot_add_events = ("OnModifierDotAdd",) if _plan_is_dot_status(plan) else ()
     if plan.operation == "add":
-        return ("OnCreate", "OnModifierAdd")
+        return ("OnCreate", "OnModifierAdd", "OnAddModifierSuc", "OnListenModifierAdd", *dot_add_events)
     if plan.operation == "stack":
-        return ("OnStack", "OnModifierAdd")
+        return ("OnStack", "OnModifierAdd", "OnModifierOnStack", "OnListenModifierOnStack")
     if plan.operation in {"refresh_or_replace_partial", "replace_partial"}:
-        return ("OnModifierAdd",)
+        return ("OnModifierAdd", "OnListenModifierAdd")
     if plan.operation in {"remove", "expire"}:
-        return ("OnDestroy", "OnModifierRemove")
+        return ("OnDestroy", "OnModifierRemove", "OnListenModifierRemove")
     return ()
+
+
+def _plan_is_dot_status(plan: StatusLifecyclePlan) -> bool:
+    sources: list[dict[str, JSONValue]] = []
+    if plan.status_instance is not None:
+        sources.append(plan.status_instance.to_json())
+    if isinstance(plan.existing_detail, dict):
+        sources.append(plan.existing_detail)
+    for source in sources:
+        status_type = str(source.get("status_type") or "").lower()
+        status_category = str(source.get("status_category") or "").lower()
+        fields = source.get("fields")
+        if "dot" in {status_type, status_category}:
+            return True
+        if "dot" in status_type or "dot" in status_category:
+            return True
+        if isinstance(fields, dict):
+            if str(fields.get("status_type") or "").lower() == "dot":
+                return True
+            if str(fields.get("status_category") or "").lower() == "dot":
+                return True
+    return False
 
 
 def _status_id_fragment(status_id: str) -> str:

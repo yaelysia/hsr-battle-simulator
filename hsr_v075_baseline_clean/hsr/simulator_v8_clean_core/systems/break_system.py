@@ -148,12 +148,18 @@ class BreakSystem:
                 GameEvent(
                     "break.triggered",
                     source_id=packet.attacker_id,
+                    target_id=packet.target_id,
                     window="break",
                     process_only=True,
                     payload={
+                        "callback_events": ["OnTriggerBreak", "OnBeingBreak", "OnListenBreak"],
+                        "attacker_id": packet.attacker_id,
+                        "actor_id": packet.attacker_id,
                         "target_id": packet.target_id,
+                        "current_hit_target_id": packet.target_id,
                         "element_type": packet.element_type,
                         "break_template_id": template.template_id,
+                        "source_trace": metadata.get("source_trace", packet.source_trace),
                     },
                 ),
             ),

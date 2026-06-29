@@ -6,6 +6,7 @@ from ..core.model import BattleState, GameEvent, JSONValue, Mutation
 from ..core.settlement import SettlementRecord
 from ..rules.evaluator import NumericEvaluationContext, NumericEvaluationResult, RuleEvaluator
 from .dynamic_values import binding_source_from_store, status_binding_sources, store_from_state
+from .mutation_events import enrich_event_with_mutation_payload
 
 
 @dataclass(frozen=True)
@@ -159,36 +160,37 @@ class ToughnessSystem:
                     trace=packet.source_trace,
                 ).to_json()
             )
+        hit_event = GameEvent(
+            event_type="toughness.hit",
+            source_id=packet.attacker_id,
+            target_id=packet.target_id,
+            window="damage",
+            process_only=True,
+            payload={
+                "callback_events": ["OnBeingStanceDamage"],
+                "attacker_id": packet.attacker_id,
+                "actor_id": packet.attacker_id,
+                "target_id": packet.target_id,
+                "current_hit_target_id": packet.target_id,
+                "primary_action_target_id": packet.metadata.get("primary_action_target_id"),
+                "hit_profile_id": packet.hit_profile_id,
+                "toughness_emission_id": packet.toughness_emission_id,
+                "source_task_id": packet.source_task_id,
+                "target_group": packet.target_group,
+                "element_type": packet.element_type,
+                "amount": amount,
+                "target_before_toughness": before,
+                "target_after_toughness": after,
+                "weakness_check": metadata["weakness_check"],
+                "source_trace": packet.source_trace,
+                "per_hit_target_context_available": True,
+                "per_hit_listener_admission_partial": True,
+            },
+        )
         return ToughnessApplicationResult(
             packet=packet,
             ok=True,
-            events=(
-                GameEvent(
-                    event_type="toughness.hit",
-                    source_id=packet.attacker_id,
-                    target_id=packet.target_id,
-                    window="damage",
-                    process_only=True,
-                    payload={
-                        "attacker_id": packet.attacker_id,
-                        "target_id": packet.target_id,
-                        "current_hit_target_id": packet.target_id,
-                        "primary_action_target_id": packet.metadata.get("primary_action_target_id"),
-                        "hit_profile_id": packet.hit_profile_id,
-                        "toughness_emission_id": packet.toughness_emission_id,
-                        "source_task_id": packet.source_task_id,
-                        "target_group": packet.target_group,
-                        "element_type": packet.element_type,
-                        "amount": amount,
-                        "target_before_toughness": before,
-                        "target_after_toughness": after,
-                        "weakness_check": metadata["weakness_check"],
-                        "source_trace": packet.source_trace,
-                        "per_hit_target_context_available": True,
-                        "per_hit_listener_admission_partial": True,
-                    },
-                ),
-            ),
+            events=(enrich_event_with_mutation_payload(hit_event, mutation),),
             mutations=tuple(mutations),
             records=tuple(records),
         )

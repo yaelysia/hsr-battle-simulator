@@ -12,6 +12,7 @@ from .damage import DamagePacket, DamageSourceFrame, DamageSystem, DamageWindowL
 from .dot_formula import DotFormula, DotFormulaInput
 from .dynamic_values import binding_source_from_store, find_status_detail, status_binding_sources, store_from_state, upsert_dynamic_value
 from .effect import EffectExecutionContext, EffectRegistry
+from .mutation_events import events_for_mutation
 from .queue import QueueEntry, QueueSystem, QueueTargetResolver
 from .status import StatusSystem
 from .timeline import TimelineSystem
@@ -1012,6 +1013,7 @@ class StatusCallbackSystem:
     ) -> StatusCallbackExecutionResult:
         current_state = state
         mutations: list[Mutation] = []
+        events: list[GameEvent] = []
         records = []
         errors = []
         for emission in emissions:
@@ -1071,6 +1073,14 @@ class StatusCallbackSystem:
             )
             current_state = self.reducer.apply_all(current_state, (mutation,))
             mutations.append(mutation)
+            events.extend(
+                events_for_mutation(
+                    mutation,
+                    actor_id=str(detail.get("caster_id") or detail.get("owner_id") or ""),
+                    source_id=str(detail.get("source_id") or callback.callback_id),
+                    event_index=current_state.event_index,
+                )
+            )
             records.append(
                 SettlementRecord(
                     record_type="action_delay",
@@ -1098,6 +1108,7 @@ class StatusCallbackSystem:
             ok=not errors,
             after_state=current_state,
             mutations=tuple(mutations),
+            events=tuple(events),
             records=tuple(records),
             errors=tuple(errors),
         )

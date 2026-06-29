@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from ..core.model import ActionCommand, BattleState, GameEvent, JSONValue, Mutation, TargetResolution
 from ..core.reducer import MutationReducer
@@ -9,6 +9,7 @@ from ..rules.ir import ActionDefinitionIR, StatusCallbackIR, StatusEventFamilyIR
 from ..rules.rulebook import RuleBook
 from .damage import DamageSystem, DamageWindowLedger
 from .effect import EffectRegistry
+from .mutation_events import MUTATION_BACKED_EVENT_TYPES, PRE_MUTATION_BLOCK_REASON
 from .status_callbacks import StatusCallbackSystem
 from .timeline import TimelineSystem
 from .trigger import TriggerSystem
@@ -335,6 +336,25 @@ class EventDispatchSystem:
             records.extend(result.records)
             events.extend(result.events)
             errors.extend(result.errors)
+            child_depth = _event_mutation_depth(event)
+            if child_depth < 1:
+                for emitted_event in result.events:
+                    if emitted_event.event_type not in MUTATION_BACKED_EVENT_TYPES:
+                        continue
+                    child_event = replace(
+                        emitted_event,
+                        payload={**emitted_event.payload, "mutation_event_depth": child_depth + 1},
+                    )
+                    child_result = self.dispatch_event(
+                        current_state,
+                        event=child_event,
+                        damage_window_ledger=damage_window_ledger,
+                    )
+                    current_state = child_result.after_state
+                    mutations.extend(child_result.mutations)
+                    records.extend(child_result.records)
+                    events.extend(child_result.events)
+                    errors.extend(child_result.errors)
             execution_record = _listener_record(
                 event,
                 listener_kind=match.listener_kind,
@@ -369,6 +389,19 @@ class EventDispatchSystem:
         unit_id: str | None,
         modifier_name: str | None,
     ) -> tuple[ListenerMatch, ...]:
+        pre_mutation_reason = _pre_mutation_listener_block_reason(event)
+        if pre_mutation_reason:
+            return tuple(
+                _pre_mutation_blocked_match(
+                    event,
+                    alias,
+                    state,
+                    reason=pre_mutation_reason,
+                    unit_id=unit_id,
+                    modifier_name=modifier_name,
+                )
+                for alias in aliases
+            )
         if unit_id and modifier_name:
             return self._explicit_status_matches(state, event, aliases, unit_id, modifier_name)
         matches: list[ListenerMatch] = []
@@ -708,6 +741,17 @@ def _event_scope_kind(event: GameEvent) -> str:
         return value
     if event.event_type in {"damage.before_hit", "damage.hit", "toughness.hit"}:
         return "per_hit_target_local"
+    if event.event_type in {
+        "hp.change",
+        "heal.after",
+        "shield.change",
+        "sp.change",
+        "energy.change",
+        "energy.before_change",
+        "toughness.before_hit",
+        "action_delay.changed",
+    }:
+        return "being_hit_target_local"
     if event.event_type == "unit.defeated":
         return "owner_local"
     if event.event_type.startswith("break."):
@@ -727,6 +771,23 @@ def _scope_kind_for_callback_event(event: GameEvent, callback_event: str) -> str
         return explicit
     if callback_event == "OnListenAllowAction":
         return "owner_local"
+    if callback_event in {"OnAfterDealHeal", "OnBeforeDealHeal"}:
+        return "actor_local"
+    if callback_event in {
+        "OnHPChange",
+        "OnHPOverflow",
+        "OnAfterBeingHeal",
+        "OnBeforeBeingHeal",
+        "OnShieldChange",
+        "OnSPChange",
+        "OnEnergyPointChange",
+        "OnBeforeEnergyPointChange",
+        "OnBeforeBeingStanceDamage",
+        "OnBeingStanceDamage",
+        "OnActionDelayEffect",
+        "OnActionDelayEffectAll",
+    }:
+        return "being_hit_target_local"
     if callback_event in {
         "OnBeforeHitAll",
         "OnAfterHitAll",
@@ -758,7 +819,17 @@ def _scope_kind_for_callback_event(event: GameEvent, callback_event: str) -> str
         return "owner_local"
     if callback_event == "OnBeforeDying":
         return "owner_local"
-    if callback_event in {"OnStack", "OnPhase1", "OnCreate", "OnDestroy", "OnModifierAdd", "OnModifierRemove"}:
+    if callback_event in {
+        "OnStack",
+        "OnPhase1",
+        "OnCreate",
+        "OnDestroy",
+        "OnModifierAdd",
+        "OnModifierRemove",
+        "OnAddModifierSuc",
+        "OnModifierOnStack",
+        "OnModifierDotAdd",
+    }:
         return "status_local"
     return _event_scope_kind(event)
 
@@ -853,6 +924,14 @@ def _global_listener_auto_admitted(event: GameEvent, callback: StatusCallbackIR,
         event.event_type == "turn.end"
         and alias.callback_event == "OnListenTurnEnd"
         and callback.event == "OnListenTurnEnd"
+        and alias.admission_status == "executable"
+    ) or (
+        (
+            event.event_type in MUTATION_BACKED_EVENT_TYPES
+            or event.event_type in {"status.lifecycle", "break.triggered"}
+        )
+        and alias.callback_event.startswith("OnListen")
+        and callback.event == alias.callback_event
         and alias.admission_status == "executable"
     )
 
@@ -962,6 +1041,45 @@ def _alias_blocked_match(
         status="blocked",
         reason=reason,
         source="event_alias_matrix",
+        order_key=_listener_order_key(state, alias.scope_kind, target_unit, -1, None),
+        event_alias=alias.to_json(),
+        blocked_category=_blocked_category(reason),
+    )
+
+
+def _pre_mutation_listener_block_reason(event: GameEvent) -> str:
+    admission = event.payload.get("pre_mutation_execution_admission")
+    if admission != "blocked":
+        return ""
+    reason = event.payload.get("blocked_reason")
+    return str(reason) if isinstance(reason, str) and reason else PRE_MUTATION_BLOCK_REASON
+
+
+def _event_mutation_depth(event: GameEvent) -> int:
+    value = event.payload.get("mutation_event_depth")
+    return int(value) if isinstance(value, int) and value >= 0 else 0
+
+
+def _pre_mutation_blocked_match(
+    event: GameEvent,
+    alias: EventAlias,
+    state: BattleState,
+    *,
+    reason: str,
+    unit_id: str | None = None,
+    modifier_name: str | None = None,
+) -> ListenerMatch:
+    target_unit = unit_id or str(event.target_id or _event_current_hit_target_id(event) or "")
+    return ListenerMatch(
+        listener_kind=_listener_kind_for_scope(alias.scope_kind),
+        scope_kind=alias.scope_kind,
+        callback_event=alias.callback_event,
+        unit_id=target_unit,
+        modifier_name=modifier_name or "",
+        callback=None,
+        status="blocked",
+        reason=reason,
+        source="mutation_backed_event_safety",
         order_key=_listener_order_key(state, alias.scope_kind, target_unit, -1, None),
         event_alias=alias.to_json(),
         blocked_category=_blocked_category(reason),

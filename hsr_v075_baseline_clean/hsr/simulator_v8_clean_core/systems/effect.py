@@ -16,6 +16,7 @@ from .dynamic_values import (
     store_from_state,
     upsert_dynamic_value,
 )
+from .mutation_events import events_for_mutation
 from .status import SUPPORTED_ADD_MODIFIER_ALIASES, SUPPORTED_EFFECT_TARGET_ALIASES, StatusSystem
 
 
@@ -400,7 +401,16 @@ def _execute_fixed_unit_delta(
             source="effect_system",
             metadata=_effect_metadata(effect, context, standard, amount, amount_result, formula_details=formula_details),
         )
-        return _mutation_effect_result(effect, kind, mutation, amount, target_id=None, resource="skill_points", evaluation=amount_result)
+        return _mutation_effect_result(
+            effect,
+            kind,
+            mutation,
+            amount,
+            context=context,
+            target_id=None,
+            resource="skill_points",
+            evaluation=amount_result,
+        )
     if target_id not in state.units:
         return _unsupported_effect(effect, f"target unit {target_id!r} is not in state")
     unit = state.units[target_id]
@@ -415,7 +425,15 @@ def _execute_fixed_unit_delta(
             source="effect_system",
             metadata=_effect_metadata(effect, context, standard, amount, amount_result, formula_details=formula_details),
         )
-        return _mutation_effect_result(effect, kind, mutation, amount, target_id=target_id, evaluation=amount_result)
+        return _mutation_effect_result(
+            effect,
+            kind,
+            mutation,
+            amount,
+            context=context,
+            target_id=target_id,
+            evaluation=amount_result,
+        )
     if kind == "shield":
         before = float(unit.resources.get("shield", 0.0))
         after = max(0.0, before + amount)
@@ -428,7 +446,16 @@ def _execute_fixed_unit_delta(
             source="effect_system",
             metadata=_effect_metadata(effect, context, standard, amount, amount_result, formula_details=formula_details),
         )
-        return _mutation_effect_result(effect, kind, mutation, amount, target_id=target_id, resource="shield", evaluation=amount_result)
+        return _mutation_effect_result(
+            effect,
+            kind,
+            mutation,
+            amount,
+            context=context,
+            target_id=target_id,
+            resource="shield",
+            evaluation=amount_result,
+        )
     resource = standard.get("resource")
     if kind == "resource_delta" and resource == "energy":
         cap = unit.max_energy if unit.max_energy > 0 else unit.energy + amount
@@ -442,7 +469,16 @@ def _execute_fixed_unit_delta(
             source="effect_system",
             metadata=_effect_metadata(effect, context, standard, amount, amount_result, formula_details=formula_details),
         )
-        return _mutation_effect_result(effect, kind, mutation, amount, target_id=target_id, resource="energy", evaluation=amount_result)
+        return _mutation_effect_result(
+            effect,
+            kind,
+            mutation,
+            amount,
+            context=context,
+            target_id=target_id,
+            resource="energy",
+            evaluation=amount_result,
+        )
     if kind == "resource_delta" and isinstance(resource, str) and resource:
         before = float(unit.resources.get(resource, 0.0))
         after = before + amount
@@ -455,7 +491,16 @@ def _execute_fixed_unit_delta(
             source="effect_system",
             metadata=_effect_metadata(effect, context, standard, amount, amount_result, formula_details=formula_details),
         )
-        return _mutation_effect_result(effect, kind, mutation, amount, target_id=target_id, resource=resource, evaluation=amount_result)
+        return _mutation_effect_result(
+            effect,
+            kind,
+            mutation,
+            amount,
+            context=context,
+            target_id=target_id,
+            resource=resource,
+            evaluation=amount_result,
+        )
     return _unsupported_effect(effect, f"unsupported_resource_delta:{resource}")
 
 
@@ -1025,6 +1070,7 @@ def _mutation_effect_result(
     mutation: Mutation,
     amount: float,
     *,
+    context: EffectExecutionContext,
     target_id: str | None,
     resource: str | None = None,
     evaluation: NumericEvaluationResult | None = None,
@@ -1049,7 +1095,16 @@ def _mutation_effect_result(
         payload=payload,
         trace={"effect_source": effect.source.to_json()},
     ).to_json()
-    return EffectResult(mutations=(mutation,), records=(record,))
+    return EffectResult(
+        events=events_for_mutation(
+            mutation,
+            actor_id=context.caster_id,
+            source_id=context.source_id,
+            event_index=context.state.event_index,
+        ),
+        mutations=(mutation,),
+        records=(record,),
+    )
 
 
 def _unsupported_effect(effect: EffectIR, reason: str, details: dict[str, JSONValue] | None = None) -> EffectResult:

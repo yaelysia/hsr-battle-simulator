@@ -2832,8 +2832,22 @@ STATUS_EVENT_RUNTIME_SOURCES: dict[str, tuple[str, ...]] = {
     "OnAfterBeingAttacked": ("damage.hit",),
     "OnBeingHit": ("damage.hit",),
     "OnHit": ("damage.hit", "toughness.hit"),
+    "OnHPChange": ("hp.change", "heal.after"),
+    "OnListenHPChange": ("hp.change", "heal.after"),
+    "OnAfterBeingHeal": ("heal.after",),
+    "OnAfterDealHeal": ("heal.after",),
+    "OnHPOverflow": ("heal.after",),
+    "OnShieldChange": ("shield.change",),
+    "OnListenShieldChange": ("shield.change",),
+    "OnListenInitShield": ("shield.change",),
+    "OnSPChange": ("sp.change",),
+    "OnBeforeEnergyPointChange": ("energy.before_change",),
+    "OnEnergyPointChange": ("energy.change",),
+    "OnBeforeBeingStanceDamage": ("toughness.before_hit",),
+    "OnBeingStanceDamage": ("toughness.hit",),
     "OnTriggerBreak": ("break.triggered",),
     "OnBeingBreak": ("break.triggered",),
+    "OnListenBreak": ("break.triggered",),
     "OnTriggerDeath": ("unit.defeated",),
     "OnListenCharacterDie": ("unit.defeated",),
     "OnTriggerDeathrattle": ("unit.defeated",),
@@ -2843,6 +2857,15 @@ STATUS_EVENT_RUNTIME_SOURCES: dict[str, tuple[str, ...]] = {
     "OnStack": ("status.lifecycle",),
     "OnModifierAdd": ("status.lifecycle",),
     "OnModifierRemove": ("status.lifecycle",),
+    "OnAddModifierSuc": ("status.lifecycle",),
+    "OnListenModifierAdd": ("status.lifecycle",),
+    "OnListenModifierRemove": ("status.lifecycle",),
+    "OnModifierOnStack": ("status.lifecycle",),
+    "OnListenModifierOnStack": ("status.lifecycle",),
+    "OnModifierDotAdd": ("status.lifecycle",),
+    "OnActionDelayEffect": ("action_delay.changed",),
+    "OnActionDelayEffectAll": ("action_delay.changed",),
+    "OnListenGlobalActionDelayChanged": ("action_delay.changed",),
 }
 
 
@@ -2918,7 +2941,20 @@ def _status_event_family_name(event: str) -> str:
         return "custom_event"
     if event in {"OnWaveMonster"}:
         return "wave"
-    if event in {"OnCreate", "OnDestroy", "OnStack", "OnModifierAdd", "OnModifierRemove", "OnPhase1"}:
+    if event in {
+        "OnCreate",
+        "OnDestroy",
+        "OnStack",
+        "OnModifierAdd",
+        "OnModifierRemove",
+        "OnPhase1",
+        "OnAddModifierSuc",
+        "OnListenModifierAdd",
+        "OnListenModifierRemove",
+        "OnModifierOnStack",
+        "OnListenModifierOnStack",
+        "OnModifierDotAdd",
+    }:
         return "status_lifecycle"
     if "Hit" in event or "Attacked" in event:
         return "hit"
@@ -6036,6 +6072,23 @@ def _status_callback_source_mode(relative_path: str) -> str:
 def _status_callback_scope_kind(event: str) -> str:
     if event in {"OnListenCharacterDie", "OnListenAllowAction"}:
         return "owner_local"
+    if event in {"OnAfterDealHeal", "OnBeforeDealHeal"}:
+        return "actor_local"
+    if event in {
+        "OnHPChange",
+        "OnHPOverflow",
+        "OnAfterBeingHeal",
+        "OnBeforeBeingHeal",
+        "OnShieldChange",
+        "OnSPChange",
+        "OnEnergyPointChange",
+        "OnBeforeEnergyPointChange",
+        "OnBeforeBeingStanceDamage",
+        "OnBeingStanceDamage",
+        "OnActionDelayEffect",
+        "OnActionDelayEffectAll",
+    }:
+        return "being_hit_target_local"
     if event in {
         "OnBeforeHitAll",
         "OnAfterHitAll",
@@ -6050,7 +6103,17 @@ def _status_callback_scope_kind(event: str) -> str:
         "OnListenInsertAbilityFinish",
     }:
         return "actor_local"
-    if event in {"OnCreate", "OnDestroy", "OnStack", "OnPhase1"}:
+    if event in {
+        "OnCreate",
+        "OnDestroy",
+        "OnStack",
+        "OnPhase1",
+        "OnModifierAdd",
+        "OnModifierRemove",
+        "OnAddModifierSuc",
+        "OnModifierOnStack",
+        "OnModifierDotAdd",
+    }:
         return "status_local"
     if event.startswith("OnListen"):
         return "global_listener"

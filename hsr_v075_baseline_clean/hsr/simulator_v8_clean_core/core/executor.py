@@ -29,6 +29,7 @@ from ..systems.target import TargetPolicy, TargetSystem
 from ..systems.timeline import TimelinePlan, TimelineSystem
 from ..systems.toughness import ToughnessPacket, ToughnessSystem
 from ..systems.event_dispatch import EventDispatchResult, EventDispatchSystem
+from ..systems.mutation_events import MUTATION_BACKED_EVENT_TYPES, before_toughness_event, events_for_mutation
 
 
 class CombatExecutor:
@@ -163,15 +164,34 @@ class CombatExecutor:
             events = (action_event,)
             timeline_mutations = ()
             resource_mutations = ()
-        pre_damage_mutations = (*timeline_mutations, *resource_mutations)
-        current_state = self.reducer.apply_all(state, pre_damage_mutations)
         trigger_results: list[EventDispatchResult] = []
         listener_dispatch_results: list[EventDispatchResult] = []
-        ordered_mutations: list[Mutation] = list(pre_damage_mutations)
+        current_state = self.reducer.apply_all(state, timeline_mutations)
+        ordered_mutations: list[Mutation] = list(timeline_mutations)
         runtime_records: list[dict[str, JSONValue]] = [
             *(_mutation_record("timeline", mutation) for mutation in timeline_mutations),
-            *(_mutation_record("resource", mutation) for mutation in resource_mutations),
         ]
+        for mutation in resource_mutations:
+            current_state = self.reducer.apply_all(current_state, (mutation,))
+            ordered_mutations.append(mutation)
+            runtime_records.append(_mutation_record("resource", mutation))
+            for emitted_event in events_for_mutation(
+                mutation,
+                actor_id=command.actor_id,
+                source_id=command.actor_id,
+                event_index=current_state.event_index,
+                extra_payload={
+                    "action_id": command.action_id,
+                    "action_level": command.action_level,
+                    "actor_id": command.actor_id,
+                    "source_trace": action_source_metadata.get("source_trace", {}),
+                },
+            ):
+                dispatch_result = self.event_dispatcher.dispatch_event(current_state, event=emitted_event)
+                current_state = dispatch_result.after_state
+                listener_dispatch_results.append(dispatch_result)
+                ordered_mutations.extend(dispatch_result.mutations)
+                runtime_records.extend(dispatch_result.records)
         damage_results = []
         target_rng_events = []
         damage_mutations: tuple[Mutation, ...] = ()
@@ -200,6 +220,25 @@ class CombatExecutor:
                         ability_task_results.append(ability_result)
                         ordered_mutations.extend(ability_result.mutations)
                         runtime_records.extend(ability_result.records)
+                        for emitted_event in ability_result.events:
+                            if emitted_event.event_type not in {
+                                "status.lifecycle",
+                                "damage.hit",
+                                "toughness.hit",
+                                "break.triggered",
+                                "unit.defeated",
+                                *MUTATION_BACKED_EVENT_TYPES,
+                            }:
+                                continue
+                            dispatch_result = self.event_dispatcher.dispatch_event(
+                                current_state,
+                                event=emitted_event,
+                                damage_window_ledger=damage_window_ledger,
+                            )
+                            current_state = dispatch_result.after_state
+                            listener_dispatch_results.append(dispatch_result)
+                            ordered_mutations.extend(dispatch_result.mutations)
+                            runtime_records.extend(dispatch_result.records)
                     dispatch_event = GameEvent(
                         event_type=f"action.window.{step.canonical_window}",
                         source_id=command.actor_id,
@@ -413,6 +452,33 @@ class CombatExecutor:
                         current_state = self.reducer.apply_all(current_state, damage_result.mutations)
                         ordered_mutations.extend(damage_result.mutations)
                         runtime_records.extend(damage_result.records)
+                        for mutation in damage_result.mutations:
+                            for hp_event in events_for_mutation(
+                                mutation,
+                                actor_id=command.actor_id,
+                                source_id=command.actor_id,
+                                event_index=current_state.event_index,
+                                extra_payload={
+                                    "action_id": command.action_id,
+                                    "action_level": command.action_level,
+                                    "actor_id": command.actor_id,
+                                    "attacker_id": command.actor_id,
+                                    "primary_action_target_id": damage_plan.primary_action_target_id,
+                                    "current_hit_target_id": damage_packet.target_id,
+                                    "attack_type": action_definition.attack_type,
+                                    "skill_effect": action_definition.skill_effect,
+                                    "source_trace": damage_packet.source_trace,
+                                },
+                            ):
+                                dispatch_result = self.event_dispatcher.dispatch_event(
+                                    current_state,
+                                    event=hp_event,
+                                    damage_window_ledger=damage_window_ledger,
+                                )
+                                current_state = dispatch_result.after_state
+                                listener_dispatch_results.append(dispatch_result)
+                                ordered_mutations.extend(dispatch_result.mutations)
+                                runtime_records.extend(dispatch_result.records)
                         for emitted_event in damage_result.events:
                             kill_energy_mutation = self._kill_energy_mutation_for_event(
                                 current_state,
@@ -423,6 +489,26 @@ class CombatExecutor:
                                 current_state = self.reducer.apply_all(current_state, (kill_energy_mutation,))
                                 ordered_mutations.append(kill_energy_mutation)
                                 runtime_records.append(_mutation_record("resource", kill_energy_mutation))
+                                for resource_event in events_for_mutation(
+                                    kill_energy_mutation,
+                                    actor_id=str(kill_energy_mutation.path[1]) if len(kill_energy_mutation.path) > 1 else command.actor_id,
+                                    source_id=command.actor_id,
+                                    event_index=current_state.event_index,
+                                    extra_payload={
+                                        "action_id": command.action_id,
+                                        "action_level": command.action_level,
+                                        "actor_id": command.actor_id,
+                                        "source_trace": kill_energy_mutation.metadata.get("source_trace", {}),
+                                    },
+                                ):
+                                    resource_dispatch = self.event_dispatcher.dispatch_event(
+                                        current_state,
+                                        event=resource_event,
+                                    )
+                                    current_state = resource_dispatch.after_state
+                                    listener_dispatch_results.append(resource_dispatch)
+                                    ordered_mutations.extend(resource_dispatch.mutations)
+                                    runtime_records.extend(resource_dispatch.records)
                             dispatch_result = self.event_dispatcher.dispatch_event(
                                 current_state,
                                 event=emitted_event,
@@ -441,6 +527,31 @@ class CombatExecutor:
                             toughness_result = self.toughness.apply_packet(current_state, toughness_packet)
                             toughness_results.append(toughness_result)
                             toughness_mutations = (*toughness_mutations, *toughness_result.mutations)
+                            for mutation in toughness_result.mutations:
+                                stance_before_event = before_toughness_event(
+                                    mutation,
+                                    actor_id=command.actor_id,
+                                    event_index=current_state.event_index,
+                                    extra_payload={
+                                        "action_id": command.action_id,
+                                        "action_level": command.action_level,
+                                        "actor_id": command.actor_id,
+                                        "attacker_id": command.actor_id,
+                                        "primary_action_target_id": toughness_plan.primary_action_target_id,
+                                        "current_hit_target_id": toughness_plan.target_id,
+                                        "source_trace": toughness_plan.source_trace,
+                                    },
+                                )
+                                if stance_before_event is None:
+                                    continue
+                                dispatch_result = self.event_dispatcher.dispatch_event(
+                                    current_state,
+                                    event=stance_before_event,
+                                )
+                                current_state = dispatch_result.after_state
+                                listener_dispatch_results.append(dispatch_result)
+                                ordered_mutations.extend(dispatch_result.mutations)
+                                runtime_records.extend(dispatch_result.records)
                             current_state = self.reducer.apply_all(current_state, toughness_result.mutations)
                             ordered_mutations.extend(toughness_result.mutations)
                             runtime_records.extend(toughness_result.records)
@@ -472,6 +583,31 @@ class CombatExecutor:
                         toughness_result = self.toughness.apply_packet(current_state, toughness_packet)
                         toughness_results.append(toughness_result)
                         toughness_mutations = (*toughness_mutations, *toughness_result.mutations)
+                        for mutation in toughness_result.mutations:
+                            stance_before_event = before_toughness_event(
+                                mutation,
+                                actor_id=command.actor_id,
+                                event_index=current_state.event_index,
+                                extra_payload={
+                                    "action_id": command.action_id,
+                                    "action_level": command.action_level,
+                                    "actor_id": command.actor_id,
+                                    "attacker_id": command.actor_id,
+                                    "primary_action_target_id": toughness_plan.primary_action_target_id,
+                                    "current_hit_target_id": toughness_plan.target_id,
+                                    "source_trace": toughness_plan.source_trace,
+                                },
+                            )
+                            if stance_before_event is None:
+                                continue
+                            dispatch_result = self.event_dispatcher.dispatch_event(
+                                current_state,
+                                event=stance_before_event,
+                            )
+                            current_state = dispatch_result.after_state
+                            listener_dispatch_results.append(dispatch_result)
+                            ordered_mutations.extend(dispatch_result.mutations)
+                            runtime_records.extend(dispatch_result.records)
                         current_state = self.reducer.apply_all(current_state, toughness_result.mutations)
                         ordered_mutations.extend(toughness_result.mutations)
                         runtime_records.extend(toughness_result.records)
@@ -507,7 +643,14 @@ class CombatExecutor:
                     ordered_mutations.extend(ability_result.mutations)
                     runtime_records.extend(ability_result.records)
                     for emitted_event in ability_result.events:
-                        if emitted_event.event_type not in {"status.lifecycle", "damage.hit", "toughness.hit", "break.triggered", "unit.defeated"}:
+                        if emitted_event.event_type not in {
+                            "status.lifecycle",
+                            "damage.hit",
+                            "toughness.hit",
+                            "break.triggered",
+                            "unit.defeated",
+                            *MUTATION_BACKED_EVENT_TYPES,
+                        }:
                             continue
                         dispatch_result = self.event_dispatcher.dispatch_event(current_state, event=emitted_event)
                         current_state = dispatch_result.after_state
