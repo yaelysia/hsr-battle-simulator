@@ -9,6 +9,7 @@ from ..core.settlement import SettlementRecord
 from ..rules.evaluator import NumericEvaluationContext, RuleEvaluator
 from ..rules.ir import EffectIR, RuleEntity
 from ..rules.rulebook import RuleBook
+from .target import TargetSystem
 
 
 SUPPORTED_EFFECT_TARGET_ALIASES = {"Caster", "ModifierOwnerEntity", "ParamEntity", "CurrentActionTarget"}
@@ -216,9 +217,9 @@ class StatusSystem:
         if not isinstance(modifier_name, str) or not modifier_name:
             return _unsupported_result(effect, "AddModifier has no modifier_name")
         target_alias = standard.get("target_alias")
-        target_ids, target_blocked_reason = _resolve_add_modifier_target_ids(
+        target_ids, target_blocked_reason, target_expression_trace = self._resolve_add_modifier_targets(
             state,
-            target_alias,
+            standard,
             caster_id=caster_id,
             owner_id=owner_id,
             param_entity_id=param_entity_id,
@@ -306,6 +307,7 @@ class StatusSystem:
                     "modifier_definition": definition.source.to_json(),
                     "status_config": status_metadata.get("source"),
                     "target_alias": target_alias if isinstance(target_alias, str) else "",
+                    "target_expression": target_expression_trace,
                     "resolved_target_ids": list(target_ids),
                     "target_resolution": target_resolution_trace,
                     "duration_admission": duration_admission,
@@ -359,6 +361,61 @@ class StatusSystem:
             status_instance=status_instances[-1] if status_instances else None,
             lifecycle_result=lifecycle_result,
         )
+
+    def _resolve_add_modifier_targets(
+        self,
+        state: BattleState,
+        standard: dict[str, JSONValue],
+        *,
+        caster_id: str,
+        owner_id: str | None,
+        param_entity_id: str | None,
+        current_action_target_id: str | None,
+        target_resolution: TargetResolution | None,
+    ) -> tuple[tuple[str, ...], str, dict[str, JSONValue]]:
+        target_expression_id = standard.get("target_expression_id")
+        if isinstance(target_expression_id, str) and target_expression_id and self.rules is not None:
+            expression = self.rules.target_expression(target_expression_id)
+            if expression is None:
+                return (), f"target_expression_missing:{target_expression_id}", {}
+            payload_alias = standard.get("target_alias")
+            if (
+                isinstance(payload_alias, str)
+                and payload_alias
+                and expression.alias
+                and payload_alias != expression.alias
+            ):
+                return (), f"target_expression_alias_mismatch:{payload_alias}:{expression.alias}", {
+                    "target_expression": expression.to_json(),
+                    "target_alias": payload_alias,
+                }
+            result = TargetSystem().resolve_target_expression(
+                state,
+                expression,
+                caster_id=caster_id,
+                owner_id=owner_id,
+                param_entity_id=param_entity_id,
+                current_action_target_id=current_action_target_id,
+                target_resolution=target_resolution,
+            )
+            trace = result.to_json()
+            if not result.ok:
+                return (), result.blocked_reason, trace
+            return result.target_ids, "", trace
+        target_alias = standard.get("target_alias")
+        target_ids, target_blocked_reason = _resolve_add_modifier_target_ids(
+            state,
+            target_alias,
+            caster_id=caster_id,
+            owner_id=owner_id,
+            param_entity_id=param_entity_id,
+            current_action_target_id=current_action_target_id,
+            target_resolution=target_resolution,
+        )
+        return target_ids, target_blocked_reason, {
+            "legacy_target_alias_resolution": True,
+            "target_alias": target_alias if isinstance(target_alias, str) else "",
+        }
 
     def apply_remove_modifier(
         self,

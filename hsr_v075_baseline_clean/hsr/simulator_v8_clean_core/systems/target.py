@@ -4,6 +4,7 @@ import hashlib
 from dataclasses import dataclass, field
 
 from ..core.model import BattleState, JSONValue, RNGEvent, TargetResolution
+from ..rules.ir import TargetExpressionIR
 
 
 @dataclass(frozen=True)
@@ -55,7 +56,95 @@ class TargetEnumerationResult:
         }
 
 
+@dataclass(frozen=True)
+class TargetExpressionResult:
+    ok: bool
+    target_ids: tuple[str, ...] = ()
+    blocked_reason: str = ""
+    expression_id: str = ""
+    expression_kind: str = ""
+    alias: str = ""
+    metadata: dict[str, JSONValue] = field(default_factory=dict)
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "ok": self.ok,
+            "target_ids": list(self.target_ids),
+            "blocked_reason": self.blocked_reason,
+            "expression_id": self.expression_id,
+            "expression_kind": self.expression_kind,
+            "alias": self.alias,
+            "metadata": self.metadata,
+        }
+
+
 class TargetSystem:
+    def resolve_target_expression(
+        self,
+        state: BattleState,
+        expression: TargetExpressionIR,
+        *,
+        caster_id: str,
+        owner_id: str | None = None,
+        param_entity_id: str | None = None,
+        current_action_target_id: str | None = None,
+        target_resolution: TargetResolution | None = None,
+    ) -> TargetExpressionResult:
+        metadata: dict[str, JSONValue] = {
+            "target_expression": expression.to_json(),
+            "caster_id": caster_id,
+            "owner_id": owner_id,
+            "param_entity_id": param_entity_id,
+            "current_action_target_id": current_action_target_id,
+            "target_resolution": target_resolution.to_json() if target_resolution else None,
+        }
+        if expression.coverage_status != "executable":
+            reason = expression.blocked_reason or f"target_expression_not_executable:{expression.coverage_status}"
+            return TargetExpressionResult(
+                ok=False,
+                blocked_reason=reason,
+                expression_id=expression.target_expression_id,
+                expression_kind=expression.expression_kind,
+                alias=expression.alias,
+                metadata=metadata,
+            )
+        if expression.expression_kind != "TargetAlias":
+            reason = f"target_expression_kind_not_supported:{expression.expression_kind}"
+            return TargetExpressionResult(
+                ok=False,
+                blocked_reason=reason,
+                expression_id=expression.target_expression_id,
+                expression_kind=expression.expression_kind,
+                alias=expression.alias,
+                metadata=metadata,
+            )
+        target_ids, reason = _resolve_target_alias_ids(
+            state,
+            expression.alias,
+            caster_id=caster_id,
+            owner_id=owner_id,
+            param_entity_id=param_entity_id,
+            current_action_target_id=current_action_target_id,
+            target_resolution=target_resolution,
+        )
+        if reason:
+            return TargetExpressionResult(
+                ok=False,
+                blocked_reason=reason,
+                expression_id=expression.target_expression_id,
+                expression_kind=expression.expression_kind,
+                alias=expression.alias,
+                metadata=metadata,
+            )
+        return TargetExpressionResult(
+            ok=True,
+            target_ids=target_ids,
+            expression_id=expression.target_expression_id,
+            expression_kind=expression.expression_kind,
+            alias=expression.alias,
+            metadata=metadata,
+        )
+
     def enumerate_action_targets(
         self,
         state: BattleState,
@@ -333,6 +422,81 @@ def _policy_allows(actor_id: str, actor_side: str, target_id: str, target_side: 
     if target_side == actor_side:
         return policy.allow_ally
     return policy.allow_enemy
+
+
+def _resolve_target_alias_ids(
+    state: BattleState,
+    alias: str,
+    *,
+    caster_id: str,
+    owner_id: str | None,
+    param_entity_id: str | None,
+    current_action_target_id: str | None,
+    target_resolution: TargetResolution | None,
+) -> tuple[tuple[str, ...], str]:
+    if alias in {"Caster", "ModifierOwnerEntity", "ParamEntity", "CurrentActionTarget", "AbilityTargetEntity"}:
+        target_id = _resolve_single_alias(
+            alias,
+            caster_id=caster_id,
+            owner_id=owner_id,
+            param_entity_id=param_entity_id,
+            current_action_target_id=current_action_target_id,
+            target_resolution=target_resolution,
+        )
+        if target_id is None:
+            return (), f"unsupported_or_missing_target_alias:{alias}"
+        if target_id not in state.units:
+            return (), f"target unit {target_id!r} is not in state"
+        return (target_id,), ""
+    if alias in {"AllEnemy", "AllTeamMember", "AllLightTeam", "AllTeammate"}:
+        return _resolve_group_alias(state, caster_id, alias)
+    return (), f"target_alias_not_admitted:{alias or 'missing'}"
+
+
+def _resolve_single_alias(
+    alias: str,
+    *,
+    caster_id: str,
+    owner_id: str | None,
+    param_entity_id: str | None,
+    current_action_target_id: str | None,
+    target_resolution: TargetResolution | None,
+) -> str | None:
+    if alias == "Caster":
+        return caster_id
+    if alias == "ModifierOwnerEntity":
+        return owner_id or caster_id
+    if alias == "ParamEntity":
+        return param_entity_id
+    if alias in {"CurrentActionTarget", "AbilityTargetEntity"}:
+        if current_action_target_id:
+            return current_action_target_id
+        if alias == "AbilityTargetEntity" and target_resolution is not None and target_resolution.selected:
+            return target_resolution.selected[0]
+    return None
+
+
+def _resolve_group_alias(
+    state: BattleState,
+    caster_id: str,
+    alias: str,
+) -> tuple[tuple[str, ...], str]:
+    caster = state.units.get(caster_id)
+    if caster is None:
+        return (), "caster_missing_for_group_target"
+    targets: list[str] = []
+    for unit_id, unit in sorted(state.units.items()):
+        if unit.hp <= 0:
+            continue
+        if alias == "AllEnemy" and unit.side != caster.side:
+            targets.append(unit_id)
+        elif alias in {"AllTeamMember", "AllLightTeam"} and unit.side == caster.side:
+            targets.append(unit_id)
+        elif alias == "AllTeammate" and unit.side == caster.side and unit_id != caster_id:
+            targets.append(unit_id)
+    if not targets:
+        return (), f"target group empty:{alias}"
+    return tuple(dict.fromkeys(targets)), ""
 
 
 def _policy_metadata(policy: TargetPolicy) -> dict[str, JSONValue]:

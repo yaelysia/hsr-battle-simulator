@@ -46,6 +46,7 @@ from .ir import (
     StatusDamageEmissionIR,
     StatusEventFamilyIR,
     SuperBreakEmissionIR,
+    TargetExpressionIR,
     TimelineRuleIR,
     ToughnessEmissionIR,
     TriggerIR,
@@ -671,6 +672,11 @@ class RuleBook:
                 for key, value in super_break_emissions_by_template.items()
             },
         )
+        object.__setattr__(
+            self,
+            "_target_expressions",
+            {expression.target_expression_id: expression for expression in self.ir.target_expressions},
+        )
         object.__setattr__(self, "_effects", {effect.effect_id: effect for effect in self.ir.effects})
         object.__setattr__(self, "_conditions", {condition.condition_id: condition for condition in self.ir.conditions})
         object.__setattr__(self, "_triggers", {trigger.trigger_id: trigger for trigger in self.ir.triggers})
@@ -791,6 +797,12 @@ class RuleBook:
 
     def formula(self, formula_id: str) -> FormulaIR | None:
         return self._formulas.get(formula_id)
+
+    def target_expression(self, target_expression_id: str) -> TargetExpressionIR | None:
+        return self._target_expressions.get(target_expression_id)
+
+    def target_expressions(self) -> tuple[TargetExpressionIR, ...]:
+        return self.ir.target_expressions
 
     def has_action(self, action_id: str) -> bool:
         entity = self._entities.get(action_id)

@@ -56,6 +56,7 @@ from ..rules.ir import (
     StatusCallbackTaskIR,
     StatusDamageEmissionIR,
     SuperBreakEmissionIR,
+    TargetExpressionIR,
     TimelineRuleIR,
     ToughnessEmissionIR,
     TriggerIR,
@@ -207,6 +208,7 @@ class TBGDLowering:
         queue_intents: list[QueueIntentIR] = []
         skill_continuations: list[SkillContinuationIR] = []
         super_break_emissions: list[SuperBreakEmissionIR] = []
+        target_expressions: list[TargetExpressionIR] = []
         timeline_rules = self._lower_timeline_rules()
         resource_rules = self._lower_resource_rules()
         queue_priorities = self._lower_queue_priorities()
@@ -249,7 +251,9 @@ class TBGDLowering:
             ability_task_effects,
             ability_task_conditions,
             ability_task_formulas,
+            ability_task_target_expressions,
         ) = self._lower_action_ability_bindings(action_definitions)
+        target_expressions.extend(ability_task_target_expressions)
         ability_task_effects = _attach_status_formula_bindings_to_add_modifier_effects(
             ability_task_effects,
             ability_tasks,
@@ -292,6 +296,7 @@ class TBGDLowering:
             effects.extend(lowered.effects)
             conditions.extend(lowered.conditions)
             formulas.extend(lowered.formulas)
+            target_expressions.extend(lowered.target_expressions)
             status_callbacks.extend(lowered.status_callbacks)
             status_callback_tasks.extend(lowered.status_callback_tasks)
             status_damage_emissions.extend(lowered.status_damage_emissions)
@@ -306,12 +311,14 @@ class TBGDLowering:
             standalone_effects,
             standalone_conditions,
             standalone_formulas,
+            standalone_target_expressions,
         ) = self._lower_standalone_ability_graphs(selected_ability_files)
         ability_phases.extend(standalone_phases)
         ability_tasks.extend(standalone_tasks)
         effects.extend(standalone_effects)
         conditions.extend(standalone_conditions)
         formulas.extend(standalone_formulas)
+        target_expressions.extend(standalone_target_expressions)
         standalone_hit_profiles = _lower_standalone_hit_profiles(
             standalone_tasks,
             standalone_effects,
@@ -426,6 +433,7 @@ class TBGDLowering:
             timeline_rules=tuple(timeline_rules),
             resource_rules=tuple(resource_rules),
             super_break_emissions=tuple(super_break_emissions),
+            target_expressions=tuple(_dedupe_target_expressions(target_expressions).values()),
             triggers=tuple(triggers),
             effects=tuple(effects),
             conditions=tuple(conditions),
@@ -477,6 +485,10 @@ class TBGDLowering:
                     "timeline_rule_count": len(timeline_rules),
                     "resource_rule_count": len(resource_rules),
                     "super_break_emission_count": len(super_break_emissions),
+                    "target_expression_count": len(target_expressions),
+                    "executable_target_expression_count": sum(
+                        1 for expression in target_expressions if expression.coverage_status == "executable"
+                    ),
                     "skill_formula_binding_count": len(skill_formula_bindings),
                     "bounce_policy_count": len(bounce_policies),
                     "character_mechanism_slot_count": len(character_mechanism_slots),
@@ -1167,6 +1179,7 @@ class TBGDLowering:
         list[EffectIR],
         list[ConditionIR],
         list[FormulaIR],
+        list[TargetExpressionIR],
     ]:
         avatar_skill_rows = self._avatar_skill_rows_by_skill_id()
         avatar_configs = self._avatar_configs_by_skill_id()
@@ -1180,6 +1193,7 @@ class TBGDLowering:
         effects: list[EffectIR] = []
         conditions: list[ConditionIR] = []
         formulas: list[FormulaIR] = []
+        target_expressions: list[TargetExpressionIR] = []
         for definition in definitions:
             if definition.action_id.startswith("avatar_skill:"):
                 binding, binding_phases, lowered_tasks = self._avatar_action_binding(
@@ -1206,7 +1220,8 @@ class TBGDLowering:
             effects.extend(lowered_tasks.effects)
             conditions.extend(lowered_tasks.conditions)
             formulas.extend(lowered_tasks.formulas)
-        return bindings, phases, tasks, effects, conditions, formulas
+            target_expressions.extend(lowered_tasks.target_expressions)
+        return bindings, phases, tasks, effects, conditions, formulas, target_expressions
 
     def _lower_standalone_ability_graphs(
         self,
@@ -1218,6 +1233,7 @@ class TBGDLowering:
         list[EffectIR],
         list[ConditionIR],
         list[FormulaIR],
+        list[TargetExpressionIR],
     ]:
         graphs: list[StandaloneAbilityGraphIR] = []
         phases: list[AbilityPhaseIR] = []
@@ -1225,6 +1241,7 @@ class TBGDLowering:
         effects: list[EffectIR] = []
         conditions: list[ConditionIR] = []
         formulas: list[FormulaIR] = []
+        target_expressions: list[TargetExpressionIR] = []
         for path in ability_files:
             relative = relative_source_path(self.tbgd_root, path)
             if not _standalone_ability_source_admitted(relative):
@@ -1253,6 +1270,7 @@ class TBGDLowering:
                 effects.extend(lowered.effects)
                 conditions.extend(lowered.conditions)
                 formulas.extend(lowered.formulas)
+                target_expressions.extend(lowered.target_expressions)
                 task_ids = tuple(task.task_id for task in lowered.ability_tasks)
                 executable_task_ids = tuple(
                     task.task_id
@@ -1298,7 +1316,7 @@ class TBGDLowering:
                         blocked_reason="" if task_ids else "standalone_ability_has_no_tasks",
                     )
                 )
-        return graphs, phases, tasks, effects, conditions, formulas
+        return graphs, phases, tasks, effects, conditions, formulas, target_expressions
 
     def _avatar_skill_rows_by_skill_id(self) -> dict[str, dict[str, Any]]:
         rows: dict[str, dict[str, Any]] = {}
@@ -1769,6 +1787,14 @@ class TBGDLowering:
                 "parent_task_id": parent_task_id,
             },
         )
+        self_expression = _target_expression_from_raw(
+            task,
+            field_name="$self",
+            expression_id=f"target_expression:{task_id}:self",
+            source=source,
+        )
+        if self_expression is not None:
+            lowered.target_expressions.append(self_expression)
         if opcode == "PredicateTaskList":
             condition = self._lower_ability_task_condition(task.get("Predicate"), source, task_id)
             if condition:
@@ -1841,6 +1867,13 @@ class TBGDLowering:
 
         effect_id = f"effect:{task_id}"
         payload = _effect_payload(task, opcode, "")
+        payload, task_target_expressions = _attach_target_expressions_to_effect_payload(
+            payload,
+            task,
+            effect_id=effect_id,
+            source=source,
+        )
+        lowered.target_expressions.extend(task_target_expressions)
         coverage_status = _effect_coverage_status(opcode, payload)
         blocked_reason = "" if coverage_status == "executable" else _effect_blocked_reason(opcode, payload, coverage_status)
         lowered.effects.append(
@@ -2341,6 +2374,14 @@ class TBGDLowering:
             raw_id=modifier_name,
             evidence=evidence,
         )
+        self_expression = _target_expression_from_raw(
+            task,
+            field_name="$self",
+            expression_id=f"target_expression:{task_id}:self",
+            source=source,
+        )
+        if self_expression is not None:
+            lowered.target_expressions.append(self_expression)
         if opcode == "PredicateTaskList":
             condition = self._lower_condition(task.get("Predicate"), source, task_index)
             if condition:
@@ -2467,6 +2508,13 @@ class TBGDLowering:
             "ModifyDamageData",
         }:
             payload = _effect_payload(task, opcode, modifier_name)
+            payload, task_target_expressions = _attach_target_expressions_to_effect_payload(
+                payload,
+                task,
+                effect_id=effect_id,
+                source=source,
+            )
+            lowered.target_expressions.extend(task_target_expressions)
             effect_status = _effect_coverage_status(opcode, payload)
             lowered.effects.append(
                 EffectIR(
@@ -2547,6 +2595,14 @@ class TBGDLowering:
             raw_id=modifier_name,
             evidence={"callback_index": callback_index, "task_index": task_index, "branch": branch},
         )
+        self_expression = _target_expression_from_raw(
+            task,
+            field_name="$self",
+            expression_id=f"target_expression:{relative}:{modifier_name}:{callback_index}:{branch}:{task_index}:{opcode}:self",
+            source=source,
+        )
+        if self_expression is not None:
+            lowered.target_expressions.append(self_expression)
         if opcode == "PredicateTaskList":
             predicate = task.get("Predicate")
             condition = self._lower_condition(predicate, source, task_index)
@@ -2578,6 +2634,13 @@ class TBGDLowering:
 
         effect_id = f"effect:{relative}:{modifier_name}:{callback_index}:{branch}:{task_index}:{opcode}"
         payload = _effect_payload(task, opcode, modifier_name)
+        payload, task_target_expressions = _attach_target_expressions_to_effect_payload(
+            payload,
+            task,
+            effect_id=effect_id,
+            source=source,
+        )
+        lowered.target_expressions.extend(task_target_expressions)
         coverage_status = _effect_coverage_status(opcode, payload)
         lowered.effects.append(
             EffectIR(
@@ -2762,6 +2825,7 @@ class _LoweredAbility:
     effects: list[EffectIR] = field(default_factory=list)
     conditions: list[ConditionIR] = field(default_factory=list)
     formulas: list[FormulaIR] = field(default_factory=list)
+    target_expressions: list[TargetExpressionIR] = field(default_factory=list)
 
     def merge(self, other: "_LoweredAbility") -> None:
         self.entities.extend(other.entities)
@@ -2777,6 +2841,7 @@ class _LoweredAbility:
         self.effects.extend(other.effects)
         self.conditions.extend(other.conditions)
         self.formulas.extend(other.formulas)
+        self.target_expressions.extend(other.target_expressions)
 
 
 @dataclass(frozen=True)
@@ -3694,6 +3759,13 @@ def _dedupe_entities(entities: list[RuleEntity]) -> dict[str, RuleEntity]:
     deduped: dict[str, RuleEntity] = {}
     for entity in entities:
         deduped[entity.entity_id] = entity
+    return deduped
+
+
+def _dedupe_target_expressions(expressions: list[TargetExpressionIR]) -> dict[str, TargetExpressionIR]:
+    deduped: dict[str, TargetExpressionIR] = {}
+    for expression in expressions:
+        deduped[expression.target_expression_id] = expression
     return deduped
 
 
@@ -5712,6 +5784,146 @@ def _effect_payload(value: dict[str, Any], opcode: str, source_modifier_name: st
         payload["damage_formula_family"] = family
         payload["bypasses_normal_multipliers"] = family in {"true_damage", "hp_loss"}
     return payload
+
+
+TARGET_EXPRESSION_FIELD_NAMES = {
+    "TargetType",
+    "AbilityTarget",
+    "AutoCastTargetType",
+    "AbilityInherentTargetType",
+    "ReadTargetType",
+    "CompareType",
+    "FirstTargetType",
+    "SecondTargetType",
+}
+
+
+def _attach_target_expressions_to_effect_payload(
+    payload: dict[str, Any],
+    task: dict[str, Any],
+    *,
+    effect_id: str,
+    source: IRSource,
+) -> tuple[dict[str, Any], list[TargetExpressionIR]]:
+    expressions: list[TargetExpressionIR] = []
+    refs_by_field: dict[str, Any] = {}
+    for field_name, raw_value in _iter_target_expression_fields(task):
+        expression = _target_expression_from_raw(
+            raw_value,
+            field_name=field_name,
+            expression_id=f"target_expression:{effect_id}:{field_name}",
+            source=source,
+        )
+        if expression is None:
+            continue
+        expressions.append(expression)
+        refs_by_field[field_name] = {
+            "target_expression_id": expression.target_expression_id,
+            "expression_kind": expression.expression_kind,
+            "alias": expression.alias,
+            "coverage_status": expression.coverage_status,
+            "blocked_reason": expression.blocked_reason,
+            "admission_batch": expression.admission_batch,
+            "source": expression.source.to_json(),
+        }
+    if not expressions:
+        return payload, []
+    updated = dict(payload)
+    updated["target_expression_refs"] = refs_by_field
+    standard = updated.get("standard")
+    if isinstance(standard, dict):
+        standard = dict(standard)
+        target_ref = refs_by_field.get("TargetType")
+        if isinstance(target_ref, dict):
+            standard["target_expression_id"] = target_ref["target_expression_id"]
+            standard["target_expression_kind"] = target_ref["expression_kind"]
+            standard["target_expression_coverage_status"] = target_ref["coverage_status"]
+            standard["target_expression_blocked_reason"] = target_ref["blocked_reason"]
+            standard["target_expression_source"] = target_ref["source"]
+        standard["target_expression_refs"] = refs_by_field
+        updated["standard"] = standard
+    return updated, expressions
+
+
+def _iter_target_expression_fields(task: dict[str, Any]) -> tuple[tuple[str, Any], ...]:
+    pairs: list[tuple[str, Any]] = []
+    for field_name in sorted(TARGET_EXPRESSION_FIELD_NAMES):
+        value = task.get(field_name)
+        if _is_target_expression_node(value):
+            pairs.append((field_name, value))
+    return tuple(pairs)
+
+
+def _is_target_expression_node(value: Any) -> bool:
+    if not isinstance(value, dict):
+        return False
+    node_type = str(value.get("$type") or "")
+    return node_type.startswith("RPG.GameCore.Target") or node_type == "RPG.GameCore.Retarget"
+
+
+def _target_expression_from_raw(
+    value: Any,
+    *,
+    field_name: str,
+    expression_id: str,
+    source: IRSource,
+) -> TargetExpressionIR | None:
+    if not _is_target_expression_node(value):
+        return None
+    assert isinstance(value, dict)
+    node_type = str(value.get("$type") or "")
+    expression_kind = _target_expression_kind(node_type, value)
+    alias = _target_alias(value) or ""
+    coverage_status, blocked_reason, admission_batch = _target_expression_admission(expression_kind, alias)
+    return TargetExpressionIR(
+        target_expression_id=expression_id,
+        expression_kind=expression_kind,
+        alias=alias,
+        payload={
+            "field_name": field_name,
+            "node_type": node_type,
+            "alias": alias,
+            "raw": _json_safe(value),
+        },
+        source=IRSource(
+            source_path=source.source_path,
+            raw_type="TargetExpression",
+            raw_id=expression_id,
+            evidence={
+                **source.evidence,
+                "target_expression_field": field_name,
+                "target_expression_kind": expression_kind,
+                "target_alias": alias,
+                "source_raw_type": source.raw_type,
+                "source_raw_id": source.raw_id,
+            },
+        ),
+        coverage_status=coverage_status,
+        blocked_reason=blocked_reason,
+        admission_batch=admission_batch,
+    )
+
+
+def _target_expression_kind(node_type: str, value: dict[str, Any]) -> str:
+    if node_type.startswith("RPG.GameCore."):
+        return node_type.removeprefix("RPG.GameCore.")
+    if value.get("Alias") is not None:
+        return "TargetAlias"
+    return "UnknownTargetExpression"
+
+
+def _target_expression_admission(kind: str, alias: str) -> tuple[str, str, str]:
+    if kind == "TargetAlias" and alias in ADD_MODIFIER_TARGET_ALIASES | EXECUTABLE_TARGET_ALIASES:
+        return "executable", "", "v0_288_target_alias_core"
+    if kind in {"TargetSequence", "TargetFilter", "Retarget"}:
+        return "blocked", f"target_expression_kind_not_admitted:{kind}", "v0_289_target_sequence_filter_retarget"
+    if kind.startswith("TargetSort"):
+        return "blocked", f"target_sort_not_admitted:{kind}", "after_target_sequence_sorting"
+    if kind.startswith("TargetFetch"):
+        return "blocked", f"target_fetch_not_admitted:{kind}", "after_summon_or_unique_entity_system"
+    if kind == "TargetAlias" and alias:
+        return "blocked", f"target_alias_not_admitted:{alias}", "later_target_expression_admission"
+    return "blocked", f"target_expression_not_admitted:{kind or 'missing'}", "later_target_expression_admission"
 
 
 def _effect_coverage_status(opcode: str, payload: dict[str, Any]) -> str:

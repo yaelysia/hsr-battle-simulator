@@ -261,7 +261,10 @@ def _boundary_case(
     )
     checks = {
         "missing_target_blocked": _blocked_without_mutation(missing_target, "unsupported_or_missing_target_alias:AbilityTargetEntity"),
-        "unsupported_alias_blocked": _blocked_without_mutation(unsupported_alias, "unsupported_or_missing_target_alias:AbilityTargetAdjoinEntity"),
+        "unsupported_alias_blocked": _blocked_without_mutation(
+            unsupported_alias,
+            "target_expression_alias_mismatch:AbilityTargetAdjoinEntity",
+        ),
         "unknown_modifier_blocked": _blocked_without_mutation(unknown_modifier, "unknown modifier definition"),
         "listener_blocked_without_mutation": _blocked_without_mutation(listener_result, "attached_status_listener_not_admitted"),
         "dynamic_blocked_without_mutation": _blocked_without_mutation(dynamic_result, "attached_status_dynamic_value_unresolved"),

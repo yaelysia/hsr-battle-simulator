@@ -71,6 +71,32 @@ class ConditionIR:
 
 
 @dataclass(frozen=True)
+class TargetExpressionIR:
+    target_expression_id: str
+    expression_kind: str
+    alias: str
+    payload: dict[str, JSONValue]
+    source: IRSource
+    coverage_status: CoverageStatus = "blocked"
+    blocked_reason: str = ""
+    admission_batch: str = ""
+    runtime_scope: str = "effect_target"
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "target_expression_id": self.target_expression_id,
+            "expression_kind": self.expression_kind,
+            "alias": self.alias,
+            "payload": self.payload,
+            "source": self.source.to_json(),
+            "coverage_status": self.coverage_status,
+            "blocked_reason": self.blocked_reason,
+            "admission_batch": self.admission_batch,
+            "runtime_scope": self.runtime_scope,
+        }
+
+
+@dataclass(frozen=True)
 class EffectIR:
     effect_id: str
     opcode: str
@@ -1482,6 +1508,7 @@ class CanonicalIR:
     timeline_rules: tuple[TimelineRuleIR, ...] = ()
     resource_rules: tuple[ResourceRuleIR, ...] = ()
     super_break_emissions: tuple[SuperBreakEmissionIR, ...] = ()
+    target_expressions: tuple[TargetExpressionIR, ...] = ()
     triggers: tuple[TriggerIR, ...] = ()
     effects: tuple[EffectIR, ...] = ()
     conditions: tuple[ConditionIR, ...] = ()
@@ -1533,6 +1560,7 @@ class CanonicalIR:
             "timeline_rules": [rule.to_json() for rule in self.timeline_rules],
             "resource_rules": [rule.to_json() for rule in self.resource_rules],
             "super_break_emissions": [emission.to_json() for emission in self.super_break_emissions],
+            "target_expressions": [expression.to_json() for expression in self.target_expressions],
             "triggers": [trigger.to_json() for trigger in self.triggers],
             "effects": [effect.to_json() for effect in self.effects],
             "conditions": [condition.to_json() for condition in self.conditions],
