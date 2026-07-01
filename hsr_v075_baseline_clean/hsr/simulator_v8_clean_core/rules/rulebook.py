@@ -9,6 +9,7 @@ from .ir import (
     ActionDefinitionIR,
     ActionDelayEmissionIR,
     ActionEventIR,
+    AssistantAbilityResolutionIR,
     AvatarProfileIR,
     CharacterEidolonSlotIR,
     CharacterMechanismSlotIR,
@@ -45,6 +46,9 @@ from .ir import (
     StatusCallbackTaskIR,
     StatusDamageEmissionIR,
     StatusEventFamilyIR,
+    ServantDefinitionIR,
+    SummonMonsterIntentIR,
+    SummonUnitDefinitionIR,
     SuperBreakEmissionIR,
     TargetExpressionIR,
     TimelineRuleIR,
@@ -115,6 +119,53 @@ class RuleBook:
             self,
             "_monster_data_cards_by_entity_ref",
             {card.entity_ref: card for card in self.ir.monster_data_cards},
+        )
+        object.__setattr__(
+            self,
+            "_summon_unit_definitions",
+            {definition.summon_definition_id: definition for definition in self.ir.summon_unit_definitions},
+        )
+        object.__setattr__(
+            self,
+            "_summon_unit_definitions_by_unit_id",
+            {definition.summon_unit_id: definition for definition in self.ir.summon_unit_definitions},
+        )
+        object.__setattr__(
+            self,
+            "_summon_monster_intents",
+            {intent.summon_intent_id: intent for intent in self.ir.summon_monster_intents},
+        )
+        summon_monster_intents_by_task: dict[str, list[SummonMonsterIntentIR]] = {}
+        for intent in self.ir.summon_monster_intents:
+            summon_monster_intents_by_task.setdefault(intent.source_task_id, []).append(intent)
+        object.__setattr__(
+            self,
+            "_summon_monster_intents_by_task",
+            {
+                key: tuple(sorted(value, key=lambda item: item.summon_intent_id))
+                for key, value in summon_monster_intents_by_task.items()
+            },
+        )
+        object.__setattr__(
+            self,
+            "_assistant_ability_resolutions",
+            {
+                resolution.assistant_resolution_id: resolution
+                for resolution in self.ir.assistant_ability_resolutions
+            },
+        )
+        object.__setattr__(
+            self,
+            "_assistant_ability_resolution_by_intent",
+            {
+                resolution.queue_intent_id: resolution
+                for resolution in self.ir.assistant_ability_resolutions
+            },
+        )
+        object.__setattr__(
+            self,
+            "_servant_definitions",
+            {definition.servant_definition_id: definition for definition in self.ir.servant_definitions},
         )
         mechanism_slots_by_card: dict[str, list[CharacterMechanismSlotIR]] = {}
         for slot in self.ir.character_mechanism_slots:
@@ -779,6 +830,39 @@ class RuleBook:
 
     def monster_data_card_for_entity(self, entity_ref: str) -> MonsterDataCardIR | None:
         return self._monster_data_cards_by_entity_ref.get(entity_ref)
+
+    def summon_unit_definition(self, summon_definition_id: str) -> SummonUnitDefinitionIR | None:
+        return self._summon_unit_definitions.get(summon_definition_id)
+
+    def summon_unit_definition_for_unit_id(self, summon_unit_id: str) -> SummonUnitDefinitionIR | None:
+        return self._summon_unit_definitions_by_unit_id.get(summon_unit_id)
+
+    def summon_unit_definitions(self) -> tuple[SummonUnitDefinitionIR, ...]:
+        return tuple(sorted(self.ir.summon_unit_definitions, key=lambda item: item.summon_definition_id))
+
+    def summon_monster_intent(self, summon_intent_id: str) -> SummonMonsterIntentIR | None:
+        return self._summon_monster_intents.get(summon_intent_id)
+
+    def summon_monster_intents(self) -> tuple[SummonMonsterIntentIR, ...]:
+        return tuple(sorted(self.ir.summon_monster_intents, key=lambda item: item.summon_intent_id))
+
+    def summon_monster_intents_for_task(self, source_task_id: str) -> tuple[SummonMonsterIntentIR, ...]:
+        return self._summon_monster_intents_by_task.get(source_task_id, ())
+
+    def assistant_ability_resolution(self, assistant_resolution_id: str) -> AssistantAbilityResolutionIR | None:
+        return self._assistant_ability_resolutions.get(assistant_resolution_id)
+
+    def assistant_ability_resolution_for_intent(self, queue_intent_id: str) -> AssistantAbilityResolutionIR | None:
+        return self._assistant_ability_resolution_by_intent.get(queue_intent_id)
+
+    def assistant_ability_resolutions(self) -> tuple[AssistantAbilityResolutionIR, ...]:
+        return tuple(sorted(self.ir.assistant_ability_resolutions, key=lambda item: item.assistant_resolution_id))
+
+    def servant_definition(self, servant_definition_id: str) -> ServantDefinitionIR | None:
+        return self._servant_definitions.get(servant_definition_id)
+
+    def servant_definitions(self) -> tuple[ServantDefinitionIR, ...]:
+        return tuple(sorted(self.ir.servant_definitions, key=lambda item: item.servant_definition_id))
 
     def character_mechanism_slot(self, mechanism_slot_id: str) -> CharacterMechanismSlotIR | None:
         return self._character_mechanism_slots.get(mechanism_slot_id)

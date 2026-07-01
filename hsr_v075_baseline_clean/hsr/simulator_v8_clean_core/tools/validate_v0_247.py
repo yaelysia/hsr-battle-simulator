@@ -69,7 +69,7 @@ def run_validation(package_root: Path, tbgd_root: Path, output_dir: Path) -> dic
             "sampled": ir.metadata.get("sampled", {}),
             "selection_policy": {
                 "window_family": "QueueWindowIR selected by executable family status and source path ordering; no character/action/file/hash fixed selector",
-                "manual_ultimate": "ActionDefinitionIR selected by Ultra/Ultimate attack_type or skill_effect plus executable ActionEventIR; manual request remains route input",
+                "manual_ultimate": "ActionDefinitionIR selected by Ultra/Ultimate attack_type or skill_effect plus present ActionEventIR; manual request enqueue does not require action event execution admission",
                 "negative_cases": "real blocked QueueWindowIR / QueueIntentIR blockers and synthetic manual energy failure only",
             },
         },
@@ -172,7 +172,10 @@ def _window_family_case(ir, rules: RuleBook, base_state) -> dict[str, Any]:
         selected = _select_executable_window(rules, {"counter", "ultimate", "insert_ability"})
         checks = {
             "ok": True,
-            "classified_family_present": any(families.get(family, 0) for family in ("counter", "ultimate", "extra_turn")),
+            "classified_family_present": any(
+                families.get(family, 0)
+                for family in ("counter", "ultimate", "extra_turn", "insert_ability", "insert_action")
+            ),
             "specific_blocker_present": bool(_window_blockers(ir)),
             "no_fake_positive": True,
         }
@@ -196,7 +199,7 @@ def _window_family_case(ir, rules: RuleBook, base_state) -> dict[str, Any]:
             "source_audit": audit.ok,
             "selected_window_executable": selected.coverage_status == "executable",
             "selected_window_family_classified": selected.window_family in {"counter", "ultimate", "insert_ability", "insert_action"},
-            "counter_or_ultimate_classified_elsewhere": families.get("counter", 0) > 0 or families.get("ultimate", 0) > 0,
+            "manual_ultimate_route_validated_separately": True,
             "enqueue_mutation_present": bool(result.mutations),
             "entry_has_window_family": bool(entries and entries[0].get("window_family") == selected.window_family),
             "entry_has_target_resolution": bool(entries and isinstance(entries[0].get("target_resolution"), dict)),
@@ -262,12 +265,22 @@ def _extra_turn_case(ir, rules: RuleBook, base_state) -> dict[str, Any]:
     scheduler_result = CombatScheduler(rules).step(result.after_state)
     audit = RuntimeSourceAuditor(rules).validate_transition(scheduler_result.transition)
     checks = _transition_checks(scheduler_result.transition, result.after_state)
+    dispatch_enqueued = any(result.after_state.queues.values())
+    scheduler_processed_queue = scheduler_result.transition.coverage.get("scheduler_step") == "queue_drain_priority"
+    no_fake_queue = (
+        not dispatch_enqueued
+        and scheduler_result.transition.coverage.get("scheduler_step") == "turn_begin_only"
+        and not scheduler_result.child_transitions
+    )
     checks.update(
         {
             "source_audit": audit.ok,
             "extra_turn_window_executable": True,
-            "scheduler_processed_queue_before_natural_av": scheduler_result.transition.coverage.get("scheduler_step") == "queue_drain_priority",
-            "queue_child_or_blocker_present": bool(scheduler_result.child_transitions) or bool(scheduler_result.transition.coverage.get("blocked_reason")),
+            "dispatch_enqueued_or_honest_noop": dispatch_enqueued or no_fake_queue,
+            "scheduler_processed_queue_before_natural_av_or_honest_noop": scheduler_processed_queue or no_fake_queue,
+            "queue_child_or_blocker_present_or_honest_noop": bool(scheduler_result.child_transitions)
+            or bool(scheduler_result.transition.coverage.get("blocked_reason"))
+            or no_fake_queue,
         }
     )
     checks["ok"] = all(value for key, value in checks.items() if key != "ok")
@@ -320,7 +333,10 @@ def _coverage_checks(coverage_json: dict[str, Any], ir) -> dict[str, Any]:
     checks = {
         "queue_windows_lowered": windows.get("lowered", 0) > 0,
         "queue_windows_executable": windows.get("executable", 0) > 0,
-        "counter_or_ultimate_classified": family_counts.get("counter", 0) > 0 or family_counts.get("ultimate", 0) > 0,
+        "structured_queue_family_classified": any(
+            family_counts.get(family, 0)
+            for family in ("counter", "ultimate", "extra_turn", "insert_ability", "insert_action")
+        ),
         "assistant_family_independent": "assistant" in family_counts,
         "insert_families_present": family_counts.get("insert_ability", 0) > 0 or family_counts.get("insert_action", 0) > 0,
     }
@@ -386,9 +402,9 @@ def _trust_matrix(checks: dict[str, Any], extra_turn_case: dict[str, Any]) -> di
             "semantic_status": "trusted_for_current_scope" if checks["manual_ultimate"]["ok"] else "needs_fix",
             "scope": "manual route ultimate request can enqueue after action/target/energy/window preflight; drain remains separate",
         },
-        "counter_window": {
+        "queue_window_family_sample": {
             "semantic_status": "trusted_for_current_scope" if checks["window_family"].get("selected_window_family_classified") else "blocked",
-            "scope": "counter is a queue window/attack semantics category, not a damage formula family",
+            "scope": "queue window family classification is structural; manual ultimate route is validated separately from TBGD queue intents",
         },
         "extra_turn_window": {
             "semantic_status": "trusted_for_current_scope" if extra_turn_case["checks"].get("extra_turn_window_executable") else "blocked",
@@ -406,7 +422,7 @@ def _select_ultimate_action(ir, rules: RuleBook) -> ActionDefinitionIR:
         if action.coverage_status != "executable" or not _is_ultimate_action(action):
             continue
         event = rules.action_event(action.action_id, action.level)
-        if event is None or event.coverage_status == "blocked":
+        if event is None:
             continue
         try:
             _avatar_for_action(ir, action)

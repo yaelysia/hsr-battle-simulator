@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass, field
+from typing import Any
 
 from ..core.model import BattleState, JSONValue, RNGEvent, TargetResolution
 from ..rules.evaluator import EvaluationContext, RuleEvaluator
 from ..rules.ir import ConditionIR, IRSource, TargetExpressionIR
+from .unit_relation import is_dark_team, is_light_team, is_opposing_combat_team, is_same_combat_team
 from .unit_lifecycle import UnitLifecycleSystem
 
 
@@ -194,7 +196,7 @@ class TargetSystem:
                 unit_id
                 for unit_id, unit in sorted(state.units.items())
                 if self.lifecycle.can_target(state, unit_id, allow_defeated=policy.allow_defeated)[0]
-                and _policy_allows(actor_id, actor.side, unit_id, unit.side, policy)
+                and _policy_allows(actor_id, actor, unit_id, unit, policy)
             )
             if not selectable:
                 return TargetEnumerationResult(
@@ -315,7 +317,7 @@ class TargetSystem:
                 errors.append(reason)
                 rejected.append(target_id)
                 continue
-            if not _policy_allows(actor_id, actor.side, target_id, target.side, policy):
+            if not _policy_allows(actor_id, actor, target_id, target, policy):
                 reason = f"policy_rejected:{policy.policy_id}:{target_id}"
                 errors.append(reason)
                 rejected.append(target_id)
@@ -344,7 +346,7 @@ class TargetSystem:
         return tuple(
             unit_id
             for unit_id, unit in state.units.items()
-            if unit.side != actor.side and self.lifecycle.can_target(state, unit_id, allow_defeated=allow_defeated)[0]
+            if is_opposing_combat_team(actor, unit) and self.lifecycle.can_target(state, unit_id, allow_defeated=allow_defeated)[0]
         )
 
     def resolve_bounce_hit_target(
@@ -367,12 +369,12 @@ class TargetSystem:
         live_candidates = tuple(
             unit_id
             for unit_id, unit in sorted(state.units.items())
-            if unit.side != actor.side and self.lifecycle.can_target(state, unit_id)[0]
+            if is_opposing_combat_team(actor, unit) and self.lifecycle.can_target(state, unit_id)[0]
         )
         all_candidates = tuple(
             unit_id
             for unit_id, unit in sorted(state.units.items())
-            if unit.side != actor.side
+            if is_opposing_combat_team(actor, unit)
         )
         selection_strategy = str(bounce_policy.get("selection_strategy") or "")
         candidate_pool = live_candidates
@@ -426,12 +428,14 @@ class TargetSystem:
         return BounceTargetResult(ok=True, target_id=selected, rng_event=rng_event, metadata=result)
 
 
-def _policy_allows(actor_id: str, actor_side: str, target_id: str, target_side: str, policy: TargetPolicy) -> bool:
+def _policy_allows(actor_id: str, actor: Any, target_id: str, target: Any, policy: TargetPolicy) -> bool:
     if target_id == actor_id:
         return policy.allow_self
-    if target_side == actor_side:
+    if is_same_combat_team(actor, target):
         return policy.allow_ally
-    return policy.allow_enemy
+    if is_opposing_combat_team(actor, target):
+        return policy.allow_enemy
+    return False
 
 
 @dataclass(frozen=True)
@@ -769,6 +773,10 @@ def _resolve_target_alias_ids(
         )
     if alias in {"AllEnemy", "AllTeamMember", "AllLightTeam", "AllDarkTeam", "AllTeammate", "TeamFormation", "AllEnemyWithUnSelectable"}:
         return _resolve_group_alias(state, caster_id, alias)
+    if alias == "LastSummonMonsters":
+        return _last_summon_monsters(state)
+    if alias == "CasterSummonedMinions":
+        return _caster_summoned_minions(state, caster_id)
     return (), f"target_alias_not_admitted:{alias or 'missing'}"
 
 
@@ -807,15 +815,15 @@ def _resolve_group_alias(
     for unit_id, unit in sorted(state.units.items()):
         if not UnitLifecycleSystem().can_target(state, unit_id)[0]:
             continue
-        if alias in {"AllEnemy", "AllEnemyWithUnSelectable"} and unit.side != caster.side:
+        if alias in {"AllEnemy", "AllEnemyWithUnSelectable"} and is_opposing_combat_team(caster, unit):
             targets.append(unit_id)
-        elif alias in {"AllTeamMember", "TeamFormation"} and unit.side == caster.side:
+        elif alias in {"AllTeamMember", "TeamFormation"} and is_same_combat_team(caster, unit):
             targets.append(unit_id)
-        elif alias == "AllLightTeam" and unit.side in {"ally", "summon"}:
+        elif alias == "AllLightTeam" and is_light_team(unit):
             targets.append(unit_id)
-        elif alias == "AllDarkTeam" and unit.side == "enemy":
+        elif alias == "AllDarkTeam" and is_dark_team(unit):
             targets.append(unit_id)
-        elif alias == "AllTeammate" and unit.side == caster.side and unit_id != caster_id:
+        elif alias == "AllTeammate" and is_same_combat_team(caster, unit) and unit_id != caster_id:
             targets.append(unit_id)
     if not targets:
         return (), f"target group empty:{alias}"
@@ -912,6 +920,49 @@ def _target_ids_from_payload(
 
 def _existing_targets(state: BattleState, target_ids: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(target_id for target_id in target_ids if target_id in state.units))
+
+
+def _last_summon_monsters(state: BattleState) -> tuple[tuple[str, ...], str]:
+    runtime = state.global_flags.get("summon_runtime")
+    if not isinstance(runtime, dict) or runtime.get("schema_version") != "p1_3_summon_runtime_v1":
+        return (), "summon_runtime_missing"
+    raw = runtime.get("last_summon_monsters")
+    if not isinstance(raw, list):
+        return (), "last_summon_monsters_missing"
+    lifecycle = UnitLifecycleSystem()
+    target_ids = tuple(
+        str(item)
+        for item in raw
+        if isinstance(item, str)
+        and item in state.units
+        and lifecycle.can_target(state, item, allow_defeated=False)[0]
+    )
+    if not target_ids:
+        return (), "last_summon_monsters_empty"
+    return tuple(dict.fromkeys(target_ids)), ""
+
+
+def _caster_summoned_minions(state: BattleState, caster_id: str) -> tuple[tuple[str, ...], str]:
+    runtime = state.global_flags.get("summon_runtime")
+    if not isinstance(runtime, dict) or runtime.get("schema_version") != "p1_3_summon_runtime_v1":
+        return (), "summon_runtime_missing"
+    by_owner = runtime.get("by_owner")
+    if not isinstance(by_owner, dict):
+        return (), "summon_runtime_by_owner_missing"
+    raw = by_owner.get(caster_id)
+    if not isinstance(raw, list):
+        return (), "caster_summoned_minions_missing"
+    lifecycle = UnitLifecycleSystem()
+    target_ids = tuple(
+        str(item)
+        for item in raw
+        if isinstance(item, str)
+        and item in state.units
+        and lifecycle.can_target(state, item, allow_defeated=False)[0]
+    )
+    if not target_ids:
+        return (), "caster_summoned_minions_empty"
+    return tuple(dict.fromkeys(target_ids)), ""
 
 
 def _dedupe(target_ids: tuple[str, ...]) -> tuple[str, ...]:
@@ -1024,7 +1075,7 @@ def _adjacent_units(
         unit_id
         for unit_id, unit in state.units.items()
         if unit_id != primary_id
-        and unit.side != actor.side
+        and is_opposing_combat_team(actor, unit)
         and UnitLifecycleSystem().can_target(state, unit_id)[0]
         and _position(unit.flags.get("position")) in {position - 1, position + 1}
     ]

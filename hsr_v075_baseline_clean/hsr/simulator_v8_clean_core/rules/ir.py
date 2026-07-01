@@ -323,6 +323,164 @@ class MonsterDataCardIR:
 
 
 @dataclass(frozen=True)
+class SummonUnitDefinitionIR:
+    summon_definition_id: str
+    summon_unit_id: str
+    summon_kind: str
+    config_path: str
+    unique_group: str
+    max_summon_count: int | None
+    destroy_on_enter_battle: bool | None
+    remove_maze_buff_on_destroy: bool | None
+    battle_admission: dict[str, JSONValue]
+    skill_config: dict[str, JSONValue]
+    source: IRSource
+    coverage_status: CoverageStatus = "blocked"
+    blocked_reason: str = ""
+    schema_version: str = "p1_3_summon_unit_definition_v1"
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "summon_definition_id": self.summon_definition_id,
+            "schema_version": self.schema_version,
+            "summon_unit_id": self.summon_unit_id,
+            "summon_kind": self.summon_kind,
+            "config_path": self.config_path,
+            "unique_group": self.unique_group,
+            "max_summon_count": self.max_summon_count,
+            "destroy_on_enter_battle": self.destroy_on_enter_battle,
+            "remove_maze_buff_on_destroy": self.remove_maze_buff_on_destroy,
+            "battle_admission": self.battle_admission,
+            "skill_config": self.skill_config,
+            "source": self.source.to_json(),
+            "coverage_status": self.coverage_status,
+            "blocked_reason": self.blocked_reason,
+        }
+
+
+@dataclass(frozen=True)
+class SummonMonsterEntryIR:
+    entry_id: str
+    monster_entity_ref: str
+    monster_raw_id: str
+    position_policy: dict[str, JSONValue]
+    count: int
+    level_policy: dict[str, JSONValue]
+    wave_clear_policy: Literal["counts", "ignore", "blocked"]
+    source: IRSource
+    coverage_status: CoverageStatus = "blocked"
+    blocked_reason: str = ""
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "entry_id": self.entry_id,
+            "monster_entity_ref": self.monster_entity_ref,
+            "monster_raw_id": self.monster_raw_id,
+            "position_policy": self.position_policy,
+            "count": self.count,
+            "level_policy": self.level_policy,
+            "wave_clear_policy": self.wave_clear_policy,
+            "source": self.source.to_json(),
+            "coverage_status": self.coverage_status,
+            "blocked_reason": self.blocked_reason,
+        }
+
+
+@dataclass(frozen=True)
+class SummonMonsterIntentIR:
+    summon_intent_id: str
+    source_task_id: str
+    owner_scope: str
+    target_scope: str
+    delay_policy: dict[str, JSONValue]
+    entries: tuple[SummonMonsterEntryIR, ...]
+    source_event: str
+    source: IRSource
+    coverage_status: CoverageStatus = "blocked"
+    blocked_reason: str = ""
+    schema_version: str = "p1_3_summon_monster_intent_v1"
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "summon_intent_id": self.summon_intent_id,
+            "schema_version": self.schema_version,
+            "source_task_id": self.source_task_id,
+            "owner_scope": self.owner_scope,
+            "target_scope": self.target_scope,
+            "delay_policy": self.delay_policy,
+            "entries": [entry.to_json() for entry in self.entries],
+            "source_event": self.source_event,
+            "source": self.source.to_json(),
+            "coverage_status": self.coverage_status,
+            "blocked_reason": self.blocked_reason,
+        }
+
+
+@dataclass(frozen=True)
+class AssistantAbilityResolutionIR:
+    assistant_resolution_id: str
+    queue_intent_id: str
+    assistant_ability_id: str
+    owner_alias: str
+    target_alias: str
+    resolved_graph_id: str
+    attribution_policy: dict[str, JSONValue]
+    source: IRSource
+    coverage_status: CoverageStatus = "blocked"
+    blocked_reason: str = ""
+    schema_version: str = "p1_3_assistant_ability_resolution_v1"
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "assistant_resolution_id": self.assistant_resolution_id,
+            "schema_version": self.schema_version,
+            "queue_intent_id": self.queue_intent_id,
+            "assistant_ability_id": self.assistant_ability_id,
+            "owner_alias": self.owner_alias,
+            "target_alias": self.target_alias,
+            "resolved_graph_id": self.resolved_graph_id,
+            "attribution_policy": self.attribution_policy,
+            "source": self.source.to_json(),
+            "coverage_status": self.coverage_status,
+            "blocked_reason": self.blocked_reason,
+        }
+
+
+@dataclass(frozen=True)
+class ServantDefinitionIR:
+    servant_definition_id: str
+    servant_ref: str
+    owner_entity_ref: str
+    representation: Literal["unit", "component", "blocked"]
+    ability_graph_ids: tuple[str, ...]
+    action_set: dict[str, JSONValue]
+    stat_source: dict[str, JSONValue]
+    timeline_source: dict[str, JSONValue]
+    lifecycle_source: dict[str, JSONValue]
+    source: IRSource
+    coverage_status: CoverageStatus = "blocked"
+    blocked_reason: str = ""
+    schema_version: str = "p1_3_servant_definition_v1"
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "servant_definition_id": self.servant_definition_id,
+            "schema_version": self.schema_version,
+            "servant_ref": self.servant_ref,
+            "owner_entity_ref": self.owner_entity_ref,
+            "representation": self.representation,
+            "ability_graph_ids": list(self.ability_graph_ids),
+            "action_set": self.action_set,
+            "stat_source": self.stat_source,
+            "timeline_source": self.timeline_source,
+            "lifecycle_source": self.lifecycle_source,
+            "source": self.source.to_json(),
+            "coverage_status": self.coverage_status,
+            "blocked_reason": self.blocked_reason,
+        }
+
+
+@dataclass(frozen=True)
 class CharacterMechanismSlotIR:
     mechanism_slot_id: str
     character_data_card_id: str
@@ -1521,6 +1679,10 @@ class CanonicalIR:
     avatar_profiles: tuple[AvatarProfileIR, ...] = ()
     character_data_cards: tuple[CharacterDataCardIR, ...] = ()
     monster_data_cards: tuple[MonsterDataCardIR, ...] = ()
+    summon_unit_definitions: tuple[SummonUnitDefinitionIR, ...] = ()
+    summon_monster_intents: tuple[SummonMonsterIntentIR, ...] = ()
+    assistant_ability_resolutions: tuple[AssistantAbilityResolutionIR, ...] = ()
+    servant_definitions: tuple[ServantDefinitionIR, ...] = ()
     character_mechanism_slots: tuple[CharacterMechanismSlotIR, ...] = ()
     passive_mechanism_slots: tuple[PassiveMechanismSlotIR, ...] = ()
     character_trace_nodes: tuple[CharacterTraceNodeIR, ...] = ()
@@ -1574,6 +1736,10 @@ class CanonicalIR:
             "avatar_profiles": [profile.to_json() for profile in self.avatar_profiles],
             "character_data_cards": [card.to_json() for card in self.character_data_cards],
             "monster_data_cards": [card.to_json() for card in self.monster_data_cards],
+            "summon_unit_definitions": [definition.to_json() for definition in self.summon_unit_definitions],
+            "summon_monster_intents": [intent.to_json() for intent in self.summon_monster_intents],
+            "assistant_ability_resolutions": [resolution.to_json() for resolution in self.assistant_ability_resolutions],
+            "servant_definitions": [definition.to_json() for definition in self.servant_definitions],
             "character_mechanism_slots": [slot.to_json() for slot in self.character_mechanism_slots],
             "passive_mechanism_slots": [slot.to_json() for slot in self.passive_mechanism_slots],
             "character_trace_nodes": [node.to_json() for node in self.character_trace_nodes],

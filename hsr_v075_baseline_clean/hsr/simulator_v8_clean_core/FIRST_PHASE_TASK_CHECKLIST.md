@@ -114,33 +114,35 @@
 
 目标：把 summon/assistant/servant 从预留字段推进为可执行实体或可执行队列语义。
 
-- [ ] P1-3.1 审查 `UnitSide=summon`、snapshot teams、target resolver、timeline summon admission、monster `summon_refs`、assistant queue 当前实现。
-- [ ] P1-3.2 定义 `battle_unit_summon`、`assistant_ability`、`servant`、`summoned_monster` 的分类。
-- [ ] P1-3.3 明确 summon 是否使用 `summon` side，敌方召唤怪是否使用 `enemy` side 加 summon metadata。
-- [ ] P1-3.4 定义 summon owner/summoner/source/lifetime/timeline/targetability/wave persistence 字段。
-- [ ] P1-3.5 定义 assistant queue item 的 owner/source/ability/target 字段。
-- [ ] P1-3.6 定义 servant 是独立 unit 还是 owner-bound runtime component。
-- [ ] P1-3.7 接入 `SummonMonster` admission 的第一条真实来源路径。
-- [ ] P1-3.8 将 summon spawn 接入 UnitSpawn。
-- [ ] P1-3.9 将 summon death/expire 接入 UnitDefeat/UnitRemove。
-- [ ] P1-3.10 接入 summon target resolver。
-- [ ] P1-3.11 接入 owner 的 summon target。
-- [ ] P1-3.12 接入 enemy summon target。
-- [ ] P1-3.13 接入 summon timeline eligibility。
-- [ ] P1-3.14 缺 summon speed/AV 来源时保持 blocked 或不可行动，不使用默认值。
-- [ ] P1-3.15 接入 assistant queue ability 的最小执行路径。
-- [ ] P1-3.16 明确 assistant damage/status/resource 归因。
-- [ ] P1-3.17 增加 summon monster spawn 验证。
-- [ ] P1-3.18 增加 summon targetable 验证。
-- [ ] P1-3.19 增加 summon death/expire 验证。
-- [ ] P1-3.20 增加 owner death interaction 验证。
-- [ ] P1-3.21 增加 assistant queue ability execution 验证。
-- [ ] P1-3.22 增加 unsupported summon blocked 验证。
-- [ ] P1-3.23 更新阶段报告，说明 summon/assistant/servant 的分类和已支持范围。
+详细计划见 `P1_3_SUMMON_ASSISTANT_SERVANT_TASK_PLAN.md`。
+
+- [x] P1-3.1 审查 `UnitSide=summon`、snapshot teams、target resolver、timeline summon admission、monster `summon_refs`、assistant queue 当前实现。
+- [x] P1-3.2 定义 `battle_unit_summon`、`assistant_ability`、`servant`、`summoned_monster` 的分类。
+- [x] P1-3.3 明确 summon 是否使用 `summon` side，敌方召唤怪是否使用 `enemy` side 加 summon metadata。
+- [x] P1-3.4 定义 summon owner/summoner/source/lifetime/timeline/targetability/wave persistence 字段。
+- [x] P1-3.5 定义 assistant queue item 的 owner/source/ability/target 字段。
+- [x] P1-3.6 定义 servant 是独立 unit 还是 owner-bound runtime component。
+- [x] P1-3.7 接入 `SummonMonster` admission 的第一条真实来源路径。
+- [x] P1-3.8 将 summon spawn 接入 UnitSpawn。
+- [x] P1-3.9 将 summon death/expire 接入 UnitDefeat/UnitRemove 或在缺真实来源时 detailed blocked。
+- [x] P1-3.10 接入 summon target resolver。
+- [x] P1-3.11 接入 owner 的 summon target。
+- [x] P1-3.12 接入 enemy summon target。
+- [x] P1-3.13 接入 summon timeline eligibility。
+- [x] P1-3.14 缺 summon speed/AV 来源时保持 blocked 或不可行动，不使用默认值。
+- [x] P1-3.15 接入 assistant queue ability 的最小执行路径或详细 blocked。
+- [x] P1-3.16 明确 assistant damage/status/resource 归因或 blocked 边界。
+- [x] P1-3.17 增加 summon monster spawn 验证。
+- [x] P1-3.18 增加 summon targetable 验证。
+- [x] P1-3.19 增加 summon death/expire executable 或缺真实来源 blocked 验证。
+- [x] P1-3.20 增加 owner death interaction 验证。
+- [x] P1-3.21 增加 assistant queue ability execution 或详细 blocked 验证。
+- [x] P1-3.22 增加 unsupported summon blocked 验证。
+- [x] P1-3.23 更新阶段报告，说明 summon/assistant/servant 的分类和已支持范围。
 
 完成口径：
 
-- [ ] P1-3-DONE 至少一种真实 summon 或 assistant 机制可从 IR admission 到 runtime mutation，并通过 replay/source audit。
+- [x] P1-3-DONE 至少一种真实 summon 或 assistant 机制可从 IR admission 到 runtime mutation，并通过 replay/source audit。
 
 ## P1-4 状态系统主体
 
@@ -376,7 +378,7 @@
 ## 当前状态
 
 - [ ] 第一阶段未开始实现。
-- [ ] 第一阶段实现中。
+- [x] 第一阶段实现中。
 - [ ] 第一阶段已完成。
 
-当前建议从 `P1-0 动作权责边界` 开始。P1-0 完成后再进入 UnitLifecycle；不要先做状态扩面或内容扩面。
+当前建议从 `P1-4 状态系统主体` 开始。P1-0 至 P1-3 已形成第一阶段前置底座；不要先做内容扩面。

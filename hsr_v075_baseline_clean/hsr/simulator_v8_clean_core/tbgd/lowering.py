@@ -21,6 +21,7 @@ from ..rules.ir import (
     ActionDelayEmissionIR,
     ActionEventIR,
     ActionPhaseStepIR,
+    AssistantAbilityResolutionIR,
     AvatarProfileIR,
     BreakBaseDamageIR,
     BreakDamageEmissionIR,
@@ -56,6 +57,10 @@ from ..rules.ir import (
     StatusEventFamilyIR,
     StatusCallbackTaskIR,
     StatusDamageEmissionIR,
+    ServantDefinitionIR,
+    SummonMonsterEntryIR,
+    SummonMonsterIntentIR,
+    SummonUnitDefinitionIR,
     SuperBreakEmissionIR,
     TargetExpressionIR,
     TimelineRuleIR,
@@ -243,6 +248,7 @@ class TBGDLowering:
             max_records_per_table=self.limits.max_records_per_table,
         )
         monster_data_cards = monster_cards.monster_data_cards
+        summon_unit_definitions = self._lower_summon_unit_definitions()
         passive_mechanism_slots = list(monster_cards.passive_mechanism_slots)
         skill_formula_bindings = [*skill_formula_bindings, *monster_cards.skill_formula_bindings]
         combatant_profiles = self._lower_combatant_profiles()
@@ -359,6 +365,12 @@ class TBGDLowering:
         )
         skill_continuations = _skill_continuations_from_ability_tasks(ability_tasks)
         combatant_action_sets = self._lower_combatant_action_sets(action_definitions)
+        summon_monster_intents = _lower_summon_monster_intents(
+            ability_tasks=ability_tasks,
+            effects=effects,
+            combatant_profiles=combatant_profiles,
+            monster_data_cards=monster_data_cards,
+        )
         queue_resolutions = _lower_queue_resolutions(
             queue_intents=queue_intents,
             action_bindings=action_ability_bindings,
@@ -366,6 +378,8 @@ class TBGDLowering:
             standalone_graphs=standalone_ability_graphs,
             combatant_action_sets=combatant_action_sets,
         )
+        assistant_ability_resolutions = _lower_assistant_ability_resolutions(queue_intents, queue_resolutions)
+        servant_definitions = self._lower_servant_definitions()
         extra_turn_source_basis = self._extra_turn_source_basis()
         queue_windows = _lower_queue_windows(queue_intents, queue_resolutions, extra_turn_source_basis)
         queue_lifecycle_policies = _lower_queue_lifecycle_policies(queue_windows, extra_turn_source_basis)
@@ -400,6 +414,10 @@ class TBGDLowering:
             avatar_profiles=tuple(avatar_profiles),
             character_data_cards=tuple(character_data_cards),
             monster_data_cards=tuple(monster_data_cards),
+            summon_unit_definitions=tuple(summon_unit_definitions),
+            summon_monster_intents=tuple(summon_monster_intents),
+            assistant_ability_resolutions=tuple(assistant_ability_resolutions),
+            servant_definitions=tuple(servant_definitions),
             character_mechanism_slots=tuple(character_mechanism_slots),
             passive_mechanism_slots=tuple(passive_mechanism_slots),
             character_trace_nodes=tuple(character_trace_nodes),
@@ -2276,6 +2294,71 @@ class TBGDLowering:
             "id_key": id_key,
         }
 
+    def _lower_summon_unit_definitions(self) -> list[SummonUnitDefinitionIR]:
+        relative_path = "ExcelOutput/SummonUnitData.json"
+        path = self.tbgd_root / relative_path
+        if not path.exists():
+            return []
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return []
+        if not isinstance(data, list):
+            return []
+        definitions: list[SummonUnitDefinitionIR] = []
+        for row_index, row in enumerate(_limit_sequence(data, self.limits.max_records_per_table)):
+            if not isinstance(row, dict) or row.get("ID") is None:
+                continue
+            summon_unit_id = str(row.get("ID"))
+            config_path = str(row.get("JsonPath") or "")
+            config = self._read_json_dict(config_path) if config_path else None
+            config_summary = _summon_unit_config_summary(config)
+            summon_kind = _summon_unit_kind(row, config_summary)
+            blocked_reason = _summon_unit_blocked_reason(row, config_summary)
+            source = IRSource(
+                source_path=relative_path,
+                raw_type="SummonUnitData",
+                raw_id=summon_unit_id,
+                evidence={
+                    "row_index": row_index,
+                    "config_path": config_path,
+                    "config_source_exists": config is not None,
+                    "config_summary": config_summary,
+                    "source_boundary": "summon_unit_definition_only_not_spawn_trigger",
+                    "raw_paths": {
+                        "json_path": "JsonPath",
+                        "is_client": "IsClient",
+                        "is_team_summon": "IsTeamSummon",
+                        "destroy_on_enter_battle": "DestroyOnEnterBattle",
+                        "max_summon_count": "MaxSummonCount",
+                        "unique_group": "UniqueGroup",
+                    },
+                },
+            )
+            definitions.append(
+                SummonUnitDefinitionIR(
+                    summon_definition_id=f"summon_unit_definition:{summon_unit_id}",
+                    summon_unit_id=summon_unit_id,
+                    summon_kind=summon_kind,
+                    config_path=config_path,
+                    unique_group=str(row.get("UniqueGroup") or ""),
+                    max_summon_count=_optional_int(row.get("MaxSummonCount")),
+                    destroy_on_enter_battle=_optional_bool(row.get("DestroyOnEnterBattle")),
+                    remove_maze_buff_on_destroy=_optional_bool(row.get("RemoveMazeBuffOnDestroy")),
+                    battle_admission={
+                        "admission_status": "blocked",
+                        "blocked_reason": blocked_reason,
+                        "catalog_not_trigger": True,
+                        "runtime_spawn_requires_explicit_intent": True,
+                    },
+                    skill_config=config_summary,
+                    source=source,
+                    coverage_status="blocked",
+                    blocked_reason=blocked_reason,
+                )
+            )
+        return definitions
+
     def _ability_files(self) -> list[Path]:
         roots = [self.tbgd_root / "Config/ConfigAbility", self.tbgd_root / "Config/ConfigGlobalModifier"]
         files: list[Path] = []
@@ -2284,6 +2367,52 @@ class TBGDLowering:
                 continue
             files.extend(path for path in root.rglob("*.json") if not path.name.endswith(".layout.json"))
         return sorted(files)
+
+    def _lower_servant_definitions(self) -> list[ServantDefinitionIR]:
+        root = self.tbgd_root / "Config/ConfigAbility/Servant"
+        if not root.exists():
+            return []
+        definitions: list[ServantDefinitionIR] = []
+        for path in sorted(root.rglob("*.json")):
+            if path.name.endswith(".layout.json"):
+                continue
+            relative = relative_source_path(self.tbgd_root, path)
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if not isinstance(data, dict):
+                continue
+            ability_map = _ability_map(data)
+            ability_names = tuple(sorted(ability_map))
+            source = IRSource(
+                source_path=relative,
+                raw_type="ServantAbilityFile",
+                raw_id=Path(relative).stem,
+                evidence={
+                    "ability_count": len(ability_names),
+                    "ability_names": list(ability_names),
+                    "classification_source": "servant_ability_file_discovery",
+                    "unit_admission": "blocked_until_owner_stat_timeline_action_lifecycle_sources_exist",
+                },
+            )
+            definitions.append(
+                ServantDefinitionIR(
+                    servant_definition_id=f"servant_definition:{_safe_id(relative)}",
+                    servant_ref=Path(relative).stem,
+                    owner_entity_ref="",
+                    representation="blocked",
+                    ability_graph_ids=(),
+                    action_set={"ability_names": list(ability_names), "coverage_status": "discovered_only"},
+                    stat_source={"admission_status": "blocked", "blocked_reason": "servant_stat_source_missing"},
+                    timeline_source={"admission_status": "blocked", "blocked_reason": "servant_timeline_source_missing"},
+                    lifecycle_source={"admission_status": "blocked", "blocked_reason": "servant_lifecycle_source_missing"},
+                    source=source,
+                    coverage_status="blocked",
+                    blocked_reason="servant_owner_stat_timeline_action_source_missing",
+                )
+            )
+        return definitions
 
     def _lower_ability_file(
         self,
@@ -5914,6 +6043,8 @@ ADD_MODIFIER_TARGET_ALIASES = EXECUTABLE_TARGET_ALIASES | {
 STATUS_CALLBACK_LIST_TARGET_ALIASES = {"ParamEntitySkillTargetEntityList", "AllEnemyWithUnSelectable"}
 TARGET_EXPRESSION_CONTEXT_ALIASES = {
     "AllDarkTeam",
+    "CasterSummonedMinions",
+    "LastSummonMonsters",
     "SkillTargetEntityList",
     "ParamEntityList",
     "TeamFormation",
@@ -6854,6 +6985,241 @@ def _action_delay_expr(task: dict[str, Any], opcode: str) -> dict[str, Any]:
     expr["source_field"] = key
     expr["opcode"] = opcode
     return expr
+
+
+def _lower_summon_monster_intents(
+    *,
+    ability_tasks: list[AbilityTaskIR],
+    effects: list[EffectIR],
+    combatant_profiles: list[CombatantProfileIR],
+    monster_data_cards: list[MonsterDataCardIR],
+) -> list[SummonMonsterIntentIR]:
+    effect_by_id = {effect.effect_id: effect for effect in effects}
+    profile_by_entity = {profile.entity_id: profile for profile in combatant_profiles}
+    card_by_entity = {card.entity_ref: card for card in monster_data_cards}
+    intents: list[SummonMonsterIntentIR] = []
+    for task in sorted(ability_tasks, key=lambda item: item.task_id):
+        if task.opcode != "SummonMonster":
+            continue
+        effect = effect_by_id.get(task.effect_id)
+        payload = effect.payload if effect is not None else {}
+        entries_raw = payload.get("SummonMonsterDataList") if isinstance(payload, dict) else None
+        delay_policy = _summon_monster_delay_policy(payload if isinstance(payload, dict) else {})
+        entries: list[SummonMonsterEntryIR] = []
+        if isinstance(entries_raw, list):
+            for entry_index, raw_entry in enumerate(entries_raw):
+                if not isinstance(raw_entry, dict):
+                    continue
+                entries.append(
+                    _summon_monster_entry_from_raw(
+                        task,
+                        raw_entry,
+                        entry_index,
+                        profile_by_entity=profile_by_entity,
+                        card_by_entity=card_by_entity,
+                    )
+                )
+        source_admitted = _mainline_monster_ability_source(task.source.source_path)
+        blocked_reasons: list[str] = []
+        if not source_admitted:
+            blocked_reasons.append("summon_monster_source_mode_not_admitted")
+        if not entries:
+            blocked_reasons.append("summon_monster_entries_missing")
+        if delay_policy.get("admission_status") != "executable":
+            blocked_reasons.append(str(delay_policy.get("blocked_reason") or "summon_monster_delay_ratio_not_admitted"))
+        for entry in entries:
+            if entry.coverage_status != "executable":
+                blocked_reasons.append(entry.blocked_reason or f"summon_monster_entry_not_executable:{entry.coverage_status}")
+        blocked_reason = ";".join(dict.fromkeys(reason for reason in blocked_reasons if reason))
+        source = IRSource(
+            source_path=task.source.source_path,
+            raw_type="SummonMonsterIntent",
+            raw_id=task.task_id,
+            evidence={
+                "source_task": task.to_json(),
+                "effect": effect.to_json() if effect is not None else {},
+                "entry_count": len(entries),
+                "delay_policy": delay_policy,
+                "source_admitted": source_admitted,
+                "admission_policy": "mainline_monster_ability_fixed_monster_id_profile_card_zero_or_missing_delay_ratio",
+            },
+        )
+        intents.append(
+            SummonMonsterIntentIR(
+                summon_intent_id=f"summon_monster_intent:{task.task_id}",
+                source_task_id=task.task_id,
+                owner_scope="caster",
+                target_scope="summoned_monster_entries",
+                delay_policy=delay_policy,
+                entries=tuple(entries),
+                source_event=task.callback_kind,
+                source=source,
+                coverage_status="blocked" if blocked_reason else "executable",
+                blocked_reason=blocked_reason,
+            )
+        )
+    return intents
+
+
+def _summon_monster_delay_policy(payload: dict[str, Any]) -> dict[str, Any]:
+    if "DelayRatio" not in payload:
+        return {
+            "kind": "missing",
+            "source_field": "SummonMonster.DelayRatio",
+            "admission_status": "executable",
+            "runtime_policy": "no_additional_initial_action_value_offset",
+            "reason": "DelayRatio field absent; current runtime uses CombatantProfileIR speed and default timeline rule without summon-specific offset.",
+        }
+    expr = _numeric_expr_summary(payload.get("DelayRatio"))
+    fixed_value = _fixed_expr_value(expr)
+    policy: dict[str, Any] = {
+        "kind": "fixed_zero" if fixed_value == 0 else str(expr.get("kind") or "unknown"),
+        "source_field": "SummonMonster.DelayRatio",
+        "expr": expr,
+        "raw": _json_safe(payload.get("DelayRatio")),
+    }
+    if fixed_value is None:
+        return {
+            **policy,
+            "admission_status": "blocked",
+            "blocked_reason": "summon_monster_delay_ratio_dynamic_not_admitted",
+            "runtime_policy": "blocked_until_delay_ratio_timeline_semantics_admitted",
+        }
+    policy["value"] = float(fixed_value)
+    if abs(float(fixed_value)) > 1e-9:
+        return {
+            **policy,
+            "admission_status": "blocked",
+            "blocked_reason": "summon_monster_delay_ratio_nonzero_not_admitted",
+            "runtime_policy": "blocked_until_delay_ratio_timeline_semantics_admitted",
+        }
+    return {
+        **policy,
+        "admission_status": "executable",
+        "runtime_policy": "fixed_zero_no_additional_initial_action_value_offset",
+        "reason": "DelayRatio is fixed zero, so P1-3 does not apply summon-specific initial AV offset.",
+    }
+
+
+def _summon_monster_entry_from_raw(
+    task: AbilityTaskIR,
+    raw_entry: dict[str, Any],
+    entry_index: int,
+    *,
+    profile_by_entity: dict[str, CombatantProfileIR],
+    card_by_entity: dict[str, MonsterDataCardIR],
+) -> SummonMonsterEntryIR:
+    monster_expr = _numeric_expr_summary(raw_entry.get("MonsterID"))
+    monster_value = _fixed_expr_value(monster_expr)
+    blocked_reasons: list[str] = []
+    if monster_value is None:
+        if raw_entry.get("MonsterIDFromCustomValue") is not None:
+            blocked_reasons.append("summon_monster_id_from_custom_value_not_admitted")
+        else:
+            blocked_reasons.append("summon_monster_fixed_monster_id_missing")
+    monster_raw_id = str(int(monster_value)) if monster_value is not None else ""
+    monster_entity_ref = f"monster:{monster_raw_id}" if monster_raw_id else ""
+    profile = profile_by_entity.get(monster_entity_ref)
+    card = card_by_entity.get(monster_entity_ref)
+    if monster_entity_ref:
+        if profile is None or profile.coverage_status != "executable":
+            blocked_reasons.append("summon_monster_profile_missing_or_blocked")
+        if card is None:
+            blocked_reasons.append("summon_monster_data_card_missing")
+    location_type = str(raw_entry.get("LocationType") or "")
+    if not location_type:
+        blocked_reasons.append("summon_monster_location_type_missing")
+    position_policy = {
+        "kind": "relative_location_type",
+        "location_type": location_type,
+        "init_anim_state_name": str(raw_entry.get("InitAnimStateName") or ""),
+        "source_field": "SummonMonsterDataList.LocationType",
+    }
+    level_policy = {
+        "kind": "profile_base_stats_no_runtime_level_scaling",
+        "admission_status": "executable" if profile is not None and profile.coverage_status == "executable" else "blocked",
+        "source_basis": "CombatantProfileIR.base_stats",
+    }
+    if level_policy["admission_status"] != "executable":
+        blocked_reasons.append("summon_monster_level_policy_profile_missing")
+    blocked_reason = ";".join(dict.fromkeys(reason for reason in blocked_reasons if reason))
+    source = IRSource(
+        source_path=task.source.source_path,
+        raw_type="SummonMonsterDataList",
+        raw_id=f"{task.task_id}:{entry_index}",
+        evidence={
+            "source_task_id": task.task_id,
+            "entry_index": entry_index,
+            "raw_entry": _json_safe(raw_entry),
+            "monster_id_expr": monster_expr,
+            "wave_clear_policy_basis": "p1_3_conservative_enemy_summon_counts",
+        },
+    )
+    return SummonMonsterEntryIR(
+        entry_id=f"summon_monster_entry:{task.task_id}:{entry_index}",
+        monster_entity_ref=monster_entity_ref,
+        monster_raw_id=monster_raw_id,
+        position_policy=position_policy,
+        count=1,
+        level_policy=level_policy,
+        wave_clear_policy="blocked" if blocked_reason else "counts",
+        source=source,
+        coverage_status="blocked" if blocked_reason else "executable",
+        blocked_reason=blocked_reason,
+    )
+
+
+def _lower_assistant_ability_resolutions(
+    queue_intents: list[QueueIntentIR],
+    queue_resolutions: list[QueueResolutionIR],
+) -> list[AssistantAbilityResolutionIR]:
+    resolutions_by_intent = {resolution.queue_intent_id: resolution for resolution in queue_resolutions}
+    assistant_resolutions: list[AssistantAbilityResolutionIR] = []
+    for intent in sorted(queue_intents, key=lambda item: item.queue_intent_id):
+        if intent.opcode != "TurnInsertAssistantAbility":
+            continue
+        resolution = resolutions_by_intent.get(intent.queue_intent_id)
+        ability_id = ""
+        value = _fixed_expr_value(intent.skill_index_expr)
+        if value is not None:
+            ability_id = str(int(value))
+        blocked_reasons: list[str] = []
+        if not ability_id:
+            blocked_reasons.append("assistant_ability_id_missing_or_dynamic")
+        if not intent.actor_target_alias:
+            blocked_reasons.append("assistant_owner_alias_missing")
+        if not intent.ability_target_alias:
+            blocked_reasons.append("assistant_target_alias_missing")
+        blocked_reasons.append("assistant_actor_or_stats_source_not_admitted")
+        source = IRSource(
+            source_path=intent.source.source_path,
+            raw_type="AssistantAbilityResolution",
+            raw_id=intent.queue_intent_id,
+            evidence={
+                "queue_intent": intent.to_json(),
+                "queue_resolution": resolution.to_json() if resolution is not None else {},
+                "admission_policy": "p1_3_assistant_requires_owner_target_graph_and_stats",
+            },
+        )
+        assistant_resolutions.append(
+            AssistantAbilityResolutionIR(
+                assistant_resolution_id=f"assistant_ability_resolution:{intent.queue_intent_id}",
+                queue_intent_id=intent.queue_intent_id,
+                assistant_ability_id=ability_id,
+                owner_alias=intent.actor_target_alias or "",
+                target_alias=intent.ability_target_alias or "",
+                resolved_graph_id="",
+                attribution_policy={
+                    "kind": "blocked",
+                    "blocked_reason": "assistant_actor_or_stats_source_not_admitted",
+                    "source_queue_intent_id": intent.queue_intent_id,
+                },
+                source=source,
+                coverage_status="blocked",
+                blocked_reason=";".join(dict.fromkeys(blocked_reasons)),
+            )
+        )
+    return assistant_resolutions
 
 
 QUEUE_INTENT_OPCODES = {"TurnInsertAbility", "TurnInsertAction", "TurnInsertAssistantAbility"}
@@ -8478,6 +8844,57 @@ def _dynamic_value_requests(dynamic_values: dict[str, Any]) -> dict[str, Any]:
             request["hash"] = expr.get("hash")
         requests[key] = request
     return requests
+
+
+def _optional_bool(value: Any) -> bool | None:
+    return value if isinstance(value, bool) else None
+
+
+def _optional_int(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    return None
+
+
+def _summon_unit_config_summary(config: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(config, dict):
+        return {"config_readable": False}
+    return {
+        "config_readable": True,
+        "group_config_name": str(config.get("GroupConfigName") or ""),
+        "config_entity_path": str(config.get("ConfigEntityPath") or ""),
+        "has_skill_config": isinstance(config.get("SkillConfig"), dict),
+        "has_ai_config": isinstance(config.get("AIConfig"), dict),
+        "on_create_opcodes": _iter_gamecore_opcodes(config.get("OnCreate"))[:40],
+        "on_destroy_opcodes": _iter_gamecore_opcodes(config.get("OnDestroy"))[:40],
+        "trigger_opcodes": _iter_gamecore_opcodes(config.get("TriggerConfig"))[:80],
+        "raw_config_keys": sorted(str(key) for key in config.keys())[:80],
+    }
+
+
+def _summon_unit_kind(row: dict[str, Any], config_summary: dict[str, Any]) -> str:
+    if row.get("IsClient") is True:
+        return "visual_or_adventure_summon"
+    group_name = str(config_summary.get("group_config_name") or "")
+    if group_name in {"FollowUnit", "FollowField", "Field"}:
+        return "adventure_follow_unit"
+    if row.get("IsTeamSummon") is True or config_summary.get("has_skill_config") is True:
+        return "battle_candidate"
+    return "unknown"
+
+
+def _summon_unit_blocked_reason(row: dict[str, Any], config_summary: dict[str, Any]) -> str:
+    if row.get("IsClient") is True:
+        return "summon_unit_client_only_not_combat_runtime"
+    if row.get("DestroyOnEnterBattle") is True:
+        return "summon_unit_destroy_on_enter_battle_not_battle_spawn"
+    if config_summary.get("config_readable") is not True:
+        return "summon_unit_config_missing"
+    return "summon_unit_battle_admission_source_missing"
 
 
 def _target_alias(value: Any) -> str | None:

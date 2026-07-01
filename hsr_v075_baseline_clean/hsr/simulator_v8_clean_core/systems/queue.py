@@ -5,6 +5,7 @@ from typing import Any
 
 from ..core.model import BattleState, GameEvent, JSONValue, Mutation
 from ..rules.ir import QueueResolutionIR
+from .unit_relation import is_opposing_combat_team, is_same_combat_team
 from .unit_lifecycle import UnitLifecycleSystem
 
 
@@ -975,11 +976,10 @@ def _units_by_relative_side(state: BattleState, actor_id: str, *, enemy: bool) -
     if actor is None:
         return ()
     lifecycle = UnitLifecycleSystem()
-    def matches(unit_side: str) -> bool:
-        return unit_side != actor.side if enemy else unit_side == actor.side
 
     return tuple(
         unit_id
         for unit_id, unit in sorted(state.units.items())
-        if matches(unit.side) and lifecycle.can_target(state, unit_id, allow_defeated=False)[0]
+        if (is_opposing_combat_team(actor, unit) if enemy else is_same_combat_team(actor, unit))
+        and lifecycle.can_target(state, unit_id, allow_defeated=False)[0]
     )

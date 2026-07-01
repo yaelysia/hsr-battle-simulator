@@ -22,6 +22,7 @@ from .scheduler import (
     queue_plan_requires_external_command,
     select_next_queue_drain_plan,
 )
+from .summon import SUMMON_RUNTIME_SCHEMA_VERSION
 from .target import TargetEnumerationResult, TargetSystem
 from .timeline import TimelineSystem
 from .unit_lifecycle import UnitLifecycleSystem
@@ -674,16 +675,7 @@ class ActionAvailabilitySystem:
         if actor.side == "enemy":
             return self._enemy_choices(state, actor)
         if actor.side == "summon":
-            blocked = (
-                BlockedActionReason(
-                    reason="summon_action_admission_missing",
-                    scope="summon_action",
-                    actor_id=actor.unit_id,
-                    actor_side=actor.side,
-                    metadata={"timeline_admitted": actor.flags.get("timeline_admitted")},
-                ),
-            )
-            return (), blocked
+            return self._summon_choices(state, actor)
         return (), (
             BlockedActionReason(
                 reason=f"unsupported_actor_side:{actor.side}",
@@ -758,6 +750,106 @@ class ActionAvailabilitySystem:
                 choices.append(choice)
             else:
                 blocked.append(reason)
+        return tuple(choices), tuple(blocked)
+
+    def _summon_choices(
+        self,
+        state: BattleState,
+        actor: UnitState,
+    ) -> tuple[tuple[ActionChoice, ...], tuple[BlockedActionReason, ...]]:
+        if actor.flags.get("timeline_admitted") is not True:
+            return (), (
+                BlockedActionReason(
+                    reason="summon_timeline_not_admitted",
+                    scope="summon_action",
+                    actor_id=actor.unit_id,
+                    actor_side=actor.side,
+                    metadata={"timeline_admitted": actor.flags.get("timeline_admitted")},
+                ),
+                BlockedActionReason(
+                    reason="summon_action_admission_missing",
+                    scope="summon_action",
+                    actor_id=actor.unit_id,
+                    actor_side=actor.side,
+                    metadata={"timeline_admitted": actor.flags.get("timeline_admitted")},
+                ),
+            )
+        admission_blocker = _summon_action_admission_blocker(state, actor)
+        if admission_blocker is not None:
+            reason, metadata, source_trace = admission_blocker
+            return (), (
+                BlockedActionReason(
+                    reason=reason,
+                    scope="summon_action",
+                    actor_id=actor.unit_id,
+                    actor_side=actor.side,
+                    metadata={
+                        "timeline_admitted": actor.flags.get("timeline_admitted"),
+                        "team_side": actor.flags.get("team_side"),
+                        **metadata,
+                    },
+                    source_trace=source_trace,
+                ),
+            )
+        action_set = self.rules.combatant_action_set(actor.template_id)
+        if action_set is None:
+            return (), (
+                BlockedActionReason(
+                    reason="summon_action_set_missing",
+                    scope="summon_action",
+                    actor_id=actor.unit_id,
+                    actor_side=actor.side,
+                    metadata={"entity_ref": actor.template_id},
+                ),
+            )
+        choices: list[ActionChoice] = []
+        blocked: list[BlockedActionReason] = []
+        for skill_index, entry in _sorted_action_set_entries(action_set.skill_index_map):
+            action_id = str(entry.get("action_ref") or "")
+            level = _default_level(entry)
+            reason = self._action_set_entry_blocked_reason(entry, action_id, level)
+            if action_set.coverage_status != "executable":
+                reason = action_set.blocked_reason or f"combatant_action_set_not_executable:{action_set.coverage_status}"
+            if reason:
+                blocked.append(
+                    BlockedActionReason(
+                        reason=reason,
+                        scope="summon_action",
+                        actor_id=actor.unit_id,
+                        actor_side=actor.side,
+                        action_id=action_id,
+                        action_level=level,
+                        metadata={"skill_index": skill_index, "action_set_entry": entry},
+                        source_trace=action_set.source.to_json(),
+                    )
+                )
+                continue
+            choice, reason_record = self._normal_action_choice(
+                state,
+                actor,
+                action_id,
+                level,
+                choice_kind="summon_action",
+                source_trace={
+                    "combatant_action_set": action_set.source.to_json(),
+                    "combatant_action_set_id": action_set.combatant_action_set_id,
+                    "skill_index": skill_index,
+                    "action_set_entry": entry,
+                    "summon_action_admission": dict(actor.flags.get("summon_action_admission", {}))
+                    if isinstance(actor.flags.get("summon_action_admission"), dict)
+                    else {},
+                },
+                metadata={
+                    "skill_index": skill_index,
+                    "combatant_action_set_id": action_set.combatant_action_set_id,
+                    "summon_kind": str(actor.flags.get("summon_kind") or ""),
+                    "team_side": str(actor.flags.get("team_side") or ""),
+                },
+            )
+            if choice is not None:
+                choices.append(choice)
+            else:
+                blocked.append(reason_record)
         return tuple(choices), tuple(blocked)
 
     def _enemy_choices(
@@ -850,7 +942,7 @@ class ActionAvailabilitySystem:
         action_id: str,
         action_level: int,
         *,
-        choice_kind: Literal["normal_action"],
+        choice_kind: Literal["normal_action", "summon_action"],
         source_trace: dict[str, JSONValue],
         metadata: dict[str, JSONValue],
     ) -> tuple[ActionChoice | None, BlockedActionReason]:
@@ -1032,6 +1124,41 @@ def _command_template(command: ActionCommand) -> dict[str, JSONValue]:
         "queue_name": command.queue_name,
         "metadata": command.metadata,
     }
+
+
+def _summon_action_admission_blocker(
+    state: BattleState,
+    actor: UnitState,
+) -> tuple[str, dict[str, JSONValue], dict[str, JSONValue]] | None:
+    summon_source_trace = (
+        dict(actor.flags.get("summon_source_trace", {}))
+        if isinstance(actor.flags.get("summon_source_trace"), dict)
+        else {}
+    )
+    if actor.flags.get("summon_action_admitted") is not True:
+        return "summon_action_admission_missing", {}, summon_source_trace
+    runtime = state.global_flags.get("summon_runtime")
+    if not isinstance(runtime, dict) or runtime.get("schema_version") != SUMMON_RUNTIME_SCHEMA_VERSION:
+        return "summon_runtime_state_missing", {}, summon_source_trace
+    entities = runtime.get("entities")
+    if not isinstance(entities, dict):
+        return "summon_runtime_entities_missing", {}, summon_source_trace
+    runtime_entity = entities.get(actor.unit_id)
+    if not isinstance(runtime_entity, dict):
+        return "summon_runtime_entity_missing", {}, summon_source_trace
+    runtime_source_trace = runtime_entity.get("source_trace")
+    if not isinstance(runtime_source_trace, dict) or not runtime_source_trace:
+        return "summon_runtime_source_trace_missing", {"runtime_entity": runtime_entity}, summon_source_trace
+    source_intent_id = actor.flags.get("summon_intent_id")
+    if source_intent_id is not None and runtime_entity.get("source_intent_id") != source_intent_id:
+        return "summon_runtime_source_binding_mismatch", {"runtime_entity": runtime_entity}, runtime_source_trace
+    admission = actor.flags.get("summon_action_admission")
+    if not isinstance(admission, dict) or admission.get("coverage_status") != "executable":
+        return "summon_action_source_not_admitted", {"runtime_entity": runtime_entity}, runtime_source_trace
+    admission_source_trace = admission.get("source_trace")
+    if not isinstance(admission_source_trace, dict) or not admission_source_trace:
+        return "summon_action_source_trace_missing", {"runtime_entity": runtime_entity, "admission": admission}, runtime_source_trace
+    return None
 
 
 def _sorted_action_set_entries(skill_index_map: dict[str, JSONValue]) -> tuple[tuple[str, dict[str, JSONValue]], ...]:
