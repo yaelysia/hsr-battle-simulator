@@ -39,6 +39,15 @@ class UnitState:
     def to_snapshot(self) -> dict[str, JSONValue]:
         shield = float(self.resources.get("shield", 0.0))
         recoverable_hp = float(self.resources.get("recoverable_hp", 0.0))
+        lifecycle_status = _unit_lifecycle_status(self)
+        lifecycle = {
+            "status": lifecycle_status,
+            "active": lifecycle_status == "active",
+            "defeated": lifecycle_status == "defeated",
+            "removed": lifecycle_status == "removed",
+            "defeat_record": self.flags.get("defeat_record", {}),
+            "removed_record": self.flags.get("removed_record", {}),
+        }
         return {
             "unit_id": self.unit_id,
             "side": self.side,
@@ -48,6 +57,10 @@ class UnitState:
             "level": self.level,
             "max_hp": self.max_hp,
             "hp": self.hp,
+            "lifecycle_status": lifecycle_status,
+            "defeated": lifecycle_status == "defeated",
+            "removed": lifecycle_status == "removed",
+            "lifecycle": lifecycle,
             "attack": self.attack,
             "defense": self.defense,
             "speed": self.speed,
@@ -112,6 +125,11 @@ class BattleState:
             "enemy": [unit_id for unit_id, unit in sorted(self.units.items()) if unit.side == "enemy"],
             "summon": [unit_id for unit_id, unit in sorted(self.units.items()) if unit.side == "summon"],
         }
+        active_teams = {
+            "ally": [unit_id for unit_id, unit in sorted(self.units.items()) if unit.side == "ally" and _unit_lifecycle_status(unit) == "active"],
+            "enemy": [unit_id for unit_id, unit in sorted(self.units.items()) if unit.side == "enemy" and _unit_lifecycle_status(unit) == "active"],
+            "summon": [unit_id for unit_id, unit in sorted(self.units.items()) if unit.side == "summon" and _unit_lifecycle_status(unit) == "active"],
+        }
         return Snapshot(
             {
                 "battle": {
@@ -139,6 +157,7 @@ class BattleState:
                 "skill_points": self.skill_points,
                 "targeting": dict(global_flags.get("targeting", {})),
                 "teams": teams,
+                "active_teams": active_teams,
                 "timeline": {
                     "global_av": float(global_flags.get("global_av", 0.0)),
                     "turn_owner_id": global_flags.get("turn_owner_id"),
@@ -376,3 +395,10 @@ def _stable_id(prefix: str, payload: dict[str, JSONValue]) -> str:
     raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
     return f"{prefix}:{digest}"
+
+
+def _unit_lifecycle_status(unit: UnitState) -> str:
+    raw = unit.flags.get("lifecycle_status")
+    if isinstance(raw, str) and raw in {"active", "defeated", "removed"}:
+        return raw
+    return "defeated" if unit.hp <= 0 else "active"

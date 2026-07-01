@@ -10,6 +10,7 @@ from ..rules.evaluator import NumericEvaluationContext, RuleEvaluator
 from ..rules.ir import EffectIR, RuleEntity
 from ..rules.rulebook import RuleBook
 from .target import TargetSystem
+from .unit_lifecycle import UnitLifecycleSystem
 
 
 SUPPORTED_EFFECT_TARGET_ALIASES = {"Caster", "ModifierOwnerEntity", "ParamEntity", "CurrentActionTarget"}
@@ -1110,8 +1111,9 @@ def _resolve_add_modifier_group_targets(
     if caster is None:
         return (), "caster_missing_for_group_target"
     targets: list[str] = []
+    lifecycle = UnitLifecycleSystem()
     for unit_id, unit in sorted(state.units.items()):
-        if unit.hp <= 0:
+        if not lifecycle.can_target(state, unit_id)[0]:
             continue
         if alias == "AllEnemy" and unit.side != caster.side:
             targets.append(unit_id)

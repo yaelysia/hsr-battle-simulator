@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 
 from ..core.model import BattleState, GameEvent, JSONValue, Mutation
 from ..rules.ir import TimelineRuleIR
+from .unit_lifecycle import UnitLifecycleSystem
 
 
 @dataclass(frozen=True)
@@ -53,6 +54,9 @@ class TurnAdvanceResult:
 
 
 class TimelineSystem:
+    def __init__(self) -> None:
+        self.lifecycle = UnitLifecycleSystem()
+
     def initialize_action_values(
         self,
         state: BattleState,
@@ -95,8 +99,9 @@ class TimelineSystem:
         candidates: list[tuple[float, str]] = []
         skipped: list[dict[str, JSONValue]] = []
         for unit_id, unit in sorted(state.units.items()):
-            if unit.hp <= 0:
-                skipped.append({"unit_id": unit_id, "reason": "unit_dead_or_zero_hp"})
+            can_act, lifecycle_reason = self.lifecycle.can_act(state, unit_id)
+            if not can_act:
+                skipped.append({"unit_id": unit_id, "reason": lifecycle_reason})
                 continue
             if unit.flags.get("action_disabled") is True:
                 skipped.append({"unit_id": unit_id, "reason": "action_disabled"})

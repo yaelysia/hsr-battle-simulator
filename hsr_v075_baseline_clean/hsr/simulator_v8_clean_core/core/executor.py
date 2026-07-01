@@ -34,6 +34,7 @@ from ..systems.resource import ResourceSystem
 from ..systems.status import StatusSystem
 from ..systems.target import TargetSystem
 from ..systems.timeline import TimelinePlan, TimelineSystem
+from ..systems.unit_lifecycle import UnitLifecycleSystem
 from ..systems.toughness import ToughnessPacket, ToughnessSystem
 from ..systems.event_dispatch import EventDispatchResult, EventDispatchSystem
 from ..systems.mutation_events import MUTATION_BACKED_EVENT_TYPES, before_toughness_event, events_for_mutation
@@ -48,6 +49,7 @@ class CombatExecutor:
         self.resources = ResourceSystem()
         self.targets = TargetSystem()
         self.timeline = TimelineSystem()
+        self.lifecycle = UnitLifecycleSystem()
         self.damage = DamageSystem()
         self.toughness = ToughnessSystem()
         self.status = StatusSystem(rules)
@@ -80,6 +82,7 @@ class CombatExecutor:
             "action_event_source_trace": action_event_ir.source.to_json(),
             "effective_action_level_source": command.metadata.get("effective_action_level_source", {}),
         }
+        actor_lifecycle_ok, actor_lifecycle_reason = self.lifecycle.can_act(state, command.actor_id)
         action_event = GameEvent(
             "action.requested",
             source_id=command.actor_id,
@@ -135,6 +138,7 @@ class CombatExecutor:
             ),
         )
         plan_blocked_reason = combined_blocked_reason(
+            actor_lifecycle_reason if not actor_lifecycle_ok else "",
             binding_blocked_reason,
             action_event_reason,
             action_execution_plan.target_plan.blocked_reason,

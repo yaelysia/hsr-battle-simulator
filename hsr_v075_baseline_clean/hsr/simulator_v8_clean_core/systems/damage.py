@@ -7,6 +7,7 @@ from ..core.model import BattleState, GameEvent, JSONValue, Mutation, RNGEvent
 from ..core.settlement import SettlementRecord
 from ..rules.ir import ActionDefinitionIR
 from .damage_formula import DamageFormulaInput, DirectDamageFormula
+from .unit_lifecycle import UnitLifecycleSystem
 
 
 DamageFormulaFamily = Literal[
@@ -141,8 +142,11 @@ class DamageWindowLedger:
         target = state.units.get(packet.target_id)
         if target is None:
             return False, "damage_target_missing", False
-        if target.hp > 0:
+        lifecycle = UnitLifecycleSystem().view(state, packet.target_id)
+        if lifecycle.can_receive_damage:
             return True, "", False
+        if lifecycle.is_removed:
+            return False, "damage_source_target_removed", False
         frame = source_frame_for_packet(packet)
         defeat = self.defeated_targets.get(packet.target_id)
         if (
@@ -342,6 +346,15 @@ class DamageSystem:
             source="damage_system",
             metadata=metadata,
         )
+        lifecycle_mutations, lifecycle_records = _defeat_lifecycle_artifacts(
+            state,
+            packet,
+            before_hp=target.hp,
+            after_hp=after,
+            record_type="dot_damage",
+            hp_mutation=mutation,
+        )
+        lifecycle_mutation_id = _lifecycle_defeat_mutation_id(lifecycle_mutations)
         record_payload: dict[str, JSONValue] = {
             "amount": final_damage,
             "final_damage": final_damage,
@@ -378,8 +391,9 @@ class DamageSystem:
                 amount=final_damage,
                 before_hp=target.hp,
                 after_hp=after,
+                lifecycle_mutation_id=lifecycle_mutation_id,
             ),
-            mutations=(mutation,) if mutation is not None else (),
+            mutations=((mutation,) if mutation is not None else ()) + lifecycle_mutations,
             records=(
                 SettlementRecord(
                     record_type="dot_damage",
@@ -389,6 +403,7 @@ class DamageSystem:
                     payload=record_payload,
                     trace=packet.source_trace,
                 ).to_json(),
+                *lifecycle_records,
             ),
         )
 
@@ -495,6 +510,15 @@ class DamageSystem:
                 "final_damage": final_damage,
             },
         )
+        lifecycle_mutations, lifecycle_records = _defeat_lifecycle_artifacts(
+            state,
+            packet,
+            before_hp=target.hp,
+            after_hp=after,
+            record_type="damage",
+            hp_mutation=mutation,
+        )
+        lifecycle_mutation_id = _lifecycle_defeat_mutation_id(lifecycle_mutations)
         return DamageApplicationResult(
             packet=packet,
             ok=True,
@@ -504,8 +528,9 @@ class DamageSystem:
                 amount=final_damage,
                 before_hp=target.hp,
                 after_hp=after,
+                lifecycle_mutation_id=lifecycle_mutation_id,
             ),
-            mutations=(mutation,),
+            mutations=(mutation, *lifecycle_mutations),
             rng_events=formula_result.rng_events,
             records=(
                 SettlementRecord(
@@ -516,6 +541,7 @@ class DamageSystem:
                     payload=record_payload,
                     trace=packet.source_trace,
                 ).to_json(),
+                *lifecycle_records,
             ),
         )
 
@@ -554,6 +580,15 @@ class DamageSystem:
             source="damage_system",
             metadata=metadata,
         )
+        lifecycle_mutations, lifecycle_records = _defeat_lifecycle_artifacts(
+            state,
+            packet,
+            before_hp=target.hp,
+            after_hp=after,
+            record_type=record_type,
+            hp_mutation=mutation,
+        )
+        lifecycle_mutation_id = _lifecycle_defeat_mutation_id(lifecycle_mutations)
         record_payload: dict[str, JSONValue] = {
             "amount": final_damage,
             "final_damage": final_damage,
@@ -592,8 +627,9 @@ class DamageSystem:
                 amount=final_damage,
                 before_hp=target.hp,
                 after_hp=after,
+                lifecycle_mutation_id=lifecycle_mutation_id,
             ),
-            mutations=(mutation,) if mutation is not None else (),
+            mutations=((mutation,) if mutation is not None else ()) + lifecycle_mutations,
             records=(
                 SettlementRecord(
                     record_type=record_type,
@@ -603,6 +639,7 @@ class DamageSystem:
                     payload=record_payload,
                     trace=packet.source_trace,
                 ).to_json(),
+                *lifecycle_records,
             ),
         )
 
@@ -638,6 +675,15 @@ class DamageSystem:
             source="damage_system",
             metadata=metadata,
         )
+        lifecycle_mutations, lifecycle_records = _defeat_lifecycle_artifacts(
+            state,
+            packet,
+            before_hp=target.hp,
+            after_hp=after,
+            record_type="super_break_damage",
+            hp_mutation=mutation,
+        )
+        lifecycle_mutation_id = _lifecycle_defeat_mutation_id(lifecycle_mutations)
         record_payload: dict[str, JSONValue] = {
             "amount": final_damage,
             "final_damage": final_damage,
@@ -670,8 +716,9 @@ class DamageSystem:
                 amount=final_damage,
                 before_hp=target.hp,
                 after_hp=after,
+                lifecycle_mutation_id=lifecycle_mutation_id,
             ),
-            mutations=(mutation,) if mutation is not None else (),
+            mutations=((mutation,) if mutation is not None else ()) + lifecycle_mutations,
             records=(
                 SettlementRecord(
                     record_type="super_break_damage",
@@ -681,6 +728,7 @@ class DamageSystem:
                     payload=record_payload,
                     trace=packet.source_trace,
                 ).to_json(),
+                *lifecycle_records,
             ),
         )
 
@@ -728,6 +776,15 @@ class DamageSystem:
         if dead_target_continuation:
             record_payload["dead_target_continuation"] = True
             record_payload["continuation_reason"] = "same_damage_sequence_after_lethal"
+        lifecycle_mutations, lifecycle_records = _defeat_lifecycle_artifacts(
+            state,
+            packet,
+            before_hp=target.hp,
+            after_hp=after,
+            record_type=record_type,
+            hp_mutation=mutation,
+        )
+        lifecycle_mutation_id = _lifecycle_defeat_mutation_id(lifecycle_mutations)
         return DamageApplicationResult(
             packet=packet,
             ok=True,
@@ -737,8 +794,9 @@ class DamageSystem:
                 amount=float(packet.amount),
                 before_hp=target.hp,
                 after_hp=after,
+                lifecycle_mutation_id=lifecycle_mutation_id,
             ),
-            mutations=(mutation,) if mutation is not None else (),
+            mutations=((mutation,) if mutation is not None else ()) + lifecycle_mutations,
             records=(
                 SettlementRecord(
                     record_type=record_type,
@@ -748,6 +806,7 @@ class DamageSystem:
                     payload=record_payload,
                     trace=packet.source_trace,
                 ).to_json(),
+                *lifecycle_records,
             ),
         )
 
@@ -923,6 +982,7 @@ def _damage_events(
     amount: float,
     before_hp: float,
     after_hp: float,
+    lifecycle_mutation_id: str = "",
 ) -> tuple[GameEvent, ...]:
     hit_event = _damage_hit_event(
         packet,
@@ -938,6 +998,7 @@ def _damage_events(
         amount=amount,
         before_hp=before_hp,
         after_hp=after_hp,
+        lifecycle_mutation_id=lifecycle_mutation_id,
     )
     if defeat_event is None:
         return (hit_event,)
@@ -1012,6 +1073,7 @@ def _damage_defeat_event(
     amount: float,
     before_hp: float,
     after_hp: float,
+    lifecycle_mutation_id: str = "",
 ) -> GameEvent | None:
     if before_hp <= 0 or after_hp > 0:
         return None
@@ -1027,6 +1089,7 @@ def _damage_defeat_event(
             "record_type": record_type,
             "damage_event_id": damage_event_id,
             "lethal_damage_event_id": damage_event_id,
+            "lifecycle_mutation_id": lifecycle_mutation_id,
             "attacker_id": packet.attacker_id,
             "actor_id": source_frame.owner_id,
             "killer_id": source_frame.owner_id,
@@ -1068,6 +1131,82 @@ def _damage_defeat_event(
             "is_insert_action": bool(packet.metadata.get("is_insert_action", False)),
         },
     )
+
+
+def _defeat_lifecycle_artifacts(
+    state: BattleState,
+    packet: DamagePacket,
+    *,
+    before_hp: float,
+    after_hp: float,
+    record_type: str,
+    hp_mutation: Mutation | None,
+) -> tuple[tuple[Mutation, ...], tuple[dict[str, JSONValue], ...]]:
+    if hp_mutation is None or before_hp <= 0 or after_hp > 0:
+        return (), ()
+    source_frame = source_frame_for_packet(packet)
+    defeat_record: dict[str, JSONValue] = {
+        "record_type": record_type,
+        "target_id": packet.target_id,
+        "defeated_unit_id": packet.target_id,
+        "target_before_hp": before_hp,
+        "target_after_hp": after_hp,
+        "hp_mutation_id": hp_mutation.stable_id(),
+        "kill_credit_owner_id": source_frame.owner_id,
+        "kill_credit_source_id": source_frame.source_id,
+        "kill_credit_source_kind": source_frame.source_kind,
+        "damage_sequence_id": source_frame.sequence_id,
+        "source_frame": source_frame.to_json(),
+        "source_trace": packet.source_trace,
+    }
+    lifecycle = UnitLifecycleSystem()
+    status_mutation = lifecycle.defeat_mutation(
+        state,
+        packet.target_id,
+        reason="unit defeated by damage",
+        source="damage_system",
+        source_trace=packet.source_trace,
+        defeat_record=defeat_record,
+        metadata={
+            "hp_mutation_id": hp_mutation.stable_id(),
+            "damage_packet": packet.to_json(),
+        },
+    )
+    record_mutation = lifecycle.defeat_record_mutation(
+        state,
+        packet.target_id,
+        reason="record unit defeat",
+        source="damage_system",
+        defeat_record=defeat_record,
+        source_trace=packet.source_trace,
+    )
+    mutations = tuple(mutation for mutation in (status_mutation, record_mutation) if mutation is not None)
+    records = tuple(
+        SettlementRecord(
+            record_type="unit_lifecycle",
+            source=mutation.source,
+            mutation_id=mutation.stable_id(),
+            process_only=False,
+            payload={
+                "operation": mutation.metadata.get("lifecycle_operation"),
+                "path": list(mutation.path),
+                "before": mutation.before,
+                "after": mutation.after,
+                "reason": mutation.reason,
+                "metadata": mutation.metadata,
+            },
+            trace=packet.source_trace,
+        ).to_json()
+        for mutation in mutations
+    )
+    return mutations, records
+
+
+def _lifecycle_defeat_mutation_id(mutations: tuple[Mutation, ...]) -> str:
+    for mutation in mutations:
+        if mutation.metadata.get("lifecycle_operation") == "unit_defeat":
+            return mutation.stable_id()
+    return ""
 
 
 def _action_definition_summary(action_definition: ActionDefinitionIR | None) -> dict[str, JSONValue] | None:

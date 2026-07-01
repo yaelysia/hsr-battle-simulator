@@ -16,6 +16,7 @@ from .mutation_events import events_for_mutation
 from .queue import QueueEntry, QueueSystem, QueueTargetResolver
 from .status import StatusSystem
 from .timeline import TimelineSystem
+from .unit_lifecycle import UnitLifecycleSystem
 
 
 @dataclass(frozen=True)
@@ -1507,8 +1508,7 @@ def _unique_ids(*values: object) -> tuple[str, ...]:
 
 
 def _unit_alive(state: BattleState, unit_id: str) -> bool:
-    unit = state.units.get(unit_id)
-    return unit is not None and unit.hp > 0
+    return UnitLifecycleSystem().can_target(state, unit_id)[0]
 
 
 def _alive_enemy_ids_for_status_owner(state: BattleState, detail: dict[str, JSONValue]) -> tuple[str, ...]:
@@ -1519,7 +1519,7 @@ def _alive_enemy_ids_for_status_owner(state: BattleState, detail: dict[str, JSON
     return tuple(
         unit_id
         for unit_id, unit in state.units.items()
-        if unit.side != owner.side and unit.hp > 0
+        if unit.side != owner.side and UnitLifecycleSystem().can_target(state, unit_id)[0]
     )
 
 

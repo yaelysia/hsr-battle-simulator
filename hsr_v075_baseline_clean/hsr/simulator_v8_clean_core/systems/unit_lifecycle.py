@@ -1,0 +1,347 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, replace
+from typing import Literal
+
+from ..core.model import BattleState, JSONValue, Mutation, UnitState
+
+
+UnitLifecycleStatus = Literal["active", "defeated", "removed"]
+
+
+@dataclass(frozen=True)
+class UnitLifecycleView:
+    unit_id: str
+    status: UnitLifecycleStatus
+    hp: float
+    is_present: bool
+    is_active: bool
+    is_defeated: bool
+    is_removed: bool
+    can_be_action_actor: bool
+    can_be_targeted_alive: bool
+    can_receive_damage: bool
+    can_keep_queue_entries: bool
+    blocked_reason: str = ""
+    metadata: dict[str, JSONValue] | None = None
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "unit_id": self.unit_id,
+            "status": self.status,
+            "hp": self.hp,
+            "is_present": self.is_present,
+            "is_active": self.is_active,
+            "is_defeated": self.is_defeated,
+            "is_removed": self.is_removed,
+            "can_be_action_actor": self.can_be_action_actor,
+            "can_be_targeted_alive": self.can_be_targeted_alive,
+            "can_receive_damage": self.can_receive_damage,
+            "can_keep_queue_entries": self.can_keep_queue_entries,
+            "blocked_reason": self.blocked_reason,
+            "metadata": self.metadata or {},
+        }
+
+
+class UnitLifecycleSystem:
+    """Shared lifecycle gate for target, queue, timeline, damage and snapshots."""
+
+    VALID_STATUSES = {"active", "defeated", "removed"}
+
+    def view(self, state: BattleState, unit_id: str) -> UnitLifecycleView:
+        unit = state.units.get(unit_id)
+        if unit is None:
+            return UnitLifecycleView(
+                unit_id=unit_id,
+                status="removed",
+                hp=0.0,
+                is_present=False,
+                is_active=False,
+                is_defeated=False,
+                is_removed=True,
+                can_be_action_actor=False,
+                can_be_targeted_alive=False,
+                can_receive_damage=False,
+                can_keep_queue_entries=False,
+                blocked_reason="unit_missing",
+            )
+        status = self.status_of(unit)
+        is_active = status == "active"
+        is_defeated = status == "defeated"
+        is_removed = status == "removed"
+        reason = ""
+        if is_removed:
+            reason = "unit_removed"
+        elif is_defeated:
+            reason = "unit_defeated"
+        return UnitLifecycleView(
+            unit_id=unit_id,
+            status=status,
+            hp=float(unit.hp),
+            is_present=True,
+            is_active=is_active,
+            is_defeated=is_defeated,
+            is_removed=is_removed,
+            can_be_action_actor=is_active,
+            can_be_targeted_alive=is_active,
+            can_receive_damage=is_active,
+            can_keep_queue_entries=not is_removed,
+            blocked_reason=reason,
+            metadata={
+                "explicit_lifecycle_status": unit.flags.get("lifecycle_status"),
+                "inferred_from_hp": "lifecycle_status" not in unit.flags,
+            },
+        )
+
+    def status_of(self, unit: UnitState) -> UnitLifecycleStatus:
+        raw = unit.flags.get("lifecycle_status")
+        if isinstance(raw, str) and raw in self.VALID_STATUSES:
+            return raw  # type: ignore[return-value]
+        if unit.hp <= 0:
+            return "defeated"
+        return "active"
+
+    def can_act(self, state: BattleState, unit_id: str) -> tuple[bool, str]:
+        view = self.view(state, unit_id)
+        return view.can_be_action_actor, "" if view.can_be_action_actor else view.blocked_reason
+
+    def can_target(
+        self,
+        state: BattleState,
+        unit_id: str,
+        *,
+        allow_defeated: bool = False,
+    ) -> tuple[bool, str]:
+        view = self.view(state, unit_id)
+        if view.is_removed or not view.is_present:
+            return False, view.blocked_reason
+        if view.is_defeated and not allow_defeated:
+            return False, "unit_defeated"
+        if view.is_defeated and allow_defeated:
+            return True, ""
+        return view.can_be_targeted_alive, "" if view.can_be_targeted_alive else view.blocked_reason
+
+    def can_receive_damage(self, state: BattleState, unit_id: str) -> tuple[bool, str]:
+        view = self.view(state, unit_id)
+        return view.can_receive_damage, "" if view.can_receive_damage else view.blocked_reason
+
+    def with_status(self, unit: UnitState, status: UnitLifecycleStatus) -> UnitState:
+        flags = dict(unit.flags)
+        flags["lifecycle_status"] = status
+        return replace(unit, flags=flags)
+
+    def spawn_mutation(
+        self,
+        state: BattleState,
+        unit: UnitState,
+        *,
+        reason: str,
+        source: str,
+        source_trace: dict[str, JSONValue],
+        metadata: dict[str, JSONValue] | None = None,
+    ) -> Mutation:
+        unit = self.with_status(unit, "active")
+        return Mutation(
+            op="set",
+            path=("units", unit.unit_id),
+            before=None,
+            after=_unit_payload(unit),
+            reason=reason,
+            source=source,
+            metadata={
+                **(metadata or {}),
+                "lifecycle_operation": "unit_spawn",
+                "lifecycle_status_before": None,
+                "lifecycle_status_after": "active",
+                "source_trace": source_trace,
+            },
+        )
+
+    def defeat_mutation(
+        self,
+        state: BattleState,
+        unit_id: str,
+        *,
+        reason: str,
+        source: str,
+        source_trace: dict[str, JSONValue],
+        defeat_record: dict[str, JSONValue],
+        metadata: dict[str, JSONValue] | None = None,
+    ) -> Mutation | None:
+        unit = state.units.get(unit_id)
+        if unit is None:
+            return None
+        before_status = self.status_of(unit)
+        if before_status != "active":
+            return None
+        return Mutation(
+            op="set",
+            path=("units", unit_id, "flags", "lifecycle_status"),
+            before=unit.flags.get("lifecycle_status"),
+            after="defeated",
+            reason=reason,
+            source=source,
+            metadata={
+                **(metadata or {}),
+                "lifecycle_operation": "unit_defeat",
+                "lifecycle_status_before": before_status,
+                "lifecycle_status_after": "defeated",
+                "defeat_record": defeat_record,
+                "source_trace": source_trace,
+            },
+        )
+
+    def defeat_record_mutation(
+        self,
+        state: BattleState,
+        unit_id: str,
+        *,
+        reason: str,
+        source: str,
+        defeat_record: dict[str, JSONValue],
+        source_trace: dict[str, JSONValue],
+    ) -> Mutation | None:
+        unit = state.units.get(unit_id)
+        if unit is None:
+            return None
+        return Mutation(
+            op="set",
+            path=("units", unit_id, "flags", "defeat_record"),
+            before=unit.flags.get("defeat_record"),
+            after=defeat_record,
+            reason=reason,
+            source=source,
+            metadata={
+                "lifecycle_operation": "unit_defeat_record",
+                "source_trace": source_trace,
+            },
+        )
+
+    def remove_mutations(
+        self,
+        state: BattleState,
+        unit_id: str,
+        *,
+        reason: str,
+        source: str,
+        removed_record: dict[str, JSONValue],
+        source_trace: dict[str, JSONValue],
+    ) -> tuple[Mutation, ...]:
+        unit = state.units.get(unit_id)
+        if unit is None:
+            return ()
+        before_status = self.status_of(unit)
+        common = {
+            "source_trace": source_trace,
+            "removed_record": removed_record,
+        }
+        return (
+            Mutation(
+                op="set",
+                path=("units", unit_id, "flags", "lifecycle_status"),
+                before=unit.flags.get("lifecycle_status"),
+                after="removed",
+                reason=reason,
+                source=source,
+                metadata={
+                    **common,
+                    "lifecycle_operation": "unit_remove",
+                    "lifecycle_status_before": before_status,
+                    "lifecycle_status_after": "removed",
+                },
+            ),
+            Mutation(
+                op="set",
+                path=("units", unit_id, "flags", "removed_record"),
+                before=unit.flags.get("removed_record"),
+                after=removed_record,
+                reason=reason,
+                source=source,
+                metadata={**common, "lifecycle_operation": "unit_remove_record"},
+            ),
+        )
+
+    def revive_blocked(self, state: BattleState, unit_id: str, *, reason: str = "unit_revive_source_missing") -> dict[str, JSONValue]:
+        return {
+            "ok": False,
+            "operation": "unit_revive",
+            "unit_id": unit_id,
+            "blocked_reason": reason,
+            "state_unchanged": True,
+        }
+
+
+def _unit_payload(unit: UnitState) -> dict[str, JSONValue]:
+    return {
+        "unit_id": unit.unit_id,
+        "side": unit.side,
+        "template_id": unit.template_id,
+        "level": unit.level,
+        "max_hp": unit.max_hp,
+        "hp": unit.hp,
+        "attack": unit.attack,
+        "defense": unit.defense,
+        "speed": unit.speed,
+        "energy": unit.energy,
+        "max_energy": unit.max_energy,
+        "toughness": unit.toughness,
+        "max_toughness": unit.max_toughness,
+        "action_value": unit.action_value,
+        "statuses": list(unit.statuses),
+        "flags": dict(unit.flags),
+        "resources": dict(unit.resources),
+    }
+
+
+def unit_from_payload(payload: JSONValue) -> UnitState:
+    if not isinstance(payload, dict):
+        raise ValueError("unit spawn payload must be an object")
+    unit_id = str(payload.get("unit_id") or "")
+    side = str(payload.get("side") or "")
+    template_id = str(payload.get("template_id") or "")
+    if not unit_id or side not in {"ally", "enemy", "summon"} or not template_id:
+        raise ValueError("unit spawn payload requires unit_id, side and template_id")
+    statuses_raw = payload.get("statuses")
+    flags_raw = payload.get("flags")
+    resources_raw = payload.get("resources")
+    return UnitState(
+        unit_id=unit_id,
+        side=side,  # type: ignore[arg-type]
+        template_id=template_id,
+        level=_int(payload.get("level"), 80),
+        max_hp=_float(payload.get("max_hp"), 1.0),
+        hp=_float(payload.get("hp"), 1.0),
+        attack=_float(payload.get("attack"), 0.0),
+        defense=_float(payload.get("defense"), 0.0),
+        speed=_float(payload.get("speed"), 100.0),
+        energy=_float(payload.get("energy"), 0.0),
+        max_energy=_float(payload.get("max_energy"), 0.0),
+        toughness=_float(payload.get("toughness"), 0.0),
+        max_toughness=_float(payload.get("max_toughness"), 0.0),
+        action_value=_float(payload.get("action_value"), 0.0),
+        statuses=tuple(str(item) for item in statuses_raw if isinstance(item, str)) if isinstance(statuses_raw, list) else (),
+        flags=dict(flags_raw) if isinstance(flags_raw, dict) else {},
+        resources={
+            str(key): float(value)
+            for key, value in (resources_raw.items() if isinstance(resources_raw, dict) else ())
+            if isinstance(value, (int, float)) and not isinstance(value, bool)
+        },
+    )
+
+
+def _float(value: JSONValue, default: float) -> float:
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, (int, float)):
+        return float(value)
+    return default
+
+
+def _int(value: JSONValue, default: int) -> int:
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    return default

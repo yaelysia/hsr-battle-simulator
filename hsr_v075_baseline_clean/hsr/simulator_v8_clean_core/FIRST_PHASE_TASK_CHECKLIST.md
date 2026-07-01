@@ -51,30 +51,30 @@
 
 详细计划见 `P1_1_UNIT_LIFECYCLE_TASK_PLAN.md`。
 
-- [ ] P1-1.1 审查 `UnitState`、damage kill attribution、target alive/dead filter、timeline eligibility 当前实现。
-- [ ] P1-1.2 定义 UnitSpawn mutation 语义。
-- [ ] P1-1.3 定义 UnitDefeat mutation 语义。
-- [ ] P1-1.4 定义 UnitRemove mutation 语义。
-- [ ] P1-1.5 定义 UnitRevive 的 blocked 或预留策略。
-- [ ] P1-1.6 明确 defeated 与 removed 的区别。
-- [ ] P1-1.7 明确 removed unit 是否保留 tombstone 以支持 replay 和 audit。
-- [ ] P1-1.8 将 damage 导致 HP 到 0 的路径接入 UnitDefeat。
-- [ ] P1-1.9 统一死亡单位在 target resolver 中的过滤行为。
-- [ ] P1-1.10 统一死亡 actor 的 action availability 行为。
-- [ ] P1-1.11 统一死亡或 removed actor 对 pending queue item 的取消、跳过或 blocked 行为。
-- [ ] P1-1.12 统一死亡或 removed unit 对 timeline plan 的影响。
-- [ ] P1-1.13 为 spawn unit 建立初始 profile/card/source trace 要求。
-- [ ] P1-1.14 增加 damage defeat 正例验证。
-- [ ] P1-1.15 增加 dead target skipped 验证。
-- [ ] P1-1.16 增加 dead actor action blocked 验证。
-- [ ] P1-1.17 增加 UnitSpawn replay 验证。
-- [ ] P1-1.18 增加 UnitRemove replay 验证。
-- [ ] P1-1.19 增加 queue item actor removed 后处理验证。
-- [ ] P1-1.20 更新阶段报告，说明 lifecycle 对 target、timeline、queue、damage 的统一影响。
+- [x] P1-1.1 审查 `UnitState`、damage kill attribution、target alive/dead filter、timeline eligibility 当前实现。
+- [x] P1-1.2 定义 UnitSpawn mutation 语义。
+- [x] P1-1.3 定义 UnitDefeat mutation 语义。
+- [x] P1-1.4 定义 UnitRemove mutation 语义。
+- [x] P1-1.5 定义 UnitRevive 的 blocked 或预留策略。
+- [x] P1-1.6 明确 defeated 与 removed 的区别。
+- [x] P1-1.7 明确 removed unit 是否保留 tombstone 以支持 replay 和 audit。
+- [x] P1-1.8 将 damage 导致 HP 到 0 的路径接入 UnitDefeat。
+- [x] P1-1.9 统一死亡单位在 target resolver 中的过滤行为。
+- [x] P1-1.10 统一死亡 actor 的 action availability 行为。
+- [x] P1-1.11 统一死亡或 removed actor 对 pending queue item 的取消、跳过或 blocked 行为。
+- [x] P1-1.12 统一死亡或 removed unit 对 timeline plan 的影响。
+- [x] P1-1.13 为 spawn unit 建立初始 profile/card/source trace 要求。
+- [x] P1-1.14 增加 damage defeat 正例验证。
+- [x] P1-1.15 增加 dead target skipped 验证。
+- [x] P1-1.16 增加 dead actor action blocked 验证。
+- [x] P1-1.17 增加 UnitSpawn replay 验证。
+- [x] P1-1.18 增加 UnitRemove replay 验证。
+- [x] P1-1.19 增加 queue item actor removed 后处理验证。
+- [x] P1-1.20 更新阶段报告，说明 lifecycle 对 target、timeline、queue、damage 的统一影响。
 
 完成口径：
 
-- [ ] P1-1-DONE 单位生灭全部通过 mutation，target/timeline/queue/damage 对死亡和退场语义一致。
+- [x] P1-1-DONE 单位生灭全部通过 mutation，target/timeline/queue/damage 对死亡和退场语义一致。
 
 ## P1-2 WaveSystem 最小骨架
 

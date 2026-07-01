@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from ..core.model import BattleState, JSONValue, RNGEvent, TargetResolution
 from ..rules.evaluator import EvaluationContext, RuleEvaluator
 from ..rules.ir import ConditionIR, IRSource, TargetExpressionIR
+from .unit_lifecycle import UnitLifecycleSystem
 
 
 @dataclass(frozen=True)
@@ -80,6 +81,9 @@ class TargetExpressionResult:
 
 
 class TargetSystem:
+    def __init__(self) -> None:
+        self.lifecycle = UnitLifecycleSystem()
+
     def resolve_target_expression(
         self,
         state: BattleState,
@@ -189,7 +193,7 @@ class TargetSystem:
             selectable = tuple(
                 unit_id
                 for unit_id, unit in sorted(state.units.items())
-                if (policy.allow_defeated or unit.hp > 0)
+                if self.lifecycle.can_target(state, unit_id, allow_defeated=policy.allow_defeated)[0]
                 and _policy_allows(actor_id, actor.side, unit_id, unit.side, policy)
             )
             if not selectable:
@@ -301,8 +305,13 @@ class TargetSystem:
                 errors.append(reason)
                 rejected.append(target_id)
                 continue
-            if target.hp <= 0 and not policy.allow_defeated:
-                reason = f"defeated:{target_id}"
+            target_ok, lifecycle_reason = self.lifecycle.can_target(
+                state,
+                target_id,
+                allow_defeated=policy.allow_defeated,
+            )
+            if not target_ok:
+                reason = f"{lifecycle_reason}:{target_id}"
                 errors.append(reason)
                 rejected.append(target_id)
                 continue
@@ -335,7 +344,7 @@ class TargetSystem:
         return tuple(
             unit_id
             for unit_id, unit in state.units.items()
-            if unit.side != actor.side and (allow_defeated or unit.hp > 0)
+            if unit.side != actor.side and self.lifecycle.can_target(state, unit_id, allow_defeated=allow_defeated)[0]
         )
 
     def resolve_bounce_hit_target(
@@ -358,7 +367,7 @@ class TargetSystem:
         live_candidates = tuple(
             unit_id
             for unit_id, unit in sorted(state.units.items())
-            if unit.side != actor.side and unit.hp > 0
+            if unit.side != actor.side and self.lifecycle.can_target(state, unit_id)[0]
         )
         all_candidates = tuple(
             unit_id
@@ -796,7 +805,7 @@ def _resolve_group_alias(
         return (), "caster_missing_for_group_target"
     targets: list[str] = []
     for unit_id, unit in sorted(state.units.items()):
-        if unit.hp <= 0:
+        if not UnitLifecycleSystem().can_target(state, unit_id)[0]:
             continue
         if alias in {"AllEnemy", "AllEnemyWithUnSelectable"} and unit.side != caster.side:
             targets.append(unit_id)
@@ -1016,7 +1025,7 @@ def _adjacent_units(
         for unit_id, unit in state.units.items()
         if unit_id != primary_id
         and unit.side != actor.side
-        and unit.hp > 0
+        and UnitLifecycleSystem().can_target(state, unit_id)[0]
         and _position(unit.flags.get("position")) in {position - 1, position + 1}
     ]
     legal_set = set(legal)

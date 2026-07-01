@@ -5,6 +5,7 @@ from typing import Any
 
 from ..core.model import BattleState, GameEvent, JSONValue, Mutation
 from ..rules.ir import QueueResolutionIR
+from .unit_lifecycle import UnitLifecycleSystem
 
 
 @dataclass(frozen=True)
@@ -168,6 +169,9 @@ QUEUE_WINDOW_FAMILY_ORDER: dict[str, int] = {
 
 
 class QueueTargetResolver:
+    def __init__(self) -> None:
+        self.lifecycle = UnitLifecycleSystem()
+
     def resolve(
         self,
         state: BattleState,
@@ -199,6 +203,17 @@ class QueueTargetResolver:
                 f"queue_actor_missing:{actor_id}",
                 source_trace,
             )
+        actor_ok, actor_reason = self.lifecycle.can_act(state, actor_id)
+        if not actor_ok:
+            return QueueTargetResolution(
+                False,
+                actor_id,
+                (),
+                actor_alias or "",
+                target_alias or "",
+                f"queue_actor_{actor_reason}:{actor_id}",
+                source_trace,
+            )
         target_ids = self._resolve_many(state, detail, trigger_event, target_alias, relative_actor_id=actor_id)
         if target_alias and not target_ids:
             return QueueTargetResolution(
@@ -219,6 +234,25 @@ class QueueTargetResolver:
                 actor_alias or "",
                 target_alias or "",
                 f"queue_target_missing:{','.join(missing_targets)}",
+                source_trace,
+            )
+        invalid_targets = tuple(
+            target_id
+            for target_id in target_ids
+            if not self.lifecycle.can_target(state, target_id, allow_defeated=False)[0]
+        )
+        if invalid_targets:
+            reasons = [
+                f"{self.lifecycle.can_target(state, target_id, allow_defeated=False)[1]}:{target_id}"
+                for target_id in invalid_targets
+            ]
+            return QueueTargetResolution(
+                False,
+                actor_id,
+                target_ids,
+                actor_alias or "",
+                target_alias or "",
+                f"queue_target_lifecycle_blocked:{','.join(reasons)}",
                 source_trace,
             )
         return QueueTargetResolution(True, actor_id, target_ids, actor_alias or "", target_alias or "", "", source_trace)
@@ -288,6 +322,9 @@ class QueueTargetResolver:
 
 
 class QueueSystem:
+    def __init__(self) -> None:
+        self.lifecycle = UnitLifecycleSystem()
+
     def peek(self, state: BattleState, queue_name: str) -> dict[str, JSONValue] | None:
         current = tuple(state.queues.get(queue_name, ()))
         if not current:
@@ -713,6 +750,9 @@ class QueueSystem:
         actor_id = str(entry.get("actor_id") or "")
         if not actor_id or actor_id not in state.units:
             return {"ok": False, "blocked_reason": "queue_action_actor_missing"}
+        actor_ok, actor_reason = self.lifecycle.can_act(state, actor_id)
+        if not actor_ok:
+            return {"ok": False, "blocked_reason": f"queue_action_actor_{actor_reason}"}
         actor = state.units[actor_id]
         if not actor.template_id:
             return {"ok": False, "blocked_reason": "queue_action_actor_template_missing"}
@@ -744,6 +784,19 @@ class QueueSystem:
         target_ids = entry.get("target_ids")
         if not isinstance(target_ids, list) or not any(isinstance(item, str) and item for item in target_ids):
             return {"ok": False, "blocked_reason": "queue_action_target_missing"}
+        invalid_targets = tuple(
+            str(item)
+            for item in target_ids
+            if isinstance(item, str)
+            and item
+            and not self.lifecycle.can_target(state, item, allow_defeated=False)[0]
+        )
+        if invalid_targets:
+            reasons = [
+                f"{self.lifecycle.can_target(state, target_id, allow_defeated=False)[1]}:{target_id}"
+                for target_id in invalid_targets
+            ]
+            return {"ok": False, "blocked_reason": f"queue_action_target_lifecycle_blocked:{','.join(reasons)}"}
         return {
             "ok": True,
             "action_id": action_id,
@@ -921,11 +974,12 @@ def _units_by_relative_side(state: BattleState, actor_id: str, *, enemy: bool) -
     actor = state.units.get(actor_id)
     if actor is None:
         return ()
+    lifecycle = UnitLifecycleSystem()
     def matches(unit_side: str) -> bool:
         return unit_side != actor.side if enemy else unit_side == actor.side
 
     return tuple(
         unit_id
         for unit_id, unit in sorted(state.units.items())
-        if matches(unit.side)
+        if matches(unit.side) and lifecycle.can_target(state, unit_id, allow_defeated=False)[0]
     )

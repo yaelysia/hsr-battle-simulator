@@ -24,6 +24,7 @@ from .scheduler import (
 )
 from .target import TargetEnumerationResult, TargetSystem
 from .timeline import TimelineSystem
+from .unit_lifecycle import UnitLifecycleSystem
 
 
 ACTION_AVAILABILITY_SCHEMA_VERSION = "p1_0_action_availability_v1"
@@ -230,6 +231,7 @@ class ActionAvailabilitySystem:
         self.enemy_actions = EnemyActionSystem(rules)
         self.targets = TargetSystem()
         self.resources = ResourceSystem()
+        self.lifecycle = UnitLifecycleSystem()
 
     def view(self, state: BattleState) -> ActionAvailabilityView:
         state_phase = str(state.global_flags.get("phase", "setup"))
@@ -313,6 +315,32 @@ class ActionAvailabilitySystem:
                     queue,
                     blocked,
                     actor=ActorAvailability(turn_owner_id, "", "blocked", blocked_reason="active_turn_actor_missing"),
+                )
+            actor_ok, actor_reason = self.lifecycle.can_act(state, turn_owner_id)
+            if not actor_ok:
+                blocked_reason = f"actor_{actor_reason}"
+                blocked = (
+                    BlockedActionReason(
+                        reason=blocked_reason,
+                        scope="actor",
+                        actor_id=turn_owner_id,
+                        actor_side=actor.side,
+                        metadata={"lifecycle": self.lifecycle.view(state, turn_owner_id).to_json()},
+                    ),
+                )
+                return self._blocked_view(
+                    state,
+                    state_phase,
+                    current_window,
+                    turn_owner_id,
+                    queue,
+                    blocked,
+                    actor=ActorAvailability(
+                        turn_owner_id,
+                        actor.side,
+                        "blocked",
+                        blocked_reason=blocked_reason,
+                    ),
                 )
             actor_availability = ActorAvailability(
                 actor_id=actor.unit_id,
@@ -449,6 +477,9 @@ class ActionAvailabilitySystem:
         actor_id = str(plan.queue_entry.get("actor_id") or "")
         if not actor_id or actor_id not in state.units:
             return "queue_action_actor_missing"
+        actor_ok, actor_reason = self.lifecycle.can_act(state, actor_id)
+        if not actor_ok:
+            return f"queue_action_actor_{actor_reason}"
         if resolution.resolved_kind == "extra_turn_action_choice" and not plan.resolved_action_id:
             return ""
         action_id = plan.resolved_action_id
@@ -458,6 +489,17 @@ class ActionAvailabilitySystem:
         target_ids = tuple(str(item) for item in plan.queue_entry.get("target_ids", ()) if isinstance(item, str))
         if not target_ids:
             return "queue_action_target_missing"
+        invalid_targets = tuple(
+            target_id
+            for target_id in target_ids
+            if not self.lifecycle.can_target(state, target_id, allow_defeated=False)[0]
+        )
+        if invalid_targets:
+            reasons = [
+                f"{self.lifecycle.can_target(state, target_id, allow_defeated=False)[1]}:{target_id}"
+                for target_id in invalid_targets
+            ]
+            return f"queue_action_target_lifecycle_blocked:{','.join(reasons)}"
         definition = self.rules.action_definition(action_id, action_level)
         if definition is None:
             return "queue_action_definition_missing"
