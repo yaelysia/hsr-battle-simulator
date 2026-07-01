@@ -69,6 +69,8 @@ class ScenarioSpec:
     skill_points: int = 3
     max_skill_points: int = 5
     wave_index: int = 0
+    wave_definition_ref: str | None = None
+    stage_ref: str | None = None
     rng_state: str = "deterministic"
     global_flags: dict[str, JSONValue] = field(default_factory=dict)
 

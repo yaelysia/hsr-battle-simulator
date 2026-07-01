@@ -1,16 +1,17 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from .identity import IdentityResolver
-from .schema import PanelInput, ScenarioSpec
-from ..core.model import ActionCommand, BattleState, UnitState
+from .schema import PanelInput, ScenarioSpec, UnitSpec
+from ..core.model import ActionCommand, BattleState, JSONValue, UnitState
 from ..core.reducer import MutationReducer
-from ..rules.ir import CombatantProfileIR
+from ..rules.ir import CombatantProfileIR, WaveDefinitionIR, WaveMonsterEntryIR
 from ..rules.rulebook import RuleBook
 from ..systems.effect import EffectRegistry
 from ..systems.status import StatusSystem
+from ..systems.timeline import TimelineSystem
 
 
 @dataclass(frozen=True)
@@ -26,6 +27,7 @@ class ScenarioStateBuilder:
         self.identity = IdentityResolver(rules)
 
     def build(self, scenario: ScenarioSpec) -> ScenarioBuildResult:
+        scenario = _with_initial_wave_units(self.rules, scenario)
         validation = self.identity.validate(scenario)
         if not validation.ok:
             raise ValueError("; ".join(validation.errors))
@@ -132,6 +134,10 @@ class ScenarioStateBuilder:
             )
 
         global_flags = dict(scenario.global_flags)
+        wave_runtime = _initial_wave_runtime(self.rules, scenario)
+        if wave_runtime:
+            global_flags["wave_runtime"] = wave_runtime
+            source_traces.append(dict(wave_runtime.get("source_trace", {})))
         if scenario.route:
             global_flags.setdefault("turn_owner_id", scenario.route[0].actor_id)
         global_flags.setdefault("phase", "scenario")
@@ -163,6 +169,131 @@ class ScenarioStateBuilder:
             for step in scenario.route
         )
         return ScenarioBuildResult(state=state, commands=commands, source_traces=tuple(source_traces))
+
+
+def _with_initial_wave_units(rules: RuleBook, scenario: ScenarioSpec) -> ScenarioSpec:
+    definition = _scenario_wave_definition(rules, scenario)
+    if definition is None:
+        return scenario
+    current_wave_index = int(scenario.wave_index)
+    existing_ids = {unit.unit_id for unit in scenario.units}
+    generated: list[UnitSpec] = []
+    for entry in rules.wave_entries_for_wave(definition.wave_definition_id, current_wave_index):
+        if entry.coverage_status != "executable":
+            continue
+        unit_id = _wave_unit_id(definition, entry)
+        if unit_id in existing_ids:
+            continue
+        generated.append(_wave_unit_spec(rules, definition, entry, unit_id))
+        existing_ids.add(unit_id)
+    if not generated:
+        return scenario
+    return replace(scenario, units=(*scenario.units, *generated))
+
+
+def _scenario_wave_definition(rules: RuleBook, scenario: ScenarioSpec) -> WaveDefinitionIR | None:
+    if scenario.wave_definition_ref:
+        return rules.wave_definition(scenario.wave_definition_ref)
+    if scenario.stage_ref:
+        return rules.wave_definition_for_stage(scenario.stage_ref)
+    return None
+
+
+def _wave_unit_id(definition: WaveDefinitionIR, entry: WaveMonsterEntryIR) -> str:
+    return f"enemy:stage:{definition.stage_id}:wave:{entry.wave_index}:pos:{entry.position}"
+
+
+def _wave_unit_spec(
+    rules: RuleBook,
+    definition: WaveDefinitionIR,
+    entry: WaveMonsterEntryIR,
+    unit_id: str,
+) -> UnitSpec:
+    action_value, timeline_source = _initial_wave_action_value(rules, entry)
+    flags: dict[str, JSONValue] = {
+        "position": entry.position,
+        "wave_definition_id": definition.wave_definition_id,
+        "wave_index": entry.wave_index,
+        "wave_position": entry.position,
+        "wave_entry_id": entry.entry_id,
+        "wave_member_kind": "stage_wave_enemy",
+        "wave_clear_policy": "counts",
+        "wave_entry_source_trace": entry.source.to_json(),
+        "wave_definition_source_trace": definition.source.to_json(),
+        "initial_action_value_source_trace": timeline_source,
+    }
+    return UnitSpec(
+        unit_id=unit_id,
+        side="enemy",
+        entity_ref=entry.monster_entity_ref,
+        panel=PanelInput(
+            explicit_fields=("flags", "action_value"),
+            action_value=action_value,
+            flags=flags,
+        ),
+    )
+
+
+def _initial_wave_action_value(rules: RuleBook, entry: WaveMonsterEntryIR) -> tuple[float, dict[str, JSONValue]]:
+    profile = rules.combatant_profile(entry.monster_entity_ref)
+    if profile is None or profile.coverage_status != "executable":
+        raise ValueError(f"wave entry {entry.entry_id}: executable spawn requires executable combatant profile")
+    speed = profile.base_stats.get("speed")
+    if isinstance(speed, bool) or not isinstance(speed, (int, float)):
+        raise ValueError(f"wave entry {entry.entry_id}: executable spawn requires profile speed")
+    rule = rules.default_timeline_rule()
+    value = TimelineSystem().full_action_value(float(speed), rule)
+    return (
+        value,
+        {
+            "timeline_rule_id": rule.timeline_rule_id,
+            "timeline_rule_source": rule.source.to_json(),
+            "speed_source": profile.source.to_json(),
+            "speed": float(speed),
+            "formula": rule.initial_action_value_rule,
+        },
+    )
+
+
+def _initial_wave_runtime(rules: RuleBook, scenario: ScenarioSpec) -> dict[str, JSONValue]:
+    definition = _scenario_wave_definition(rules, scenario)
+    if definition is None:
+        return {}
+    current_wave_index = int(scenario.wave_index)
+    entries = rules.wave_entries_for_wave(definition.wave_definition_id, current_wave_index)
+    executable_entries = tuple(entry for entry in entries if entry.coverage_status == "executable")
+    blocked_entries = tuple(entry for entry in entries if entry.coverage_status != "executable")
+    current_unit_ids = tuple(_wave_unit_id(definition, entry) for entry in executable_entries)
+    blocked_reason = ""
+    status = "active"
+    if definition.coverage_status != "executable":
+        blocked_reason = definition.blocked_reason or f"wave_definition_not_executable:{definition.coverage_status}"
+        status = "blocked"
+    if not entries:
+        blocked_reason = "current_wave_entries_missing"
+        status = "blocked"
+    if blocked_entries:
+        blocked_reason = "current_wave_has_blocked_entries"
+        status = "blocked"
+    if not current_unit_ids:
+        blocked_reason = blocked_reason or "current_wave_executable_units_missing"
+        status = "blocked"
+    return {
+        "schema_version": "p1_2_wave_runtime_v1",
+        "wave_definition_id": definition.wave_definition_id,
+        "stage_id": definition.stage_id,
+        "current_wave_index": current_wave_index,
+        "total_waves": definition.wave_count,
+        "started_wave_indices": [current_wave_index] if current_unit_ids else [],
+        "cleared_wave_indices": [],
+        "current_wave_unit_ids": list(current_unit_ids),
+        "spawned_unit_ids_by_wave": {str(current_wave_index): list(current_unit_ids)} if current_unit_ids else {},
+        "removed_unit_ids_by_wave": {},
+        "status": status,
+        "blocked_reason": blocked_reason,
+        "blocked_entries": [entry.to_json() for entry in blocked_entries],
+        "source_trace": definition.source.to_json(),
+    }
 
 
 def _trace_runtime_activation(rules: RuleBook, card: object | None, flags: dict[str, Any]) -> dict[str, Any]:

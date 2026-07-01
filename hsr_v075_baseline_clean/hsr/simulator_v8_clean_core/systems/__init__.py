@@ -10,6 +10,7 @@ from .status import StatusApplicationResult, StatusInstance, StatusSystem
 from .target import TargetingResult, TargetSystem
 from .timeline import TimelinePlan, TimelinePlanResult, TimelineSystem, TurnAdvancePlan, TurnAdvanceResult
 from .trigger import TriggerSystem, TriggerWindowRecord, TriggerWindowResult
+from .wave import WaveRuntimeView, WaveSystem, WaveTransitionPlan, WaveTransitionResult
 
 __all__ = [
     "DamageSystem",
@@ -42,4 +43,8 @@ __all__ = [
     "TriggerSystem",
     "TriggerWindowRecord",
     "TriggerWindowResult",
+    "WaveSystem",
+    "WaveRuntimeView",
+    "WaveTransitionPlan",
+    "WaveTransitionResult",
 ]

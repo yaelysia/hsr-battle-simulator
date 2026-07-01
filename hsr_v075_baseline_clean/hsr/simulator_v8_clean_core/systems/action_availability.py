@@ -25,6 +25,7 @@ from .scheduler import (
 from .target import TargetEnumerationResult, TargetSystem
 from .timeline import TimelineSystem
 from .unit_lifecycle import UnitLifecycleSystem
+from .wave import WaveSystem
 
 
 ACTION_AVAILABILITY_SCHEMA_VERSION = "p1_0_action_availability_v1"
@@ -34,6 +35,7 @@ ActionAvailabilityMode = Literal[
     "queued_selectable",
     "external_selectable",
     "scheduler_required",
+    "wave_transition_available",
     "blocked",
     "idle",
 ]
@@ -232,11 +234,34 @@ class ActionAvailabilitySystem:
         self.targets = TargetSystem()
         self.resources = ResourceSystem()
         self.lifecycle = UnitLifecycleSystem()
+        self.wave = WaveSystem(rules)
 
     def view(self, state: BattleState) -> ActionAvailabilityView:
         state_phase = str(state.global_flags.get("phase", "setup"))
         current_window = str(state.global_flags.get("current_window", "idle"))
         turn_owner_id = str(state.global_flags.get("turn_owner_id") or "")
+        battle_outcome = state.global_flags.get("battle_outcome")
+        if state_phase == "ended" or isinstance(battle_outcome, str):
+            reason = f"battle_ended:{battle_outcome or 'unknown'}"
+            blocked = (
+                BlockedActionReason(
+                    reason=reason,
+                    scope="battle",
+                    metadata={"battle_outcome": str(battle_outcome or "")},
+                ),
+            )
+            return ActionAvailabilityView(
+                schema_version=ACTION_AVAILABILITY_SCHEMA_VERSION,
+                mode="blocked",
+                state_phase=state_phase,
+                current_window=current_window,
+                turn_owner_id=turn_owner_id,
+                requires_scheduler_step=False,
+                ordinary_input_blocked=True,
+                ordinary_input_blocked_reason=reason,
+                blocked=blocked,
+                coverage={"battle_outcome": str(battle_outcome or ""), "selection_controller": "battle_ended"},
+            )
         plan = select_next_queue_drain_plan(self.rules, self.queue, state)
         resolution = _resolution_for_drain_plan(self.rules, state, plan) if plan is not None and plan.ok else None
         queue, queue_blocked = self._queue_availability(state, plan, resolution)
@@ -272,6 +297,44 @@ class ActionAvailabilitySystem:
                 },
                 source_trace=queue.source_trace,
             )
+
+        wave_plan = self.wave.plan_transition(state)
+        if wave_plan.status in {"advance_to_next_wave", "battle_victory", "battle_defeat"}:
+            blocked = (
+                BlockedActionReason(
+                    reason="wave_transition_required",
+                    scope="wave",
+                    metadata={"wave_transition_plan": wave_plan.to_json()},
+                    source_trace=wave_plan.source_trace,
+                ),
+            )
+            return ActionAvailabilityView(
+                schema_version=ACTION_AVAILABILITY_SCHEMA_VERSION,
+                mode="wave_transition_available",
+                state_phase=state_phase,
+                current_window=current_window,
+                turn_owner_id=turn_owner_id,
+                requires_scheduler_step=True,
+                ordinary_input_blocked=True,
+                ordinary_input_blocked_reason="wave_transition_required",
+                queue=queue,
+                blocked=blocked,
+                coverage={
+                    "wave_transition": wave_plan.to_json(),
+                    "selection_controller": "scheduler_wave_transition",
+                },
+                source_trace=wave_plan.source_trace,
+            )
+        if wave_plan.status == "blocked" and wave_plan.blocked_reason != "wave_runtime_not_configured":
+            blocked = (
+                BlockedActionReason(
+                    reason=wave_plan.blocked_reason or "wave_transition_blocked",
+                    scope="wave",
+                    metadata={"wave_transition_plan": wave_plan.to_json()},
+                    source_trace=wave_plan.source_trace,
+                ),
+            )
+            return self._blocked_view(state, state_phase, current_window, turn_owner_id, queue, blocked)
 
         pending_turn_end = state.global_flags.get("pending_turn_end")
         if isinstance(pending_turn_end, dict):

@@ -25,6 +25,7 @@ from .queue import QUEUE_WINDOW_FAMILY_ORDER, QueueDrainPlan, QueueEntry, QueueS
 from .resource import ResourceSystem
 from .status import StatusSystem
 from .timeline import TimelineSystem, TurnAdvancePlan, TurnAdvanceResult
+from .wave import WaveSystem
 
 
 @dataclass(frozen=True)
@@ -61,6 +62,7 @@ class CombatScheduler:
         self.enemy_actions = EnemyActionSystem(rules)
         self.ability_tasks = AbilityTaskSystem(rules, self.effects, reducer=self.reducer)
         self.event_dispatcher = EventDispatchSystem(rules, self.effects, reducer=self.reducer)
+        self.wave = WaveSystem(rules)
 
     def action_availability(self, state: BattleState):
         from .action_availability import ActionAvailabilitySystem
@@ -250,6 +252,14 @@ class CombatScheduler:
         mechanics stay in their existing systems so source audit continues to
         validate the underlying mutation source instead of a scheduler shortcut.
         """
+        if state.global_flags.get("phase") == "ended" or isinstance(state.global_flags.get("battle_outcome"), str):
+            return self._blocked(
+                state,
+                "scheduler:battle_ended",
+                "battle_ended",
+                {"battle_outcome": str(state.global_flags.get("battle_outcome") or "")},
+            )
+
         queue_step = self._try_queue_drain(state, command=command)
         if queue_step is not None:
             return _with_scheduler_record(
@@ -261,6 +271,10 @@ class CombatScheduler:
         pending_turn_end = state.global_flags.get("pending_turn_end")
         if isinstance(pending_turn_end, dict):
             return self._complete_pending_turn_end(state, pending_turn_end)
+
+        wave_step = self._try_wave_transition(state)
+        if wave_step is not None:
+            return wave_step
 
         begin_result = self.advance_to_next_turn(state)
         if begin_result.transition.coverage.get("blocked_reason"):
@@ -713,6 +727,40 @@ class CombatScheduler:
             events=(event,),
             mutations=tuple(mutations),
             records=tuple(records),
+        )
+
+    def _try_wave_transition(self, state: BattleState) -> SchedulerStepResult | None:
+        plan = self.wave.plan_transition(state)
+        if plan.status == "no_change" or plan.blocked_reason == "wave_runtime_not_configured":
+            return None
+        result = self.wave.apply_transition(state, plan)
+        if plan.status == "blocked":
+            return SchedulerStepResult(
+                state,
+                _transition(
+                    before_state=state,
+                    after_state=state,
+                    action_id="wave:transition",
+                    actor_id="wave_system",
+                    events=result.events,
+                    mutations=(),
+                    records=result.records,
+                    coverage={"wave_transition": plan.to_json(), "blocked_reason": plan.blocked_reason},
+                ),
+            )
+        after = self.reducer.apply_all(state, result.mutations)
+        return SchedulerStepResult(
+            after,
+            _transition(
+                before_state=state,
+                after_state=after,
+                action_id="wave:transition",
+                actor_id="wave_system",
+                events=result.events,
+                mutations=result.mutations,
+                records=result.records,
+                coverage={"wave_transition": plan.to_json(), "scheduler_step": "wave_transition"},
+            ),
         )
 
     def _try_queue_drain(self, state: BattleState, command: ActionCommand | None = None) -> SchedulerStepResult | None:

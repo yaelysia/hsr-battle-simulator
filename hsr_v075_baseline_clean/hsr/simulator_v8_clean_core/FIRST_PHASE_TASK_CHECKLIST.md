@@ -80,33 +80,35 @@
 
 目标：让多波战斗成为真实状态系统，而不是只有 `wave_index` 字段。
 
-- [ ] P1-2.1 审查当前 `wave_index`、scenario enemy 构建、`OnWaveMonster`、event dispatch 的实际落点。
-- [ ] P1-2.2 定义 WaveDefinition IR 或等价 runtime setup 结构。
-- [ ] P1-2.3 定义 BattleWaveRuntimeState 或等价状态结构。
-- [ ] P1-2.4 定义 WaveTransitionPlan 或等价处理流程。
-- [ ] P1-2.5 定义 wave enemy entries 到 UnitSpawn 的来源链路。
-- [ ] P1-2.6 实现 current wave active enemy 集合跟踪。
-- [ ] P1-2.7 实现 wave clear 判定。
-- [ ] P1-2.8 实现 wave_index mutation。
-- [ ] P1-2.9 实现 wave despawn/remove 处理。
-- [ ] P1-2.10 实现 next wave spawn 处理。
-- [ ] P1-2.11 明确 enemy summon 是否计入 wave clear 的策略。
-- [ ] P1-2.12 明确跨波保留 HP、SP、energy 的策略。
-- [ ] P1-2.13 明确跨波状态保留或清理策略。
-- [ ] P1-2.14 明确跨波 queue 清理策略。
-- [ ] P1-2.15 明确跨波 summon 保留策略，缺来源时 blocked。
-- [ ] P1-2.16 接通真实 wave event source。
-- [ ] P1-2.17 接通 `OnWaveMonster` 可执行触发路径或明确 blocked 原因。
-- [ ] P1-2.18 增加 current wave clear 正例验证。
-- [ ] P1-2.19 增加 next wave spawn 正例验证。
-- [ ] P1-2.20 增加 wave_index replay 验证。
-- [ ] P1-2.21 增加 missing wave definition blocked 验证。
-- [ ] P1-2.22 增加 summon enemy 是否阻塞 wave clear 的验证。
-- [ ] P1-2.23 更新阶段报告，说明 wave source、mutation、event、replay 链路。
+详细计划见 `P1_2_WAVE_SYSTEM_TASK_PLAN.md`。
+
+- [x] P1-2.1 审查当前 `wave_index`、scenario enemy 构建、`OnWaveMonster`、event dispatch 的实际落点。
+- [x] P1-2.2 定义 WaveDefinition IR 或等价 runtime setup 结构。
+- [x] P1-2.3 定义 BattleWaveRuntimeState 或等价状态结构。
+- [x] P1-2.4 定义 WaveTransitionPlan 或等价处理流程。
+- [x] P1-2.5 定义 wave enemy entries 到 UnitSpawn 的来源链路。
+- [x] P1-2.6 实现 current wave active enemy 集合跟踪。
+- [x] P1-2.7 实现 wave clear 判定。
+- [x] P1-2.8 实现 wave_index mutation。
+- [x] P1-2.9 实现 wave despawn/remove 处理。
+- [x] P1-2.10 实现 next wave spawn 处理。
+- [x] P1-2.11 明确 enemy summon 是否计入 wave clear 的策略。
+- [x] P1-2.12 明确跨波保留 HP、SP、energy 的策略。
+- [x] P1-2.13 明确跨波状态保留或清理策略。
+- [x] P1-2.14 明确跨波 queue 清理策略。
+- [x] P1-2.15 明确跨波 summon 保留策略，缺来源时 blocked。
+- [x] P1-2.16 接通真实 wave event source。
+- [x] P1-2.17 接通 `OnWaveMonster` 可执行触发路径或明确 blocked 原因。
+- [x] P1-2.18 增加 current wave clear 正例验证。
+- [x] P1-2.19 增加 next wave spawn 正例验证。
+- [x] P1-2.20 增加 wave_index replay 验证。
+- [x] P1-2.21 增加 missing wave definition blocked 验证。
+- [x] P1-2.22 增加 summon enemy 是否阻塞 wave clear 的验证。
+- [x] P1-2.23 更新阶段报告，说明 wave source、mutation、event、replay 链路。
 
 完成口径：
 
-- [ ] P1-2-DONE 击杀当前波最后敌人后，可通过 mutation 进入下一波，新波敌人由规则生成并可 replay/source audit。
+- [x] P1-2-DONE 击杀当前波最后敌人后，可通过 mutation 进入下一波，新波敌人由规则生成并可 replay/source audit。
 
 ## P1-3 Summon / Assistant / Servant 最小闭环
 

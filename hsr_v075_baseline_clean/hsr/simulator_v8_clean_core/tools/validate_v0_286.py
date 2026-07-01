@@ -52,7 +52,6 @@ STILL_BLOCKED_EVENTS = (
     "OnListenModifierResist",
     "OnLockHPThresholdReached",
     "OnCustomEvent",
-    "OnWaveMonster",
     "OnVersusBarFever",
 )
 
@@ -239,7 +238,8 @@ def _boundary_case(rules: RuleBook) -> dict[str, Any]:
         "resist_still_blocked": blocked_statuses.get("OnResistModifier") == "blocked",
         "lock_hp_threshold_still_blocked": blocked_statuses.get("OnLockHPThresholdReached") == "blocked",
         "custom_event_still_blocked": blocked_statuses.get("OnCustomEvent") == "blocked",
-        "wave_event_still_blocked": blocked_statuses.get("OnWaveMonster") == "blocked",
+        "wave_event_source_admitted": _family_status(rules, "OnWaveMonster") != "blocked"
+        and "wave.monster" in _family_json(rules, "OnWaveMonster").get("runtime_event_sources", ()),
     }
     checks["ok"] = all(value for key, value in checks.items() if key != "ok")
     return {"checks": {"ok": checks["ok"], "checks": checks}, "blocked_statuses": blocked_statuses}

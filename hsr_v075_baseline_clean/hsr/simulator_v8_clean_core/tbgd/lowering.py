@@ -40,6 +40,7 @@ from ..rules.ir import (
     FormulaIR,
     HitProfileIR,
     IRSource,
+    MonsterDataCardIR,
     PassiveMechanismSlotIR,
     QueueIntentIR,
     QueueLifecyclePolicyIR,
@@ -60,6 +61,8 @@ from ..rules.ir import (
     TimelineRuleIR,
     ToughnessEmissionIR,
     TriggerIR,
+    WaveDefinitionIR,
+    WaveMonsterEntryIR,
 )
 
 
@@ -243,6 +246,7 @@ class TBGDLowering:
         passive_mechanism_slots = list(monster_cards.passive_mechanism_slots)
         skill_formula_bindings = [*skill_formula_bindings, *monster_cards.skill_formula_bindings]
         combatant_profiles = self._lower_combatant_profiles()
+        wave_definitions = self._lower_wave_definitions(entities, combatant_profiles, monster_data_cards)
         action_definitions = list(self._lower_action_definitions().values())
         (
             action_ability_bindings,
@@ -434,6 +438,7 @@ class TBGDLowering:
             resource_rules=tuple(resource_rules),
             super_break_emissions=tuple(super_break_emissions),
             target_expressions=tuple(_dedupe_target_expressions(target_expressions).values()),
+            wave_definitions=tuple(wave_definitions),
             triggers=tuple(triggers),
             effects=tuple(effects),
             conditions=tuple(conditions),
@@ -488,6 +493,10 @@ class TBGDLowering:
                     "target_expression_count": len(target_expressions),
                     "executable_target_expression_count": sum(
                         1 for expression in target_expressions if expression.coverage_status == "executable"
+                    ),
+                    "wave_definition_count": len(wave_definitions),
+                    "executable_wave_definition_count": sum(
+                        1 for definition in wave_definitions if definition.coverage_status == "executable"
                     ),
                     "skill_formula_binding_count": len(skill_formula_bindings),
                     "bounce_policy_count": len(bounce_policies),
@@ -595,6 +604,135 @@ class TBGDLowering:
         for template_id, template_row in sorted(template_rows.items()):
             profiles.append(_combatant_profile_from_template(template_id, template_row))
         return profiles
+
+    def _lower_wave_definitions(
+        self,
+        entities: list[RuleEntity],
+        combatant_profiles: list[CombatantProfileIR],
+        monster_data_cards: tuple[MonsterDataCardIR, ...],
+    ) -> list[WaveDefinitionIR]:
+        relative = "ExcelOutput/StageConfig.json"
+        path = self.tbgd_root / relative
+        if not path.exists():
+            return []
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            return []
+        if not isinstance(raw, list):
+            return []
+        rows = _limit_sequence(raw, self.limits.max_records_per_table)
+        entity_by_id = {entity.entity_id: entity for entity in entities}
+        profile_by_entity = {profile.entity_id: profile for profile in combatant_profiles}
+        card_by_entity = {card.entity_ref: card for card in monster_data_cards}
+        definitions: list[WaveDefinitionIR] = []
+        for row_index, row in enumerate(rows):
+            if not isinstance(row, dict):
+                continue
+            stage_id = _stage_id(row)
+            if not stage_id:
+                continue
+            monster_list = row.get("MonsterList")
+            if not isinstance(monster_list, list) or not monster_list:
+                continue
+            declared_wave_count = _stage_config_wave_count(row.get("StageConfigData"))
+            wave_count = declared_wave_count if declared_wave_count > 0 else len(monster_list)
+            entries: list[WaveMonsterEntryIR] = []
+            for wave_index, wave in enumerate(monster_list):
+                if not isinstance(wave, dict):
+                    continue
+                for monster_key, raw_monster_id in _stage_monster_items(wave):
+                    position = _stage_monster_position(monster_key)
+                    monster_raw_id = _stage_monster_raw_id(raw_monster_id)
+                    monster_entity_ref = f"monster:{monster_raw_id}" if monster_raw_id else ""
+                    coverage_status = "executable"
+                    blocked_reason = ""
+                    if not monster_raw_id or monster_raw_id == "0":
+                        coverage_status = "blocked"
+                        blocked_reason = "wave_monster_entry_empty"
+                    elif (
+                        monster_entity_ref not in entity_by_id
+                        or entity_by_id[monster_entity_ref].entity_type not in {"monster", "monster_template"}
+                    ):
+                        coverage_status = "blocked"
+                        blocked_reason = "wave_monster_entity_missing"
+                    else:
+                        profile = profile_by_entity.get(monster_entity_ref)
+                        card = card_by_entity.get(monster_entity_ref)
+                        if profile is None or profile.coverage_status != "executable":
+                            coverage_status = "blocked"
+                            blocked_reason = "combatant_profile_missing_or_blocked"
+                        elif card is None:
+                            coverage_status = "blocked"
+                            blocked_reason = "monster_data_card_missing"
+                    entries.append(
+                        WaveMonsterEntryIR(
+                            entry_id=f"wave_entry:stage:{_safe_id(stage_id)}:w{wave_index}:p{position}:{_safe_id(monster_raw_id or 'empty')}",
+                            stage_id=stage_id,
+                            wave_index=wave_index,
+                            position=position,
+                            monster_entity_ref=monster_entity_ref,
+                            monster_raw_id=monster_raw_id,
+                            source=IRSource(
+                                source_path=relative_source_path(self.tbgd_root, path),
+                                raw_type="StageConfig.MonsterList",
+                                raw_id=f"{stage_id}:{wave_index}:{monster_key}",
+                                evidence={
+                                    "StageID": stage_id,
+                                    "stage_row_index": row_index,
+                                    "StageConfigData": row.get("StageConfigData") if isinstance(row.get("StageConfigData"), list) else [],
+                                    "declared_wave_count": declared_wave_count,
+                                    "MonsterList_wave_index": wave_index,
+                                    "MonsterList_key": monster_key,
+                                    "monster_id": monster_raw_id,
+                                },
+                            ),
+                            coverage_status=coverage_status,  # type: ignore[arg-type]
+                            blocked_reason=blocked_reason,
+                        )
+                    )
+            blocked_entries = [entry for entry in entries if entry.coverage_status != "executable"]
+            definition_blocked_reason = ""
+            definition_status = "executable"
+            if declared_wave_count <= 0:
+                definition_status = "blocked"
+                definition_blocked_reason = "stage_wave_count_missing"
+            elif wave_count != len(monster_list):
+                definition_status = "blocked"
+                definition_blocked_reason = "stage_wave_count_monster_list_mismatch"
+            elif not entries:
+                definition_status = "blocked"
+                definition_blocked_reason = "stage_wave_entries_missing"
+            elif blocked_entries:
+                definition_status = "blocked"
+                definition_blocked_reason = "stage_wave_entry_blocked"
+            stage_ability_refs = tuple(str(item) for item in row.get("StageAbilityConfig", ()) if str(item))
+            definitions.append(
+                WaveDefinitionIR(
+                    wave_definition_id=f"wave_definition:stage:{_safe_id(stage_id)}",
+                    stage_id=stage_id,
+                    wave_count=wave_count,
+                    entries=tuple(entries),
+                    stage_ability_refs=stage_ability_refs,
+                    source=IRSource(
+                        source_path=relative_source_path(self.tbgd_root, path),
+                        raw_type="StageConfig",
+                        raw_id=stage_id,
+                        evidence={
+                            "StageID": stage_id,
+                            "stage_row_index": row_index,
+                            "declared_wave_count": declared_wave_count,
+                            "monster_list_wave_count": len(monster_list),
+                            "entry_count": len(entries),
+                            "blocked_entry_count": len(blocked_entries),
+                            "StageAbilityConfig": list(stage_ability_refs),
+                        },
+                    ),
+                    coverage_status=definition_status,  # type: ignore[arg-type]
+                    blocked_reason=definition_blocked_reason,
+                )
+            )
+        return definitions
 
     def _lower_break_base_damage(self) -> list[BreakBaseDamageIR]:
         relative_path = "ExcelOutput/AvatarBreakDamage.json"
@@ -2878,6 +3016,58 @@ def _entity_raw_id(entity_type: str, id_key: str, row: dict[str, Any]) -> str:
     return str(row[id_key])
 
 
+def _stage_id(row: dict[str, Any]) -> str:
+    value = row.get("StageID")
+    if isinstance(value, bool) or value is None:
+        return ""
+    return str(value)
+
+
+def _stage_config_wave_count(value: Any) -> int:
+    if not isinstance(value, list):
+        return 0
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        key = item.get("BFLIFKBEOPJ")
+        raw_value = item.get("MNDFOPKBHKP")
+        if key != "_Wave":
+            continue
+        try:
+            return int(str(raw_value))
+        except (TypeError, ValueError):
+            return 0
+    return 0
+
+
+def _stage_monster_items(wave: dict[str, Any]) -> tuple[tuple[str, Any], ...]:
+    items: list[tuple[int, str, Any]] = []
+    for key, value in wave.items():
+        if not isinstance(key, str) or not key.startswith("Monster"):
+            continue
+        items.append((_stage_monster_position(key), key, value))
+    return tuple((key, value) for _, key, value in sorted(items, key=lambda item: (item[0], item[1])))
+
+
+def _stage_monster_position(key: str) -> int:
+    suffix = key.removeprefix("Monster")
+    try:
+        return int(suffix)
+    except ValueError:
+        return 9999
+
+
+def _stage_monster_raw_id(value: Any) -> str:
+    if isinstance(value, bool) or value is None:
+        return ""
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    text = str(value).strip()
+    return text
+
+
 STATUS_EVENT_RUNTIME_SOURCES: dict[str, tuple[str, ...]] = {
     "OnListenAllowAction": ("turn.begin",),
     "OnListenTurnEnd": ("turn.end",),
@@ -2931,12 +3121,12 @@ STATUS_EVENT_RUNTIME_SOURCES: dict[str, tuple[str, ...]] = {
     "OnActionDelayEffect": ("action_delay.changed",),
     "OnActionDelayEffectAll": ("action_delay.changed",),
     "OnListenGlobalActionDelayChanged": ("action_delay.changed",),
+    "OnWaveMonster": ("wave.monster",),
 }
 
 
 STATUS_EVENT_BLOCKED_DEPENDENCIES: dict[str, str] = {
     "OnCustomEvent": "event_source_missing:custom_event_source_not_admitted",
-    "OnWaveMonster": "event_source_missing:wave_system_not_implemented",
 }
 
 

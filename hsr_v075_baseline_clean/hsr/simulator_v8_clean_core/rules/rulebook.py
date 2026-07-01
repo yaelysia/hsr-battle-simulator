@@ -50,6 +50,8 @@ from .ir import (
     TimelineRuleIR,
     ToughnessEmissionIR,
     TriggerIR,
+    WaveDefinitionIR,
+    WaveMonsterEntryIR,
 )
 
 
@@ -677,6 +679,36 @@ class RuleBook:
             "_target_expressions",
             {expression.target_expression_id: expression for expression in self.ir.target_expressions},
         )
+        wave_definitions_by_stage: dict[str, list[WaveDefinitionIR]] = {}
+        wave_entries_by_definition_wave: dict[tuple[str, int], list[WaveMonsterEntryIR]] = {}
+        for definition in self.ir.wave_definitions:
+            wave_definitions_by_stage.setdefault(definition.stage_id, []).append(definition)
+            for entry in definition.entries:
+                wave_entries_by_definition_wave.setdefault(
+                    (definition.wave_definition_id, entry.wave_index),
+                    [],
+                ).append(entry)
+        object.__setattr__(
+            self,
+            "_wave_definitions",
+            {definition.wave_definition_id: definition for definition in self.ir.wave_definitions},
+        )
+        object.__setattr__(
+            self,
+            "_wave_definitions_by_stage",
+            {
+                stage_id: tuple(sorted(definitions, key=lambda item: item.wave_definition_id))
+                for stage_id, definitions in wave_definitions_by_stage.items()
+            },
+        )
+        object.__setattr__(
+            self,
+            "_wave_entries_by_definition_wave",
+            {
+                key: tuple(sorted(entries, key=lambda item: (item.position, item.entry_id)))
+                for key, entries in wave_entries_by_definition_wave.items()
+            },
+        )
         object.__setattr__(self, "_effects", {effect.effect_id: effect for effect in self.ir.effects})
         object.__setattr__(self, "_conditions", {condition.condition_id: condition for condition in self.ir.conditions})
         object.__setattr__(self, "_triggers", {trigger.trigger_id: trigger for trigger in self.ir.triggers})
@@ -803,6 +835,19 @@ class RuleBook:
 
     def target_expressions(self) -> tuple[TargetExpressionIR, ...]:
         return self.ir.target_expressions
+
+    def wave_definition(self, wave_definition_id: str) -> WaveDefinitionIR | None:
+        return self._wave_definitions.get(wave_definition_id)
+
+    def wave_definitions(self) -> tuple[WaveDefinitionIR, ...]:
+        return tuple(sorted(self.ir.wave_definitions, key=lambda item: item.wave_definition_id))
+
+    def wave_definition_for_stage(self, stage_id: str) -> WaveDefinitionIR | None:
+        definitions = self._wave_definitions_by_stage.get(stage_id, ())
+        return definitions[0] if definitions else None
+
+    def wave_entries_for_wave(self, wave_definition_id: str, wave_index: int) -> tuple[WaveMonsterEntryIR, ...]:
+        return self._wave_entries_by_definition_wave.get((wave_definition_id, int(wave_index)), ())
 
     def has_action(self, action_id: str) -> bool:
         entity = self._entities.get(action_id)

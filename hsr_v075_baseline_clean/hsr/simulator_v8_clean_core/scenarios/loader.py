@@ -25,6 +25,14 @@ class ScenarioLoader:
             raise ValueError("scenario.units must not be empty")
         if not route:
             raise ValueError("scenario.route must not be empty")
+        wave_definition_ref = data.get("wave_definition_ref")
+        stage_ref = data.get("stage_ref")
+        wave_setup = data.get("wave_setup")
+        if isinstance(wave_setup, dict):
+            if wave_setup.get("kind") == "tbgd_stage" and wave_setup.get("stage_id") is not None:
+                stage_ref = wave_setup.get("stage_id")
+            if wave_setup.get("kind") == "wave_definition" and wave_setup.get("wave_definition_id") is not None:
+                wave_definition_ref = wave_setup.get("wave_definition_id")
         return ScenarioSpec(
             scenario_id=scenario_id,
             version=version,
@@ -33,6 +41,8 @@ class ScenarioLoader:
             skill_points=int(data.get("skill_points", 3)),
             max_skill_points=int(data.get("max_skill_points", 5)),
             wave_index=int(data.get("wave_index", 0)),
+            wave_definition_ref=str(wave_definition_ref) if wave_definition_ref is not None else None,
+            stage_ref=str(stage_ref) if stage_ref is not None else None,
             rng_state=str(data.get("rng_state", "deterministic")),
             global_flags=dict(data.get("global_flags", {})),
         )

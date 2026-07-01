@@ -60,7 +60,7 @@ def run_validation(package_root: Path, tbgd_root: Path, output_dir: Path) -> dic
                 "mode": "structured_predicate",
                 "fixed_character_monster_skill_or_file_used_for_selection": False,
                 "positive_routes": list(POSITIVE_RUNTIME_EVENTS),
-                "blocked_routes": ["custom.event", "wave.monster", "special.mode"],
+                    "blocked_routes": ["custom.event", "fake wave.monster without WaveSystem payload", "special.mode"],
             },
         },
         "checks": checks,
@@ -108,7 +108,8 @@ def _coverage_case(rules: RuleBook) -> dict[str, Any]:
         "executable_families_have_runtime_source": all(family.runtime_event_sources for family in executable),
         "blocked_families_have_reason": all(bool(family.blocked_reason or family.blocking_dependency) for family in blocked),
         "custom_event_blocked": _family_status(rules, "OnCustomEvent") == "blocked",
-        "wave_event_blocked": _family_status(rules, "OnWaveMonster") == "blocked",
+        "wave_event_has_runtime_source": _family_status(rules, "OnWaveMonster") != "blocked"
+        and "wave.monster" in _family_json(rules, "OnWaveMonster").get("runtime_event_sources", ()),
         "before_hit_family_executable": _family_status(rules, "OnBeforeHit") == "executable",
         "status_lifecycle_family_executable": _family_status(rules, "OnCreate") == "executable",
     }

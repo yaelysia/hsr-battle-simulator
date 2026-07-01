@@ -1465,6 +1465,56 @@ class ResourceRuleIR:
 
 
 @dataclass(frozen=True)
+class WaveMonsterEntryIR:
+    entry_id: str
+    stage_id: str
+    wave_index: int
+    position: int
+    monster_entity_ref: str
+    monster_raw_id: str
+    source: IRSource
+    coverage_status: CoverageStatus = "executable"
+    blocked_reason: str = ""
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "entry_id": self.entry_id,
+            "stage_id": self.stage_id,
+            "wave_index": self.wave_index,
+            "position": self.position,
+            "monster_entity_ref": self.monster_entity_ref,
+            "monster_raw_id": self.monster_raw_id,
+            "source": self.source.to_json(),
+            "coverage_status": self.coverage_status,
+            "blocked_reason": self.blocked_reason,
+        }
+
+
+@dataclass(frozen=True)
+class WaveDefinitionIR:
+    wave_definition_id: str
+    stage_id: str
+    wave_count: int
+    entries: tuple[WaveMonsterEntryIR, ...]
+    stage_ability_refs: tuple[str, ...]
+    source: IRSource
+    coverage_status: CoverageStatus = "executable"
+    blocked_reason: str = ""
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "wave_definition_id": self.wave_definition_id,
+            "stage_id": self.stage_id,
+            "wave_count": self.wave_count,
+            "entries": [entry.to_json() for entry in self.entries],
+            "stage_ability_refs": list(self.stage_ability_refs),
+            "source": self.source.to_json(),
+            "coverage_status": self.coverage_status,
+            "blocked_reason": self.blocked_reason,
+        }
+
+
+@dataclass(frozen=True)
 class CanonicalIR:
     version: str
     entities: tuple[RuleEntity, ...] = ()
@@ -1509,6 +1559,7 @@ class CanonicalIR:
     resource_rules: tuple[ResourceRuleIR, ...] = ()
     super_break_emissions: tuple[SuperBreakEmissionIR, ...] = ()
     target_expressions: tuple[TargetExpressionIR, ...] = ()
+    wave_definitions: tuple[WaveDefinitionIR, ...] = ()
     triggers: tuple[TriggerIR, ...] = ()
     effects: tuple[EffectIR, ...] = ()
     conditions: tuple[ConditionIR, ...] = ()
@@ -1561,6 +1612,7 @@ class CanonicalIR:
             "resource_rules": [rule.to_json() for rule in self.resource_rules],
             "super_break_emissions": [emission.to_json() for emission in self.super_break_emissions],
             "target_expressions": [expression.to_json() for expression in self.target_expressions],
+            "wave_definitions": [definition.to_json() for definition in self.wave_definitions],
             "triggers": [trigger.to_json() for trigger in self.triggers],
             "effects": [effect.to_json() for effect in self.effects],
             "conditions": [condition.to_json() for condition in self.conditions],

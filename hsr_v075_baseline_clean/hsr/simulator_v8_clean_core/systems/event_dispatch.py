@@ -639,12 +639,25 @@ CANONICAL_EVENT_ALIASES: dict[str, tuple[tuple[str, str, str], ...]] = {
         ("OnCustomEvent", "owner_local", "event_alias_missing:custom_event_source_not_admitted"),
     ),
     "wave.monster": (
-        ("OnWaveMonster", "global_listener", "downstream_intent_missing:wave_system_not_implemented"),
+        ("OnWaveMonster", "global_listener", ""),
     ),
 }
 
 
 def _event_aliases(event: GameEvent, rules: RuleBook | None = None) -> tuple[EventAlias, ...]:
+    if event.event_type == "wave.monster":
+        payload_reason = _wave_monster_payload_block_reason(event)
+        if payload_reason:
+            return (
+                EventAlias(
+                    callback_event="OnWaveMonster",
+                    scope_kind="global_listener",
+                    source_basis="wave_monster_payload_validation",
+                    admission_status="blocked",
+                    blocked_dependency=payload_reason,
+                    runtime_event_source=event.event_type,
+                ),
+            )
     aliases: list[EventAlias] = []
     raw_events = event.payload.get("callback_events")
     if isinstance(raw_events, (list, tuple)):
@@ -696,6 +709,26 @@ def _event_aliases(event: GameEvent, rules: RuleBook | None = None) -> tuple[Eve
             blocked_dependency="event_alias_missing",
         ),
     )
+
+
+def _wave_monster_payload_block_reason(event: GameEvent) -> str:
+    payload = event.payload
+    required = (
+        "wave_definition_id",
+        "wave_index",
+        "unit_id",
+        "entry_id",
+        "position",
+        "source_trace",
+    )
+    missing = [key for key in required if key not in payload]
+    if missing:
+        return "wave_monster_payload_incomplete"
+    if not isinstance(payload.get("source_trace"), dict) or not payload.get("source_trace"):
+        return "wave_monster_source_trace_missing"
+    if str(payload.get("unit_id") or "") != str(event.target_id or payload.get("unit_id") or ""):
+        return "wave_monster_target_payload_mismatch"
+    return ""
 
 
 def _event_alias_for_callback(
