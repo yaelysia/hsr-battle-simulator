@@ -62,6 +62,11 @@ class CombatScheduler:
         self.ability_tasks = AbilityTaskSystem(rules, self.effects, reducer=self.reducer)
         self.event_dispatcher = EventDispatchSystem(rules, self.effects, reducer=self.reducer)
 
+    def action_availability(self, state: BattleState):
+        from .action_availability import ActionAvailabilitySystem
+
+        return ActionAvailabilitySystem(self.rules).view(state)
+
     def initialize_timeline(
         self,
         state: BattleState,
@@ -711,28 +716,34 @@ class CombatScheduler:
         )
 
     def _try_queue_drain(self, state: BattleState, command: ActionCommand | None = None) -> SchedulerStepResult | None:
-        plans: list[QueueDrainPlan] = []
-        for queue_name in sorted(state.queues):
-            resolutions = _resolutions_for_queue(self.rules, state, queue_name)
-            if not resolutions:
-                continue
-            plan = self.queue.plan_next_drain(state, queue_name, resolutions)
-            if plan.ok:
-                plans.append(plan)
-        if not plans:
+        plan = select_next_queue_drain_plan(self.rules, self.queue, state)
+        if plan is None:
             return None
-        plan = sorted(
-            plans,
-            key=lambda item: (
-                QUEUE_WINDOW_FAMILY_ORDER.get((item.queue_window or {}).get("window_family") or "unknown", 999),
-                float(item.priority_value) if item.priority_value is not None else float("inf"),
-                item.drain_order if item.drain_order is not None else 0,
-                str(item.queue_entry.get("entry_id") or ""),
-            ),
-        )[0]
+        if not plan.ok:
+            return self._blocked(
+                state,
+                "queue:drain",
+                plan.blocked_reason or "queue_drain_blocked",
+                {"drain_plan": plan.to_json()},
+            )
         resolution = _resolution_for_drain_plan(self.rules, state, plan)
         if resolution is None:
             return self._blocked(state, "queue:drain", "queue_resolution_missing", {"drain_plan": plan.to_json()})
+        requires_external_command = queue_plan_requires_external_command(plan, resolution)
+        if requires_external_command and command is None:
+            return self._blocked(
+                state,
+                "queue:selectable_drain",
+                "queue_selectable_command_missing",
+                {"drain_plan": plan.to_json(), "queue_resolution": resolution.to_json()},
+            )
+        if not requires_external_command and command is not None:
+            return self._blocked(
+                state,
+                "queue:mandatory_drain",
+                "queue_mandatory_blocks_external_command",
+                {"drain_plan": plan.to_json(), "queue_resolution": resolution.to_json(), "command": _command_payload(command)},
+            )
         action_transition = None
         if resolution.resolved_kind == "action_definition" or _is_extra_turn_action_choice_plan(plan, resolution):
             preflight_reason = self._queue_action_preflight_reason(state, plan, command=command)
@@ -968,6 +979,19 @@ class CombatScheduler:
                 selected_action_id = command.action_id
                 selected_action_level = command.action_level
                 selected_targets = tuple(target_id for target_id in command.target_ids if target_id in state.units)
+        if window_family == "ultimate":
+            if command is None:
+                return "queue_selectable_command_missing"
+            if command.actor_id != actor_id:
+                return "manual_ultimate_action_actor_mismatch"
+            if command.action_id != selected_action_id or int(command.action_level) != int(selected_action_level or 0):
+                return "manual_ultimate_action_mismatch"
+            requested_targets = tuple(command.target_ids)
+            if requested_targets != selected_targets:
+                return "manual_ultimate_target_mismatch"
+            selected_action_id = command.action_id
+            selected_action_level = command.action_level
+            selected_targets = requested_targets
         if not selected_action_id or selected_action_level is None:
             return "queue_action_resolution_missing"
         if not selected_targets:
@@ -998,12 +1022,13 @@ class CombatScheduler:
 
     def _queue_action_command_from_plan(self, plan: QueueDrainPlan, command: ActionCommand | None) -> ActionCommand:
         window_family = str((plan.queue_window or {}).get("window_family") or "")
-        if window_family == "extra_turn" and command is not None:
+        if window_family in {"extra_turn", "ultimate"} and command is not None:
+            source = "route_manual_ultimate" if window_family == "ultimate" else "route_manual_extra_turn"
             return replace(
                 command,
                 source="queue",
                 queue_name=plan.queue_name,
-                metadata={**command.metadata, "action_choice_source": "route_manual_extra_turn"},
+                metadata={**command.metadata, "action_choice_source": source},
             )
         return ActionCommand(
             actor_id=str(plan.queue_entry.get("actor_id") or ""),
@@ -1435,6 +1460,42 @@ def _mutation_records(
             trace=plan.source_trace,
         ).to_json()
         for mutation in mutations
+    )
+
+
+def select_next_queue_drain_plan(rules: RuleBook, queue: QueueSystem, state: BattleState) -> QueueDrainPlan | None:
+    admitted: list[QueueDrainPlan] = []
+    blocked: list[QueueDrainPlan] = []
+    for queue_name in sorted(state.queues):
+        if not state.queues.get(queue_name):
+            continue
+        resolutions = _resolutions_for_queue(rules, state, queue_name)
+        plan = queue.plan_next_drain(state, queue_name, resolutions)
+        if plan.ok:
+            admitted.append(plan)
+        else:
+            blocked.append(plan)
+    if admitted:
+        return sorted(admitted, key=_queue_plan_sort_key)[0]
+    if blocked:
+        return sorted(blocked, key=_queue_plan_sort_key)[0]
+    return None
+
+
+def queue_plan_requires_external_command(plan: QueueDrainPlan, resolution: QueueResolutionIR) -> bool:
+    window_family = str((plan.queue_window or {}).get("window_family") or "")
+    if window_family == "ultimate":
+        return True
+    return _is_extra_turn_action_choice_plan(plan, resolution)
+
+
+def _queue_plan_sort_key(plan: QueueDrainPlan) -> tuple[int, float, int, str]:
+    window = plan.queue_window or {}
+    return (
+        QUEUE_WINDOW_FAMILY_ORDER.get(str(window.get("window_family") or "unknown"), 999),
+        float(plan.priority_value) if plan.priority_value is not None else float("inf"),
+        plan.drain_order if plan.drain_order is not None else 0,
+        str(plan.queue_entry.get("entry_id") or ""),
     )
 
 

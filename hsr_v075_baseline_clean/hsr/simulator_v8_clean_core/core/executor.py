@@ -19,13 +19,20 @@ from ..rules.evaluator import EvaluationContext, NumericEvaluationContext, RuleE
 from ..rules.ir import ActionDefinitionIR
 from ..rules.rulebook import RuleBook
 from ..systems.ability import AbilityTaskExecutionResult, AbilityTaskSystem
+from ..systems.action_preflight import (
+    action_binding_blocked_reason,
+    action_event_blocked_reason,
+    action_resource_plan,
+    combined_blocked_reason,
+    target_policy_for_action,
+)
 from ..systems.break_system import BreakApplicationResult, BreakSystem
 from ..systems.damage import DamagePacket, DamageSystem, DamageSourceFrame, DamageWindowLedger
 from ..systems.dynamic_values import binding_source_from_store, status_binding_sources, store_from_state
 from ..systems.effect import EffectRegistry
-from ..systems.resource import ResourcePlan, ResourceSystem
+from ..systems.resource import ResourceSystem
 from ..systems.status import StatusSystem
-from ..systems.target import TargetPolicy, TargetSystem
+from ..systems.target import TargetSystem
 from ..systems.timeline import TimelinePlan, TimelineSystem
 from ..systems.toughness import ToughnessPacket, ToughnessSystem
 from ..systems.event_dispatch import EventDispatchResult, EventDispatchSystem
@@ -62,8 +69,8 @@ class CombatExecutor:
         toughness_emissions = self.rules.toughness_emissions_for_action(command.action_id, command.action_level)
         bounce_policy = _bounce_policy_for_profiles(self.rules, hit_profiles)
         action_definition_trace = self.rules.action_definition_source_trace(command.action_id, command.action_level) or {}
-        binding_blocked_reason = _binding_blocked_reason(action_binding)
-        action_event_blocked_reason = _action_event_blocked_reason(action_event_ir)
+        binding_blocked_reason = action_binding_blocked_reason(action_binding)
+        action_event_reason = action_event_blocked_reason(action_event_ir)
         action_source_metadata = {
             "definition_id": action_definition.definition_id,
             "action_id": action_definition.action_id,
@@ -90,7 +97,7 @@ class CombatExecutor:
             state,
             command.actor_id,
             command.target_ids,
-            policy=_target_policy(action_definition, action_event_ir.target_mode, bounce_policy),
+            policy=target_policy_for_action(self.rules, action_definition, action_event_ir.target_mode),
         )
         action_execution_plan = build_action_execution_plan(
             action_definition,
@@ -114,28 +121,22 @@ class CombatExecutor:
         )
         action_event_plan_payload = _action_event_plan_compat_payload(action_definition, action_event_ir)
         queue_resource_policy = _queue_action_resource_policy(command)
-        skill_point_delta = _skill_point_delta(action_definition.bp_need, action_definition.bp_add)
-        energy_gain = action_definition.sp_base
-        if queue_resource_policy.get("ignore_skill_point_delta") is True:
-            skill_point_delta = 0
-        if queue_resource_policy.get("ignore_energy_gain") is True:
-            energy_gain = 0.0
         resource_result = self.resources.plan_action_resources(
             state,
             command.actor_id,
-            ResourcePlan(
-                skill_point_delta=skill_point_delta,
-                energy_gain=energy_gain,
+            action_resource_plan(
+                action_definition,
                 source="combat_executor.resources",
                 metadata={
                     **action_source_metadata,
                     "queue_resource_policy": queue_resource_policy,
                 },
+                queue_resource_policy=queue_resource_policy,
             ),
         )
-        plan_blocked_reason = _combined_blocked_reason(
+        plan_blocked_reason = combined_blocked_reason(
             binding_blocked_reason,
-            action_event_blocked_reason,
+            action_event_reason,
             action_execution_plan.target_plan.blocked_reason,
         )
         blocked_reason = _action_blocked_reason(
@@ -818,8 +819,8 @@ class CombatExecutor:
                     "resource_ok": resource_result.ok,
                     "binding_ok": bool(action_binding and action_binding.coverage_status == "executable"),
                     "binding_blocked_reason": action_binding.blocked_reason if action_binding else "action_ability_binding_missing",
-                    "event_ok": not action_event_blocked_reason,
-                    "event_blocked_reason": action_event_blocked_reason,
+                    "event_ok": not action_event_reason,
+                    "event_blocked_reason": action_event_reason,
                     "has_selected_target": bool(target_result.resolution.selected),
                     "plan_blocked_reason": plan_blocked_reason,
                     "target_errors": list(target_result.errors),
@@ -927,8 +928,8 @@ class CombatExecutor:
                 "resource_ok": resource_result.ok,
                 "binding_ok": bool(action_binding and action_binding.coverage_status == "executable"),
                 "binding_blocked_reason": binding_blocked_reason,
-                "event_ok": not action_event_blocked_reason,
-                "event_blocked_reason": action_event_blocked_reason,
+                "event_ok": not action_event_reason,
+                "event_blocked_reason": action_event_reason,
                 "action_enabled": action_enabled,
                 "blocked_reason": blocked_reason,
                 "plan_blocked_reason": plan_blocked_reason,
@@ -1110,14 +1111,6 @@ def _metadata_bool(metadata: dict[str, JSONValue], key: str, default: bool) -> b
     return bool(value)
 
 
-def _skill_point_delta(bp_need: float, bp_add: float) -> int:
-    if bp_need > 0:
-        return -int(bp_need)
-    if bp_add > 0:
-        return int(bp_add)
-    return 0
-
-
 def _queue_action_resource_policy(command: ActionCommand) -> dict[str, JSONValue]:
     queue_parent = command.metadata.get("queue_parent") if isinstance(command.metadata, dict) else None
     if not isinstance(queue_parent, dict):
@@ -1141,28 +1134,6 @@ def _condition_skill_type(action_definition: ActionDefinitionIR) -> str:
     return "Normal"
 
 
-def _binding_blocked_reason(action_binding) -> str:
-    if action_binding is None:
-        return "action_ability_binding_missing"
-    if action_binding.coverage_status != "executable":
-        return action_binding.blocked_reason or f"action_ability_binding_not_executable:{action_binding.coverage_status}"
-    if not action_binding.phase_ids:
-        return "action_ability_binding_has_no_phase_ids"
-    return ""
-
-
-def _action_event_blocked_reason(action_event_ir) -> str:
-    if action_event_ir.blocked_reason:
-        return action_event_ir.blocked_reason
-    if action_event_ir.event_source_status != "ability_phase_graph_bound":
-        return f"action_event_source_not_bound:{action_event_ir.event_source_status}"
-    return ""
-
-
-def _combined_blocked_reason(*reasons: str) -> str:
-    return ",".join(dict.fromkeys(reason for reason in reasons if reason))
-
-
 def _callback_kind_for_step(phase: str) -> str:
     if phase == "before_skill_use":
         return "OnStart"
@@ -1171,41 +1142,6 @@ def _callback_kind_for_step(phase: str) -> str:
     if phase == "after_skill_use":
         return "OnEnd"
     return ""
-
-
-def _target_policy(
-    action_definition: ActionDefinitionIR,
-    target_mode: str,
-    bounce_policy: dict[str, JSONValue] | None = None,
-) -> TargetPolicy:
-    if target_mode == "self_or_team":
-        return TargetPolicy(
-            policy_id="self_or_team",
-            allow_enemy=False,
-            allow_ally=True,
-            allow_self=True,
-            target_mode=target_mode,
-            selection_mode="explicit_ally_or_self",
-        )
-    if action_definition.damage_kind == "hp_damage":
-        return TargetPolicy(
-            policy_id="enemy_damage",
-            allow_enemy=True,
-            allow_ally=False,
-            allow_self=False,
-            target_mode=target_mode,
-            selection_mode=target_mode,
-            bounce_policy=bounce_policy or {},
-        )
-    return TargetPolicy(
-        policy_id="explicit_any",
-        allow_enemy=True,
-        allow_ally=True,
-        allow_self=True,
-        target_mode=target_mode,
-        selection_mode=target_mode,
-        bounce_policy=bounce_policy or {},
-    )
 
 
 def _bounce_policy_for_profiles(rules: RuleBook, hit_profiles) -> dict[str, JSONValue]:

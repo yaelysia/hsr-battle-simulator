@@ -5,7 +5,8 @@ from dataclasses import dataclass, field
 from ..core.model import ActionCommand, BattleState, BattleTransition, JSONValue, Mutation
 from ..rules.ir import ActionDefinitionIR, MonsterDataCardIR
 from ..rules.rulebook import RuleBook
-from .target import TargetEnumerationResult, TargetPolicy, TargetSystem
+from .action_preflight import target_policy_for_action
+from .target import TargetEnumerationResult, TargetSystem
 
 
 @dataclass(frozen=True)
@@ -99,7 +100,7 @@ class EnemyActionSystem:
         event = self.rules.action_event(action_ref, action_level)
         if event is None:
             return self._blocked_from_card(actor_id, actor.template_id, card, "enemy_action_event_missing", sequence_index=sequence_index, step=step)
-        target_policy = _target_policy_for_definition(self.rules, definition, event.target_mode)
+        target_policy = target_policy_for_action(self.rules, definition, event.target_mode)
         target_result = self.targets.enumerate_action_targets(state, actor_id, target_policy)
         if not target_result.ok:
             return self._blocked_from_card(
@@ -276,52 +277,6 @@ def _action_level_for_step(rules: RuleBook, step: dict[str, JSONValue], action_r
             return 0
     levels = rules.action_levels(action_ref) if action_ref else ()
     return min(levels) if levels else 0
-
-
-def _target_policy_for_definition(
-    rules: RuleBook,
-    action_definition: ActionDefinitionIR,
-    target_mode: str,
-) -> TargetPolicy:
-    if target_mode == "self_or_team":
-        return TargetPolicy(
-            policy_id="self_or_team",
-            allow_enemy=False,
-            allow_ally=True,
-            allow_self=True,
-            target_mode=target_mode,
-            selection_mode="explicit_ally_or_self",
-        )
-    if action_definition.damage_kind == "hp_damage":
-        return TargetPolicy(
-            policy_id="enemy_damage",
-            allow_enemy=True,
-            allow_ally=False,
-            allow_self=False,
-            target_mode=target_mode,
-            selection_mode=target_mode,
-            bounce_policy=_bounce_policy_for_action(rules, action_definition.action_id, action_definition.level),
-        )
-    return TargetPolicy(
-        policy_id="explicit_any",
-        allow_enemy=True,
-        allow_ally=True,
-        allow_self=True,
-        target_mode=target_mode,
-        selection_mode=target_mode,
-        bounce_policy=_bounce_policy_for_action(rules, action_definition.action_id, action_definition.level),
-    )
-
-
-def _bounce_policy_for_action(rules: RuleBook, action_id: str, level: int) -> dict[str, JSONValue]:
-    for profile in rules.hit_profiles_for_action(action_id, level):
-        policy_id = profile.bounce_policy_id
-        if not policy_id:
-            continue
-        policy = rules.bounce_policy(policy_id)
-        if policy is not None:
-            return policy.to_json()
-    return {}
 
 
 def _candidate_source_trace(
