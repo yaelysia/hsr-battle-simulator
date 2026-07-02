@@ -3238,6 +3238,7 @@ STATUS_EVENT_RUNTIME_SOURCES: dict[str, tuple[str, ...]] = {
     "OnBeforeDying": ("unit.before_dying",),
     "OnCreate": ("status.lifecycle",),
     "OnDestroy": ("status.lifecycle",),
+    "OnPhase1": ("status.lifecycle",),
     "OnStack": ("status.lifecycle",),
     "OnModifierAdd": ("status.lifecycle",),
     "OnModifierRemove": ("status.lifecycle",),
@@ -6032,6 +6033,7 @@ RESOURCE_DELTA_OPCODES = {"ModifySPNew"}
 DYNAMIC_VALUE_OPCODES = {"DefineDynamicValue", "SetDynamicValue", "SetDynamicValueByAddValue", "SetDynamicValueByModifierValue"}
 DAMAGE_EMISSION_OPCODES = {"DamageByAttackProperty"}
 HP_LOSS_OPCODES = {"LoseHPByRatio"}
+DISPEL_STATUS_OPCODES = {"DispelStatus"}
 EXECUTABLE_TARGET_ALIASES = {"Caster", "ModifierOwnerEntity", "ParamEntity", "CurrentActionTarget"}
 ADD_MODIFIER_TARGET_ALIASES = EXECUTABLE_TARGET_ALIASES | {
     "AbilityTargetEntity",
@@ -6086,6 +6088,8 @@ def _effect_payload(value: dict[str, Any], opcode: str, source_modifier_name: st
         payload["standard"] = _standard_add_modifier_payload(value)
     elif opcode in REMOVE_MODIFIER_OPCODES:
         payload["standard"] = _standard_remove_modifier_payload(value, opcode, source_modifier_name)
+    elif opcode in DISPEL_STATUS_OPCODES:
+        payload["standard"] = _standard_dispel_status_payload(value)
     elif opcode in HEAL_OPCODES:
         payload["standard"] = _standard_heal_payload(value)
     elif opcode in SHIELD_OPCODES:
@@ -6373,6 +6377,17 @@ def _effect_coverage_status(opcode: str, payload: dict[str, Any]) -> str:
         has_modifier = isinstance(standard.get("modifier_name"), str) and bool(standard.get("modifier_name"))
         has_status = isinstance(standard.get("status_id"), str) and bool(standard.get("status_id"))
         if (has_modifier or has_status) and standard.get("target_alias") in EXECUTABLE_TARGET_ALIASES | STATUS_CALLBACK_LIST_TARGET_ALIASES:
+            return "executable"
+        return "blocked"
+    if opcode in DISPEL_STATUS_OPCODES:
+        standard = payload.get("standard")
+        if not isinstance(standard, dict):
+            return "blocked"
+        if standard.get("blocked_reason"):
+            return "blocked"
+        if standard.get("target_expression_coverage_status") == "executable":
+            return "executable"
+        if standard.get("target_alias") in ADD_MODIFIER_TARGET_ALIASES | STATUS_CALLBACK_LIST_TARGET_ALIASES:
             return "executable"
         return "blocked"
     if opcode in HEAL_OPCODES | SHIELD_OPCODES:
@@ -8473,6 +8488,29 @@ def _standard_remove_modifier_payload(value: dict[str, Any], opcode: str, source
         "modifier_name": modifier_name,
         "status_id": status_id,
     }
+
+
+def _standard_dispel_status_payload(value: dict[str, Any]) -> dict[str, Any]:
+    count_expr = _numeric_expr_summary(value.get("Numbers"))
+    order = _value_field(value.get("Order"))
+    payload = {
+        "kind": "status_dispel",
+        "target_alias": _target_alias(value.get("TargetType")),
+        "buff_type": _value_field(value.get("BuffType")),
+        "numbers": count_expr,
+        "order": order,
+        "only_alive": value.get("OnlyAlive") if isinstance(value.get("OnlyAlive"), bool) else None,
+        "only_can_dispel": value.get("OnlyCanDispel") if isinstance(value.get("OnlyCanDispel"), bool) else True,
+        "is_silent_dispel": value.get("IsSilentDispel") if isinstance(value.get("IsSilentDispel"), bool) else None,
+        "mute_all_visual_effect": value.get("MuteAllVisualEffect") if isinstance(value.get("MuteAllVisualEffect"), bool) else None,
+        "behavior_flags": _list_json_values(value.get("BehaviorFlags")),
+        "dispel_count_key": _value_field(value.get("DispelCountKey")),
+    }
+    if not _numeric_expr_can_be_runtime_bound(count_expr):
+        payload["blocked_reason"] = f"dispel_count_not_executable:{count_expr.get('kind') or 'unknown'}"
+    elif order not in {"LastAdded", "Random"}:
+        payload["blocked_reason"] = f"dispel_order_not_admitted:{order or 'missing'}"
+    return payload
 
 
 def _standard_heal_payload(value: dict[str, Any]) -> dict[str, Any]:

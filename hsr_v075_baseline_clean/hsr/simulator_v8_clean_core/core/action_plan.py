@@ -274,12 +274,16 @@ def build_action_execution_plan(
     source_trace: dict[str, object] | None = None,
 ) -> ActionExecutionPlan:
     target_mode = action_event.target_mode
+    target_plan_blocked_reason = _combined_blocked_reason(
+        _execution_target_plan_source_blocked_reason(action_event.blocked_reason, damage_emissions, toughness_emissions),
+        _target_plan_blocked_reason(target_mode),
+    )
     target_plan = TargetPlan(
         target_mode=target_mode,
         selection_mode=action_event.selection_mode or _selection_mode(target_mode),
         requested_target_ids=requested_target_ids,
         source="action_event_ir",
-        blocked_reason=_combined_blocked_reason(action_event.blocked_reason, _target_plan_blocked_reason(target_mode)),
+        blocked_reason=target_plan_blocked_reason,
     )
     primary_action_target_id = _primary_action_target_id(resolved_target_groups or {})
     hit_plan = tuple(_hit_plan(profile) for profile in hit_profiles)
@@ -299,10 +303,22 @@ def build_action_execution_plan(
         primary_action_target_id,
         target_plan.blocked_reason,
     )
+    event_steps = tuple(_event_step_from_ir(step) for step in action_event.phase_steps)
+    if not any(step.kind == "damage" for step in event_steps) and (damage_plan or toughness_plan):
+        event_steps = (
+            *event_steps,
+            ActionEventStep(
+                kind="damage",
+                phase="damage",
+                canonical_window="damage",
+                tbgd_event="action_damage_plan",
+                requires_action_enabled=True,
+            ),
+        )
     return ActionExecutionPlan(
         action_id=action_definition.action_id,
         action_level=action_definition.level,
-        event_steps=tuple(_event_step_from_ir(step) for step in action_event.phase_steps),
+        event_steps=event_steps,
         target_plan=target_plan,
         hit_plan=hit_plan,
         damage_plan=damage_plan,
@@ -481,6 +497,16 @@ def _target_plan_blocked_reason(target_mode: str) -> str:
     if target_mode == "unknown":
         return "unknown_target_mode_not_executable"
     return ""
+
+
+def _execution_target_plan_source_blocked_reason(
+    blocked_reason: str,
+    damage_emissions: tuple[DamageEmissionIR, ...],
+    toughness_emissions: tuple[ToughnessEmissionIR, ...],
+) -> str:
+    if blocked_reason == "missing_ability_phase_in_ability_file" and (damage_emissions or toughness_emissions):
+        return ""
+    return blocked_reason
 
 
 def _combined_blocked_reason(*reasons: str) -> str:

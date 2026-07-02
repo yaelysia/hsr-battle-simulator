@@ -4,7 +4,7 @@ import hashlib
 import json
 from dataclasses import dataclass, field
 
-from ..core.model import BattleState, GameEvent, JSONValue, Mutation, TargetResolution
+from ..core.model import BattleState, GameEvent, JSONValue, Mutation, RNGEvent, TargetResolution
 from ..core.settlement import SettlementRecord
 from ..rules.evaluator import NumericEvaluationContext, RuleEvaluator
 from ..rules.ir import EffectIR, RuleEntity
@@ -50,6 +50,9 @@ class StatusInstance:
     status_type: str = "Unknown"
     status_category: str = "unknown"
     can_dispel: bool | None = None
+    source_stack_key: str = ""
+    control_kind: str = ""
+    chance_admission: dict[str, JSONValue] = field(default_factory=dict)
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -83,6 +86,9 @@ class StatusInstance:
             "status_type": self.status_type,
             "status_category": self.status_category,
             "can_dispel": self.can_dispel,
+            "source_stack_key": self.source_stack_key,
+            "control_kind": self.control_kind,
+            "chance_admission": self.chance_admission,
         }
 
 
@@ -145,6 +151,7 @@ class StatusApplicationResult:
     ok: bool
     mutations: tuple[Mutation, ...] = ()
     events: tuple[GameEvent, ...] = ()
+    rng_events: tuple[RNGEvent, ...] = ()
     records: tuple[dict[str, JSONValue], ...] = ()
     unsupported: tuple[str, ...] = ()
     status_instance: StatusInstance | None = None
@@ -155,11 +162,58 @@ class StatusApplicationResult:
             "ok": self.ok,
             "mutations": [mutation.to_json() for mutation in self.mutations],
             "events": [event.to_json() for event in self.events],
+            "rng_events": [event.to_json() for event in self.rng_events],
             "records": list(self.records),
             "unsupported": list(self.unsupported),
             "status_instance": self.status_instance.to_json() if self.status_instance else None,
             "lifecycle_result": self.lifecycle_result.to_json() if self.lifecycle_result else None,
         }
+
+
+@dataclass(frozen=True)
+class _ChanceCheck:
+    allowed: bool
+    record: dict[str, JSONValue] | None = None
+    rng_events: tuple[RNGEvent, ...] = ()
+    unsupported: tuple[str, ...] = ()
+
+
+def status_control_gate_for_actor(actor: object) -> dict[str, JSONValue] | None:
+    flags = getattr(actor, "flags", None)
+    if not isinstance(flags, dict):
+        return None
+    details = flags.get("status_details", ())
+    if not isinstance(details, (list, tuple)):
+        return None
+    for detail in details:
+        if not isinstance(detail, dict):
+            continue
+        if str(detail.get("lifecycle_state") or "active").startswith(("expired", "removed")):
+            continue
+        control_kind = str(detail.get("control_kind") or "")
+        status_category = str(detail.get("status_category") or "")
+        if not control_kind and status_category != "control":
+            continue
+        source_trace = detail.get("source_trace")
+        if not isinstance(source_trace, dict) or not source_trace:
+            continue
+        status_instance_id = str(detail.get("instance_id") or "")
+        reason = f"status_control_gate:{control_kind or status_category}:{status_instance_id}"
+        return {
+            "reason": reason,
+            "scope": "status_control",
+            "actor_id": str(getattr(actor, "unit_id", "") or ""),
+            "actor_side": str(getattr(actor, "side", "") or ""),
+            "metadata": {
+                "status_instance_id": status_instance_id,
+                "status_id": str(detail.get("status_id") or ""),
+                "modifier_name": str(detail.get("modifier_name") or ""),
+                "control_kind": control_kind,
+                "status_category": status_category,
+            },
+            "source_trace": source_trace,
+        }
+    return None
 
 
 class StatusSystem:
@@ -241,6 +295,9 @@ class StatusSystem:
         plans: list[StatusLifecyclePlan] = []
         lifecycle_results: list[StatusLifecycleResult] = []
         status_instances: list[StatusInstance] = []
+        process_records: list[dict[str, JSONValue]] = []
+        rng_events: list[RNGEvent] = []
+        blocked_reasons: list[str] = []
         target_resolution_trace = target_resolution.to_json() if target_resolution is not None else None
         strict_target_admission = target_alias in STRICT_ATTACHED_STATUS_TARGET_ALIASES
         for target_id in target_ids:
@@ -278,7 +335,39 @@ class StatusSystem:
                 binding_sources,
                 status_metadata=status_metadata,
             )
-            application_operation, partial_reasons = _application_semantics(standard, existing_detail, duration_admission)
+            stack_admission = _runtime_stack_admission(
+                standard,
+                effect,
+                binding_sources=binding_sources,
+            )
+            refresh_admission = _runtime_refresh_admission(
+                standard,
+                definition,
+                duration_admission,
+                effect,
+            )
+            chance_admission = _runtime_chance_admission(
+                standard,
+                effect,
+                state,
+                caster_id=caster_id,
+                target_id=target_id,
+                binding_sources=binding_sources,
+            )
+            status_id = f"modifier:{modifier_name}"
+            same_status_other_source = _same_status_other_source_detail(
+                before_details,
+                status_id=status_id,
+                source_stack_key=_source_stack_key(target_id, modifier_name, effect.effect_id, source_id),
+            )
+            application_operation, partial_reasons = _application_semantics(
+                standard,
+                existing_detail,
+                duration_admission,
+                stack_admission,
+                refresh_admission,
+                same_status_other_source=same_status_other_source,
+            )
             unsupported = [*unsupported, *partial_reasons]
             trigger_ids_by_event = _trigger_ids_by_event(self.rules, modifier_name, definition.source.source_path)
             if strict_target_admission:
@@ -293,16 +382,51 @@ class StatusSystem:
                     return _unsupported_result(effect, blocked_reason)
             duration = _status_instance_duration_value(duration_admission)
             life_step_moment = str(duration_admission.get("life_step_moment") or "")
+            source_stack_key = _source_stack_key(target_id, modifier_name, effect.effect_id, source_id)
+            stack_plan = _status_stack_plan(
+                existing_detail,
+                stack_admission,
+                operation=application_operation,
+            )
+            if application_operation == "stack_reduce" and _stack_plan_stacks_after(stack_plan) <= 0:
+                application_operation = "stack_reduce_remove"
+                stack_plan = {**stack_plan, "operation": application_operation, "stack_depleted": True}
+            refresh_plan = _status_refresh_plan(
+                existing_detail,
+                duration,
+                operation=application_operation,
+            )
+            chance_check = _status_chance_check(
+                state,
+                effect,
+                chance_admission,
+                caster_id=caster_id,
+                target_id=target_id,
+                modifier_name=modifier_name,
+                status_id=status_id,
+                source_stack_key=source_stack_key,
+            )
+            rng_events.extend(chance_check.rng_events)
+            if chance_check.record is not None:
+                process_records.append(chance_check.record)
+            if chance_check.unsupported:
+                blocked_reasons.extend(chance_check.unsupported)
+                continue
+            if not chance_check.allowed:
+                continue
+            stacks = _stack_plan_stacks_after(stack_plan)
+            remaining_duration = _refresh_plan_remaining_after(refresh_plan, duration)
+            status_duration = _refresh_plan_duration(refresh_plan, duration)
             status_instance = StatusInstance(
                 instance_id=_status_instance_id(target_id, modifier_name, effect.effect_id, source_id),
-                status_id=f"modifier:{modifier_name}",
+                status_id=status_id,
                 modifier_name=modifier_name,
                 owner_id=target_id,
                 source_id=source_id,
                 caster_id=caster_id,
-                stacks=1,
-                max_stacks=_optional_int(standard.get("max_layer")),
-                duration=duration,
+                stacks=stacks,
+                max_stacks=_stack_plan_max_stacks(stack_plan),
+                duration=status_duration,
                 dynamic_values=resolved_dynamic_values,
                 formula_bindings=formula_bindings,
                 source_trace={
@@ -316,6 +440,12 @@ class StatusSystem:
                     "resolved_target_ids": list(target_ids),
                     "target_resolution": target_resolution_trace,
                     "duration_admission": duration_admission,
+                    "stack_admission": stack_admission,
+                    "refresh_admission": refresh_admission,
+                    "stack_plan": stack_plan,
+                    "refresh_plan": refresh_plan,
+                    "chance_admission": chance_admission,
+                    "source_stack_key": source_stack_key,
                     "status_formula_bindings": [dict(item) for item in formula_bindings],
                     "status_formula_binding_source": _json_safe(standard.get("status_formula_binding_source", {})),
                 },
@@ -324,16 +454,19 @@ class StatusSystem:
                 unsupported=tuple(unsupported),
                 application_operation=application_operation,
                 partial=bool(partial_reasons),
-                remaining_duration=duration,
+                remaining_duration=remaining_duration,
                 duration_unit=life_step_moment if duration is not None else "permanent_or_unknown",
                 life_step_moment=life_step_moment,
                 duration_admission=duration_admission,
-                stack_policy="unsupported_partial" if any(reason.startswith("stack_unsupported") for reason in unsupported) else "single_instance",
-                refresh_policy="unsupported_partial" if any(reason.startswith("refresh_unsupported") for reason in unsupported) else "replace_partial",
+                stack_policy=str(stack_admission.get("stack_policy") or "single_instance"),
+                refresh_policy=str(refresh_plan.get("refresh_policy") or "none"),
                 lifecycle_state="active_partial" if partial_reasons else "active",
                 status_type=str(status_metadata.get("status_type") or "Unknown"),
                 status_category=str(status_metadata.get("status_category") or "unknown"),
                 can_dispel=status_metadata.get("can_dispel") if isinstance(status_metadata.get("can_dispel"), bool) else None,
+                source_stack_key=source_stack_key,
+                control_kind=str(status_metadata.get("control_kind") or ""),
+                chance_admission=chance_admission,
             )
             plans.append(
                 StatusLifecyclePlan(
@@ -354,13 +487,19 @@ class StatusSystem:
             lifecycle_results.append(self._apply_lifecycle_plan(state, plan))
         mutations = tuple(mutation for result in lifecycle_results for mutation in result.mutations)
         events = tuple(event for result in lifecycle_results for event in result.events)
-        records = tuple(record for result in lifecycle_results for record in result.records)
-        unsupported = tuple(reason for result in lifecycle_results for reason in result.unsupported)
+        records = (*tuple(process_records), *(record for result in lifecycle_results for record in result.records))
+        unsupported = (
+            *tuple(blocked_reasons),
+            *(reason for result in lifecycle_results for reason in result.unsupported),
+        )
         lifecycle_result = lifecycle_results[-1] if lifecycle_results else None
+        ok = all(result.ok for result in lifecycle_results) if lifecycle_results else bool(process_records)
+        ok = ok and not blocked_reasons
         return StatusApplicationResult(
-            ok=all(result.ok for result in lifecycle_results) if lifecycle_results else False,
+            ok=ok,
             mutations=mutations,
             events=events,
+            rng_events=tuple(rng_events),
             records=records,
             unsupported=unsupported,
             status_instance=status_instances[-1] if status_instances else None,
@@ -484,15 +623,177 @@ class StatusSystem:
             lifecycle_result=lifecycle_result,
         )
 
+    def apply_dispel_status(
+        self,
+        state: BattleState,
+        effect: EffectIR,
+        *,
+        caster_id: str,
+        source_id: str,
+        owner_id: str | None = None,
+        param_entity_id: str | None = None,
+        current_action_target_id: str | None = None,
+        target_resolution: TargetResolution | None = None,
+        event_payload: dict[str, JSONValue] | None = None,
+        dynamic_values: dict[str, float] | None = None,
+        binding_sources: tuple[dict[str, JSONValue], ...] = (),
+    ) -> StatusApplicationResult:
+        if effect.opcode != "DispelStatus":
+            return _unsupported_result(effect, "effect is not DispelStatus")
+        if self.rules is None:
+            return _unsupported_result(effect, "StatusSystem requires RuleBook for DispelStatus")
+        standard = effect.payload.get("standard")
+        if not isinstance(standard, dict):
+            return _unsupported_result(effect, "DispelStatus effect has no standardized payload")
+        if standard.get("blocked_reason"):
+            return _unsupported_result(effect, str(standard.get("blocked_reason")))
+        target_ids, target_blocked_reason, target_expression_trace = self._resolve_add_modifier_targets(
+            state,
+            standard,
+            caster_id=caster_id,
+            owner_id=owner_id,
+            param_entity_id=param_entity_id,
+            current_action_target_id=current_action_target_id,
+            target_resolution=target_resolution,
+            event_payload=event_payload,
+            dynamic_values=dynamic_values,
+            binding_sources=binding_sources,
+        )
+        if target_blocked_reason:
+            return _unsupported_result(effect, target_blocked_reason)
+        count_admission = _runtime_dispel_count_admission(
+            standard,
+            effect,
+            dynamic_values=dynamic_values,
+            binding_sources=binding_sources,
+        )
+        source_trace = {
+            "effect_id": effect.effect_id,
+            "effect_source": effect.source.to_json(),
+            "source_id": source_id,
+            "caster_id": caster_id,
+            "target_alias": standard.get("target_alias") if isinstance(standard.get("target_alias"), str) else "",
+            "target_expression": target_expression_trace,
+            "target_resolution": target_resolution.to_json() if target_resolution is not None else None,
+            "dispel_count_admission": count_admission,
+            "dispel_filter": {
+                "buff_type": standard.get("buff_type") if isinstance(standard.get("buff_type"), str) else "",
+                "only_can_dispel": standard.get("only_can_dispel") is not False,
+                "order": standard.get("order") if isinstance(standard.get("order"), str) else "",
+                "behavior_flags": list(standard.get("behavior_flags") or []) if isinstance(standard.get("behavior_flags"), list) else [],
+            },
+        }
+        if count_admission.get("admission_status") != "executable":
+            reason = str(count_admission.get("blocked_reason") or "dispel_count_not_executable")
+            return StatusApplicationResult(
+                ok=False,
+                records=(_status_dispel_process_record("status_dispel_blocked", reason, source_trace),),
+                unsupported=(reason,),
+            )
+        order = str(standard.get("order") or "")
+        if order not in {"LastAdded", "Random"}:
+            reason = f"dispel_order_not_admitted:{order or 'missing'}"
+            return StatusApplicationResult(
+                ok=False,
+                records=(_status_dispel_process_record("status_dispel_blocked", reason, source_trace),),
+                unsupported=(reason,),
+            )
+        if standard.get("behavior_flags"):
+            reason = "dispel_behavior_flags_not_admitted"
+            return StatusApplicationResult(
+                ok=False,
+                records=(_status_dispel_process_record("status_dispel_blocked", reason, source_trace),),
+                unsupported=(reason,),
+            )
+        count = int(count_admission.get("count") or 0)
+        lifecycle_results: list[StatusLifecycleResult] = []
+        records: list[dict[str, JSONValue]] = []
+        rng_events: list[RNGEvent] = []
+        unsupported: list[str] = []
+        for target_id in target_ids:
+            before_details = _status_details(state.units[target_id].flags)
+            candidates, skipped = _dispel_candidates(before_details, standard)
+            target_trace = {**source_trace, "target_id": target_id, "skipped_candidates": skipped}
+            if not candidates:
+                records.append(
+                    _status_dispel_process_record(
+                        "status_dispel_skipped",
+                        "no_eligible_status",
+                        {**target_trace, "candidate_count": 0},
+                    )
+                )
+                continue
+            selected = candidates[:count]
+            if order == "Random":
+                if count != 1:
+                    reason = "random_dispel_count_not_one"
+                    records.append(_status_dispel_process_record("status_dispel_blocked", reason, target_trace))
+                    unsupported.append(reason)
+                    continue
+                event = _status_choice_rng_event(
+                    state,
+                    rng_type="status_dispel",
+                    source="status_system",
+                    purpose="random_dispel_candidate",
+                    candidates=tuple(str(item.get("instance_id") or "") for item in candidates),
+                    trace=target_trace,
+                )
+                rng_events.append(event)
+                result = event.result if isinstance(event.result, dict) else {}
+                selected_index = int(result.get("selected_index") or 0)
+                selected = [candidates[selected_index]]
+            for detail in selected:
+                detail_trace = {
+                    **target_trace,
+                    "selected_status_instance_id": str(detail.get("instance_id") or ""),
+                    "selected_status_id": str(detail.get("status_id") or ""),
+                    "selected_modifier_name": str(detail.get("modifier_name") or ""),
+                    "dispel_plan": {
+                        "order": order,
+                        "count": count,
+                        "candidate_count": len(candidates),
+                        "selected_instance_ids": [str(item.get("instance_id") or "") for item in selected],
+                    },
+                    "modifier_name": str(detail.get("modifier_name") or ""),
+                }
+                plan = StatusLifecyclePlan(
+                    operation="dispel",
+                    target_id=target_id,
+                    status_id=str(detail.get("status_id") or ""),
+                    source="status_system",
+                    before_details=tuple(before_details),
+                    existing_detail=detail,
+                    source_trace=detail_trace,
+                )
+                lifecycle_results.append(self._apply_lifecycle_plan(state, plan))
+                break
+        mutations = tuple(mutation for result in lifecycle_results for mutation in result.mutations)
+        events = tuple(event for result in lifecycle_results for event in result.events)
+        records.extend(record for result in lifecycle_results for record in result.records)
+        unsupported.extend(reason for result in lifecycle_results for reason in result.unsupported)
+        ok = not unsupported
+        return StatusApplicationResult(
+            ok=ok,
+            mutations=mutations,
+            events=events,
+            rng_events=tuple(rng_events),
+            records=tuple(records),
+            unsupported=tuple(unsupported),
+            lifecycle_result=lifecycle_results[-1] if lifecycle_results else None,
+        )
+
     def _apply_lifecycle_plan(self, state: BattleState, plan: StatusLifecyclePlan) -> StatusLifecycleResult:
-        if plan.operation in {"add", "refresh_or_replace_partial", "replace_partial", "stack"}:
+        if plan.operation in {"add", "refresh", "stack", "stack_refresh", "stack_reduce", "refresh_or_replace_partial", "replace_partial"}:
             return _apply_add_lifecycle_plan(state, plan)
-        if plan.operation == "remove":
+        if plan.operation in {"remove", "dispel", "stack_reduce_remove"}:
             return _apply_remove_lifecycle_plan(state, plan)
         if plan.operation == "tick":
             return _apply_tick_lifecycle_plan(state, plan)
         if plan.operation == "expire":
             return _apply_expire_lifecycle_plan(state, plan)
+        if plan.operation in {"reapply_blocked", "coexist_blocked"}:
+            reason = plan.unsupported[0] if plan.unsupported else f"status_{plan.operation}"
+            return _blocked_lifecycle_result(plan, reason)
         return StatusLifecycleResult(
             ok=False,
             operation=plan.operation,
@@ -533,6 +834,24 @@ class StatusSystem:
         if duration_admission.get("admission_status") != "executable":
             reason = str(duration_admission.get("blocked_reason") or "duration_admission_not_executable")
             return _unsupported_lifecycle_plan("tick_blocked", unit_id, status_id, reason, source_trace)
+        tick_owner_policy = str(duration_admission.get("tick_owner_policy") or "")
+        if tick_owner_policy != "holder":
+            return _unsupported_lifecycle_plan(
+                "tick_blocked",
+                unit_id,
+                status_id,
+                f"duration_tick_owner_policy_not_admitted:{tick_owner_policy or 'missing'}",
+                source_trace,
+            )
+        detail_owner_id = str(status_detail.get("owner_id") or "")
+        if detail_owner_id != unit_id:
+            return _unsupported_lifecycle_plan(
+                "tick_blocked",
+                unit_id,
+                status_id,
+                "duration_tick_owner_mismatch",
+                source_trace,
+            )
         remaining = _number_or_none(status_detail.get("remaining_duration"))
         if remaining is None:
             return _unsupported_lifecycle_plan("tick_blocked", unit_id, status_id, "remaining_duration_missing", source_trace)
@@ -625,20 +944,22 @@ def _apply_add_lifecycle_plan(state: BattleState, plan: StatusLifecyclePlan) -> 
     before_statuses = list(unit.statuses)
     after_statuses = list(dict.fromkeys((*unit.statuses, plan.status_id)))
     before_details = list(plan.before_details)
-    after_details = _replace_status_detail(before_details, plan.status_instance)
-    status_mutation = Mutation(
-        op="set",
-        path=("units", plan.target_id, "statuses"),
-        before=before_statuses,
-        after=after_statuses,
-        reason=f"status lifecycle {plan.operation} status id",
-        source="status_system",
-        metadata={
-            "status_id": plan.status_id,
-            "operation": plan.operation,
-            "lifecycle_plan": plan.to_json(),
-        },
-    )
+    after_details = _replace_status_detail(before_details, plan.status_instance, plan.existing_detail)
+    status_mutation = None
+    if before_statuses != after_statuses:
+        status_mutation = Mutation(
+            op="set",
+            path=("units", plan.target_id, "statuses"),
+            before=before_statuses,
+            after=after_statuses,
+            reason=f"status lifecycle {plan.operation} status id",
+            source="status_system",
+            metadata={
+                "status_id": plan.status_id,
+                "operation": plan.operation,
+                "lifecycle_plan": plan.to_json(),
+            },
+        )
     detail_mutation = Mutation(
         op="set",
         path=("units", plan.target_id, "flags", "status_details"),
@@ -651,27 +972,43 @@ def _apply_add_lifecycle_plan(state: BattleState, plan: StatusLifecyclePlan) -> 
             "lifecycle_plan": plan.to_json(),
         },
     )
-    status_id_record = SettlementRecord(
-        record_type="status_lifecycle",
-        source="status_system",
-        mutation_id=status_mutation.stable_id(),
-        process_only=False,
-        payload={
-            "operation": plan.operation,
-            "status_id": plan.status_id,
-            "lifecycle_result": {
-                "operation": plan.operation,
-                "partial": plan.partial,
-                "unsupported": list(plan.unsupported),
-            },
-            "lifecycle_plan": plan.to_json(),
-            "unsupported": list(plan.unsupported),
-            "partial": plan.partial,
-        },
-        trace=plan.source_trace,
-    ).to_json()
+    records: list[dict[str, JSONValue]] = []
+    mutation_ids: list[str] = []
+    if status_mutation is not None:
+        mutation_ids.append(status_mutation.stable_id())
+        records.append(
+            SettlementRecord(
+                record_type="status_apply_success" if plan.operation == "add" else "status_lifecycle",
+                source="status_system",
+                mutation_id=status_mutation.stable_id(),
+                process_only=False,
+                payload={
+                    "operation": plan.operation,
+                    "status_id": plan.status_id,
+                    "lifecycle_result": {
+                        "operation": plan.operation,
+                        "partial": plan.partial,
+                        "unsupported": list(plan.unsupported),
+                    },
+                    "lifecycle_plan": plan.to_json(),
+                    "unsupported": list(plan.unsupported),
+                    "partial": plan.partial,
+                },
+                trace=plan.source_trace,
+            ).to_json()
+        )
+    mutation_ids.append(detail_mutation.stable_id())
+    specific_record_type = {
+        "add": "status_apply_success",
+        "stack": "status_stack",
+        "stack_refresh": "status_stack_refresh",
+        "stack_reduce": "status_stack_reduce",
+        "refresh": "status_refresh",
+        "refresh_or_replace_partial": "status_lifecycle",
+        "replace_partial": "status_lifecycle",
+    }.get(plan.operation, "status_lifecycle")
     detail_record = SettlementRecord(
-        record_type="status_lifecycle",
+        record_type=specific_record_type,
         source="status_system",
         mutation_id=detail_mutation.stable_id(),
         process_only=False,
@@ -680,11 +1017,14 @@ def _apply_add_lifecycle_plan(state: BattleState, plan: StatusLifecyclePlan) -> 
             "status_id": plan.status_id,
             "status_instance": plan.status_instance.to_json(),
             "lifecycle_plan": plan.to_json(),
+            "stack_plan": plan.source_trace.get("stack_plan") if isinstance(plan.source_trace.get("stack_plan"), dict) else {},
+            "refresh_plan": plan.source_trace.get("refresh_plan") if isinstance(plan.source_trace.get("refresh_plan"), dict) else {},
             "unsupported": list(plan.unsupported),
             "partial": plan.partial,
         },
         trace=plan.source_trace,
     ).to_json()
+    records.append(detail_record)
     legacy_record = SettlementRecord(
         record_type="status",
         source="status_system",
@@ -703,16 +1043,18 @@ def _apply_add_lifecycle_plan(state: BattleState, plan: StatusLifecyclePlan) -> 
         },
         trace=plan.source_trace,
     ).to_json()
+    records.append(legacy_record)
+    mutations = (status_mutation, detail_mutation) if status_mutation is not None else (detail_mutation,)
     return StatusLifecycleResult(
         ok=True,
         operation=plan.operation,
-        mutations=(status_mutation, detail_mutation),
+        mutations=mutations,
         events=_status_lifecycle_events(
             plan,
             state,
-            mutation_ids=(status_mutation.stable_id(), detail_mutation.stable_id()),
+            mutation_ids=tuple(mutation_ids),
         ),
-        records=(status_id_record, detail_record, legacy_record),
+        records=tuple(records),
         unsupported=plan.unsupported,
         status_instance=plan.status_instance,
         lifecycle_plan=plan,
@@ -741,12 +1083,12 @@ def _apply_remove_lifecycle_plan(state: BattleState, plan: StatusLifecyclePlan) 
             lifecycle_plan=plan,
             lifecycle_state="missing",
         )
-    after_statuses = [status_id for status_id in before_statuses if status_id != plan.status_id]
-    after_details = [
-        item
-        for item in before_details
-        if not (isinstance(item, dict) and item.get("status_id") == plan.status_id)
-    ]
+    after_details = _remove_status_detail(before_details, plan.status_id, plan.existing_detail)
+    after_statuses = (
+        before_statuses
+        if _status_detail_present(after_details, plan.status_id)
+        else [status_id for status_id in before_statuses if status_id != plan.status_id]
+    )
     status_mutation = Mutation(
         op="set",
         path=("units", plan.target_id, "statuses"),
@@ -765,8 +1107,9 @@ def _apply_remove_lifecycle_plan(state: BattleState, plan: StatusLifecyclePlan) 
         source="status_system",
         metadata={"status_id": plan.status_id, "operation": plan.operation, "lifecycle_plan": plan.to_json()},
     )
+    record_type = "status_dispel" if plan.operation == "dispel" else "status_lifecycle"
     status_id_record = SettlementRecord(
-        record_type="status_lifecycle",
+        record_type=_remove_lifecycle_record_type(plan.operation, record_type),
         source="status_system",
         mutation_id=status_mutation.stable_id(),
         process_only=False,
@@ -778,7 +1121,7 @@ def _apply_remove_lifecycle_plan(state: BattleState, plan: StatusLifecyclePlan) 
         trace=plan.source_trace,
     ).to_json()
     detail_record = SettlementRecord(
-        record_type="status_lifecycle",
+        record_type=_remove_lifecycle_record_type(plan.operation, record_type),
         source="status_system",
         mutation_id=detail_mutation.stable_id(),
         process_only=False,
@@ -803,6 +1146,12 @@ def _apply_remove_lifecycle_plan(state: BattleState, plan: StatusLifecyclePlan) 
         lifecycle_plan=plan,
         lifecycle_state="removed",
     )
+
+
+def _remove_lifecycle_record_type(operation: str, fallback: str) -> str:
+    if operation == "stack_reduce_remove":
+        return "status_stack_reduce_remove"
+    return fallback
 
 
 def _apply_tick_lifecycle_plan(state: BattleState, plan: StatusLifecyclePlan) -> StatusLifecycleResult:
@@ -866,18 +1215,12 @@ def _apply_expire_lifecycle_plan(state: BattleState, plan: StatusLifecyclePlan) 
     existing = plan.existing_detail if isinstance(plan.existing_detail, dict) else None
     if existing is None:
         return _blocked_lifecycle_result(plan, "status_detail_missing_for_expire")
-    after_statuses = [status_id for status_id in before_statuses if status_id != plan.status_id]
-    after_details = [
-        item
-        for item in before_details
-        if not (
-            isinstance(item, dict)
-            and (
-                item.get("instance_id") == existing.get("instance_id")
-                or item.get("status_id") == plan.status_id
-            )
-        )
-    ]
+    after_details = _remove_status_detail(before_details, plan.status_id, existing)
+    after_statuses = (
+        before_statuses
+        if _status_detail_present(after_details, plan.status_id)
+        else [status_id for status_id in before_statuses if status_id != plan.status_id]
+    )
     status_mutation = Mutation(
         op="set",
         path=("units", plan.target_id, "statuses"),
@@ -968,7 +1311,12 @@ def _status_lifecycle_events(
     modifier_name = ""
     status_instance_id = ""
     caster_id = ""
-    if plan.status_instance is not None:
+    remove_like = plan.operation in {"remove", "expire", "dispel", "stack_reduce_remove"}
+    if remove_like and isinstance(plan.existing_detail, dict):
+        modifier_name = str(plan.existing_detail.get("modifier_name") or "")
+        status_instance_id = str(plan.existing_detail.get("instance_id") or "")
+        caster_id = str(plan.existing_detail.get("caster_id") or "")
+    elif plan.status_instance is not None:
         modifier_name = plan.status_instance.modifier_name
         status_instance_id = plan.status_instance.instance_id
         caster_id = plan.status_instance.caster_id
@@ -1010,11 +1358,11 @@ def _status_lifecycle_callback_events(plan: StatusLifecyclePlan) -> tuple[str, .
     dot_add_events = ("OnModifierDotAdd",) if _plan_is_dot_status(plan) else ()
     if plan.operation == "add":
         return ("OnCreate", "OnModifierAdd", "OnAddModifierSuc", "OnListenModifierAdd", *dot_add_events)
-    if plan.operation == "stack":
+    if plan.operation in {"stack", "stack_reduce"}:
         return ("OnStack", "OnModifierAdd", "OnModifierOnStack", "OnListenModifierOnStack")
-    if plan.operation in {"refresh_or_replace_partial", "replace_partial"}:
+    if plan.operation in {"refresh", "refresh_or_replace_partial", "replace_partial"}:
         return ("OnModifierAdd", "OnListenModifierAdd")
-    if plan.operation in {"remove", "expire"}:
+    if plan.operation in {"remove", "expire", "dispel", "stack_reduce_remove"}:
         return ("OnDestroy", "OnModifierRemove", "OnListenModifierRemove")
     return ()
 
@@ -1424,6 +1772,684 @@ def _numeric_bindings(values: dict[str, JSONValue] | dict[str, float] | None) ->
     return bindings
 
 
+def _runtime_stack_admission(
+    standard: dict[str, JSONValue],
+    effect: EffectIR,
+    *,
+    binding_sources: tuple[dict[str, JSONValue], ...],
+) -> dict[str, JSONValue]:
+    source_trace = {"effect_id": effect.effect_id, "effect_source": effect.source.to_json()}
+    max_result = RuleEvaluator().evaluate_numeric(
+        standard.get("max_layer"),
+        NumericEvaluationContext(binding_sources=binding_sources, source_trace=source_trace),
+    )
+    layer_result = RuleEvaluator().evaluate_numeric(
+        standard.get("layer_add_when_stack"),
+        NumericEvaluationContext(binding_sources=binding_sources, source_trace=source_trace),
+    )
+    if _is_missing_numeric_expr(standard.get("max_layer")):
+        max_stacks = 1
+        max_status = "not_applicable"
+    elif not max_result.ok or max_result.value is None:
+        return {
+            "admission_status": "blocked",
+            "blocked_reason": max_result.blocked_reason or "max_layer_not_executable",
+            "stack_policy": "blocked",
+            "numeric_evaluation": max_result.to_json(),
+            "layer_add_evaluation": layer_result.to_json(),
+            "source_trace": source_trace,
+        }
+    else:
+        if max_result.expression_kind not in {"fixed", "dynamic_hash", "postfix_expr"}:
+            return {
+                "admission_status": "blocked",
+                "blocked_reason": f"max_layer_not_admitted:{max_result.expression_kind}",
+                "stack_policy": "blocked",
+                "numeric_evaluation": max_result.to_json(),
+                "layer_add_evaluation": layer_result.to_json(),
+                "source_trace": source_trace,
+            }
+        if max_result.value <= 0 or int(max_result.value) != float(max_result.value):
+            return {
+                "admission_status": "blocked",
+                "blocked_reason": "max_layer_non_positive_or_non_integer",
+                "stack_policy": "blocked",
+                "numeric_evaluation": max_result.to_json(),
+                "layer_add_evaluation": layer_result.to_json(),
+                "source_trace": source_trace,
+            }
+        max_stacks = int(max_result.value)
+        max_status = "executable"
+
+    layer_delta = 0
+    layer_status = "not_applicable"
+    if not _is_missing_numeric_expr(standard.get("layer_add_when_stack")):
+        if not layer_result.ok or layer_result.value is None:
+            return {
+                "admission_status": "blocked",
+                "blocked_reason": layer_result.blocked_reason or "layer_add_when_stack_not_executable",
+                "stack_policy": "blocked",
+                "numeric_evaluation": max_result.to_json(),
+                "layer_add_evaluation": layer_result.to_json(),
+                "source_trace": source_trace,
+            }
+        if layer_result.expression_kind not in {"fixed", "dynamic_hash", "postfix_expr"}:
+            return {
+                "admission_status": "blocked",
+                "blocked_reason": f"layer_add_when_stack_not_admitted:{layer_result.expression_kind}",
+                "stack_policy": "blocked",
+                "numeric_evaluation": max_result.to_json(),
+                "layer_add_evaluation": layer_result.to_json(),
+                "source_trace": source_trace,
+            }
+        if int(layer_result.value) != float(layer_result.value):
+            return {
+                "admission_status": "blocked",
+                "blocked_reason": "layer_add_when_stack_non_integer",
+                "stack_policy": "blocked",
+                "numeric_evaluation": max_result.to_json(),
+                "layer_add_evaluation": layer_result.to_json(),
+                "source_trace": source_trace,
+            }
+        layer_delta = int(layer_result.value)
+        layer_status = "executable"
+
+    if max_stacks > 1 and layer_status != "executable":
+        stack_policy = "stackable_delta_missing"
+    elif layer_status == "executable" and layer_delta < 0:
+        stack_policy = "stack_reduce"
+    elif max_stacks > 1 and layer_delta > 0:
+        stack_policy = "additive_stack"
+    else:
+        stack_policy = "single_instance"
+    return {
+        "admission_status": "executable",
+        "blocked_reason": "",
+        "stack_policy": stack_policy,
+        "max_stacks": max_stacks,
+        "max_layer_status": max_status,
+        "layer_delta": layer_delta,
+        "layer_add_status": layer_status,
+        "numeric_evaluation": max_result.to_json(),
+        "layer_add_evaluation": layer_result.to_json(),
+        "source_trace": source_trace,
+    }
+
+
+def _stack_admission_max_stacks(stack_admission: dict[str, JSONValue]) -> int | None:
+    value = stack_admission.get("max_stacks")
+    return int(value) if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _stack_plan_max_stacks(stack_plan: dict[str, JSONValue]) -> int | None:
+    value = stack_plan.get("max_stacks")
+    return int(value) if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _runtime_refresh_admission(
+    standard: dict[str, JSONValue],
+    definition: RuleEntity,
+    duration_admission: dict[str, JSONValue],
+    effect: EffectIR,
+) -> dict[str, JSONValue]:
+    source_trace = {"effect_id": effect.effect_id, "effect_source": effect.source.to_json()}
+    explicit_refresh = bool(standard.get("is_refresh", False))
+    stacking = str(definition.fields.get("stacking") or "")
+    if not explicit_refresh and stacking != "Refresh":
+        return {
+            "admission_status": "not_applicable",
+            "blocked_reason": "refresh_source_missing",
+            "refresh_policy": "none",
+            "stacking": stacking,
+            "source_trace": source_trace,
+        }
+    if duration_admission.get("admission_status") != "executable":
+        return {
+            "admission_status": "blocked",
+            "blocked_reason": f"refresh_duration_not_executable:{duration_admission.get('blocked_reason') or 'unknown'}",
+            "refresh_policy": "blocked",
+            "stacking": stacking,
+            "source_trace": {
+                **source_trace,
+                "modifier_definition": definition.source.to_json(),
+                "duration_admission": duration_admission,
+            },
+        }
+    source_kind = "effect_is_refresh" if explicit_refresh else "modifier_definition_stacking"
+    return {
+        "admission_status": "executable",
+        "blocked_reason": "",
+        "refresh_policy": "duration_reset",
+        "source_kind": source_kind,
+        "stacking": stacking,
+        "source_trace": {
+            **source_trace,
+            "modifier_definition": definition.source.to_json(),
+        },
+    }
+
+
+def _status_stack_plan(
+    existing_detail: dict[str, JSONValue] | None,
+    stack_admission: dict[str, JSONValue],
+    *,
+    operation: str,
+) -> dict[str, JSONValue]:
+    admitted_max_stacks = _stack_admission_max_stacks(stack_admission)
+    existing_max_stacks = _detail_int(existing_detail, "max_stacks", default=1) if existing_detail is not None else 1
+    max_stacks = admitted_max_stacks or existing_max_stacks or 1
+    before = _detail_int(existing_detail, "stacks", default=1) if existing_detail is not None else 0
+    if operation not in {"stack", "stack_refresh", "stack_reduce"}:
+        after = before if existing_detail is not None else 1
+        return {
+            "operation": operation,
+            "stacks_before": before,
+            "stack_delta": 0,
+            "uncapped_stacks_after": after,
+            "stacks_after": after,
+            "max_stacks": max_stacks,
+            "stack_capped": False,
+            "stack_depleted": False,
+            "stack_policy": stack_admission.get("stack_policy"),
+            "admission": stack_admission,
+        }
+    delta = int(stack_admission.get("layer_delta") or 0)
+    uncapped = before + delta
+    after = max(0, min(max_stacks, uncapped))
+    return {
+        "operation": operation,
+        "stacks_before": before,
+        "stack_delta": delta,
+        "uncapped_stacks_after": uncapped,
+        "stacks_after": after,
+        "max_stacks": max_stacks,
+        "stack_capped": delta > 0 and uncapped != after,
+        "stack_depleted": delta < 0 and after <= 0,
+        "stack_policy": stack_admission.get("stack_policy"),
+        "admission": stack_admission,
+    }
+
+
+def _status_refresh_plan(
+    existing_detail: dict[str, JSONValue] | None,
+    new_duration: float | None,
+    *,
+    operation: str,
+) -> dict[str, JSONValue]:
+    before = _number_or_none(existing_detail.get("remaining_duration")) if isinstance(existing_detail, dict) else None
+    if operation == "refresh":
+        return {
+            "operation": operation,
+            "refresh_policy": "duration_reset",
+            "remaining_duration_before": before,
+            "remaining_duration_after": new_duration,
+            "duration_unchanged": before == new_duration,
+        }
+    if operation == "stack_refresh":
+        return {
+            "operation": operation,
+            "refresh_policy": "stack_duration_reset",
+            "remaining_duration_before": before,
+            "remaining_duration_after": new_duration,
+            "duration_unchanged": before == new_duration,
+        }
+    if operation == "stack":
+        return {
+            "operation": operation,
+            "refresh_policy": "stack_only",
+            "remaining_duration_before": before,
+            "remaining_duration_after": before,
+            "duration_unchanged": True,
+        }
+    return {
+        "operation": operation,
+        "refresh_policy": "none",
+        "remaining_duration_before": before,
+        "remaining_duration_after": new_duration if existing_detail is None else before,
+        "duration_unchanged": existing_detail is not None,
+    }
+
+
+def _stack_plan_stacks_after(stack_plan: dict[str, JSONValue]) -> int:
+    value = stack_plan.get("stacks_after")
+    return int(value) if isinstance(value, int) and not isinstance(value, bool) else 1
+
+
+def _refresh_plan_remaining_after(refresh_plan: dict[str, JSONValue], fallback: float | None) -> float | None:
+    value = refresh_plan.get("remaining_duration_after")
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else fallback
+
+
+def _refresh_plan_duration(refresh_plan: dict[str, JSONValue], fallback: float | None) -> float | None:
+    value = refresh_plan.get("remaining_duration_after")
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else fallback
+
+
+def _detail_int(detail: dict[str, JSONValue] | None, key: str, *, default: int) -> int:
+    if not isinstance(detail, dict):
+        return default
+    value = detail.get(key)
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    return default
+
+
+def _runtime_chance_admission(
+    standard: dict[str, JSONValue],
+    effect: EffectIR,
+    state: BattleState,
+    *,
+    caster_id: str,
+    target_id: str,
+    binding_sources: tuple[dict[str, JSONValue], ...],
+) -> dict[str, JSONValue]:
+    source_trace = {"effect_id": effect.effect_id, "effect_source": effect.source.to_json()}
+    chance_expr = standard.get("chance")
+    if _is_missing_numeric_expr(chance_expr):
+        base_chance = 1.0
+        chance_result = {
+            "ok": True,
+            "value": 1.0,
+            "expression_kind": "missing_as_guaranteed",
+            "bindings": {},
+            "source_trace": source_trace,
+            "blocked_reason": "",
+        }
+        source_kind = "chance_omitted_guaranteed"
+    else:
+        result = RuleEvaluator().evaluate_numeric(
+            chance_expr,
+            NumericEvaluationContext(binding_sources=binding_sources, source_trace=source_trace),
+        )
+        if not result.ok or result.value is None:
+            return {
+                "admission_status": "blocked",
+                "blocked_reason": result.blocked_reason or "chance_not_executable",
+                "source_trace": source_trace,
+                "numeric_evaluation": result.to_json(),
+            }
+        if result.expression_kind not in {"fixed", "dynamic_hash", "postfix_expr"}:
+            return {
+                "admission_status": "blocked",
+                "blocked_reason": f"chance_not_admitted:{result.expression_kind}",
+                "source_trace": source_trace,
+                "numeric_evaluation": result.to_json(),
+            }
+        if result.value < 0 or result.value > 1:
+            return {
+                "admission_status": "blocked",
+                "blocked_reason": "chance_out_of_range",
+                "source_trace": source_trace,
+                "numeric_evaluation": result.to_json(),
+            }
+        base_chance = float(result.value)
+        chance_result = result.to_json()
+        source_kind = "effect_chance"
+    effect_hit = _unit_resource(state, caster_id, "effect_hit_rate")
+    effect_resistance = _unit_resource(state, target_id, "effect_resistance")
+    base_success_probability = max(0.0, min(1.0, base_chance * (1.0 + effect_hit)))
+    resist_probability = max(0.0, min(1.0, effect_resistance))
+    return {
+        "admission_status": "executable",
+        "blocked_reason": "",
+        "source_kind": source_kind,
+        "base_chance": base_chance,
+        "effect_hit_rate": effect_hit,
+        "effect_resistance": effect_resistance,
+        "base_success_probability": base_success_probability,
+        "resist_probability": resist_probability,
+        "guaranteed": base_success_probability >= 1.0 and resist_probability <= 0.0,
+        "numeric_evaluation": chance_result,
+        "source_trace": source_trace,
+    }
+
+
+def _status_chance_check(
+    state: BattleState,
+    effect: EffectIR,
+    chance_admission: dict[str, JSONValue],
+    *,
+    caster_id: str,
+    target_id: str,
+    modifier_name: str,
+    status_id: str,
+    source_stack_key: str,
+) -> _ChanceCheck:
+    trace = {
+        "effect_id": effect.effect_id,
+        "effect_source": effect.source.to_json(),
+        "modifier_name": modifier_name,
+        "status_id": status_id,
+        "target_id": target_id,
+        "caster_id": caster_id,
+        "source_stack_key": source_stack_key,
+        "chance_admission": chance_admission,
+    }
+    if chance_admission.get("admission_status") != "executable":
+        reason = str(chance_admission.get("blocked_reason") or "chance_admission_not_executable")
+        return _ChanceCheck(
+            allowed=False,
+            record=_status_apply_process_record("status_blocked", reason, trace),
+            unsupported=(reason,),
+        )
+    immunity = _status_immunity_source(state, target_id, status_id=status_id)
+    if immunity is not None:
+        return _ChanceCheck(
+            allowed=False,
+            record=_status_apply_process_record(
+                "status_immunity",
+                "status_immunity",
+                {**trace, "immunity_source": immunity},
+            ),
+        )
+    rng_events: list[RNGEvent] = []
+    base_probability = _probability(chance_admission.get("base_success_probability"), default=1.0)
+    if base_probability < 1.0:
+        event = _status_rng_event(
+            state,
+            rng_type="status_apply",
+            source="status_system",
+            purpose="base_chance",
+            probability=base_probability,
+            trace=trace,
+        )
+        rng_events.append(event)
+        result = event.result if isinstance(event.result, dict) else {}
+        if result.get("success") is not True:
+            return _ChanceCheck(
+                allowed=False,
+                record=_status_apply_process_record(
+                    "status_apply_failed",
+                    "chance_failed",
+                    {**trace, "rng_event": event.to_json()},
+                ),
+                rng_events=tuple(rng_events),
+            )
+    resist_probability = _probability(chance_admission.get("resist_probability"), default=0.0)
+    if resist_probability > 0.0:
+        event = _status_rng_event(
+            state,
+            rng_type="status_resist",
+            source="status_system",
+            purpose="effect_resistance",
+            probability=resist_probability,
+            trace=trace,
+        )
+        rng_events.append(event)
+        result = event.result if isinstance(event.result, dict) else {}
+        if result.get("success") is True:
+            return _ChanceCheck(
+                allowed=False,
+                record=_status_apply_process_record(
+                    "status_resisted",
+                    "effect_resisted",
+                    {**trace, "rng_event": event.to_json()},
+                ),
+                rng_events=tuple(rng_events),
+            )
+    return _ChanceCheck(allowed=True, rng_events=tuple(rng_events))
+
+
+def _status_apply_process_record(
+    record_type: str,
+    reason: str,
+    trace: dict[str, JSONValue],
+) -> dict[str, JSONValue]:
+    return SettlementRecord(
+        record_type=record_type,
+        source="status_system",
+        process_only=True,
+        payload={"reason": reason, **trace},
+        trace=trace,
+    ).to_json()
+
+
+def _status_dispel_process_record(
+    record_type: str,
+    reason: str,
+    trace: dict[str, JSONValue],
+) -> dict[str, JSONValue]:
+    return SettlementRecord(
+        record_type=record_type,
+        source="status_system",
+        process_only=True,
+        payload={"reason": reason, **trace},
+        trace=trace,
+    ).to_json()
+
+
+def _runtime_dispel_count_admission(
+    standard: dict[str, JSONValue],
+    effect: EffectIR,
+    *,
+    dynamic_values: dict[str, float] | None,
+    binding_sources: tuple[dict[str, JSONValue], ...],
+) -> dict[str, JSONValue]:
+    source_trace = {"effect_id": effect.effect_id, "effect_source": effect.source.to_json()}
+    count_expr = standard.get("numbers")
+    result = RuleEvaluator().evaluate_numeric(
+        count_expr,
+        NumericEvaluationContext(
+            dynamic_values=_numeric_bindings(dynamic_values),
+            binding_sources=binding_sources,
+            source_trace=source_trace,
+        ),
+    )
+    if _is_missing_numeric_expr(count_expr):
+        return {
+            "admission_status": "blocked",
+            "blocked_reason": "dispel_count_missing",
+            "numeric_evaluation": result.to_json(),
+            "source_trace": source_trace,
+        }
+    if not result.ok or result.value is None:
+        return {
+            "admission_status": "blocked",
+            "blocked_reason": result.blocked_reason or "dispel_count_not_executable",
+            "numeric_evaluation": result.to_json(),
+            "source_trace": source_trace,
+        }
+    if result.expression_kind not in {"fixed", "dynamic_hash", "postfix_expr"}:
+        return {
+            "admission_status": "blocked",
+            "blocked_reason": f"dispel_count_not_admitted:{result.expression_kind}",
+            "numeric_evaluation": result.to_json(),
+            "source_trace": source_trace,
+        }
+    if int(result.value) != float(result.value) or result.value <= 0:
+        return {
+            "admission_status": "blocked",
+            "blocked_reason": "dispel_count_non_positive_or_non_integer",
+            "numeric_evaluation": result.to_json(),
+            "source_trace": source_trace,
+        }
+    if int(result.value) != 1:
+        return {
+            "admission_status": "blocked",
+            "blocked_reason": "dispel_count_not_one_first_phase",
+            "numeric_evaluation": result.to_json(),
+            "source_trace": source_trace,
+        }
+    return {
+        "admission_status": "executable",
+        "blocked_reason": "",
+        "count": 1,
+        "numeric_evaluation": result.to_json(),
+        "source_trace": source_trace,
+    }
+
+
+def _dispel_candidates(
+    details: tuple[JSONValue, ...],
+    standard: dict[str, JSONValue],
+) -> tuple[list[dict[str, JSONValue]], list[dict[str, JSONValue]]]:
+    candidates: list[dict[str, JSONValue]] = []
+    skipped: list[dict[str, JSONValue]] = []
+    for index, detail in enumerate(details):
+        if not isinstance(detail, dict):
+            continue
+        reason = _dispel_detail_skipped_reason(detail, standard)
+        if reason:
+            skipped.append(
+                {
+                    "index": index,
+                    "status_id": str(detail.get("status_id") or ""),
+                    "instance_id": str(detail.get("instance_id") or ""),
+                    "reason": reason,
+                }
+            )
+            continue
+        candidates.append({**detail, "__status_detail_index": index})
+    order = str(standard.get("order") or "")
+    if order == "LastAdded":
+        candidates.sort(key=lambda item: int(item.get("__status_detail_index") or 0), reverse=True)
+    else:
+        candidates.sort(key=lambda item: str(item.get("instance_id") or ""))
+    return candidates, skipped
+
+
+def _dispel_detail_skipped_reason(detail: dict[str, JSONValue], standard: dict[str, JSONValue]) -> str:
+    if detail.get("can_dispel") is not True:
+        return "can_dispel_not_true"
+    source_trace = detail.get("source_trace")
+    if not isinstance(source_trace, dict) or not source_trace:
+        return "source_trace_missing"
+    buff_type = str(standard.get("buff_type") or "")
+    if not buff_type:
+        return ""
+    category = str(detail.get("status_category") or "").lower()
+    status_type = str(detail.get("status_type") or "").lower()
+    if buff_type == "Buff" and "buff" not in {category, status_type}:
+        return "buff_type_mismatch:Buff"
+    if buff_type == "Debuff" and "debuff" not in {category, status_type}:
+        return "buff_type_mismatch:Debuff"
+    if buff_type == "Other" and "other" not in {category, status_type}:
+        return "buff_type_mismatch:Other"
+    if buff_type not in {"Buff", "Debuff", "Other"}:
+        return f"buff_type_not_admitted:{buff_type}"
+    return ""
+
+
+def _status_rng_event(
+    state: BattleState,
+    *,
+    rng_type: str,
+    source: str,
+    purpose: str,
+    probability: float,
+    trace: dict[str, JSONValue],
+) -> RNGEvent:
+    event_id = (
+        f"rng:{state.event_index}:{rng_type}:{purpose}:"
+        f"{trace.get('caster_id')}:{trace.get('target_id')}:{_status_id_fragment(str(trace.get('status_id') or ''))}"
+    )
+    roll = _deterministic_unit_roll(state.rng_state, event_id)
+    success = roll < probability
+    return RNGEvent(
+        rng_type=rng_type,
+        source=source,
+        event_id=event_id,
+        before_state=state.rng_state,
+        after_state=f"{state.rng_state}:{event_id}",
+        result={
+            "purpose": purpose,
+            "roll": roll,
+            "threshold": probability,
+            "success": success,
+        },
+        metadata={"source_trace": trace},
+    )
+
+
+def _status_choice_rng_event(
+    state: BattleState,
+    *,
+    rng_type: str,
+    source: str,
+    purpose: str,
+    candidates: tuple[str, ...],
+    trace: dict[str, JSONValue],
+) -> RNGEvent:
+    event_id = (
+        f"rng:{state.event_index}:{rng_type}:{purpose}:"
+        f"{trace.get('caster_id')}:{trace.get('target_id')}:{len(candidates)}"
+    )
+    roll = _deterministic_unit_roll(state.rng_state, event_id)
+    selected_index = min(len(candidates) - 1, int(roll * len(candidates))) if candidates else 0
+    return RNGEvent(
+        rng_type=rng_type,
+        source=source,
+        event_id=event_id,
+        before_state=state.rng_state,
+        after_state=f"{state.rng_state}:{event_id}",
+        result={
+            "purpose": purpose,
+            "roll": roll,
+            "candidate_count": len(candidates),
+            "selected_index": selected_index,
+            "selected": candidates[selected_index] if candidates else "",
+        },
+        metadata={"source_trace": trace},
+    )
+
+
+def _deterministic_unit_roll(rng_state: str, event_id: str) -> float:
+    raw = f"{rng_state}:{event_id}".encode("utf-8")
+    digest = hashlib.sha1(raw).hexdigest()[:12]
+    return int(digest, 16) / float(0xFFFFFFFFFFFF)
+
+
+def _probability(value: object, *, default: float) -> float:
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, (int, float)):
+        return max(0.0, min(1.0, float(value)))
+    return default
+
+
+def _unit_resource(state: BattleState, unit_id: str, key: str) -> float:
+    unit = state.units.get(unit_id)
+    if unit is None:
+        return 0.0
+    value = unit.resources.get(key)
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else 0.0
+
+
+def _status_immunity_source(
+    state: BattleState,
+    target_id: str,
+    *,
+    status_id: str,
+) -> dict[str, JSONValue] | None:
+    unit = state.units.get(target_id)
+    if unit is None:
+        return None
+    immunities = unit.flags.get("status_immunities")
+    if isinstance(immunities, dict):
+        values = immunities.get(status_id) or immunities.get(status_id.removeprefix("modifier:"))
+        if isinstance(values, dict) and values.get("admission_status") == "executable":
+            return _json_safe(values) if isinstance(_json_safe(values), dict) else {"raw": str(values)}
+    details = unit.flags.get("status_details", ())
+    if not isinstance(details, (list, tuple)):
+        return None
+    for detail in details:
+        if not isinstance(detail, dict):
+            continue
+        values = detail.get("immunity_status_ids")
+        if isinstance(values, (list, tuple)) and status_id in {str(item) for item in values}:
+            source_trace = detail.get("source_trace") if isinstance(detail.get("source_trace"), dict) else {}
+            return {
+                "status_instance_id": str(detail.get("instance_id") or ""),
+                "status_id": str(detail.get("status_id") or ""),
+                "source_trace": source_trace,
+            }
+    return None
+
+
 def _map_stack_property(property_name: str) -> tuple[str, str, str] | None:
     element_prefixes = {
         "Physical": "Physical",
@@ -1533,6 +2559,8 @@ def _admit_default_unit_status_lifecycle(
         "admission_status": "executable",
         "blocked_reason": "",
         "life_step_moment": "ModifierPhase1End",
+        "tick_owner_policy": "holder",
+        "tick_owner_source": "status_owner",
         "source_trace": {
             **source_trace,
             "default_life_step_moment": {
@@ -1609,6 +2637,8 @@ def _duration_admission_from_expr(
         "blocked_reason": "",
         "life_step_moment": life_step_moment,
         "remaining_duration": float(result.value),
+        "tick_owner_policy": "holder",
+        "tick_owner_source": "status_owner",
         "source_kind": source_kind,
         "source_trace": source_trace,
         "numeric_evaluation": result.to_json(),
@@ -1694,12 +2724,51 @@ def _status_details(unit_flags: dict[str, JSONValue]) -> list[JSONValue]:
     return []
 
 
-def _replace_status_detail(details: list[JSONValue], status_instance: StatusInstance) -> list[JSONValue]:
+def _replace_status_detail(
+    details: list[JSONValue],
+    status_instance: StatusInstance,
+    existing_detail: dict[str, JSONValue] | None = None,
+) -> list[JSONValue]:
     instance_json = status_instance.to_json()
+    existing_instance_id = str(existing_detail.get("instance_id") or "") if isinstance(existing_detail, dict) else ""
+    result: list[JSONValue] = []
+    replaced = False
+    for item in details:
+        if isinstance(item, dict) and (
+            item.get("instance_id") == status_instance.instance_id
+            or (existing_instance_id and item.get("instance_id") == existing_instance_id)
+        ):
+            if not replaced:
+                result.append(instance_json)
+                replaced = True
+            continue
+        result.append(item)
+    if not replaced:
+        result.append(instance_json)
+    return result
+
+
+def _remove_status_detail(
+    details: list[JSONValue],
+    status_id: str,
+    existing_detail: dict[str, JSONValue] | None,
+) -> list[JSONValue]:
+    instance_id = str(existing_detail.get("instance_id") or "") if isinstance(existing_detail, dict) else ""
+    if instance_id:
+        return [
+            item
+            for item in details
+            if not (isinstance(item, dict) and item.get("instance_id") == instance_id)
+        ]
     return [
-        *(item for item in details if not (isinstance(item, dict) and item.get("instance_id") == status_instance.instance_id)),
-        instance_json,
+        item
+        for item in details
+        if not (isinstance(item, dict) and item.get("status_id") == status_id)
     ]
+
+
+def _status_detail_present(details: list[JSONValue], status_id: str) -> bool:
+    return any(isinstance(item, dict) and item.get("status_id") == status_id for item in details)
 
 
 def _matching_status_detail(
@@ -1711,13 +2780,33 @@ def _matching_status_detail(
 ) -> dict[str, JSONValue] | None:
     instance_id = _status_instance_id(target_id, modifier_name, effect_id, source_id)
     status_id = f"modifier:{modifier_name}"
+    source_stack_key = _source_stack_key(target_id, modifier_name, effect_id, source_id)
     for item in details:
         if not isinstance(item, dict):
             continue
         if item.get("instance_id") == instance_id:
             return item
+        if item.get("source_stack_key") == source_stack_key:
+            return item
         if item.get("status_id") == status_id and item.get("source_id") == source_id:
             return item
+    return None
+
+
+def _same_status_other_source_detail(
+    details: list[JSONValue],
+    *,
+    status_id: str,
+    source_stack_key: str,
+) -> dict[str, JSONValue] | None:
+    for item in details:
+        if not isinstance(item, dict):
+            continue
+        if item.get("status_id") != status_id:
+            continue
+        if item.get("source_stack_key") == source_stack_key:
+            continue
+        return item
     return None
 
 
@@ -1728,32 +2817,76 @@ def _find_status_detail(details: list[JSONValue], status_id: str) -> dict[str, J
     return None
 
 
+def _source_stack_key(target_id: str, modifier_name: str, effect_id: str, source_id: str) -> str:
+    raw = json.dumps(
+        {
+            "target_id": target_id,
+            "modifier_name": modifier_name,
+            "effect_id": effect_id,
+            "source_id": source_id,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return f"status_stack:{hashlib.sha1(raw.encode('utf-8')).hexdigest()[:16]}"
+
+
 def _application_semantics(
     standard: dict[str, JSONValue],
     existing_detail: dict[str, JSONValue] | None,
     duration_admission: dict[str, JSONValue],
+    stack_admission: dict[str, JSONValue],
+    refresh_admission: dict[str, JSONValue],
+    *,
+    same_status_other_source: dict[str, JSONValue] | None,
 ) -> tuple[str, list[str]]:
     reasons: list[str] = []
     operation = "add"
-    max_layer = _optional_int(standard.get("max_layer"))
-    layer_add = _optional_float(standard.get("layer_add_when_stack"))
-    chance_expr = standard.get("chance")
-    chance = _optional_float(chance_expr)
+    if same_status_other_source is not None and existing_detail is None:
+        return "coexist_blocked", ["coexist_unsupported:different_source_same_status"]
+    if stack_admission.get("admission_status") == "blocked":
+        reasons.append(f"stack_blocked:{stack_admission.get('blocked_reason')}")
     if existing_detail is not None:
-        operation = "refresh_or_replace_partial"
-        reasons.append("refresh_or_replace_partial:existing_status_instance")
-    if max_layer is not None and max_layer > 1:
-        reasons.append("stack_unsupported:max_layer")
-    if layer_add is not None and layer_add != 0:
-        reasons.append("stack_unsupported:layer_add_when_stack")
-    if bool(standard.get("is_refresh", False)):
-        reasons.append("refresh_unsupported:is_refresh")
+        max_stacks = _stack_admission_max_stacks(stack_admission) or 1
+        layer_delta = stack_admission.get("layer_delta")
+        stack_executable = (
+            not reasons
+            and max_stacks > 1
+            and isinstance(layer_delta, int)
+            and layer_delta > 0
+            and stack_admission.get("stack_policy") == "additive_stack"
+        )
+        stack_reduce_executable = (
+            not reasons
+            and isinstance(layer_delta, int)
+            and layer_delta < 0
+            and stack_admission.get("stack_policy") == "stack_reduce"
+        )
+        refresh_status = str(refresh_admission.get("admission_status") or "")
+        refresh_executable = refresh_status == "executable"
+        if stack_executable and refresh_executable:
+            operation = "stack_refresh"
+        elif stack_executable:
+            operation = "stack"
+        elif stack_reduce_executable:
+            operation = "stack_reduce"
+        elif refresh_executable:
+            operation = "refresh"
+        elif refresh_status == "blocked":
+            operation = "reapply_blocked"
+            reasons.append(f"refresh_blocked:{refresh_admission.get('blocked_reason')}")
+        else:
+            operation = "reapply_blocked"
+            reasons.append("reapply_unsupported:no_admitted_stack_or_refresh_policy")
+    else:
+        if stack_admission.get("stack_policy") == "stackable_delta_missing":
+            reasons.append("stack_partial:layer_add_when_stack_missing")
+        if stack_admission.get("stack_policy") == "stack_reduce":
+            operation = "reapply_blocked"
+            reasons.append("stack_reduce_blocked:status_detail_missing")
     if duration_admission.get("admission_status") == "blocked":
         reasons.append(f"duration_lifecycle_blocked:{duration_admission.get('blocked_reason')}")
-    if chance is not None and chance != 1.0:
-        reasons.append("chance_unsupported:non_guaranteed_add_modifier")
-    if chance is None and not _is_missing_numeric_expr(chance_expr):
-        reasons.append("chance_formula_unsupported")
     return operation, reasons
 
 
@@ -1768,14 +2901,17 @@ def _status_metadata(rules: RuleBook, modifier_name: str) -> dict[str, JSONValue
             "status_type": "Unknown",
             "status_category": "unknown",
             "can_dispel": None,
+            "control_kind": "",
             "source": None,
         }
     status_type = str(entity.fields.get("StatusType") or entity.fields.get("status_type") or "Unknown")
     can_dispel = entity.fields.get("CanDispel")
+    control_kind = str(entity.fields.get("ControlKind") or entity.fields.get("control_kind") or "")
     return {
         "status_type": status_type,
         "status_category": _status_category(status_type),
         "can_dispel": can_dispel if isinstance(can_dispel, bool) else None,
+        "control_kind": control_kind,
         "source": entity.source.to_json(),
     }
 
@@ -1788,6 +2924,8 @@ def _status_category(status_type: str) -> str:
         return "debuff"
     if normalized == "other":
         return "other"
+    if normalized == "control":
+        return "control"
     return "unknown"
 
 

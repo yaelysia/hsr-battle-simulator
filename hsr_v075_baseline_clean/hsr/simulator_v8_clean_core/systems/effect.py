@@ -4,7 +4,7 @@ import math
 from dataclasses import dataclass
 from typing import Callable
 
-from ..core.model import BattleState, GameEvent, JSONValue, Mutation, TargetResolution
+from ..core.model import BattleState, GameEvent, JSONValue, Mutation, RNGEvent, TargetResolution
 from ..core.settlement import SettlementRecord
 from ..rules.evaluator import NumericEvaluationContext, NumericEvaluationResult, RuleEvaluator
 from ..rules.ir import EffectIR
@@ -24,6 +24,7 @@ from .status import SUPPORTED_ADD_MODIFIER_ALIASES, SUPPORTED_EFFECT_TARGET_ALIA
 class EffectResult:
     events: tuple[GameEvent, ...] = ()
     mutations: tuple[Mutation, ...] = ()
+    rng_events: tuple[RNGEvent, ...] = ()
     records: tuple[dict[str, JSONValue], ...] = ()
     unsupported: tuple[str, ...] = ()
 
@@ -56,6 +57,7 @@ class EffectRegistry:
             self.register("AddModifier", self._execute_add_modifier)
             self.register("RemoveModifier", self._execute_remove_modifier)
             self.register("RemoveSelfModifier", self._execute_remove_modifier)
+            self.register("DispelStatus", self._execute_dispel_status)
         self.register("Heal", self._execute_heal)
         self.register("HealHP", self._execute_heal)
         self.register("Shield", self._execute_shield)
@@ -106,6 +108,8 @@ class EffectRegistry:
             return "blocked"
         if effect.opcode in {"RemoveModifier", "RemoveSelfModifier"} and not _remove_modifier_payload_is_executable(effect):
             return "blocked"
+        if effect.opcode == "DispelStatus" and not _dispel_status_payload_is_executable(effect):
+            return "blocked"
         if effect.opcode in {"Heal", "HealHP", "Shield", "InitShield", "StackShield", "ModifyShield", "ResourceDelta", "ModifySPNew"} and not _fixed_payload_is_executable(effect):
             return "blocked"
         if effect.opcode == "LoseHPByRatio" and not _hp_loss_ratio_payload_is_executable(effect):
@@ -141,6 +145,7 @@ class EffectRegistry:
         return EffectResult(
             events=result.events,
             mutations=result.mutations,
+            rng_events=result.rng_events,
             records=result.records,
             unsupported=result.unsupported,
         )
@@ -166,6 +171,37 @@ class EffectRegistry:
         return EffectResult(
             events=result.events,
             mutations=result.mutations,
+            rng_events=result.rng_events,
+            records=result.records,
+            unsupported=result.unsupported,
+        )
+
+    def _execute_dispel_status(
+        self,
+        effect: EffectIR,
+        context: EffectExecutionContext | None,
+    ) -> EffectResult:
+        if self.status_system is None:
+            return _unsupported_effect(effect, "DispelStatus requires StatusSystem")
+        if context is None:
+            return _unsupported_effect(effect, "DispelStatus requires EffectExecutionContext")
+        result = self.status_system.apply_dispel_status(
+            context.state,
+            effect,
+            caster_id=context.caster_id,
+            source_id=context.source_id,
+            owner_id=context.owner_id,
+            param_entity_id=context.param_entity_id,
+            current_action_target_id=context.current_action_target_id,
+            target_resolution=context.target_resolution,
+            event_payload=context.event_payload,
+            dynamic_values=context.dynamic_values,
+            binding_sources=_binding_sources(context),
+        )
+        return EffectResult(
+            events=result.events,
+            mutations=result.mutations,
+            rng_events=result.rng_events,
             records=result.records,
             unsupported=result.unsupported,
         )
@@ -221,6 +257,17 @@ def _remove_modifier_payload_is_executable(effect: EffectIR) -> bool:
     has_modifier = isinstance(standard.get("modifier_name"), str) and bool(standard.get("modifier_name"))
     has_status = isinstance(standard.get("status_id"), str) and bool(standard.get("status_id"))
     return (has_modifier or has_status) and standard.get("target_alias") in SUPPORTED_EFFECT_TARGET_ALIASES
+
+
+def _dispel_status_payload_is_executable(effect: EffectIR) -> bool:
+    standard = effect.payload.get("standard")
+    if not isinstance(standard, dict):
+        return False
+    if standard.get("blocked_reason"):
+        return False
+    if standard.get("target_expression_coverage_status") == "executable":
+        return True
+    return standard.get("target_alias") in SUPPORTED_ADD_MODIFIER_ALIASES
 
 
 def _fixed_payload_is_executable(effect: EffectIR) -> bool:

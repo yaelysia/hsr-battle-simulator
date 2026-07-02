@@ -22,6 +22,7 @@ from .scheduler import (
     queue_plan_requires_external_command,
     select_next_queue_drain_plan,
 )
+from .status import status_control_gate_for_actor
 from .summon import SUMMON_RUNTIME_SCHEMA_VERSION
 from .target import TargetEnumerationResult, TargetSystem
 from .timeline import TimelineSystem
@@ -406,6 +407,24 @@ class ActionAvailabilitySystem:
                         blocked_reason=blocked_reason,
                     ),
                 )
+            control_gate = _control_gate_for_actor(state, actor)
+            if control_gate is not None:
+                blocked_reason = control_gate.reason
+                blocked = (control_gate,)
+                return self._blocked_view(
+                    state,
+                    state_phase,
+                    current_window,
+                    turn_owner_id,
+                    queue,
+                    blocked,
+                    actor=ActorAvailability(
+                        turn_owner_id,
+                        actor.side,
+                        "blocked",
+                        blocked_reason=blocked_reason,
+                    ),
+                )
             actor_availability = ActorAvailability(
                 actor_id=actor.unit_id,
                 actor_side=actor.side,
@@ -544,6 +563,9 @@ class ActionAvailabilitySystem:
         actor_ok, actor_reason = self.lifecycle.can_act(state, actor_id)
         if not actor_ok:
             return f"queue_action_actor_{actor_reason}"
+        control_gate = _control_gate_for_actor(state, state.units[actor_id])
+        if control_gate is not None:
+            return f"queue_action_actor_{control_gate.reason}"
         if resolution.resolved_kind == "extra_turn_action_choice" and not plan.resolved_action_id:
             return ""
         action_id = plan.resolved_action_id
@@ -1124,6 +1146,22 @@ def _command_template(command: ActionCommand) -> dict[str, JSONValue]:
         "queue_name": command.queue_name,
         "metadata": command.metadata,
     }
+
+
+def _control_gate_for_actor(state: BattleState, actor: UnitState) -> BlockedActionReason | None:
+    gate = status_control_gate_for_actor(actor)
+    if gate is None:
+        return None
+    metadata = gate.get("metadata") if isinstance(gate.get("metadata"), dict) else {}
+    source_trace = gate.get("source_trace") if isinstance(gate.get("source_trace"), dict) else {}
+    return BlockedActionReason(
+        reason=str(gate.get("reason") or "status_control_gate"),
+        scope=str(gate.get("scope") or "status_control"),
+        actor_id=str(gate.get("actor_id") or actor.unit_id),
+        actor_side=str(gate.get("actor_side") or actor.side),
+        metadata=metadata,
+        source_trace=source_trace,
+    )
 
 
 def _summon_action_admission_blocker(

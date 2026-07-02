@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 
-from ..core.model import BattleState, GameEvent, JSONValue, Mutation
+from ..core.model import BattleState, GameEvent, JSONValue, Mutation, RNGEvent
 from ..core.reducer import MutationReducer
 from ..core.settlement import SettlementRecord
 from ..rules.evaluator import EvaluationContext, NumericEvaluationContext, NumericEvaluationResult, RuleEvaluator
@@ -24,6 +24,7 @@ class StatusCallbackExecutionResult:
     ok: bool
     after_state: BattleState
     mutations: tuple[Mutation, ...] = ()
+    rng_events: tuple[RNGEvent, ...] = ()
     records: tuple[dict[str, JSONValue], ...] = ()
     events: tuple[GameEvent, ...] = ()
     errors: tuple[str, ...] = ()
@@ -97,12 +98,14 @@ class StatusCallbackSystem:
         current_state = state
         mutations: list[Mutation] = []
         records: list[dict[str, JSONValue]] = []
+        rng_events: list[RNGEvent] = []
         errors: list[str] = []
         events: list[GameEvent] = []
         for callback in callbacks:
             result = self._execute_callback(current_state, callback, detail, trigger_event, damage_window_ledger)
             current_state = result.after_state
             mutations.extend(result.mutations)
+            rng_events.extend(result.rng_events)
             records.extend(result.records)
             events.extend(result.events)
             errors.extend(result.errors)
@@ -110,6 +113,7 @@ class StatusCallbackSystem:
             ok=not errors,
             after_state=current_state,
             mutations=tuple(mutations),
+            rng_events=tuple(rng_events),
             records=tuple(records),
             events=tuple(events),
             errors=tuple(errors),
@@ -148,6 +152,7 @@ class StatusCallbackSystem:
                 trace={"callback_source": callback.source.to_json(), "status_source": _json_dict(detail.get("source_trace"))},
             ).to_json()
         ]
+        rng_events: list[RNGEvent] = []
         errors: list[str] = []
         events = [
             GameEvent(
@@ -174,6 +179,7 @@ class StatusCallbackSystem:
             result = self._execute_task(current_state, callback, task, detail, trigger_event, tasks, damage_window_ledger)
             current_state = result.after_state
             mutations.extend(result.mutations)
+            rng_events.extend(result.rng_events)
             records.extend(result.records)
             events.extend(result.events)
             errors.extend(result.errors)
@@ -181,6 +187,7 @@ class StatusCallbackSystem:
             ok=not errors,
             after_state=current_state,
             mutations=tuple(mutations),
+            rng_events=tuple(rng_events),
             records=tuple(records),
             events=tuple(events),
             errors=tuple(errors),
@@ -313,6 +320,7 @@ class StatusCallbackSystem:
             )
         ]
         events: list[GameEvent] = []
+        rng_events: list[RNGEvent] = []
         errors: list[str] = []
         precheck_result = self._precheck_selected_queue_group(
             state,
@@ -348,6 +356,7 @@ class StatusCallbackSystem:
             )
             current_state = child_result.after_state
             mutations.extend(child_result.mutations)
+            rng_events.extend(child_result.rng_events)
             records.extend(child_result.records)
             events.extend(child_result.events)
             errors.extend(child_result.errors)
@@ -355,6 +364,7 @@ class StatusCallbackSystem:
             ok=not errors,
             after_state=current_state,
             mutations=tuple(mutations),
+            rng_events=tuple(rng_events),
             records=tuple(records),
             events=tuple(events),
             errors=tuple(errors),
@@ -408,6 +418,7 @@ class StatusCallbackSystem:
         mutations: list[Mutation] = []
         records: list[dict[str, JSONValue]] = []
         events: list[GameEvent] = []
+        rng_events: list[RNGEvent] = []
         errors: list[str] = []
         selected_count = 0
         for candidate_id in candidates:
@@ -444,6 +455,7 @@ class StatusCallbackSystem:
                     ok=False,
                     after_state=current_state,
                     mutations=tuple(mutations),
+                    rng_events=tuple(rng_events),
                     records=tuple(records) + precheck_result.records,
                     events=tuple(events),
                     errors=precheck_result.errors,
@@ -466,6 +478,7 @@ class StatusCallbackSystem:
                 )
                 current_state = child_result.after_state
                 mutations.extend(child_result.mutations)
+                rng_events.extend(child_result.rng_events)
                 records.extend(child_result.records)
                 events.extend(child_result.events)
                 errors.extend(child_result.errors)
@@ -475,6 +488,7 @@ class StatusCallbackSystem:
             ok=not errors,
             after_state=current_state,
             mutations=tuple(mutations),
+            rng_events=tuple(rng_events),
             records=tuple(records),
             events=tuple(events),
             errors=tuple(errors),
@@ -519,6 +533,7 @@ class StatusCallbackSystem:
             return StatusCallbackExecutionResult(
                 ok=False,
                 after_state=state,
+                rng_events=result.rng_events,
                 records=(*result.records, _task_blocked_record(callback, task, detail, reason)),
                 errors=(reason, *result.unsupported),
             )
@@ -543,6 +558,7 @@ class StatusCallbackSystem:
             ok=not result.unsupported,
             after_state=after_state,
             mutations=result.mutations,
+            rng_events=result.rng_events,
             records=records,
             events=result.events,
             errors=result.unsupported,
@@ -577,6 +593,7 @@ class StatusCallbackSystem:
         mutations: list[Mutation] = []
         records: list[dict[str, JSONValue]] = []
         events: list[GameEvent] = []
+        rng_events: list[RNGEvent] = []
         errors: list[str] = []
         for target_id in target_ids:
             patched_standard = {**standard, "target_alias": "ParamEntity"}
@@ -588,6 +605,7 @@ class StatusCallbackSystem:
             mutations.extend(result.mutations)
             records.extend(result.records)
             events.extend(result.events)
+            rng_events.extend(result.rng_events)
             errors.extend(result.unsupported)
         summary = _task_blocked_record(
             callback,
@@ -607,6 +625,7 @@ class StatusCallbackSystem:
             ok=not errors,
             after_state=current_state,
             mutations=tuple(mutations),
+            rng_events=tuple(rng_events),
             records=tuple(records),
             events=tuple(events),
             errors=tuple(errors),

@@ -264,39 +264,56 @@ def binding_source_from_status_detail(
     detail: dict[str, Any],
     dynamic_values: object,
 ) -> dict[str, JSONValue] | None:
-    if not isinstance(dynamic_values, dict):
-        return None
     entries: dict[str, JSONValue] = {}
-    for key, value in dynamic_values.items():
-        if key.startswith("__") or not isinstance(value, (int, float)):
-            continue
-        entry = {
-            "scope": "status",
-            "owner_id": str(detail.get("owner_id") or ""),
-            "status_id": str(detail.get("status_id") or ""),
-            "status_instance_id": str(detail.get("instance_id") or ""),
-            "name": str(key),
-            "hash": str(key),
-            "value": float(value),
-            "source_trace": detail.get("source_trace", {}),
-        }
-        entries[_entry_key(entry)] = entry
-    by_hash = dynamic_values.get("__by_hash")
-    if isinstance(by_hash, dict):
-        for key, value in by_hash.items():
-            if not isinstance(value, (int, float)):
+    source_trace = detail.get("source_trace", {})
+    owner_id = str(detail.get("owner_id") or "")
+    status_id = str(detail.get("status_id") or "")
+    status_instance_id = str(detail.get("instance_id") or "")
+    stacks = detail.get("stacks")
+    if isinstance(stacks, (int, float)) and not isinstance(stacks, bool):
+        for key in ("Layer", "layer", "stacks"):
+            entry = {
+                "scope": "status_layer",
+                "owner_id": owner_id,
+                "status_id": status_id,
+                "status_instance_id": status_instance_id,
+                "name": key,
+                "hash": key,
+                "value": float(stacks),
+                "source_trace": source_trace,
+            }
+            entries[_entry_key(entry)] = entry
+    if isinstance(dynamic_values, dict):
+        for key, value in dynamic_values.items():
+            if key.startswith("__") or not isinstance(value, (int, float)):
                 continue
             entry = {
                 "scope": "status",
-                "owner_id": str(detail.get("owner_id") or ""),
-                "status_id": str(detail.get("status_id") or ""),
-                "status_instance_id": str(detail.get("instance_id") or ""),
-                "name": None,
+                "owner_id": owner_id,
+                "status_id": status_id,
+                "status_instance_id": status_instance_id,
+                "name": str(key),
                 "hash": str(key),
                 "value": float(value),
-                "source_trace": detail.get("source_trace", {}),
+                "source_trace": source_trace,
             }
             entries[_entry_key(entry)] = entry
+        by_hash = dynamic_values.get("__by_hash")
+        if isinstance(by_hash, dict):
+            for key, value in by_hash.items():
+                if not isinstance(value, (int, float)):
+                    continue
+                entry = {
+                    "scope": "status",
+                    "owner_id": owner_id,
+                    "status_id": status_id,
+                    "status_instance_id": status_instance_id,
+                    "name": None,
+                    "hash": str(key),
+                    "value": float(value),
+                    "source_trace": source_trace,
+                }
+                entries[_entry_key(entry)] = entry
     if not entries:
         return None
     indexed = _reindex({"entries": entries})

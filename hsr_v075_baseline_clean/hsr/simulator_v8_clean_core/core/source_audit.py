@@ -77,6 +77,11 @@ MUTATION_SOURCE_POLICIES: dict[str, dict[str, JSONValue]] = {
         "required_metadata": ["monster_data_card_id", "sequence_index", "action_id", "action_level", "source_trace"],
         "coverage_required": "fixed sequence candidate available and action executed successfully",
     },
+    "wave_system": {
+        "required_ir": ["WaveDefinitionIR / WaveMonsterEntryIR"],
+        "required_metadata": ["source_trace", "wave_transition_plan or wave_definition_id"],
+        "coverage_required": "executable wave definition or traceable battle outcome",
+    },
     "combat_executor.queue": {
         "required_ir": ["QueueIntentIR + QueuePriorityIR + QueueWindowIR for enqueue; QueueIntentIR + QueueResolutionIR + QueuePriorityIR + QueueWindowIR + QueueWindowPlan for dequeue; extra_turn additionally requires QueueLifecyclePolicyIR + ExtraActionPolicyIR"],
         "required_metadata": ["queue_name", "queue_operation", "queue_intent_id", "queue_window_id", "target_resolution", "source_trace"],
@@ -180,6 +185,8 @@ class RuntimeSourceAuditor:
             return self._audit_queue_mutation(mutation, records, violations)
         if mutation.source == "enemy_action_system":
             return self._audit_enemy_action_mutation(mutation, records, violations)
+        if mutation.source == "wave_system":
+            return self._audit_wave_mutation(mutation, records, violations)
         violations.append(_violation(mutation, "unsupported_mutation_source", details={"records": list(records)}))
         return _trace(mutation, records, {})
 
@@ -381,6 +388,40 @@ class RuntimeSourceAuditor:
             {
                 "timeline_rule_id": timeline_rule_id or "",
                 "turn_advance_plan_id": plan_id or "",
+            },
+        )
+
+    def _audit_wave_mutation(
+        self,
+        mutation: Mutation,
+        records: tuple[dict[str, JSONValue], ...],
+        violations: list[SourceAuditViolation],
+    ) -> dict[str, JSONValue]:
+        metadata = mutation.metadata
+        _require_dict(mutation, metadata, "source_trace", violations)
+        plan = metadata.get("wave_transition_plan") if isinstance(metadata.get("wave_transition_plan"), dict) else {}
+        removed_record = metadata.get("removed_record") if isinstance(metadata.get("removed_record"), dict) else {}
+        wave_definition_id = _first_str(
+            plan.get("wave_definition_id") if isinstance(plan, dict) else None,
+            removed_record.get("wave_definition_id") if isinstance(removed_record, dict) else None,
+            metadata.get("wave_definition_id"),
+        )
+        if wave_definition_id:
+            definition = self.rules.wave_definition(wave_definition_id)
+            if definition is None:
+                violations.append(_violation(mutation, "wave_definition_missing", details={"wave_definition_id": wave_definition_id}))
+            else:
+                _audit_source(definition.source, definition.coverage_status, mutation, violations, executable_required=True)
+        elif not metadata.get("outcome"):
+            violations.append(_violation(mutation, "wave_definition_id_missing", missing_field="wave_definition_id"))
+        return _trace(
+            mutation,
+            records,
+            {
+                "wave_definition_id": wave_definition_id,
+                "lifecycle_operation": str(metadata.get("lifecycle_operation") or ""),
+                "status_cleanup_operation": str(metadata.get("status_cleanup_operation") or ""),
+                "outcome": str(metadata.get("outcome") or ""),
             },
         )
 

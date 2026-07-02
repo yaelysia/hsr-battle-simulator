@@ -137,10 +137,17 @@ class CombatExecutor:
                 queue_resource_policy=queue_resource_policy,
             ),
         )
-        plan_blocked_reason = combined_blocked_reason(
-            actor_lifecycle_reason if not actor_lifecycle_ok else "",
+        execution_binding_blocked_reason = _execution_source_blocked_reason(binding_blocked_reason, action_execution_plan)
+        execution_event_blocked_reason = _execution_source_blocked_reason(action_event_reason, action_execution_plan)
+        use_action_damage_plan_fallback = _uses_action_damage_plan_fallback(
             binding_blocked_reason,
             action_event_reason,
+            action_execution_plan,
+        )
+        plan_blocked_reason = combined_blocked_reason(
+            actor_lifecycle_reason if not actor_lifecycle_ok else "",
+            execution_binding_blocked_reason,
+            execution_event_blocked_reason,
             action_execution_plan.target_plan.blocked_reason,
         )
         blocked_reason = _action_blocked_reason(
@@ -212,7 +219,7 @@ class CombatExecutor:
             for step in action_execution_plan.event_steps:
                 if step.kind == "trigger_window":
                     callback_kind = _callback_kind_for_step(step.phase)
-                    if callback_kind:
+                    if callback_kind and not use_action_damage_plan_fallback:
                         ability_result = self.ability_tasks.execute_callback(
                             current_state,
                             phases=ability_phases,
@@ -711,14 +718,18 @@ class CombatExecutor:
         trigger_windows = tuple(window for result in trigger_results for window in result.trigger_windows)
         ability_task_mutations = tuple(mutation for result in ability_task_results for mutation in result.mutations)
         ability_task_events = tuple(event for result in ability_task_results for event in result.events)
+        ability_task_rng_events = tuple(event for result in ability_task_results for event in result.rng_events)
         ability_task_records = tuple(record for result in ability_task_results for record in result.task_records)
         listener_dispatch_mutations = tuple(mutation for result in listener_dispatch_results for mutation in result.mutations)
         listener_dispatch_events = tuple(event for result in listener_dispatch_results for event in result.events)
+        listener_dispatch_rng_events = tuple(event for result in listener_dispatch_results for event in result.rng_events)
         listener_dispatch_records = tuple(record for result in listener_dispatch_results for record in result.records)
         mutations = tuple(ordered_mutations)
         after_state = current_state
         damage_rng_events = (
             *tuple(target_rng_events),
+            *ability_task_rng_events,
+            *listener_dispatch_rng_events,
             *tuple(event for result in damage_results for event in result.rng_events),
         )
 
@@ -1055,6 +1066,20 @@ def _action_event_plan_compat_payload(action_definition: ActionDefinitionIR, act
         "plan_source": "action_event_ir_compat_projection",
         "action_event_id": action_event_ir.action_event_id,
     }
+
+
+def _execution_source_blocked_reason(reason: str, action_execution_plan) -> str:
+    if reason == "missing_ability_phase_in_ability_file" and (
+        action_execution_plan.damage_plan or action_execution_plan.toughness_plan
+    ):
+        return ""
+    return reason
+
+
+def _uses_action_damage_plan_fallback(binding_reason: str, event_reason: str, action_execution_plan) -> bool:
+    if not (action_execution_plan.damage_plan or action_execution_plan.toughness_plan):
+        return False
+    return "missing_ability_phase_in_ability_file" in {binding_reason, event_reason}
 
 
 def _action_blocked_reason(

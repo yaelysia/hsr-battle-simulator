@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from ..core.model import ActionCommand, BattleState, GameEvent, JSONValue, Mutation, TargetResolution
+from ..core.model import ActionCommand, BattleState, GameEvent, JSONValue, Mutation, RNGEvent, TargetResolution
 from ..core.reducer import MutationReducer
 from ..core.settlement import SettlementRecord
 from ..rules.evaluator import EvaluationContext, NumericEvaluationContext, RuleEvaluator
@@ -23,6 +23,7 @@ class AbilityTaskExecutionResult:
     after_state: BattleState
     mutations: tuple[Mutation, ...] = ()
     events: tuple[GameEvent, ...] = ()
+    rng_events: tuple[RNGEvent, ...] = ()
     records: tuple[dict[str, JSONValue], ...] = ()
     task_records: tuple[dict[str, JSONValue], ...] = ()
 
@@ -57,6 +58,7 @@ class AbilityTaskSystem:
         current = state
         mutations: list[Mutation] = []
         events: list[GameEvent] = []
+        rng_events: list[RNGEvent] = []
         records: list[dict[str, JSONValue]] = []
         task_records: list[dict[str, JSONValue]] = []
         primary_target = target_resolution.selected[0] if target_resolution.selected else None
@@ -74,7 +76,7 @@ class AbilityTaskSystem:
                 )
             )
             for task in roots:
-                current, task_mutations, task_events, task_records_for_root = self._execute_task(
+                current, task_mutations, task_events, task_rng_events, task_records_for_root = self._execute_task(
                     current,
                     task,
                     tasks,
@@ -85,6 +87,7 @@ class AbilityTaskSystem:
                 )
                 mutations.extend(task_mutations)
                 events.extend(task_events)
+                rng_events.extend(task_rng_events)
                 records.extend(task_records_for_root)
                 task_records.extend(
                     record.get("payload", {})
@@ -112,6 +115,7 @@ class AbilityTaskSystem:
             after_state=current,
             mutations=tuple(mutations),
             events=tuple(events),
+            rng_events=tuple(rng_events),
             records=tuple(records),
             task_records=tuple(task_records),
         )
@@ -199,6 +203,7 @@ class AbilityTaskSystem:
         current = state
         mutations: list[Mutation] = []
         events: list[GameEvent] = []
+        rng_events: list[RNGEvent] = []
         records: list[dict[str, JSONValue]] = [
             SettlementRecord(
                 record_type="standalone_ability_execution",
@@ -226,12 +231,14 @@ class AbilityTaskSystem:
             current = result.after_state
             mutations.extend(result.mutations)
             events.extend(result.events)
+            rng_events.extend(result.rng_events)
             records.extend(result.records)
             task_records.extend(result.task_records)
         return AbilityTaskExecutionResult(
             after_state=current,
             mutations=tuple(mutations),
             events=tuple(events),
+            rng_events=tuple(rng_events),
             records=tuple(records),
             task_records=tuple(task_records),
         )
@@ -246,7 +253,7 @@ class AbilityTaskSystem:
         action_definition: ActionDefinitionIR,
         primary_target: str | None,
         target_resolution: TargetResolution,
-    ) -> tuple[BattleState, list[Mutation], list[GameEvent], list[dict[str, JSONValue]]]:
+    ) -> tuple[BattleState, list[Mutation], list[GameEvent], list[RNGEvent], list[dict[str, JSONValue]]]:
         if task.opcode == "PredicateTaskList":
             return self._execute_predicate_task(
                 state,
@@ -277,14 +284,14 @@ class AbilityTaskSystem:
             )
         if task.coverage_status != "executable":
             record = _task_process_record(task, ok=False, blocked_reason=task.blocked_reason or "task_not_executable")
-            return state, [], [], [record]
+            return state, [], [], [], [record]
         if not task.effect_id:
             record = _task_process_record(task, ok=False, blocked_reason="task_has_no_effect")
-            return state, [], [], [record]
+            return state, [], [], [], [record]
         effect = self.rules.effect(task.effect_id)
         if effect is None:
             record = _task_process_record(task, ok=False, blocked_reason="missing_effect")
-            return state, [], [], [record]
+            return state, [], [], [], [record]
         effect_coverage = self.effect_registry.coverage(effect)
         if effect_coverage != "executable":
             record = _task_process_record(
@@ -295,7 +302,7 @@ class AbilityTaskSystem:
                 effect_opcode=effect.opcode,
                 effect_coverage=effect_coverage,
             )
-            return state, [], [], [record]
+            return state, [], [], [], [record]
 
         result = self.effect_registry.execute(
             effect,
@@ -331,7 +338,7 @@ class AbilityTaskSystem:
                 record_count=len(result.records),
             )
         )
-        return after, list(result.mutations), list(result.events), records
+        return after, list(result.mutations), list(result.events), list(result.rng_events), records
 
     def _execute_trigger_ability_task(
         self,
@@ -342,23 +349,23 @@ class AbilityTaskSystem:
         action_definition: ActionDefinitionIR,
         primary_target: str | None,
         target_resolution: TargetResolution,
-    ) -> tuple[BattleState, list[Mutation], list[GameEvent], list[dict[str, JSONValue]]]:
+    ) -> tuple[BattleState, list[Mutation], list[GameEvent], list[RNGEvent], list[dict[str, JSONValue]]]:
         if task.coverage_status != "executable":
-            return state, [], [], [_task_process_record(task, ok=False, blocked_reason=task.blocked_reason or "task_not_executable")]
+            return state, [], [], [], [_task_process_record(task, ok=False, blocked_reason=task.blocked_reason or "task_not_executable")]
         effect = self.rules.effect(task.effect_id) if task.effect_id else None
         standard = effect.payload.get("standard") if effect is not None else None
         if effect is None or not isinstance(standard, dict):
-            return state, [], [], [_task_process_record(task, ok=False, blocked_reason="trigger_ability_effect_missing")]
+            return state, [], [], [], [_task_process_record(task, ok=False, blocked_reason="trigger_ability_effect_missing")]
         ability_name = standard.get("ability_name")
         if not isinstance(ability_name, str) or not ability_name:
-            return state, [], [], [_task_process_record(task, ok=False, blocked_reason="trigger_ability_name_missing", effect_id=effect.effect_id, effect_opcode=effect.opcode)]
+            return state, [], [], [], [_task_process_record(task, ok=False, blocked_reason="trigger_ability_name_missing", effect_id=effect.effect_id, effect_opcode=effect.opcode)]
         if not command.action_id.startswith("standalone_ability:"):
             action_phase_names = {
                 phase.ability_name
                 for phase in self.rules.ability_phases_for_action(command.action_id, command.action_level)
             }
             if ability_name in action_phase_names:
-                return state, [], [], [
+                return state, [], [], [], [
                     _task_process_record(
                         task,
                         ok=True,
@@ -370,15 +377,15 @@ class AbilityTaskSystem:
                 ]
         depth = int(command.metadata.get("standalone_depth") or 0)
         if depth >= 4:
-            return state, [], [], [_task_process_record(task, ok=False, blocked_reason="trigger_ability_depth_limit", effect_id=effect.effect_id, effect_opcode=effect.opcode)]
+            return state, [], [], [], [_task_process_record(task, ok=False, blocked_reason="trigger_ability_depth_limit", effect_id=effect.effect_id, effect_opcode=effect.opcode)]
         graphs = self.rules.standalone_ability_graphs_by_name(ability_name)
         if not graphs:
-            return state, [], [], [_task_process_record(task, ok=False, blocked_reason=f"standalone_ability_graph_missing:{ability_name}", effect_id=effect.effect_id, effect_opcode=effect.opcode)]
+            return state, [], [], [], [_task_process_record(task, ok=False, blocked_reason=f"standalone_ability_graph_missing:{ability_name}", effect_id=effect.effect_id, effect_opcode=effect.opcode)]
         source_path = task.source.source_path
         same_source = tuple(graph for graph in graphs if graph.source.source_path == source_path)
         selected_graphs = same_source or graphs
         if len(selected_graphs) != 1:
-            return state, [], [], [_task_process_record(task, ok=False, blocked_reason=f"standalone_ability_graph_ambiguous:{ability_name}", effect_id=effect.effect_id, effect_opcode=effect.opcode)]
+            return state, [], [], [], [_task_process_record(task, ok=False, blocked_reason=f"standalone_ability_graph_ambiguous:{ability_name}", effect_id=effect.effect_id, effect_opcode=effect.opcode)]
         graph = selected_graphs[0]
         phases = tuple(
             phase
@@ -415,7 +422,7 @@ class AbilityTaskSystem:
                 record_count=len(result.records),
             )
         )
-        return result.after_state, list(result.mutations), list(result.events), records
+        return result.after_state, list(result.mutations), list(result.events), list(result.rng_events), records
 
     def _execute_damage_task(
         self,
@@ -426,14 +433,14 @@ class AbilityTaskSystem:
         action_definition: ActionDefinitionIR,
         primary_target: str | None,
         target_resolution: TargetResolution,
-    ) -> tuple[BattleState, list[Mutation], list[GameEvent], list[dict[str, JSONValue]]]:
+    ) -> tuple[BattleState, list[Mutation], list[GameEvent], list[RNGEvent], list[dict[str, JSONValue]]]:
         emissions = tuple(
             emission
             for emission in self.rules.damage_emissions_for_task(task.task_id)
             if emission.action_id == task.action_id and emission.level == task.level
         )
         if not emissions:
-            return state, [], [], [_task_process_record(task, ok=False, blocked_reason="damage_emission_missing")]
+            return state, [], [], [], [_task_process_record(task, ok=False, blocked_reason="damage_emission_missing")]
         current = state
         mutations: list[Mutation] = []
         events: list[GameEvent] = []
@@ -543,7 +550,7 @@ class AbilityTaskSystem:
                         record_count=len(damage_result.records),
                     )
                 )
-        return current, mutations, events, records
+        return current, mutations, events, [], records
 
     def _execute_predicate_task(
         self,
@@ -555,11 +562,11 @@ class AbilityTaskSystem:
         action_definition: ActionDefinitionIR,
         primary_target: str | None,
         target_resolution: TargetResolution,
-    ) -> tuple[BattleState, list[Mutation], list[GameEvent], list[dict[str, JSONValue]]]:
+    ) -> tuple[BattleState, list[Mutation], list[GameEvent], list[RNGEvent], list[dict[str, JSONValue]]]:
         condition = self.rules.condition(task.condition_id) if task.condition_id else None
         if condition is None:
             record = _task_process_record(task, ok=False, blocked_reason="missing_predicate_condition")
-            return state, [], [], [record]
+            return state, [], [], [], [record]
         result = self.evaluator.evaluate_condition_result(
             condition,
             EvaluationContext(
@@ -587,12 +594,13 @@ class AbilityTaskSystem:
                 blocked_reason=f"blocked_condition:{condition.condition_id}:{result.reason}",
                 condition_result=result.to_json(),
             )
-            return state, [], [], [record]
+            return state, [], [], [], [record]
 
         selected_child_ids = task.success_task_ids if result.result else task.failed_task_ids
         current = state
         mutations: list[Mutation] = []
         events: list[GameEvent] = []
+        rng_events: list[RNGEvent] = []
         records: list[dict[str, JSONValue]] = [
             _task_process_record(
                 task,
@@ -606,7 +614,7 @@ class AbilityTaskSystem:
             if child is None:
                 records.append(_task_process_record(task, ok=False, blocked_reason=f"missing_child_task:{child_id}"))
                 continue
-            current, child_mutations, child_events, child_records = self._execute_task(
+            current, child_mutations, child_events, child_rng_events, child_records = self._execute_task(
                 current,
                 child,
                 tasks,
@@ -617,8 +625,9 @@ class AbilityTaskSystem:
             )
             mutations.extend(child_mutations)
             events.extend(child_events)
+            rng_events.extend(child_rng_events)
             records.extend(child_records)
-        return current, mutations, events, records
+        return current, mutations, events, rng_events, records
 
 
 def _task_process_record(

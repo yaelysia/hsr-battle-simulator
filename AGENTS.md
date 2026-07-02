@@ -153,6 +153,30 @@ hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/FORBIDDEN.md
 - 每个阶段必须回头检查本次修改是否正确，不要给后续审查纠偏添加压力。
 - 每次阶段汇报必须说明：当前做到哪里、距离最小可用战斗纵切还缺什么、距离完整复刻还缺哪些大模块。
 
+## 规划与验收口径
+
+本项目是未完成模拟器，计划和验收不能把目标写得过大过泛。每个阶段、每个 checklist 项都应先按来源和实现状态拆成三态：
+
+- `executable`：当前 RuleBook / Canonical IR 中存在真实来源，runtime mutation、settlement、source audit、replay 均通过。
+- `source_gap_blocked`：runtime 可以有通用 admission/blocked 分支或未来预留路径，但当前 TBGD / IR 结构化扫描没有真实可执行来源；只能验证 coverage gap、blocked、state unchanged，不能合成正例 mutation。
+- `implementation_missing`：当前存在真实来源，但 runtime 没有正确 admission / mutation / settlement / replay，这才是需要继续编码修复的缺口。
+
+规划时必须把“需要编码实现”和“需要 discovery/coverage-gap 验证”分开。不能要求执行线程为当前数据库不存在的机制造 synthetic case；不能为了勾 checklist 把无真实来源的路径标成 executable。
+
+验收时应优先检查：
+
+- 当前数据库/IR 有真实来源的机制是否都有正例 executable validation。
+- 当前数据库/IR 无真实来源的机制是否明确记录为 source gap，并有 negative validation 证明不会产生 mutation。
+- runtime 是否保持通用 admission、blocked/process-only、source audit 和 replay 口径。
+- 是否存在硬编码角色/怪物/技能 ID、验证专用路径、伪 source trace、默认 fallback。
+
+阶段完成口径应尽量拆成两层：
+
+- 阶段底座可验收：有来源的机制已 executable；无来源的机制已 source-gap/blocked 且 state unchanged；后续阶段可以继续推进。
+- 全正例 DONE：所有列项都存在真实来源正例并通过 executable validation。只有来源确实存在时才允许使用这个口径。
+
+如果在工作中形成新的长期经验、红线或流程约定，应及时更新本 `AGENTS.md`，避免后续线程重复踩坑。
+
 ## 近期经验教训
 
 - 数据库里有答案时，不能用自造默认值、固定映射、观测数值或旧版经验替代。
@@ -241,6 +265,7 @@ git diff --check
 
 - 每个可验证结构阶段建议提交一次检查点。
 - 大变动后创建 git 提交保留检查点。
+- 按当前协作约定，阶段验收成功后提交一个 git 检查点；验收未通过、仍有 source/语义/通用性问题时不要为了留档提交。
 - v8 代码检查点不要混入无关文件。
 - `AGENTS.md` 只有在用户明确要求维护项目入口说明时才提交；本次交接文档更新属于允许范围。
 - 如果工作区里存在用户未提交修改，不要回滚；与当前任务无关则忽略。

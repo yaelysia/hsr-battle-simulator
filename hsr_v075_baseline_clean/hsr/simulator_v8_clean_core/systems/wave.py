@@ -289,7 +289,7 @@ class WaveSystem:
                         payload={"wave_transition_plan": plan.to_json(), "source_trace": source_trace},
                     ),
                 ),
-                (_plan_record(plan, mutations, process_only=False),),
+                _plan_records(plan, mutations, process_only=False),
             )
         if definition is None:
             blocked = self._blocked(
@@ -321,7 +321,7 @@ class WaveSystem:
                         payload={"wave_transition_plan": plan.to_json(), "source_trace": source_trace},
                     ),
                 ),
-                (_plan_record(plan, mutations, process_only=False),),
+                _plan_records(plan, mutations, process_only=False),
             )
         if plan.status == "advance_to_next_wave":
             next_index = int(plan.next_wave_index) if plan.next_wave_index is not None else plan.current_wave_index + 1
@@ -377,7 +377,7 @@ class WaveSystem:
                     for entry, unit in zip(plan.spawn_entries, spawn_units, strict=True)
                 ),
             )
-            return WaveTransitionResult(plan, mutations, events, (_plan_record(plan, mutations, process_only=False),))
+            return WaveTransitionResult(plan, mutations, events, _plan_records(plan, mutations, process_only=False))
         return WaveTransitionResult(plan, (), (), (_plan_record(plan, (), process_only=True),))
 
     def blocked(self, state: BattleState, reason: str) -> WaveTransitionResult:
@@ -578,6 +578,7 @@ def _remove_mutations(
 ) -> tuple[Mutation, ...]:
     mutations: list[Mutation] = []
     for unit_id in plan.remove_unit_ids:
+        mutations.extend(_status_cleanup_mutations(state, unit_id, plan, source_trace))
         mutations.extend(
             lifecycle.remove_mutations(
                 state,
@@ -591,6 +592,51 @@ def _remove_mutations(
                     "source_trace": source_trace,
                 },
                 source_trace=source_trace,
+            )
+        )
+    return tuple(mutations)
+
+
+def _status_cleanup_mutations(
+    state: BattleState,
+    unit_id: str,
+    plan: WaveTransitionPlan,
+    source_trace: dict[str, JSONValue],
+) -> tuple[Mutation, ...]:
+    unit = state.units.get(unit_id)
+    if unit is None:
+        return ()
+    mutations: list[Mutation] = []
+    metadata = {
+        "wave_transition_plan": plan.to_json(),
+        "lifecycle_operation": "wave_status_cleanup",
+        "unit_id": unit_id,
+        "source_trace": source_trace,
+    }
+    if unit.statuses:
+        mutations.append(
+            Mutation(
+                op="set",
+                path=("units", unit_id, "statuses"),
+                before=unit.statuses,
+                after=(),
+                reason="clear statuses for removed wave unit",
+                source="wave_system",
+                metadata={**metadata, "status_cleanup_operation": "clear_statuses"},
+                mutation_id=f"mutation:wave_status_cleanup:{unit_id}:statuses:{plan.current_wave_index}",
+            )
+        )
+    if "status_details" in unit.flags:
+        mutations.append(
+            Mutation(
+                op="set",
+                path=("units", unit_id, "flags", "status_details"),
+                before=unit.flags.get("status_details"),
+                after=None,
+                reason="clear status details for removed wave unit",
+                source="wave_system",
+                metadata={**metadata, "status_cleanup_operation": "clear_status_details"},
+                mutation_id=f"mutation:wave_status_cleanup:{unit_id}:status_details:{plan.current_wave_index}",
             )
         )
     return tuple(mutations)
@@ -809,16 +855,34 @@ def _plan_record(
     mutations: tuple[Mutation, ...],
     *,
     process_only: bool,
+    mutation: Mutation | None = None,
+    mutation_index: int | None = None,
 ) -> dict[str, JSONValue]:
+    mutation_id = mutation.stable_id() if mutation is not None else mutations[0].stable_id() if mutations else ""
     return SettlementRecord(
         record_type="wave_transition",
         source="wave_system",
         process_only=process_only,
-        mutation_id=mutations[0].stable_id() if mutations else "",
+        mutation_id=mutation_id,
         payload={
             "plan": plan.to_json(),
             "mutation_ids": [mutation.stable_id() for mutation in mutations],
             "mutation_count": len(mutations),
+            "mutation_index": mutation_index if mutation_index is not None else -1,
         },
         trace=plan.source_trace,
     ).to_json()
+
+
+def _plan_records(
+    plan: WaveTransitionPlan,
+    mutations: tuple[Mutation, ...],
+    *,
+    process_only: bool,
+) -> tuple[dict[str, JSONValue], ...]:
+    if not mutations:
+        return (_plan_record(plan, mutations, process_only=process_only),)
+    return tuple(
+        _plan_record(plan, mutations, process_only=process_only, mutation=mutation, mutation_index=index)
+        for index, mutation in enumerate(mutations)
+    )

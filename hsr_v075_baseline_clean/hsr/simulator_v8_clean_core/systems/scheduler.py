@@ -23,7 +23,7 @@ from .enemy_action import EnemyActionCandidate, EnemyActionSystem
 from .event_dispatch import EventDispatchSystem
 from .queue import QUEUE_WINDOW_FAMILY_ORDER, QueueDrainPlan, QueueEntry, QueueSystem
 from .resource import ResourceSystem
-from .status import StatusSystem
+from .status import StatusSystem, status_control_gate_for_actor
 from .timeline import TimelineSystem, TurnAdvancePlan, TurnAdvanceResult
 from .wave import WaveSystem
 
@@ -41,6 +41,7 @@ class _StatusLifecycleSweep:
     events: tuple[GameEvent, ...] = ()
     mutations: tuple[Mutation, ...] = ()
     records: tuple[dict[str, JSONValue], ...] = ()
+    rng_events: tuple = ()
 
 
 class CombatScheduler:
@@ -347,6 +348,18 @@ class CombatScheduler:
                 "source": "timeline_scheduler.step",
             }
         }
+        control_gate = status_control_gate_for_actor(begin_result.after_state.units[actor_id])
+        if control_gate is not None:
+            return self._blocked(
+                state,
+                "scheduler:status_control_gate",
+                str(control_gate.get("reason") or "status_control_gate"),
+                {
+                    "control_gate": control_gate,
+                    "command": _command_payload(command),
+                    "turn_begin_candidate": begin_result.transition.coverage,
+                },
+            )
         scheduled_command = replace(
             command,
             metadata={**command.metadata, **parent_metadata},
@@ -695,7 +708,9 @@ class CombatScheduler:
     ) -> _StatusLifecycleSweep:
         current = state
         mutations: list[Mutation] = []
+        events: list[GameEvent] = []
         records: list[dict[str, JSONValue]] = []
+        rng_events: list = []
         for unit_id in (actor_id,):
             if unit_id not in current.units:
                 continue
@@ -705,11 +720,47 @@ class CombatScheduler:
                 if isinstance(item, dict)
             )
             for detail in details:
+                phase1_event = _status_phase1_lifecycle_event(current, unit_id, detail, life_step_moment)
+                if phase1_event is not None:
+                    dispatch = self.event_dispatcher.dispatch_status_callback(
+                        current,
+                        event=phase1_event,
+                        unit_id=unit_id,
+                        modifier_name=str(detail.get("modifier_name") or ""),
+                    )
+                    events.extend(dispatch.events)
+                    records.extend(dispatch.records)
+                    rng_events.extend(dispatch.rng_events)
+                    if dispatch.mutations:
+                        mutations.extend(dispatch.mutations)
+                        current = dispatch.after_state
+                    refreshed_detail = _status_detail_by_instance(
+                        current,
+                        unit_id,
+                        str(detail.get("instance_id") or ""),
+                    )
+                    if refreshed_detail is None:
+                        continue
+                    detail = refreshed_detail
                 result = self.status.apply_lifecycle_tick(current, unit_id, detail, life_step_moment)
                 records.extend(result.records)
+                events.extend(result.events)
                 if result.mutations:
                     mutations.extend(result.mutations)
                     current = self.reducer.apply_all(current, result.mutations)
+                for lifecycle_event in result.events:
+                    dispatch = self.event_dispatcher.dispatch_status_callback(
+                        current,
+                        event=lifecycle_event,
+                        unit_id=unit_id,
+                        modifier_name=str(detail.get("modifier_name") or ""),
+                    )
+                    events.extend(dispatch.events)
+                    records.extend(dispatch.records)
+                    rng_events.extend(dispatch.rng_events)
+                    if dispatch.mutations:
+                        mutations.extend(dispatch.mutations)
+                        current = dispatch.after_state
         event = GameEvent(
             "status.lifecycle.tick",
             source_id=actor_id,
@@ -722,11 +773,13 @@ class CombatScheduler:
                 "record_count": len(records),
             },
         )
+        events.append(event)
         return _StatusLifecycleSweep(
             after_state=current,
-            events=(event,),
+            events=tuple(events),
             mutations=tuple(mutations),
             records=tuple(records),
+            rng_events=tuple(rng_events),
         )
 
     def _try_wave_transition(self, state: BattleState) -> SchedulerStepResult | None:
@@ -1006,6 +1059,9 @@ class CombatScheduler:
         actor_id = str(plan.queue_entry.get("actor_id") or "")
         if not actor_id or actor_id not in state.units:
             return "queue_action_actor_missing"
+        control_gate = status_control_gate_for_actor(state.units[actor_id])
+        if control_gate is not None:
+            return str(control_gate.get("reason") or "status_control_gate")
         selected_action_id = plan.resolved_action_id
         selected_action_level = plan.resolved_action_level
         selected_targets = tuple(str(item) for item in plan.queue_entry.get("target_ids", ()) if isinstance(item, str))
@@ -1288,6 +1344,66 @@ class CombatScheduler:
             coverage={"blocked_reason": reason},
         )
         return SchedulerStepResult(state, transition)
+
+
+def _status_phase1_lifecycle_event(
+    state: BattleState,
+    unit_id: str,
+    detail: dict[str, JSONValue],
+    life_step_moment: str,
+) -> GameEvent | None:
+    if life_step_moment != "ModifierPhase1End":
+        return None
+    trigger_ids_by_event = detail.get("trigger_ids_by_event")
+    trigger_ids = trigger_ids_by_event.get("OnPhase1") if isinstance(trigger_ids_by_event, dict) else None
+    if not isinstance(trigger_ids, list) or not any(isinstance(item, str) and item for item in trigger_ids):
+        return None
+    source_trace = detail.get("source_trace")
+    if not isinstance(source_trace, dict) or not source_trace:
+        return None
+    modifier_name = str(detail.get("modifier_name") or "")
+    status_id = str(detail.get("status_id") or "")
+    status_instance_id = str(detail.get("instance_id") or "")
+    caster_id = str(detail.get("caster_id") or unit_id)
+    return GameEvent(
+        "status.lifecycle",
+        source_id=caster_id,
+        target_id=unit_id,
+        event_id=(
+            f"event:{state.event_index}:status_lifecycle:OnPhase1:"
+            f"{unit_id}:{status_id.replace(':', '_')}:{status_instance_id}"
+        ),
+        window="OnPhase1",
+        process_only=True,
+        payload={
+            "callback_event": "OnPhase1",
+            "listener_scope": "status_local",
+            "lifecycle_operation": "tick",
+            "life_step_moment": life_step_moment,
+            "target_id": unit_id,
+            "owner_id": unit_id,
+            "modifier_name": modifier_name,
+            "status_id": status_id,
+            "status_instance_id": status_instance_id,
+            "source_trace": source_trace,
+        },
+    )
+
+
+def _status_detail_by_instance(
+    state: BattleState,
+    unit_id: str,
+    instance_id: str,
+) -> dict[str, JSONValue] | None:
+    if not instance_id or unit_id not in state.units:
+        return None
+    details = state.units[unit_id].flags.get("status_details", ())
+    if not isinstance(details, (list, tuple)):
+        return None
+    for item in details:
+        if isinstance(item, dict) and item.get("instance_id") == instance_id:
+            return item
+    return None
 
 
 def _transition(

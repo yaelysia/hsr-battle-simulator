@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 
-from ..core.model import ActionCommand, BattleState, GameEvent, JSONValue, Mutation, TargetResolution
+from ..core.model import ActionCommand, BattleState, GameEvent, JSONValue, Mutation, RNGEvent, TargetResolution
 from ..core.reducer import MutationReducer
 from ..core.settlement import SettlementRecord
 from ..rules.ir import ActionDefinitionIR, StatusCallbackIR, StatusEventFamilyIR
@@ -20,6 +20,7 @@ class EventDispatchResult:
     after_state: BattleState
     mutations: tuple[Mutation, ...] = ()
     events: tuple[GameEvent, ...] = ()
+    rng_events: tuple[RNGEvent, ...] = ()
     records: tuple[dict[str, JSONValue], ...] = ()
     trigger_windows: tuple[dict[str, JSONValue], ...] = ()
     listener_records: tuple[dict[str, JSONValue], ...] = ()
@@ -305,6 +306,7 @@ class EventDispatchSystem:
         mutations: list[Mutation] = []
         records: list[dict[str, JSONValue]] = [dispatch_record]
         events: list[GameEvent] = [event]
+        rng_events: list[RNGEvent] = []
         listener_records: list[dict[str, JSONValue]] = []
         errors: list[str] = []
         for match in matches:
@@ -333,6 +335,7 @@ class EventDispatchSystem:
             )
             current_state = result.after_state
             mutations.extend(result.mutations)
+            rng_events.extend(result.rng_events)
             records.extend(result.records)
             events.extend(result.events)
             errors.extend(result.errors)
@@ -352,6 +355,7 @@ class EventDispatchSystem:
                     )
                     current_state = child_result.after_state
                     mutations.extend(child_result.mutations)
+                    rng_events.extend(child_result.rng_events)
                     records.extend(child_result.records)
                     events.extend(child_result.events)
                     errors.extend(child_result.errors)
@@ -374,6 +378,7 @@ class EventDispatchSystem:
             after_state=current_state,
             mutations=tuple(mutations),
             events=tuple(events),
+            rng_events=tuple(rng_events),
             records=tuple(records),
             trigger_windows=(),
             listener_records=tuple(listener_records),

@@ -148,54 +148,59 @@
 
 目标：把 buff/debuff/control/DoT 的通用状态底座补齐，避免后续角色、怪物、光锥、遗器扩面时出现 runtime 特判。
 
-- [ ] P1-4.1 审查 `systems/status.py`、`status_callbacks.py`、`AddModifier`、`RemoveModifier`、DoT/status damage 当前实现。
-- [ ] P1-4.2 定义 status instance identity 和 source stack 规则。
-- [ ] P1-4.3 实现 max stack admission。
-- [ ] P1-4.4 实现 add stack mutation。
-- [ ] P1-4.5 实现 stack cap。
-- [ ] P1-4.6 实现 stack reduce 和 stack 到 0 移除。
-- [ ] P1-4.7 实现 stack 影响 dynamic value/formula 的读取路径。
-- [ ] P1-4.8 定义 refresh policy admission。
-- [ ] P1-4.9 实现 duration refresh。
-- [ ] P1-4.10 实现 stack-only refresh。
+详细计划：`P1_4_STATUS_SYSTEM_TASK_PLAN.md`。P1-4 是状态系统主体阶段，每个小项必须按“目标 / 要做什么 / 验收结果 / 禁止事项”执行，不能只以验证脚本通过作为完成标准。
+
+来源缺口口径：当前若结构化扫描证明某机制没有真实 TBGD / IR 正例，只能记录为 `source_gap_blocked` 并验证 state unchanged，不能合成 executable mutation 来勾选。已知缺口包括 `P1-4.11 stack + duration refresh` 和 `P1-4.29 / P1-4.42 random dispel`。
+
+- [x] P1-4.1 审查 `systems/status.py`、`status_callbacks.py`、`AddModifier`、`RemoveModifier`、DoT/status damage 当前实现。
+- [x] P1-4.2 定义 status instance identity 和 source stack 规则。
+- [x] P1-4.3 实现 max stack admission。
+- [x] P1-4.4 实现 add stack mutation。
+- [x] P1-4.5 实现 stack cap。
+- [x] P1-4.6 实现 stack reduce 和 stack 到 0 移除。
+- [x] P1-4.7 实现 stack 影响 dynamic value/formula 的读取路径。
+- [x] P1-4.8 定义 refresh policy admission。
+- [x] P1-4.9 实现 duration refresh。
+- [x] P1-4.10 实现 stack-only refresh。
 - [ ] P1-4.11 实现 stack + duration refresh。
-- [ ] P1-4.12 实现 replace/coexist 的最小可执行策略。
-- [ ] P1-4.13 定义 duration tick owner：holder turn、caster turn、action、wave、permanent。
-- [ ] P1-4.14 实现 turn start duration tick。
-- [ ] P1-4.15 实现 turn end duration tick。
-- [ ] P1-4.16 实现 action after duration tick。
-- [ ] P1-4.17 实现 wave end status cleanup。
-- [ ] P1-4.18 实现 status expire mutation。
-- [ ] P1-4.19 将 DoT tick 接入状态生命周期。
-- [ ] P1-4.20 实现 tick 后 callback 触发。
-- [ ] P1-4.21 定义 chance admission：base chance、effect hit、effect resist、immunity。
-- [ ] P1-4.22 接入状态命中的 RNG event。
-- [ ] P1-4.23 实现 status apply success settlement。
-- [ ] P1-4.24 实现 status apply failure settlement。
-- [ ] P1-4.25 实现 resisted settlement。
-- [ ] P1-4.26 实现 immunity settlement。
-- [ ] P1-4.27 定义 dispellable、positive、negative、control 分类。
-- [ ] P1-4.28 实现确定性 dispel。
+- [x] P1-4.12 实现 replace/coexist 的最小可执行策略。
+- [x] P1-4.13 定义 duration tick owner：holder turn、caster turn、action、wave、permanent。
+- [x] P1-4.14 实现 turn start duration tick。
+- [x] P1-4.15 实现 turn end duration tick。
+- [x] P1-4.16 实现 action after duration tick。
+- [x] P1-4.17 实现 wave end status cleanup。
+- [x] P1-4.18 实现 status expire mutation。
+- [x] P1-4.19 将 DoT tick 接入状态生命周期。
+- [x] P1-4.20 实现 tick 后 callback 触发。
+- [x] P1-4.21 定义 chance admission：base chance、effect hit、effect resist、immunity。
+- [x] P1-4.22 接入状态命中的 RNG event。
+- [x] P1-4.23 实现 status apply success settlement。
+- [x] P1-4.24 实现 status apply failure settlement。
+- [x] P1-4.25 实现 resisted settlement。
+- [x] P1-4.26 实现 immunity settlement。
+- [x] P1-4.27 定义 dispellable、positive、negative、control 分类。
+- [x] P1-4.28 实现确定性 dispel。
 - [ ] P1-4.29 实现随机 dispel 的 RNG 接入。
-- [ ] P1-4.30 实现 dispel skipped/failed settlement。
-- [ ] P1-4.31 定义 control 对 action availability 的 gating。
-- [ ] P1-4.32 定义 control 对 timeline/queue 的最小影响。
-- [ ] P1-4.33 增加 status apply success 验证。
-- [ ] P1-4.34 增加 chance failure 验证。
-- [ ] P1-4.35 增加 resisted 验证。
-- [ ] P1-4.36 增加 immunity 验证。
-- [ ] P1-4.37 增加 stack cap 验证。
-- [ ] P1-4.38 增加 duration refresh 验证。
-- [ ] P1-4.39 增加 DoT tick 验证。
-- [ ] P1-4.40 增加 expire remove 验证。
-- [ ] P1-4.41 增加 deterministic dispel 验证。
+- [x] P1-4.30 实现 dispel skipped/failed settlement。
+- [x] P1-4.31 定义 control 对 action availability 的 gating。
+- [x] P1-4.32 定义 control 对 timeline/queue 的最小影响。
+- [x] P1-4.33 增加 status apply success 验证。
+- [x] P1-4.34 增加 chance failure 验证。
+- [x] P1-4.35 增加 resisted 验证。
+- [x] P1-4.36 增加 immunity 验证。
+- [x] P1-4.37 增加 stack cap 验证。
+- [x] P1-4.38 增加 duration refresh 验证。
+- [x] P1-4.39 增加 DoT tick 验证。
+- [x] P1-4.40 增加 expire remove 验证。
+- [x] P1-4.41 增加 deterministic dispel 验证。
 - [ ] P1-4.42 增加 random dispel replay 验证。
-- [ ] P1-4.43 增加 control blocks action 验证。
-- [ ] P1-4.44 增加缺 chance/formula/source blocked 验证。
-- [ ] P1-4.45 更新阶段报告，说明状态通用语义和剩余 blocked 范围。
+- [x] P1-4.43 增加 control blocks action 验证。
+- [x] P1-4.44 增加缺 chance/formula/source blocked 验证。
+- [x] P1-4.45 更新阶段报告，说明状态通用语义和剩余 blocked 范围。
 
 完成口径：
 
+- [x] P1-4-SUBSTRATE-ACCEPTED 状态系统底座已通过有来源正例和 source-gap/blocked 验证；剩余无真实来源项不产生 synthetic mutation。
 - [ ] P1-4-DONE 状态 stack、refresh、duration、tick、chance/resist/immunity、dispel、control gating 形成通用底座并通过验证。
 
 ## P1-5 行动队列与窗口语义
