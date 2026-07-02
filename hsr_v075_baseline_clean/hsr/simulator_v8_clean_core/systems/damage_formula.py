@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 
 from ..core.model import BattleState, JSONValue, RNGEvent, UnitState
 from ..rules.ir import ActionDefinitionIR
+from .rng import RNGOutcome, RNGRequest, merge_rng_result_payload, resolve_rng_request
 from .scaling_basis import resolve_scaling_basis
 
 
@@ -117,6 +118,8 @@ class DamageFormulaInput:
     scaling_basis: dict[str, JSONValue] = field(default_factory=dict)
     source_trace: dict[str, JSONValue] = field(default_factory=dict)
     crit_mode: str | None = None
+    rng_choices: dict[str, JSONValue] = field(default_factory=dict)
+    rng_mode: str | None = None
     direct_modifier_terms: tuple[dict[str, JSONValue], ...] = ()
 
 
@@ -268,33 +271,63 @@ def _resolve_crit(formula_input: DamageFormulaInput, actor: UnitState) -> tuple[
         f"{formula_input.attacker_id}:{formula_input.action_definition.definition_id}:"
         f"{formula_input.target_id}:crit"
     )
-    mode = str(formula_input.crit_mode or "deterministic").lower()
+    mode = str(formula_input.crit_mode or "").lower()
+    forced_outcome_id = ""
     if mode in {"crit", "forced_crit", "true"}:
-        is_crit = True
-        roll = None
-        reason = "forced_crit"
+        forced_outcome_id = "crit"
     elif mode in {"noncrit", "non_crit", "false"}:
-        is_crit = False
-        roll = None
-        reason = "forced_noncrit"
-    elif mode in {"", "deterministic", "auto"}:
-        roll = _deterministic_roll(
-            formula_input.state.rng_state,
-            formula_input.state.event_index,
-            formula_input.attacker_id,
-            formula_input.action_definition.definition_id,
-            formula_input.target_id,
-        )
-        is_crit = roll < crit_rate
-        reason = "deterministic_rng"
+        forced_outcome_id = "noncrit"
     elif mode == "expected":
         raise ValueError("expected crit mode is not executable in v0_209")
-    else:
+    elif mode not in {"", "deterministic", "deterministic_seed", "auto"}:
         raise ValueError(f"unknown crit mode {formula_input.crit_mode!r}")
+    request = RNGRequest(
+        rng_type="crit",
+        purpose="crit",
+        event_id=event_id,
+        choice_key=f"crit:{formula_input.attacker_id}:{formula_input.action_definition.definition_id}:{formula_input.target_id}",
+        source="damage_formula",
+        before_state=formula_input.state.rng_state,
+        decision_kind="probability",
+        outcomes=(
+            RNGOutcome(
+                "crit",
+                payload={"is_crit": True, "mode": mode or "deterministic", "value": "crit"},
+                probability=crit_rate,
+            ),
+            RNGOutcome(
+                "noncrit",
+                payload={"is_crit": False, "mode": mode or "deterministic", "value": "noncrit"},
+                probability=1.0 - crit_rate,
+            ),
+        ),
+        source_trace=formula_input.source_trace,
+        metadata={
+            "actor_id": formula_input.attacker_id,
+            "target_id": formula_input.target_id,
+            "action_definition_id": formula_input.action_definition.definition_id,
+            "crit_rate": crit_rate,
+            "crit_damage": crit_damage,
+        },
+    )
+    resolution_result = resolve_rng_request(
+        request,
+        rng_choices=formula_input.rng_choices,
+        rng_mode=formula_input.rng_mode or "deterministic_seed",
+        forced_outcome_id=forced_outcome_id or None,
+    )
+    if not resolution_result.ok or resolution_result.selected_outcome is None or resolution_result.event is None:
+        raise ValueError(resolution_result.blocked_reason or "crit_rng_blocked")
+    is_crit = resolution_result.selected_outcome.outcome_id == "crit"
+    roll = resolution_result.roll
+    if resolution_result.choice_source == "forced_command":
+        reason = "forced_crit" if is_crit else "forced_noncrit"
+    else:
+        reason = resolution_result.choice_source
     multiplier = 1.0 + crit_damage if is_crit else 1.0
     resolution = CritResolution(
         event_id=event_id,
-        mode=mode or "deterministic",
+        mode=mode or str(formula_input.rng_mode or "deterministic"),
         is_crit=is_crit,
         crit_rate=crit_rate,
         crit_damage=crit_damage,
@@ -302,20 +335,7 @@ def _resolve_crit(formula_input: DamageFormulaInput, actor: UnitState) -> tuple[
         rng_roll=roll,
         reason=reason,
     )
-    rng_event = RNGEvent(
-        rng_type="crit",
-        source="damage_formula",
-        event_id=event_id,
-        before_state=formula_input.state.rng_state,
-        after_state=formula_input.state.rng_state,
-        result=resolution.to_json(),
-        metadata={
-            "actor_id": formula_input.attacker_id,
-            "target_id": formula_input.target_id,
-            "action_definition_id": formula_input.action_definition.definition_id,
-            "source_trace": formula_input.source_trace,
-        },
-    )
+    rng_event = merge_rng_result_payload(resolution_result.event, resolution.to_json())
     bucket = DamageFormulaBucket(
         bucket="crit",
         multiplier=multiplier,

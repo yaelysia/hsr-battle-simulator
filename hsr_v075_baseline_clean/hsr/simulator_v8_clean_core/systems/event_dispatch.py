@@ -213,6 +213,7 @@ class EventDispatchSystem:
             after_state=result.after_state,
             mutations=result.mutations,
             events=(event, *result.events),
+            rng_events=result.rng_events,
             records=(dispatch_record, *listener_records, *result.records),
             trigger_windows=result.trigger_windows,
             listener_records=listener_records,

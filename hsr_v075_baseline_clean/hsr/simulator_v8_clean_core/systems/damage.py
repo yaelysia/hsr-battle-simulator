@@ -431,6 +431,8 @@ class DamageSystem:
                     scaling_basis=packet.scaling_basis,
                     source_trace=packet.source_trace,
                     crit_mode=_metadata_str(packet.metadata, "crit_mode"),
+                    rng_choices=_metadata_dict(packet.metadata, "rng_choices"),
+                    rng_mode=_metadata_str(packet.metadata, "rng_mode"),
                     direct_modifier_terms=_direct_modifier_terms_from_metadata(packet.metadata),
                 )
             )
@@ -890,6 +892,11 @@ def _damage_source_skip(
 def _metadata_str(metadata: dict[str, JSONValue], key: str) -> str | None:
     value = metadata.get(key)
     return str(value) if isinstance(value, str) else None
+
+
+def _metadata_dict(metadata: dict[str, JSONValue], key: str) -> dict[str, JSONValue]:
+    value = metadata.get(key)
+    return {str(item_key): item_value for item_key, item_value in value.items()} if isinstance(value, dict) else {}
 
 
 def _direct_modifier_terms_from_metadata(metadata: dict[str, JSONValue]) -> tuple[dict[str, JSONValue], ...]:

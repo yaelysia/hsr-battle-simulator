@@ -362,6 +362,7 @@ class CombatExecutor:
                                 previous_hit_targets=tuple(action_hit_targets),
                                 action_id=command.action_id,
                                 action_level=command.action_level,
+                                event_payload=command.metadata,
                             )
                             if not bounce_result.ok:
                                 runtime_records.append(
@@ -715,6 +716,7 @@ class CombatExecutor:
 
         trigger_mutations = tuple(mutation for result in trigger_results for mutation in result.mutations)
         trigger_events = tuple(event for result in trigger_results for event in result.events)
+        trigger_rng_events = tuple(event for result in trigger_results for event in result.rng_events)
         trigger_windows = tuple(window for result in trigger_results for window in result.trigger_windows)
         ability_task_mutations = tuple(mutation for result in ability_task_results for mutation in result.mutations)
         ability_task_events = tuple(event for result in ability_task_results for event in result.events)
@@ -729,6 +731,7 @@ class CombatExecutor:
         damage_rng_events = (
             *tuple(target_rng_events),
             *ability_task_rng_events,
+            *trigger_rng_events,
             *listener_dispatch_rng_events,
             *tuple(event for result in damage_results for event in result.rng_events),
         )
@@ -1565,6 +1568,12 @@ def _damage_metadata(command: ActionCommand) -> dict[str, JSONValue]:
     crit_mode = command.metadata.get("crit_mode")
     if isinstance(crit_mode, str):
         metadata["crit_mode"] = crit_mode
+    rng_choices = command.metadata.get("rng_choices")
+    if isinstance(rng_choices, dict):
+        metadata["rng_choices"] = {str(key): value for key, value in rng_choices.items()}
+    rng_mode = command.metadata.get("rng_mode")
+    if isinstance(rng_mode, str):
+        metadata["rng_mode"] = rng_mode
     metadata["is_current_skill_active"] = True
     metadata["is_insert_action"] = command.source == "queue"
     return metadata

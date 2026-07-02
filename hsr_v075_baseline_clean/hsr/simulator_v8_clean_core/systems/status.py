@@ -9,6 +9,7 @@ from ..core.settlement import SettlementRecord
 from ..rules.evaluator import NumericEvaluationContext, RuleEvaluator
 from ..rules.ir import EffectIR, RuleEntity
 from ..rules.rulebook import RuleBook
+from .rng import RNGOutcome, RNGRequest, resolve_rng_request, rng_choices_from_payload, rng_mode_from_payload
 from .target import TargetSystem
 from .unit_lifecycle import UnitLifecycleSystem
 
@@ -410,6 +411,7 @@ class StatusSystem:
                 modifier_name=modifier_name,
                 status_id=status_id,
                 source_stack_key=source_stack_key,
+                event_payload=event_payload,
             )
             rng_events.extend(chance_check.rng_events)
             if chance_check.record is not None:
@@ -747,9 +749,15 @@ class StatusSystem:
                     purpose="random_dispel_candidate",
                     candidates=tuple(str(item.get("instance_id") or "") for item in candidates),
                     trace=target_trace,
+                    event_payload=event_payload,
                 )
                 rng_events.append(event)
                 result = event.result if isinstance(event.result, dict) else {}
+                if result.get("blocked_reason"):
+                    reason = str(result.get("blocked_reason") or "requires_rng_choice")
+                    records.append(_status_dispel_process_record("status_dispel_blocked", reason, {**target_trace, "rng_event": event.to_json()}))
+                    unsupported.append(reason)
+                    continue
                 selected_index = int(result.get("selected_index") or 0)
                 selected = [candidates[selected_index]]
             for detail in selected:
@@ -2136,6 +2144,7 @@ def _status_chance_check(
     modifier_name: str,
     status_id: str,
     source_stack_key: str,
+    event_payload: dict[str, JSONValue] | None,
 ) -> _ChanceCheck:
     trace = {
         "effect_id": effect.effect_id,
@@ -2174,9 +2183,24 @@ def _status_chance_check(
             purpose="base_chance",
             probability=base_probability,
             trace=trace,
+            event_payload=event_payload,
+            success_outcome_id="success",
+            fail_outcome_id="fail",
         )
         rng_events.append(event)
         result = event.result if isinstance(event.result, dict) else {}
+        if result.get("blocked_reason"):
+            reason = str(result.get("blocked_reason") or "requires_rng_choice")
+            return _ChanceCheck(
+                allowed=False,
+                record=_status_apply_process_record(
+                    "status_blocked",
+                    reason,
+                    {**trace, "rng_event": event.to_json()},
+                ),
+                rng_events=tuple(rng_events),
+                unsupported=(reason,),
+            )
         if result.get("success") is not True:
             return _ChanceCheck(
                 allowed=False,
@@ -2196,9 +2220,24 @@ def _status_chance_check(
             purpose="effect_resistance",
             probability=resist_probability,
             trace=trace,
+            event_payload=event_payload,
+            success_outcome_id="resisted",
+            fail_outcome_id="not_resisted",
         )
         rng_events.append(event)
         result = event.result if isinstance(event.result, dict) else {}
+        if result.get("blocked_reason"):
+            reason = str(result.get("blocked_reason") or "requires_rng_choice")
+            return _ChanceCheck(
+                allowed=False,
+                record=_status_apply_process_record(
+                    "status_blocked",
+                    reason,
+                    {**trace, "rng_event": event.to_json()},
+                ),
+                rng_events=tuple(rng_events),
+                unsupported=(reason,),
+            )
         if result.get("success") is True:
             return _ChanceCheck(
                 allowed=False,
@@ -2360,26 +2399,51 @@ def _status_rng_event(
     purpose: str,
     probability: float,
     trace: dict[str, JSONValue],
+    event_payload: dict[str, JSONValue] | None,
+    success_outcome_id: str,
+    fail_outcome_id: str,
 ) -> RNGEvent:
     event_id = (
         f"rng:{state.event_index}:{rng_type}:{purpose}:"
         f"{trace.get('caster_id')}:{trace.get('target_id')}:{_status_id_fragment(str(trace.get('status_id') or ''))}"
     )
-    roll = _deterministic_unit_roll(state.rng_state, event_id)
-    success = roll < probability
+    request = RNGRequest(
+        rng_type=rng_type,
+        purpose=purpose,
+        event_id=event_id,
+        choice_key=f"{rng_type}:{purpose}:{trace.get('caster_id')}:{trace.get('target_id')}:{_status_id_fragment(str(trace.get('status_id') or ''))}",
+        source=source,
+        before_state=state.rng_state,
+        decision_kind="probability",
+        outcomes=(
+            RNGOutcome(success_outcome_id, payload={"success": True, "value": success_outcome_id}, probability=probability),
+            RNGOutcome(fail_outcome_id, payload={"success": False, "value": fail_outcome_id}, probability=1.0 - probability),
+        ),
+        source_trace=trace,
+        metadata={"probability": probability},
+    )
+    resolution = resolve_rng_request(
+        request,
+        rng_choices=rng_choices_from_payload(event_payload),
+        rng_mode=rng_mode_from_payload(event_payload, default="deterministic_seed"),
+    )
+    if resolution.ok and resolution.event is not None:
+        return resolution.event
     return RNGEvent(
         rng_type=rng_type,
         source=source,
         event_id=event_id,
         before_state=state.rng_state,
-        after_state=f"{state.rng_state}:{event_id}",
+        after_state=state.rng_state,
         result={
+            "schema": "v8_rng_decision_v1",
             "purpose": purpose,
-            "roll": roll,
-            "threshold": probability,
-            "success": success,
+            "blocked_reason": resolution.blocked_reason,
+            "available_rng_outcomes": resolution.available_rng_outcomes(),
+            "choice_key": request.choice_key,
+            "source_trace": trace,
         },
-        metadata={"source_trace": trace},
+        metadata={"source_trace": trace, "available_rng_outcomes": resolution.available_rng_outcomes()},
     )
 
 
@@ -2391,27 +2455,60 @@ def _status_choice_rng_event(
     purpose: str,
     candidates: tuple[str, ...],
     trace: dict[str, JSONValue],
+    event_payload: dict[str, JSONValue] | None,
 ) -> RNGEvent:
     event_id = (
         f"rng:{state.event_index}:{rng_type}:{purpose}:"
         f"{trace.get('caster_id')}:{trace.get('target_id')}:{len(candidates)}"
     )
-    roll = _deterministic_unit_roll(state.rng_state, event_id)
-    selected_index = min(len(candidates) - 1, int(roll * len(candidates))) if candidates else 0
+    request = RNGRequest(
+        rng_type=rng_type,
+        purpose=purpose,
+        event_id=event_id,
+        choice_key=f"{rng_type}:{purpose}:{trace.get('caster_id')}:{trace.get('target_id')}",
+        source=source,
+        before_state=state.rng_state,
+        decision_kind="choice",
+        outcomes=tuple(
+            RNGOutcome(
+                outcome_id=candidate,
+                payload={
+                    "candidate_count": len(candidates),
+                    "selected_index": index,
+                    "selected": candidate,
+                    "selected_status_instance_id": candidate,
+                    "value": candidate,
+                },
+                weight=1.0,
+            )
+            for index, candidate in enumerate(candidates)
+        ),
+        source_trace=trace,
+        metadata={"candidate_count": len(candidates), "candidates": list(candidates)},
+    )
+    resolution = resolve_rng_request(
+        request,
+        rng_choices=rng_choices_from_payload(event_payload),
+        rng_mode=rng_mode_from_payload(event_payload, default="deterministic_seed"),
+    )
+    if resolution.ok and resolution.event is not None:
+        return resolution.event
     return RNGEvent(
         rng_type=rng_type,
         source=source,
         event_id=event_id,
         before_state=state.rng_state,
-        after_state=f"{state.rng_state}:{event_id}",
+        after_state=state.rng_state,
         result={
+            "schema": "v8_rng_decision_v1",
             "purpose": purpose,
-            "roll": roll,
+            "blocked_reason": resolution.blocked_reason,
+            "available_rng_outcomes": resolution.available_rng_outcomes(),
+            "choice_key": request.choice_key,
             "candidate_count": len(candidates),
-            "selected_index": selected_index,
-            "selected": candidates[selected_index] if candidates else "",
+            "source_trace": trace,
         },
-        metadata={"source_trace": trace},
+        metadata={"source_trace": trace, "available_rng_outcomes": resolution.available_rng_outcomes()},
     )
 
 

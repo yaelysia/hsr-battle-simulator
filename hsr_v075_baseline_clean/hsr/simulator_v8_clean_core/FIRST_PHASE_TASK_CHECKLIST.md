@@ -289,29 +289,45 @@
 
 目标：所有概率和随机目标都可记录、可 replay，并为后续推演器分支枚举预留接口。
 
-- [ ] P1-7.1 审查当前 `rng_state`、transition rng events、target random、status chance 相关实现。
-- [ ] P1-7.2 定义统一 RNG event 格式。
-- [ ] P1-7.3 定义 deterministic choice 输入格式。
-- [ ] P1-7.4 明确 seed/draw 模型与 explicit choice ledger 的取舍。
-- [ ] P1-7.5 实现状态命中 RNG event。
-- [ ] P1-7.6 实现 effect resist RNG event。
-- [ ] P1-7.7 实现 control resist RNG event。
-- [ ] P1-7.8 实现 random target RNG event。
-- [ ] P1-7.9 实现 random bounce RNG event 或明确 blocked。
-- [ ] P1-7.10 实现 random dispel RNG event。
-- [ ] P1-7.11 增加 `requires_rng_choice` 或等价状态。
-- [ ] P1-7.12 增加 `available_rng_outcomes` 或等价预留。
-- [ ] P1-7.13 增加 probability weight 记录或预留。
-- [ ] P1-7.14 禁止无记录进程随机数进入 runtime。
-- [ ] P1-7.15 增加同一 RNG event replay 验证。
-- [ ] P1-7.16 增加不同 RNG event 不同合法结果验证。
-- [ ] P1-7.17 增加 missing RNG choice blocked 验证。
-- [ ] P1-7.18 增加 probability settlement success/failure 验证。
-- [ ] P1-7.19 更新阶段报告，说明 RNG ledger 和后续 branch enumeration 预留。
+详细计划：`P1_7_RNG_BRANCH_TASK_PLAN.md`。
+
+验收口径：每个 RNG / probability / branch 子机制先按 `executable / source_gap_blocked / implementation_missing` 三态判断。有真实 TBGD/IR 来源的随机机制必须完成 positive executable validation；当前没有真实来源或缺 runtime context 的机制只能做 coverage gap、blocked、state unchanged 和 no synthetic mutation 验证，不能为了提高 coverage 使用进程随机、默认第一个 outcome 或 synthetic 正例。
+
+本阶段资源约束：P1-7 以专项轻量验证为主，不自动运行 `validate_v0_209`、`validate_v0_264` 等旧重回归；旧回归需在资源允许时单独串行执行。
+
+- [x] P1-7.1 审查当前 RNG surface：`RNGEvent`、transition rng events、crit、bounce、target random、status chance/resist、random dispel。
+- [x] P1-7.2 审查 RNG source/admission，区分真实来源、engine convention、validation forced choice、source gap。
+- [x] P1-7.3 定义统一 RNG request schema。
+- [x] P1-7.4 定义统一 RNGEvent result/metadata schema。
+- [x] P1-7.5 定义 explicit choice ledger 输入格式。
+- [x] P1-7.6 定义 deterministic seed mode，并明确不能使用进程随机。
+- [x] P1-7.7 实现或预留 `available_rng_outcomes`。
+- [x] P1-7.8 增加中央 RNG resolver/helper。
+- [x] P1-7.9 迁移 crit RNG，并由 P1-7 专项验证覆盖 forced/explicit/deterministic 契约。
+- [x] P1-7.10 迁移 target random，并保持 P1-6 missing choice/invalid choice 口径。
+- [x] P1-7.11 迁移 bounce target RNG，并由 P1-7 专项验证覆盖 explicit/invalid/deterministic 契约。
+- [x] P1-7.12 迁移 status apply chance。
+- [x] P1-7.13 迁移 effect resist。
+- [x] P1-7.14 明确 control resist executable 或 source-gap blocked 边界。
+- [x] P1-7.15 处理 random dispel executable 或 source-gap blocked 边界。
+- [x] P1-7.16 统一 missing choice blocked payload。
+- [x] P1-7.17 统一 probability weight / branch weight 记录。
+- [x] P1-7.18 增加 replay contract：同一 before + action + rng ledger 可复现 after。
+- [x] P1-7.19 增加 no process random 静态检查。
+- [x] P1-7.20 透传 rng context 到 ability/effect/status callback/target/damage。
+- [x] P1-7.21 RNG settlement/source audit：成功、失败、blocked 都可追踪。
+- [x] P1-7.22 新增 `validate_p1_7_rng_branch_system.py`。
+- [x] P1-7.23 增加 crit RNG 验证。
+- [x] P1-7.24 增加 target random RNG 验证。
+- [x] P1-7.25 增加 bounce target RNG 验证。
+- [x] P1-7.26 增加 status chance/resist RNG 验证。
+- [x] P1-7.27 增加 random dispel source-gap/positive 验证。
+- [x] P1-7.28 更新阶段报告，说明 RNG ledger、source gap 和后续 branch enumeration 预留。
 
 完成口径：
 
-- [ ] P1-7-DONE 第一阶段所有随机和概率路径都进入 RNG event，replay 不依赖进程随机状态。
+- [x] P1-7-SUBSTRATE-ACCEPTED RNG 分支底座已通过专项验证和 source-gap/blocked 记录；已有 crit、target random、bounce、status chance/resist 等第一阶段关键路径进入统一 RNG schema；missing choice 有 available outcomes，失败/抵抗/blocked 不产生 mutation。
+- [ ] P1-7-DONE 第一阶段所有已有随机和概率路径都进入统一 RNG event，replay 不依赖进程随机状态。剩余无真实来源机制只能标 source gap，不能当正例完成。
 
 ## P1-8 最小战斗配置入口
 

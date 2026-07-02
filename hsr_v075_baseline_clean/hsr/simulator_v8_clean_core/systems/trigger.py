@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from ..core.model import ActionCommand, BattleState, GameEvent, JSONValue, Mutation, TargetResolution
+from ..core.model import ActionCommand, BattleState, GameEvent, JSONValue, Mutation, RNGEvent, TargetResolution
 from ..core.reducer import MutationReducer
 from ..core.settlement import SettlementRecord
 from ..rules.evaluator import EvaluationContext, RuleEvaluator
@@ -51,6 +51,7 @@ class TriggerWindowResult:
     after_state: BattleState
     mutations: tuple[Mutation, ...] = ()
     events: tuple[GameEvent, ...] = ()
+    rng_events: tuple[RNGEvent, ...] = ()
     records: tuple[dict[str, JSONValue], ...] = ()
     trigger_windows: tuple[dict[str, JSONValue], ...] = ()
 
@@ -88,6 +89,7 @@ class TriggerSystem:
 
         current = state
         mutations: list[Mutation] = []
+        rng_events: list[RNGEvent] = []
         records: list[dict[str, JSONValue]] = []
         window_records: list[dict[str, JSONValue]] = []
         primary_target = target_resolution.selected[0] if target_resolution.selected else None
@@ -209,10 +211,19 @@ class TriggerSystem:
                             owner_id=owner_id,
                             param_entity_id=primary_target or command.actor_id,
                             current_action_target_id=primary_target,
+                            target_resolution=target_resolution,
+                            event_payload=_condition_event_payload(
+                                command=command,
+                                action_definition=action_definition,
+                                primary_target=primary_target,
+                                canonical_window=canonical_window,
+                                tbgd_event=tbgd_event,
+                            ),
                         ),
                     )
                     current = self.reducer.apply_all(current, result.mutations)
                     mutations.extend(result.mutations)
+                    rng_events.extend(result.rng_events)
                     records.extend(result.records)
                     if result.unsupported and not result.records:
                         records.append(
@@ -288,6 +299,7 @@ class TriggerSystem:
             after_state=current,
             mutations=tuple(mutations),
             events=events,
+            rng_events=tuple(rng_events),
             records=tuple(records),
             trigger_windows=tuple(window_records),
         )
@@ -525,7 +537,7 @@ def _condition_event_payload(
     canonical_window: str,
     tbgd_event: str,
 ) -> dict[str, JSONValue]:
-    return {
+    payload: dict[str, JSONValue] = {
         "SkillType": action_definition.skill_effect,
         "AttackType": action_definition.attack_type,
         "canonical_window": canonical_window,
@@ -539,6 +551,11 @@ def _condition_event_payload(
         "damage_formula_family": action_definition.damage_formula_family,
         "skill_effect": action_definition.skill_effect,
     }
+    for key in ("rng_choices", "rng_mode", "target_random_choices"):
+        value = command.metadata.get(key)
+        if isinstance(value, (dict, str)):
+            payload[key] = value
+    return payload
 
 
 def _window_metadata(

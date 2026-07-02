@@ -7,6 +7,7 @@ from typing import Any
 from ..core.model import BattleState, JSONValue, RNGEvent, TargetResolution
 from ..rules.evaluator import EvaluationContext, NumericEvaluationContext, RuleEvaluator
 from ..rules.ir import ConditionIR, IRSource, TargetExpressionIR
+from .rng import RNGOutcome, RNGRequest, resolve_rng_request, rng_choices_from_payload, rng_mode_from_payload
 from .unit_relation import is_dark_team, is_light_team, is_opposing_combat_team, is_same_combat_team
 from .unit_lifecycle import UnitLifecycleSystem
 
@@ -364,6 +365,7 @@ class TargetSystem:
         previous_hit_targets: tuple[str, ...],
         action_id: str,
         action_level: int,
+        event_payload: dict[str, JSONValue] | None = None,
     ) -> BounceTargetResult:
         actor = state.units.get(actor_id)
         if actor is None:
@@ -398,38 +400,66 @@ class TargetSystem:
             candidate_pool = all_candidates or (primary_target_id,)
             candidate_pool_reason = "all_targets_defeated_continue_sequence"
         event_id = f"rng:{state.event_index}:{actor_id}:{action_id}:{action_level}:bounce:{hit_index}"
-        roll = _deterministic_roll(state.rng_state, event_id, tuple(candidate_pool), tuple(previous_hit_targets))
-        selected_index = min(len(candidate_pool) - 1, int(roll * len(candidate_pool))) if candidate_pool else 0
-        selected = candidate_pool[selected_index]
-        result = {
-            "selected_target_id": selected,
-            "candidate_pool": list(candidate_pool),
-            "candidate_pool_reason": candidate_pool_reason,
-            "roll": roll,
-            "selected_index": selected_index,
-            "hit_index": hit_index,
-            "selection_strategy": selection_strategy,
-            "live_target_priority": bool(bounce_policy.get("live_target_priority")),
-            "continue_on_all_defeated": bool(bounce_policy.get("continue_on_all_defeated")),
-            "previous_hit_targets": list(previous_hit_targets),
-            "bounce_policy_id": str(bounce_policy.get("bounce_policy_id") or ""),
-        }
-        rng_event = RNGEvent(
+        outcomes = tuple(
+            RNGOutcome(
+                outcome_id=str(unit_id),
+                payload={
+                    "selected_target_id": unit_id,
+                    "selected_index": index,
+                    "candidate_pool": list(candidate_pool),
+                    "candidate_pool_reason": candidate_pool_reason,
+                    "hit_index": hit_index,
+                    "selection_strategy": selection_strategy,
+                    "live_target_priority": bool(bounce_policy.get("live_target_priority")),
+                    "continue_on_all_defeated": bool(bounce_policy.get("continue_on_all_defeated")),
+                    "previous_hit_targets": list(previous_hit_targets),
+                    "bounce_policy_id": str(bounce_policy.get("bounce_policy_id") or ""),
+                    "value": unit_id,
+                },
+                weight=1.0,
+            )
+            for index, unit_id in enumerate(candidate_pool)
+        )
+        request = RNGRequest(
             rng_type="bounce_target",
-            source="target_system",
+            purpose="bounce_target",
             event_id=event_id,
+            choice_key=f"bounce:{actor_id}:{action_id}:{action_level}:{hit_index}",
+            source="target_system",
             before_state=state.rng_state,
-            after_state=state.rng_state,
-            result=result,
+            decision_kind="choice",
+            outcomes=outcomes,
+            source_trace=bounce_policy.get("source", {}) if isinstance(bounce_policy.get("source"), dict) else {},
             metadata={
                 "actor_id": actor_id,
                 "action_id": action_id,
                 "action_level": action_level,
                 "primary_target_id": primary_target_id,
-                "source_trace": bounce_policy.get("source", {}),
+                "candidate_pool": list(candidate_pool),
+                "candidate_pool_reason": candidate_pool_reason,
+                "previous_hit_targets": list(previous_hit_targets),
             },
+            invalid_choice_reason="bounce_target_choice_invalid",
         )
-        return BounceTargetResult(ok=True, target_id=selected, rng_event=rng_event, metadata=result)
+        resolution = resolve_rng_request(
+            request,
+            rng_choices=rng_choices_from_payload(event_payload),
+            rng_mode=rng_mode_from_payload(event_payload, default="deterministic_seed"),
+        )
+        if not resolution.ok or resolution.selected_outcome is None or resolution.event is None:
+            return BounceTargetResult(ok=False, error=resolution.blocked_reason, metadata=resolution.blocked_payload())
+        result = dict(resolution.selected_outcome.payload)
+        if resolution.roll is not None:
+            result["roll"] = resolution.roll
+        result["rng_event_id"] = resolution.event.event_id
+        result["choice_key"] = request.choice_key
+        result["choice_source"] = resolution.choice_source
+        return BounceTargetResult(
+            ok=True,
+            target_id=str(result.get("selected_target_id") or ""),
+            rng_event=resolution.event,
+            metadata=result,
+        )
 
 
 def _policy_allows(actor_id: str, actor: Any, target_id: str, target: Any, policy: TargetPolicy) -> bool:
@@ -1460,70 +1490,77 @@ def _select_random_targets(
     path: str,
     source_trace: dict[str, JSONValue],
 ) -> _ExpressionResolution:
-    choices = event_payload.get("target_random_choices")
-    if not isinstance(choices, dict):
-        return _inline_result(
-            path,
-            "TargetShuffle",
-            "",
-            (),
-            "requires_rng_choice",
-            [{"operation": "target_random", "candidate_pool_before": list(candidate_targets), "choice_key": path}],
+    choices = rng_choices_from_payload(event_payload)
+    legacy_choices = event_payload.get("target_random_choices")
+    if not choices and isinstance(legacy_choices, dict):
+        legacy_choice = legacy_choices.get(path)
+        if legacy_choice is None:
+            legacy_choice = legacy_choices.get("default")
+        if legacy_choice is not None:
+            choices = {path: legacy_choice}
+    outcomes = tuple(
+        RNGOutcome(
+            outcome_id=str(target_id),
+            payload={
+                "selected_target_id": target_id,
+                "selected_index": index,
+                "candidate_pool": list(candidate_targets),
+                "value": target_id,
+            },
+            weight=1.0,
         )
-    raw_choice = choices.get(path)
-    if raw_choice is None:
-        raw_choice = choices.get("default")
-    if raw_choice is None:
-        return _inline_result(
-            path,
-            "TargetShuffle",
-            "",
-            (),
-            "requires_rng_choice",
-            [{"operation": "target_random", "candidate_pool_before": list(candidate_targets), "choice_key": path}],
-        )
-    selected_index: int | None = None
-    selected_id = ""
-    if isinstance(raw_choice, int) and not isinstance(raw_choice, bool):
-        selected_index = raw_choice
-        if 0 <= selected_index < len(candidate_targets):
-            selected_id = candidate_targets[selected_index]
-    elif isinstance(raw_choice, str):
-        if raw_choice in candidate_targets:
-            selected_id = raw_choice
-            selected_index = candidate_targets.index(raw_choice)
-    if selected_index is None or not selected_id:
-        return _inline_result(
-            path,
-            "TargetShuffle",
-            "",
-            (),
-            "target_random_choice_invalid",
-            [{"operation": "target_random", "candidate_pool_before": list(candidate_targets), "raw_choice": raw_choice}],
-        )
-    event_id = f"rng:{state.event_index}:target_random:{_stable_path(path)}:{len(candidate_targets)}"
-    rng_event = RNGEvent(
-        rng_type="target_random",
-        source="target_system",
-        event_id=event_id,
-        before_state=state.rng_state,
-        after_state=state.rng_state,
-        result={
-            "candidate_pool": list(candidate_targets),
-            "selected_index": selected_index,
-            "selected_target_id": selected_id,
-            "choice_source": "event_payload.target_random_choices",
-        },
-        metadata={"source_trace": source_trace, "choice_key": path},
+        for index, target_id in enumerate(candidate_targets)
     )
+    event_id = f"rng:{state.event_index}:target_random:{_stable_path(path)}:{len(candidate_targets)}"
+    request = RNGRequest(
+        rng_type="target_random",
+        purpose="target_random",
+        event_id=event_id,
+        choice_key=path,
+        source="target_system",
+        before_state=state.rng_state,
+        decision_kind="choice",
+        outcomes=outcomes,
+        source_trace=source_trace,
+        metadata={"candidate_pool": list(candidate_targets), "path": path},
+        invalid_choice_reason="target_random_choice_invalid",
+    )
+    resolution = resolve_rng_request(
+        request,
+        rng_choices=choices,
+        rng_mode=rng_mode_from_payload(event_payload, default="explicit_ledger"),
+    )
+    if not resolution.ok:
+        return _inline_result(
+            path,
+            "TargetShuffle",
+            "",
+            (),
+            resolution.blocked_reason,
+            [
+                {
+                    "operation": "target_random",
+                    "candidate_pool_before": list(candidate_targets),
+                    "choice_key": path,
+                    "available_rng_outcomes": resolution.available_rng_outcomes(),
+                    "raw_choice": resolution.raw_choice,
+                }
+            ],
+        )
+    if resolution.selected_outcome is None or resolution.event is None:
+        return _inline_result(path, "TargetShuffle", "", (), "target_random_choice_invalid")
+    selected_id = str(resolution.selected_outcome.payload.get("selected_target_id") or "")
+    selected_index = int(resolution.selected_outcome.payload.get("selected_index") or 0)
     step = {
         "operation": "target_random",
         "candidate_pool_before": list(candidate_targets),
         "selected_targets": [selected_id],
         "selected_index": selected_index,
         "rng_event_id": event_id,
+        "choice_key": path,
+        "choice_source": resolution.choice_source,
     }
-    return _inline_result(path, "TargetShuffle", "", (selected_id,), "", [step], (rng_event,))
+    return _inline_result(path, "TargetShuffle", "", (selected_id,), "", [step], (resolution.event,))
 
 
 def _positive_int_from_numeric(

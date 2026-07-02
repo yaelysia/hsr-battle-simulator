@@ -314,6 +314,7 @@ class AbilityTaskSystem:
                 param_entity_id=primary_target or command.actor_id,
                 current_action_target_id=primary_target,
                 target_resolution=target_resolution,
+                event_payload=_rng_event_payload_from_command(command),
                 binding_sources=_binding_sources(
                     self.rules,
                     state,
@@ -444,6 +445,7 @@ class AbilityTaskSystem:
         current = state
         mutations: list[Mutation] = []
         events: list[GameEvent] = []
+        rng_events: list[RNGEvent] = []
         records: list[dict[str, JSONValue]] = []
         ledger = DamageWindowLedger()
         for emission in emissions:
@@ -537,6 +539,7 @@ class AbilityTaskSystem:
                 current = self.reducer.apply_all(current, damage_result.mutations)
                 mutations.extend(damage_result.mutations)
                 events.extend(damage_result.events)
+                rng_events.extend(damage_result.rng_events)
                 records.extend(damage_result.records)
                 records.append(
                     _task_process_record(
@@ -550,7 +553,7 @@ class AbilityTaskSystem:
                         record_count=len(damage_result.records),
                     )
                 )
-        return current, mutations, events, [], records
+        return current, mutations, events, rng_events, records
 
     def _execute_predicate_task(
         self,
@@ -671,6 +674,15 @@ def _task_process_record(
     ).to_json()
 
 
+def _rng_event_payload_from_command(command: ActionCommand) -> dict[str, JSONValue]:
+    payload: dict[str, JSONValue] = {}
+    for key in ("rng_choices", "rng_mode", "target_random_choices"):
+        value = command.metadata.get(key)
+        if isinstance(value, (dict, str)):
+            payload[key] = value
+    return payload
+
+
 def _event_payload(
     command: ActionCommand,
     action_definition: ActionDefinitionIR,
@@ -678,6 +690,7 @@ def _event_payload(
     target_resolution: TargetResolution,
 ) -> dict[str, JSONValue]:
     return {
+        **_rng_event_payload_from_command(command),
         "SkillType": action_definition.skill_effect,
         "skill_type": action_definition.skill_effect,
         "attack_type": action_definition.attack_type,

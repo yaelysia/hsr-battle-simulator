@@ -184,6 +184,10 @@ hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/FORBIDDEN.md
 
 计划文档中每个验证命令旁应标注目的和触发条件。验收时如果为了节省时间跳过无关验证，也要说明跳过理由和剩余风险；不能用少跑验证掩盖与本次改动直接相关的回归风险。
 
+资源重验证要额外标注并串行运行。凡是会全量 TBGD discovery/lowering、构建完整 RuleBook、写出大体积 `canonical_ir` / coverage / fidelity JSON 的脚本，都不能和其他重验证并行跑；怀疑资源问题时先只读脚本确认输出规模，再决定是否运行。`validate_v0_209` 已知会全量构建并写出完整 canonical/coverage/fidelity，默认不作为普通小改的直接回归，只有改到 direct damage/crit/RNGEvent schema 且 P1 主验证无法覆盖时才串行运行，并优先输出到 `/tmp`。
+
+新增或重写验证脚本必须有资源预算。默认只输出 summary、matrix、抽样 case 和必要审计记录；禁止默认写完整 `CanonicalIR.to_json()`、完整 coverage/fidelity、完整 RuleBook 派生大对象或全量 transition dump。确实需要大产物时必须加显式开关，例如 `--write-large-artifacts` / `--full-artifacts`，默认关闭，并在计划文档标注预计资源风险。主验证脚本应优先按结构化谓词抽样真实来源，而不是为了覆盖率全量序列化数据库。
+
 如果在工作中形成新的长期经验、红线或流程约定，应及时更新本 `AGENTS.md`，避免后续线程重复踩坑。
 
 ## 近期经验教训
@@ -199,6 +203,7 @@ hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/FORBIDDEN.md
 - 怪物 `AbilityNameList` 只是怪物机制入口之一，不等于完整被动；技能挂状态、状态 callback、队列插入也可能是真实被动链路的一部分。
 - 如果外部资料或用户机制说明与当前实现冲突，应回到 TBGD/数据卡来源链路重新审查，不能硬补 runtime 特例。
 - 带结构化 key/name 的 target fetch 或 registry 读取，必须验证精确 key 命中、缺 key、错 key、默认 registry 同时存在等负例；默认项不能冒充命名来源。
+- RNG choice ledger 的推演器/验收主路径应优先使用精确 `choice_key` 或 `event_id`；`rng_type` / `default` 只能作为人工驱动或兼容兜底，不能冒充某个具体随机分支的来源。
 
 ## 快照与结算目标摘要
 
