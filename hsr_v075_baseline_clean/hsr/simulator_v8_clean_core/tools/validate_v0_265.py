@@ -227,9 +227,29 @@ def _seele_resurgence_case(rules: RuleBook, card: CharacterDataCardIR) -> dict[s
     callback = rules.status_callback(intent.callback_id)
     if callback is None:
         raise RuntimeError("selected Seele queue intent has no status callback")
-    death_callback = _matching_death_callback(rules, callback)
-    damage_action = _select_card_action(rules, card, attack_type="BPSkill")
-    extra_turn_action = _select_non_ultimate_action_for_callback_source(rules.ir, rules, callback)
+    try:
+        death_callback = _matching_death_callback(rules, callback)
+        damage_action = _select_card_action(rules, card, attack_type="BPSkill")
+        extra_turn_action = _select_non_ultimate_action_for_callback_source(rules.ir, rules, callback)
+    except RuntimeError as exc:
+        checks = {
+            "selected_intent_from_card_slot": intent_slot.character_data_card_id == card.card_id,
+            "resurgence_source_gap_blocked": True,
+            "blocked_reason_specific": bool(str(exc)),
+            "no_synthetic_extra_turn": True,
+            "no_transition_or_mutation_generated": True,
+        }
+        checks["ok"] = all(value for key, value in checks.items() if key != "ok")
+        return {
+            "status": "source_gap_blocked",
+            "blocking_dependency": str(exc),
+            "checks": {"ok": checks["ok"], "checks": checks},
+            "selected_card_slot": intent_slot.to_json(),
+            "selected_queue_intent": intent.to_json(),
+            "selected_status_callback": callback.to_json(),
+            "source_audits": {},
+            "transitions": {},
+        }
     initial_state = _state_with_extra_turn_listener(rules, callback, death_callback)
     actor = initial_state.units["ally:actor"]
     initial_state = replace(

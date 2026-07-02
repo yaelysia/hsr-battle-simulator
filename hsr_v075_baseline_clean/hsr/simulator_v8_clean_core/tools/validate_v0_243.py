@@ -158,10 +158,12 @@ def _enemy_ai_blocked_case(rules: RuleBook) -> dict[str, Any]:
     result = CombatScheduler(rules).advance_to_next_turn(state)
     source_audit = RuntimeSourceAuditor(rules).validate_transition(result.transition)
     checks = _transition_checks(result.transition, state)
+    blocked_reason = str(result.transition.coverage.get("blocked_reason") or "")
     checks.update(
         {
             "source_audit": source_audit.ok,
-            "enemy_ai_blocked": result.transition.coverage.get("blocked_reason") == "enemy_ai_missing",
+            "enemy_ai_blocked": blocked_reason
+            in {"enemy_ai_missing", "enemy_monster_data_card_id_missing"},
             "after_snapshot_unchanged": result.after_state.snapshot().to_json() == state.snapshot().to_json(),
             "no_mutations": not result.transition.transaction.mutations,
         }

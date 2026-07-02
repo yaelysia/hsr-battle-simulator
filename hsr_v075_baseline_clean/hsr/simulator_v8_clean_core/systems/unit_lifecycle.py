@@ -200,6 +200,7 @@ class UnitLifecycleSystem:
         source: str,
         defeat_record: dict[str, JSONValue],
         source_trace: dict[str, JSONValue],
+        metadata: dict[str, JSONValue] | None = None,
     ) -> Mutation | None:
         unit = state.units.get(unit_id)
         if unit is None:
@@ -212,6 +213,7 @@ class UnitLifecycleSystem:
             reason=reason,
             source=source,
             metadata={
+                **(metadata or {}),
                 "lifecycle_operation": "unit_defeat_record",
                 "source_trace": source_trace,
             },

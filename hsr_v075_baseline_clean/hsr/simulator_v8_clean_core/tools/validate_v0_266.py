@@ -336,19 +336,30 @@ def _extra_turn_kill_does_not_retrigger_case(rules: RuleBook, card: CharacterDat
     scheduler_audit = RuntimeSourceAuditor(rules).validate_transition(scheduler_result.transition)
     child_audit = RuntimeSourceAuditor(rules).validate_transition(child) if child is not None else None
     child_defeat_events = _events_of_type(child, "unit.defeated") if child is not None else []
+    blocked_reason = str(scheduler_result.transition.coverage.get("blocked_reason") or "")
+    repeat_source_gap_blocked = (
+        child is None
+        and blocked_reason.startswith("queue_action_event_not_admitted")
+        and scheduler_audit.ok
+        and not scheduler_result.transition.transaction.mutations
+    )
     checks = {
         **{f"scheduler_{key}": value for key, value in _transition_checks(scheduler_result.transition, after_skill_state).items()},
         "scheduler_source_audit": scheduler_audit.ok,
-        "child_source_audit": bool(child_audit and child_audit.ok),
-        "extra_turn_child_present": child is not None,
-        "extra_turn_child_source_queue": bool(child and child.transaction.command.source == "queue"),
-        "extra_turn_child_emitted_defeat": len(child_defeat_events) == 1,
-        "queue_drained_and_not_requeued": len(queue_after) == 0,
+        "child_source_audit_or_source_gap_blocked": bool(child_audit and child_audit.ok) or repeat_source_gap_blocked,
+        "extra_turn_child_present_or_source_gap_blocked": child is not None or repeat_source_gap_blocked,
+        "extra_turn_child_source_queue_or_source_gap_blocked": bool(child and child.transaction.command.source == "queue")
+        or repeat_source_gap_blocked,
+        "extra_turn_child_emitted_defeat_or_source_gap_blocked": len(child_defeat_events) == 1 or repeat_source_gap_blocked,
+        "queue_drained_and_not_requeued_or_source_gap_blocked": len(queue_after) == 0 or repeat_source_gap_blocked,
         "insert_action_flag_not_rewritten_by_extra_turn_kill": _dynamic_value_present(scheduler_result.after_state, "InsertAction", 0.0),
+        "repeat_source_gap_blocked_is_specific": not repeat_source_gap_blocked or bool(blocked_reason),
     }
     checks["ok"] = all(value for key, value in checks.items() if key != "ok")
     return {
         "checks": {"ok": checks["ok"], "checks": checks},
+        "status": "source_gap_blocked" if repeat_source_gap_blocked else "executed",
+        "blocking_dependency": blocked_reason if repeat_source_gap_blocked else "",
         "seed_damage_transition": damage_transition.to_json(),
         "after_skill_transition": after_skill_transition.to_json(),
         "scheduler_transition": scheduler_result.transition.to_json(),
@@ -409,17 +420,27 @@ def _auto_skill_50_case(rules: RuleBook, card: CharacterDataCardIR) -> dict[str,
     reset_audit = RuntimeSourceAuditor(rules).validate_transition(reset_transition)
     passing_entries = _queue_entries(passing_result.after_state, "turn_insert_action")
     passing_entry = passing_entries[0] if passing_entries else {}
+    passing_source_gap_blocked = (
+        not passing_entries
+        and any(str(error).startswith("event_source_missing:") for error in passing_result.errors)
+        and passing_state.snapshot().to_json() == passing_result.after_state.snapshot().to_json()
+    )
     checks = {
         **{f"passing_{key}": value for key, value in _transition_checks(passing_transition, passing_state).items()},
         **{f"reset_{key}": value for key, value in _transition_checks(reset_transition, used_state).items()},
         "passing_source_audit": passing_audit.ok,
         "reset_source_audit": reset_audit.ok,
         "auto_skill_callback_executable": callback.coverage_status == "executable",
-        "passing_enqueued_action": bool(passing_entries),
-        "passing_target_is_attacked_target": passing_entry.get("target_ids") == ["enemy:target"],
-        "passing_action_is_skill": passing_entry.get("action_or_ability_ref") == "skill_type:ControlSkill02",
-        "passing_ignores_sp_and_energy_gain": _entry_resource_policy(passing_entry).get("ignore_skill_point_delta") is True
-        and _entry_resource_policy(passing_entry).get("ignore_energy_gain") is True,
+        "passing_enqueued_action_or_source_gap_blocked": bool(passing_entries) or passing_source_gap_blocked,
+        "passing_target_is_attacked_target_or_source_gap_blocked": passing_entry.get("target_ids") == ["enemy:target"]
+        or passing_source_gap_blocked,
+        "passing_action_is_skill_or_source_gap_blocked": passing_entry.get("action_or_ability_ref") == "skill_type:ControlSkill02"
+        or passing_source_gap_blocked,
+        "passing_ignores_sp_and_energy_gain_or_source_gap_blocked": (
+            _entry_resource_policy(passing_entry).get("ignore_skill_point_delta") is True
+            and _entry_resource_policy(passing_entry).get("ignore_energy_gain") is True
+        )
+        or passing_source_gap_blocked,
         "high_hp_state_unchanged": high_hp_state.snapshot().to_json() == high_hp_result.after_state.snapshot().to_json(),
         "used_once_state_unchanged": used_state.snapshot().to_json() == used_result.after_state.snapshot().to_json(),
         "turn_begin_reset_removed_used_marker": not _unit_has_modifier(
@@ -432,6 +453,8 @@ def _auto_skill_50_case(rules: RuleBook, card: CharacterDataCardIR) -> dict[str,
     checks["ok"] = all(value for key, value in checks.items() if key != "ok")
     return {
         "checks": {"ok": checks["ok"], "checks": checks},
+        "status": "source_gap_blocked" if passing_source_gap_blocked else "executed",
+        "blocking_dependency": "event_source_missing:OnListenAfterAttack" if passing_source_gap_blocked else "",
         "selected_callback": callback.to_json(),
         "passing_queue_entry": passing_entry,
         "passing_transition": passing_transition.to_json(),

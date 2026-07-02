@@ -50,6 +50,10 @@ class QueueEntry:
     window_family: str = ""
     window_policy: dict[str, JSONValue] | None = None
     target_resolution: dict[str, JSONValue] | None = None
+    owner_id: str = ""
+    source_id: str = ""
+    expiration_policy: dict[str, JSONValue] | None = None
+    cancel_policy: dict[str, JSONValue] | None = None
     status: str = "pending"
     drain_status: str = "not_attempted"
 
@@ -71,6 +75,10 @@ class QueueEntry:
             "window_family": self.window_family,
             "window_policy": self.window_policy or {},
             "target_resolution": self.target_resolution or {},
+            "owner_id": self.owner_id,
+            "source_id": self.source_id,
+            "expiration_policy": self.expiration_policy or {},
+            "cancel_policy": self.cancel_policy or {},
             "source_trace": self.source_trace,
             "status": self.status,
             "drain_status": self.drain_status,
@@ -94,8 +102,33 @@ class QueueWindowPlan:
     target_resolution: dict[str, JSONValue] | None = None
     blocked_reason: str = ""
     source_trace: dict[str, JSONValue] | None = None
+    control: str = ""
+    family_order: int | None = None
+    ordering_source_kind: str = ""
+    ordering: dict[str, JSONValue] | None = None
 
     def to_json(self) -> dict[str, JSONValue]:
+        ordering = self.ordering or queue_ordering_metadata(
+            window_family=self.window_family,
+            priority_source={
+                "queue_priority_id": self.queue_priority_id,
+                "priority_key": self.priority_key,
+                "priority_value": self.priority_value,
+            },
+            priority_key=self.priority_key,
+            priority_value=self.priority_value,
+            drain_order=None,
+            entry_id="",
+            blocked_reason=self.blocked_reason,
+        )
+        control = self.control or queue_window_control(self.window_family, ok=self.ok)
+        if (
+            not self.control
+            and self.ok
+            and self.window_family == "extra_turn"
+            and (self.window_policy or {}).get("action_selection_policy") == "source_or_route_selected_action_required"
+        ):
+            control = "selectable"
         return {
             "ok": self.ok,
             "status": self.status,
@@ -112,6 +145,10 @@ class QueueWindowPlan:
             "target_resolution": self.target_resolution or {},
             "blocked_reason": self.blocked_reason,
             "source_trace": self.source_trace or {},
+            "control": control,
+            "family_order": self.family_order if self.family_order is not None else queue_window_family_order(self.window_family),
+            "ordering_source_kind": self.ordering_source_kind or str(ordering.get("ordering_source_kind") or ""),
+            "ordering": ordering,
         }
 
 
@@ -133,8 +170,34 @@ class QueueDrainPlan:
     queue_window: dict[str, JSONValue] | None = None
     resolved_action_id: str = ""
     resolved_action_level: int | None = None
+    control: str = ""
+    family_order: int | None = None
+    ordering_source_kind: str = ""
+    tie_breaker: dict[str, JSONValue] | None = None
+    ordering: dict[str, JSONValue] | None = None
 
     def to_json(self) -> dict[str, JSONValue]:
+        window = self.queue_window or {}
+        window_family = str(window.get("window_family") or "")
+        priority_source = None
+        entry_priority = self.queue_entry.get("priority_source") if isinstance(self.queue_entry, dict) else None
+        if isinstance(entry_priority, dict):
+            priority_source = entry_priority
+        ordering = self.ordering or queue_ordering_metadata(
+            window_family=window_family,
+            priority_source=priority_source,
+            priority_key=self.priority_key,
+            priority_value=self.priority_value,
+            drain_order=self.drain_order,
+            entry_id=str(self.queue_entry.get("entry_id") or "") if isinstance(self.queue_entry, dict) else "",
+            blocked_reason=self.blocked_reason,
+        )
+        if self.control:
+            control = self.control
+        elif self.ok and window_family == "extra_turn" and self.resolved_kind == "extra_turn_action_choice":
+            control = "selectable"
+        else:
+            control = queue_window_control(window_family, ok=self.ok)
         return {
             "ok": self.ok,
             "status": self.status,
@@ -152,6 +215,11 @@ class QueueDrainPlan:
             "queue_window": self.queue_window or {},
             "resolved_action_id": self.resolved_action_id,
             "resolved_action_level": self.resolved_action_level,
+            "control": control,
+            "family_order": self.family_order if self.family_order is not None else queue_window_family_order(window_family),
+            "ordering_source_kind": self.ordering_source_kind or str(ordering.get("ordering_source_kind") or ""),
+            "tie_breaker": self.tie_breaker or dict(ordering.get("tie_breaker", {})),
+            "ordering": ordering,
         }
 
 
@@ -167,6 +235,78 @@ QUEUE_WINDOW_FAMILY_ORDER: dict[str, int] = {
     "assistant": 90,
     "unknown": 999,
 }
+
+
+def queue_window_family_order(window_family: str) -> int:
+    return QUEUE_WINDOW_FAMILY_ORDER.get(window_family or "unknown", 999)
+
+
+def queue_window_control(window_family: str, resolution: QueueResolutionIR | None = None, *, ok: bool = True) -> str:
+    if not ok:
+        return "blocked"
+    if window_family == "ultimate":
+        return "selectable"
+    if (
+        window_family == "extra_turn"
+        and resolution is not None
+        and resolution.resolved_kind == "extra_turn_action_choice"
+    ):
+        return "selectable"
+    return "mandatory"
+
+
+def queue_ordering_metadata(
+    *,
+    window_family: str,
+    priority_source: dict[str, JSONValue] | None,
+    priority_key: str,
+    priority_value: float | None,
+    drain_order: int | None,
+    entry_id: str,
+    blocked_reason: str = "",
+) -> dict[str, JSONValue]:
+    priority = priority_source if isinstance(priority_source, dict) else {}
+    priority_source_kind = _priority_ordering_source_kind(priority)
+    family_order = queue_window_family_order(window_family)
+    return {
+        "family_order": family_order,
+        "family_order_source_kind": "engine_scheduling_convention",
+        "priority_key": priority_key,
+        "priority_value": priority_value,
+        "priority_order_source_kind": priority_source_kind,
+        "priority_table": str(priority.get("priority_table") or ""),
+        "queue_priority_id": str(priority.get("queue_priority_id") or ""),
+        "tie_breaker_source_kind": "engine_scheduling_convention",
+        "tie_breaker": {
+            "drain_order": drain_order,
+            "entry_id": entry_id,
+            "rule": "stable_drain_order_then_entry_id",
+        },
+        "ordering_source_kind": "source_gap_blocked" if blocked_reason else priority_source_kind,
+        "engine_scheduling_convention": {
+            "family_order_table": dict(QUEUE_WINDOW_FAMILY_ORDER),
+            "sort_key": [
+                family_order,
+                priority_value if priority_value is not None else "inf",
+                drain_order if drain_order is not None else 0,
+                entry_id,
+            ],
+        },
+        "blocked_reason": blocked_reason,
+    }
+
+
+def _priority_ordering_source_kind(priority_source: dict[str, JSONValue]) -> str:
+    priority_key = str(priority_source.get("priority_key") or "")
+    priority_table = str(priority_source.get("priority_table") or "")
+    queue_priority_id = str(priority_source.get("queue_priority_id") or "")
+    if priority_source.get("field") == "manual_route_input" or priority_key == "manual_ultimate":
+        return "manual_route_input"
+    if queue_priority_id or priority_table:
+        return "tbgd_priority_table"
+    if priority_source.get("priority_ordering_admitted") is True:
+        return "queue_intent_priority_source"
+    return "source_gap_blocked"
 
 
 class QueueTargetResolver:

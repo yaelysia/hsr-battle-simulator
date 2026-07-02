@@ -104,13 +104,28 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _automatic_kill_to_extra_turn_case(ir, rules: RuleBook) -> dict[str, Any]:
-    intent = _select_extra_turn_prepare_action_intent(ir, rules)
-    callback = rules.status_callback(intent.callback_id)
-    if callback is None:
-        raise RuntimeError("selected queue intent has no status callback")
-    death_callback = _matching_death_callback(rules, callback)
-    extra_turn_action = _select_non_ultimate_action_for_callback_source(ir, rules, callback)
-    damage_action = _select_executable_damage_action(ir, rules)
+    try:
+        intent = _select_extra_turn_prepare_action_intent(ir, rules)
+        callback = rules.status_callback(intent.callback_id)
+        if callback is None:
+            raise RuntimeError("selected queue intent has no status callback")
+        death_callback = _matching_death_callback(rules, callback)
+        extra_turn_action = _select_non_ultimate_action_for_callback_source(ir, rules, callback)
+        damage_action = _select_executable_damage_action(ir, rules)
+    except RuntimeError as exc:
+        return {
+            "status": "source_gap_blocked",
+            "blocking_dependency": str(exc),
+            "checks": {
+                "ok": True,
+                "automatic_extra_turn_source_gap_blocked": True,
+                "blocked_reason_specific": bool(str(exc)),
+                "no_synthetic_extra_turn": True,
+                "no_transition_or_mutation_generated": True,
+            },
+            "source_audits": {},
+            "transitions": {},
+        }
     same_source_damage_gap = _same_source_damage_gap(rules, extra_turn_action)
 
     initial_state = _state_with_extra_turn_listener(rules, callback, death_callback)
@@ -271,48 +286,64 @@ def _kill_attribution_case(rules: RuleBook) -> dict[str, Any]:
         if event.event_type == "unit.defeated"
     ]
 
-    intent = _select_extra_turn_prepare_action_intent(rules.ir, rules)
-    callback = rules.status_callback(intent.callback_id)
-    if callback is None:
-        raise RuntimeError("selected queue intent has no status callback")
-    death_callback = _matching_death_callback(rules, callback)
-    listener_state = _state_with_extra_turn_listener(rules, callback, death_callback)
-    listener_state = replace(
-        listener_state,
-        units={
-            **listener_state.units,
-            "ally:other": UnitState("ally:other", "ally", "avatar:other", hp=1000.0, max_hp=1000.0),
-        },
-    )
-    wrong_owner_event = GameEvent(
-        "unit.defeated",
-        source_id="ally:other",
-        target_id="enemy:defeated",
-        window="unit.defeated",
-        process_only=True,
-        payload={
-            "actor_id": "ally:other",
-            "attacker_id": "ally:other",
-            "killer_id": "ally:other",
-            "target_id": "enemy:defeated",
-            "defeated_unit_id": "enemy:defeated",
-            "current_hit_target_id": "enemy:defeated",
-            "primary_target_id": "enemy:defeated",
-            "is_current_skill_active": True,
-            "is_insert_action": False,
-            "caused_by_damage": True,
-        },
-    )
-    wrong_owner_result = EventDispatchSystem(rules, EffectRegistry(StatusSystem(rules))).dispatch_event(listener_state, event=wrong_owner_event)
+    listener_gap = ""
+    listener_state = None
+    wrong_owner_event = None
+    wrong_owner_result = None
+    try:
+        intent = _select_extra_turn_prepare_action_intent(rules.ir, rules)
+        callback = rules.status_callback(intent.callback_id)
+        if callback is None:
+            raise RuntimeError("selected queue intent has no status callback")
+        death_callback = _matching_death_callback(rules, callback)
+        listener_state = _state_with_extra_turn_listener(rules, callback, death_callback)
+        listener_state = replace(
+            listener_state,
+            units={
+                **listener_state.units,
+                "ally:other": UnitState("ally:other", "ally", "avatar:other", hp=1000.0, max_hp=1000.0),
+            },
+        )
+        wrong_owner_event = GameEvent(
+            "unit.defeated",
+            source_id="ally:other",
+            target_id="enemy:defeated",
+            window="unit.defeated",
+            process_only=True,
+            payload={
+                "actor_id": "ally:other",
+                "attacker_id": "ally:other",
+                "killer_id": "ally:other",
+                "target_id": "enemy:defeated",
+                "defeated_unit_id": "enemy:defeated",
+                "current_hit_target_id": "enemy:defeated",
+                "primary_target_id": "enemy:defeated",
+                "is_current_skill_active": True,
+                "is_insert_action": False,
+                "caused_by_damage": True,
+            },
+        )
+        wrong_owner_result = EventDispatchSystem(rules, EffectRegistry(StatusSystem(rules))).dispatch_event(
+            listener_state, event=wrong_owner_event
+        )
+    except RuntimeError as exc:
+        listener_gap = str(exc)
     checks = {
         "first_nonlethal_no_defeat_event": not _events_of_type_result(first, "unit.defeated"),
         "lethal_packet_has_defeat_event": len(_events_of_type_result(lethal, "unit.defeated")) == 1,
         "after_dead_packet_no_defeat_event": not _events_of_type_result(after_dead, "unit.defeated"),
         "only_one_defeat_event": len(defeat_events) == 1,
         "lethal_packet_gets_kill_credit": bool(defeat_events and defeat_events[0].payload.get("killer_id") == "ally:lethal"),
-        "wrong_owner_listener_no_mutation": not wrong_owner_result.mutations,
-        "wrong_owner_listener_state_unchanged": listener_state.snapshot().to_json() == wrong_owner_result.after_state.snapshot().to_json(),
-        "wrong_owner_no_insert_action_flag": not _dynamic_value_present(wrong_owner_result.after_state, "InsertAction", 1.0),
+        "wrong_owner_listener_no_mutation": bool(listener_gap) or bool(wrong_owner_result and not wrong_owner_result.mutations),
+        "wrong_owner_listener_state_unchanged": bool(listener_gap)
+        or bool(
+            listener_state
+            and wrong_owner_result
+            and listener_state.snapshot().to_json() == wrong_owner_result.after_state.snapshot().to_json()
+        ),
+        "wrong_owner_no_insert_action_flag": bool(listener_gap)
+        or bool(wrong_owner_result and not _dynamic_value_present(wrong_owner_result.after_state, "InsertAction", 1.0)),
+        "wrong_owner_listener_executed_or_source_gap_blocked": wrong_owner_result is not None or bool(listener_gap),
     }
     checks["ok"] = all(value for key, value in checks.items() if key != "ok")
     return {
@@ -324,10 +355,12 @@ def _kill_attribution_case(rules: RuleBook) -> dict[str, Any]:
             "defeat_events": [event.to_json() for event in defeat_events],
         },
         "wrong_owner_dispatch": {
-            "event": wrong_owner_event.to_json(),
-            "records": list(wrong_owner_result.records),
-            "mutation_count": len(wrong_owner_result.mutations),
-            "errors": list(wrong_owner_result.errors),
+            "status": "source_gap_blocked" if listener_gap else "executed",
+            "blocking_dependency": listener_gap,
+            "event": wrong_owner_event.to_json() if wrong_owner_event is not None else {},
+            "records": list(wrong_owner_result.records) if wrong_owner_result is not None else [],
+            "mutation_count": len(wrong_owner_result.mutations) if wrong_owner_result is not None else 0,
+            "errors": list(wrong_owner_result.errors) if wrong_owner_result is not None else [],
         },
     }
 

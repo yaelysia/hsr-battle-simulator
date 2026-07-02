@@ -1159,6 +1159,13 @@ def _defeat_lifecycle_artifacts(
         "source_frame": source_frame.to_json(),
         "source_trace": packet.source_trace,
     }
+    packet_json = packet.to_json()
+    damage_metadata: dict[str, JSONValue] = {
+        **hp_mutation.metadata,
+        "hp_mutation_id": hp_mutation.stable_id(),
+        "damage_packet": packet_json,
+        "defeat_record": defeat_record,
+    }
     lifecycle = UnitLifecycleSystem()
     status_mutation = lifecycle.defeat_mutation(
         state,
@@ -1167,10 +1174,7 @@ def _defeat_lifecycle_artifacts(
         source="damage_system",
         source_trace=packet.source_trace,
         defeat_record=defeat_record,
-        metadata={
-            "hp_mutation_id": hp_mutation.stable_id(),
-            "damage_packet": packet.to_json(),
-        },
+        metadata=damage_metadata,
     )
     record_mutation = lifecycle.defeat_record_mutation(
         state,
@@ -1179,6 +1183,7 @@ def _defeat_lifecycle_artifacts(
         source="damage_system",
         defeat_record=defeat_record,
         source_trace=packet.source_trace,
+        metadata=damage_metadata,
     )
     mutations = tuple(mutation for mutation in (status_mutation, record_mutation) if mutation is not None)
     records = tuple(

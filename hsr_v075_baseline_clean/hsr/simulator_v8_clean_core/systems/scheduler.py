@@ -178,6 +178,18 @@ class CombatScheduler:
                 "resource_rule_id": self.rules.default_ultimate_energy_cost_rule().resource_rule_id,
             },
             target_resolution=target_resolution,
+            owner_id=command.actor_id,
+            source_id=queue_intent_id,
+            expiration_policy={
+                "status": "source_gap_blocked",
+                "blocked_reason": "manual_ultimate_expiration_policy_source_missing",
+            },
+            cancel_policy={
+                "actor_removed": "blocked_process_only",
+                "actor_defeated": "blocked_process_only",
+                "target_invalid": "blocked_process_only",
+                "retarget": "source_gap_blocked",
+            },
             status="pending",
             drain_status="pending_resolution",
         )
@@ -873,18 +885,39 @@ class CombatScheduler:
             },
         )
         after_dequeue = self.reducer.apply_all(state, (dequeue,))
+        drain_payload: dict[str, JSONValue] = {
+            "drain_plan": plan.to_json(),
+            "queue_resolution": resolution.to_json(),
+            "queue_window_plan": plan.queue_window or {},
+            "external_command": _command_payload(command) if command is not None else {},
+        }
         records: list[dict[str, JSONValue]] = [
+            SettlementRecord(
+                record_type="queue_drain_begin",
+                source="queue_system",
+                process_only=True,
+                payload=drain_payload,
+                trace=plan.source_trace or {},
+            ).to_json(),
             SettlementRecord(
                 record_type="queue_dequeue",
                 source="queue_system",
                 mutation_id=dequeue.stable_id(),
                 process_only=False,
-                payload={"drain_plan": plan.to_json(), "queue_resolution": resolution.to_json()},
+                payload=drain_payload,
                 trace=plan.source_trace or {},
             ).to_json()
         ]
         mutations: tuple[Mutation, ...] = (dequeue,)
         events: tuple[GameEvent, ...] = (
+            GameEvent(
+                "queue.drain.begin",
+                source_id=str(plan.queue_entry.get("actor_id") or ""),
+                event_id=f"event:{state.event_index}:queue_drain_begin:{plan.queue_intent_id}",
+                window="queue",
+                process_only=True,
+                payload=drain_payload,
+            ),
             GameEvent(
                 "queue.drained",
                 source_id=str(plan.queue_entry.get("actor_id") or ""),
@@ -1036,6 +1069,32 @@ class CombatScheduler:
                 )
             )
         child_transitions = (action_transition,) if action_transition is not None else ()
+        drain_end_payload: dict[str, JSONValue] = {
+            **drain_payload,
+            "child_transition_present": action_transition is not None,
+            "mutation_count": len(mutations),
+            "event_count": len(events) + 1,
+        }
+        events = (
+            *events,
+            GameEvent(
+                "queue.drain.end",
+                source_id=str(plan.queue_entry.get("actor_id") or ""),
+                event_id=f"event:{after_state.event_index}:queue_drain_end:{plan.queue_intent_id}",
+                window="queue",
+                process_only=True,
+                payload=drain_end_payload,
+            ),
+        )
+        records.append(
+            SettlementRecord(
+                record_type="queue_drain_end",
+                source="queue_system",
+                process_only=True,
+                payload=drain_end_payload,
+                trace=plan.source_trace or {},
+            ).to_json()
+        )
         return SchedulerStepResult(
             after_state,
             _transition(
@@ -1320,6 +1379,7 @@ class CombatScheduler:
         reason: str,
         payload: dict[str, JSONValue],
     ) -> SchedulerStepResult:
+        is_queue_block = action_id.startswith("queue:")
         record = SettlementRecord(
             record_type="scheduler_blocked",
             source="timeline_scheduler",
@@ -1327,6 +1387,24 @@ class CombatScheduler:
             payload={"reason": reason, **payload},
             trace={},
         ).to_json()
+        queue_record = (
+            SettlementRecord(
+                record_type="queue_drain_blocked",
+                source="queue_system",
+                process_only=True,
+                payload={"reason": reason, **payload},
+                trace={},
+            ).to_json(),
+        ) if is_queue_block else ()
+        queue_event = (
+            GameEvent(
+                "queue.drain.blocked",
+                event_id=f"event:{state.event_index}:{action_id}:queue_drain_blocked",
+                window="queue",
+                process_only=True,
+                payload={"reason": reason, **payload},
+            ),
+        ) if is_queue_block else ()
         transition = _transition(
             before_state=state,
             after_state=state,
@@ -1339,8 +1417,9 @@ class CombatScheduler:
                     process_only=True,
                     payload={"reason": reason, **payload},
                 ),
+                *queue_event,
             ),
-            records=(record,),
+            records=(record, *queue_record),
             coverage={"blocked_reason": reason},
         )
         return SchedulerStepResult(state, transition)

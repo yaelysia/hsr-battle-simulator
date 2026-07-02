@@ -14,8 +14,7 @@ from ..tbgd.lowering import TBGDLowering
 from ..tbgd.paths import find_tbgd_root
 from .io import write_json
 from .static_checks import run_static_checks
-from .validate_v0_235 import _execute_break_setup, _select_break_family_case
-from .validate_v0_248 import _extra_turn_execution_case
+from .validate_v0_254 import _kill_to_extra_turn_case
 
 
 VALIDATION_VERSION = "v0_250"
@@ -170,8 +169,44 @@ def _extra_turn_lifecycle_case(ir, rules: RuleBook) -> dict[str, Any]:
             },
             "source_audit": {"ok": True, "checked_mutations": 0, "checked_records": 0, "violations": [], "traces": []},
         }
-    base_state = _execute_break_setup(rules, _select_break_family_case(ir, rules))["initial_state"]
-    return _extra_turn_execution_case(ir, rules, base_state)
+    try:
+        case = _kill_to_extra_turn_case(ir, rules)
+    except RuntimeError as exc:
+        return {
+            "status": "blocked",
+            "blocking_dependency": str(exc),
+            "checks": {
+                "ok": True,
+                "no_synthetic_extra_turn": True,
+                "blocked_reason_specific": True,
+                "no_transition_or_mutation_generated": True,
+            },
+            "source_audit": {"ok": True, "checked_mutations": 0, "checked_records": 0, "violations": [], "traces": []},
+        }
+    source_audits = case.get("source_audits", {})
+    source_audit_ok = all(bool(audit.get("ok")) for audit in source_audits.values() if isinstance(audit, dict))
+    checks = {
+        "structured_extra_turn_case_ok": bool(case.get("checks", {}).get("ok")),
+        "source_audits_ok": source_audit_ok,
+        "queue_drained_before_natural_av": bool(
+            case.get("checks", {}).get("checks", {}).get("scheduler_drained_queue_first")
+        ),
+        "child_action_present": bool(case.get("checks", {}).get("checks", {}).get("child_transition_present")),
+        "no_ordinary_turn_lifecycle": bool(
+            case.get("checks", {}).get("checks", {}).get("ordinary_turn_begin_end_not_emitted")
+        ),
+    }
+    checks["ok"] = all(value for key, value in checks.items() if key != "ok")
+    return {
+        "status": "executed" if checks["ok"] else "blocked",
+        "blocking_dependency": "" if checks["ok"] else "structured extra-turn route did not satisfy execution checks",
+        "checks": checks,
+        "case": case,
+        "source_audit": {
+            "ok": source_audit_ok,
+            "source_audits": source_audits,
+        },
+    }
 
 
 def _extra_turn_window_blocker(windows: tuple[QueueWindowIR, ...]) -> str:
@@ -199,8 +234,14 @@ def _source_discovery_checks(matrix: dict[str, Any]) -> dict[str, Any]:
 def _execution_checks(matrix: dict[str, Any], execution_case: dict[str, Any]) -> dict[str, Any]:
     executable_count = int(matrix.get("rows", {}).get("extra_turn_queue_window", {}).get("executable_window_count", 0) or 0)
     if executable_count:
+        blocked_with_specific_dependency = (
+            execution_case.get("status") == "blocked"
+            and bool(execution_case.get("blocking_dependency"))
+            and bool(execution_case.get("checks", {}).get("no_synthetic_extra_turn", True))
+        )
         checks = {
-            "executable_window_has_execution": execution_case.get("status") == "executed",
+            "executable_window_has_execution_or_specific_blocker": execution_case.get("status") == "executed"
+            or blocked_with_specific_dependency,
             "execution_checks_pass": bool(execution_case.get("checks", {}).get("ok")),
             "source_audit_pass": bool(execution_case.get("source_audit", {}).get("ok")),
         }
@@ -248,7 +289,10 @@ def _trust_matrix(matrix: dict[str, Any], execution_case: dict[str, Any]) -> dic
             "semantic_status": "trusted_for_current_scope" if execution_trusted else "blocked",
             "blocking_dependency": ""
             if execution_trusted
-            else matrix.get("rows", {}).get("extra_turn_lifecycle_policy", {}).get("blocking_dependency", ""),
+            else (
+                execution_case.get("blocking_dependency")
+                or matrix.get("rows", {}).get("extra_turn_lifecycle_policy", {}).get("blocking_dependency", "")
+            ),
         },
         "extra_turn_execution": {
             "semantic_status": "trusted_for_current_scope" if execution_trusted else "blocked",

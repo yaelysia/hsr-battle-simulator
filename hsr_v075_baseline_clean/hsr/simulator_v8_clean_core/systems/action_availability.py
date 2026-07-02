@@ -269,7 +269,7 @@ class ActionAvailabilitySystem:
         queue, queue_blocked = self._queue_availability(state, plan, resolution)
         if queue.mode != "none":
             choices = self._queue_choices(state, plan, resolution) if plan is not None else ()
-            selectable_windows = self._selectable_windows(plan, resolution) if plan is not None else ()
+            selectable_windows = self._selectable_windows(state, plan, resolution) if plan is not None else ()
             blocked = queue_blocked
             mode: ActionAvailabilityMode
             if queue.mode == "blocked":
@@ -517,10 +517,11 @@ class ActionAvailabilitySystem:
             blocked_reason = "queue_resolution_missing"
         else:
             blocked_reason = self._queue_action_boundary_blocked_reason(state, plan, resolution)
-            if blocked_reason:
-                mode = "blocked"
-            elif queue_plan_requires_external_command(plan, resolution):
+            requires_external_command = queue_plan_requires_external_command(plan, resolution)
+            if requires_external_command and not _selectable_window_hard_blocked(blocked_reason):
                 mode = "selectable"
+            elif blocked_reason:
+                mode = "blocked"
             else:
                 mode = "mandatory"
         queue = QueueAvailability(
@@ -669,20 +670,55 @@ class ActionAvailabilitySystem:
 
     def _selectable_windows(
         self,
+        state: BattleState,
         plan: QueueDrainPlan | None,
         resolution: QueueResolutionIR | None,
     ) -> tuple[SelectableWindow, ...]:
         if plan is None or resolution is None or not plan.ok or not queue_plan_requires_external_command(plan, resolution):
             return ()
         window = plan.queue_window or {}
+        actor_id = str(plan.queue_entry.get("actor_id") or "")
+        target_resolution = window.get("target_resolution", plan.queue_entry.get("target_resolution", {}))
+        if not isinstance(target_resolution, dict):
+            target_resolution = {}
         return (
             SelectableWindow(
                 window_id=str(window.get("queue_window_id") or plan.queue_intent_id),
                 window_kind=str(window.get("window_family") or "unknown"),
-                actor_id=str(plan.queue_entry.get("actor_id") or ""),
+                actor_id=actor_id,
                 queue_name=plan.queue_name,
                 queue_entry_id=str(plan.queue_entry.get("entry_id") or ""),
-                metadata={"drain_plan": plan.to_json(), "queue_resolution": resolution.to_json()},
+                metadata={
+                    "control": "selectable",
+                    "actor_id": actor_id,
+                    "queue_name": plan.queue_name,
+                    "queue_entry_id": str(plan.queue_entry.get("entry_id") or ""),
+                    "queue_intent_id": plan.queue_intent_id,
+                    "queue_resolution_id": plan.queue_resolution_id,
+                    "queue_window_plan": window,
+                    "drain_plan": plan.to_json(),
+                    "queue_resolution": resolution.to_json(),
+                    "resource_preflight": _selectable_resource_preflight(state, plan),
+                    "target_policy": {
+                        "source": "queue_target_resolution",
+                        "target_resolution": target_resolution,
+                        "target_ids": list(plan.queue_entry.get("target_ids", ()))
+                        if isinstance(plan.queue_entry.get("target_ids"), list)
+                        else [],
+                    },
+                    "source_contract": {
+                        "queue_intent_source": (plan.queue_entry.get("source_trace") or {}).get("queue_intent_source", {})
+                        if isinstance(plan.queue_entry.get("source_trace"), dict)
+                        else {},
+                        "queue_window_source": (plan.queue_entry.get("source_trace") or {}).get("queue_window_source", {})
+                        if isinstance(plan.queue_entry.get("source_trace"), dict)
+                        else {},
+                        "engine_scheduling_convention": (plan.to_json().get("ordering") or {}).get(
+                            "engine_scheduling_convention",
+                            {},
+                        ),
+                    },
+                },
                 source_trace=plan.source_trace or {},
             ),
         )
@@ -1146,6 +1182,47 @@ def _command_template(command: ActionCommand) -> dict[str, JSONValue]:
         "queue_name": command.queue_name,
         "metadata": command.metadata,
     }
+
+
+def _selectable_resource_preflight(state: BattleState, plan: QueueDrainPlan) -> dict[str, JSONValue]:
+    window_family = str((plan.queue_window or {}).get("window_family") or "")
+    actor_id = str(plan.queue_entry.get("actor_id") or "")
+    actor = state.units.get(actor_id)
+    if window_family == "ultimate":
+        energy = actor.energy if actor is not None else 0.0
+        max_energy = actor.max_energy if actor is not None else 0.0
+        ok = actor is not None and max_energy > 0 and energy >= max_energy
+        return {
+            "kind": "ultimate_energy",
+            "actor_id": actor_id,
+            "energy": energy,
+            "max_energy": max_energy,
+            "ok": ok,
+            "blocked_reason": "" if ok else "manual_ultimate_energy_not_ready_at_drain",
+        }
+    if window_family == "extra_turn":
+        return {
+            "kind": "extra_turn_route_choice",
+            "actor_id": actor_id,
+            "ok": True,
+            "blocked_reason": "",
+            "requires_action_command_before_action_resource_preflight": True,
+        }
+    return {"kind": window_family or "unknown", "actor_id": actor_id, "ok": True, "blocked_reason": ""}
+
+
+def _selectable_window_hard_blocked(reason: str) -> bool:
+    if not reason:
+        return False
+    return reason.startswith(
+        (
+            "queue_action_actor_missing",
+            "queue_action_actor_unit_removed",
+            "queue_action_actor_unit_defeated",
+            "queue_action_target_missing",
+            "queue_action_target_lifecycle_blocked",
+        )
+    )
 
 
 def _control_gate_for_actor(state: BattleState, actor: UnitState) -> BlockedActionReason | None:

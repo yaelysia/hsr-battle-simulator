@@ -1284,6 +1284,18 @@ class StatusCallbackSystem:
                 window_family=window.window_family,
                 window_policy=window.window_policy,
                 target_resolution=target_resolution.to_json(),
+                owner_id=str(detail.get("owner_id") or ""),
+                source_id=str(detail.get("source_id") or callback.callback_id),
+                expiration_policy={
+                    "status": "source_gap_blocked",
+                    "blocked_reason": "queue_expiration_policy_source_missing",
+                },
+                cancel_policy={
+                    "actor_removed": "blocked_process_only",
+                    "actor_defeated": "blocked_process_only",
+                    "target_invalid": "blocked_process_only",
+                    "retarget": "source_gap_blocked",
+                },
                 status="pending",
                 drain_status="not_admitted",
             )

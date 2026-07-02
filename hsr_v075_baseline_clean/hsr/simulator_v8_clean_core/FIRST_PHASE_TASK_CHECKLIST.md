@@ -207,36 +207,41 @@
 
 目标：统一追击、反击、终结技插队、额外回合、assistant、insert action/ability 的窗口和优先级。
 
-- [ ] P1-5.1 审查 `systems/queue.py`、`QueueIntentIR`、status callback queue intent、executor queue drain 当前实现。
-- [ ] P1-5.2 定义 battle start、wave start、turn start、before action、after damage、after kill、after action、turn end、wave end、ultimate interrupt、queue drain 等窗口。
-- [ ] P1-5.3 定义 queue family 优先级，并区分 TBGD source 与 engine scheduling convention。
-- [ ] P1-5.4 定义 mandatory queue。
-- [ ] P1-5.5 定义 selectable queue。
-- [ ] P1-5.6 定义 conditional queue。
-- [ ] P1-5.7 补齐 queue item 字段：id、family、priority、actor、owner/source、action/ability、target expression、source trace、expiration、cancel。
-- [ ] P1-5.8 实现 queue drain process event。
-- [ ] P1-5.9 实现 follow-up 最小顺序。
-- [ ] P1-5.10 实现 counter 最小顺序。
-- [ ] P1-5.11 实现 extra turn 与 timeline 的关系。
-- [ ] P1-5.12 实现 insert action 最小语义或 blocked 策略。
-- [ ] P1-5.13 实现 insert ability 最小语义或 blocked 策略。
-- [ ] P1-5.14 实现 assistant family 最小顺序。
-- [ ] P1-5.15 实现 ultimate selectable window 暴露。
-- [ ] P1-5.16 实现 actor death/remove 时 pending queue 处理。
-- [ ] P1-5.17 实现 unknown queue family blocked。
-- [ ] P1-5.18 增加 follow-up order 验证。
-- [ ] P1-5.19 增加 counter order 验证。
-- [ ] P1-5.20 增加 after kill callback 验证。
-- [ ] P1-5.21 增加 extra turn order 验证。
-- [ ] P1-5.22 增加 ultimate selectable window 验证。
-- [ ] P1-5.23 增加 assistant family order 验证。
-- [ ] P1-5.24 增加 actor removed queue cancel/blocked 验证。
-- [ ] P1-5.25 增加 unknown family blocked 验证。
-- [ ] P1-5.26 更新阶段报告，说明 queue/window 顺序和推演器可见边界。
+详细计划：`P1_5_QUEUE_WINDOW_TASK_PLAN.md`。
+
+验收口径：每个 queue family / window / drain 机制先按 `executable / source_gap_blocked / implementation_missing` 三态判断。有真实 TBGD/IR 来源的机制必须完成 positive executable validation；当前没有真实来源的机制只能做 coverage gap、blocked、state unchanged 和 no synthetic mutation 验证，不能为了勾选 checklist 合成正例。
+
+- [x] P1-5.1 审查 `systems/queue.py`、`QueueIntentIR`、status callback queue intent、executor queue drain 当前实现。
+- [x] P1-5.2 定义 battle start、wave start、turn start、before action、after damage、after kill、after action、turn end、wave end、ultimate interrupt、queue drain 等窗口。
+- [x] P1-5.3 定义 queue family 优先级，并区分 TBGD source 与 engine scheduling convention。
+- [x] P1-5.4 定义 mandatory queue。
+- [x] P1-5.5 定义 selectable queue。
+- [x] P1-5.6 定义 conditional queue。
+- [x] P1-5.7 补齐 queue item 字段：id、family、priority、actor、owner/source、action/ability、target expression、source trace、expiration、cancel。
+- [x] P1-5.8 实现 queue drain process event。
+- [x] P1-5.9 实现 follow-up 最小顺序。
+- [x] P1-5.10 实现 counter 最小顺序。
+- [x] P1-5.11 实现 extra turn 与 timeline 的关系。
+- [x] P1-5.12 实现 insert action 最小语义或 blocked 策略。
+- [x] P1-5.13 实现 insert ability 最小语义或 blocked 策略。
+- [x] P1-5.14 实现 assistant family 最小顺序。
+- [x] P1-5.15 实现 ultimate selectable window 暴露。
+- [x] P1-5.16 实现 actor death/remove 时 pending queue 处理。
+- [x] P1-5.17 实现 unknown queue family blocked。
+- [x] P1-5.18 增加 follow-up order 验证。
+- [x] P1-5.19 增加 counter order 验证。
+- [x] P1-5.20 增加 after kill callback 验证。
+- [x] P1-5.21 增加 extra turn order 验证。
+- [x] P1-5.22 增加 ultimate selectable window 验证。
+- [x] P1-5.23 增加 assistant family order 验证。
+- [x] P1-5.24 增加 actor removed queue cancel/blocked 验证。
+- [x] P1-5.25 增加 unknown family blocked 验证。
+- [x] P1-5.26 更新阶段报告，说明 queue/window 顺序和推演器可见边界。
 
 完成口径：
 
-- [ ] P1-5-DONE 队列顺序确定，mandatory/selectable 可区分，queue drain 可 replay，推演器能知道当前是否必须先结算队列。
+- [x] P1-5-SUBSTRATE-ACCEPTED 队列/窗口底座已通过有来源正例和 source-gap/blocked 验证；mandatory/selectable/conditional 可区分，queue drain 可 replay，推演器能知道当前是否必须先结算队列或等待 selectable window。
+- [ ] P1-5-DONE 所有列出的 queue family 和窗口都有真实来源正例，队列顺序确定，mandatory/selectable 可区分，queue drain 可 replay，推演器能知道当前是否必须先结算队列。
 
 ## P1-6 目标系统关键缺口
 
