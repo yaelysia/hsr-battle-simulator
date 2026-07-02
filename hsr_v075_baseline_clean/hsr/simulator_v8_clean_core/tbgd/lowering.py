@@ -6051,6 +6051,42 @@ TARGET_EXPRESSION_CONTEXT_ALIASES = {
     "ParamEntityList",
     "TeamFormation",
 }
+P1_6_SAFE_TARGET_FETCH_KINDS = {
+    "TargetFetchAbilityTarget",
+    "TargetFetchCaster",
+    "TargetFetchCurrentActionTarget",
+    "TargetFetchModifierOwner",
+    "TargetFetchOwner",
+    "TargetFetchParamEntityList",
+    "TargetFetchPartner",
+    "TargetFetchUniqueNameEntity",
+}
+P1_6_SAFE_TARGET_PROPERTY_SORTS = {"CurrentHP", "MaxHP", "CurrentStance", "MaxStance"}
+P1_6_SAFE_TARGET_RATIO_SORTS = {"HPRatio", "StanceRatio"}
+P1_6_SAFE_DIRECT_TARGET_ALIASES = {
+    "AbilityTargetAdjoinEntity",
+    "AbilityTargetAndAdjoinEntity",
+    "AbilityTargetLeftEntity",
+    "AbilityTargetRightEntity",
+    "CasterAdjoinEntity",
+    "CasterWithAbilityTargetAndAdjoinEntity",
+    "ModifierOwnerEntityAdjoinEntity",
+    "ParamEntityAdjoinEntity",
+}
+P1_6_SAFE_DOT_TARGET_BASE_ALIASES = ADD_MODIFIER_TARGET_ALIASES | STATUS_CALLBACK_LIST_TARGET_ALIASES | TARGET_EXPRESSION_CONTEXT_ALIASES
+P1_6_SAFE_DOT_TARGET_OPERATIONS = {
+    "GetAdjoinEntity",
+    "GetAliveOnly",
+    "Reverse",
+    "Select1",
+    "SelectLast",
+    "SortByFormation",
+    "SortByHP",
+    "SortByHPRatio",
+    "SortByMaxHP",
+    "SortByStance",
+    "SortByStanceRatio",
+}
 DAMAGE_EMISSION_TARGET_ALIASES = {
     "AbilityTargetEntity",
     "AbilityTargetAdjoinEntity",
@@ -6246,12 +6282,15 @@ def _target_expression_kind(node_type: str, value: dict[str, Any]) -> str:
 
 def _target_expression_admission(kind: str, alias: str, raw: dict[str, Any]) -> tuple[str, str, str]:
     if kind == "TargetAlias" and _target_alias_admitted(alias):
-        return "executable", "", "v0_288_target_alias_core"
+        return "executable", "", "p1_6_target_pipeline" if _target_alias_chain_admitted(alias) else "v0_288_target_alias_core"
     if kind in {"TargetConcat", "TargetSequence", "TargetFilter", "Retarget"}:
         reason = _target_expression_runtime_blocked_reason(raw)
         if not reason:
-            return "executable", "", "v0_289_target_sequence_filter_retarget"
-        return "blocked", reason, "v0_289_target_sequence_filter_retarget"
+            return "executable", "", "p1_6_target_pipeline" if _target_expression_uses_p1_6_node(raw) else "v0_289_target_sequence_filter_retarget"
+        return "blocked", reason, "p1_6_target_pipeline" if _target_expression_uses_p1_6_node(raw) else "v0_289_target_sequence_filter_retarget"
+    reason = _target_expression_runtime_blocked_reason(raw)
+    if not reason and _target_expression_kind_admitted(kind, raw):
+        return "executable", "", "p1_6_target_pipeline"
     if kind.startswith("TargetSort"):
         return "blocked", f"target_sort_not_admitted:{kind}", "after_target_sequence_sorting"
     if kind.startswith("TargetFetch"):
@@ -6266,7 +6305,8 @@ def _target_alias_admitted(alias: str) -> bool:
         ADD_MODIFIER_TARGET_ALIASES
         | STATUS_CALLBACK_LIST_TARGET_ALIASES
         | TARGET_EXPRESSION_CONTEXT_ALIASES
-    )
+        | P1_6_SAFE_DIRECT_TARGET_ALIASES
+    ) or _target_alias_chain_admitted(alias)
 
 
 def _target_expression_runtime_blocked_reason(raw: dict[str, Any]) -> str:
@@ -6297,8 +6337,6 @@ def _target_expression_runtime_blocked_reason(raw: dict[str, Any]) -> str:
             return _target_expression_runtime_blocked_reason(target)
         return ""
     if kind == "Retarget":
-        if raw.get("ByRandom") is True:
-            return "retarget_random_not_admitted"
         target = raw.get("TargetType")
         if not isinstance(target, dict):
             return "retarget_target_type_missing"
@@ -6315,6 +6353,9 @@ def _target_expression_runtime_blocked_reason(raw: dict[str, Any]) -> str:
         if max_number is not None and not _numeric_expr_can_be_runtime_bound(_numeric_expr_summary(max_number)):
             return "retarget_max_number_not_executable"
         return ""
+    reason = _target_pipeline_node_blocked_reason(kind, raw)
+    if reason != "target_pipeline_node_not_matched":
+        return reason
     if kind.startswith("TargetSort"):
         return f"target_sort_not_admitted:{kind}"
     if kind.startswith("TargetFetch"):
@@ -6332,9 +6373,86 @@ def _first_target_expression_child_blocked_reason(children: list[Any]) -> str:
     return ""
 
 
+def _target_expression_kind_admitted(kind: str, raw: dict[str, Any]) -> bool:
+    return _target_pipeline_node_blocked_reason(kind, raw) == ""
+
+
+def _target_pipeline_node_blocked_reason(kind: str, raw: dict[str, Any]) -> str:
+    if kind in P1_6_SAFE_TARGET_FETCH_KINDS:
+        if kind == "TargetFetchUniqueNameEntity" and not raw.get("UniqueName"):
+            return "unique_entity_key_missing"
+        return ""
+    if kind == "TargetMapAdjoinEntity":
+        side = str(raw.get("SideType") or "")
+        return "" if side in {"", "Both", "Left", "Right"} else f"target_adjacent_side_not_admitted:{side}"
+    if kind == "TargetReverse":
+        return ""
+    if kind == "TargetShuffle":
+        return ""
+    if kind == "TargetTake":
+        count = raw.get("Count")
+        if count is None:
+            return "target_take_count_missing"
+        if not _numeric_expr_can_be_runtime_bound(_numeric_expr_summary(count)):
+            return "target_take_count_not_executable"
+        return ""
+    if kind == "TargetIndex":
+        index_type = str(raw.get("IndexType") or "IndexStrict")
+        if index_type not in {"First", "IndexStrict", "Last"}:
+            return f"target_index_type_not_admitted:{index_type or 'missing'}"
+        index_value = raw.get("IndexValue")
+        if index_value is not None and not _numeric_expr_can_be_runtime_bound(_numeric_expr_summary(index_value)):
+            return "target_index_value_not_executable"
+        return ""
+    if kind == "TargetSortByProperty":
+        property_type = str(raw.get("PropertyType") or "")
+        return "" if property_type in P1_6_SAFE_TARGET_PROPERTY_SORTS else f"target_sort_property_not_admitted:{property_type or 'missing'}"
+    if kind == "TargetSortByPropertyRatio":
+        property_type = str(raw.get("PropertyRatioType") or "")
+        return "" if property_type in P1_6_SAFE_TARGET_RATIO_SORTS else f"target_sort_ratio_not_admitted:{property_type or 'missing'}"
+    if kind == "TargetSortByFormation":
+        return ""
+    return "target_pipeline_node_not_matched"
+
+
+def _target_expression_uses_p1_6_node(raw: dict[str, Any]) -> bool:
+    kind = _target_expression_kind(str(raw.get("$type") or ""), raw)
+    if _target_pipeline_node_blocked_reason(kind, raw) != "target_pipeline_node_not_matched":
+        return True
+    if kind == "TargetAlias" and _target_alias_chain_admitted(_target_alias(raw) or ""):
+        return True
+    children = raw.get("Targets") if kind == "TargetConcat" else raw.get("Sequence")
+    if isinstance(children, list):
+        return any(isinstance(child, dict) and _target_expression_uses_p1_6_node(child) for child in children)
+    target = raw.get("TargetType") or raw.get("Target") or raw.get("Targets")
+    return isinstance(target, dict) and _target_expression_uses_p1_6_node(target)
+
+
+def _target_alias_chain_admitted(alias: str) -> bool:
+    if alias in P1_6_SAFE_DIRECT_TARGET_ALIASES:
+        return True
+    if "." not in alias or any(token in alias for token in (" ", "+", "-", "|", "(", ")")):
+        return False
+    parts = tuple(part for part in alias.split(".") if part)
+    if len(parts) < 2:
+        return False
+    if parts[0] not in P1_6_SAFE_DOT_TARGET_BASE_ALIASES:
+        return False
+    return all(part in P1_6_SAFE_DOT_TARGET_OPERATIONS for part in parts[1:])
+
+
 def _target_expression_normalized_payload(raw: dict[str, Any]) -> dict[str, Any]:
     kind = _target_expression_kind(str(raw.get("$type") or ""), raw)
     payload: dict[str, Any] = {"expression_kind": kind, "alias": _target_alias(raw) or ""}
+    if kind == "TargetAlias" and _target_alias_chain_admitted(payload["alias"]):
+        payload["alias_admission"] = {
+            "admission_batch": "p1_6_target_pipeline",
+            "source_paths": [
+                "Config/GlobalConfig/TargetAliasConfig.json",
+                "Config/GlobalConfig/TargetOperationConfig.json",
+            ],
+            "mode": "safe_global_alias_or_dot_chain",
+        }
     if kind == "TargetConcat":
         payload["children"] = [_target_expression_normalized_payload(item) for item in raw.get("Targets") or [] if isinstance(item, dict)]
     elif kind == "TargetSequence":
@@ -6355,6 +6473,41 @@ def _target_expression_normalized_payload(raw: dict[str, Any]) -> dict[str, Any]
             payload["target"] = _target_expression_normalized_payload(target)
         payload["by_random"] = bool(raw.get("ByRandom"))
         payload["max_number"] = _numeric_expr_summary(raw.get("MaxNumber"))
+    elif kind in P1_6_SAFE_TARGET_FETCH_KINDS:
+        payload["fetch"] = {
+            "fetch_kind": kind,
+            "unique_name": str(raw.get("UniqueName") or ""),
+            "name": str(raw.get("Name") or ""),
+            "source_path": "Config/GlobalConfig/TargetAliasConfig.json"
+            if kind in {"TargetFetchCaster", "TargetFetchPartner", "TargetFetchParamEntityList"}
+            else "",
+        }
+    elif kind == "TargetMapAdjoinEntity":
+        payload["adjacent"] = {"side_type": str(raw.get("SideType") or "Both"), "position_source": "UnitState.flags.position"}
+    elif kind == "TargetShuffle":
+        payload["random"] = {"choice_source": "event_payload.target_random_choices", "rng_type": "target_random"}
+    elif kind == "TargetTake":
+        payload["take"] = {"count": _numeric_expr_summary(raw.get("Count"))}
+    elif kind == "TargetIndex":
+        payload["index"] = {"index_type": str(raw.get("IndexType") or "IndexStrict"), "index_value": _numeric_expr_summary(raw.get("IndexValue"))}
+    elif kind == "TargetReverse":
+        payload["reverse"] = {"operation": "reverse"}
+    elif kind == "TargetSortByProperty":
+        payload["sort"] = {
+            "sort_key": str(raw.get("PropertyType") or ""),
+            "sort_kind": kind,
+            "highest_first": bool(raw.get("HighestFirst")),
+            "direction_source": "raw.HighestFirst" if "HighestFirst" in raw else "tbgd_target_operation_default_lowest_first",
+        }
+    elif kind == "TargetSortByPropertyRatio":
+        payload["sort"] = {
+            "sort_key": str(raw.get("PropertyRatioType") or ""),
+            "sort_kind": kind,
+            "highest_first": bool(raw.get("HighestFirst")),
+            "direction_source": "raw.HighestFirst" if "HighestFirst" in raw else "tbgd_target_operation_default_lowest_first",
+        }
+    elif kind == "TargetSortByFormation":
+        payload["sort"] = {"sort_key": "formation_position", "sort_kind": kind, "position_source": "UnitState.flags.position"}
     return payload
 
 

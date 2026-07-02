@@ -273,7 +273,7 @@ class StatusSystem:
         if not isinstance(modifier_name, str) or not modifier_name:
             return _unsupported_result(effect, "AddModifier has no modifier_name")
         target_alias = standard.get("target_alias")
-        target_ids, target_blocked_reason, target_expression_trace = self._resolve_add_modifier_targets(
+        target_ids, target_blocked_reason, target_expression_trace, target_rng_events = self._resolve_add_modifier_targets(
             state,
             standard,
             caster_id=caster_id,
@@ -286,7 +286,12 @@ class StatusSystem:
             binding_sources=binding_sources,
         )
         if target_blocked_reason:
-            return _unsupported_result(effect, target_blocked_reason)
+            return _unsupported_result(
+                effect,
+                target_blocked_reason,
+                trace={"target_expression": target_expression_trace},
+                rng_events=target_rng_events,
+            )
 
         definition = _select_modifier_definition(self.rules, modifier_name, effect.source.source_path)
         if definition is None:
@@ -296,7 +301,7 @@ class StatusSystem:
         lifecycle_results: list[StatusLifecycleResult] = []
         status_instances: list[StatusInstance] = []
         process_records: list[dict[str, JSONValue]] = []
-        rng_events: list[RNGEvent] = []
+        rng_events: list[RNGEvent] = list(target_rng_events)
         blocked_reasons: list[str] = []
         target_resolution_trace = target_resolution.to_json() if target_resolution is not None else None
         strict_target_admission = target_alias in STRICT_ATTACHED_STATUS_TARGET_ALIASES
@@ -519,12 +524,12 @@ class StatusSystem:
         event_payload: dict[str, JSONValue] | None,
         dynamic_values: dict[str, float] | None,
         binding_sources: tuple[dict[str, JSONValue], ...],
-    ) -> tuple[tuple[str, ...], str, dict[str, JSONValue]]:
+    ) -> tuple[tuple[str, ...], str, dict[str, JSONValue], tuple[RNGEvent, ...]]:
         target_expression_id = standard.get("target_expression_id")
         if isinstance(target_expression_id, str) and target_expression_id and self.rules is not None:
             expression = self.rules.target_expression(target_expression_id)
             if expression is None:
-                return (), f"target_expression_missing:{target_expression_id}", {}
+                return (), f"target_expression_missing:{target_expression_id}", {}, ()
             payload_alias = standard.get("target_alias")
             if (
                 isinstance(payload_alias, str)
@@ -535,7 +540,7 @@ class StatusSystem:
                 return (), f"target_expression_alias_mismatch:{payload_alias}:{expression.alias}", {
                     "target_expression": expression.to_json(),
                     "target_alias": payload_alias,
-                }
+                }, ()
             result = TargetSystem().resolve_target_expression(
                 state,
                 expression,
@@ -550,8 +555,8 @@ class StatusSystem:
             )
             trace = result.to_json()
             if not result.ok:
-                return (), result.blocked_reason, trace
-            return result.target_ids, "", trace
+                return (), result.blocked_reason, trace, result.rng_events
+            return result.target_ids, "", trace, result.rng_events
         target_alias = standard.get("target_alias")
         target_ids, target_blocked_reason = _resolve_add_modifier_target_ids(
             state,
@@ -565,7 +570,7 @@ class StatusSystem:
         return target_ids, target_blocked_reason, {
             "legacy_target_alias_resolution": True,
             "target_alias": target_alias if isinstance(target_alias, str) else "",
-        }
+        }, ()
 
     def apply_remove_modifier(
         self,
@@ -647,7 +652,7 @@ class StatusSystem:
             return _unsupported_result(effect, "DispelStatus effect has no standardized payload")
         if standard.get("blocked_reason"):
             return _unsupported_result(effect, str(standard.get("blocked_reason")))
-        target_ids, target_blocked_reason, target_expression_trace = self._resolve_add_modifier_targets(
+        target_ids, target_blocked_reason, target_expression_trace, target_rng_events = self._resolve_add_modifier_targets(
             state,
             standard,
             caster_id=caster_id,
@@ -660,7 +665,12 @@ class StatusSystem:
             binding_sources=binding_sources,
         )
         if target_blocked_reason:
-            return _unsupported_result(effect, target_blocked_reason)
+            return _unsupported_result(
+                effect,
+                target_blocked_reason,
+                trace={"target_expression": target_expression_trace},
+                rng_events=target_rng_events,
+            )
         count_admission = _runtime_dispel_count_admission(
             standard,
             effect,
@@ -708,7 +718,7 @@ class StatusSystem:
         count = int(count_admission.get("count") or 0)
         lifecycle_results: list[StatusLifecycleResult] = []
         records: list[dict[str, JSONValue]] = []
-        rng_events: list[RNGEvent] = []
+        rng_events: list[RNGEvent] = list(target_rng_events)
         unsupported: list[str] = []
         for target_id in target_ids:
             before_details = _status_details(state.units[target_id].flags)
@@ -905,7 +915,14 @@ class StatusSystem:
         )
 
 
-def _unsupported_result(effect: EffectIR, reason: str) -> StatusApplicationResult:
+def _unsupported_result(
+    effect: EffectIR,
+    reason: str,
+    *,
+    trace: dict[str, JSONValue] | None = None,
+    rng_events: tuple[RNGEvent, ...] = (),
+) -> StatusApplicationResult:
+    full_trace = {"effect_source": effect.source.to_json(), **(trace or {})}
     return StatusApplicationResult(
         ok=False,
         records=(
@@ -914,9 +931,10 @@ def _unsupported_result(effect: EffectIR, reason: str) -> StatusApplicationResul
                 source="status_system",
                 process_only=True,
                 payload={"reason": reason, "effect_id": effect.effect_id, "opcode": effect.opcode},
-                trace={"effect_source": effect.source.to_json()},
+                trace=full_trace,
             ).to_json(),
         ),
+        rng_events=rng_events,
         unsupported=(reason,),
     )
 

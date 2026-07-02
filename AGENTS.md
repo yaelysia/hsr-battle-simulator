@@ -175,6 +175,15 @@ hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/FORBIDDEN.md
 - 阶段底座可验收：有来源的机制已 executable；无来源的机制已 source-gap/blocked 且 state unchanged；后续阶段可以继续推进。
 - 全正例 DONE：所有列项都存在真实来源正例并通过 executable validation。只有来源确实存在时才允许使用这个口径。
 
+后续计划必须包含“分层验证范围”，避免执行线程无脑全量验证：
+
+- 必跑最小集：`compileall`、本阶段新增/修改的主验证脚本、`git diff --check`。
+- 直接回归集：只跑与本次改动触达系统有调用链或数据契约关系的旧验证，例如改 queue/window 才跑 queue、scheduler、extra-turn、mutation/source audit 相关验证。
+- 条件触发集：只有改到 shared reducer、snapshot/replay、source audit、target、RNG、damage、status lifecycle、wave/timeline 等共享底座时，才扩大到对应跨阶段验证。
+- 全量验证集：只在阶段验收、结构性大改、提交前高风险检查或用户明确要求时运行；计划中必须说明为什么需要全量。
+
+计划文档中每个验证命令旁应标注目的和触发条件。验收时如果为了节省时间跳过无关验证，也要说明跳过理由和剩余风险；不能用少跑验证掩盖与本次改动直接相关的回归风险。
+
 如果在工作中形成新的长期经验、红线或流程约定，应及时更新本 `AGENTS.md`，避免后续线程重复踩坑。
 
 ## 近期经验教训
@@ -189,6 +198,7 @@ hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/FORBIDDEN.md
 - 击杀收益必须按具体伤害来源归因，不只是 actor；同一主行动序列可继续结算，派生/DoT/附加伤害遇到已死目标必须跳过。
 - 怪物 `AbilityNameList` 只是怪物机制入口之一，不等于完整被动；技能挂状态、状态 callback、队列插入也可能是真实被动链路的一部分。
 - 如果外部资料或用户机制说明与当前实现冲突，应回到 TBGD/数据卡来源链路重新审查，不能硬补 runtime 特例。
+- 带结构化 key/name 的 target fetch 或 registry 读取，必须验证精确 key 命中、缺 key、错 key、默认 registry 同时存在等负例；默认项不能冒充命名来源。
 
 ## 快照与结算目标摘要
 

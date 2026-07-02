@@ -180,15 +180,39 @@ def _alias_cases(rules: RuleBook) -> dict[str, Any]:
 
 
 def _resolver_case(rules: RuleBook, *, kind: str) -> dict[str, Any]:
-    expression = _select_expression(rules, kind=kind, allow_missing=True)
-    if expression is None:
+    candidates = _select_expressions(rules, kind=kind)
+    if not candidates:
         checks = {"coverage_gap_recorded": True, "no_synthetic_expression_used": True}
         checks["ok"] = True
         return {
             "checks": {"ok": True, "checks": checks},
             "coverage_gap": f"no executable {kind} expression found by structured predicate",
         }
-    result = TargetSystem().resolve_target_expression(
+    expression = candidates[0]
+    result = _resolve_candidate(expression)
+    for candidate in candidates:
+        candidate_result = _resolve_candidate(candidate)
+        if candidate_result.ok and candidate_result.target_ids:
+            expression = candidate
+            result = candidate_result
+            break
+    checks = {
+        "expression_executable": expression.coverage_status == "executable",
+        "resolver_ok": result.ok,
+        "targets_present": bool(result.target_ids),
+        "resolution_steps_present": bool(result.metadata.get("resolution_steps")),
+        "source_trace_present": bool(expression.source.to_json()),
+    }
+    checks["ok"] = all(value for key, value in checks.items() if key != "ok")
+    return {
+        "checks": {"ok": checks["ok"], "checks": checks},
+        "expression": _expression_sample(expression),
+        "resolution": result.to_json(),
+    }
+
+
+def _resolve_candidate(expression: TargetExpressionIR) -> Any:
+    return TargetSystem().resolve_target_expression(
         _state(),
         expression,
         caster_id="ally:caster",
@@ -204,19 +228,6 @@ def _resolver_case(rules: RuleBook, *, kind: str) -> dict[str, Any]:
             "SkillType": "Normal",
         },
     )
-    checks = {
-        "expression_executable": expression.coverage_status == "executable",
-        "resolver_ok": result.ok,
-        "targets_present": bool(result.target_ids),
-        "resolution_steps_present": bool(result.metadata.get("resolution_steps")),
-        "source_trace_present": bool(expression.source.to_json()),
-    }
-    checks["ok"] = all(value for key, value in checks.items() if key != "ok")
-    return {
-        "checks": {"ok": checks["ok"], "checks": checks},
-        "expression": _expression_sample(expression),
-        "resolution": result.to_json(),
-    }
 
 
 def _runtime_add_modifier_case(rules: RuleBook) -> dict[str, Any]:
@@ -322,6 +333,17 @@ def _select_expression(
     if allow_missing:
         return None
     raise RuntimeError(f"no executable target expression found for kind={kind!r} alias={alias!r}")
+
+
+def _select_expressions(rules: RuleBook, *, kind: str, alias: str = "") -> tuple[TargetExpressionIR, ...]:
+    return tuple(
+        expression
+        for expression in sorted(rules.target_expressions(), key=lambda item: (item.source.source_path, item.target_expression_id))
+        if expression.coverage_status == "executable"
+        and expression.expression_kind == kind
+        and (not alias or expression.alias == alias)
+        and _mainline_expression_source(expression)
+    )
 
 
 def _select_runtime_candidate(rules: RuleBook) -> RuntimeCandidate | None:

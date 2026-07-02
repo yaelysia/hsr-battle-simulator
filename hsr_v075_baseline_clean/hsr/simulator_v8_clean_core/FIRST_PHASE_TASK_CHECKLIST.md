@@ -247,38 +247,43 @@
 
 目标：补齐第一阶段最影响通用战斗的目标表达式，并保持失败时 blocked/state unchanged。
 
-- [ ] P1-6.1 审查 `systems/target.py` 和 TBGD lowering 中 TargetSort、TargetFetch、Retarget、TargetSequence、TargetFilter admission。
-- [ ] P1-6.2 定义 target resolution record 的完整字段。
-- [ ] P1-6.3 实现 TargetSort admission。
-- [ ] P1-6.4 实现按 HP/HP ratio 排序。
-- [ ] P1-6.5 实现按 toughness 排序或明确 blocked。
-- [ ] P1-6.6 实现按 position 排序或明确 blocked。
-- [ ] P1-6.7 实现 TargetFetch caster。
-- [ ] P1-6.8 实现 TargetFetch owner。
-- [ ] P1-6.9 实现 TargetFetch partner 或明确 blocked。
-- [ ] P1-6.10 实现 TargetFetch unique entity。
-- [ ] P1-6.11 实现 adjacent target。
-- [ ] P1-6.12 实现 random target 的 deterministic choice 接入。
-- [ ] P1-6.13 实现 random target 的 RNG event 记录。
-- [ ] P1-6.14 实现 summon target。
-- [ ] P1-6.15 实现 servant target 或明确 blocked。
-- [ ] P1-6.16 实现 dynamic max number admission。
-- [ ] P1-6.17 明确缺排序规则 blocked。
-- [ ] P1-6.18 明确缺 payload blocked。
-- [ ] P1-6.19 明确 unique entity 找不到 blocked。
-- [ ] P1-6.20 明确 random 缺 RNG choice blocked 或返回需要 choice。
-- [ ] P1-6.21 增加 HP ratio sort 验证。
-- [ ] P1-6.22 增加 adjacent target 验证。
-- [ ] P1-6.23 增加 random target replay 验证。
-- [ ] P1-6.24 增加 unique summon target 验证。
-- [ ] P1-6.25 增加 dead/alive filter 验证。
-- [ ] P1-6.26 增加 missing sort blocked 验证。
-- [ ] P1-6.27 增加 missing payload blocked 验证。
-- [ ] P1-6.28 更新阶段报告，说明新增 target expression coverage。
+详细计划：`P1_6_TARGET_SYSTEM_TASK_PLAN.md`。
+
+验收口径：每个 target expression / sort / fetch / random / adjacent / unique / summon / servant 子机制先按 `executable / source_gap_blocked / implementation_missing` 三态判断。有真实 TBGD/IR 来源的目标机制必须完成 positive executable validation；当前没有真实来源或缺 runtime context 的机制只能做 coverage gap、blocked、state unchanged 和 no synthetic mutation 验证，不能为了提高 coverage 默认选第一个目标、默认排序或偷偷随机。
+
+- [x] P1-6.1 审查 `systems/target.py` 和 TBGD lowering 中 TargetSort、TargetFetch、Retarget、TargetSequence、TargetFilter admission。
+- [x] P1-6.2 定义 target resolution record 的完整字段。
+- [x] P1-6.3 实现 TargetSort admission。
+- [x] P1-6.4 实现按 HP/HP ratio 排序。
+- [x] P1-6.5 实现按 toughness 排序或明确 blocked。
+- [x] P1-6.6 实现按 position 排序或明确 blocked。
+- [x] P1-6.7 实现 TargetFetch caster。
+- [x] P1-6.8 实现 TargetFetch owner。
+- [x] P1-6.9 实现 TargetFetch partner 或明确 blocked。
+- [x] P1-6.10 实现 TargetFetch unique entity。
+- [x] P1-6.11 实现 adjacent target。
+- [x] P1-6.12 实现 random target 的 deterministic choice 接入。
+- [x] P1-6.13 实现 random target 的 RNG event 记录。
+- [x] P1-6.14 实现 summon target。
+- [x] P1-6.15 实现 servant target 或明确 blocked。
+- [x] P1-6.16 实现 dynamic max number admission。
+- [x] P1-6.17 明确缺排序规则 blocked。
+- [x] P1-6.18 明确缺 payload blocked。
+- [x] P1-6.19 明确 unique entity 找不到 blocked。
+- [x] P1-6.20 明确 random 缺 RNG choice blocked 或返回需要 choice。
+- [x] P1-6.21 增加 HP ratio sort 验证。
+- [x] P1-6.22 增加 adjacent target 验证。
+- [x] P1-6.23 增加 random target replay 验证。
+- [x] P1-6.24 增加 unique summon target 验证。
+- [x] P1-6.25 增加 dead/alive filter 验证。
+- [x] P1-6.26 增加 missing sort blocked 验证。
+- [x] P1-6.27 增加 missing payload blocked 验证。
+- [x] P1-6.28 更新阶段报告，说明新增 target expression coverage。
 
 完成口径：
 
-- [ ] P1-6-DONE sort/fetch/adjacent/random/unique/summon target 的第一阶段关键子集可用，目标失败不产生 mutation。
+- [x] P1-6-SUBSTRATE-ACCEPTED 目标系统底座已通过有来源正例和 source-gap/blocked 验证；target resolution record 完整，缺排序、缺 payload、缺 RNG choice、unique not found、target removed/defeated 均 blocked/state unchanged。
+- [x] P1-6-DONE sort/fetch/adjacent/random/unique/summon target 的第一阶段关键子集均有真实来源正例可用，目标失败不产生 mutation。剩余 source gap：toughness/formation sort 当前无安全正例，owner fetch 无当前数据库正例，servant target 无 executable runtime registry。
 
 ## P1-7 RNG 与分支基础
 
