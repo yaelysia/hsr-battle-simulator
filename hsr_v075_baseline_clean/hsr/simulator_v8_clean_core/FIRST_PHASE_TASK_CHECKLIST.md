@@ -367,30 +367,32 @@
 
 目标：把第一阶段拆散的能力合并成可重复的验收命令和报告。
 
-- [ ] P1-9.1 新增第一阶段聚合 validation 命令。
-- [ ] P1-9.2 聚合 action boundary 验证。
-- [ ] P1-9.3 聚合 UnitLifecycle 验证。
-- [ ] P1-9.4 聚合 WaveSystem 验证。
-- [ ] P1-9.5 聚合 Summon/Assistant/Servant 验证。
-- [ ] P1-9.6 聚合状态系统验证。
-- [ ] P1-9.7 聚合 queue/window 验证。
-- [ ] P1-9.8 聚合 target 验证。
-- [ ] P1-9.9 聚合 RNG 验证。
-- [ ] P1-9.10 聚合 BattleSetup 验证。
-- [ ] P1-9.11 聚合 snapshot replay 验证。
-- [ ] P1-9.12 聚合 source audit 验证。
-- [ ] P1-9.13 增加 static checks，确认 runtime 不引用旧 simulator、旧 model pack、TextMap、raw TBGD。
-- [ ] P1-9.14 生成第一阶段 source audit 抽样报告。
-- [ ] P1-9.15 生成第一阶段 blocked/audit_only/discovered_only 不产生 mutation 报告。
-- [ ] P1-9.16 新增 live validation report。
-- [ ] P1-9.17 更新 `CODEX_HANDOFF.md` 或主线交接摘要。
-- [ ] P1-9.18 跑 `compileall`。
-- [ ] P1-9.19 跑第一阶段聚合 validation。
-- [ ] P1-9.20 跑 `git diff --check`。
+计划文档：`P1_9_PHASE1_AGGREGATE_TASK_PLAN.md`
+
+验收口径：P1-9 是第一阶段聚合验收底座，不是把所有 source gap 强行变成正例。聚合报告必须区分 `executable`、`source_gap_blocked`、`implementation_missing`，并同时输出 `p1_9_done_eligible` 与 `phase1_full_acceptance`。只有无 regression / implementation_missing、executable 正例通过、source gap blocked 且 state unchanged 时，才能勾 `P1-9-DONE`。如果 P1-4/P1-5/P1-7 仍有当前数据库无真实来源的机制，则不能勾第一阶段全正例完成。
+
+- [x] P1-9.1 审查 P1-0 到 P1-8 当前验证脚本、summary 输出和资源风险，形成 validation inventory。
+- [x] P1-9.2 将 `validate_p1_7_rng_branch_system.py` 统一为 `run_validation(package_root, tbgd_root, output_dir)` 接口，并保持 CLI 输出兼容。
+- [x] P1-9.3 新增 `validate_p1_9_phase1_aggregate.py` 主验证脚本，默认只构建一次 RuleBook，不以 subprocess 串联旧验证作为主路径。
+- [x] P1-9.4 定义聚合报告 schema，矩阵项必须包含 `phase_item`、`source_state`、`validation_state`、positive/negative case count、replay/source audit 状态。
+- [x] P1-9.5 按结构化谓词选择聚合样例，不依赖固定角色名、怪物名、action id、stage id、文件名或 hash。
+- [x] P1-9.6 构造 BattleSetup 聚合 scenario：two-wave、source-backed initial status、source-backed summoned monster、servant source gap、timeline、RNG、objective。
+- [x] P1-9.7 执行至少一个 route transition 作为 route contract 样本；若 route 无 mutation，必须标为 `route_contract_only_no_mutation`，并用有真实 mutation 的 setup/direct transition 提供 snapshot replay、`RuntimeSourceAuditor`、`SettlementTraceabilityValidator` 正例。
+- [x] P1-9.8 聚合 action boundary 验证：core 暴露合法输入，enemy action 由外部输入，mandatory queue 与 selectable action 不混淆。
+- [x] P1-9.9 聚合 lifecycle / wave / summon 验证：spawn/defeat/remove/wave runtime/summon runtime mutation 可 replay/source audit，servant 不伪造。
+- [x] P1-9.10 聚合 status / queue-window / target / RNG 验证：有来源正例 passed，无来源或缺 choice/缺 target 的负例 blocked/no mutation。
+- [x] P1-9.11 输出 source gap / blocked / audit_only / discovered_only 矩阵，确认这些项不产生 mutation，且不被写成 executable。
+- [x] P1-9.12 增加 static boundary 检查，确认 runtime 不引用旧 simulator、旧 model pack、TextMap、raw TBGD，scenario/tools 不把 setup 当规则来源。
+- [x] P1-9.13 控制验证输出资源预算：默认只写 summary/matrix/sample，不写完整 CanonicalIR、coverage/fidelity、RuleBook 派生大对象或全量 transition dump。
+- [x] P1-9.14 新增 `live_validation_reports/v8_p1_9_phase1_aggregate_checkpoint.md`，说明当前做到哪里、source gap、implementation_missing、剩余完整复刻模块。
+- [x] P1-9.15 更新 `CODEX_HANDOFF.md` 或主线交接摘要，写入 P1-9 聚合报告路径、最近检查点、下一阶段建议。
+- [x] P1-9.16 更新本 checklist：勾选 P1-9 子项，但不把 P1-9-DONE 与 PHASE1 全正例完成混淆。
+- [x] P1-9.17 跑必跑最小集：`compileall`、`validate_p1_9_phase1_aggregate`、`git diff --check`。
+- [x] P1-9.18 根据触达范围串行跑直接回归；默认不跑 `validate_v0_204` / `validate_v0_209` 等高 IO 脚本。
 
 完成口径：
 
-- [ ] P1-9-DONE 第一阶段所有聚合验证通过，报告说明当前做到哪里、剩余 blocked 范围、距离完整复刻还缺什么。
+- [x] P1-9-DONE 第一阶段聚合验证底座通过，报告说明当前 executable 范围、source_gap_blocked 范围、implementation_missing 范围、`phase1_full_acceptance` 是否满足，以及距离完整复刻还缺什么。
 
 ## 全阶段验收
 
@@ -406,11 +408,13 @@
 - [ ] PHASE1-ACCEPT-8 sort/fetch/adjacent/random/unique/summon target 的关键子集可用。
 - [ ] PHASE1-ACCEPT-9 RNG 事件进入 transition，不存在不可追踪随机。
 - [ ] PHASE1-ACCEPT-10 最小 BattleSetup 能构建两波、有状态、有召唤、有 deterministic RNG 的验证场景。
-- [ ] PHASE1-ACCEPT-11 聚合 validation 通过。
-- [ ] PHASE1-ACCEPT-12 snapshot replay 通过。
-- [ ] PHASE1-ACCEPT-13 source audit 通过。
-- [ ] PHASE1-ACCEPT-14 blocked/audit_only/discovered_only 不产生 mutation。
-- [ ] PHASE1-ACCEPT-15 runtime 不引用旧 simulator、旧 model pack、TextMap、raw TBGD。
+- [x] PHASE1-ACCEPT-11 聚合 validation 通过。
+- [x] PHASE1-ACCEPT-12 snapshot replay 通过。
+- [x] PHASE1-ACCEPT-13 source audit 通过。
+- [x] PHASE1-ACCEPT-14 blocked/audit_only/discovered_only 不产生 mutation。
+- [x] PHASE1-ACCEPT-15 runtime 不引用旧 simulator、旧 model pack、TextMap、raw TBGD。
+
+P1-9 聚合报告显示 `phase1_full_acceptance=false`。当前全阶段验收仍受这些 source gap 阻塞：P1-4 stack+duration refresh、random dispel Order=Random；P1-6 formation/toughness sort、owner fetch、servant target；P1-7 部分随机来源 admission；P1-8 servant / battle_unit_summon initial setup。上述项不能合成正例，也不能因此勾选第一阶段已完成。
 
 ## 当前状态
 
@@ -418,4 +422,4 @@
 - [x] 第一阶段实现中。
 - [ ] 第一阶段已完成。
 
-当前建议从 `P1-4 状态系统主体` 开始。P1-0 至 P1-3 已形成第一阶段前置底座；不要先做内容扩面。
+当前建议进入 P1-9 后续的缺口收敛：优先补当前数据库有真实来源但 runtime 仍缺 admission 的项；对当前数据库没有真实来源的项继续保持 source_gap_blocked。不要为了勾第一阶段 full acceptance 合成正例。

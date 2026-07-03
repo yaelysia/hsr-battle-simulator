@@ -2,7 +2,7 @@
 
 ## 0. 一句话状态
 
-当前主线是 `simulator_v8_clean_core`，已经推进到 `v0_289 target expression sequence filter retarget`，最近代码检查点提交是 `f1fe9ce`。v8 已有干净的 Canonical IR、RuleBook、快照/回放/结算/来源审计骨架，并已经接入怪物卡、普通怪物技能、固定序列行动候选、状态监听事件族、mutation-backed 事件源和目标表达式安全子集。下一阶段建议优先补状态系统主体：叠层、刷新、概率、持续时间、tick、DoT tick、控制、抵抗、免疫、驱散。
+当前主线是 `simulator_v8_clean_core`，已经推进到 `P1-9 phase1 aggregate validation`。最近已通过 P1-9 聚合验收：`validate_p1_9_phase1_aggregate` 输出 `ok=true`、`p1_9_done_eligible=true`、`phase1_full_acceptance=false`。这表示第一阶段聚合底座可验收，但第一阶段全正例仍被 source gap 阻塞，不能标为完整完成。
 
 ## 1. 路径与事实来源
 
@@ -53,9 +53,10 @@ hsr_v075_baseline_clean/hsr/simulator_v7_7/
 3. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/PROJECT_GOALS.md`
 4. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/FORBIDDEN.md`
 5. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/MONSTER_CARD_SPEC.md`
-6. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_status_target_event_database_audit_checkpoint_v0_287.md`
-7. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_ir_checkpoint_v0_288.md`
-8. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_sequence_filter_retarget_checkpoint_v0_289.md`
+6. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p1_9_phase1_aggregate_checkpoint.md`
+7. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_status_target_event_database_audit_checkpoint_v0_287.md`
+8. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_ir_checkpoint_v0_288.md`
+9. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_sequence_filter_retarget_checkpoint_v0_289.md`
 
 需要追怪物历史时再读：
 
@@ -133,7 +134,25 @@ UI：
 - 它只做 scenario 编排、战场式查看、事件回放、审计详情、观测对照。
 - UI 不计算伤害、不补规则、不绕过 blocked、不进入 runtime 规则系统。
 
+P1-9 聚合验收：
+
+- 新增 `tools/validate_p1_9_phase1_aggregate.py`，默认只做一次 TBGD lowering / RuleBook 构建，不用 subprocess 串联旧验证。
+- P1-7 验证脚本已统一为 `run_validation(package_root, tbgd_root, output_dir)`，CLI 输出保持兼容。
+- P1-9 聚合 scenario 覆盖 two-wave setup、source-backed initial status、source-backed summoned monster、servant source gap、explicit timeline、scenario RNG ledger、objective metadata 和至少一个 route transition。
+- P1-9 route transition 当前是 route contract 样本；若无 mutation，会在 samples 中标为 `route_contract_only_no_mutation`，不作为 core source audit 正例。
+- core snapshot replay / source audit 正例使用 source-backed direct status transition，要求 `mutation_count>0`、`checked_mutations>0`、`checked_records>0`。
+- executable 矩阵项只有 `replay_ok=true` 且 `source_audit_ok=true` 才能随聚合 `ok=true` 通过；status setup 的 source trace 统计会识别嵌套 lifecycle/status instance source trace。
+- 聚合输出在 `/tmp/hsr_v8_p1_9_phase1_aggregate/`，关键文件包括 `validation_summary_p1_9_phase1_aggregate.json`、`phase1_system_matrix_p1_9.json`、`phase1_source_gap_matrix_p1_9.json`、`phase1_transition_audit_samples_p1_9.json`。
+- P1-9 summary 当前结论：`ok=true`、`p1_9_done_eligible=true`、`phase1_full_acceptance=false`、`implementation_missing=0`。
+
 ## 5. 当前明确没做到什么
+
+P1-9 后仍明确没有完整：
+
+- P1-4：`stack + duration refresh` 同一 AddModifier 当前无真实来源正例；`DispelStatus(Order=Random)` 当前无真实来源。
+- P1-6：formation/toughness sort、owner fetch、servant target 当前仍是 source gap。
+- P1-7：部分随机来源 admission 仍只能 source_gap_blocked，不能合成正例。
+- P1-8：servant initial setup、battle_unit_summon initial setup 当前 source gap，已验证 blocked/no mutation。
 
 状态系统主体还没完整：
 
@@ -212,14 +231,14 @@ TargetAlias=197061
 
 ## 7. 推荐下一步
 
-建议下一阶段做状态系统主体，而不是继续扩动作入口。
+建议下一阶段先做 source gap / implementation gap 分流，不要继续扩动作入口，也不要为了 full acceptance 合成正例。优先处理当前 RuleBook / Canonical IR 中确有真实来源但 runtime admission 或验证不足的项；当前数据库确实无真实来源的项继续保持 source_gap_blocked。
 
 推荐顺序：
 
-1. `stack/refresh/chance`。
-2. `duration/tick/expire`。
-3. DoT tick。
-4. 控制、抵抗、免疫、驱散。
+1. 重新审查 P1-4 stack/refresh/chance/duration/dispel，先区分真实来源缺口与 runtime 实现缺口。
+2. 补齐有真实来源的 status lifecycle / chance / duration / tick / dispel admission 和 negative validation。
+3. 复查 P1-6 target sort/fetch source gap，如果数据库出现真实来源，再补 executable 正例。
+4. 复查 P1-7 RNG source admission，继续要求 missing/invalid choice blocked 且 no mutation。
 
 理由：
 
@@ -234,6 +253,9 @@ TargetAlias=197061
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 python3 -m compileall -q simulator_v8_clean_core simulator_v8_ui
+PYTHONDONTWRITEBYTECODE=1 python3 -m simulator_v8_clean_core.tools.validate_p1_9_phase1_aggregate --output-dir /tmp/hsr_v8_p1_9_phase1_aggregate
+PYTHONDONTWRITEBYTECODE=1 python3 -m simulator_v8_clean_core.tools.validate_p1_7_rng_branch_system --output-dir /tmp/hsr_v8_p1_7_after_p1_9
+PYTHONDONTWRITEBYTECODE=1 python3 -m simulator_v8_clean_core.tools.validate_p1_8_battle_setup --output-dir /tmp/hsr_v8_p1_8_after_p1_9
 PYTHONDONTWRITEBYTECODE=1 python3 -m simulator_v8_clean_core.tools.validate_v0_289 --output-dir /tmp/hsr_v8_target_expression_v0_289
 PYTHONDONTWRITEBYTECODE=1 python3 -m simulator_v8_clean_core.tools.validate_v0_288 --output-dir /tmp/hsr_v8_target_expression_v0_288
 PYTHONDONTWRITEBYTECODE=1 python3 -m simulator_v8_clean_core.tools.validate_v0_287 --output-dir /tmp/hsr_v8_status_target_audit_v0_287
@@ -264,7 +286,7 @@ git diff --check
 如果要继续推进，建议开局说清：
 
 ```text
-当前接续 v0_289。先读 CODEX_HANDOFF、README、PROJECT_GOALS、FORBIDDEN、MONSTER_CARD_SPEC 和 v0_287-v0_289 报告。下一步优先做状态系统 stack/refresh/chance，runtime 仍只能读 Canonical IR/数据卡 IR，缺来源或缺条件必须 blocked/state unchanged。
+当前接续 P1-9 phase1 aggregate validation。先读 CODEX_HANDOFF、README、PROJECT_GOALS、FORBIDDEN、MONSTER_CARD_SPEC 和 `v8_p1_9_phase1_aggregate_checkpoint.md`。P1-9 聚合底座已通过，但 `phase1_full_acceptance=false`；下一步先做 source gap / implementation gap 分流，runtime 仍只能读 Canonical IR/数据卡 IR，缺来源或缺条件必须 blocked/state unchanged。
 ```
 
 不要从旧 `CODEX_HANDOFF` 的 v7 叙述接续；本文件已经替换为 v8 当前交接手册。

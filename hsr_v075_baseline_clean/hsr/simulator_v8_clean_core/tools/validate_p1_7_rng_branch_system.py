@@ -15,11 +15,8 @@ from ..systems.target import TargetSystem
 VALIDATION_VERSION = "p1_7_rng_branch_system"
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--output-dir", required=True)
-    args = parser.parse_args()
-    output_dir = Path(args.output_dir)
+def run_validation(package_root: Path, tbgd_root: Path, output_dir: Path) -> dict[str, Any]:
+    _ = (package_root, tbgd_root)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     cases = {
@@ -42,7 +39,19 @@ def main() -> None:
     _write_json(output_dir / "rng_bounce_cases_p1_7.json", cases["bounce"])
     _write_json(output_dir / "rng_static_checks_p1_7.json", cases["static_random"])
     _write_json(output_dir / "rng_surface_matrix_p1_7.json", cases["surface_matrix"])
+    return summary
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--output-dir", required=True)
+    parser.add_argument("--tbgd-root", type=Path, default=None)
+    args = parser.parse_args(argv)
+    package_root = Path(__file__).resolve().parents[1]
+    tbgd_root = args.tbgd_root or package_root.parent.parent / "turnbasedgamedata-main"
+    summary = run_validation(package_root, tbgd_root, Path(args.output_dir))
     print(f"v8 {VALIDATION_VERSION} validation ok={summary['ok']}")
+    return 0 if summary["ok"] else 1
 
 
 def _rng_helper_cases() -> dict[str, Any]:
@@ -493,4 +502,4 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
