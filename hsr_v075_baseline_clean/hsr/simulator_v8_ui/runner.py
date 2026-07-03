@@ -198,7 +198,7 @@ class UIRunner:
         process_notice_records.extend(prompt_preparation.process_notice_records)
         prompt_preparation_transitions.extend(prompt_preparation.transitions)
         prompt_preparation_blocked.extend(prompt_preparation.blocked_records)
-        blocked_records = [*step_blocked_records, *prompt_preparation_blocked]
+        blocked_records = [*build.blocked_setup, *step_blocked_records, *prompt_preparation_blocked]
         coverage_gap_records = step_coverage_gap_records
         report: dict[str, JSONValue] = {
             "schema_version": UI_REPORT_SCHEMA_VERSION,
@@ -206,8 +206,12 @@ class UIRunner:
             "validation": {
                 **validation.to_json(),
                 "build_source_traces": list(build.source_traces),
+                "build_setup_records": list(build.setup_records),
+                "build_blocked_setup": list(build.blocked_setup),
             },
             "options": _options_to_json(run_options),
+            "scenario": scenario_to_json(scenario),
+            "setup_records": list(build.setup_records),
             "initial_snapshot": initial_snapshot,
             "timeline_init_transition": timeline_init_transition,
             "steps": steps,
@@ -325,11 +329,16 @@ def load_json_file(path: Path) -> dict[str, Any]:
 
 
 def _explicit_action_value_unit_ids(scenario: ScenarioSpec) -> tuple[str, ...]:
-    return tuple(
+    unit_ids = {
         unit.unit_id
         for unit in scenario.units
         if "action_value" in set(unit.panel.explicit_fields)
-    )
+    }
+    timeline = scenario.battle_setup.timeline
+    if timeline is not None and timeline.mode == "explicit_action_values":
+        unit_ids.update(timeline.action_values)
+        unit_ids.update(timeline.explicit_overrides)
+    return tuple(sorted(unit_ids))
 
 
 def _options_to_json(options: UIRunOptions) -> dict[str, JSONValue]:

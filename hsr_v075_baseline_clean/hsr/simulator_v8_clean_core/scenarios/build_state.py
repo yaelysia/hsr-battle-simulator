@@ -4,14 +4,16 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from .identity import IdentityResolver
-from .schema import PanelInput, ScenarioSpec, UnitSpec
-from ..core.model import ActionCommand, BattleState, JSONValue, UnitState
+from .schema import InitialStatusSpec, InitialSummonSpec, PanelInput, RNGSetupSpec, ScenarioSpec, UnitSpec
+from ..core.model import ActionCommand, BattleState, GameEvent, JSONValue, Mutation, RNGEvent, UnitState
 from ..core.reducer import MutationReducer
 from ..rules.ir import CombatantProfileIR, WaveDefinitionIR, WaveMonsterEntryIR
 from ..rules.rulebook import RuleBook
 from ..systems.effect import EffectRegistry
 from ..systems.status import StatusSystem
+from ..systems.summon import SummonSystem
 from ..systems.timeline import TimelineSystem
+from ..systems.unit_lifecycle import UnitLifecycleSystem
 
 
 @dataclass(frozen=True)
@@ -19,6 +21,22 @@ class ScenarioBuildResult:
     state: BattleState
     commands: tuple[ActionCommand, ...]
     source_traces: tuple[dict[str, object], ...]
+    setup_records: tuple[dict[str, JSONValue], ...] = ()
+    setup_mutations: tuple[Mutation, ...] = ()
+    setup_events: tuple[GameEvent, ...] = ()
+    setup_rng_events: tuple[RNGEvent, ...] = ()
+    blocked_setup: tuple[dict[str, JSONValue], ...] = ()
+
+
+@dataclass(frozen=True)
+class _SetupApplyResult:
+    state: BattleState
+    records: tuple[dict[str, JSONValue], ...] = ()
+    mutations: tuple[Mutation, ...] = ()
+    events: tuple[GameEvent, ...] = ()
+    rng_events: tuple[RNGEvent, ...] = ()
+    blocked: tuple[dict[str, JSONValue], ...] = ()
+    source_traces: tuple[dict[str, JSONValue], ...] = ()
 
 
 class ScenarioStateBuilder:
@@ -34,6 +52,7 @@ class ScenarioStateBuilder:
 
         units = {}
         source_traces = list(validation.source_traces)
+        setup_records: list[dict[str, JSONValue]] = []
         eidolon_startup_specs: list[dict[str, Any]] = []
         trace_startup_specs: list[dict[str, Any]] = []
         passive_startup_specs: list[dict[str, Any]] = []
@@ -112,7 +131,9 @@ class ScenarioStateBuilder:
             attack = _apply_trace_base_stat(attack, "attack", trace_activation)
             defense = _apply_trace_base_stat(defense, "defense", trace_activation)
             speed = _apply_trace_base_stat(speed, "speed", trace_activation)
-            hp = panel.hp if _panel_has(panel, "hp") and panel.hp is not None else max_hp
+            hp = _panel_hp(unit.unit_id, panel, max_hp)
+            max_energy = panel.max_energy
+            energy = _panel_energy(unit.unit_id, panel, max_energy)
             units[unit.unit_id] = UnitState(
                 unit_id=unit.unit_id,
                 side=unit.side,
@@ -123,8 +144,8 @@ class ScenarioStateBuilder:
                 attack=attack,
                 defense=defense,
                 speed=speed,
-                energy=panel.energy,
-                max_energy=panel.max_energy,
+                energy=energy,
+                max_energy=max_energy,
                 toughness=_panel_or_profile_value(panel, "toughness", profile_values, required=entity.entity_type in {"monster", "monster_template"}),
                 max_toughness=_panel_or_profile_value(panel, "max_toughness", profile_values, required=entity.entity_type in {"monster", "monster_template"}),
                 action_value=panel.action_value,
@@ -138,17 +159,29 @@ class ScenarioStateBuilder:
         if wave_runtime:
             global_flags["wave_runtime"] = wave_runtime
             source_traces.append(dict(wave_runtime.get("source_trace", {})))
+            setup_records.append(
+                {
+                    "record_type": "setup_wave",
+                    "source_kind": "scenario_initial_condition",
+                    "status": str(wave_runtime.get("status") or ""),
+                    "wave_definition_id": str(wave_runtime.get("wave_definition_id") or ""),
+                    "current_wave_index": int(wave_runtime.get("current_wave_index") or 0),
+                    "blocked_reason": str(wave_runtime.get("blocked_reason") or ""),
+                    "source_trace": dict(wave_runtime.get("source_trace") or {}),
+                }
+            )
         if scenario.route:
             global_flags.setdefault("turn_owner_id", scenario.route[0].actor_id)
+        _apply_pre_state_setup_flags(global_flags, scenario, setup_records)
         global_flags.setdefault("phase", "scenario")
         global_flags.setdefault("current_window", "idle")
         state = BattleState(
             units=units,
-            wave_index=scenario.wave_index,
-            skill_points=scenario.skill_points,
-            max_skill_points=scenario.max_skill_points,
+            wave_index=_scenario_wave_index(scenario),
+            skill_points=_scenario_skill_points(scenario),
+            max_skill_points=_scenario_max_skill_points(scenario),
             global_flags=global_flags,
-            rng_state=scenario.rng_state,
+            rng_state=_scenario_rng_state(scenario),
         )
         state, startup_traces = _apply_startup_ability_effects(
             state,
@@ -156,6 +189,10 @@ class ScenarioStateBuilder:
             [*eidolon_startup_specs, *trace_startup_specs, *passive_startup_specs],
         )
         source_traces.extend(startup_traces)
+        setup_result = _apply_battle_setup(self.rules, state, scenario)
+        state = setup_result.state
+        setup_records.extend(setup_result.records)
+        source_traces.extend(setup_result.source_traces)
         commands = tuple(
             ActionCommand(
                 actor_id=step.actor_id,
@@ -164,18 +201,565 @@ class ScenarioStateBuilder:
                 target_ids=step.target_ids,
                 source=step.source,
                 queue_name=step.queue_name,
-                metadata=step.metadata,
+                metadata=_command_metadata(scenario, step.metadata),
             )
             for step in scenario.route
         )
-        return ScenarioBuildResult(state=state, commands=commands, source_traces=tuple(source_traces))
+        return ScenarioBuildResult(
+            state=state,
+            commands=commands,
+            source_traces=tuple(source_traces),
+            setup_records=tuple(setup_records),
+            setup_mutations=setup_result.mutations,
+            setup_events=setup_result.events,
+            setup_rng_events=setup_result.rng_events,
+            blocked_setup=setup_result.blocked,
+        )
+
+
+def _scenario_skill_points(scenario: ScenarioSpec) -> int:
+    value = scenario.battle_setup.resources.skill_points
+    return int(value) if value is not None else int(scenario.skill_points)
+
+
+def _scenario_max_skill_points(scenario: ScenarioSpec) -> int:
+    value = scenario.battle_setup.resources.max_skill_points
+    return int(value) if value is not None else int(scenario.max_skill_points)
+
+
+def _scenario_wave_index(scenario: ScenarioSpec) -> int:
+    if scenario.battle_setup.wave is not None:
+        return int(scenario.battle_setup.wave.wave_index)
+    return int(scenario.wave_index)
+
+
+def _scenario_rng_setup(scenario: ScenarioSpec) -> RNGSetupSpec:
+    rng = scenario.battle_setup.rng
+    if rng is None:
+        return RNGSetupSpec(rng_state=scenario.rng_state or "deterministic")
+    if rng.rng_state is None:
+        return replace(rng, rng_state=scenario.rng_state or "deterministic")
+    return rng
+
+
+def _scenario_rng_state(scenario: ScenarioSpec) -> str:
+    return str(_scenario_rng_setup(scenario).rng_state or "deterministic")
+
+
+def _panel_hp(unit_id: str, panel: PanelInput, max_hp: float) -> float:
+    if panel.hp is not None and panel.hp_ratio is not None:
+        raise ValueError(f"unit {unit_id}: hp and hp_ratio cannot both be set")
+    if panel.hp_ratio is not None:
+        if panel.hp_ratio < 0.0 or panel.hp_ratio > 1.0:
+            raise ValueError(f"unit {unit_id}: hp_ratio must be between 0 and 1")
+        return float(max_hp) * float(panel.hp_ratio)
+    if _panel_has(panel, "hp") and panel.hp is not None:
+        return float(panel.hp)
+    return float(max_hp)
+
+
+def _panel_energy(unit_id: str, panel: PanelInput, max_energy: float) -> float:
+    if panel.energy_ratio is not None and _panel_has(panel, "energy"):
+        raise ValueError(f"unit {unit_id}: energy and energy_ratio cannot both be set")
+    if panel.energy_ratio is not None:
+        if panel.energy_ratio < 0.0 or panel.energy_ratio > 1.0:
+            raise ValueError(f"unit {unit_id}: energy_ratio must be between 0 and 1")
+        if max_energy <= 0.0:
+            raise ValueError(f"unit {unit_id}: energy_ratio requires max_energy > 0")
+        return float(max_energy) * float(panel.energy_ratio)
+    return float(panel.energy)
+
+
+def _apply_pre_state_setup_flags(
+    global_flags: dict[str, JSONValue],
+    scenario: ScenarioSpec,
+    setup_records: list[dict[str, JSONValue]],
+) -> None:
+    setup = scenario.battle_setup
+    setup_records.append(
+        {
+            "record_type": "setup_resources",
+            "source_kind": "scenario_initial_condition",
+            "status": "applied",
+            "skill_points": _scenario_skill_points(scenario),
+            "max_skill_points": _scenario_max_skill_points(scenario),
+        }
+    )
+    setup_rng = _scenario_rng_setup(scenario)
+    if setup.rng is not None and _rng_setup_is_explicit(setup_rng):
+        global_flags["scenario_rng_setup"] = _rng_setup_to_json(setup_rng)
+        setup_records.append(
+            {
+                "record_type": "setup_rng",
+                "source_kind": "scenario_route_input",
+                "status": "applied",
+                "rng_state": setup_rng.rng_state or "deterministic",
+                "rng_mode": setup_rng.rng_mode or "",
+                "rng_choice_keys": sorted(setup_rng.rng_choices),
+            }
+        )
+    if setup.objective is not None:
+        global_flags["objective"] = _objective_to_json(setup.objective)
+        setup_records.append(
+            {
+                "record_type": "setup_objective",
+                "source_kind": "scenario_search_metadata",
+                "status": "recorded",
+                "objective_id": setup.objective.objective_id,
+                "kind": setup.objective.kind,
+                "affects_rules": False,
+            }
+        )
+
+def _apply_battle_setup(rules: RuleBook, state: BattleState, scenario: ScenarioSpec) -> _SetupApplyResult:
+    status = _apply_initial_statuses(rules, state, scenario)
+    current = status.state
+    summon = _apply_initial_summons(rules, current, scenario)
+    current = summon.state
+    timeline = _apply_timeline_setup(current, scenario)
+    return _SetupApplyResult(
+        state=timeline.state,
+        records=(*status.records, *summon.records, *timeline.records),
+        mutations=(*status.mutations, *summon.mutations, *timeline.mutations),
+        events=(*status.events, *summon.events, *timeline.events),
+        rng_events=(*status.rng_events, *summon.rng_events, *timeline.rng_events),
+        blocked=(*status.blocked, *summon.blocked, *timeline.blocked),
+        source_traces=(*status.source_traces, *summon.source_traces, *timeline.source_traces),
+    )
+
+
+def _rng_setup_is_explicit(rng: RNGSetupSpec) -> bool:
+    return bool(rng.rng_mode or rng.rng_choices or (rng.rng_state is not None and rng.rng_state != "deterministic"))
+
+
+def _apply_timeline_setup(state: BattleState, scenario: ScenarioSpec) -> _SetupApplyResult:
+    timeline = scenario.battle_setup.timeline
+    if timeline is None:
+        return _SetupApplyResult(state=state)
+    records: list[dict[str, JSONValue]] = [
+        {
+            "record_type": "setup_timeline",
+            "source_kind": "scenario_initial_condition",
+            "status": "applied",
+            "mode": timeline.mode,
+            "global_av": timeline.global_av,
+            "turn_owner_id": timeline.turn_owner_id or "",
+        }
+    ]
+    blocked = _timeline_setup_blocked(state, timeline)
+    if blocked is not None:
+        return _SetupApplyResult(state=state, records=(*records, blocked), blocked=(blocked,))
+    mutations: list[Mutation] = []
+    policy = {
+        "mode": timeline.mode,
+        "source_kind": "scenario_initial_condition",
+        "explicit_action_value_unit_ids": sorted(timeline.action_values),
+        "explicit_overrides": list(timeline.explicit_overrides),
+    }
+    mutations.append(
+        Mutation(
+            op="set",
+            path=("global_flags", "global_av"),
+            before=state.global_flags.get("global_av"),
+            after=float(timeline.global_av),
+            reason="scenario timeline global action value",
+            source="scenario_setup",
+            metadata={"setup_operation": "timeline_global_av", "source_kind": "scenario_initial_condition"},
+        )
+    )
+    mutations.append(
+        Mutation(
+            op="set",
+            path=("global_flags", "timeline_setup_policy"),
+            before=state.global_flags.get("timeline_setup_policy"),
+            after=policy,
+            reason="scenario timeline setup policy",
+            source="scenario_setup",
+            metadata={"setup_operation": "timeline_policy", "source_kind": "scenario_initial_condition"},
+        )
+    )
+    if timeline.turn_owner_id is not None:
+        mutations.append(
+            Mutation(
+                op="set",
+                path=("global_flags", "turn_owner_id"),
+                before=state.global_flags.get("turn_owner_id"),
+                after=timeline.turn_owner_id,
+                reason="scenario timeline turn owner",
+                source="scenario_setup",
+                metadata={"setup_operation": "timeline_turn_owner", "source_kind": "scenario_initial_condition"},
+            )
+        )
+    if timeline.mode == "runtime_initialize":
+        after = MutationReducer().apply_all(state, tuple(mutations))
+        return _SetupApplyResult(state=after, records=tuple(records), mutations=tuple(mutations))
+    for unit_id, action_value in sorted(timeline.action_values.items()):
+        unit = state.units[unit_id]
+        mutation = Mutation(
+            op="set",
+            path=("units", unit_id, "action_value"),
+            before=unit.action_value,
+            after=float(action_value),
+            reason="scenario explicit action value",
+            source="scenario_setup",
+            metadata={
+                "setup_operation": "explicit_action_value",
+                "source_kind": "scenario_initial_condition",
+                "unit_id": unit_id,
+            },
+        )
+        mutations.append(mutation)
+        records.append(
+            {
+                "record_type": "setup_timeline_action_value",
+                "source_kind": "scenario_initial_condition",
+                "status": "applied",
+                "unit_id": unit_id,
+                "before": unit.action_value,
+                "after": float(action_value),
+                "mutation_id": mutation.stable_id(),
+            }
+        )
+    after = MutationReducer().apply_all(state, tuple(mutations))
+    return _SetupApplyResult(state=after, records=tuple(records), mutations=tuple(mutations))
+
+
+def _timeline_setup_blocked(state: BattleState, timeline: object) -> dict[str, JSONValue] | None:
+    turn_owner_id = getattr(timeline, "turn_owner_id", None)
+    lifecycle = UnitLifecycleSystem()
+    if turn_owner_id is not None:
+        view = lifecycle.view(state, str(turn_owner_id))
+        if not view.is_active:
+            return _setup_blocked_record(
+                "setup_timeline",
+                view.blocked_reason or "timeline_turn_owner_not_active",
+                {"turn_owner_id": str(turn_owner_id), "owner_lifecycle": view.to_json()},
+            )
+    action_values = getattr(timeline, "action_values", {})
+    if isinstance(action_values, dict):
+        for unit_id in action_values:
+            if unit_id not in state.units:
+                return _setup_blocked_record(
+                    "setup_timeline",
+                    "timeline_action_value_unit_missing",
+                    {"unit_id": str(unit_id)},
+                )
+    return None
+
+
+def _apply_initial_statuses(rules: RuleBook, state: BattleState, scenario: ScenarioSpec) -> _SetupApplyResult:
+    if not scenario.battle_setup.initial_statuses:
+        return _SetupApplyResult(state=state)
+    reducer = MutationReducer()
+    system = StatusSystem(rules)
+    registry = EffectRegistry(system)
+    current = state
+    records: list[dict[str, JSONValue]] = []
+    mutations: list[Mutation] = []
+    events: list[GameEvent] = []
+    rng_events: list[RNGEvent] = []
+    blocked: list[dict[str, JSONValue]] = []
+    traces: list[dict[str, JSONValue]] = []
+    for index, spec in enumerate(scenario.battle_setup.initial_statuses):
+        effect = rules.effect(spec.effect_ref or "")
+        if effect is None:
+            raise ValueError(f"battle_setup.initial_statuses[{index}]: unknown effect_ref {spec.effect_ref!r}")
+        if effect.opcode != "AddModifier":
+            raise ValueError(
+                f"battle_setup.initial_statuses[{index}]: effect_ref {spec.effect_ref!r} opcode is "
+                f"{effect.opcode!r}, expected 'AddModifier'"
+            )
+        traces.append(effect.source.to_json())
+        coverage = registry.coverage(effect)
+        if coverage != "executable":
+            record = _setup_blocked_record(
+                "setup_initial_status",
+                f"effect_not_executable:{coverage}",
+                {
+                    "effect_ref": effect.effect_id,
+                    "effect_opcode": effect.opcode,
+                    "effect_coverage_status": effect.coverage_status,
+                    "source_trace": effect.source.to_json(),
+                },
+            )
+            records.append(record)
+            blocked.append(record)
+            continue
+        result = system.apply_add_modifier(
+            current,
+            effect,
+            caster_id=spec.caster_id or spec.source_id,
+            source_id=spec.source_id,
+            owner_id=spec.owner_id or spec.target_id,
+            param_entity_id=spec.param_entity_id or spec.source_id,
+            current_action_target_id=spec.current_action_target_id or spec.target_id,
+            event_payload=_status_event_payload(scenario, spec),
+            dynamic_values=spec.dynamic_values,
+            binding_sources=(_status_setup_binding_source(spec, effect.effect_id),),
+        )
+        current = reducer.apply_all(current, result.mutations)
+        mutations.extend(result.mutations)
+        events.extend(result.events)
+        rng_events.extend(result.rng_events)
+        records.extend(result.records)
+        setup_record = {
+            "record_type": "setup_initial_status",
+            "source_kind": "scenario_initial_condition",
+            "status": "applied" if result.mutations else ("process_only" if result.records else "blocked"),
+            "ok": result.ok,
+            "target_id": spec.target_id,
+            "source_id": spec.source_id,
+            "effect_ref": effect.effect_id,
+            "mutation_count": len(result.mutations),
+            "rng_event_count": len(result.rng_events),
+            "unsupported": list(result.unsupported),
+            "status_instance": result.status_instance.to_json() if result.status_instance else None,
+            "source_trace": effect.source.to_json(),
+        }
+        records.append(setup_record)
+        if result.unsupported:
+            blocked.append({**setup_record, "blocked_reason": ";".join(result.unsupported)})
+    return _SetupApplyResult(
+        state=current,
+        records=tuple(records),
+        mutations=tuple(mutations),
+        events=tuple(events),
+        rng_events=tuple(rng_events),
+        blocked=tuple(blocked),
+        source_traces=tuple(traces),
+    )
+
+
+def _apply_initial_summons(rules: RuleBook, state: BattleState, scenario: ScenarioSpec) -> _SetupApplyResult:
+    if not scenario.battle_setup.initial_summons:
+        return _SetupApplyResult(state=state)
+    reducer = MutationReducer()
+    lifecycle = UnitLifecycleSystem()
+    system = SummonSystem(rules)
+    current = state
+    records: list[dict[str, JSONValue]] = []
+    mutations: list[Mutation] = []
+    events: list[GameEvent] = []
+    blocked: list[dict[str, JSONValue]] = []
+    traces: list[dict[str, JSONValue]] = []
+    for index, spec in enumerate(scenario.battle_setup.initial_summons):
+        owner_view = lifecycle.view(current, spec.owner_id)
+        if not owner_view.is_active:
+            record = _setup_blocked_record(
+                "setup_initial_summon",
+                owner_view.blocked_reason or "summon_owner_inactive",
+                {"owner_id": spec.owner_id, "owner_lifecycle": owner_view.to_json(), "kind": spec.kind},
+            )
+            records.append(record)
+            blocked.append(record)
+            continue
+        if spec.kind == "summoned_monster":
+            result = _apply_initial_summoned_monster(rules, current, system, spec, index)
+        elif spec.kind == "battle_unit_summon":
+            result = _blocked_initial_battle_unit_summon(rules, current, spec)
+        else:
+            result = _blocked_initial_servant(rules, current, spec)
+        current = reducer.apply_all(current, result.mutations)
+        mutations.extend(result.mutations)
+        events.extend(result.events)
+        records.extend(result.records)
+        blocked.extend(result.blocked)
+        traces.extend(result.source_traces)
+    return _SetupApplyResult(
+        state=current,
+        records=tuple(records),
+        mutations=tuple(mutations),
+        events=tuple(events),
+        blocked=tuple(blocked),
+        source_traces=tuple(traces),
+    )
+
+
+def _apply_initial_summoned_monster(
+    rules: RuleBook,
+    state: BattleState,
+    system: SummonSystem,
+    spec: InitialSummonSpec,
+    index: int,
+) -> _SetupApplyResult:
+    intent = rules.summon_monster_intent(spec.summon_intent_ref or "")
+    if intent is None:
+        raise ValueError(f"battle_setup.initial_summons[{index}]: unknown summon_intent_ref {spec.summon_intent_ref!r}")
+    plan = system.plan_spawn_summoned_monster(state, intent, owner_id=spec.owner_id)
+    result = system.apply_spawn(state, plan)
+    override_reason = _summon_override_blocked_reason(spec, result.mutations)
+    if override_reason:
+        blocked_result = system.blocked(override_reason, owner_id=spec.owner_id, source_trace=intent.source.to_json())
+        result = blocked_result
+    records = list(result.records)
+    setup_record = {
+        "record_type": "setup_initial_summon",
+        "source_kind": "scenario_initial_condition",
+        "status": "applied" if result.mutations else "blocked",
+        "ok": result.plan.ok,
+        "kind": spec.kind,
+        "owner_id": spec.owner_id,
+        "summon_intent_ref": intent.summon_intent_id,
+        "unit_ids": list(result.plan.unit_ids),
+        "mutation_count": len(result.mutations),
+        "blocked_reason": result.plan.blocked_reason,
+        "source_trace": intent.source.to_json(),
+    }
+    records.append(setup_record)
+    blocked = (setup_record,) if not result.plan.ok else ()
+    return _SetupApplyResult(
+        state=state,
+        records=tuple(records),
+        mutations=result.mutations,
+        events=result.events,
+        blocked=blocked,
+        source_traces=(intent.source.to_json(),),
+    )
+
+
+def _blocked_initial_battle_unit_summon(
+    rules: RuleBook,
+    state: BattleState,
+    spec: InitialSummonSpec,
+) -> _SetupApplyResult:
+    source_trace: dict[str, JSONValue] = {}
+    if spec.summon_intent_ref:
+        definition = rules.summon_unit_definition(spec.summon_intent_ref)
+        if definition is not None:
+            source_trace = definition.source.to_json()
+    record = _setup_blocked_record(
+        "setup_initial_summon",
+        "battle_unit_summon_initial_setup_source_gap",
+        {
+            "kind": spec.kind,
+            "owner_id": spec.owner_id,
+            "summon_intent_ref": spec.summon_intent_ref or "",
+            "entity_ref": spec.entity_ref or "",
+            "source_trace": source_trace,
+        },
+    )
+    return _SetupApplyResult(state=state, records=(record,), blocked=(record,), source_traces=(source_trace,) if source_trace else ())
+
+
+def _blocked_initial_servant(
+    rules: RuleBook,
+    state: BattleState,
+    spec: InitialSummonSpec,
+) -> _SetupApplyResult:
+    source_trace: dict[str, JSONValue] = {}
+    servant_ref = spec.summon_intent_ref or spec.entity_ref or ""
+    if servant_ref:
+        definition = rules.servant_definition(servant_ref)
+        if definition is not None:
+            source_trace = definition.source.to_json()
+    record = _setup_blocked_record(
+        "setup_initial_summon",
+        "servant_initial_setup_source_gap",
+        {
+            "kind": spec.kind,
+            "owner_id": spec.owner_id,
+            "servant_ref": servant_ref,
+            "source_trace": source_trace,
+        },
+    )
+    return _SetupApplyResult(state=state, records=(record,), blocked=(record,), source_traces=(source_trace,) if source_trace else ())
+
+
+def _summon_override_blocked_reason(spec: InitialSummonSpec, mutations: tuple[Mutation, ...]) -> str:
+    spawned = tuple(
+        mutation.after
+        for mutation in mutations
+        if mutation.metadata.get("lifecycle_operation") == "unit_spawn" and isinstance(mutation.after, dict)
+    )
+    if spec.unit_id and spec.unit_id not in {str(unit.get("unit_id") or "") for unit in spawned}:
+        return "summoned_monster_unit_id_override_not_admitted"
+    if spec.entity_ref and any(unit.get("template_id") != spec.entity_ref for unit in spawned):
+        return "summoned_monster_entity_ref_override_not_admitted"
+    if spec.position is not None:
+        for unit in spawned:
+            flags = unit.get("flags") if isinstance(unit.get("flags"), dict) else {}
+            if int(flags.get("position") or -1) != spec.position:
+                return "summoned_monster_position_override_not_admitted"
+    return ""
+
+
+def _status_event_payload(scenario: ScenarioSpec, spec: InitialStatusSpec) -> dict[str, JSONValue]:
+    setup_rng = _scenario_rng_setup(scenario)
+    payload: dict[str, JSONValue] = {}
+    rng_choices = {**setup_rng.rng_choices, **spec.rng_choices}
+    if rng_choices:
+        payload["rng_choices"] = rng_choices
+    rng_mode = spec.rng_mode or setup_rng.rng_mode
+    if rng_mode:
+        payload["rng_mode"] = rng_mode
+    return payload
+
+
+def _status_setup_binding_source(spec: InitialStatusSpec, effect_ref: str) -> dict[str, JSONValue]:
+    return {
+        "source_kind": "scenario_initial_condition",
+        "effect_ref": effect_ref,
+        "target_id": spec.target_id,
+        "source_id": spec.source_id,
+        "metadata": spec.metadata,
+    }
+
+
+def _setup_blocked_record(
+    record_type: str,
+    reason: str,
+    payload: dict[str, JSONValue],
+) -> dict[str, JSONValue]:
+    return {
+        "record_type": record_type,
+        "source_kind": "scenario_initial_condition",
+        "status": "blocked",
+        "blocked_reason": reason,
+        "process_only": True,
+        "produced_mutation": False,
+        **payload,
+    }
+
+
+def _command_metadata(scenario: ScenarioSpec, route_metadata: dict[str, JSONValue]) -> dict[str, JSONValue]:
+    setup_rng = _scenario_rng_setup(scenario)
+    metadata = dict(route_metadata)
+    if setup_rng.rng_mode and "rng_mode" not in metadata:
+        metadata["rng_mode"] = setup_rng.rng_mode
+    if setup_rng.rng_choices:
+        route_choices = metadata.get("rng_choices")
+        merged = dict(setup_rng.rng_choices)
+        if isinstance(route_choices, dict):
+            merged.update(route_choices)
+        elif route_choices is not None:
+            return metadata
+        metadata["rng_choices"] = merged
+    return metadata
+
+
+def _rng_setup_to_json(rng: RNGSetupSpec) -> dict[str, JSONValue]:
+    return {
+        "rng_state": rng.rng_state or "deterministic",
+        "rng_mode": rng.rng_mode,
+        "rng_choices": dict(rng.rng_choices),
+    }
+
+
+def _objective_to_json(objective: object) -> dict[str, JSONValue]:
+    return {
+        "objective_id": str(getattr(objective, "objective_id", "")),
+        "kind": str(getattr(objective, "kind", "")),
+        "payload": dict(getattr(objective, "payload", {}) or {}),
+        "source_kind": "scenario_search_metadata",
+        "affects_rules": False,
+    }
 
 
 def _with_initial_wave_units(rules: RuleBook, scenario: ScenarioSpec) -> ScenarioSpec:
     definition = _scenario_wave_definition(rules, scenario)
     if definition is None:
         return scenario
-    current_wave_index = int(scenario.wave_index)
+    current_wave_index = _scenario_wave_index(scenario)
     existing_ids = {unit.unit_id for unit in scenario.units}
     generated: list[UnitSpec] = []
     for entry in rules.wave_entries_for_wave(definition.wave_definition_id, current_wave_index):
@@ -192,6 +776,14 @@ def _with_initial_wave_units(rules: RuleBook, scenario: ScenarioSpec) -> Scenari
 
 
 def _scenario_wave_definition(rules: RuleBook, scenario: ScenarioSpec) -> WaveDefinitionIR | None:
+    wave = scenario.battle_setup.wave
+    if wave is not None:
+        if wave.kind == "wave_definition" and wave.wave_definition_ref:
+            return rules.wave_definition(wave.wave_definition_ref)
+        if wave.kind == "stage" and wave.stage_ref:
+            return rules.wave_definition_for_stage(wave.stage_ref)
+        if wave.kind == "none":
+            return None
     if scenario.wave_definition_ref:
         return rules.wave_definition(scenario.wave_definition_ref)
     if scenario.stage_ref:
@@ -259,7 +851,7 @@ def _initial_wave_runtime(rules: RuleBook, scenario: ScenarioSpec) -> dict[str, 
     definition = _scenario_wave_definition(rules, scenario)
     if definition is None:
         return {}
-    current_wave_index = int(scenario.wave_index)
+    current_wave_index = _scenario_wave_index(scenario)
     entries = rules.wave_entries_for_wave(definition.wave_definition_id, current_wave_index)
     executable_entries = tuple(entry for entry in entries if entry.coverage_status == "executable")
     blocked_entries = tuple(entry for entry in entries if entry.coverage_status != "executable")

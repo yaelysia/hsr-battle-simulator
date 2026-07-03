@@ -333,29 +333,35 @@
 
 目标：提供能表达第一阶段验证战斗的配置入口，避免只能手写 `BattleState`。
 
-- [ ] P1-8.1 审查 `scenarios/schema.py`、`scenarios/build_state.py`、UI scenario 编排当前能力。
-- [ ] P1-8.2 定义最小 BattleSetup schema 或扩展 ScenarioSpec。
-- [ ] P1-8.3 增加 ally roster 配置。
-- [ ] P1-8.4 增加 enemy waves 配置。
-- [ ] P1-8.5 增加 initial SP 配置。
-- [ ] P1-8.6 增加 initial energy 配置。
-- [ ] P1-8.7 增加 initial HP ratio 配置。
-- [ ] P1-8.8 增加 initial statuses 配置。
-- [ ] P1-8.9 增加 initial summon/servant 配置。
-- [ ] P1-8.10 增加 initial timeline 配置或明确由 runtime 初始化。
-- [ ] P1-8.11 增加 deterministic RNG choices 配置。
-- [ ] P1-8.12 增加 objective metadata 预留。
-- [ ] P1-8.13 确保配置入口不成为规则来源。
-- [ ] P1-8.14 增加 two-wave setup 验证。
-- [ ] P1-8.15 增加 initial statuses setup 验证。
-- [ ] P1-8.16 增加 initial summon setup 验证。
-- [ ] P1-8.17 增加 deterministic rng setup 验证。
-- [ ] P1-8.18 增加不存在 card/profile 构建失败或 blocked 验证。
-- [ ] P1-8.19 更新 scenario README 或阶段报告，说明第一阶段配置入口边界。
+详细计划：`P1_8_BATTLE_SETUP_TASK_PLAN.md`。
+
+验收口径：P1-8 的配置入口只描述初始条件和路线输入，不能成为规则来源。机制类 setup 必须引用 RuleBook / Canonical IR / 数据卡 IR；无真实来源时只能 `source_gap_blocked` 或构建失败，不能通过 scenario flags 注入 fake status、fake summon、fake passive。主验证必须轻量，不复制 `validate_v0_204` 的全量 canonical/coverage/fidelity 写盘模式。
+
+- [x] P1-8.1 审查 `scenarios/schema.py`、`scenarios/loader.py`、`scenarios/identity.py`、`scenarios/build_state.py`、UI scenario 编排当前能力。
+- [x] P1-8.2 定义 `BattleSetupSpec` 或等价扩展，并保留当前 v8 scenario root 字段作为输入别名。
+- [x] P1-8.3 强化 loader 类型校验，新增 setup 字段不能被默认值静默吞掉。
+- [x] P1-8.4 明确 ally/enemy roster 配置，支持 panel overrides、level、eidolon、position、resources。
+- [x] P1-8.5 增加 source-backed enemy waves 配置，复用 P1-2 wave runtime。
+- [x] P1-8.6 增加 initial SP / max SP 配置和范围校验。
+- [x] P1-8.7 增加 initial energy、energy ratio、HP ratio 配置和歧义/越界负例。
+- [x] P1-8.8 增加 source-backed initial statuses 配置，复用 `StatusSystem.apply_add_modifier`。
+- [x] P1-8.9 增加 initial summon/servant 配置，summoned monster 复用 `SummonSystem`，servant 无来源时 source gap。
+- [x] P1-8.10 增加 initial timeline 配置或明确由 runtime scheduler 初始化。
+- [x] P1-8.11 增加 scenario-level deterministic RNG choices / rng_mode 配置，并合并到 route command metadata。
+- [x] P1-8.12 增加 objective metadata 预留，确认不影响规则执行。
+- [x] P1-8.13 确保配置入口不成为规则来源，并增加 no-rule-injection/static boundary 检查。
+- [x] P1-8.14 增加 two-wave setup 验证。
+- [x] P1-8.15 增加 initial statuses setup 验证，包含真实来源正例和 blocked/no mutation 负例。
+- [x] P1-8.16 增加 initial summon setup 验证，包含真实 summon 正例和 servant/source-gap 负例。
+- [x] P1-8.17 增加 deterministic rng setup 验证，确认同一 setup + command 可 replay。
+- [x] P1-8.18 增加不存在 card/profile/effect/summon/wave 或 invalid ratio 构建失败或 blocked 验证。
+- [x] P1-8.19 更新 scenario README 和阶段报告，说明第一阶段配置入口边界。
+- [x] P1-8.20 更新 UI runner/report 的最小 roundtrip，确保新增 setup 字段不丢失。
+- [x] P1-8.21 新增 `validate_p1_8_battle_setup.py` 轻量主验证脚本。
 
 完成口径：
 
-- [ ] P1-8-DONE 可以用配置文件构建两波、有状态、有召唤、有 deterministic RNG 的第一阶段验证战斗。
+- [x] P1-8-DONE 可以用配置文件构建两波、有状态、有召唤、有 deterministic RNG 的第一阶段验证战斗。
 
 ## P1-9 聚合验证与阶段验收
 

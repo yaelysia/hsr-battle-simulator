@@ -11,10 +11,12 @@ class PanelInput:
     explicit_fields: tuple[str, ...] = (
         "max_hp",
         "hp",
+        "hp_ratio",
         "attack",
         "defense",
         "speed",
         "energy",
+        "energy_ratio",
         "max_energy",
         "toughness",
         "max_toughness",
@@ -25,10 +27,12 @@ class PanelInput:
     )
     max_hp: float = 1.0
     hp: float | None = None
+    hp_ratio: float | None = None
     attack: float = 0.0
     defense: float = 0.0
     speed: float = 100.0
     energy: float = 0.0
+    energy_ratio: float | None = None
     max_energy: float = 0.0
     toughness: float = 0.0
     max_toughness: float = 0.0
@@ -61,6 +65,81 @@ class RouteStepSpec:
 
 
 @dataclass(frozen=True)
+class SetupResourceSpec:
+    skill_points: int | None = None
+    max_skill_points: int | None = None
+
+
+@dataclass(frozen=True)
+class WaveSetupSpec:
+    kind: Literal["none", "stage", "wave_definition"] = "none"
+    stage_ref: str | None = None
+    wave_definition_ref: str | None = None
+    wave_index: int = 0
+
+
+@dataclass(frozen=True)
+class InitialStatusSpec:
+    target_id: str
+    source_id: str
+    effect_ref: str | None = None
+    owner_id: str | None = None
+    caster_id: str | None = None
+    param_entity_id: str | None = None
+    current_action_target_id: str | None = None
+    dynamic_values: dict[str, float] = field(default_factory=dict)
+    rng_choices: dict[str, JSONValue] = field(default_factory=dict)
+    rng_mode: str | None = None
+    metadata: dict[str, JSONValue] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class InitialSummonSpec:
+    kind: Literal["summoned_monster", "battle_unit_summon", "servant"] = "summoned_monster"
+    owner_id: str = ""
+    summon_intent_ref: str | None = None
+    unit_id: str | None = None
+    entity_ref: str | None = None
+    position: int | None = None
+    metadata: dict[str, JSONValue] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class TimelineSetupSpec:
+    mode: Literal["runtime_initialize", "explicit_action_values"] = "runtime_initialize"
+    global_av: float = 0.0
+    turn_owner_id: str | None = None
+    action_values: dict[str, float] = field(default_factory=dict)
+    explicit_overrides: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class RNGSetupSpec:
+    rng_state: str | None = "deterministic"
+    rng_mode: str | None = None
+    rng_choices: dict[str, JSONValue] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class ObjectiveSpec:
+    objective_id: str
+    kind: str
+    payload: dict[str, JSONValue] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class BattleSetupSpec:
+    resources: SetupResourceSpec = field(default_factory=SetupResourceSpec)
+    wave: WaveSetupSpec | None = None
+    timeline: TimelineSetupSpec | None = None
+    rng: RNGSetupSpec | None = None
+    initial_statuses: tuple[InitialStatusSpec, ...] = ()
+    initial_summons: tuple[InitialSummonSpec, ...] = ()
+    objective: ObjectiveSpec | None = None
+    metadata: dict[str, JSONValue] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class ScenarioSpec:
     scenario_id: str
     version: str
@@ -73,6 +152,7 @@ class ScenarioSpec:
     stage_ref: str | None = None
     rng_state: str = "deterministic"
     global_flags: dict[str, JSONValue] = field(default_factory=dict)
+    battle_setup: BattleSetupSpec = field(default_factory=BattleSetupSpec)
 
 
 @dataclass(frozen=True)

@@ -1,0 +1,97 @@
+{
+  "scenario_id": "p1_8_battle_setup_smoke",
+  "version": "p1_8_battle_setup",
+  "skill_points": 2,
+  "max_skill_points": 5,
+  "wave_index": 0,
+  "rng_state": "seed:p1_8_smoke",
+  "battle_setup": {
+    "resources": {
+      "skill_points": 2,
+      "max_skill_points": 5
+    },
+    "timeline": {
+      "mode": "explicit_action_values",
+      "global_av": 0.0,
+      "turn_owner_id": "ally:saber",
+      "action_values": {
+        "ally:saber": 0.0,
+        "enemy:target": 100.0
+      }
+    },
+    "rng": {
+      "rng_state": "seed:p1_8_smoke",
+      "rng_mode": "explicit_ledger",
+      "rng_choices": {}
+    },
+    "objective": {
+      "objective_id": "smoke_defeat_target",
+      "kind": "defeat_units",
+      "payload": {
+        "target_unit_ids": [
+          "enemy:target"
+        ]
+      }
+    },
+    "metadata": {
+      "note": "Scenario setup is initial-condition metadata only; source-backed status/summon examples are selected dynamically by validate_p1_8_battle_setup."
+    }
+  },
+  "global_flags": {
+    "phase": "scenario",
+    "current_window": "idle"
+  },
+  "units": [
+    {
+      "unit_id": "ally:saber",
+      "side": "ally",
+      "entity_ref": "avatar:1014",
+      "level": 80,
+      "position": 1,
+      "panel": {
+        "max_hp": 3000,
+        "hp_ratio": 1.0,
+        "attack": 3200,
+        "defense": 900,
+        "speed": 101,
+        "energy_ratio": 0.5,
+        "max_energy": 120,
+        "resources": {
+          "critical_chance": 0.05,
+          "critical_damage": 0.5
+        }
+      }
+    },
+    {
+      "unit_id": "enemy:target",
+      "side": "enemy",
+      "entity_ref": "monster:1002011",
+      "level": 80,
+      "position": 1,
+      "panel": {
+        "max_hp": 10000,
+        "hp": 10000,
+        "attack": 1000,
+        "defense": 1000,
+        "speed": 100,
+        "toughness": 60,
+        "max_toughness": 60
+      }
+    }
+  ],
+  "route": [
+    {
+      "actor_id": "ally:saber",
+      "action_ref": "avatar_skill:101401",
+      "action_level": 10,
+      "target_ids": [
+        "enemy:target"
+      ],
+      "source": "manual",
+      "metadata": {
+        "label": "P1-8 battle setup smoke",
+        "reset_actor_av": true
+      }
+    }
+  ]
+}

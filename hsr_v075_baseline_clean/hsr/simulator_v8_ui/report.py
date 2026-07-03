@@ -377,8 +377,11 @@ def scenario_to_json(scenario: ScenarioSpec) -> dict[str, JSONValue]:
         "skill_points": scenario.skill_points,
         "max_skill_points": scenario.max_skill_points,
         "wave_index": scenario.wave_index,
+        "wave_definition_ref": scenario.wave_definition_ref,
+        "stage_ref": scenario.stage_ref,
         "rng_state": scenario.rng_state,
         "global_flags": scenario.global_flags,
+        "battle_setup": asdict(scenario.battle_setup),
         "units": [
             {
                 "unit_id": unit.unit_id,
