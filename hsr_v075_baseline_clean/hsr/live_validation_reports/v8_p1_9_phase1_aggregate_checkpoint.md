@@ -91,6 +91,8 @@ source_gap_blocked=2
 
 上述项当前均不能作为 positive executable case；只能保持 source_gap_blocked / process-only / state unchanged。
 
+后续复审说明：`v8_p1_gap_attribution_audit_checkpoint.md` 已重新归因这些阻塞项。并非所有项都是真 raw source gap；formation sort、owner fetch、servant target、servant setup、battle_unit_summon setup、stack+duration refresh 等需要继续拆成 lowering/admission/validation gap。
+
 ## 验证命令
 
 在 `hsr_v075_baseline_clean/hsr` 下已串行运行：

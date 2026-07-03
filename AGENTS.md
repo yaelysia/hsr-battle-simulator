@@ -163,6 +163,24 @@ hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/FORBIDDEN.md
 
 规划时必须把“需要编码实现”和“需要 discovery/coverage-gap 验证”分开。不能要求执行线程为当前数据库不存在的机制造 synthetic case；不能为了勾 checklist 把无真实来源的路径标成 executable。
 
+标记 `source_gap_blocked` 前必须先区分三种情况：
+
+- raw TBGD 确实没有对应结构化来源。
+- raw TBGD 有来源，但 lowering 没有投影到 Canonical IR。
+- Canonical IR 有来源，但验证脚本或 runtime admission 谓词过窄，没有选出正例。
+
+只有第一种才是真正的 source gap。后两种应记录为 lowering/admission/validation gap，并进入实现或验收修正；不能把“当前检查脚本没扫到”直接等同于“数据库没有来源”。
+
+这个分层定位适用于所有机制，不只是状态系统。任何 action、damage、status、target、RNG、queue、wave、summon、resource、character card、monster card、environment/stage 机制，在规划和验收时都必须先回答：
+
+- raw TBGD 是否有结构化来源。
+- lowering 是否把来源完整投影到 Canonical IR / 数据卡 IR。
+- RuleBook 是否保留了可审计 source trace 和 admission 所需字段。
+- runtime 是否只基于 IR 做通用 admission / mutation / settlement。
+- validation 是否用足够准确的结构化谓词选样，而不是因为谓词过窄误报 source gap。
+
+只有完成这层审计后，才能把缺口归类为 `source_gap_blocked`、`lowering_gap`、`admission_gap`、`validation_gap` 或 `implementation_missing`。
+
 验收时应优先检查：
 
 - 当前数据库/IR 有真实来源的机制是否都有正例 executable validation。
@@ -204,6 +222,7 @@ hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/FORBIDDEN.md
 - 如果外部资料或用户机制说明与当前实现冲突，应回到 TBGD/数据卡来源链路重新审查，不能硬补 runtime 特例。
 - 带结构化 key/name 的 target fetch 或 registry 读取，必须验证精确 key 命中、缺 key、错 key、默认 registry 同时存在等负例；默认项不能冒充命名来源。
 - RNG choice ledger 的推演器/验收主路径应优先使用精确 `choice_key` 或 `event_id`；`rng_type` / `default` 只能作为人工驱动或兼容兜底，不能冒充某个具体随机分支的来源。
+- 如果游戏机制直觉与验证脚本的 source gap 结论冲突，优先审查检查谓词和 lowering 投影。比如状态叠层/刷新不能只看 AddModifier task 里的 `MaxLayer` / `LayerAddWhenStack` / `IsRefresh`，还要确认 modifier definition 的 `Stacking`、`Count`、`LifeTime`、`StackProperty` 等 raw 字段是否已经被正确投影和 admission。
 
 ## 快照与结算目标摘要
 

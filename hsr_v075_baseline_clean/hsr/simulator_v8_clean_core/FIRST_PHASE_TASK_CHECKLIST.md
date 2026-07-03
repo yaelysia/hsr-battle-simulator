@@ -414,7 +414,7 @@
 - [x] PHASE1-ACCEPT-14 blocked/audit_only/discovered_only 不产生 mutation。
 - [x] PHASE1-ACCEPT-15 runtime 不引用旧 simulator、旧 model pack、TextMap、raw TBGD。
 
-P1-9 聚合报告显示 `phase1_full_acceptance=false`。当前全阶段验收仍受这些 source gap 阻塞：P1-4 stack+duration refresh、random dispel Order=Random；P1-6 formation/toughness sort、owner fetch、servant target；P1-7 部分随机来源 admission；P1-8 servant / battle_unit_summon initial setup。上述项不能合成正例，也不能因此勾选第一阶段已完成。
+P1-9 聚合报告显示 `phase1_full_acceptance=false`。当前全阶段验收仍受未完成缺口阻塞，但这些缺口不能再统一叫 source gap。最新归因见 `../live_validation_reports/v8_p1_gap_attribution_audit_checkpoint.md`：random dispel Order=Random 和当前精确 toughness sort 仍按真 source gap 处理；stack+duration refresh、formation sort、owner fetch、servant target、servant / battle_unit_summon initial setup、control resist 等需要按 lowering/admission/validation/implementation gap 继续拆分。上述项不能合成正例，也不能因此勾选第一阶段已完成。
 
 ## 当前状态
 

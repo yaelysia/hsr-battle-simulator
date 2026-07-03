@@ -149,10 +149,14 @@ P1-9 聚合验收：
 
 P1-9 后仍明确没有完整：
 
-- P1-4：`stack + duration refresh` 同一 AddModifier 当前无真实来源正例；`DispelStatus(Order=Random)` 当前无真实来源。
-- P1-6：formation/toughness sort、owner fetch、servant target 当前仍是 source gap。
-- P1-7：部分随机来源 admission 仍只能 source_gap_blocked，不能合成正例。
-- P1-8：servant initial setup、battle_unit_summon initial setup 当前 source gap，已验证 blocked/no mutation。
+- P1-4：`DispelStatus(Order=Random)` 当前确认是真 source gap；`stack + duration refresh` 不再直接判为 raw source gap，当前更可能是 validation/lowering/admission gap，需要审计 `Stacking`、`Count`、`LifeTime`、`StackProperty` 等 raw 字段如何投影。
+- P1-6：formation sort、owner fetch raw 来源已确认存在，当前是 lowering/admission gap；toughness sort 当前精确 raw source 仍未发现；servant target raw/IR 均有大量候选，但 runtime servant registry/admission 未完成。
+- P1-7：`random_source_paths` 需要拆分；random dispel 是 source gap，control resist 是 control admission/formula 缺口。
+- P1-8：servant initial setup、battle_unit_summon initial setup 不能再简单叫 source gap。raw/IR 定义存在，但 stat/timeline/lifecycle/action/source admission 未完成，已验证 blocked/no mutation。
+
+最新缺口归因报告：
+
+- `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p1_gap_attribution_audit_checkpoint.md`
 
 状态系统主体还没完整：
 
