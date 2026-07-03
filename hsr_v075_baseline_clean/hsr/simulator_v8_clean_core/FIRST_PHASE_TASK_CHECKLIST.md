@@ -142,7 +142,8 @@
 
 完成口径：
 
-- [x] P1-3-DONE 至少一种真实 summon 或 assistant 机制可从 IR admission 到 runtime mutation，并通过 replay/source audit。
+- [x] P1-3-SUBSTRATE-ACCEPTED 普通 `SummonMonster` 已有真实来源正例，可从 IR admission 到 `UnitSpawn` / summon runtime mutation，并通过 replay/source audit；assistant/servant blocked 边界不产生 mutation。
+- [ ] P1-3-DONE summon、assistant、servant/忆灵均按真实来源形成可执行实体或队列语义。当前 servant/忆灵仍是 `implementation_missing`：定义已发现，但 owner/stat/timeline/action/lifecycle admission 未完成；assistant 当前是 `boundary_only`，不能冒充 executable。
 
 ## P1-4 状态系统主体
 
@@ -150,7 +151,7 @@
 
 详细计划：`P1_4_STATUS_SYSTEM_TASK_PLAN.md`。P1-4 是状态系统主体阶段，每个小项必须按“目标 / 要做什么 / 验收结果 / 禁止事项”执行，不能只以验证脚本通过作为完成标准。
 
-来源缺口口径：当前若结构化扫描证明某机制没有真实 TBGD / IR 正例，只能记录为 `source_gap_blocked` 并验证 state unchanged，不能合成 executable mutation 来勾选。已知缺口包括 `P1-4.11 stack + duration refresh` 和 `P1-4.29 / P1-4.42 random dispel`。
+来源缺口口径：当前若结构化扫描证明某机制没有真实 TBGD / IR 正例，只能记录为 `source_absent_not_required` 或 `boundary_only` 并验证 state unchanged，不能合成 executable mutation 来勾选。`P1-4.11 stack + duration refresh` 当前无组合来源正例；`P1-4.29 / P1-4.42 random dispel` 当前不作为第一阶段 blocker。
 
 - [x] P1-4.1 审查 `systems/status.py`、`status_callbacks.py`、`AddModifier`、`RemoveModifier`、DoT/status damage 当前实现。
 - [x] P1-4.2 定义 status instance identity 和 source stack 规则。
@@ -209,7 +210,7 @@
 
 详细计划：`P1_5_QUEUE_WINDOW_TASK_PLAN.md`。
 
-验收口径：每个 queue family / window / drain 机制先按 `executable / source_gap_blocked / implementation_missing` 三态判断。有真实 TBGD/IR 来源的机制必须完成 positive executable validation；当前没有真实来源的机制只能做 coverage gap、blocked、state unchanged 和 no synthetic mutation 验证，不能为了勾选 checklist 合成正例。
+验收口径：每个 queue family / window / drain 机制先按 `executable / boundary_only / source_absent_not_required / implementation_missing` 判断。有真实 TBGD/IR 来源的机制必须完成 positive executable validation；当前没有真实来源或只具备边界验证的机制只能做 coverage gap、blocked、state unchanged 和 no synthetic mutation 验证，不能为了勾选 checklist 合成正例。
 
 - [x] P1-5.1 审查 `systems/queue.py`、`QueueIntentIR`、status callback queue intent、executor queue drain 当前实现。
 - [x] P1-5.2 定义 battle start、wave start、turn start、before action、after damage、after kill、after action、turn end、wave end、ultimate interrupt、queue drain 等窗口。
@@ -249,7 +250,7 @@
 
 详细计划：`P1_6_TARGET_SYSTEM_TASK_PLAN.md`。
 
-验收口径：每个 target expression / sort / fetch / random / adjacent / unique / summon / servant 子机制先按 `executable / source_gap_blocked / implementation_missing` 三态判断。有真实 TBGD/IR 来源的目标机制必须完成 positive executable validation；当前没有真实来源或缺 runtime context 的机制只能做 coverage gap、blocked、state unchanged 和 no synthetic mutation 验证，不能为了提高 coverage 默认选第一个目标、默认排序或偷偷随机。
+验收口径：每个 target expression / sort / fetch / random / adjacent / unique / summon / servant 子机制先按 `executable / boundary_only / source_absent_not_required / implementation_missing` 判断。有真实 TBGD/IR 来源的目标机制必须完成 positive executable validation；当前没有真实来源或缺 runtime context 的机制只能做 coverage gap、blocked、state unchanged 和 no synthetic mutation 验证，不能为了提高 coverage 默认选第一个目标、默认排序或偷偷随机。
 
 - [x] P1-6.1 审查 `systems/target.py` 和 TBGD lowering 中 TargetSort、TargetFetch、Retarget、TargetSequence、TargetFilter admission。
 - [x] P1-6.2 定义 target resolution record 的完整字段。
@@ -291,12 +292,12 @@
 
 详细计划：`P1_7_RNG_BRANCH_TASK_PLAN.md`。
 
-验收口径：每个 RNG / probability / branch 子机制先按 `executable / source_gap_blocked / implementation_missing` 三态判断。有真实 TBGD/IR 来源的随机机制必须完成 positive executable validation；当前没有真实来源或缺 runtime context 的机制只能做 coverage gap、blocked、state unchanged 和 no synthetic mutation 验证，不能为了提高 coverage 使用进程随机、默认第一个 outcome 或 synthetic 正例。
+验收口径：每个 RNG / probability / branch 子机制先按 `executable / boundary_only / source_absent_not_required / implementation_missing` 判断。有真实 TBGD/IR 来源的随机机制必须完成 positive executable validation；当前没有真实来源或缺 runtime context 的机制只能做 coverage gap、blocked、state unchanged 和 no synthetic mutation 验证，不能为了提高 coverage 使用进程随机、默认第一个 outcome 或 synthetic 正例。
 
 本阶段资源约束：P1-7 以专项轻量验证为主，不自动运行 `validate_v0_209`、`validate_v0_264` 等旧重回归；旧回归需在资源允许时单独串行执行。
 
 - [x] P1-7.1 审查当前 RNG surface：`RNGEvent`、transition rng events、crit、bounce、target random、status chance/resist、random dispel。
-- [x] P1-7.2 审查 RNG source/admission，区分真实来源、engine convention、validation forced choice、source gap。
+- [x] P1-7.2 审查 RNG source/admission，区分真实来源、engine convention、validation forced choice、source_absent_not_required / boundary_only。
 - [x] P1-7.3 定义统一 RNG request schema。
 - [x] P1-7.4 定义统一 RNGEvent result/metadata schema。
 - [x] P1-7.5 定义 explicit choice ledger 输入格式。
@@ -322,12 +323,12 @@
 - [x] P1-7.25 增加 bounce target RNG 验证。
 - [x] P1-7.26 增加 status chance/resist RNG 验证。
 - [x] P1-7.27 增加 random dispel source-gap/positive 验证。
-- [x] P1-7.28 更新阶段报告，说明 RNG ledger、source gap 和后续 branch enumeration 预留。
+- [x] P1-7.28 更新阶段报告，说明 RNG ledger、source_absent_not_required / boundary_only 和后续 branch enumeration 预留。
 
 完成口径：
 
 - [x] P1-7-SUBSTRATE-ACCEPTED RNG 分支底座已通过专项验证和 source-gap/blocked 记录；已有 crit、target random、bounce、status chance/resist 等第一阶段关键路径进入统一 RNG schema；missing choice 有 available outcomes，失败/抵抗/blocked 不产生 mutation。
-- [ ] P1-7-DONE 第一阶段所有已有随机和概率路径都进入统一 RNG event，replay 不依赖进程随机状态。剩余无真实来源机制只能标 source gap，不能当正例完成。
+- [ ] P1-7-DONE 第一阶段所有已有随机和概率路径都进入统一 RNG event，replay 不依赖进程随机状态。剩余无真实来源机制只能标 source_absent_not_required / boundary_only，不能当正例完成。
 
 ## P1-8 最小战斗配置入口
 
@@ -335,7 +336,7 @@
 
 详细计划：`P1_8_BATTLE_SETUP_TASK_PLAN.md`。
 
-验收口径：P1-8 的配置入口只描述初始条件和路线输入，不能成为规则来源。机制类 setup 必须引用 RuleBook / Canonical IR / 数据卡 IR；无真实来源时只能 `source_gap_blocked` 或构建失败，不能通过 scenario flags 注入 fake status、fake summon、fake passive。主验证必须轻量，不复制 `validate_v0_204` 的全量 canonical/coverage/fidelity 写盘模式。
+验收口径：P1-8 的配置入口只描述初始条件和路线输入，不能成为规则来源。机制类 setup 必须引用 RuleBook / Canonical IR / 数据卡 IR；缺真实来源或缺 admission 时只能 `boundary_only` / `source_absent_not_required` / `implementation_missing` 或构建失败，不能通过 scenario flags 注入 fake status、fake summon、fake passive。主验证必须轻量，不复制 `validate_v0_204` 的全量 canonical/coverage/fidelity 写盘模式。
 
 - [x] P1-8.1 审查 `scenarios/schema.py`、`scenarios/loader.py`、`scenarios/identity.py`、`scenarios/build_state.py`、UI scenario 编排当前能力。
 - [x] P1-8.2 定义 `BattleSetupSpec` 或等价扩展，并保留当前 v8 scenario root 字段作为输入别名。
@@ -345,14 +346,14 @@
 - [x] P1-8.6 增加 initial SP / max SP 配置和范围校验。
 - [x] P1-8.7 增加 initial energy、energy ratio、HP ratio 配置和歧义/越界负例。
 - [x] P1-8.8 增加 source-backed initial statuses 配置，复用 `StatusSystem.apply_add_modifier`。
-- [x] P1-8.9 增加 initial summon/servant 配置，summoned monster 复用 `SummonSystem`，servant 无来源时 source gap。
+- [x] P1-8.9 增加 initial summon/servant 配置，summoned monster 复用 `SummonSystem`；servant/忆灵目前因 owner/stat/timeline/action/lifecycle admission 未完成而 blocked/no mutation，不能再写成完整机制完成。
 - [x] P1-8.10 增加 initial timeline 配置或明确由 runtime scheduler 初始化。
 - [x] P1-8.11 增加 scenario-level deterministic RNG choices / rng_mode 配置，并合并到 route command metadata。
 - [x] P1-8.12 增加 objective metadata 预留，确认不影响规则执行。
 - [x] P1-8.13 确保配置入口不成为规则来源，并增加 no-rule-injection/static boundary 检查。
 - [x] P1-8.14 增加 two-wave setup 验证。
 - [x] P1-8.15 增加 initial statuses setup 验证，包含真实来源正例和 blocked/no mutation 负例。
-- [x] P1-8.16 增加 initial summon setup 验证，包含真实 summon 正例和 servant/source-gap 负例。
+- [x] P1-8.16 增加 initial summon setup 验证，包含真实 summoned monster 正例和 servant admission-missing blocked/no mutation 负例。
 - [x] P1-8.17 增加 deterministic rng setup 验证，确认同一 setup + command 可 replay。
 - [x] P1-8.18 增加不存在 card/profile/effect/summon/wave 或 invalid ratio 构建失败或 blocked 验证。
 - [x] P1-8.19 更新 scenario README 和阶段报告，说明第一阶段配置入口边界。
@@ -361,7 +362,8 @@
 
 完成口径：
 
-- [x] P1-8-DONE 可以用配置文件构建两波、有状态、有召唤、有 deterministic RNG 的第一阶段验证战斗。
+- [x] P1-8-SUBSTRATE-ACCEPTED 可以用配置文件构建两波、有状态、有普通 summoned monster、有 deterministic RNG 的第一阶段验证战斗；BattleSetup 不成为规则来源。
+- [ ] P1-8-DONE BattleSetup 还能用真实来源生成开局 servant/忆灵或明确 owner-bound component。当前 servant/忆灵 initial setup 是 `implementation_missing`，`SummonUnitData` catalog/battle_unit_summon 边界是 `boundary_only`。
 
 ## P1-9 聚合验证与阶段验收
 
@@ -369,22 +371,22 @@
 
 计划文档：`P1_9_PHASE1_AGGREGATE_TASK_PLAN.md`
 
-验收口径：P1-9 是第一阶段聚合验收底座，不是把所有 source gap 强行变成正例。聚合报告必须区分 `executable`、`source_gap_blocked`、`implementation_missing`，并同时输出 `p1_9_done_eligible` 与 `phase1_full_acceptance`。只有无 regression / implementation_missing、executable 正例通过、source gap blocked 且 state unchanged 时，才能勾 `P1-9-DONE`。如果 P1-4/P1-5/P1-7 仍有当前数据库无真实来源的机制，则不能勾第一阶段全正例完成。
+验收口径：P1-9 是第一阶段聚合验收底座，不是把所有缺口强行变成正例。聚合报告必须区分 `executable`、`boundary_only`、`source_absent_not_required`、`implementation_missing`，并同时输出 `p1_9_done_eligible`、`phase1_repair_substrate_accepted` 与 `phase1_minimum_battle_slice`。只有无 regression / implementation_missing、executable 正例通过、boundary-only blocked 且 state unchanged、source-absent 项明确不属于当前数据库必做机制时，才能标记最小可用战斗纵切完成。
 
 - [x] P1-9.1 审查 P1-0 到 P1-8 当前验证脚本、summary 输出和资源风险，形成 validation inventory。
 - [x] P1-9.2 将 `validate_p1_7_rng_branch_system.py` 统一为 `run_validation(package_root, tbgd_root, output_dir)` 接口，并保持 CLI 输出兼容。
 - [x] P1-9.3 新增 `validate_p1_9_phase1_aggregate.py` 主验证脚本，默认只构建一次 RuleBook，不以 subprocess 串联旧验证作为主路径。
 - [x] P1-9.4 定义聚合报告 schema，矩阵项必须包含 `phase_item`、`source_state`、`validation_state`、positive/negative case count、replay/source audit 状态。
 - [x] P1-9.5 按结构化谓词选择聚合样例，不依赖固定角色名、怪物名、action id、stage id、文件名或 hash。
-- [x] P1-9.6 构造 BattleSetup 聚合 scenario：two-wave、source-backed initial status、source-backed summoned monster、servant source gap、timeline、RNG、objective。
+- [x] P1-9.6 构造 BattleSetup 聚合 scenario：two-wave、source-backed initial status、source-backed summoned monster、servant admission-missing boundary、timeline、RNG、objective。
 - [x] P1-9.7 执行至少一个 route transition 作为 route contract 样本；若 route 无 mutation，必须标为 `route_contract_only_no_mutation`，并用有真实 mutation 的 setup/direct transition 提供 snapshot replay、`RuntimeSourceAuditor`、`SettlementTraceabilityValidator` 正例。
 - [x] P1-9.8 聚合 action boundary 验证：core 暴露合法输入，enemy action 由外部输入，mandatory queue 与 selectable action 不混淆。
 - [x] P1-9.9 聚合 lifecycle / wave / summon 验证：spawn/defeat/remove/wave runtime/summon runtime mutation 可 replay/source audit，servant 不伪造。
 - [x] P1-9.10 聚合 status / queue-window / target / RNG 验证：有来源正例 passed，无来源或缺 choice/缺 target 的负例 blocked/no mutation。
-- [x] P1-9.11 输出 source gap / blocked / audit_only / discovered_only 矩阵，确认这些项不产生 mutation，且不被写成 executable。
+- [x] P1-9.11 输出 executable / boundary_only / source_absent_not_required / implementation_missing 矩阵，确认 blocked / audit_only / discovered_only 项不产生 mutation，且不被写成 executable。
 - [x] P1-9.12 增加 static boundary 检查，确认 runtime 不引用旧 simulator、旧 model pack、TextMap、raw TBGD，scenario/tools 不把 setup 当规则来源。
 - [x] P1-9.13 控制验证输出资源预算：默认只写 summary/matrix/sample，不写完整 CanonicalIR、coverage/fidelity、RuleBook 派生大对象或全量 transition dump。
-- [x] P1-9.14 新增 `live_validation_reports/v8_p1_9_phase1_aggregate_checkpoint.md`，说明当前做到哪里、source gap、implementation_missing、剩余完整复刻模块。
+- [x] P1-9.14 新增 `live_validation_reports/v8_p1_9_phase1_aggregate_checkpoint.md`，说明当前做到哪里、boundary_only、source_absent_not_required、implementation_missing、剩余完整复刻模块。
 - [x] P1-9.15 更新 `CODEX_HANDOFF.md` 或主线交接摘要，写入 P1-9 聚合报告路径、最近检查点、下一阶段建议。
 - [x] P1-9.16 更新本 checklist：勾选 P1-9 子项，但不把 P1-9-DONE 与 PHASE1 全正例完成混淆。
 - [x] P1-9.17 跑必跑最小集：`compileall`、`validate_p1_9_phase1_aggregate`、`git diff --check`。
@@ -392,7 +394,7 @@
 
 完成口径：
 
-- [x] P1-9-DONE 第一阶段聚合验证底座通过，报告说明当前 executable 范围、source_gap_blocked 范围、implementation_missing 范围、`phase1_full_acceptance` 是否满足，以及距离完整复刻还缺什么。
+- [x] P1-9-DONE 第一阶段聚合验证底座通过，报告说明当前 executable、boundary_only、source_absent_not_required、implementation_missing 范围、`phase1_minimum_battle_slice` 是否满足，以及距离完整复刻还缺什么。
 
 ## 全阶段验收
 
@@ -414,7 +416,7 @@
 - [x] PHASE1-ACCEPT-14 blocked/audit_only/discovered_only 不产生 mutation。
 - [x] PHASE1-ACCEPT-15 runtime 不引用旧 simulator、旧 model pack、TextMap、raw TBGD。
 
-P1-9 聚合报告显示 `phase1_full_acceptance=false`。当前全阶段验收仍受未完成缺口阻塞，但这些缺口不能再统一叫 source gap。最新归因见 `../live_validation_reports/v8_p1_gap_attribution_audit_checkpoint.md`：random dispel Order=Random 仍按真 source gap 处理；formation sort、toughness sort、owner fetch 已修正为 executable；stack+duration refresh、servant target、servant / battle_unit_summon initial setup、control resist 等需要按 lowering/admission/validation/implementation gap 继续拆分。上述未完成项不能合成正例，也不能因此勾选第一阶段全正例完成。
+P1-9 聚合报告显示 `phase1_minimum_battle_slice=false`。当前全阶段验收仍受未完成缺口阻塞，但这些缺口不能再统一叫 source gap。random dispel Order=Random 当前是 `source_absent_not_required`，不再作为第一阶段 blocker；formation sort、toughness sort、owner fetch 已修正为 executable；stack+duration refresh 当前无组合来源正例，不合成 synthetic case；servant target、servant/忆灵 initial setup 是 `implementation_missing`；battle_unit_summon initial setup 是 `boundary_only`，因为 `SummonUnitData` 是 catalog/definition，不是自动 battle spawn trigger。上述未完成项不能合成正例，也不能因此勾选第一阶段最小可用战斗纵切。
 
 ## 当前状态
 
@@ -422,4 +424,4 @@ P1-9 聚合报告显示 `phase1_full_acceptance=false`。当前全阶段验收�
 - [x] 第一阶段实现中。
 - [ ] 第一阶段已完成。
 
-当前建议进入 P1-9 后续的缺口收敛：优先补当前数据库有真实来源但 runtime 仍缺 admission 的项；对当前数据库没有真实来源的项继续保持 source_gap_blocked。不要为了勾第一阶段 full acceptance 合成正例。
+当前建议进入 P1 repair 后续的缺口收敛：优先补当前数据库有真实来源但 runtime 仍缺 admission 的项，尤其 servant/忆灵；对当前数据库没有真实来源且不属于当前阶段必做的项继续保持 `source_absent_not_required` 或 `boundary_only`。不要为了勾第一阶段最小纵切合成正例。

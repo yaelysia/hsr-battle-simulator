@@ -2,7 +2,7 @@
 
 ## 0. 一句话状态
 
-当前主线是 `simulator_v8_clean_core`，已经推进到 `P1-9 phase1 aggregate validation`。最近已通过 P1-9 聚合验收：`validate_p1_9_phase1_aggregate` 输出 `ok=true`、`p1_9_done_eligible=true`、`phase1_full_acceptance=false`。这表示第一阶段聚合底座可验收，但第一阶段全正例仍被 source gap 阻塞，不能标为完整完成。
+当前主线是 `simulator_v8_clean_core`，正在做 `P1_REPAIR_ACTION_PLAN.md` 的第一阶段返工。最近 P1-9 聚合底座可通过，但不能把 `ok=true` 当作第一阶段完成：返工后的 P1-9 需要同时输出 `phase1_repair_substrate_accepted` 和 `phase1_minimum_battle_slice`。当前真实口径是底座可验收，servant/忆灵等关键机制仍是 `implementation_missing`，第一阶段最小可用战斗纵切不能标为完成。
 
 ## 1. 路径与事实来源
 
@@ -53,10 +53,11 @@ hsr_v075_baseline_clean/hsr/simulator_v7_7/
 3. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/PROJECT_GOALS.md`
 4. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/FORBIDDEN.md`
 5. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/MONSTER_CARD_SPEC.md`
-6. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p1_9_phase1_aggregate_checkpoint.md`
-7. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_status_target_event_database_audit_checkpoint_v0_287.md`
-8. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_ir_checkpoint_v0_288.md`
-9. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_sequence_filter_retarget_checkpoint_v0_289.md`
+6. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/P1_REPAIR_ACTION_PLAN.md`
+7. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p1_9_phase1_aggregate_checkpoint.md`
+8. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_status_target_event_database_audit_checkpoint_v0_287.md`
+9. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_ir_checkpoint_v0_288.md`
+10. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_sequence_filter_retarget_checkpoint_v0_289.md`
 
 需要追怪物历史时再读：
 
@@ -138,12 +139,12 @@ P1-9 聚合验收：
 
 - 新增 `tools/validate_p1_9_phase1_aggregate.py`，默认只做一次 TBGD lowering / RuleBook 构建，不用 subprocess 串联旧验证。
 - P1-7 验证脚本已统一为 `run_validation(package_root, tbgd_root, output_dir)`，CLI 输出保持兼容。
-- P1-9 聚合 scenario 覆盖 two-wave setup、source-backed initial status、source-backed summoned monster、servant source gap、explicit timeline、scenario RNG ledger、objective metadata 和至少一个 route transition。
+- P1-9 聚合 scenario 覆盖 two-wave setup、source-backed initial status、source-backed summoned monster、servant admission-missing boundary、explicit timeline、scenario RNG ledger、objective metadata 和至少一个 route transition。
 - P1-9 route transition 当前是 route contract 样本；若无 mutation，会在 samples 中标为 `route_contract_only_no_mutation`，不作为 core source audit 正例。
 - core snapshot replay / source audit 正例使用 source-backed direct status transition，要求 `mutation_count>0`、`checked_mutations>0`、`checked_records>0`。
 - executable 矩阵项只有 `replay_ok=true` 且 `source_audit_ok=true` 才能随聚合 `ok=true` 通过；status setup 的 source trace 统计会识别嵌套 lifecycle/status instance source trace。
 - 聚合输出在 `/tmp/hsr_v8_p1_9_phase1_aggregate/`，关键文件包括 `validation_summary_p1_9_phase1_aggregate.json`、`phase1_system_matrix_p1_9.json`、`phase1_source_gap_matrix_p1_9.json`、`phase1_transition_audit_samples_p1_9.json`。
-- P1-9 summary 当前结论：`ok=true`、`p1_9_done_eligible=true`、`phase1_full_acceptance=false`、`implementation_missing=0`。
+- P1-9 返工后 summary 必须区分四类：`executable`、`boundary_only`、`source_absent_not_required`、`implementation_missing`。`ok=true` 只代表报告和边界检查有效；是否完成第一阶段最小可用战斗纵切看 `phase1_minimum_battle_slice`。
 
 后续已修正 P1-6 目标系统误缺口：`TargetAliasConfig` / `TargetOperationConfig` 现在会 lower 成带真实来源的 `TargetExpressionIR`，`formation sort`、`toughness sort`、`owner fetch` 均有 executable 正例；`ModifierOwnerEntity` 缺 owner 时不再 fallback 到 caster。
 
@@ -151,10 +152,10 @@ P1-9 聚合验收：
 
 P1-9 后仍明确没有完整：
 
-- P1-4：`DispelStatus(Order=Random)` 当前确认是真 source gap；`stack + duration refresh` 不再直接判为 raw source gap，当前更可能是 validation/lowering/admission gap，需要审计 `Stacking`、`Count`、`LifeTime`、`StackProperty` 等 raw 字段如何投影。
+- P1-4：deterministic dispel、refresh、stack、duration、expire、DoT、chance/resist/immunity 等已有专项正例；`DispelStatus(Order=Random)` 当前是 `source_absent_not_required`，不再作为第一阶段 blocker；`stack + duration refresh` 当前没有组合来源正例，禁止 synthetic positive case。
 - P1-6：formation sort、toughness sort、owner fetch 已修正为 executable；servant target raw/IR 均有大量候选，但 runtime servant registry/admission 未完成。
-- P1-7：`random_source_paths` 需要拆分；random dispel 是 source gap，control resist 是 control admission/formula 缺口。
-- P1-8：servant initial setup、battle_unit_summon initial setup 不能再简单叫 source gap。raw/IR 定义存在，但 stat/timeline/lifecycle/action/source admission 未完成，已验证 blocked/no mutation。
+- P1-7：`random_source_paths` 已拆分口径；random dispel 当前是 `source_absent_not_required`，control resist 是 control admission/formula 缺口。
+- P1-8：servant/忆灵 initial setup 不能再叫 source gap。raw/IR servant 定义存在，但 owner/stat/timeline/lifecycle/action admission 未完成，属于 `implementation_missing`；battle_unit_summon / `SummonUnitData` catalog 不是自动 battle spawn trigger，当前是 `boundary_only`，已验证 blocked/no mutation。
 
 最新缺口归因报告：
 
@@ -237,14 +238,14 @@ TargetAlias=197061
 
 ## 7. 推荐下一步
 
-建议下一阶段继续做 source gap / implementation gap 分流，不要继续扩动作入口，也不要为了 full acceptance 合成正例。优先处理当前 RuleBook / Canonical IR 中确有真实来源但 runtime admission 或验证不足的项；当前数据库确实无真实来源的项继续保持 source_gap_blocked。
+建议下一阶段继续做 executable / boundary_only / source_absent_not_required / implementation_missing 分流，不要继续扩动作入口，也不要为了最小纵切合成正例。优先处理当前 RuleBook / Canonical IR 中确有真实来源但 runtime admission 或验证不足的项；当前数据库确实无真实来源且不属于当前阶段必做的项继续保持 source_absent_not_required 或 boundary_only。
 
 推荐顺序：
 
-1. 重新审查 P1-4 stack/refresh/chance/duration/dispel，先区分真实来源缺口与 runtime 实现缺口。
-2. 补齐有真实来源的 status lifecycle / chance / duration / tick / dispel admission 和 negative validation。
+1. 优先推进 servant/忆灵数据卡和 runtime admission：owner、stat、timeline、action、lifecycle、target registry 必须来自 IR/数据卡，不能默认生成。
+2. 继续保持 P1-4/P1-5 的专项验证作为直接回归，不把 random dispel / 无当前来源 queue family 合成正例。
 3. 复查 P1-7 RNG source admission，继续要求 missing/invalid choice blocked 且 no mutation。
-4. 进入 servant / battle_unit_summon admission 审计，拆清 servant、battle unit summon、summoned monster、adventure summon unit。
+4. 进入 battle_unit_summon admission 审计时先区分 catalog/visual/adventure 与真实 battle spawn trigger。
 
 理由：
 
@@ -292,7 +293,7 @@ git diff --check
 如果要继续推进，建议开局说清：
 
 ```text
-当前接续 P1-9 phase1 aggregate validation。先读 CODEX_HANDOFF、README、PROJECT_GOALS、FORBIDDEN、MONSTER_CARD_SPEC 和 `v8_p1_9_phase1_aggregate_checkpoint.md`。P1-9 聚合底座已通过，但 `phase1_full_acceptance=false`；下一步先做 source gap / implementation gap 分流，runtime 仍只能读 Canonical IR/数据卡 IR，缺来源或缺条件必须 blocked/state unchanged。
+当前接续 P1 repair。先读 CODEX_HANDOFF、P1_REPAIR_ACTION_PLAN、README、PROJECT_GOALS、FORBIDDEN、MONSTER_CARD_SPEC 和 `v8_p1_9_phase1_aggregate_checkpoint.md`。P1-9 聚合底座已通过，但 `phase1_minimum_battle_slice=false`；下一步先做 executable / boundary_only / source_absent_not_required / implementation_missing 分流，runtime 仍只能读 Canonical IR/数据卡 IR，缺来源或缺条件必须 blocked/state unchanged。
 ```
 
 不要从旧 `CODEX_HANDOFF` 的 v7 叙述接续；本文件已经替换为 v8 当前交接手册。

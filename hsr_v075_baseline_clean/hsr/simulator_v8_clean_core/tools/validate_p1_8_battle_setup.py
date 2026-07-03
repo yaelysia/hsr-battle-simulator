@@ -49,7 +49,7 @@ def run_validation(package_root: Path, tbgd_root: Path, output_dir: Path) -> dic
         "two_wave_setup": wave_cases["checks"],
         "initial_status": status_cases["checks"],
         "initial_summon": summon_cases["summoned_monster"]["checks"],
-        "servant_source_gap": summon_cases["servant_source_gap"]["checks"],
+        "servant_initial_setup_boundary": summon_cases["servant_initial_setup"]["checks"],
         "timeline_setup": timeline_rng_objective_cases["timeline"]["checks"],
         "rng_setup": timeline_rng_objective_cases["rng"]["checks"],
         "objective_metadata": timeline_rng_objective_cases["objective"]["checks"],
@@ -326,7 +326,7 @@ def _summon_cases(
     servant_build = ScenarioStateBuilder(rules).build(ScenarioLoader().load_dict(servant_data))
     servant_checks = {
         "blocked_record_present": any(
-            record.get("blocked_reason") == "servant_initial_setup_source_gap" for record in servant_build.blocked_setup
+            record.get("blocked_reason") == "servant_initial_setup_admission_missing" for record in servant_build.blocked_setup
         ),
         "no_unit_created": len(servant_build.state.units) == 2,
         "no_setup_mutation": not servant_build.setup_mutations,
@@ -350,8 +350,18 @@ def _summon_cases(
             "setup_records": build.setup_records,
             "timeline_after_summon": timeline_after_summon,
         },
+        "servant_initial_setup": {
+            "checks": {"ok": servant_checks["ok"], "checks": servant_checks},
+            "source_state": "implementation_missing",
+            "classification": "servant_owner_stat_timeline_action_lifecycle_admission_missing",
+            "mechanism_complete": False,
+            "blocked_setup": servant_build.blocked_setup,
+        },
         "servant_source_gap": {
             "checks": {"ok": servant_checks["ok"], "checks": servant_checks},
+            "source_state": "implementation_missing",
+            "classification": "deprecated_name_servant_is_not_true_source_gap",
+            "mechanism_complete": False,
             "blocked_setup": servant_build.blocked_setup,
         },
         "missing_owner": {

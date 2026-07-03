@@ -629,7 +629,7 @@ def _blocked_initial_battle_unit_summon(
             source_trace = definition.source.to_json()
     record = _setup_blocked_record(
         "setup_initial_summon",
-        "battle_unit_summon_initial_setup_source_gap",
+        "battle_unit_summon_initial_setup_boundary_only",
         {
             "kind": spec.kind,
             "owner_id": spec.owner_id,
@@ -654,7 +654,7 @@ def _blocked_initial_servant(
             source_trace = definition.source.to_json()
     record = _setup_blocked_record(
         "setup_initial_summon",
-        "servant_initial_setup_source_gap",
+        "servant_initial_setup_admission_missing",
         {
             "kind": spec.kind,
             "owner_id": spec.owner_id,

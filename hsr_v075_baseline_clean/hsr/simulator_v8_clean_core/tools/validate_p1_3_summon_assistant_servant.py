@@ -427,6 +427,9 @@ def _assistant_case(rules: RuleBook) -> dict[str, Any]:
     checks["ok"] = all(value for key, value in checks.items() if key != "ok")
     return {
         "checks": {"ok": checks["ok"], "checks": checks},
+        "source_state": "boundary_only",
+        "classification": "assistant_resolution_sources_not_executable_current_scope",
+        "mechanism_complete": False,
         "assistant_intent_count": len(assistant_intents),
         "assistant_resolution_count": len(assistant_resolutions),
         "sample": assistant_resolutions[0].to_json() if assistant_resolutions else {},
@@ -444,6 +447,9 @@ def _servant_case(rules: RuleBook) -> dict[str, Any]:
     checks["ok"] = all(value for key, value in checks.items() if key != "ok")
     return {
         "checks": {"ok": checks["ok"], "checks": checks},
+        "source_state": "implementation_missing",
+        "classification": "servant_owner_stat_timeline_action_lifecycle_admission_missing",
+        "mechanism_complete": False,
         "definition_count": len(definitions),
         "sample": definitions[0].to_json() if definitions else {},
     }
