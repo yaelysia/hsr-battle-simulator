@@ -75,23 +75,18 @@ source_gap_blocked=2
 - P1-8：BattleSetup 聚合入口可构建两波、有状态、有召唤、有 timeline/RNG/objective 的初始态。
 - Core：route transition contract、direct status mutation snapshot replay、direct status mutation settlement traceability、direct status mutation runtime source audit、static boundary 均通过。
 
-## 当前 source gap 范围
+## 当前 full acceptance blockers
 
 当前 `phase1_full_acceptance=false` 的阻塞项：
 
-- `p1_4.stack_duration_refresh`：当前结构化扫描无 stack + duration refresh 同一 `AddModifier` 正例。
-- `p1_4.random_dispel_order_random`：当前无 `DispelStatus(Order=Random)` 真实来源。
-- `p1_6.formation_sort`：当前无安全 executable formation sort 正例。
-- `p1_6.toughness_sort`：当前无安全 executable toughness sort 正例。
-- `p1_6.owner_fetch`：当前无 `TargetFetchModifierOwner` / `TargetFetchOwner` 正例。
-- `p1_6.servant_target`：servant target registry 当前未 executable。
-- `p1_7.random_source_paths`：部分随机来源 admission 仍只能 source gap / blocked。
-- `p1_8.servant_initial_setup`：servant initial setup blocked/no mutation。
-- `p1_8.battle_unit_summon_initial_setup`：battle_unit_summon initial setup blocked/no mutation。
+- `p1_4.stack_duration_refresh`：当前为 validation / projection gap，不能再直接断言 raw 无来源。
+- `p1_4.random_dispel_order_random`：当前无 `DispelStatus(Order=Random)` 真实来源，是真 source gap。
+- `p1_6.servant_target`：servant target registry 当前未 executable，是 admission gap。
+- `p1_7.random_source_paths`：仅 random dispel 子项仍是真 source gap；control resist 是 control formula/admission gap。
+- `p1_8.servant_initial_setup`：servant initial setup blocked/no mutation，是 admission gap。
+- `p1_8.battle_unit_summon_initial_setup`：battle_unit_summon initial setup blocked/no mutation，是 admission/scope split gap。
 
-上述项当前均不能作为 positive executable case；只能保持 source_gap_blocked / process-only / state unchanged。
-
-后续复审说明：`v8_p1_gap_attribution_audit_checkpoint.md` 已重新归因这些阻塞项。并非所有项都是真 raw source gap；formation sort、owner fetch、servant target、servant setup、battle_unit_summon setup、stack+duration refresh 等需要继续拆成 lowering/admission/validation gap。
+后续修正说明：`formation sort`、`toughness sort`、`owner fetch` 已通过全局 `TargetAliasConfig` / `TargetOperationConfig` lowering 变为 executable 正例，不再是 full acceptance blocker。上述剩余项不能合成 positive executable case；无真实来源的保持 source_gap_blocked，有来源但 admission 未完成的保持 blocked / state unchanged。
 
 ## 验证命令
 

@@ -367,10 +367,10 @@ def _surface_matrix() -> dict[str, Any]:
         },
         {
             "surface": "control_resist",
-            "status": "source_gap_blocked",
-            "source_kind": "control_kind_metadata_without_complete_control_resist_formula",
+            "status": "admission_gap_blocked",
+            "source_kind": "control_kind_metadata_present_but_complete_control_resist_formula_not_admitted",
             "unified_schema": False,
-            "ledger": "not promoted to separate executable branch",
+            "ledger": "not promoted to separate executable branch until status/control formula admission exists",
         },
         {
             "surface": "random_dispel",
@@ -382,8 +382,15 @@ def _surface_matrix() -> dict[str, Any]:
     ]
     checks = {
         "matrix_has_core_surfaces": len(rows) >= 7,
-        "source_gap_rows_present": any(row["status"] == "source_gap_blocked" for row in rows)
-        or any("source_gap_blocked" in row["status"] for row in rows),
+        "random_dispel_true_source_gap_recorded": any(
+            row.get("surface") == "random_dispel" and "source_gap_blocked" in str(row.get("status") or "")
+            for row in rows
+        ),
+        "control_resist_not_misclassified_as_source_gap": all(
+            "source_gap_blocked" not in str(row.get("status") or "")
+            for row in rows
+            if row.get("surface") == "control_resist"
+        ),
     }
     checks["ok"] = all(value for key, value in checks.items() if key != "ok")
     return {"checks": checks, "rows": rows}

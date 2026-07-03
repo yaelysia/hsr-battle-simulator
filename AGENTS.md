@@ -221,6 +221,7 @@ hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/FORBIDDEN.md
 - 怪物 `AbilityNameList` 只是怪物机制入口之一，不等于完整被动；技能挂状态、状态 callback、队列插入也可能是真实被动链路的一部分。
 - 如果外部资料或用户机制说明与当前实现冲突，应回到 TBGD/数据卡来源链路重新审查，不能硬补 runtime 特例。
 - 带结构化 key/name 的 target fetch 或 registry 读取，必须验证精确 key 命中、缺 key、错 key、默认 registry 同时存在等负例；默认项不能冒充命名来源。
+- 目标系统判断 source gap 时不能只按 raw `$type` 名称搜索。`AllEnemy.SortByFormation`、`AllEnemy.SortByStance` 等 dot alias 语义来自 `TargetAliasConfig.AliasDict` 的 base alias 与 `TargetOperationConfig.OperationDict` 的 operation 组合；若验证找不到正例，先检查全局目标配置是否已投影到 Canonical IR。
 - RNG choice ledger 的推演器/验收主路径应优先使用精确 `choice_key` 或 `event_id`；`rng_type` / `default` 只能作为人工驱动或兼容兜底，不能冒充某个具体随机分支的来源。
 - 如果游戏机制直觉与验证脚本的 source gap 结论冲突，优先审查检查谓词和 lowering 投影。比如状态叠层/刷新不能只看 AddModifier task 里的 `MaxLayer` / `LayerAddWhenStack` / `IsRefresh`，还要确认 modifier definition 的 `Stacking`、`Count`、`LifeTime`、`StackProperty` 等 raw 字段是否已经被正确投影和 admission。
 

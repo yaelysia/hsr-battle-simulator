@@ -283,7 +283,7 @@
 完成口径：
 
 - [x] P1-6-SUBSTRATE-ACCEPTED 目标系统底座已通过有来源正例和 source-gap/blocked 验证；target resolution record 完整，缺排序、缺 payload、缺 RNG choice、unique not found、target removed/defeated 均 blocked/state unchanged。
-- [x] P1-6-DONE sort/fetch/adjacent/random/unique/summon target 的第一阶段关键子集均有真实来源正例可用，目标失败不产生 mutation。剩余 source gap：toughness/formation sort 当前无安全正例，owner fetch 无当前数据库正例，servant target 无 executable runtime registry。
+- [x] P1-6-DONE sort/fetch/adjacent/random/unique/summon target 的第一阶段关键子集均有真实来源正例可用，目标失败不产生 mutation。后续修正后 `formation sort`、`toughness sort`、`owner fetch` 均已有全局 TargetAlias/TargetOperation 来源正例；剩余缺口是 servant target 无 executable runtime registry。
 
 ## P1-7 RNG 与分支基础
 
@@ -414,7 +414,7 @@
 - [x] PHASE1-ACCEPT-14 blocked/audit_only/discovered_only 不产生 mutation。
 - [x] PHASE1-ACCEPT-15 runtime 不引用旧 simulator、旧 model pack、TextMap、raw TBGD。
 
-P1-9 聚合报告显示 `phase1_full_acceptance=false`。当前全阶段验收仍受未完成缺口阻塞，但这些缺口不能再统一叫 source gap。最新归因见 `../live_validation_reports/v8_p1_gap_attribution_audit_checkpoint.md`：random dispel Order=Random 和当前精确 toughness sort 仍按真 source gap 处理；stack+duration refresh、formation sort、owner fetch、servant target、servant / battle_unit_summon initial setup、control resist 等需要按 lowering/admission/validation/implementation gap 继续拆分。上述项不能合成正例，也不能因此勾选第一阶段已完成。
+P1-9 聚合报告显示 `phase1_full_acceptance=false`。当前全阶段验收仍受未完成缺口阻塞，但这些缺口不能再统一叫 source gap。最新归因见 `../live_validation_reports/v8_p1_gap_attribution_audit_checkpoint.md`：random dispel Order=Random 仍按真 source gap 处理；formation sort、toughness sort、owner fetch 已修正为 executable；stack+duration refresh、servant target、servant / battle_unit_summon initial setup、control resist 等需要按 lowering/admission/validation/implementation gap 继续拆分。上述未完成项不能合成正例，也不能因此勾选第一阶段全正例完成。
 
 ## 当前状态
 

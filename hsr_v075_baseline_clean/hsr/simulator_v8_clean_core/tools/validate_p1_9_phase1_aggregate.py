@@ -51,6 +51,9 @@ VALIDATION_VERSION = "p1_9_phase1_aggregate"
 SOURCE_STATES = {
     "executable",
     "source_gap_blocked",
+    "lowering_gap",
+    "admission_gap",
+    "validation_gap",
     "implementation_missing",
     "audit_only",
     "discovered_only",
@@ -331,7 +334,7 @@ def run_validation(
     full_acceptance_blockers = [
         row["item_id"]
         for row in source_gap_matrix
-        if row["source_state"] == "source_gap_blocked" and row["phase1_full_acceptance_blocker"] is True
+        if row["phase1_full_acceptance_blocker"] is True
     ]
     ok = (
         all(item["validation_state"] in {"passed", "expected_blocked", "skipped_by_scope"} for item in matrix)
@@ -776,7 +779,10 @@ def _source_gap_matrix(
             "p1_4.stack_duration_refresh",
             "P1-4",
             "stack + duration refresh same AddModifier source",
-            source_state="executable" if stack_counts.get("stackable_refresh_prefilter", 0) > 0 else "source_gap_blocked",
+            source_state="executable" if stack_counts.get("stackable_refresh_prefilter", 0) > 0 else "validation_gap",
+            gap_classification="executable"
+            if stack_counts.get("stackable_refresh_prefilter", 0) > 0
+            else "status_stack_refresh_predicate_or_projection_gap",
             evidence_mode="structured_scan",
             reason=f"stack_refresh_source_counts={stack_counts}",
             runtime_guarded_path=True,
@@ -790,6 +796,7 @@ def _source_gap_matrix(
             "P1-4",
             "DispelStatus(Order=Random)",
             source_state="executable" if random_dispel_present else "source_gap_blocked",
+            gap_classification="executable" if random_dispel_present else "true_raw_source_gap",
             evidence_mode="structured_scan",
             reason="Order=Random DispelStatus source present" if random_dispel_present else "no Order=Random DispelStatus source found",
             runtime_guarded_path=True,
@@ -803,12 +810,18 @@ def _source_gap_matrix(
         ("toughness_sort", "p1_6.toughness_sort", "toughness sort"),
     ):
         case = sort_cases.get(key, {})
+        source_state = "executable"
+        gap_classification = "executable"
+        if _is_source_gap(case):
+            source_state = "lowering_gap"
+            gap_classification = "global_target_config_lowering_or_selection_gap"
         rows.append(
             _gap_row(
                 item_id,
                 "P1-6",
                 name,
-                source_state="source_gap_blocked" if _is_source_gap(case) else "executable",
+                source_state=source_state,
+                gap_classification=gap_classification,
                 evidence_mode="structured_scan",
                 reason=str(case.get("reason") or "executable target expression found"),
                 runtime_guarded_path=True,
@@ -816,12 +829,14 @@ def _source_gap_matrix(
             )
         )
     owner_case = fetch_cases.get("owner", {})
+    owner_is_gap = _is_source_gap(owner_case)
     rows.append(
         _gap_row(
             "p1_6.owner_fetch",
             "P1-6",
             "TargetFetchModifierOwner/TargetFetchOwner",
-            source_state="source_gap_blocked" if _is_source_gap(owner_case) else "executable",
+            source_state="lowering_gap" if owner_is_gap else "executable",
+            gap_classification="global_target_config_lowering_or_selection_gap" if owner_is_gap else "executable",
             evidence_mode="structured_scan",
             reason=str(owner_case.get("reason") or "executable owner fetch source found"),
             runtime_guarded_path=True,
@@ -833,7 +848,8 @@ def _source_gap_matrix(
             "p1_6.servant_target",
             "P1-6",
             "servant target registry",
-            source_state="source_gap_blocked",
+            source_state="admission_gap",
+            gap_classification="servant_target_runtime_registry_admission_gap",
             evidence_mode="known_checkpoint",
             reason="servant target runtime registry is not executable in P1-6",
             runtime_guarded_path=True,
@@ -850,6 +866,7 @@ def _source_gap_matrix(
             "P1-7",
             "RNG surfaces without current real source admission",
             source_state="source_gap_blocked" if random_source_gaps else "executable",
+            gap_classification="true_raw_source_gap_subset" if random_source_gaps else "executable",
             evidence_mode="structured_validation_matrix",
             reason=f"source_gap_surface_count={len(random_source_gaps)}",
             runtime_guarded_path=True,
@@ -861,9 +878,10 @@ def _source_gap_matrix(
             "p1_8.servant_initial_setup",
             "P1-8",
             "servant initial setup",
-            source_state="source_gap_blocked",
+            source_state="admission_gap",
+            gap_classification="servant_definition_runtime_setup_admission_gap",
             evidence_mode="runtime_blocked_case",
-            reason="servant_initial_setup_source_gap",
+            reason="servant_initial_setup_admission_gap",
             runtime_guarded_path=True,
             blocked_no_mutation=servant_blocked["checks"]["ok"],
             blocked_records=servant_blocked["blocked_setup"],
@@ -874,9 +892,10 @@ def _source_gap_matrix(
             "p1_8.battle_unit_summon_initial_setup",
             "P1-8",
             "battle_unit_summon initial setup",
-            source_state="source_gap_blocked",
+            source_state="admission_gap",
+            gap_classification="summon_unit_battle_admission_gap",
             evidence_mode="runtime_blocked_case",
-            reason="battle_unit_summon_initial_setup_source_gap",
+            reason="battle_unit_summon_initial_setup_admission_gap",
             runtime_guarded_path=True,
             blocked_no_mutation=battle_unit_summon_blocked["checks"]["ok"],
             blocked_records=battle_unit_summon_blocked["blocked_setup"],
@@ -891,23 +910,27 @@ def _gap_row(
     name: str,
     *,
     source_state: str,
+    gap_classification: str,
     evidence_mode: str,
     reason: str,
     runtime_guarded_path: bool,
     blocked_no_mutation: bool,
     blocked_records: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    if source_state not in SOURCE_STATES:
+        raise ValueError(f"invalid source_state: {source_state}")
     return {
         "item_id": item_id,
         "phase_item": phase_item,
         "name": name,
         "source_state": source_state,
-        "validation_state": "expected_blocked" if source_state == "source_gap_blocked" else "passed",
+        "gap_classification": gap_classification,
+        "validation_state": "passed" if source_state == "executable" else "expected_blocked",
         "evidence_mode": evidence_mode,
         "reason": reason,
         "runtime_guarded_path": runtime_guarded_path,
         "blocked_no_mutation": blocked_no_mutation,
-        "phase1_full_acceptance_blocker": source_state == "source_gap_blocked",
+        "phase1_full_acceptance_blocker": source_state != "executable",
         "blocked_records": blocked_records or [],
     }
 

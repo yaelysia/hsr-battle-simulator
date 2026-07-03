@@ -217,6 +217,7 @@ class TBGDLowering:
         skill_continuations: list[SkillContinuationIR] = []
         super_break_emissions: list[SuperBreakEmissionIR] = []
         target_expressions: list[TargetExpressionIR] = []
+        target_expressions.extend(self._lower_global_target_expressions())
         timeline_rules = self._lower_timeline_rules()
         resource_rules = self._lower_resource_rules()
         queue_priorities = self._lower_queue_priorities()
@@ -610,6 +611,93 @@ class TBGDLowering:
                 coverage_status="executable",
             )
         ]
+
+    def _lower_global_target_expressions(self) -> list[TargetExpressionIR]:
+        alias_relative = "Config/GlobalConfig/TargetAliasConfig.json"
+        operation_relative = "Config/GlobalConfig/TargetOperationConfig.json"
+        alias_path = self.tbgd_root / alias_relative
+        operation_path = self.tbgd_root / operation_relative
+        alias_config = _json_object_from_path(alias_path)
+        operation_config = _json_object_from_path(operation_path)
+        alias_dict = alias_config.get("AliasDict") if isinstance(alias_config.get("AliasDict"), dict) else {}
+        operation_dict = (
+            operation_config.get("OperationDict") if isinstance(operation_config.get("OperationDict"), dict) else {}
+        )
+        expressions: list[TargetExpressionIR] = []
+        for alias, raw in sorted(alias_dict.items()):
+            if not isinstance(alias, str) or not isinstance(raw, dict):
+                continue
+            source = IRSource(
+                source_path=alias_relative,
+                raw_type="TargetAliasConfig.AliasDict",
+                raw_id=alias,
+                evidence={
+                    "source_path": alias_relative,
+                    "target_config_path": alias_relative,
+                    "alias": alias,
+                },
+            )
+            expression = _target_expression_from_raw(
+                raw,
+                field_name=f"AliasDict.{alias}",
+                expression_id=f"target_expression:global_alias:{_safe_id(alias)}",
+                source=source,
+            )
+            if expression is not None:
+                expressions.append(expression)
+        safe_bases = sorted(alias for alias in P1_6_SAFE_DOT_TARGET_BASE_ALIASES if alias in alias_dict)
+        safe_operations = sorted(operation for operation in P1_6_SAFE_DOT_TARGET_OPERATIONS if operation in operation_dict)
+        for base_alias in safe_bases:
+            for operation in safe_operations:
+                raw = {"$type": "RPG.GameCore.TargetAlias", "Alias": f"{base_alias}.{operation}"}
+                coverage_status, blocked_reason, admission_batch = _target_expression_admission(
+                    "TargetAlias",
+                    raw["Alias"],
+                    raw,
+                )
+                expressions.append(
+                    TargetExpressionIR(
+                        target_expression_id=(
+                            "target_expression:global_alias_chain:"
+                            f"{_safe_id(base_alias)}:{_safe_id(operation)}"
+                        ),
+                        expression_kind="TargetAlias",
+                        alias=raw["Alias"],
+                        payload={
+                            "field_name": "TargetAliasConfig.AliasDict + TargetOperationConfig.OperationDict",
+                            "node_type": "RPG.GameCore.TargetAlias",
+                            "alias": raw["Alias"],
+                            "normalized": _target_expression_normalized_payload(raw),
+                            "raw": _json_safe(raw),
+                        },
+                        source=IRSource(
+                            source_path=f"{alias_relative}+{operation_relative}",
+                            raw_type="TargetAliasOperationChain",
+                            raw_id=raw["Alias"],
+                            evidence={
+                                "source_path": alias_relative,
+                                "target_config_path": alias_relative,
+                                "operation_config_path": operation_relative,
+                                "base_alias": base_alias,
+                                "operation": operation,
+                                "base_alias_raw_type": _short_gamecore_type(
+                                    alias_dict.get(base_alias, {}).get("$type")
+                                    if isinstance(alias_dict.get(base_alias), dict)
+                                    else ""
+                                ),
+                                "operation_raw_type": _short_gamecore_type(
+                                    operation_dict.get(operation, {}).get("$type")
+                                    if isinstance(operation_dict.get(operation), dict)
+                                    else ""
+                                ),
+                            },
+                        ),
+                        coverage_status=coverage_status,
+                        blocked_reason=blocked_reason,
+                        admission_batch=admission_batch,
+                    )
+                )
+        return expressions
 
     def _lower_combatant_profiles(self) -> list[CombatantProfileIR]:
         monster_rows = self._rows_by_id("ExcelOutput/MonsterConfig.json", "MonsterID")
@@ -6020,6 +6108,16 @@ def _list_json_values(value: Any) -> list[Any]:
     return [_json_safe(item) for item in value]
 
 
+def _json_object_from_path(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
 def _compact_payload(value: dict[str, Any]) -> dict[str, Any]:
     ignored = {"SuccessTaskList", "FailedTaskList", "CallbackConfig"}
     return {key: _json_safe(item) for key, item in value.items() if key not in ignored and key != "$type"}
@@ -6479,7 +6577,13 @@ def _target_expression_normalized_payload(raw: dict[str, Any]) -> dict[str, Any]
             "unique_name": str(raw.get("UniqueName") or ""),
             "name": str(raw.get("Name") or ""),
             "source_path": "Config/GlobalConfig/TargetAliasConfig.json"
-            if kind in {"TargetFetchCaster", "TargetFetchPartner", "TargetFetchParamEntityList"}
+            if kind
+            in {
+                "TargetFetchCaster",
+                "TargetFetchModifierOwner",
+                "TargetFetchPartner",
+                "TargetFetchParamEntityList",
+            }
             else "",
         }
     elif kind == "TargetMapAdjoinEntity":

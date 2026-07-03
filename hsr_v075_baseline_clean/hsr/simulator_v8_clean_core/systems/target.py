@@ -1123,7 +1123,7 @@ def _resolve_single_alias(
     if alias == "Caster":
         return caster_id
     if alias == "ModifierOwnerEntity":
-        return owner_id or caster_id
+        return owner_id
     if alias == "ParamEntity":
         return param_entity_id
     if alias in {"CurrentActionTarget", "AbilityTargetEntity"}:

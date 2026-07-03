@@ -145,12 +145,14 @@ P1-9 聚合验收：
 - 聚合输出在 `/tmp/hsr_v8_p1_9_phase1_aggregate/`，关键文件包括 `validation_summary_p1_9_phase1_aggregate.json`、`phase1_system_matrix_p1_9.json`、`phase1_source_gap_matrix_p1_9.json`、`phase1_transition_audit_samples_p1_9.json`。
 - P1-9 summary 当前结论：`ok=true`、`p1_9_done_eligible=true`、`phase1_full_acceptance=false`、`implementation_missing=0`。
 
+后续已修正 P1-6 目标系统误缺口：`TargetAliasConfig` / `TargetOperationConfig` 现在会 lower 成带真实来源的 `TargetExpressionIR`，`formation sort`、`toughness sort`、`owner fetch` 均有 executable 正例；`ModifierOwnerEntity` 缺 owner 时不再 fallback 到 caster。
+
 ## 5. 当前明确没做到什么
 
 P1-9 后仍明确没有完整：
 
 - P1-4：`DispelStatus(Order=Random)` 当前确认是真 source gap；`stack + duration refresh` 不再直接判为 raw source gap，当前更可能是 validation/lowering/admission gap，需要审计 `Stacking`、`Count`、`LifeTime`、`StackProperty` 等 raw 字段如何投影。
-- P1-6：formation sort、owner fetch raw 来源已确认存在，当前是 lowering/admission gap；toughness sort 当前精确 raw source 仍未发现；servant target raw/IR 均有大量候选，但 runtime servant registry/admission 未完成。
+- P1-6：formation sort、toughness sort、owner fetch 已修正为 executable；servant target raw/IR 均有大量候选，但 runtime servant registry/admission 未完成。
 - P1-7：`random_source_paths` 需要拆分；random dispel 是 source gap，control resist 是 control admission/formula 缺口。
 - P1-8：servant initial setup、battle_unit_summon initial setup 不能再简单叫 source gap。raw/IR 定义存在，但 stat/timeline/lifecycle/action/source admission 未完成，已验证 blocked/no mutation。
 
@@ -235,14 +237,14 @@ TargetAlias=197061
 
 ## 7. 推荐下一步
 
-建议下一阶段先做 source gap / implementation gap 分流，不要继续扩动作入口，也不要为了 full acceptance 合成正例。优先处理当前 RuleBook / Canonical IR 中确有真实来源但 runtime admission 或验证不足的项；当前数据库确实无真实来源的项继续保持 source_gap_blocked。
+建议下一阶段继续做 source gap / implementation gap 分流，不要继续扩动作入口，也不要为了 full acceptance 合成正例。优先处理当前 RuleBook / Canonical IR 中确有真实来源但 runtime admission 或验证不足的项；当前数据库确实无真实来源的项继续保持 source_gap_blocked。
 
 推荐顺序：
 
 1. 重新审查 P1-4 stack/refresh/chance/duration/dispel，先区分真实来源缺口与 runtime 实现缺口。
 2. 补齐有真实来源的 status lifecycle / chance / duration / tick / dispel admission 和 negative validation。
-3. 复查 P1-6 target sort/fetch source gap，如果数据库出现真实来源，再补 executable 正例。
-4. 复查 P1-7 RNG source admission，继续要求 missing/invalid choice blocked 且 no mutation。
+3. 复查 P1-7 RNG source admission，继续要求 missing/invalid choice blocked 且 no mutation。
+4. 进入 servant / battle_unit_summon admission 审计，拆清 servant、battle unit summon、summoned monster、adventure summon unit。
 
 理由：
 

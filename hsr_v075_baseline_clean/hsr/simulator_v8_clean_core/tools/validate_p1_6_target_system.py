@@ -271,8 +271,20 @@ def _fetch_cases(rules: RuleBook) -> dict[str, Any]:
         checks["owner_source_gap_recorded"] = True
     else:
         result = _resolve(fetch_owner, state)
-        cases["owner"] = {"expression": _expression_sample(fetch_owner), "resolution": result.to_json()}
+        missing_owner = _resolve(fetch_owner, state, owner_id=None)
+        alias_missing_owner = _resolve(_synthetic_modifier_owner_alias(), state, owner_id=None)
+        cases["owner"] = {
+            "expression": _expression_sample(fetch_owner),
+            "resolution": result.to_json(),
+            "missing_owner_resolution": missing_owner.to_json(),
+            "modifier_owner_alias_missing_owner_resolution": alias_missing_owner.to_json(),
+        }
         checks["owner_fetch_ok"] = result.ok and result.target_ids == ("ally:caster",)
+        checks["owner_missing_owner_blocked"] = not missing_owner.ok and missing_owner.blocked_reason == "target_fetch_owner_missing"
+        checks["modifier_owner_alias_missing_owner_blocked"] = (
+            not alias_missing_owner.ok
+            and alias_missing_owner.blocked_reason == "unsupported_or_missing_target_alias:ModifierOwnerEntity"
+        )
 
     fetch_param_list = _select_expression(rules, kind="TargetFetchParamEntityList", allow_missing=True)
     if fetch_param_list is None:
@@ -664,6 +676,7 @@ def _resolve(
     expression: TargetExpressionIR,
     state: BattleState,
     *,
+    owner_id: str | None = "ally:caster",
     current_action_target_id: str = "enemy:mid",
     target_resolution: TargetResolution | None = None,
     event_payload: dict[str, Any] | None = None,
@@ -673,7 +686,7 @@ def _resolve(
         state,
         expression,
         caster_id="ally:caster",
-        owner_id="ally:caster",
+        owner_id=owner_id,
         param_entity_id="enemy:mid",
         current_action_target_id=current_action_target_id,
         target_resolution=target_resolution or _target_resolution(("enemy:left", "enemy:mid", "enemy:right")),
@@ -1025,6 +1038,18 @@ def _synthetic_sort_missing_payload() -> TargetExpressionIR:
             }
         },
         source=_validation_source("missing_sort_payload"),
+        coverage_status="executable",
+        admission_batch="validation_boundary_no_mutation",
+    )
+
+
+def _synthetic_modifier_owner_alias() -> TargetExpressionIR:
+    return TargetExpressionIR(
+        target_expression_id="validation:p1_6:modifier_owner_alias_missing_owner",
+        expression_kind="TargetAlias",
+        alias="ModifierOwnerEntity",
+        payload={"raw": {"$type": "RPG.GameCore.TargetAlias", "Alias": "ModifierOwnerEntity"}},
+        source=_validation_source("modifier_owner_alias_missing_owner"),
         coverage_status="executable",
         admission_batch="validation_boundary_no_mutation",
     )
