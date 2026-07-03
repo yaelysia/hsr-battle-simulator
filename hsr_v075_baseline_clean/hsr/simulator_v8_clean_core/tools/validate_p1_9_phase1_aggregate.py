@@ -4,7 +4,7 @@ import argparse
 import hashlib
 import inspect
 import json
-from dataclasses import asdict, is_dataclass
+from dataclasses import asdict, is_dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -65,8 +65,11 @@ from .validate_p1_6_target_system import _fetch_cases, _sort_cases
 from .validate_p1_7_rng_branch_system import _rng_helper_cases, _surface_matrix, _target_random_cases
 from .validate_p1_8_battle_setup import (
     _base_scenario_data,
+    _base_scenario_data_for_avatar,
     _select_avatar_action,
+    _select_avatar_action_for_entity,
     _select_enemy_entity,
+    _select_executable_servant_definition,
     _select_executable_summon_monster_intent,
     _select_initial_status_case,
     _select_two_wave_definition,
@@ -137,7 +140,7 @@ def run_validation(
     status_transition_case = _direct_status_transition_case(rules, action, enemy_ref, status_effect)
 
     direct_cases = _direct_cases(rules)
-    servant_blocked = _blocked_initial_summon_case(rules, action, enemy_ref, "servant")
+    servant_case = _servant_initial_summon_case(rules, enemy_ref)
     battle_unit_summon_blocked = _blocked_initial_summon_case(rules, action, enemy_ref, "battle_unit_summon")
     blocked_status_case = _blocked_status_case(rules, action, enemy_ref)
     target_case = _aggregate_target_case(build.state, transition)
@@ -148,7 +151,7 @@ def run_validation(
     source_gap_matrix = _source_gap_matrix(
         rules,
         direct_cases=direct_cases,
-        servant_blocked=servant_blocked,
+        servant_case=servant_case,
         battle_unit_summon_blocked=battle_unit_summon_blocked,
     )
     transition_samples = _transition_samples(
@@ -158,7 +161,7 @@ def run_validation(
         replay={"ok": replay.ok, "errors": list(replay.errors)},
         source_audit=source_audit.to_json(),
         settlement_traceability=settlement_traceability.to_json(),
-        servant_blocked=servant_blocked,
+        servant_case=servant_case,
         blocked_status=blocked_status_case,
         target_case=target_case,
         direct_cases=direct_cases,
@@ -220,17 +223,18 @@ def run_validation(
         _item(
             "p1_3.servant_runtime",
             "P1-3",
-            "implementation_missing",
-            "expected_blocked" if servant_blocked["checks"]["ok"] else "failed",
-            positive_case_count=0,
+            "executable",
+            "passed" if servant_case["checks"]["ok"] else "failed",
+            positive_case_count=1,
             negative_case_count=1,
-            mutation_count=0,
-            blocked_count=len(servant_blocked["blocked_setup"]),
+            mutation_count=servant_case["setup_mutation_count"],
+            blocked_count=0,
+            source_trace_count=servant_case["source_trace_count"],
             replay_ok=True,
-            source_audit_ok=True,
+            source_audit_ok=servant_case["source_trace_count"] > 0,
             notes=[
-                "servant definitions are discovered but lowering/runtime admission still lacks owner/stat/timeline/action/lifecycle sources",
-                "blocked_no_mutation boundary is verified but does not complete servant runtime",
+                "servant definition is admitted from AvatarServantConfig/AvatarServantSkillConfig",
+                "spawn/action availability/target registry are validated as executable runtime paths",
             ],
         ),
         _item(
@@ -374,7 +378,7 @@ def run_validation(
         "source_audit": status_transition_case["source_audit"],
         "settlement_traceability": status_transition_case["settlement_traceability"],
         "static_boundary": static_boundary["checks"],
-        "blocked_no_mutation": _blocked_no_mutation_check(servant_blocked, battle_unit_summon_blocked, blocked_status_case, direct_cases),
+        "blocked_no_mutation": _blocked_no_mutation_check(servant_case, battle_unit_summon_blocked, blocked_status_case, direct_cases),
     }
     minimum_slice_blockers = [
         row["item_id"]
@@ -816,6 +820,88 @@ def _aggregate_target_case(state: BattleState, transition: BattleTransition) -> 
     }
 
 
+def _servant_initial_summon_case(rules: RuleBook, enemy_ref: str) -> dict[str, Any]:
+    definition = _select_executable_servant_definition(rules)
+    action = _select_avatar_action_for_entity(rules, definition.owner_entity_ref)
+    data = _base_scenario_data_for_avatar(rules, action, definition.owner_entity_ref, enemy_ref)
+    data["scenario_id"] = "p1_9_servant_initial_setup"
+    data["battle_setup"] = {
+        "initial_summons": [
+            {
+                "kind": "servant",
+                "owner_id": "ally:actor",
+                "summon_intent_ref": definition.servant_definition_id,
+            }
+        ]
+    }
+    build = ScenarioStateBuilder(rules).build(ScenarioLoader().load_dict(data))
+    servant_units = tuple(
+        unit_id for unit_id, unit in build.state.units.items() if unit.flags.get("summon_kind") == "servant"
+    )
+    runtime = build.state.global_flags.get("summon_runtime")
+    availability = None
+    if servant_units:
+        availability = ActionAvailabilitySystem(rules).view(
+            replace(
+                build.state,
+                global_flags={
+                    **build.state.global_flags,
+                    "turn_owner_id": servant_units[0],
+                    "phase": "scenario",
+                    "current_window": "idle",
+                },
+            )
+        )
+    caster_servant_expression = _select_global_target_expression(rules, "CasterServant")
+    caster_servant_result = (
+        TargetSystem().resolve_target_expression(build.state, caster_servant_expression, caster_id="ally:actor")
+        if caster_servant_expression is not None
+        else None
+    )
+    checks = {
+        "definition_executable": definition.coverage_status == "executable",
+        "setup_not_blocked": not build.blocked_setup,
+        "servant_spawned": bool(servant_units),
+        "setup_mutation_present": any(
+            mutation.metadata.get("lifecycle_operation") == "unit_spawn" for mutation in build.setup_mutations
+        ),
+        "runtime_tracks_servant": isinstance(runtime, dict)
+        and any(unit_id in runtime.get("servants", {}) for unit_id in servant_units),
+        "action_availability_ok": availability is not None
+        and availability.mode == "external_selectable"
+        and any(choice.choice_kind == "summon_action" for choice in availability.choices),
+        "caster_servant_target_expression_present": caster_servant_expression is not None,
+        "caster_servant_target_resolves": caster_servant_result is not None
+        and caster_servant_result.ok
+        and any(unit_id in caster_servant_result.target_ids for unit_id in servant_units),
+    }
+    checks["ok"] = all(value for key, value in checks.items() if key != "ok")
+    return {
+        "checks": {"ok": checks["ok"], "checks": checks},
+        "servant_definition_id": definition.servant_definition_id,
+        "servant_ref": definition.servant_ref,
+        "servant_unit_ids": list(servant_units),
+        "setup_mutation_count": len(build.setup_mutations),
+        "source_trace_count": len(build.source_traces),
+        "blocked_setup": list(build.blocked_setup),
+        "setup_records": list(build.setup_records),
+        "availability": availability.to_json() if availability is not None else {},
+        "caster_servant_expression": caster_servant_expression.to_json() if caster_servant_expression is not None else {},
+        "caster_servant_result": caster_servant_result.to_json() if caster_servant_result is not None else {},
+    }
+
+
+def _select_global_target_expression(rules: RuleBook, alias: str):
+    for expression in sorted(rules.target_expressions(), key=lambda item: item.target_expression_id):
+        if expression.coverage_status != "executable":
+            continue
+        payload = expression.payload if isinstance(expression.payload, dict) else {}
+        field_name = str(payload.get("field_name") or "")
+        if expression.alias == alias or field_name == f"AliasDict.{alias}":
+            return expression
+    return None
+
+
 def _blocked_initial_summon_case(rules: RuleBook, action: Any, enemy_ref: str, kind: str) -> dict[str, Any]:
     data = _base_scenario_data(rules, action, enemy_ref)
     data["scenario_id"] = f"p1_9_blocked_{kind}"
@@ -823,7 +909,6 @@ def _blocked_initial_summon_case(rules: RuleBook, action: Any, enemy_ref: str, k
     data["battle_setup"] = {"initial_summons": [{"kind": kind, "owner_id": "ally:actor"}]}
     build = ScenarioStateBuilder(rules).build(ScenarioLoader().load_dict(data))
     expected_reason = {
-        "servant": "servant_initial_setup_admission_missing",
         "battle_unit_summon": "battle_unit_summon_initial_setup_boundary_only",
     }.get(kind, f"{kind}_initial_setup_blocked")
     checks = {
@@ -890,7 +975,7 @@ def _source_gap_matrix(
     rules: RuleBook,
     *,
     direct_cases: dict[str, Any],
-    servant_blocked: dict[str, Any],
+    servant_case: dict[str, Any],
     battle_unit_summon_blocked: dict[str, Any],
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
@@ -1000,10 +1085,14 @@ def _source_gap_matrix(
             "p1_6.servant_target",
             "P1-6",
             "servant target registry",
-            source_state="implementation_missing",
-            gap_classification="servant_target_runtime_registry_admission_gap",
-            evidence_mode="known_checkpoint",
-            reason="servant target runtime registry is required for servant/owner target expressions but not executable yet",
+            source_state="executable" if servant_case["checks"]["checks"].get("caster_servant_target_resolves") else "implementation_missing",
+            gap_classification="executable"
+            if servant_case["checks"]["checks"].get("caster_servant_target_resolves")
+            else "servant_target_runtime_registry_admission_gap",
+            evidence_mode="servant_runtime_positive_case",
+            reason="CasterServant target expression resolved through summon_runtime.servants"
+            if servant_case["checks"]["checks"].get("caster_servant_target_resolves")
+            else "servant target runtime registry did not resolve executable CasterServant expression",
             runtime_guarded_path=True,
             blocked_no_mutation=True,
         )
@@ -1030,13 +1119,15 @@ def _source_gap_matrix(
             "p1_8.servant_initial_setup",
             "P1-8",
             "servant initial setup",
-            source_state="implementation_missing",
-            gap_classification="servant_definition_runtime_setup_admission_gap",
-            evidence_mode="runtime_blocked_case",
-            reason="servant/rememberance summon setup still lacks owner/stat/timeline/action/lifecycle admission; blocked guard is correct but mechanism is not complete",
+            source_state="executable" if servant_case["checks"]["ok"] else "implementation_missing",
+            gap_classification="executable" if servant_case["checks"]["ok"] else "servant_definition_runtime_setup_admission_gap",
+            evidence_mode="servant_runtime_positive_case",
+            reason="servant setup spawned a unit from executable ServantDefinitionIR"
+            if servant_case["checks"]["ok"]
+            else "servant setup positive case failed",
             runtime_guarded_path=True,
-            blocked_no_mutation=servant_blocked["checks"]["ok"],
-            blocked_records=servant_blocked["blocked_setup"],
+            blocked_no_mutation=True,
+            blocked_records=servant_case["blocked_setup"],
         )
     )
     rows.append(
@@ -1098,7 +1189,7 @@ def _transition_samples(
     replay: dict[str, Any],
     source_audit: dict[str, Any],
     settlement_traceability: dict[str, Any],
-    servant_blocked: dict[str, Any],
+    servant_case: dict[str, Any],
     blocked_status: dict[str, Any],
     target_case: dict[str, Any],
     direct_cases: dict[str, Any],
@@ -1155,7 +1246,7 @@ def _transition_samples(
             "status_regression_checks": direct_cases["status_regression"]["checks"]["checks"],
         },
         "blocked_sample": {
-            "servant_initial_setup": servant_blocked,
+            "servant_initial_setup": servant_case,
             "blocked_status": blocked_status,
             "invalid_target": target_case["invalid"],
             "missing_rng_choice": direct_cases["rng_helper"]["missing"],
@@ -1314,7 +1405,7 @@ def _rewrite_resource_budget(output_dir: Path, summary: dict[str, Any], *, write
 
 
 def _blocked_no_mutation_check(
-    servant_blocked: dict[str, Any],
+    servant_case: dict[str, Any],
     battle_unit_summon_blocked: dict[str, Any],
     blocked_status: dict[str, Any],
     direct_cases: dict[str, Any],
@@ -1322,7 +1413,7 @@ def _blocked_no_mutation_check(
     rng_missing = direct_cases["rng_helper"]["missing"]
     target_missing = direct_cases["target_random"]["missing"]
     checks = {
-        "servant_blocked_no_mutation": servant_blocked["setup_mutation_count"] == 0,
+        "servant_initial_setup_executable_mutation_present": servant_case["setup_mutation_count"] > 0,
         "battle_unit_summon_blocked_no_mutation": battle_unit_summon_blocked["setup_mutation_count"] == 0,
         "blocked_status_no_mutation": blocked_status["setup_mutation_count"] == 0,
         "missing_rng_choice_blocked": (rng_missing.get("blocked_reason") or rng_missing.get("reason")) == "requires_rng_choice",

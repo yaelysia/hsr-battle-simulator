@@ -7,7 +7,7 @@ from ..rules.rulebook import RuleBook
 ALLY_ENTITY_TYPES = {"avatar"}
 ENEMY_ENTITY_TYPES = {"monster", "monster_template"}
 SUMMON_ENTITY_TYPES = {"summon_unit"}
-ACTION_ENTITY_TYPES = {"avatar_skill", "monster_skill", "active_skill"}
+ACTION_ENTITY_TYPES = {"avatar_skill", "monster_skill", "active_skill", "servant_skill"}
 
 
 class IdentityResolver:
@@ -18,6 +18,7 @@ class IdentityResolver:
         errors: list[str] = []
         traces: list[dict[str, object]] = []
         unit_ids = {unit.unit_id for unit in scenario.units}
+        units_by_id = {unit.unit_id: unit for unit in scenario.units}
         if len(unit_ids) != len(scenario.units):
             errors.append("unit_id values must be unique")
 
@@ -131,8 +132,25 @@ class IdentityResolver:
                         errors.append(f"{prefix}: unknown entity_ref {summon.entity_ref!r}")
             elif summon.kind == "servant":
                 servant_ref = summon.summon_intent_ref or summon.entity_ref
-                if servant_ref and self.rules.servant_definition(servant_ref) is None:
-                    errors.append(f"{prefix}: unknown servant definition/ref {servant_ref!r}")
+                if not servant_ref:
+                    errors.append(f"{prefix}.summon_intent_ref or entity_ref must be set for servant")
+                else:
+                    definition = self.rules.servant_definition(servant_ref)
+                    if definition is None:
+                        errors.append(f"{prefix}: unknown servant definition/ref {servant_ref!r}")
+                    elif definition.coverage_status != "executable":
+                        errors.append(
+                            f"{prefix}: servant definition {servant_ref!r} is not executable: "
+                            f"{definition.blocked_reason or definition.coverage_status}"
+                        )
+                    else:
+                        owner = units_by_id.get(summon.owner_id)
+                        if owner is not None and definition.owner_entity_ref and owner.entity_ref != definition.owner_entity_ref:
+                            errors.append(
+                                f"{prefix}: servant owner {summon.owner_id!r} entity_ref {owner.entity_ref!r} "
+                                f"does not match {definition.owner_entity_ref!r}"
+                            )
+                        traces.append(definition.source.to_json())
 
         timeline = setup.timeline
         if timeline is not None:

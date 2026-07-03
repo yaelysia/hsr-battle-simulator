@@ -558,7 +558,7 @@ def _apply_initial_summons(rules: RuleBook, state: BattleState, scenario: Scenar
         elif spec.kind == "battle_unit_summon":
             result = _blocked_initial_battle_unit_summon(rules, current, spec)
         else:
-            result = _blocked_initial_servant(rules, current, spec)
+            result = _apply_initial_servant(rules, current, system, spec, index)
         current = reducer.apply_all(current, result.mutations)
         mutations.extend(result.mutations)
         events.extend(result.events)
@@ -641,28 +641,47 @@ def _blocked_initial_battle_unit_summon(
     return _SetupApplyResult(state=state, records=(record,), blocked=(record,), source_traces=(source_trace,) if source_trace else ())
 
 
-def _blocked_initial_servant(
+def _apply_initial_servant(
     rules: RuleBook,
     state: BattleState,
+    system: SummonSystem,
     spec: InitialSummonSpec,
+    index: int,
 ) -> _SetupApplyResult:
-    source_trace: dict[str, JSONValue] = {}
     servant_ref = spec.summon_intent_ref or spec.entity_ref or ""
-    if servant_ref:
-        definition = rules.servant_definition(servant_ref)
-        if definition is not None:
-            source_trace = definition.source.to_json()
-    record = _setup_blocked_record(
-        "setup_initial_summon",
-        "servant_initial_setup_admission_missing",
-        {
-            "kind": spec.kind,
-            "owner_id": spec.owner_id,
-            "servant_ref": servant_ref,
-            "source_trace": source_trace,
-        },
+    definition = rules.servant_definition(servant_ref)
+    if definition is None:
+        raise ValueError(f"battle_setup.initial_summons[{index}]: unknown servant definition/ref {servant_ref!r}")
+    plan = system.plan_spawn_servant(state, definition, owner_id=spec.owner_id)
+    result = system.apply_spawn_servant(state, plan)
+    override_reason = _servant_override_blocked_reason(spec, definition.servant_ref, definition.servant_definition_id, result.mutations)
+    if override_reason:
+        result = system.blocked(override_reason, owner_id=spec.owner_id, source_trace=definition.source.to_json())
+    records = list(result.records)
+    setup_record = {
+        "record_type": "setup_initial_summon",
+        "source_kind": "scenario_initial_condition",
+        "status": "applied" if result.mutations else "blocked",
+        "ok": result.plan.ok,
+        "kind": spec.kind,
+        "owner_id": spec.owner_id,
+        "servant_ref": definition.servant_ref,
+        "servant_definition_id": definition.servant_definition_id,
+        "unit_ids": list(result.plan.unit_ids),
+        "mutation_count": len(result.mutations),
+        "blocked_reason": result.plan.blocked_reason,
+        "source_trace": definition.source.to_json(),
+    }
+    records.append(setup_record)
+    blocked = (setup_record,) if not result.plan.ok else ()
+    return _SetupApplyResult(
+        state=state,
+        records=tuple(records),
+        mutations=result.mutations,
+        events=result.events,
+        blocked=blocked,
+        source_traces=(definition.source.to_json(),),
     )
-    return _SetupApplyResult(state=state, records=(record,), blocked=(record,), source_traces=(source_trace,) if source_trace else ())
 
 
 def _summon_override_blocked_reason(spec: InitialSummonSpec, mutations: tuple[Mutation, ...]) -> str:
@@ -680,6 +699,30 @@ def _summon_override_blocked_reason(spec: InitialSummonSpec, mutations: tuple[Mu
             flags = unit.get("flags") if isinstance(unit.get("flags"), dict) else {}
             if int(flags.get("position") or -1) != spec.position:
                 return "summoned_monster_position_override_not_admitted"
+    return ""
+
+
+def _servant_override_blocked_reason(
+    spec: InitialSummonSpec,
+    servant_ref: str,
+    servant_definition_id: str,
+    mutations: tuple[Mutation, ...],
+) -> str:
+    spawned = tuple(
+        mutation.after
+        for mutation in mutations
+        if mutation.metadata.get("lifecycle_operation") == "unit_spawn" and isinstance(mutation.after, dict)
+    )
+    if spec.unit_id:
+        return "servant_unit_id_override_not_admitted"
+    if spec.position is not None:
+        return "servant_position_override_not_admitted"
+    if (
+        spec.entity_ref
+        and spec.entity_ref not in {servant_ref, servant_definition_id}
+        and any(unit.get("template_id") != spec.entity_ref for unit in spawned)
+    ):
+        return "servant_entity_ref_override_not_admitted"
     return ""
 
 

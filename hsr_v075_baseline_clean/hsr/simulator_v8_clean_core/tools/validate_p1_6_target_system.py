@@ -63,6 +63,7 @@ PIPELINE_KINDS = {
     "TargetSortByFormation",
     "TargetTake",
     "TargetIndex",
+    "TargetQuery",
     "TargetReverse",
     "TargetShuffle",
 }
@@ -377,6 +378,7 @@ def _fetch_cases(rules: RuleBook) -> dict[str, Any]:
 
 def _summon_fetch_cases(rules: RuleBook) -> dict[str, Any]:
     state = _state()
+    servant_state = _state_with_servant_runtime(state)
     checks: dict[str, bool] = {}
     cases: dict[str, Any] = {}
     for alias, expected in {
@@ -397,12 +399,40 @@ def _summon_fetch_cases(rules: RuleBook) -> dict[str, Any]:
         }
         checks[f"{alias}_ok"] = result.ok and result.target_ids == expected
         checks[f"{alias}_missing_runtime_blocked"] = not missing_runtime.ok and missing_runtime.blocked_reason == "summon_runtime_missing"
-    checks["servant_runtime_source_gap_recorded"] = True
+    servant_list = _select_expression(rules, kind="TargetAlias", alias="ServantEntityList", allow_missing=True)
+    if servant_list is None:
+        cases["ServantEntityList"] = _source_gap("no executable ServantEntityList alias")
+        checks["ServantEntityList_source_gap_recorded"] = True
+    else:
+        result = _resolve(servant_list, servant_state)
+        missing_runtime = _resolve(servant_list, replace(servant_state, global_flags={}))
+        cases["ServantEntityList"] = {
+            "expression": _expression_sample(servant_list),
+            "resolution": result.to_json(),
+            "missing_runtime_resolution": missing_runtime.to_json(),
+        }
+        checks["ServantEntityList_ok"] = result.ok and result.target_ids == ("summon:servant",)
+        checks["ServantEntityList_missing_runtime_blocked"] = (
+            not missing_runtime.ok and missing_runtime.blocked_reason == "summon_runtime_missing"
+        )
+    caster_servant = _select_global_target_expression(rules, "CasterServant")
+    if caster_servant is None:
+        cases["CasterServant"] = _source_gap("no executable CasterServant target expression")
+        checks["CasterServant_source_gap_recorded"] = True
+    else:
+        result = _resolve(caster_servant, servant_state)
+        flag_only = _resolve(caster_servant, _state_with_flag_only_servant(state))
+        cases["CasterServant"] = {
+            "expression": _expression_sample(caster_servant),
+            "resolution": result.to_json(),
+            "flag_only_resolution": flag_only.to_json(),
+        }
+        checks["CasterServant_ok"] = result.ok and result.target_ids == ("summon:servant",)
+        checks["CasterServant_flag_only_blocked"] = not flag_only.ok and flag_only.blocked_reason == "summon_runtime_missing"
     checks["ok"] = all(value for key, value in checks.items() if key != "ok")
     return {
         "checks": {"ok": checks["ok"], "checks": checks},
         "cases": cases,
-        "servant_boundary": _source_gap("servant target registry is not executable in P1-6 runtime; servant stays source_gap_blocked"),
     }
 
 
@@ -725,6 +755,17 @@ def _select_expression_by_alias(rules: RuleBook, aliases: tuple[str, ...]) -> Ta
     return None
 
 
+def _select_global_target_expression(rules: RuleBook, alias: str) -> TargetExpressionIR | None:
+    for expression in sorted(rules.target_expressions(), key=lambda item: (item.source.source_path, item.target_expression_id)):
+        if expression.coverage_status != "executable":
+            continue
+        payload = expression.payload if isinstance(expression.payload, dict) else {}
+        field_name = str(payload.get("field_name") or "")
+        if expression.alias == alias or field_name == f"AliasDict.{alias}":
+            return expression
+    return None
+
+
 def _select_expression_by_kind(rules: RuleBook, kinds: tuple[str, ...]) -> TargetExpressionIR | None:
     for kind in kinds:
         expression = _select_expression(rules, kind=kind, allow_missing=True)
@@ -950,6 +991,82 @@ def _state_with_flags(unit_id: str, flags: dict[str, Any]) -> BattleState:
     units = dict(state.units)
     units[unit_id] = replace(unit, flags=merged)
     return replace(state, units=units)
+
+
+def _state_with_servant_runtime(state: BattleState) -> BattleState:
+    servant = UnitState(
+        unit_id="summon:servant",
+        side="summon",
+        template_id="servant:validation",
+        hp=500.0,
+        max_hp=500.0,
+        speed=100.0,
+        flags={
+            "position": 2,
+            "team_side": "ally",
+            "summon_kind": "servant",
+            "owner_id": "ally:caster",
+            "summon_intent_id": "servant_definition:validation",
+        },
+    )
+    units = dict(state.units)
+    units[servant.unit_id] = servant
+    runtime = dict(state.global_flags.get("summon_runtime") or {})
+    by_owner = {key: list(value) for key, value in (runtime.get("by_owner") or {}).items() if isinstance(value, list)}
+    by_owner.setdefault("ally:caster", [])
+    if servant.unit_id not in by_owner["ally:caster"]:
+        by_owner["ally:caster"].append(servant.unit_id)
+    entities = dict(runtime.get("entities") or {})
+    entities.setdefault(
+        "summon:caster",
+        {
+            "summon_kind": "summoned_monster",
+            "owner_id": "ally:caster",
+            "source_intent_id": "summon_intent:validation",
+            "source_trace": {"source_path": "validation", "raw_type": "SummonMonsterIntent", "raw_id": "validation"},
+        },
+    )
+    entities[servant.unit_id] = {
+        "summon_kind": "servant",
+        "owner_id": "ally:caster",
+        "source_intent_id": "servant_definition:validation",
+        "source_trace": {"source_path": "validation", "raw_type": "ServantDefinitionIR", "raw_id": "validation"},
+        "removed_event_index": None,
+    }
+    servants = dict(runtime.get("servants") or {})
+    servants[servant.unit_id] = {
+        "unit_id": servant.unit_id,
+        "servant_definition_id": "servant_definition:validation",
+        "servant_ref": "servant:validation",
+        "owner_id": "ally:caster",
+        "source_trace": entities[servant.unit_id]["source_trace"],
+        "removed_event_index": None,
+    }
+    runtime.update(
+        {
+            "schema_version": "p1_3_summon_runtime_v1",
+            "entities": entities,
+            "by_owner": by_owner,
+            "servants": servants,
+            "last_servants": [servant.unit_id],
+        }
+    )
+    return replace(state, units=units, global_flags={**state.global_flags, "summon_runtime": runtime})
+
+
+def _state_with_flag_only_servant(state: BattleState) -> BattleState:
+    servant = UnitState(
+        unit_id="summon:flag_only_servant",
+        side="summon",
+        template_id="servant:validation",
+        hp=500.0,
+        max_hp=500.0,
+        speed=100.0,
+        flags={"position": 2, "team_side": "ally", "summon_kind": "servant", "owner_id": "ally:caster"},
+    )
+    units = dict(state.units)
+    units[servant.unit_id] = servant
+    return replace(state, units=units, global_flags={key: value for key, value in state.global_flags.items() if key != "summon_runtime"})
 
 
 def _with_unique_registry(state: BattleState, unique_name: str, value: Any) -> BattleState:

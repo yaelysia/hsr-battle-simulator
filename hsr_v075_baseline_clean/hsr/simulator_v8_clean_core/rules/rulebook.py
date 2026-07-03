@@ -167,6 +167,11 @@ class RuleBook:
             "_servant_definitions",
             {definition.servant_definition_id: definition for definition in self.ir.servant_definitions},
         )
+        object.__setattr__(
+            self,
+            "_servant_definitions_by_ref",
+            {definition.servant_ref: definition for definition in self.ir.servant_definitions if definition.servant_ref},
+        )
         mechanism_slots_by_card: dict[str, list[CharacterMechanismSlotIR]] = {}
         for slot in self.ir.character_mechanism_slots:
             mechanism_slots_by_card.setdefault(slot.character_data_card_id, []).append(slot)
@@ -859,7 +864,7 @@ class RuleBook:
         return tuple(sorted(self.ir.assistant_ability_resolutions, key=lambda item: item.assistant_resolution_id))
 
     def servant_definition(self, servant_definition_id: str) -> ServantDefinitionIR | None:
-        return self._servant_definitions.get(servant_definition_id)
+        return self._servant_definitions.get(servant_definition_id) or self._servant_definitions_by_ref.get(servant_definition_id)
 
     def servant_definitions(self) -> tuple[ServantDefinitionIR, ...]:
         return tuple(sorted(self.ir.servant_definitions, key=lambda item: item.servant_definition_id))

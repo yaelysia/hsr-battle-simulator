@@ -438,20 +438,108 @@ def _assistant_case(rules: RuleBook) -> dict[str, Any]:
 
 def _servant_case(rules: RuleBook) -> dict[str, Any]:
     definitions = rules.servant_definitions()
+    definition = _select_executable_servant_definition(rules)
+    base_state = _base_servant_state(definition)
+    system = SummonSystem(rules)
+    plan = system.plan_spawn_servant(base_state, definition, owner_id="ally:servant_owner")
+    result = system.apply_spawn_servant(base_state, plan)
+    after = MutationReducer().apply_all(base_state, result.mutations)
+    replay = MutationReducer().replay_snapshot(base_state, result.mutations, after.snapshot().to_json())
+    servant_id = _first_servant_id(after)
+    availability_state = replace(
+        after,
+        global_flags={**after.global_flags, "turn_owner_id": servant_id, "phase": "scenario", "current_window": "idle"},
+    )
+    availability = ActionAvailabilitySystem(rules).view(availability_state)
+    servant_list_expr = _select_target_expression(rules, "ServantEntityList")
+    caster_servant_expr = _select_global_target_expression(rules, "CasterServant")
+    servant_list_result = (
+        TargetSystem().resolve_target_expression(availability_state, servant_list_expr, caster_id="ally:servant_owner")
+        if servant_list_expr is not None
+        else None
+    )
+    caster_servant_result = (
+        TargetSystem().resolve_target_expression(availability_state, caster_servant_expr, caster_id="ally:servant_owner")
+        if caster_servant_expr is not None
+        else None
+    )
+    servant = after.units[servant_id]
+    remove_plan = system.plan_remove(
+        after,
+        servant_id,
+        "validation servant remove",
+        source_trace=servant.flags.get("owner_death_policy_source_trace")
+        if isinstance(servant.flags.get("owner_death_policy_source_trace"), dict)
+        else None,
+        admission=servant.flags.get("owner_death_policy_admission")
+        if isinstance(servant.flags.get("owner_death_policy_admission"), dict)
+        else None,
+    )
+    remove_result = system.apply_remove(after, remove_plan)
+    removed_after = MutationReducer().apply_all(after, remove_result.mutations)
+    remove_replay = MutationReducer().replay_snapshot(after, remove_result.mutations, removed_after.snapshot().to_json())
+    servant_list_after_remove = (
+        TargetSystem().resolve_target_expression(removed_after, servant_list_expr, caster_id="ally:servant_owner")
+        if servant_list_expr is not None
+        else None
+    )
+    flag_only_state = _flag_only_servant_state(definition)
+    flag_only_availability = ActionAvailabilitySystem(rules).view(flag_only_state)
+    flag_only_servant_list = (
+        TargetSystem().resolve_target_expression(flag_only_state, servant_list_expr, caster_id="ally:servant_owner")
+        if servant_list_expr is not None
+        else None
+    )
+    flag_only_blocked_reasons = [item.reason for item in flag_only_availability.blocked]
     checks = {
         "servant_definitions_present": bool(definitions),
-        "servant_definitions_blocked": all(item.coverage_status == "blocked" for item in definitions),
-        "servant_no_unit_representation_without_sources": all(item.representation == "blocked" for item in definitions),
-        "servant_source_trace_present": all(bool(item.source.source_path) for item in definitions),
+        "servant_executable_definition_present": definition.coverage_status == "executable" and definition.representation == "unit",
+        "servant_action_admission_has_executable_bindings": bool(definition.action_set.get("executable_binding_ids")),
+        "servant_skipped_slots_are_audited": isinstance(definition.action_set.get("skipped_slots"), list),
+        "spawn_plan_ok": plan.ok and plan.operation == "servant_spawn",
+        "spawn_unit_mutation_present": any(mutation.metadata.get("lifecycle_operation") == "unit_spawn" for mutation in result.mutations),
+        "runtime_mutation_present": any(mutation.path == ("global_flags", "summon_runtime") for mutation in result.mutations),
+        "spawned_unit_is_servant": servant.side == "summon" and servant.template_id == definition.servant_ref,
+        "servant_team_side_inherits_owner": servant.flags.get("team_side") == "ally",
+        "servant_timeline_admitted": servant.flags.get("timeline_admitted") is True and servant.action_value > 0.0,
+        "servant_action_availability": availability.mode == "external_selectable"
+        and any(choice.choice_kind == "summon_action" for choice in availability.choices),
+        "servant_action_source_trace_present": all(choice.source_trace for choice in availability.choices),
+        "servant_entity_list_expression_present": servant_list_expr is not None,
+        "servant_entity_list_resolves": servant_list_result is not None and servant_list_result.ok and servant_id in servant_list_result.target_ids,
+        "caster_servant_expression_present": caster_servant_expr is not None,
+        "caster_servant_resolves": caster_servant_result is not None and caster_servant_result.ok and servant_id in caster_servant_result.target_ids,
+        "spawn_replay_ok": replay.ok,
+        "remove_plan_ok": remove_plan.ok and remove_plan.operation == "remove_summon",
+        "remove_mutations_present": any(mutation.metadata.get("lifecycle_operation") == "unit_remove" for mutation in remove_result.mutations),
+        "remove_replay_ok": remove_replay.ok,
+        "removed_servant_not_targetable": servant_list_after_remove is not None
+        and not servant_list_after_remove.ok
+        and servant_id not in servant_list_after_remove.target_ids,
+        "flag_only_action_blocked": not flag_only_availability.choices
+        and any(reason in {"summon_runtime_state_missing", "summon_runtime_entity_missing"} for reason in flag_only_blocked_reasons),
+        "flag_only_target_blocked": flag_only_servant_list is not None
+        and not flag_only_servant_list.ok
+        and flag_only_servant_list.blocked_reason == "summon_runtime_missing",
     }
     checks["ok"] = all(value for key, value in checks.items() if key != "ok")
     return {
         "checks": {"ok": checks["ok"], "checks": checks},
-        "source_state": "implementation_missing",
-        "classification": "servant_owner_stat_timeline_action_lifecycle_admission_missing",
-        "mechanism_complete": False,
+        "source_state": "executable",
+        "classification": "servant_unit_spawn_action_target_remove_runtime_executable",
+        "mechanism_complete": True,
         "definition_count": len(definitions),
-        "sample": definitions[0].to_json() if definitions else {},
+        "sample": definition.to_json(),
+        "spawn_plan": plan.to_json(),
+        "spawned_unit_id": servant_id,
+        "spawn_mutations": [mutation.to_json() for mutation in result.mutations],
+        "availability": availability.to_json(),
+        "servant_entity_list_result": servant_list_result.to_json() if servant_list_result is not None else {},
+        "caster_servant_result": caster_servant_result.to_json() if caster_servant_result is not None else {},
+        "remove_plan": remove_plan.to_json(),
+        "remove_mutations": [mutation.to_json() for mutation in remove_result.mutations],
+        "flag_only_availability": flag_only_availability.to_json(),
+        "flag_only_servant_list": flag_only_servant_list.to_json() if flag_only_servant_list is not None else {},
     }
 
 
@@ -471,9 +559,40 @@ def _select_executable_summon_monster_intent(rules: RuleBook) -> SummonMonsterIn
     raise RuntimeError("no executable SummonMonsterIntentIR selected by structured predicate")
 
 
+def _select_executable_servant_definition(rules: RuleBook):
+    for definition in rules.servant_definitions():
+        if definition.coverage_status != "executable":
+            continue
+        if definition.representation != "unit":
+            continue
+        if not definition.owner_entity_ref:
+            continue
+        if not definition.action_set.get("executable_binding_ids"):
+            continue
+        if definition.stat_source.get("admission_status") != "executable":
+            continue
+        if definition.timeline_source.get("admission_status") != "executable":
+            continue
+        if definition.lifecycle_source.get("admission_status") != "executable":
+            continue
+        return definition
+    raise RuntimeError("no executable ServantDefinitionIR selected by structured predicate")
+
+
 def _select_target_expression(rules: RuleBook, alias: str) -> TargetExpressionIR | None:
     for expression in sorted(rules.target_expressions(), key=lambda item: item.target_expression_id):
         if expression.alias == alias and expression.coverage_status == "executable":
+            return expression
+    return None
+
+
+def _select_global_target_expression(rules: RuleBook, alias: str) -> TargetExpressionIR | None:
+    for expression in sorted(rules.target_expressions(), key=lambda item: item.target_expression_id):
+        if expression.coverage_status != "executable":
+            continue
+        payload = expression.payload if isinstance(expression.payload, dict) else {}
+        field_name = str(payload.get("field_name") or "")
+        if expression.alias == alias or field_name == f"AliasDict.{alias}":
             return expression
     return None
 
@@ -520,6 +639,82 @@ def _base_summon_state() -> BattleState:
             ),
         }
     )
+
+
+def _base_servant_state(definition) -> BattleState:
+    return BattleState(
+        units={
+            "ally:servant_owner": UnitState(
+                "ally:servant_owner",
+                "ally",
+                definition.owner_entity_ref,
+                level=80,
+                hp=1000.0,
+                max_hp=1000.0,
+                attack=500.0,
+                defense=300.0,
+                speed=100.0,
+                flags={"position": 1},
+            ),
+            "enemy:target": UnitState(
+                "enemy:target",
+                "enemy",
+                "monster:target",
+                level=80,
+                hp=1000.0,
+                max_hp=1000.0,
+                attack=100.0,
+                defense=100.0,
+                speed=90.0,
+                flags={"position": 5},
+            ),
+        },
+        global_flags={"phase": "scenario", "current_window": "idle"},
+    )
+
+
+def _flag_only_servant_state(definition) -> BattleState:
+    return BattleState(
+        units={
+            "ally:servant_owner": UnitState(
+                "ally:servant_owner",
+                "ally",
+                definition.owner_entity_ref,
+                hp=1000.0,
+                max_hp=1000.0,
+                speed=100.0,
+                flags={"position": 1},
+            ),
+            "summon:flag_only_servant": UnitState(
+                "summon:flag_only_servant",
+                "summon",
+                definition.servant_ref,
+                hp=100.0,
+                max_hp=100.0,
+                speed=100.0,
+                flags={
+                    "team_side": "ally",
+                    "summon_kind": "servant",
+                    "owner_id": "ally:servant_owner",
+                    "timeline_admitted": True,
+                    "summon_action_admitted": True,
+                    "summon_action_admission": {"coverage_status": "executable", "source_trace": definition.source.to_json()},
+                    "summon_intent_id": definition.servant_definition_id,
+                    "summon_source_trace": definition.source.to_json(),
+                    "position": 2,
+                },
+            ),
+            "enemy:target": UnitState("enemy:target", "enemy", "monster:target", hp=100.0, max_hp=100.0, flags={"position": 5}),
+        },
+        global_flags={"turn_owner_id": "summon:flag_only_servant", "phase": "scenario", "current_window": "idle"},
+    )
+
+
+def _first_servant_id(state: BattleState) -> str:
+    for unit_id, unit in sorted(state.units.items()):
+        if unit.flags.get("summon_kind") == "servant":
+            return unit_id
+    raise RuntimeError("spawned servant unit missing")
 
 
 def _wave_state(wave_definition_id: str, summon: UnitState) -> BattleState:

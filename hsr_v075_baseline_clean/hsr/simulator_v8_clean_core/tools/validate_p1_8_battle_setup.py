@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import asdict, is_dataclass
+from dataclasses import asdict, is_dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +11,7 @@ from ..rules.ir import ActionDefinitionIR, EffectIR, SummonMonsterIntentIR, Wave
 from ..rules.rulebook import RuleBook
 from ..scenarios import IdentityResolver, ScenarioLoader, ScenarioStateBuilder
 from ..systems.effect import EffectRegistry
+from ..systems.action_availability import ActionAvailabilitySystem
 from ..systems.rng import RNGOutcome, RNGRequest, resolve_rng_request
 from ..systems.status import StatusSystem
 from ..tbgd.lowering import TBGDLowering
@@ -49,7 +50,7 @@ def run_validation(package_root: Path, tbgd_root: Path, output_dir: Path) -> dic
         "two_wave_setup": wave_cases["checks"],
         "initial_status": status_cases["checks"],
         "initial_summon": summon_cases["summoned_monster"]["checks"],
-        "servant_initial_setup_boundary": summon_cases["servant_initial_setup"]["checks"],
+        "servant_initial_setup": summon_cases["servant_initial_setup"]["checks"],
         "timeline_setup": timeline_rng_objective_cases["timeline"]["checks"],
         "rng_setup": timeline_rng_objective_cases["rng"]["checks"],
         "objective_metadata": timeline_rng_objective_cases["objective"]["checks"],
@@ -321,17 +322,55 @@ def _summon_cases(
     summoned_checks["ok"] = all(value for key, value in summoned_checks.items() if key != "ok")
     timeline_after_summon = _summon_timeline_override_case(rules, action, enemy_ref, intent, spawned[0] if spawned else "")
 
-    servant_data = _base_scenario_data(rules, action, enemy_ref)
-    servant_data["battle_setup"] = {"initial_summons": [{"kind": "servant", "owner_id": "ally:actor"}]}
+    servant_definition = _select_executable_servant_definition(rules)
+    servant_action = _select_avatar_action_for_entity(rules, servant_definition.owner_entity_ref)
+    servant_data = _base_scenario_data_for_avatar(rules, servant_action, servant_definition.owner_entity_ref, enemy_ref)
+    servant_data["scenario_id"] = "p1_8_servant_initial_setup"
+    servant_data["battle_setup"] = {
+        "initial_summons": [
+            {
+                "kind": "servant",
+                "owner_id": "ally:actor",
+                "summon_intent_ref": servant_definition.servant_definition_id,
+            }
+        ]
+    }
     servant_build = ScenarioStateBuilder(rules).build(ScenarioLoader().load_dict(servant_data))
+    servant_units = tuple(
+        unit_id for unit_id, unit in servant_build.state.units.items() if unit.flags.get("summon_kind") == "servant"
+    )
+    servant_runtime = servant_build.state.global_flags.get("summon_runtime")
+    servant_availability = None
+    if servant_units:
+        servant_availability = ActionAvailabilitySystem(rules).view(
+            replace(
+                servant_build.state,
+                global_flags={
+                    **servant_build.state.global_flags,
+                    "turn_owner_id": servant_units[0],
+                    "phase": "scenario",
+                    "current_window": "idle",
+                },
+            )
+        )
     servant_checks = {
-        "blocked_record_present": any(
-            record.get("blocked_reason") == "servant_initial_setup_admission_missing" for record in servant_build.blocked_setup
+        "servant_definition_executable": servant_definition.coverage_status == "executable",
+        "servant_spawned": bool(servant_units),
+        "no_blocked_setup": not servant_build.blocked_setup,
+        "setup_mutations_present": any(
+            mutation.metadata.get("lifecycle_operation") == "unit_spawn" for mutation in servant_build.setup_mutations
         ),
-        "no_unit_created": len(servant_build.state.units) == 2,
-        "no_setup_mutation": not servant_build.setup_mutations,
+        "runtime_tracks_servant": isinstance(servant_runtime, dict)
+        and any(unit_id in servant_runtime.get("servants", {}) for unit_id in servant_units),
+        "source_trace_present": all(servant_build.state.units[unit_id].flags.get("summon_source_trace") for unit_id in servant_units),
+        "servant_action_available": servant_availability is not None
+        and servant_availability.mode == "external_selectable"
+        and any(choice.choice_kind == "summon_action" for choice in servant_availability.choices),
     }
     servant_checks["ok"] = all(value for key, value in servant_checks.items() if key != "ok")
+    missing_servant_ref = _base_scenario_data_for_avatar(rules, servant_action, servant_definition.owner_entity_ref, enemy_ref)
+    missing_servant_ref["battle_setup"] = {"initial_summons": [{"kind": "servant", "owner_id": "ally:actor"}]}
+    missing_servant_ref_error = _build_error(rules, missing_servant_ref)
     missing_owner = _base_scenario_data(rules, action, enemy_ref)
     missing_owner["battle_setup"] = {
         "initial_summons": [
@@ -352,17 +391,30 @@ def _summon_cases(
         },
         "servant_initial_setup": {
             "checks": {"ok": servant_checks["ok"], "checks": servant_checks},
-            "source_state": "implementation_missing",
-            "classification": "servant_owner_stat_timeline_action_lifecycle_admission_missing",
-            "mechanism_complete": False,
-            "blocked_setup": servant_build.blocked_setup,
+            "source_state": "executable",
+            "classification": "servant_initial_setup_executable",
+            "mechanism_complete": True,
+            "servant_definition_id": servant_definition.servant_definition_id,
+            "servant_unit_ids": list(servant_units),
+            "setup_records": servant_build.setup_records,
+            "availability": servant_availability.to_json() if servant_availability is not None else {},
         },
         "servant_source_gap": {
             "checks": {"ok": servant_checks["ok"], "checks": servant_checks},
-            "source_state": "implementation_missing",
-            "classification": "deprecated_name_servant_is_not_true_source_gap",
-            "mechanism_complete": False,
-            "blocked_setup": servant_build.blocked_setup,
+            "source_state": "executable",
+            "classification": "not_source_gap_servant_initial_setup_has_real_sources",
+            "mechanism_complete": True,
+            "servant_definition_id": servant_definition.servant_definition_id,
+        },
+        "missing_servant_ref": {
+            "checks": {
+                "ok": "summon_intent_ref or entity_ref must be set for servant" in missing_servant_ref_error,
+                "checks": {
+                    "missing_servant_ref_fails": "summon_intent_ref or entity_ref must be set for servant"
+                    in missing_servant_ref_error
+                },
+            },
+            "error": missing_servant_ref_error,
         },
         "missing_owner": {
             "checks": {"ok": "unknown owner_id" in missing_owner_error, "checks": {"missing_owner_fails": "unknown owner_id" in missing_owner_error}},
@@ -652,6 +704,21 @@ def _select_avatar_action(rules: RuleBook) -> ActionDefinitionIR:
     raise RuntimeError("no avatar action definition selected by structured predicate")
 
 
+def _select_avatar_action_for_entity(rules: RuleBook, entity_ref: str) -> ActionDefinitionIR:
+    skill_refs: set[str] = set()
+    for card in rules.ir.character_data_cards:
+        if card.entity_ref != entity_ref:
+            continue
+        skill_refs.update(f"avatar_skill:{skill_id}" for skill_id in card.skill_ids)
+    for definition in sorted(rules.ir.action_definitions, key=lambda item: (item.action_id, item.level)):
+        if definition.action_id not in skill_refs:
+            continue
+        entity = rules.entity(definition.action_id)
+        if entity is not None and entity.entity_type == "avatar_skill":
+            return definition
+    raise RuntimeError(f"no avatar action definition selected for {entity_ref}")
+
+
 def _avatar_entity_for_action(rules: RuleBook, action: ActionDefinitionIR) -> str:
     for card in rules.ir.character_data_cards:
         if any(action.action_id == f"avatar_skill:{skill_id}" for skill_id in card.skill_ids):
@@ -695,8 +762,35 @@ def _select_executable_summon_monster_intent(rules: RuleBook) -> SummonMonsterIn
     raise RuntimeError("no executable SummonMonsterIntentIR selected by structured predicate")
 
 
+def _select_executable_servant_definition(rules: RuleBook):
+    for definition in rules.servant_definitions():
+        if definition.coverage_status != "executable" or definition.representation != "unit":
+            continue
+        if not definition.owner_entity_ref:
+            continue
+        if not definition.action_set.get("executable_binding_ids"):
+            continue
+        if definition.stat_source.get("admission_status") != "executable":
+            continue
+        if definition.timeline_source.get("admission_status") != "executable":
+            continue
+        if definition.lifecycle_source.get("admission_status") != "executable":
+            continue
+        return definition
+    raise RuntimeError("no executable ServantDefinitionIR selected by structured predicate")
+
+
 def _base_scenario_data(rules: RuleBook, action: ActionDefinitionIR, enemy_ref: str) -> dict[str, Any]:
     avatar_ref = _avatar_entity_for_action(rules, action)
+    return _base_scenario_data_for_avatar(rules, action, avatar_ref, enemy_ref)
+
+
+def _base_scenario_data_for_avatar(
+    rules: RuleBook,
+    action: ActionDefinitionIR,
+    avatar_ref: str,
+    enemy_ref: str,
+) -> dict[str, Any]:
     return {
         "scenario_id": "p1_8_battle_setup_validation",
         "version": VALIDATION_VERSION,
