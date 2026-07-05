@@ -278,6 +278,10 @@ class DamageSystem:
             admitted, reason, dead_target_continuation = window_ledger.admit_packet(state, packet)
             if not admitted:
                 return _damage_source_skip(packet, reason, window_ledger)
+        else:
+            admitted, reason = _admit_packet_without_window(state, packet)
+            if not admitted:
+                return _damage_source_skip(packet, reason, None)
         if packet.damage_formula_family == "direct":
             result = self._apply_direct_damage(state, packet, dead_target_continuation=dead_target_continuation)
         elif packet.damage_formula_family == "break":
@@ -887,6 +891,17 @@ def _damage_source_skip(
             ).to_json(),
         ),
     )
+
+
+def _admit_packet_without_window(state: BattleState, packet: DamagePacket) -> tuple[bool, str]:
+    if packet.target_id not in state.units:
+        return False, "damage_target_missing"
+    lifecycle = UnitLifecycleSystem().view(state, packet.target_id)
+    if lifecycle.can_receive_damage:
+        return True, ""
+    if lifecycle.is_removed:
+        return False, "damage_source_target_removed"
+    return False, "damage_source_target_not_alive"
 
 
 def _metadata_str(metadata: dict[str, JSONValue], key: str) -> str | None:
