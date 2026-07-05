@@ -516,6 +516,8 @@ def _unit_from_wave_entry(rules: RuleBook, definition: WaveDefinitionIR, entry: 
         for damage_type, value in profile.resistances.items()
         if isinstance(value, (int, float)) and not isinstance(value, bool)
     }
+    if isinstance(profile.status_resistance, (int, float)) and not isinstance(profile.status_resistance, bool):
+        resources["effect_resistance"] = float(profile.status_resistance)
     flags: dict[str, JSONValue] = {
         "position": entry.position,
         "wave_definition_id": definition.wave_definition_id,
@@ -533,6 +535,7 @@ def _unit_from_wave_entry(rules: RuleBook, definition: WaveDefinitionIR, entry: 
         "monster_data_card_id": card.card_id,
         "monster_passive_mechanism_slot_ids": list(card.passive_mechanism_slot_ids),
         "weaknesses": list(profile.weaknesses),
+        "debuff_resistances": list(profile.debuff_resistances),
         "initial_action_value_source_trace": {
             "timeline_rule_id": timeline_rule.timeline_rule_id,
             "timeline_rule_source": timeline_rule.source.to_json(),

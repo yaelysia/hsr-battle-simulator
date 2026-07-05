@@ -510,6 +510,8 @@ class SummonSystem:
             for damage_type, value in profile.resistances.items()
             if isinstance(value, (int, float)) and not isinstance(value, bool)
         }
+        if isinstance(profile.status_resistance, (int, float)) and not isinstance(profile.status_resistance, bool):
+            resources["effect_resistance"] = float(profile.status_resistance)
         flags: dict[str, JSONValue] = {
             "position": position,
             "summon_kind": "summoned_monster",
@@ -528,6 +530,7 @@ class SummonSystem:
             "monster_data_card_id": card.card_id,
             "monster_passive_mechanism_slot_ids": list(card.passive_mechanism_slot_ids),
             "weaknesses": list(profile.weaknesses),
+            "debuff_resistances": list(profile.debuff_resistances),
             "initial_action_value_source_trace": {
                 "timeline_rule_id": timeline_rule.timeline_rule_id,
                 "timeline_rule_source": timeline_rule.source.to_json(),

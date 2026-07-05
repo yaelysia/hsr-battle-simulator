@@ -4661,6 +4661,8 @@ def _combatant_profile_from_monster(
         weaknesses=tuple(str(item) for item in monster_row.get("StanceWeakList") or ()),
         resistances=_damage_type_resistances(monster_row.get("DamageTypeResistance")),
         source=source,
+        status_resistance=_required_number(template_row, "StatusResistanceBase"),
+        debuff_resistances=tuple(_json_safe(item) for item in monster_row.get("DebuffResist") or ()),
         coverage_status="blocked" if blocked_reason else "executable",
         blocked_reason=blocked_reason,
     )
@@ -4717,6 +4719,8 @@ def _combatant_profile_from_template(template_id: str, template_row: dict[str, A
         weaknesses=(),
         resistances={},
         source=source,
+        status_resistance=_required_number(template_row, "StatusResistanceBase"),
+        debuff_resistances=(),
         coverage_status="blocked" if blocked_reason else "lowered",
         blocked_reason=blocked_reason or "monster_template_profile_lacks_monster_weakness_and_resistance",
     )
@@ -4821,6 +4825,8 @@ def _blocked_combatant_profile(
         weaknesses=(),
         resistances={},
         source=source,
+        status_resistance=None,
+        debuff_resistances=(),
         coverage_status="blocked",
         blocked_reason=reason,
     )

@@ -191,6 +191,8 @@ class CombatantProfileIR:
     weaknesses: tuple[str, ...]
     resistances: dict[str, JSONValue]
     source: IRSource
+    status_resistance: JSONValue = None
+    debuff_resistances: tuple[JSONValue, ...] = ()
     coverage_status: CoverageStatus = "blocked"
     blocked_reason: str = ""
 
@@ -204,6 +206,8 @@ class CombatantProfileIR:
             "toughness_profile": self.toughness_profile,
             "weaknesses": list(self.weaknesses),
             "resistances": self.resistances,
+            "status_resistance": self.status_resistance,
+            "debuff_resistances": list(self.debuff_resistances),
             "source": self.source.to_json(),
             "coverage_status": self.coverage_status,
             "blocked_reason": self.blocked_reason,

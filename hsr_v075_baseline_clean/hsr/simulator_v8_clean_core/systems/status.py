@@ -358,6 +358,7 @@ class StatusSystem:
                 state,
                 caster_id=caster_id,
                 target_id=target_id,
+                dynamic_values=dynamic_values,
                 binding_sources=binding_sources,
             )
             status_id = f"modifier:{modifier_name}"
@@ -2085,6 +2086,7 @@ def _runtime_chance_admission(
     *,
     caster_id: str,
     target_id: str,
+    dynamic_values: dict[str, float] | None,
     binding_sources: tuple[dict[str, JSONValue], ...],
 ) -> dict[str, JSONValue]:
     source_trace = {"effect_id": effect.effect_id, "effect_source": effect.source.to_json()}
@@ -2103,7 +2105,11 @@ def _runtime_chance_admission(
     else:
         result = RuleEvaluator().evaluate_numeric(
             chance_expr,
-            NumericEvaluationContext(binding_sources=binding_sources, source_trace=source_trace),
+            NumericEvaluationContext(
+                dynamic_values=_numeric_bindings(dynamic_values),
+                binding_sources=binding_sources,
+                source_trace=source_trace,
+            ),
         )
         if not result.ok or result.value is None:
             return {
