@@ -134,6 +134,11 @@ def _current_queue_scope(ir) -> dict[str, Any]:
     intent_opcode = Counter(intent.opcode for intent in ir.queue_intents)
     window_status = Counter(window.coverage_status for window in ir.queue_windows)
     window_family = Counter(window.window_family for window in ir.queue_windows)
+    semantic_family = Counter(
+        semantic
+        for window in ir.queue_windows
+        for semantic in _queue_window_semantic_families(window)
+    )
     resolution_status = Counter(resolution.coverage_status for resolution in ir.queue_resolutions)
     resolution_kind = Counter(resolution.resolved_kind for resolution in ir.queue_resolutions)
     checks = {
@@ -151,6 +156,7 @@ def _current_queue_scope(ir) -> dict[str, Any]:
         "intent_opcode_counts": dict(sorted(intent_opcode.items())),
         "window_status_counts": dict(sorted(window_status.items())),
         "window_family_counts": dict(sorted(window_family.items())),
+        "semantic_family_counts": dict(sorted(semantic_family.items())),
         "resolution_status_counts": dict(sorted(resolution_status.items())),
         "resolution_kind_counts": dict(sorted(resolution_kind.items())),
         "current_queue_scope": {
@@ -168,17 +174,20 @@ def _queue_source_matrix(ir, rules: RuleBook) -> dict[str, Any]:
     rows: list[dict[str, Any]] = []
     non_executable_intent_executable_window = []
     text_hint_executable = []
+    semantic_status = Counter()
     for window in sorted(ir.queue_windows, key=lambda item: item.queue_window_id):
         intent = rules.queue_intent(window.queue_intent_id)
         resolution = rules.queue_resolution_for_intent(window.queue_intent_id)
         policy = window.window_policy if isinstance(window.window_policy, dict) else {}
         source_basis = policy.get("source_basis") if isinstance(policy.get("source_basis"), dict) else {}
+        semantic_families = _queue_window_semantic_families(window)
         row = {
             "queue_window_id": window.queue_window_id,
             "queue_intent_id": window.queue_intent_id,
             "opcode": intent.opcode if intent is not None else "",
             "queue_kind": intent.queue_kind if intent is not None else window.queue_kind,
             "window_family": window.window_family,
+            "semantic_families": semantic_families,
             "window_coverage_status": window.coverage_status,
             "window_blocked_reason": window.blocked_reason,
             "intent_coverage_status": intent.coverage_status if intent is not None else "missing",
@@ -193,6 +202,8 @@ def _queue_source_matrix(ir, rules: RuleBook) -> dict[str, Any]:
             "source": window.source.to_json(),
         }
         rows.append(row)
+        for semantic in semantic_families:
+            semantic_status[(window.window_family, semantic, window.coverage_status)] += 1
         if intent is not None and intent.coverage_status != "executable" and window.coverage_status == "executable":
             non_executable_intent_executable_window.append(row)
         if source_basis.get("source_basis") == "text_only_queue_window_hint" and window.coverage_status == "executable":
@@ -207,6 +218,10 @@ def _queue_source_matrix(ir, rules: RuleBook) -> dict[str, Any]:
     return {
         "checks": {"ok": checks["ok"], "checks": checks},
         "family_status_counts": {f"{family}:{status}": count for (family, status), count in sorted(family_status.items())},
+        "semantic_status_counts": {
+            f"{family}:{semantic}:{status}": count
+            for (family, semantic, status), count in sorted(semantic_status.items())
+        },
         "sample_rows": rows[:25],
         "negative_evidence": {
             "non_executable_intent_executable_window": non_executable_intent_executable_window[:10],
@@ -453,16 +468,58 @@ def _extra_turn_case(ir, rules: RuleBook) -> dict[str, Any]:
 def _queue_family_source_gaps(ir) -> dict[str, Any]:
     rows = []
     for family in ("follow_up", "counter", "assistant", "interrupt", "immediate", "unknown"):
-        windows = [window for window in ir.queue_windows if window.window_family == family]
-        executable = [window for window in windows if window.coverage_status == "executable"]
+        structural_windows = [window for window in ir.queue_windows if window.window_family == family]
+        semantic_windows = [
+            window for window in ir.queue_windows if family in _queue_window_semantic_families(window)
+        ]
+        windows_by_id = {
+            window.queue_window_id: window
+            for window in (*structural_windows, *semantic_windows)
+        }
+        windows = list(windows_by_id.values())
+        executable = [
+            window
+            for window in structural_windows
+            if window.coverage_status == "executable"
+        ]
+        semantic_executable = [
+            window
+            for window in semantic_windows
+            if window.coverage_status == "executable"
+        ]
+        structural_status = Counter(window.coverage_status for window in structural_windows)
+        semantic_source_status = Counter(
+            (window.window_family, window.coverage_status)
+            for window in semantic_windows
+        )
+        source_window_family = Counter(window.window_family for window in windows)
+        if executable:
+            classification = "executable"
+        elif semantic_windows:
+            classification = "admission_gap"
+        else:
+            classification = "source_gap_blocked"
         rows.append(
             {
                 "window_family": family,
+                "semantic_family": family,
                 "total_count": len(windows),
+                "source_count": len(windows),
+                "structural_count": len(structural_windows),
+                "semantic_hint_count": len(semantic_windows),
                 "executable_count": len(executable),
+                "admitted_family_executable_count": len(executable),
+                "semantic_executable_source_count": len(semantic_executable),
                 "blocked_count": len(windows) - len(executable),
-                "classification": "executable" if executable else "source_gap_blocked",
+                "classification": classification,
+                "source_window_family_counts": dict(sorted(source_window_family.items())),
+                "structural_status_counts": dict(sorted(structural_status.items())),
+                "semantic_source_status_counts": {
+                    f"{window_family}:{status}": count
+                    for (window_family, status), count in sorted(semantic_source_status.items())
+                },
                 "blocked_reason_samples": sorted({window.blocked_reason for window in windows if window.blocked_reason})[:10],
+                "sample_window_ids": sorted(windows_by_id)[:10],
             }
         )
     checks = {
@@ -789,6 +846,19 @@ def _window_source_basis(window: QueueWindowIR) -> str:
     policy = window.window_policy if isinstance(window.window_policy, dict) else {}
     basis = policy.get("source_basis") if isinstance(policy.get("source_basis"), dict) else {}
     return str(basis.get("source_basis") or "")
+
+
+def _queue_window_semantic_families(window: QueueWindowIR) -> tuple[str, ...]:
+    policy = window.window_policy if isinstance(window.window_policy, dict) else {}
+    families: list[str] = []
+    text_hints = policy.get("text_hints")
+    if isinstance(text_hints, (list, tuple)):
+        families.extend(str(item) for item in text_hints if isinstance(item, str) and item)
+    source_basis = policy.get("source_basis") if isinstance(policy.get("source_basis"), dict) else {}
+    basis_hints = source_basis.get("text_hints")
+    if isinstance(basis_hints, (list, tuple)):
+        families.extend(str(item) for item in basis_hints if isinstance(item, str) and item)
+    return tuple(sorted(set(families)))
 
 
 def _transition_checks(transition, before_state: BattleState) -> dict[str, bool]:

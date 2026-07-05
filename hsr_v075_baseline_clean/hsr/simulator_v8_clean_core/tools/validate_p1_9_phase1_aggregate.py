@@ -401,7 +401,7 @@ def run_validation(
         "version": VALIDATION_VERSION,
         "baseline_version": BASELINE_VERSION,
         "ok": ok,
-        "p1_9_done_eligible": ok,
+        "p1_9_done_eligible": phase1_minimum_battle_slice,
         "phase1_repair_substrate_accepted": ok,
         "phase1_minimum_battle_slice": phase1_minimum_battle_slice,
         "phase1_minimum_battle_slice_blocked_by": minimum_slice_blockers,
@@ -1018,9 +1018,13 @@ def _source_gap_matrix(
         row = next((item for item in queue_family_rows if item.get("window_family") == family), {})
         total_count = int(row.get("total_count") or 0) if isinstance(row, dict) else 0
         executable_count = int(row.get("executable_count") or 0) if isinstance(row, dict) else 0
+        family_classification = str(row.get("classification") or "") if isinstance(row, dict) else ""
         if executable_count:
             source_state = "executable"
             classification = "executable"
+        elif family_classification in {"lowering_gap", "admission_gap", "validation_gap"}:
+            source_state = family_classification
+            classification = f"{family}_queue_{family_classification}"
         elif total_count:
             source_state = "boundary_only"
             classification = f"{family}_queue_sources_not_executable_current_scope"
@@ -1175,8 +1179,10 @@ def _gap_row(
         "reason": reason,
         "runtime_guarded_path": runtime_guarded_path,
         "blocked_no_mutation": blocked_no_mutation,
-        "phase1_minimum_battle_slice_blocker": source_state == "implementation_missing",
-        "phase1_full_acceptance_blocker": source_state == "implementation_missing",
+        "phase1_minimum_battle_slice_blocker": source_state
+        in {"lowering_gap", "admission_gap", "validation_gap", "implementation_missing"},
+        "phase1_full_acceptance_blocker": source_state
+        in {"lowering_gap", "admission_gap", "validation_gap", "implementation_missing"},
         "blocked_records": blocked_records or [],
     }
 
