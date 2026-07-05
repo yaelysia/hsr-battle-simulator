@@ -782,4 +782,12 @@ def _gamecore_opcode(node: dict[str, Any]) -> str:
 def _p2_source_area(relative_path: str) -> str:
     if relative_path.startswith("Config/ConfigGlobalModifier/"):
         return "GlobalModifier"
+    if relative_path.startswith("Config/ConfigGlobalTaskListTemplate/"):
+        return "GlobalModifier"
+    if relative_path == "Config/ConfigAbility/StageBattleEventAbility.json":
+        return "BattleEvent"
+    if relative_path == "Config/ConfigAbility/TrialPlayerPassiveAbility.json":
+        return "Avatar"
+    if relative_path == "Config/ConfigAbility/Common_Additional_Ability.json":
+        return "GlobalModifier"
     return _source_area(relative_path)
