@@ -227,7 +227,7 @@ class StatusCallbackSystem:
                 reason = task.blocked_reason or f"status_callback_task_not_executable:{task.coverage_status}"
                 return self._blocked_queue_intents(state, callback, task, detail, tuple(queue_intents), reason)
             if delay_emissions:
-                return self._execute_delay_emissions(state, callback, task, detail, tuple(delay_emissions))
+                return self._execute_delay_emissions(state, callback, task, detail, trigger_event, tuple(delay_emissions))
             if damage_emissions:
                 records = tuple(
                     _status_damage_blocked_record(
@@ -261,7 +261,7 @@ class StatusCallbackSystem:
                 damage_window_ledger,
             )
         if delay_emissions:
-            return self._execute_delay_emissions(state, callback, task, detail, tuple(delay_emissions))
+            return self._execute_delay_emissions(state, callback, task, detail, trigger_event, tuple(delay_emissions))
         if queue_intents:
             return self._execute_queue_intents(state, callback, task, detail, trigger_event, tuple(queue_intents))
         if task.opcode == "SetDynamicValueByDamageDataProperty":
@@ -1029,6 +1029,7 @@ class StatusCallbackSystem:
         callback: StatusCallbackIR,
         task: StatusCallbackTaskIR,
         detail: dict[str, JSONValue],
+        trigger_event: GameEvent | None,
         emissions: tuple[ActionDelayEmissionIR, ...],
     ) -> StatusCallbackExecutionResult:
         current_state = state
@@ -1047,7 +1048,7 @@ class StatusCallbackSystem:
                 records.append(_action_delay_blocked_record(callback, task, detail, emission, reason))
                 errors.append(reason)
                 continue
-            target_id = _resolve_callback_target_id(detail, emission.target_alias)
+            target_id = _resolve_callback_target_id(detail, emission.target_alias, trigger_event)
             if not target_id or target_id not in current_state.units:
                 reason = f"action_delay_target_not_resolved:{emission.target_alias or 'unknown'}"
                 records.append(_action_delay_blocked_record(callback, task, detail, emission, reason))
@@ -1745,14 +1746,21 @@ def _break_element_from_detail(detail: dict[str, JSONValue]) -> str | None:
     return template.removeprefix("StanceBreak_") or None
 
 
-def _resolve_callback_target_id(detail: dict[str, JSONValue], target_alias: str | None) -> str:
+def _resolve_callback_target_id(
+    detail: dict[str, JSONValue],
+    target_alias: str | None,
+    event: GameEvent | None,
+) -> str:
     alias = target_alias or "ModifierOwnerEntity"
     if alias == "ModifierOwnerEntity":
         return str(detail.get("owner_id") or "")
     if alias == "Caster":
         return str(detail.get("caster_id") or "")
-    if alias in {"ParamEntity", "CurrentActionTarget"}:
-        return str(detail.get("owner_id") or "")
+    if alias in {"ParamEntity", "CurrentActionTarget", "AbilityTargetEntity"}:
+        payload = event.payload if event is not None and isinstance(event.payload, dict) else {}
+        return _first_payload_str(payload, ("param_entity_id", "current_hit_target_id", "primary_target_id", "target_id")) or (
+            str(event.target_id or "") if event is not None else ""
+        )
     return ""
 
 
@@ -1768,7 +1776,7 @@ def _resolve_queue_alias(detail: dict[str, JSONValue], event: GameEvent | None, 
             value = payload.get(key)
             if isinstance(value, str) and value:
                 return value
-        return str(event.target_id or "") if event is not None else str(detail.get("owner_id") or "")
+        return str(event.target_id or "") if event is not None else ""
     if alias == "DamageAttackerEntity":
         for key in ("attacker_id", "actor_id"):
             value = payload.get(key)
@@ -1954,7 +1962,7 @@ def _condition_context(
     target_id = _first_payload_str(payload, ("current_hit_target_id", "primary_target_id", "target_id")) or (
         str(event.target_id or "") if event is not None else ""
     )
-    param_entity_id = _first_payload_str(payload, ("param_entity_id",)) or target_id or owner_id
+    param_entity_id = _first_payload_str(payload, ("param_entity_id",)) or target_id
     unit_ids = tuple(unit_id for unit_id in (owner_id, caster_id, param_entity_id) if unit_id)
     return EvaluationContext(
         state=state,
@@ -1985,7 +1993,7 @@ def _effect_context(
     target_id = _first_payload_str(payload, ("current_hit_target_id", "primary_target_id", "target_id")) or (
         str(event.target_id or "") if event is not None else ""
     )
-    param_entity_id = _first_payload_str(payload, ("param_entity_id",)) or target_id or owner_id
+    param_entity_id = _first_payload_str(payload, ("param_entity_id",)) or target_id
     unit_ids = tuple(unit_id for unit_id in (owner_id, caster_id, param_entity_id) if unit_id)
     return EffectExecutionContext(
         state=state,

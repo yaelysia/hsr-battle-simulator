@@ -445,6 +445,34 @@ class TBGDLowering:
         formulas.extend(self._lower_elation_mechanics())
         formulas.extend(self._lower_damage_behavior_templates())
         status_event_families = _lower_status_event_families(status_callbacks, status_callback_tasks)
+        status_event_blocked_reasons = _status_event_blocked_reasons(status_event_families)
+        status_callbacks = _block_status_callbacks_by_event_family(status_callbacks, status_event_blocked_reasons)
+        status_callback_blocked_reasons = {
+            callback.callback_id: status_event_blocked_reasons[callback.event]
+            for callback in status_callbacks
+            if callback.event in status_event_blocked_reasons
+        }
+        status_callback_tasks = _block_status_callback_tasks_by_callback(
+            status_callback_tasks,
+            status_callback_blocked_reasons,
+        )
+        status_damage_emissions = _block_status_callback_derived_by_callback(
+            status_damage_emissions,
+            status_callback_blocked_reasons,
+        )
+        damage_modifiers = _block_status_callback_derived_by_callback(
+            damage_modifiers,
+            status_callback_blocked_reasons,
+        )
+        action_delay_emissions = _block_status_callback_derived_by_callback(
+            action_delay_emissions,
+            status_callback_blocked_reasons,
+        )
+        queue_intents = _block_status_callback_derived_by_callback(
+            queue_intents,
+            status_callback_blocked_reasons,
+        )
+        status_event_families = _lower_status_event_families(status_callbacks, status_callback_tasks)
 
         return CanonicalIR(
             version=BASELINE_VERSION,
@@ -3730,6 +3758,73 @@ def _lower_status_event_families(
             )
         )
     return families
+
+
+def _status_event_blocked_reasons(status_event_families: list[StatusEventFamilyIR]) -> dict[str, str]:
+    return {
+        family.callback_event: family.blocking_dependency or family.blocked_reason
+        for family in status_event_families
+        if family.coverage_status != "executable" or family.admission_status != "executable"
+    }
+
+
+def _block_status_callbacks_by_event_family(
+    status_callbacks: list[StatusCallbackIR],
+    blocked_reasons_by_event: dict[str, str],
+) -> list[StatusCallbackIR]:
+    blocked_callbacks: list[StatusCallbackIR] = []
+    for callback in status_callbacks:
+        reason = blocked_reasons_by_event.get(callback.event)
+        if not reason:
+            blocked_callbacks.append(callback)
+            continue
+        blocked_callbacks.append(
+            replace(
+                callback,
+                coverage_status="blocked",
+                admission_status="blocked",
+                blocked_reason=callback.blocked_reason or reason,
+                blocking_dependency=callback.blocking_dependency or reason,
+            )
+        )
+    return blocked_callbacks
+
+
+def _block_status_callback_tasks_by_callback(
+    status_callback_tasks: list[StatusCallbackTaskIR],
+    blocked_reasons_by_callback: dict[str, str],
+) -> list[StatusCallbackTaskIR]:
+    blocked_tasks: list[StatusCallbackTaskIR] = []
+    for task in status_callback_tasks:
+        reason = blocked_reasons_by_callback.get(task.callback_id)
+        if not reason:
+            blocked_tasks.append(task)
+            continue
+        blocked_tasks.append(
+            replace(
+                task,
+                coverage_status="blocked",
+                blocked_reason=task.blocked_reason or reason,
+            )
+        )
+    return blocked_tasks
+
+
+def _block_status_callback_derived_by_callback(items: list[Any], blocked_reasons_by_callback: dict[str, str]) -> list[Any]:
+    blocked_items: list[Any] = []
+    for item in items:
+        reason = blocked_reasons_by_callback.get(item.callback_id)
+        if not reason:
+            blocked_items.append(item)
+            continue
+        blocked_items.append(
+            replace(
+                item,
+                coverage_status="blocked",
+                blocked_reason=item.blocked_reason or reason,
+            )
+        )
+    return blocked_items
 
 
 def _status_event_family_name(event: str) -> str:
