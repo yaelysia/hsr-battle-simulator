@@ -23,9 +23,25 @@ from ..tbgd.paths import find_tbgd_root
 from .io import write_json
 from .static_checks import run_static_checks
 from .validate_v0_254 import _kill_to_extra_turn_case
+from .validate_v0_282 import (
+    _counter_route_case as _counter_route_case_v0_282,
+    _negative_cases as _counter_negative_cases_v0_282,
+    _select_counter_sample,
+    _strip_runtime,
+)
 
 
 VALIDATION_VERSION = "p1_5_queue_window_system"
+COUNTER_CALLBACK_EVENTS = {
+    "OnAfterBeingAttacked",
+    "OnListenBeforeBeingHit",
+}
+COUNTER_TARGET_ALIASES = {
+    "ParamEntity",
+    "DamageAttackerEntity",
+    "CurrentActionTarget",
+    "AbilityTargetEntity",
+}
 
 
 def run_validation(package_root: Path, tbgd_root: Path, output_dir: Path) -> dict[str, object]:
@@ -41,7 +57,8 @@ def run_validation(package_root: Path, tbgd_root: Path, output_dir: Path) -> dic
     insert_ability_case = _insert_ability_case(rules)
     selectable_ultimate_case = _selectable_ultimate_case(rules)
     extra_turn_case = _extra_turn_case(ir, rules)
-    family_gaps = _queue_family_source_gaps(ir)
+    counter_case = _counter_case(package_root.parent, rules)
+    family_gaps = _queue_family_source_gaps(ir, counter_executable=counter_case["checks"]["ok"])
     actor_removed_case = _actor_target_lifecycle_case(rules)
     unknown_family_case = _unknown_family_blocked_case(ir)
     conditional_case = _conditional_queue_case(ir, rules)
@@ -56,6 +73,7 @@ def run_validation(package_root: Path, tbgd_root: Path, output_dir: Path) -> dic
         "insert_ability": insert_ability_case["checks"],
         "selectable_ultimate": selectable_ultimate_case["checks"],
         "extra_turn": extra_turn_case["checks"],
+        "counter_route": counter_case["checks"],
         "family_gaps": family_gaps["checks"],
         "actor_target_lifecycle": actor_removed_case["checks"],
         "unknown_family_blocked": unknown_family_case["checks"],
@@ -94,6 +112,7 @@ def run_validation(package_root: Path, tbgd_root: Path, output_dir: Path) -> dic
             "insert_ability": insert_ability_case,
             "selectable_ultimate": selectable_ultimate_case,
             "extra_turn": extra_turn_case,
+            "counter_route": counter_case,
             "family_gaps": family_gaps,
             "actor_target_lifecycle": actor_removed_case,
             "unknown_family_blocked": unknown_family_case,
@@ -109,6 +128,7 @@ def run_validation(package_root: Path, tbgd_root: Path, output_dir: Path) -> dic
     write_json(output_dir / "queue_mandatory_drain_case_p1_5.json", mandatory_case)
     write_json(output_dir / "queue_selectable_ultimate_case_p1_5.json", selectable_ultimate_case)
     write_json(output_dir / "queue_extra_turn_case_p1_5.json", extra_turn_case)
+    write_json(output_dir / "queue_counter_route_case_p1_5.json", counter_case)
     write_json(output_dir / "queue_family_source_gaps_p1_5.json", family_gaps)
     write_json(output_dir / "queue_actor_removed_case_p1_5.json", actor_removed_case)
     write_json(output_dir / "queue_unknown_family_blocked_case_p1_5.json", unknown_family_case)
@@ -465,7 +485,53 @@ def _extra_turn_case(ir, rules: RuleBook) -> dict[str, Any]:
     return {"checks": {"ok": checks["ok"], "checks": checks}, "case": case}
 
 
-def _queue_family_source_gaps(ir) -> dict[str, Any]:
+def _counter_case(hsr_root: Path, rules: RuleBook) -> dict[str, Any]:
+    sample = _select_counter_sample(rules)
+    route_case = _counter_route_case_v0_282(hsr_root, rules, sample)
+    negative_case = _counter_negative_cases_v0_282(rules, sample, route_case)
+    queue_entries = _counter_queue_entries(route_case)
+    semantic_counter_entries = [
+        entry
+        for entry in queue_entries
+        if "counter" in _entry_semantic_families(entry)
+    ]
+    source_audit = route_case.get("source_audit") if isinstance(route_case.get("source_audit"), dict) else {}
+    replay = route_case.get("replay") if isinstance(route_case.get("replay"), dict) else {}
+    transitions = route_case.get("transitions") if isinstance(route_case.get("transitions"), dict) else {}
+    checks = {
+        "structured_counter_sample_selected": sample["checks"]["ok"],
+        "counter_route_ok": route_case["checks"]["ok"],
+        "counter_negative_cases_ok": negative_case["checks"]["ok"],
+        "counter_queue_semantic_tagged": bool(semantic_counter_entries),
+        "counter_queue_uses_generic_insert_ability_family": any(
+            str(entry.get("window_family") or "") == "insert_ability"
+            for entry in semantic_counter_entries
+        ),
+        "counter_source_audit_ok": all(
+            isinstance(item, dict) and item.get("ok") is True
+            for item in source_audit.values()
+        ),
+        "counter_replay_ok": all(
+            isinstance(item, dict) and item.get("ok") is True
+            for item in replay.values()
+        ),
+        "counter_enqueue_transition_present": bool(transitions.get("attack")),
+        "counter_drain_transition_present": bool(transitions.get("drain")),
+        "counter_blocked_negatives_no_mutation": negative_case["checks"]["ok"],
+    }
+    checks["ok"] = all(value for key, value in checks.items() if key != "ok")
+    return {
+        "schema_version": "v8_p1_5_counter_route_final",
+        "checks": {"ok": checks["ok"], "checks": checks},
+        "selection": sample["selection_policy"],
+        "sample": sample["sample"],
+        "positive_route": _strip_runtime(route_case),
+        "negative_cases": negative_case,
+        "semantic_counter_entries": semantic_counter_entries,
+    }
+
+
+def _queue_family_source_gaps(ir, *, counter_executable: bool = False) -> dict[str, Any]:
     rows = []
     for family in ("follow_up", "counter", "assistant", "interrupt", "immediate", "unknown"):
         structural_windows = [window for window in ir.queue_windows if window.window_family == family]
@@ -493,7 +559,8 @@ def _queue_family_source_gaps(ir) -> dict[str, Any]:
             for window in semantic_windows
         )
         source_window_family = Counter(window.window_family for window in windows)
-        if executable:
+        semantic_e2e_executable_count = 1 if family == "counter" and counter_executable else 0
+        if executable or semantic_e2e_executable_count:
             classification = "executable"
         elif semantic_windows:
             classification = "admission_gap"
@@ -509,6 +576,7 @@ def _queue_family_source_gaps(ir) -> dict[str, Any]:
                 "semantic_hint_count": len(semantic_windows),
                 "executable_count": len(executable),
                 "admitted_family_executable_count": len(executable),
+                "semantic_e2e_executable_count": semantic_e2e_executable_count,
                 "semantic_executable_source_count": len(semantic_executable),
                 "blocked_count": len(windows) - len(executable),
                 "classification": classification,
@@ -858,7 +926,54 @@ def _queue_window_semantic_families(window: QueueWindowIR) -> tuple[str, ...]:
     basis_hints = source_basis.get("text_hints")
     if isinstance(basis_hints, (list, tuple)):
         families.extend(str(item) for item in basis_hints if isinstance(item, str) and item)
+    families.extend(_structured_queue_semantic_families(window.source.to_json()))
     return tuple(sorted(set(families)))
+
+
+def _entry_semantic_families(entry: dict[str, Any]) -> tuple[str, ...]:
+    policy = entry.get("window_policy") if isinstance(entry.get("window_policy"), dict) else {}
+    families: list[str] = []
+    text_hints = policy.get("text_hints")
+    if isinstance(text_hints, (list, tuple)):
+        families.extend(str(item) for item in text_hints if isinstance(item, str) and item)
+    source_basis = policy.get("source_basis") if isinstance(policy.get("source_basis"), dict) else {}
+    basis_hints = source_basis.get("text_hints")
+    if isinstance(basis_hints, (list, tuple)):
+        families.extend(str(item) for item in basis_hints if isinstance(item, str) and item)
+    source_trace = entry.get("source_trace") if isinstance(entry.get("source_trace"), dict) else {}
+    families.extend(_structured_queue_semantic_families(source_trace.get("queue_window_source")))
+    families.extend(_structured_queue_semantic_families(source_trace.get("queue_intent_source")))
+    return tuple(sorted(set(families)))
+
+
+def _structured_queue_semantic_families(source: Any) -> tuple[str, ...]:
+    if not isinstance(source, dict):
+        return ()
+    evidence = source.get("evidence") if isinstance(source.get("evidence"), dict) else {}
+    intent_source = evidence.get("queue_intent_source")
+    if isinstance(intent_source, dict):
+        nested = _structured_queue_semantic_families(intent_source)
+        if nested:
+            return nested
+    event = str(evidence.get("event") or "")
+    opcode = str(evidence.get("opcode") or "")
+    task = evidence.get("task") if isinstance(evidence.get("task"), dict) else {}
+    target = task.get("AbilityTarget") if isinstance(task.get("AbilityTarget"), dict) else {}
+    target_alias = str(target.get("Alias") or "")
+    if event in COUNTER_CALLBACK_EVENTS and opcode == "TurnInsertAbility" and target_alias in COUNTER_TARGET_ALIASES:
+        return ("counter",)
+    return ()
+
+
+def _counter_queue_entries(route_case: dict[str, Any]) -> list[dict[str, Any]]:
+    snapshots = route_case.get("snapshots") if isinstance(route_case.get("snapshots"), dict) else {}
+    queues = snapshots.get("after_attack_queues") if isinstance(snapshots.get("after_attack_queues"), dict) else {}
+    entries: list[dict[str, Any]] = []
+    for value in queues.values():
+        if not isinstance(value, list):
+            continue
+        entries.extend(dict(item) for item in value if isinstance(item, dict))
+    return entries
 
 
 def _transition_checks(transition, before_state: BattleState) -> dict[str, bool]:

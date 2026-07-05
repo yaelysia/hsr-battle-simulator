@@ -142,8 +142,8 @@
 
 完成口径：
 
-- [x] P1-3-SUBSTRATE-ACCEPTED 普通 `SummonMonster` 已有真实来源正例，可从 IR admission 到 `UnitSpawn` / summon runtime mutation，并通过 replay/source audit；assistant/servant blocked 边界不产生 mutation。
-- [ ] P1-3-DONE summon、assistant、servant/忆灵均按真实来源形成可执行实体或队列语义。当前 servant/忆灵仍是 `implementation_missing`：定义已发现，但 owner/stat/timeline/action/lifecycle admission 未完成；assistant 当前是 `boundary_only`，不能冒充 executable。
+- [x] P1-3-SUBSTRATE-ACCEPTED 普通 `SummonMonster` 与 servant/忆灵已有真实来源正例，可从 IR admission 到 `UnitSpawn` / summon runtime mutation，并通过 replay/source audit；assistant boundary 不产生 mutation。
+- [ ] P1-3-DONE summon、assistant、servant/忆灵均按真实来源形成可执行实体或队列语义。普通 summon 与 servant/忆灵已形成第一阶段真实来源可执行纵切；assistant 当前是 `boundary_only`，不作为 P1 minimum blocker，但不能冒充 executable。
 
 ## P1-4 状态系统主体
 
@@ -284,7 +284,7 @@
 完成口径：
 
 - [x] P1-6-SUBSTRATE-ACCEPTED 目标系统底座已通过有来源正例和 source-gap/blocked 验证；target resolution record 完整，缺排序、缺 payload、缺 RNG choice、unique not found、target removed/defeated 均 blocked/state unchanged。
-- [x] P1-6-DONE sort/fetch/adjacent/random/unique/summon target 的第一阶段关键子集均有真实来源正例可用，目标失败不产生 mutation。后续修正后 `formation sort`、`toughness sort`、`owner fetch` 均已有全局 TargetAlias/TargetOperation 来源正例；剩余缺口是 servant target 无 executable runtime registry。
+- [x] P1-6-DONE sort/fetch/adjacent/random/unique/summon/servant target 的第一阶段关键子集均有真实来源正例可用，目标失败不产生 mutation。后续修正后 `formation sort`、`toughness sort`、`owner fetch` 均已有全局 TargetAlias/TargetOperation 来源正例；servant target 已通过 runtime servant registry 正例和 flag-only 负例。
 
 ## P1-7 RNG 与分支基础
 
@@ -346,14 +346,14 @@
 - [x] P1-8.6 增加 initial SP / max SP 配置和范围校验。
 - [x] P1-8.7 增加 initial energy、energy ratio、HP ratio 配置和歧义/越界负例。
 - [x] P1-8.8 增加 source-backed initial statuses 配置，复用 `StatusSystem.apply_add_modifier`。
-- [x] P1-8.9 增加 initial summon/servant 配置，summoned monster 复用 `SummonSystem`；servant/忆灵目前因 owner/stat/timeline/action/lifecycle admission 未完成而 blocked/no mutation，不能再写成完整机制完成。
+- [x] P1-8.9 增加 initial summon/servant 配置，summoned monster 与 servant/忆灵均复用 `SummonSystem`；servant/忆灵通过 `ServantDefinitionIR` owner/stat/timeline/action/lifecycle admission 后可生成开局 unit。
 - [x] P1-8.10 增加 initial timeline 配置或明确由 runtime scheduler 初始化。
 - [x] P1-8.11 增加 scenario-level deterministic RNG choices / rng_mode 配置，并合并到 route command metadata。
 - [x] P1-8.12 增加 objective metadata 预留，确认不影响规则执行。
 - [x] P1-8.13 确保配置入口不成为规则来源，并增加 no-rule-injection/static boundary 检查。
 - [x] P1-8.14 增加 two-wave setup 验证。
 - [x] P1-8.15 增加 initial statuses setup 验证，包含真实来源正例和 blocked/no mutation 负例。
-- [x] P1-8.16 增加 initial summon setup 验证，包含真实 summoned monster 正例和 servant admission-missing blocked/no mutation 负例。
+- [x] P1-8.16 增加 initial summon setup 验证，包含真实 summoned monster 正例、servant/忆灵 initial setup 正例和缺来源/缺 ref 负例。
 - [x] P1-8.17 增加 deterministic rng setup 验证，确认同一 setup + command 可 replay。
 - [x] P1-8.18 增加不存在 card/profile/effect/summon/wave 或 invalid ratio 构建失败或 blocked 验证。
 - [x] P1-8.19 更新 scenario README 和阶段报告，说明第一阶段配置入口边界。
@@ -363,7 +363,7 @@
 完成口径：
 
 - [x] P1-8-SUBSTRATE-ACCEPTED 可以用配置文件构建两波、有状态、有普通 summoned monster、有 deterministic RNG 的第一阶段验证战斗；BattleSetup 不成为规则来源。
-- [ ] P1-8-DONE BattleSetup 还能用真实来源生成开局 servant/忆灵或明确 owner-bound component。当前 servant/忆灵 initial setup 是 `implementation_missing`，`SummonUnitData` catalog/battle_unit_summon 边界是 `boundary_only`。
+- [x] P1-8-DONE BattleSetup 能用真实来源生成开局 servant/忆灵；`SummonUnitData` catalog/battle_unit_summon 边界仍是 `boundary_only`。
 
 ## P1-9 聚合验证与阶段验收
 
@@ -378,7 +378,7 @@
 - [x] P1-9.3 新增 `validate_p1_9_phase1_aggregate.py` 主验证脚本，默认只构建一次 RuleBook，不以 subprocess 串联旧验证作为主路径。
 - [x] P1-9.4 定义聚合报告 schema，矩阵项必须包含 `phase_item`、`source_state`、`validation_state`、positive/negative case count、replay/source audit 状态。
 - [x] P1-9.5 按结构化谓词选择聚合样例，不依赖固定角色名、怪物名、action id、stage id、文件名或 hash。
-- [x] P1-9.6 构造 BattleSetup 聚合 scenario：two-wave、source-backed initial status、source-backed summoned monster、servant admission-missing boundary、timeline、RNG、objective。
+- [x] P1-9.6 构造 BattleSetup 聚合 scenario：two-wave、source-backed initial status、source-backed summoned monster、source-backed servant、timeline、RNG、objective，并保留 battle_unit_summon boundary。
 - [x] P1-9.7 执行至少一个 route transition 作为 route contract 样本；若 route 无 mutation，必须标为 `route_contract_only_no_mutation`，并用有真实 mutation 的 setup/direct transition 提供 snapshot replay、`RuntimeSourceAuditor`、`SettlementTraceabilityValidator` 正例。
 - [x] P1-9.8 聚合 action boundary 验证：core 暴露合法输入，enemy action 由外部输入，mandatory queue 与 selectable action 不混淆。
 - [x] P1-9.9 聚合 lifecycle / wave / summon 验证：spawn/defeat/remove/wave runtime/summon runtime mutation 可 replay/source audit，servant 不伪造。
@@ -394,34 +394,34 @@
 
 完成口径：
 
-- [x] P1-9-DONE 第一阶段聚合验证底座通过，报告说明当前 executable、boundary_only、source_absent_not_required、implementation_missing 范围、`phase1_minimum_battle_slice` 是否满足，以及距离完整复刻还缺什么。
+- [x] P1-9-DONE 第一阶段聚合验证通过，报告说明当前 executable、boundary_only、source_absent_not_required 范围；`phase1_minimum_battle_slice=true` 且 blocker 为空，同时继续说明距离完整复刻还缺什么。
 
 ## 全阶段验收
 
 以下全部勾选后，第一阶段才算完成：
 
-- [ ] PHASE1-ACCEPT-1 外部可以显式驱动 ally/enemy/summon 合法动作。
-- [ ] PHASE1-ACCEPT-2 core 不做敌方 AI。
-- [ ] PHASE1-ACCEPT-3 多波战斗可通过 WaveSystem 推进。
-- [ ] PHASE1-ACCEPT-4 单位 spawn、defeat、remove 可 replay。
-- [ ] PHASE1-ACCEPT-5 至少一种 summon 或 assistant 机制能真实执行。
-- [ ] PHASE1-ACCEPT-6 状态 stack、refresh、duration、tick、chance/resist/immunity、dispel 有通用底座。
-- [ ] PHASE1-ACCEPT-7 follow-up、counter、extra turn、assistant、ultimate window 有清晰队列/window 语义。
-- [ ] PHASE1-ACCEPT-8 sort/fetch/adjacent/random/unique/summon target 的关键子集可用。
-- [ ] PHASE1-ACCEPT-9 RNG 事件进入 transition，不存在不可追踪随机。
-- [ ] PHASE1-ACCEPT-10 最小 BattleSetup 能构建两波、有状态、有召唤、有 deterministic RNG 的验证场景。
+- [x] PHASE1-ACCEPT-1 外部可以显式驱动 ally/enemy/summon 合法动作。
+- [x] PHASE1-ACCEPT-2 core 不做敌方 AI。
+- [x] PHASE1-ACCEPT-3 多波战斗可通过 WaveSystem 推进。
+- [x] PHASE1-ACCEPT-4 单位 spawn、defeat、remove 可 replay。
+- [x] PHASE1-ACCEPT-5 至少一种 summon 或 assistant 机制能真实执行。
+- [x] PHASE1-ACCEPT-6 状态 stack、refresh、duration、tick、chance/resist/immunity、dispel 有通用底座。
+- [x] PHASE1-ACCEPT-7 follow-up、counter、extra turn、assistant、ultimate window 有清晰队列/window 语义。
+- [x] PHASE1-ACCEPT-8 sort/fetch/adjacent/random/unique/summon/servant target 的关键子集可用。
+- [x] PHASE1-ACCEPT-9 RNG 事件进入 transition，不存在不可追踪随机。
+- [x] PHASE1-ACCEPT-10 最小 BattleSetup 能构建两波、有状态、有召唤、有 servant、有 deterministic RNG 的验证场景。
 - [x] PHASE1-ACCEPT-11 聚合 validation 通过。
 - [x] PHASE1-ACCEPT-12 snapshot replay 通过。
 - [x] PHASE1-ACCEPT-13 source audit 通过。
 - [x] PHASE1-ACCEPT-14 blocked/audit_only/discovered_only 不产生 mutation。
 - [x] PHASE1-ACCEPT-15 runtime 不引用旧 simulator、旧 model pack、TextMap、raw TBGD。
 
-P1-9 聚合报告显示 `phase1_minimum_battle_slice=false`。当前全阶段验收仍受未完成缺口阻塞，但这些缺口不能再统一叫 source gap。random dispel Order=Random 当前是 `source_absent_not_required`，不再作为第一阶段 blocker；formation sort、toughness sort、owner fetch 已修正为 executable；stack+duration refresh 当前无组合来源正例，不合成 synthetic case；servant target、servant/忆灵 initial setup 是 `implementation_missing`；battle_unit_summon initial setup 是 `boundary_only`，因为 `SummonUnitData` 是 catalog/definition，不是自动 battle spawn trigger。上述未完成项不能合成正例，也不能因此勾选第一阶段最小可用战斗纵切。
+P1-9 聚合报告显示 `phase1_minimum_battle_slice=true` 且 blocker 为空。random dispel Order=Random 当前是 `source_absent_not_required`，不作为第一阶段 blocker；stack+duration refresh 当前无组合来源正例，不合成 synthetic case；follow-up 当前未发现第一阶段可执行来源，不阻塞 P1；assistant 和 battle_unit_summon 当前是 `boundary_only`。servant/忆灵 runtime、target 和 initial setup 已有真实来源正例。反击已由 `OnAfterBeingAttacked` / `TurnInsertAbility` / attacker target alias 的结构化来源形成端到端正例，并通过 replay/source audit/负例验证。
 
 ## 当前状态
 
 - [ ] 第一阶段未开始实现。
-- [x] 第一阶段实现中。
-- [ ] 第一阶段已完成。
+- [ ] 第一阶段实现中。
+- [x] 第一阶段已完成。
 
-当前建议进入 P1 repair 后续的缺口收敛：优先补当前数据库有真实来源但 runtime 仍缺 admission 的项，尤其 servant/忆灵；对当前数据库没有真实来源且不属于当前阶段必做的项继续保持 `source_absent_not_required` 或 `boundary_only`。不要为了勾第一阶段最小纵切合成正例。
+当前建议进入 P2，而不是继续第一阶段修补。后续仍要保持 executable / boundary_only / source_absent_not_required / implementation_missing 分流；assistant、battle_unit_summon、random dispel、stack+duration refresh、follow-up 等未完成或无来源项不能为了扩展覆盖率合成正例。

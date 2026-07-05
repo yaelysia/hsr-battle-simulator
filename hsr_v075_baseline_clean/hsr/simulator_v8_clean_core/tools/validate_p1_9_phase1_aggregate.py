@@ -51,6 +51,7 @@ from .validate_p1_4_status_system import (
 from .validate_p1_5_queue_window_system import (
     _actor_target_lifecycle_case,
     _conditional_queue_case,
+    _counter_case,
     _current_queue_scope,
     _extra_turn_case,
     _insert_ability_case,
@@ -139,7 +140,7 @@ def run_validation(
     )
     status_transition_case = _direct_status_transition_case(rules, action, enemy_ref, status_effect)
 
-    direct_cases = _direct_cases(rules)
+    direct_cases = _direct_cases(package_root.parent, rules)
     servant_case = _servant_initial_summon_case(rules, enemy_ref)
     battle_unit_summon_blocked = _blocked_initial_summon_case(rules, action, enemy_ref, "battle_unit_summon")
     blocked_status_case = _blocked_status_case(rules, action, enemy_ref)
@@ -523,11 +524,11 @@ def _aggregate_scenario_data(
     return data
 
 
-def _direct_cases(rules: RuleBook) -> dict[str, Any]:
+def _direct_cases(hsr_root: Path, rules: RuleBook) -> dict[str, Any]:
     return {
         "lifecycle": _json_safe(_damage_defeat_case()),
         "status_regression": _status_regression_cases(rules),
-        "queue_regression": _queue_regression_cases(rules),
+        "queue_regression": _queue_regression_cases(hsr_root, rules),
         "queue_scope": _json_safe(_current_queue_scope(rules.ir)),
         "queue_source": _json_safe(_queue_source_matrix(rules.ir, rules)),
         "rng_helper": _json_safe(_rng_helper_cases()),
@@ -562,13 +563,17 @@ def _status_regression_cases(rules: RuleBook) -> dict[str, Any]:
     }
 
 
-def _queue_regression_cases(rules: RuleBook) -> dict[str, Any]:
+def _queue_regression_cases(hsr_root: Path, rules: RuleBook) -> dict[str, Any]:
+    counter_case = _counter_case(hsr_root, rules)
     cases = {
         "mandatory_insert_action": _compact_case(_mandatory_insert_action_case(rules)),
         "insert_ability": _compact_case(_insert_ability_case(rules)),
         "selectable_ultimate": _compact_case(_selectable_ultimate_case(rules)),
         "extra_turn": _compact_case(_extra_turn_case(rules.ir, rules)),
-        "family_gaps": _compact_case(_queue_family_source_gaps(rules.ir)),
+        "counter_route": _compact_case(counter_case),
+        "family_gaps": _compact_case(
+            _queue_family_source_gaps(rules.ir, counter_executable=counter_case["checks"]["ok"])
+        ),
         "actor_target_lifecycle": _compact_case(_actor_target_lifecycle_case(rules)),
         "conditional_queue": _compact_case(_conditional_queue_case(rules.ir, rules)),
         "source_contract": _compact_case(_queue_source_contract_case(rules.ir)),
@@ -578,6 +583,7 @@ def _queue_regression_cases(rules: RuleBook) -> dict[str, Any]:
         "mandatory_insert_action",
         "insert_ability",
         "selectable_ultimate",
+        "counter_route",
         "actor_target_lifecycle",
         "conditional_queue",
         "source_contract",
@@ -1018,8 +1024,11 @@ def _source_gap_matrix(
         row = next((item for item in queue_family_rows if item.get("window_family") == family), {})
         total_count = int(row.get("total_count") or 0) if isinstance(row, dict) else 0
         executable_count = int(row.get("executable_count") or 0) if isinstance(row, dict) else 0
+        semantic_e2e_executable_count = (
+            int(row.get("semantic_e2e_executable_count") or 0) if isinstance(row, dict) else 0
+        )
         family_classification = str(row.get("classification") or "") if isinstance(row, dict) else ""
-        if executable_count:
+        if executable_count or semantic_e2e_executable_count or family_classification == "executable":
             source_state = "executable"
             classification = "executable"
         elif family_classification in {"lowering_gap", "admission_gap", "validation_gap"}:
