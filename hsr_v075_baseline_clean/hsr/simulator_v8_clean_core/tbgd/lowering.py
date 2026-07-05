@@ -105,6 +105,11 @@ ENTITY_TABLES: dict[str, tuple[str, str, tuple[str, ...]]] = {
         "SkillID",
         ("SkillTriggerKey", "SkillEffect", "AttackType", "MaxLevel"),
     ),
+    "ExcelOutput/StatusConfig.json": (
+        "status",
+        "StatusID",
+        ("ModifierName", "StatusType", "CanDispel", "ReadParamList", "TagList"),
+    ),
     "ExcelOutput/AvatarStatusConfig.json": (
         "status",
         "StatusID",
@@ -114,6 +119,16 @@ ENTITY_TABLES: dict[str, tuple[str, str, tuple[str, ...]]] = {
         "status",
         "StatusID",
         ("ModifierName", "StatusType", "CanDispel", "ReadParamList", "TagList"),
+    ),
+    "ExcelOutput/MonsterStatusConfig.json": (
+        "status",
+        "StatusID",
+        ("ModifierName", "StatusType", "CanDispel", "ReadParamList", "TagList"),
+    ),
+    "ExcelOutput/ILBattleStatusConfig.json": (
+        "status",
+        "ID",
+        ("ModifierName", "StatusType", "CanDispel", "ReadParamList", "TagList", "DisplayPriority"),
     ),
     "ExcelOutput/ILBattleMonsterSkill.json": (
         "ilbattle_monster_skill",

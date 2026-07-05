@@ -134,6 +134,66 @@ def validate_p2_status_inventory_matrix(matrix: dict[str, Any]) -> dict[str, Any
     return {"ok": checks["ok"], "checks": checks}
 
 
+def validate_p2_ir_rulebook_integrity_matrix(matrix: dict[str, Any]) -> dict[str, Any]:
+    definitions = matrix["ir_status_sources"]["definitions"]
+    effects = matrix["ir_status_sources"]["status_effects"]
+    callbacks = matrix["ir_status_sources"]["callbacks"]
+    numeric = matrix["ir_status_sources"]["status_damage_and_numeric"]
+    status_entity_count = definitions["status_entity_count"]
+    modifier_definition_count = definitions["modifier_definition_count"]
+    modifier_fields = definitions["modifier_definition_required_field_counts"]
+    status_fields = definitions["status_entity_field_counts"]
+    family_matrix = matrix["status_family_matrix"]
+    checks = {
+        "status_entity_count_covers_raw_catalog": status_entity_count >= matrix["status_catalog"]["status_definition_total"],
+        "modifier_definitions_rulebook_visible": (
+            definitions["modifier_definitions_rulebook_visible"] == modifier_definition_count
+        ),
+        "status_entities_rulebook_visible": definitions["status_entities_rulebook_visible"] == status_entity_count,
+        "modifier_definition_source_trace_complete": (
+            definitions["modifier_definition_source_trace_complete"] == modifier_definition_count
+        ),
+        "status_entity_source_trace_complete": definitions["status_entity_source_trace_complete"] == status_entity_count,
+        "modifier_definition_core_fields_present": all(
+            modifier_fields.get(key, 0) == modifier_definition_count
+            for key in (
+                "modifier_name",
+                "stacking",
+                "lifetime_expr",
+                "duration_admission",
+                "behavior_flags",
+                "dynamic_value_bindings",
+                "callback_events",
+                "stack_properties",
+            )
+        ),
+        "status_entity_modifier_name_present": status_fields.get("ModifierName", 0) == status_entity_count,
+        "status_entity_status_type_present": status_fields.get("StatusType", 0) == status_entity_count,
+        "status_entity_can_dispel_counted": "CanDispel" in status_fields,
+        "status_effect_source_trace_complete": effects["source_trace_complete"] == effects["total"],
+        "callbacks_rulebook_visible": callbacks["callbacks_rulebook_visible"] == callbacks["total_callbacks"],
+        "event_families_rulebook_visible": (
+            callbacks["event_families_rulebook_visible"] == callbacks["total_event_families"]
+        ),
+        "callback_tasks_source_trace_complete": (
+            callbacks["callback_task_source_trace_complete"] == callbacks["total_callback_tasks"]
+        ),
+        "status_damage_source_trace_complete": (
+            numeric["status_damage_source_trace_complete"] == numeric["status_damage_emission_count"]
+        ),
+        "action_delay_source_trace_complete": (
+            numeric["action_delay_source_trace_complete"] == numeric["action_delay_emission_count"]
+        ),
+        "no_family_lowering_or_admission_gap": not any(
+            item["classification"] in {"lowering_gap", "admission_gap"}
+            for item in family_matrix.values()
+        ),
+        "all_families_classified": matrix["unclassified_count"] == 0,
+    }
+    checks["ok"] = all(value for key, value in checks.items() if key != "ok")
+    return {"ok": checks["ok"], "checks": checks}
+
+
 def _raw_status_source_matrix(tbgd_root: Path) -> dict[str, Any]:
     records: list[dict[str, Any]] = []
     callback_events = Counter()
@@ -263,8 +323,31 @@ def _ir_status_source_matrix(ir: CanonicalIR, rules: RuleBook) -> dict[str, Any]
             "status_entity_count": len(status_entities),
             "modifier_definitions_rulebook_visible": _modifier_definition_visibility(rules, modifier_definitions),
             "status_entities_rulebook_visible": _status_entity_visibility(rules, status_entities),
+            "modifier_definition_source_trace_complete": _source_trace_complete_count(modifier_definitions),
+            "status_entity_source_trace_complete": _source_trace_complete_count(status_entities),
             "modifier_definition_coverage_counts": _entity_coverage_counts(modifier_definitions),
             "status_entity_coverage_counts": _entity_coverage_counts(status_entities),
+            "modifier_definition_required_field_counts": _field_presence_counts(
+                modifier_definitions,
+                (
+                    "modifier_name",
+                    "stacking",
+                    "lifetime",
+                    "lifetime_expr",
+                    "life_step_moment",
+                    "duration_admission",
+                    "behavior_flags",
+                    "dynamic_values",
+                    "dynamic_value_bindings",
+                    "callback_dynamic_hashes",
+                    "callback_events",
+                    "stack_properties",
+                ),
+            ),
+            "status_entity_field_counts": _field_presence_counts(
+                status_entities,
+                ("ModifierName", "StatusType", "CanDispel", "ReadParamList", "TagList", "DisplayPriority"),
+            ),
             "samples": {
                 "modifier_definition": _sample_entity(modifier_definitions[0]) if modifier_definitions else None,
                 "status_entity": _sample_entity(status_entities[0]) if status_entities else None,
@@ -273,6 +356,7 @@ def _ir_status_source_matrix(ir: CanonicalIR, rules: RuleBook) -> dict[str, Any]
         "status_effects": {
             "total": len(status_effects),
             "opcode_counts": dict(sorted(effects_by_opcode.items())),
+            "source_trace_complete": _source_trace_complete_count(status_effects),
             "coverage_by_opcode": {
                 opcode: dict(sorted(counter.items()))
                 for opcode, counter in sorted(coverage_by_opcode.items())
@@ -299,6 +383,9 @@ def _ir_status_source_matrix(ir: CanonicalIR, rules: RuleBook) -> dict[str, Any]
             "event_families_rulebook_visible": sum(
                 1 for family in ir.status_event_families if rules.status_event_family(family.callback_event) is not None
             ),
+            "callback_source_trace_complete": _source_trace_complete_count(ir.status_callbacks),
+            "callback_task_source_trace_complete": _source_trace_complete_count(ir.status_callback_tasks),
+            "event_family_source_trace_complete": _source_trace_complete_count(ir.status_event_families),
             "samples": {
                 "event_family": ir.status_event_families[0].to_json() if ir.status_event_families else None,
                 "callback": ir.status_callbacks[0].to_json() if ir.status_callbacks else None,
@@ -307,12 +394,16 @@ def _ir_status_source_matrix(ir: CanonicalIR, rules: RuleBook) -> dict[str, Any]
         },
         "status_damage_and_numeric": {
             "status_damage_emission_count": len(ir.status_damage_emissions),
+            "status_damage_source_trace_complete": _source_trace_complete_count(ir.status_damage_emissions),
             "status_damage_coverage_counts": dict(sorted(status_damage_by_coverage.items())),
             "damage_modifier_count": len(ir.damage_modifiers),
+            "damage_modifier_source_trace_complete": _source_trace_complete_count(ir.damage_modifiers),
             "damage_modifier_coverage_counts": dict(sorted(damage_modifier_by_coverage.items())),
             "action_delay_emission_count": len(ir.action_delay_emissions),
+            "action_delay_source_trace_complete": _source_trace_complete_count(ir.action_delay_emissions),
             "action_delay_coverage_counts": dict(sorted(action_delay_by_coverage.items())),
             "queue_intent_count": len(ir.queue_intents),
+            "queue_intent_source_trace_complete": _source_trace_complete_count(ir.queue_intents),
             "queue_intent_coverage_counts": dict(sorted(queue_intent_by_coverage.items())),
             "dynamic_value_definition_count": _dynamic_value_definition_count(modifier_definitions),
             "formula_binding_add_modifier_count": _status_formula_binding_effect_count(status_effects),
@@ -621,6 +712,24 @@ def _sample_entity(entity: RuleEntity) -> dict[str, Any]:
 
 def _entity_coverage_counts(entities: list[RuleEntity]) -> dict[str, int]:
     return dict(sorted(Counter(entity.coverage_status for entity in entities).items()))
+
+
+def _field_presence_counts(entities: list[RuleEntity], field_names: tuple[str, ...]) -> dict[str, int]:
+    return {
+        field_name: sum(1 for entity in entities if field_name in entity.fields)
+        for field_name in field_names
+    }
+
+
+def _source_trace_complete_count(items: Any) -> int:
+    count = 0
+    for item in items:
+        source = getattr(item, "source", None)
+        if source is None:
+            continue
+        if source.source_path and source.raw_type and source.raw_id:
+            count += 1
+    return count
 
 
 def _modifier_definition_visibility(rules: RuleBook, definitions: list[RuleEntity]) -> int:
