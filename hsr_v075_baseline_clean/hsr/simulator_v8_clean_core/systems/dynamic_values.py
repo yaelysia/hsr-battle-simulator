@@ -283,6 +283,20 @@ def binding_source_from_status_detail(
                 "source_trace": source_trace,
             }
             entries[_entry_key(entry)] = entry
+    remaining_duration = detail.get("remaining_duration")
+    if isinstance(remaining_duration, (int, float)) and not isinstance(remaining_duration, bool):
+        for key in ("LifeTime", "life_time", "remaining_duration"):
+            entry = {
+                "scope": "status_lifetime",
+                "owner_id": owner_id,
+                "status_id": status_id,
+                "status_instance_id": status_instance_id,
+                "name": key,
+                "hash": key,
+                "value": float(remaining_duration),
+                "source_trace": source_trace,
+            }
+            entries[_entry_key(entry)] = entry
     if isinstance(dynamic_values, dict):
         for key, value in dynamic_values.items():
             if key.startswith("__") or not isinstance(value, (int, float)):
