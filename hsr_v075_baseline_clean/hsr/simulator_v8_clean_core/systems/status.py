@@ -801,7 +801,7 @@ class StatusSystem:
         )
 
     def _apply_lifecycle_plan(self, state: BattleState, plan: StatusLifecyclePlan) -> StatusLifecycleResult:
-        if plan.operation in {"add", "refresh", "stack", "stack_refresh", "stack_reduce", "refresh_or_replace_partial", "replace_partial"}:
+        if plan.operation in {"add", "refresh", "replace", "stack", "stack_refresh", "stack_reduce", "refresh_or_replace_partial", "replace_partial"}:
             return _apply_add_lifecycle_plan(state, plan)
         if plan.operation in {"remove", "dispel", "stack_reduce_remove"}:
             return _apply_remove_lifecycle_plan(state, plan)
@@ -1030,6 +1030,7 @@ def _apply_add_lifecycle_plan(state: BattleState, plan: StatusLifecyclePlan) -> 
         "stack_refresh": "status_stack_refresh",
         "stack_reduce": "status_stack_reduce",
         "refresh": "status_refresh",
+        "replace": "status_replace",
         "refresh_or_replace_partial": "status_lifecycle",
         "replace_partial": "status_lifecycle",
     }.get(plan.operation, "status_lifecycle")
@@ -1386,7 +1387,7 @@ def _status_lifecycle_callback_events(plan: StatusLifecyclePlan) -> tuple[str, .
         return ("OnCreate", "OnModifierAdd", "OnAddModifierSuc", "OnListenModifierAdd", *dot_add_events)
     if plan.operation in {"stack", "stack_reduce"}:
         return ("OnStack", "OnModifierAdd", "OnModifierOnStack", "OnListenModifierOnStack")
-    if plan.operation in {"refresh", "refresh_or_replace_partial", "replace_partial"}:
+    if plan.operation in {"refresh", "replace", "refresh_or_replace_partial", "replace_partial"}:
         return ("OnModifierAdd", "OnListenModifierAdd")
     if plan.operation in {"remove", "expire", "dispel", "stack_reduce_remove"}:
         return ("OnDestroy", "OnModifierRemove", "OnListenModifierRemove")
@@ -2026,6 +2027,14 @@ def _status_refresh_plan(
             "remaining_duration_before": before,
             "remaining_duration_after": before,
             "duration_unchanged": True,
+        }
+    if operation == "replace":
+        return {
+            "operation": operation,
+            "refresh_policy": "replace_instance",
+            "remaining_duration_before": before,
+            "remaining_duration_after": new_duration,
+            "duration_unchanged": before == new_duration,
         }
     return {
         "operation": operation,
@@ -2980,6 +2989,11 @@ def _application_semantics(
         )
         refresh_status = str(refresh_admission.get("admission_status") or "")
         refresh_executable = refresh_status == "executable"
+        replace_executable = (
+            not reasons
+            and str(refresh_admission.get("stacking") or "")
+            in {"Replace", "ReplaceByCaster", "ReplaceByCasterAbility"}
+        )
         if stack_executable and refresh_executable:
             operation = "stack_refresh"
         elif stack_executable:
@@ -2988,6 +3002,8 @@ def _application_semantics(
             operation = "stack_reduce"
         elif refresh_executable:
             operation = "refresh"
+        elif replace_executable:
+            operation = "replace"
         elif refresh_status == "blocked":
             operation = "reapply_blocked"
             reasons.append(f"refresh_blocked:{refresh_admission.get('blocked_reason')}")
