@@ -333,7 +333,7 @@ class StatusSystem:
             formula_bindings = _status_formula_bindings(standard)
             before_details = _status_details(unit_flags=state.units[target_id].flags)
             existing_detail = _matching_status_detail(before_details, target_id, modifier_name, effect.effect_id, source_id)
-            status_metadata = _status_metadata(self.rules, modifier_name)
+            status_metadata = _status_metadata(self.rules, modifier_name, definition)
             duration_admission = _runtime_duration_admission(
                 standard,
                 definition,
@@ -3036,7 +3036,7 @@ def _is_missing_numeric_expr(expr: object) -> bool:
     return isinstance(expr, dict) and expr.get("kind") == "missing"
 
 
-def _status_metadata(rules: RuleBook, modifier_name: str) -> dict[str, JSONValue]:
+def _status_metadata(rules: RuleBook, modifier_name: str, definition: RuleEntity | None = None) -> dict[str, JSONValue]:
     entity = rules.status_entity_for_modifier(modifier_name)
     if entity is None:
         return {
@@ -3049,12 +3049,24 @@ def _status_metadata(rules: RuleBook, modifier_name: str) -> dict[str, JSONValue
     status_type = str(entity.fields.get("StatusType") or entity.fields.get("status_type") or "Unknown")
     can_dispel = entity.fields.get("CanDispel")
     control_kind = str(entity.fields.get("ControlKind") or entity.fields.get("control_kind") or "")
+    status_category = _status_category(status_type)
+    behavior_flags = tuple(
+        str(flag)
+        for flag in (definition.fields.get("behavior_flags") if definition is not None else ())
+        if isinstance(flag, str)
+    )
+    control_flag = _control_kind_from_behavior_flags(behavior_flags)
+    if control_flag:
+        status_category = "control"
+        control_kind = control_kind or control_flag
     return {
         "status_type": status_type,
-        "status_category": _status_category(status_type),
+        "status_category": status_category,
         "can_dispel": can_dispel if isinstance(can_dispel, bool) else None,
         "control_kind": control_kind,
         "source": entity.source.to_json(),
+        "modifier_definition_source": definition.source.to_json() if definition is not None else None,
+        "behavior_flags": list(behavior_flags),
     }
 
 
@@ -3069,6 +3081,16 @@ def _status_category(status_type: str) -> str:
     if normalized == "control":
         return "control"
     return "unknown"
+
+
+def _control_kind_from_behavior_flags(behavior_flags: tuple[str, ...]) -> str:
+    if not ({"STAT_CTRL", "DisableAction"} & set(behavior_flags)):
+        return ""
+    for flag in behavior_flags:
+        if not flag.startswith("STAT_") or flag == "STAT_CTRL":
+            continue
+        return flag.removeprefix("STAT_")
+    return "control"
 
 
 def _json_safe(value: object) -> JSONValue:
