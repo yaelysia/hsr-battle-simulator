@@ -11,8 +11,8 @@ turnbasedgamedata-main -> TBGD compiler/lowering -> Canonical IR -> Combat Core
 当前检查点：
 
 ```text
-v0_289 target expression sequence filter retarget
-最近代码检查点提交：f1fe9ce
+P2 status system complete
+聚合验证入口：python3 -m simulator_v8_clean_core.tools.validate_p2_status_system_complete
 ```
 
 ## 基本规则
@@ -40,6 +40,7 @@ v0_289 target expression sequence filter retarget
 - 角色数据卡边界、加强版希儿示例卡、行迹/星魂通用接口。
 - 怪物卡规范、`MonsterDataCardIR`、普通怪物技能动作、固定序列行动候选、怪物技能附带状态。
 - 状态监听事件族矩阵、mutation-backed 事件源、银鬃尉官基础反击纵切。
+- P2 状态系统底座完成：全量状态来源分类、状态机制 family 矩阵、正负例样本、source audit/replay 抽样均由 `validate_p2_status_system_complete` 聚合验收。
 - 目标表达式 IR 与安全解析子集：简单别名、明确群体、上下文目标列表、`TargetSequence`、`TargetFilter`、确定性 `Retarget`。
 - P1-0 action availability 查询边界：外部推演器可查询当前普通动作、queue mandatory/selectable、pending turn end、enemy fixed-sequence candidate 和 summon blocked。
 - 本地 UI 测试台 `simulator_v8_ui/`，作为测试编排与审计展示层，不作为规则系统。
@@ -48,7 +49,7 @@ v0_289 target expression sequence filter retarget
 
 - 完整角色面板装配：晋阶、全量角色行迹、光锥、内圈/外圈遗器及套装效果。
 - 大量角色卡人工解释、结构化 admission 与验证。
-- 完整状态系统：叠层、刷新、概率、失败分支、持续时间、tick、DoT tick、控制、抵抗、免疫、驱散。
+- 状态系统 P2 底座已完成；后续仍需按 P3+ 扩面特殊模式、新事件源、新 target/opcode、未来数据库新增机制，不能把 boundary/process-only 项伪装成全正例。
 - 完整目标系统：排序、随机、fetch、相邻目标、唯一实体、召唤物/servant 目标、特殊玩法目标。
 - 全怪物技能、被动、阶段切换、召唤、波次、关卡倍率。
 - 完整敌方行动推演策略、波次系统、召唤物/assistant、特殊战斗模式。
@@ -60,6 +61,9 @@ v0_289 target expression sequence filter retarget
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 python3 -m compileall -q simulator_v8_clean_core simulator_v8_ui
+PYTHONDONTWRITEBYTECODE=1 python3 -m simulator_v8_clean_core.tools.validate_p2_status_system_complete --output-dir /tmp/hsr_v8_p2_status_system_complete
+PYTHONDONTWRITEBYTECODE=1 python3 -m simulator_v8_clean_core.tools.validate_p2_s11_full_status_source_closure --output-dir /tmp/hsr_v8_p2_s11_full_status_source_closure
+PYTHONDONTWRITEBYTECODE=1 python3 -m simulator_v8_clean_core.tools.validate_p2_s10_status_callback_coverage --output-dir /tmp/hsr_v8_p2_s10_status_callback_coverage
 PYTHONDONTWRITEBYTECODE=1 python3 -m simulator_v8_clean_core.tools.validate_p1_0_action_boundary --output-dir /tmp/hsr_v8_p1_0_action_boundary
 PYTHONDONTWRITEBYTECODE=1 python3 -m simulator_v8_clean_core.tools.validate_v0_289 --output-dir /tmp/hsr_v8_target_expression_v0_289
 PYTHONDONTWRITEBYTECODE=1 python3 -m simulator_v8_clean_core.tools.validate_v0_288 --output-dir /tmp/hsr_v8_target_expression_v0_288
@@ -73,16 +77,18 @@ git diff --check
 
 - `compileall` 通过。
 - 验证输出 `ok=true`。
+- P2 聚合 summary 包含 `p2_status_substrate_complete=true`、`p2_all_status_sources_classified=true`、gap/unclassified 均为 0。
 - replay/source audit/settlement traceability 通过。
 - unsupported、blocked、audit-only、discovered-only 不产生 mutation。
 - runtime/core/systems 不引用 UI，不读取 raw TBGD/TextMap/旧 v7/旧 model pack。
 
 ## 下一阶段建议
 
-当前目标表达式底座已补到可支撑更多状态和怪物技能。下一阶段建议优先补状态系统主体：
+当前 P2 状态系统底座已完成。下一阶段建议进入 P3+ 扩面：
 
-1. `stack/refresh/chance`。
-2. `duration/tick/expire`。
-3. DoT tick、控制、抵抗、免疫、驱散。
+1. 角色/怪物数据卡扩面，把专属机制进入数据卡槽位，再接通用系统。
+2. 光锥、遗器、环境、关卡机制。
+3. summon、assistant、servant 完整行为。
+4. 特殊模式、新事件源、新 target/opcode 的来源链路与负例验证。
 
 每个新增机制仍必须满足：真实来源、通用接口、正例可审计、负例 state unchanged。

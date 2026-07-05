@@ -2,7 +2,7 @@
 
 ## 0. 一句话状态
 
-当前主线是 `simulator_v8_clean_core`。P1 最终收口已完成：P1-9 聚合输出 `ok=true`、`p1_9_done_eligible=true`、`phase1_repair_substrate_accepted=true`、`phase1_minimum_battle_slice=true`，且 blocker 列表为空。第一阶段最小完整战斗纵切已通过，后续应进入 P2，不要继续按旧 P1 blocker 修补。
+当前主线是 `simulator_v8_clean_core`。P1 最终收口已完成，P2 状态系统底座也已完成：`validate_p2_status_system_complete` 输出 `ok=true`、`p2_status_substrate_complete=true`、`p2_all_status_sources_classified=true`，且 implementation/lowering/admission/validation gap 与 unclassified 均为 0。后续应进入 P3+ 扩面，不要继续按旧 P1/P2 blocker 修补。
 
 ## 1. 路径与事实来源
 
@@ -55,10 +55,11 @@ hsr_v075_baseline_clean/hsr/simulator_v7_7/
 5. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/MONSTER_CARD_SPEC.md`
 6. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/PHASE1_SUMMARY.md`
 7. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/P2_STATUS_SYSTEM_COMPLETE_TASK_PLAN.md`
-8. `hsr_v075_baseline_clean/hsr/live_validation_reports/archive/phase1/v8_p1_final_acceptance_checkpoint_v0_292.md`
-9. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_status_target_event_database_audit_checkpoint_v0_287.md`
-10. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_ir_checkpoint_v0_288.md`
-11. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_sequence_filter_retarget_checkpoint_v0_289.md`
+8. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p2_status_system_complete_checkpoint.md`
+9. `hsr_v075_baseline_clean/hsr/live_validation_reports/archive/phase1/v8_p1_final_acceptance_checkpoint_v0_292.md`
+10. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_status_target_event_database_audit_checkpoint_v0_287.md`
+11. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_ir_checkpoint_v0_288.md`
+12. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_sequence_filter_retarget_checkpoint_v0_289.md`
 
 P1 的详细执行计划和过程报告已经归档，默认不要作为下一阶段入口：
 
@@ -111,6 +112,8 @@ P1 的详细执行计划和过程报告已经归档，默认不要作为下一�
 - dynamic values、StatusInstance dynamic values、DynamicValueStore。
 - 状态监听事件族矩阵 `StatusEventFamilyIR`。
 - runtime 只执行已有真实事件源、payload、条件、目标、task 全部 admission 的 listener。
+- P2 状态系统聚合验收已完成：全量状态来源矩阵 10 个 family 全部 classified/executable，6 个来源域全部 classified/executable，implementation/lowering/admission/validation gap 为 0。
+- 状态系统正例覆盖施加、移除、驱散、生命周期、概率/抵抗/免疫、控制行动门、数值绑定、DoT/状态伤害、callback queue/action delay/dynamic value；负例覆盖缺来源、缺 payload、缺条件、缺目标、缺公式、unsupported task，均保持 process-only / state unchanged。
 - 银鬃尉官基础反击纵切已打通：技能挂监听状态、受击触发、条件判断、插入反击、执行反击。
 - P1 最终 counter 验收已不依赖固定角色/怪物名选择：P1-5 按 `OnAfterBeingAttacked` / `TurnInsertAbility` / attacker target alias 的结构化谓词选出真实来源，入列、drain、伤害/效果、replay、source audit、负例均通过。
 
@@ -171,12 +174,11 @@ P1 minimum 已完成，但完整复刻仍远未完成：
 
 - `hsr_v075_baseline_clean/hsr/live_validation_reports/archive/phase1/v8_p1_gap_attribution_audit_checkpoint.md`
 
-状态系统主体还没完整：
+状态系统 P2 底座已完成，但不要把它误读成完整游戏复刻：
 
-- 叠层、刷新、概率、失败分支。
-- 持续时间、tick、expire。
-- DoT tick。
-- 控制、抵抗、免疫、驱散。
+- 当前数据库内状态来源已经全量分类；blocked 项都有负例验证，不会假执行。
+- 后续若要把 boundary/process-only 项扩成全正例，必须先证明 raw TBGD / lowering / RuleBook / runtime admission 具备真实来源链路。
+- 特殊模式、新事件源、新 target/opcode、新 wave/custom event、未来数据库新增机制仍按 P3+ 单独扩面。
 
 目标系统还没完整：
 
