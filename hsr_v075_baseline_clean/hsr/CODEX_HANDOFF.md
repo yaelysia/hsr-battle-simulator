@@ -54,10 +54,11 @@ hsr_v075_baseline_clean/hsr/simulator_v7_7/
 4. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/FORBIDDEN.md`
 5. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/MONSTER_CARD_SPEC.md`
 6. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/PHASE1_SUMMARY.md`
-7. `hsr_v075_baseline_clean/hsr/live_validation_reports/archive/phase1/v8_p1_final_acceptance_checkpoint_v0_292.md`
-8. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_status_target_event_database_audit_checkpoint_v0_287.md`
-9. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_ir_checkpoint_v0_288.md`
-10. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_sequence_filter_retarget_checkpoint_v0_289.md`
+7. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/P2_STATUS_SYSTEM_COMPLETE_TASK_PLAN.md`
+8. `hsr_v075_baseline_clean/hsr/live_validation_reports/archive/phase1/v8_p1_final_acceptance_checkpoint_v0_292.md`
+9. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_status_target_event_database_audit_checkpoint_v0_287.md`
+10. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_ir_checkpoint_v0_288.md`
+11. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_sequence_filter_retarget_checkpoint_v0_289.md`
 
 P1 的详细执行计划和过程报告已经归档，默认不要作为下一阶段入口：
 
@@ -247,14 +248,14 @@ TargetAlias=197061
 
 ## 7. 推荐下一步
 
-建议进入 P2，而不是继续 P1 修补。后续仍要继续做 executable / boundary_only / source_absent_not_required / implementation_missing 分流；当前数据库确实无真实来源且不属于当前阶段必做的项继续保持 source_absent_not_required 或 boundary_only。
+建议进入 P2 状态系统完整覆盖，而不是继续 P1 修补。当前 P2 状态系统计划见 `simulator_v8_clean_core/P2_STATUS_SYSTEM_COMPLETE_TASK_PLAN.md`。后续仍要继续做 executable / boundary_only / source_absent_not_required / implementation_missing 分流；当前数据库确实无真实来源且不属于当前阶段必做的项继续保持 source_absent_not_required 或 boundary_only。
 
 推荐顺序：
 
-1. 扩展完整状态系统主体：组合叠层+持续时间刷新、更多 tick/控制/抵抗/免疫/驱散分支。
-2. 扩展角色/怪物数据卡解释范围，继续禁止 runtime 特判角色或怪物。
-3. 扩展 servant/召唤物/assistant 完整行为，但保持 servant 已有 P1 纵切不回退。
-4. 进入 battle_unit_summon admission 审计时先区分 catalog/visual/adventure 与真实 battle spawn trigger。
+1. 执行 P2-S0：先产出状态全量盘点和覆盖矩阵，不要直接改 runtime。
+2. 按计划推进 P2-S1 到 P2-S12，先补状态底层完整语义，再做全状态来源接入和未覆盖清零。
+3. 状态系统完成后，再扩展角色/怪物数据卡解释范围，继续禁止 runtime 特判角色或怪物。
+4. 再推进 servant/召唤物/assistant 完整行为；进入 battle_unit_summon admission 审计时先区分 catalog/visual/adventure 与真实 battle spawn trigger。
 
 理由：
 
@@ -298,7 +299,7 @@ git diff --check
 如果要继续推进，建议开局说清：
 
 ```text
-当前接续 v8 P2。先读 CODEX_HANDOFF、PHASE1_SUMMARY、README、PROJECT_GOALS、FORBIDDEN、MONSTER_CARD_SPEC 和归档最终报告 `live_validation_reports/archive/phase1/v8_p1_final_acceptance_checkpoint_v0_292.md`。P1-9 最终聚合已通过，`phase1_minimum_battle_slice=true` 且 blocker 为空；P1 过程计划和中间报告只作追溯，不作为当前任务入口。下一步继续按 executable / boundary_only / source_absent_not_required / implementation_missing 分流推进 P2，runtime 仍只能读 Canonical IR/数据卡 IR，缺来源或缺条件必须 blocked/state unchanged。
+当前接续 v8 P2 状态系统完整覆盖。先读 CODEX_HANDOFF、PHASE1_SUMMARY、P2_STATUS_SYSTEM_COMPLETE_TASK_PLAN、README、PROJECT_GOALS、FORBIDDEN、MONSTER_CARD_SPEC 和归档最终报告 `live_validation_reports/archive/phase1/v8_p1_final_acceptance_checkpoint_v0_292.md`。P1-9 最终聚合已通过，`phase1_minimum_battle_slice=true` 且 blocker 为空；P1 过程计划和中间报告只作追溯，不作为当前任务入口。下一步先执行 P2-S0 状态全量盘点和覆盖矩阵，不要直接改 runtime。继续按 executable / boundary_only / source_absent_not_required / implementation_missing 分流推进，runtime 仍只能读 Canonical IR/数据卡 IR，缺来源或缺条件必须 blocked/state unchanged。
 ```
 
 不要从旧 `CODEX_HANDOFF` 的 v7 叙述接续；本文件已经替换为 v8 当前交接手册。
