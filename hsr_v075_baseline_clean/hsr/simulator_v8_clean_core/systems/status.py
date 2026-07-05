@@ -838,6 +838,11 @@ class StatusSystem:
     ) -> StatusLifecyclePlan:
         if unit_id not in state.units:
             return _unsupported_lifecycle_plan("tick_blocked", unit_id, "", "unit_missing", {})
+        unit = state.units[unit_id]
+        lifecycle_status = str(unit.flags.get("lifecycle_status") or "")
+        if lifecycle_status in {"defeated", "removed"} or unit.hp <= 0:
+            reason = f"unit_not_active_for_status_lifecycle:{lifecycle_status or 'hp_zero'}"
+            return _unsupported_lifecycle_plan("tick_blocked", unit_id, "", reason, {})
         status_id = str(status_detail.get("status_id") or "")
         source_trace = _status_detail_source_trace(status_detail)
         modifier_name = str(status_detail.get("modifier_name") or status_id.removeprefix("modifier:"))
