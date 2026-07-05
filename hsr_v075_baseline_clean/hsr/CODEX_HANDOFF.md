@@ -53,14 +53,16 @@ hsr_v075_baseline_clean/hsr/simulator_v7_7/
 3. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/PROJECT_GOALS.md`
 4. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/FORBIDDEN.md`
 5. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/MONSTER_CARD_SPEC.md`
-6. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/P1_FINAL_REPAIR_PLAN.md`
-7. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p1_final_acceptance_checkpoint_v0_292.md`
-8. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p1_servant_runtime_repair_checkpoint_v0_290.md`
-9. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p1_queue_family_gap_repair_checkpoint_v0_291.md`
-10. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p1_9_phase1_aggregate_checkpoint.md`
-11. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_status_target_event_database_audit_checkpoint_v0_287.md`
-12. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_ir_checkpoint_v0_288.md`
-13. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_sequence_filter_retarget_checkpoint_v0_289.md`
+6. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/PHASE1_SUMMARY.md`
+7. `hsr_v075_baseline_clean/hsr/live_validation_reports/archive/phase1/v8_p1_final_acceptance_checkpoint_v0_292.md`
+8. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_status_target_event_database_audit_checkpoint_v0_287.md`
+9. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_ir_checkpoint_v0_288.md`
+10. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_sequence_filter_retarget_checkpoint_v0_289.md`
+
+P1 的详细执行计划和过程报告已经归档，默认不要作为下一阶段入口：
+
+- `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/docs/archive/phase1/`
+- `hsr_v075_baseline_clean/hsr/live_validation_reports/archive/phase1/`
 
 需要追怪物历史时再读：
 
@@ -166,7 +168,7 @@ P1 minimum 已完成，但完整复刻仍远未完成：
 
 最新缺口归因报告：
 
-- `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p1_gap_attribution_audit_checkpoint.md`
+- `hsr_v075_baseline_clean/hsr/live_validation_reports/archive/phase1/v8_p1_gap_attribution_audit_checkpoint.md`
 
 状态系统主体还没完整：
 
@@ -261,9 +263,9 @@ TargetAlias=197061
 - 怪物技能、状态监听、AddModifier 已经能把更多状态挂入系统。
 - P1 minimum 已不再被 servant 或 counter 阻塞；后续最大工作量仍是状态、角色/怪物机制、装备和关卡系统扩面。
 
-## 8. 推荐验证命令
+## 8. P1 回归验证命令
 
-在 `hsr_v075_baseline_clean/hsr` 下运行：
+这些命令用于复核 P1 最小纵切，不是 P2 每次小改的默认全量验证。在 `hsr_v075_baseline_clean/hsr` 下运行：
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 python3 -m compileall -q simulator_v8_clean_core simulator_v8_ui
@@ -296,7 +298,7 @@ git diff --check
 如果要继续推进，建议开局说清：
 
 ```text
-当前接续 v8 P2。先读 CODEX_HANDOFF、P1_FINAL_REPAIR_PLAN、README、PROJECT_GOALS、FORBIDDEN、MONSTER_CARD_SPEC 和 `v8_p1_final_acceptance_checkpoint_v0_292.md`。P1-9 最终聚合已通过，`phase1_minimum_battle_slice=true` 且 blocker 为空；下一步继续按 executable / boundary_only / source_absent_not_required / implementation_missing 分流推进 P2，runtime 仍只能读 Canonical IR/数据卡 IR，缺来源或缺条件必须 blocked/state unchanged。
+当前接续 v8 P2。先读 CODEX_HANDOFF、PHASE1_SUMMARY、README、PROJECT_GOALS、FORBIDDEN、MONSTER_CARD_SPEC 和归档最终报告 `live_validation_reports/archive/phase1/v8_p1_final_acceptance_checkpoint_v0_292.md`。P1-9 最终聚合已通过，`phase1_minimum_battle_slice=true` 且 blocker 为空；P1 过程计划和中间报告只作追溯，不作为当前任务入口。下一步继续按 executable / boundary_only / source_absent_not_required / implementation_missing 分流推进 P2，runtime 仍只能读 Canonical IR/数据卡 IR，缺来源或缺条件必须 blocked/state unchanged。
 ```
 
 不要从旧 `CODEX_HANDOFF` 的 v7 叙述接续；本文件已经替换为 v8 当前交接手册。

@@ -33,8 +33,9 @@ turnbasedgamedata-main -> TBGD compiler/lowering -> Canonical IR -> Combat Core
 最近检查点：
 
 ```text
-v0_289 target expression sequence filter retarget
-最近代码检查点提交：f1fe9ce
+P1 final acceptance / phase1 minimum battle slice
+最近代码检查点提交：1b88c70 v8 p1 final counter acceptance
+最近文档检查点提交：8513659 docs: add P1 final repair plan
 ```
 
 当前 v8 已建立的底层范围包括：
@@ -47,16 +48,17 @@ v0_289 target expression sequence filter retarget
 - 怪物卡规范、`MonsterDataCardIR`、普通怪物技能动作、固定序列行动候选、怪物技能附带状态。
 - 状态监听事件族矩阵、mutation-backed 事件源、银鬃尉官基础反击纵切。
 - 目标表达式 IR 与安全解析子集：简单别名、明确群体、上下文目标列表、`TargetSequence`、`TargetFilter`、确定性 `Retarget`。
+- 第一阶段 P1 最小完整战斗纵切已经完成，P1-9 聚合输出 `phase1_minimum_battle_slice=true` 且 blocker 为空。
 - `simulator_v8_ui/` 本地 UI 测试台，用于 scenario 编排和审计展示，不进入规则系统。
 
 当前仍未完整实现的大块：
 
 - 完整角色面板装配：晋阶、全量角色行迹、光锥、内圈/外圈遗器及套装效果。
 - 大量角色卡人工解释与验证。
-- 状态系统主体：叠层、刷新、概率、失败分支、持续时间、tick、DoT tick、控制、抵抗、免疫、驱散。
-- 目标系统剩余部分：排序、随机、fetch、相邻目标、唯一实体、召唤物/servant 目标、特殊玩法目标。
+- 状态系统扩面：更多叠层/刷新组合、概率与失败分支、持续时间、tick、DoT tick、控制抵抗、免疫、更多驱散分支。
+- 目标系统剩余部分：更多排序、随机、fetch、相邻目标、唯一实体、召唤物/servant 扩展目标、特殊玩法目标。
 - 全怪物技能、全怪物被动、阶段切换、召唤、波次、关卡倍率。
-- 敌方完整行动推演策略、波次系统、召唤物/assistant/servant 完整行为。
+- 敌方行动候选扩面、波次系统扩面、召唤物/assistant/servant 完整行为；敌方 AI 不进入 core，由外部推演器控制。
 - 光锥、遗器、环境、关卡机制。
 - `OnCustomEvent`、`OnWaveMonster` 等需要真实事件源或波次系统的回调。
 
@@ -97,9 +99,16 @@ v8 当前只保留少数高密度长期文档，避免文档膨胀影响索引�
 3. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/PROJECT_GOALS.md`
 4. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/FORBIDDEN.md`
 5. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/MONSTER_CARD_SPEC.md`
-6. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_status_target_event_database_audit_checkpoint_v0_287.md`
-7. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_ir_checkpoint_v0_288.md`
-8. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_sequence_filter_retarget_checkpoint_v0_289.md`
+6. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/PHASE1_SUMMARY.md`
+7. `hsr_v075_baseline_clean/hsr/live_validation_reports/archive/phase1/v8_p1_final_acceptance_checkpoint_v0_292.md`
+8. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_status_target_event_database_audit_checkpoint_v0_287.md`
+9. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_ir_checkpoint_v0_288.md`
+10. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_sequence_filter_retarget_checkpoint_v0_289.md`
+
+P1 过程计划和中间报告已经归档，默认不要作为当前线程入口：
+
+1. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/docs/archive/phase1/`
+2. `hsr_v075_baseline_clean/hsr/live_validation_reports/archive/phase1/`
 
 只在需要对照旧行为时读：
 
