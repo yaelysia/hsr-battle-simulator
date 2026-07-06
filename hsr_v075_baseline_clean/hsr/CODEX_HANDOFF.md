@@ -55,11 +55,12 @@ hsr_v075_baseline_clean/hsr/simulator_v7_7/
 5. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/MONSTER_CARD_SPEC.md`
 6. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/PHASE1_SUMMARY.md`
 7. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/P2_STATUS_SYSTEM_COMPLETE_TASK_PLAN.md`
-8. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p2_status_system_complete_checkpoint.md`
-9. `hsr_v075_baseline_clean/hsr/live_validation_reports/archive/phase1/v8_p1_final_acceptance_checkpoint_v0_292.md`
-10. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_status_target_event_database_audit_checkpoint_v0_287.md`
-11. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_ir_checkpoint_v0_288.md`
-12. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_sequence_filter_retarget_checkpoint_v0_289.md`
+8. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/P3_SUMMON_ASSISTANT_SERVANT_COMPLETE_TASK_PLAN.md`
+9. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p2_status_system_complete_checkpoint.md`
+10. `hsr_v075_baseline_clean/hsr/live_validation_reports/archive/phase1/v8_p1_final_acceptance_checkpoint_v0_292.md`
+11. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_status_target_event_database_audit_checkpoint_v0_287.md`
+12. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_ir_checkpoint_v0_288.md`
+13. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_sequence_filter_retarget_checkpoint_v0_289.md`
 
 P1 的详细执行计划和过程报告已经归档，默认不要作为下一阶段入口：
 
@@ -256,7 +257,7 @@ P2 状态底座已可作为后续机制扩面的依赖。推荐下一步进入 P
 
 1. 角色/怪物数据卡扩面：把专属机制解释进数据卡机制槽位，再接通用 action、status、damage、queue、target 系统。
 2. 光锥、遗器、环境、关卡机制：先建立来源矩阵和 admission 口径，再做 runtime 正例。
-3. summon、assistant、servant 完整行为：继续区分 catalog/visual/adventure 与真实 battle runtime trigger。
+3. summon、assistant、servant 完整行为：当前已制定 `P3_SUMMON_ASSISTANT_SERVANT_COMPLETE_TASK_PLAN.md`，先执行 P3-S0 总盘点，继续区分 catalog/visual/adventure 与真实 battle runtime trigger。
 4. 目标系统扩面：排序、fetch、随机、相邻目标、唯一实体、召唤物/servant 目标和特殊玩法目标。
 
 后续仍要继续做 executable / boundary_only / source_absent_not_required / implementation_missing 分流；当前数据库确实无真实来源且不属于当前阶段必做的项继续保持 source_absent_not_required 或 boundary_only。状态系统如果被再次触达，应把 P2 聚合和直接相关 P1/P2 回归列入验证范围。
@@ -295,7 +296,7 @@ git diff --check
 如果要继续推进，建议开局说清：
 
 ```text
-当前接续 v8 P3+ 扩面。先读 CODEX_HANDOFF、README、PROJECT_GOALS、FORBIDDEN、P2_STATUS_SYSTEM_COMPLETE_TASK_PLAN、P2 最终报告和 P1 最终报告。P1-9 最终聚合已通过，`phase1_minimum_battle_slice=true` 且 blocker 为空；P2 状态系统聚合已通过，`p2_status_substrate_complete=true`、`p2_all_status_sources_classified=true`，gap/unclassified 为 0。后续选择角色/怪物数据卡、装备/关卡、召唤物/servant、目标系统等 P3+ 扩面任务继续推进；继续按 executable / boundary_only / source_absent_not_required / implementation_missing 分流，runtime 仍只能读 Canonical IR/数据卡 IR，缺来源或缺条件必须 blocked/state unchanged。
+当前接续 v8 P3 召唤物 / 忆灵 / assistant 体系。先读 CODEX_HANDOFF、README、PROJECT_GOALS、FORBIDDEN、P2_STATUS_SYSTEM_COMPLETE_TASK_PLAN、P3_SUMMON_ASSISTANT_SERVANT_COMPLETE_TASK_PLAN、P2 最终报告和 P1 最终报告。P1-9 最终聚合已通过，`phase1_minimum_battle_slice=true` 且 blocker 为空；P2 状态系统聚合已通过，`p2_status_substrate_complete=true`、`p2_all_status_sources_classified=true`，gap/unclassified 为 0。下一步执行 P3-S0 召唤物来源全量盘点和术语归一，不要直接改 runtime；继续按 executable / boundary_only / source_absent_not_required / implementation_missing 分流，runtime 仍只能读 Canonical IR/数据卡 IR，缺来源或缺条件必须 blocked/state unchanged。
 ```
 
 不要从旧 `CODEX_HANDOFF` 的 v7 叙述接续；本文件已经替换为 v8 当前交接手册。

@@ -88,7 +88,7 @@ git diff --check
 
 1. 角色/怪物数据卡扩面，把专属机制进入数据卡槽位，再接通用系统。
 2. 光锥、遗器、环境、关卡机制。
-3. summon、assistant、servant 完整行为。
+3. summon、assistant、servant 完整行为；当前计划见 `P3_SUMMON_ASSISTANT_SERVANT_COMPLETE_TASK_PLAN.md`。
 4. 特殊模式、新事件源、新 target/opcode 的来源链路与负例验证。
 
 每个新增机制仍必须满足：真实来源、通用接口、正例可审计、负例 state unchanged。
