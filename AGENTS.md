@@ -236,6 +236,7 @@ hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/FORBIDDEN.md
 - 如果游戏机制直觉与验证脚本的 source gap 结论冲突，优先审查检查谓词和 lowering 投影。比如状态叠层/刷新不能只看 AddModifier task 里的 `MaxLayer` / `LayerAddWhenStack` / `IsRefresh`，还要确认 modifier definition 的 `Stacking`、`Count`、`LifeTime`、`StackProperty` 等 raw 字段是否已经被正确投影和 admission。
 - 阶段验收不能把“blocked/no mutation 边界验证通过”当成“机制完成”。如果任务目标写的是 servant/召唤物、队列 family、状态生命周期等可执行机制，就必须有真实来源正例；只有计划明确写成 discovery/boundary 阶段时，blocked 才能算该子项通过。后续复核要逐项对照原计划目标，而不是只看聚合脚本 `ok=true`。
 - 队列 family 缺口不能只按 `QueueWindowIR.window_family` 统计。反击/追击等游戏语义可能先以通用 `insert_ability` / `insert_action` 承载，并在 `window_policy.source_basis.text_hints`、ability name、callback event、priority key 或 action definition 中保留语义线索；验收若只看 family 为 0 就标 `source_absent_not_required`，会漏掉真实来源，应归为 validation/admission gap 或补正例。
+- lowering 生成派生产物后如果又把上游节点改成 blocked，必须同步重算或阻断所有依赖产物。例如先生成 queue window，再按状态事件源缺失把 callback queue intent 改成 blocked，会留下“blocked intent 对应 executable window”的 IR 不一致；阶段验收必须跑触达系统的直接回归来抓这种问题。
 
 ## 快照与结算目标摘要
 

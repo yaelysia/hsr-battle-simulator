@@ -2,9 +2,11 @@
 
 日期：2026-07-05
 
+口径复核：2026-07-06
+
 ## 结论
 
-P2 状态系统底座已完成，聚合验证入口为：
+P2 状态系统底座与当前数据库状态来源闭环已完成，聚合验证入口为：
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 python3 -m simulator_v8_clean_core.tools.validate_p2_status_system_complete --output-dir /tmp/hsr_v8_p2_status_system_complete
@@ -23,6 +25,13 @@ p2_status_validation_gap_count=0
 p2_status_unclassified_count=0
 source_absent_not_required_count=0
 ```
+
+本报告里的“完成”只指状态系统底座和当前 TBGD / Canonical IR 状态来源分类完成：
+
+- 有真实来源且当前语义可执行的状态路径已有结构化正例、transition、replay、settlement traceability 和 source audit。
+- 当前不能执行的状态路径已有明确 blocked/process-only/state unchanged 负例或边界证据。
+- 当前没有 implementation/lowering/admission/validation gap 与 unclassified 残留。
+- 这不表示全角色、全怪物、光锥、遗器、关卡、特殊模式都已复刻；这些仍属于 P3+ 扩面。
 
 ## 聚合范围
 
@@ -53,6 +62,12 @@ ir_total=270515
 executable_total=246885
 blocked_total=12305
 ```
+
+解释：
+
+- `status_family_classification_counts.executable=10` 表示 10 个状态机制族都已经有真实来源正例和通用执行/边界分类能力。
+- `source_domain_classification_counts.executable=6` 表示 6 个来源域都已经纳入状态系统矩阵并具备可执行正例。
+- `blocked_total=12305` 表示个体来源层仍有被明确阻断的来源；这些来源不是未分类缺口，而是缺事件 payload、缺条件、缺目标、缺公式、unsupported task、缺真实事件源等边界项，必须保持 process-only / state unchanged。
 
 来源域：
 
@@ -117,6 +132,35 @@ status_callback_event_families -> validate_p2_s10_status_callback_coverage
 - 更新 `CODEX_HANDOFF.md`，将入口状态改为 P2 状态系统已完成。
 - 更新 `simulator_v8_clean_core/README.md`，加入 P2 聚合验证入口和 P3+ 建议。
 - 更新 `P2_STATUS_SYSTEM_COMPLETE_TASK_PLAN.md` checklist。
+
+## 2026-07-06 口径复核
+
+本次复核修正了一个验收口径问题：blocked 状态事件源把 callback / queue intent 降级后，不能留下已经生成的 executable queue 下游 IR。
+
+已确认代码层修复：
+
+- lowering 先根据状态事件族阻断 callback 及派生 queue intent，再生成 queue resolution / queue window / queue lifecycle / extra-action。
+- `validate_p2_s10_status_callback_coverage` 新增 queue intent 下游一致性检查，覆盖被阻断事件源对应的 queue intent 及其下游派生产物。
+- `validate_p1_5_queue_window_system` 继续检查 executable queue window 必须来自 executable intent。
+
+复核输出：
+
+```text
+validate_p1_5_queue_window_system ok=True
+all_executable_windows_have_executable_intent=True
+blocked_audit_discovered_not_admitted_to_window=True
+
+validate_p1_9_phase1_aggregate ok=True
+phase1_minimum_battle_slice=True
+
+validate_p2_status_system_complete ok=True
+p2_status_substrate_complete=True
+p2_all_status_sources_classified=True
+
+queue_intent_downstream_consistency.ok=True
+event_blocked_queue_intent_count=735
+executable_downstream_mismatch_count=0
+```
 
 ## 验证
 

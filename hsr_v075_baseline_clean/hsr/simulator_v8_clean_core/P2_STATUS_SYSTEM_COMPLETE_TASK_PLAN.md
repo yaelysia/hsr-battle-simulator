@@ -2,6 +2,8 @@
 
 本文档是 P2 状态系统阶段的执行计划。它不是 P1-4 的延续清单，而是一个更严格的“完整状态系统覆盖”计划：先把状态底层语义补完整，再把当前 TBGD / Canonical IR 中能发现的全部状态相关来源逐一分类、接入、验证或明确阻断。
 
+当前状态：P2-S0 到 P2-S12 均已完成并验收。本文档保留为后续线程理解状态系统契约和验收口径的长期文档，不再作为“下一步从 S0 开始执行”的行动清单。
+
 ## 0. 背景和目标
 
 P1 已经完成，v8 clean core 现在具备外部推演器驱动下的最小完整战斗纵切。P1-4 已经把状态系统底座推进到可用状态，包含状态添加、叠层、刷新、持续时间、过期、DoT tick、概率、效果抵抗、免疫、确定性驱散、控制阻塞行动等第一阶段能力。
@@ -25,7 +27,7 @@ P1 已经完成，v8 clean core 现在具备外部推演器驱动下的最小完
 - 所有状态监听和回调。
 - 所有通过状态影响属性、伤害、行动、目标、队列、资源的路径。
 
-P2 状态系统完成后，后续角色、怪物、光锥、遗器、关卡机制扩面时，不应再发现“状态底座根本没做好”的隐藏缺口。
+P2 状态系统完成后，后续角色、怪物、光锥、遗器、关卡机制扩面时，不应再发现“状态底座根本没做好”的隐藏缺口。这个完成口径不表示所有角色、怪物、装备、关卡机制已经复刻；它表示状态系统本身已经具备通用执行、审计、回放、边界阻断和当前数据库来源分类能力。
 
 ## 1. 完成定义
 
@@ -631,23 +633,28 @@ git diff --check
 - [x] P2-S11 全状态来源接入和未覆盖清零完成。
 - [x] P2-S12 聚合验收、文档收口和 P3 交接完成。
 
-## 20. 第一项执行建议
+## 20. 完成后的使用口径
 
-下一步应先执行 P2-S0，不要直接改 runtime。
+P2 已经完成，不要再按本文档从 P2-S0 重新启动。后续线程应把本文档当作状态系统契约，重点继承以下口径：
 
-P2-S0 的执行层目标是产出一个轻量状态总矩阵，用它回答：
+- “状态系统完成”指当前 TBGD / Canonical IR 中状态相关来源已经全量分类，且状态底座有可执行正例、负例、source audit 和 replay。
+- family/domain 层的 executable 表示该机制族具备真实来源正例和通用执行路径，不表示每一条 raw source 都可以无条件执行。
+- 个体来源如果缺事件 payload、缺条件、缺目标、缺公式、unsupported task 或缺真实事件源，仍必须 blocked / process-only / state unchanged。
+- 如果后续新增 TBGD 数据、补新事件源、补新 target/opcode、补角色/怪物/装备/关卡机制，需要重新经过 raw -> lowering -> RuleBook -> runtime -> validation 的分层审计，不能因为 P2 已完成就跳过 admission。
+- blocked 上游节点如果会生成下游派生产物，lowering 必须先完成 blocking 再生成下游，或在 blocking 后同步重算下游，避免留下 blocked intent 对应 executable window 这类 IR 不一致。
 
-```text
-当前数据库里到底有多少状态定义？
-有多少状态施加来源？
-有多少移除和驱散来源？
-有多少状态回调和事件？
-哪些已经 executable？
-哪些是 source absent？
-哪些是 lowering gap？
-哪些是 admission gap？
-哪些是 implementation missing？
-哪些只是 validation gap？
+状态相关修改的建议验证：
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 -m compileall -q simulator_v8_clean_core simulator_v8_ui
+PYTHONDONTWRITEBYTECODE=1 python3 -m simulator_v8_clean_core.tools.validate_p2_status_system_complete --output-dir /tmp/hsr_v8_p2_status_system_complete
+git diff --check
 ```
 
-只有这个矩阵可靠，后续才不会再出现“某个状态系统缺口到最后才突然冒出来”的情况。
+若改到 status callback、queue intent、queue window 或事件族 admission，应额外跑：
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 -m simulator_v8_clean_core.tools.validate_p2_s10_status_callback_coverage --output-dir /tmp/hsr_v8_p2_s10_status_callback_coverage
+PYTHONDONTWRITEBYTECODE=1 python3 -m simulator_v8_clean_core.tools.validate_p1_5_queue_window_system --output-dir /tmp/hsr_v8_p1_5_queue_window_system
+PYTHONDONTWRITEBYTECODE=1 python3 -m simulator_v8_clean_core.tools.validate_p1_9_phase1_aggregate --output-dir /tmp/hsr_v8_p1_9_phase1_aggregate
+```

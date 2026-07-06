@@ -2,7 +2,7 @@
 
 ## 0. 一句话状态
 
-当前主线是 `simulator_v8_clean_core`。P1 最终收口已完成，P2 状态系统底座也已完成：`validate_p2_status_system_complete` 输出 `ok=true`、`p2_status_substrate_complete=true`、`p2_all_status_sources_classified=true`，且 implementation/lowering/admission/validation gap 与 unclassified 均为 0。后续应进入 P3+ 扩面，不要继续按旧 P1/P2 blocker 修补。
+当前主线是 `simulator_v8_clean_core`。P1 最终收口已完成，P2 状态系统底座与当前数据库状态来源闭环也已完成：`validate_p2_status_system_complete` 输出 `ok=true`、`p2_status_substrate_complete=true`、`p2_all_status_sources_classified=true`，且 implementation/lowering/admission/validation gap 与 unclassified 均为 0。这里的完成含义是“当前 TBGD / Canonical IR 中状态相关来源已全量分类；有来源且可执行的路径已有正例；不能执行的路径有 blocked/process-only 负例”，不是“全游戏角色、怪物、装备、关卡机制已经复刻”。后续应进入 P3+ 扩面，不要继续按旧 P1/P2 blocker 修补。
 
 ## 1. 路径与事实来源
 
@@ -112,8 +112,10 @@ P1 的详细执行计划和过程报告已经归档，默认不要作为下一�
 - dynamic values、StatusInstance dynamic values、DynamicValueStore。
 - 状态监听事件族矩阵 `StatusEventFamilyIR`。
 - runtime 只执行已有真实事件源、payload、条件、目标、task 全部 admission 的 listener。
-- P2 状态系统聚合验收已完成：全量状态来源矩阵 10 个 family 全部 classified/executable，6 个来源域全部 classified/executable，implementation/lowering/admission/validation gap 为 0。
-- 状态系统正例覆盖施加、移除、驱散、生命周期、概率/抵抗/免疫、控制行动门、数值绑定、DoT/状态伤害、callback queue/action delay/dynamic value；负例覆盖缺来源、缺 payload、缺条件、缺目标、缺公式、unsupported task，均保持 process-only / state unchanged。
+- P2 状态系统聚合验收已完成：全量状态来源矩阵 10 个 family 和 6 个来源域均已分类，family/domain 层具备可执行正例，implementation/lowering/admission/validation gap 为 0。
+- 个体来源层仍存在被明确阻断的状态来源；这些不是未完成 gap，而是缺事件 payload、缺条件、缺目标、缺公式、unsupported task、缺真实事件源等边界项，已验证为 process-only / state unchanged。
+- 状态系统正例覆盖施加、移除、驱散、生命周期、概率/抵抗/免疫、控制行动门、数值绑定、DoT/状态伤害、callback queue/action delay/dynamic value。
+- P2 复核已补上 blocked 状态事件源的 queue 下游 IR 一致性检查：被事件源阻断的 queue intent 不会留下 executable queue resolution/window/lifecycle/extra-action。
 - 银鬃尉官基础反击纵切已打通：技能挂监听状态、受击触发、条件判断、插入反击、执行反击。
 - P1 最终 counter 验收已不依赖固定角色/怪物名选择：P1-5 按 `OnAfterBeingAttacked` / `TurnInsertAbility` / attacker target alias 的结构化谓词选出真实来源，入列、drain、伤害/效果、replay、source audit、负例均通过。
 
@@ -250,28 +252,24 @@ TargetAlias=197061
 
 ## 7. 推荐下一步
 
-建议进入 P2 状态系统完整覆盖，而不是继续 P1 修补。当前 P2 状态系统计划见 `simulator_v8_clean_core/P2_STATUS_SYSTEM_COMPLETE_TASK_PLAN.md`。后续仍要继续做 executable / boundary_only / source_absent_not_required / implementation_missing 分流；当前数据库确实无真实来源且不属于当前阶段必做的项继续保持 source_absent_not_required 或 boundary_only。
+P2 状态底座已可作为后续机制扩面的依赖。推荐下一步进入 P3+，优先选择一个清晰大块继续推进：
 
-推荐顺序：
+1. 角色/怪物数据卡扩面：把专属机制解释进数据卡机制槽位，再接通用 action、status、damage、queue、target 系统。
+2. 光锥、遗器、环境、关卡机制：先建立来源矩阵和 admission 口径，再做 runtime 正例。
+3. summon、assistant、servant 完整行为：继续区分 catalog/visual/adventure 与真实 battle runtime trigger。
+4. 目标系统扩面：排序、fetch、随机、相邻目标、唯一实体、召唤物/servant 目标和特殊玩法目标。
 
-1. 执行 P2-S0：先产出状态全量盘点和覆盖矩阵，不要直接改 runtime。
-2. 按计划推进 P2-S1 到 P2-S12，先补状态底层完整语义，再做全状态来源接入和未覆盖清零。
-3. 状态系统完成后，再扩展角色/怪物数据卡解释范围，继续禁止 runtime 特判角色或怪物。
-4. 再推进 servant/召唤物/assistant 完整行为；进入 battle_unit_summon admission 审计时先区分 catalog/visual/adventure 与真实 battle spawn trigger。
+后续仍要继续做 executable / boundary_only / source_absent_not_required / implementation_missing 分流；当前数据库确实无真实来源且不属于当前阶段必做的项继续保持 source_absent_not_required 或 boundary_only。状态系统如果被再次触达，应把 P2 聚合和直接相关 P1/P2 回归列入验证范围。
 
-理由：
+## 8. 推荐验证命令
 
-- v0_287 已经做过数据库审计矩阵。
-- v0_288/v0_289 已经补了目标表达式底座。
-- 怪物技能、状态监听、AddModifier 已经能把更多状态挂入系统。
-- P1 minimum 已不再被 servant 或 counter 阻塞；后续最大工作量仍是状态、角色/怪物机制、装备和关卡系统扩面。
-
-## 8. P1 回归验证命令
-
-这些命令用于复核 P1 最小纵切，不是 P2 每次小改的默认全量验证。在 `hsr_v075_baseline_clean/hsr` 下运行：
+这些命令用于复核当前 P1 + P2 可信范围，不是每次小改都要全量运行。涉及状态、callback、queue 下游 IR、source audit 时优先跑 P2 聚合；只改无关文档时可只跑静态检查。在 `hsr_v075_baseline_clean/hsr` 下运行：
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 python3 -m compileall -q simulator_v8_clean_core simulator_v8_ui
+PYTHONDONTWRITEBYTECODE=1 python3 -m simulator_v8_clean_core.tools.validate_p2_status_system_complete --output-dir /tmp/hsr_v8_p2_status_system_complete
+PYTHONDONTWRITEBYTECODE=1 python3 -m simulator_v8_clean_core.tools.validate_p2_s10_status_callback_coverage --output-dir /tmp/hsr_v8_p2_s10_status_callback_coverage
+PYTHONDONTWRITEBYTECODE=1 python3 -m simulator_v8_clean_core.tools.validate_p2_s11_full_status_source_closure --output-dir /tmp/hsr_v8_p2_s11_full_status_source_closure
 PYTHONDONTWRITEBYTECODE=1 python3 -m simulator_v8_clean_core.tools.validate_p1_5_queue_window_system --output-dir /tmp/hsr_v8_p1_5_counter_final
 PYTHONDONTWRITEBYTECODE=1 python3 -m simulator_v8_clean_core.tools.validate_p1_9_phase1_aggregate --output-dir /tmp/hsr_v8_p1_9_counter_final
 PYTHONDONTWRITEBYTECODE=1 python3 -m simulator_v8_clean_core.tools.validate_p1_0_action_boundary --output-dir /tmp/hsr_v8_p1_0_after_counter_final
@@ -279,11 +277,7 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m simulator_v8_clean_core.tools.validate_p1_4
 git diff --check
 ```
 
-如果下一步改状态系统，新增验证应至少覆盖：
-
-- 正例：状态叠层、刷新、概率成功/失败、持续时间递减、到期移除。
-- 负例：缺来源、缺 duration、缺 chance source、unsupported stack rule、blocked listener 不产生 mutation。
-- audit：每个状态 mutation 能反查到 status definition、modifier definition、effect/callback、target expression、source trace。
+高负载验证继续串行运行，默认输出到 `/tmp`，不要并行启动多个完整 lowering / RuleBook 构建脚本。
 
 ## 9. 工作习惯
 
@@ -301,7 +295,7 @@ git diff --check
 如果要继续推进，建议开局说清：
 
 ```text
-当前接续 v8 P2 状态系统完整覆盖。先读 CODEX_HANDOFF、PHASE1_SUMMARY、P2_STATUS_SYSTEM_COMPLETE_TASK_PLAN、README、PROJECT_GOALS、FORBIDDEN、MONSTER_CARD_SPEC 和归档最终报告 `live_validation_reports/archive/phase1/v8_p1_final_acceptance_checkpoint_v0_292.md`。P1-9 最终聚合已通过，`phase1_minimum_battle_slice=true` 且 blocker 为空；P1 过程计划和中间报告只作追溯，不作为当前任务入口。下一步先执行 P2-S0 状态全量盘点和覆盖矩阵，不要直接改 runtime。继续按 executable / boundary_only / source_absent_not_required / implementation_missing 分流推进，runtime 仍只能读 Canonical IR/数据卡 IR，缺来源或缺条件必须 blocked/state unchanged。
+当前接续 v8 P3+ 扩面。先读 CODEX_HANDOFF、README、PROJECT_GOALS、FORBIDDEN、P2_STATUS_SYSTEM_COMPLETE_TASK_PLAN、P2 最终报告和 P1 最终报告。P1-9 最终聚合已通过，`phase1_minimum_battle_slice=true` 且 blocker 为空；P2 状态系统聚合已通过，`p2_status_substrate_complete=true`、`p2_all_status_sources_classified=true`，gap/unclassified 为 0。后续选择角色/怪物数据卡、装备/关卡、召唤物/servant、目标系统等 P3+ 扩面任务继续推进；继续按 executable / boundary_only / source_absent_not_required / implementation_missing 分流，runtime 仍只能读 Canonical IR/数据卡 IR，缺来源或缺条件必须 blocked/state unchanged。
 ```
 
 不要从旧 `CODEX_HANDOFF` 的 v7 叙述接续；本文件已经替换为 v8 当前交接手册。
