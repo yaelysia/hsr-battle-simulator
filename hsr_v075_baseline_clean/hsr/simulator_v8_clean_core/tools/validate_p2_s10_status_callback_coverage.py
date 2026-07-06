@@ -64,6 +64,7 @@ def run_validation(package_root: Path, tbgd_root: Path, output_dir: Path) -> dic
     remove_self_case = _effect_mutation_case(ir, rules, "RemoveSelfModifier")
     dynamic_case = _effect_mutation_case(ir, rules, "SetDynamicValue")
     queue_case = _queue_insert_case(ir, rules)
+    queue_downstream_consistency = _queue_downstream_consistency_case(ir, rules)
     delay_case = _action_delay_case(ir, rules)
     status_damage_case = _status_damage_case(ir, rules)
     missing_status_case = _missing_status_case(ir, rules)
@@ -84,6 +85,7 @@ def run_validation(package_root: Path, tbgd_root: Path, output_dir: Path) -> dic
         "remove_self_modifier_callback": remove_self_case["checks"],
         "dynamic_value_callback": dynamic_case["checks"],
         "queue_insert_callback": queue_case["checks"],
+        "queue_intent_downstream_consistency": queue_downstream_consistency["checks"],
         "action_delay_callback": delay_case["checks"],
         "status_damage_callback": status_damage_case["checks"],
         "missing_status_blocked": missing_status_case["checks"],
@@ -122,6 +124,7 @@ def run_validation(package_root: Path, tbgd_root: Path, output_dir: Path) -> dic
                 "remove_self_modifier": remove_self_case["summary"],
                 "dynamic_value": dynamic_case["summary"],
                 "queue_insert": queue_case["summary"],
+                "queue_intent_downstream_consistency": queue_downstream_consistency["summary"],
                 "action_delay": delay_case["summary"],
                 "status_damage": status_damage_case["summary"],
             },
@@ -142,6 +145,7 @@ def run_validation(package_root: Path, tbgd_root: Path, output_dir: Path) -> dic
             "remove_self_modifier": remove_self_case["case"],
             "dynamic_value": dynamic_case["case"],
             "queue_insert": queue_case["case"],
+            "queue_intent_downstream_consistency": queue_downstream_consistency["case"],
             "action_delay": delay_case["case"],
             "status_damage": status_damage_case["case"],
             "missing_status": missing_status_case["case"],
@@ -453,6 +457,103 @@ def _queue_insert_case(ir, rules: RuleBook) -> dict[str, Any]:
                 "case": {"callback": callback.to_json(), "task": task.to_json(), "transition": _compact_transition(transition)},
             }
     return _missing_positive_case("queue_insert")
+
+
+def _queue_downstream_consistency_case(ir, rules: RuleBook) -> dict[str, Any]:
+    blocked_events = {
+        family.callback_event for family in ir.status_event_families if family.coverage_status != "executable"
+    }
+    callback_by_id = {callback.callback_id: callback for callback in ir.status_callbacks}
+    event_blocked_intents = []
+    event_blocked_intent_mismatches = []
+    non_executable_intents = []
+    executable_resolution_mismatches = []
+    executable_window_mismatches = []
+    executable_lifecycle_mismatches = []
+    executable_extra_action_mismatches = []
+
+    for intent in ir.queue_intents:
+        callback = callback_by_id.get(intent.callback_id)
+        event_is_blocked = callback is not None and callback.event in blocked_events
+        if event_is_blocked:
+            event_blocked_intents.append(intent)
+            if intent.coverage_status == "executable":
+                event_blocked_intent_mismatches.append(intent)
+        if intent.coverage_status == "executable":
+            continue
+        non_executable_intents.append(intent)
+        resolution = rules.queue_resolution_for_intent(intent.queue_intent_id)
+        if resolution is not None and resolution.coverage_status == "executable":
+            executable_resolution_mismatches.append(intent)
+        window = rules.queue_window_for_intent(intent.queue_intent_id)
+        if window is not None and window.coverage_status == "executable":
+            executable_window_mismatches.append(intent)
+        lifecycle = rules.queue_lifecycle_policy_for_intent(intent.queue_intent_id)
+        if lifecycle is not None and lifecycle.coverage_status == "executable":
+            executable_lifecycle_mismatches.append(intent)
+        extra_action = rules.extra_action_policy_for_intent(intent.queue_intent_id)
+        if extra_action is not None and extra_action.coverage_status == "executable":
+            executable_extra_action_mismatches.append(intent)
+
+    checks = {
+        "event_blocked_queue_intents_seen": bool(event_blocked_intents),
+        "all_event_blocked_queue_intents_blocked": not event_blocked_intent_mismatches,
+        "no_blocked_intent_executable_resolution": not executable_resolution_mismatches,
+        "no_blocked_intent_executable_window": not executable_window_mismatches,
+        "no_blocked_intent_executable_lifecycle": not executable_lifecycle_mismatches,
+        "no_blocked_intent_executable_extra_action": not executable_extra_action_mismatches,
+    }
+    checks["ok"] = all(value for key, value in checks.items() if key != "ok")
+    mismatch_samples = (
+        [("event_blocked_intent", intent) for intent in event_blocked_intent_mismatches[:3]]
+        + [("queue_resolution", intent) for intent in executable_resolution_mismatches[:3]]
+        + [("queue_window", intent) for intent in executable_window_mismatches[:3]]
+        + [("queue_lifecycle_policy", intent) for intent in executable_lifecycle_mismatches[:3]]
+        + [("extra_action_policy", intent) for intent in executable_extra_action_mismatches[:3]]
+    )
+    return {
+        "checks": {
+            "ok": checks["ok"],
+            "checks": checks,
+            "mismatch_samples": [
+                {
+                    "mismatch_layer": layer,
+                    "downstream": _queue_downstream_sample(intent, rules),
+                }
+                for layer, intent in mismatch_samples[:10]
+            ],
+        },
+        "summary": {
+            "classification": "ir_consistency",
+            "blocked_event_count": len(blocked_events),
+            "event_blocked_queue_intent_count": len(event_blocked_intents),
+            "non_executable_queue_intent_count": len(non_executable_intents),
+            "executable_downstream_mismatch_count": len(mismatch_samples),
+        },
+        "case": {
+            "event_blocked_sample": _queue_downstream_sample(event_blocked_intents[0], rules)
+            if event_blocked_intents
+            else {},
+        },
+    }
+
+
+def _queue_downstream_sample(intent, rules: RuleBook) -> dict[str, Any]:
+    callback = rules.status_callback(intent.callback_id)
+    family = rules.status_event_family(callback.event) if callback is not None else None
+    resolution = rules.queue_resolution_for_intent(intent.queue_intent_id)
+    window = rules.queue_window_for_intent(intent.queue_intent_id)
+    lifecycle = rules.queue_lifecycle_policy_for_intent(intent.queue_intent_id)
+    extra_action = rules.extra_action_policy_for_intent(intent.queue_intent_id)
+    return {
+        "queue_intent": intent.to_json(),
+        "status_callback": callback.to_json() if callback is not None else {},
+        "status_event_family": family.to_json() if family is not None else {},
+        "queue_resolution": resolution.to_json() if resolution is not None else {},
+        "queue_window": window.to_json() if window is not None else {},
+        "queue_lifecycle_policy": lifecycle.to_json() if lifecycle is not None else {},
+        "extra_action_policy": extra_action.to_json() if extra_action is not None else {},
+    }
 
 
 def _action_delay_case(ir, rules: RuleBook) -> dict[str, Any]:

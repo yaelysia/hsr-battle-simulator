@@ -409,6 +409,35 @@ class TBGDLowering:
             combatant_profiles=combatant_profiles,
             monster_data_cards=monster_data_cards,
         )
+        status_event_families = _lower_status_event_families(status_callbacks, status_callback_tasks)
+        status_event_blocked_reasons = _status_event_blocked_reasons(status_event_families)
+        status_callbacks = _block_status_callbacks_by_event_family(status_callbacks, status_event_blocked_reasons)
+        status_callback_blocked_reasons = {
+            callback.callback_id: status_event_blocked_reasons[callback.event]
+            for callback in status_callbacks
+            if callback.event in status_event_blocked_reasons
+        }
+        status_callback_tasks = _block_status_callback_tasks_by_callback(
+            status_callback_tasks,
+            status_callback_blocked_reasons,
+        )
+        status_damage_emissions = _block_status_callback_derived_by_callback(
+            status_damage_emissions,
+            status_callback_blocked_reasons,
+        )
+        damage_modifiers = _block_status_callback_derived_by_callback(
+            damage_modifiers,
+            status_callback_blocked_reasons,
+        )
+        action_delay_emissions = _block_status_callback_derived_by_callback(
+            action_delay_emissions,
+            status_callback_blocked_reasons,
+        )
+        queue_intents = _block_status_callback_derived_by_callback(
+            queue_intents,
+            status_callback_blocked_reasons,
+        )
+        status_event_families = _lower_status_event_families(status_callbacks, status_callback_tasks)
         queue_resolutions = _lower_queue_resolutions(
             queue_intents=queue_intents,
             action_bindings=action_ability_bindings,
@@ -444,35 +473,6 @@ class TBGDLowering:
         entities = list(_dedupe_entities(entities).values())
         formulas.extend(self._lower_elation_mechanics())
         formulas.extend(self._lower_damage_behavior_templates())
-        status_event_families = _lower_status_event_families(status_callbacks, status_callback_tasks)
-        status_event_blocked_reasons = _status_event_blocked_reasons(status_event_families)
-        status_callbacks = _block_status_callbacks_by_event_family(status_callbacks, status_event_blocked_reasons)
-        status_callback_blocked_reasons = {
-            callback.callback_id: status_event_blocked_reasons[callback.event]
-            for callback in status_callbacks
-            if callback.event in status_event_blocked_reasons
-        }
-        status_callback_tasks = _block_status_callback_tasks_by_callback(
-            status_callback_tasks,
-            status_callback_blocked_reasons,
-        )
-        status_damage_emissions = _block_status_callback_derived_by_callback(
-            status_damage_emissions,
-            status_callback_blocked_reasons,
-        )
-        damage_modifiers = _block_status_callback_derived_by_callback(
-            damage_modifiers,
-            status_callback_blocked_reasons,
-        )
-        action_delay_emissions = _block_status_callback_derived_by_callback(
-            action_delay_emissions,
-            status_callback_blocked_reasons,
-        )
-        queue_intents = _block_status_callback_derived_by_callback(
-            queue_intents,
-            status_callback_blocked_reasons,
-        )
-        status_event_families = _lower_status_event_families(status_callbacks, status_callback_tasks)
 
         return CanonicalIR(
             version=BASELINE_VERSION,
