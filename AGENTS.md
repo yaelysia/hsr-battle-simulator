@@ -214,6 +214,8 @@ hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/FORBIDDEN.md
 
 资源重验证要额外标注并串行运行。凡是会全量 TBGD discovery/lowering、构建完整 RuleBook、写出大体积 `canonical_ir` / coverage / fidelity JSON 的脚本，都不能和其他重验证并行跑；怀疑资源问题时先只读脚本确认输出规模，再决定是否运行。`validate_v0_209` 已知会全量构建并写出完整 canonical/coverage/fidelity，默认不作为普通小改的直接回归，只有改到 direct damage/crit/RNGEvent schema 且 P1 主验证无法覆盖时才串行运行，并优先输出到 `/tmp`。
 
+验证该跑还是要跑，但高负荷验证必须手动限流，避免把磁盘 IO 和内存打满。凡是会全量读取 TBGD、重复 build lowering / RuleBook、执行阶段聚合或写较大 `/tmp` 产物的验证，都按重验证处理：一次只跑一个命令；不要和 `compileall`、其他 validation 或报告生成并行；优先跑本阶段主验证和最小直接回归，确需多项重验证时分批串行并在每项结束后确认结果；默认不写大产物，已有 summary 足够时只读取 summary；如果预计会造成明显 IO / 内存峰值，先向用户说明并等待确认。
+
 新增或重写验证脚本必须有资源预算。默认只输出 summary、matrix、抽样 case 和必要审计记录；禁止默认写完整 `CanonicalIR.to_json()`、完整 coverage/fidelity、完整 RuleBook 派生大对象或全量 transition dump。确实需要大产物时必须加显式开关，例如 `--write-large-artifacts` / `--full-artifacts`，默认关闭，并在计划文档标注预计资源风险。主验证脚本应优先按结构化谓词抽样真实来源，而不是为了覆盖率全量序列化数据库。
 
 如果在工作中形成新的长期经验、红线或流程约定，应及时更新本 `AGENTS.md`，避免后续线程重复踩坑。
@@ -237,6 +239,7 @@ hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/FORBIDDEN.md
 - 阶段验收不能把“blocked/no mutation 边界验证通过”当成“机制完成”。如果任务目标写的是 servant/召唤物、队列 family、状态生命周期等可执行机制，就必须有真实来源正例；只有计划明确写成 discovery/boundary 阶段时，blocked 才能算该子项通过。后续复核要逐项对照原计划目标，而不是只看聚合脚本 `ok=true`。
 - 队列 family 缺口不能只按 `QueueWindowIR.window_family` 统计。反击/追击等游戏语义可能先以通用 `insert_ability` / `insert_action` 承载，并在 `window_policy.source_basis.text_hints`、ability name、callback event、priority key 或 action definition 中保留语义线索；验收若只看 family 为 0 就标 `source_absent_not_required`，会漏掉真实来源，应归为 validation/admission gap 或补正例。
 - lowering 生成派生产物后如果又把上游节点改成 blocked，必须同步重算或阻断所有依赖产物。例如先生成 queue window，再按状态事件源缺失把 callback queue intent 改成 blocked，会留下“blocked intent 对应 executable window”的 IR 不一致；阶段验收必须跑触达系统的直接回归来抓这种问题。
+- 最终聚合验收必须继承所有分步矩阵中的真实 gap。最终手写 source/mechanism matrix 的主行 `gap=0` 不能覆盖 S0/S1/S8 等分步报告里仍存在的 `lowering_gap`、`admission_gap`、`validation_gap` 或内部子项 gap；如果一个来源域有 executable 正例但内部仍有未投影/未准入子项，必须拆子行继承到总缺口，不能用“有一个正例跑通”代表整域完成。
 
 ## 快照与结算目标摘要
 
@@ -314,6 +317,7 @@ git diff --check
 - 每个可验证结构阶段建议提交一次检查点。
 - 大变动后创建 git 提交保留检查点。
 - 按当前协作约定，阶段验收成功后提交一个 git 检查点；验收未通过、仍有 source/语义/通用性问题时不要为了留档提交。
+- 纯规划文档、交接文档、报告口径整理默认不作为检查点提交；除非用户明确要求提交，或该文档更新与一次阶段验收/实现检查点绑定。
 - v8 代码检查点不要混入无关文件。
 - `AGENTS.md` 只有在用户明确要求维护项目入口说明时才提交；本次交接文档更新属于允许范围。
 - 如果工作区里存在用户未提交修改，不要回滚；与当前任务无关则忽略。

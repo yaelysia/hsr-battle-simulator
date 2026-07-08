@@ -90,6 +90,7 @@ EXECUTABLE_CONDITION_OPCODES = {
     "ByIsInsertAction",
     "ByNot",
     "ByTargetListIntersects",
+    "ByTargetEntityType",
     "ByTargetTeam",
 }
 
@@ -778,6 +779,33 @@ def _evaluate_condition_payload(
             opcode,
             "target_identity_compared",
             {"left_target_id": left_id, "right_target_id": right_id},
+            source_trace,
+        )
+    if opcode == "ByTargetEntityType":
+        target_id, target_details = _resolve_condition_target(payload.get("TargetType"), context)
+        if target_id is None:
+            return _condition_blocked(condition_id, opcode, "target_alias_unresolved", target_details, source_trace)
+        unit = _state_unit(context, target_id)
+        if unit is None:
+            return _condition_blocked(condition_id, opcode, "target_unit_missing", {"target_id": target_id}, source_trace)
+        entity_type = payload.get("EntityTypeMask")
+        if entity_type != "Servant":
+            return _condition_blocked(
+                condition_id,
+                opcode,
+                f"entity_type_not_supported:{entity_type or 'missing'}",
+                {"target_id": target_id, "entity_type_mask": entity_type},
+                source_trace,
+            )
+        is_servant = getattr(unit, "side", None) == "summon" and getattr(unit, "flags", {}).get("summon_kind") == "servant"
+        if payload.get("Inverse") is True:
+            is_servant = not is_servant
+        return _condition_result(
+            is_servant,
+            condition_id,
+            opcode,
+            "target_entity_type_checked",
+            {"target_id": target_id, "entity_type_mask": entity_type, "inverse": payload.get("Inverse") is True},
             source_trace,
         )
     if opcode == "ByCompareMonsterID":

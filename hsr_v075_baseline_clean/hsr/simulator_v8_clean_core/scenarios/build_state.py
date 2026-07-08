@@ -193,6 +193,9 @@ class ScenarioStateBuilder:
         state = setup_result.state
         setup_records.extend(setup_result.records)
         source_traces.extend(setup_result.source_traces)
+        route_unit_errors = _validate_route_units_after_setup(scenario, state)
+        if route_unit_errors:
+            raise ValueError("; ".join(route_unit_errors))
         commands = tuple(
             ActionCommand(
                 actor_id=step.actor_id,
@@ -215,6 +218,18 @@ class ScenarioStateBuilder:
             setup_rng_events=setup_result.rng_events,
             blocked_setup=setup_result.blocked,
         )
+
+
+def _validate_route_units_after_setup(scenario: ScenarioSpec, state: BattleState) -> tuple[str, ...]:
+    unit_ids = set(state.units)
+    errors: list[str] = []
+    for index, step in enumerate(scenario.route):
+        if step.actor_id not in unit_ids:
+            errors.append(f"route[{index}]: unknown actor_id {step.actor_id!r}")
+        for target_id in step.target_ids:
+            if target_id not in unit_ids:
+                errors.append(f"route[{index}]: unknown target_id {target_id!r}")
+    return tuple(errors)
 
 
 def _scenario_skill_points(scenario: ScenarioSpec) -> int:

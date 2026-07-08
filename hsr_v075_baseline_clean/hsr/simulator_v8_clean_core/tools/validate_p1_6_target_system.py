@@ -22,6 +22,7 @@ from ..core.source_audit import RuntimeSourceAuditor
 from ..rules.ir import EffectIR, IRSource, TargetExpressionIR
 from ..rules.rulebook import RuleBook
 from ..systems.status import StatusSystem
+from ..systems.summon import SUMMON_RUNTIME_SCHEMA_VERSION
 from ..systems.target import TargetSystem
 from ..tbgd.lowering import TBGDLowering
 from ..tbgd.paths import find_tbgd_root
@@ -971,9 +972,39 @@ def _state() -> BattleState:
                 "ally:caster:validation_partner": "ally:two",
             },
             "summon_runtime": {
-                "schema_version": "p1_3_summon_runtime_v1",
+                "schema_version": SUMMON_RUNTIME_SCHEMA_VERSION,
                 "last_summon_monsters": ["summon:last"],
                 "by_owner": {"ally:caster": ["summon:caster"], "enemy:mid": ["summon:last"]},
+                "entities": {
+                    "summon:last": {
+                        "runtime_id": "summon:last",
+                        "unit_id": "summon:last",
+                        "template_ref": "monster:validation:last_summon",
+                        "summon_kind": "summoned_monster",
+                        "owner_id": "enemy:mid",
+                        "summoner_id": "enemy:mid",
+                        "team_side": "enemy",
+                        "status": "active",
+                        "source_intent_id": "summon_intent:validation:last",
+                        "source_trace": {"source_path": "validation", "raw_type": "SummonMonsterIntent", "raw_id": "last"},
+                        "created_event_index": 0,
+                        "removed_event_index": None,
+                    },
+                    "summon:caster": {
+                        "runtime_id": "summon:caster",
+                        "unit_id": "summon:caster",
+                        "template_ref": "monster:validation:caster_summon",
+                        "summon_kind": "summoned_monster",
+                        "owner_id": "ally:caster",
+                        "summoner_id": "ally:caster",
+                        "team_side": "ally",
+                        "status": "active",
+                        "source_intent_id": "summon_intent:validation:caster",
+                        "source_trace": {"source_path": "validation", "raw_type": "SummonMonsterIntent", "raw_id": "caster"},
+                        "created_event_index": 0,
+                        "removed_event_index": None,
+                    },
+                },
             },
         },
     )
@@ -1044,7 +1075,7 @@ def _state_with_servant_runtime(state: BattleState) -> BattleState:
     }
     runtime.update(
         {
-            "schema_version": "p1_3_summon_runtime_v1",
+            "schema_version": SUMMON_RUNTIME_SCHEMA_VERSION,
             "entities": entities,
             "by_owner": by_owner,
             "servants": servants,

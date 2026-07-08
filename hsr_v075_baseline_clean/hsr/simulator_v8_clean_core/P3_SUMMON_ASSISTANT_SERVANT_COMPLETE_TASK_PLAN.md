@@ -1,4 +1,4 @@
-# P3 召唤物 / 忆灵 / Assistant 体系完整覆盖分步计划
+# P3 召唤物 / 忆灵体系完整覆盖分步计划（AssistantAvatar 已移出）
 
 本文档是 P3 召唤物相关体系的执行计划。它延续 P2 状态系统的严格口径：先盘点当前数据库和 IR 中所有相关来源，再分层归因，最后只把有真实来源、可审计、可回放的路径做成 executable。缺来源、缺条件、缺目标、缺事件 payload、缺公式、缺 action admission 的路径必须 blocked / process-only / state unchanged，不能用 synthetic 正例凑完成。
 
@@ -11,7 +11,7 @@ P1 已经完成召唤物体系的最小纵切：
 - `SummonUnitData` / `ConfigSummonUnit` 已进入 `SummonUnitDefinitionIR` discovery，但当前仍按 catalog / visual / adventure 边界处理，不等同于战斗 runtime 自动生成。
 - `AvatarServantConfig` / `AvatarServantSkillConfig` 已 lower 到 `ServantDefinitionIR`，runtime 支持 servant / 忆灵 spawn、remove、target registry、action availability 和 BattleSetup initial setup。
 - servant 目标相关别名已经有第一阶段正例，flag-only servant 不会被当成真实目标。
-- `TurnInsertAssistantAbility` 已进入 `AssistantAbilityResolutionIR`，但 assistant actor / stats / execution source 当前未 admission，仍是 boundary-only。
+- `TurnInsertAssistantAbility` 已确认属于 AssistantAvatar / avatar assistant ability 系统：raw/IR/RuleBook 可审计，但没有 summon monster、UnitSpawn、servant lifecycle 或 SummonUnit runtime entity 语义。它保留为 P3 scope exclusion，后续单独处理，不计入 P3 召唤物/忆灵缺口。
 
 当前明确不足：
 
@@ -19,10 +19,9 @@ P1 已经完成召唤物体系的最小纵切：
 - `SummonUnitData` 仍没有拆清 combat battle summon 与 client / scene / adventure summon 的完整 admission。
 - summoned monster 的移除、过期、owner death cleanup、波次清理还只覆盖最小边界。
 - servant / 忆灵虽然可以生成和作为行动单位出现，但 damage stat binding、资源归属、完整技能执行、生命周期联动仍未宣称完整。
-- assistant 仍没有可执行 actor / stats / action graph / queue drain 正例。
 - summon runtime schema 还是 P1-3 版本，后续需要升级成能表达多类召唤实体、生命周期、目标关系、行动、来源审计的稳定契约。
 
-P3 的目标不是做敌方 AI。敌人、召唤怪物、servant、assistant 的动作选择仍由外部推演器控制；core 只提供合法动作、目标、队列、生命周期和结算规则。
+P3 的目标不是做敌方 AI。敌人、召唤怪物、servant 的动作选择仍由外部推演器控制；core 只提供合法动作、目标、队列、生命周期和结算规则。
 
 ## 1. 范围定义
 
@@ -31,7 +30,6 @@ P3 的目标不是做敌方 AI。敌人、召唤怪物、servant、assistant 的
 - 敌方或机制生成的 summoned monster。
 - `SummonUnitData` / `ConfigSummonUnit` 中能证明属于战斗 runtime 的 battle unit summon。
 - servant / 忆灵，包括 owner 绑定、属性继承、行动、目标关系、生命周期。
-- assistant ability，包括 `TurnInsertAssistantAbility`、assistant queue / window、assistant action execution。
 - 召唤物与状态、目标、队列、时间线、波次、BattleSetup、source audit、replay 的联动。
 
 本阶段不覆盖：
@@ -40,12 +38,13 @@ P3 的目标不是做敌方 AI。敌人、召唤怪物、servant、assistant 的
 - 全角色、全怪物机制解释本身；只在召唤体系需要时接入必要数据卡槽位。
 - 光锥、遗器、关卡环境的完整复刻；只处理它们提供召唤来源时的分类和边界。
 - 没有真实战斗 runtime 来源的 client / scene / adventure summon。
+- AssistantAvatar / `TurnInsertAssistantAbility` / `ConfigAbility/Avatar/Assistant` 协助技能配置。它保留 raw/IR/RuleBook 审计和 blocked 边界样本，但不是 P3 summon/servant runtime entity acceptance。
 
 ## 2. 完成定义
 
 P3 召唤物体系完成必须同时满足：
 
-- 当前 TBGD / Canonical IR 中所有 summon / servant / assistant 相关来源都有覆盖矩阵。
+- 当前 TBGD / Canonical IR 中所有 summon / servant 相关来源都有覆盖矩阵；AssistantAvatar 相关来源必须明确记录为 out_of_scope。
 - 每个来源都完成分层归因：raw 是否存在、lowering 是否投影、RuleBook 是否保留 admission 字段、runtime 是否有通用语义、validation 是否能结构化选样。
 - 有真实来源且当前语义可支持的路径都能 executable，并产生 transition、mutation、settlement、replay 和 source audit。
 - 不能执行的路径都有明确原因，并验证 blocked / process-only / state unchanged。
@@ -58,7 +57,7 @@ P3 召唤物体系完成必须同时满足：
 
 不能宣称完成的情况：
 
-- 只验证 `SummonMonster`，不盘点 servant / assistant / `SummonUnitData`。
+- 只验证 `SummonMonster`，不盘点 servant / `SummonUnitData`。
 - 只验证 spawn，不验证 remove / cleanup / wave / target / queue / action boundary。
 - 只把 blocked negative 当成机制完成，但没有真实来源正例。
 - 只看聚合 `ok=true`，不审查 source trace 是否指向真实 IR 节点。
@@ -82,14 +81,14 @@ P3 召唤物体系完成必须同时满足：
 
 ```text
 P3-S0  召唤物来源全量盘点和术语归一
-P3-S1  Summon / Servant / Assistant IR 与 RuleBook 契约补齐
+P3-S1  Summon / Servant IR 与 RuleBook 契约补齐
 P3-S2  summon runtime schema v2 与实体身份统一
 P3-S3  summoned monster 生成、位置、数量、唯一组和延迟 admission 完整化
 P3-S4  battle unit summon / SummonUnitData 来源拆分和 runtime admission
 P3-S5  servant / 忆灵定义、属性、生命周期、owner 关系完整化
 P3-S6  召唤单位行动可用性和动作执行链路
-P3-S7  assistant ability、assistant queue/window 和执行边界
-P3-S8  目标系统中的召唤物 / servant / assistant 关系扩展
+P3-S7  AssistantAvatar scope exclusion 与 queue/window 边界审计
+P3-S8  目标系统中的召唤物 / servant 关系扩展
 P3-S9  移除、过期、owner cleanup、死亡、波次切换和清场
 P3-S10 状态、资源、伤害、击杀归因与召唤物联动
 P3-S11 BattleSetup、scenario、外部推演器接口和端到端样例
@@ -108,15 +107,15 @@ P3-S12 全来源闭环、聚合验收、报告和交接
 - `SummonUnitData` / `ConfigSummonUnit` / summon unit config。
 - `MonsterConfig.SummonIDList` 等 catalog 引用。
 - `AvatarServantConfig` / `AvatarServantSkillConfig` / servant ability files。
-- `TurnInsertAssistantAbility` 及其 queue intent。
-- summon / servant / assistant 相关 target alias / target operation。
+- `TurnInsertAssistantAbility` 及其 queue intent 只作为 AssistantAvatar scope exclusion 留证。
+- summon / servant 相关 target alias / target operation。
 - owner death、remove、expire、wave clear、lifetime、targetability、actionability 相关来源。
 - 角色、怪物、stage、battle event、global config 中可能触发召唤或影响召唤物的来源。
 
 ### 验收结果
 
 - 输出轻量覆盖矩阵，至少包含来源域、raw 数量、IR 数量、executable / blocked / gap 计数、样例 source trace。
-- 明确区分 summoned monster、battle unit summon、servant / 忆灵、assistant、client / scene / adventure summon、catalog ref。
+- 明确区分 summoned monster、battle unit summon、servant / 忆灵、AssistantAvatar out_of_scope、client / scene / adventure summon、catalog ref。
 - 每个 gap 都有分层归因。
 - 未分类来源数量必须为 0。
 - 默认只输出 summary、matrix、少量样例，不写完整 IR。
@@ -128,7 +127,7 @@ P3-S12 全来源闭环、聚合验收、报告和交接
 - 把 monster catalog ref 当作 runtime trigger。
 - 只输出总数，没有 raw -> IR -> RuleBook 链路。
 
-## 6. P3-S1 Summon / Servant / Assistant IR 与 RuleBook 契约补齐
+## 6. P3-S1 Summon / Servant IR 与 RuleBook 契约补齐
 
 ### 目标
 
@@ -140,7 +139,7 @@ P3-S12 全来源闭环、聚合验收、报告和交接
 - spawn 触发来源、位置、延迟、初始行动值、初始等级、基础属性来源。
 - remove / expire / owner cleanup / wave cleanup 来源。
 - servant 属性继承、速度、生命、行动集、技能图、生命周期、owner 绑定。
-- assistant actor、stats、ability graph、target、queue priority、attribution policy。
+- AssistantAvatar resolution contract 只验证 raw/IR/RuleBook 可审计和 out_of_scope 分类，不作为 P3 runtime admission 目标。
 - 召唤物与状态、资源、伤害公式、target expression 的 source trace。
 - RuleBook 查询 API 必须能按结构化 key 查到定义、intent、resolution、lifecycle policy 和 action admission。
 
@@ -168,7 +167,7 @@ P3-S12 全来源闭环、聚合验收、报告和交接
 
 - 每个召唤实体的唯一 runtime id、unit id、template/ref、summon kind。
 - owner、summoner、team side、source intent、source trace、created / removed event index。
-- by owner、by unique group、last summoned monsters、last servants、assistant history。
+- by owner、by unique group、last summoned monsters、last servants。
 - targetability、actionability、timeline admission、lifetime、wave clear policy。
 - removed 状态必须保留审计记录，不能直接从 registry 中消失。
 - runtime view 是纯查询，不能改变 state。
@@ -294,37 +293,37 @@ P3-S12 全来源闭环、聚合验收、报告和交接
 - 给 `side="summon"` 默认动作。
 - core 内部自动选择召唤物动作。
 
-## 12. P3-S7 assistant ability、assistant queue/window 和执行边界
+## 12. P3-S7 AssistantAvatar scope exclusion 与 queue/window 边界审计
 
 ### 目标
 
-把 assistant 从 boundary-only 推进到真实来源可执行，或严格证明当前数据库缺可执行来源。
+证明 `TurnInsertAssistantAbility` / `AssistantAbilityResolutionIR` 属于 AssistantAvatar / avatar assistant ability 系统，不属于 P3 召唤物/servant runtime entity acceptance；同时保留 queue/window 的 blocked 边界审计，避免 runtime 把它伪执行成 servant 或 summoned monster。
 
 ### 必须覆盖
 
 - `TurnInsertAssistantAbility` 来源、assistant ability id、owner alias、target alias。
-- assistant actor / stats source、ability graph、target resolution、queue priority。
+- AssistantAvatar raw / IR / RuleBook 可见性。
 - assistant queue window 与 queue intent / resolution / lifecycle 一致性。
-- assistant action attribution：伤害、状态、资源、击杀归因归谁。
-- missing actor、missing stats、dynamic ability id、target alias unsupported、priority missing 等负例。
+- blocked assistant intent 不派生 executable queue downstream IR。
+- validation-only assistant queue drain / action availability 边界保持 state unchanged、无 selectable window、无 action choices。
 
 ### 验收结果
 
-- 如果存在真实可执行来源，至少一个 assistant queue -> drain -> action/effect 正例通过 replay / source audit。
-- 如果不存在，assistant 保持 `source_absent_not_required` 或 `boundary_only`，并证明 raw / IR / RuleBook 分层结果。
-- blocked assistant intent 不得生成 executable queue downstream IR。
+- S0 `assistant_ability_queue`、S1 `assistant_resolution_contract`、S7 source layer 均分类为 `out_of_scope`。
+- S12 写出 `p3_summon_scope_exclusions.json`，记录 raw=5、IR=5、RuleBook visible=5，且 `p3_gap_count=0`。
+- queue drain / action availability negative 样本通过，证明 AssistantAvatar 不会被 P3 runtime 伪执行。
 
 ### 不算完成
 
 - 把 assistant 当成普通 servant 或普通 summon 直接执行。
-- 只检查 queue intent，不检查 assistant actor/stats/target/action graph。
-- 用固定 ability id 合成正例。
+- 把 AssistantAvatar scope exclusion 改名成 boundary_only 后仍计入 P3 完成。
+- 用固定 ability id 合成 P3 召唤物正例。
 
-## 13. P3-S8 目标系统中的召唤物 / servant / assistant 关系扩展
+## 13. P3-S8 目标系统中的召唤物 / servant 关系扩展
 
 ### 目标
 
-让目标系统能完整表达召唤物相关目标关系，同时保持“缺 registry / 缺 source 不 fallback”。
+让目标系统能完整表达召唤物/servant 相关目标关系，同时保持“缺 registry / 缺 source 不 fallback”。AssistantAvatar 目标别名只作为 out_of_scope boundary 记录。
 
 ### 必须覆盖
 
@@ -332,13 +331,14 @@ P3-S12 全来源闭环、聚合验收、报告和交接
 - summon / servant 与 ally/enemy/team side 的关系。
 - targetability 和 dead / removed / untargetable 过滤。
 - unique group、adjacent、formation order、random target、fetch / sort 与 summon entity 的交互。
-- assistant target alias 和 payload。
+- `FriendServantSelect` / `AssistantAvatar` 不进入 P3 target gap 矩阵，只在 assistant target boundary 中记录 `out_of_scope`。
 
 ### 验收结果
 
 - 召唤物目标相关 alias / operation 矩阵无 unclassified。
 - 真实 source-backed 正例覆盖 owner fetch、servant fetch、last summon、summoned minions。
 - 缺 registry、flag-only、removed entity、wrong owner、unsupported target operation 全部 blocked。
+- assistant target boundary classification 为 `out_of_scope`，不计入 P3 lowering/admission gap。
 
 ### 不算完成
 
@@ -366,6 +366,15 @@ P3-S12 全来源闭环、聚合验收、报告和交接
 - 缺 remove source 时 blocked，不能复用 spawn source。
 - active enemy summon 是否阻塞 wave clear 由真实 policy 决定。
 - 移除后 replay、source audit、target negative、queue negative 全部通过。
+
+### 当前完成结果
+
+- 已完成 executable 正例：servant 显式 remove 使用真实 lifecycle remove admission，产生 status cleanup、queue cleanup、turn owner cleanup、`UnitRemove`、removed record 和 summon runtime mutation。
+- 已完成 executable 正例：owner cleanup 使用 servant lifecycle source，产生 `UnitRemove` 和 summon runtime removed audit。
+- 已完成负例：缺 remove admission 或尝试复用 spawn source 时 blocked、process-only、state unchanged。
+- 已完成 wave clear policy 验证：当前真实 summoned monster `wave_clear_policy=counts`，会阻塞 wave clear；`ignore` policy 分支允许 wave transition 且不把 ignored summon 当作当前 wave remove unit。
+- 已完成 replay / source audit / target negative / queue negative 定向验证。
+- expire、summoned monster death、owner 离场、setup reset 暂未扩成独立 executable 正例，后续若 TBGD / lowering 暴露更细 remove source，需要继续按 S9 同一口径补验证。
 
 ### 不算完成
 
@@ -395,6 +404,15 @@ P3-S12 全来源闭环、聚合验收、报告和交接
 - 缺 stat binding 或资源归属来源时 blocked，不用默认 owner 兜底。
 - P2 状态聚合相关回归不退化。
 
+### 当前完成结果
+
+- 已完成 executable 正例：servant 作为 actor / target / status holder 对自身施加状态，产生 `status_system` mutation、settlement record、replay 和 source audit 均通过。
+- 已完成 damage stat gate：servant hp-damage action IR 存在，但当前缺 servant damage stat admission 时 executor blocked，`state unchanged`，不默认套用 owner / copied attack。
+- 已完成 resource ownership 边界：当前 executable servant action 无正向 skill point cost，资源 mutation 不合成；无资源归属来源时不默认 owner。
+- 已完成 kill attribution source-frame 边界：generic damage source frame 可区分 `attacker_id=servant`、`kill_credit_owner_id=owner`、`kill_credit_source_id/source_kind`。
+- 已完成 removed summon negative：servant removed 后 damage target blocked，不产生 damage mutation。
+- servant damage formula executable 正例暂未开放；必须等 stat binding / owner binding 来源 admission 完整后再从 blocked 升级。
+
 ### 不算完成
 
 - 用普通单位公式硬套 servant，但没有 stat source。
@@ -421,6 +439,15 @@ P3-S12 全来源闭环、聚合验收、报告和交接
 - 缺真实来源的 initial summon blocked / state unchanged。
 - route 选择不合法召唤物动作时 blocked，不自动改选。
 
+### 当前完成结果
+
+- 已完成 scenario route 阶段化身份校验：route 的 action/source 可在 setup 前校验；route actor / target 若来自 `battle_setup.initial_summons`，会在 setup mutation 应用后精确校验，未知 ID 不能进入 executor。
+- 已完成 executable 端到端正例：BattleSetup 开局生成 servant，scenario route 显式选择 servant action，经过 action availability、target admission、executor、mutation、settlement、replay 和 source audit。
+- 已完成 boundary 负例：battle unit summon initial setup 当前仍为 boundary-only，blocked / process-only / state unchanged，不把 `SummonUnitData` 默认当作可执行战斗召唤。
+- 已完成非法 route 负例：route 显式选择不可用 servant hp-damage action 时 blocked、state unchanged，不自动改选可用动作。
+- 已完成缺目标负例：route 不提供目标时 blocked、state unchanged，不自动补默认 target。
+- S11 主验证只写 summary / compact audit，未写完整 Canonical IR 或全量 transition dump。
+
 ### 不算完成
 
 - 只手写 BattleState，不走 BattleSetup。
@@ -437,7 +464,7 @@ P3-S12 全来源闭环、聚合验收、报告和交接
 
 - `validate_p3_summon_assistant_servant_complete.py` 或等价聚合入口。
 - 召唤物来源总矩阵。
-- summon / servant / assistant 机制分类矩阵。
+- summon / servant 机制分类矩阵，以及 AssistantAvatar scope exclusion 矩阵。
 - 正例样本集。
 - blocked / state unchanged 负例样本集。
 - source audit 抽样报告。
@@ -446,19 +473,24 @@ P3-S12 全来源闭环、聚合验收、报告和交接
 - P3 最终报告。
 - 更新 `CODEX_HANDOFF.md`、`README.md` 和必要入口文档。
 
-### 验收结果
+### 目标验收标准
 
-最终 summary 至少包含：
+允许 P3-S12 底座闭环通过时，最终 summary 至少包含：
 
 ```text
-ok=True
+validation_gate_ok=True
+p3_summon_foundation_closed=True
+p3_summon_phase_complete=True
+p3_summon_acceptance_ok=True
 p3_summon_substrate_complete=True
+p3_summon_all_executable_complete=False
 p3_summon_sources_classified=True
 p3_summon_implementation_missing_count=0
 p3_summon_lowering_gap_count=0
-p3_summon_admission_gap_count=0
 p3_summon_validation_gap_count=0
 p3_summon_unclassified_count=0
+allowed_gap_evidence_summary.all_evidence_ok=True
+allowed_gap_evidence_summary.disallowed_gap_count=0
 ```
 
 如果当前数据库确实不存在某些战斗 runtime 来源，可以有：
@@ -468,11 +500,61 @@ source_absent_not_required_count > 0
 boundary_only_count > 0
 ```
 
-但每一项都必须有 raw / IR / RuleBook 分层证据，不能是脚本漏扫。
+如果当前有 raw/IR 来源但准入证据不足，可以保留 `admission_gap`；如果 raw 指向的 profile/card/stat 等真实来源缺失，可以保留 `source_gap_blocked`。但每一项都必须有 raw / IR / RuleBook 分层证据、blocked/process-only/state unchanged 样本或等价边界证据，并进入 allowed gap evidence matrix，不能是脚本漏扫或 aggregate 隐藏。
+
+全正例完成是更高口径，必须额外满足：
+
+```text
+p3_summon_all_executable_complete=True
+p3_summon_source_gap_blocked_count=0
+p3_summon_admission_gap_count=0
+inherited_gap_count=0
+```
+
+### 当前更正结果
+
+- 已新增聚合入口：`simulator_v8_clean_core.tools.validate_p3_summon_assistant_servant_complete`。
+- 已完成一次 RuleBook 构建内的 S0-S11 聚合，避免串联 subprocess 或重复 lowering。
+- 聚合口径已更正：最终 acceptance 必须继承 S0/S1/S8 分步矩阵中的真实 gap；最终 source/mechanism matrix 也必须把 executable 正例和同域 gap 子项拆成不同子行，不能用宽域正例覆盖子缺口。
+- 当前状态是：`validation_gate_ok=True`，`p3_summon_phase_complete=True`，`p3_summon_all_executable_complete=False`。这表示 P3 底座闭环验收通过，但仍不是全正例 / 全 admission 清零完成。
+- 已输出最终来源总矩阵、机制分类矩阵、正例样本集、blocked / state unchanged 负例样本集、source audit 样本、replay 样本和 resource budget。
+- 已新增 scope exclusion 输出：`p3_summon_scope_exclusions.json`。AssistantAvatar / `TurnInsertAssistantAbility` 分类为 `out_of_scope`，`p3_gap_count=0`，后续由独立 AssistantAvatar / avatar assistant ability 工作处理。
+- 当前 summary：
+
+```text
+ok=True
+validation_gate_ok=True
+p3_summon_foundation_closed=True
+p3_summon_phase_complete=True
+p3_summon_acceptance_ok=True
+p3_summon_substrate_complete=True
+p3_summon_all_executable_complete=False
+p3_summon_sources_classified=True
+p3_summon_implementation_missing_count=0
+p3_summon_source_gap_blocked_count=27
+p3_summon_lowering_gap_count=0
+p3_summon_admission_gap_count=2123
+p3_summon_validation_gap_count=0
+p3_summon_unclassified_count=0
+p3_summon_scope_exclusion_count=1
+source_absent_not_required_count=3
+boundary_only_count=6
+```
+
+- 最终 source matrix：13 rows，`executable=6`、`boundary_only=2`、`source_absent_not_required=2`、`admission_gap=2`、`source_gap_blocked=1`，`gap_count=2150`。
+- 最终 mechanism matrix：19 rows，`executable=11`、`boundary_only=4`、`source_absent_not_required=1`、`admission_gap=2`、`source_gap_blocked=1`，`gap_count=2150`。
+- inherited gap matrix：3 rows，`admission_gap=2123`、`source_gap_blocked=27`。
+- allowed gap evidence matrix：3 rows，`allowed_gap_count=2150`、`disallowed_gap_count=0`、`all_evidence_ok=true`，因此当前 admission/source-gap 不阻塞底座闭环验收，但会阻塞全正例完成。
+- S8 `FriendServantSelect` / AssistantAvatar target boundary 已改为 `out_of_scope`；S0 lifecycle `OnEnterBattle` admission gap 已清零；S6 summoned monster action availability 已从 boundary-only 推进为 source-backed fixed-sequence executable。
+- source audit 样本 5 条全部通过；replay 样本 8 条全部通过。
+- resource budget：`rulebook_build_count=1`，`large_artifacts_written=false`，`full_ir_written=false`，`full_transition_dump_written=false`。
+- 已更正 P3 最终报告并更新 `CODEX_HANDOFF.md`、`README.md`。
+
+当前底座闭环验收通过。`p3_summon_sources_classified=True` 只代表没有 unclassified；`p3_summon_all_executable_complete=False` 说明 admission/source-gap 仍未清零，不能宣称全正例完成。
 
 ### 不算完成
 
-- 聚合 `ok=True`，但还有 hidden blocker。
+- 聚合 `ok=True`，但没有 allowed-gap evidence matrix。
 - 报告只列已支持样例，不列全量缺口。
 - 只跑验证脚本，不审代码结构和通用性。
 - 没有更新交接文档，导致后续线程继续按旧状态理解。
@@ -541,38 +623,31 @@ git diff --check
 
 ## 20. Checklist
 
-- [ ] P3-S0 召唤物来源全量盘点和术语归一完成。
-- [ ] P3-S1 Summon / Servant / Assistant IR 与 RuleBook 契约补齐完成。
-- [ ] P3-S2 summon runtime schema v2 与实体身份统一完成。
-- [ ] P3-S3 summoned monster 生成、位置、数量、唯一组和延迟 admission 完整化完成。
-- [ ] P3-S4 battle unit summon / SummonUnitData 来源拆分和 runtime admission 完成。
-- [ ] P3-S5 servant / 忆灵定义、属性、生命周期、owner 关系完整化完成。
-- [ ] P3-S6 召唤单位行动可用性和动作执行链路完成。
-- [ ] P3-S7 assistant ability、assistant queue/window 和执行边界完成。
-- [ ] P3-S8 目标系统中的召唤物 / servant / assistant 关系扩展完成。
-- [ ] P3-S9 移除、过期、owner cleanup、死亡、波次切换和清场完成。
-- [ ] P3-S10 状态、资源、伤害、击杀归因与召唤物联动完成。
-- [ ] P3-S11 BattleSetup、scenario、外部推演器接口和端到端样例完成。
-- [ ] P3-S12 全来源闭环、聚合验收、报告和交接完成。
+- [x] P3-S0 召唤物来源全量盘点和术语归一完成。
+- [x] P3-S1 Summon / Servant IR 与 RuleBook 契约补齐完成；AssistantAvatar contract 已分类为 out_of_scope。
+- [x] P3-S2 summon runtime schema v2 与实体身份统一完成。
+- [x] P3-S3 summoned monster 生成、位置、数量、唯一组和延迟 admission 完整化完成。
+- [x] P3-S4 battle unit summon / SummonUnitData 来源拆分和 runtime admission 完成。
+- [x] P3-S5 servant / 忆灵定义、属性、生命周期、owner 关系完整化完成。
+- [x] P3-S6 召唤单位行动可用性和动作执行链路完成。
+- [x] P3-S7 AssistantAvatar scope exclusion 与 queue/window 边界审计完成。
+- [x] P3-S8 目标系统中的召唤物 / servant 关系扩展完成；AssistantAvatar target boundary 已分类为 out_of_scope。
+- [x] P3-S9 移除、过期、owner cleanup、死亡、波次切换和清场完成。
+- [x] P3-S10 状态、资源、伤害、击杀归因与召唤物联动完成。
+- [x] P3-S11 BattleSetup、scenario、外部推演器接口和端到端样例完成。
+- [x] P3-S12 全来源闭环、聚合验收、报告和交接完成；当前底座闭环验收通过，但 all-executable 未完成。
 
-## 21. 第一项执行建议
+## 21. 下一项执行建议
 
-下一步应先执行 P3-S0，不要直接改 runtime。
+当前状态是 P3 底座闭环验收通过，全正例 / 全 admission 清零未完成。下一步可以进入 P4+ 扩面，但 P3 剩余 admission/source-gap 应作为后续 backlog 持续收敛，不能把它们误读成 executable。
 
-P3-S0 的执行层目标是产出一个轻量召唤体系总矩阵，用它回答：
+推荐后续优先选一个清晰大块：
 
 ```text
-当前数据库里到底有哪些 summoned monster 来源？
-有哪些 SummonUnitData / ConfigSummonUnit 来源？
-哪些是 combat battle summon，哪些只是 client / scene / adventure / catalog？
-有哪些 servant / 忆灵定义和技能？
-有哪些 assistant queue / ability 来源？
-哪些已经 executable？
-哪些是 boundary_only？
-哪些是 lowering gap？
-哪些是 admission gap？
-哪些是 implementation missing？
-哪些只是 validation gap？
+S0 summon_target_expression 子项 admission gap。
+S0 summoned_monster_intent admission 子项 gap。
+S0 summoned_monster_intent source_gap_blocked 子项 gap。
+独立 AssistantAvatar / avatar assistant ability 工作：不属于 P3 召唤物/忆灵验收。
 ```
 
-只有这个矩阵可靠，后续才不会再出现“召唤物体系某个大类其实从没接入”的问题。
+后续重验证仍必须串行限流，输出到 `/tmp`，不默认写全量大产物。

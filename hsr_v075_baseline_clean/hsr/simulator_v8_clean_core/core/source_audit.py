@@ -82,6 +82,11 @@ MUTATION_SOURCE_POLICIES: dict[str, dict[str, JSONValue]] = {
         "required_metadata": ["source_trace", "wave_transition_plan or wave_definition_id"],
         "coverage_required": "executable wave definition or traceable battle outcome",
     },
+    "summon_system": {
+        "required_ir": ["SummonMonsterIntentIR or ServantDefinitionIR"],
+        "required_metadata": ["summon_operation", "summon_plan or intent_id", "source_trace"],
+        "coverage_required": "executable for mutating spawn/remove/cleanup paths",
+    },
     "combat_executor.queue": {
         "required_ir": ["QueueIntentIR + QueuePriorityIR + QueueWindowIR for enqueue; QueueIntentIR + QueueResolutionIR + QueuePriorityIR + QueueWindowIR + QueueWindowPlan for dequeue; extra_turn additionally requires QueueLifecyclePolicyIR + ExtraActionPolicyIR"],
         "required_metadata": ["queue_name", "queue_operation", "queue_intent_id", "queue_window_id", "target_resolution", "source_trace"],
@@ -187,6 +192,8 @@ class RuntimeSourceAuditor:
             return self._audit_enemy_action_mutation(mutation, records, violations)
         if mutation.source == "wave_system":
             return self._audit_wave_mutation(mutation, records, violations)
+        if mutation.source == "summon_system":
+            return self._audit_summon_mutation(mutation, records, violations)
         violations.append(_violation(mutation, "unsupported_mutation_source", details={"records": list(records)}))
         return _trace(mutation, records, {})
 
@@ -422,6 +429,95 @@ class RuntimeSourceAuditor:
                 "lifecycle_operation": str(metadata.get("lifecycle_operation") or ""),
                 "status_cleanup_operation": str(metadata.get("status_cleanup_operation") or ""),
                 "outcome": str(metadata.get("outcome") or ""),
+            },
+        )
+
+    def _audit_summon_mutation(
+        self,
+        mutation: Mutation,
+        records: tuple[dict[str, JSONValue], ...],
+        violations: list[SourceAuditViolation],
+    ) -> dict[str, JSONValue]:
+        metadata = mutation.metadata
+        _require_dict(mutation, metadata, "source_trace", violations)
+        plan = metadata.get("summon_plan") if isinstance(metadata.get("summon_plan"), dict) else {}
+        plan_metadata = plan.get("metadata") if isinstance(plan.get("metadata"), dict) else {}
+        removed_record = metadata.get("removed_record") if isinstance(metadata.get("removed_record"), dict) else {}
+        operation = _first_str(
+            metadata.get("summon_operation"),
+            plan.get("operation"),
+            removed_record.get("summon_operation"),
+        )
+        intent_ids = _summon_audit_intent_ids(metadata, plan, plan_metadata, removed_record)
+        if not intent_ids:
+            violations.append(
+                _violation(
+                    mutation,
+                    "summon_source_ir_missing",
+                    missing_field="intent_id",
+                    details={"operation": operation, "metadata": metadata},
+                )
+            )
+        for intent_id in intent_ids:
+            servant_definition = self.rules.servant_definition(intent_id)
+            if servant_definition is not None:
+                _audit_source(servant_definition.source, servant_definition.coverage_status, mutation, violations, executable_required=True)
+                continue
+            summon_intent = self.rules.summon_monster_intent(intent_id)
+            if summon_intent is not None:
+                _audit_source(summon_intent.source, summon_intent.coverage_status, mutation, violations, executable_required=True)
+                continue
+            violations.append(
+                _violation(
+                    mutation,
+                    "summon_source_ir_missing",
+                    details={"operation": operation, "intent_id": intent_id},
+                )
+            )
+        if operation == "remove_summon":
+            admission = metadata.get("remove_admission")
+            if not isinstance(admission, dict):
+                admission = removed_record.get("remove_admission")
+            if not isinstance(admission, dict):
+                admission = plan_metadata.get("remove_admission")
+            if (
+                not isinstance(admission, dict)
+                or admission.get("coverage_status") != "executable"
+                or admission.get("remove_source_admitted") is not True
+            ):
+                violations.append(
+                    _violation(
+                        mutation,
+                        "summon_remove_source_not_admitted",
+                        missing_field="remove_admission",
+                        details={"operation": operation, "admission": admission if isinstance(admission, dict) else {}},
+                    )
+                )
+        if operation == "owner_removed_cleanup":
+            admissions = plan_metadata.get("remove_admissions")
+            if isinstance(admissions, list) and admissions:
+                for admission in admissions:
+                    if not isinstance(admission, dict):
+                        violations.append(_violation(mutation, "summon_remove_admission_invalid", details={"admission": admission}))
+                        continue
+                    if admission.get("coverage_status") != "executable" or admission.get("remove_source_admitted") is not True:
+                        violations.append(
+                            _violation(
+                                mutation,
+                                "summon_remove_source_not_admitted",
+                                details={"operation": operation, "admission": admission},
+                            )
+                        )
+        return _trace(
+            mutation,
+            records,
+            {
+                "summon_operation": operation,
+                "intent_ids": list(intent_ids),
+                "lifecycle_operation": str(metadata.get("lifecycle_operation") or ""),
+                "status_cleanup_operation": str(metadata.get("status_cleanup_operation") or ""),
+                "queue_cleanup_operation": str(metadata.get("queue_cleanup_operation") or ""),
+                "turn_owner_cleanup_operation": str(metadata.get("turn_owner_cleanup_operation") or ""),
             },
         )
 
@@ -1621,6 +1717,19 @@ def _first_str(*values: object) -> str:
         if isinstance(value, str) and value:
             return value
     return ""
+
+
+def _summon_audit_intent_ids(*sources: dict[str, JSONValue]) -> tuple[str, ...]:
+    values: list[str] = []
+    for source in sources:
+        for key in ("intent_id", "summon_intent_id", "servant_definition_id"):
+            value = source.get(key)
+            if isinstance(value, str) and value:
+                values.append(value)
+        raw_intent_ids = source.get("intent_ids")
+        if isinstance(raw_intent_ids, list):
+            values.extend(str(item) for item in raw_intent_ids if isinstance(item, str) and item)
+    return tuple(dict.fromkeys(values))
 
 
 def _trace(

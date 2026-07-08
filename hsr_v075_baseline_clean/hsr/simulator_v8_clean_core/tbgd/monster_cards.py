@@ -9,6 +9,10 @@ from ..rules.ir import IRSource, JSONValue, MonsterDataCardIR, PassiveMechanismS
 
 
 MONSTER_CONFIG_PATH = "ExcelOutput/MonsterConfig.json"
+MONSTER_ROW_PATHS: tuple[str, ...] = (
+    MONSTER_CONFIG_PATH,
+    "ExcelOutput/MonsterUniqueConfig.json",
+)
 MONSTER_TEMPLATE_PATHS: tuple[str, ...] = (
     "ExcelOutput/MonsterTemplateConfig.json",
     "ExcelOutput/MonsterTemplateUniqueConfig.json",
@@ -54,12 +58,16 @@ def build_monster_card_ir(
     *,
     max_records_per_table: int | None,
 ) -> MonsterCardBuildResult:
-    monster_rows = _rows_by_id(
-        tbgd_root,
-        MONSTER_CONFIG_PATH,
-        "MonsterID",
-        max_records_per_table=max_records_per_table,
-    )
+    monster_rows: dict[str, _RowRecord] = {}
+    for relative_path in MONSTER_ROW_PATHS:
+        monster_rows.update(
+            _rows_by_id(
+                tbgd_root,
+                relative_path,
+                "MonsterID",
+                max_records_per_table=max_records_per_table,
+            )
+        )
     template_rows: dict[str, _RowRecord] = {}
     for relative_path in MONSTER_TEMPLATE_PATHS:
         template_rows.update(

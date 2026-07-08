@@ -37,11 +37,13 @@ class IdentityResolver:
             if trace:
                 traces.append(trace)
 
+        setup = scenario.battle_setup
+        route_may_reference_setup_units = bool(setup.initial_summons)
         for index, step in enumerate(scenario.route):
-            if step.actor_id not in unit_ids:
+            if step.actor_id not in unit_ids and not route_may_reference_setup_units:
                 errors.append(f"route[{index}]: unknown actor_id {step.actor_id!r}")
             for target_id in step.target_ids:
-                if target_id not in unit_ids:
+                if target_id not in unit_ids and not route_may_reference_setup_units:
                     errors.append(f"route[{index}]: unknown target_id {target_id!r}")
             action = self.rules.entity(step.action_ref)
             if action is None:
@@ -65,7 +67,6 @@ class IdentityResolver:
             if definition_trace:
                 traces.append(definition_trace)
 
-        setup = scenario.battle_setup
         wave = setup.wave
         if wave is not None:
             if wave.kind == "stage":

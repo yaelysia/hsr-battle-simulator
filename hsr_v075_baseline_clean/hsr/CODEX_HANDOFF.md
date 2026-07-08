@@ -2,7 +2,7 @@
 
 ## 0. 一句话状态
 
-当前主线是 `simulator_v8_clean_core`。P1 最终收口已完成，P2 状态系统底座与当前数据库状态来源闭环也已完成：`validate_p2_status_system_complete` 输出 `ok=true`、`p2_status_substrate_complete=true`、`p2_all_status_sources_classified=true`，且 implementation/lowering/admission/validation gap 与 unclassified 均为 0。这里的完成含义是“当前 TBGD / Canonical IR 中状态相关来源已全量分类；有来源且可执行的路径已有正例；不能执行的路径有 blocked/process-only 负例”，不是“全游戏角色、怪物、装备、关卡机制已经复刻”。后续应进入 P3+ 扩面，不要继续按旧 P1/P2 blocker 修补。
+当前主线是 `simulator_v8_clean_core`。P1 最终收口、P2 状态系统底座、P3 召唤物体系底座均已完成当前闭环验收。P3 聚合入口 `validate_p3_summon_assistant_servant_complete` 最新限流复查输出 `ok=true`、`validation_gate_ok=true`、`p3_summon_phase_complete=true`、`p3_summon_substrate_complete=true`、`p3_summon_all_executable_complete=false`、`p3_summon_sources_classified=true`、`p3_summon_admission_gap_count=2123`、`p3_summon_source_gap_blocked_count=27`、`p3_summon_scope_exclusion_count=1`、`p3_summon_implementation_missing_count=0`、`p3_summon_lowering_gap_count=0`、`p3_summon_unclassified_count=0`。这些 admission/source-gap 来自 S0 分步矩阵继承，并已投影到最终 source/mechanism matrix 子行和 allowed-gap evidence matrix，不能被宽域 executable 正例掩盖，也不能误读为 executable。AssistantAvatar / `TurnInsertAssistantAbility` 已移出 P3 召唤物/servant 验收，记录在 `p3_summon_scope_exclusions.json`，不计入 P3 gap。
 
 ## 1. 路径与事实来源
 
@@ -56,11 +56,12 @@ hsr_v075_baseline_clean/hsr/simulator_v7_7/
 6. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/PHASE1_SUMMARY.md`
 7. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/P2_STATUS_SYSTEM_COMPLETE_TASK_PLAN.md`
 8. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/P3_SUMMON_ASSISTANT_SERVANT_COMPLETE_TASK_PLAN.md`
-9. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p2_status_system_complete_checkpoint.md`
-10. `hsr_v075_baseline_clean/hsr/live_validation_reports/archive/phase1/v8_p1_final_acceptance_checkpoint_v0_292.md`
-11. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_status_target_event_database_audit_checkpoint_v0_287.md`
-12. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_ir_checkpoint_v0_288.md`
-13. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_sequence_filter_retarget_checkpoint_v0_289.md`
+9. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p3_summon_assistant_servant_complete_checkpoint.md`
+10. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p2_status_system_complete_checkpoint.md`
+11. `hsr_v075_baseline_clean/hsr/live_validation_reports/archive/phase1/v8_p1_final_acceptance_checkpoint_v0_292.md`
+12. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_status_target_event_database_audit_checkpoint_v0_287.md`
+13. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_ir_checkpoint_v0_288.md`
+14. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_sequence_filter_retarget_checkpoint_v0_289.md`
 
 P1 的详细执行计划和过程报告已经归档，默认不要作为下一阶段入口：
 
@@ -163,12 +164,45 @@ P1-9 聚合验收：
 
 后续已修正 servant/忆灵与 P1-8 setup 缺口：`AvatarServantConfig` / `AvatarServantSkillConfig` lowering 到 `ServantDefinitionIR`，runtime 支持 servant spawn/remove、target registry、action availability 和 initial setup；flag-only servant 负例不会被解析为真实目标。
 
+P3 召唤物 / 忆灵聚合验收更正：
+
+- 新增 `tools/validate_p3_summon_assistant_servant_complete.py`，默认只做一次 TBGD lowering / RuleBook 构建，不串联 subprocess，不写完整 Canonical IR 或全量 transition dump。
+- 聚合现在能诚实继承分步矩阵缺口，并把 source/mechanism 宽域正例拆成 executable slice 与 gap 子行；AssistantAvatar 另记为 scope exclusion。这是底座闭环验收通过，不是全正例完成。
+- P3-S12 最新 summary：
+  - `ok=true`
+  - `validation_gate_ok=true`
+  - `p3_summon_foundation_closed=true`
+  - `p3_summon_phase_complete=true`
+  - `p3_summon_substrate_complete=true`
+  - `p3_summon_all_executable_complete=false`
+  - `p3_summon_sources_classified=true`
+  - `p3_summon_admission_gap_count=2123`
+  - `p3_summon_source_gap_blocked_count=27`
+  - `p3_summon_scope_exclusion_count=1`
+  - `p3_summon_implementation_missing_count=0`
+  - `p3_summon_lowering_gap_count=0`
+  - `p3_summon_validation_gap_count=0`
+  - `p3_summon_unclassified_count=0`
+- source matrix：13 rows，`executable=6`、`boundary_only=2`、`source_absent_not_required=2`、`admission_gap=2`、`source_gap_blocked=1`，`gap_count=2150`。
+- mechanism matrix：19 rows，`executable=11`、`boundary_only=4`、`source_absent_not_required=1`、`admission_gap=2`、`source_gap_blocked=1`，`gap_count=2150`。
+- inherited gap matrix：3 rows，`gap_count=2150`，其中 `admission_gap=2123`、`source_gap_blocked=27`。
+- allowed gap evidence matrix：3 rows，`allowed_gap_count=2150`、`disallowed_gap_count=0`、`all_evidence_ok=true`。P3 底座闭环验收通过；全正例完成仍要求 inherited gap 为 0。
+- scope exclusion matrix：1 row，AssistantAvatar / `TurnInsertAssistantAbility` `out_of_scope`，raw=5、IR=5、RuleBook visible=5、`p3_gap_count=0`。
+- 正例样本 8 条、blocked / state unchanged 样本 7 条、source audit 样本 5 条、replay 样本 8 条均通过。
+- 当前 P3 可依赖能力：
+  - summoned monster source-backed spawn / runtime registry / fixed-sequence action availability / target relation / replay / source audit。
+  - `SummonUnitData` / `ConfigSummonUnit` catalog 和非 battle 来源保持 boundary，不会自动 spawn。
+  - servant definition、owner/stat/lifecycle、spawn/remove、action availability、status holder、BattleSetup initial setup 和 scenario route。
+  - AssistantAvatar raw / IR / RuleBook / queue window 可审计，但已移出 P3 summon/servant acceptance；后续单独处理，不能作为 P3 admission gap。
+  - summon / servant target relation、remove / owner cleanup / wave policy、status/resource/damage boundary 与击杀归因 source frame。
+  - `FriendServantSelect` / AssistantAvatar target boundary 当前 `out_of_scope`；P3-S8 summon/servant target relation 当前 `executable=7`；S0 lifecycle `OnEnterBattle` admission gap 已清零。
+
 ## 5. 当前明确没做到什么
 
 P1 minimum 已完成，但完整复刻仍远未完成：
 
 - P1-4：deterministic dispel、refresh、stack、duration、expire、DoT、chance/resist/immunity 等已有专项正例；`DispelStatus(Order=Random)` 当前是 `source_absent_not_required`，不再作为第一阶段 blocker；`stack + duration refresh` 当前没有组合来源正例，禁止 synthetic positive case。
-- P1-5：counter 已有 P1-FINAL 端到端正例；follow-up 当前未发现第一阶段可执行来源，不阻塞 P1；assistant 仍是 `boundary_only`。
+- P1-5 / P3-S7：counter 已有 P1-FINAL 端到端正例；follow-up 当前未发现第一阶段可执行来源，不阻塞 P1；AssistantAvatar queue/window 可审计，但已移出 P3 summon/servant acceptance，后续单独处理。
 - P1-6：formation sort、toughness sort、owner fetch、servant target 已修正为 executable；更完整的特殊玩法目标、复杂 fetch/sort、召唤物/servant 扩展语义仍在后续阶段。
 - P1-7：`random_source_paths` 已拆分口径；random dispel 当前是 `source_absent_not_required`，control resist 是 control admission/formula 缺口。
 - P1-8：servant/忆灵 initial setup 已有真实来源正例；battle_unit_summon / `SummonUnitData` catalog 不是自动 battle spawn trigger，当前是 `boundary_only`，已验证 blocked/no mutation。
@@ -181,7 +215,7 @@ P1 minimum 已完成，但完整复刻仍远未完成：
 
 - 当前数据库内状态来源已经全量分类；blocked 项都有负例验证，不会假执行。
 - 后续若要把 boundary/process-only 项扩成全正例，必须先证明 raw TBGD / lowering / RuleBook / runtime admission 具备真实来源链路。
-- 特殊模式、新事件源、新 target/opcode、新 wave/custom event、未来数据库新增机制仍按 P3+ 单独扩面。
+- 特殊模式、新事件源、新 target/opcode、新 wave/custom event、未来数据库新增机制仍按 P4+ 单独扩面。
 
 目标系统还没完整：
 
@@ -190,7 +224,7 @@ P1 minimum 已完成，但完整复刻仍远未完成：
 - 随机目标扩展。
 - 相邻目标。
 - 唯一实体查询。
-- 召唤物/servant 目标扩展。
+- 更复杂的召唤物/servant 目标扩展。
 - 特殊玩法目标。
 
 角色与装备还没完整：
@@ -211,7 +245,7 @@ P1 minimum 已完成，但完整复刻仍远未完成：
 
 其他大块：
 
-- summon、assistant、servant 完整行为。
+- assistant executable actor/stats/action graph、servant HP damage formula、更多 summon/servant 特殊机制。
 - 特殊战斗模式。
 - 环境、关卡机制。
 - `OnCustomEvent`、`OnWaveMonster` 等需要真实事件源或波次系统的 callback。
@@ -253,12 +287,12 @@ TargetAlias=197061
 
 ## 7. 推荐下一步
 
-P2 状态底座已可作为后续机制扩面的依赖。推荐下一步进入 P3+，优先选择一个清晰大块继续推进：
+P1/P2 底座已可作为后续机制扩面的依赖；P3 仍需先修 inherited gap。推荐下一步继续 P3 gap repair：
 
-1. 角色/怪物数据卡扩面：把专属机制解释进数据卡机制槽位，再接通用 action、status、damage、queue、target 系统。
-2. 光锥、遗器、环境、关卡机制：先建立来源矩阵和 admission 口径，再做 runtime 正例。
-3. summon、assistant、servant 完整行为：当前已制定 `P3_SUMMON_ASSISTANT_SERVANT_COMPLETE_TASK_PLAN.md`，先执行 P3-S0 总盘点，继续区分 catalog/visual/adventure 与真实 battle runtime trigger。
-4. 目标系统扩面：排序、fetch、随机、相邻目标、唯一实体、召唤物/servant 目标和特殊玩法目标。
+1. S0 `summoned_monster_intent` admission / source-gap blocked：拆清 raw occurrence、IR 展开与 blocked 子项的真实归因。
+2. S0 `summon_target_expression` 子项 admission gap：按结构化谓词拆子行，不用一个 executable 正例代表整域完成。
+3. AssistantAvatar / avatar assistant ability 若要实现，应另立独立目标，不作为 P3 召唤物/忆灵 backlog。
+4. 只有 P3 聚合 `p3_summon_all_executable_complete=true` 且 inherited gap 为 0 后，才能声明 P3 全正例完成。
 
 后续仍要继续做 executable / boundary_only / source_absent_not_required / implementation_missing 分流；当前数据库确实无真实来源且不属于当前阶段必做的项继续保持 source_absent_not_required 或 boundary_only。状态系统如果被再次触达，应把 P2 聚合和直接相关 P1/P2 回归列入验证范围。
 
@@ -268,6 +302,7 @@ P2 状态底座已可作为后续机制扩面的依赖。推荐下一步进入 P
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 python3 -m compileall -q simulator_v8_clean_core simulator_v8_ui
+PYTHONDONTWRITEBYTECODE=1 python3 -m simulator_v8_clean_core.tools.validate_p3_summon_assistant_servant_complete --output-dir /tmp/hsr_v8_p3_complete
 PYTHONDONTWRITEBYTECODE=1 python3 -m simulator_v8_clean_core.tools.validate_p2_status_system_complete --output-dir /tmp/hsr_v8_p2_status_system_complete
 PYTHONDONTWRITEBYTECODE=1 python3 -m simulator_v8_clean_core.tools.validate_p2_s10_status_callback_coverage --output-dir /tmp/hsr_v8_p2_s10_status_callback_coverage
 PYTHONDONTWRITEBYTECODE=1 python3 -m simulator_v8_clean_core.tools.validate_p2_s11_full_status_source_closure --output-dir /tmp/hsr_v8_p2_s11_full_status_source_closure
@@ -296,7 +331,7 @@ git diff --check
 如果要继续推进，建议开局说清：
 
 ```text
-当前接续 v8 P3 召唤物 / 忆灵 / assistant 体系。先读 CODEX_HANDOFF、README、PROJECT_GOALS、FORBIDDEN、P2_STATUS_SYSTEM_COMPLETE_TASK_PLAN、P3_SUMMON_ASSISTANT_SERVANT_COMPLETE_TASK_PLAN、P2 最终报告和 P1 最终报告。P1-9 最终聚合已通过，`phase1_minimum_battle_slice=true` 且 blocker 为空；P2 状态系统聚合已通过，`p2_status_substrate_complete=true`、`p2_all_status_sources_classified=true`，gap/unclassified 为 0。下一步执行 P3-S0 召唤物来源全量盘点和术语归一，不要直接改 runtime；继续按 executable / boundary_only / source_absent_not_required / implementation_missing 分流，runtime 仍只能读 Canonical IR/数据卡 IR，缺来源或缺条件必须 blocked/state unchanged。
+当前接续 v8 P4+ 扩面或 P3 backlog 收敛。先读 CODEX_HANDOFF、README、PROJECT_GOALS、FORBIDDEN、P3_SUMMON_ASSISTANT_SERVANT_COMPLETE_TASK_PLAN、P3 最终报告、P2 最终报告和 P1 最终报告。P1-9 最终聚合已通过，`phase1_minimum_battle_slice=true` 且 blocker 为空；P2 状态系统聚合已通过，`p2_status_substrate_complete=true`、`p2_all_status_sources_classified=true`，gap/unclassified 为 0；P3 召唤物 / 忆灵底座闭环验收已通过，`validation_gate_ok=true`、`p3_summon_phase_complete=true`、`p3_summon_substrate_complete=true`、`p3_summon_all_executable_complete=false`、`p3_summon_admission_gap_count=2123`、`p3_summon_source_gap_blocked_count=27`、`p3_summon_scope_exclusion_count=1`、`p3_summon_implementation_missing_count=0`、`p3_summon_lowering_gap_count=0`。AssistantAvatar / `TurnInsertAssistantAbility` 已移出 P3 召唤物/servant 验收并记录为 out_of_scope，后续单独处理。后续继续按 executable / boundary_only / source_absent_not_required / source_gap_blocked / admission_gap / out_of_scope 分流，runtime 仍只能读 Canonical IR/数据卡 IR，缺来源或缺条件必须 blocked/state unchanged。
 ```
 
 不要从旧 `CODEX_HANDOFF` 的 v7 叙述接续；本文件已经替换为 v8 当前交接手册。

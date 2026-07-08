@@ -915,6 +915,34 @@ class ActionAvailabilitySystem:
         state: BattleState,
         actor: UnitState,
     ) -> tuple[tuple[ActionChoice, ...], tuple[BlockedActionReason, ...]]:
+        if actor.flags.get("summon_kind"):
+            if actor.flags.get("timeline_admitted") is not True:
+                return (), (
+                    BlockedActionReason(
+                        reason="summon_timeline_not_admitted",
+                        scope="enemy_fixed_sequence",
+                        actor_id=actor.unit_id,
+                        actor_side=actor.side,
+                        metadata={"timeline_admitted": actor.flags.get("timeline_admitted")},
+                    ),
+                )
+            admission_blocker = _summon_action_admission_blocker(state, actor)
+            if admission_blocker is not None:
+                reason, metadata, source_trace = admission_blocker
+                return (), (
+                    BlockedActionReason(
+                        reason=reason,
+                        scope="enemy_fixed_sequence",
+                        actor_id=actor.unit_id,
+                        actor_side=actor.side,
+                        metadata={
+                            "timeline_admitted": actor.flags.get("timeline_admitted"),
+                            "team_side": actor.flags.get("team_side"),
+                            **metadata,
+                        },
+                        source_trace=source_trace,
+                    ),
+                )
         candidate = self.enemy_actions.next_candidate(state, actor.unit_id)
         if candidate.status != "available":
             return (), (
@@ -943,6 +971,47 @@ class ActionAvailabilitySystem:
                     source_trace=candidate.source_trace,
                 ),
             )
+        event = self.rules.action_event(candidate.action_ref, candidate.action_level)
+        if event is None:
+            return (), (
+                BlockedActionReason(
+                    reason="enemy_action_event_missing",
+                    scope="enemy_fixed_sequence",
+                    actor_id=actor.unit_id,
+                    actor_side=actor.side,
+                    action_id=candidate.action_ref,
+                    action_level=candidate.action_level,
+                    metadata={"enemy_action_candidate": candidate.to_json()},
+                    source_trace={
+                        **candidate.source_trace,
+                        "action_definition": definition.source.to_json(),
+                    },
+                ),
+            )
+        source_trace = {
+            **candidate.source_trace,
+            "action_definition": definition.source.to_json(),
+            "action_event": event.source.to_json(),
+        }
+        graph_blocked_reason = combined_blocked_reason(
+            self._action_event_admission_reason(event),
+            action_binding_blocked_reason(
+                self.rules.action_ability_binding(candidate.action_ref, candidate.action_level)
+            ),
+        )
+        if graph_blocked_reason:
+            return (), (
+                BlockedActionReason(
+                    reason=graph_blocked_reason,
+                    scope="enemy_fixed_sequence",
+                    actor_id=actor.unit_id,
+                    actor_side=actor.side,
+                    action_id=candidate.action_ref,
+                    action_level=candidate.action_level,
+                    metadata={"enemy_action_candidate": candidate.to_json()},
+                    source_trace=source_trace,
+                ),
+            )
         resource_status, resource_reason = self._resource_status(state, actor.unit_id, definition, {})
         if resource_status == "blocked":
             return (), (
@@ -954,7 +1023,7 @@ class ActionAvailabilitySystem:
                     action_id=candidate.action_ref,
                     action_level=candidate.action_level,
                     metadata={"enemy_action_candidate": candidate.to_json()},
-                    source_trace=candidate.source_trace,
+                    source_trace=source_trace,
                 ),
             )
         return (
@@ -982,11 +1051,15 @@ class ActionAvailabilitySystem:
                     resource_status=resource_status,
                     resource_blocked_reason=resource_reason,
                     coverage_status="executable",
-                    source_trace=candidate.source_trace,
+                    source_trace=source_trace,
                     metadata={
                         "selection_controller": "external",
                         "candidate_kind": "fixed_sequence_candidate",
-                        "enemy_action_candidate": candidate.to_json(),
+                        "enemy_action_candidate": {
+                            **candidate.to_json(),
+                            "source_trace": source_trace,
+                            "action_event": event.to_json(),
+                        },
                     },
                 ),
             ),

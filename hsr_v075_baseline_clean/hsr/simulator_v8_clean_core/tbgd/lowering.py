@@ -13,6 +13,7 @@ from .character_cards import build_character_card_ir
 from .monster_cards import build_monster_card_ir
 from .paths import relative_source_path
 from .. import BASELINE_VERSION
+from ..rules.evaluator import NumericEvaluationContext, RuleEvaluator
 from ..rules.ir import (
     AbilityPhaseIR,
     AbilityTaskIR,
@@ -767,13 +768,38 @@ class TBGDLowering:
     def _lower_combatant_profiles(self) -> list[CombatantProfileIR]:
         monster_rows = self._rows_by_id("ExcelOutput/MonsterConfig.json", "MonsterID")
         template_rows = self._rows_by_id("ExcelOutput/MonsterTemplateConfig.json", "MonsterTemplateID")
+        unique_monster_rows = self._rows_by_id("ExcelOutput/MonsterUniqueConfig.json", "MonsterID")
+        unique_template_rows = self._rows_by_id("ExcelOutput/MonsterTemplateUniqueConfig.json", "MonsterTemplateID")
         profiles: list[CombatantProfileIR] = []
         for monster_id, monster_row in sorted(monster_rows.items()):
             template_id = str(monster_row.get("MonsterTemplateID") or "")
             template_row = template_rows.get(template_id)
             profiles.append(_combatant_profile_from_monster(monster_id, monster_row, template_id, template_row))
+        for monster_id, monster_row in sorted(unique_monster_rows.items()):
+            template_id = str(monster_row.get("MonsterTemplateID") or "")
+            template_row = unique_template_rows.get(template_id)
+            profiles.append(
+                _combatant_profile_from_monster(
+                    monster_id,
+                    monster_row,
+                    template_id,
+                    template_row,
+                    source_path="ExcelOutput/MonsterUniqueConfig.json",
+                    raw_type="MonsterUniqueConfig",
+                    template_source_path="ExcelOutput/MonsterTemplateUniqueConfig.json",
+                )
+            )
         for template_id, template_row in sorted(template_rows.items()):
             profiles.append(_combatant_profile_from_template(template_id, template_row))
+        for template_id, template_row in sorted(unique_template_rows.items()):
+            profiles.append(
+                _combatant_profile_from_template(
+                    template_id,
+                    template_row,
+                    source_path="ExcelOutput/MonsterTemplateUniqueConfig.json",
+                    raw_type="MonsterTemplateUniqueConfig",
+                )
+            )
         return profiles
 
     def _lower_wave_definitions(
@@ -1520,6 +1546,7 @@ class TBGDLowering:
                     definition,
                     avatar_skill_rows.get(definition.source.raw_id, {}),
                     avatar_configs.get(definition.source.raw_id, []),
+                    avatar_skill_rows,
                     ability_file_cache,
                 )
             elif definition.action_id.startswith("monster_skill:"):
@@ -1529,6 +1556,7 @@ class TBGDLowering:
                     definition,
                     monster_skill_rows.get(definition.source.raw_id, {}),
                     monster_configs.get(definition.source.raw_id, []),
+                    monster_skill_rows,
                     ability_file_cache,
                     monster_ability_file_index,
                 )
@@ -1537,6 +1565,7 @@ class TBGDLowering:
                     definition,
                     servant_skill_rows.get(definition.source.raw_id, {}),
                     servant_configs.get(definition.source.raw_id, []),
+                    servant_skill_rows,
                     ability_file_cache,
                 )
             else:
@@ -1723,32 +1752,36 @@ class TBGDLowering:
                     template_rows[str(row["MonsterTemplateID"])] = copied
 
         result: dict[str, list[dict[str, Any]]] = {}
-        path = self.tbgd_root / "ExcelOutput/MonsterConfig.json"
-        if not path.exists():
-            return result
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            return result
-        if not isinstance(data, list):
-            return result
-        for row_index, row in enumerate(_limit_sequence(data, self.limits.max_records_per_table)):
-            if not isinstance(row, dict) or row.get("MonsterID") is None:
+        for relative_path in ("ExcelOutput/MonsterConfig.json", "ExcelOutput/MonsterUniqueConfig.json"):
+            path = self.tbgd_root / relative_path
+            if not path.exists():
                 continue
-            template_id = str(row.get("MonsterTemplateID") or "")
-            template_row = template_rows.get(template_id, {})
-            config = {
-                "relative_path": "ExcelOutput/MonsterConfig.json",
-                "row_index": row_index,
-                "monster_id": row.get("MonsterID"),
-                "template_id": template_id,
-                "json_path": template_row.get("JsonConfig"),
-                "skill_list": row.get("SkillList") or [],
-                "template_source_path": template_row.get("_v8_source_path") or "",
-                "template_row_index": template_row.get("_v8_row_index"),
-            }
-            for skill_id in row.get("SkillList") or []:
-                result.setdefault(str(skill_id), []).append(config)
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if not isinstance(data, list):
+                continue
+            for row_index, row in enumerate(_limit_sequence(data, self.limits.max_records_per_table)):
+                if not isinstance(row, dict) or row.get("MonsterID") is None:
+                    continue
+                template_id = str(row.get("MonsterTemplateID") or "")
+                template_row = template_rows.get(template_id, {})
+                config = {
+                    "relative_path": relative_path,
+                    "row_index": row_index,
+                    "monster_id": row.get("MonsterID"),
+                    "template_id": template_id,
+                    "json_path": template_row.get("JsonConfig"),
+                    "skill_list": row.get("SkillList") or [],
+                    "template_source_path": template_row.get("_v8_source_path") or "",
+                    "template_row_index": template_row.get("_v8_row_index"),
+                    "override_skill_params": _json_safe(row.get("OverrideSkillParams") or []),
+                    "custom_values": _json_safe(row.get("CustomValues") or {}),
+                    "dynamic_values": _json_safe(row.get("DynamicValues") or {}),
+                }
+                for skill_id in row.get("SkillList") or []:
+                    result.setdefault(str(skill_id), []).append(config)
         return result
 
     def _servant_skill_rows_by_skill_id(self) -> dict[str, dict[str, Any]]:
@@ -1862,6 +1895,7 @@ class TBGDLowering:
         definition: ActionDefinitionIR,
         skill_row: dict[str, Any],
         avatar_configs: list[dict[str, Any]],
+        avatar_skill_rows: dict[str, dict[str, Any]],
         ability_file_cache: dict[str, dict[str, Any] | None],
     ) -> tuple[ActionAbilityBindingIR, list[AbilityPhaseIR], "_LoweredAbility"]:
         skill_trigger_key = str(skill_row.get("SkillTriggerKey") or definition.source.evidence.get("skill_trigger_key") or "")
@@ -1893,6 +1927,18 @@ class TBGDLowering:
             return _blocked_action_binding(definition, "avatar_ability_file_not_readable", ability_path)
         ability_map = _ability_map(ability_data)
         ability_names = _expand_triggered_ability_names(ability_names, ability_map)
+        source_context = _ability_graph_source_context(
+            source_mode="mainline_avatar",
+            skill_row=skill_row,
+            skill_trigger_key=skill_trigger_key,
+            character_path=character_path,
+            character_config=character_config,
+            config_source=avatar_config,
+            config_kind="avatar_config",
+            ability_paths=(ability_path,),
+            skill_rows_by_trigger_key=_skill_rows_by_trigger_key_for_config(avatar_config, avatar_skill_rows, skill_row),
+            allowed_dynamic_hashes=_dynamic_hashes_for_ability_names(ability_names, ability_map),
+        )
         binding_id = f"action_binding:{definition.action_id}:{definition.level}"
         binding_phases: list[AbilityPhaseIR] = []
         lowered = _LoweredAbility()
@@ -1911,6 +1957,7 @@ class TBGDLowering:
                     "phase_index": phase_index,
                     "skill_trigger_key": skill_trigger_key,
                     "entry_ability": entry_ability,
+                    "ability_source_context": source_context,
                 },
             )
             phase_id = f"ability_phase:{definition.action_id}:{definition.level}:{phase_index}:{ability_name}"
@@ -1920,6 +1967,7 @@ class TBGDLowering:
                 ability_name=ability_name,
                 ability=ability,
                 ability_path=ability_path,
+                source_context=source_context,
             )
             lowered.merge(phase_lowered)
             binding_phases.append(
@@ -1984,6 +2032,7 @@ class TBGDLowering:
         definition: ActionDefinitionIR,
         skill_row: dict[str, Any],
         monster_configs: list[dict[str, Any]],
+        monster_skill_rows: dict[str, dict[str, Any]],
         ability_file_cache: dict[str, dict[str, Any] | None],
         ability_file_index: dict[str, tuple[str, ...]],
     ) -> tuple[ActionAbilityBindingIR, list[AbilityPhaseIR], "_LoweredAbility"]:
@@ -2026,6 +2075,18 @@ class TBGDLowering:
             ability_names = expanded_names
             resolved_paths, missing_names, ambiguous_names = _resolve_monster_ability_paths(ability_names, ability_file_index)
 
+        source_context = _ability_graph_source_context(
+            source_mode="mainline_monster",
+            skill_row=skill_row,
+            skill_trigger_key=skill_trigger_key,
+            character_path=character_path,
+            character_config=character_config,
+            config_source=monster_config,
+            config_kind="monster_config",
+            ability_paths=tuple(sorted(set(resolved_paths.values()))),
+            skill_rows_by_trigger_key=_skill_rows_by_trigger_key_for_config(monster_config, monster_skill_rows, skill_row),
+            allowed_dynamic_hashes=_dynamic_hashes_for_ability_names(ability_names, combined_ability_map),
+        )
         binding_id = f"action_binding:{definition.action_id}:{definition.level}"
         binding_phases: list[AbilityPhaseIR] = []
         lowered = _LoweredAbility()
@@ -2056,6 +2117,7 @@ class TBGDLowering:
                     "monster_id": _json_safe(monster_config.get("monster_id")),
                     "template_id": _json_safe(monster_config.get("template_id")),
                     "character_config_path": character_path,
+                    "ability_source_context": source_context,
                 },
             )
             phase_id = f"ability_phase:{definition.action_id}:{definition.level}:{phase_index}:{ability_name}"
@@ -2065,6 +2127,7 @@ class TBGDLowering:
                 ability_name=ability_name,
                 ability=ability,
                 ability_path=ability_path,
+                source_context=source_context,
             )
             lowered.merge(phase_lowered)
             binding_phases.append(
@@ -2141,6 +2204,7 @@ class TBGDLowering:
         definition: ActionDefinitionIR,
         skill_row: dict[str, Any],
         servant_configs: list[dict[str, Any]],
+        servant_skill_rows: dict[str, dict[str, Any]],
         ability_file_cache: dict[str, dict[str, Any] | None],
     ) -> tuple[ActionAbilityBindingIR, list[AbilityPhaseIR], "_LoweredAbility"]:
         skill_trigger_key = str(skill_row.get("SkillTriggerKey") or definition.source.evidence.get("skill_trigger_key") or "")
@@ -2175,6 +2239,18 @@ class TBGDLowering:
             return _blocked_action_binding(definition, "servant_ability_file_not_readable", ability_path)
         ability_map = _ability_map(ability_data)
         ability_names = _expand_triggered_ability_names(ability_names, ability_map)
+        source_context = _ability_graph_source_context(
+            source_mode="mainline_servant",
+            skill_row=skill_row,
+            skill_trigger_key=skill_trigger_key,
+            character_path=character_path,
+            character_config=character_config,
+            config_source=servant_config,
+            config_kind="servant_config",
+            ability_paths=(ability_path,),
+            skill_rows_by_trigger_key=_skill_rows_by_trigger_key_for_config(servant_config, servant_skill_rows, skill_row),
+            allowed_dynamic_hashes=_dynamic_hashes_for_ability_names(ability_names, ability_map),
+        )
         binding_id = f"action_binding:{definition.action_id}:{definition.level}"
         binding_phases: list[AbilityPhaseIR] = []
         lowered = _LoweredAbility()
@@ -2195,6 +2271,7 @@ class TBGDLowering:
                     "entry_ability": entry_ability,
                     "servant_id": _json_safe(servant_config.get("servant_id")),
                     "character_config_path": character_path,
+                    "ability_source_context": source_context,
                 },
             )
             phase_id = f"ability_phase:{definition.action_id}:{definition.level}:{phase_index}:{ability_name}"
@@ -2204,6 +2281,7 @@ class TBGDLowering:
                 ability_name=ability_name,
                 ability=ability,
                 ability_path=ability_path,
+                source_context=source_context,
             )
             lowered.merge(phase_lowered)
             binding_phases.append(
@@ -2272,6 +2350,7 @@ class TBGDLowering:
         ability_name: str,
         ability: dict[str, Any],
         ability_path: str,
+        source_context: dict[str, Any] | None = None,
     ) -> "_LoweredAbility":
         lowered = _LoweredAbility()
         for callback_kind in ABILITY_TASK_CALLBACKS:
@@ -2290,6 +2369,7 @@ class TBGDLowering:
                     task_path=f"{callback_kind}[{task_index}]",
                     branch="root",
                     parent_task_id="",
+                    source_context=source_context,
                 )
                 lowered.merge(task_lowered)
         return lowered
@@ -2307,6 +2387,7 @@ class TBGDLowering:
         task_path: str,
         branch: str,
         parent_task_id: str,
+        source_context: dict[str, Any] | None = None,
     ) -> "_LoweredAbility":
         lowered = _LoweredAbility()
         if not isinstance(task, dict):
@@ -2326,6 +2407,7 @@ class TBGDLowering:
                 "task_path": task_path,
                 "branch": branch,
                 "parent_task_id": parent_task_id,
+                "ability_source_context": _json_safe(source_context or {}),
             },
         )
         self_expression = _target_expression_from_raw(
@@ -2354,6 +2436,7 @@ class TBGDLowering:
                     task_path=f"{task_path}.SuccessTaskList[{child_index}]",
                     branch="success",
                     parent_task_id=task_id,
+                    source_context=source_context,
                 )
                 lowered.merge(child_lowered)
                 success_ids.extend(
@@ -2373,6 +2456,7 @@ class TBGDLowering:
                     task_path=f"{task_path}.FailedTaskList[{child_index}]",
                     branch="failed",
                     parent_task_id=task_id,
+                    source_context=source_context,
                 )
                 lowered.merge(child_lowered)
                 failed_ids.extend(
@@ -2700,6 +2784,8 @@ class TBGDLowering:
             config_summary = _summon_unit_config_summary(config)
             summon_kind = _summon_unit_kind(row, config_summary)
             blocked_reason = _summon_unit_blocked_reason(row, config_summary)
+            raw_flags = _summon_unit_raw_flags(row)
+            battle_admission = _summon_unit_battle_admission(row, config_summary, blocked_reason)
             source = IRSource(
                 source_path=relative_path,
                 raw_type="SummonUnitData",
@@ -2709,6 +2795,8 @@ class TBGDLowering:
                     "config_path": config_path,
                     "config_source_exists": config is not None,
                     "config_summary": config_summary,
+                    "raw_flags": raw_flags,
+                    "source_mode": battle_admission["source_mode"],
                     "source_boundary": "summon_unit_definition_only_not_spawn_trigger",
                     "raw_paths": {
                         "json_path": "JsonPath",
@@ -2730,12 +2818,7 @@ class TBGDLowering:
                     max_summon_count=_optional_int(row.get("MaxSummonCount")),
                     destroy_on_enter_battle=_optional_bool(row.get("DestroyOnEnterBattle")),
                     remove_maze_buff_on_destroy=_optional_bool(row.get("RemoveMazeBuffOnDestroy")),
-                    battle_admission={
-                        "admission_status": "blocked",
-                        "blocked_reason": blocked_reason,
-                        "catalog_not_trigger": True,
-                        "runtime_spawn_requires_explicit_intent": True,
-                    },
+                    battle_admission=battle_admission,
                     skill_config=config_summary,
                     source=source,
                     coverage_status="blocked",
@@ -3158,6 +3241,8 @@ class TBGDLowering:
 
         effect_id = f"effect:{relative}:{modifier_name}:{callback_index}:{branch}:{task_index}:{opcode}"
         child_task_ids: list[str] = []
+        success_task_ids: list[str] = []
+        failed_task_ids: list[str] = []
         for child_index, child in enumerate(task.get("TaskList") or []):
             child_lowered = self._lower_status_callback_task_tree(
                 child,
@@ -3175,6 +3260,44 @@ class TBGDLowering:
             )
             lowered.merge(child_lowered)
             child_task_ids.extend(item.task_id for item in child_lowered.status_callback_tasks if item.parent_task_id == task_id)
+        for child_index, child in enumerate(task.get("SuccessTaskList") or []):
+            child_lowered = self._lower_status_callback_task_tree(
+                child,
+                relative=relative,
+                map_name=map_name,
+                modifier_name=modifier_name,
+                callback_id=callback_id,
+                event=event,
+                callback_index=callback_index,
+                task_index=child_index,
+                task_path=f"{task_path}.SuccessTaskList[{child_index}]",
+                branch="success",
+                parent_task_id=task_id,
+                queue_priority_lookup=queue_priority_lookup,
+            )
+            lowered.merge(child_lowered)
+            child_ids = [item.task_id for item in child_lowered.status_callback_tasks if item.parent_task_id == task_id]
+            child_task_ids.extend(child_ids)
+            success_task_ids.extend(child_ids)
+        for child_index, child in enumerate(task.get("FailedTaskList") or []):
+            child_lowered = self._lower_status_callback_task_tree(
+                child,
+                relative=relative,
+                map_name=map_name,
+                modifier_name=modifier_name,
+                callback_id=callback_id,
+                event=event,
+                callback_index=callback_index,
+                task_index=child_index,
+                task_path=f"{task_path}.FailedTaskList[{child_index}]",
+                branch="failed",
+                parent_task_id=task_id,
+                queue_priority_lookup=queue_priority_lookup,
+            )
+            lowered.merge(child_lowered)
+            child_ids = [item.task_id for item in child_lowered.status_callback_tasks if item.parent_task_id == task_id]
+            child_task_ids.extend(child_ids)
+            failed_task_ids.extend(child_ids)
         if opcode == "Retarget":
             coverage_status, blocked_reason = _retarget_task_status(retarget_condition, child_task_ids)
         else:
@@ -3201,6 +3324,8 @@ class TBGDLowering:
                 condition_id=retarget_condition.condition_id if retarget_condition else "",
                 parent_task_id=parent_task_id,
                 child_task_ids=tuple(child_task_ids),
+                success_task_ids=tuple(success_task_ids),
+                failed_task_ids=tuple(failed_task_ids),
                 source=source,
                 coverage_status=coverage_status,
                 blocked_reason=blocked_reason,
@@ -3690,6 +3815,7 @@ STATUS_EVENT_RUNTIME_SOURCES: dict[str, tuple[str, ...]] = {
     "OnActionDelayEffect": ("action_delay.changed",),
     "OnActionDelayEffectAll": ("action_delay.changed",),
     "OnListenGlobalActionDelayChanged": ("action_delay.changed",),
+    "OnEnterBattle": ("battle.setup",),
     "OnWaveMonster": ("wave.monster",),
 }
 
@@ -4714,15 +4840,19 @@ def _combatant_profile_from_monster(
     monster_row: dict[str, Any],
     template_id: str,
     template_row: dict[str, Any] | None,
+    *,
+    source_path: str = "ExcelOutput/MonsterConfig.json",
+    raw_type: str = "MonsterConfig",
+    template_source_path: str = "ExcelOutput/MonsterTemplateConfig.json",
 ) -> CombatantProfileIR:
     source = IRSource(
-        source_path="ExcelOutput/MonsterConfig.json",
-        raw_type="MonsterConfig",
+        source_path=source_path,
+        raw_type=raw_type,
         raw_id=monster_id,
         evidence={
             "entity_id": f"monster:{monster_id}",
             "template_id": template_id,
-            "template_source_path": "ExcelOutput/MonsterTemplateConfig.json",
+            "template_source_path": template_source_path,
             "raw_paths": {
                 "template_id": "MonsterTemplateID",
                 "attack_modify_ratio": "AttackModifyRatio",
@@ -4786,10 +4916,16 @@ def _compatible_action_definitions_for_combatant_action_set(
     return tuple(definitions)
 
 
-def _combatant_profile_from_template(template_id: str, template_row: dict[str, Any]) -> CombatantProfileIR:
+def _combatant_profile_from_template(
+    template_id: str,
+    template_row: dict[str, Any],
+    *,
+    source_path: str = "ExcelOutput/MonsterTemplateConfig.json",
+    raw_type: str = "MonsterTemplateConfig",
+) -> CombatantProfileIR:
     source = IRSource(
-        source_path="ExcelOutput/MonsterTemplateConfig.json",
-        raw_type="MonsterTemplateConfig",
+        source_path=source_path,
+        raw_type=raw_type,
         raw_id=template_id,
         evidence={
             "entity_id": f"monster_template:{template_id}",
@@ -5302,6 +5438,15 @@ def _servant_stat_source(
         "speed_base": speed_base,
         "speed_inherit": speed_inherit,
     }
+    for component_key, field_name in (
+        ("hp_base", "HPBase"),
+        ("hp_inherit", "HPInherit"),
+        ("speed_base", "SpeedBase"),
+        ("speed_inherit", "SpeedInherit"),
+    ):
+        component = components[component_key]
+        if not component.get("source_trace"):
+            component["source_trace"] = [_servant_config_stat_field_source(row, field_name)]
     blocking_reasons = [
         str(component.get("blocked_reason") or "")
         for component in components.values()
@@ -5456,6 +5601,19 @@ def _servant_skill_row_source(skill_id: str, row: dict[str, Any]) -> dict[str, A
             "row_index": _json_safe(row.get("_v8_row_index")),
             "level": _json_safe(row.get("Level")),
             "param_list": _json_safe(row.get("ParamList") or []),
+        },
+    }
+
+
+def _servant_config_stat_field_source(row: dict[str, Any], field_name: str) -> dict[str, Any]:
+    return {
+        "source_path": str(row.get("_v8_source_path") or "ExcelOutput/AvatarServantConfig.json"),
+        "raw_type": "AvatarServantConfig",
+        "raw_id": str(row.get("ServantID") or ""),
+        "evidence": {
+            "row_index": _json_safe(row.get("_v8_row_index")),
+            "field_name": field_name,
+            "raw_value": _json_safe(row.get(field_name)),
         },
     }
 
@@ -6994,11 +7152,16 @@ TARGET_EXPRESSION_CONTEXT_ALIASES = {
     "AllDarkTeam",
     "CasterServant",
     "CasterSummonedMinions",
+    "FriendServantSelect",
     "LastSummonMonsters",
     "SkillTargetEntityList",
     "ParamEntityList",
     "ServantEntityList",
+    "BattleEventEntityList",
     "TeamFormation",
+    "GridFight_AllBackEnd",
+    "GridFight_AllBackEndRoleOnly",
+    "GridFight_AllBackEndActivedRoleOnly",
 }
 P1_6_SAFE_TARGET_FETCH_KINDS = {
     "TargetFetchAbilityTarget",
@@ -7017,10 +7180,29 @@ P1_6_SAFE_DIRECT_TARGET_ALIASES = {
     "AbilityTargetAndAdjoinEntity",
     "AbilityTargetLeftEntity",
     "AbilityTargetRightEntity",
+    "AbilityTargetServantOrSummoner",
+    "AllEnemyIgnoreServant",
+    "AllLightTeamIgnoreServant",
+    "AllLightTeamOnlyAddSPOnceForServant",
+    "AllLightTeamWithAllLightTeamUnselectable",
+    "AllLightTeamWithAllUnselectableLightTeam",
+    "AllTeamMemberWithUnselectable",
+    "AllTeammateOnlyAddSPOnceForServant",
+    "AllTeammateWithUnselectable",
+    "CasterServantOrSummoner",
+    "CasterBEServant",
+    "CasterSummoner",
+    "CurrentAimAtTarget",
     "CasterAdjoinEntity",
     "CasterWithAbilityTargetAndAdjoinEntity",
+    "LeftToRightLightTeamTarget",
+    "LightTeamLeftWithoutServant",
+    "LightTeamRightWithoutServant",
+    "ModifierOwnerSummoner",
     "ModifierOwnerEntityAdjoinEntity",
+    "ModifierOwnerSummonedMinions",
     "ParamEntityAdjoinEntity",
+    "ParamEntitySummoner",
 }
 P1_6_SAFE_DOT_TARGET_BASE_ALIASES = ADD_MODIFIER_TARGET_ALIASES | STATUS_CALLBACK_LIST_TARGET_ALIASES | TARGET_EXPRESSION_CONTEXT_ALIASES
 P1_6_SAFE_DOT_TARGET_OPERATIONS = {
@@ -7028,16 +7210,34 @@ P1_6_SAFE_DOT_TARGET_OPERATIONS = {
     "GetAliveOnly",
     "Reverse",
     "Select1",
+    "Select2",
+    "Select3",
+    "Select4",
     "SelectLast",
+    "Shuffle",
     "SortByFormation",
     "SortByHP",
     "SortByHPRatio",
     "SortByMaxHP",
     "SortByStance",
     "SortByStanceRatio",
+    "SortByBreakDamageAddedRatio",
     "GetServant",
+    "GetServantAndDummyCharacter",
+    "GetDummyCharacter",
+    "GetBEServant",
+    "GetSummonedMinions",
+    "WithServant",
+    "WithBEServant",
+    "WithServantAndDummyCharacter",
+    "RemoveBattleEvent",
+    "RemoveBEServant",
+    "RemoveCharacterChangeTarget",
+    "RemoveNonSelfCreateBattleEvent",
     "RemoveServant",
+    "RemoveUnselectable",
     "GetSummoner",
+    "WithSummoner",
 }
 DAMAGE_EMISSION_TARGET_ALIASES = {
     "AbilityTargetEntity",
@@ -7066,6 +7266,7 @@ EXECUTABLE_CONDITION_OPCODES = {
     "ByIsInsertAction",
     "ByNot",
     "ByTargetListIntersects",
+    "ByTargetEntityType",
     "ByTargetTeam",
 }
 
@@ -7107,6 +7308,7 @@ def _effect_payload(value: dict[str, Any], opcode: str, source_modifier_name: st
 
 TARGET_EXPRESSION_FIELD_NAMES = {
     "TargetType",
+    "TargetInfo",
     "AbilityTarget",
     "AutoCastTargetType",
     "AbilityInherentTargetType",
@@ -7170,7 +7372,23 @@ def _iter_target_expression_fields(task: dict[str, Any]) -> tuple[tuple[str, Any
         value = task.get(field_name)
         if _is_target_expression_node(value):
             pairs.append((field_name, value))
+        elif field_name == "TargetInfo":
+            pairs.extend(_target_info_expression_fields(value))
     return tuple(pairs)
+
+
+def _target_info_expression_fields(value: Any) -> tuple[tuple[str, dict[str, Any]], ...]:
+    if isinstance(value, str) and _target_alias_admitted(value):
+        return (("TargetInfo", {"$type": "RPG.GameCore.TargetAlias", "Alias": value}),)
+    if not isinstance(value, dict):
+        return ()
+    target_type = value.get("TargetType")
+    if _is_target_expression_node(target_type):
+        assert isinstance(target_type, dict)
+        return (("TargetInfo.TargetType", target_type),)
+    if isinstance(target_type, str) and _target_alias_admitted(target_type):
+        return (("TargetInfo.TargetType", {"$type": "RPG.GameCore.TargetAlias", "Alias": target_type}),)
+    return ()
 
 
 def _is_target_expression_node(value: Any) -> bool:
@@ -7339,6 +7557,8 @@ def _target_pipeline_node_blocked_reason(kind: str, raw: dict[str, Any]) -> str:
     if kind == "TargetMapAdjoinEntity":
         side = str(raw.get("SideType") or "")
         return "" if side in {"", "Both", "Left", "Right"} else f"target_adjacent_side_not_admitted:{side}"
+    if kind in {"TargetMapSummoner", "TargetMapSummonedMinions"}:
+        return ""
     if kind == "TargetReverse":
         return ""
     if kind == "TargetShuffle":
@@ -7412,12 +7632,58 @@ def _target_expression_uses_p1_6_node(raw: dict[str, Any]) -> bool:
 def _target_alias_chain_admitted(alias: str) -> bool:
     if alias in P1_6_SAFE_DIRECT_TARGET_ALIASES:
         return True
+    if _target_alias_set_admitted(alias):
+        return True
+    return _target_alias_dot_chain_admitted(alias)
+
+
+def _target_alias_set_admitted(alias: str) -> bool:
+    parsed = _parse_target_alias_set(alias)
+    if len(parsed) < 2:
+        return False
+    for _, token in parsed:
+        if token in P1_6_SAFE_DIRECT_TARGET_ALIASES:
+            continue
+        if _target_alias_dot_chain_admitted(token):
+            continue
+        if token in (
+            ADD_MODIFIER_TARGET_ALIASES
+            | STATUS_CALLBACK_LIST_TARGET_ALIASES
+            | TARGET_EXPRESSION_CONTEXT_ALIASES
+        ):
+            continue
+        return False
+    return True
+
+
+def _parse_target_alias_set(alias: str) -> tuple[tuple[str, str], ...]:
+    parsed: list[tuple[str, str]] = []
+    operator = "+"
+    current: list[str] = []
+    for ch in alias:
+        if ch in {"+", "|", "-"}:
+            operand = "".join(current).strip()
+            if not operand:
+                return ()
+            parsed.append((operator, operand))
+            operator = ch
+            current = []
+            continue
+        current.append(ch)
+    operand = "".join(current).strip()
+    if not operand:
+        return ()
+    parsed.append((operator, operand))
+    return tuple(parsed) if len(parsed) >= 2 else ()
+
+
+def _target_alias_dot_chain_admitted(alias: str) -> bool:
     if "." not in alias or any(token in alias for token in (" ", "+", "-", "|", "(", ")")):
         return False
     parts = tuple(part for part in alias.split(".") if part)
     if len(parts) < 2:
         return False
-    if parts[0] not in P1_6_SAFE_DOT_TARGET_BASE_ALIASES:
+    if parts[0] not in P1_6_SAFE_DOT_TARGET_BASE_ALIASES and parts[0] not in P1_6_SAFE_DIRECT_TARGET_ALIASES:
         return False
     return all(part in P1_6_SAFE_DOT_TARGET_OPERATIONS for part in parts[1:])
 
@@ -8175,10 +8441,12 @@ def _lower_summon_monster_intents(
     for task in sorted(ability_tasks, key=lambda item: item.task_id):
         if task.opcode != "SummonMonster":
             continue
+        if task.action_id.startswith("standalone_ability:"):
+            continue
         effect = effect_by_id.get(task.effect_id)
         payload = effect.payload if effect is not None else {}
         entries_raw = payload.get("SummonMonsterDataList") if isinstance(payload, dict) else None
-        delay_policy = _summon_monster_delay_policy(payload if isinstance(payload, dict) else {})
+        delay_policy = _summon_monster_delay_policy(payload if isinstance(payload, dict) else {}, task)
         entries: list[SummonMonsterEntryIR] = []
         if isinstance(entries_raw, list):
             for entry_index, raw_entry in enumerate(entries_raw):
@@ -8235,43 +8503,51 @@ def _lower_summon_monster_intents(
     return intents
 
 
-def _summon_monster_delay_policy(payload: dict[str, Any]) -> dict[str, Any]:
+def _summon_monster_delay_policy(payload: dict[str, Any], task: AbilityTaskIR) -> dict[str, Any]:
     if "DelayRatio" not in payload:
         return {
             "kind": "missing",
             "source_field": "SummonMonster.DelayRatio",
             "admission_status": "executable",
-            "runtime_policy": "no_additional_initial_action_value_offset",
-            "reason": "DelayRatio field absent; current runtime uses CombatantProfileIR speed and default timeline rule without summon-specific offset.",
+            "runtime_policy": "initial_action_value_full_av_times_delay_ratio",
+            "value": 1.0,
+            "reason": "DelayRatio field absent; current runtime uses the default full action value, equivalent to ratio 1.",
         }
     expr = _numeric_expr_summary(payload.get("DelayRatio"))
-    fixed_value = _fixed_expr_value(expr)
+    resolution = _resolve_summon_numeric_expr(
+        task,
+        expr,
+        source_kind="summon_monster_delay_ratio",
+        binding_missing_reason="summon_monster_delay_ratio_dynamic_binding_source_missing",
+    )
     policy: dict[str, Any] = {
-        "kind": "fixed_zero" if fixed_value == 0 else str(expr.get("kind") or "unknown"),
+        "kind": str(expr.get("kind") or "unknown"),
         "source_field": "SummonMonster.DelayRatio",
         "expr": expr,
         "raw": _json_safe(payload.get("DelayRatio")),
+        "resolution": resolution,
     }
-    if fixed_value is None:
+    if resolution.get("ok") is not True or not isinstance(resolution.get("value"), (int, float)):
         return {
             **policy,
             "admission_status": "blocked",
-            "blocked_reason": "summon_monster_delay_ratio_dynamic_not_admitted",
+            "blocked_reason": str(resolution.get("blocked_reason") or "summon_monster_delay_ratio_dynamic_not_admitted"),
             "runtime_policy": "blocked_until_delay_ratio_timeline_semantics_admitted",
         }
-    policy["value"] = float(fixed_value)
-    if abs(float(fixed_value)) > 1e-9:
+    value = float(resolution["value"])
+    policy["value"] = value
+    if value < 0:
         return {
             **policy,
             "admission_status": "blocked",
-            "blocked_reason": "summon_monster_delay_ratio_nonzero_not_admitted",
-            "runtime_policy": "blocked_until_delay_ratio_timeline_semantics_admitted",
+            "blocked_reason": "summon_monster_delay_ratio_negative_not_admitted",
+            "runtime_policy": "blocked_until_negative_delay_ratio_semantics_admitted",
         }
     return {
         **policy,
         "admission_status": "executable",
-        "runtime_policy": "fixed_zero_no_additional_initial_action_value_offset",
-        "reason": "DelayRatio is fixed zero, so P1-3 does not apply summon-specific initial AV offset.",
+        "runtime_policy": "initial_action_value_full_av_times_delay_ratio",
+        "reason": "DelayRatio is admitted as a non-negative multiplier over the default full action value.",
     }
 
 
@@ -8283,39 +8559,99 @@ def _summon_monster_entry_from_raw(
     profile_by_entity: dict[str, CombatantProfileIR],
     card_by_entity: dict[str, MonsterDataCardIR],
 ) -> SummonMonsterEntryIR:
-    monster_expr = _numeric_expr_summary(raw_entry.get("MonsterID"))
-    monster_value = _fixed_expr_value(monster_expr)
+    monster_expr = _summon_monster_id_expr(raw_entry)
+    monster_resolution = _resolve_summon_monster_id_expr(task, monster_expr)
+    monster_value = monster_resolution.get("value") if monster_resolution.get("ok") is True else None
     blocked_reasons: list[str] = []
     if monster_value is None:
         if raw_entry.get("MonsterIDFromCustomValue") is not None:
-            blocked_reasons.append("summon_monster_id_from_custom_value_not_admitted")
+            blocked_reasons.append(
+                _summon_monster_id_unbound_reason(
+                    monster_expr,
+                    str(monster_resolution.get("blocked_reason") or "summon_monster_id_from_custom_value_not_admitted"),
+                )
+            )
+        elif monster_expr.get("kind") == "dynamic_hash":
+            blocked_reasons.append(
+                _summon_monster_id_unbound_reason(
+                    monster_expr,
+                    str(monster_resolution.get("blocked_reason") or "summon_monster_dynamic_monster_id_not_admitted"),
+                )
+            )
+        elif monster_expr.get("kind") == "postfix_expr":
+            blocked_reasons.append(
+                _summon_monster_id_unbound_reason(
+                    monster_expr,
+                    str(
+                        monster_resolution.get("blocked_reason")
+                        or f"summon_monster_monster_id_expr_not_admitted:{monster_expr.get('reason') or 'postfix_expr'}"
+                    ),
+                )
+            )
+        elif monster_expr.get("kind") == "missing":
+            blocked_reasons.append("summon_monster_monster_id_missing")
         else:
             blocked_reasons.append("summon_monster_fixed_monster_id_missing")
     monster_raw_id = str(int(monster_value)) if monster_value is not None else ""
     monster_entity_ref = f"monster:{monster_raw_id}" if monster_raw_id else ""
     profile = profile_by_entity.get(monster_entity_ref)
     card = card_by_entity.get(monster_entity_ref)
+    id_normalization = _summon_monster_fixed_id_normalization(
+        monster_raw_id,
+        profile_by_entity=profile_by_entity,
+        card_by_entity=card_by_entity,
+    )
+    if (profile is None or card is None) and id_normalization.get("admission_status") == "executable":
+        monster_raw_id = str(id_normalization["normalized_monster_id"])
+        monster_entity_ref = f"monster:{monster_raw_id}"
+        profile = profile_by_entity.get(monster_entity_ref)
+        card = card_by_entity.get(monster_entity_ref)
     if monster_entity_ref:
-        if profile is None or profile.coverage_status != "executable":
-            blocked_reasons.append("summon_monster_profile_missing_or_blocked")
+        if profile is None:
+            blocked_reasons.append("summon_monster_profile_source_missing")
+        elif profile.coverage_status != "executable":
+            blocked_reasons.append(
+                f"summon_monster_profile_source_blocked:{profile.blocked_reason or 'combatant_profile_blocked'}"
+            )
         if card is None:
-            blocked_reasons.append("summon_monster_data_card_missing")
+            blocked_reasons.append("summon_monster_data_card_source_missing")
     location_type = str(raw_entry.get("LocationType") or "")
+    supported_location_types = {"BeforeCaster", "AfterCaster", "First", "Last", "KeepOnFirst", "KeepOnLast"}
     if not location_type:
         blocked_reasons.append("summon_monster_location_type_missing")
+    elif location_type not in supported_location_types:
+        blocked_reasons.append(f"summon_monster_location_type_not_admitted:{location_type}")
     position_policy = {
         "kind": "relative_location_type",
         "location_type": location_type,
         "init_anim_state_name": str(raw_entry.get("InitAnimStateName") or ""),
         "source_field": "SummonMonsterDataList.LocationType",
+        "admission_status": "executable" if location_type in supported_location_types else "blocked",
+        "blocked_reason": "" if location_type in supported_location_types else f"summon_monster_location_type_not_admitted:{location_type or 'missing'}",
+    }
+    count_policy = {
+        "kind": "implicit_single_entry",
+        "source_field": "SummonMonsterDataList",
+        "admission_status": "executable",
+        "value": 1,
+        "reason": "current raw SummonMonsterDataList entries have no Count field; each list item lowers to one spawn instance.",
     }
     level_policy = {
         "kind": "profile_base_stats_no_runtime_level_scaling",
         "admission_status": "executable" if profile is not None and profile.coverage_status == "executable" else "blocked",
         "source_basis": "CombatantProfileIR.base_stats",
+        "profile_id": profile.profile_id if profile is not None else "",
     }
     if level_policy["admission_status"] != "executable":
-        blocked_reasons.append("summon_monster_level_policy_profile_missing")
+        if monster_entity_ref:
+            if profile is None:
+                blocked_reasons.append("summon_monster_level_policy_profile_source_missing")
+            else:
+                blocked_reasons.append(
+                    f"summon_monster_level_policy_profile_source_blocked:{profile.blocked_reason or 'combatant_profile_blocked'}"
+                )
+        else:
+            blocked_reasons.append("summon_monster_level_policy_monster_id_unresolved")
     blocked_reason = ";".join(dict.fromkeys(reason for reason in blocked_reasons if reason))
     source = IRSource(
         source_path=task.source.source_path,
@@ -8326,6 +8662,11 @@ def _summon_monster_entry_from_raw(
             "entry_index": entry_index,
             "raw_entry": _json_safe(raw_entry),
             "monster_id_expr": monster_expr,
+            "monster_id_resolution": monster_resolution,
+            "monster_id_normalization": id_normalization,
+            "position_policy": position_policy,
+            "count_policy": count_policy,
+            "level_policy": level_policy,
             "wave_clear_policy_basis": "p1_3_conservative_enemy_summon_counts",
         },
     )
@@ -8341,6 +8682,159 @@ def _summon_monster_entry_from_raw(
         coverage_status="blocked" if blocked_reason else "executable",
         blocked_reason=blocked_reason,
     )
+
+
+def _summon_monster_fixed_id_normalization(
+    monster_raw_id: str,
+    *,
+    profile_by_entity: dict[str, CombatantProfileIR],
+    card_by_entity: dict[str, MonsterDataCardIR],
+) -> dict[str, Any]:
+    if not monster_raw_id or not monster_raw_id.endswith("00") or not monster_raw_id[:-2].isdigit():
+        return {"admission_status": "not_applicable"}
+    normalized = str(int(monster_raw_id) // 100)
+    if normalized == monster_raw_id:
+        return {"admission_status": "not_applicable"}
+    normalized_ref = f"monster:{normalized}"
+    profile = profile_by_entity.get(normalized_ref)
+    card = card_by_entity.get(normalized_ref)
+    if profile is None or profile.coverage_status != "executable" or card is None:
+        return {
+            "admission_status": "blocked",
+            "blocked_reason": "summon_monster_fixed_id_x100_candidate_missing_profile_or_card",
+            "raw_monster_id": monster_raw_id,
+            "normalized_monster_id": normalized,
+        }
+    return {
+        "admission_status": "executable",
+        "normalization": "fixed_monster_id_x100_to_monster_config_id",
+        "raw_monster_id": monster_raw_id,
+        "normalized_monster_id": normalized,
+        "normalized_entity_ref": normalized_ref,
+        "profile_id": profile.profile_id,
+        "card_id": card.card_id,
+    }
+
+
+def _summon_monster_id_expr(raw_entry: dict[str, Any]) -> dict[str, Any]:
+    if raw_entry.get("MonsterID") is not None:
+        expr = _numeric_expr_summary(raw_entry.get("MonsterID"))
+        expr["source_field"] = "SummonMonsterDataList.MonsterID"
+        return expr
+    custom_value = raw_entry.get("MonsterIDFromCustomValue")
+    if isinstance(custom_value, dict) and isinstance(custom_value.get("Hash"), int):
+        return {
+            "kind": "dynamic_hash",
+            "hash": int(custom_value["Hash"]),
+            "supported": True,
+            "source_field": "SummonMonsterDataList.MonsterIDFromCustomValue.Hash",
+            "raw": _json_safe(custom_value),
+        }
+    expr = _numeric_expr_summary(custom_value)
+    expr["source_field"] = "SummonMonsterDataList.MonsterIDFromCustomValue"
+    return expr
+
+
+def _resolve_summon_monster_id_expr(task: AbilityTaskIR, monster_expr: dict[str, Any]) -> dict[str, Any]:
+    result = _resolve_summon_numeric_expr(
+        task,
+        monster_expr,
+        source_kind="dynamic_monster_id",
+        binding_missing_reason="summon_monster_dynamic_binding_source_missing",
+        fixed_source_kind="fixed_monster_id",
+    )
+    source_field = str(monster_expr.get("source_field") or "")
+    if result.get("ok") is not True and source_field.endswith("MonsterIDFromCustomValue.Hash"):
+        reason = str(result.get("blocked_reason") or "")
+        if reason == "summon_monster_dynamic_binding_source_missing":
+            result["blocked_reason"] = "custom_value_hash_to_name_binding_missing"
+        elif reason.startswith("dynamic_hash_unbound:"):
+            result["blocked_reason"] = f"custom_value_hash_unbound:{reason.removeprefix('dynamic_hash_unbound:')}"
+        result["custom_value_binding_candidates"] = _custom_value_binding_candidates_from_task(task)
+    return result
+
+
+def _resolve_summon_numeric_expr(
+    task: AbilityTaskIR,
+    numeric_expr: dict[str, Any],
+    *,
+    source_kind: str,
+    binding_missing_reason: str,
+    fixed_source_kind: str | None = None,
+) -> dict[str, Any]:
+    fixed_value = _fixed_expr_value(numeric_expr)
+    if fixed_value is not None:
+        return {
+            "ok": True,
+            "value": float(fixed_value),
+            "source_kind": fixed_source_kind or source_kind,
+            "expr": numeric_expr,
+            "source_trace": task.source.to_json(),
+        }
+    binding_sources = _numeric_binding_sources_from_task(task)
+    if not binding_sources:
+        return {
+            "ok": False,
+            "value": None,
+            "source_kind": source_kind,
+            "expr": numeric_expr,
+            "blocked_reason": binding_missing_reason,
+            "source_trace": task.source.to_json(),
+        }
+    result = RuleEvaluator().evaluate_numeric(
+        numeric_expr,
+        NumericEvaluationContext(
+            binding_sources=binding_sources,
+            source_trace=task.source.to_json(),
+        ),
+    )
+    if result.ok and result.value is not None:
+        return {
+            "ok": True,
+            "value": float(result.value),
+            "source_kind": source_kind,
+            "expr": numeric_expr,
+            "bindings": result.bindings,
+            "source_trace": result.source_trace,
+        }
+    return {
+        "ok": False,
+        "value": None,
+        "source_kind": source_kind,
+        "expr": numeric_expr,
+        "bindings": result.bindings,
+        "blocked_reason": result.blocked_reason or binding_missing_reason,
+        "source_trace": result.source_trace,
+    }
+
+
+def _numeric_binding_sources_from_task(task: AbilityTaskIR) -> tuple[dict[str, Any], ...]:
+    source_context = task.source.evidence.get("ability_source_context")
+    if not isinstance(source_context, dict):
+        return ()
+    raw_sources = source_context.get("numeric_binding_sources")
+    if not isinstance(raw_sources, list):
+        return ()
+    return tuple(source for source in raw_sources if isinstance(source, dict))
+
+
+def _custom_value_binding_candidates_from_task(task: AbilityTaskIR) -> dict[str, Any]:
+    source_context = task.source.evidence.get("ability_source_context")
+    if not isinstance(source_context, dict):
+        return {}
+    candidates = source_context.get("custom_value_bindings")
+    return dict(candidates) if isinstance(candidates, dict) else {}
+
+
+def _summon_monster_id_unbound_reason(monster_expr: dict[str, Any], reason: str) -> str:
+    source_field = str(monster_expr.get("source_field") or "")
+    if source_field.endswith("MonsterIDFromCustomValue.Hash"):
+        return f"summon_monster_id_from_custom_value_not_admitted:{reason}"
+    if monster_expr.get("kind") == "dynamic_hash":
+        return f"summon_monster_dynamic_monster_id_not_admitted:{reason}"
+    if monster_expr.get("kind") == "postfix_expr":
+        return f"summon_monster_monster_id_expr_not_admitted:{reason or 'postfix_expr'}"
+    return reason or "summon_monster_fixed_monster_id_missing"
 
 
 def _lower_assistant_ability_resolutions(
@@ -8364,7 +8858,13 @@ def _lower_assistant_ability_resolutions(
             blocked_reasons.append("assistant_owner_alias_missing")
         if not intent.ability_target_alias:
             blocked_reasons.append("assistant_target_alias_missing")
-        blocked_reasons.append("assistant_actor_or_stats_source_not_admitted")
+        blocked_reasons.extend(
+            (
+                "assistant_actor_source_not_admitted",
+                "assistant_stats_source_not_admitted",
+                "assistant_action_graph_source_not_admitted",
+            )
+        )
         source = IRSource(
             source_path=intent.source.source_path,
             raw_type="AssistantAbilityResolution",
@@ -8385,7 +8885,20 @@ def _lower_assistant_ability_resolutions(
                 resolved_graph_id="",
                 attribution_policy={
                     "kind": "blocked",
-                    "blocked_reason": "assistant_actor_or_stats_source_not_admitted",
+                    "blocked_reason": "assistant_actor_source_not_admitted;assistant_stats_source_not_admitted;assistant_action_graph_source_not_admitted",
+                    "actor_source": {
+                        "coverage_status": "blocked",
+                        "blocked_reason": "assistant_actor_source_not_admitted",
+                    },
+                    "stat_source": {
+                        "coverage_status": "blocked",
+                        "blocked_reason": "assistant_stats_source_not_admitted",
+                    },
+                    "action_graph_source": {
+                        "coverage_status": "blocked",
+                        "blocked_reason": "assistant_action_graph_source_not_admitted",
+                        "assistant_ability_id": ability_id,
+                    },
                     "source_queue_intent_id": intent.queue_intent_id,
                 },
                 source=source,
@@ -9549,6 +10062,8 @@ def _condition_payload_executable(opcode: str, payload: dict[str, Any]) -> bool:
         )
     if opcode == "ByCompareTarget":
         return _target_alias(payload.get("TargetType")) in EXECUTABLE_TARGET_ALIASES and _target_alias(payload.get("CompareType")) in EXECUTABLE_TARGET_ALIASES
+    if opcode == "ByTargetEntityType":
+        return _target_alias(payload.get("TargetType")) in EXECUTABLE_TARGET_ALIASES and payload.get("EntityTypeMask") == "Servant"
     if opcode == "ByCompareDamageCustomName":
         return isinstance(_value_field(payload.get("CustomName")), str)
     if opcode in {"ByAnd", "ByAny"}:
@@ -10033,6 +10548,283 @@ def _dynamic_value_bindings(value: Any) -> dict[str, Any]:
     return {"by_hash": by_hash, "raw": _json_safe(value)}
 
 
+def _ability_graph_source_context(
+    *,
+    source_mode: str,
+    skill_row: dict[str, Any],
+    skill_trigger_key: str,
+    character_path: str,
+    character_config: dict[str, Any],
+    config_source: dict[str, Any],
+    config_kind: str,
+    ability_paths: tuple[str, ...],
+    skill_rows_by_trigger_key: dict[str, dict[str, Any]] | None = None,
+    allowed_dynamic_hashes: set[str] | None = None,
+) -> dict[str, Any]:
+    skill_param_binding_source, skill_param_summary = _skill_param_numeric_binding_source(
+        character_config=character_config,
+        skill_row=skill_row,
+        skill_trigger_key=skill_trigger_key,
+        character_path=character_path,
+        skill_rows_by_trigger_key=skill_rows_by_trigger_key,
+        allowed_dynamic_hashes=allowed_dynamic_hashes,
+    )
+    custom_values = character_config.get("CustomValues")
+    context: dict[str, Any] = {
+        "source_mode": source_mode,
+        "skill_id": _json_safe(skill_row.get("SkillID")),
+        "skill_trigger_key": skill_trigger_key,
+        "skill_source_path": str(skill_row.get("_v8_source_path") or ""),
+        "skill_row_index": _json_safe(skill_row.get("_v8_row_index")),
+        "param_list": _json_safe(skill_row.get("ParamList") if isinstance(skill_row.get("ParamList"), list) else []),
+        "character_config_path": character_path,
+        "config_kind": config_kind,
+        "config_source": _compact_ability_config_source(config_source),
+        "ability_paths": [path for path in ability_paths if path],
+        "skill_param_dynamic_bindings": skill_param_summary,
+        "numeric_binding_sources": [skill_param_binding_source] if skill_param_binding_source.get("by_hash") else [],
+        "custom_value_keys": sorted(str(key) for key in custom_values.keys())[:80] if isinstance(custom_values, dict) else [],
+        "custom_value_bindings": _custom_value_binding_summary(config_source, character_config),
+        "override_skill_params": _json_safe(config_source.get("override_skill_params") or []),
+    }
+    return _json_safe(context)
+
+
+def _compact_ability_config_source(config_source: dict[str, Any]) -> dict[str, Any]:
+    keys = (
+        "relative_path",
+        "row_index",
+        "avatar_id",
+        "monster_id",
+        "servant_id",
+        "template_id",
+        "json_path",
+        "template_source_path",
+        "template_row_index",
+        "version_kind",
+        "enhanced_id",
+    )
+    return {key: _json_safe(config_source.get(key)) for key in keys if key in config_source}
+
+
+def _custom_value_binding_summary(config_source: dict[str, Any], character_config: dict[str, Any]) -> dict[str, Any]:
+    raw_custom_values = config_source.get("custom_values")
+    character_values = character_config.get("CustomValues") if isinstance(character_config, dict) else None
+    character_values = character_values if isinstance(character_values, dict) else {}
+    entries: list[dict[str, Any]] = []
+    if isinstance(raw_custom_values, list):
+        for index, item in enumerate(raw_custom_values):
+            if not isinstance(item, dict):
+                continue
+            name = item.get("BFLIFKBEOPJ") or item.get("Name") or item.get("Key")
+            raw_value = item.get("MNDFOPKBHKP", item.get("Value"))
+            entry: dict[str, Any] = {
+                "index": index,
+                "name": str(name or ""),
+                "raw_path": f"CustomValues[{index}]",
+                "raw_name_field": "BFLIFKBEOPJ" if "BFLIFKBEOPJ" in item else "",
+                "raw_value_field": "MNDFOPKBHKP" if "MNDFOPKBHKP" in item else ("Value" if "Value" in item else ""),
+                "value": _json_safe(raw_value),
+                "character_config_value": _json_safe(character_values.get(str(name))) if name is not None else None,
+                "character_config_hit": str(name) in character_values if name is not None else False,
+            }
+            entries.append(entry)
+    elif isinstance(raw_custom_values, dict):
+        for index, (name, raw_value) in enumerate(sorted(raw_custom_values.items(), key=lambda pair: str(pair[0]))):
+            entries.append(
+                {
+                    "index": index,
+                    "name": str(name),
+                    "raw_path": f"CustomValues[{name}]",
+                    "raw_name_field": "dict_key",
+                    "raw_value_field": "dict_value",
+                    "value": _json_safe(raw_value),
+                    "character_config_value": _json_safe(character_values.get(str(name))),
+                    "character_config_hit": str(name) in character_values,
+                }
+            )
+    return {
+        "source_type": "monster_config_custom_values",
+        "entry_count": len(entries),
+        "entries": _json_safe(entries[:24]),
+        "hash_to_name_admitted": False,
+        "blocked_reason": "custom_value_hash_to_name_binding_missing",
+    }
+
+
+def _skill_param_numeric_binding_source(
+    *,
+    character_config: dict[str, Any],
+    skill_row: dict[str, Any],
+    skill_trigger_key: str,
+    character_path: str,
+    skill_rows_by_trigger_key: dict[str, dict[str, Any]] | None = None,
+    allowed_dynamic_hashes: set[str] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    floats = character_config.get("DynamicValues", {}).get("Floats") if isinstance(character_config, dict) else None
+    rows_by_trigger: dict[str, dict[str, Any]] = dict(skill_rows_by_trigger_key or {})
+    if skill_trigger_key and skill_trigger_key not in rows_by_trigger:
+        rows_by_trigger[skill_trigger_key] = skill_row
+    by_hash: dict[str, Any] = {}
+    summary_entries: list[dict[str, Any]] = []
+    if isinstance(floats, dict):
+        for raw_hash, item in sorted(floats.items(), key=lambda pair: str(pair[0])):
+            hash_key = str(raw_hash)
+            if allowed_dynamic_hashes is not None and hash_key not in allowed_dynamic_hashes:
+                continue
+            if not isinstance(item, dict):
+                continue
+            read_info = item.get("ReadInfo")
+            if not isinstance(read_info, dict):
+                continue
+            if read_info.get("Type") != "SkillParam":
+                continue
+            trigger_key = str(read_info.get("TriggerKey") or "")
+            binding_skill_row = rows_by_trigger.get(trigger_key)
+            if binding_skill_row is None:
+                continue
+            param_list = binding_skill_row.get("ParamList") if isinstance(binding_skill_row.get("ParamList"), list) else []
+            param_index_raw = read_info.get("Index")
+            entry_summary: dict[str, Any] = {
+                "hash": str(raw_hash),
+                "trigger_key": trigger_key,
+                "current_skill_trigger_key": skill_trigger_key,
+                "skill_id": _json_safe(binding_skill_row.get("SkillID")),
+                "skill_source_path": str(binding_skill_row.get("_v8_source_path") or ""),
+                "skill_row_index": _json_safe(binding_skill_row.get("_v8_row_index")),
+                "param_index": _json_safe(param_index_raw),
+                "read_info": _json_safe(read_info),
+                "source_path": character_path,
+                "raw_path": f"DynamicValues.Floats[{raw_hash}].ReadInfo",
+            }
+            if not isinstance(param_index_raw, int):
+                summary_entries.append({**entry_summary, "admission_status": "blocked", "blocked_reason": "skill_param_index_not_integer"})
+                continue
+            if param_index_raw < 0 or param_index_raw >= len(param_list):
+                summary_entries.append(
+                    {
+                        **entry_summary,
+                        "admission_status": "blocked",
+                        "blocked_reason": "skill_param_index_out_of_range",
+                        "param_count": len(param_list),
+                    }
+                )
+                continue
+            param_raw = param_list[param_index_raw]
+            value = _numeric_param_value(param_raw)
+            if value is None:
+                summary_entries.append(
+                    {
+                        **entry_summary,
+                        "admission_status": "blocked",
+                        "blocked_reason": "skill_param_value_not_numeric",
+                        "param_raw": _json_safe(param_raw),
+                    }
+                )
+                continue
+            entry = {
+                "hash": str(raw_hash),
+                "trigger_key": trigger_key,
+                "current_skill_trigger_key": skill_trigger_key,
+                "skill_id": _json_safe(binding_skill_row.get("SkillID")),
+                "skill_source_path": str(binding_skill_row.get("_v8_source_path") or ""),
+                "skill_row_index": _json_safe(binding_skill_row.get("_v8_row_index")),
+                "param_index": _json_safe(param_index_raw),
+                "source_path": character_path,
+                "raw_path": f"DynamicValues.Floats[{raw_hash}].ReadInfo",
+                "admission_status": "executable",
+                "param_raw": _json_safe(param_raw),
+                "value": float(value),
+                "source_trace": {
+                    "source_path": character_path,
+                    "raw_type": "CharacterConfig.DynamicValues.SkillParam",
+                    "raw_id": str(raw_hash),
+                    "evidence": {
+                        "skill_source_path": str(skill_row.get("_v8_source_path") or ""),
+                        "current_skill_id": _json_safe(skill_row.get("SkillID")),
+                        "current_skill_trigger_key": skill_trigger_key,
+                        "binding_skill_source_path": str(binding_skill_row.get("_v8_source_path") or ""),
+                        "binding_skill_id": _json_safe(binding_skill_row.get("SkillID")),
+                        "binding_skill_trigger_key": trigger_key,
+                        "param_ref": f"ParamList[{param_index_raw}]",
+                        "param_value": _json_safe(param_raw),
+                    },
+                },
+            }
+            by_hash[str(raw_hash)] = entry
+            summary_entries.append(entry)
+    binding_source = {
+        "source_type": "character_config_skill_param",
+        "by_hash": by_hash,
+        "by_name": {},
+    }
+    summary = {
+        "source_type": "character_config_skill_param",
+        "entry_count": len(by_hash),
+        "blocked_count": sum(1 for item in summary_entries if item.get("admission_status") == "blocked"),
+        "allowed_dynamic_hash_count": len(allowed_dynamic_hashes or ()),
+        "entries": summary_entries[:12],
+    }
+    return binding_source, summary
+
+
+def _dynamic_hashes_for_ability_names(ability_names: list[str], ability_map: dict[str, dict[str, Any]]) -> set[str]:
+    hashes: set[str] = set()
+    for ability_name in ability_names:
+        ability = ability_map.get(ability_name)
+        if isinstance(ability, dict):
+            _collect_dynamic_hashes(ability, hashes)
+    return hashes
+
+
+def _collect_dynamic_hashes(value: Any, result: set[str]) -> None:
+    if isinstance(value, dict):
+        dynamic_hashes = value.get("DynamicHashes")
+        if isinstance(dynamic_hashes, list):
+            for item in dynamic_hashes:
+                if isinstance(item, int):
+                    result.add(str(item))
+        for item in value.values():
+            _collect_dynamic_hashes(item, result)
+    elif isinstance(value, list):
+        for item in value:
+            _collect_dynamic_hashes(item, result)
+
+
+def _skill_rows_by_trigger_key_for_config(
+    config_source: dict[str, Any],
+    skill_rows_by_id: dict[str, dict[str, Any]],
+    current_skill_row: dict[str, Any],
+) -> dict[str, dict[str, Any]]:
+    rows: dict[str, dict[str, Any]] = {}
+
+    def add(row: Any) -> None:
+        if not isinstance(row, dict):
+            return
+        trigger_key = str(row.get("SkillTriggerKey") or "")
+        if trigger_key:
+            rows.setdefault(trigger_key, row)
+
+    add(current_skill_row)
+    for key in ("skill_list", "base_skill_list", "enhanced_skill_list"):
+        raw_skill_ids = config_source.get(key)
+        if not isinstance(raw_skill_ids, list):
+            continue
+        for skill_id in raw_skill_ids:
+            add(skill_rows_by_id.get(str(skill_id)))
+    return rows
+
+
+def _numeric_param_value(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, dict):
+        return _numeric_param_value(value.get("Value"))
+    return None
+
+
 def _dynamic_value_requests(dynamic_values: dict[str, Any]) -> dict[str, Any]:
     requests: dict[str, Any] = {}
     for key, expr in dynamic_values.items():
@@ -10060,38 +10852,158 @@ def _optional_int(value: Any) -> int | None:
 def _summon_unit_config_summary(config: dict[str, Any] | None) -> dict[str, Any]:
     if not isinstance(config, dict):
         return {"config_readable": False}
+    on_create_opcodes = _iter_gamecore_opcodes(config.get("OnCreate"))[:40]
+    on_destroy_opcodes = _iter_gamecore_opcodes(config.get("OnDestroy"))[:40]
+    trigger_opcodes = _iter_gamecore_opcodes(config.get("TriggerConfig"))[:80]
+    adventure_or_maze_markers = _summon_unit_adventure_or_maze_markers(
+        group_name=str(config.get("GroupConfigName") or ""),
+        opcodes=(*on_create_opcodes, *on_destroy_opcodes, *trigger_opcodes),
+    )
     return {
         "config_readable": True,
         "group_config_name": str(config.get("GroupConfigName") or ""),
         "config_entity_path": str(config.get("ConfigEntityPath") or ""),
         "has_skill_config": isinstance(config.get("SkillConfig"), dict),
         "has_ai_config": isinstance(config.get("AIConfig"), dict),
-        "on_create_opcodes": _iter_gamecore_opcodes(config.get("OnCreate"))[:40],
-        "on_destroy_opcodes": _iter_gamecore_opcodes(config.get("OnDestroy"))[:40],
-        "trigger_opcodes": _iter_gamecore_opcodes(config.get("TriggerConfig"))[:80],
+        "has_trigger_config": isinstance(config.get("TriggerConfig"), dict),
+        "has_resident_effects": isinstance(config.get("ResidentEffects"), list) and bool(config.get("ResidentEffects")),
+        "on_create_opcodes": on_create_opcodes,
+        "on_destroy_opcodes": on_destroy_opcodes,
+        "trigger_opcodes": trigger_opcodes,
+        "adventure_or_maze_markers": adventure_or_maze_markers,
         "raw_config_keys": sorted(str(key) for key in config.keys())[:80],
     }
 
 
 def _summon_unit_kind(row: dict[str, Any], config_summary: dict[str, Any]) -> str:
+    source_mode = _summon_unit_source_mode(row, config_summary)
+    if source_mode == "client_or_visual":
+        return "client_or_visual_summon"
+    if source_mode == "destroy_on_enter_battle":
+        return "destroy_on_enter_battle_summon"
+    if source_mode == "adventure_or_maze":
+        return "adventure_or_maze_summon"
+    if source_mode == "battle_runtime_candidate":
+        return "battle_runtime_candidate"
+    if source_mode == "config_missing":
+        return "config_missing"
+    return "catalog_or_scene_summon"
+
+
+def _summon_unit_source_mode(row: dict[str, Any], config_summary: dict[str, Any]) -> str:
     if row.get("IsClient") is True:
-        return "visual_or_adventure_summon"
+        return "client_or_visual"
+    if row.get("DestroyOnEnterBattle") is True:
+        return "destroy_on_enter_battle"
+    if config_summary.get("config_readable") is not True:
+        return "config_missing"
     group_name = str(config_summary.get("group_config_name") or "")
-    if group_name in {"FollowUnit", "FollowField", "Field"}:
-        return "adventure_follow_unit"
+    markers = config_summary.get("adventure_or_maze_markers")
+    if group_name in {"FollowUnit", "FollowField", "Field"} or (isinstance(markers, list) and markers):
+        return "adventure_or_maze"
     if row.get("IsTeamSummon") is True or config_summary.get("has_skill_config") is True:
-        return "battle_candidate"
-    return "unknown"
+        return "battle_runtime_candidate"
+    return "catalog_or_scene"
 
 
 def _summon_unit_blocked_reason(row: dict[str, Any], config_summary: dict[str, Any]) -> str:
-    if row.get("IsClient") is True:
+    source_mode = _summon_unit_source_mode(row, config_summary)
+    if source_mode == "client_or_visual":
         return "summon_unit_client_only_not_combat_runtime"
-    if row.get("DestroyOnEnterBattle") is True:
+    if source_mode == "destroy_on_enter_battle":
         return "summon_unit_destroy_on_enter_battle_not_battle_spawn"
-    if config_summary.get("config_readable") is not True:
+    if source_mode == "config_missing":
         return "summon_unit_config_missing"
+    if source_mode == "adventure_or_maze":
+        return "summon_unit_adventure_or_maze_not_combat_runtime"
+    if source_mode == "catalog_or_scene":
+        return "summon_unit_catalog_or_scene_not_battle_trigger"
     return "summon_unit_battle_admission_source_missing"
+
+
+def _summon_unit_battle_admission(
+    row: dict[str, Any],
+    config_summary: dict[str, Any],
+    blocked_reason: str,
+) -> dict[str, Any]:
+    source_mode = _summon_unit_source_mode(row, config_summary)
+    return {
+        "admission_status": "blocked",
+        "blocked_reason": blocked_reason,
+        "source_mode": source_mode,
+        "catalog_not_trigger": source_mode in {"catalog_or_scene", "client_or_visual", "destroy_on_enter_battle", "adventure_or_maze"},
+        "runtime_spawn_requires_explicit_intent": True,
+        "raw_flags": _summon_unit_raw_flags(row),
+        "config_markers": {
+            "group_config_name": str(config_summary.get("group_config_name") or ""),
+            "config_entity_path": str(config_summary.get("config_entity_path") or ""),
+            "has_skill_config": config_summary.get("has_skill_config") is True,
+            "has_ai_config": config_summary.get("has_ai_config") is True,
+            "has_trigger_config": config_summary.get("has_trigger_config") is True,
+            "has_resident_effects": config_summary.get("has_resident_effects") is True,
+            "adventure_or_maze_markers": list(config_summary.get("adventure_or_maze_markers") or []),
+        },
+        "required_runtime_sources": {
+            "battle_trigger": {
+                "admission_status": "blocked",
+                "blocked_reason": "summon_unit_battle_trigger_source_absent",
+            },
+            "unit_profile": {
+                "admission_status": "blocked",
+                "blocked_reason": "summon_unit_profile_source_absent",
+            },
+            "stats": {
+                "admission_status": "blocked",
+                "blocked_reason": "summon_unit_stats_source_absent",
+            },
+            "position": {
+                "admission_status": "blocked",
+                "blocked_reason": "summon_unit_position_source_absent",
+            },
+            "lifetime": {
+                "admission_status": "blocked",
+                "blocked_reason": "summon_unit_lifetime_source_absent",
+            },
+            "targetability": {
+                "admission_status": "blocked",
+                "blocked_reason": "summon_unit_targetability_source_absent",
+            },
+            "actionability": {
+                "admission_status": "blocked",
+                "blocked_reason": "summon_unit_actionability_source_absent",
+            },
+        },
+    }
+
+
+def _summon_unit_raw_flags(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "is_client": row.get("IsClient") is True,
+        "is_team_summon": row.get("IsTeamSummon") is True,
+        "destroy_on_enter_battle": row.get("DestroyOnEnterBattle") is True,
+        "remove_maze_buff_on_destroy": row.get("RemoveMazeBuffOnDestroy") is True,
+        "max_summon_count": _optional_int(row.get("MaxSummonCount")),
+        "unique_group": str(row.get("UniqueGroup") or ""),
+    }
+
+
+def _summon_unit_adventure_or_maze_markers(*, group_name: str, opcodes: tuple[str, ...]) -> list[str]:
+    markers: list[str] = []
+    if group_name in {"FollowUnit", "FollowField", "Field"}:
+        markers.append(f"group_config:{group_name}")
+    adventure_opcodes = {
+        "AddMazeBuff",
+        "RefreshMazeBuffTime",
+        "AddAdventureModifier",
+        "TriggerHitProp",
+        "PropDestructReset",
+        "RemoveEffect",
+        "TriggerEffect",
+    }
+    for opcode in opcodes:
+        if opcode in adventure_opcodes:
+            markers.append(f"opcode:{opcode}")
+    return list(dict.fromkeys(markers))
 
 
 def _target_alias(value: Any) -> str | None:
@@ -10128,6 +11040,15 @@ def _numeric_expr_summary(value: Any) -> dict[str, Any]:
             return {"kind": "fixed", "value": float(value["Value"]), "supported": True}
         postfix = value.get("PostfixExpr")
         if isinstance(postfix, dict):
+            postfix_fixed = _postfix_expr_fixed_value(postfix)
+            if postfix_fixed is not None:
+                return {
+                    "kind": "fixed",
+                    "value": postfix_fixed,
+                    "supported": True,
+                    "raw": _json_safe(value),
+                    "admission": "postfix_fixed_arithmetic",
+                }
             hashes = postfix.get("DynamicHashes")
             fixed_values = postfix.get("FixedValues")
             opcodes = postfix.get("OpCodes")
@@ -10165,6 +11086,70 @@ def _fixed_expr_value(value: Any) -> float | None:
         return float(value)
     if isinstance(value, dict) and value.get("kind") == "fixed" and isinstance(value.get("value"), (int, float)):
         return float(value["value"])
+    return None
+
+
+def _postfix_expr_fixed_value(postfix: dict[str, Any]) -> float | None:
+    dynamic_hashes = postfix.get("DynamicHashes")
+    if isinstance(dynamic_hashes, list) and dynamic_hashes:
+        return None
+    fixed_values = postfix.get("FixedValues")
+    if not isinstance(fixed_values, list):
+        return None
+    opcodes = postfix.get("OpCodes")
+    if not isinstance(opcodes, str) or not opcodes:
+        return None
+    try:
+        decoded = list(base64.b64decode(opcodes))
+    except Exception:
+        return None
+    stack: list[float] = []
+    index = 0
+    ended = False
+    while index < len(decoded):
+        opcode = decoded[index]
+        if opcode == 17:
+            ended = True
+            index += 1
+            continue
+        if opcode == 0:
+            if index + 1 >= len(decoded):
+                return None
+            fixed_index = decoded[index + 1]
+            if fixed_index >= len(fixed_values):
+                return None
+            value = _numeric_fixed_value_item(fixed_values[fixed_index])
+            if value is None:
+                return None
+            stack.append(value)
+            index += 2
+            continue
+        if opcode in {2, 3, 4, 5}:
+            if len(stack) < 2:
+                return None
+            right = stack.pop()
+            left = stack.pop()
+            if opcode == 2:
+                stack.append(left + right)
+            elif opcode == 3:
+                stack.append(left - right)
+            elif opcode == 4:
+                stack.append(left * right)
+            elif opcode == 5:
+                if right == 0:
+                    return None
+                stack.append(left / right)
+            index += 1
+            continue
+        return None
+    return stack[0] if ended and len(stack) == 1 else None
+
+
+def _numeric_fixed_value_item(value: Any) -> float | None:
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, dict) and isinstance(value.get("Value"), (int, float)):
+        return float(value["Value"])
     return None
 
 

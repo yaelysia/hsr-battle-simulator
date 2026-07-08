@@ -162,6 +162,21 @@ class RuleBook:
                 for resolution in self.ir.assistant_ability_resolutions
             },
         )
+        assistant_ability_resolutions_by_ability_id: dict[str, list[AssistantAbilityResolutionIR]] = {}
+        for resolution in self.ir.assistant_ability_resolutions:
+            if resolution.assistant_ability_id:
+                assistant_ability_resolutions_by_ability_id.setdefault(
+                    resolution.assistant_ability_id,
+                    [],
+                ).append(resolution)
+        object.__setattr__(
+            self,
+            "_assistant_ability_resolutions_by_ability_id",
+            {
+                key: tuple(sorted(value, key=lambda item: item.assistant_resolution_id))
+                for key, value in assistant_ability_resolutions_by_ability_id.items()
+            },
+        )
         object.__setattr__(
             self,
             "_servant_definitions",
@@ -171,6 +186,18 @@ class RuleBook:
             self,
             "_servant_definitions_by_ref",
             {definition.servant_ref: definition for definition in self.ir.servant_definitions if definition.servant_ref},
+        )
+        servant_definitions_by_owner: dict[str, list[ServantDefinitionIR]] = {}
+        for definition in self.ir.servant_definitions:
+            if definition.owner_entity_ref:
+                servant_definitions_by_owner.setdefault(definition.owner_entity_ref, []).append(definition)
+        object.__setattr__(
+            self,
+            "_servant_definitions_by_owner",
+            {
+                key: tuple(sorted(value, key=lambda item: item.servant_definition_id))
+                for key, value in servant_definitions_by_owner.items()
+            },
         )
         mechanism_slots_by_card: dict[str, list[CharacterMechanismSlotIR]] = {}
         for slot in self.ir.character_mechanism_slots:
@@ -297,6 +324,11 @@ class RuleBook:
             self,
             "_action_ability_bindings",
             {(binding.action_id, binding.level): binding for binding in self.ir.action_ability_bindings},
+        )
+        object.__setattr__(
+            self,
+            "_action_ability_bindings_by_id",
+            {binding.binding_id: binding for binding in self.ir.action_ability_bindings},
         )
         ability_phases_by_binding: dict[str, list[AbilityPhaseIR]] = {}
         ability_phases_by_action: dict[tuple[str, int], list[AbilityPhaseIR]] = {}
@@ -632,10 +664,32 @@ class RuleBook:
             "_queue_window_by_intent",
             {window.queue_intent_id: window for window in self.ir.queue_windows},
         )
+        queue_windows_by_family: dict[str, list[QueueWindowIR]] = {}
+        for window in self.ir.queue_windows:
+            queue_windows_by_family.setdefault(window.window_family, []).append(window)
+        object.__setattr__(
+            self,
+            "_queue_windows_by_family",
+            {
+                key: tuple(sorted(value, key=lambda item: item.queue_window_id))
+                for key, value in queue_windows_by_family.items()
+            },
+        )
         object.__setattr__(
             self,
             "_queue_lifecycle_policies",
             {policy.queue_lifecycle_policy_id: policy for policy in self.ir.queue_lifecycle_policies},
+        )
+        queue_lifecycle_policies_by_family: dict[str, list[QueueLifecyclePolicyIR]] = {}
+        for policy in self.ir.queue_lifecycle_policies:
+            queue_lifecycle_policies_by_family.setdefault(policy.window_family, []).append(policy)
+        object.__setattr__(
+            self,
+            "_queue_lifecycle_policies_by_family",
+            {
+                key: tuple(sorted(value, key=lambda item: item.queue_lifecycle_policy_id))
+                for key, value in queue_lifecycle_policies_by_family.items()
+            },
         )
         object.__setattr__(
             self,
@@ -860,11 +914,17 @@ class RuleBook:
     def assistant_ability_resolution_for_intent(self, queue_intent_id: str) -> AssistantAbilityResolutionIR | None:
         return self._assistant_ability_resolution_by_intent.get(queue_intent_id)
 
+    def assistant_ability_resolutions_for_ability(self, assistant_ability_id: str) -> tuple[AssistantAbilityResolutionIR, ...]:
+        return self._assistant_ability_resolutions_by_ability_id.get(assistant_ability_id, ())
+
     def assistant_ability_resolutions(self) -> tuple[AssistantAbilityResolutionIR, ...]:
         return tuple(sorted(self.ir.assistant_ability_resolutions, key=lambda item: item.assistant_resolution_id))
 
     def servant_definition(self, servant_definition_id: str) -> ServantDefinitionIR | None:
         return self._servant_definitions.get(servant_definition_id) or self._servant_definitions_by_ref.get(servant_definition_id)
+
+    def servant_definitions_for_owner(self, owner_entity_ref: str) -> tuple[ServantDefinitionIR, ...]:
+        return self._servant_definitions_by_owner.get(owner_entity_ref, ())
 
     def servant_definitions(self) -> tuple[ServantDefinitionIR, ...]:
         return tuple(sorted(self.ir.servant_definitions, key=lambda item: item.servant_definition_id))
@@ -1134,11 +1194,20 @@ class RuleBook:
     def queue_window(self, queue_window_id: str) -> QueueWindowIR | None:
         return self._queue_windows.get(queue_window_id)
 
+    def queue_windows(self) -> tuple[QueueWindowIR, ...]:
+        return tuple(sorted(self.ir.queue_windows, key=lambda item: item.queue_window_id))
+
     def queue_window_for_intent(self, queue_intent_id: str) -> QueueWindowIR | None:
         return self._queue_window_by_intent.get(queue_intent_id)
 
+    def queue_windows_by_family(self, window_family: str) -> tuple[QueueWindowIR, ...]:
+        return self._queue_windows_by_family.get(window_family, ())
+
     def queue_lifecycle_policy(self, policy_id: str) -> QueueLifecyclePolicyIR | None:
         return self._queue_lifecycle_policies.get(policy_id)
+
+    def queue_lifecycle_policies(self) -> tuple[QueueLifecyclePolicyIR, ...]:
+        return tuple(sorted(self.ir.queue_lifecycle_policies, key=lambda item: item.queue_lifecycle_policy_id))
 
     def queue_lifecycle_policy_for_window(self, queue_window_id: str) -> QueueLifecyclePolicyIR | None:
         return self._queue_lifecycle_policy_by_window.get(queue_window_id)
@@ -1146,8 +1215,14 @@ class RuleBook:
     def queue_lifecycle_policy_for_intent(self, queue_intent_id: str) -> QueueLifecyclePolicyIR | None:
         return self._queue_lifecycle_policy_by_intent.get(queue_intent_id)
 
+    def queue_lifecycle_policies_by_family(self, window_family: str) -> tuple[QueueLifecyclePolicyIR, ...]:
+        return self._queue_lifecycle_policies_by_family.get(window_family, ())
+
     def extra_action_policy(self, policy_id: str) -> ExtraActionPolicyIR | None:
         return self._extra_action_policies.get(policy_id)
+
+    def extra_action_policies(self) -> tuple[ExtraActionPolicyIR, ...]:
+        return tuple(sorted(self.ir.extra_action_policies, key=lambda item: item.extra_action_policy_id))
 
     def extra_action_policy_for_window(self, queue_window_id: str) -> ExtraActionPolicyIR | None:
         return self._extra_action_policy_by_window.get(queue_window_id)
@@ -1169,6 +1244,9 @@ class RuleBook:
 
     def combatant_action_set(self, entity_ref: str) -> CombatantActionSetIR | None:
         return self._combatant_action_sets.get(entity_ref)
+
+    def combatant_action_sets(self) -> tuple[CombatantActionSetIR, ...]:
+        return tuple(sorted(self.ir.combatant_action_sets, key=lambda item: item.combatant_action_set_id))
 
     def timeline_rule(self, timeline_rule_id: str) -> TimelineRuleIR | None:
         return self._timeline_rules.get(timeline_rule_id)
@@ -1213,6 +1291,9 @@ class RuleBook:
 
     def action_ability_binding(self, action_id: str, level: int) -> ActionAbilityBindingIR | None:
         return self._action_ability_bindings.get((action_id, level))
+
+    def action_ability_binding_by_id(self, binding_id: str) -> ActionAbilityBindingIR | None:
+        return self._action_ability_bindings_by_id.get(binding_id)
 
     def ability_phases_for_action(self, action_id: str, level: int) -> tuple[AbilityPhaseIR, ...]:
         return self._ability_phases_by_action.get((action_id, level), ())

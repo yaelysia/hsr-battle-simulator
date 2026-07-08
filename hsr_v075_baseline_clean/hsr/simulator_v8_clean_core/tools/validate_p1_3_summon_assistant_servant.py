@@ -12,7 +12,7 @@ from ..core.reducer import MutationReducer
 from ..rules.ir import SummonMonsterIntentIR, TargetExpressionIR
 from ..rules.rulebook import RuleBook
 from ..systems.action_availability import ActionAvailabilitySystem
-from ..systems.summon import SummonSystem
+from ..systems.summon import SUMMON_RUNTIME_SCHEMA_VERSION, SummonSystem
 from ..systems.target import TargetPolicy, TargetSystem
 from ..systems.timeline import TimelineSystem
 from ..systems.wave import WaveSystem
@@ -66,14 +66,14 @@ def run_validation(package_root: Path, tbgd_root: Path, output_dir: Path) -> dic
                     "mode": "structured_p1_3_source_predicates",
                     "fixed_character_monster_summon_or_file_used": False,
                     "predicate": [
-                        "SummonMonsterIntentIR.coverage_status == executable",
-                        "source path is admitted by lowering as mainline monster ability",
-                        "entry has fixed MonsterID parsed to monster entity",
-                        "CombatantProfileIR and MonsterDataCardIR exist",
-                        "position policy has structured LocationType source",
-                        "DelayRatio is missing or fixed zero; dynamic/nonzero DelayRatio is blocked",
-                    ],
-                },
+                    "SummonMonsterIntentIR.coverage_status == executable",
+                    "source path is admitted by lowering as mainline monster ability",
+                    "entry has fixed MonsterID parsed to monster entity",
+                    "CombatantProfileIR and MonsterDataCardIR exist",
+                    "position policy has structured LocationType source",
+                    "DelayRatio is structured; fixed non-negative values are executable, dynamic or unbound values stay blocked",
+                ],
+            },
             },
             "checks": checks,
             "cases": {
@@ -119,6 +119,11 @@ def _source_discovery_cases(rules: RuleBook) -> dict[str, Any]:
         for intent in rules.summon_monster_intents()
         if isinstance(intent.delay_policy, dict) and intent.delay_policy.get("admission_status") == "blocked"
     )
+    executable_delay_intents = tuple(
+        intent
+        for intent in rules.summon_monster_intents()
+        if isinstance(intent.delay_policy, dict) and intent.delay_policy.get("admission_status") == "executable"
+    )
     checks = {
         "summon_unit_definitions_present": bool(summon_defs),
         "client_summon_blocked": bool(client_defs) and all(item.coverage_status == "blocked" for item in client_defs),
@@ -132,8 +137,16 @@ def _source_discovery_cases(rules: RuleBook) -> dict[str, Any]:
         "executable_delay_policy_admitted": all(
             intent.delay_policy.get("admission_status") == "executable" for intent in executable_intents
         ),
-        "delay_ratio_nonzero_or_dynamic_blocks": bool(delay_blocked_intents)
-        and all("delay_ratio" in intent.blocked_reason for intent in delay_blocked_intents[:20]),
+        "delay_ratio_executable_values_non_negative": all(
+            not isinstance(intent.delay_policy.get("value"), (int, float))
+            or not isinstance(intent.delay_policy.get("value"), bool)
+            and float(intent.delay_policy.get("value", 0.0)) >= 0.0
+            for intent in executable_delay_intents
+        ),
+        "delay_ratio_blocked_policies_have_reason": all(
+            bool(str(intent.delay_policy.get("blocked_reason") or intent.blocked_reason))
+            for intent in delay_blocked_intents
+        ),
         "rulebook_indexes_work": bool(executable_intents)
         and rules.summon_monster_intent(executable_intents[0].summon_intent_id) == executable_intents[0],
     }
@@ -150,6 +163,7 @@ def _source_discovery_cases(rules: RuleBook) -> dict[str, Any]:
             "executable": len(executable_intents),
             "blocked": sum(1 for intent in rules.ir.summon_monster_intents if intent.coverage_status == "blocked"),
             "delay_blocked": len(delay_blocked_intents),
+            "delay_executable": len(executable_delay_intents),
         },
         "catalog_sample": catalog_cards[0].to_json() if catalog_cards else {},
     }
@@ -168,7 +182,7 @@ def _spawn_case(rules: RuleBook, intent: SummonMonsterIntentIR) -> dict[str, Any
     runtime = after.global_flags.get("summon_runtime")
     targets = TargetSystem().enumerate_action_targets(after, "ally:probe", TargetPolicy())
     checks = {
-        "view_pure_query_state_unchanged": before_hash == _snapshot_hash(state) and view.schema_version == "p1_3_summon_runtime_v1",
+        "view_pure_query_state_unchanged": before_hash == _snapshot_hash(state) and view.schema_version == SUMMON_RUNTIME_SCHEMA_VERSION,
         "plan_ok": plan.ok and plan.operation == "spawn_summoned_monster",
         "unit_spawn_mutations_present": any(mutation.metadata.get("lifecycle_operation") == "unit_spawn" for mutation in result.mutations),
         "runtime_mutation_present": any(mutation.path == ("global_flags", "summon_runtime") for mutation in result.mutations),
@@ -419,7 +433,9 @@ def _assistant_case(rules: RuleBook) -> dict[str, Any]:
         "assistant_resolution_count_matches_intents": len(assistant_resolutions) == len(assistant_intents),
         "assistant_resolutions_blocked_or_no_source": all(item.coverage_status == "blocked" for item in assistant_resolutions),
         "assistant_blocked_reason_specific": all(
-            "assistant_actor_or_stats_source_not_admitted" in item.blocked_reason
+            "assistant_actor_source_not_admitted" in item.blocked_reason
+            and "assistant_stats_source_not_admitted" in item.blocked_reason
+            and "assistant_action_graph_source_not_admitted" in item.blocked_reason
             for item in assistant_resolutions
         ),
         "assistant_no_fake_execution": not any(item.coverage_status == "executable" for item in assistant_resolutions),

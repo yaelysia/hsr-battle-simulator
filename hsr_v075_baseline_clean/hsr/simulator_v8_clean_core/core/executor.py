@@ -139,13 +139,22 @@ class CombatExecutor:
         )
         execution_binding_blocked_reason = _execution_source_blocked_reason(binding_blocked_reason, action_execution_plan)
         execution_event_blocked_reason = _execution_source_blocked_reason(action_event_reason, action_execution_plan)
+        summon_execution_blocked_reason = _summon_execution_blocked_reason(state, command)
         use_action_damage_plan_fallback = _uses_action_damage_plan_fallback(
             binding_blocked_reason,
             action_event_reason,
             action_execution_plan,
         )
+        summon_damage_stat_blocked_reason = _summon_damage_stat_blocked_reason(
+            state,
+            command,
+            action_definition,
+            action_execution_plan,
+        )
         plan_blocked_reason = combined_blocked_reason(
             actor_lifecycle_reason if not actor_lifecycle_ok else "",
+            summon_execution_blocked_reason,
+            summon_damage_stat_blocked_reason,
             execution_binding_blocked_reason,
             execution_event_blocked_reason,
             action_execution_plan.target_plan.blocked_reason,
@@ -839,6 +848,8 @@ class CombatExecutor:
                     "binding_blocked_reason": action_binding.blocked_reason if action_binding else "action_ability_binding_missing",
                     "event_ok": not action_event_reason,
                     "event_blocked_reason": action_event_reason,
+                    "summon_execution_blocked_reason": summon_execution_blocked_reason,
+                    "summon_damage_stat_blocked_reason": summon_damage_stat_blocked_reason,
                     "has_selected_target": bool(target_result.resolution.selected),
                     "plan_blocked_reason": plan_blocked_reason,
                     "target_errors": list(target_result.errors),
@@ -948,6 +959,8 @@ class CombatExecutor:
                 "binding_blocked_reason": binding_blocked_reason,
                 "event_ok": not action_event_reason,
                 "event_blocked_reason": action_event_reason,
+                "summon_execution_blocked_reason": summon_execution_blocked_reason,
+                "summon_damage_stat_blocked_reason": summon_damage_stat_blocked_reason,
                 "action_enabled": action_enabled,
                 "blocked_reason": blocked_reason,
                 "plan_blocked_reason": plan_blocked_reason,
@@ -1077,6 +1090,77 @@ def _execution_source_blocked_reason(reason: str, action_execution_plan) -> str:
     ):
         return ""
     return reason
+
+
+def _summon_execution_blocked_reason(state: BattleState, command: ActionCommand) -> str:
+    actor = state.units.get(command.actor_id)
+    if actor is None or not actor.flags.get("summon_kind"):
+        return ""
+    if actor.flags.get("timeline_admitted") is not True:
+        return "summon_timeline_not_admitted"
+    if actor.flags.get("summon_action_admitted") is not True:
+        return "summon_action_admission_missing"
+    runtime = state.global_flags.get("summon_runtime")
+    if not isinstance(runtime, dict) or runtime.get("schema_version") != "p3_summon_runtime_v2":
+        return "summon_runtime_state_missing"
+    entities = runtime.get("entities")
+    if not isinstance(entities, dict):
+        return "summon_runtime_entities_missing"
+    runtime_entity = entities.get(actor.unit_id)
+    if not isinstance(runtime_entity, dict):
+        return "summon_runtime_entity_missing"
+    if runtime_entity.get("status", "active") != "active":
+        return "summon_runtime_entity_not_active"
+    runtime_source_trace = runtime_entity.get("source_trace")
+    if not isinstance(runtime_source_trace, dict) or not runtime_source_trace:
+        return "summon_runtime_source_trace_missing"
+    source_intent_id = actor.flags.get("summon_intent_id")
+    if source_intent_id is not None and runtime_entity.get("source_intent_id") != source_intent_id:
+        return "summon_runtime_source_binding_mismatch"
+    admission = actor.flags.get("summon_action_admission")
+    if not isinstance(admission, dict) or admission.get("coverage_status") != "executable":
+        return "summon_action_source_not_admitted"
+    admission_source_trace = admission.get("source_trace")
+    if not isinstance(admission_source_trace, dict) or not admission_source_trace:
+        return "summon_action_source_trace_missing"
+    return ""
+
+
+def _summon_damage_stat_blocked_reason(
+    state: BattleState,
+    command: ActionCommand,
+    action_definition: ActionDefinitionIR,
+    action_execution_plan,
+) -> str:
+    actor = state.units.get(command.actor_id)
+    if actor is None or not actor.flags.get("summon_kind"):
+        return ""
+    has_hp_damage_surface = (
+        action_definition.damage_kind == "hp_damage"
+        or bool(action_execution_plan.damage_emissions)
+        or bool(action_execution_plan.damage_plan)
+    )
+    if not has_hp_damage_surface:
+        return ""
+    summon_kind = str(actor.flags.get("summon_kind") or "")
+    if summon_kind == "summoned_monster":
+        source_trace = actor.flags.get("combatant_profile_source_trace")
+        if (
+            actor.flags.get("combatant_profile_coverage_status") == "executable"
+            and isinstance(source_trace, dict)
+            and source_trace
+        ):
+            return ""
+        return "summon_damage_stat_source_not_admitted"
+    admission = actor.flags.get("summon_damage_stat_admission")
+    if not isinstance(admission, dict):
+        admission = actor.flags.get("servant_damage_stat_admission")
+    if not isinstance(admission, dict) or admission.get("coverage_status") != "executable":
+        return "summon_damage_stat_binding_not_admitted"
+    source_trace = admission.get("source_trace")
+    if not isinstance(source_trace, dict) or not source_trace:
+        return "summon_damage_stat_source_trace_missing"
+    return ""
 
 
 def _uses_action_damage_plan_fallback(binding_reason: str, event_reason: str, action_execution_plan) -> bool:
