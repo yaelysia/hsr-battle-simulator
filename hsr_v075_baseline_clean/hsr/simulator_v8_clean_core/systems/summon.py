@@ -8,6 +8,7 @@ from ..core.model import BattleState, GameEvent, JSONValue, Mutation, UnitState
 from ..core.settlement import SettlementRecord
 from ..rules.ir import ServantDefinitionIR, SummonMonsterEntryIR, SummonMonsterIntentIR
 from ..rules.rulebook import RuleBook
+from ..rules.value_binding import ValueBindingRequest, ValueContext, ValueResolver
 from .timeline import TimelineSystem
 from .unit_lifecycle import UnitLifecycleSystem
 
@@ -106,6 +107,7 @@ class SummonSystem:
         self.rules = rules
         self.lifecycle = UnitLifecycleSystem()
         self.timeline = TimelineSystem()
+        self.value_resolver = ValueResolver(rules)
 
     def view(self, state: BattleState) -> SummonRuntimeView:
         runtime = _summon_runtime(state)
@@ -172,6 +174,18 @@ class SummonSystem:
             if entry.coverage_status != "executable":
                 blocked.append(entry.blocked_reason or f"summon_monster_entry_not_executable:{entry.coverage_status}")
                 continue
+            profile = self.rules.combatant_profile(entry.monster_entity_ref)
+            stat_resolutions = _summon_profile_stat_resolutions(self.value_resolver, entry, profile)
+            if any(resolution.get("ok") is not True for resolution in stat_resolutions.values()):
+                blocked.append("summon_monster_profile_stat_value_resolution_blocked")
+                continue
+            card = self.rules.monster_data_card_for_entity(entry.monster_entity_ref)
+            if not _summon_monster_card_source_available(card):
+                blocked.append("summon_monster_data_card_source_blocked")
+                continue
+            if not _summon_level_policy_executable(entry, profile):
+                blocked.append("summon_monster_level_policy_source_blocked")
+                continue
             if not isinstance(entry.count, int) or entry.count <= 0:
                 blocked.append("summon_monster_entry_count_not_positive")
                 continue
@@ -208,6 +222,14 @@ class SummonSystem:
                 "intent": intent.to_json(),
                 "spawn_instance_count": len(unit_ids),
                 "entry_counts": {entry.entry_id: entry.count for entry in intent.entries},
+                "entry_value_resolutions": {
+                    entry.entry_id: _summon_profile_stat_resolutions(
+                        self.value_resolver,
+                        entry,
+                        self.rules.combatant_profile(entry.monster_entity_ref),
+                    )
+                    for entry in intent.entries
+                },
             },
         )
 
@@ -354,6 +376,9 @@ class SummonSystem:
                     else {},
                     "summon_delay_policy": intent.delay_policy,
                     "combatant_profile_id": unit.flags.get("combatant_profile_id"),
+                    "summon_value_resolutions": unit.flags.get("summon_value_resolutions")
+                    if isinstance(unit.flags.get("summon_value_resolutions"), dict)
+                    else {},
                     "combatant_profile_source_trace": unit.flags.get("combatant_profile_source_trace")
                     if isinstance(unit.flags.get("combatant_profile_source_trace"), dict)
                     else {},
@@ -618,7 +643,11 @@ class SummonSystem:
         card = self.rules.monster_data_card_for_entity(entry.monster_entity_ref)
         if card is None:
             raise ValueError(f"summon entry {entry.entry_id}: monster data card missing")
-        speed = _number(profile.base_stats, "speed")
+        stat_resolutions = _summon_profile_stat_resolutions(self.value_resolver, entry, profile)
+        max_hp = _resolved_value(stat_resolutions, "max_hp")
+        attack = _resolved_value(stat_resolutions, "attack")
+        defense = _resolved_value(stat_resolutions, "defense")
+        speed = _resolved_value(stat_resolutions, "speed")
         timeline_rule = self.rules.default_timeline_rule()
         base_action_value = self.timeline.full_action_value(speed, timeline_rule)
         delay_ratio = _summon_delay_ratio(intent.delay_policy)
@@ -649,6 +678,7 @@ class SummonSystem:
             "summon_entry_source_trace": entry.source.to_json(),
             "summon_position_policy": entry.position_policy,
             "summon_level_policy": entry.level_policy,
+            "summon_value_resolutions": stat_resolutions,
             "summon_level_source_trace": profile.source.to_json(),
             "summon_delay_policy": intent.delay_policy,
             "combatant_profile_id": profile.profile_id,
@@ -697,10 +727,10 @@ class SummonSystem:
             side="enemy",
             template_id=entry.monster_entity_ref,
             level=owner.level,
-            max_hp=_number(profile.base_stats, "max_hp"),
-            hp=_number(profile.base_stats, "max_hp"),
-            attack=_number(profile.base_stats, "attack"),
-            defense=_number(profile.base_stats, "defense"),
+            max_hp=max_hp,
+            hp=max_hp,
+            attack=attack,
+            defense=defense,
             speed=speed,
             toughness=_number(profile.toughness_profile, "current_toughness"),
             max_toughness=_number(profile.toughness_profile, "max_toughness"),
@@ -1520,6 +1550,61 @@ def _summon_monster_spawn_instances(intent: SummonMonsterIntentIR) -> tuple[_Sum
             )
             spawn_index += 1
     return tuple(instances)
+
+
+def _summon_profile_stat_resolutions(
+    resolver: ValueResolver,
+    entry: SummonMonsterEntryIR,
+    profile: object | None,
+) -> dict[str, JSONValue]:
+    profile_id = str(getattr(profile, "profile_id", "") or "")
+    source_trace = {
+        "summon_entry": entry.source.to_json(),
+        "combatant_profile": profile.source.to_json() if profile is not None else {},
+    }
+    return {
+        field_name: resolver.resolve(
+            ValueBindingRequest(
+                binding_kind="combatant_profile_base_stat",
+                field_name=field_name,
+                required_context_keys=("combatant_profile",),
+                source_trace=source_trace,
+            ),
+            ValueContext(
+                combatant_profile_id=profile_id,
+                source_trace=source_trace,
+            ),
+        ).to_json()
+        for field_name in ("max_hp", "attack", "defense", "speed")
+    }
+
+
+def _resolved_value(resolutions: dict[str, JSONValue], field_name: str) -> float:
+    resolution = resolutions.get(field_name)
+    if not isinstance(resolution, dict) or resolution.get("ok") is not True:
+        raise ValueError(f"summon profile stat {field_name!r} is not resolved")
+    value = resolution.get("value")
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"summon profile stat {field_name!r} resolved to non numeric value")
+    return float(value)
+
+
+def _summon_level_policy_executable(entry: SummonMonsterEntryIR, profile: object | None) -> bool:
+    policy = entry.level_policy
+    if policy.get("admission_status") != "executable":
+        return False
+    kind = str(policy.get("kind") or "")
+    if kind == "profile_base_stats_no_runtime_level_scaling":
+        profile_id = str(getattr(profile, "profile_id", "") or "")
+        return bool(profile_id and policy.get("profile_id") == profile_id)
+    return False
+
+
+def _summon_monster_card_source_available(card: object | None) -> bool:
+    if card is None:
+        return False
+    coverage_status = str(getattr(card, "coverage_status", "") or "")
+    return coverage_status in {"lowered", "executable"}
 
 
 def _summon_delay_ratio(delay_policy: dict[str, JSONValue]) -> float:

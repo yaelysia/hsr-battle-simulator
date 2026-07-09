@@ -12,6 +12,7 @@ from ..core.settlement import SettlementTraceabilityValidator
 from ..core.snapshot_contract import SnapshotCompletenessValidator
 from ..core.source_audit import RuntimeSourceAuditor
 from ..core.transition_contract import TransitionContractValidator
+from ..rules.evaluator import NumericEvaluationContext, RuleEvaluator
 from ..rules.ir import ActionDefinitionIR, CombatantProfileIR, RuleEntity, ToughnessEmissionIR
 from ..rules.rulebook import RuleBook
 from ..scenarios.build_state import ScenarioStateBuilder
@@ -104,11 +105,20 @@ def _select_toughness_case(ir, rules: RuleBook) -> dict[str, Any]:
             continue
         if not emission.source.source_path.startswith("Config/ConfigAbility/Avatar/"):
             continue
-        profile = _profile_for_element(ir, rules, emission.element_type)
+        expected_amount = _expected_toughness_amount(emission)
+        profile = _profile_for_element(ir, rules, emission.element_type, min_toughness_exclusive=expected_amount)
+        if profile is None:
+            profile = _profile_for_element(ir, rules, emission.element_type)
         if profile is None:
             continue
         avatar = _avatar_for_action(ir, action)
-        return {"emission": emission, "action": action, "profile": profile, "avatar": avatar}
+        return {
+            "emission": emission,
+            "action": action,
+            "profile": profile,
+            "avatar": avatar,
+            "expected_toughness_amount": expected_amount,
+        }
     raise RuntimeError("no structured executable mainline toughness emission case found")
 
 
@@ -120,9 +130,20 @@ def _execute_toughness_case(rules: RuleBook, case: dict[str, Any], *, deplete: b
     scenario = ScenarioLoader().load_dict(_scenario_dict(profile, action, avatar, enemy_panel={}))
     identity_result = IdentityResolver(rules).validate(scenario)
     build_result = ScenarioStateBuilder(rules).build(scenario)
-    enemy = build_result.state.units["enemy:profile_target"]
-    amount = enemy.toughness if deplete else 1.0
-    state = _state_with_dynamic_binding(build_result.state, emission, amount)
+    state = build_result.state
+    enemy = state.units["enemy:profile_target"]
+    expected_amount = case.get("expected_toughness_amount")
+    if isinstance(expected_amount, (int, float)) and expected_amount > 0:
+        target_toughness = float(expected_amount) if deplete else max(float(enemy.toughness), float(expected_amount) * 2.0)
+        updated_enemy = replace(
+            enemy,
+            toughness=target_toughness,
+            max_toughness=max(float(enemy.max_toughness), target_toughness),
+        )
+        state = replace(state, units={**state.units, updated_enemy.unit_id: updated_enemy})
+        enemy = updated_enemy
+    amount = enemy.toughness if deplete else enemy.toughness * 0.5
+    state = _state_with_dynamic_binding(state, emission, amount)
     command = build_result.commands[0]
     after_state, transition = CombatExecutor(rules).execute(command, state)
     source_audit = RuntimeSourceAuditor(rules).validate_transition(transition)
@@ -249,7 +270,13 @@ def _apply_unit_case(state, packet: ToughnessPacket) -> dict[str, object]:
     }
 
 
-def _profile_for_element(ir, rules: RuleBook, element_type: str | None) -> CombatantProfileIR | None:
+def _profile_for_element(
+    ir,
+    rules: RuleBook,
+    element_type: str | None,
+    *,
+    min_toughness_exclusive: float | None = None,
+) -> CombatantProfileIR | None:
     if not element_type:
         return None
     for profile in sorted(ir.combatant_profiles, key=lambda item: item.entity_id):
@@ -258,7 +285,67 @@ def _profile_for_element(ir, rules: RuleBook, element_type: str | None) -> Comba
         if element_type not in profile.weaknesses:
             continue
         if rules.entity(profile.entity_id) is not None:
+            toughness = _profile_toughness_value(profile)
+            if min_toughness_exclusive is not None and (
+                toughness is None or toughness <= float(min_toughness_exclusive)
+            ):
+                continue
             return profile
+    return None
+
+
+def _expected_toughness_amount(emission: ToughnessEmissionIR) -> float | None:
+    result = RuleEvaluator().evaluate_numeric(
+        emission.toughness_amount_expr,
+        NumericEvaluationContext(
+            binding_sources=_numeric_binding_sources_from_trace(emission.source.to_json()),
+            source_trace=emission.source.to_json(),
+        ),
+    )
+    if result.ok and isinstance(result.value, (int, float)):
+        return float(result.value)
+    stance_source = emission.source.evidence.get("stance_source")
+    raw_value = stance_source.get("raw_value") if isinstance(stance_source, dict) else None
+    value = raw_value.get("Value") if isinstance(raw_value, dict) else None
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
+def _numeric_binding_sources_from_trace(value: object) -> tuple[dict[str, object], ...]:
+    sources: list[dict[str, object]] = []
+
+    def visit(item: object) -> None:
+        if isinstance(item, dict):
+            if item.get("source_type") and (isinstance(item.get("by_hash"), dict) or isinstance(item.get("by_name"), dict)):
+                sources.append(dict(item))
+            for child in item.values():
+                visit(child)
+        elif isinstance(item, (list, tuple)):
+            for child in item:
+                visit(child)
+
+    visit(value)
+    deduped: list[dict[str, object]] = []
+    seen: set[tuple[str, str]] = set()
+    for source in sources:
+        key = (
+            str(source.get("source_type") or ""),
+            ",".join(sorted(str(key) for key in dict(source.get("by_hash") or {}).keys())),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(source)
+    return tuple(deduped)
+
+
+def _profile_toughness_value(profile: CombatantProfileIR) -> float | None:
+    for key in ("toughness", "max_toughness", "stance", "max_stance", "Stance", "MaxStance"):
+        value = profile.toughness_profile.get(key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return float(value)
+    for value in profile.toughness_profile.values():
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return float(value)
     return None
 
 

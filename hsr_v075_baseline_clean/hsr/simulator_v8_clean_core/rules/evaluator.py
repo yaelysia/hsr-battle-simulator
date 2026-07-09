@@ -264,21 +264,6 @@ def _evaluate_dynamic_hash(
     hash_value = expression.get("hash")
     key = str(hash_value)
     sources_checked: list[dict[str, Any]] = []
-    values = context.dynamic_values or {}
-    if key in values and isinstance(values[key], (int, float)):
-        return NumericEvaluationResult(
-            ok=True,
-            value=float(values[key]),
-            expression_kind="dynamic_hash",
-            bindings={
-                "hash": hash_value,
-                "key": key,
-                "value": float(values[key]),
-                "source_type": "explicit_dynamic_values",
-            },
-            source_trace=source_trace,
-        )
-    sources_checked.append({"source_type": "explicit_dynamic_values", "hit": False})
     for index, source in enumerate(context.binding_sources):
         value, binding = _lookup_binding_source(source, key)
         sources_checked.append(
@@ -295,6 +280,21 @@ def _evaluate_dynamic_hash(
                 bindings={"hash": hash_value, "key": key, "value": value, **binding},
                 source_trace=source_trace,
             )
+    values = context.dynamic_values or {}
+    if key in values and isinstance(values[key], (int, float)):
+        return NumericEvaluationResult(
+            ok=True,
+            value=float(values[key]),
+            expression_kind="dynamic_hash",
+            bindings={
+                "hash": hash_value,
+                "key": key,
+                "value": float(values[key]),
+                "source_type": "explicit_dynamic_values",
+            },
+            source_trace=source_trace,
+        )
+    sources_checked.append({"source_type": "explicit_dynamic_values", "hit": False})
     return NumericEvaluationResult(
         ok=False,
         value=None,

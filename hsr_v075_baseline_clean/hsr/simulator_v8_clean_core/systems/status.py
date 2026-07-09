@@ -9,6 +9,7 @@ from ..core.settlement import SettlementRecord
 from ..rules.evaluator import NumericEvaluationContext, RuleEvaluator
 from ..rules.ir import EffectIR, RuleEntity
 from ..rules.rulebook import RuleBook
+from ..rules.value_binding import ValueBindingRequest, ValueContext, ValueResolver
 from .rng import RNGOutcome, RNGRequest, resolve_rng_request, rng_choices_from_payload, rng_mode_from_payload
 from .target import TargetSystem
 from .unit_lifecycle import UnitLifecycleSystem
@@ -220,6 +221,7 @@ def status_control_gate_for_actor(actor: object) -> dict[str, JSONValue] | None:
 class StatusSystem:
     def __init__(self, rules: RuleBook | None = None):
         self.rules = rules
+        self.value_resolver = ValueResolver(rules) if rules is not None else None
 
     def add_status(self, state: BattleState, unit_id: str, status_id: str, source: str) -> Mutation:
         unit = state.units[unit_id]
@@ -340,11 +342,13 @@ class StatusSystem:
                 effect,
                 binding_sources,
                 status_metadata=status_metadata,
+                value_resolver=self.value_resolver,
             )
             stack_admission = _runtime_stack_admission(
                 standard,
                 effect,
                 binding_sources=binding_sources,
+                value_resolver=self.value_resolver,
             )
             refresh_admission = _runtime_refresh_admission(
                 standard,
@@ -360,6 +364,7 @@ class StatusSystem:
                 target_id=target_id,
                 dynamic_values=dynamic_values,
                 binding_sources=binding_sources,
+                value_resolver=self.value_resolver,
             )
             status_id = f"modifier:{modifier_name}"
             same_status_other_source = _same_status_other_source_detail(
@@ -1805,13 +1810,59 @@ def _numeric_bindings(values: dict[str, JSONValue] | dict[str, float] | None) ->
     return bindings
 
 
+def _runtime_numeric_value_resolution(
+    value_resolver: ValueResolver | None,
+    expression: object,
+    *,
+    modifier_name: str,
+    dynamic_values: dict[str, float] | None = None,
+    binding_sources: tuple[dict[str, JSONValue], ...] = (),
+    source_trace: dict[str, JSONValue],
+    required_context_keys: tuple[str, ...] = (),
+) -> dict[str, JSONValue]:
+    if value_resolver is None:
+        return {}
+    resolution = value_resolver.resolve(
+        ValueBindingRequest(
+            binding_kind="runtime_numeric_expression",
+            expression=_json_safe(expression),
+            required_context_keys=required_context_keys,
+            source_trace=source_trace,
+        ),
+        ValueContext(
+            modifier_name=modifier_name,
+            dynamic_values=_numeric_bindings(dynamic_values),
+            binding_sources=binding_sources,
+            source_trace=source_trace,
+        ),
+    )
+    return resolution.to_json()
+
+
 def _runtime_stack_admission(
     standard: dict[str, JSONValue],
     effect: EffectIR,
     *,
     binding_sources: tuple[dict[str, JSONValue], ...],
+    value_resolver: ValueResolver | None = None,
 ) -> dict[str, JSONValue]:
     source_trace = {"effect_id": effect.effect_id, "effect_source": effect.source.to_json()}
+    max_resolution = _runtime_numeric_value_resolution(
+        value_resolver,
+        standard.get("max_layer"),
+        modifier_name=str(standard.get("modifier_name") or ""),
+        binding_sources=binding_sources,
+        source_trace=source_trace,
+        required_context_keys=("status_modifier",),
+    )
+    layer_resolution = _runtime_numeric_value_resolution(
+        value_resolver,
+        standard.get("layer_add_when_stack"),
+        modifier_name=str(standard.get("modifier_name") or ""),
+        binding_sources=binding_sources,
+        source_trace=source_trace,
+        required_context_keys=("status_modifier",),
+    )
     max_result = RuleEvaluator().evaluate_numeric(
         standard.get("max_layer"),
         NumericEvaluationContext(binding_sources=binding_sources, source_trace=source_trace),
@@ -1830,6 +1881,8 @@ def _runtime_stack_admission(
             "stack_policy": "blocked",
             "numeric_evaluation": max_result.to_json(),
             "layer_add_evaluation": layer_result.to_json(),
+            "max_layer_value_resolution": max_resolution,
+            "layer_add_value_resolution": layer_resolution,
             "source_trace": source_trace,
         }
     else:
@@ -1840,6 +1893,8 @@ def _runtime_stack_admission(
                 "stack_policy": "blocked",
                 "numeric_evaluation": max_result.to_json(),
                 "layer_add_evaluation": layer_result.to_json(),
+                "max_layer_value_resolution": max_resolution,
+                "layer_add_value_resolution": layer_resolution,
                 "source_trace": source_trace,
             }
         if max_result.value <= 0 or int(max_result.value) != float(max_result.value):
@@ -1849,6 +1904,8 @@ def _runtime_stack_admission(
                 "stack_policy": "blocked",
                 "numeric_evaluation": max_result.to_json(),
                 "layer_add_evaluation": layer_result.to_json(),
+                "max_layer_value_resolution": max_resolution,
+                "layer_add_value_resolution": layer_resolution,
                 "source_trace": source_trace,
             }
         max_stacks = int(max_result.value)
@@ -1864,6 +1921,8 @@ def _runtime_stack_admission(
                 "stack_policy": "blocked",
                 "numeric_evaluation": max_result.to_json(),
                 "layer_add_evaluation": layer_result.to_json(),
+                "max_layer_value_resolution": max_resolution,
+                "layer_add_value_resolution": layer_resolution,
                 "source_trace": source_trace,
             }
         if layer_result.expression_kind not in {"fixed", "dynamic_hash", "postfix_expr"}:
@@ -1873,6 +1932,8 @@ def _runtime_stack_admission(
                 "stack_policy": "blocked",
                 "numeric_evaluation": max_result.to_json(),
                 "layer_add_evaluation": layer_result.to_json(),
+                "max_layer_value_resolution": max_resolution,
+                "layer_add_value_resolution": layer_resolution,
                 "source_trace": source_trace,
             }
         if int(layer_result.value) != float(layer_result.value):
@@ -1882,6 +1943,8 @@ def _runtime_stack_admission(
                 "stack_policy": "blocked",
                 "numeric_evaluation": max_result.to_json(),
                 "layer_add_evaluation": layer_result.to_json(),
+                "max_layer_value_resolution": max_resolution,
+                "layer_add_value_resolution": layer_resolution,
                 "source_trace": source_trace,
             }
         layer_delta = int(layer_result.value)
@@ -1905,6 +1968,8 @@ def _runtime_stack_admission(
         "layer_add_status": layer_status,
         "numeric_evaluation": max_result.to_json(),
         "layer_add_evaluation": layer_result.to_json(),
+        "max_layer_value_resolution": max_resolution,
+        "layer_add_value_resolution": layer_resolution,
         "source_trace": source_trace,
     }
 
@@ -2088,9 +2153,19 @@ def _runtime_chance_admission(
     target_id: str,
     dynamic_values: dict[str, float] | None,
     binding_sources: tuple[dict[str, JSONValue], ...],
+    value_resolver: ValueResolver | None = None,
 ) -> dict[str, JSONValue]:
     source_trace = {"effect_id": effect.effect_id, "effect_source": effect.source.to_json()}
     chance_expr = standard.get("chance")
+    chance_value_resolution = _runtime_numeric_value_resolution(
+        value_resolver,
+        chance_expr,
+        modifier_name=str(standard.get("modifier_name") or ""),
+        dynamic_values=dynamic_values,
+        binding_sources=binding_sources,
+        source_trace=source_trace,
+        required_context_keys=("status_modifier",),
+    )
     if _is_missing_numeric_expr(chance_expr):
         base_chance = 1.0
         chance_result = {
@@ -2114,24 +2189,27 @@ def _runtime_chance_admission(
         if not result.ok or result.value is None:
             return {
                 "admission_status": "blocked",
-                "blocked_reason": result.blocked_reason or "chance_not_executable",
-                "source_trace": source_trace,
-                "numeric_evaluation": result.to_json(),
-            }
+            "blocked_reason": result.blocked_reason or "chance_not_executable",
+            "source_trace": source_trace,
+            "numeric_evaluation": result.to_json(),
+            "value_resolution": chance_value_resolution,
+        }
         if result.expression_kind not in {"fixed", "dynamic_hash", "postfix_expr"}:
             return {
                 "admission_status": "blocked",
-                "blocked_reason": f"chance_not_admitted:{result.expression_kind}",
-                "source_trace": source_trace,
-                "numeric_evaluation": result.to_json(),
-            }
+            "blocked_reason": f"chance_not_admitted:{result.expression_kind}",
+            "source_trace": source_trace,
+            "numeric_evaluation": result.to_json(),
+            "value_resolution": chance_value_resolution,
+        }
         if result.value < 0 or result.value > 1:
             return {
                 "admission_status": "blocked",
-                "blocked_reason": "chance_out_of_range",
-                "source_trace": source_trace,
-                "numeric_evaluation": result.to_json(),
-            }
+            "blocked_reason": "chance_out_of_range",
+            "source_trace": source_trace,
+            "numeric_evaluation": result.to_json(),
+            "value_resolution": chance_value_resolution,
+        }
         base_chance = float(result.value)
         chance_result = result.to_json()
         source_kind = "effect_chance"
@@ -2150,6 +2228,7 @@ def _runtime_chance_admission(
         "resist_probability": resist_probability,
         "guaranteed": base_success_probability >= 1.0 and resist_probability <= 0.0,
         "numeric_evaluation": chance_result,
+        "value_resolution": chance_value_resolution,
         "source_trace": source_trace,
     }
 
@@ -2630,6 +2709,7 @@ def _runtime_duration_admission(
     binding_sources: tuple[dict[str, JSONValue], ...] = (),
     *,
     status_metadata: dict[str, JSONValue] | None = None,
+    value_resolver: ValueResolver | None = None,
 ) -> dict[str, JSONValue]:
     source_mode = _duration_source_mode(effect.source.source_path)
     if source_mode != "mainline":
@@ -2649,6 +2729,8 @@ def _runtime_duration_admission(
         source_kind="effect",
         source_trace={"effect_id": effect.effect_id, "effect_source": effect.source.to_json()},
         binding_sources=binding_sources,
+        value_resolver=value_resolver,
+        modifier_name=str(standard.get("modifier_name") or ""),
     )
     combined_standard = _admit_default_unit_status_lifecycle(
         combined_standard,
@@ -2664,6 +2746,8 @@ def _runtime_duration_admission(
         source_kind="modifier_definition",
         source_trace={"modifier_definition": definition.source.to_json()},
         binding_sources=binding_sources,
+        value_resolver=value_resolver,
+        modifier_name=str(standard.get("modifier_name") or ""),
     )
     combined_definition = _admit_default_unit_status_lifecycle(
         combined_definition,
@@ -2715,7 +2799,17 @@ def _duration_admission_from_expr(
     source_kind: str,
     source_trace: dict[str, JSONValue],
     binding_sources: tuple[dict[str, JSONValue], ...] = (),
+    value_resolver: ValueResolver | None = None,
+    modifier_name: str = "",
 ) -> dict[str, JSONValue]:
+    value_resolution = _runtime_numeric_value_resolution(
+        value_resolver,
+        lifetime_expr,
+        modifier_name=modifier_name,
+        binding_sources=binding_sources,
+        source_trace=source_trace,
+        required_context_keys=("status_modifier",),
+    )
     result = RuleEvaluator().evaluate_numeric(
         lifetime_expr,
         NumericEvaluationContext(binding_sources=binding_sources, source_trace=source_trace),
@@ -2728,6 +2822,7 @@ def _duration_admission_from_expr(
             "source_kind": source_kind,
             "source_trace": source_trace,
             "numeric_evaluation": result.to_json(),
+            "value_resolution": value_resolution,
         }
     if not result.ok or result.value is None:
         return {
@@ -2737,6 +2832,7 @@ def _duration_admission_from_expr(
             "source_kind": source_kind,
             "source_trace": source_trace,
             "numeric_evaluation": result.to_json(),
+            "value_resolution": value_resolution,
         }
     if result.expression_kind not in {"fixed", "dynamic_hash", "postfix_expr"}:
         return {
@@ -2746,6 +2842,7 @@ def _duration_admission_from_expr(
             "source_kind": source_kind,
             "source_trace": source_trace,
             "numeric_evaluation": result.to_json(),
+            "value_resolution": value_resolution,
         }
     if result.value <= 0:
         return {
@@ -2755,6 +2852,7 @@ def _duration_admission_from_expr(
             "source_kind": source_kind,
             "source_trace": source_trace,
             "numeric_evaluation": result.to_json(),
+            "value_resolution": value_resolution,
         }
     if life_step_moment not in SUPPORTED_DURATION_LIFE_STEP_MOMENTS:
         reason = "life_step_moment_missing" if not life_step_moment else f"unsupported_life_step_moment:{life_step_moment}"
@@ -2766,6 +2864,7 @@ def _duration_admission_from_expr(
             "source_kind": source_kind,
             "source_trace": source_trace,
             "numeric_evaluation": result.to_json(),
+            "value_resolution": value_resolution,
         }
     return {
         "admission_status": "executable",
@@ -2777,6 +2876,7 @@ def _duration_admission_from_expr(
         "source_kind": source_kind,
         "source_trace": source_trace,
         "numeric_evaluation": result.to_json(),
+        "value_resolution": value_resolution,
     }
 
 

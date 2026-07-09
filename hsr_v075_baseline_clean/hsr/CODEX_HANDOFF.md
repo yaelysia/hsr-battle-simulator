@@ -2,7 +2,7 @@
 
 ## 0. 一句话状态
 
-当前主线是 `simulator_v8_clean_core`。P1 最终收口、P2 状态系统底座、P3 召唤物体系底座均已完成当前闭环验收。P4 角色卡 / 怪物卡数据卡扩面已提交 `ready_for_review` 证据包：聚合入口 `validate_p4_combatant_data_card_expansion` 输出 `ok=true`、`validation_gate_ok=true`、`p4_combatant_data_card_substrate_complete=true`、`p4_all_executable_complete=false`、`p4_sources_classified=true`、`p4_admission_gap_count=1333000`、`p4_source_gap_blocked_count=55`、`p4_implementation_missing_count=0`、`p4_lowering_gap_count=0`、`p4_validation_gap_count=0`、`p4_unclassified_count=0`、`allowed_gap_evidence_summary.all_evidence_ok=true`。P4 是数据卡扩面底座闭环通过，不是全角色 / 全怪物全正例完成。
+当前主线是 `simulator_v8_clean_core`。P1 最终收口、P2 状态系统底座、P3 召唤物体系底座、P4 角色卡 / 怪物卡数据卡扩面底座、P5 公式 / 动态值 / 参数绑定通用准入底座均已完成当前闭环验收。P5 聚合入口 `validate_p5_formula_dynamic_param_binding` 输出 `ok=true`、`validation_gate_ok=true`、`p5_formula_dynamic_param_binding_substrate_complete=true`、`p5_all_executable_complete=false`、`p5_sources_classified=true`、`p5_admission_gap_count=1492393`、`p5_source_gap_blocked_count=0`、`p5_implementation_missing_count=0`、`p5_lowering_gap_count=0`、`p5_validation_gap_count=0`、`p5_unclassified_count=0`、`allowed_gap_evidence_summary.all_evidence_ok=true`。P5 是绑定底座闭环通过，不是全角色 / 全怪物 / 全装备 / 全关卡公式正例完成。
 
 ## 1. 路径与事实来源
 
@@ -57,13 +57,15 @@ hsr_v075_baseline_clean/hsr/simulator_v7_7/
 7. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/P2_STATUS_SYSTEM_COMPLETE_TASK_PLAN.md`
 8. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/P3_SUMMON_ASSISTANT_SERVANT_COMPLETE_TASK_PLAN.md`
 9. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/P4_COMBATANT_DATA_CARD_EXPANSION_TASK_PLAN.md`
-10. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p4_combatant_data_card_expansion_checkpoint.md`
-11. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p3_summon_assistant_servant_complete_checkpoint.md`
-12. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p2_status_system_complete_checkpoint.md`
-13. `hsr_v075_baseline_clean/hsr/live_validation_reports/archive/phase1/v8_p1_final_acceptance_checkpoint_v0_292.md`
-14. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_status_target_event_database_audit_checkpoint_v0_287.md`
-15. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_ir_checkpoint_v0_288.md`
-16. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_sequence_filter_retarget_checkpoint_v0_289.md`
+10. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/P5_FORMULA_DYNAMIC_PARAM_BINDING_TASK_PLAN.md`
+11. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p5_formula_dynamic_param_binding_checkpoint.md`
+12. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p4_combatant_data_card_expansion_checkpoint.md`
+13. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p3_summon_assistant_servant_complete_checkpoint.md`
+14. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p2_status_system_complete_checkpoint.md`
+15. `hsr_v075_baseline_clean/hsr/live_validation_reports/archive/phase1/v8_p1_final_acceptance_checkpoint_v0_292.md`
+16. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_status_target_event_database_audit_checkpoint_v0_287.md`
+17. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_ir_checkpoint_v0_288.md`
+18. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_sequence_filter_retarget_checkpoint_v0_289.md`
 
 P1 的详细执行计划和过程报告已经归档，默认不要作为下一阶段入口：
 
@@ -199,7 +201,7 @@ P3 召唤物 / 忆灵聚合验收更正：
   - summon / servant target relation、remove / owner cleanup / wave policy、status/resource/damage boundary 与击杀归因 source frame。
   - `FriendServantSelect` / AssistantAvatar target boundary 当前 `out_of_scope`；P3-S8 summon/servant target relation 当前 `executable=7`；S0 lifecycle `OnEnterBattle` admission gap 已清零。
 
-P4 角色卡 / 怪物卡数据卡扩面 ready_for_review：
+P4 角色卡 / 怪物卡数据卡扩面 checkpoint：
 
 - 新增聚合入口 `tools/validate_p4_combatant_data_card_expansion.py`，默认只构建一次 TBGD lowering / RuleBook，在内存中重建 S0-S11 子矩阵和 P3 backlog 视图；不串联 subprocess，不写完整 Canonical IR 或全量 transition dump。
 - P4-S12 输出目录：`/tmp/hsr_v8_p4_combatant_data_card_expansion/`，关键文件为 `validation_summary_p4_combatant_data_card_expansion.json` 和 `p4_combatant_data_card_expansion_matrix.json`。
@@ -317,29 +319,29 @@ TargetAlias=197061
 
 ## 7. 推荐下一步
 
-P1/P2 底座已可作为后续机制扩面的依赖；P3 仍需先修 inherited gap。推荐下一步继续 P3 gap repair：
+推荐下一步围绕 P5 保留的 admission gap 继续扩面，而不是重做底座。优先方向通常是角色卡 / 怪物卡数据卡全量扩面、装备 / 构筑输入接入、状态和召唤物特殊机制回收、目标系统剩余排序 / 随机 / fetch / servant 目标扩展、波次 / 阶段 / 关卡环境。
 
-1. S0 `summoned_monster_intent` admission / source-gap blocked：拆清 raw occurrence、IR 展开与 blocked 子项的真实归因。
-2. S0 `summon_target_expression` 子项 admission gap：按结构化谓词拆子行，不用一个 executable 正例代表整域完成。
-3. AssistantAvatar / avatar assistant ability 若要实现，应另立独立目标，不作为 P3 召唤物/忆灵 backlog。
-4. 只有 P3 聚合 `p3_summon_all_executable_complete=true` 且 inherited gap 为 0 后，才能声明 P3 全正例完成。
+后续仍要延续 P4/P5 的执行结构：
 
-后续仍要继续做 executable / boundary_only / source_absent_not_required / implementation_missing 分流；当前数据库确实无真实来源且不属于当前阶段必做的项继续保持 source_absent_not_required 或 boundary_only。状态系统如果被再次触达，应把 P2 聚合和直接相关 P1/P2 回归列入验证范围。
+1. 一次只做一个阶段。
+2. 每阶段先提交阶段执行卡，等待确认后再改文件。
+3. 执行线程只能提交 `ready_for_review`，不能自称 `done`，不能改 checklist。
+4. 聚合只能在所有分步均由验收线程确认后实现。
+5. 聚合必须继承分步 gap，不能用宽域 executable 正例掩盖内部缺口。
+
+后续仍要继续做 executable / boundary_only / source_absent_not_required / implementation_missing / admission_gap / source_gap_blocked 分流；当前数据库确实无真实来源且不属于当前阶段必做的项继续保持 source_absent_not_required 或 boundary_only。状态、召唤物、数据卡或 action/query 如果被再次触达，应把对应 P2/P3/P4 聚合和直接相关回归列入验证范围。
 
 ## 8. 推荐验证命令
 
-这些命令用于复核当前 P1 + P2 可信范围，不是每次小改都要全量运行。涉及状态、callback、queue 下游 IR、source audit 时优先跑 P2 聚合；只改无关文档时可只跑静态检查。在 `hsr_v075_baseline_clean/hsr` 下运行：
+这些命令用于复核当前 P1-P5 可信范围，不是每次小改都要全量运行。涉及公式、动态值、状态、callback、queue、召唤物、数据卡、action/query、source audit 时按触达范围跑对应聚合；只改无关文档时可只跑静态检查。在 `hsr_v075_baseline_clean/hsr` 下运行：
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 python3 -m compileall -q simulator_v8_clean_core simulator_v8_ui
-PYTHONDONTWRITEBYTECODE=1 python3 -m simulator_v8_clean_core.tools.validate_p3_summon_assistant_servant_complete --output-dir /tmp/hsr_v8_p3_complete
-PYTHONDONTWRITEBYTECODE=1 python3 -m simulator_v8_clean_core.tools.validate_p2_status_system_complete --output-dir /tmp/hsr_v8_p2_status_system_complete
-PYTHONDONTWRITEBYTECODE=1 python3 -m simulator_v8_clean_core.tools.validate_p2_s10_status_callback_coverage --output-dir /tmp/hsr_v8_p2_s10_status_callback_coverage
-PYTHONDONTWRITEBYTECODE=1 python3 -m simulator_v8_clean_core.tools.validate_p2_s11_full_status_source_closure --output-dir /tmp/hsr_v8_p2_s11_full_status_source_closure
-PYTHONDONTWRITEBYTECODE=1 python3 -m simulator_v8_clean_core.tools.validate_p1_5_queue_window_system --output-dir /tmp/hsr_v8_p1_5_counter_final
-PYTHONDONTWRITEBYTECODE=1 python3 -m simulator_v8_clean_core.tools.validate_p1_9_phase1_aggregate --output-dir /tmp/hsr_v8_p1_9_counter_final
-PYTHONDONTWRITEBYTECODE=1 python3 -m simulator_v8_clean_core.tools.validate_p1_0_action_boundary --output-dir /tmp/hsr_v8_p1_0_after_counter_final
-PYTHONDONTWRITEBYTECODE=1 python3 -m simulator_v8_clean_core.tools.validate_p1_4_status_system --output-dir /tmp/hsr_v8_p1_4_after_counter_final
+PYTHONDONTWRITEBYTECODE=1 ionice -c3 nice -n 15 python3 -B -m simulator_v8_clean_core.tools.validate_p1_9_phase1_aggregate --output-dir /tmp/hsr_v8_p1_9_current
+PYTHONDONTWRITEBYTECODE=1 ionice -c3 nice -n 15 python3 -B -m simulator_v8_clean_core.tools.validate_p2_status_system_complete --output-dir /tmp/hsr_v8_p2_current
+PYTHONDONTWRITEBYTECODE=1 ionice -c3 nice -n 15 python3 -B -m simulator_v8_clean_core.tools.validate_p3_summon_assistant_servant_complete --output-dir /tmp/hsr_v8_p3_current
+PYTHONDONTWRITEBYTECODE=1 ionice -c3 nice -n 15 python3 -B -m simulator_v8_clean_core.tools.validate_p4_combatant_data_card_expansion --output-dir /tmp/hsr_v8_p4_current
+PYTHONDONTWRITEBYTECODE=1 ionice -c3 nice -n 15 python3 -B -m simulator_v8_clean_core.tools.validate_p5_formula_dynamic_param_binding --output-dir /tmp/hsr_v8_p5_current
 git diff --check
 ```
 
@@ -361,7 +363,7 @@ git diff --check
 如果要继续推进，建议开局说清：
 
 ```text
-当前接续 v8 P4+ 扩面或 P3 backlog 收敛。先读 CODEX_HANDOFF、README、PROJECT_GOALS、FORBIDDEN、P3_SUMMON_ASSISTANT_SERVANT_COMPLETE_TASK_PLAN、P3 最终报告、P2 最终报告和 P1 最终报告。P1-9 最终聚合已通过，`phase1_minimum_battle_slice=true` 且 blocker 为空；P2 状态系统聚合已通过，`p2_status_substrate_complete=true`、`p2_all_status_sources_classified=true`，gap/unclassified 为 0；P3 召唤物 / 忆灵底座闭环验收已通过，`validation_gate_ok=true`、`p3_summon_phase_complete=true`、`p3_summon_substrate_complete=true`、`p3_summon_all_executable_complete=false`、`p3_summon_admission_gap_count=2123`、`p3_summon_source_gap_blocked_count=27`、`p3_summon_scope_exclusion_count=1`、`p3_summon_implementation_missing_count=0`、`p3_summon_lowering_gap_count=0`。AssistantAvatar / `TurnInsertAssistantAbility` 已移出 P3 召唤物/servant 验收并记录为 out_of_scope，后续单独处理。后续继续按 executable / boundary_only / source_absent_not_required / source_gap_blocked / admission_gap / out_of_scope 分流，runtime 仍只能读 Canonical IR/数据卡 IR，缺来源或缺条件必须 blocked/state unchanged。
+当前接续 v8 P5 之后的机制扩面。先读 CODEX_HANDOFF、README、PROJECT_GOALS、FORBIDDEN、P4/P5 计划、P5 checkpoint、P4 checkpoint、P3/P2/P1 最终报告。P1-9、P2、P3、P4、P5 聚合均已通过；P3 当前 `p3_summon_all_executable_complete=false`，P4 当前 `p4_all_executable_complete=false`，P5 当前 `p5_all_executable_complete=false`，这些 admission/source-gap 是已归因 backlog，不是当前底座失败。后续必须继续按 P4/P5 的执行结构推进：一次一个阶段、先提交阶段执行卡、执行线程只交 `ready_for_review`、验收线程复核后勾 checklist、聚合最后做并继承分步 gap。runtime 仍只能读 Canonical IR/数据卡 IR，缺来源或缺条件必须 blocked/state unchanged。
 ```
 
 不要从旧 `CODEX_HANDOFF` 的 v7 叙述接续；本文件已经替换为 v8 当前交接手册。

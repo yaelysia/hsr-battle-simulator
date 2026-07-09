@@ -1609,7 +1609,12 @@ def _audit_dynamic_numeric_binding(
             )
         )
         return
-    if source_type not in {"status_instance", "dynamic_value_store", "break_template_runtime_value"}:
+    if source_type not in {
+        "status_instance",
+        "dynamic_value_store",
+        "break_template_runtime_value",
+        "character_skill_param_slot",
+    }:
         violations.append(
             _violation(
                 mutation,
@@ -1652,7 +1657,12 @@ def _audit_postfix_dynamic_numeric_binding(
             violations.append(_violation(mutation, "postfix_dynamic_operand_binding_missing", details={"operand": operand}))
             continue
         source_type = str(operand_bindings.get("source_type") or "")
-        if source_type not in {"status_instance", "dynamic_value_store", "break_template_runtime_value"}:
+        if source_type not in {
+            "status_instance",
+            "dynamic_value_store",
+            "break_template_runtime_value",
+            "character_skill_param_slot",
+        }:
             violations.append(
                 _violation(
                     mutation,

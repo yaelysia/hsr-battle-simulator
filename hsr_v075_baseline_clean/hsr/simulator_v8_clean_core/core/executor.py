@@ -18,11 +18,12 @@ from .settlement import SettlementRecord
 from ..rules.evaluator import EvaluationContext, NumericEvaluationContext, RuleEvaluator
 from ..rules.ir import ActionDefinitionIR
 from ..rules.rulebook import RuleBook
+from ..rules.value_binding import ValueBindingRequest, ValueContext, ValueResolution, ValueResolver
 from ..systems.ability import AbilityTaskExecutionResult, AbilityTaskSystem
 from ..systems.action_preflight import (
     action_binding_blocked_reason,
     action_event_blocked_reason,
-    action_resource_plan,
+    action_skill_point_delta,
     combined_blocked_reason,
     target_policy_for_action,
 )
@@ -30,7 +31,7 @@ from ..systems.break_system import BreakApplicationResult, BreakSystem
 from ..systems.damage import DamagePacket, DamageSystem, DamageSourceFrame, DamageWindowLedger
 from ..systems.dynamic_values import binding_source_from_store, status_binding_sources, store_from_state
 from ..systems.effect import EffectRegistry
-from ..systems.resource import ResourceSystem
+from ..systems.resource import ResourcePlan, ResourceSystem
 from ..systems.status import StatusSystem
 from ..systems.target import TargetSystem
 from ..systems.timeline import TimelinePlan, TimelineSystem
@@ -57,6 +58,7 @@ class CombatExecutor:
         self.breaks = BreakSystem(rules, self.effects, reducer=self.reducer)
         self.ability_tasks = AbilityTaskSystem(rules, self.effects, reducer=self.reducer)
         self.event_dispatcher = EventDispatchSystem(rules, self.effects, reducer=self.reducer)
+        self.value_resolver = ValueResolver(rules)
 
     def execute(self, command: ActionCommand, state: BattleState) -> tuple[BattleState, BattleTransition]:
         before = state.snapshot()
@@ -129,18 +131,20 @@ class CombatExecutor:
         )
         action_event_plan_payload = _action_event_plan_compat_payload(action_definition, action_event_ir)
         queue_resource_policy = _queue_action_resource_policy(command)
+        resource_plan, resource_value_blocked_reasons = _action_resource_plan_with_value_resolution(
+            self.value_resolver,
+            command,
+            action_definition,
+            metadata={
+                **action_source_metadata,
+                "queue_resource_policy": queue_resource_policy,
+            },
+            queue_resource_policy=queue_resource_policy,
+        )
         resource_result = self.resources.plan_action_resources(
             state,
             command.actor_id,
-            action_resource_plan(
-                action_definition,
-                source="combat_executor.resources",
-                metadata={
-                    **action_source_metadata,
-                    "queue_resource_policy": queue_resource_policy,
-                },
-                queue_resource_policy=queue_resource_policy,
-            ),
+            resource_plan,
         )
         execution_binding_blocked_reason = _execution_source_blocked_reason(binding_blocked_reason, action_execution_plan)
         execution_event_blocked_reason = _execution_source_blocked_reason(action_event_reason, action_execution_plan)
@@ -170,7 +174,7 @@ class CombatExecutor:
             has_selected_target=bool(target_result.resolution.selected),
             plan_blocked_reason=plan_blocked_reason,
             target_errors=target_result.errors,
-            resource_errors=resource_result.errors,
+            resource_errors=(*resource_result.errors, *resource_value_blocked_reasons),
         )
         action_enabled = not blocked_reason
         if action_enabled:
@@ -406,11 +410,34 @@ class CombatExecutor:
                                     else {},
                                 },
                             )
+                        damage_value_resolution = _damage_value_resolution(
+                            self.value_resolver,
+                            command,
+                            action_definition,
+                            damage_plan,
+                        )
+                        if not damage_value_resolution.ok or damage_value_resolution.value is None:
+                            runtime_records.append(
+                                SettlementRecord(
+                                    record_type="damage_value_resolution_blocked",
+                                    source="combat_executor.value_resolver",
+                                    process_only=True,
+                                    payload={
+                                        "reason": damage_value_resolution.blocked_reason,
+                                        "damage_plan": damage_plan.to_json(),
+                                        "value_resolution": damage_value_resolution.to_json(),
+                                    },
+                                    trace=damage_plan.hit_source_trace,
+                                ).to_json()
+                            )
+                            continue
+                        damage_plan = replace(damage_plan, scaling_ratio=float(damage_value_resolution.value))
                         damage_packet = _damage_packet(
                             command,
                             action_definition,
                             action_definition_trace,
                             damage_plan,
+                            value_resolution=damage_value_resolution.to_json(),
                         )
                         if damage_packet is None:
                             continue
@@ -550,7 +577,17 @@ class CombatExecutor:
                             damage_plan,
                         ):
                             applied_toughness_keys.add((toughness_plan.toughness_emission_id, toughness_plan.target_id))
-                            toughness_packet = _toughness_packet(command, toughness_plan)
+                            toughness_value_resolution = _toughness_value_resolution(
+                                self.value_resolver,
+                                command,
+                                action_definition,
+                                toughness_plan,
+                            )
+                            toughness_packet = _toughness_packet(
+                                command,
+                                toughness_plan,
+                                value_resolution=toughness_value_resolution.to_json(),
+                            )
                             toughness_result = self.toughness.apply_packet(current_state, toughness_packet)
                             toughness_results.append(toughness_result)
                             toughness_mutations = (*toughness_mutations, *toughness_result.mutations)
@@ -606,7 +643,17 @@ class CombatExecutor:
                         key = (toughness_plan.toughness_emission_id, toughness_plan.target_id)
                         if key in applied_toughness_keys:
                             continue
-                        toughness_packet = _toughness_packet(command, toughness_plan)
+                        toughness_value_resolution = _toughness_value_resolution(
+                            self.value_resolver,
+                            command,
+                            action_definition,
+                            toughness_plan,
+                        )
+                        toughness_packet = _toughness_packet(
+                            command,
+                            toughness_plan,
+                            value_resolution=toughness_value_resolution.to_json(),
+                        )
                         toughness_result = self.toughness.apply_packet(current_state, toughness_packet)
                         toughness_results.append(toughness_result)
                         toughness_mutations = (*toughness_mutations, *toughness_result.mutations)
@@ -1232,6 +1279,76 @@ def _metadata_bool(metadata: dict[str, JSONValue], key: str, default: bool) -> b
     return bool(value)
 
 
+def _action_resource_plan_with_value_resolution(
+    resolver: ValueResolver,
+    command: ActionCommand,
+    action_definition: ActionDefinitionIR,
+    *,
+    metadata: dict[str, JSONValue],
+    queue_resource_policy: dict[str, JSONValue],
+) -> tuple[ResourcePlan, tuple[str, ...]]:
+    resolutions: dict[str, dict[str, JSONValue]] = {}
+    blocked_reasons: list[str] = []
+    values: dict[str, float] = {}
+    for field_name in ("bp_need", "bp_add", "sp_base"):
+        resolution = _action_definition_numeric_field_resolution(
+            resolver,
+            command,
+            action_definition,
+            field_name,
+        )
+        resolutions[field_name] = resolution.to_json()
+        if resolution.ok and resolution.value is not None:
+            values[field_name] = float(resolution.value)
+        else:
+            blocked_reasons.append(
+                "resource_value_resolution_blocked:"
+                f"{field_name}:{resolution.blocked_reason or 'unknown'}"
+            )
+    skill_point_delta = action_skill_point_delta(values.get("bp_need", 0.0), values.get("bp_add", 0.0))
+    energy_gain = values.get("sp_base", 0.0)
+    if queue_resource_policy.get("ignore_skill_point_delta") is True:
+        skill_point_delta = 0
+    if queue_resource_policy.get("ignore_energy_gain") is True:
+        energy_gain = 0.0
+    return (
+        ResourcePlan(
+            skill_point_delta=skill_point_delta,
+            energy_gain=energy_gain,
+            source="combat_executor.resources",
+            metadata={
+                **metadata,
+                "resource_value_resolutions": resolutions,
+                "value_resolver_admitted": not blocked_reasons,
+            },
+        ),
+        tuple(blocked_reasons),
+    )
+
+
+def _action_definition_numeric_field_resolution(
+    resolver: ValueResolver,
+    command: ActionCommand,
+    action_definition: ActionDefinitionIR,
+    field_name: str,
+) -> ValueResolution:
+    return resolver.resolve(
+        ValueBindingRequest(
+            binding_kind="action_definition_numeric_field",
+            field_name=field_name,
+            required_context_keys=("action",),
+            source_trace=action_definition.source.to_json(),
+        ),
+        ValueContext(
+            actor_id=command.actor_id,
+            owner_id=command.actor_id,
+            action_id=action_definition.action_id,
+            action_level=action_definition.level,
+            source_trace=action_definition.source.to_json(),
+        ),
+    )
+
+
 def _queue_action_resource_policy(command: ActionCommand) -> dict[str, JSONValue]:
     queue_parent = command.metadata.get("queue_parent") if isinstance(command.metadata, dict) else None
     if not isinstance(queue_parent, dict):
@@ -1281,6 +1398,8 @@ def _damage_packet(
     action_definition: ActionDefinitionIR,
     source_trace: dict[str, object],
     damage_plan: DamagePlan,
+    *,
+    value_resolution: dict[str, JSONValue] | None = None,
 ) -> DamagePacket | None:
     if action_definition.damage_kind != "hp_damage":
         return None
@@ -1328,6 +1447,8 @@ def _damage_packet(
         ),
         metadata={
             **_damage_metadata(command),
+            "value_resolution": value_resolution or {},
+            "value_resolver_admitted": bool((value_resolution or {}).get("ok")),
             "damage_source_owner_id": command.actor_id,
             "damage_source_id": f"action:{command.action_id}:level:{command.action_level}",
             "damage_source_kind": "primary_action_damage",
@@ -1363,6 +1484,44 @@ def _damage_packet(
             "target_selection_policy": damage_plan.target_selection_policy or {},
         },
     )
+
+
+def _damage_value_resolution(
+    resolver: ValueResolver,
+    command: ActionCommand,
+    action_definition: ActionDefinitionIR,
+    damage_plan: DamagePlan,
+) -> ValueResolution:
+    binding = _skill_formula_binding_from_trace(damage_plan.hit_source_trace)
+    context = ValueContext(
+        actor_id=command.actor_id,
+        target_id=damage_plan.target_id,
+        owner_id=command.actor_id,
+        action_id=command.action_id,
+        action_level=command.action_level,
+        hit_id=damage_plan.hit_profile_id,
+        hit_index=damage_plan.hit_index,
+        data_card_id=str(binding.get("data_card_id") or binding.get("character_data_card_id") or ""),
+        data_card_kind=str(binding.get("data_card_kind") or ""),
+        source_trace=damage_plan.hit_source_trace,
+    )
+    if binding:
+        request = ValueBindingRequest(
+            binding_kind="skill_formula_param",
+            binding_id=str(binding.get("binding_id") or ""),
+            param_index=_int_or_none(binding.get("param_index")),
+            formula_role=str(binding.get("formula_role") or "direct_damage"),
+            required_context_keys=("action",),
+            source_trace=damage_plan.hit_source_trace,
+        )
+    else:
+        request = ValueBindingRequest(
+            binding_kind="fixed_numeric_expression",
+            expression={"kind": "fixed", "value": damage_plan.scaling_ratio},
+            required_context_keys=("action",),
+            source_trace=damage_plan.hit_source_trace,
+        )
+    return resolver.resolve(request, context)
 
 
 def _collect_direct_damage_modifiers(
@@ -1591,7 +1750,15 @@ def _enter_break_if_depleted(breaks: BreakSystem, state: BattleState, toughness_
     return breaks.enter_break(state, replace(toughness_result.packet, metadata=metadata))
 
 
-def _toughness_packet(command: ActionCommand, toughness_plan: ToughnessPlan) -> ToughnessPacket:
+def _toughness_packet(
+    command: ActionCommand,
+    toughness_plan: ToughnessPlan,
+    *,
+    value_resolution: dict[str, JSONValue] | None = None,
+) -> ToughnessPacket:
+    amount = value_resolution.get("value") if isinstance(value_resolution, dict) else None
+    amount_value = float(amount) if isinstance(amount, (int, float)) and not isinstance(amount, bool) else None
+    coverage_status = "executable" if not toughness_plan.blocked_reason and bool((value_resolution or {}).get("ok")) else "blocked"
     return ToughnessPacket(
         attacker_id=command.actor_id,
         target_id=toughness_plan.target_id,
@@ -1599,17 +1766,183 @@ def _toughness_packet(command: ActionCommand, toughness_plan: ToughnessPlan) -> 
         source_task_id=toughness_plan.source_task_id,
         hit_profile_id=toughness_plan.hit_profile_id,
         element_type=toughness_plan.element_type,
-        amount=None,
+        amount=amount_value,
         amount_expr=toughness_plan.toughness_amount_expr,
         target_group=toughness_plan.target_group,
-        coverage_status="executable" if not toughness_plan.blocked_reason else "blocked",
+        coverage_status=coverage_status,
         source_trace=toughness_plan.source_trace,
         metadata={
             "primary_action_target_id": toughness_plan.primary_action_target_id,
             "toughness_amount_expr": toughness_plan.toughness_amount_expr,
+            "value_resolution": value_resolution or {},
+            "value_resolver_admitted": bool((value_resolution or {}).get("ok")),
             "source_trace": toughness_plan.source_trace,
         },
     )
+
+
+def _toughness_value_resolution(
+    resolver: ValueResolver,
+    command: ActionCommand,
+    action_definition: ActionDefinitionIR,
+    toughness_plan: ToughnessPlan,
+) -> ValueResolution:
+    context = ValueContext(
+        actor_id=command.actor_id,
+        target_id=toughness_plan.target_id,
+        owner_id=command.actor_id,
+        action_id=action_definition.action_id,
+        action_level=action_definition.level,
+        hit_id=toughness_plan.hit_profile_id,
+        hit_index=toughness_plan.hit_index,
+        dynamic_values={},
+        binding_sources=_numeric_binding_sources_from_trace(toughness_plan.source_trace),
+        source_trace=toughness_plan.source_trace,
+    )
+    hashes = sorted(_hashes_from_expression(toughness_plan.toughness_amount_expr))
+    if hashes:
+        request = ValueBindingRequest(
+            binding_kind="dynamic_hash",
+            expression={"hash": hashes[0]},
+            required_context_keys=("dynamic_value_source",),
+            source_trace=toughness_plan.source_trace,
+        )
+        resolution = resolver.resolve(request, context)
+        if resolution.ok:
+            return resolution
+        fallback_request = ValueBindingRequest(
+            binding_kind="action_definition_list_item",
+            field_name="show_stance_list",
+            param_index=toughness_plan.hit_index,
+            required_context_keys=("action",),
+            source_trace={
+                **toughness_plan.source_trace,
+                "fallback_basis": "ActionDefinitionIR.show_stance_list",
+                "dynamic_hash_resolution": resolution.to_json(),
+            },
+        )
+        fallback_resolution = resolver.resolve(fallback_request, context)
+        if fallback_resolution.ok:
+            return replace(
+                fallback_resolution,
+                delegate_resolution={
+                    **fallback_resolution.delegate_resolution,
+                    "preceding_dynamic_hash_resolution": resolution.to_json(),
+                },
+            )
+        return replace(
+            fallback_resolution,
+            blocked_reason=(
+                f"{fallback_resolution.blocked_reason};"
+                f"dynamic_hash:{resolution.blocked_reason}"
+            ),
+            delegate_resolution={
+                **fallback_resolution.delegate_resolution,
+                "preceding_dynamic_hash_resolution": resolution.to_json(),
+            },
+        )
+    else:
+        request = ValueBindingRequest(
+            binding_kind="fixed_numeric_expression",
+            expression=toughness_plan.toughness_amount_expr,
+            required_context_keys=("action",),
+            source_trace=toughness_plan.source_trace,
+        )
+    return resolver.resolve(request, context)
+
+
+def _skill_formula_binding_from_trace(value: object) -> dict[str, JSONValue]:
+    if isinstance(value, dict):
+        nested = value.get("skill_formula_binding")
+        if isinstance(nested, dict) and nested.get("binding_id"):
+            return {str(key): _json_safe(item) for key, item in nested.items()}
+        if str(value.get("binding_id") or "").startswith("skill_formula_binding:") and "param_index" in value:
+            return {str(key): _json_safe(item) for key, item in value.items()}
+        for item in value.values():
+            result = _skill_formula_binding_from_trace(item)
+            if result:
+                return result
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            result = _skill_formula_binding_from_trace(item)
+            if result:
+                return result
+    return {}
+
+
+def _numeric_binding_sources_from_trace(value: object) -> tuple[dict[str, object], ...]:
+    sources: list[dict[str, object]] = []
+
+    def visit(item: object) -> None:
+        if isinstance(item, dict):
+            if item.get("source_type") and (isinstance(item.get("by_hash"), dict) or isinstance(item.get("by_name"), dict)):
+                sources.append(dict(item))
+            for child in item.values():
+                visit(child)
+        elif isinstance(item, (list, tuple)):
+            for child in item:
+                visit(child)
+
+    visit(value)
+    deduped: list[dict[str, object]] = []
+    seen: set[tuple[str, str]] = set()
+    for source in sources:
+        key = (
+            str(source.get("source_type") or ""),
+            ",".join(sorted(str(key) for key in dict(source.get("by_hash") or {}).keys())),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(source)
+    return tuple(deduped)
+
+
+def _hashes_from_expression(expression: object) -> set[str]:
+    hashes: set[str] = set()
+    if isinstance(expression, dict):
+        if str(expression.get("kind") or "") == "dynamic_hash" and expression.get("hash") is not None:
+            hashes.add(str(expression.get("hash")))
+        dynamic_hashes = expression.get("DynamicHashes")
+        if isinstance(dynamic_hashes, list):
+            for item in dynamic_hashes:
+                hashes.add(str(item))
+        raw = expression.get("raw")
+        if isinstance(raw, (dict, list)):
+            hashes.update(_hashes_from_expression(raw))
+        postfix = expression.get("PostfixExpr")
+        if isinstance(postfix, dict):
+            hashes.update(_hashes_from_expression(postfix))
+        for key, item in expression.items():
+            if key in {"raw", "PostfixExpr"}:
+                continue
+            if isinstance(item, (dict, list)):
+                hashes.update(_hashes_from_expression(item))
+    elif isinstance(expression, list):
+        for item in expression:
+            hashes.update(_hashes_from_expression(item))
+    return hashes
+
+
+def _int_or_none(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _json_safe(value: object) -> JSONValue:
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    return str(value)
 
 
 def _command_with_character_card_level_bonus(

@@ -9,6 +9,7 @@ from ..core.model import ActionCommand, BattleState, GameEvent, JSONValue, Mutat
 from ..core.reducer import MutationReducer
 from ..rules.ir import CombatantProfileIR, WaveDefinitionIR, WaveMonsterEntryIR
 from ..rules.rulebook import RuleBook
+from ..rules.value_binding import ValueBindingRequest, ValueContext, ValueResolver
 from ..systems.effect import EffectRegistry
 from ..systems.status import StatusSystem
 from ..systems.summon import SummonSystem
@@ -43,6 +44,7 @@ class ScenarioStateBuilder:
     def __init__(self, rules: RuleBook):
         self.rules = rules
         self.identity = IdentityResolver(rules)
+        self.value_resolver = ValueResolver(rules)
 
     def build(self, scenario: ScenarioSpec) -> ScenarioBuildResult:
         scenario = _with_initial_wave_units(self.rules, scenario)
@@ -83,7 +85,7 @@ class ScenarioStateBuilder:
                         "independent_rank_toggle_allowed": False,
                     }
                     flags["eidolon_source_traces"] = tuple(slot.source.to_json() for slot in eidolon_slots)
-                    runtime_activation = _eidolon_runtime_activation(eidolon_slots)
+                    runtime_activation = _eidolon_runtime_activation(self.value_resolver, eidolon_slots)
                     flags.update(runtime_activation["flags"])
                     for startup_spec in runtime_activation["startup_specs"]:
                         eidolon_startup_specs.append({"unit_id": unit.unit_id, **startup_spec})
@@ -113,7 +115,7 @@ class ScenarioStateBuilder:
                 if isinstance(weaknesses, list):
                     flags["weaknesses"] = tuple(str(item) for item in weaknesses)
             resources = _resources_with_profile_resistances(panel, profile)
-            trace_activation = _trace_runtime_activation(self.rules, card, flags)
+            trace_activation = _trace_runtime_activation(self.rules, self.value_resolver, card, flags)
             flags.update(trace_activation["flags"])
             for startup_spec in trace_activation["startup_specs"]:
                 trace_startup_specs.append({"unit_id": unit.unit_id, **startup_spec})
@@ -946,7 +948,12 @@ def _initial_wave_runtime(rules: RuleBook, scenario: ScenarioSpec) -> dict[str, 
     }
 
 
-def _trace_runtime_activation(rules: RuleBook, card: object | None, flags: dict[str, Any]) -> dict[str, Any]:
+def _trace_runtime_activation(
+    rules: RuleBook,
+    value_resolver: ValueResolver,
+    card: object | None,
+    flags: dict[str, Any],
+) -> dict[str, Any]:
     if card is None:
         return {"flags": {}, "base_stat_ratios": {}, "base_stat_deltas": {}, "resource_deltas": {}, "startup_specs": []}
     card_id = str(getattr(card, "card_id", ""))
@@ -1016,14 +1023,22 @@ def _trace_runtime_activation(rules: RuleBook, card: object | None, flags: dict[
             for term in _dict_items(slot.semantics.get("mapped_terms")):
                 kind = str(term.get("application_kind") or "")
                 key = str(term.get("target_key") or "")
-                value = _float_or_none(term.get("value"))
+                value_resolution = _fixed_numeric_value_resolution(
+                    value_resolver,
+                    term.get("value"),
+                    data_card_id=card_id,
+                    data_card_kind="character",
+                    source_trace=slot.source.to_json(),
+                )
+                value = _resolution_float_or_none(value_resolution)
                 if value is None or not key:
                     blocked_slots.append(
                         {
                             "trace_node_id": node.trace_node_id,
                             "mechanism_slot_id": slot_id,
-                            "blocked_reason": "trace_static_stat_term_invalid",
+                            "blocked_reason": value_resolution.get("blocked_reason") or "trace_static_stat_term_invalid",
                             "term": term,
+                            "value_resolution": value_resolution,
                             "source": slot.source.to_json(),
                         }
                     )
@@ -1035,6 +1050,7 @@ def _trace_runtime_activation(rules: RuleBook, card: object | None, flags: dict[
                         "application_kind": kind,
                         "target_key": key,
                         "value": value,
+                        "value_resolution": value_resolution,
                         "source": slot.source.to_json(),
                     }
                 )
@@ -1177,6 +1193,45 @@ def _float_or_none(value: object) -> float | None:
     return None
 
 
+def _fixed_numeric_value_resolution(
+    value_resolver: ValueResolver,
+    expression: object,
+    *,
+    data_card_id: str,
+    data_card_kind: str,
+    source_trace: dict[str, JSONValue],
+) -> dict[str, JSONValue]:
+    return value_resolver.resolve(
+        ValueBindingRequest(
+            binding_kind="fixed_numeric_expression",
+            expression=expression if isinstance(expression, (bool, int, float, str, list, tuple, dict)) else str(expression),
+            required_context_keys=("data_card_source",),
+            source_trace=source_trace,
+        ),
+        ValueContext(
+            data_card_id=data_card_id,
+            data_card_kind=data_card_kind,
+            source_trace=source_trace,
+        ),
+    ).to_json()
+
+
+def _resolution_float_or_none(resolution: dict[str, JSONValue]) -> float | None:
+    if resolution.get("ok") is not True:
+        return None
+    value = resolution.get("value")
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
+
+
+def _resolution_int_or_none(resolution: dict[str, JSONValue]) -> int | None:
+    value = _resolution_float_or_none(resolution)
+    if value is None or int(value) != value:
+        return None
+    return int(value)
+
+
 def _profile_values(profile: CombatantProfileIR | None) -> dict[str, float]:
     if profile is None or profile.coverage_status != "executable":
         return {}
@@ -1242,11 +1297,13 @@ def _resources_with_profile_resistances(
     return resources
 
 
-def _eidolon_runtime_activation(eidolon_slots: tuple[object, ...]) -> dict[str, Any]:
+def _eidolon_runtime_activation(value_resolver: ValueResolver, eidolon_slots: tuple[object, ...]) -> dict[str, Any]:
     flags: dict[str, object] = {}
     startup_specs: list[dict[str, Any]] = []
     skill_level_bonus_by_action_id: dict[str, int] = {}
     skill_level_bonus_sources: dict[str, list[dict[str, object]]] = {}
+    skill_level_bonus_resolutions: dict[str, list[dict[str, object]]] = {}
+    skill_level_bonus_blocked: list[dict[str, object]] = []
     startup_ability_names: list[str] = []
     for slot in eidolon_slots:
         semantics = getattr(slot, "semantics", {})
@@ -1273,11 +1330,31 @@ def _eidolon_runtime_activation(eidolon_slots: tuple[object, ...]) -> dict[str, 
         if isinstance(skill_add_level_list, dict):
             for raw_skill_id, raw_bonus in skill_add_level_list.items():
                 raw_skill_id = str(raw_skill_id)
-                bonus = _int_or_none(raw_bonus)
+                value_resolution = _fixed_numeric_value_resolution(
+                    value_resolver,
+                    raw_bonus,
+                    data_card_id=str(getattr(slot, "character_data_card_id", "") or ""),
+                    data_card_kind="character",
+                    source_trace=getattr(slot, "source", None).to_json() if getattr(slot, "source", None) else {},
+                )
+                bonus = _resolution_int_or_none(value_resolution)
                 if bonus is None:
+                    skill_level_bonus_blocked.append(
+                        {
+                            "eidolon_slot_id": getattr(slot, "eidolon_slot_id", ""),
+                            "rank": getattr(slot, "rank", 0),
+                            "rank_id": getattr(slot, "rank_id", ""),
+                            "raw_skill_id": raw_skill_id,
+                            "blocked_reason": value_resolution.get("blocked_reason")
+                            or "eidolon_skill_level_bonus_not_integer",
+                            "value_resolution": value_resolution,
+                            "source": getattr(slot, "source", None).to_json() if getattr(slot, "source", None) else {},
+                        }
+                    )
                     continue
                 action_id = f"avatar_skill:{raw_skill_id}"
                 skill_level_bonus_by_action_id[action_id] = skill_level_bonus_by_action_id.get(action_id, 0) + bonus
+                skill_level_bonus_resolutions.setdefault(action_id, []).append(value_resolution)
                 skill_level_bonus_sources.setdefault(action_id, []).append(
                     {
                         "eidolon_slot_id": getattr(slot, "eidolon_slot_id", ""),
@@ -1285,12 +1362,16 @@ def _eidolon_runtime_activation(eidolon_slots: tuple[object, ...]) -> dict[str, 
                         "rank_id": getattr(slot, "rank_id", ""),
                         "raw_skill_id": raw_skill_id,
                         "bonus": bonus,
+                        "value_resolution": value_resolution,
                         "source": getattr(slot, "source", None).to_json() if getattr(slot, "source", None) else {},
                     }
                 )
     if skill_level_bonus_by_action_id:
         flags["eidolon_skill_level_bonus_by_action_id"] = skill_level_bonus_by_action_id
         flags["eidolon_skill_level_bonus_sources"] = skill_level_bonus_sources
+        flags["eidolon_skill_level_bonus_value_resolutions"] = skill_level_bonus_resolutions
+    if skill_level_bonus_blocked:
+        flags["eidolon_skill_level_bonus_blocked"] = tuple(skill_level_bonus_blocked)
     if startup_ability_names:
         flags["eidolon_startup_rank_abilities"] = tuple(startup_ability_names)
     return {"flags": flags, "startup_specs": startup_specs}

@@ -553,13 +553,13 @@ git diff --check
 本 checklist 只由验收线程更新。执行线程完成某阶段后只能提交 `ready_for_review` 证据包，不能自行勾选。
 
 - [x] P5-S0 公式 / 动态值 / 自定义值来源总账本与 P4 gap 继承完成。
-- [ ] P5-S1 ValueBindingIR / RuleBook / runtime consumer 契约审计完成。
-- [ ] P5-S2 静态参数与等级缩放绑定准入完成。
-- [ ] P5-S3 动态值 / 自定义值定义与读取位点投影完成。
-- [ ] P5-S4 通用 ValueContext / ValueResolver admission 完成。
-- [ ] P5-S5 伤害、韧性、治疗、护盾、生命变化 consumer 接入完成。
-- [ ] P5-S6 资源、状态数值、callback queue 数值 consumer 接入完成。
-- [ ] P5-S7 怪物 custom value 与召唤怪参数绑定回收完成。
-- [ ] P5-S8 角色行迹 / 星魂 / 强化形态数值绑定回收完成。
-- [ ] P5-S9 负例、source audit、replay、旧验证迁移完成。
-- [ ] P5-S10 P5 聚合验收、报告、交接和后续 backlog 完成。
+- [x] P5-S1 ValueBindingIR / RuleBook / runtime consumer 契约审计完成。
+- [x] P5-S2 静态参数与等级缩放绑定准入完成。
+- [x] P5-S3 动态值 / 自定义值定义与读取位点投影完成。
+- [x] P5-S4 通用 ValueContext / ValueResolver admission 完成。
+- [x] P5-S5 伤害、韧性、治疗、护盾、生命变化 consumer 接入完成。
+- [x] P5-S6 资源、状态数值、callback queue 数值 consumer 接入完成。
+- [x] P5-S7 怪物 custom value 与召唤怪参数绑定回收完成。
+- [x] P5-S8 角色行迹 / 星魂 / 强化形态数值绑定回收完成。
+- [x] P5-S9 负例、source audit、replay、旧验证迁移完成。
+- [x] P5-S10 P5 聚合验收、报告、交接和后续 backlog 完成。

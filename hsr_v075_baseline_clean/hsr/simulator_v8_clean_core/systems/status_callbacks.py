@@ -8,6 +8,7 @@ from ..core.settlement import SettlementRecord
 from ..rules.evaluator import EvaluationContext, NumericEvaluationContext, NumericEvaluationResult, RuleEvaluator
 from ..rules.ir import ActionDelayEmissionIR, QueueIntentIR, StatusCallbackIR, StatusCallbackTaskIR, StatusDamageEmissionIR
 from ..rules.rulebook import RuleBook
+from ..rules.value_binding import ValueBindingRequest, ValueContext, ValueResolver
 from .damage import DamagePacket, DamageSourceFrame, DamageSystem, DamageWindowLedger
 from .dot_formula import DotFormula, DotFormulaInput
 from .dynamic_values import binding_source_from_store, find_status_detail, status_binding_sources, store_from_state, upsert_dynamic_value
@@ -51,6 +52,7 @@ class StatusCallbackSystem:
         self.queue_targets = QueueTargetResolver()
         self.effect_registry = effect_registry or EffectRegistry(StatusSystem(rules))
         self.evaluator = RuleEvaluator()
+        self.value_resolver = ValueResolver(rules)
 
     def execute(
         self,
@@ -1251,6 +1253,21 @@ class StatusCallbackSystem:
                 records.append(_queue_intent_blocked_record(callback, task, detail, intent, precheck_reason))
                 errors.append(precheck_reason)
                 continue
+            priority_resolution = _queue_priority_value_resolution(
+                self.value_resolver,
+                intent,
+                callback,
+                task,
+                detail,
+            )
+            if not priority_resolution.get("ok"):
+                reason = (
+                    "queue_priority_value_resolution_blocked:"
+                    f"{priority_resolution.get('blocked_reason') or 'unknown'}"
+                )
+                records.append(_queue_intent_blocked_record(callback, task, detail, intent, reason))
+                errors.append(reason)
+                continue
             lifecycle_policy_id = ""
             extra_action_policy_id = ""
             if isinstance(window.window_policy, dict):
@@ -1263,6 +1280,7 @@ class StatusCallbackSystem:
                 "queue_lifecycle_policy_id": lifecycle_policy_id,
                 "extra_action_policy_id": extra_action_policy_id,
                 "queue_intent_resource_policy": _queue_resource_policy(intent),
+                "queue_priority_value_resolution": priority_resolution,
                 "status_callback_source": callback.source.to_json(),
                 "status_task_source": task.source.to_json(),
                 "status_instance_source": _json_dict(detail.get("source_trace")),
@@ -1278,7 +1296,7 @@ class StatusCallbackSystem:
                 priority_source=intent.priority_source,
                 source_trace=source_trace,
                 priority_key=str(intent.priority_source.get("priority_key") or ""),
-                priority_value=_json_float(intent.priority_source.get("priority_value")),
+                priority_value=_json_float(priority_resolution.get("value")),
                 queue_priority_id=str(intent.priority_source.get("queue_priority_id") or ""),
                 priority_source_trace=_json_dict(intent.priority_source.get("source_trace")),
                 queue_window_id=window.queue_window_id,
@@ -1318,6 +1336,7 @@ class StatusCallbackSystem:
                     "window_family": entry.window_family,
                     "priority_key": entry.priority_key,
                     "priority_value": entry.priority_value,
+                    "priority_value_resolution": priority_resolution,
                     "admission_result": "executable",
                     "target_resolution": target_resolution.to_json(),
                     "source_trace": source_trace,
@@ -1340,6 +1359,7 @@ class StatusCallbackSystem:
                         "queue_kind": intent.queue_kind,
                         "entry": entry.to_json(),
                         "queue_window": window.to_json(),
+                        "priority_value_resolution": priority_resolution,
                         "drain_candidate": False,
                         "drain_blocked_reason": "queue_drain_pending_resolution",
                     },
@@ -1440,6 +1460,37 @@ class StatusCallbackSystem:
 def _queue_resource_policy(intent: QueueIntentIR) -> dict[str, JSONValue]:
     policy = intent.abort_policy.get("resource_policy") if isinstance(intent.abort_policy, dict) else None
     return policy if isinstance(policy, dict) else {}
+
+
+def _queue_priority_value_resolution(
+    value_resolver: ValueResolver,
+    intent: QueueIntentIR,
+    callback: StatusCallbackIR,
+    task: StatusCallbackTaskIR,
+    detail: dict[str, JSONValue],
+) -> dict[str, JSONValue]:
+    source_trace = {
+        "queue_intent_source": intent.source.to_json(),
+        "queue_priority_source": _json_dict(intent.priority_source.get("source_trace")),
+        "status_callback_source": callback.source.to_json(),
+        "status_task_source": task.source.to_json(),
+        "status_instance_source": _json_dict(detail.get("source_trace")),
+    }
+    resolution = value_resolver.resolve(
+        ValueBindingRequest(
+            binding_kind="runtime_numeric_expression",
+            expression={"kind": "fixed", "value": intent.priority_source.get("priority_value")},
+            required_context_keys=("status_modifier",),
+            source_trace=source_trace,
+        ),
+        ValueContext(
+            owner_id=str(detail.get("owner_id") or ""),
+            status_id=str(detail.get("status_id") or ""),
+            modifier_name=str(detail.get("modifier_name") or callback.modifier_name),
+            source_trace=source_trace,
+        ),
+    )
+    return resolution.to_json()
 
 
 def _queue_insert_precheck_blocked(state: BattleState, intent: QueueIntentIR, actor_id: str) -> str:
