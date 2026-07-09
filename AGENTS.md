@@ -33,9 +33,9 @@ turnbasedgamedata-main -> TBGD compiler/lowering -> Canonical IR -> Combat Core
 最近检查点：
 
 ```text
-P1 final acceptance / phase1 minimum battle slice
-最近代码检查点提交：1b88c70 v8 p1 final counter acceptance
-最近文档检查点提交：8513659 docs: add P1 final repair plan
+P5 formula / dynamic / parameter binding substrate
+最近代码检查点提交：f9a9b65 v8 p5 formula dynamic param binding
+当前规划主线：架构分层与内容卡 / 内核边界收敛，随后进入 P6 底层机制扩面
 ```
 
 当前 v8 已建立的底层范围包括：
@@ -49,16 +49,21 @@ P1 final acceptance / phase1 minimum battle slice
 - 状态监听事件族矩阵、mutation-backed 事件源、银鬃尉官基础反击纵切。
 - 目标表达式 IR 与安全解析子集：简单别名、明确群体、上下文目标列表、`TargetSequence`、`TargetFilter`、确定性 `Retarget`。
 - 第一阶段 P1 最小完整战斗纵切已经完成，P1-9 聚合输出 `phase1_minimum_battle_slice=true` 且 blocker 为空。
+- P2 状态系统底座已经完成，状态生命周期、概率/抵抗/免疫、驱散、DoT/状态伤害、callback queue、dynamic value 等当前闭环可验收；这不等于全角色、全怪物、装备和关卡状态机制都已复刻。
+- P3 召唤物 / 忆灵底座闭环已经完成，summoned monster spawn、servant lifecycle/action/status/BattleSetup、target relation、source audit/replay 可验证；P3 是底座闭环通过，不是全正例完成。
+- P4 角色卡 / 怪物卡数据卡扩面底座已经完成，action/query contract、data card source trace、formula/dynamic/target/passive/action gap 总账、P3 backlog 继承和聚合验收可验证；P4 是底座闭环通过，不是全角色 / 全怪物 / 全装备 / 全关卡正例完成。
+- P5 公式 / 动态值 / 参数绑定通用准入底座已经完成，ValueResolver、静态参数、dynamic/custom 投影、damage/toughness/resource/status/callback queue/summon/trace/eidolon 消费侧、负例、source audit/replay 和聚合验收可验证；P5 是底座闭环通过，不是全角色 / 全怪物 / 全装备 / 全关卡公式正例完成。
 - `simulator_v8_ui/` 本地 UI 测试台，用于 scenario 编排和审计展示，不进入规则系统。
 
 当前仍未完整实现的大块：
 
 - 完整角色面板装配：晋阶、全量角色行迹、光锥、内圈/外圈遗器及套装效果。
+- P5 保留的 admission gap 逐类回收：公式参数、动态值、自定义值、召唤参数、状态数值、资源和数据卡上下文的全正例扩面。
 - 大量角色卡人工解释与验证。
-- 状态系统扩面：更多叠层/刷新组合、概率与失败分支、持续时间、tick、DoT tick、控制抵抗、免疫、更多驱散分支。
+- 状态系统长线扩面：全角色、全怪物、装备、关卡带来的新状态来源和特殊事件源。
 - 目标系统剩余部分：更多排序、随机、fetch、相邻目标、唯一实体、召唤物/servant 扩展目标、特殊玩法目标。
 - 全怪物技能、全怪物被动、阶段切换、召唤、波次、关卡倍率。
-- 敌方行动候选扩面、波次系统扩面、召唤物/assistant/servant 完整行为；敌方 AI 不进入 core，由外部推演器控制。
+- 敌方行动候选扩面、波次系统扩面、P3 inherited summon/target gaps、servant damage formula、特殊战斗模式；敌方 AI 不进入 core，由外部推演器控制。
 - 光锥、遗器、环境、关卡机制。
 - `OnCustomEvent`、`OnWaveMonster` 等需要真实事件源或波次系统的回调。
 
@@ -96,15 +101,21 @@ v8 当前只保留少数高密度长期文档，避免文档膨胀影响索引�
 
 1. `hsr_v075_baseline_clean/hsr/CODEX_HANDOFF.md`
 2. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/README.md`
-3. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/PROJECT_GOALS.md`
-4. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/FORBIDDEN.md`
-5. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/MONSTER_CARD_SPEC.md`
-6. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/PHASE1_SUMMARY.md`
-7. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/P2_STATUS_SYSTEM_COMPLETE_TASK_PLAN.md`
-8. `hsr_v075_baseline_clean/hsr/live_validation_reports/archive/phase1/v8_p1_final_acceptance_checkpoint_v0_292.md`
-9. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_status_target_event_database_audit_checkpoint_v0_287.md`
-10. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_ir_checkpoint_v0_288.md`
-11. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_sequence_filter_retarget_checkpoint_v0_289.md`
+3. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/ARCHITECTURE_BOUNDARY_CONTRACT.md`
+4. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/DOCUMENTATION_INDEX.md`
+5. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/PROJECT_GOALS.md`
+6. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/FORBIDDEN.md`
+7. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/MONSTER_CARD_SPEC.md`
+8. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/PHASE1_SUMMARY.md`
+9. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/P2_STATUS_SYSTEM_COMPLETE_TASK_PLAN.md`
+10. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/P3_SUMMON_ASSISTANT_SERVANT_COMPLETE_TASK_PLAN.md`
+11. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/P4_COMBATANT_DATA_CARD_EXPANSION_TASK_PLAN.md`
+12. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/P5_FORMULA_DYNAMIC_PARAM_BINDING_TASK_PLAN.md`
+13. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p5_formula_dynamic_param_binding_checkpoint.md`
+14. `hsr_v075_baseline_clean/hsr/live_validation_reports/archive/phase1/v8_p1_final_acceptance_checkpoint_v0_292.md`
+15. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_status_target_event_database_audit_checkpoint_v0_287.md`
+16. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_ir_checkpoint_v0_288.md`
+17. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_sequence_filter_retarget_checkpoint_v0_289.md`
 
 P1 过程计划和中间报告已经归档，默认不要作为当前线程入口：
 
@@ -146,6 +157,28 @@ hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/FORBIDDEN.md
 - 不允许验证主路径靠固定角色名、固定怪物名、固定技能 ID、固定文件名、固定 hash 或固定观测答案运转。
 - 不允许目标表达式 fallback 到名称、路径或默认目标；缺目标、缺 payload、缺排序规则、缺条件时必须 blocked/state unchanged。
 
+## 架构归属和推演器边界
+
+推演器定位是“像玩家一样操作和看结果”的外部控制器，不是第二套战斗系统。它只能读取状态、查询合法动作和目标、选择 action command、指定或枚举可控 RNG 分支、读取 transition 和判断目标是否达成。它不能负责技能可用性、目标解析、状态结算、伤害公式、敌方 AI、机制默认值或 blocked reason 绕过。
+
+规则归属必须靠近来源：
+
+- 角色卡负责角色自身：基础面板、技能、行迹、星魂、特殊资源、角色召唤物入口。
+- 怪物卡负责怪物自身：面板、技能、被动、阶段、弱点、抗性、召唤怪入口。
+- 装备与构筑输入主要作为角色卡装配输入；怪物等级、模板、阶段和特殊覆盖作为怪物卡或环境装配输入。P4 只预留 hook，不完整实现光锥、遗器、套装和关卡机制。
+- 角色召唤物归属角色卡。servant / 忆灵这类有独立属性、技能、行动和生命周期的单位，应通过角色卡子卡或派生 combatant card 接入。
+- 怪物召唤物优先复用已有怪物卡。召唤者只提供 spawn intent、owner/summoner relation、生命周期和清理策略；被召唤单位自身规则仍来自怪物卡。
+- 动作查询归属可行动单位的数据卡或子卡；目标查询归属 action definition。每个 action 自己声明合法目标、目标选择规则和实际打击范围。
+- 关卡、环境、战斗事件是独立后续层，不能为了当前阶段完成而伪装成角色或怪物机制。
+
+“真实预留”不是空字段。后续计划中如果要求预留装备、构筑、召唤物、环境或推演器接口，必须同时有明确归属、稳定 slot/hook、admission 边界、blocked/state unchanged 负例验证和后续归属记录。
+
+UI 可以提前设计最终形态的入口和信息架构，用来倒查底层接口缺口；但不能为了 UI 层牺牲底层内核质量。UI view model 可以做适配，core / IR / RuleBook / runtime 不能为了界面方便引入硬编码、伪来源、默认 fallback 或不通用字段。若 UI 需求和内核通用性、来源审计、数据归属冲突，执行线程必须暂停并询问用户决定方向。
+
+UI 只能消费 core/API 输出的战斗事实、合法动作、合法目标、资源门、blocked reason、transition 和审计结果；不能在前端或 UI API 层复刻战斗规则。战技点、能量、行动条、技能可用性、目标范围、状态变化、装备效果等都可能存在角色/机制例外，UI 不能按“常见规则”自行推导或修正，只能展示 runtime 给出的结果并提交用户选择。
+
+当前 `turnbasedgamedata-main` 是 release data dump，包含角色、怪物、技能、状态、装备、遗器、召唤物、关卡和战斗事件等配置；目前没有发现可直接调用的完整 battle engine。v8 仍应以 TBGD 配置为事实来源，经 lowering 进入 Canonical IR，再由 runtime 做可审计状态转移。
+
 ## v8 审查红线
 
 每次例行审查、结构回正或新增机制时，必须按以下红线检查，不能只看验证是否绿：
@@ -164,6 +197,29 @@ hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/FORBIDDEN.md
 - 每次阶段汇报必须说明：当前做到哪里、距离最小可用战斗纵切还缺什么、距离完整复刻还缺哪些大模块。
 
 ## 规划与验收口径
+
+后续计划文档必须降低执行线程的注意力负担，不能只写一个大而全的总目标。大型目标应拆成严格顺序阶段，每个阶段都要有：
+
+- 一句话目标：说明本阶段完成后系统新增的具体能力。
+- 本阶段只做：明确当前阶段允许实现的范围。
+- 本阶段不做：明确后续阶段内容，防止执行线程提前展开。
+- 完成标记：用可直接勾选的 `[ ]` 子项列出交付物、代码/文档/验证结果。
+- 阶段红线：列出常见误判，防止“看起来可用”冒充完成。
+- 最小验证：只列本阶段必须跑的验证和触发条件。
+
+计划必须显式要求一次只执行一个阶段。后续阶段只能作为背景，不允许提前实现、提前打勾或把后续目标混进当前阶段。若阶段内容太多，应继续拆子阶段，而不是把大量目标塞进一个阶段。
+
+每个阶段开始前必须先产出阶段执行卡，并等待确认后再改文件。执行卡必须具体到目标产物、拟改文件、拟新增或修改的函数/脚本/页面、结构化判定谓词、blocked/gap/deferred 条件、验证命令、明确不跑的验证及理由、资源限峰值措施、最终 evidence。执行卡不能只是复述计划条款。
+
+执行线程和验收线程的职责必须分开。执行线程最多只能提交 `ready_for_review`，不能自称 `done`，不能修改 checklist，不能把 `[ ]` 改成 `[x]`。阶段完成标记和总 checklist 只能由验收线程在复核真实代码、真实验证输出、真实矩阵/summary、source/audit evidence 后更新。未完成项必须保留 `[ ]` 并记录 blocker / gap / deferred，不能用“后续会补”打勾。
+
+`ok=true` 不是完成证明。验收时必须说明验证实际检查了什么、没检查什么、predicate 是否过宽、是否把 gap 用 executable 正例覆盖、报告引用的 evidence 是否真实存在。报告不是完成证据本身，只能作为证据索引。
+
+资源控制是限制峰值，不是跳过必要验证。必要长验证可以串行、低优先级、输出到 `/tmp` 运行；禁止并行重验证、默认写大产物或跑无关全量。
+
+计划文档只能有一套执行清单。背景、设计原则、页面规划、契约说明、风险矩阵只能作为参考资料，不能再写成另一套“完成要求 / 验收要求 / 防漏验收”清单；否则执行线程会在多个清单之间失焦。需要验收或打标的内容必须集中到对应阶段小节。
+
+P4 的执行质量明显改善，后续大型计划应沿用这个正向模式：先用背景和约束建立方向，但把可执行内容压缩到唯一阶段清单；每阶段只做一个目标，先提交阶段执行卡，再产出 `ready_for_review` 证据包；最终聚合只能在所有分步验收后实现，且必须继承分步矩阵中的 gap。这个结构能显著降低执行线程偷跑、漏做、自勾和用聚合脚本掩盖分步问题的概率。
 
 本项目是未完成模拟器，计划和验收不能把目标写得过大过泛。每个阶段、每个 checklist 项都应先按来源和实现状态拆成三态：
 
@@ -240,6 +296,14 @@ hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/FORBIDDEN.md
 - 队列 family 缺口不能只按 `QueueWindowIR.window_family` 统计。反击/追击等游戏语义可能先以通用 `insert_ability` / `insert_action` 承载，并在 `window_policy.source_basis.text_hints`、ability name、callback event、priority key 或 action definition 中保留语义线索；验收若只看 family 为 0 就标 `source_absent_not_required`，会漏掉真实来源，应归为 validation/admission gap 或补正例。
 - lowering 生成派生产物后如果又把上游节点改成 blocked，必须同步重算或阻断所有依赖产物。例如先生成 queue window，再按状态事件源缺失把 callback queue intent 改成 blocked，会留下“blocked intent 对应 executable window”的 IR 不一致；阶段验收必须跑触达系统的直接回归来抓这种问题。
 - 最终聚合验收必须继承所有分步矩阵中的真实 gap。最终手写 source/mechanism matrix 的主行 `gap=0` 不能覆盖 S0/S1/S8 等分步报告里仍存在的 `lowering_gap`、`admission_gap`、`validation_gap` 或内部子项 gap；如果一个来源域有 executable 正例但内部仍有未投影/未准入子项，必须拆子行继承到总缺口，不能用“有一个正例跑通”代表整域完成。
+- 推演器不能承担底层规则。它只像玩家一样查询、选择、提交和读取结果；技能可用性、目标范围、状态结算、伤害公式、敌方动作候选、blocked reason 都必须由 core / 数据卡 / RuleBook 给出。
+- 动作属于可行动单位的数据卡或子卡，目标属于 action definition。不要让 UI、scenario、route 或未来推演器猜测 action/target 规则。
+- 角色召唤物归属角色卡，servant / 忆灵应通过角色卡子卡或派生 combatant card 表达；怪物召唤物优先绑定已有怪物卡，只额外记录召唤者、owner/summoner relation 和生命周期。
+- 装备、构筑、关卡、环境等未来接入点在当前阶段只能做真实预留：必须有归属、slot/hook、blocked 负例和后续阶段记录；空字段或 placeholder 不算预留完成。
+- UI 早期可以做完整入口和 mock 视觉，但所有入口必须标 readiness；mock only 不能保存成正式 scenario、不能导出 route、不能参与验收。
+- UI 是倒查内部接口的工作台，不是内核设计的上级约束。为了 UI 体验牺牲 core 通用性、来源追溯或 runtime 干净度时，必须停下询问。
+- `turnbasedgamedata-main` 当前是配置数据来源，不是可直接调用的 battle engine。不能因为看到 battle/ability 配置就假设存在现成状态转移系统，也不能反过来用自造规则替代 lowering。
+- P4 的正面经验：执行质量提升不是因为目标写得更大，而是因为目标被拆成严格顺序、每阶段只有一个清晰完成口径、执行线程只能提交 evidence、验收线程负责勾选和提交。后续计划优先复用这种结构，尤其是角色/怪物全量扩面、动态公式、目标系统、波次/关卡环境这类长线任务。
 
 ## 快照与结算目标摘要
 
@@ -275,22 +339,25 @@ settlement record 必须能追溯到 mutation，或明确标记为 process-only 
 
 ## v8 当前验证命令
 
-在 `hsr_v075_baseline_clean/hsr` 下运行：
+按触达范围运行验证，不要无脑全量。当前稳定聚合入口如下，在 `hsr_v075_baseline_clean/hsr` 下运行：
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 python3 -m compileall -q simulator_v8_clean_core simulator_v8_ui
-PYTHONDONTWRITEBYTECODE=1 python3 -m simulator_v8_clean_core.tools.validate_v0_289 --output-dir /tmp/hsr_v8_target_expression_v0_289
-PYTHONDONTWRITEBYTECODE=1 python3 -m simulator_v8_clean_core.tools.validate_v0_288 --output-dir /tmp/hsr_v8_target_expression_v0_288
-PYTHONDONTWRITEBYTECODE=1 python3 -m simulator_v8_clean_core.tools.validate_v0_287 --output-dir /tmp/hsr_v8_status_target_audit_v0_287
-PYTHONDONTWRITEBYTECODE=1 python3 -m simulator_v8_clean_core.tools.validate_v0_286 --output-dir /tmp/hsr_v8_mutation_events_v0_286
-PYTHONDONTWRITEBYTECODE=1 python3 -m simulator_v8_clean_core.tools.validate_v0_284 --output-dir /tmp/hsr_v8_monster_attached_status_v0_284
+PYTHONDONTWRITEBYTECODE=1 ionice -c3 nice -n 15 python3 -B -m simulator_v8_clean_core.tools.validate_p1_9_phase1_aggregate --output-dir /tmp/hsr_v8_p1_9_current
+PYTHONDONTWRITEBYTECODE=1 ionice -c3 nice -n 15 python3 -B -m simulator_v8_clean_core.tools.validate_p2_status_system_complete --output-dir /tmp/hsr_v8_p2_current
+PYTHONDONTWRITEBYTECODE=1 ionice -c3 nice -n 15 python3 -B -m simulator_v8_clean_core.tools.validate_p3_summon_assistant_servant_complete --output-dir /tmp/hsr_v8_p3_current
+PYTHONDONTWRITEBYTECODE=1 ionice -c3 nice -n 15 python3 -B -m simulator_v8_clean_core.tools.validate_p4_combatant_data_card_expansion --output-dir /tmp/hsr_v8_p4_current
 git diff --check
 ```
+
+P4 角色卡 / 怪物卡数据卡扩面底座已验收通过。P4 聚合期望 `ok=true`、`validation_gate_ok=true`、`p4_combatant_data_card_substrate_complete=true`、`p4_all_executable_complete=false`；保留 gap 只能是已归因的 `admission_gap` / `source_gap_blocked`，不能出现 `implementation_missing`、`lowering_gap`、`validation_gap` 或 `unclassified`。
 
 当前期望：
 
 - compileall 通过。
-- validation 输出 `ok=true`。
+- P1/P2/P3/P4 聚合输出 `ok=true`。
+- P3 聚合是底座闭环通过，当前全正例期望仍是 `p3_summon_all_executable_complete=false`，不能把 inherited gaps 误读为失败或完成。
+- P4 聚合是数据卡扩面底座闭环通过，当前全正例期望仍是 `p4_all_executable_complete=false`，不能把 admission/source-gap 误读为失败或完成。
 - static checks 通过。
 - snapshot replay 通过。
 - source audit 通过。
