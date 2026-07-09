@@ -100,7 +100,12 @@ class CombatExecutor:
             state,
             command.actor_id,
             command.target_ids,
-            policy=target_policy_for_action(self.rules, action_definition, action_event_ir.target_mode),
+            policy=target_policy_for_action(
+                self.rules,
+                action_definition,
+                action_event_ir.target_mode,
+                action_event=action_event_ir,
+            ),
         )
         action_execution_plan = build_action_execution_plan(
             action_definition,

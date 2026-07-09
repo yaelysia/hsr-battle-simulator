@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..core.model import JSONValue
-from ..rules.ir import ActionDefinitionIR
+from ..rules.ir import ActionDefinitionIR, ActionEventIR
 from ..rules.rulebook import RuleBook
 from .resource import ResourcePlan
 from .target import TargetPolicy
@@ -43,8 +43,21 @@ def target_policy_for_action(
     rules: RuleBook,
     action_definition: ActionDefinitionIR,
     target_mode: str,
+    *,
+    action_event: ActionEventIR | None = None,
 ) -> TargetPolicy:
     bounce_policy = bounce_policy_for_action(rules, action_definition.action_id, action_definition.level)
+    source_trace = _target_policy_source_trace(action_definition, target_mode, action_event, bounce_policy)
+    metadata = {
+        "action_id": action_definition.action_id,
+        "action_level": action_definition.level,
+        "definition_id": action_definition.definition_id,
+        "action_event_id": action_event.action_event_id if action_event is not None else "",
+        "target_mode": target_mode,
+        "action_definition_target_mode": action_definition.target_mode,
+        "damage_kind": action_definition.damage_kind,
+        "source_mode": action_definition.source_mode,
+    }
     if target_mode == "self_or_team":
         return TargetPolicy(
             policy_id="self_or_team",
@@ -53,6 +66,8 @@ def target_policy_for_action(
             allow_self=True,
             target_mode=target_mode,
             selection_mode="explicit_ally_or_self",
+            source_trace=source_trace,
+            metadata=metadata,
         )
     if action_definition.damage_kind == "hp_damage":
         return TargetPolicy(
@@ -63,6 +78,8 @@ def target_policy_for_action(
             target_mode=target_mode,
             selection_mode=target_mode,
             bounce_policy=bounce_policy,
+            source_trace=source_trace,
+            metadata=metadata,
         )
     return TargetPolicy(
         policy_id="explicit_any",
@@ -72,6 +89,8 @@ def target_policy_for_action(
         target_mode=target_mode,
         selection_mode=target_mode,
         bounce_policy=bounce_policy,
+        source_trace=source_trace,
+        metadata=metadata,
     )
 
 
@@ -84,6 +103,27 @@ def bounce_policy_for_action(rules: RuleBook, action_id: str, level: int) -> dic
         if policy is not None:
             return policy.to_json()
     return {}
+
+
+def _target_policy_source_trace(
+    action_definition: ActionDefinitionIR,
+    target_mode: str,
+    action_event: ActionEventIR | None,
+    bounce_policy: dict[str, JSONValue],
+) -> dict[str, JSONValue]:
+    source_trace: dict[str, JSONValue] = {
+        "action_definition": action_definition.source.to_json(),
+        "target_mode": {
+            "value": target_mode,
+            "source": "action_event" if action_event is not None else "action_definition",
+        },
+    }
+    if action_event is not None:
+        source_trace["action_event"] = action_event.source.to_json()
+    bounce_source = bounce_policy.get("source")
+    if isinstance(bounce_source, dict) and bounce_source:
+        source_trace["bounce_policy"] = bounce_source
+    return source_trace
 
 
 def action_binding_blocked_reason(action_binding: Any | None) -> str:

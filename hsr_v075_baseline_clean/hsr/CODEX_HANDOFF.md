@@ -2,7 +2,7 @@
 
 ## 0. 一句话状态
 
-当前主线是 `simulator_v8_clean_core`。P1 最终收口、P2 状态系统底座、P3 召唤物体系底座均已完成当前闭环验收。P3 聚合入口 `validate_p3_summon_assistant_servant_complete` 最新限流复查输出 `ok=true`、`validation_gate_ok=true`、`p3_summon_phase_complete=true`、`p3_summon_substrate_complete=true`、`p3_summon_all_executable_complete=false`、`p3_summon_sources_classified=true`、`p3_summon_admission_gap_count=2123`、`p3_summon_source_gap_blocked_count=27`、`p3_summon_scope_exclusion_count=1`、`p3_summon_implementation_missing_count=0`、`p3_summon_lowering_gap_count=0`、`p3_summon_unclassified_count=0`。这些 admission/source-gap 来自 S0 分步矩阵继承，并已投影到最终 source/mechanism matrix 子行和 allowed-gap evidence matrix，不能被宽域 executable 正例掩盖，也不能误读为 executable。AssistantAvatar / `TurnInsertAssistantAbility` 已移出 P3 召唤物/servant 验收，记录在 `p3_summon_scope_exclusions.json`，不计入 P3 gap。
+当前主线是 `simulator_v8_clean_core`。P1 最终收口、P2 状态系统底座、P3 召唤物体系底座均已完成当前闭环验收。P4 角色卡 / 怪物卡数据卡扩面已提交 `ready_for_review` 证据包：聚合入口 `validate_p4_combatant_data_card_expansion` 输出 `ok=true`、`validation_gate_ok=true`、`p4_combatant_data_card_substrate_complete=true`、`p4_all_executable_complete=false`、`p4_sources_classified=true`、`p4_admission_gap_count=1333000`、`p4_source_gap_blocked_count=55`、`p4_implementation_missing_count=0`、`p4_lowering_gap_count=0`、`p4_validation_gap_count=0`、`p4_unclassified_count=0`、`allowed_gap_evidence_summary.all_evidence_ok=true`。P4 是数据卡扩面底座闭环通过，不是全角色 / 全怪物全正例完成。
 
 ## 1. 路径与事实来源
 
@@ -56,12 +56,14 @@ hsr_v075_baseline_clean/hsr/simulator_v7_7/
 6. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/PHASE1_SUMMARY.md`
 7. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/P2_STATUS_SYSTEM_COMPLETE_TASK_PLAN.md`
 8. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/P3_SUMMON_ASSISTANT_SERVANT_COMPLETE_TASK_PLAN.md`
-9. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p3_summon_assistant_servant_complete_checkpoint.md`
-10. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p2_status_system_complete_checkpoint.md`
-11. `hsr_v075_baseline_clean/hsr/live_validation_reports/archive/phase1/v8_p1_final_acceptance_checkpoint_v0_292.md`
-12. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_status_target_event_database_audit_checkpoint_v0_287.md`
-13. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_ir_checkpoint_v0_288.md`
-14. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_sequence_filter_retarget_checkpoint_v0_289.md`
+9. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/P4_COMBATANT_DATA_CARD_EXPANSION_TASK_PLAN.md`
+10. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p4_combatant_data_card_expansion_checkpoint.md`
+11. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p3_summon_assistant_servant_complete_checkpoint.md`
+12. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p2_status_system_complete_checkpoint.md`
+13. `hsr_v075_baseline_clean/hsr/live_validation_reports/archive/phase1/v8_p1_final_acceptance_checkpoint_v0_292.md`
+14. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_status_target_event_database_audit_checkpoint_v0_287.md`
+15. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_ir_checkpoint_v0_288.md`
+16. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_sequence_filter_retarget_checkpoint_v0_289.md`
 
 P1 的详细执行计划和过程报告已经归档，默认不要作为下一阶段入口：
 
@@ -196,6 +198,34 @@ P3 召唤物 / 忆灵聚合验收更正：
   - AssistantAvatar raw / IR / RuleBook / queue window 可审计，但已移出 P3 summon/servant acceptance；后续单独处理，不能作为 P3 admission gap。
   - summon / servant target relation、remove / owner cleanup / wave policy、status/resource/damage boundary 与击杀归因 source frame。
   - `FriendServantSelect` / AssistantAvatar target boundary 当前 `out_of_scope`；P3-S8 summon/servant target relation 当前 `executable=7`；S0 lifecycle `OnEnterBattle` admission gap 已清零。
+
+P4 角色卡 / 怪物卡数据卡扩面 ready_for_review：
+
+- 新增聚合入口 `tools/validate_p4_combatant_data_card_expansion.py`，默认只构建一次 TBGD lowering / RuleBook，在内存中重建 S0-S11 子矩阵和 P3 backlog 视图；不串联 subprocess，不写完整 Canonical IR 或全量 transition dump。
+- P4-S12 输出目录：`/tmp/hsr_v8_p4_combatant_data_card_expansion/`，关键文件为 `validation_summary_p4_combatant_data_card_expansion.json` 和 `p4_combatant_data_card_expansion_matrix.json`。
+- 最新 summary：
+  - `ok=true`
+  - `validation_gate_ok=true`
+  - `p4_combatant_data_card_phase_complete=true`
+  - `p4_combatant_data_card_substrate_complete=true`
+  - `p4_all_executable_complete=false`
+  - `p4_sources_classified=true`
+  - `p4_admission_gap_count=1333000`
+  - `p4_source_gap_blocked_count=55`
+  - `p4_implementation_missing_count=0`
+  - `p4_lowering_gap_count=0`
+  - `p4_validation_gap_count=0`
+  - `p4_unclassified_count=0`
+  - `allowed_gap_evidence_summary.all_evidence_ok=true`
+  - `allowed_gap_evidence_summary.disallowed_gap_count=0`
+- P4 final matrix 继承分步 gap，不允许用 source/mechanism 宽域正例覆盖内部子项 gap。当前保留 gap 均为 allowed `admission_gap` / `source_gap_blocked`；不是 executable。
+- P4 source matrix 当前 58 rows：`admission_gap=37`、`boundary_only=4`、`executable=10`、`out_of_scope=7`，`unclassified=0`。
+- P4 action availability matrix 当前 7 rows：`boundary_only=2`、`executable=4`、`source_absent_not_required=1`；executable choice 均带 action definition 和 actor data card source trace。
+- P4 allowed gap evidence matrix 当前 96 rows，`allowed_gap_count=1333056`、`disallowed_gap_count=0`、`all_evidence_ok=true`。
+- P4 scope exclusion matrix 当前 9 rows，包含 BattleTargetConfig stage objective、LocalPlayer maze/local-player config、ILBattle special action、AssistantAvatar 等非当前 P4 战斗数据卡 runtime 范围。
+- S12 期间修正了 S0 早期误分类：`BattleTargetConfig` 是 stage/environment objective，不是 action target expression；`ConfigCharacter/LocalPlayer` 是 maze/local-player layer，不是战斗角色卡 config；`ILBattleMonsterSkill:ParamList` 没有当前怪物卡 owner，不能合成无 owner 的 `SkillFormulaBindingIR`。
+- S12 期间修正了 S2 继承记录口径：`s1_monster_card_action_set_link_gap_inherited` 是 boundary record，不是 executable action choice 样本。
+- P4 回归验证已串行通过：P4 聚合、`compileall`、P1-9 聚合、P2 聚合、P3 聚合、`git diff --check`。
 
 ## 5. 当前明确没做到什么
 

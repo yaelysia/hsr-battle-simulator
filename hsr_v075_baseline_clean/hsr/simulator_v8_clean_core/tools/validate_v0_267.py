@@ -98,8 +98,16 @@ def _eidolon_card_case(rules: RuleBook, card: CharacterDataCardIR) -> dict[str, 
             and slot.source.evidence.get("param_values") is not None
             for slot in slots
         ),
-        "effect_slots_exist_but_do_not_fake_runtime": len(eidolon_effect_slots) == 6
-        and all(slot.coverage_status == "blocked" and slot.blocked_reason for slot in eidolon_effect_slots),
+        "effect_slots_classified_without_fake_runtime": len(eidolon_effect_slots) == 6
+        and all(
+            (
+                slot.coverage_status == "executable"
+                and bool(slot.semantics)
+                and bool(slot.source.source_path)
+            )
+            or (slot.coverage_status != "executable" and bool(slot.blocked_reason))
+            for slot in eidolon_effect_slots
+        ),
     }
     checks["ok"] = all(value for key, value in checks.items() if key != "ok")
     return {

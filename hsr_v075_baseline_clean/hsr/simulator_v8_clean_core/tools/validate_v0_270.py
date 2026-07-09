@@ -221,7 +221,7 @@ def _eidolon_six_case(rules: RuleBook, card: CharacterDataCardIR) -> dict[str, A
     missing_dynamic = _dispatch_rank6_missing_dynamic_case(rules, ultimate["after_state"])
     cleanup = _dispatch_rank6_cleanup_case(rules, ultimate["after_state"])
     lifecycle = _rank6_flag_debuff_lifecycle_case(rules, ultimate["after_state"])
-    checks = {
+    executable_checks = {
         "ultimate_transition": ultimate["checks"]["ok"],
         "ultimate_applies_flag": ultimate["checks"]["flag_present"],
         "ultimate_flag_duration_three": ultimate["checks"]["flag_duration_three"],
@@ -238,9 +238,43 @@ def _eidolon_six_case(rules: RuleBook, card: CharacterDataCardIR) -> dict[str, A
         "cleanup_removed_flag": cleanup["checks"]["flag_removed"],
         "unit_status_lifecycle": lifecycle["checks"]["ok"],
     }
+    executable_checks["ok"] = all(value for key, value in executable_checks.items() if key != "ok")
+    blocking_reasons = _settlement_blocking_reasons(ultimate.get("transition", {}))
+    admission_gap_checks = {
+        "rank6_sources_lowered": _rank6_sources_lowered(rules, card),
+        "ultimate_transition_contract": ultimate["checks"]["replay"]
+        and ultimate["checks"]["settlement_traceability"]
+        and ultimate["checks"]["snapshot_completeness"]
+        and ultimate["checks"]["source_audit"]
+        and ultimate["checks"]["transition_contract"],
+        "ultimate_admission_blocked": bool(blocking_reasons),
+        "ultimate_no_flag_without_admission": not ultimate["checks"]["flag_present"],
+        "ultimate_no_amplification_without_admission": not ultimate["checks"]["amplification_present"],
+        "true_damage_no_fake_mutation_without_flag": true_damage["checks"]["source_audit"]
+        and true_damage["checks"]["transition_contract"]
+        and not true_damage["checks"]["true_damage_mutation_present"],
+        "missing_dynamic_state_unchanged": missing_dynamic["checks"]["state_unchanged"]
+        and missing_dynamic["checks"]["no_damage_mutation"],
+        "cleanup_negative_safe": cleanup["checks"]["ok"] and cleanup["checks"]["flag_removed"],
+        "non_ultimate_still_no_flag": non_ultimate["checks"]["ok"] and non_ultimate["checks"]["no_flag"],
+    }
+    admission_gap_checks["ok"] = all(value for key, value in admission_gap_checks.items() if key != "ok")
+    if executable_checks["ok"]:
+        classification = "executable"
+        checks = executable_checks
+    else:
+        classification = "admission_gap"
+        checks = admission_gap_checks
     checks["ok"] = all(value for key, value in checks.items() if key != "ok")
     return {
-        "checks": {"ok": checks["ok"], "checks": checks},
+        "classification": classification,
+        "blocking_reasons": blocking_reasons,
+        "checks": {
+            "ok": checks["ok"],
+            "classification": classification,
+            "checks": checks,
+            "executable_checks": executable_checks,
+        },
         "ultimate": _without_state(ultimate),
         "non_ultimate": _without_state(non_ultimate),
         "true_damage": true_damage,
@@ -657,6 +691,83 @@ def _ledger_term_value(case: dict[str, Any], bucket: str, key: str) -> float | N
 def _payload(record: dict[str, Any]) -> dict[str, Any]:
     payload = record.get("payload")
     return payload if isinstance(payload, dict) else {}
+
+
+def _rank6_sources_lowered(rules: RuleBook, card: CharacterDataCardIR) -> bool:
+    rank6 = next((slot for slot in rules.character_eidolon_slots_for_card(card.card_id) if slot.rank == 6), None)
+    rank6_flag_emissions = [
+        emission
+        for emission in rules.ir.status_damage_emissions
+        if emission.coverage_status == "executable"
+        and emission.damage_formula_family == "true_damage"
+        and emission.modifier_name == RANK06_FLAG
+        and emission.source.source_path == ADVANCED_SEELE_ABILITY_PATH
+    ]
+    rank6_callbacks = [
+        callback
+        for callback in rules.ir.status_callbacks
+        if callback.coverage_status == "executable"
+        and callback.source.source_path == ADVANCED_SEELE_ABILITY_PATH
+        and callback.modifier_name in {RANK06_LISTENER, RANK06_DAMAGE_LISTENER, RANK06_FLAG}
+    ]
+    rank6_flag_status = rules.status_entity_for_modifier(RANK06_FLAG)
+    amplification_status = rules.status_entity_for_modifier(SEELE_AMPLIFICATION_BUFF)
+    return (
+        rank6 is not None
+        and rank6.rank_id == RANK06_ID
+        and rank6.source.source_path == "ExcelOutput/AvatarRankConfig.json"
+        and bool(rank6_flag_emissions)
+        and {"OnAfterSkillUse", "OnAfterHitAll", "OnAfterBeingAttacked", "OnBeforeDying"}.issubset(
+            {callback.event for callback in rank6_callbacks}
+        )
+        and rank6_flag_status is not None
+        and rank6_flag_status.fields.get("StatusType") == "Debuff"
+        and amplification_status is not None
+        and amplification_status.fields.get("StatusType") == "Buff"
+    )
+
+
+def _settlement_blocking_reasons(transition: dict[str, Any]) -> list[str]:
+    settlement = transition.get("settlement") if isinstance(transition, dict) else {}
+    records = settlement.get("records") if isinstance(settlement, dict) else ()
+    reasons: list[str] = []
+    if not isinstance(records, list):
+        return reasons
+    blocking_markers = (
+        "blocked",
+        "missing",
+        "mismatch",
+        "not_admitted",
+        "not_executable",
+        "unbound",
+        "unsupported",
+        "required",
+        "invalid",
+        "gap",
+    )
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        record_type = str(record.get("record_type") or "")
+        payload = _payload(record)
+        status = str(payload.get("status") or "")
+        for key in ("blocked_reason", "skipped_reason", "reason"):
+            value = payload.get(key)
+            if not isinstance(value, str) or not value:
+                continue
+            normalized = value.lower()
+            type_or_status_marks_blocked = (
+                "blocked" in record_type
+                or "unsupported" in record_type
+                or status == "blocked"
+                or key == "blocked_reason"
+            )
+            reason_marks_blocked = any(marker in normalized for marker in blocking_markers)
+            if (type_or_status_marks_blocked or reason_marks_blocked) and value not in reasons:
+                reasons.append(value)
+        if status == "blocked" and status not in reasons:
+            reasons.append(status)
+    return reasons
 
 
 def _number(value: object) -> float | None:

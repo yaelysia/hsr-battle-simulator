@@ -772,6 +772,7 @@ class ActionAvailabilitySystem:
             )
         choices: list[ActionChoice] = []
         blocked: list[BlockedActionReason] = []
+        actor_data_card = _actor_data_card_source_trace(self.rules, actor)
         for skill_index, entry in _sorted_action_set_entries(action_set.skill_index_map):
             action_id = str(entry.get("action_ref") or "")
             level = _default_level(entry)
@@ -797,12 +798,17 @@ class ActionAvailabilitySystem:
                 level,
                 choice_kind="normal_action",
                 source_trace={
+                    "actor_data_card": actor_data_card,
                     "combatant_action_set": action_set.source.to_json(),
                     "combatant_action_set_id": action_set.combatant_action_set_id,
                     "skill_index": skill_index,
                     "action_set_entry": entry,
                 },
-                metadata={"skill_index": skill_index, "combatant_action_set_id": action_set.combatant_action_set_id},
+                metadata={
+                    "skill_index": skill_index,
+                    "combatant_action_set_id": action_set.combatant_action_set_id,
+                    "actor_data_card": _compact_actor_data_card(actor_data_card),
+                },
             )
             if choice is not None:
                 choices.append(choice)
@@ -862,6 +868,7 @@ class ActionAvailabilitySystem:
             )
         choices: list[ActionChoice] = []
         blocked: list[BlockedActionReason] = []
+        actor_data_card = _actor_data_card_source_trace(self.rules, actor)
         for skill_index, entry in _sorted_action_set_entries(action_set.skill_index_map):
             action_id = str(entry.get("action_ref") or "")
             level = _default_level(entry)
@@ -889,6 +896,7 @@ class ActionAvailabilitySystem:
                 level,
                 choice_kind="summon_action",
                 source_trace={
+                    "actor_data_card": actor_data_card,
                     "combatant_action_set": action_set.source.to_json(),
                     "combatant_action_set_id": action_set.combatant_action_set_id,
                     "skill_index": skill_index,
@@ -902,6 +910,7 @@ class ActionAvailabilitySystem:
                     "combatant_action_set_id": action_set.combatant_action_set_id,
                     "summon_kind": str(actor.flags.get("summon_kind") or ""),
                     "team_side": str(actor.flags.get("team_side") or ""),
+                    "actor_data_card": _compact_actor_data_card(actor_data_card),
                 },
             )
             if choice is not None:
@@ -988,8 +997,10 @@ class ActionAvailabilitySystem:
                     },
                 ),
             )
+        actor_data_card = _actor_data_card_source_trace(self.rules, actor)
         source_trace = {
             **candidate.source_trace,
+            "actor_data_card": actor_data_card,
             "action_definition": definition.source.to_json(),
             "action_event": event.source.to_json(),
         }
@@ -1054,6 +1065,7 @@ class ActionAvailabilitySystem:
                     source_trace=source_trace,
                     metadata={
                         "selection_controller": "external",
+                        "actor_data_card": _compact_actor_data_card(actor_data_card),
                         "candidate_kind": "fixed_sequence_candidate",
                         "enemy_action_candidate": {
                             **candidate.to_json(),
@@ -1097,7 +1109,7 @@ class ActionAvailabilitySystem:
         target_result = self.targets.enumerate_action_targets(
             state,
             actor.unit_id,
-            target_policy_for_action(self.rules, definition, event.target_mode),
+            target_policy_for_action(self.rules, definition, event.target_mode, action_event=event),
         )
         resource_status, resource_reason = self._resource_status(state, actor.unit_id, definition, {})
         blocked_reason = combined_blocked_reason(
@@ -1296,6 +1308,63 @@ def _selectable_window_hard_blocked(reason: str) -> bool:
             "queue_action_target_lifecycle_blocked",
         )
     )
+
+
+def _actor_data_card_source_trace(rules: RuleBook, actor: UnitState) -> dict[str, JSONValue]:
+    if actor.side == "ally":
+        card = rules.character_data_card_for_entity(actor.template_id)
+        if card is None:
+            return {}
+        return {
+            "card_kind": "character_data_card",
+            "card_id": card.card_id,
+            "entity_ref": card.entity_ref,
+            "coverage_status": card.coverage_status,
+            "blocked_reason": card.blocked_reason,
+            "source": card.source.to_json(),
+        }
+    if actor.side == "enemy":
+        card_id = str(actor.flags.get("monster_data_card_id") or "")
+        card = rules.monster_data_card(card_id) if card_id else None
+        if card is None:
+            card = rules.monster_data_card_for_entity(actor.template_id)
+        if card is None:
+            return {}
+        return {
+            "card_kind": "monster_data_card",
+            "card_id": card.card_id,
+            "entity_ref": card.entity_ref,
+            "coverage_status": card.coverage_status,
+            "blocked_reason": card.blocked_reason,
+            "source": card.source.to_json(),
+        }
+    if actor.side == "summon":
+        definition_id = str(actor.flags.get("servant_definition_id") or actor.template_id)
+        definition = rules.servant_definition(definition_id)
+        if definition is None:
+            return {}
+        return {
+            "card_kind": "servant_definition",
+            "card_id": definition.servant_definition_id,
+            "entity_ref": definition.servant_ref,
+            "owner_entity_ref": definition.owner_entity_ref,
+            "coverage_status": definition.coverage_status,
+            "blocked_reason": definition.blocked_reason,
+            "source": definition.source.to_json(),
+        }
+    return {}
+
+
+def _compact_actor_data_card(actor_data_card: dict[str, JSONValue]) -> dict[str, JSONValue]:
+    if not actor_data_card:
+        return {}
+    return {
+        "card_kind": actor_data_card.get("card_kind"),
+        "card_id": actor_data_card.get("card_id"),
+        "entity_ref": actor_data_card.get("entity_ref"),
+        "owner_entity_ref": actor_data_card.get("owner_entity_ref"),
+        "coverage_status": actor_data_card.get("coverage_status"),
+    }
 
 
 def _control_gate_for_actor(state: BattleState, actor: UnitState) -> BlockedActionReason | None:

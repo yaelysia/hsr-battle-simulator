@@ -756,18 +756,18 @@ git diff --check
 本 checklist 只由验收线程更新。执行线程完成某阶段后只能提交 `ready_for_review` 证据包，不能自行勾选。
 
 - [x] P4-S0 角色 / 怪物数据卡来源总账本与范围定界完成。
-- [ ] P4-S1 CharacterDataCard / MonsterDataCard / RuleBook 契约复核完成。
-- [ ] P4-S2 Combatant action set 与 action availability 扩面完成。
-- [ ] P4-S3 公式、技能参数、dynamic value / custom value 绑定总账完成。
-- [ ] P4-S4 角色 / 怪物 target alias、TargetQuery、fetch/sort admission 扩面完成。
-- [ ] P4-S5 怪物技能 action graph 覆盖扩面完成。
-- [ ] P4-S6 怪物被动、监听、阶段、波次、召唤交叉边界完成。
-- [ ] P4-S7 角色基础动作、天赋、秘技、强化形态机制槽位扩面完成。
-- [ ] P4-S8 行迹、星魂、等级提升、开局机制与角色资源槽位扩面完成。
-- [ ] P4-S9 数据卡状态、资源、伤害、击杀归因联动完成。
-- [ ] P4-S10 P3 backlog 回收：summon target 与 summoned monster intent 完成。
-- [ ] P4-S11 未来外部推演器 action/query 调用契约样例完成，不实现推演器。
-- [ ] P4-S12 P4 聚合验收、报告、交接和后续 backlog 完成。
+- [x] P4-S1 CharacterDataCard / MonsterDataCard / RuleBook 契约复核完成。
+- [x] P4-S2 Combatant action set 与 action availability 扩面完成。
+- [x] P4-S3 公式、技能参数、dynamic value / custom value 绑定总账完成。
+- [x] P4-S4 角色 / 怪物 target alias、TargetQuery、fetch/sort admission 扩面完成。
+- [x] P4-S5 怪物技能 action graph 覆盖扩面完成。
+- [x] P4-S6 怪物被动、监听、阶段、波次、召唤交叉边界完成。
+- [x] P4-S7 角色基础动作、天赋、秘技、强化形态机制槽位扩面完成。
+- [x] P4-S8 行迹、星魂、等级提升、开局机制与角色资源槽位扩面完成。
+- [x] P4-S9 数据卡状态、资源、伤害、击杀归因联动完成。
+- [x] P4-S10 P3 backlog 回收：summon target 与 summoned monster intent 完成。
+- [x] P4-S11 未来外部推演器 action/query 调用契约样例完成，不实现推演器。
+- [x] P4-S12 P4 聚合验收、报告、交接和后续 backlog 完成。
 
 ## 23. 夜间 goal 模式建议
 

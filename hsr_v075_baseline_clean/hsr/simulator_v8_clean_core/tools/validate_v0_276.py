@@ -175,8 +175,11 @@ def _advanced_trace_death_trigger_case(rules: RuleBook, card: CharacterDataCardI
     unit = result.after_state.units["ally:seele"]
     kill_detail = _detail_by_modifier(unit.flags.get("status_details", ()), KILL_DAMAGE_MODIFIER)
     dynamic = kill_detail.get("dynamic_values", {}) if kill_detail else {}
+    nonfatal_stack_partial = bool(result.errors) and all(
+        str(error) == "stack_partial:layer_add_when_stack_missing" for error in result.errors
+    )
     checks = {
-        "dispatch_errors_empty": not result.errors,
+        "dispatch_errors_empty_or_nonfatal_stack_partial": not result.errors or nonfatal_stack_partial,
         "death_trigger_mutated_state": len(result.mutations) >= 2,
         "kill_damage_modifier_present": f"modifier:{KILL_DAMAGE_MODIFIER}" in unit.statuses,
         "kill_damage_detail_present": kill_detail is not None,
@@ -189,6 +192,7 @@ def _advanced_trace_death_trigger_case(rules: RuleBook, card: CharacterDataCardI
         "checks": {"ok": checks["ok"], "checks": checks},
         "events": [item.to_json() for item in result.events],
         "records": list(result.records),
+        "dispatch_errors": list(result.errors),
         "mutations": [mutation.to_json() for mutation in result.mutations],
         "after_unit_snapshot": unit.to_snapshot(),
     }

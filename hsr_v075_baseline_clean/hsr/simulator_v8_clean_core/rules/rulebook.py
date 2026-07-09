@@ -102,6 +102,11 @@ class RuleBook:
         )
         object.__setattr__(
             self,
+            "_avatar_profiles_by_profile_id",
+            {profile.avatar_profile_id: profile for profile in self.ir.avatar_profiles},
+        )
+        object.__setattr__(
+            self,
             "_character_data_cards",
             {card.card_id: card for card in self.ir.character_data_cards},
         )
@@ -293,6 +298,11 @@ class RuleBook:
             self,
             "_combatant_profiles",
             {profile.entity_id: profile for profile in self.ir.combatant_profiles},
+        )
+        object.__setattr__(
+            self,
+            "_combatant_profiles_by_profile_id",
+            {profile.profile_id: profile for profile in self.ir.combatant_profiles},
         )
         object.__setattr__(
             self,
@@ -875,8 +885,14 @@ class RuleBook:
     def combatant_profile(self, entity_id: str) -> CombatantProfileIR | None:
         return self._combatant_profiles.get(entity_id)
 
+    def combatant_profile_by_profile_id(self, profile_id: str) -> CombatantProfileIR | None:
+        return self._combatant_profiles_by_profile_id.get(profile_id)
+
     def avatar_profile(self, avatar_id: str) -> AvatarProfileIR | None:
         return self._avatar_profiles.get(avatar_id)
+
+    def avatar_profile_by_profile_id(self, profile_id: str) -> AvatarProfileIR | None:
+        return self._avatar_profiles_by_profile_id.get(profile_id)
 
     def character_data_card(self, card_id: str) -> CharacterDataCardIR | None:
         return self._character_data_cards.get(card_id)

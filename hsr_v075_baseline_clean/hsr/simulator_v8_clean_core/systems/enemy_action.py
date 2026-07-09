@@ -100,7 +100,7 @@ class EnemyActionSystem:
         event = self.rules.action_event(action_ref, action_level)
         if event is None:
             return self._blocked_from_card(actor_id, actor.template_id, card, "enemy_action_event_missing", sequence_index=sequence_index, step=step)
-        target_policy = target_policy_for_action(self.rules, definition, event.target_mode)
+        target_policy = target_policy_for_action(self.rules, definition, event.target_mode, action_event=event)
         target_result = self.targets.enumerate_action_targets(state, actor_id, target_policy)
         if not target_result.ok:
             return self._blocked_from_card(

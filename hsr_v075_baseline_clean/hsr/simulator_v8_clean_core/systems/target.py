@@ -42,6 +42,8 @@ class TargetPolicy:
     target_mode: str = "single"
     selection_mode: str = "explicit"
     bounce_policy: dict[str, JSONValue] = field(default_factory=dict)
+    source_trace: dict[str, JSONValue] = field(default_factory=dict)
+    metadata: dict[str, JSONValue] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -2820,6 +2822,8 @@ def _policy_metadata(policy: TargetPolicy) -> dict[str, JSONValue]:
         "target_mode": policy.target_mode,
         "selection_mode": policy.selection_mode,
         "bounce_policy": policy.bounce_policy,
+        "source_trace": policy.source_trace,
+        "metadata": policy.metadata,
     }
 
 

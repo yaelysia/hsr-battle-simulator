@@ -368,12 +368,16 @@ def _build_source_family_rows(
             raw_count=raw["ConfigCharacter.LocalPlayer"],
             raw_source_samples=raw_samples["ConfigCharacter.LocalPlayer"],
             ir_container="CharacterMechanismSlotIR / CharacterTraceNodeIR / CharacterDataCardIR evidence",
-            ir_items=_items_by_source((*ir.character_mechanism_slots, *ir.character_trace_nodes, *ir.character_data_cards), path_contains=("Config/ConfigCharacter/LocalPlayer",)),
+            ir_items=_items_by_source_tokens(
+                (*ir.character_mechanism_slots, *ir.character_trace_nodes, *ir.character_data_cards),
+                path_contains=("Config/ConfigCharacter/LocalPlayer",),
+            ),
             rules=rules,
             rulebook_query_surface="RuleBook character card/trace/mechanism accessors where projected",
-            projection_predicate="IR source.source_path contains Config/ConfigCharacter/LocalPlayer",
-            notes="Character config files are inventoried separately from Excel rows; missing projection is a real gap, not source absence.",
-            future_owner="Character card config assembly",
+            projection_predicate="IR source/evidence JSON contains Config/ConfigCharacter/LocalPlayer",
+            notes="LocalPlayer config files describe maze/local-player behavior; battle character configs are under Config/ConfigCharacter/Avatar and feed character cards separately.",
+            future_owner="maze/local-player character layer",
+            forced_classification="out_of_scope",
         )
     )
     add(
@@ -438,10 +442,13 @@ def _build_source_family_rows(
             raw_count=raw["ConfigCharacter.Servant"],
             raw_source_samples=raw_samples["ConfigCharacter.Servant"],
             ir_container="ServantDefinitionIR evidence",
-            ir_items=_items_by_source(ir.servant_definitions, path_contains=("Config/ConfigCharacter/Servant",)),
+            ir_items=_items_by_source_tokens(
+                ir.servant_definitions,
+                path_contains=("Config/ConfigCharacter/Servant",),
+            ),
             rules=rules,
             rulebook_query_surface="RuleBook.servant_definition / servant_definitions_for_owner",
-            projection_predicate="ServantDefinitionIR source path contains Config/ConfigCharacter/Servant",
+            projection_predicate="ServantDefinitionIR source/evidence JSON contains Config/ConfigCharacter/Servant",
             notes="Servant character config files are inventoried as servant subcard evidence.",
             future_owner="Character servant subcard assembly",
         )
@@ -817,9 +824,44 @@ def _build_source_family_rows(
         )
     )
 
-    add(_formula_row("avatar_skill_param_formula_sources", "ExcelOutput/AvatarSkillConfig.json:ParamList", excel / "AvatarSkillConfig.json", "ParamList", _items_by_source(formula_items, raw_types=("AvatarSkillConfig",)), rules, raw_samples["AvatarSkillConfig"], "Character skill formula/parameter binding"))
-    add(_formula_row("monster_skill_param_formula_sources", "ExcelOutput/MonsterSkillConfig.json:ParamList", excel / "MonsterSkillConfig.json", "ParamList", _items_by_source(formula_items, raw_types=("MonsterSkillConfig",)), rules, raw_samples["MonsterSkillConfig"], "Monster skill formula/parameter binding"))
-    add(_formula_row("ilbattle_skill_param_formula_sources", "ExcelOutput/ILBattleMonsterSkill.json:ParamList", excel / "ILBattleMonsterSkill.json", "ParamList", _items_by_source(formula_items, raw_types=("ILBattleMonsterSkill",)), rules, raw_samples["ILBattleMonsterSkill"], "ILBattle monster skill formula/parameter binding"))
+    add(
+        _formula_row(
+            "avatar_skill_param_formula_sources",
+            "ExcelOutput/AvatarSkillConfig.json:ParamList",
+            excel / "AvatarSkillConfig.json",
+            "ParamList",
+            _items_by_source_tokens(formula_items, path_contains=("ExcelOutput/AvatarSkillConfig.json",)),
+            rules,
+            raw_samples["AvatarSkillConfig"],
+            "Character skill formula/parameter binding",
+        )
+    )
+    add(
+        _formula_row(
+            "monster_skill_param_formula_sources",
+            "ExcelOutput/MonsterSkillConfig.json:ParamList",
+            excel / "MonsterSkillConfig.json",
+            "ParamList",
+            _items_by_source_tokens(formula_items, path_contains=("ExcelOutput/MonsterSkillConfig.json",)),
+            rules,
+            raw_samples["MonsterSkillConfig"],
+            "Monster skill formula/parameter binding",
+        )
+    )
+    add(
+        _formula_row(
+            "ilbattle_skill_param_formula_sources",
+            "ExcelOutput/ILBattleMonsterSkill.json:ParamList",
+            excel / "ILBattleMonsterSkill.json",
+            "ParamList",
+            _items_by_source_tokens(formula_items, path_contains=("ExcelOutput/ILBattleMonsterSkill.json",)),
+            rules,
+            raw_samples["ILBattleMonsterSkill"],
+            "ILBattle monster skill formula/parameter binding",
+            future_owner="ILBattle special action layer",
+            forced_classification="out_of_scope",
+        )
+    )
     add(
         _source_family_row(
             "avatar_skill_resource_fields",
@@ -921,7 +963,26 @@ def _build_source_family_rows(
     )
 
     add(
-        _target_row("target_battle_target_config", "ExcelOutput/BattleTargetConfig.json", raw["BattleTargetConfig"], raw_samples["BattleTargetConfig"], _items_by_source(ir.target_expressions, raw_types=("BattleTargetConfig",)), rules, "Target expressions sourced from BattleTargetConfig")
+        _source_family_row(
+            "target_battle_target_config",
+            raw_source_kind="stage_objective_table",
+            raw_path_or_field="ExcelOutput/BattleTargetConfig.json",
+            raw_count=raw["BattleTargetConfig"],
+            raw_source_samples=raw_samples["BattleTargetConfig"],
+            ir_container="stage/environment objective layer",
+            ir_items=(),
+            rules=rules,
+            rulebook_query_surface="not exposed as P4 action target query",
+            projection_predicate="BattleTargetConfig rows describe battle objectives, not action target resolution.",
+            blocked_boundary_samples=_hook_boundary_samples(
+                "stage_environment_objective_boundary",
+                "BattleTargetConfig belongs to the later stage/environment objective layer.",
+                "P4 action target query must not treat battle-objective rows as TargetExpressionIR fallback.",
+            ),
+            notes="BattleTargetConfig raw rows are challenge/score objectives and are kept out of P4 action target admission.",
+            future_owner="stage/environment objective layer",
+            forced_classification="out_of_scope",
+        )
     )
     add(
         _target_row("target_alias_config_alias_dict", "Config/GlobalConfig/TargetAliasConfig.json:AliasDict", _json_nested_dict_count(global_config / "TargetAliasConfig.json", "AliasDict"), _json_nested_dict_samples(tbgd_root, global_config / "TargetAliasConfig.json", "AliasDict"), _items_by_source(ir.target_expressions, raw_types=("TargetAliasConfig.AliasDict", "TargetAliasOperationChain")), rules, "Target alias dictionary entries")
@@ -1177,6 +1238,8 @@ def _formula_row(
     rules: RuleBook,
     raw_source_samples: Iterable[dict[str, JSONValue]],
     notes: str,
+    future_owner: str = "P4-S3 formula/dynamic binding admission",
+    forced_classification: str = "",
 ) -> dict[str, JSONValue]:
     return _source_family_row(
         source_family,
@@ -1190,7 +1253,8 @@ def _formula_row(
         rulebook_query_surface="RuleBook.skill_formula_binding / damage_emission / toughness_emission",
         projection_predicate=f"formula-related IR source points at {path.name}",
         notes=notes,
-        future_owner="P4-S3 formula/dynamic binding admission",
+        future_owner=future_owner,
+        forced_classification=forced_classification,
     )
 
 
@@ -1409,6 +1473,27 @@ def _items_by_source(
         if raw_type_set and raw_type not in raw_type_set:
             continue
         if path_tokens and not any(token in source_path for token in path_tokens):
+            continue
+        selected.append(item)
+    return tuple(selected)
+
+
+def _items_by_source_tokens(
+    items: Iterable[Any],
+    *,
+    raw_types: Iterable[str] = (),
+    path_contains: Iterable[str] = (),
+) -> tuple[Any, ...]:
+    raw_type_tokens = tuple(str(item) for item in raw_types)
+    path_tokens = tuple(str(item) for item in path_contains)
+    selected: list[Any] = []
+    for item in items:
+        source = getattr(item, "source", None)
+        source_json = _to_json(source) if source is not None else _to_json(item)
+        blob = json.dumps(source_json, ensure_ascii=False, sort_keys=True)
+        if raw_type_tokens and not any(token in blob for token in raw_type_tokens):
+            continue
+        if path_tokens and not any(token in blob for token in path_tokens):
             continue
         selected.append(item)
     return tuple(selected)

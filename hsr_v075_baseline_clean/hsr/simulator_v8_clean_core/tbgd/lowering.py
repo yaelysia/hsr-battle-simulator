@@ -1341,6 +1341,7 @@ class TBGDLowering:
         for relative_path, entity_type, id_key, skill_key, config_rows in (
             ("ExcelOutput/AvatarConfig.json", "avatar", "AvatarID", "SkillList", self._avatar_config_rows_prefer_enhanced()),
             ("ExcelOutput/MonsterConfig.json", "monster", "MonsterID", "SkillList", None),
+            ("ExcelOutput/MonsterUniqueConfig.json", "monster", "MonsterID", "SkillList", None),
             ("ExcelOutput/AvatarServantConfig.json", "servant", "ServantID", "SkillIDList", None),
         ):
             path = self.tbgd_root / relative_path
