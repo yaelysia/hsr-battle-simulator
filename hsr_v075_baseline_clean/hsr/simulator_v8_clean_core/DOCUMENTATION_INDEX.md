@@ -27,6 +27,14 @@ checkpoint: f9a9b65 v8 p5 formula dynamic param binding
 
 P3/P4/P5 的 `*_all_executable_complete=false` 是已归因 backlog，不是当前底座失败。
 
+当前推荐下一阶段：
+
+```text
+P6 architecture boundary refactor
+```
+
+P6 用于回正 P1-P5 后暴露出的架构边界偏移：结算层不能靠审计来源信息反查规则，召唤 / 波次 / 初始配置生成单位应收敛到统一出生单，内容卡只声明机制而不执行机制。
+
 ## 2. 下一线程优先入口
 
 新线程默认按以下顺序读：
@@ -66,6 +74,7 @@ P3/P4/P5 的 `*_all_executable_complete=false` 是已归因 backlog，不是当�
 - `P3_SUMMON_ASSISTANT_SERVANT_COMPLETE_TASK_PLAN.md`
 - `P4_COMBATANT_DATA_CARD_EXPANSION_TASK_PLAN.md`
 - `P5_FORMULA_DYNAMIC_PARAM_BINDING_TASK_PLAN.md`
+- `P6_ARCHITECTURE_BOUNDARY_REFACTOR_TASK_PLAN.md`
 
 P1 过程计划已经归档，不作为默认入口：
 

@@ -16,6 +16,13 @@ checkpoint: f9a9b65 v8 p5 formula dynamic param binding
 聚合验证入口：python3 -m simulator_v8_clean_core.tools.validate_p5_formula_dynamic_param_binding
 ```
 
+当前推荐下一阶段：
+
+```text
+P6 architecture boundary refactor
+计划文档：P6_ARCHITECTURE_BOUNDARY_REFACTOR_TASK_PLAN.md
+```
+
 ## 文档入口
 
 新线程默认先读：
@@ -34,6 +41,7 @@ checkpoint: f9a9b65 v8 p5 formula dynamic param binding
 - `P3_SUMMON_ASSISTANT_SERVANT_COMPLETE_TASK_PLAN.md`
 - `P4_COMBATANT_DATA_CARD_EXPANSION_TASK_PLAN.md`
 - `P5_FORMULA_DYNAMIC_PARAM_BINDING_TASK_PLAN.md`
+- `P6_ARCHITECTURE_BOUNDARY_REFACTOR_TASK_PLAN.md`
 - `MONSTER_CARD_SPEC.md`
 
 P1 过程计划和旧过程报告已归档，默认不要作为当前入口。

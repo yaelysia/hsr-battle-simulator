@@ -111,11 +111,12 @@ v8 当前只保留少数高密度长期文档，避免文档膨胀影响索引�
 10. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/P3_SUMMON_ASSISTANT_SERVANT_COMPLETE_TASK_PLAN.md`
 11. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/P4_COMBATANT_DATA_CARD_EXPANSION_TASK_PLAN.md`
 12. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/P5_FORMULA_DYNAMIC_PARAM_BINDING_TASK_PLAN.md`
-13. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p5_formula_dynamic_param_binding_checkpoint.md`
-14. `hsr_v075_baseline_clean/hsr/live_validation_reports/archive/phase1/v8_p1_final_acceptance_checkpoint_v0_292.md`
-15. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_status_target_event_database_audit_checkpoint_v0_287.md`
-16. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_ir_checkpoint_v0_288.md`
-17. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_sequence_filter_retarget_checkpoint_v0_289.md`
+13. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/P6_ARCHITECTURE_BOUNDARY_REFACTOR_TASK_PLAN.md`
+14. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p5_formula_dynamic_param_binding_checkpoint.md`
+15. `hsr_v075_baseline_clean/hsr/live_validation_reports/archive/phase1/v8_p1_final_acceptance_checkpoint_v0_292.md`
+16. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_status_target_event_database_audit_checkpoint_v0_287.md`
+17. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_ir_checkpoint_v0_288.md`
+18. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_sequence_filter_retarget_checkpoint_v0_289.md`
 
 P1 过程计划和中间报告已经归档，默认不要作为当前线程入口：
 
@@ -200,7 +201,7 @@ UI 只能消费 core/API 输出的战斗事实、合法动作、合法目标、�
 
 后续计划文档必须降低执行线程的注意力负担，不能只写一个大而全的总目标。大型目标应拆成严格顺序阶段，每个阶段都要有：
 
-- 一句话目标：说明本阶段完成后系统新增的具体能力。
+- 阶段目标：必须详细说明本阶段完成后系统新增或改变的具体能力、要消除的具体错误职责、明确不追求的相邻目标；不能只写一句话概括。
 - 本阶段只做：明确当前阶段允许实现的范围。
 - 本阶段不做：明确后续阶段内容，防止执行线程提前展开。
 - 完成标记：用可直接勾选的 `[ ]` 子项列出交付物、代码/文档/验证结果。
@@ -209,7 +210,9 @@ UI 只能消费 core/API 输出的战斗事实、合法动作、合法目标、�
 
 计划必须显式要求一次只执行一个阶段。后续阶段只能作为背景，不允许提前实现、提前打勾或把后续目标混进当前阶段。若阶段内容太多，应继续拆子阶段，而不是把大量目标塞进一个阶段。
 
-每个阶段开始前必须先产出阶段执行卡，并等待确认后再改文件。执行卡必须具体到目标产物、拟改文件、拟新增或修改的函数/脚本/页面、结构化判定谓词、blocked/gap/deferred 条件、验证命令、明确不跑的验证及理由、资源限峰值措施、最终 evidence。执行卡不能只是复述计划条款。
+每个阶段开始前必须先产出阶段执行卡，并等待确认后再改文件。执行卡必须具体到详细阶段目标、验收标准、目标与证据映射、目标产物、拟改文件、拟新增或修改的函数/脚本/页面、结构化判定谓词、blocked/gap/deferred 条件、验证命令、明确不跑的验证及理由、资源限峰值措施、最终 evidence。执行卡不能只是复述计划条款。
+
+执行卡里的目标和验收必须写细。目标要说明“完成后系统应变成什么样”，验收要逐条说明“做到什么才算通过、出现什么不能通过、用哪份代码/验证/报告证明”。禁止只写一句话目标，也禁止用“验证通过”“边界收紧”“契约优化”这类抽象说法替代可检查标准。
 
 执行线程和验收线程的职责必须分开。执行线程最多只能提交 `ready_for_review`，不能自称 `done`，不能修改 checklist，不能把 `[ ]` 改成 `[x]`。阶段完成标记和总 checklist 只能由验收线程在复核真实代码、真实验证输出、真实矩阵/summary、source/audit evidence 后更新。未完成项必须保留 `[ ]` 并记录 blocker / gap / deferred，不能用“后续会补”打勾。
 

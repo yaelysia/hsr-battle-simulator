@@ -4,6 +4,8 @@
 
 当前主线是 `simulator_v8_clean_core`。P1 最终收口、P2 状态系统底座、P3 召唤物体系底座、P4 角色卡 / 怪物卡数据卡扩面底座、P5 公式 / 动态值 / 参数绑定通用准入底座均已完成当前闭环验收。P5 聚合入口 `validate_p5_formula_dynamic_param_binding` 输出 `ok=true`、`validation_gate_ok=true`、`p5_formula_dynamic_param_binding_substrate_complete=true`、`p5_all_executable_complete=false`、`p5_sources_classified=true`、`p5_admission_gap_count=1492393`、`p5_source_gap_blocked_count=0`、`p5_implementation_missing_count=0`、`p5_lowering_gap_count=0`、`p5_validation_gap_count=0`、`p5_unclassified_count=0`、`allowed_gap_evidence_summary.all_evidence_ok=true`。P5 是绑定底座闭环通过，不是全角色 / 全怪物 / 全装备 / 全关卡公式正例完成。
 
+当前推荐下一阶段是 P6 架构边界回正。P6 不新增大功能，而是回正 P1-P5 后暴露的职责偏移：结算层不能靠审计来源信息反查规则，召唤 / 波次 / 初始配置生成单位应收敛到统一出生单，内容卡只声明机制而不执行机制。
+
 ## 1. 路径与事实来源
 
 项目路径：
@@ -60,14 +62,15 @@ hsr_v075_baseline_clean/hsr/simulator_v7_7/
 10. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/P3_SUMMON_ASSISTANT_SERVANT_COMPLETE_TASK_PLAN.md`
 11. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/P4_COMBATANT_DATA_CARD_EXPANSION_TASK_PLAN.md`
 12. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/P5_FORMULA_DYNAMIC_PARAM_BINDING_TASK_PLAN.md`
-13. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p5_formula_dynamic_param_binding_checkpoint.md`
-14. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p4_combatant_data_card_expansion_checkpoint.md`
-15. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p3_summon_assistant_servant_complete_checkpoint.md`
-16. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p2_status_system_complete_checkpoint.md`
-17. `hsr_v075_baseline_clean/hsr/live_validation_reports/archive/phase1/v8_p1_final_acceptance_checkpoint_v0_292.md`
-18. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_status_target_event_database_audit_checkpoint_v0_287.md`
-19. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_ir_checkpoint_v0_288.md`
-20. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_sequence_filter_retarget_checkpoint_v0_289.md`
+13. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/P6_ARCHITECTURE_BOUNDARY_REFACTOR_TASK_PLAN.md`
+14. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p5_formula_dynamic_param_binding_checkpoint.md`
+15. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p4_combatant_data_card_expansion_checkpoint.md`
+16. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p3_summon_assistant_servant_complete_checkpoint.md`
+17. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p2_status_system_complete_checkpoint.md`
+18. `hsr_v075_baseline_clean/hsr/live_validation_reports/archive/phase1/v8_p1_final_acceptance_checkpoint_v0_292.md`
+19. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_status_target_event_database_audit_checkpoint_v0_287.md`
+20. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_ir_checkpoint_v0_288.md`
+21. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_sequence_filter_retarget_checkpoint_v0_289.md`
 
 P1 的详细执行计划和过程报告已经归档，默认不要作为下一阶段入口：
 
