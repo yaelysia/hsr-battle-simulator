@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Callable
 
 from ..core.model import BattleState, GameEvent, JSONValue, Mutation, RNGEvent, TargetResolution
 from ..core.settlement import SettlementRecord
+from ..core.transition_outcome import ExecutionNodeResult
 from ..rules.evaluator import NumericEvaluationContext, NumericEvaluationResult, RuleEvaluator
 from ..rules.ir import EffectIR
 from .damage import DamagePacket, DamageSourceFrame, DamageSystem, DamageWindowLedger
@@ -27,6 +28,7 @@ class EffectResult:
     rng_events: tuple[RNGEvent, ...] = ()
     records: tuple[dict[str, JSONValue], ...] = ()
     unsupported: tuple[str, ...] = ()
+    node_results: tuple[ExecutionNodeResult, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -81,14 +83,24 @@ class EffectRegistry:
     def execute(self, effect: EffectIR, context: EffectExecutionContext | None = None) -> EffectResult:
         handler = self._handlers.get(effect.opcode)
         if not handler:
-            return EffectResult(unsupported=(effect.opcode,))
+            return EffectResult(
+                unsupported=(effect.opcode,),
+                node_results=(
+                    ExecutionNodeResult(
+                        node_kind="effect",
+                        node_id=effect.effect_id,
+                        status="unsupported",
+                        reason_code=f"effect_handler_missing:{effect.opcode}",
+                    ),
+                ),
+            )
         coverage = self.coverage(effect)
         if coverage != "executable":
             specific_reason = _effect_payload_blocked_reason(effect)
             reason = f"effect_not_executable:{coverage}"
             if specific_reason:
                 reason = f"{reason}:{specific_reason}"
-            return _unsupported_effect(
+            result = _unsupported_effect(
                 effect,
                 reason,
                 {
@@ -97,7 +109,22 @@ class EffectRegistry:
                     "blocked_reason": specific_reason or _effect_blocked_reason(effect),
                 },
             )
-        return handler(effect, context)
+        else:
+            result = handler(effect, context)
+        if result.node_results:
+            return result
+        reason = ",".join(result.unsupported)
+        return replace(
+            result,
+            node_results=(
+                ExecutionNodeResult(
+                    node_kind="effect",
+                    node_id=effect.effect_id,
+                    status="unsupported" if result.unsupported else "complete",
+                    reason_code=reason,
+                ),
+            ),
+        )
 
     def coverage(self, effect: EffectIR) -> str:
         if effect.opcode not in self._handlers:

@@ -15,6 +15,7 @@ from .model import (
 )
 from .reducer import MutationReducer
 from .settlement import SettlementRecord
+from .transition_outcome import ExecutionNodeResult, classify_transition_outcome
 from ..rules.evaluator import EvaluationContext, NumericEvaluationContext, RuleEvaluator
 from ..rules.ir import ActionDefinitionIR
 from ..rules.rulebook import RuleBook
@@ -177,6 +178,46 @@ class CombatExecutor:
             resource_errors=(*resource_result.errors, *resource_value_blocked_reasons),
         )
         action_enabled = not blocked_reason
+        execution_node_results: list[ExecutionNodeResult] = [
+            ExecutionNodeResult(
+                node_kind="target_resolution",
+                node_id=action_definition.definition_id,
+                status="complete" if target_result.ok else "blocked",
+                reason_code="" if target_result.ok else ",".join(target_result.errors) or "action_target_blocked",
+            ),
+            ExecutionNodeResult(
+                node_kind="target_selection",
+                node_id=action_definition.definition_id,
+                status="complete" if target_result.resolution.selected else "blocked",
+                reason_code="" if target_result.resolution.selected else "no_selected_target",
+            ),
+            ExecutionNodeResult(
+                node_kind="resource_plan",
+                node_id=f"{command.actor_id}:{command.action_id}:{command.action_level}",
+                status="complete" if resource_result.ok else "blocked",
+                reason_code=""
+                if resource_result.ok
+                else ",".join((*resource_result.errors, *resource_value_blocked_reasons)) or "action_resource_blocked",
+            ),
+            ExecutionNodeResult(
+                node_kind="action_binding",
+                node_id=action_binding.binding_id if action_binding else f"{command.action_id}:{command.action_level}",
+                status="complete" if not execution_binding_blocked_reason else "unsupported",
+                reason_code=execution_binding_blocked_reason,
+            ),
+            ExecutionNodeResult(
+                node_kind="action_event",
+                node_id=action_event_ir.action_event_id,
+                status="complete" if not execution_event_blocked_reason else "unsupported",
+                reason_code=execution_event_blocked_reason,
+            ),
+            ExecutionNodeResult(
+                node_kind="action_plan",
+                node_id=action_definition.definition_id,
+                status="complete" if not plan_blocked_reason else "blocked",
+                reason_code=plan_blocked_reason,
+            ),
+        ]
         if action_enabled:
             timeline_result = self.timeline.open_action(
                 state,
@@ -383,6 +424,14 @@ class CombatExecutor:
                                 event_payload=command.metadata,
                             )
                             if not bounce_result.ok:
+                                execution_node_results.append(
+                                    ExecutionNodeResult(
+                                        node_kind="target_selection",
+                                        node_id=damage_plan.damage_emission_id or damage_plan.source_task_id,
+                                        status="blocked",
+                                        reason_code=bounce_result.error or "bounce_target_resolution_blocked",
+                                    )
+                                )
                                 runtime_records.append(
                                     SettlementRecord(
                                         record_type="bounce_target_blocked",
@@ -417,6 +466,14 @@ class CombatExecutor:
                             damage_plan,
                         )
                         if not damage_value_resolution.ok or damage_value_resolution.value is None:
+                            execution_node_results.append(
+                                _value_resolution_node_result(
+                                    node_kind="damage_formula",
+                                    node_id=damage_plan.damage_emission_id or damage_plan.source_task_id,
+                                    ok=False,
+                                    reason=damage_value_resolution.blocked_reason or "damage_value_resolution_blocked",
+                                )
+                            )
                             runtime_records.append(
                                 SettlementRecord(
                                     record_type="damage_value_resolution_blocked",
@@ -431,6 +488,13 @@ class CombatExecutor:
                                 ).to_json()
                             )
                             continue
+                        execution_node_results.append(
+                            _value_resolution_node_result(
+                                node_kind="damage_formula",
+                                node_id=damage_plan.damage_emission_id or damage_plan.source_task_id,
+                                ok=True,
+                            )
+                        )
                         damage_plan = replace(damage_plan, scaling_ratio=float(damage_value_resolution.value))
                         damage_packet = _damage_packet(
                             command,
@@ -440,6 +504,14 @@ class CombatExecutor:
                             value_resolution=damage_value_resolution.to_json(),
                         )
                         if damage_packet is None:
+                            execution_node_results.append(
+                                ExecutionNodeResult(
+                                    node_kind="damage_packet",
+                                    node_id=damage_plan.damage_emission_id or damage_plan.source_task_id,
+                                    status="error",
+                                    reason_code="damage_packet_not_constructed",
+                                )
+                            )
                             continue
                         modifier_terms, modifier_records = _collect_direct_damage_modifiers(
                             current_state,
@@ -583,6 +655,14 @@ class CombatExecutor:
                                 action_definition,
                                 toughness_plan,
                             )
+                            execution_node_results.append(
+                                _value_resolution_node_result(
+                                    node_kind="toughness_formula",
+                                    node_id=toughness_plan.toughness_emission_id or toughness_plan.source_task_id,
+                                    ok=toughness_value_resolution.ok and toughness_value_resolution.value is not None,
+                                    reason=toughness_value_resolution.blocked_reason,
+                                )
+                            )
                             toughness_packet = _toughness_packet(
                                 command,
                                 toughness_plan,
@@ -648,6 +728,14 @@ class CombatExecutor:
                             command,
                             action_definition,
                             toughness_plan,
+                        )
+                        execution_node_results.append(
+                            _value_resolution_node_result(
+                                node_kind="toughness_formula",
+                                node_id=toughness_plan.toughness_emission_id or toughness_plan.source_task_id,
+                                ok=toughness_value_resolution.ok and toughness_value_resolution.value is not None,
+                                reason=toughness_value_resolution.blocked_reason,
+                            )
                         )
                         toughness_packet = _toughness_packet(
                             command,
@@ -787,6 +875,19 @@ class CombatExecutor:
         listener_dispatch_events = tuple(event for result in listener_dispatch_results for event in result.events)
         listener_dispatch_rng_events = tuple(event for result in listener_dispatch_results for event in result.rng_events)
         listener_dispatch_records = tuple(record for result in listener_dispatch_results for record in result.records)
+        execution_node_results.extend(
+            node
+            for result in ability_task_results
+            for node in result.node_results
+        )
+        execution_node_results.extend(
+            node
+            for result in (*trigger_results, *listener_dispatch_results)
+            for node in result.node_results
+        )
+        execution_node_results.extend(_damage_node_results(damage_results))
+        execution_node_results.extend(_toughness_node_results(toughness_results))
+        execution_node_results.extend(_break_node_results(break_results))
         mutations = tuple(ordered_mutations)
         after_state = current_state
         damage_rng_events = (
@@ -979,6 +1080,13 @@ class CombatExecutor:
             after=after_state.snapshot(),
             target_resolution=target_result.resolution,
             rng_events=damage_rng_events,
+            outcome=classify_transition_outcome(
+                tuple(execution_node_results),
+                state_changed=before.to_json() != after_state.snapshot().to_json(),
+                mutation_count=len(mutations),
+                preflight_blocked=not action_enabled,
+                preflight_reason=blocked_reason,
+            ),
             coverage={
                 "executor": "v0_221_action_ability_binding",
                 "action_ability_binding": action_binding.to_json() if action_binding else None,
@@ -1047,7 +1155,7 @@ class CombatExecutor:
                 "damage_formula_family": action_definition.damage_formula_family,
             },
         )
-        return after_state, transition
+        return (after_state if transition.outcome.successor_eligible else state), transition
 
     def _kill_energy_mutation_for_event(
         self,
@@ -1099,6 +1207,57 @@ def _mutation_record(record_type: str, mutation: Mutation) -> dict[str, JSONValu
             "metadata": mutation.metadata,
         },
     ).to_json()
+
+
+def _value_resolution_node_result(
+    *,
+    node_kind: str,
+    node_id: str,
+    ok: bool,
+    reason: str = "",
+) -> ExecutionNodeResult:
+    return ExecutionNodeResult(
+        node_kind=node_kind,
+        node_id=node_id,
+        status="complete" if ok else "blocked",
+        reason_code="" if ok else reason or f"{node_kind}_blocked",
+    )
+
+
+def _damage_node_results(results: list) -> tuple[ExecutionNodeResult, ...]:
+    return tuple(
+        ExecutionNodeResult(
+            node_kind="damage_application",
+            node_id=result.packet.damage_emission_id or result.packet.source_task_id or f"damage:{index}",
+            status="complete" if result.ok else "blocked",
+            reason_code="" if result.ok else ",".join(result.errors) or "damage_application_blocked",
+        )
+        for index, result in enumerate(results)
+    )
+
+
+def _toughness_node_results(results: list) -> tuple[ExecutionNodeResult, ...]:
+    return tuple(
+        ExecutionNodeResult(
+            node_kind="toughness_application",
+            node_id=result.packet.toughness_emission_id or result.packet.source_task_id or f"toughness:{index}",
+            status="complete" if result.ok else "blocked",
+            reason_code="" if result.ok else ",".join(result.errors) or "toughness_application_blocked",
+        )
+        for index, result in enumerate(results)
+    )
+
+
+def _break_node_results(results: list[BreakApplicationResult]) -> tuple[ExecutionNodeResult, ...]:
+    return tuple(
+        ExecutionNodeResult(
+            node_kind="break_application",
+            node_id=f"break:{index}",
+            status="complete" if result.ok else "blocked",
+            reason_code="" if result.ok else ",".join(result.errors) or "break_application_blocked",
+        )
+        for index, result in enumerate(results)
+    )
 
 
 def _dedupe_events(*events: GameEvent) -> tuple[GameEvent, ...]:

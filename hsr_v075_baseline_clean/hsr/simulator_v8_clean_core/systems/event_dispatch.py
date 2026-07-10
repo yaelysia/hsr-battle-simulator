@@ -5,6 +5,7 @@ from dataclasses import dataclass, replace
 from ..core.model import ActionCommand, BattleState, GameEvent, JSONValue, Mutation, RNGEvent, TargetResolution
 from ..core.reducer import MutationReducer
 from ..core.settlement import SettlementRecord
+from ..core.transition_outcome import ExecutionNodeResult
 from ..rules.ir import ActionDefinitionIR, StatusCallbackIR, StatusEventFamilyIR
 from ..rules.rulebook import RuleBook
 from .damage import DamageSystem, DamageWindowLedger
@@ -25,6 +26,7 @@ class EventDispatchResult:
     trigger_windows: tuple[dict[str, JSONValue], ...] = ()
     listener_records: tuple[dict[str, JSONValue], ...] = ()
     errors: tuple[str, ...] = ()
+    node_results: tuple[ExecutionNodeResult, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -154,7 +156,7 @@ class EventDispatchSystem:
         damage_window_ledger: DamageWindowLedger | None = None,
     ) -> EventDispatchResult:
         if command is not None and action_definition is not None and target_resolution is not None:
-            return self._dispatch_action_window_event(
+            result = self._dispatch_action_window_event(
                 state,
                 event=event,
                 command=command,
@@ -163,13 +165,15 @@ class EventDispatchSystem:
                 enabled=enabled,
                 skipped_reason=skipped_reason,
             )
-        return self._dispatch_listener_event(
-            state,
-            event=event,
-            unit_id=unit_id,
-            modifier_name=modifier_name,
-            damage_window_ledger=damage_window_ledger,
-        )
+        else:
+            result = self._dispatch_listener_event(
+                state,
+                event=event,
+                unit_id=unit_id,
+                modifier_name=modifier_name,
+                damage_window_ledger=damage_window_ledger,
+            )
+        return _with_event_dispatch_node_result(result, event)
 
     def _dispatch_action_window_event(
         self,
@@ -218,6 +222,7 @@ class EventDispatchSystem:
             trigger_windows=result.trigger_windows,
             listener_records=listener_records,
             errors=(),
+            node_results=_trigger_window_node_results(event, result.trigger_windows),
         )
 
     def dispatch_status_callback(
@@ -310,6 +315,7 @@ class EventDispatchSystem:
         rng_events: list[RNGEvent] = []
         listener_records: list[dict[str, JSONValue]] = []
         errors: list[str] = []
+        node_results: list[ExecutionNodeResult] = []
         for match in matches:
             listener_record = _listener_record(
                 event,
@@ -340,6 +346,7 @@ class EventDispatchSystem:
             records.extend(result.records)
             events.extend(result.events)
             errors.extend(result.errors)
+            node_results.extend(result.node_results)
             child_depth = _event_mutation_depth(event)
             if child_depth < 1:
                 for emitted_event in result.events:
@@ -360,6 +367,7 @@ class EventDispatchSystem:
                     records.extend(child_result.records)
                     events.extend(child_result.events)
                     errors.extend(child_result.errors)
+                    node_results.extend(child_result.node_results)
             execution_record = _listener_record(
                 event,
                 listener_kind=match.listener_kind,
@@ -384,6 +392,7 @@ class EventDispatchSystem:
             trigger_windows=(),
             listener_records=tuple(listener_records),
             errors=tuple(errors),
+            node_results=tuple(node_results),
         )
 
     def _resolve_listener_matches(
@@ -539,7 +548,66 @@ class EventDispatchSystem:
             records=(dispatch_record, listener_record),
             listener_records=(listener_record,),
             errors=(reason,),
+            node_results=(
+                ExecutionNodeResult(
+                    node_kind="event_dispatch",
+                    node_id=event.event_id or event.event_type,
+                    status="blocked",
+                    reason_code=reason,
+                ),
+            ),
         )
+
+
+def _with_event_dispatch_node_result(
+    result: EventDispatchResult,
+    event: GameEvent,
+) -> EventDispatchResult:
+    nodes = list(result.node_results)
+    if result.errors:
+        nodes.append(
+            ExecutionNodeResult(
+                node_kind="event_dispatch",
+                node_id=event.event_id or event.event_type,
+                status="blocked",
+                reason_code=",".join(result.errors),
+            )
+        )
+    elif not nodes:
+        nodes.append(
+            ExecutionNodeResult(
+                node_kind="event_dispatch",
+                node_id=event.event_id or event.event_type,
+                status="complete",
+            )
+        )
+    return replace(result, node_results=tuple(nodes))
+
+
+def _trigger_window_node_results(
+    event: GameEvent,
+    trigger_windows: tuple[dict[str, JSONValue], ...],
+) -> tuple[ExecutionNodeResult, ...]:
+    if not trigger_windows:
+        return (
+            ExecutionNodeResult(
+                node_kind="trigger_window",
+                node_id=event.event_id or event.event_type,
+                status="complete",
+            ),
+        )
+    results: list[ExecutionNodeResult] = []
+    for index, window in enumerate(trigger_windows):
+        reason = str(window.get("blocked_reason") or "")
+        results.append(
+            ExecutionNodeResult(
+                node_kind="trigger_window",
+                node_id=str(window.get("trigger_id") or f"{event.event_id or event.event_type}:{index}"),
+                status="blocked" if reason else "complete",
+                reason_code=reason,
+            )
+        )
+    return tuple(results)
 
 
 def _dispatch_record(

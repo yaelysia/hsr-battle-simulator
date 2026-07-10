@@ -11,15 +11,15 @@ turnbasedgamedata-main -> TBGD compiler/lowering -> Canonical IR / 数据卡 IR 
 当前最近检查点：
 
 ```text
-P7-S0 kernel trust issue baseline accepted
-最近检查点：P7-S0 内核可信问题基线验收提交
-轻量验证入口：python3 -m simulator_v8_clean_core.tools.validate_p7_s0_kernel_trust_baseline
+P7-S1 transition trust result contract accepted
+最近检查点：P7-S1 Transition 可信结果契约验收提交
+轻量验证入口：python3 -m simulator_v8_clean_core.tools.validate_p7_s1_transition_trust_contract
 ```
 
 当前推荐下一阶段：
 
 ```text
-P7-S1 transition trust result contract
+P7-S2 mutation preconditions and reducer conflict detection
 计划文档：P7_KERNEL_TRUST_AND_COMBAT_SEMANTICS_REPAIR_TASK_PLAN.md
 ```
 
@@ -102,6 +102,7 @@ L0 来源编译层：TBGD raw -> lowering -> Canonical IR / 数据卡 IR
 - P5 公式 / 动态值 / 参数绑定通用准入底座通过；`p5_all_executable_complete=false` 是已归因 backlog。
 - P6 架构边界回正通过；一等出生模板、显式计算入口和访问边界已经收口。
 - P7-S0 问题基线通过；24 项问题仍全部 `confirmed_open`，S0 只固化复现和结构证据，没有修改 runtime。
+- P7-S1 Transition 可信结果契约通过；只有 `committed` 可作为正式后继，blocked / diagnostic / unclassified 均不可推进外部状态。
 - 本地 UI 测试台 `simulator_v8_ui/`，作为测试编排与审计展示层，不作为规则系统。
 
 ## 当前仍未完整落地的大块
@@ -129,13 +130,14 @@ PYTHONDONTWRITEBYTECODE=1 ionice -c3 nice -n 15 python3 -B -m simulator_v8_clean
 PYTHONDONTWRITEBYTECODE=1 ionice -c3 nice -n 15 python3 -B -m simulator_v8_clean_core.tools.validate_p5_formula_dynamic_param_binding --output-dir /tmp/hsr_v8_p5_current
 PYTHONDONTWRITEBYTECODE=1 ionice -c3 nice -n 15 python3 -B -m simulator_v8_clean_core.tools.validate_p6_architecture_boundary_refactor --output-dir /tmp/hsr_v8_p6_current
 PYTHONDONTWRITEBYTECODE=1 python3 -B -m simulator_v8_clean_core.tools.validate_p7_s0_kernel_trust_baseline --output-dir /tmp/hsr_v8_p7_s0_current
+PYTHONDONTWRITEBYTECODE=1 python3 -B -m simulator_v8_clean_core.tools.validate_p7_s1_transition_trust_contract --output-dir /tmp/hsr_v8_p7_s1_current
 git diff --check
 ```
 
 当前期望：
 
 - `compileall` 通过。
-- P1/P2/P3/P4/P5/P6 聚合输出 `ok=true`；P7-S0 轻量基线输出 `ok=true`。
+- P1/P2/P3/P4/P5/P6 聚合输出 `ok=true`；P7-S0/P7-S1 轻量验证输出 `ok=true`。
 - P3/P4/P5 当前全正例期望仍是 `*_all_executable_complete=false`，不能把已归因 gap 误读为失败，也不能把底座通过误读为全正例完成。
 - replay/source audit/settlement traceability 通过。
 - unsupported、blocked、audit-only、discovered-only 不产生 mutation。
@@ -145,4 +147,4 @@ git diff --check
 
 ## 下一阶段建议
 
-下一步只执行 P7-S1 Transition 可信结果契约。S1 经独立验收前不得提前执行 S2-S19，也不继续大规模内容扩面。阶段开始前先提交详细执行卡；执行线程只能提交 `ready_for_review`，由验收线程检查代码、谓词和 evidence 后勾选唯一 checklist。
+下一步只执行 P7-S2 Mutation 前置条件与 reducer 冲突检测。S2 经独立验收前不得提前执行 S3-S19，也不继续大规模内容扩面。阶段开始前先提交详细执行卡；执行线程只能提交 `ready_for_review`，由验收线程检查代码、谓词和 evidence 后勾选唯一 checklist。

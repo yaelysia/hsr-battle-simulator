@@ -5,6 +5,7 @@ from dataclasses import dataclass, replace
 from ..core.model import BattleState, GameEvent, JSONValue, Mutation, RNGEvent
 from ..core.reducer import MutationReducer
 from ..core.settlement import SettlementRecord
+from ..core.transition_outcome import ExecutionNodeResult
 from ..rules.evaluator import EvaluationContext, NumericEvaluationContext, NumericEvaluationResult, RuleEvaluator
 from ..rules.ir import ActionDelayEmissionIR, QueueIntentIR, StatusCallbackIR, StatusCallbackTaskIR, StatusDamageEmissionIR
 from ..rules.rulebook import RuleBook
@@ -29,6 +30,7 @@ class StatusCallbackExecutionResult:
     records: tuple[dict[str, JSONValue], ...] = ()
     events: tuple[GameEvent, ...] = ()
     errors: tuple[str, ...] = ()
+    node_results: tuple[ExecutionNodeResult, ...] = ()
 
 
 class StatusCallbackSystem:
@@ -55,6 +57,39 @@ class StatusCallbackSystem:
         self.value_resolver = ValueResolver(rules)
 
     def execute(
+        self,
+        state: BattleState,
+        *,
+        unit_id: str,
+        modifier_name: str,
+        event: str,
+        trigger_event: GameEvent | None = None,
+        damage_window_ledger: DamageWindowLedger | None = None,
+    ) -> StatusCallbackExecutionResult:
+        result = self._execute(
+            state,
+            unit_id=unit_id,
+            modifier_name=modifier_name,
+            event=event,
+            trigger_event=trigger_event,
+            damage_window_ledger=damage_window_ledger,
+        )
+        if result.node_results:
+            return result
+        reason = ",".join(result.errors)
+        return replace(
+            result,
+            node_results=(
+                ExecutionNodeResult(
+                    node_kind="status_callback",
+                    node_id=f"{unit_id}:{modifier_name}:{event}",
+                    status="complete" if result.ok else "blocked",
+                    reason_code=reason or ("" if result.ok else "status_callback_incomplete"),
+                ),
+            ),
+        )
+
+    def _execute(
         self,
         state: BattleState,
         *,

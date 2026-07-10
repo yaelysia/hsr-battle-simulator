@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from ..core.model import ActionCommand, BattleState, GameEvent, JSONValue, Mutation, RNGEvent, TargetResolution
 from ..core.reducer import MutationReducer
 from ..core.settlement import SettlementRecord
+from ..core.transition_outcome import ExecutionNodeResult
 from ..rules.evaluator import EvaluationContext, NumericEvaluationContext, RuleEvaluator
 from ..rules.ir import AbilityPhaseIR, AbilityTaskIR, ActionDefinitionIR, IRSource
 from ..rules.rulebook import RuleBook
@@ -26,6 +27,7 @@ class AbilityTaskExecutionResult:
     rng_events: tuple[RNGEvent, ...] = ()
     records: tuple[dict[str, JSONValue], ...] = ()
     task_records: tuple[dict[str, JSONValue], ...] = ()
+    node_results: tuple[ExecutionNodeResult, ...] = ()
 
 
 class AbilityTaskSystem:
@@ -118,6 +120,7 @@ class AbilityTaskSystem:
             rng_events=tuple(rng_events),
             records=tuple(records),
             task_records=tuple(task_records),
+            node_results=_node_results_from_task_records(task_records),
         )
 
     def execute_standalone(
@@ -146,6 +149,14 @@ class AbilityTaskSystem:
                         },
                         trace={},
                     ).to_json(),
+                ),
+                node_results=(
+                    ExecutionNodeResult(
+                        node_kind="ability_graph",
+                        node_id=str(queue_entry.get("entry_id") or "standalone_ability"),
+                        status="blocked",
+                        reason_code="standalone_ability_phases_missing",
+                    ),
                 ),
             )
         ability_name = phases[0].ability_name
@@ -219,6 +230,7 @@ class AbilityTaskSystem:
             ).to_json()
         ]
         task_records: list[dict[str, JSONValue]] = []
+        node_results: list[ExecutionNodeResult] = []
         for callback_kind in ("OnStart", "OnAttack", "OnHit", "OnEnd"):
             result = self.execute_callback(
                 current,
@@ -234,6 +246,7 @@ class AbilityTaskSystem:
             rng_events.extend(result.rng_events)
             records.extend(result.records)
             task_records.extend(result.task_records)
+            node_results.extend(result.node_results)
         return AbilityTaskExecutionResult(
             after_state=current,
             mutations=tuple(mutations),
@@ -241,6 +254,7 @@ class AbilityTaskSystem:
             rng_events=tuple(rng_events),
             records=tuple(records),
             task_records=tuple(task_records),
+            node_results=tuple(node_results),
         )
 
     def _execute_task(
@@ -672,6 +686,36 @@ def _task_process_record(
         },
         trace=task.source.to_json(),
     ).to_json()
+
+
+def _node_results_from_task_records(
+    task_records: list[dict[str, JSONValue]] | tuple[dict[str, JSONValue], ...],
+) -> tuple[ExecutionNodeResult, ...]:
+    results: list[ExecutionNodeResult] = []
+    for index, payload in enumerate(task_records):
+        task_id = str(payload.get("task_id") or f"ability_task:{index}")
+        ok = payload.get("ok") is True
+        reason = str(payload.get("blocked_reason") or "")
+        coverage_status = str(payload.get("coverage_status") or "")
+        if ok:
+            status = "complete"
+        elif "partial" in reason or "partial" in coverage_status:
+            status = "partial"
+        elif coverage_status and coverage_status != "executable":
+            status = "unsupported"
+        elif "not_executable" in reason or "unsupported" in reason:
+            status = "unsupported"
+        else:
+            status = "blocked"
+        results.append(
+            ExecutionNodeResult(
+                node_kind="ability_task",
+                node_id=task_id,
+                status=status,
+                reason_code=reason or ("" if ok else "ability_task_incomplete"),
+            )
+        )
+    return tuple(results)
 
 
 def _rng_event_payload_from_command(command: ActionCommand) -> dict[str, JSONValue]:

@@ -34,8 +34,8 @@ turnbasedgamedata-main -> TBGD compiler/lowering -> Canonical IR -> Combat Core
 
 ```text
 P7 kernel trust and combat semantics repair
-最近代码检查点：P7-S0 内核可信问题基线验收提交
-当前规划主线：P7 内核可信执行与战斗语义回正；下一步只执行 P7-S1 Transition 可信结果契约
+最近代码检查点：P7-S1 Transition 可信结果契约验收提交
+当前规划主线：P7 内核可信执行与战斗语义回正；下一步只执行 P7-S2 Mutation 前置条件与 reducer 冲突检测
 ```
 
 当前 v8 已建立的底层范围包括：
@@ -56,6 +56,7 @@ P7 kernel trust and combat semantics repair
 - P6 架构边界回正已经完成，伤害 / 削韧显式计算入口、一等 `UnitBirthTemplateIR`、请求绑定出生单、Stage / HardLevelGroup 波次等级来源、RuleBook 窄访问边界和聚合阻断口径均已验收；P6 是职责边界闭环通过，不是全部机制扩面完成。
 - P6 后深度代码复审已建立 P7 问题计划：当前 skeleton 可保留，但 transition 可信门、Mutation 前置校验、动作 / 目标 / 调度闭环、回合阶段、伤害、护盾、状态概率、RNG、召唤和波次等语义仍需逐项回正。旧聚合通过不能被解释为这些问题已解决。
 - P7-S0 问题基线已经独立验收：P7-I01 至 P7-I24 均有唯一 `confirmed_open` 记录，十项轻量 runtime probe 实际复现当前缺陷，I20/I21/I23 具备全包 AST 结构证据；S0 没有修改 runtime，也不表示任何问题已经修复。
+- P7-S1 Transition 可信结果契约已经独立验收：`committed`、`blocked`、`diagnostic` 三类结果机器可读，未知、矛盾或不完整结果不可作为正式后继；executor、scheduler 和 UI consumer 已接入 outcome。S1 不等于原子提交完成，diagnostic candidate 的内部 mutation 收口仍归 P7-S3。
 - `simulator_v8_ui/` 本地 UI 测试台，用于 scenario 编排和审计展示，不进入规则系统。
 
 当前仍未完整实现的大块：

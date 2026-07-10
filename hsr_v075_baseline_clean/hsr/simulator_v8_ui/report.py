@@ -65,6 +65,7 @@ def build_step_report(
         "after_panel_summary": panel_summary(after_snapshot),
         "panel_source_breakdown": panel_source_breakdown(after_snapshot, scenario_data),
         "transition": transition_json if include_raw_transition else transition_summary(transition_json),
+        "transition_outcome": transition_json.get("outcome"),
         "child_transitions": [
             child.to_json() if include_raw_transition else transition_summary(child.to_json())
             for child in child_transitions
@@ -597,16 +598,18 @@ def blocked_records(
     for record in records:
         if _is_true_blocking_record(record):
             result.append(_readable_record(record, category="真正阻塞", impact="本步骤无法按有效战斗变更继续执行。"))
-    coverage = _dict(transition_json.get("coverage"))
-    reason = coverage.get("blocked_reason")
-    if isinstance(reason, str) and reason and reason != "enemy_ai_missing":
+    outcome = _dict(transition_json.get("outcome"))
+    category = str(outcome.get("category") or "")
+    reason_codes = [str(item) for item in _list(outcome.get("reason_codes")) if isinstance(item, str) and item]
+    if category in {"blocked", "diagnostic"}:
         result.append(
             {
-                "record_type": "coverage_blocked_reason",
-                "category": "真正阻塞",
-                "reason": reason,
-                "path": "coverage.blocked_reason",
-                "impact": "transition 标记为 blocked。",
+                "record_type": "transition_outcome_not_committed",
+                "category": "真正阻塞" if category == "blocked" else "诊断性结果",
+                "reason": reason_codes[0] if reason_codes else "transition_outcome_not_successor_eligible",
+                "reason_codes": reason_codes,
+                "path": "outcome",
+                "impact": "该 transition 不可作为正式战斗后继。",
                 "produced_mutation": bool(_list(transition_json.get("mutations"))),
             }
         )
@@ -681,6 +684,7 @@ def transition_summary(transition_json: dict[str, JSONValue]) -> dict[str, JSONV
         "rng_event_count": len(_list(transition_json.get("rng_events"))),
         "mutation_count": len(_list(transition_json.get("mutations"))),
         "settlement_record_count": len(_list(settlement.get("records"))),
+        "outcome": transition_json.get("outcome"),
         "coverage": transition_json.get("coverage"),
         "contract_validation": transition_json.get("contract_validation"),
     }

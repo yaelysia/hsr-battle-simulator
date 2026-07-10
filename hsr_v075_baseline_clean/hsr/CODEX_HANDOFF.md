@@ -4,7 +4,7 @@
 
 当前主线是 `simulator_v8_clean_core`。P1 最终收口、P2 状态系统底座、P3 召唤物体系底座、P4 角色卡 / 怪物卡数据卡扩面底座、P5 公式 / 动态值 / 参数绑定通用准入底座、P6 架构边界回正均已完成当前闭环验收。P6 聚合入口 `validate_p6_architecture_boundary_refactor` 输出 `ok=true`、`stages=4/4`、`ready_for_review=true`、`p6_all_mechanisms_reimplemented=false`；S0 当前 `violation_row_count=0`，P6 自有越界显式延期白名单为空。P6 是边界回正，不是全机制复刻完成。
 
-当前规划主线是 P7 内核可信执行与战斗语义回正。P7-S0 问题基线已经独立验收：P7-I01 至 P7-I24 均有唯一 `confirmed_open` 记录，十项轻量 runtime probe 实际复现当前缺陷，I20/I21/I23 具备全包 AST 结构证据，且 S0 没有修改 runtime。下一步只能执行 P7-S1 Transition 可信结果契约；执行前仍须提交独立执行卡。P3/P4/P5 admission gap、装备 / 构筑 / 关卡环境 / 全角色全怪物扩面仍保留，但不应在可信内核回正前继续大规模展开。
+当前规划主线是 P7 内核可信执行与战斗语义回正。P7-S0 问题基线和 P7-S1 Transition 可信结果契约已经独立验收。BattleTransition 现在用 `committed`、`blocked`、`diagnostic` 明确区分正式后继、执行前阻断和诊断性候选；未知、不完整、状态变化却无 Mutation、diagnostic child 等路径不能冒充正式后继。下一步只能执行 P7-S2 Mutation 前置条件与 reducer 冲突检测；执行前仍须提交独立执行卡。P3/P4/P5 admission gap 和内容扩面继续保留。
 
 ## 1. 路径与事实来源
 
@@ -326,7 +326,7 @@ TargetAlias=197061
 
 ## 7. 推荐下一步
 
-推荐下一步只执行 P7-S1：建立机器可读的 transition 可信结果契约，使完整成功、阻断且状态不变、诊断性且不可作为后继三类结果无需靠日志或 coverage 文字猜测。S1 只建立并接通可信类别，不提前实现 S2 reducer 冲突检测或 S3 原子执行图。P7 完成可信状态转移、动作 / 目标 / 调度和核心战斗语义回正前，暂停大规模角色卡 / 怪物卡、装备和关卡扩面。
+推荐下一步只执行 P7-S2：强制 reducer 核对 Mutation.before、op、after 和同路径链，过期计划、非法操作和冲突写入必须整体拒绝。S2 不提前实现 S3 的所选执行图原子提交，也不修改具体战斗公式。P7 完成可信状态转移、动作 / 目标 / 调度和核心战斗语义回正前，暂停大规模内容扩面。
 
 P7 仍要延续并收紧 P4/P5/P7 的执行结构：
 
@@ -371,7 +371,7 @@ git diff --check
 如果要继续推进，建议开局说清：
 
 ```text
-当前接续 v8 P7-S0 内核可信问题基线验收检查点之后。先读 CODEX_HANDOFF、README、ARCHITECTURE_BOUNDARY_CONTRACT、PROJECT_GOALS、FORBIDDEN、P7 计划和 P7-S0 evidence。P7-I01 至 P7-I24 当前全部保持 `confirmed_open`；S0 的十项 runtime probe 和 I20/I21/I23 结构证据已经验收，但不表示任何缺陷已经修复。下一步只能执行 P7-S1 Transition 可信结果契约，先提交详细执行卡；执行线程只交 `ready_for_review`，验收线程复核后勾唯一 checklist。runtime 仍只能读 Canonical IR / 数据卡 IR，审计来源不能驱动行为，任何 partial / blocked 路径最终必须 state unchanged。
+当前接续 v8 P7-S1 Transition 可信结果契约验收检查点之后。先读 CODEX_HANDOFF、README、ARCHITECTURE_BOUNDARY_CONTRACT、PROJECT_GOALS、FORBIDDEN、P7 计划和 S0/S1 evidence。S0 问题基线与 S1 outcome 契约已验收；P7-I01 的结果分类部分完成，但部分执行的内部原子收口仍归 S3。下一步只能执行 P7-S2 Mutation 前置条件与 reducer 冲突检测，先提交详细执行卡；执行线程只交 `ready_for_review`，验收线程复核后勾唯一 checklist。UI `enemy_ai_auto_skip` 的既有验证错位继续归 P7-S8，不得在 S2 顺手修复。
 ```
 
 不要从旧 `CODEX_HANDOFF` 的 v7 叙述接续；本文件已经替换为 v8 当前交接手册。

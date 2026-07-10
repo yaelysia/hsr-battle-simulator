@@ -15,6 +15,7 @@ from ..core.model import (
 )
 from ..core.reducer import MutationReducer
 from ..core.settlement import SettlementRecord
+from ..core.transition_outcome import ExecutionNodeResult, ExecutionNodeStatus, classify_transition_outcome
 from ..rules.ir import AbilityPhaseIR, IRSource, QueueResolutionIR
 from ..rules.rulebook import RuleBook
 from .ability import AbilityTaskSystem
@@ -88,6 +89,7 @@ class CombatScheduler:
                 events=result.events,
                 mutations=result.mutations,
                 records=_mutation_records("timeline_initialize", result.mutations, result.plan),
+                node_results=(_scheduler_node("timeline", "timeline:initialize"),),
                 coverage={"timeline_rule": rule.to_json()},
             ),
         )
@@ -250,6 +252,7 @@ class CombatScheduler:
             ),
             mutations=(mutation,),
             records=records,
+            node_results=(_scheduler_node("queue", "queue:manual_ultimate_request"),),
             coverage={
                 "manual_ultimate": True,
                 "queue_entry": entry.to_json(),
@@ -464,6 +467,7 @@ class CombatScheduler:
                     pending_mutation,
                 ),
                 target_resolution=action_transition.target_resolution,
+                child_transitions=(begin_result.transition, action_transition),
                 coverage={
                     "scheduler_step": "manual_action_turn_lifecycle_deferred_for_queue",
                     "turn_begin": begin_result.transition.coverage,
@@ -481,7 +485,7 @@ class CombatScheduler:
                 },
             )
             return SchedulerStepResult(
-                after_pending,
+                _eligible_scheduler_state(state, after_pending, combined),
                 combined,
                 child_transitions=(begin_result.transition, action_transition),
             )
@@ -540,6 +544,7 @@ class CombatScheduler:
                 *end_result.transition.transaction.mutations,
             ),
             target_resolution=action_transition.target_resolution,
+            child_transitions=(begin_result.transition, action_transition, end_result.transition),
             coverage={
                 "scheduler_step": "manual_action_turn_lifecycle",
                 "turn_begin": begin_result.transition.coverage,
@@ -558,7 +563,7 @@ class CombatScheduler:
             },
         )
         return SchedulerStepResult(
-            end_result.after_state,
+            _eligible_scheduler_state(state, end_result.after_state, combined),
             combined,
             child_transitions=(begin_result.transition, action_transition, end_result.transition),
         )
@@ -631,6 +636,7 @@ class CombatScheduler:
                 events=(*events, *candidate_events),
                 mutations=mutations,
                 records=records,
+                node_results=(_scheduler_node("timeline", "timeline:advance_to_next_turn"),),
                 coverage={
                     "turn_advance_plan": plan.to_json(),
                     "timeline_rule": rule.to_json(),
@@ -686,30 +692,29 @@ class CombatScheduler:
             )
         result = self.timeline.end_turn(dispatch.after_state, actor_id, rule, turn_kind="regular")
         after = self.reducer.apply_all(dispatch.after_state, result.mutations)
-        return SchedulerStepResult(
-            after,
-            _transition(
-                before_state=state,
-                after_state=after,
-                action_id="timeline:end_current_turn",
-                actor_id=actor_id,
-                events=(*lifecycle.events, *dispatch.events, *result.events),
-                mutations=(*lifecycle.mutations, *dispatch.mutations, *result.mutations),
-                records=(
-                    *lifecycle.records,
-                    *dispatch.records,
-                    *_mutation_records("turn_end", result.mutations, result.plan),
-                ),
-                coverage={
-                    "timeline_rule": rule.to_json(),
-                    "turn_advance_plan": result.plan.to_json(),
-                    "status_lifecycle": {
-                        "life_step_moment": "ModifierPhase1End",
-                        "mutation_count": len(lifecycle.mutations),
-                    },
-                },
+        transition = _transition(
+            before_state=state,
+            after_state=after,
+            action_id="timeline:end_current_turn",
+            actor_id=actor_id,
+            events=(*lifecycle.events, *dispatch.events, *result.events),
+            mutations=(*lifecycle.mutations, *dispatch.mutations, *result.mutations),
+            records=(
+                *lifecycle.records,
+                *dispatch.records,
+                *_mutation_records("turn_end", result.mutations, result.plan),
             ),
+            node_results=(*dispatch.node_results, _scheduler_node("timeline", "timeline:end_current_turn")),
+            coverage={
+                "timeline_rule": rule.to_json(),
+                "turn_advance_plan": result.plan.to_json(),
+                "status_lifecycle": {
+                    "life_step_moment": "ModifierPhase1End",
+                    "mutation_count": len(lifecycle.mutations),
+                },
+            },
         )
+        return SchedulerStepResult(_eligible_scheduler_state(state, after, transition), transition)
 
     def _apply_status_lifecycle_tick(
         self,
@@ -810,6 +815,16 @@ class CombatScheduler:
                     events=result.events,
                     mutations=(),
                     records=result.records,
+                    node_results=(
+                        _scheduler_node(
+                            "wave",
+                            "wave:transition",
+                            status="blocked",
+                            reason=plan.blocked_reason or "wave_transition_blocked",
+                        ),
+                    ),
+                    preflight_blocked=True,
+                    preflight_reason=plan.blocked_reason,
                     coverage={"wave_transition": plan.to_json(), "blocked_reason": plan.blocked_reason},
                 ),
             )
@@ -824,6 +839,7 @@ class CombatScheduler:
                 events=result.events,
                 mutations=result.mutations,
                 records=result.records,
+                node_results=(_scheduler_node("wave", "wave:transition"),),
                 coverage={"wave_transition": plan.to_json(), "scheduler_step": "wave_transition"},
             ),
         )
@@ -1095,22 +1111,27 @@ class CombatScheduler:
                 trace=plan.source_trace or {},
             ).to_json()
         )
-        return SchedulerStepResult(
-            after_state,
-            _transition(
-                before_state=state,
-                after_state=after_state,
-                action_id="queue:drain_admitted",
-                actor_id=str(plan.queue_entry.get("actor_id") or ""),
-                events=events,
-                mutations=mutations,
-                records=tuple(records),
-                coverage={
-                    "drain_plan": plan.to_json(),
-                    "queue_resolution": resolution.to_json(),
-                    "queue_window_plan": plan.queue_window or {},
-                },
+        transition = _transition(
+            before_state=state,
+            after_state=after_state,
+            action_id="queue:drain_admitted",
+            actor_id=str(plan.queue_entry.get("actor_id") or ""),
+            events=events,
+            mutations=mutations,
+            records=tuple(records),
+            node_results=(
+                _scheduler_node("queue", "queue:drain_admitted"),
+                *_child_transition_node_results(child_transitions),
             ),
+            coverage={
+                "drain_plan": plan.to_json(),
+                "queue_resolution": resolution.to_json(),
+                "queue_window_plan": plan.queue_window or {},
+            },
+        )
+        return SchedulerStepResult(
+            _eligible_scheduler_state(state, after_state, transition),
+            transition,
             child_transitions=child_transitions,
         )
 
@@ -1325,6 +1346,7 @@ class CombatScheduler:
                 clear_mutation,
             ),
             target_resolution=TargetResolution(reason="pending_turn_end_no_target", source="timeline_scheduler"),
+            child_transitions=(end_result.transition,),
             coverage={
                 "scheduler_step": "complete_deferred_turn_lifecycle",
                 "pending_turn_end": pending_turn_end,
@@ -1332,7 +1354,11 @@ class CombatScheduler:
                 "turn_end": end_result.transition.coverage,
             },
         )
-        return SchedulerStepResult(after_clear, combined, child_transitions=(end_result.transition,))
+        return SchedulerStepResult(
+            _eligible_scheduler_state(state, after_clear, combined),
+            combined,
+            child_transitions=(end_result.transition,),
+        )
 
     def _ultimate_energy_cost_mutation(
         self,
@@ -1420,6 +1446,9 @@ class CombatScheduler:
                 *queue_event,
             ),
             records=(record, *queue_record),
+            node_results=(_scheduler_node("scheduler", action_id, status="blocked", reason=reason),),
+            preflight_blocked=True,
+            preflight_reason=reason,
             coverage={"blocked_reason": reason},
         )
         return SchedulerStepResult(state, transition)
@@ -1494,6 +1523,9 @@ def _transition(
     events: tuple[GameEvent, ...] = (),
     mutations: tuple[Mutation, ...] = (),
     records: tuple[dict[str, JSONValue], ...] = (),
+    node_results: tuple[ExecutionNodeResult, ...],
+    preflight_blocked: bool = False,
+    preflight_reason: str = "",
     coverage: dict[str, JSONValue] | None = None,
 ) -> BattleTransition:
     command = ActionCommand(actor_id=actor_id, action_id=action_id, action_level=0, metadata={"scheduler": "timeline"})
@@ -1509,6 +1541,13 @@ def _transition(
         ),
         after=after_state.snapshot(),
         target_resolution=TargetResolution(reason="scheduler_no_target", source="timeline_scheduler"),
+        outcome=classify_transition_outcome(
+            node_results,
+            state_changed=before_state.snapshot().to_json() != after_state.snapshot().to_json(),
+            mutation_count=len(mutations),
+            preflight_blocked=preflight_blocked,
+            preflight_reason=preflight_reason,
+        ),
         coverage=coverage or {},
     )
 
@@ -1522,6 +1561,7 @@ def _combine_scheduler_transitions(
     mutations: tuple[Mutation, ...],
     records: tuple[dict[str, JSONValue], ...],
     target_resolution: TargetResolution,
+    child_transitions: tuple[BattleTransition, ...],
     coverage: dict[str, JSONValue],
 ) -> BattleTransition:
     action_id = "scheduler:step"
@@ -1543,6 +1583,14 @@ def _combine_scheduler_transitions(
         ),
         after=after_state.snapshot(),
         target_resolution=target_resolution,
+        outcome=classify_transition_outcome(
+            (
+                _scheduler_node("scheduler", action_id),
+                *_child_transition_node_results(child_transitions),
+            ),
+            state_changed=before_state.snapshot().to_json() != after_state.snapshot().to_json(),
+            mutation_count=len(mutations),
+        ),
         coverage=coverage,
     )
 
@@ -1574,10 +1622,54 @@ def _with_scheduler_record(
         after=result.transition.after,
         target_resolution=result.transition.target_resolution,
         rng_events=result.transition.rng_events,
+        outcome=result.transition.outcome,
         coverage={**result.transition.coverage, **payload},
         contract_validation=result.transition.contract_validation,
     )
     return SchedulerStepResult(result.after_state, replacement, result.child_transitions)
+
+
+def _scheduler_node(
+    node_kind: str,
+    node_id: str,
+    *,
+    status: ExecutionNodeStatus = "complete",
+    reason: str = "",
+) -> ExecutionNodeResult:
+    return ExecutionNodeResult(
+        node_kind=node_kind,
+        node_id=node_id,
+        status=status,
+        reason_code=reason,
+    )
+
+
+def _child_transition_node_results(
+    transitions: tuple[BattleTransition, ...],
+) -> tuple[ExecutionNodeResult, ...]:
+    results: list[ExecutionNodeResult] = []
+    for index, transition in enumerate(transitions):
+        results.append(
+            ExecutionNodeResult(
+                node_kind="child_transition",
+                node_id=transition.transaction.command.action_id or f"child:{index}",
+                status="complete" if transition.outcome.successor_eligible else "partial",
+                reason_code=""
+                if transition.outcome.successor_eligible
+                else ",".join(transition.outcome.reason_codes)
+                or f"child_transition_{transition.outcome.category}",
+            )
+        )
+        results.extend(transition.outcome.node_results)
+    return tuple(results)
+
+
+def _eligible_scheduler_state(
+    before_state: BattleState,
+    candidate_after_state: BattleState,
+    transition: BattleTransition,
+) -> BattleState:
+    return candidate_after_state if transition.outcome.successor_eligible else before_state
 
 
 def _scheduler_process_records(

@@ -5,6 +5,8 @@ import json
 from dataclasses import dataclass, field
 from typing import Literal
 
+from .transition_outcome import TransitionOutcome, unclassified_transition_outcome
+
 
 JSONValue = None | bool | int | float | str | list["JSONValue"] | dict[str, "JSONValue"]
 UnitSide = Literal["ally", "enemy", "summon"]
@@ -362,6 +364,7 @@ class BattleTransition:
     after: Snapshot
     target_resolution: TargetResolution = field(default_factory=TargetResolution)
     rng_events: tuple[RNGEvent, ...] = ()
+    outcome: TransitionOutcome = field(default_factory=unclassified_transition_outcome)
     coverage: dict[str, JSONValue] = field(default_factory=dict)
     contract_validation: dict[str, JSONValue] = field(default_factory=dict)
 
@@ -381,6 +384,7 @@ class BattleTransition:
             "target_resolution": self.target_resolution.to_json(),
             "events": [event.to_json() for event in self.transaction.events],
             "rng_events": [event.to_json() for event in self.rng_events],
+            "outcome": self.outcome.to_json(),
             "mutations": [mutation.to_json() for mutation in self.transaction.mutations],
             "trigger_windows": list(self.transaction.trigger_windows),
             "settlement": self.transaction.settlement.to_json()

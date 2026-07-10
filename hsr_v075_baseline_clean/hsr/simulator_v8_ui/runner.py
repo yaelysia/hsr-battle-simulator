@@ -121,7 +121,7 @@ class UIRunner:
         if run_options.mode == "scheduler" and run_options.initialize_timeline:
             explicit_overrides = _explicit_action_value_unit_ids(scenario)
             timeline_result = scheduler.initialize_timeline(state, explicit_overrides=explicit_overrides)
-            state = timeline_result.after_state
+            state = _transition_successor_state(state, timeline_result.after_state, timeline_result.transition.to_json())
             timeline_init_transition = timeline_result.transition.to_json()
 
         steps: list[dict[str, JSONValue]] = []
@@ -133,6 +133,7 @@ class UIRunner:
             if run_options.mode == "executor":
                 before_state = state
                 after_state, transition = CombatExecutor(self.rules).execute(command, before_state)
+                after_state = _transition_successor_state(before_state, after_state, transition.to_json())
                 child_transitions = ()
             else:
                 attempts = 0
@@ -164,7 +165,7 @@ class UIRunner:
                         attempts += 1
                         continue
                     break
-                after_state = result.after_state
+                after_state = _transition_successor_state(before_state, result.after_state, result.transition.to_json())
                 transition = result.transition
                 child_transitions = result.child_transitions
             steps.append(
@@ -415,7 +416,7 @@ def _prepare_action_prompt_state(
             )
             break
 
-        current = next_result.after_state
+        current = _transition_successor_state(current, next_result.after_state, next_json)
         transitions.append(
             {
                 "stage": "prepare_action_prompt_advance",
@@ -592,28 +593,32 @@ def _state_without_unit_flags(
 
 
 def _transition_blocked_reason(transition_json: dict[str, JSONValue]) -> str:
-    coverage = transition_json.get("coverage")
-    if isinstance(coverage, dict):
-        reason = coverage.get("blocked_reason")
+    outcome = _dict(transition_json.get("outcome"))
+    if outcome.get("category") == "committed" and outcome.get("successor_eligible") is True:
+        return ""
+    for reason in _list(outcome.get("reason_codes")):
         if isinstance(reason, str) and reason:
             return reason
-    for record in _list(_dict(transition_json.get("settlement")).get("records")):
-        payload = _dict(_dict(record).get("payload"))
-        reason = payload.get("reason") or payload.get("blocked_reason")
-        if isinstance(reason, str) and reason:
-            return reason
+    if outcome:
+        return "transition_outcome_not_successor_eligible"
     return ""
 
 
 def _blocked_actor_id(transition_json: dict[str, JSONValue]) -> str:
-    for record in _list(_dict(transition_json.get("settlement")).get("records")):
-        payload = _dict(_dict(record).get("payload"))
-        actor_id = payload.get("actor_id")
-        if isinstance(actor_id, str) and actor_id:
-            return actor_id
     command = _dict(transition_json.get("command"))
     actor_id = command.get("actor_id")
     return actor_id if isinstance(actor_id, str) else ""
+
+
+def _transition_successor_state(
+    before_state: BattleState,
+    candidate_after_state: BattleState,
+    transition_json: dict[str, JSONValue],
+) -> BattleState:
+    outcome = _dict(transition_json.get("outcome"))
+    if outcome.get("category") == "committed" and outcome.get("successor_eligible") is True:
+        return candidate_after_state
+    return before_state
 
 
 def _prompt_preparation_blocked_record(
