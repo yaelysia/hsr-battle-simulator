@@ -33,9 +33,9 @@ turnbasedgamedata-main -> TBGD compiler/lowering -> Canonical IR -> Combat Core
 最近检查点：
 
 ```text
-P6 architecture boundary refactor
-最近代码检查点：P6 架构边界回正验收提交
-当前规划主线：P6 后续机制扩面与既有 admission backlog 回收
+P7 kernel trust and combat semantics repair
+最近代码检查点：P7-S0 内核可信问题基线验收提交
+当前规划主线：P7 内核可信执行与战斗语义回正；下一步只执行 P7-S1 Transition 可信结果契约
 ```
 
 当前 v8 已建立的底层范围包括：
@@ -54,6 +54,8 @@ P6 architecture boundary refactor
 - P4 角色卡 / 怪物卡数据卡扩面底座已经完成，action/query contract、data card source trace、formula/dynamic/target/passive/action gap 总账、P3 backlog 继承和聚合验收可验证；P4 是底座闭环通过，不是全角色 / 全怪物 / 全装备 / 全关卡正例完成。
 - P5 公式 / 动态值 / 参数绑定通用准入底座已经完成，ValueResolver、静态参数、dynamic/custom 投影、damage/toughness/resource/status/callback queue/summon/trace/eidolon 消费侧、负例、source audit/replay 和聚合验收可验证；P5 是底座闭环通过，不是全角色 / 全怪物 / 全装备 / 全关卡公式正例完成。
 - P6 架构边界回正已经完成，伤害 / 削韧显式计算入口、一等 `UnitBirthTemplateIR`、请求绑定出生单、Stage / HardLevelGroup 波次等级来源、RuleBook 窄访问边界和聚合阻断口径均已验收；P6 是职责边界闭环通过，不是全部机制扩面完成。
+- P6 后深度代码复审已建立 P7 问题计划：当前 skeleton 可保留，但 transition 可信门、Mutation 前置校验、动作 / 目标 / 调度闭环、回合阶段、伤害、护盾、状态概率、RNG、召唤和波次等语义仍需逐项回正。旧聚合通过不能被解释为这些问题已解决。
+- P7-S0 问题基线已经独立验收：P7-I01 至 P7-I24 均有唯一 `confirmed_open` 记录，十项轻量 runtime probe 实际复现当前缺陷，I20/I21/I23 具备全包 AST 结构证据；S0 没有修改 runtime，也不表示任何问题已经修复。
 - `simulator_v8_ui/` 本地 UI 测试台，用于 scenario 编排和审计展示，不进入规则系统。
 
 当前仍未完整实现的大块：
@@ -113,11 +115,12 @@ v8 当前只保留少数高密度长期文档，避免文档膨胀影响索引�
 11. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/P4_COMBATANT_DATA_CARD_EXPANSION_TASK_PLAN.md`
 12. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/P5_FORMULA_DYNAMIC_PARAM_BINDING_TASK_PLAN.md`
 13. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/P6_ARCHITECTURE_BOUNDARY_REFACTOR_TASK_PLAN.md`
-14. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p5_formula_dynamic_param_binding_checkpoint.md`
-15. `hsr_v075_baseline_clean/hsr/live_validation_reports/archive/phase1/v8_p1_final_acceptance_checkpoint_v0_292.md`
-16. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_status_target_event_database_audit_checkpoint_v0_287.md`
-17. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_ir_checkpoint_v0_288.md`
-18. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_sequence_filter_retarget_checkpoint_v0_289.md`
+14. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/P7_KERNEL_TRUST_AND_COMBAT_SEMANTICS_REPAIR_TASK_PLAN.md`
+15. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p5_formula_dynamic_param_binding_checkpoint.md`
+16. `hsr_v075_baseline_clean/hsr/live_validation_reports/archive/phase1/v8_p1_final_acceptance_checkpoint_v0_292.md`
+17. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_status_target_event_database_audit_checkpoint_v0_287.md`
+18. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_ir_checkpoint_v0_288.md`
+19. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_sequence_filter_retarget_checkpoint_v0_289.md`
 
 P1 过程计划和中间报告已经归档，默认不要作为当前线程入口：
 
@@ -308,6 +311,10 @@ P4 的执行质量明显改善，后续大型计划应沿用这个正向模式�
 - UI 是倒查内部接口的工作台，不是内核设计的上级约束。为了 UI 体验牺牲 core 通用性、来源追溯或 runtime 干净度时，必须停下询问。
 - `turnbasedgamedata-main` 当前是配置数据来源，不是可直接调用的 battle engine。不能因为看到 battle/ability 配置就假设存在现成状态转移系统，也不能反过来用自造规则替代 lowering。
 - P4 的正面经验：执行质量提升不是因为目标写得更大，而是因为目标被拆成严格顺序、每阶段只有一个清晰完成口径、执行线程只能提交 evidence、验收线程负责勾选和提交。后续计划优先复用这种结构，尤其是角色/怪物全量扩面、动态公式、目标系统、波次/关卡环境这类长线任务。
+- transition/replay/source audit 自洽不等于战斗语义完整。每个结果必须有权威可信类别；只有所选执行图完整、Mutation 前置条件成立且原子提交的结果才能作为推演器下一状态，partial / blocked / diagnostic 必须 state unchanged。
+- 动作查询与提交必须满足 round trip：同一决策状态中，查询给出的每个动作和目标都可原样提交，未给出的命令必须被拒绝；只读查询不得推进时间线、重复触发回合开始或改变当前行动者。
+- `source_trace`、source/evidence 和审计 payload 只能用于解释来源，不能作为 runtime 行为输入。边界静态检查必须覆盖“从审计信息取规则”的行为路径，不能只检查 raw import 或敏感 token。
+- 内核验收必须包含通用不变量，至少覆盖动作所有权、目标基数、护盾吸收、回合 / DoT / 控制顺序、独立 RNG 身份、Mutation before 冲突、队列前进保证和 partial no-mutation；阶段聚合 `ok=true` 不能替代这些检查。
 
 ## 快照与结算目标摘要
 

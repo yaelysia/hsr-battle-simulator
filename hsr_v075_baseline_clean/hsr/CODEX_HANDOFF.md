@@ -4,7 +4,7 @@
 
 当前主线是 `simulator_v8_clean_core`。P1 最终收口、P2 状态系统底座、P3 召唤物体系底座、P4 角色卡 / 怪物卡数据卡扩面底座、P5 公式 / 动态值 / 参数绑定通用准入底座、P6 架构边界回正均已完成当前闭环验收。P6 聚合入口 `validate_p6_architecture_boundary_refactor` 输出 `ok=true`、`stages=4/4`、`ready_for_review=true`、`p6_all_mechanisms_reimplemented=false`；S0 当前 `violation_row_count=0`，P6 自有越界显式延期白名单为空。P6 是边界回正，不是全机制复刻完成。
 
-当前可进入后续机制扩面。P6 已将 summon / servant / wave 出生模板前移为一等 `UnitBirthTemplateIR`，把波次等级和 HardLevelGroup 属性倍率接入结构化来源，补齐缺失、不完整、完整篡改出生单的 blocked/no mutation 负例，并移除 action plan 对 `ParamList[...]` raw path 的参数解析。P6 后仍保留 RuleBook 动态绑定 accessor 一等投影、P3/P4/P5 admission gap、装备 / 构筑 / 关卡环境 / 全角色全怪物扩面等 backlog。
+当前规划主线是 P7 内核可信执行与战斗语义回正。P7-S0 问题基线已经独立验收：P7-I01 至 P7-I24 均有唯一 `confirmed_open` 记录，十项轻量 runtime probe 实际复现当前缺陷，I20/I21/I23 具备全包 AST 结构证据，且 S0 没有修改 runtime。下一步只能执行 P7-S1 Transition 可信结果契约；执行前仍须提交独立执行卡。P3/P4/P5 admission gap、装备 / 构筑 / 关卡环境 / 全角色全怪物扩面仍保留，但不应在可信内核回正前继续大规模展开。
 
 ## 1. 路径与事实来源
 
@@ -63,15 +63,16 @@ hsr_v075_baseline_clean/hsr/simulator_v7_7/
 11. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/P4_COMBATANT_DATA_CARD_EXPANSION_TASK_PLAN.md`
 12. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/P5_FORMULA_DYNAMIC_PARAM_BINDING_TASK_PLAN.md`
 13. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/P6_ARCHITECTURE_BOUNDARY_REFACTOR_TASK_PLAN.md`
-14. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p6_architecture_boundary_refactor_checkpoint.md`
-15. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p5_formula_dynamic_param_binding_checkpoint.md`
-16. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p4_combatant_data_card_expansion_checkpoint.md`
-17. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p3_summon_assistant_servant_complete_checkpoint.md`
-18. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p2_status_system_complete_checkpoint.md`
-19. `hsr_v075_baseline_clean/hsr/live_validation_reports/archive/phase1/v8_p1_final_acceptance_checkpoint_v0_292.md`
-20. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_status_target_event_database_audit_checkpoint_v0_287.md`
-21. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_ir_checkpoint_v0_288.md`
-22. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_sequence_filter_retarget_checkpoint_v0_289.md`
+14. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/P7_KERNEL_TRUST_AND_COMBAT_SEMANTICS_REPAIR_TASK_PLAN.md`
+15. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p6_architecture_boundary_refactor_checkpoint.md`
+16. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p5_formula_dynamic_param_binding_checkpoint.md`
+17. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p4_combatant_data_card_expansion_checkpoint.md`
+18. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p3_summon_assistant_servant_complete_checkpoint.md`
+19. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p2_status_system_complete_checkpoint.md`
+20. `hsr_v075_baseline_clean/hsr/live_validation_reports/archive/phase1/v8_p1_final_acceptance_checkpoint_v0_292.md`
+21. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_status_target_event_database_audit_checkpoint_v0_287.md`
+22. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_ir_checkpoint_v0_288.md`
+23. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_sequence_filter_retarget_checkpoint_v0_289.md`
 
 P1 的详细执行计划和过程报告已经归档，默认不要作为下一阶段入口：
 
@@ -325,9 +326,9 @@ TargetAlias=197061
 
 ## 7. 推荐下一步
 
-推荐下一步围绕 P3/P4/P5 保留的 admission gap 继续扩面，而不是重做底座。优先方向通常是 RuleBook 动态绑定 accessor 一等投影、角色卡 / 怪物卡数据卡全量扩面、装备 / 构筑输入接入、状态和召唤物特殊机制回收、目标系统剩余排序 / 随机 / fetch / servant 目标扩展、波次 / 阶段 / 关卡环境。
+推荐下一步只执行 P7-S1：建立机器可读的 transition 可信结果契约，使完整成功、阻断且状态不变、诊断性且不可作为后继三类结果无需靠日志或 coverage 文字猜测。S1 只建立并接通可信类别，不提前实现 S2 reducer 冲突检测或 S3 原子执行图。P7 完成可信状态转移、动作 / 目标 / 调度和核心战斗语义回正前，暂停大规模角色卡 / 怪物卡、装备和关卡扩面。
 
-后续仍要延续 P4/P5 的执行结构：
+P7 仍要延续并收紧 P4/P5/P7 的执行结构：
 
 1. 一次只做一个阶段。
 2. 每阶段先提交阶段执行卡，等待确认后再改文件。
@@ -339,7 +340,7 @@ TargetAlias=197061
 
 ## 8. 推荐验证命令
 
-这些命令用于复核当前 P1-P5 可信范围，不是每次小改都要全量运行。涉及公式、动态值、状态、callback、queue、召唤物、数据卡、action/query、source audit 时按触达范围跑对应聚合；只改无关文档时可只跑静态检查。在 `hsr_v075_baseline_clean/hsr` 下运行：
+这些命令用于复核当前 P1-P6 已验收底座范围，不代表 P7 发现的问题已经解决，也不是每次小改都要全量运行。P7-S0 已通过自身轻量基线；后续阶段按触达范围选择直接回归，P1-P6 全聚合默认只在 P7-S19 串行运行。在 `hsr_v075_baseline_clean/hsr` 下运行：
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 python3 -m compileall -q simulator_v8_clean_core simulator_v8_ui
@@ -370,7 +371,7 @@ git diff --check
 如果要继续推进，建议开局说清：
 
 ```text
-当前接续 v8 P6 架构边界回正验收检查点之后。先读 CODEX_HANDOFF、README、PROJECT_GOALS、FORBIDDEN、P6 计划、P6 checkpoint、P5/P4/P3/P2/P1 checkpoint。P1-9、P2、P3、P4、P5、P6 聚合均已通过；P6 S0 当前无越界行，出生模板已前移为一等 Canonical IR，runtime 对缺失、不完整和篡改出生单均 blocked/state unchanged，波次等级由 Stage / HardLevelGroup 提供。P3 当前 `p3_summon_all_executable_complete=false`，P4 当前 `p4_all_executable_complete=false`，P5 当前 `p5_all_executable_complete=false`，P6 当前 `p6_all_mechanisms_reimplemented=false`，这些 admission/source-gap/边界 backlog 是已归因项，不是当前底座失败。下一步继续按 P4/P5/P6 的执行结构推进：一次一个阶段、先提交阶段执行卡、执行线程只交 `ready_for_review`、验收线程复核后勾 checklist、聚合最后做并继承分步 gap。runtime 仍只能读 Canonical IR/数据卡 IR，缺来源或缺条件必须 blocked/state unchanged。
+当前接续 v8 P7-S0 内核可信问题基线验收检查点之后。先读 CODEX_HANDOFF、README、ARCHITECTURE_BOUNDARY_CONTRACT、PROJECT_GOALS、FORBIDDEN、P7 计划和 P7-S0 evidence。P7-I01 至 P7-I24 当前全部保持 `confirmed_open`；S0 的十项 runtime probe 和 I20/I21/I23 结构证据已经验收，但不表示任何缺陷已经修复。下一步只能执行 P7-S1 Transition 可信结果契约，先提交详细执行卡；执行线程只交 `ready_for_review`，验收线程复核后勾唯一 checklist。runtime 仍只能读 Canonical IR / 数据卡 IR，审计来源不能驱动行为，任何 partial / blocked 路径最终必须 state unchanged。
 ```
 
 不要从旧 `CODEX_HANDOFF` 的 v7 叙述接续；本文件已经替换为 v8 当前交接手册。

@@ -17,6 +17,14 @@ P6 architecture boundary refactor accepted
 checkpoint: v8_p6_architecture_boundary_refactor_checkpoint.md
 ```
 
+当前规划阶段：
+
+```text
+P7 kernel trust and combat semantics repair
+P7-S0 issue baseline accepted
+next stage: P7-S1 transition trust result contract
+```
+
 当前验收口径：
 
 - P1 最小完整战斗纵切已通过。
@@ -25,16 +33,19 @@ checkpoint: v8_p6_architecture_boundary_refactor_checkpoint.md
 - P4 角色卡 / 怪物卡数据卡扩面底座已通过，但全正例未完成。
 - P5 公式 / 动态值 / 参数绑定通用准入底座已通过，但全正例未完成。
 - P6 架构边界回正已完成验收；出生模板、计算入口、访问边界和聚合阻断口径均已收口。
+- P7-S0 问题基线已完成独立验收；24 项问题全部保持 `confirmed_open`，十项 runtime probe 和三项结构化否定证据已固化，未修改 runtime。
+
+P6 后的内核深度复审确认：现有 transition / replay / source audit 骨架值得保留，但动作完整性、Mutation 前置校验、动作与目标契约、调度阶段、伤害、护盾、状态概率、RNG、召唤和波次等路径仍有会影响真实战斗结果的问题。P7 用实际代码问题总账和通用不变量逐项回正这些语义，不把旧聚合 `ok=true` 外推为完整正确。
 
 P3/P4/P5 的 `*_all_executable_complete=false` 和 P6 的 `p6_all_mechanisms_reimplemented=false` 是已归因 backlog，不是当前底座失败。
 
 当前推荐下一阶段：
 
 ```text
-post-P6 backlog expansion
+P7-S1 transition trust result contract
 ```
 
-P6 已回正 P1-P5 后暴露出的主要架构边界偏移：结算层不再靠审计来源信息或 raw path 文本反查规则；summon / servant / wave 出生模板已在 lowering 投影为一等 Canonical IR，runtime 只物化请求绑定规格；缺失、不完整和完整篡改出生单均 blocked/no mutation；波次等级与 HardLevelGroup 属性倍率由结构化来源提供；内容卡 / RuleBook / 静态边界增加防线。下一步处理 RuleBook 过渡 accessor 一等投影、P3/P4/P5 admission gap 和装备 / 构筑 / 关卡环境等扩面。
+P7-S0 已独立验收。下一步只执行 P7-S1：建立机器可读的 transition 可信结果类别，明确完整成功、阻断且状态不变、诊断性且不可作为后继三类语义。S1 经独立验收前不得提前执行 S2-S19。P3/P4/P5 既有 admission backlog 和装备 / 构筑 / 关卡环境扩面继续保留，但应等待 P7 对可信状态转移底座完成回正。
 
 ## 2. 下一线程优先入口
 
@@ -47,6 +58,7 @@ P6 已回正 P1-P5 后暴露出的主要架构边界偏移：结算层不再靠�
 5. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/PROJECT_GOALS.md`
 6. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/FORBIDDEN.md`
 7. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/DOCUMENTATION_INDEX.md`
+8. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/P7_KERNEL_TRUST_AND_COMBAT_SEMANTICS_REPAIR_TASK_PLAN.md`
 
 如果任务涉及具体阶段，再读对应阶段计划和 checkpoint。
 
@@ -76,12 +88,13 @@ P6 已回正 P1-P5 后暴露出的主要架构边界偏移：结算层不再靠�
 - `P4_COMBATANT_DATA_CARD_EXPANSION_TASK_PLAN.md`
 - `P5_FORMULA_DYNAMIC_PARAM_BINDING_TASK_PLAN.md`
 - `P6_ARCHITECTURE_BOUNDARY_REFACTOR_TASK_PLAN.md`
+- `P7_KERNEL_TRUST_AND_COMBAT_SEMANTICS_REPAIR_TASK_PLAN.md`
 
 P1 过程计划已经归档，不作为默认入口：
 
 - `docs/archive/phase1/`
 
-后续新增大型阶段计划必须沿用 P4/P5 结构：
+后续新增大型阶段计划必须沿用 P4/P5/P7 结构：
 
 - 只保留一套执行 checklist。
 - 每阶段只做一个明确目标。
@@ -100,6 +113,7 @@ P1 过程计划已经归档，不作为默认入口：
 - `../live_validation_reports/v8_p4_combatant_data_card_expansion_checkpoint.md`
 - `../live_validation_reports/v8_p5_formula_dynamic_param_binding_checkpoint.md`
 - `../live_validation_reports/v8_p6_architecture_boundary_refactor_checkpoint.md`
+- `../live_validation_reports/v8_p7_s0_kernel_trust_baseline_ready_for_review.md`（S0 执行 evidence；验收结论以 P7 checklist 和检查点提交为准）
 
 阶段内 `ready_for_review` 报告是 evidence 索引，不是验收结论本身。最终以对应 `checkpoint` 和验收线程结论为准。
 

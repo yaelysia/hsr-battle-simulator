@@ -11,16 +11,16 @@ turnbasedgamedata-main -> TBGD compiler/lowering -> Canonical IR / 数据卡 IR 
 当前最近检查点：
 
 ```text
-P5 formula / dynamic / parameter binding substrate
-checkpoint: f9a9b65 v8 p5 formula dynamic param binding
-聚合验证入口：python3 -m simulator_v8_clean_core.tools.validate_p5_formula_dynamic_param_binding
+P7-S0 kernel trust issue baseline accepted
+最近检查点：P7-S0 内核可信问题基线验收提交
+轻量验证入口：python3 -m simulator_v8_clean_core.tools.validate_p7_s0_kernel_trust_baseline
 ```
 
 当前推荐下一阶段：
 
 ```text
-P6 architecture boundary refactor
-计划文档：P6_ARCHITECTURE_BOUNDARY_REFACTOR_TASK_PLAN.md
+P7-S1 transition trust result contract
+计划文档：P7_KERNEL_TRUST_AND_COMBAT_SEMANTICS_REPAIR_TASK_PLAN.md
 ```
 
 ## 文档入口
@@ -42,6 +42,7 @@ P6 architecture boundary refactor
 - `P4_COMBATANT_DATA_CARD_EXPANSION_TASK_PLAN.md`
 - `P5_FORMULA_DYNAMIC_PARAM_BINDING_TASK_PLAN.md`
 - `P6_ARCHITECTURE_BOUNDARY_REFACTOR_TASK_PLAN.md`
+- `P7_KERNEL_TRUST_AND_COMBAT_SEMANTICS_REPAIR_TASK_PLAN.md`
 - `MONSTER_CARD_SPEC.md`
 
 P1 过程计划和旧过程报告已归档，默认不要作为当前入口。
@@ -99,6 +100,8 @@ L0 来源编译层：TBGD raw -> lowering -> Canonical IR / 数据卡 IR
 - P3 召唤物 / 忆灵底座通过；`p3_summon_all_executable_complete=false` 是已归因 backlog。
 - P4 角色卡 / 怪物卡数据卡扩面底座通过；`p4_all_executable_complete=false` 是已归因 backlog。
 - P5 公式 / 动态值 / 参数绑定通用准入底座通过；`p5_all_executable_complete=false` 是已归因 backlog。
+- P6 架构边界回正通过；一等出生模板、显式计算入口和访问边界已经收口。
+- P7-S0 问题基线通过；24 项问题仍全部 `confirmed_open`，S0 只固化复现和结构证据，没有修改 runtime。
 - 本地 UI 测试台 `simulator_v8_ui/`，作为测试编排与审计展示层，不作为规则系统。
 
 ## 当前仍未完整落地的大块
@@ -124,13 +127,15 @@ PYTHONDONTWRITEBYTECODE=1 ionice -c3 nice -n 15 python3 -B -m simulator_v8_clean
 PYTHONDONTWRITEBYTECODE=1 ionice -c3 nice -n 15 python3 -B -m simulator_v8_clean_core.tools.validate_p3_summon_assistant_servant_complete --output-dir /tmp/hsr_v8_p3_current
 PYTHONDONTWRITEBYTECODE=1 ionice -c3 nice -n 15 python3 -B -m simulator_v8_clean_core.tools.validate_p4_combatant_data_card_expansion --output-dir /tmp/hsr_v8_p4_current
 PYTHONDONTWRITEBYTECODE=1 ionice -c3 nice -n 15 python3 -B -m simulator_v8_clean_core.tools.validate_p5_formula_dynamic_param_binding --output-dir /tmp/hsr_v8_p5_current
+PYTHONDONTWRITEBYTECODE=1 ionice -c3 nice -n 15 python3 -B -m simulator_v8_clean_core.tools.validate_p6_architecture_boundary_refactor --output-dir /tmp/hsr_v8_p6_current
+PYTHONDONTWRITEBYTECODE=1 python3 -B -m simulator_v8_clean_core.tools.validate_p7_s0_kernel_trust_baseline --output-dir /tmp/hsr_v8_p7_s0_current
 git diff --check
 ```
 
 当前期望：
 
 - `compileall` 通过。
-- P1/P2/P3/P4/P5 聚合输出 `ok=true`。
+- P1/P2/P3/P4/P5/P6 聚合输出 `ok=true`；P7-S0 轻量基线输出 `ok=true`。
 - P3/P4/P5 当前全正例期望仍是 `*_all_executable_complete=false`，不能把已归因 gap 误读为失败，也不能把底座通过误读为全正例完成。
 - replay/source audit/settlement traceability 通过。
 - unsupported、blocked、audit-only、discovered-only 不产生 mutation。
@@ -140,12 +145,4 @@ git diff --check
 
 ## 下一阶段建议
 
-继续做底层前，先引用 `ARCHITECTURE_BOUNDARY_CONTRACT.md` 校准边界。优先方向：
-
-1. 目标系统完整化。
-2. 波次 / 战斗结构 / 开局事件底座。
-3. 行动窗口 / 队列 / 事件调度强化。
-4. 资源与特殊资源底座。
-5. 数据卡扩面和 P3/P4/P5 gap 回收。
-
-每个新增机制仍必须满足：真实来源、通用接口、正例可审计、负例 state unchanged、gap 继承到聚合矩阵。
+下一步只执行 P7-S1 Transition 可信结果契约。S1 经独立验收前不得提前执行 S2-S19，也不继续大规模内容扩面。阶段开始前先提交详细执行卡；执行线程只能提交 `ready_for_review`，由验收线程检查代码、谓词和 evidence 后勾选唯一 checklist。
