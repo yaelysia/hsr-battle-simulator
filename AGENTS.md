@@ -33,9 +33,9 @@ turnbasedgamedata-main -> TBGD compiler/lowering -> Canonical IR -> Combat Core
 最近检查点：
 
 ```text
-P5 formula / dynamic / parameter binding substrate
-最近代码检查点提交：f9a9b65 v8 p5 formula dynamic param binding
-当前规划主线：架构分层与内容卡 / 内核边界收敛，随后进入 P6 底层机制扩面
+P6 architecture boundary refactor
+最近代码检查点：P6 架构边界回正验收提交
+当前规划主线：P6 后续机制扩面与既有 admission backlog 回收
 ```
 
 当前 v8 已建立的底层范围包括：
@@ -53,6 +53,7 @@ P5 formula / dynamic / parameter binding substrate
 - P3 召唤物 / 忆灵底座闭环已经完成，summoned monster spawn、servant lifecycle/action/status/BattleSetup、target relation、source audit/replay 可验证；P3 是底座闭环通过，不是全正例完成。
 - P4 角色卡 / 怪物卡数据卡扩面底座已经完成，action/query contract、data card source trace、formula/dynamic/target/passive/action gap 总账、P3 backlog 继承和聚合验收可验证；P4 是底座闭环通过，不是全角色 / 全怪物 / 全装备 / 全关卡正例完成。
 - P5 公式 / 动态值 / 参数绑定通用准入底座已经完成，ValueResolver、静态参数、dynamic/custom 投影、damage/toughness/resource/status/callback queue/summon/trace/eidolon 消费侧、负例、source audit/replay 和聚合验收可验证；P5 是底座闭环通过，不是全角色 / 全怪物 / 全装备 / 全关卡公式正例完成。
+- P6 架构边界回正已经完成，伤害 / 削韧显式计算入口、一等 `UnitBirthTemplateIR`、请求绑定出生单、Stage / HardLevelGroup 波次等级来源、RuleBook 窄访问边界和聚合阻断口径均已验收；P6 是职责边界闭环通过，不是全部机制扩面完成。
 - `simulator_v8_ui/` 本地 UI 测试台，用于 scenario 编排和审计展示，不进入规则系统。
 
 当前仍未完整实现的大块：

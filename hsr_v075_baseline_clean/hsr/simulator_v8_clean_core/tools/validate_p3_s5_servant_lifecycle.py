@@ -10,7 +10,7 @@ from typing import Any
 from .. import BASELINE_VERSION
 from ..core.model import BattleState, UnitState
 from ..core.reducer import MutationReducer
-from ..rules.ir import ServantDefinitionIR
+from ..rules.ir import ServantDefinitionIR, UnitBirthTemplateIR
 from ..rules.rulebook import RuleBook
 from ..systems.summon import SummonSystem
 from ..tbgd.lowering import TBGDLowering
@@ -248,6 +248,9 @@ def _servant_spawn_owner_lifecycle_case(rules: RuleBook, definition: ServantDefi
 def _servant_negative_boundary_cases(rules: RuleBook, definition: ServantDefinitionIR) -> dict[str, Any]:
     system = SummonSystem(rules)
     base_state = _base_servant_state(definition)
+    template = rules.unit_birth_template(definition.birth_template_id)
+    if template is None:
+        raise RuntimeError("executable servant definition must reference a unit birth template")
     cases = {
         "owner_missing": _blocked_spawn_case(system, base_state, definition, "ally:missing", "servant_owner_missing"),
         "owner_entity_mismatch": _blocked_spawn_case(
@@ -258,51 +261,45 @@ def _servant_negative_boundary_cases(rules: RuleBook, definition: ServantDefinit
             "servant_owner_entity_mismatch",
         ),
         "non_positive_runtime_stats": _blocked_spawn_case(
-            system,
+            SummonSystem(_TemplateOverrideRuleBook(rules, _template_with_non_positive_stats(template))),
             base_state,
-            _definition_with_non_positive_stats(definition),
+            definition,
             "ally:servant_owner",
-            "servant_runtime_max_hp_non_positive;servant_runtime_speed_non_positive",
+            "unit_birth_template_materialization_invalid:unit_spawn_plan_max_hp_non_positive",
         ),
         "action_set_blocked": _blocked_spawn_case(
-            system,
-            base_state,
-            replace(
-                definition,
-                action_set={
-                    "admission_status": "blocked",
-                    "coverage_status": "blocked",
-                    "blocked_reason": "validation_missing_action_set",
-                },
+            SummonSystem(
+                _TemplateOverrideRuleBook(
+                    rules,
+                    replace(template, coverage_status="blocked", blocked_reason="validation_missing_action_set"),
+                )
             ),
+            base_state,
+            definition,
             "ally:servant_owner",
             "validation_missing_action_set",
         ),
         "timeline_source_blocked": _blocked_spawn_case(
-            system,
-            base_state,
-            replace(
-                definition,
-                timeline_source={
-                    "admission_status": "blocked",
-                    "coverage_status": "blocked",
-                    "blocked_reason": "validation_missing_timeline_source",
-                },
+            SummonSystem(
+                _TemplateOverrideRuleBook(
+                    rules,
+                    replace(template, coverage_status="blocked", blocked_reason="validation_missing_timeline_source"),
+                )
             ),
+            base_state,
+            definition,
             "ally:servant_owner",
             "validation_missing_timeline_source",
         ),
         "lifecycle_source_blocked": _blocked_spawn_case(
-            system,
-            base_state,
-            replace(
-                definition,
-                lifecycle_source={
-                    "admission_status": "blocked",
-                    "coverage_status": "blocked",
-                    "blocked_reason": "validation_missing_lifecycle_source",
-                },
+            SummonSystem(
+                _TemplateOverrideRuleBook(
+                    rules,
+                    replace(template, coverage_status="blocked", blocked_reason="validation_missing_lifecycle_source"),
+                )
             ),
+            base_state,
+            definition,
             "ally:servant_owner",
             "validation_missing_lifecycle_source",
         ),
@@ -365,19 +362,27 @@ def _duplicate_servant_case(rules: RuleBook, definition: ServantDefinitionIR) ->
     )
 
 
-def _definition_with_non_positive_stats(definition: ServantDefinitionIR) -> ServantDefinitionIR:
-    stat_source = deepcopy(definition.stat_source)
-    components = stat_source.get("components") if isinstance(stat_source.get("components"), dict) else {}
-    for key in ("hp_base", "hp_inherit", "speed_base", "speed_inherit"):
-        component = dict(components.get(key) or {})
-        component["admission_status"] = "executable"
-        component["value"] = 0.0
-        components[key] = component
-    stat_source["components"] = components
-    stat_source["admission_status"] = "executable"
-    stat_source["coverage_status"] = "executable"
-    stat_source["blocked_reason"] = ""
-    return replace(definition, stat_source=stat_source)
+class _TemplateOverrideRuleBook:
+    def __init__(self, rules: RuleBook, template: UnitBirthTemplateIR) -> None:
+        self._rules = rules
+        self._template = template
+
+    def unit_birth_template(self, birth_template_id: str) -> UnitBirthTemplateIR | None:
+        if birth_template_id == self._template.birth_template_id:
+            return self._template
+        return self._rules.unit_birth_template(birth_template_id)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._rules, name)
+
+
+def _template_with_non_positive_stats(template: UnitBirthTemplateIR) -> UnitBirthTemplateIR:
+    unit_field_specs = deepcopy(template.unit_field_specs)
+    spec = dict(unit_field_specs.get("max_hp") or {})
+    spec["scale"] = 0.0
+    spec["offset"] = 0.0
+    unit_field_specs["max_hp"] = spec
+    return replace(template, unit_field_specs=unit_field_specs)
 
 
 def _state_with_owner_template(state: BattleState, template_id: str) -> BattleState:

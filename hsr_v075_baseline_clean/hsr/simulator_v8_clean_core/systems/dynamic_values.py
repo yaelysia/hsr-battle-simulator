@@ -141,7 +141,7 @@ def character_skill_param_binding_source(
         card = rules.character_data_card_for_entity(unit.template_id)
     if card is None:
         return None
-    config_bindings = card.source.evidence.get("character_config_dynamic_value_bindings")
+    config_bindings = rules.character_dynamic_value_bindings_for_card(card.card_id)
     if not isinstance(config_bindings, dict):
         return None
     by_hash = config_bindings.get("by_hash")

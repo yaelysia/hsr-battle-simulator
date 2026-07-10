@@ -1492,7 +1492,7 @@ def _damage_value_resolution(
     action_definition: ActionDefinitionIR,
     damage_plan: DamagePlan,
 ) -> ValueResolution:
-    binding = _skill_formula_binding_from_trace(damage_plan.hit_source_trace)
+    value_context = damage_plan.value_context if isinstance(damage_plan.value_context, dict) else {}
     context = ValueContext(
         actor_id=command.actor_id,
         target_id=damage_plan.target_id,
@@ -1501,27 +1501,17 @@ def _damage_value_resolution(
         action_level=command.action_level,
         hit_id=damage_plan.hit_profile_id,
         hit_index=damage_plan.hit_index,
-        data_card_id=str(binding.get("data_card_id") or binding.get("character_data_card_id") or ""),
-        data_card_kind=str(binding.get("data_card_kind") or ""),
+        data_card_id=str(value_context.get("data_card_id") or ""),
+        data_card_kind=str(value_context.get("data_card_kind") or ""),
         source_trace=damage_plan.hit_source_trace,
     )
-    if binding:
-        request = ValueBindingRequest(
-            binding_kind="skill_formula_param",
-            binding_id=str(binding.get("binding_id") or ""),
-            param_index=_int_or_none(binding.get("param_index")),
-            formula_role=str(binding.get("formula_role") or "direct_damage"),
-            required_context_keys=("action",),
-            source_trace=damage_plan.hit_source_trace,
-        )
-    else:
-        request = ValueBindingRequest(
-            binding_kind="fixed_numeric_expression",
-            expression={"kind": "fixed", "value": damage_plan.scaling_ratio},
-            required_context_keys=("action",),
-            source_trace=damage_plan.hit_source_trace,
-        )
-    return resolver.resolve(request, context)
+    return _resolve_plan_value_request(
+        resolver,
+        damage_plan.value_request,
+        context,
+        blocked_reason="damage_value_request_missing",
+        fallback_source_trace=damage_plan.hit_source_trace,
+    )
 
 
 def _collect_direct_damage_modifiers(
@@ -1795,133 +1785,79 @@ def _toughness_value_resolution(
         action_level=action_definition.level,
         hit_id=toughness_plan.hit_profile_id,
         hit_index=toughness_plan.hit_index,
-        dynamic_values={},
-        binding_sources=_numeric_binding_sources_from_trace(toughness_plan.source_trace),
+        dynamic_values={} if toughness_plan.value_binding_sources else None,
+        binding_sources=toughness_plan.value_binding_sources,
         source_trace=toughness_plan.source_trace,
     )
-    hashes = sorted(_hashes_from_expression(toughness_plan.toughness_amount_expr))
-    if hashes:
-        request = ValueBindingRequest(
-            binding_kind="dynamic_hash",
-            expression={"hash": hashes[0]},
-            required_context_keys=("dynamic_value_source",),
-            source_trace=toughness_plan.source_trace,
+    return _resolve_plan_value_request(
+        resolver,
+        toughness_plan.value_request,
+        context,
+        blocked_reason="toughness_value_request_missing",
+        fallback_source_trace=toughness_plan.source_trace,
+    )
+
+
+def _resolve_plan_value_request(
+    resolver: ValueResolver,
+    request_data: object,
+    context: ValueContext,
+    *,
+    blocked_reason: str,
+    fallback_source_trace: dict[str, JSONValue],
+) -> ValueResolution:
+    request_dict = request_data if isinstance(request_data, dict) else {}
+    binding_kind = str(request_dict.get("binding_kind") or "")
+    if not binding_kind or binding_kind == "blocked":
+        return _blocked_plan_value_resolution(
+            request_dict,
+            context,
+            reason=str(request_dict.get("blocked_reason") or blocked_reason),
+            source_trace=_request_source_trace(request_dict, fallback_source_trace),
         )
-        resolution = resolver.resolve(request, context)
-        if resolution.ok:
-            return resolution
-        fallback_request = ValueBindingRequest(
-            binding_kind="action_definition_list_item",
-            field_name="show_stance_list",
-            param_index=toughness_plan.hit_index,
-            required_context_keys=("action",),
-            source_trace={
-                **toughness_plan.source_trace,
-                "fallback_basis": "ActionDefinitionIR.show_stance_list",
-                "dynamic_hash_resolution": resolution.to_json(),
-            },
-        )
-        fallback_resolution = resolver.resolve(fallback_request, context)
-        if fallback_resolution.ok:
-            return replace(
-                fallback_resolution,
-                delegate_resolution={
-                    **fallback_resolution.delegate_resolution,
-                    "preceding_dynamic_hash_resolution": resolution.to_json(),
-                },
-            )
-        return replace(
-            fallback_resolution,
-            blocked_reason=(
-                f"{fallback_resolution.blocked_reason};"
-                f"dynamic_hash:{resolution.blocked_reason}"
-            ),
-            delegate_resolution={
-                **fallback_resolution.delegate_resolution,
-                "preceding_dynamic_hash_resolution": resolution.to_json(),
-            },
-        )
-    else:
-        request = ValueBindingRequest(
-            binding_kind="fixed_numeric_expression",
-            expression=toughness_plan.toughness_amount_expr,
-            required_context_keys=("action",),
-            source_trace=toughness_plan.source_trace,
-        )
+    request = ValueBindingRequest(
+        binding_kind=binding_kind,
+        binding_id=str(request_dict.get("binding_id") or ""),
+        param_index=_int_or_none(request_dict.get("param_index")),
+        formula_role=str(request_dict.get("formula_role") or ""),
+        field_name=str(request_dict.get("field_name") or ""),
+        expression=request_dict.get("expression"),
+        required_context_keys=tuple(str(item) for item in request_dict.get("required_context_keys") or ()),
+        source_trace=_request_source_trace(request_dict, fallback_source_trace),
+    )
     return resolver.resolve(request, context)
 
 
-def _skill_formula_binding_from_trace(value: object) -> dict[str, JSONValue]:
-    if isinstance(value, dict):
-        nested = value.get("skill_formula_binding")
-        if isinstance(nested, dict) and nested.get("binding_id"):
-            return {str(key): _json_safe(item) for key, item in nested.items()}
-        if str(value.get("binding_id") or "").startswith("skill_formula_binding:") and "param_index" in value:
-            return {str(key): _json_safe(item) for key, item in value.items()}
-        for item in value.values():
-            result = _skill_formula_binding_from_trace(item)
-            if result:
-                return result
-    elif isinstance(value, (list, tuple)):
-        for item in value:
-            result = _skill_formula_binding_from_trace(item)
-            if result:
-                return result
-    return {}
+def _blocked_plan_value_resolution(
+    request_data: dict[str, object],
+    context: ValueContext,
+    *,
+    reason: str,
+    source_trace: dict[str, JSONValue],
+) -> ValueResolution:
+    safe_request = _json_safe(request_data)
+    return ValueResolution(
+        ok=False,
+        value=None,
+        binding_kind=str(request_data.get("binding_kind") or "blocked"),
+        source_trace=source_trace,
+        context_trace=context.to_trace(),
+        blocked_reason=reason,
+        request=safe_request if isinstance(safe_request, dict) else {},
+        delegate_resolution={},
+        context_keys=context.available_keys(),
+    )
 
 
-def _numeric_binding_sources_from_trace(value: object) -> tuple[dict[str, object], ...]:
-    sources: list[dict[str, object]] = []
-
-    def visit(item: object) -> None:
-        if isinstance(item, dict):
-            if item.get("source_type") and (isinstance(item.get("by_hash"), dict) or isinstance(item.get("by_name"), dict)):
-                sources.append(dict(item))
-            for child in item.values():
-                visit(child)
-        elif isinstance(item, (list, tuple)):
-            for child in item:
-                visit(child)
-
-    visit(value)
-    deduped: list[dict[str, object]] = []
-    seen: set[tuple[str, str]] = set()
-    for source in sources:
-        key = (
-            str(source.get("source_type") or ""),
-            ",".join(sorted(str(key) for key in dict(source.get("by_hash") or {}).keys())),
-        )
-        if key in seen:
-            continue
-        seen.add(key)
-        deduped.append(source)
-    return tuple(deduped)
-
-
-def _hashes_from_expression(expression: object) -> set[str]:
-    hashes: set[str] = set()
-    if isinstance(expression, dict):
-        if str(expression.get("kind") or "") == "dynamic_hash" and expression.get("hash") is not None:
-            hashes.add(str(expression.get("hash")))
-        dynamic_hashes = expression.get("DynamicHashes")
-        if isinstance(dynamic_hashes, list):
-            for item in dynamic_hashes:
-                hashes.add(str(item))
-        raw = expression.get("raw")
-        if isinstance(raw, (dict, list)):
-            hashes.update(_hashes_from_expression(raw))
-        postfix = expression.get("PostfixExpr")
-        if isinstance(postfix, dict):
-            hashes.update(_hashes_from_expression(postfix))
-        for key, item in expression.items():
-            if key in {"raw", "PostfixExpr"}:
-                continue
-            if isinstance(item, (dict, list)):
-                hashes.update(_hashes_from_expression(item))
-    elif isinstance(expression, list):
-        for item in expression:
-            hashes.update(_hashes_from_expression(item))
-    return hashes
+def _request_source_trace(
+    request_data: dict[str, object],
+    fallback_source_trace: dict[str, JSONValue],
+) -> dict[str, JSONValue]:
+    trace = request_data.get("source_trace")
+    if isinstance(trace, dict):
+        safe_trace = _json_safe(trace)
+        return safe_trace if isinstance(safe_trace, dict) else fallback_source_trace
+    return fallback_source_trace
 
 
 def _int_or_none(value: object) -> int | None:

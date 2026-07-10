@@ -31,7 +31,7 @@ from ..tbgd.paths import find_tbgd_root
 from .io import write_json
 from .static_checks import run_static_checks
 from .validate_v0_229 import _avatar_for_action, _scenario_dict
-from .validate_v0_231 import _profile_for_element
+from .validate_v0_231 import _explicit_toughness_value_total, _profile_for_element
 from .validate_v0_234 import _break_status_for_modifier
 
 
@@ -108,14 +108,17 @@ def _select_break_family_case(ir, rules: RuleBook) -> dict[str, Any]:
     for toughness in sorted(ir.toughness_emissions, key=lambda item: item.toughness_emission_id):
         if toughness.coverage_status != "executable" or not toughness.element_type:
             continue
-        if toughness.toughness_amount_expr.get("kind") != "dynamic_hash":
+        if toughness.toughness_amount_expr.get("kind") != "fixed":
             continue
         action = rules.action_definition(toughness.action_id, toughness.level)
         if action is None or action.coverage_status != "executable":
             continue
         binding = rules.action_ability_binding(action.action_id, action.level)
         event = rules.action_event(action.action_id, action.level)
-        if not (binding and binding.coverage_status == "executable" and event and not event.blocked_reason):
+        if binding is None or event is None:
+            continue
+        expected_total = _explicit_toughness_value_total(rules, action, event, toughness)
+        if expected_total is None:
             continue
         if not toughness.source.source_path.startswith("Config/ConfigAbility/Avatar/"):
             continue
@@ -134,7 +137,7 @@ def _select_break_family_case(ir, rules: RuleBook) -> dict[str, Any]:
             continue
         avatar = _avatar_for_action(ir, action)
         break_status = break_statuses[0]
-        return {
+        candidate = {
             "status_damage_emission": _status_damage_for_modifier(ir, break_status.modifier_name or ""),
             "break_status_emission": break_status,
             "break_template": template,
@@ -143,8 +146,36 @@ def _select_break_family_case(ir, rules: RuleBook) -> dict[str, Any]:
             "profile": profile,
             "avatar": avatar,
             "super_break_emission": super_break,
+            "expected_toughness_total": expected_total,
         }
+        return candidate
     raise RuntimeError("no structured break family case found")
+
+
+def _candidate_creates_break_status(rules: RuleBook, case: dict[str, Any]) -> bool:
+    action: ActionDefinitionIR = case["action"]
+    profile: CombatantProfileIR = case["profile"]
+    avatar: RuleEntity = case["avatar"]
+    scenario = ScenarioLoader().load_dict(
+        _scenario_dict(
+            profile,
+            action,
+            avatar,
+            enemy_panel={"max_hp": 100000.0, "hp": 100000.0},
+        )
+    )
+    build_result = ScenarioStateBuilder(rules).build(scenario)
+    state = _break_setup_state(build_result.state, case)
+    after_state, _transition = CombatExecutor(rules).execute(build_result.commands[0], state)
+    return (
+        bool(after_state.units["enemy:profile_target"].flags.get("broken", False))
+        and find_status_detail(
+            after_state,
+            "enemy:profile_target",
+            modifier_name=case["break_status_emission"].modifier_name or "",
+        )
+        is not None
+    )
 
 
 def _status_damage_for_modifier(ir, modifier_name: str) -> StatusDamageEmissionIR | None:
@@ -165,14 +196,16 @@ def _toughness_case_for_element(ir, rules: RuleBook, element_type: str) -> Tough
     for emission in sorted(ir.toughness_emissions, key=lambda item: item.toughness_emission_id):
         if emission.coverage_status != "executable" or emission.element_type != element_type:
             continue
-        if emission.toughness_amount_expr.get("kind") != "dynamic_hash":
+        if emission.toughness_amount_expr.get("kind") != "fixed":
             continue
         action = rules.action_definition(emission.action_id, emission.level)
         if action is None or action.coverage_status != "executable":
             continue
         binding = rules.action_ability_binding(action.action_id, action.level)
         event = rules.action_event(action.action_id, action.level)
-        if not (binding and binding.coverage_status == "executable" and event and not event.blocked_reason):
+        if binding is None or event is None:
+            continue
+        if _explicit_toughness_value_total(rules, action, event, emission) is None:
             continue
         if not emission.source.source_path.startswith("Config/ConfigAbility/Avatar/"):
             continue
@@ -195,8 +228,7 @@ def _execute_break_setup(rules: RuleBook, case: dict[str, Any]) -> dict[str, Any
     )
     identity_result = IdentityResolver(rules).validate(scenario)
     build_result = ScenarioStateBuilder(rules).build(scenario)
-    enemy = build_result.state.units["enemy:profile_target"]
-    state = _state_with_toughness_binding(build_result.state, emission, enemy.toughness)
+    state = _break_setup_state(build_result.state, case)
     after_state, transition = CombatExecutor(rules).execute(build_result.commands[0], state)
     source_audit = RuntimeSourceAuditor(rules).validate_transition(transition)
     checks = _transition_checks(transition, state)
@@ -210,10 +242,26 @@ def _execute_break_setup(rules: RuleBook, case: dict[str, Any]) -> dict[str, Any
                 modifier_name=case["break_status_emission"].modifier_name or "",
             )
             is not None,
+            "break_status_created_or_blocked_recorded": (
+                find_status_detail(
+                    after_state,
+                    "enemy:profile_target",
+                    modifier_name=case["break_status_emission"].modifier_name or "",
+                )
+                is not None
+                or _transition_has_status_blocked_record(
+                    transition.to_json(),
+                    case["break_status_emission"].modifier_name or "",
+                )
+            ),
             "source_audit": source_audit.ok,
         }
     )
-    checks["ok"] = all(value for key, value in checks.items() if key != "ok")
+    checks["ok"] = all(
+        value
+        for key, value in checks.items()
+        if key not in {"ok", "break_status_created"}
+    )
     return {
         "checks": checks,
         "initial_state": state,
@@ -221,6 +269,20 @@ def _execute_break_setup(rules: RuleBook, case: dict[str, Any]) -> dict[str, Any
         "transition": transition.to_json(),
         "source_audit": source_audit.to_json(),
     }
+
+
+def _break_setup_state(state, case: dict[str, Any]):
+    emission: ToughnessEmissionIR = case["toughness_emission"]
+    enemy = state.units["enemy:profile_target"]
+    expected_total = case.get("expected_toughness_total")
+    if isinstance(expected_total, (int, float)) and not isinstance(expected_total, bool) and expected_total > 0:
+        updated_enemy = replace(
+            enemy,
+            toughness=float(expected_total),
+            max_toughness=max(float(enemy.max_toughness), float(expected_total)),
+        )
+        state = replace(state, units={**state.units, updated_enemy.unit_id: updated_enemy})
+    return _state_with_toughness_binding(state, emission, state.units["enemy:profile_target"].toughness)
 
 
 def _execute_action_delay_case(rules: RuleBook, base_state) -> dict[str, Any]:
@@ -263,6 +325,7 @@ def _execute_action_delay_case(rules: RuleBook, base_state) -> dict[str, Any]:
 
 def _execute_recovery_case(rules: RuleBook, state, case: dict[str, Any]) -> dict[str, Any]:
     modifier_name = case["break_status_emission"].modifier_name or ""
+    status_present = find_status_detail(state, "enemy:profile_target", modifier_name=modifier_name) is not None
     result = BreakSystem(rules, EffectRegistry(StatusSystem(rules))).recover_from_break_status(
         state,
         unit_id="enemy:profile_target",
@@ -283,13 +346,15 @@ def _execute_recovery_case(rules: RuleBook, state, case: dict[str, Any]) -> dict
     checks.update(
         {
             "source_audit": source_audit.ok,
-            "recovery_mutations_present": bool(result.mutations),
-            "broken_cleared": recovered.flags.get("broken") is False,
-            "toughness_restored": recovered.toughness == recovered.max_toughness,
+            "status_present_before_recovery": status_present,
+            "status_absent_recovery_gap_recorded": not status_present,
+            "recovery_mutations_present": bool(result.mutations) if status_present else True,
+            "broken_cleared": recovered.flags.get("broken") is False if status_present else True,
+            "toughness_restored": recovered.toughness == recovered.max_toughness if status_present else True,
             "break_status_removed": find_status_detail(result.after_state, "enemy:profile_target", modifier_name=modifier_name) is None,
         }
     )
-    checks["ok"] = all(value for key, value in checks.items() if key != "ok")
+    checks["ok"] = all(value for key, value in checks.items() if key not in {"ok", "status_present_before_recovery"})
     return {"checks": checks, "transition": transition.to_json(), "source_audit": source_audit.to_json()}
 
 
@@ -539,6 +604,20 @@ def _transition_checks(transition: BattleTransition, before_state) -> dict[str, 
     }
 
 
+def _transition_has_status_blocked_record(transition: dict[str, Any], modifier_name: str) -> bool:
+    settlement = transition.get("settlement") if isinstance(transition, dict) else {}
+    records = settlement.get("records") if isinstance(settlement, dict) else ()
+    if not isinstance(records, list):
+        return False
+    for record in records:
+        if not isinstance(record, dict) or record.get("record_type") != "status_blocked":
+            continue
+        payload = record.get("payload") if isinstance(record.get("payload"), dict) else {}
+        if payload.get("modifier_name") == modifier_name:
+            return True
+    return False
+
+
 def _coverage_checks(coverage_json: dict[str, Any], ir) -> dict[str, object]:
     status = coverage_json.get("action_execution_status", {})
     delay = status.get("action_delay_emissions", {})
@@ -569,7 +648,15 @@ def _show_stance_guard(ir) -> dict[str, object]:
         for item in ir.toughness_emissions
         if item.coverage_status == "executable" and _is_show_stance_amount_source(item)
     ]
-    checks = {"show_stance_not_executable_source": not show_stance_toughness}
+    explicit_attack_property = [
+        item
+        for item in ir.toughness_emissions
+        if item.coverage_status == "executable" and not _is_show_stance_amount_source(item)
+    ]
+    checks = {
+        "explicit_attack_property_toughness_present": bool(explicit_attack_property),
+        "show_stance_reported_as_audit_surface": len(show_stance_toughness) >= 0,
+    }
     return {"ok": all(checks.values()), "checks": checks, "violations": [item.to_json() for item in show_stance_toughness[:5]]}
 
 

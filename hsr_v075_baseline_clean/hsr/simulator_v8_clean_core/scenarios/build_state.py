@@ -13,8 +13,8 @@ from ..rules.value_binding import ValueBindingRequest, ValueContext, ValueResolv
 from ..systems.effect import EffectRegistry
 from ..systems.status import StatusSystem
 from ..systems.summon import SummonSystem
-from ..systems.timeline import TimelineSystem
 from ..systems.unit_lifecycle import UnitLifecycleSystem
+from ..systems.unit_spawn import UnitSpawnRequest, UnitSpawnSystem
 
 
 @dataclass(frozen=True)
@@ -861,49 +861,61 @@ def _wave_unit_spec(
     entry: WaveMonsterEntryIR,
     unit_id: str,
 ) -> UnitSpec:
-    action_value, timeline_source = _initial_wave_action_value(rules, entry)
-    flags: dict[str, JSONValue] = {
-        "position": entry.position,
-        "wave_definition_id": definition.wave_definition_id,
-        "wave_index": entry.wave_index,
-        "wave_position": entry.position,
-        "wave_entry_id": entry.entry_id,
-        "wave_member_kind": "stage_wave_enemy",
-        "wave_clear_policy": "counts",
-        "wave_entry_source_trace": entry.source.to_json(),
-        "wave_definition_source_trace": definition.source.to_json(),
-        "initial_action_value_source_trace": timeline_source,
-    }
+    template = rules.unit_birth_template(entry.birth_template_id)
+    if template is None:
+        raise ValueError(f"wave entry {entry.entry_id}: unit birth template missing")
+    request = UnitSpawnRequest(
+        spawn_kind="wave_enemy",
+        unit_id=unit_id,
+        birth_template_id=entry.birth_template_id,
+        entity_ref=entry.monster_entity_ref,
+        source_id=definition.wave_definition_id,
+        entry_id=entry.entry_id,
+        wave_definition_id=definition.wave_definition_id,
+        stage_id=definition.stage_id,
+        wave_index=entry.wave_index,
+        position=entry.position,
+        source_trace=definition.source.to_json(),
+        entry_source_trace=entry.source.to_json(),
+    )
+    plan = UnitSpawnSystem().plan(template, request)
+    if not plan.ok:
+        raise ValueError(f"wave entry {entry.entry_id}: {plan.blocked_reason or 'unit birth template blocked'}")
+    unit = plan.to_unit(expected_request=request)
     return UnitSpec(
         unit_id=unit_id,
         side="enemy",
         entity_ref=entry.monster_entity_ref,
+        level=unit.level,
+        position=entry.position,
         panel=PanelInput(
-            explicit_fields=("flags", "action_value"),
-            action_value=action_value,
-            flags=flags,
+            explicit_fields=(
+                "max_hp",
+                "hp",
+                "attack",
+                "defense",
+                "speed",
+                "energy",
+                "max_energy",
+                "toughness",
+                "max_toughness",
+                "action_value",
+                "resources",
+                "flags",
+            ),
+            max_hp=unit.max_hp,
+            hp=unit.hp,
+            attack=unit.attack,
+            defense=unit.defense,
+            speed=unit.speed,
+            energy=unit.energy,
+            max_energy=unit.max_energy,
+            toughness=unit.toughness,
+            max_toughness=unit.max_toughness,
+            action_value=unit.action_value,
+            resources=unit.resources,
+            flags=unit.flags,
         ),
-    )
-
-
-def _initial_wave_action_value(rules: RuleBook, entry: WaveMonsterEntryIR) -> tuple[float, dict[str, JSONValue]]:
-    profile = rules.combatant_profile(entry.monster_entity_ref)
-    if profile is None or profile.coverage_status != "executable":
-        raise ValueError(f"wave entry {entry.entry_id}: executable spawn requires executable combatant profile")
-    speed = profile.base_stats.get("speed")
-    if isinstance(speed, bool) or not isinstance(speed, (int, float)):
-        raise ValueError(f"wave entry {entry.entry_id}: executable spawn requires profile speed")
-    rule = rules.default_timeline_rule()
-    value = TimelineSystem().full_action_value(float(speed), rule)
-    return (
-        value,
-        {
-            "timeline_rule_id": rule.timeline_rule_id,
-            "timeline_rule_source": rule.source.to_json(),
-            "speed_source": profile.source.to_json(),
-            "speed": float(speed),
-            "formula": rule.initial_action_value_rule,
-        },
     )
 
 

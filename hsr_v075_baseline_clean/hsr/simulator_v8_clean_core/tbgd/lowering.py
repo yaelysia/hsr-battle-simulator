@@ -42,6 +42,7 @@ from ..rules.ir import (
     FormulaIR,
     HitProfileIR,
     IRSource,
+    JSONValue,
     MonsterDataCardIR,
     PassiveMechanismSlotIR,
     QueueIntentIR,
@@ -67,6 +68,7 @@ from ..rules.ir import (
     TimelineRuleIR,
     ToughnessEmissionIR,
     TriggerIR,
+    UnitBirthTemplateIR,
     WaveDefinitionIR,
     WaveMonsterEntryIR,
 )
@@ -448,6 +450,14 @@ class TBGDLowering:
         )
         assistant_ability_resolutions = _lower_assistant_ability_resolutions(queue_intents, queue_resolutions)
         servant_definitions = self._lower_servant_definitions(combatant_action_sets, action_ability_bindings)
+        unit_birth_templates = _lower_unit_birth_templates(
+            summon_monster_intents=summon_monster_intents,
+            servant_definitions=servant_definitions,
+            wave_definitions=wave_definitions,
+            combatant_profiles=combatant_profiles,
+            monster_data_cards=monster_data_cards,
+            timeline_rules=timeline_rules,
+        )
         extra_turn_source_basis = self._extra_turn_source_basis()
         queue_windows = _lower_queue_windows(queue_intents, queue_resolutions, extra_turn_source_basis)
         queue_lifecycle_policies = _lower_queue_lifecycle_policies(queue_windows, extra_turn_source_basis)
@@ -482,6 +492,7 @@ class TBGDLowering:
             character_data_cards=tuple(character_data_cards),
             monster_data_cards=tuple(monster_data_cards),
             summon_unit_definitions=tuple(summon_unit_definitions),
+            unit_birth_templates=tuple(unit_birth_templates),
             summon_monster_intents=tuple(summon_monster_intents),
             assistant_ability_resolutions=tuple(assistant_ability_resolutions),
             servant_definitions=tuple(servant_definitions),
@@ -822,6 +833,7 @@ class TBGDLowering:
         entity_by_id = {entity.entity_id: entity for entity in entities}
         profile_by_entity = {profile.entity_id: profile for profile in combatant_profiles}
         card_by_entity = {card.entity_ref: card for card in monster_data_cards}
+        hard_level_profiles = self._hard_level_profiles()
         definitions: list[WaveDefinitionIR] = []
         for row_index, row in enumerate(rows):
             if not isinstance(row, dict):
@@ -834,6 +846,17 @@ class TBGDLowering:
                 continue
             declared_wave_count = _stage_config_wave_count(row.get("StageConfigData"))
             wave_count = declared_wave_count if declared_wave_count > 0 else len(monster_list)
+            level = _positive_int(row.get("Level"))
+            hard_level_group = _positive_int(row.get("HardLevelGroup"))
+            level_policy = _wave_level_policy(
+                stage_id=stage_id,
+                stage_row_index=row_index,
+                level=level,
+                hard_level_group=hard_level_group,
+                hard_level_profile=hard_level_profiles.get((hard_level_group, level))
+                if hard_level_group is not None and level is not None
+                else None,
+            )
             entries: list[WaveMonsterEntryIR] = []
             for wave_index, wave in enumerate(monster_list):
                 if not isinstance(wave, dict):
@@ -844,7 +867,10 @@ class TBGDLowering:
                     monster_entity_ref = f"monster:{monster_raw_id}" if monster_raw_id else ""
                     coverage_status = "executable"
                     blocked_reason = ""
-                    if not monster_raw_id or monster_raw_id == "0":
+                    if level_policy.get("admission_status") != "executable":
+                        coverage_status = "blocked"
+                        blocked_reason = str(level_policy.get("blocked_reason") or "wave_stage_level_source_blocked")
+                    elif not monster_raw_id or monster_raw_id == "0":
                         coverage_status = "blocked"
                         blocked_reason = "wave_monster_entry_empty"
                     elif (
@@ -882,8 +908,10 @@ class TBGDLowering:
                                     "MonsterList_wave_index": wave_index,
                                     "MonsterList_key": monster_key,
                                     "monster_id": monster_raw_id,
+                                    "level_policy": level_policy,
                                 },
                             ),
+                            birth_template_id=_wave_birth_template_id(stage_id, wave_index, position, monster_raw_id),
                             coverage_status=coverage_status,  # type: ignore[arg-type]
                             blocked_reason=blocked_reason,
                         )
@@ -891,7 +919,10 @@ class TBGDLowering:
             blocked_entries = [entry for entry in entries if entry.coverage_status != "executable"]
             definition_blocked_reason = ""
             definition_status = "executable"
-            if declared_wave_count <= 0:
+            if level_policy.get("admission_status") != "executable":
+                definition_status = "blocked"
+                definition_blocked_reason = str(level_policy.get("blocked_reason") or "wave_stage_level_source_blocked")
+            elif declared_wave_count <= 0:
                 definition_status = "blocked"
                 definition_blocked_reason = "stage_wave_count_missing"
             elif wave_count != len(monster_list):
@@ -923,13 +954,41 @@ class TBGDLowering:
                             "entry_count": len(entries),
                             "blocked_entry_count": len(blocked_entries),
                             "StageAbilityConfig": list(stage_ability_refs),
+                            "Level": level,
+                            "HardLevelGroup": hard_level_group,
+                            "level_policy": level_policy,
                         },
                     ),
+                    level=level,
+                    hard_level_group=hard_level_group,
+                    level_policy=level_policy,
                     coverage_status=definition_status,  # type: ignore[arg-type]
                     blocked_reason=definition_blocked_reason,
                 )
             )
         return definitions
+
+    def _hard_level_profiles(self) -> dict[tuple[int, int], dict[str, Any]]:
+        relative = "ExcelOutput/HardLevelGroup.json"
+        path = self.tbgd_root / relative
+        if not path.exists():
+            return {}
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+        if not isinstance(raw, list):
+            return {}
+        result: dict[tuple[int, int], dict[str, Any]] = {}
+        for row_index, row in enumerate(_limit_sequence(raw, self.limits.max_records_per_table)):
+            if not isinstance(row, dict):
+                continue
+            group = _positive_int(row.get("HardLevelGroup"))
+            level = _positive_int(row.get("Level"))
+            if group is None or level is None:
+                continue
+            result[(group, level)] = {**row, "_v8_source_path": relative, "_v8_row_index": row_index}
+        return result
 
     def _lower_break_base_damage(self) -> list[BreakBaseDamageIR]:
         relative_path = "ExcelOutput/AvatarBreakDamage.json"
@@ -2931,6 +2990,7 @@ class TBGDLowering:
                     timeline_source=timeline_source,
                     lifecycle_source=lifecycle_source,
                     source=source,
+                    birth_template_id=_servant_birth_template_id(servant_id),
                     coverage_status=coverage_status,
                     blocked_reason=blocked_reason,
                 )
@@ -4363,6 +4423,625 @@ def _trace_startup_effect_blocked_reason(effect: EffectIR) -> str:
     if target_alias not in {"Caster", "ModifierOwnerEntity"}:
         return f"trace_startup_effect_target_alias_not_admitted:{target_alias}"
     return ""
+
+
+def _positive_int(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value > 0 else None
+    if isinstance(value, float) and value.is_integer():
+        converted = int(value)
+        return converted if converted > 0 else None
+    return None
+
+
+def _wave_level_policy(
+    *,
+    stage_id: str,
+    stage_row_index: int,
+    level: int | None,
+    hard_level_group: int | None,
+    hard_level_profile: dict[str, Any] | None,
+) -> dict[str, JSONValue]:
+    blocked_reasons: list[str] = []
+    if level is None:
+        blocked_reasons.append("stage_level_missing")
+    if hard_level_group is None:
+        blocked_reasons.append("stage_hard_level_group_missing")
+    if level is not None and hard_level_group is not None and hard_level_profile is None:
+        blocked_reasons.append("stage_hard_level_profile_missing")
+    ratios: dict[str, JSONValue] = {}
+    if hard_level_profile is not None:
+        for field_name, raw_key in (
+            ("attack", "AttackRatio"),
+            ("defense", "DefenceRatio"),
+            ("max_hp", "HPRatio"),
+            ("speed", "SpeedRatio"),
+            ("max_toughness", "StanceRatio"),
+        ):
+            ratio = _required_number(hard_level_profile, raw_key)
+            if ratio is None or ratio <= 0:
+                blocked_reasons.append(f"stage_hard_level_ratio_missing:{raw_key}")
+            else:
+                ratios[field_name] = ratio
+    blocked_reason = ";".join(dict.fromkeys(blocked_reasons))
+    return {
+        "kind": "stage_level_hard_level_group",
+        "admission_status": "blocked" if blocked_reason else "executable",
+        "blocked_reason": blocked_reason,
+        "level": level,
+        "hard_level_group": hard_level_group,
+        "ratios": ratios,
+        "source_trace": {
+            "stage": {
+                "source_path": "ExcelOutput/StageConfig.json",
+                "raw_type": "StageConfig",
+                "raw_id": stage_id,
+                "evidence": {
+                    "row_index": stage_row_index,
+                    "level_field": "Level",
+                    "hard_level_group_field": "HardLevelGroup",
+                    "level": level,
+                    "hard_level_group": hard_level_group,
+                },
+            },
+            "hard_level_profile": {
+                "source_path": str((hard_level_profile or {}).get("_v8_source_path") or ""),
+                "raw_type": "HardLevelGroup",
+                "raw_id": f"{hard_level_group}:{level}" if hard_level_group is not None and level is not None else "",
+                "evidence": {
+                    "row_index": (hard_level_profile or {}).get("_v8_row_index"),
+                    "ratios": ratios,
+                },
+            },
+        },
+    }
+
+
+def _wave_birth_template_id(stage_id: str, wave_index: int, position: int, monster_raw_id: str) -> str:
+    return f"unit_birth_template:wave:{_safe_id(stage_id)}:{_safe_id(monster_raw_id or 'empty')}"
+
+
+def _summoned_monster_birth_template_id(task_id: str, entry_index: int) -> str:
+    return f"unit_birth_template:summoned_monster:{_safe_id(task_id)}:{entry_index}"
+
+
+def _servant_birth_template_id(servant_id: str) -> str:
+    return f"unit_birth_template:servant:{_safe_id(servant_id)}"
+
+
+def _lower_unit_birth_templates(
+    *,
+    summon_monster_intents: list[SummonMonsterIntentIR],
+    servant_definitions: list[ServantDefinitionIR],
+    wave_definitions: list[WaveDefinitionIR],
+    combatant_profiles: list[CombatantProfileIR],
+    monster_data_cards: tuple[MonsterDataCardIR, ...] | list[MonsterDataCardIR],
+    timeline_rules: list[TimelineRuleIR],
+) -> list[UnitBirthTemplateIR]:
+    profile_by_entity = {profile.entity_id: profile for profile in combatant_profiles}
+    card_by_entity = {card.entity_ref: card for card in monster_data_cards}
+    timeline_rule = next((rule for rule in timeline_rules if rule.coverage_status == "executable"), None)
+    templates: list[UnitBirthTemplateIR] = []
+    for intent in summon_monster_intents:
+        for entry in intent.entries:
+            templates.append(
+                _summoned_monster_birth_template(
+                    intent,
+                    entry,
+                    profile_by_entity.get(entry.monster_entity_ref),
+                    card_by_entity.get(entry.monster_entity_ref),
+                    timeline_rule,
+                )
+            )
+    for definition in servant_definitions:
+        templates.append(_servant_birth_template(definition, timeline_rule))
+    for definition in wave_definitions:
+        for entry in definition.entries:
+            templates.append(
+                _wave_enemy_birth_template(
+                    definition,
+                    entry,
+                    profile_by_entity.get(entry.monster_entity_ref),
+                    card_by_entity.get(entry.monster_entity_ref),
+                    timeline_rule,
+                )
+            )
+    return list({template.birth_template_id: template for template in templates}.values())
+
+
+def _summoned_monster_birth_template(
+    intent: SummonMonsterIntentIR,
+    entry: SummonMonsterEntryIR,
+    profile: CombatantProfileIR | None,
+    card: MonsterDataCardIR | None,
+    timeline_rule: TimelineRuleIR | None,
+) -> UnitBirthTemplateIR:
+    reasons: list[str] = []
+    if intent.coverage_status != "executable":
+        reasons.append(intent.blocked_reason or f"summon_monster_intent_not_executable:{intent.coverage_status}")
+    if entry.coverage_status != "executable":
+        reasons.append(entry.blocked_reason or f"summon_monster_entry_not_executable:{entry.coverage_status}")
+    if profile is None or profile.coverage_status != "executable":
+        reasons.append("summon_monster_combatant_profile_missing_or_blocked")
+    if card is None:
+        reasons.append("summon_monster_data_card_missing")
+    if timeline_rule is None:
+        reasons.append("summon_monster_timeline_rule_missing")
+    if entry.level_policy.get("admission_status") != "executable" or (
+        profile is not None and entry.level_policy.get("profile_id") != profile.profile_id
+    ):
+        reasons.append("summon_monster_level_policy_source_blocked")
+    delay_ratio = _strict_json_number(intent.delay_policy.get("value"))
+    if intent.delay_policy.get("admission_status") != "executable" or delay_ratio is None or delay_ratio < 0:
+        reasons.append("summon_monster_delay_policy_source_blocked")
+        delay_ratio = 0.0
+    position_policy = entry.position_policy
+    if position_policy.get("admission_status") != "executable":
+        reasons.append(str(position_policy.get("blocked_reason") or "summon_monster_position_policy_blocked"))
+    profile_values, profile_reasons = _birth_profile_values(profile)
+    reasons.extend(profile_reasons)
+    stat_resolutions = _birth_profile_stat_resolutions(entry, profile, profile_values)
+    source_trace = entry.source.to_json()
+    card_source = card.source.to_json() if card is not None else {}
+    profile_source = profile.source.to_json() if profile is not None else {}
+    timeline_source = timeline_rule.source.to_json() if timeline_rule is not None else {}
+    location_type = str(position_policy.get("location_type") or "")
+    unit_field_specs: dict[str, JSONValue] = {
+        "side": "enemy",
+        "template_id": entry.monster_entity_ref,
+        "level": {"binding_kind": "owner_field", "field": "level"},
+        "max_hp": profile_values.get("max_hp"),
+        "hp": {"binding_kind": "copy_unit_field", "field": "max_hp"},
+        "attack": profile_values.get("attack"),
+        "defense": profile_values.get("defense"),
+        "speed": profile_values.get("speed"),
+        "energy": 0.0,
+        "max_energy": 0.0,
+        "toughness": profile_values.get("current_toughness"),
+        "max_toughness": profile_values.get("max_toughness"),
+        "action_value": {
+            "binding_kind": "timeline_action_value",
+            "speed_field": "speed",
+            "base_action_gauge": timeline_rule.base_action_gauge if timeline_rule is not None else None,
+            "multiplier": delay_ratio,
+        },
+    }
+    flag_specs: dict[str, JSONValue] = {
+        "position": {
+            "binding_kind": "relative_owner_position",
+            "location_type": location_type,
+            "offset_request_field": "spawn_index",
+        },
+        "team_side": "enemy",
+        "summon_kind": "summoned_monster",
+        "wave_member_kind": "enemy_summon",
+        "wave_clear_policy": entry.wave_clear_policy,
+        "owner_id": {"binding_kind": "request_field", "field": "owner_id"},
+        "summoner_id": {"binding_kind": "request_field", "field": "summoner_id"},
+        "summon_intent_id": {"binding_kind": "request_field", "field": "source_id"},
+        "summon_entry_id": {"binding_kind": "request_field", "field": "entry_id"},
+        "summon_entry_index": {"binding_kind": "request_field", "field": "entry_index"},
+        "summon_entry_copy_index": {"binding_kind": "request_field", "field": "copy_index"},
+        "summon_spawn_index": {"binding_kind": "request_field", "field": "spawn_index"},
+        "summon_entry_count": entry.count,
+        "summon_source_trace": intent.source.to_json(),
+        "summon_entry_source_trace": source_trace,
+        "summon_position_policy": entry.position_policy,
+        "summon_level_policy": entry.level_policy,
+        "summon_value_resolutions": stat_resolutions,
+        "summon_level_source_trace": profile_source,
+        "summon_delay_policy": intent.delay_policy,
+        "combatant_profile_id": profile.profile_id if profile is not None else "",
+        "combatant_profile_source_trace": profile_source,
+        "combatant_profile_coverage_status": profile.coverage_status if profile is not None else "blocked",
+        "monster_data_card_id": card.card_id if card is not None else "",
+        "monster_data_card_source_trace": card_source,
+        "monster_passive_mechanism_slot_ids": list(card.passive_mechanism_slot_ids) if card is not None else [],
+        "weaknesses": list(profile.weaknesses) if profile is not None else [],
+        "debuff_resistances": list(profile.debuff_resistances) if profile is not None else [],
+        "toughness_profile_source_trace": profile_source,
+        "resistance_source_trace": profile_source,
+        "status_resistance_source_trace": profile_source,
+        "timeline_admitted": timeline_rule is not None,
+        "summon_action_admitted": card is not None,
+        "summon_action_admission": {
+            "coverage_status": "executable" if card is not None else "blocked",
+            "source_trace": {
+                "summon_intent": intent.source.to_json(),
+                "summon_entry": source_trace,
+                "monster_data_card": card_source,
+                "combatant_profile": profile_source,
+            },
+            "action_set_kind": "enemy_fixed_sequence",
+            "monster_data_card_id": card.card_id if card is not None else "",
+            "action_sequence_count": len(card.action_sequence) if card is not None else 0,
+            "executable_action_sequence_count": sum(
+                1
+                for step in (card.action_sequence if card is not None else ())
+                if isinstance(step, dict) and step.get("coverage_status") == "executable"
+            ),
+        },
+        "initial_action_value_source_trace": {
+            "binding_kind": "timeline_trace",
+            "timeline_rule_id": timeline_rule.timeline_rule_id if timeline_rule is not None else "",
+            "timeline_rule_source": timeline_source,
+            "speed_source": profile_source,
+            "formula": timeline_rule.initial_action_value_rule if timeline_rule is not None else "",
+            "multiplier": delay_ratio,
+            "summon_delay_policy": intent.delay_policy,
+            "summon_delay_application": "initial_action_value_full_av_times_delay_ratio",
+        },
+    }
+    blocked_reason = ";".join(dict.fromkeys(reason for reason in reasons if reason))
+    return UnitBirthTemplateIR(
+        birth_template_id=entry.birth_template_id,
+        spawn_kind="summoned_monster",
+        entity_ref=entry.monster_entity_ref,
+        unit_field_specs=unit_field_specs,
+        flag_specs=flag_specs,
+        resource_specs=_birth_profile_resources(profile),
+        request_contract={
+            "spawn_kind": "summoned_monster",
+            "entity_ref": entry.monster_entity_ref,
+            "source_id": intent.summon_intent_id,
+            "entry_id": entry.entry_id,
+            "owner_required": True,
+            "summoner_matches_owner": True,
+            "template_source_role": "entry",
+        },
+        source=entry.source,
+        coverage_status="blocked" if blocked_reason else "executable",
+        blocked_reason=blocked_reason,
+    )
+
+
+def _servant_birth_template(
+    definition: ServantDefinitionIR,
+    timeline_rule: TimelineRuleIR | None,
+) -> UnitBirthTemplateIR:
+    reasons: list[str] = []
+    if definition.coverage_status != "executable" or definition.representation != "unit":
+        reasons.append(definition.blocked_reason or f"servant_definition_not_executable:{definition.coverage_status}")
+    if timeline_rule is None:
+        reasons.append("servant_timeline_rule_missing")
+    components = definition.stat_source.get("components") if isinstance(definition.stat_source, dict) else None
+    component_values: dict[str, float] = {}
+    for key in ("hp_base", "hp_inherit", "speed_base", "speed_inherit"):
+        component = components.get(key) if isinstance(components, dict) else None
+        value = _strict_json_number(component.get("value")) if isinstance(component, dict) else None
+        if value is None:
+            reasons.append(f"servant_birth_template_stat_component_missing:{key}")
+        else:
+            component_values[key] = value
+    source_trace = definition.source.to_json()
+    timeline_source_trace = _birth_first_source_trace(definition.timeline_source, source_trace)
+    lifecycle_source_trace = _birth_first_source_trace(definition.lifecycle_source, source_trace)
+    action_set_trace = definition.action_set.get("source_trace") if isinstance(definition.action_set, dict) else None
+    unit_field_specs: dict[str, JSONValue] = {
+        "side": "summon",
+        "template_id": definition.servant_ref,
+        "level": {"binding_kind": "owner_field", "field": "level"},
+        "max_hp": {
+            "binding_kind": "owner_linear",
+            "owner_field": "max_hp",
+            "scale": component_values.get("hp_inherit"),
+            "offset": component_values.get("hp_base"),
+            "minimum": 0.0,
+        },
+        "hp": {"binding_kind": "copy_unit_field", "field": "max_hp"},
+        "attack": {"binding_kind": "owner_field", "field": "attack"},
+        "defense": {"binding_kind": "owner_field", "field": "defense"},
+        "speed": {
+            "binding_kind": "owner_linear",
+            "owner_field": "speed",
+            "scale": component_values.get("speed_inherit"),
+            "offset": component_values.get("speed_base"),
+            "minimum": 0.0,
+        },
+        "energy": 0.0,
+        "max_energy": 0.0,
+        "toughness": 0.0,
+        "max_toughness": 0.0,
+        "action_value": {
+            "binding_kind": "timeline_action_value",
+            "speed_field": "speed",
+            "base_action_gauge": timeline_rule.base_action_gauge if timeline_rule is not None else None,
+            "multiplier": 1.0,
+        },
+    }
+    flag_specs: dict[str, JSONValue] = {
+        "position": {"binding_kind": "owner_position"},
+        "team_side": {"binding_kind": "owner_team_side"},
+        "summon_kind": "servant",
+        "owner_id": {"binding_kind": "request_field", "field": "owner_id"},
+        "summoner_id": {"binding_kind": "request_field", "field": "summoner_id"},
+        "owner_entity_ref": definition.owner_entity_ref,
+        "servant_definition_id": {"binding_kind": "request_field", "field": "source_id"},
+        "servant_ref": definition.servant_ref,
+        "summon_intent_id": {"binding_kind": "request_field", "field": "source_id"},
+        "summon_source_trace": source_trace,
+        "servant_definition_source_trace": source_trace,
+        "stat_source": definition.stat_source,
+        "servant_owner_source": definition.stat_source.get("owner_source", {})
+        if isinstance(definition.stat_source, dict)
+        else {},
+        "timeline_source": definition.timeline_source,
+        "lifecycle_source": definition.lifecycle_source,
+        "servant_runtime_stat_values": {
+            "binding_kind": "servant_runtime_stat_values",
+            "hp_formula": "owner.max_hp * hp_inherit + hp_base",
+            "speed_formula": "owner.speed * speed_inherit + speed_base",
+            "attack_source_status": "schema_carry_only",
+            "defense_source_status": "schema_carry_only",
+        },
+        "timeline_admitted": timeline_rule is not None,
+        "summon_action_admitted": definition.action_set.get("admission_status") == "executable",
+        "summon_action_admission": {
+            "coverage_status": definition.action_set.get("admission_status") or definition.action_set.get("coverage_status"),
+            "source_trace": {
+                "servant_definition": source_trace,
+                "action_set_source_trace": list(action_set_trace) if isinstance(action_set_trace, list) else [],
+            },
+            "action_set": definition.action_set,
+            "ability_graph_ids": list(definition.ability_graph_ids),
+            "skipped_slots": definition.action_set.get("skipped_slots", [])
+            if isinstance(definition.action_set, dict)
+            else [],
+        },
+        "owner_death_policy": "remove",
+        "owner_death_policy_admission": {
+            "coverage_status": "executable",
+            "remove_source_admitted": True,
+            "lifecycle_source": definition.lifecycle_source,
+        },
+        "owner_death_policy_source_trace": lifecycle_source_trace,
+        "initial_action_value_source_trace": {
+            "binding_kind": "timeline_trace",
+            "timeline_rule_id": timeline_rule.timeline_rule_id if timeline_rule is not None else "",
+            "timeline_rule_source": timeline_rule.source.to_json() if timeline_rule is not None else {},
+            "timeline_source": timeline_source_trace,
+            "formula": timeline_rule.initial_action_value_rule if timeline_rule is not None else "",
+            "multiplier": 1.0,
+        },
+        "servant_attack_defense_source_status": {
+            "coverage_status": "schema_carry_only",
+            "source": "owner_current_unit_state",
+            "note": "servant damage stat binding is not admitted by servant spawn",
+        },
+    }
+    blocked_reason = ";".join(dict.fromkeys(reason for reason in reasons if reason))
+    return UnitBirthTemplateIR(
+        birth_template_id=definition.birth_template_id,
+        spawn_kind="servant",
+        entity_ref=definition.servant_ref,
+        unit_field_specs=unit_field_specs,
+        flag_specs=flag_specs,
+        resource_specs={},
+        request_contract={
+            "spawn_kind": "servant",
+            "entity_ref": definition.servant_ref,
+            "source_id": definition.servant_definition_id,
+            "entry_id": definition.servant_definition_id,
+            "owner_required": True,
+            "summoner_matches_owner": True,
+            "owner_entity_ref": definition.owner_entity_ref,
+            "template_source_role": "entry",
+        },
+        source=definition.source,
+        coverage_status="blocked" if blocked_reason else "executable",
+        blocked_reason=blocked_reason,
+    )
+
+
+def _wave_enemy_birth_template(
+    definition: WaveDefinitionIR,
+    entry: WaveMonsterEntryIR,
+    profile: CombatantProfileIR | None,
+    card: MonsterDataCardIR | None,
+    timeline_rule: TimelineRuleIR | None,
+) -> UnitBirthTemplateIR:
+    reasons: list[str] = []
+    if definition.coverage_status != "executable":
+        reasons.append(definition.blocked_reason or f"wave_definition_not_executable:{definition.coverage_status}")
+    if entry.coverage_status != "executable":
+        reasons.append(entry.blocked_reason or f"wave_entry_not_executable:{entry.coverage_status}")
+    if definition.level_policy.get("admission_status") != "executable":
+        reasons.append(str(definition.level_policy.get("blocked_reason") or "wave_stage_level_source_blocked"))
+    if definition.level is None or definition.hard_level_group is None:
+        reasons.append("wave_stage_level_source_missing")
+    if profile is None or profile.coverage_status != "executable":
+        reasons.append("wave_combatant_profile_missing_or_blocked")
+    if card is None:
+        reasons.append("wave_monster_data_card_missing")
+    if timeline_rule is None:
+        reasons.append("wave_timeline_rule_missing")
+    profile_values, profile_reasons = _birth_profile_values(profile)
+    reasons.extend(profile_reasons)
+    ratios = definition.level_policy.get("ratios") if isinstance(definition.level_policy, dict) else None
+    scaled_values: dict[str, float] = {}
+    for field_name in ("max_hp", "attack", "defense", "speed", "max_toughness"):
+        ratio = _strict_json_number(ratios.get(field_name)) if isinstance(ratios, dict) else None
+        source_field = "max_toughness" if field_name == "max_toughness" else field_name
+        base_value = _strict_json_number(profile_values.get(source_field))
+        if ratio is None or ratio <= 0 or base_value is None:
+            reasons.append(f"wave_stage_scaled_stat_source_missing:{field_name}")
+        else:
+            scaled_values[field_name] = base_value * ratio
+    scaled_values["current_toughness"] = scaled_values.get("max_toughness", 0.0)
+    profile_source = profile.source.to_json() if profile is not None else {}
+    card_source = card.source.to_json() if card is not None else {}
+    timeline_source = timeline_rule.source.to_json() if timeline_rule is not None else {}
+    level_source_trace = definition.level_policy.get("source_trace") if isinstance(definition.level_policy, dict) else {}
+    unit_field_specs: dict[str, JSONValue] = {
+        "side": "enemy",
+        "template_id": entry.monster_entity_ref,
+        "level": definition.level,
+        "max_hp": scaled_values.get("max_hp"),
+        "hp": {"binding_kind": "copy_unit_field", "field": "max_hp"},
+        "attack": scaled_values.get("attack"),
+        "defense": scaled_values.get("defense"),
+        "speed": scaled_values.get("speed"),
+        "energy": 0.0,
+        "max_energy": 0.0,
+        "toughness": scaled_values.get("current_toughness"),
+        "max_toughness": scaled_values.get("max_toughness"),
+        "action_value": {
+            "binding_kind": "timeline_action_value",
+            "speed_field": "speed",
+            "base_action_gauge": timeline_rule.base_action_gauge if timeline_rule is not None else None,
+            "multiplier": 1.0,
+        },
+    }
+    flag_specs: dict[str, JSONValue] = {
+        "position": {"binding_kind": "request_field", "field": "position"},
+        "wave_definition_id": {"binding_kind": "request_field", "field": "wave_definition_id"},
+        "stage_id": definition.stage_id,
+        "wave_index": {"binding_kind": "request_field", "field": "wave_index"},
+        "wave_position": {"binding_kind": "request_field", "field": "position"},
+        "wave_entry_id": {"binding_kind": "request_field", "field": "entry_id"},
+        "wave_member_kind": "stage_wave_enemy",
+        "wave_clear_policy": "counts",
+        "wave_entry_source_trace": {"binding_kind": "request_field", "field": "entry_source_trace"},
+        "wave_definition_source_trace": {"binding_kind": "request_field", "field": "source_trace"},
+        "stage_level": definition.level,
+        "hard_level_group": definition.hard_level_group,
+        "stage_level_policy": definition.level_policy,
+        "stage_level_source_trace": level_source_trace if isinstance(level_source_trace, dict) else {},
+        "wave_stat_scaling": {
+            "kind": "combatant_profile_times_stage_hard_level_ratios",
+            "base_profile_values": profile_values,
+            "ratios": ratios if isinstance(ratios, dict) else {},
+            "resolved_values": scaled_values,
+            "source_trace": {
+                "combatant_profile": profile_source,
+                "stage_level": level_source_trace if isinstance(level_source_trace, dict) else {},
+            },
+        },
+        "combatant_profile_id": profile.profile_id if profile is not None else "",
+        "combatant_profile_source_trace": profile_source,
+        "combatant_profile_coverage_status": profile.coverage_status if profile is not None else "blocked",
+        "monster_data_card_id": card.card_id if card is not None else "",
+        "monster_data_card_source_trace": card_source,
+        "monster_passive_mechanism_slot_ids": list(card.passive_mechanism_slot_ids) if card is not None else [],
+        "weaknesses": list(profile.weaknesses) if profile is not None else [],
+        "debuff_resistances": list(profile.debuff_resistances) if profile is not None else [],
+        "initial_action_value_source_trace": {
+            "binding_kind": "timeline_trace",
+            "timeline_rule_id": timeline_rule.timeline_rule_id if timeline_rule is not None else "",
+            "timeline_rule_source": timeline_source,
+            "speed_source": {
+                "combatant_profile": profile_source,
+                "stage_level": level_source_trace if isinstance(level_source_trace, dict) else {},
+            },
+            "formula": timeline_rule.initial_action_value_rule if timeline_rule is not None else "",
+            "multiplier": 1.0,
+        },
+    }
+    blocked_reason = ";".join(dict.fromkeys(reason for reason in reasons if reason))
+    return UnitBirthTemplateIR(
+        birth_template_id=entry.birth_template_id,
+        spawn_kind="wave_enemy",
+        entity_ref=entry.monster_entity_ref,
+        unit_field_specs=unit_field_specs,
+        flag_specs=flag_specs,
+        resource_specs=_birth_profile_resources(profile),
+        request_contract={
+            "spawn_kind": "wave_enemy",
+            "entity_ref": entry.monster_entity_ref,
+            "source_id": definition.wave_definition_id,
+            "wave_definition_id": definition.wave_definition_id,
+            "stage_id": definition.stage_id,
+            "owner_required": False,
+            "template_source_role": "source",
+        },
+        source=definition.source,
+        coverage_status="blocked" if blocked_reason else "executable",
+        blocked_reason=blocked_reason,
+    )
+
+
+def _birth_profile_values(profile: CombatantProfileIR | None) -> tuple[dict[str, float], list[str]]:
+    if profile is None:
+        return {}, ["unit_birth_template_combatant_profile_missing"]
+    values: dict[str, float] = {}
+    reasons: list[str] = []
+    for field_name in ("max_hp", "attack", "defense", "speed"):
+        value = _strict_json_number(profile.base_stats.get(field_name))
+        if value is None:
+            reasons.append(f"unit_birth_template_profile_stat_missing:{field_name}")
+        else:
+            values[field_name] = value
+    for field_name in ("current_toughness", "max_toughness"):
+        value = _strict_json_number(profile.toughness_profile.get(field_name))
+        if value is None:
+            reasons.append(f"unit_birth_template_profile_toughness_missing:{field_name}")
+        else:
+            values[field_name] = value
+    return values, reasons
+
+
+def _birth_profile_resources(profile: CombatantProfileIR | None) -> dict[str, JSONValue]:
+    if profile is None:
+        return {}
+    resources: dict[str, JSONValue] = {
+        f"{damage_type}_resistance": float(value)
+        for damage_type, value in profile.resistances.items()
+        if isinstance(value, (int, float)) and not isinstance(value, bool)
+    }
+    if isinstance(profile.status_resistance, (int, float)) and not isinstance(profile.status_resistance, bool):
+        resources["effect_resistance"] = float(profile.status_resistance)
+    return resources
+
+
+def _birth_profile_stat_resolutions(
+    entry: SummonMonsterEntryIR,
+    profile: CombatantProfileIR | None,
+    values: dict[str, float],
+) -> dict[str, JSONValue]:
+    profile_source = profile.source.to_json() if profile is not None else {}
+    source_trace = {"summon_entry": entry.source.to_json(), "combatant_profile": profile_source}
+    result: dict[str, JSONValue] = {}
+    for field_name in ("max_hp", "attack", "defense", "speed"):
+        value = values.get(field_name)
+        result[field_name] = {
+            "ok": value is not None,
+            "value": value,
+            "binding_kind": "combatant_profile_base_stat",
+            "source_trace": source_trace,
+            "context_trace": {
+                "combatant_profile_id": profile.profile_id if profile is not None else "",
+                "available_keys": ["combatant_profile"] if profile is not None else [],
+            },
+            "blocked_reason": "" if value is not None else f"combatant_profile_base_stat_missing:{field_name}",
+            "request": {
+                "binding_kind": "combatant_profile_base_stat",
+                "field_name": field_name,
+                "required_context_keys": ["combatant_profile"],
+            },
+            "delegate_resolution": {
+                "value_source": f"CombatantProfileIR.base_stats.{field_name}",
+                "profile_id": profile.profile_id if profile is not None else "",
+            },
+            "context_keys": ["combatant_profile"] if profile is not None else [],
+        }
+    return result
+
+
+def _birth_first_source_trace(source: dict[str, JSONValue], fallback: dict[str, JSONValue]) -> dict[str, JSONValue]:
+    traces = source.get("source_trace") if isinstance(source, dict) else None
+    if isinstance(traces, list) and traces and isinstance(traces[0], dict):
+        return dict(traces[0])
+    if isinstance(traces, dict):
+        return dict(traces)
+    return dict(fallback)
+
+
+def _strict_json_number(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
 
 
 def _trace_startup_dynamic_binding_admission(
@@ -6196,6 +6875,7 @@ def _standalone_multiplier_source(
             {
                 "raw_path": f"ParamList[{binding.param_index}]",
                 "raw_value": _json_safe(binding.param_value),
+                "param_index": binding.param_index,
                 "skill_formula_binding_id": binding.binding_id,
                 "formula_slot_id": binding.formula_slot_id,
                 "sequence_order": binding.sequence_order,
@@ -6898,6 +7578,7 @@ def _param_multiplier_source(
     source = {
         "raw_path": f"ParamList[{param_index}]",
         "raw_value": _json_safe(item),
+        "param_index": param_index,
         "param_list_count": len(definition.param_list),
         "multi_param_list_not_implemented": False,
         "show_damage_count": len(definition.show_damage_list),
@@ -8680,6 +9361,7 @@ def _summon_monster_entry_from_raw(
         level_policy=level_policy,
         wave_clear_policy="blocked" if blocked_reason else "counts",
         source=source,
+        birth_template_id=_summoned_monster_birth_template_id(task.task_id, entry_index),
         coverage_status="blocked" if blocked_reason else "executable",
         blocked_reason=blocked_reason,
     )

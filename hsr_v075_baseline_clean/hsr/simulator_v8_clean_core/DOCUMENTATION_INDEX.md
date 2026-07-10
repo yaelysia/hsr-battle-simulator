@@ -13,8 +13,8 @@ hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/
 最近完成阶段：
 
 ```text
-P5 formula / dynamic / parameter binding substrate
-checkpoint: f9a9b65 v8 p5 formula dynamic param binding
+P6 architecture boundary refactor accepted
+checkpoint: v8_p6_architecture_boundary_refactor_checkpoint.md
 ```
 
 当前验收口径：
@@ -24,16 +24,17 @@ checkpoint: f9a9b65 v8 p5 formula dynamic param binding
 - P3 召唤物 / 忆灵底座已通过，但全正例未完成。
 - P4 角色卡 / 怪物卡数据卡扩面底座已通过，但全正例未完成。
 - P5 公式 / 动态值 / 参数绑定通用准入底座已通过，但全正例未完成。
+- P6 架构边界回正已完成验收；出生模板、计算入口、访问边界和聚合阻断口径均已收口。
 
-P3/P4/P5 的 `*_all_executable_complete=false` 是已归因 backlog，不是当前底座失败。
+P3/P4/P5 的 `*_all_executable_complete=false` 和 P6 的 `p6_all_mechanisms_reimplemented=false` 是已归因 backlog，不是当前底座失败。
 
 当前推荐下一阶段：
 
 ```text
-P6 architecture boundary refactor
+post-P6 backlog expansion
 ```
 
-P6 用于回正 P1-P5 后暴露出的架构边界偏移：结算层不能靠审计来源信息反查规则，召唤 / 波次 / 初始配置生成单位应收敛到统一出生单，内容卡只声明机制而不执行机制。
+P6 已回正 P1-P5 后暴露出的主要架构边界偏移：结算层不再靠审计来源信息或 raw path 文本反查规则；summon / servant / wave 出生模板已在 lowering 投影为一等 Canonical IR，runtime 只物化请求绑定规格；缺失、不完整和完整篡改出生单均 blocked/no mutation；波次等级与 HardLevelGroup 属性倍率由结构化来源提供；内容卡 / RuleBook / 静态边界增加防线。下一步处理 RuleBook 过渡 accessor 一等投影、P3/P4/P5 admission gap 和装备 / 构筑 / 关卡环境等扩面。
 
 ## 2. 下一线程优先入口
 
@@ -98,6 +99,7 @@ P1 过程计划已经归档，不作为默认入口：
 - `../live_validation_reports/v8_p3_summon_assistant_servant_complete_checkpoint.md`
 - `../live_validation_reports/v8_p4_combatant_data_card_expansion_checkpoint.md`
 - `../live_validation_reports/v8_p5_formula_dynamic_param_binding_checkpoint.md`
+- `../live_validation_reports/v8_p6_architecture_boundary_refactor_checkpoint.md`
 
 阶段内 `ready_for_review` 报告是 evidence 索引，不是验收结论本身。最终以对应 `checkpoint` 和验收线程结论为准。
 
@@ -134,6 +136,7 @@ PYTHONDONTWRITEBYTECODE=1 ionice -c3 nice -n 15 python3 -B -m simulator_v8_clean
 PYTHONDONTWRITEBYTECODE=1 ionice -c3 nice -n 15 python3 -B -m simulator_v8_clean_core.tools.validate_p3_summon_assistant_servant_complete --output-dir /tmp/hsr_v8_p3_current
 PYTHONDONTWRITEBYTECODE=1 ionice -c3 nice -n 15 python3 -B -m simulator_v8_clean_core.tools.validate_p4_combatant_data_card_expansion --output-dir /tmp/hsr_v8_p4_current
 PYTHONDONTWRITEBYTECODE=1 ionice -c3 nice -n 15 python3 -B -m simulator_v8_clean_core.tools.validate_p5_formula_dynamic_param_binding --output-dir /tmp/hsr_v8_p5_current
+PYTHONDONTWRITEBYTECODE=1 ionice -c3 nice -n 15 python3 -B -m simulator_v8_clean_core.tools.validate_p6_architecture_boundary_refactor --output-dir /tmp/hsr_v8_p6_current
 git diff --check
 ```
 

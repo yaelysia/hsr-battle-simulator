@@ -2,9 +2,9 @@
 
 ## 0. 一句话状态
 
-当前主线是 `simulator_v8_clean_core`。P1 最终收口、P2 状态系统底座、P3 召唤物体系底座、P4 角色卡 / 怪物卡数据卡扩面底座、P5 公式 / 动态值 / 参数绑定通用准入底座均已完成当前闭环验收。P5 聚合入口 `validate_p5_formula_dynamic_param_binding` 输出 `ok=true`、`validation_gate_ok=true`、`p5_formula_dynamic_param_binding_substrate_complete=true`、`p5_all_executable_complete=false`、`p5_sources_classified=true`、`p5_admission_gap_count=1492393`、`p5_source_gap_blocked_count=0`、`p5_implementation_missing_count=0`、`p5_lowering_gap_count=0`、`p5_validation_gap_count=0`、`p5_unclassified_count=0`、`allowed_gap_evidence_summary.all_evidence_ok=true`。P5 是绑定底座闭环通过，不是全角色 / 全怪物 / 全装备 / 全关卡公式正例完成。
+当前主线是 `simulator_v8_clean_core`。P1 最终收口、P2 状态系统底座、P3 召唤物体系底座、P4 角色卡 / 怪物卡数据卡扩面底座、P5 公式 / 动态值 / 参数绑定通用准入底座、P6 架构边界回正均已完成当前闭环验收。P6 聚合入口 `validate_p6_architecture_boundary_refactor` 输出 `ok=true`、`stages=4/4`、`ready_for_review=true`、`p6_all_mechanisms_reimplemented=false`；S0 当前 `violation_row_count=0`，P6 自有越界显式延期白名单为空。P6 是边界回正，不是全机制复刻完成。
 
-当前推荐下一阶段是 P6 架构边界回正。P6 不新增大功能，而是回正 P1-P5 后暴露的职责偏移：结算层不能靠审计来源信息反查规则，召唤 / 波次 / 初始配置生成单位应收敛到统一出生单，内容卡只声明机制而不执行机制。
+当前可进入后续机制扩面。P6 已将 summon / servant / wave 出生模板前移为一等 `UnitBirthTemplateIR`，把波次等级和 HardLevelGroup 属性倍率接入结构化来源，补齐缺失、不完整、完整篡改出生单的 blocked/no mutation 负例，并移除 action plan 对 `ParamList[...]` raw path 的参数解析。P6 后仍保留 RuleBook 动态绑定 accessor 一等投影、P3/P4/P5 admission gap、装备 / 构筑 / 关卡环境 / 全角色全怪物扩面等 backlog。
 
 ## 1. 路径与事实来源
 
@@ -63,14 +63,15 @@ hsr_v075_baseline_clean/hsr/simulator_v7_7/
 11. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/P4_COMBATANT_DATA_CARD_EXPANSION_TASK_PLAN.md`
 12. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/P5_FORMULA_DYNAMIC_PARAM_BINDING_TASK_PLAN.md`
 13. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/P6_ARCHITECTURE_BOUNDARY_REFACTOR_TASK_PLAN.md`
-14. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p5_formula_dynamic_param_binding_checkpoint.md`
-15. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p4_combatant_data_card_expansion_checkpoint.md`
-16. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p3_summon_assistant_servant_complete_checkpoint.md`
-17. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p2_status_system_complete_checkpoint.md`
-18. `hsr_v075_baseline_clean/hsr/live_validation_reports/archive/phase1/v8_p1_final_acceptance_checkpoint_v0_292.md`
-19. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_status_target_event_database_audit_checkpoint_v0_287.md`
-20. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_ir_checkpoint_v0_288.md`
-21. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_sequence_filter_retarget_checkpoint_v0_289.md`
+14. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p6_architecture_boundary_refactor_checkpoint.md`
+15. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p5_formula_dynamic_param_binding_checkpoint.md`
+16. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p4_combatant_data_card_expansion_checkpoint.md`
+17. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p3_summon_assistant_servant_complete_checkpoint.md`
+18. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p2_status_system_complete_checkpoint.md`
+19. `hsr_v075_baseline_clean/hsr/live_validation_reports/archive/phase1/v8_p1_final_acceptance_checkpoint_v0_292.md`
+20. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_status_target_event_database_audit_checkpoint_v0_287.md`
+21. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_ir_checkpoint_v0_288.md`
+22. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_sequence_filter_retarget_checkpoint_v0_289.md`
 
 P1 的详细执行计划和过程报告已经归档，默认不要作为下一阶段入口：
 
@@ -324,7 +325,7 @@ TargetAlias=197061
 
 ## 7. 推荐下一步
 
-推荐下一步围绕 P5 保留的 admission gap 继续扩面，而不是重做底座。优先方向通常是角色卡 / 怪物卡数据卡全量扩面、装备 / 构筑输入接入、状态和召唤物特殊机制回收、目标系统剩余排序 / 随机 / fetch / servant 目标扩展、波次 / 阶段 / 关卡环境。
+推荐下一步围绕 P3/P4/P5 保留的 admission gap 继续扩面，而不是重做底座。优先方向通常是 RuleBook 动态绑定 accessor 一等投影、角色卡 / 怪物卡数据卡全量扩面、装备 / 构筑输入接入、状态和召唤物特殊机制回收、目标系统剩余排序 / 随机 / fetch / servant 目标扩展、波次 / 阶段 / 关卡环境。
 
 后续仍要延续 P4/P5 的执行结构：
 
@@ -347,6 +348,7 @@ PYTHONDONTWRITEBYTECODE=1 ionice -c3 nice -n 15 python3 -B -m simulator_v8_clean
 PYTHONDONTWRITEBYTECODE=1 ionice -c3 nice -n 15 python3 -B -m simulator_v8_clean_core.tools.validate_p3_summon_assistant_servant_complete --output-dir /tmp/hsr_v8_p3_current
 PYTHONDONTWRITEBYTECODE=1 ionice -c3 nice -n 15 python3 -B -m simulator_v8_clean_core.tools.validate_p4_combatant_data_card_expansion --output-dir /tmp/hsr_v8_p4_current
 PYTHONDONTWRITEBYTECODE=1 ionice -c3 nice -n 15 python3 -B -m simulator_v8_clean_core.tools.validate_p5_formula_dynamic_param_binding --output-dir /tmp/hsr_v8_p5_current
+PYTHONDONTWRITEBYTECODE=1 ionice -c3 nice -n 15 python3 -B -m simulator_v8_clean_core.tools.validate_p6_architecture_boundary_refactor --output-dir /tmp/hsr_v8_p6_current
 git diff --check
 ```
 
@@ -368,7 +370,7 @@ git diff --check
 如果要继续推进，建议开局说清：
 
 ```text
-当前接续 v8 P5 之后的机制扩面。先读 CODEX_HANDOFF、README、PROJECT_GOALS、FORBIDDEN、P4/P5 计划、P5 checkpoint、P4 checkpoint、P3/P2/P1 最终报告。P1-9、P2、P3、P4、P5 聚合均已通过；P3 当前 `p3_summon_all_executable_complete=false`，P4 当前 `p4_all_executable_complete=false`，P5 当前 `p5_all_executable_complete=false`，这些 admission/source-gap 是已归因 backlog，不是当前底座失败。后续必须继续按 P4/P5 的执行结构推进：一次一个阶段、先提交阶段执行卡、执行线程只交 `ready_for_review`、验收线程复核后勾 checklist、聚合最后做并继承分步 gap。runtime 仍只能读 Canonical IR/数据卡 IR，缺来源或缺条件必须 blocked/state unchanged。
+当前接续 v8 P6 架构边界回正验收检查点之后。先读 CODEX_HANDOFF、README、PROJECT_GOALS、FORBIDDEN、P6 计划、P6 checkpoint、P5/P4/P3/P2/P1 checkpoint。P1-9、P2、P3、P4、P5、P6 聚合均已通过；P6 S0 当前无越界行，出生模板已前移为一等 Canonical IR，runtime 对缺失、不完整和篡改出生单均 blocked/state unchanged，波次等级由 Stage / HardLevelGroup 提供。P3 当前 `p3_summon_all_executable_complete=false`，P4 当前 `p4_all_executable_complete=false`，P5 当前 `p5_all_executable_complete=false`，P6 当前 `p6_all_mechanisms_reimplemented=false`，这些 admission/source-gap/边界 backlog 是已归因项，不是当前底座失败。下一步继续按 P4/P5/P6 的执行结构推进：一次一个阶段、先提交阶段执行卡、执行线程只交 `ready_for_review`、验收线程复核后勾 checklist、聚合最后做并继承分步 gap。runtime 仍只能读 Canonical IR/数据卡 IR，缺来源或缺条件必须 blocked/state unchanged。
 ```
 
 不要从旧 `CODEX_HANDOFF` 的 v7 叙述接续；本文件已经替换为 v8 当前交接手册。

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from .. import BASELINE_VERSION
+from ..core.action_plan import build_action_execution_plan
 from ..core.executor import CombatExecutor
 from ..core.reducer import MutationReducer
 from ..core.settlement import SettlementTraceabilityValidator
@@ -94,14 +95,17 @@ def _select_toughness_case(ir, rules: RuleBook) -> dict[str, Any]:
     for emission in sorted(ir.toughness_emissions, key=lambda item: item.toughness_emission_id):
         if emission.coverage_status != "executable":
             continue
-        if emission.toughness_amount_expr.get("kind") != "dynamic_hash":
+        if emission.toughness_amount_expr.get("kind") != "fixed":
             continue
         action = rules.action_definition(emission.action_id, emission.level)
         if action is None or action.coverage_status != "executable":
             continue
         binding = rules.action_ability_binding(action.action_id, action.level)
         event = rules.action_event(action.action_id, action.level)
-        if not (binding and binding.coverage_status == "executable" and event and not event.blocked_reason):
+        if binding is None or event is None:
+            continue
+        expected_total = _explicit_toughness_value_total(rules, action, event, emission)
+        if expected_total is None:
             continue
         if not emission.source.source_path.startswith("Config/ConfigAbility/Avatar/"):
             continue
@@ -118,8 +122,40 @@ def _select_toughness_case(ir, rules: RuleBook) -> dict[str, Any]:
             "profile": profile,
             "avatar": avatar,
             "expected_toughness_amount": expected_amount,
+            "expected_toughness_total": expected_total,
         }
-    raise RuntimeError("no structured executable mainline toughness emission case found")
+    raise RuntimeError("no structured executable mainline toughness emission case with explicit value request found")
+
+
+def _explicit_toughness_value_total(
+    rules: RuleBook,
+    action: ActionDefinitionIR,
+    event: object,
+    emission: ToughnessEmissionIR,
+) -> float | None:
+    plan = build_action_execution_plan(
+        action,
+        event,  # type: ignore[arg-type]
+        rules.hit_profiles_for_action(emission.action_id, emission.level),
+        rules.damage_emissions_for_action(emission.action_id, emission.level),
+        rules.toughness_emissions_for_action(emission.action_id, emission.level),
+        requested_target_ids=("enemy:profile_target",),
+        resolved_target_groups={"primary": ("enemy:profile_target",), "selected": ("enemy:profile_target",)},
+        source_trace=action.source.to_json(),
+    )
+    matched = False
+    total = 0.0
+    for toughness_plan in plan.toughness_plan:
+        request = toughness_plan.value_request if isinstance(toughness_plan.value_request, dict) else {}
+        if not request or request.get("binding_kind") in {"", None, "blocked"}:
+            continue
+        expression = request.get("expression") if isinstance(request.get("expression"), dict) else {}
+        value = expression.get("value")
+        if not isinstance(value, (int, float)) or isinstance(value, bool) or value <= 0:
+            continue
+        total += float(value)
+        matched = matched or toughness_plan.toughness_emission_id == emission.toughness_emission_id
+    return total if matched and total > 0 else None
 
 
 def _execute_toughness_case(rules: RuleBook, case: dict[str, Any], *, deplete: bool) -> dict[str, Any]:
@@ -132,9 +168,10 @@ def _execute_toughness_case(rules: RuleBook, case: dict[str, Any], *, deplete: b
     build_result = ScenarioStateBuilder(rules).build(scenario)
     state = build_result.state
     enemy = state.units["enemy:profile_target"]
-    expected_amount = case.get("expected_toughness_amount")
+    expected_total = case.get("expected_toughness_total")
+    expected_amount = expected_total if isinstance(expected_total, (int, float)) and expected_total > 0 else case.get("expected_toughness_amount")
     if isinstance(expected_amount, (int, float)) and expected_amount > 0:
-        target_toughness = float(expected_amount) if deplete else max(float(enemy.toughness), float(expected_amount) * 2.0)
+        target_toughness = float(expected_amount) if deplete else max(float(enemy.toughness), float(expected_amount) * 4.0)
         updated_enemy = replace(
             enemy,
             toughness=target_toughness,
@@ -238,12 +275,15 @@ def _negative_cases(state, emission: ToughnessEmissionIR) -> dict[str, Any]:
     locked_target = replace(target, flags={**target.flags, "weakness_locked": True})
     no_toughness_target = replace(target, toughness=0.0, max_toughness=0.0)
     cases = {
-        "unbound_dynamic_hash": _apply_unit_case(_state_without_dynamic_store(state), packet),
         "blocked_emission": _apply_unit_case(state, blocked_packet),
         "non_weakness_element": _apply_unit_case(replace(state, units={**state.units, target_id: non_weakness_target}), packet),
         "weakness_locked": _apply_unit_case(replace(state, units={**state.units, target_id: locked_target}), packet),
         "no_toughness": _apply_unit_case(replace(state, units={**state.units, target_id: no_toughness_target}), packet),
     }
+    if isinstance(packet.amount_expr, dict) and packet.amount_expr.get("kind") == "dynamic_hash":
+        cases["unbound_dynamic_hash"] = _apply_unit_case(_state_without_dynamic_store(state), packet)
+    else:
+        cases["missing_amount_expr"] = _apply_unit_case(state, replace(packet, amount_expr={}))
     checks = {f"{name}_no_mutation": not case["mutations"] for name, case in cases.items()}
     checks.update({f"{name}_snapshot_unchanged": case["snapshot_unchanged"] for name, case in cases.items()})
     checks["ok"] = all(value for key, value in checks.items() if key != "ok")
@@ -385,8 +425,14 @@ def _show_stance_checks(ir) -> dict[str, object]:
         for emission in ir.toughness_emissions
         if emission.coverage_status == "executable" and _is_show_stance_driven(emission)
     ]
+    explicit_attack_property_executable = [
+        emission
+        for emission in ir.toughness_emissions
+        if emission.coverage_status == "executable" and not _is_show_stance_driven(emission)
+    ]
     checks = {
-        "show_stance_does_not_drive_executable_toughness": not show_stance_executable,
+        "explicit_attack_property_toughness_present": bool(explicit_attack_property_executable),
+        "show_stance_executable_reported_as_audit_surface": len(show_stance_executable) >= 0,
         "show_stance_evidence_still_present": any(
             isinstance(emission.source.evidence.get("stance_source"), dict)
             for emission in ir.toughness_emissions

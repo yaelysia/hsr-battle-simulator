@@ -32,6 +32,7 @@ from .ir import (
     ExtraActionPolicyIR,
     FormulaIR,
     HitProfileIR,
+    JSONValue,
     QueueIntentIR,
     QueueLifecyclePolicyIR,
     QueuePriorityIR,
@@ -54,6 +55,7 @@ from .ir import (
     TimelineRuleIR,
     ToughnessEmissionIR,
     TriggerIR,
+    UnitBirthTemplateIR,
     WaveDefinitionIR,
     WaveMonsterEntryIR,
 )
@@ -134,6 +136,11 @@ class RuleBook:
             self,
             "_summon_unit_definitions_by_unit_id",
             {definition.summon_unit_id: definition for definition in self.ir.summon_unit_definitions},
+        )
+        object.__setattr__(
+            self,
+            "_unit_birth_templates",
+            {template.birth_template_id: template for template in self.ir.unit_birth_templates},
         )
         object.__setattr__(
             self,
@@ -900,6 +907,15 @@ class RuleBook:
     def character_data_card_for_entity(self, entity_ref: str) -> CharacterDataCardIR | None:
         return self._character_data_cards_by_entity_ref.get(entity_ref)
 
+    def character_dynamic_value_bindings_for_card(self, card_id: str) -> dict[str, JSONValue]:
+        card = self.character_data_card(card_id)
+        if card is None:
+            return {}
+        bindings = card.source.evidence.get("character_config_dynamic_value_bindings")
+        if not isinstance(bindings, dict):
+            return {}
+        return _json_object_copy(bindings)
+
     def monster_data_card(self, card_id: str) -> MonsterDataCardIR | None:
         return self._monster_data_cards.get(card_id)
 
@@ -914,6 +930,12 @@ class RuleBook:
 
     def summon_unit_definitions(self) -> tuple[SummonUnitDefinitionIR, ...]:
         return tuple(sorted(self.ir.summon_unit_definitions, key=lambda item: item.summon_definition_id))
+
+    def unit_birth_template(self, birth_template_id: str) -> UnitBirthTemplateIR | None:
+        return self._unit_birth_templates.get(birth_template_id)
+
+    def unit_birth_templates(self) -> tuple[UnitBirthTemplateIR, ...]:
+        return tuple(sorted(self.ir.unit_birth_templates, key=lambda item: item.birth_template_id))
 
     def summon_monster_intent(self, summon_intent_id: str) -> SummonMonsterIntentIR | None:
         return self._summon_monster_intents.get(summon_intent_id)
@@ -1358,3 +1380,20 @@ class RuleBook:
         if entities:
             return entities[0]
         return None
+
+
+def _json_object_copy(value: dict[str, JSONValue]) -> dict[str, JSONValue]:
+    copied: dict[str, JSONValue] = {}
+    for key, item in value.items():
+        copied[str(key)] = _json_copy(item)
+    return copied
+
+
+def _json_copy(value: JSONValue) -> JSONValue:
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, dict):
+        return {str(key): _json_copy(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_json_copy(item) for item in value]
+    return str(value)

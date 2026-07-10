@@ -363,6 +363,36 @@ class SummonUnitDefinitionIR:
 
 
 @dataclass(frozen=True)
+class UnitBirthTemplateIR:
+    birth_template_id: str
+    spawn_kind: Literal["summoned_monster", "servant", "wave_enemy"]
+    entity_ref: str
+    unit_field_specs: dict[str, JSONValue]
+    flag_specs: dict[str, JSONValue]
+    resource_specs: dict[str, JSONValue]
+    request_contract: dict[str, JSONValue]
+    source: IRSource
+    coverage_status: CoverageStatus = "blocked"
+    blocked_reason: str = ""
+    schema_version: str = "p6_unit_birth_template_v1"
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "birth_template_id": self.birth_template_id,
+            "schema_version": self.schema_version,
+            "spawn_kind": self.spawn_kind,
+            "entity_ref": self.entity_ref,
+            "unit_field_specs": self.unit_field_specs,
+            "flag_specs": self.flag_specs,
+            "resource_specs": self.resource_specs,
+            "request_contract": self.request_contract,
+            "source": self.source.to_json(),
+            "coverage_status": self.coverage_status,
+            "blocked_reason": self.blocked_reason,
+        }
+
+
+@dataclass(frozen=True)
 class SummonMonsterEntryIR:
     entry_id: str
     monster_entity_ref: str
@@ -372,6 +402,7 @@ class SummonMonsterEntryIR:
     level_policy: dict[str, JSONValue]
     wave_clear_policy: Literal["counts", "ignore", "blocked"]
     source: IRSource
+    birth_template_id: str = ""
     coverage_status: CoverageStatus = "blocked"
     blocked_reason: str = ""
 
@@ -384,6 +415,7 @@ class SummonMonsterEntryIR:
             "count": self.count,
             "level_policy": self.level_policy,
             "wave_clear_policy": self.wave_clear_policy,
+            "birth_template_id": self.birth_template_id,
             "source": self.source.to_json(),
             "coverage_status": self.coverage_status,
             "blocked_reason": self.blocked_reason,
@@ -462,6 +494,7 @@ class ServantDefinitionIR:
     timeline_source: dict[str, JSONValue]
     lifecycle_source: dict[str, JSONValue]
     source: IRSource
+    birth_template_id: str = ""
     coverage_status: CoverageStatus = "blocked"
     blocked_reason: str = ""
     schema_version: str = "p1_3_servant_definition_v1"
@@ -478,6 +511,7 @@ class ServantDefinitionIR:
             "stat_source": self.stat_source,
             "timeline_source": self.timeline_source,
             "lifecycle_source": self.lifecycle_source,
+            "birth_template_id": self.birth_template_id,
             "source": self.source.to_json(),
             "coverage_status": self.coverage_status,
             "blocked_reason": self.blocked_reason,
@@ -1635,6 +1669,7 @@ class WaveMonsterEntryIR:
     monster_entity_ref: str
     monster_raw_id: str
     source: IRSource
+    birth_template_id: str = ""
     coverage_status: CoverageStatus = "executable"
     blocked_reason: str = ""
 
@@ -1646,6 +1681,7 @@ class WaveMonsterEntryIR:
             "position": self.position,
             "monster_entity_ref": self.monster_entity_ref,
             "monster_raw_id": self.monster_raw_id,
+            "birth_template_id": self.birth_template_id,
             "source": self.source.to_json(),
             "coverage_status": self.coverage_status,
             "blocked_reason": self.blocked_reason,
@@ -1660,6 +1696,9 @@ class WaveDefinitionIR:
     entries: tuple[WaveMonsterEntryIR, ...]
     stage_ability_refs: tuple[str, ...]
     source: IRSource
+    level: int | None = None
+    hard_level_group: int | None = None
+    level_policy: dict[str, JSONValue] = field(default_factory=dict)
     coverage_status: CoverageStatus = "executable"
     blocked_reason: str = ""
 
@@ -1670,6 +1709,9 @@ class WaveDefinitionIR:
             "wave_count": self.wave_count,
             "entries": [entry.to_json() for entry in self.entries],
             "stage_ability_refs": list(self.stage_ability_refs),
+            "level": self.level,
+            "hard_level_group": self.hard_level_group,
+            "level_policy": self.level_policy,
             "source": self.source.to_json(),
             "coverage_status": self.coverage_status,
             "blocked_reason": self.blocked_reason,
@@ -1684,6 +1726,7 @@ class CanonicalIR:
     character_data_cards: tuple[CharacterDataCardIR, ...] = ()
     monster_data_cards: tuple[MonsterDataCardIR, ...] = ()
     summon_unit_definitions: tuple[SummonUnitDefinitionIR, ...] = ()
+    unit_birth_templates: tuple[UnitBirthTemplateIR, ...] = ()
     summon_monster_intents: tuple[SummonMonsterIntentIR, ...] = ()
     assistant_ability_resolutions: tuple[AssistantAbilityResolutionIR, ...] = ()
     servant_definitions: tuple[ServantDefinitionIR, ...] = ()
@@ -1741,6 +1784,7 @@ class CanonicalIR:
             "character_data_cards": [card.to_json() for card in self.character_data_cards],
             "monster_data_cards": [card.to_json() for card in self.monster_data_cards],
             "summon_unit_definitions": [definition.to_json() for definition in self.summon_unit_definitions],
+            "unit_birth_templates": [template.to_json() for template in self.unit_birth_templates],
             "summon_monster_intents": [intent.to_json() for intent in self.summon_monster_intents],
             "assistant_ability_resolutions": [resolution.to_json() for resolution in self.assistant_ability_resolutions],
             "servant_definitions": [definition.to_json() for definition in self.servant_definitions],

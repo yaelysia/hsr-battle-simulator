@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from ..rules.ir import ActionDefinitionIR, ActionEventIR, DamageEmissionIR, HitProfileIR, ToughnessEmissionIR
 
@@ -111,6 +111,8 @@ class DamagePlan:
     blocked_reason: str = ""
     target_group_multiplier_not_implemented: bool = False
     target_selection_policy: dict[str, object] | None = None
+    value_request: dict[str, object] = field(default_factory=dict)
+    value_context: dict[str, object] = field(default_factory=dict)
 
     def to_json(self) -> dict[str, object]:
         return {
@@ -130,6 +132,8 @@ class DamagePlan:
             "blocked_reason": self.blocked_reason,
             "target_group_multiplier_not_implemented": self.target_group_multiplier_not_implemented,
             "target_selection_policy": self.target_selection_policy or {},
+            "value_request": self.value_request,
+            "value_context": self.value_context,
         }
 
 
@@ -147,6 +151,9 @@ class ToughnessPlan:
     source_trace: dict[str, object]
     primary_action_target_id: str | None = None
     blocked_reason: str = ""
+    value_request: dict[str, object] = field(default_factory=dict)
+    value_context: dict[str, object] = field(default_factory=dict)
+    value_binding_sources: tuple[dict[str, object], ...] = ()
 
     def to_json(self) -> dict[str, object]:
         return {
@@ -162,6 +169,9 @@ class ToughnessPlan:
             "source_trace": self.source_trace,
             "primary_action_target_id": self.primary_action_target_id,
             "blocked_reason": self.blocked_reason,
+            "value_request": self.value_request,
+            "value_context": self.value_context,
+            "value_binding_sources": list(self.value_binding_sources),
         }
 
 
@@ -378,6 +388,7 @@ def _damage_plan_from_emissions(
         scaling_ratio = _hit_scaling_ratio(profile)
         if scaling_ratio is None:
             continue
+        value_request = _damage_value_request(profile, emission, scaling_ratio)
         for target_id in _targets_for_hit_profile(profile, target_groups):
             plans.append(
                 DamagePlan(
@@ -397,6 +408,8 @@ def _damage_plan_from_emissions(
                     blocked_reason=profile.blocked_reason,
                     target_group_multiplier_not_implemented=_target_group_multiplier_not_implemented(action_definition, profile),
                     target_selection_policy=profile.target_selection_policy,
+                    value_request=value_request,
+                    value_context=_damage_value_context(profile),
                 )
             )
     return tuple(plans)
@@ -419,6 +432,7 @@ def _toughness_plan_from_emissions(
         profile = hit_profiles.get(emission.hit_profile_id)
         if profile is None:
             continue
+        value_request, value_binding_sources = _toughness_value_request(emission)
         for target_id in _targets_for_hit_profile(profile, target_groups):
             plans.append(
                 ToughnessPlan(
@@ -434,6 +448,9 @@ def _toughness_plan_from_emissions(
                     source_trace=emission.source.to_json(),
                     primary_action_target_id=primary_action_target_id,
                     blocked_reason=emission.blocked_reason,
+                    value_request=value_request,
+                    value_context={},
+                    value_binding_sources=value_binding_sources,
                 )
             )
     return tuple(plans)
@@ -467,6 +484,216 @@ def _hit_scaling_ratio(profile: HitProfileIR) -> float | None:
     value = expr.get("value")
     if isinstance(value, (int, float)):
         return float(value)
+    return None
+
+
+def _damage_value_request(
+    profile: HitProfileIR,
+    emission: DamageEmissionIR,
+    scaling_ratio: float,
+) -> dict[str, object]:
+    multiplier_source = profile.multiplier_source if isinstance(profile.multiplier_source, dict) else {}
+    source_kind = str(multiplier_source.get("source_kind") or "")
+    binding_id = str(multiplier_source.get("skill_formula_binding_id") or "")
+    trace = {
+        "value_request_source": "HitProfileIR.multiplier_source",
+        "damage_emission_id": emission.damage_emission_id,
+        "hit_profile_id": profile.hit_profile_id,
+        "source_kind": source_kind,
+        "multiplier_source": multiplier_source,
+    }
+    if binding_id and source_kind in {"character_data_card_skill_formula", "monster_data_card_skill_formula"}:
+        param_index = _structured_param_index(multiplier_source)
+        if param_index is None:
+            return {
+                "binding_kind": "blocked",
+                "blocked_reason": "damage_value_request_param_index_missing",
+                "required_context_keys": [],
+                "source_trace": trace,
+            }
+        return {
+            "binding_kind": "skill_formula_param",
+            "binding_id": binding_id,
+            "param_index": param_index,
+            "formula_role": "direct_damage",
+            "required_context_keys": ["action"],
+            "source_trace": trace,
+        }
+    if _fixed_expr_value(profile.multiplier_expr) is not None:
+        return {
+            "binding_kind": "fixed_numeric_expression",
+            "expression": dict(profile.multiplier_expr),
+            "required_context_keys": ["action"],
+            "source_trace": {
+                **trace,
+                "value_request_source": "HitProfileIR.multiplier_expr",
+                "scaling_ratio": scaling_ratio,
+            },
+        }
+    return {
+        "binding_kind": "blocked",
+        "blocked_reason": "damage_value_request_missing",
+        "required_context_keys": [],
+        "source_trace": trace,
+    }
+
+
+def _damage_value_context(profile: HitProfileIR) -> dict[str, object]:
+    multiplier_source = profile.multiplier_source if isinstance(profile.multiplier_source, dict) else {}
+    data_card_id = str(
+        multiplier_source.get("data_card_id")
+        or multiplier_source.get("character_data_card_id")
+        or ""
+    )
+    data_card_kind = str(multiplier_source.get("data_card_kind") or "")
+    if not data_card_kind and data_card_id:
+        data_card_kind = "character"
+    return {
+        "data_card_id": data_card_id,
+        "data_card_kind": data_card_kind,
+    }
+
+
+def _structured_param_index(source: dict[str, object]) -> int | None:
+    param_index = source.get("param_index")
+    if isinstance(param_index, bool) or not isinstance(param_index, int) or param_index < 0:
+        return None
+    return param_index
+
+
+def _toughness_value_request(emission: ToughnessEmissionIR) -> tuple[dict[str, object], tuple[dict[str, object], ...]]:
+    expression = emission.toughness_amount_expr
+    binding_sources = _binding_sources_from_expression(expression)
+    hashes = sorted(_hashes_from_expression(expression))
+    trace = {
+        "value_request_source": "ToughnessEmissionIR.toughness_amount_expr",
+        "toughness_emission_id": emission.toughness_emission_id,
+        "source_kind": expression.get("source_kind") if isinstance(expression, dict) else "",
+    }
+    if hashes:
+        if not binding_sources:
+            return (
+                {
+                    "binding_kind": "blocked",
+                    "blocked_reason": "toughness_dynamic_binding_source_missing",
+                    "expression": {"kind": "dynamic_hash", "hash": hashes[0]},
+                    "required_context_keys": ["dynamic_value_source"],
+                    "source_trace": trace,
+                },
+                (),
+            )
+        return (
+            {
+                "binding_kind": "dynamic_hash",
+                "expression": {"kind": "dynamic_hash", "hash": hashes[0]},
+                "required_context_keys": ["dynamic_value_source"],
+                "source_trace": trace,
+            },
+            binding_sources,
+        )
+    if _fixed_expr_value(expression) is not None:
+        return (
+            {
+                "binding_kind": "fixed_numeric_expression",
+                "expression": dict(expression),
+                "required_context_keys": ["action"],
+                "source_trace": trace,
+            },
+            (),
+        )
+    return (
+        {
+            "binding_kind": "blocked",
+            "blocked_reason": "toughness_value_request_missing",
+            "expression": dict(expression) if isinstance(expression, dict) else expression,
+            "required_context_keys": [],
+            "source_trace": trace,
+        },
+        binding_sources,
+    )
+
+
+def _binding_sources_from_expression(expression: object) -> tuple[dict[str, object], ...]:
+    sources: list[dict[str, object]] = []
+
+    def visit(value: object) -> None:
+        if isinstance(value, dict):
+            binding_source = value.get("binding_source")
+            if _is_binding_source(binding_source):
+                sources.append(dict(binding_source))
+            for key, item in value.items():
+                if key == "source_trace":
+                    continue
+                if isinstance(item, (dict, list, tuple)):
+                    visit(item)
+        elif isinstance(value, (list, tuple)):
+            for item in value:
+                visit(item)
+
+    visit(expression)
+    deduped: list[dict[str, object]] = []
+    seen: set[tuple[str, str]] = set()
+    for source in sources:
+        key = (
+            str(source.get("source_type") or ""),
+            ",".join(sorted(str(key) for key in dict(source.get("by_hash") or {}).keys())),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(source)
+    return tuple(deduped)
+
+
+def _is_binding_source(value: object) -> bool:
+    if not isinstance(value, dict):
+        return False
+    return bool(value.get("source_type")) and (
+        isinstance(value.get("by_hash"), dict) or isinstance(value.get("by_name"), dict)
+    )
+
+
+def _hashes_from_expression(expression: object) -> set[str]:
+    hashes: set[str] = set()
+    if isinstance(expression, dict):
+        if str(expression.get("kind") or "") == "dynamic_hash" and expression.get("hash") is not None:
+            hashes.add(str(expression.get("hash")))
+        dynamic_hashes = expression.get("DynamicHashes")
+        if isinstance(dynamic_hashes, list):
+            for item in dynamic_hashes:
+                hashes.add(str(item))
+        raw = expression.get("raw")
+        if isinstance(raw, (dict, list)):
+            hashes.update(_hashes_from_expression(raw))
+        postfix = expression.get("PostfixExpr")
+        if isinstance(postfix, dict):
+            hashes.update(_hashes_from_expression(postfix))
+        for key, item in expression.items():
+            if key in {"raw", "PostfixExpr", "source_trace"}:
+                continue
+            if isinstance(item, (dict, list)):
+                hashes.update(_hashes_from_expression(item))
+    elif isinstance(expression, list):
+        for item in expression:
+            hashes.update(_hashes_from_expression(item))
+    return hashes
+
+
+def _fixed_expr_value(expression: object) -> float | None:
+    if isinstance(expression, bool):
+        return None
+    if isinstance(expression, (int, float)):
+        return float(expression)
+    if not isinstance(expression, dict):
+        return None
+    kind = str(expression.get("kind") or "")
+    if kind == "fixed":
+        value = expression.get("value")
+        return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+    fixed_value = expression.get("FixedValue")
+    if isinstance(fixed_value, dict):
+        value = fixed_value.get("Value")
+        return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
     return None
 
 

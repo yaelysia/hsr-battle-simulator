@@ -322,7 +322,7 @@ def _missing_source_negative_case(summon_case: dict[str, Any], rules: RuleBook) 
             monster_entity_ref="monster:p5_s7_missing_profile_card",
             monster_raw_id="p5_s7_missing_profile_card",
         ),
-        "missing_level_policy": replace(first_entry, level_policy={}),
+        "missing_level_policy": replace(first_entry, level_policy={}, birth_template_id=""),
     }
     system = SummonSystem(rules)
     results = {}
@@ -495,9 +495,14 @@ def _missing_profile_card_level_source_blocked_row(case: dict[str, Any]) -> dict
     checks = {
         "missing_profile_card_case_present": "missing_profile_card" in cases,
         "missing_level_policy_case_present": "missing_level_policy" in cases,
-        "missing_profile_card_blocked": "summon_monster_profile_stat_value_resolution_blocked"
-        in str(cases.get("missing_profile_card", {}).get("blocked_reason") or ""),
-        "missing_level_policy_blocked": "summon_monster_level_policy_source_blocked"
+        "missing_profile_card_blocked": str(cases.get("missing_profile_card", {}).get("blocked_reason") or "")
+        in {
+            "summon_monster_combatant_profile_missing",
+            "summon_monster_profile_stat_value_resolution_blocked",
+            "summon_monster_data_card_source_blocked",
+            "unit_birth_template_entity_ref_mismatch",
+        },
+        "missing_level_policy_blocked": "summon_monster_birth_template_missing"
         in str(cases.get("missing_level_policy", {}).get("blocked_reason") or ""),
         "all_negative_cases_no_mutations": bool(cases) and all(item.get("mutation_count") == 0 for item in cases.values()),
         "all_negative_cases_process_only": bool(cases)

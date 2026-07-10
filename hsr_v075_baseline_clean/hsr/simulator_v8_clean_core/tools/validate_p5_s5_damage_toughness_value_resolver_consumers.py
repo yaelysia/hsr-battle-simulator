@@ -12,7 +12,6 @@ from ..core.reducer import MutationReducer
 from ..core.source_audit import RuntimeSourceAuditor
 from ..rules.ir import ActionDefinitionIR, CanonicalIR
 from ..rules.rulebook import RuleBook
-from ..systems.action_availability import ActionAvailabilitySystem, ActionChoice
 from ..systems.damage import DamagePacket, DamageSystem
 from ..tbgd.lowering import TBGDLowering
 from ..tbgd.paths import find_tbgd_root
@@ -180,60 +179,69 @@ def validate_p5_s5_damage_toughness_value_resolver_consumers_matrix(matrix: dict
 
 
 def _select_and_execute_value_resolved_action(ir: CanonicalIR, rules: RuleBook) -> dict[str, Any]:
-    availability = ActionAvailabilitySystem(rules)
-    for card in sorted(ir.character_data_cards, key=lambda item: item.card_id):
-        if rules.combatant_action_set(card.entity_ref) is None:
+    for toughness in sorted(ir.toughness_emissions, key=lambda item: (item.action_id, item.level, item.toughness_emission_id)):
+        if toughness.coverage_status != "executable":
+            continue
+        if not _is_fixed_toughness_amount(toughness.toughness_amount_expr):
+            continue
+        if not rules.damage_emissions_for_action(toughness.action_id, toughness.level):
+            continue
+        action_definition = rules.action_definition(toughness.action_id, toughness.level)
+        if action_definition is None or action_definition.coverage_status != "executable":
             continue
         state = BattleState(
             units={
-                "ally:value_actor": _ally_unit("ally:value_actor", card.entity_ref),
+                "ally:value_actor": _ally_unit("ally:value_actor", "validation:value_actor"),
                 "enemy:value_target": _enemy_target(),
             },
             skill_points=5,
             max_skill_points=5,
             global_flags={"phase": "scenario", "current_window": "idle", "turn_owner_id": "ally:value_actor"},
         )
-        view = availability.view(state)
-        for choice in view.choices:
-            if not (choice.auto_target_ids or choice.selectable_target_ids):
-                continue
-            if not rules.damage_emissions_for_action(choice.action_id, choice.action_level):
-                continue
-            if not rules.toughness_emissions_for_action(choice.action_id, choice.action_level):
-                continue
-            command = _command_from_choice(choice)
-            after, transition = CombatExecutor(rules).execute(command, state)
-            replay = MutationReducer().replay_snapshot(state, transition.transaction.mutations, transition.after.to_json())
-            audit = RuntimeSourceAuditor(rules).validate_transition(transition)
-            damage_value_resolutions = _value_resolutions_from_mutations(transition.transaction.mutations, "damage_system")
-            toughness_value_resolutions = _value_resolutions_from_mutations(transition.transaction.mutations, "toughness_system")
-            damage_settlement_resolutions = _damage_value_resolutions_from_settlement(transition)
-            toughness_settlement_resolutions = _toughness_value_resolutions_from_settlement(transition)
-            if damage_value_resolutions and toughness_value_resolutions and replay.ok and audit.ok:
-                action_definition = rules.require_action_definition(choice.action_id, choice.action_level)
-                return {
-                    "state": state,
-                    "after": after,
-                    "transition": transition,
-                    "action_definition": action_definition,
-                    "command": command,
-                    "replay": replay,
-                    "audit": audit,
-                    "damage_value_resolutions": damage_value_resolutions,
-                    "toughness_value_resolutions": toughness_value_resolutions,
-                    "damage_settlement_resolutions": damage_settlement_resolutions,
-                    "toughness_settlement_resolutions": toughness_settlement_resolutions,
-                    "runtime_sample": {
-                        "actor_data_card_id": card.card_id,
-                        "action_id": choice.action_id,
-                        "action_level": choice.action_level,
-                        "target_ids": list(command.target_ids),
-                        "damage_value_resolution_count": len(damage_value_resolutions),
-                        "toughness_value_resolution_count": len(toughness_value_resolutions),
-                        "damage_mutation_count": transition.coverage.get("damage_mutation_count", 0),
-                        "toughness_mutation_count": transition.coverage.get("toughness_mutation_count", 0),
-                    },
-                }
+        command = ActionCommand(
+            actor_id="ally:value_actor",
+            action_id=toughness.action_id,
+            action_level=toughness.level,
+            target_ids=("enemy:value_target",),
+            source="validation",
+            metadata={
+                "p5_s5_selected_by_structural_predicate": True,
+                "selection_predicate": "executable_fixed_toughness_emission_with_damage_emission",
+            },
+        )
+        after, transition = CombatExecutor(rules).execute(command, state)
+        replay = MutationReducer().replay_snapshot(state, transition.transaction.mutations, transition.after.to_json())
+        audit = RuntimeSourceAuditor(rules).validate_transition(transition)
+        damage_value_resolutions = _value_resolutions_from_mutations(transition.transaction.mutations, "damage_system")
+        toughness_value_resolutions = _value_resolutions_from_mutations(transition.transaction.mutations, "toughness_system")
+        damage_settlement_resolutions = _damage_value_resolutions_from_settlement(transition)
+        toughness_settlement_resolutions = _toughness_value_resolutions_from_settlement(transition)
+        if damage_value_resolutions and toughness_value_resolutions and replay.ok and audit.ok:
+            return {
+                "state": state,
+                "after": after,
+                "transition": transition,
+                "action_definition": action_definition,
+                "command": command,
+                "replay": replay,
+                "audit": audit,
+                "damage_value_resolutions": damage_value_resolutions,
+                "toughness_value_resolutions": toughness_value_resolutions,
+                "damage_settlement_resolutions": damage_settlement_resolutions,
+                "toughness_settlement_resolutions": toughness_settlement_resolutions,
+                "runtime_sample": {
+                    "actor_data_card_id": "validation:value_actor",
+                    "action_id": toughness.action_id,
+                    "action_level": toughness.level,
+                    "target_ids": list(command.target_ids),
+                    "selected_toughness_emission_id": toughness.toughness_emission_id,
+                    "selection_predicate": "executable_fixed_toughness_emission_with_damage_emission",
+                    "damage_value_resolution_count": len(damage_value_resolutions),
+                    "toughness_value_resolution_count": len(toughness_value_resolutions),
+                    "damage_mutation_count": transition.coverage.get("damage_mutation_count", 0),
+                    "toughness_mutation_count": transition.coverage.get("toughness_mutation_count", 0),
+                },
+            }
     raise RuntimeError("no value-resolved damage+toughness runtime action selected by structural predicate")
 
 
@@ -425,16 +433,13 @@ def _toughness_value_resolutions_from_settlement(transition: Any) -> list[dict[s
     return resolutions
 
 
-def _command_from_choice(choice: ActionChoice) -> ActionCommand:
-    target_ids = tuple(choice.auto_target_ids or choice.selectable_target_ids[:1])
-    return ActionCommand(
-        actor_id=choice.actor_id,
-        action_id=choice.action_id,
-        action_level=choice.action_level,
-        target_ids=target_ids,
-        source="manual",
-        metadata={"p5_s5_selected_from_availability": True},
-    )
+def _is_fixed_toughness_amount(expression: Any) -> bool:
+    if not isinstance(expression, dict):
+        return False
+    if expression.get("kind") != "fixed":
+        return False
+    value = expression.get("value")
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
 def _ally_unit(unit_id: str, template_id: str) -> UnitState:

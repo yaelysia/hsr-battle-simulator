@@ -7,7 +7,7 @@ from ..core.model import BattleState, GameEvent, JSONValue, Mutation, UnitState
 from ..core.settlement import SettlementRecord
 from ..rules.ir import WaveDefinitionIR, WaveMonsterEntryIR
 from ..rules.rulebook import RuleBook
-from .timeline import TimelineSystem
+from .unit_spawn import UnitSpawnRequest, UnitSpawnSystem, spawn_plans_from_metadata
 from .unit_lifecycle import UnitLifecycleSystem
 
 
@@ -63,6 +63,8 @@ class WaveTransitionPlan:
     cleared_unit_ids: tuple[str, ...] = ()
     blocking_unit_ids: tuple[str, ...] = ()
     spawn_entries: tuple[WaveMonsterEntryIR, ...] = ()
+    spawn_requests: tuple[UnitSpawnRequest, ...] = ()
+    spawn_unit_plans: tuple[dict[str, JSONValue], ...] = ()
     remove_unit_ids: tuple[str, ...] = ()
     blocked_reason: str = ""
     source_trace: dict[str, JSONValue] = field(default_factory=dict)
@@ -77,6 +79,8 @@ class WaveTransitionPlan:
             "cleared_unit_ids": list(self.cleared_unit_ids),
             "blocking_unit_ids": list(self.blocking_unit_ids),
             "spawn_entries": [entry.to_json() for entry in self.spawn_entries],
+            "spawn_requests": [request.to_json() for request in self.spawn_requests],
+            "spawn_unit_plans": list(self.spawn_unit_plans),
             "remove_unit_ids": list(self.remove_unit_ids),
             "blocked_reason": self.blocked_reason,
             "source_trace": self.source_trace,
@@ -95,7 +99,7 @@ class WaveSystem:
     def __init__(self, rules: RuleBook) -> None:
         self.rules = rules
         self.lifecycle = UnitLifecycleSystem()
-        self.timeline = TimelineSystem()
+        self.unit_spawn = UnitSpawnSystem()
 
     def view(self, state: BattleState) -> WaveRuntimeView:
         runtime = _wave_runtime(state)
@@ -234,13 +238,14 @@ class WaveSystem:
                 blocking_unit_ids=cleared_ids,
                 source_trace=definition.source.to_json(),
             )
+        spawn_unit_plans: list[dict[str, JSONValue]] = []
+        spawn_requests: list[UnitSpawnRequest] = []
         for entry in spawn_entries:
-            reason = _spawn_entry_blocked_reason(self.rules, entry)
-            if reason:
+            if entry.coverage_status != "executable":
                 return self._blocked(
                     wave_definition_id,
                     current_wave_index,
-                    reason,
+                    entry.blocked_reason or f"wave_entry_not_executable:{entry.coverage_status}",
                     blocking_unit_ids=cleared_ids,
                     source_trace=entry.source.to_json(),
                 )
@@ -253,6 +258,40 @@ class WaveSystem:
                     blocking_unit_ids=(unit_id,),
                     source_trace=entry.source.to_json(),
                 )
+            template = self.rules.unit_birth_template(entry.birth_template_id)
+            if template is None:
+                return self._blocked(
+                    wave_definition_id,
+                    current_wave_index,
+                    "wave_unit_birth_template_missing",
+                    blocking_unit_ids=cleared_ids,
+                    source_trace=entry.source.to_json(),
+                )
+            spawn_request = UnitSpawnRequest(
+                spawn_kind="wave_enemy",
+                unit_id=unit_id,
+                birth_template_id=entry.birth_template_id,
+                entity_ref=entry.monster_entity_ref,
+                source_id=definition.wave_definition_id,
+                entry_id=entry.entry_id,
+                wave_definition_id=definition.wave_definition_id,
+                stage_id=definition.stage_id,
+                wave_index=entry.wave_index,
+                position=entry.position,
+                source_trace=definition.source.to_json(),
+                entry_source_trace=entry.source.to_json(),
+            )
+            spawn_plan = self.unit_spawn.plan(template, spawn_request)
+            if not spawn_plan.ok:
+                return self._blocked(
+                    wave_definition_id,
+                    current_wave_index,
+                    spawn_plan.blocked_reason or "wave_unit_spawn_plan_blocked",
+                    blocking_unit_ids=cleared_ids,
+                    source_trace=spawn_plan.source_trace or entry.source.to_json(),
+                )
+            spawn_requests.append(spawn_request)
+            spawn_unit_plans.append(spawn_plan.to_json())
         return WaveTransitionPlan(
             ok=True,
             status="advance_to_next_wave",
@@ -261,6 +300,8 @@ class WaveSystem:
             next_wave_index=next_wave_index,
             cleared_unit_ids=cleared_ids,
             spawn_entries=spawn_entries,
+            spawn_requests=tuple(spawn_requests),
+            spawn_unit_plans=tuple(spawn_unit_plans),
             remove_unit_ids=remove_ids,
             source_trace=definition.source.to_json(),
         )
@@ -327,7 +368,45 @@ class WaveSystem:
             next_index = int(plan.next_wave_index) if plan.next_wave_index is not None else plan.current_wave_index + 1
             remove_mutations = _remove_mutations(self.lifecycle, state, plan, source_trace)
             runtime_cleared = _runtime_after_current_cleared(runtime, plan)
-            spawn_units = tuple(_unit_from_wave_entry(self.rules, definition, entry) for entry in plan.spawn_entries)
+            spawn_plans = spawn_plans_from_metadata({"unit_spawn_plans": list(plan.spawn_unit_plans)})
+            if not spawn_plans:
+                blocked = self._blocked(
+                    plan.wave_definition_id,
+                    plan.current_wave_index,
+                    "wave_unit_spawn_plan_missing",
+                    source_trace=source_trace,
+                )
+                return WaveTransitionResult(blocked, (), (), (_plan_record(blocked, (), process_only=True),))
+            request_reason = _wave_spawn_request_plan_blocked_reason(plan, definition, next_index)
+            if request_reason:
+                blocked = self._blocked(
+                    plan.wave_definition_id,
+                    plan.current_wave_index,
+                    request_reason,
+                    source_trace=source_trace,
+                )
+                return WaveTransitionResult(blocked, (), (), (_plan_record(blocked, (), process_only=True),))
+            try:
+                spawn_units = tuple(
+                    spawn_plan.to_unit(expected_request=request)
+                    for spawn_plan, request in zip(spawn_plans, plan.spawn_requests, strict=True)
+                )
+            except ValueError as exc:
+                blocked = self._blocked(
+                    plan.wave_definition_id,
+                    plan.current_wave_index,
+                    f"wave_unit_spawn_plan_invalid:{exc}",
+                    source_trace=source_trace,
+                )
+                return WaveTransitionResult(blocked, (), (), (_plan_record(blocked, (), process_only=True),))
+            if len(spawn_units) != len(plan.spawn_entries):
+                blocked = self._blocked(
+                    plan.wave_definition_id,
+                    plan.current_wave_index,
+                    "wave_unit_spawn_plan_entry_mismatch",
+                    source_trace=source_trace,
+                )
+                return WaveTransitionResult(blocked, (), (), (_plan_record(blocked, (), process_only=True),))
             spawn_mutations = tuple(
                 self.lifecycle.spawn_mutation(
                     state,
@@ -479,94 +558,29 @@ def _active_enemy_block_reason(unit: UnitState, current_wave_index: int) -> str:
     return "active_enemy_without_wave_membership"
 
 
-def _spawn_entry_blocked_reason(rules: RuleBook, entry: WaveMonsterEntryIR) -> str:
-    if entry.coverage_status != "executable":
-        return entry.blocked_reason or f"wave_entry_not_executable:{entry.coverage_status}"
-    profile = rules.combatant_profile(entry.monster_entity_ref)
-    if profile is None or profile.coverage_status != "executable":
-        return "combatant_profile_missing_or_blocked"
-    card = rules.monster_data_card_for_entity(entry.monster_entity_ref)
-    if card is None:
-        return "monster_data_card_missing"
-    for key in ("max_hp", "attack", "defense", "speed"):
-        value = profile.base_stats.get(key)
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            return f"combatant_profile_base_stat_missing:{key}"
-    for key in ("current_toughness", "max_toughness"):
-        value = profile.toughness_profile.get(key)
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            return f"combatant_profile_toughness_missing:{key}"
-    try:
-        rules.default_timeline_rule()
-    except KeyError:
-        return "timeline_rule_missing"
+def _wave_spawn_request_plan_blocked_reason(
+    plan: WaveTransitionPlan,
+    definition: WaveDefinitionIR,
+    next_wave_index: int,
+) -> str:
+    if len(plan.spawn_requests) != len(plan.spawn_entries) or len(plan.spawn_requests) != len(plan.spawn_unit_plans):
+        return "wave_spawn_request_count_mismatch"
+    for request, entry in zip(plan.spawn_requests, plan.spawn_entries, strict=True):
+        if request.spawn_kind != "wave_enemy":
+            return "wave_spawn_request_kind_mismatch"
+        if request.unit_id != _wave_unit_id(definition, entry):
+            return "wave_spawn_request_unit_id_mismatch"
+        if request.birth_template_id != entry.birth_template_id or request.entity_ref != entry.monster_entity_ref:
+            return "wave_spawn_request_birth_template_mismatch"
+        if request.source_id != definition.wave_definition_id or request.wave_definition_id != definition.wave_definition_id:
+            return "wave_spawn_request_definition_mismatch"
+        if request.stage_id != definition.stage_id or request.wave_index != next_wave_index:
+            return "wave_spawn_request_stage_mismatch"
+        if request.entry_id != entry.entry_id or request.position != entry.position:
+            return "wave_spawn_request_entry_mismatch"
+        if request.source_trace != definition.source.to_json() or request.entry_source_trace != entry.source.to_json():
+            return "wave_spawn_request_source_mismatch"
     return ""
-
-
-def _unit_from_wave_entry(rules: RuleBook, definition: WaveDefinitionIR, entry: WaveMonsterEntryIR) -> UnitState:
-    profile = rules.require_combatant_profile(entry.monster_entity_ref)
-    card = rules.monster_data_card_for_entity(entry.monster_entity_ref)
-    if card is None:
-        raise ValueError(f"wave entry {entry.entry_id}: monster data card missing")
-    speed = _number(profile.base_stats, "speed")
-    timeline_rule = rules.default_timeline_rule()
-    action_value = TimelineSystem().full_action_value(speed, timeline_rule)
-    resources = {
-        f"{damage_type}_resistance": float(value)
-        for damage_type, value in profile.resistances.items()
-        if isinstance(value, (int, float)) and not isinstance(value, bool)
-    }
-    if isinstance(profile.status_resistance, (int, float)) and not isinstance(profile.status_resistance, bool):
-        resources["effect_resistance"] = float(profile.status_resistance)
-    flags: dict[str, JSONValue] = {
-        "position": entry.position,
-        "wave_definition_id": definition.wave_definition_id,
-        "stage_id": definition.stage_id,
-        "wave_index": entry.wave_index,
-        "wave_position": entry.position,
-        "wave_entry_id": entry.entry_id,
-        "wave_member_kind": "stage_wave_enemy",
-        "wave_clear_policy": "counts",
-        "wave_entry_source_trace": entry.source.to_json(),
-        "wave_definition_source_trace": definition.source.to_json(),
-        "combatant_profile_id": profile.profile_id,
-        "combatant_profile_source_trace": profile.source.to_json(),
-        "combatant_profile_coverage_status": profile.coverage_status,
-        "monster_data_card_id": card.card_id,
-        "monster_passive_mechanism_slot_ids": list(card.passive_mechanism_slot_ids),
-        "weaknesses": list(profile.weaknesses),
-        "debuff_resistances": list(profile.debuff_resistances),
-        "initial_action_value_source_trace": {
-            "timeline_rule_id": timeline_rule.timeline_rule_id,
-            "timeline_rule_source": timeline_rule.source.to_json(),
-            "speed_source": profile.source.to_json(),
-            "speed": speed,
-            "formula": timeline_rule.initial_action_value_rule,
-        },
-    }
-    return UnitState(
-        unit_id=_wave_unit_id(definition, entry),
-        side="enemy",
-        template_id=entry.monster_entity_ref,
-        level=80,
-        max_hp=_number(profile.base_stats, "max_hp"),
-        hp=_number(profile.base_stats, "max_hp"),
-        attack=_number(profile.base_stats, "attack"),
-        defense=_number(profile.base_stats, "defense"),
-        speed=speed,
-        toughness=_number(profile.toughness_profile, "current_toughness"),
-        max_toughness=_number(profile.toughness_profile, "max_toughness"),
-        action_value=action_value,
-        flags=flags,
-        resources=resources,
-    )
-
-
-def _number(mapping: dict[str, JSONValue], key: str) -> float:
-    value = mapping.get(key)
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ValueError(f"missing numeric {key!r}")
-    return float(value)
 
 
 def _wave_unit_id(definition: WaveDefinitionIR, entry: WaveMonsterEntryIR) -> str:
