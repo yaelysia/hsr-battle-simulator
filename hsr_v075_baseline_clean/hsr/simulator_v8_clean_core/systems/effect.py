@@ -523,10 +523,11 @@ def _execute_fixed_unit_delta(
         mutation = Mutation(
             op="set",
             path=("units", target_id, "resources", "shield"),
-            before=before,
+            before=before if "shield" in unit.resources else None,
             after=after,
             reason="apply numeric shield effect",
             source="effect_system",
+            before_exists="shield" in unit.resources,
             metadata=_effect_metadata(effect, context, standard, amount, amount_result, formula_details=formula_details),
         )
         return _mutation_effect_result(
@@ -568,10 +569,11 @@ def _execute_fixed_unit_delta(
         mutation = Mutation(
             op="set",
             path=("units", target_id, "resources", resource),
-            before=before,
+            before=before if resource in unit.resources else None,
             after=after,
             reason=f"apply numeric {resource} delta effect",
             source="effect_system",
+            before_exists=resource in unit.resources,
             metadata=_effect_metadata(effect, context, standard, amount, amount_result, formula_details=formula_details),
         )
         return _mutation_effect_result(
@@ -728,10 +730,11 @@ def _execute_mechanism_bar_state(effect: EffectIR, context: EffectExecutionConte
     mutation = Mutation(
         op="set",
         path=("units", target_id, "flags", "mechanism_bars"),
-        before=before,
+        before=before if "mechanism_bars" in unit.flags else None,
         after=after,
         reason="apply fixed mechanism bar state effect",
         source="effect_system",
+        before_exists="mechanism_bars" in unit.flags,
         metadata={
             "effect_id": effect.effect_id,
             "opcode": effect.opcode,
@@ -958,10 +961,11 @@ def _dynamic_value_store_result(
     mutation = Mutation(
         op="set",
         path=("global_flags", "dynamic_value_store"),
-        before=before,
+        before=before if "dynamic_value_store" in context.state.global_flags else None,
         after=after,
         reason=f"apply {effect.opcode} dynamic value store write",
         source="effect_system",
+        before_exists="dynamic_value_store" in context.state.global_flags,
         metadata={
             "effect_id": effect.effect_id,
             "opcode": effect.opcode,
@@ -1116,10 +1120,11 @@ def _status_dynamic_value_mutation(
     return Mutation(
         op="set",
         path=("units", target_id, "flags", "status_details"),
-        before=before_details,
+        before=before_details if "status_details" in unit.flags else None,
         after=updated_details,
         reason=f"apply {effect.opcode} status dynamic value write",
         source="effect_system",
+        before_exists="status_details" in unit.flags,
         metadata={
             "effect_id": effect.effect_id,
             "opcode": effect.opcode,

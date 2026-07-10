@@ -1049,10 +1049,11 @@ def _runtime_mutation(
     return Mutation(
         op="set",
         path=("global_flags", "summon_runtime"),
-        before=before if state.global_flags.get("summon_runtime") is not None else None,
+        before=before if "summon_runtime" in state.global_flags else None,
         after=after,
         reason=reason,
         source="summon_system",
+        before_exists="summon_runtime" in state.global_flags,
         metadata={
             "summon_operation": plan.operation,
             "summon_plan": plan.to_json(),
@@ -1084,8 +1085,8 @@ def _remove_cleanup_mutations(
             Mutation(
                 op="set",
                 path=("units", unit_id, "statuses"),
-                before=unit.statuses,
-                after=(),
+                before=list(unit.statuses),
+                after=[],
                 reason="clear statuses for removed summon",
                 source="summon_system",
                 metadata={**metadata, "status_cleanup_operation": "clear_statuses"},
@@ -1095,12 +1096,13 @@ def _remove_cleanup_mutations(
     if "status_details" in unit.flags:
         mutations.append(
             Mutation(
-                op="set",
+                op="delete",
                 path=("units", unit_id, "flags", "status_details"),
                 before=unit.flags.get("status_details"),
                 after=None,
                 reason="clear status details for removed summon",
                 source="summon_system",
+                after_exists=False,
                 metadata={**metadata, "status_cleanup_operation": "clear_status_details"},
                 mutation_id=f"mutation:summon_remove_cleanup:{unit_id}:status_details:{plan.operation}",
             )
@@ -1110,12 +1112,13 @@ def _remove_cleanup_mutations(
     if turn_owner_id == unit_id:
         mutations.append(
             Mutation(
-                op="set",
+                op="delete",
                 path=("global_flags", "turn_owner_id"),
                 before=turn_owner_id,
                 after=None,
                 reason="clear turn owner for removed summon",
                 source="summon_system",
+                after_exists=False,
                 metadata={**metadata, "turn_owner_cleanup_operation": "clear_removed_turn_owner"},
                 mutation_id=f"mutation:summon_remove_cleanup:{unit_id}:turn_owner:{plan.operation}",
             )

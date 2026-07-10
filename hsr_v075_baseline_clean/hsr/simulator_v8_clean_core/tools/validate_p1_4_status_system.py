@@ -173,8 +173,10 @@ def _stack_cap_case(rules: RuleBook) -> dict[str, Any]:
     after_first = MutationReducer().apply_all(state, first.mutations)
     current = after_first
     stack_results = []
+    before_last_stack = after_first
     max_stacks = 1
     for _ in range(8):
+        before_last_stack = current
         result = system.apply_add_modifier(
             current,
             effect,
@@ -195,7 +197,7 @@ def _stack_cap_case(rules: RuleBook) -> dict[str, Any]:
         ):
             break
     final_detail = _first_status_detail(current)
-    transition = _status_transition(after_first, stack_results[-1], "p1_4:stack_cap")
+    transition = _status_transition(before_last_stack, stack_results[-1], "p1_4:stack_cap")
     source_audit = RuntimeSourceAuditor(rules).validate_transition(transition)
     stack_records = [record for result in stack_results for record in result.records if record.get("record_type") == "status_stack"]
     checks = {
@@ -210,7 +212,11 @@ def _stack_cap_case(rules: RuleBook) -> dict[str, Any]:
             for record in stack_records
         ),
         "source_audit": source_audit.ok,
-        "replay": MutationReducer().replay_snapshot(after_first, stack_results[-1].mutations, transition.after.to_json()).ok,
+        "replay": MutationReducer().replay_snapshot(
+            before_last_stack,
+            stack_results[-1].mutations,
+            transition.after.to_json(),
+        ).ok,
     }
     checks["ok"] = all(value for key, value in checks.items() if key != "ok")
     return {
@@ -219,6 +225,7 @@ def _stack_cap_case(rules: RuleBook) -> dict[str, Any]:
         "effect": _effect_sample(effect),
         "modifier_name": _modifier_name(effect),
         "after_first_state": after_first,
+        "before_last_stack_snapshot": before_last_stack.snapshot().to_json(),
         "final_state": current,
         "status_detail": final_detail,
         "final_status_detail": final_detail,

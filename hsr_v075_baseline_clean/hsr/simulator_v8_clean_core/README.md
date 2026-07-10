@@ -11,15 +11,15 @@ turnbasedgamedata-main -> TBGD compiler/lowering -> Canonical IR / 数据卡 IR 
 当前最近检查点：
 
 ```text
-P7-S1 transition trust result contract accepted
-最近检查点：P7-S1 Transition 可信结果契约验收提交
-轻量验证入口：python3 -m simulator_v8_clean_core.tools.validate_p7_s1_transition_trust_contract
+P7-S2 mutation preconditions and reducer conflict detection accepted
+最近检查点：P7-S2 Mutation 前置条件与 reducer 冲突检测验收提交
+轻量验证入口：python3 -m simulator_v8_clean_core.tools.validate_p7_s2_mutation_reducer_contract
 ```
 
 当前推荐下一阶段：
 
 ```text
-P7-S2 mutation preconditions and reducer conflict detection
+P7-S3 selected execution graph atomic commit
 计划文档：P7_KERNEL_TRUST_AND_COMBAT_SEMANTICS_REPAIR_TASK_PLAN.md
 ```
 
@@ -137,7 +137,7 @@ git diff --check
 当前期望：
 
 - `compileall` 通过。
-- P1/P2/P3/P4/P5/P6 聚合输出 `ok=true`；P7-S0/P7-S1 轻量验证输出 `ok=true`。
+- P1/P2/P3/P4/P5/P6 聚合输出 `ok=true`；P7-S0/P7-S1/P7-S2 轻量验证输出 `ok=true`。
 - P3/P4/P5 当前全正例期望仍是 `*_all_executable_complete=false`，不能把已归因 gap 误读为失败，也不能把底座通过误读为全正例完成。
 - replay/source audit/settlement traceability 通过。
 - unsupported、blocked、audit-only、discovered-only 不产生 mutation。
@@ -147,4 +147,4 @@ git diff --check
 
 ## 下一阶段建议
 
-下一步只执行 P7-S2 Mutation 前置条件与 reducer 冲突检测。S2 经独立验收前不得提前执行 S3-S19，也不继续大规模内容扩面。阶段开始前先提交详细执行卡；执行线程只能提交 `ready_for_review`，由验收线程检查代码、谓词和 evidence 后勾选唯一 checklist。
+下一步只执行 P7-S3 所选执行图原子提交。S3 经独立验收前不得提前执行 S4-S19，也不继续大规模内容扩面。阶段开始前先提交详细执行卡；执行线程只能提交 `ready_for_review`，由验收线程检查代码、谓词和 evidence 后勾选唯一 checklist。

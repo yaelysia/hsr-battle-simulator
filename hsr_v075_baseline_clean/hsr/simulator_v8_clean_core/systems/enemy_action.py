@@ -179,10 +179,11 @@ class EnemyActionSystem:
         return Mutation(
             op="set",
             path=("units", candidate.actor_id, "flags", "enemy_action_sequence_cursor"),
-            before=before,
+            before=before if "enemy_action_sequence_cursor" in actor.flags else None,
             after=after,
             reason="enemy_fixed_action_sequence_cursor_advanced",
             source="enemy_action_system",
+            before_exists="enemy_action_sequence_cursor" in actor.flags,
             metadata={
                 "operation": "advance_enemy_action_sequence_cursor",
                 "actor_id": candidate.actor_id,

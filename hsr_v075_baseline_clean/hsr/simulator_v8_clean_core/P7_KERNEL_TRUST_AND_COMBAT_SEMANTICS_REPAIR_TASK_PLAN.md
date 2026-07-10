@@ -1025,7 +1025,7 @@ v8 旧 Python API、旧 JSON、旧 CLI 和旧 compiled case 不是兼容目标�
 
 - [x] P7-S0 已建立 P7-I01 至 P7-I24 的问题基线、轻量复现和唯一归属矩阵，未修改 runtime 行为。
 - [x] P7-S1 已建立机器可读的 transition 可信结果契约，不完整结果不能冒充可提交成功。
-- [ ] P7-S2 已强制 Mutation before、op 和同路径冲突校验，过期计划不能静默覆盖状态。
+- [x] P7-S2 已强制 Mutation before、op 和同路径冲突校验，过期计划不能静默覆盖状态。
 - [ ] P7-S3 已实现所选执行图原子提交，任一选中节点失败时 state unchanged。
 - [ ] P7-S4 已彻底分离规则输入与审计来源，并收敛版本化 engine rule 来源。
 - [ ] P7-S5 已将当前可执行 target / numeric / condition 子集 lower 为类型化 IR，runtime 不再解析 raw 子语言。

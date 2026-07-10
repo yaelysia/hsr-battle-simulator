@@ -23,7 +23,8 @@ checkpoint: v8_p6_architecture_boundary_refactor_checkpoint.md
 P7 kernel trust and combat semantics repair
 P7-S0 issue baseline accepted
 P7-S1 transition trust result contract accepted
-next stage: P7-S2 mutation preconditions and reducer conflict detection
+P7-S2 mutation preconditions and reducer conflict detection accepted
+next stage: P7-S3 selected execution graph atomic commit
 ```
 
 当前验收口径：
@@ -36,6 +37,7 @@ next stage: P7-S2 mutation preconditions and reducer conflict detection
 - P6 架构边界回正已完成验收；出生模板、计算入口、访问边界和聚合阻断口径均已收口。
 - P7-S0 问题基线已完成独立验收；24 项问题全部保持 `confirmed_open`，十项 runtime probe 和三项结构化否定证据已固化，未修改 runtime。
 - P7-S1 Transition 可信结果契约已完成独立验收；不完整、未知和矛盾结果不能冒充正式后继，父 scheduler transition 会保留 diagnostic child 身份。
+- P7-S2 Mutation 前置条件与 reducer 冲突检测已完成独立验收；严格 before/op/after、路径存在性、同路径连续链、结构化冲突、整批回滚、不可变 Mutation JSON 和统一 UnitState codec 均已形成直接证据。
 
 P6 后的内核深度复审确认：现有 transition / replay / source audit 骨架值得保留，但动作完整性、Mutation 前置校验、动作与目标契约、调度阶段、伤害、护盾、状态概率、RNG、召唤和波次等路径仍有会影响真实战斗结果的问题。P7 用实际代码问题总账和通用不变量逐项回正这些语义，不把旧聚合 `ok=true` 外推为完整正确。
 
@@ -44,10 +46,10 @@ P3/P4/P5 的 `*_all_executable_complete=false` 和 P6 的 `p6_all_mechanisms_rei
 当前推荐下一阶段：
 
 ```text
-P7-S2 mutation preconditions and reducer conflict detection
+P7-S3 selected execution graph atomic commit
 ```
 
-P7-S0 和 P7-S1 已独立验收。下一步只执行 P7-S2：让 Mutation 的 before、op、after 和同路径链成为 reducer 强制执行的前置条件，过期计划或冲突必须拒绝且 state unchanged。S2 经独立验收前不得提前执行 S3-S19。P3/P4/P5 既有 admission backlog 和装备 / 构筑 / 关卡环境扩面继续保留。
+P7-S0、P7-S1 和 P7-S2 已独立验收。下一步只执行 P7-S3：让一次动作实际选择的完整执行图统一预检并原子提交，任一选中节点失败时 mutation 为零且 state unchanged。S3 经独立验收前不得提前执行 S4-S19。P3/P4/P5 既有 admission backlog 和装备 / 构筑 / 关卡环境扩面继续保留。
 
 ## 2. 下一线程优先入口
 

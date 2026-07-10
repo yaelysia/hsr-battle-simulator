@@ -5,11 +5,13 @@ import json
 from dataclasses import dataclass, field
 from typing import Literal
 
+from .immutable_json import freeze_json, thaw_json
 from .transition_outcome import TransitionOutcome, unclassified_transition_outcome
 
 
 JSONValue = None | bool | int | float | str | list["JSONValue"] | dict[str, "JSONValue"]
 UnitSide = Literal["ally", "enemy", "summon"]
+MutationOp = Literal["set", "delete", "spawn"]
 
 
 @dataclass(frozen=True)
@@ -296,39 +298,70 @@ class Mutation:
     directly. Process-only records should be represented as GameEvent.
     """
 
-    op: str
+    op: MutationOp | str
     path: tuple[str, ...]
     before: JSONValue
     after: JSONValue
     reason: str
     source: str
+    before_exists: bool = True
+    after_exists: bool = True
     metadata: dict[str, JSONValue] = field(default_factory=dict)
     mutation_id: str = ""
+    _stable_id_cache: str = field(init=False, repr=False, compare=False)
 
-    def stable_id(self) -> str:
-        return self.mutation_id or _stable_id(
+    def __post_init__(self) -> None:
+        if not isinstance(self.op, str):
+            raise TypeError("mutation op must be a string")
+        path = tuple(self.path)
+        if not all(isinstance(item, str) for item in path):
+            raise TypeError("mutation path segments must be strings")
+        if type(self.before_exists) is not bool or type(self.after_exists) is not bool:
+            raise TypeError("mutation existence markers must be bool values")
+        if not isinstance(self.reason, str) or not isinstance(self.source, str):
+            raise TypeError("mutation reason and source must be strings")
+        if not isinstance(self.mutation_id, str):
+            raise TypeError("mutation_id must be a string")
+        before = freeze_json(self.before)
+        after = freeze_json(self.after)
+        metadata = freeze_json(self.metadata)
+        if not isinstance(metadata, dict):
+            raise TypeError("mutation metadata must be a JSON object")
+        object.__setattr__(self, "path", path)
+        object.__setattr__(self, "before", before)
+        object.__setattr__(self, "after", after)
+        object.__setattr__(self, "metadata", metadata)
+        stable_id = self.mutation_id or _stable_id(
             "mutation",
             {
                 "op": self.op,
-                "path": list(self.path),
-                "before": self.before,
-                "after": self.after,
+                "path": list(path),
+                "before": thaw_json(before),
+                "before_exists": self.before_exists,
+                "after": thaw_json(after),
+                "after_exists": self.after_exists,
                 "reason": self.reason,
                 "source": self.source,
-                "metadata": self.metadata,
+                "metadata": thaw_json(metadata),
             },
         )
+        object.__setattr__(self, "_stable_id_cache", stable_id)
+
+    def stable_id(self) -> str:
+        return self._stable_id_cache
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
             "mutation_id": self.stable_id(),
             "op": self.op,
             "path": list(self.path),
-            "before": self.before,
-            "after": self.after,
+            "before": thaw_json(self.before),
+            "before_exists": self.before_exists,
+            "after": thaw_json(self.after),
+            "after_exists": self.after_exists,
             "reason": self.reason,
             "source": self.source,
-            "metadata": self.metadata,
+            "metadata": thaw_json(self.metadata),
         }
 
 

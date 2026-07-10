@@ -84,10 +84,11 @@ class BreakSystem:
         broken_mutation = Mutation(
             op="set",
             path=("units", packet.target_id, "flags", "broken"),
-            before=bool(target.flags.get("broken", False)),
+            before=target.flags.get("broken"),
             after=True,
             reason="enter weakness break state",
             source="break_system",
+            before_exists="broken" in target.flags,
             metadata=metadata,
         )
         element_mutation = Mutation(
@@ -97,6 +98,7 @@ class BreakSystem:
             after=packet.element_type,
             reason="record weakness break element",
             source="break_system",
+            before_exists="break_element" in target.flags,
             metadata=metadata,
         )
         source_mutation = Mutation(
@@ -114,6 +116,7 @@ class BreakSystem:
             },
             reason="record weakness break source",
             source="break_system",
+            before_exists="break_source" in target.flags,
             metadata=metadata,
         )
         lifecycle_mutations = (broken_mutation, element_mutation, source_mutation)
@@ -465,28 +468,31 @@ class BreakSystem:
             Mutation(
                 op="set",
                 path=("units", unit_id, "flags", "broken"),
-                before=bool(target.flags.get("broken", False)),
+                before=target.flags.get("broken"),
                 after=False,
                 reason="recover from weakness break",
                 source="break_system",
+                before_exists="broken" in target.flags,
                 metadata=metadata,
             ),
             Mutation(
-                op="set",
+                op="delete",
                 path=("units", unit_id, "flags", "break_element"),
                 before=target.flags.get("break_element"),
                 after=None,
                 reason="clear break element",
                 source="break_system",
+                after_exists=False,
                 metadata=metadata,
             ),
             Mutation(
-                op="set",
+                op="delete",
                 path=("units", unit_id, "flags", "break_source"),
                 before=target.flags.get("break_source"),
                 after=None,
                 reason="clear break source",
                 source="break_system",
+                after_exists=False,
                 metadata=metadata,
             ),
             Mutation(
@@ -510,10 +516,11 @@ class BreakSystem:
             Mutation(
                 op="set",
                 path=("units", unit_id, "flags", "status_details"),
-                before=list(target.flags.get("status_details", ())),
+                before=list(target.flags.get("status_details", ())) if "status_details" in target.flags else None,
                 after=status_details,
                 reason="remove break status detail on recovery",
                 source="break_system",
+                before_exists="status_details" in target.flags,
                 metadata=metadata,
             ),
         ]

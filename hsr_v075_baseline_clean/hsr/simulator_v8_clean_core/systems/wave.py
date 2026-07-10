@@ -434,7 +434,14 @@ class WaveSystem:
                 _runtime_mutation(state, runtime, runtime_cleared, plan, source_trace),
                 _wave_index_mutation(state, next_index, plan, source_trace),
                 *spawn_mutations,
-                _runtime_mutation(state, runtime_cleared, runtime_after, plan, source_trace),
+                _runtime_mutation(
+                    state,
+                    runtime_cleared,
+                    runtime_after,
+                    plan,
+                    source_trace,
+                    before_exists=True,
+                ),
             )
             events = (
                 _wave_cleared_event(state, plan, source_trace),
@@ -635,8 +642,8 @@ def _status_cleanup_mutations(
             Mutation(
                 op="set",
                 path=("units", unit_id, "statuses"),
-                before=unit.statuses,
-                after=(),
+                before=list(unit.statuses),
+                after=[],
                 reason="clear statuses for removed wave unit",
                 source="wave_system",
                 metadata={**metadata, "status_cleanup_operation": "clear_statuses"},
@@ -646,12 +653,13 @@ def _status_cleanup_mutations(
     if "status_details" in unit.flags:
         mutations.append(
             Mutation(
-                op="set",
+                op="delete",
                 path=("units", unit_id, "flags", "status_details"),
                 before=unit.flags.get("status_details"),
                 after=None,
                 reason="clear status details for removed wave unit",
                 source="wave_system",
+                after_exists=False,
                 metadata={**metadata, "status_cleanup_operation": "clear_status_details"},
                 mutation_id=f"mutation:wave_status_cleanup:{unit_id}:status_details:{plan.current_wave_index}",
             )
@@ -721,14 +729,18 @@ def _runtime_mutation(
     after: dict[str, JSONValue],
     plan: WaveTransitionPlan,
     source_trace: dict[str, JSONValue],
+    *,
+    before_exists: bool | None = None,
 ) -> Mutation:
+    path_exists = "wave_runtime" in state.global_flags if before_exists is None else before_exists
     return Mutation(
         op="set",
         path=("global_flags", "wave_runtime"),
-        before=before,
+        before=before if path_exists else None,
         after=after,
         reason="update wave runtime state",
         source="wave_system",
+        before_exists=path_exists,
         metadata={
             "wave_transition_plan": plan.to_json(),
             "source_trace": source_trace,
@@ -793,6 +805,7 @@ def _battle_outcome_mutations(
             after=outcome,
             reason="battle ended by wave system",
             source="wave_system",
+            before_exists="battle_outcome" in state.global_flags,
             metadata={"source_trace": source_trace, "outcome": outcome},
             mutation_id=f"mutation:battle_outcome:{state.event_index}:{outcome}",
         ),
@@ -803,6 +816,7 @@ def _battle_outcome_mutations(
             after="ended",
             reason="battle ended by wave system",
             source="wave_system",
+            before_exists="phase" in state.global_flags,
             metadata={"source_trace": source_trace, "outcome": outcome},
             mutation_id=f"mutation:battle_phase:{state.event_index}:{outcome}",
         ),
@@ -813,6 +827,7 @@ def _battle_outcome_mutations(
             after="battle_end",
             reason="battle ended by wave system",
             source="wave_system",
+            before_exists="current_window" in state.global_flags,
             metadata={"source_trace": source_trace, "outcome": outcome},
             mutation_id=f"mutation:battle_window:{state.event_index}:{outcome}",
         ),

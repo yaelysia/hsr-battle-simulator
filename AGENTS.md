@@ -34,8 +34,8 @@ turnbasedgamedata-main -> TBGD compiler/lowering -> Canonical IR -> Combat Core
 
 ```text
 P7 kernel trust and combat semantics repair
-最近代码检查点：P7-S1 Transition 可信结果契约验收提交
-当前规划主线：P7 内核可信执行与战斗语义回正；下一步只执行 P7-S2 Mutation 前置条件与 reducer 冲突检测
+最近代码检查点：P7-S2 Mutation 前置条件与 reducer 冲突检测验收提交
+当前规划主线：P7 内核可信执行与战斗语义回正；下一步只执行 P7-S3 所选执行图原子提交
 ```
 
 当前 v8 已建立的底层范围包括：
@@ -57,6 +57,7 @@ P7 kernel trust and combat semantics repair
 - P6 后深度代码复审已建立 P7 问题计划：当前 skeleton 可保留，但 transition 可信门、Mutation 前置校验、动作 / 目标 / 调度闭环、回合阶段、伤害、护盾、状态概率、RNG、召唤和波次等语义仍需逐项回正。旧聚合通过不能被解释为这些问题已解决。
 - P7-S0 问题基线已经独立验收：P7-I01 至 P7-I24 均有唯一 `confirmed_open` 记录，十项轻量 runtime probe 实际复现当前缺陷，I20/I21/I23 具备全包 AST 结构证据；S0 没有修改 runtime，也不表示任何问题已经修复。
 - P7-S1 Transition 可信结果契约已经独立验收：`committed`、`blocked`、`diagnostic` 三类结果机器可读，未知、矛盾或不完整结果不可作为正式后继；executor、scheduler 和 UI consumer 已接入 outcome。S1 不等于原子提交完成，diagnostic candidate 的内部 mutation 收口仍归 P7-S3。
+- P7-S2 Mutation 前置条件与 reducer 冲突检测已经独立验收：Mutation 显式区分路径缺失与 null，before/op/after 和同路径链由生产 reducer 强制校验，冲突整批 state unchanged；Mutation JSON 在创建边界递归冻结、stable ID 固定，写状态前防御性解别名；UnitState 完整 payload 统一由 core codec 编解码。S2 不等于完整动作原子提交，所选执行图任一节点失败时的统一回滚仍归 P7-S3。
 - `simulator_v8_ui/` 本地 UI 测试台，用于 scenario 编排和审计展示，不进入规则系统。
 
 当前仍未完整实现的大块：
@@ -316,6 +317,8 @@ P4 的执行质量明显改善，后续大型计划应沿用这个正向模式�
 - 动作查询与提交必须满足 round trip：同一决策状态中，查询给出的每个动作和目标都可原样提交，未给出的命令必须被拒绝；只读查询不得推进时间线、重复触发回合开始或改变当前行动者。
 - `source_trace`、source/evidence 和审计 payload 只能用于解释来源，不能作为 runtime 行为输入。边界静态检查必须覆盖“从审计信息取规则”的行为路径，不能只检查 raw import 或敏感 token。
 - 内核验收必须包含通用不变量，至少覆盖动作所有权、目标基数、护盾吸收、回合 / DoT / 控制顺序、独立 RNG 身份、Mutation before 冲突、队列前进保证和 partial no-mutation；阶段聚合 `ok=true` 不能替代这些检查。
+- `@dataclass(frozen=True)` 只冻结字段重新绑定，不会冻结嵌套 dict/list。Mutation、RNG choice、queue intent 等可信指令若包含可变 JSON，必须在创建边界递归防御性冻结或复制，并在写入 state 前再次解别名；stable ID 必须在指令创建后保持不变，验证要包含原始输入、指令内部容器和序列化副本的别名污染负例。
+- UnitState、spawn payload、snapshot entity 等共享状态结构的字段集合、数字规范和编解码必须只有一个 core 层契约；reducer、lifecycle、spawn/setup 只能复用，不能各自复制一套默认值和字段校验，否则新增字段时必然分叉。
 
 ## 快照与结算目标摘要
 

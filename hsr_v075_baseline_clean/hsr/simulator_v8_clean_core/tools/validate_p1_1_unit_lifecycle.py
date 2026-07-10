@@ -313,23 +313,29 @@ def _spawn_remove_case() -> dict[str, Any]:
         reducer.apply_all(after_spawn, (spawn_mutation,))
     except ValueError:
         duplicate_spawn_rejected = True
-    unknown_unit_rejected = False
-    try:
-        reducer.apply_all(
-            state,
-            (
-                Mutation(
-                    op="set",
-                    path=("units", "missing", "hp"),
-                    before=None,
-                    after=1.0,
-                    reason="invalid",
-                    source="validation",
-                ),
+    unknown_unit_result = reducer.apply_all_result(
+        state,
+        (
+            Mutation(
+                op="set",
+                path=("units", "missing", "hp"),
+                before=None,
+                after=1.0,
+                reason="invalid",
+                source="validation",
             ),
-        )
-    except KeyError:
-        unknown_unit_rejected = True
+        ),
+    )
+    unknown_unit_conflict = unknown_unit_result.conflicts[0] if unknown_unit_result.conflicts else None
+    unknown_unit_rejected = (
+        not unknown_unit_result.ok
+        and unknown_unit_result.after_state == state
+        and unknown_unit_result.applied_count == 0
+        and unknown_unit_conflict is not None
+        and unknown_unit_conflict.code == "invalid_path"
+        and unknown_unit_conflict.mutation_index == 0
+        and unknown_unit_conflict.path == ("units", "missing", "hp")
+    )
     checks = {
         "spawn_replay_ok": spawn_replay.ok,
         "spawned_active": after_spawn.snapshot().to_json()["units"]["enemy:spawned"]["lifecycle_status"] == "active",
@@ -350,6 +356,7 @@ def _spawn_remove_case() -> dict[str, Any]:
         "spawn_mutation": spawn_mutation.to_json(),
         "remove_mutations": [mutation.to_json() for mutation in remove_mutations],
         "revive": revive,
+        "unknown_unit_reduction": unknown_unit_result.to_json(),
     }
 
 

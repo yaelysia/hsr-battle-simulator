@@ -4,6 +4,7 @@ from dataclasses import dataclass, replace
 from typing import Literal
 
 from ..core.model import BattleState, JSONValue, Mutation, UnitState
+from ..core.unit_state_codec import unit_state_to_payload
 
 
 UnitLifecycleStatus = Literal["active", "defeated", "removed"]
@@ -142,12 +143,13 @@ class UnitLifecycleSystem:
     ) -> Mutation:
         unit = self.with_status(unit, "active")
         return Mutation(
-            op="set",
+            op="spawn",
             path=("units", unit.unit_id),
             before=None,
-            after=_unit_payload(unit),
+            after=unit_state_to_payload(unit),
             reason=reason,
             source=source,
+            before_exists=False,
             metadata={
                 **(metadata or {}),
                 "lifecycle_operation": "unit_spawn",
@@ -181,6 +183,7 @@ class UnitLifecycleSystem:
             after="defeated",
             reason=reason,
             source=source,
+            before_exists="lifecycle_status" in unit.flags,
             metadata={
                 **(metadata or {}),
                 "lifecycle_operation": "unit_defeat",
@@ -212,6 +215,7 @@ class UnitLifecycleSystem:
             after=defeat_record,
             reason=reason,
             source=source,
+            before_exists="defeat_record" in unit.flags,
             metadata={
                 **(metadata or {}),
                 "lifecycle_operation": "unit_defeat_record",
@@ -245,6 +249,7 @@ class UnitLifecycleSystem:
                 after="removed",
                 reason=reason,
                 source=source,
+                before_exists="lifecycle_status" in unit.flags,
                 metadata={
                     **common,
                     "lifecycle_operation": "unit_remove",
@@ -259,6 +264,7 @@ class UnitLifecycleSystem:
                 after=removed_record,
                 reason=reason,
                 source=source,
+                before_exists="removed_record" in unit.flags,
                 metadata={**common, "lifecycle_operation": "unit_remove_record"},
             ),
         )
@@ -271,79 +277,3 @@ class UnitLifecycleSystem:
             "blocked_reason": reason,
             "state_unchanged": True,
         }
-
-
-def _unit_payload(unit: UnitState) -> dict[str, JSONValue]:
-    return {
-        "unit_id": unit.unit_id,
-        "side": unit.side,
-        "template_id": unit.template_id,
-        "level": unit.level,
-        "max_hp": unit.max_hp,
-        "hp": unit.hp,
-        "attack": unit.attack,
-        "defense": unit.defense,
-        "speed": unit.speed,
-        "energy": unit.energy,
-        "max_energy": unit.max_energy,
-        "toughness": unit.toughness,
-        "max_toughness": unit.max_toughness,
-        "action_value": unit.action_value,
-        "statuses": list(unit.statuses),
-        "flags": dict(unit.flags),
-        "resources": dict(unit.resources),
-    }
-
-
-def unit_from_payload(payload: JSONValue) -> UnitState:
-    if not isinstance(payload, dict):
-        raise ValueError("unit spawn payload must be an object")
-    unit_id = str(payload.get("unit_id") or "")
-    side = str(payload.get("side") or "")
-    template_id = str(payload.get("template_id") or "")
-    if not unit_id or side not in {"ally", "enemy", "summon"} or not template_id:
-        raise ValueError("unit spawn payload requires unit_id, side and template_id")
-    statuses_raw = payload.get("statuses")
-    flags_raw = payload.get("flags")
-    resources_raw = payload.get("resources")
-    return UnitState(
-        unit_id=unit_id,
-        side=side,  # type: ignore[arg-type]
-        template_id=template_id,
-        level=_int(payload.get("level"), 80),
-        max_hp=_float(payload.get("max_hp"), 1.0),
-        hp=_float(payload.get("hp"), 1.0),
-        attack=_float(payload.get("attack"), 0.0),
-        defense=_float(payload.get("defense"), 0.0),
-        speed=_float(payload.get("speed"), 100.0),
-        energy=_float(payload.get("energy"), 0.0),
-        max_energy=_float(payload.get("max_energy"), 0.0),
-        toughness=_float(payload.get("toughness"), 0.0),
-        max_toughness=_float(payload.get("max_toughness"), 0.0),
-        action_value=_float(payload.get("action_value"), 0.0),
-        statuses=tuple(str(item) for item in statuses_raw if isinstance(item, str)) if isinstance(statuses_raw, list) else (),
-        flags=dict(flags_raw) if isinstance(flags_raw, dict) else {},
-        resources={
-            str(key): float(value)
-            for key, value in (resources_raw.items() if isinstance(resources_raw, dict) else ())
-            if isinstance(value, (int, float)) and not isinstance(value, bool)
-        },
-    )
-
-
-def _float(value: JSONValue, default: float) -> float:
-    if isinstance(value, bool):
-        return default
-    if isinstance(value, (int, float)):
-        return float(value)
-    return default
-
-
-def _int(value: JSONValue, default: int) -> int:
-    if isinstance(value, bool):
-        return default
-    if isinstance(value, int):
-        return value
-    if isinstance(value, float):
-        return int(value)
-    return default

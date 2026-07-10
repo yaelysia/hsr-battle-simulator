@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from ..core.model import JSONValue, UnitState
+from ..core.unit_state_codec import unit_state_from_payload
 from ..rules.ir import UnitBirthTemplateIR
 
 
@@ -123,55 +124,13 @@ class UnitSpawnPlan:
         _validate_spawn_request_complete(request)
         if expected_request is not None and request.to_json() != expected_request.to_json():
             raise ValueError("unit_spawn_plan_request_mismatch")
-        unit_id = _required_string(self.unit, "unit_id")
-        if unit_id != self.unit_id:
+        unit = unit_state_from_payload(self.unit)
+        if unit.unit_id != self.unit_id:
             raise ValueError("unit_spawn_plan_unit_id_mismatch")
-        side = _required_side(self.unit, "side")
-        template_id = _required_string(self.unit, "template_id")
-        level = _required_int(self.unit, "level")
-        max_hp = _required_number(self.unit, "max_hp")
-        hp = _required_number(self.unit, "hp")
-        attack = _required_number(self.unit, "attack")
-        defense = _required_number(self.unit, "defense")
-        speed = _required_number(self.unit, "speed")
-        energy = _required_number(self.unit, "energy")
-        max_energy = _required_number(self.unit, "max_energy")
-        toughness = _required_number(self.unit, "toughness")
-        max_toughness = _required_number(self.unit, "max_toughness")
-        action_value = _required_number(self.unit, "action_value")
-        flags = _required_dict(self.unit, "flags")
-        resources = _required_resource_values(self.unit, "resources")
-        _validate_required_birth_plan_values(
-            level=level,
-            max_hp=max_hp,
-            hp=hp,
-            speed=speed,
-            energy=energy,
-            max_energy=max_energy,
-            toughness=toughness,
-            max_toughness=max_toughness,
-            action_value=action_value,
-        )
+        flags = dict(unit.flags)
         _validate_birth_plan_source_fields(request, flags)
         _validate_unit_request_binding(self, request, self.unit, flags)
-        return UnitState(
-            unit_id=unit_id,
-            side=side,
-            template_id=template_id,
-            level=level,
-            max_hp=max_hp,
-            hp=hp,
-            attack=attack,
-            defense=defense,
-            speed=speed,
-            energy=energy,
-            max_energy=max_energy,
-            toughness=toughness,
-            max_toughness=max_toughness,
-            action_value=action_value,
-            flags=flags,
-            resources=resources,
-        )
+        return unit
 
 
 class UnitSpawnSystem:
@@ -232,7 +191,7 @@ class UnitSpawnSystem:
                 birth_template_id=template.birth_template_id,
                 source_trace=request.entry_source_trace,
                 request=request.to_json(),
-                unit={**fields, "flags": flags, "resources": resources},
+                unit={**fields, "statuses": [], "flags": flags, "resources": resources},
                 metadata={
                     "spawn_plan_kind": template.spawn_kind,
                     "birth_template_id": template.birth_template_id,
@@ -547,79 +506,6 @@ def _validate_birth_plan_source_fields(request: UnitSpawnRequest, flags: dict[st
         _required_flag_dict(flags, "wave_definition_source_trace")
         _required_flag_dict(flags, "combatant_profile_source_trace")
         _required_flag_dict(flags, "monster_data_card_source_trace")
-
-
-def _required_string(mapping: dict[str, JSONValue], key: str) -> str:
-    value = mapping.get(key)
-    if not isinstance(value, str) or not value:
-        raise ValueError(f"unit_spawn_plan_{key}_missing")
-    return value
-
-
-def _required_side(mapping: dict[str, JSONValue], key: str) -> str:
-    value = _required_string(mapping, key)
-    if value not in {"ally", "enemy", "summon"}:
-        raise ValueError("unit_spawn_plan_side_invalid")
-    return value
-
-
-def _required_int(mapping: dict[str, JSONValue], key: str) -> int:
-    value = mapping.get(key)
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise ValueError(f"unit_spawn_plan_{key}_missing")
-    return value
-
-
-def _required_number(mapping: dict[str, JSONValue], key: str) -> float:
-    value = mapping.get(key)
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ValueError(f"unit_spawn_plan_{key}_missing")
-    return float(value)
-
-
-def _required_dict(mapping: dict[str, JSONValue], key: str) -> dict[str, JSONValue]:
-    value = mapping.get(key)
-    if not isinstance(value, dict):
-        raise ValueError(f"unit_spawn_plan_{key}_missing")
-    return dict(value)
-
-
-def _required_resource_values(mapping: dict[str, JSONValue], key: str) -> dict[str, float]:
-    resources = _required_dict(mapping, key)
-    converted: dict[str, float] = {}
-    for resource_key, value in resources.items():
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            raise ValueError("unit_spawn_plan_resources_invalid")
-        converted[str(resource_key)] = float(value)
-    return converted
-
-
-def _validate_required_birth_plan_values(
-    *,
-    level: int,
-    max_hp: float,
-    hp: float,
-    speed: float,
-    energy: float,
-    max_energy: float,
-    toughness: float,
-    max_toughness: float,
-    action_value: float,
-) -> None:
-    if level <= 0:
-        raise ValueError("unit_spawn_plan_level_non_positive")
-    if max_hp <= 0:
-        raise ValueError("unit_spawn_plan_max_hp_non_positive")
-    if hp < 0 or hp > max_hp:
-        raise ValueError("unit_spawn_plan_hp_invalid")
-    if speed <= 0:
-        raise ValueError("unit_spawn_plan_speed_non_positive")
-    if energy < 0 or max_energy < 0 or (max_energy and energy > max_energy):
-        raise ValueError("unit_spawn_plan_energy_invalid")
-    if toughness < 0 or max_toughness < 0 or toughness > max_toughness:
-        raise ValueError("unit_spawn_plan_toughness_invalid")
-    if action_value < 0:
-        raise ValueError("unit_spawn_plan_action_value_invalid")
 
 
 def _required_flag_string(flags: dict[str, JSONValue], key: str) -> str:

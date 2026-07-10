@@ -918,10 +918,11 @@ class StatusCallbackSystem:
         mutation = Mutation(
             op="set",
             path=("global_flags", "dynamic_value_store"),
-            before=store_before,
+            before=store_before if "dynamic_value_store" in state.global_flags else None,
             after=store_after,
             reason="set dynamic value from damage data property",
             source="status_callback_system",
+            before_exists="dynamic_value_store" in state.global_flags,
             metadata={
                 "callback_id": callback.callback_id,
                 "task_id": task.task_id,

@@ -70,11 +70,13 @@ def run_snapshot_replay_check() -> dict[str, object]:
         "mutation_replay": {
             "ok": replay.ok,
             "errors": list(replay.errors),
+            "conflicts": [conflict.to_json() for conflict in replay.conflicts],
             "mutation_count": len(mutations),
         },
         "transaction_replay": {
             "ok": transaction_replay.ok,
             "errors": list(transaction_replay.errors),
+            "conflicts": [conflict.to_json() for conflict in transaction_replay.conflicts],
             "mutation_count": len(transition.transaction.mutations),
             "has_before": bool(transition.transaction.before.to_json()),
             "has_after": bool(transition.after.to_json()),

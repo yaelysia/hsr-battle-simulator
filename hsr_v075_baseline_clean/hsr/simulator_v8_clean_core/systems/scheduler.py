@@ -1254,6 +1254,7 @@ class CombatScheduler:
             after=pending,
             reason="defer natural turn end while queue entries are pending",
             source="timeline_system",
+            before_exists="pending_turn_end" in state.global_flags,
             metadata={
                 "timeline_rule_id": rule.timeline_rule_id,
                 "turn_advance_plan_id": plan_id,
@@ -1267,12 +1268,13 @@ class CombatScheduler:
         rule = self.rules.default_timeline_rule()
         plan_id = f"turn_advance_plan:{state.event_index}:{actor_id}:clear_pending_turn_end"
         return Mutation(
-            op="set",
+            op="delete",
             path=("global_flags", "pending_turn_end"),
             before=state.global_flags.get("pending_turn_end"),
             after=None,
             reason="clear deferred natural turn end marker",
             source="timeline_system",
+            after_exists=False,
             metadata={
                 "timeline_rule_id": rule.timeline_rule_id,
                 "turn_advance_plan_id": plan_id,

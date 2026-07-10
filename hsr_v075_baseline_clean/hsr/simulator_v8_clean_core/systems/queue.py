@@ -988,10 +988,11 @@ class QueueSystem:
         return Mutation(
             op="set",
             path=("queues", queue_name),
-            before=list(current),
+            before=list(current) if queue_name in state.queues else None,
             after=list(updated),
             reason="enqueue action",
             source=source,
+            before_exists=queue_name in state.queues,
             metadata={
                 **(metadata or {}),
                 "queue_name": queue_name,
@@ -1046,10 +1047,11 @@ class QueueSystem:
         return Mutation(
             op="set",
             path=("queues", queue_name),
-            before=list(current),
+            before=list(current) if queue_name in state.queues else None,
             after=list(updated),
             reason="dequeue action",
             source=source,
+            before_exists=queue_name in state.queues,
             metadata={
                 **(metadata or {}),
                 "queue_name": queue_name,

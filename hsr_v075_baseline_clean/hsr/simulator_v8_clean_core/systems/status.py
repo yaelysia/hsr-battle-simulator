@@ -1000,10 +1000,11 @@ def _apply_add_lifecycle_plan(state: BattleState, plan: StatusLifecyclePlan) -> 
     detail_mutation = Mutation(
         op="set",
         path=("units", plan.target_id, "flags", "status_details"),
-        before=before_details,
+        before=before_details if "status_details" in unit.flags else None,
         after=after_details,
         reason=f"status lifecycle {plan.operation} status details",
         source="status_system",
+        before_exists="status_details" in unit.flags,
         metadata={
             "status_instance": plan.status_instance.to_json(),
             "lifecycle_plan": plan.to_json(),
@@ -1139,10 +1140,11 @@ def _apply_remove_lifecycle_plan(state: BattleState, plan: StatusLifecyclePlan) 
     detail_mutation = Mutation(
         op="set",
         path=("units", plan.target_id, "flags", "status_details"),
-        before=before_details,
+        before=before_details if "status_details" in unit.flags else None,
         after=after_details,
         reason="status lifecycle remove status details",
         source="status_system",
+        before_exists="status_details" in unit.flags,
         metadata={"status_id": plan.status_id, "operation": plan.operation, "lifecycle_plan": plan.to_json()},
     )
     record_type = "status_dispel" if plan.operation == "dispel" else "status_lifecycle"
@@ -1211,10 +1213,11 @@ def _apply_tick_lifecycle_plan(state: BattleState, plan: StatusLifecyclePlan) ->
     detail_mutation = Mutation(
         op="set",
         path=("units", plan.target_id, "flags", "status_details"),
-        before=before_details,
+        before=before_details if "status_details" in unit.flags else None,
         after=after_details,
         reason="status lifecycle tick duration",
         source="status_system",
+        before_exists="status_details" in unit.flags,
         metadata={
             "status_id": plan.status_id,
             "operation": plan.operation,
@@ -1271,10 +1274,11 @@ def _apply_expire_lifecycle_plan(state: BattleState, plan: StatusLifecyclePlan) 
     detail_mutation = Mutation(
         op="set",
         path=("units", plan.target_id, "flags", "status_details"),
-        before=before_details,
+        before=before_details if "status_details" in unit.flags else None,
         after=after_details,
         reason="status lifecycle expire status details",
         source="status_system",
+        before_exists="status_details" in unit.flags,
         metadata={"status_id": plan.status_id, "operation": plan.operation, "lifecycle_plan": plan.to_json()},
     )
     status_record = SettlementRecord(

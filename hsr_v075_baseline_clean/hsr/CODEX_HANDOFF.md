@@ -4,7 +4,7 @@
 
 当前主线是 `simulator_v8_clean_core`。P1 最终收口、P2 状态系统底座、P3 召唤物体系底座、P4 角色卡 / 怪物卡数据卡扩面底座、P5 公式 / 动态值 / 参数绑定通用准入底座、P6 架构边界回正均已完成当前闭环验收。P6 聚合入口 `validate_p6_architecture_boundary_refactor` 输出 `ok=true`、`stages=4/4`、`ready_for_review=true`、`p6_all_mechanisms_reimplemented=false`；S0 当前 `violation_row_count=0`，P6 自有越界显式延期白名单为空。P6 是边界回正，不是全机制复刻完成。
 
-当前规划主线是 P7 内核可信执行与战斗语义回正。P7-S0 问题基线和 P7-S1 Transition 可信结果契约已经独立验收。BattleTransition 现在用 `committed`、`blocked`、`diagnostic` 明确区分正式后继、执行前阻断和诊断性候选；未知、不完整、状态变化却无 Mutation、diagnostic child 等路径不能冒充正式后继。下一步只能执行 P7-S2 Mutation 前置条件与 reducer 冲突检测；执行前仍须提交独立执行卡。P3/P4/P5 admission gap 和内容扩面继续保留。
+当前规划主线是 P7 内核可信执行与战斗语义回正。P7-S0 问题基线、P7-S1 Transition 可信结果契约和 P7-S2 Mutation 前置条件与 reducer 冲突检测已经独立验收。Mutation 现在显式区分路径存在性与 null，支持结构化 set/delete/spawn，并在创建时递归冻结 before/after/metadata、缓存 stable ID；reducer 写状态前防御性 thaw，避免原始对象和 BattleState 别名污染。单位状态完整 payload 已收敛到单一 `core/unit_state_codec.py`，reducer/lifecycle/spawn 共同使用。P1-1、P1-2、P1-4 直接回归均通过。下一步只能执行 P7-S3 所选执行图原子提交；P3/P4/P5 admission gap 和内容扩面继续保留。
 
 ## 1. 路径与事实来源
 
@@ -326,7 +326,7 @@ TargetAlias=197061
 
 ## 7. 推荐下一步
 
-推荐下一步只执行 P7-S2：强制 reducer 核对 Mutation.before、op、after 和同路径链，过期计划、非法操作和冲突写入必须整体拒绝。S2 不提前实现 S3 的所选执行图原子提交，也不修改具体战斗公式。P7 完成可信状态转移、动作 / 目标 / 调度和核心战斗语义回正前，暂停大规模内容扩面。
+推荐下一步只执行 P7-S3 所选执行图原子提交：把一次动作实际选择并触发的全部节点纳入统一预检和提交门，任一节点 blocked、partial、unsupported 或 reducer 冲突时，整次动作必须 mutation 为零且 state unchanged。开始编码前仍须提交独立执行卡，不得提前展开 S4-S19。P7 完成可信状态转移、动作 / 目标 / 调度和核心战斗语义回正前，暂停大规模内容扩面。
 
 P7 仍要延续并收紧 P4/P5/P7 的执行结构：
 
@@ -343,6 +343,8 @@ P7 仍要延续并收紧 P4/P5/P7 的执行结构：
 这些命令用于复核当前 P1-P6 已验收底座范围，不代表 P7 发现的问题已经解决，也不是每次小改都要全量运行。P7-S0 已通过自身轻量基线；后续阶段按触达范围选择直接回归，P1-P6 全聚合默认只在 P7-S19 串行运行。在 `hsr_v075_baseline_clean/hsr` 下运行：
 
 ```bash
+PYTHONDONTWRITEBYTECODE=1 python3 -B -m simulator_v8_clean_core.tools.validate_p7_s2_mutation_reducer_contract --output-dir /tmp/hsr_v8_p7_s2_mutation_reducer_contract
+PYTHONDONTWRITEBYTECODE=1 python3 -B -m simulator_v8_clean_core.tools.validate_p7_s1_transition_trust_contract --output-dir /tmp/hsr_v8_p7_s1_after_p7_s2
 PYTHONDONTWRITEBYTECODE=1 python3 -m compileall -q simulator_v8_clean_core simulator_v8_ui
 PYTHONDONTWRITEBYTECODE=1 ionice -c3 nice -n 15 python3 -B -m simulator_v8_clean_core.tools.validate_p1_9_phase1_aggregate --output-dir /tmp/hsr_v8_p1_9_current
 PYTHONDONTWRITEBYTECODE=1 ionice -c3 nice -n 15 python3 -B -m simulator_v8_clean_core.tools.validate_p2_status_system_complete --output-dir /tmp/hsr_v8_p2_current
@@ -371,7 +373,7 @@ git diff --check
 如果要继续推进，建议开局说清：
 
 ```text
-当前接续 v8 P7-S1 Transition 可信结果契约验收检查点之后。先读 CODEX_HANDOFF、README、ARCHITECTURE_BOUNDARY_CONTRACT、PROJECT_GOALS、FORBIDDEN、P7 计划和 S0/S1 evidence。S0 问题基线与 S1 outcome 契约已验收；P7-I01 的结果分类部分完成，但部分执行的内部原子收口仍归 S3。下一步只能执行 P7-S2 Mutation 前置条件与 reducer 冲突检测，先提交详细执行卡；执行线程只交 `ready_for_review`，验收线程复核后勾唯一 checklist。UI `enemy_ai_auto_skip` 的既有验证错位继续归 P7-S8，不得在 S2 顺手修复。
+当前接续 v8 P7-S2 Mutation 前置条件与 reducer 冲突检测验收检查点。先读 CODEX_HANDOFF、README、ARCHITECTURE_BOUNDARY_CONTRACT、PROJECT_GOALS、FORBIDDEN、P7 计划及 S0/S1/S2 evidence。S0、S1、S2 已验收；下一步只能为 P7-S3 所选执行图原子提交提交详细执行卡，重点处理多 task、状态 partial、callback 中间失败和 reducer 冲突时的整动作 state unchanged。UI `enemy_ai_auto_skip` 的既有验证错位继续归 P7-S8，不得在 S3 顺手修复。
 ```
 
 不要从旧 `CODEX_HANDOFF` 的 v7 叙述接续；本文件已经替换为 v8 当前交接手册。

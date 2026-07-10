@@ -12,7 +12,13 @@ from .model import (
     UnitState,
 )
 from .fidelity import MechanicFidelityMatrix, build_fidelity_matrix
-from .reducer import MutationReducer, ReplayResult
+from .reducer import (
+    MutationConflict,
+    MutationConflictError,
+    MutationReducer,
+    MutationReductionResult,
+    ReplayResult,
+)
 from .settlement import SettlementRecord, SettlementTraceabilityValidator
 from .snapshot_contract import SnapshotCompletenessValidator
 from .transition_contract import TransitionContractValidator
@@ -22,6 +28,7 @@ from .transition_outcome import (
     classify_transition_outcome,
     unclassified_transition_outcome,
 )
+from .unit_state_codec import unit_state_from_payload, unit_state_to_payload
 
 __all__ = [
     "ActionCommand",
@@ -32,7 +39,10 @@ __all__ = [
     "GameEvent",
     "MechanicFidelityMatrix",
     "Mutation",
+    "MutationConflict",
+    "MutationConflictError",
     "MutationReducer",
+    "MutationReductionResult",
     "RNGEvent",
     "ReplayResult",
     "Snapshot",
@@ -47,4 +57,6 @@ __all__ = [
     "build_fidelity_matrix",
     "classify_transition_outcome",
     "unclassified_transition_outcome",
+    "unit_state_from_payload",
+    "unit_state_to_payload",
 ]
