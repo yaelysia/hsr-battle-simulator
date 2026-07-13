@@ -36,6 +36,7 @@ REQUIRED_UNIT_PATHS: tuple[tuple[str, ...], ...] = (
     ("hp",),
     ("max_hp",),
     ("shield",),
+    ("shield_instances",),
     ("recoverable_hp",),
     ("energy",),
     ("max_energy",),

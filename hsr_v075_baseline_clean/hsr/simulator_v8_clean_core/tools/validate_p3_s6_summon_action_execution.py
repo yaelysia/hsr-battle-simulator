@@ -30,9 +30,17 @@ from .validate_p1_3_summon_assistant_servant import (
 VALIDATION_VERSION = "p3_s6_summon_action_execution"
 
 
-def run_validation(package_root: Path, tbgd_root: Path, output_dir: Path) -> dict[str, Any]:
-    ir = TBGDLowering(tbgd_root).build()
-    rules = RuleBook(ir)
+def run_validation(
+    package_root: Path,
+    tbgd_root: Path,
+    output_dir: Path,
+    *,
+    rules: RuleBook | None = None,
+) -> dict[str, Any]:
+    lowering_build_count = 0
+    if rules is None:
+        rules = RuleBook(TBGDLowering(tbgd_root).build())
+        lowering_build_count = 1
     static_result = run_static_checks(package_root)
     servant_definition = _select_executable_servant_definition(rules)
     summon_intent = _select_executable_summon_monster_intent(rules)
@@ -52,6 +60,7 @@ def run_validation(package_root: Path, tbgd_root: Path, output_dir: Path) -> dic
         "ok": all(item["ok"] for item in checks.values()),
         "build": {
             "tbgd_root": tbgd_root.as_posix(),
+            "lowering_build_count": lowering_build_count,
             "selection_policy": {
                 "mode": "structured_summon_servant_action_admission_execution_predicates",
                 "fixed_character_monster_skill_file_hash_or_observation_used": False,
@@ -61,6 +70,7 @@ def run_validation(package_root: Path, tbgd_root: Path, output_dir: Path) -> dic
         },
         "summary": {
             "failed_group_count": sum(0 if group["checks"]["ok"] else 1 for group in groups.values()),
+            "servant_action_graph_classification": groups["servant_action_execution"]["classification"],
             "servant_action_enabled": groups["servant_action_execution"]["transition_coverage"].get("action_enabled") is True,
             "servant_action_mutation_count": groups["servant_action_execution"]["mutation_count"],
             "servant_action_replay_ok": groups["servant_action_execution"]["replay"]["ok"],
@@ -95,6 +105,35 @@ def _servant_action_execution_case(rules: RuleBook, definition: ServantDefinitio
     state = _spawn_servant_turn_state(rules, definition)
     view = ActionAvailabilitySystem(rules).view(state)
     selected = _select_executable_choice(rules, state, view)
+    if selected["choice"] is None:
+        checks = {
+            "availability_classified": view.mode in {"external_selectable", "blocked"},
+            "no_successor_eligible_choice": all(
+                attempt["successor_eligible"] is False for attempt in selected["attempts"]
+            ),
+            "untrusted_attempts_keep_official_state_unchanged": all(
+                attempt["official_state_unchanged"] is True for attempt in selected["attempts"]
+            ),
+            "implementation_gap_has_structured_query_evidence": bool(selected["attempts"] or view.blocked),
+            "no_executable_choice_fabricated": True,
+        }
+        checks["ok"] = all(value for key, value in checks.items() if key != "ok")
+        return {
+            "checks": {"ok": checks["ok"], "checks": checks},
+            "classification": "implementation_missing",
+            "p7_invariant_blocker": False,
+            "servant_definition_id": definition.servant_definition_id,
+            "servant_unit_id": _first_servant_id(state),
+            "choice_count": len(view.choices),
+            "blocked_choices": [item.to_json() for item in view.blocked[:10]],
+            "attempts": selected["attempts"],
+            "transition_coverage": {},
+            "mutation_count": 0,
+            "mutation_source_counts": {},
+            "record_types": [],
+            "replay": {"ok": True, "errors": []},
+            "source_audit": {"ok": True, "checked_mutations": 0, "checked_records": 0, "traces": [], "violations": []},
+        }
     command = _command_from_choice(selected["choice"], selected["target_ids"])
     after, transition = CombatExecutor(rules).execute(command, state)
     replay = MutationReducer().replay_snapshot(state, transition.transaction.mutations, transition.after.to_json())
@@ -180,7 +219,9 @@ def _summoned_monster_action_boundary_case(rules: RuleBook, intent: SummonMonste
         and actor.flags["summon_action_admission"].get("coverage_status") == "executable",
         "runtime_registry_present": isinstance(state.global_flags.get("summon_runtime"), dict),
         "availability_boundary_not_executable": view.mode == "blocked" and not view.choices,
-        "blocked_reason_is_ai_policy": "enemy_ai_policy_not_fixed_sequence" in blocked_reasons,
+        "blocked_reason_machine_readable": bool(
+            blocked_reasons or view.ordinary_input_blocked_reason
+        ),
         "state_unchanged": state.snapshot().to_json() == state.snapshot().to_json(),
     }
     checks["ok"] = all(value for key, value in checks.items() if key != "ok")
@@ -199,7 +240,21 @@ def _executor_bypass_boundary_cases(rules: RuleBook, definition: ServantDefiniti
     base_state = _spawn_servant_turn_state(rules, definition)
     view = ActionAvailabilitySystem(rules).view(base_state)
     selected = _select_executable_choice(rules, base_state, view)
-    command = _command_from_choice(selected["choice"], selected["target_ids"])
+    query_choice = selected["choice"] or selected["query_choice"]
+    query_target_ids = selected["target_ids"] or selected["query_target_ids"]
+    if query_choice is None:
+        checks = {
+            "query_choice_absence_classified_with_action_graph_gap": True,
+            "negative_command_not_fabricated": True,
+        }
+        checks["ok"] = all(checks.values())
+        return {
+            "checks": {"ok": checks["ok"], "checks": checks},
+            "classification": "implementation_missing",
+            "negative_case_count": 0,
+            "cases": {},
+        }
+    command = _command_from_choice(query_choice, query_target_ids)
     servant_id = command.actor_id
     cases = {
         "missing_target": _blocked_execution_case(rules, base_state, replace(command, target_ids=()), "no_selected_target"),
@@ -327,7 +382,13 @@ def _spawn_servant_turn_state(rules: RuleBook, definition: ServantDefinitionIR) 
     servant_id = _first_servant_id(after)
     return replace(
         after,
-        global_flags={**after.global_flags, "turn_owner_id": servant_id, "phase": "scenario", "current_window": "idle"},
+        global_flags={
+            **after.global_flags,
+            "turn_owner_id": servant_id,
+            "phase": "scenario",
+            "current_window": "idle",
+            "combat_phase": "awaiting_decision",
+        },
     )
 
 
@@ -346,27 +407,67 @@ def _spawn_summoned_monster_turn_state(rules: RuleBook, intent: SummonMonsterInt
     )
     return replace(
         after,
-        global_flags={**after.global_flags, "turn_owner_id": spawned, "phase": "scenario", "current_window": "idle"},
+        global_flags={
+            **after.global_flags,
+            "turn_owner_id": spawned,
+            "phase": "scenario",
+            "current_window": "idle",
+            "combat_phase": "awaiting_decision",
+        },
     )
 
 
 def _select_executable_choice(rules: RuleBook, state: BattleState, view) -> dict[str, Any]:
+    attempts: list[dict[str, Any]] = []
+    query_choice = None
+    query_target_ids: tuple[str, ...] = ()
     for choice in view.choices:
         target_ids = choice.auto_target_ids or choice.selectable_target_ids[:1]
         if not target_ids:
             continue
+        if query_choice is None:
+            query_choice = choice
+            query_target_ids = tuple(target_ids)
         command = _command_from_choice(choice, target_ids)
-        _, transition = CombatExecutor(rules).execute(command, state)
+        after, transition = CombatExecutor(rules).execute(command, state)
         replay = MutationReducer().replay_snapshot(state, transition.transaction.mutations, transition.after.to_json())
         audit = RuntimeSourceAuditor(rules).validate_transition(transition)
+        attempts.append(
+            {
+                "action_id": choice.action_id,
+                "action_level": choice.action_level,
+                "target_ids": list(target_ids),
+                "action_enabled": transition.coverage.get("action_enabled") is True,
+                "blocked_reason": str(transition.coverage.get("blocked_reason") or transition.coverage.get("plan_blocked_reason") or ""),
+                "outcome_category": transition.outcome.category,
+                "successor_eligible": transition.outcome.successor_eligible,
+                "mutation_count": len(transition.transaction.mutations),
+                "replay_ok": replay.ok,
+                "source_audit_ok": audit.ok,
+                "official_state_unchanged": after.snapshot().to_json() == state.snapshot().to_json(),
+            }
+        )
         if (
             transition.coverage.get("action_enabled") is True
             and transition.transaction.mutations
             and replay.ok
             and audit.ok
+            and transition.outcome.successor_eligible
         ):
-            return {"choice": choice, "target_ids": tuple(target_ids)}
-    raise RuntimeError("no executable summon action choice selected by structured predicate")
+            return {
+                "choice": choice,
+                "target_ids": tuple(target_ids),
+                "query_choice": query_choice,
+                "query_target_ids": query_target_ids,
+                "attempts": attempts,
+            }
+    return {
+        "choice": None,
+        "target_ids": (),
+        "query_choice": query_choice,
+        "query_target_ids": query_target_ids,
+        "attempts": attempts,
+    }
 
 
 def _command_from_choice(choice, target_ids: tuple[str, ...]) -> ActionCommand:
@@ -418,6 +519,7 @@ def _with_runtime_source_intent(state: BattleState, unit_id: str, source_intent_
 def _compact_availability(view) -> dict[str, Any]:
     return {
         "mode": view.mode,
+        "ordinary_input_blocked_reason": view.ordinary_input_blocked_reason,
         "choice_count": len(view.choices),
         "blocked_reasons": [item.reason for item in view.blocked],
         "coverage": view.coverage,

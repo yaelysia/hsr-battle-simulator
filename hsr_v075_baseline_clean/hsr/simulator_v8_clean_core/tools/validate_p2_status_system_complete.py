@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from .. import BASELINE_VERSION
+from ..rules.rulebook import RuleBook
 from ..tbgd.paths import find_tbgd_root
 from .io import write_json
 from .validate_p2_s10_status_callback_coverage import run_validation as run_s10_validation
@@ -15,18 +16,24 @@ from .validate_p2_s11_full_status_source_closure import run_validation as run_s1
 VALIDATION_VERSION = "p2_status_system_complete"
 
 
-def run_validation(package_root: Path, tbgd_root: Path, output_dir: Path) -> dict[str, Any]:
+def run_validation(
+    package_root: Path,
+    tbgd_root: Path,
+    output_dir: Path,
+    *,
+    rules: RuleBook | None = None,
+) -> dict[str, Any]:
     s10_output = output_dir / "s10_callback_coverage"
     s11_output = output_dir / "s11_source_closure"
-    s10 = run_s10_validation(package_root, tbgd_root, s10_output)
-    s11 = run_s11_validation(package_root, tbgd_root, s11_output)
+    s10 = run_s10_validation(package_root, tbgd_root, s10_output, rules=rules)
+    s11 = run_s11_validation(package_root, tbgd_root, s11_output, rules=rules)
 
     final_summary = _final_summary(s10, s11)
     source_audit_report = _source_audit_replay_report(s10)
     mechanism_matrix = _mechanism_matrix(s11)
     positive_samples = _positive_samples(s10, s11)
     negative_samples = _negative_samples(s10, s11)
-    resource_budget = _resource_budget(output_dir)
+    resource_budget = _resource_budget(output_dir, lowering_runs=0 if rules is not None else 2)
     checks = {
         "s10_callback_coverage": {"ok": s10["ok"], "checks": {"s10_ok": s10["ok"]}},
         "s11_source_closure": {"ok": s11["ok"], "checks": {"s11_ok": s11["ok"]}},
@@ -45,6 +52,7 @@ def run_validation(package_root: Path, tbgd_root: Path, output_dir: Path) -> dic
             "status_mechanism_classification": mechanism_matrix,
             "source_domains": s11["summary"]["source_domains"],
             "blocked_evidence": s11["summary"]["blocked_evidence"],
+            "content_coverage_gaps": final_summary["p2_status_content_coverage_gaps"],
         },
         "samples": {
             "positive": positive_samples,
@@ -69,6 +77,9 @@ def _final_summary(s10: dict[str, Any], s11: dict[str, Any]) -> dict[str, Any]:
         "ok": bool(s10["ok"] and s11["ok"]),
         "p2_status_substrate_complete": bool(s10["ok"] and s11["ok"]),
         "p2_all_status_sources_classified": family_summary["unclassified_count"] == 0,
+        "p2_status_full_callback_coverage": not bool(s10["summary"].get("content_gaps")),
+        "p2_status_content_coverage_gap_count": len(s10["summary"].get("content_gaps", {})),
+        "p2_status_content_coverage_gaps": s10["summary"].get("content_gaps", {}),
         "p2_status_implementation_missing_count": classification_counts.get("implementation_missing", 0),
         "p2_status_lowering_gap_count": classification_counts.get("lowering_gap", 0),
         "p2_status_admission_gap_count": classification_counts.get("admission_gap", 0),
@@ -90,6 +101,10 @@ def _summary_checks(summary: dict[str, Any]) -> dict[str, Any]:
         "summary_ok": summary["ok"] is True,
         "substrate_complete": summary["p2_status_substrate_complete"] is True,
         "all_sources_classified": summary["p2_all_status_sources_classified"] is True,
+        "content_coverage_gaps_classified": all(
+            isinstance(item, dict) and item.get("classification") == "implementation_missing"
+            for item in summary["p2_status_content_coverage_gaps"].values()
+        ),
         "implementation_missing_zero": summary["p2_status_implementation_missing_count"] == 0,
         "lowering_gap_zero": summary["p2_status_lowering_gap_count"] == 0,
         "admission_gap_zero": summary["p2_status_admission_gap_count"] == 0,
@@ -115,7 +130,11 @@ def _mechanism_matrix(s11: dict[str, Any]) -> dict[str, Any]:
 
 def _positive_samples(s10: dict[str, Any], s11: dict[str, Any]) -> dict[str, Any]:
     return {
-        "status_callback_mutation_cases": s10["summary"]["positive_cases"],
+        "status_callback_mutation_cases": {
+            key: value
+            for key, value in s10["summary"]["positive_cases"].items()
+            if value.get("classification") == "executable"
+        },
         "source_domain_cases": s11["summary"]["source_domains"],
     }
 
@@ -128,6 +147,7 @@ def _negative_samples(s10: dict[str, Any], s11: dict[str, Any]) -> dict[str, Any
             for family_id, item in s11["summary"]["blocked_evidence"].items()
             if item["blocked_count"] > 0
         },
+        "content_coverage_gaps": s10["summary"].get("content_gaps", {}),
     }
 
 
@@ -168,9 +188,9 @@ def _source_audit_replay_report(s10: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _resource_budget(output_dir: Path) -> dict[str, Any]:
+def _resource_budget(output_dir: Path, *, lowering_runs: int) -> dict[str, Any]:
     summary = {
-        "full_tbgd_lowering_runs": 2,
+        "full_tbgd_lowering_runs": lowering_runs,
         "sub_validations": ("validate_p2_s10_status_callback_coverage", "validate_p2_s11_full_status_source_closure"),
         "large_artifacts_written": False,
         "full_canonical_ir_written": False,

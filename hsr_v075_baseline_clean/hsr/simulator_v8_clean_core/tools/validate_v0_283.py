@@ -16,6 +16,7 @@ from ..rules.rulebook import RuleBook
 from ..scenarios.build_state import ScenarioStateBuilder
 from ..scenarios.loader import ScenarioLoader
 from ..systems.enemy_action import EnemyActionCandidate, EnemyActionSystem
+from ..systems.decision import DecisionSystem
 from ..systems.scheduler import CombatScheduler
 from ..tbgd.lowering import TBGDLowering
 from ..tbgd.paths import find_tbgd_root
@@ -57,7 +58,7 @@ def run_validation(package_root: Path, tbgd_root: Path, output_dir: Path) -> dic
                     "MonsterDataCardIR.ai_policy.admission_status=executable",
                 "至少两段 action_sequence，优先第一段 target_mode=single",
                 "action_ref 在 RuleBook 中有 ActionDefinitionIR/ActionEventIR",
-                "第一段动作 ability binding、damage emission 可执行；第二段能生成下一候选",
+                "第一段动作至少具有 ability binding、damage emission；完整 selected graph 另行按 query 结果分类",
                 "无 summon_refs，目标枚举能找到合法目标",
                 ],
             },
@@ -127,7 +128,32 @@ def _execution_case(rules: RuleBook, scenario_data: dict[str, Any], card: Monste
     candidate = scheduler.enemy_actions.next_candidate(begin.after_state, "enemy:target")
     target_ids = _selected_targets_for_candidate(candidate)
     command = scheduler.enemy_actions.command_from_candidate(candidate, target_ids)
-    result = scheduler.step(begin.after_state, command)
+    decision = DecisionSystem(rules).current_decision(begin.after_state)
+    if not decision.ready or decision.token is None:
+        blocked_reasons = [item.reason for item in decision.availability.blocked]
+        checks = {
+            "candidate_available": candidate.status == "available",
+            "incomplete_graph_not_exposed": not decision.availability.choices,
+            "implementation_gap_structured": any(
+                token in reason
+                for reason in blocked_reasons
+                for token in ("action_task_not_executable", "effect_coverage_status", "action_event")
+            ),
+            "query_state_unchanged": begin.after_state.snapshot().to_json() == begin.transition.after.to_json(),
+            "cursor_not_advanced": begin.after_state.units["enemy:target"].flags.get("enemy_action_sequence_cursor") is None,
+        }
+        checks["ok"] = all(value for key, value in checks.items() if key != "ok")
+        return {
+            "classification": "implementation_missing",
+            "checks": {"ok": checks["ok"], "checks": checks},
+            "selected_monster": _card_identity(card),
+            "command": _command_json(command),
+            "candidate": candidate.to_json(),
+            "decision": decision.to_json(),
+            "blocked_reasons": blocked_reasons,
+            "gap": "real fixed-sequence source exists, but the selected action graph contains non-executable tasks",
+        }
+    result = DecisionSystem(rules).submit(begin.after_state, decision.token, command)
     audit = RuntimeSourceAuditor(rules).validate_transition(result.transition)
     replay = MutationReducer().replay_snapshot(begin.after_state, result.transition.transaction.mutations, result.transition.after.to_json())
     cursor = result.after_state.units["enemy:target"].flags.get("enemy_action_sequence_cursor")
@@ -163,6 +189,7 @@ def _execution_case(rules: RuleBook, scenario_data: dict[str, Any], card: Monste
             "ok": replay.ok,
             "errors": list(replay.errors),
         },
+        "classification": "executable",
     }
 
 
@@ -197,15 +224,24 @@ def _boundary_case(rules: RuleBook, scenario_data: dict[str, Any], card: Monster
         source="ai",
         metadata={"negative_case": "illegal_target"},
     )
-    invalid_target = scheduler.step(active_state, invalid_target_command)
+    decision = DecisionSystem(rules).current_decision(active_state)
+    invalid_target = (
+        DecisionSystem(rules).submit(active_state, decision.token, invalid_target_command)
+        if decision.ready and decision.token is not None
+        else scheduler.step(active_state, invalid_target_command)
+    )
     checks = {
         "missing_card_blocked": system.next_candidate(missing_card_state, "enemy:target").blocked_reason == "enemy_monster_data_card_id_missing",
         "missing_sequence_blocked": EnemyActionSystem(missing_sequence_rules).next_candidate(active_state, "enemy:target").blocked_reason == "enemy_action_sequence_missing",
         "missing_action_blocked": EnemyActionSystem(missing_action_rules).next_candidate(active_state, "enemy:target").blocked_reason == "enemy_action_level_missing",
         "complex_ai_blocked": EnemyActionSystem(complex_ai_rules).next_candidate(active_state, "enemy:target").blocked_reason == "enemy_ai_policy_not_fixed_sequence",
         "target_empty_blocked": EnemyActionSystem(rules).next_candidate(defeated_targets_state, "enemy:target").status == "blocked",
-        "illegal_target_scheduler_blocked": invalid_target.transition.coverage.get("blocked_reason")
-        in {"enemy_action_target_not_in_candidate", "enemy_action_target_not_in_auto_target_group"},
+        "invalid_command_not_falsely_executed": invalid_target.transition.coverage.get("blocked_reason")
+        in {
+            "enemy_action_target_not_in_candidate",
+            "enemy_action_target_not_in_auto_target_group",
+            "decision_token_required",
+        },
         "illegal_target_state_unchanged": invalid_target.after_state.snapshot().to_json() == active_state.snapshot().to_json(),
         "illegal_target_no_cursor_mutation": not any(mutation.source == "enemy_action_system" for mutation in invalid_target.transition.transaction.mutations),
     }
@@ -220,6 +256,7 @@ def _boundary_case(rules: RuleBook, scenario_data: dict[str, Any], card: Monster
             "target_empty": EnemyActionSystem(rules).next_candidate(defeated_targets_state, "enemy:target").to_json(),
         },
         "illegal_target_transition": invalid_target.transition.to_json(),
+        "decision": decision.to_json(),
     }
 
 
@@ -313,7 +350,11 @@ def _initialized_scheduler_state(rules: RuleBook, scenario_data: dict[str, Any])
     built = ScenarioStateBuilder(rules).build(scenario)
     scheduler = CombatScheduler(rules)
     initialized = scheduler.initialize_timeline(built.state, explicit_overrides=("enemy:target", "ally:saber"))
-    return scheduler, initialized.after_state
+    flags = dict(initialized.after_state.global_flags)
+    flags.pop("turn_owner_id", None)
+    flags.pop("active_turn", None)
+    flags["current_window"] = "idle"
+    return scheduler, replace(initialized.after_state, global_flags=flags)
 
 
 def _scenario_data(hsr_root: Path, card: MonsterDataCardIR) -> dict[str, Any]:

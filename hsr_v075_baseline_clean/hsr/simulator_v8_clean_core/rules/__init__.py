@@ -5,6 +5,8 @@ from .ir import (
     FormulaIR,
     IRSource,
     RuleEntity,
+    TargetExpressionIR,
+    TargetExpressionNodeIR,
     TriggerIR,
 )
 from .evaluator import EvaluationContext, RuleEvaluator
@@ -20,6 +22,7 @@ __all__ = [
     "RuleBook",
     "RuleEntity",
     "RuleEvaluator",
+    "TargetExpressionIR",
+    "TargetExpressionNodeIR",
     "TriggerIR",
 ]
-

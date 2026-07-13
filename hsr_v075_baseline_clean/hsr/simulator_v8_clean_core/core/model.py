@@ -37,11 +37,17 @@ class UnitState:
     max_toughness: float = 0.0
     action_value: float = 0.0
     statuses: tuple[str, ...] = ()
+    shield_instances: tuple[dict[str, JSONValue], ...] = ()
     flags: dict[str, JSONValue] = field(default_factory=dict)
     resources: dict[str, float] = field(default_factory=dict)
 
     def to_snapshot(self) -> dict[str, JSONValue]:
-        shield = float(self.resources.get("shield", 0.0))
+        shield = sum(
+            float(instance.get("remaining", 0.0))
+            for instance in self.shield_instances
+            if isinstance(instance.get("remaining"), (int, float))
+            and not isinstance(instance.get("remaining"), bool)
+        )
         recoverable_hp = float(self.resources.get("recoverable_hp", 0.0))
         lifecycle_status = _unit_lifecycle_status(self)
         lifecycle = {
@@ -85,6 +91,7 @@ class UnitState:
             "energy": self.energy,
             "max_energy": self.max_energy,
             "shield": shield,
+            "shield_instances": [dict(instance) for instance in self.shield_instances],
             "recoverable_hp": recoverable_hp,
             "toughness": self.toughness,
             "max_toughness": self.max_toughness,
@@ -271,7 +278,10 @@ class RNGEvent:
 @dataclass(frozen=True)
 class TargetResolution:
     requested: tuple[str, ...] = ()
+    selectable: tuple[str, ...] = ()
     legal: tuple[str, ...] = ()
+    primary: str | None = None
+    impact_group: tuple[str, ...] = ()
     selected: tuple[str, ...] = ()
     rejected: tuple[str, ...] = ()
     reason: str = "not_resolved"
@@ -281,7 +291,10 @@ class TargetResolution:
     def to_json(self) -> dict[str, JSONValue]:
         return {
             "requested": list(self.requested),
+            "selectable": list(self.selectable),
             "legal": list(self.legal),
+            "primary": self.primary,
+            "impact_group": list(self.impact_group),
             "selected": list(self.selected),
             "rejected": list(self.rejected),
             "reason": self.reason,

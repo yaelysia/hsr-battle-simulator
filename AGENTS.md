@@ -34,8 +34,8 @@ turnbasedgamedata-main -> TBGD compiler/lowering -> Canonical IR -> Combat Core
 
 ```text
 P7 kernel trust and combat semantics repair
-最近代码检查点：P7-S2 Mutation 前置条件与 reducer 冲突检测验收提交
-当前规划主线：P7 内核可信执行与战斗语义回正；下一步只执行 P7-S3 所选执行图原子提交
+最近代码检查点：P7 内核可信执行与战斗语义回正最终验收
+当前规划主线：P7-S0 至 P7-S19 已全部通过验收；下一大型阶段尚未确定，继续规划时必须继承 P2/P3/P4/P6 保留的真实内容缺口
 ```
 
 当前 v8 已建立的底层范围包括：
@@ -50,14 +50,15 @@ P7 kernel trust and combat semantics repair
 - 目标表达式 IR 与安全解析子集：简单别名、明确群体、上下文目标列表、`TargetSequence`、`TargetFilter`、确定性 `Retarget`。
 - 第一阶段 P1 最小完整战斗纵切已经完成，P1-9 聚合输出 `phase1_minimum_battle_slice=true` 且 blocker 为空。
 - P2 状态系统底座已经完成，状态生命周期、概率/抵抗/免疫、驱散、DoT/状态伤害、callback queue、dynamic value 等当前闭环可验收；这不等于全角色、全怪物、装备和关卡状态机制都已复刻。
-- P3 召唤物 / 忆灵底座闭环已经完成，summoned monster spawn、servant lifecycle/action/status/BattleSetup、target relation、source audit/replay 可验证；P3 是底座闭环通过，不是全正例完成。
+- P3 召唤物 / 忆灵曾按 P7 前 transition 口径验收底座闭环；P7 原子提交收紧后，servant action graph 已重新归类为真实 `implementation_missing`。summoned monster spawn、servant lifecycle/status/BattleSetup、target relation、source audit/replay 底座仍可验证，但当前不能再声称 servant action 或 P3 底座被原样继承完成。
 - P4 角色卡 / 怪物卡数据卡扩面底座已经完成，action/query contract、data card source trace、formula/dynamic/target/passive/action gap 总账、P3 backlog 继承和聚合验收可验证；P4 是底座闭环通过，不是全角色 / 全怪物 / 全装备 / 全关卡正例完成。
 - P5 公式 / 动态值 / 参数绑定通用准入底座已经完成，ValueResolver、静态参数、dynamic/custom 投影、damage/toughness/resource/status/callback queue/summon/trace/eidolon 消费侧、负例、source audit/replay 和聚合验收可验证；P5 是底座闭环通过，不是全角色 / 全怪物 / 全装备 / 全关卡公式正例完成。
 - P6 架构边界回正已经完成，伤害 / 削韧显式计算入口、一等 `UnitBirthTemplateIR`、请求绑定出生单、Stage / HardLevelGroup 波次等级来源、RuleBook 窄访问边界和聚合阻断口径均已验收；P6 是职责边界闭环通过，不是全部机制扩面完成。
-- P6 后深度代码复审已建立 P7 问题计划：当前 skeleton 可保留，但 transition 可信门、Mutation 前置校验、动作 / 目标 / 调度闭环、回合阶段、伤害、护盾、状态概率、RNG、召唤和波次等语义仍需逐项回正。旧聚合通过不能被解释为这些问题已解决。
-- P7-S0 问题基线已经独立验收：P7-I01 至 P7-I24 均有唯一 `confirmed_open` 记录，十项轻量 runtime probe 实际复现当前缺陷，I20/I21/I23 具备全包 AST 结构证据；S0 没有修改 runtime，也不表示任何问题已经修复。
-- P7-S1 Transition 可信结果契约已经独立验收：`committed`、`blocked`、`diagnostic` 三类结果机器可读，未知、矛盾或不完整结果不可作为正式后继；executor、scheduler 和 UI consumer 已接入 outcome。S1 不等于原子提交完成，diagnostic candidate 的内部 mutation 收口仍归 P7-S3。
-- P7-S2 Mutation 前置条件与 reducer 冲突检测已经独立验收：Mutation 显式区分路径缺失与 null，before/op/after 和同路径链由生产 reducer 强制校验，冲突整批 state unchanged；Mutation JSON 在创建边界递归冻结、stable ID 固定，写状态前防御性解别名；UnitState 完整 payload 统一由 core codec 编解码。S2 不等于完整动作原子提交，所选执行图任一节点失败时的统一回滚仍归 P7-S3。
+- P6 后深度代码复审建立的 P7 问题计划已全部完成验收：保留原有 skeleton，并回正 transition 可信门、Mutation 前置校验、动作 / 目标 / 调度闭环、回合阶段、伤害、护盾、状态概率、RNG、召唤和波次等内核语义。
+- P7-S0 问题基线已经独立验收：P7-I01 至 P7-I24 当时均有唯一 `confirmed_open` 记录和实际复现证据，随后已在 S1-S19 中逐项修正并关闭。
+- P7-S1 Transition 可信结果契约已经独立验收：`committed`、`blocked`、`diagnostic` 三类结果机器可读，未知、矛盾或不完整结果不可作为正式后继；executor、scheduler 和 UI consumer 已接入 outcome，完整原子提交由后续 S3 收口。
+- P7-S2 Mutation 前置条件与 reducer 冲突检测已经独立验收：Mutation 显式区分路径缺失与 null，before/op/after 和同路径链由生产 reducer 强制校验，冲突整批 state unchanged；Mutation JSON 在创建边界递归冻结、stable ID 固定，写状态前防御性解别名；UnitState 完整 payload 统一由 core codec 编解码。
+- P7-S0 至 P7-S19 已全部通过验收，P7-I01 至 P7-I24 均有当前代码和结构化负例证据；最终聚合包含 S1-S18 的 18 份阶段摘要、一次共享 RuleBook 的 9 项当前源码回归和自包含旧证据拒绝负例。P7 完成的是内核可信执行与当前已准入战斗语义，不代表 P2 action-delay callback graph、P3 servant action graph 或全角色 / 全怪物 / 全装备 / 全关卡内容扩面已经完成。
 - `simulator_v8_ui/` 本地 UI 测试台，用于 scenario 编排和审计展示，不进入规则系统。
 
 当前仍未完整实现的大块：
@@ -118,11 +119,12 @@ v8 当前只保留少数高密度长期文档，避免文档膨胀影响索引�
 12. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/P5_FORMULA_DYNAMIC_PARAM_BINDING_TASK_PLAN.md`
 13. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/P6_ARCHITECTURE_BOUNDARY_REFACTOR_TASK_PLAN.md`
 14. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/P7_KERNEL_TRUST_AND_COMBAT_SEMANTICS_REPAIR_TASK_PLAN.md`
-15. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p5_formula_dynamic_param_binding_checkpoint.md`
-16. `hsr_v075_baseline_clean/hsr/live_validation_reports/archive/phase1/v8_p1_final_acceptance_checkpoint_v0_292.md`
-17. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_status_target_event_database_audit_checkpoint_v0_287.md`
-18. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_ir_checkpoint_v0_288.md`
-19. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_sequence_filter_retarget_checkpoint_v0_289.md`
+15. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p7_kernel_trust_and_combat_semantics_final_checkpoint.md`
+16. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p5_formula_dynamic_param_binding_checkpoint.md`
+17. `hsr_v075_baseline_clean/hsr/live_validation_reports/archive/phase1/v8_p1_final_acceptance_checkpoint_v0_292.md`
+18. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_status_target_event_database_audit_checkpoint_v0_287.md`
+19. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_ir_checkpoint_v0_288.md`
+20. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_sequence_filter_retarget_checkpoint_v0_289.md`
 
 P1 过程计划和中间报告已经归档，默认不要作为当前线程入口：
 
@@ -317,6 +319,15 @@ P4 的执行质量明显改善，后续大型计划应沿用这个正向模式�
 - 动作查询与提交必须满足 round trip：同一决策状态中，查询给出的每个动作和目标都可原样提交，未给出的命令必须被拒绝；只读查询不得推进时间线、重复触发回合开始或改变当前行动者。
 - `source_trace`、source/evidence 和审计 payload 只能用于解释来源，不能作为 runtime 行为输入。边界静态检查必须覆盖“从审计信息取规则”的行为路径，不能只检查 raw import 或敏感 token。
 - 内核验收必须包含通用不变量，至少覆盖动作所有权、目标基数、护盾吸收、回合 / DoT / 控制顺序、独立 RNG 身份、Mutation before 冲突、队列前进保证和 partial no-mutation；阶段聚合 `ok=true` 不能替代这些检查。
+- 收紧 runtime fallback 时必须同步审计所有 IR 生产入口，不能只迁移普通 ability task。全局模板、击破模板、状态 callback、波次、召唤和其他派生 lowering 只要会生成 executable effect，也必须经过同一 typed target / numeric / condition 投影；否则旧 fallback 移除后会把真实机制静默变成 blocked。
+- 最终聚合中的“证据当前有效”必须有真实依据，不能只读取旧 summary 的 `ok=true`。至少要覆盖所有会影响当前代码的阶段（包括已早期验收的 transition / reducer），验证关键阶段完成字段而不只看顶层 `ok`，并防止旧产物在代码修改后继续冒充当前回归；共享一次 RuleBook 的串行现跑优先于重复全量构建。
+- 规则 / 审计分离的静态门禁不能维护固定 runtime 文件白名单；应自动扫描 core / rules / systems 新增文件，并检查来源字段参与条件、排序、身份和准入。审计裁剪反例必须把 `source_path`、`raw_type`、`raw_id`、`evidence` 及机制专用审计路径真正清空，不能用 `"audit_trimmed"` 等非空占位冒充裁剪。
+- callback 执行顺序必须由 lowering 投影为稳定 typed order，并由 RuleBook、dispatcher 和 callback executor 共同消费；不能用 callback source path、raw type/raw id 或含路径的 callback id 作为行为排序回退。
+- 公开 frozen dataclass 只是数据载体，不是授权。query/queue 签发的提交能力必须携带内核 issuer 创建的不可伪造 capability，并绑定完整 claims 与 state revision；验证必须覆盖公开构造、字段篡改和陈旧状态复用。授权实现本身不能调用战斗 RNG，也不应引入会触发随机性静态门禁的进程随机数。
+- 类型化 IR 只有在 runtime 完全不再读取 raw/audit payload 时才成立。验证必须保留 typed node、删除整个 legacy/raw payload 后仍得到相同行为；nested condition 应在 lowering 时成为 `ConditionIR`，禁止 runtime 现场从字典重建。
+- 缺失战斗阶段可在明确初始化边界解释为 idle，但已存在的未知/损坏阶段必须 blocked/state unchanged。波次触发的 phase mutation 应使用 wave 规则身份和 `wave_system` 来源，不能冒充 timeline mutation。
+- 敌方复杂 AI 未实现不等于其数据卡动作不可查询。`selection_controller=external` 时，AI 只是不负责选动作；已类型化且通过 ActionContract 的卡片动作仍应交给外部控制器选择。只有存在真实、已准入的 fixed-sequence source 时才约束候选并推进 sequence cursor。
+- ability graph 中视觉/同步任务可以由一份集中、精确的 process-only opcode 契约承载，但未知 opcode 不能因此宽泛跳过。带语义的 task（条件、召唤、能力附着等）必须有 typed IR、真实 runtime consumer 和负例；不能因为 EffectIR 是 audit-only 或任务看似不影响数值就标 complete。
 - `@dataclass(frozen=True)` 只冻结字段重新绑定，不会冻结嵌套 dict/list。Mutation、RNG choice、queue intent 等可信指令若包含可变 JSON，必须在创建边界递归防御性冻结或复制，并在写入 state 前再次解别名；stable ID 必须在指令创建后保持不变，验证要包含原始输入、指令内部容器和序列化副本的别名污染负例。
 - UnitState、spawn payload、snapshot entity 等共享状态结构的字段集合、数字规范和编解码必须只有一个 core 层契约；reducer、lifecycle、spawn/setup 只能复用，不能各自复制一套默认值和字段校验，否则新增字段时必然分叉。
 

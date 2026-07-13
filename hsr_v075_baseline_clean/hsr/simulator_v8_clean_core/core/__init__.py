@@ -11,6 +11,7 @@ from .model import (
     TargetResolution,
     UnitState,
 )
+from .compact_state import CompactSemanticState, CompactStateQuery
 from .fidelity import MechanicFidelityMatrix, build_fidelity_matrix
 from .reducer import (
     MutationConflict,
@@ -36,6 +37,8 @@ __all__ = [
     "ActionTransaction",
     "BattleState",
     "BattleTransition",
+    "CompactSemanticState",
+    "CompactStateQuery",
     "GameEvent",
     "MechanicFidelityMatrix",
     "Mutation",

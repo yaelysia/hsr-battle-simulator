@@ -17,6 +17,15 @@ def action_skill_point_delta(bp_need: float, bp_add: float) -> int:
     return 0
 
 
+def action_resource_blocked_reason(errors: tuple[str, ...]) -> str:
+    for error in errors:
+        if error.startswith("insufficient skill points"):
+            return "insufficient_skill_points"
+        if error.startswith("unknown actor_id"):
+            return "resource_unknown_actor"
+    return "resource_plan_failed"
+
+
 def action_resource_plan(
     action_definition: ActionDefinitionIR,
     *,
@@ -57,41 +66,52 @@ def target_policy_for_action(
         "action_definition_target_mode": action_definition.target_mode,
         "damage_kind": action_definition.damage_kind,
         "source_mode": action_definition.source_mode,
+        "target_relation": action_event.target_relation
+        if action_event is not None
+        else action_definition.target_relation,
     }
-    if target_mode == "self_or_team":
-        return TargetPolicy(
-            policy_id="self_or_team",
-            allow_enemy=False,
-            allow_ally=True,
-            allow_self=True,
-            target_mode=target_mode,
-            selection_mode="explicit_ally_or_self",
-            source_trace=source_trace,
-            metadata=metadata,
-        )
-    if action_definition.damage_kind == "hp_damage":
-        return TargetPolicy(
-            policy_id="enemy_damage",
-            allow_enemy=True,
-            allow_ally=False,
-            allow_self=False,
-            target_mode=target_mode,
-            selection_mode=target_mode,
-            bounce_policy=bounce_policy,
-            source_trace=source_trace,
-            metadata=metadata,
-        )
+    relation = str(metadata["target_relation"] or "unknown")
+    allow_enemy, allow_ally, allow_self = _target_relation_flags(relation)
+    selection_min = 0 if target_mode == "aoe" else 1
+    selection_max = 0 if target_mode == "aoe" else 1
+    impact_mode = {
+        "single": "primary_only",
+        "self_or_team": "primary_only",
+        "blast": "primary_plus_adjacent",
+        "aoe": "all_relation_targets",
+        "bounce": "primary_then_rng_bounce",
+    }.get(target_mode, "unknown")
     return TargetPolicy(
-        policy_id="explicit_any",
-        allow_enemy=True,
-        allow_ally=True,
-        allow_self=True,
+        policy_id=f"{relation}:{target_mode}",
+        allow_enemy=allow_enemy,
+        allow_ally=allow_ally,
+        allow_self=allow_self,
         target_mode=target_mode,
-        selection_mode=target_mode,
+        selection_mode="automatic" if selection_max == 0 else "explicit_primary",
+        target_relation=relation,
+        selection_min=selection_min,
+        selection_max=selection_max,
+        impact_mode=impact_mode,
         bounce_policy=bounce_policy,
         source_trace=source_trace,
         metadata=metadata,
     )
+
+
+def _target_relation_flags(relation: str) -> tuple[bool, bool, bool]:
+    if relation == "enemy":
+        return True, False, False
+    if relation == "ally":
+        return False, True, False
+    if relation == "self":
+        return False, False, True
+    if relation == "ally_or_self":
+        return False, True, True
+    if relation == "any":
+        return True, True, True
+    if relation in {"owner", "summoner", "summon"}:
+        return False, True, True
+    return False, False, False
 
 
 def bounce_policy_for_action(rules: RuleBook, action_id: str, level: int) -> dict[str, JSONValue]:

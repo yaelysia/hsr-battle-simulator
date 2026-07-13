@@ -7,6 +7,7 @@ from ..core.reducer import MutationReducer
 from ..core.settlement import SettlementRecord
 from ..core.transition_outcome import ExecutionNodeResult
 from ..rules.evaluator import EvaluationContext, NumericEvaluationContext, NumericEvaluationResult, RuleEvaluator
+from ..rules.expression_ir import numeric_dynamic_hashes, numeric_fixed, numeric_missing
 from ..rules.ir import ActionDelayEmissionIR, QueueIntentIR, StatusCallbackIR, StatusCallbackTaskIR, StatusDamageEmissionIR
 from ..rules.rulebook import RuleBook
 from ..rules.value_binding import ValueBindingRequest, ValueContext, ValueResolver
@@ -47,7 +48,7 @@ class StatusCallbackSystem:
         effect_registry: EffectRegistry | None = None,
     ) -> None:
         self.rules = rules
-        self.damage = damage or DamageSystem()
+        self.damage = damage or DamageSystem(rules)
         self.reducer = reducer or MutationReducer()
         self.timeline = timeline or TimelineSystem()
         self.queue = queue or QueueSystem()
@@ -118,6 +119,7 @@ class StatusCallbackSystem:
         admitted_callback_ids = _trigger_ids_for_event(detail, event)
         if admitted_callback_ids is not None:
             callbacks = tuple(callback for callback in callbacks if callback.callback_id in admitted_callback_ids)
+        callbacks = tuple(sorted(callbacks, key=lambda callback: callback.execution_order))
         if not callbacks:
             return StatusCallbackExecutionResult(
                 ok=True,
@@ -716,6 +718,7 @@ class StatusCallbackSystem:
                     attack_type=emission.attack_type,
                     damage_formula_family="true_damage",
                     amount=float(evaluation.value),
+                    amount_stage="fixed_final",
                     element_type=emission.element_type,
                     status_damage_emission_id=emission.status_damage_emission_id,
                     status_callback_id=callback.callback_id,
@@ -778,6 +781,7 @@ class StatusCallbackSystem:
                 attack_type=emission.attack_type,
                 damage_formula_family="break",
                 amount=float(evaluation.value),
+                amount_stage="family_base",
                 element_type=emission.element_type or _break_element_from_detail(detail),
                 status_damage_emission_id=emission.status_damage_emission_id,
                 status_callback_id=callback.callback_id,
@@ -857,7 +861,7 @@ class StatusCallbackSystem:
         trigger_event: GameEvent | None,
         tasks: dict[str, StatusCallbackTaskIR],
     ) -> StatusCallbackExecutionResult:
-        payload = task.source.evidence.get("task") if isinstance(task.source.evidence, dict) else None
+        payload = task.task_payload
         if not isinstance(payload, dict):
             reason = "set_dynamic_value_damage_property_payload_missing"
             return StatusCallbackExecutionResult(
@@ -1015,6 +1019,7 @@ class StatusCallbackSystem:
             attack_type=emission.attack_type,
             damage_formula_family="dot",
             amount=formula_result.final_damage,
+            amount_stage="family_base",
             element_type=emission.element_type,
             status_damage_emission_id=emission.status_damage_emission_id,
             status_callback_id=callback.callback_id,
@@ -1108,10 +1113,11 @@ class StatusCallbackSystem:
                 records.append(_action_delay_blocked_record(callback, task, detail, emission, reason, evaluation=evaluation))
                 errors.append(reason)
                 continue
-            mutation = self.timeline.set_action_value(
+            adjustment = self.timeline.adjust_action_value(
                 current_state,
                 target_id,
-                float(evaluation.value),
+                operation="set",
+                amount=float(evaluation.value),
                 source="status_callback_system",
                 metadata={
                     "callback_id": callback.callback_id,
@@ -1130,22 +1136,32 @@ class StatusCallbackSystem:
                     },
                 },
             )
-            current_state = self.reducer.apply_all(current_state, (mutation,))
-            mutations.append(mutation)
-            events.extend(
-                events_for_mutation(
-                    mutation,
-                    actor_id=str(detail.get("caster_id") or detail.get("owner_id") or ""),
-                    source_id=str(detail.get("source_id") or callback.callback_id),
-                    event_index=current_state.event_index,
+            if not adjustment.plan.ok:
+                reason = adjustment.plan.blocked_reason or "action_delay_timeline_adjustment_blocked"
+                records.extend(adjustment.records)
+                records.append(_action_delay_blocked_record(callback, task, detail, emission, reason, evaluation=evaluation))
+                errors.append(reason)
+                continue
+            current_state = self.reducer.apply_all(current_state, adjustment.mutations)
+            mutations.extend(adjustment.mutations)
+            events.extend(adjustment.events)
+            records.extend(adjustment.records)
+            mutation = adjustment.mutations[0] if adjustment.mutations else None
+            if mutation is not None:
+                events.extend(
+                    events_for_mutation(
+                        mutation,
+                        actor_id=str(detail.get("caster_id") or detail.get("owner_id") or ""),
+                        source_id=str(detail.get("source_id") or callback.callback_id),
+                        event_index=current_state.event_index,
+                    )
                 )
-            )
             records.append(
                 SettlementRecord(
                     record_type="action_delay",
                     source="status_callback_system",
-                    mutation_id=mutation.stable_id(),
-                    process_only=False,
+                    mutation_id=mutation.stable_id() if mutation is not None else None,
+                    process_only=mutation is None,
                     payload={
                         "callback_id": callback.callback_id,
                         "task_id": task.task_id,
@@ -1331,6 +1347,7 @@ class StatusCallbackSystem:
                 target_ids=target_resolution.target_ids,
                 priority_source=intent.priority_source,
                 source_trace=source_trace,
+                resource_policy=_queue_resource_policy(intent),
                 priority_key=str(intent.priority_source.get("priority_key") or ""),
                 priority_value=_json_float(priority_resolution.get("value")),
                 queue_priority_id=str(intent.priority_source.get("queue_priority_id") or ""),
@@ -1512,10 +1529,16 @@ def _queue_priority_value_resolution(
         "status_task_source": task.source.to_json(),
         "status_instance_source": _json_dict(detail.get("source_trace")),
     }
+    priority_value = intent.priority_source.get("priority_value")
+    priority_expression = (
+        numeric_fixed(float(priority_value))
+        if isinstance(priority_value, (int, float)) and not isinstance(priority_value, bool)
+        else numeric_missing("queue_priority_value_not_numeric")
+    )
     resolution = value_resolver.resolve(
         ValueBindingRequest(
             binding_kind="runtime_numeric_expression",
-            expression={"kind": "fixed", "value": intent.priority_source.get("priority_value")},
+            expression=priority_expression,
             required_context_keys=("status_modifier",),
             source_trace=source_trace,
         ),
@@ -1559,10 +1582,10 @@ def _retarget_candidates(
     detail: dict[str, JSONValue],
     trigger_event: GameEvent | None,
 ) -> tuple[str, ...]:
-    evidence = task.source.evidence.get("retarget") if isinstance(task.source.evidence, dict) else None
-    if not isinstance(evidence, dict):
+    policy = task.retarget_policy
+    if not isinstance(policy, dict):
         return ()
-    alias = str(evidence.get("target_alias") or "")
+    alias = str(policy.get("target_alias") or "")
     if alias != "ParamEntityAttackTargetList.SortByHP":
         return ()
     payload = trigger_event.payload if trigger_event is not None and isinstance(trigger_event.payload, dict) else {}
@@ -1582,8 +1605,8 @@ def _retarget_candidates(
 
 
 def _retarget_max_number(task: StatusCallbackTaskIR) -> int:
-    evidence = task.source.evidence.get("retarget") if isinstance(task.source.evidence, dict) else None
-    expr = evidence.get("max_number_expr") if isinstance(evidence, dict) else None
+    policy = task.retarget_policy
+    expr = policy.get("max_number_expr") if isinstance(policy, dict) else None
     if isinstance(expr, dict) and expr.get("kind") == "fixed":
         value = expr.get("value")
         if isinstance(value, (int, float)) and value > 0:
@@ -1652,7 +1675,7 @@ def _status_damage_binding_sources(
     emission: StatusDamageEmissionIR,
     break_base_damage: dict[str, JSONValue],
 ) -> tuple[dict[str, JSONValue], ...]:
-    hashes = _postfix_dynamic_hashes(emission.scaling_expr)
+    hashes = numeric_dynamic_hashes(emission.scaling_expr)
     if not hashes:
         return ()
     base_source = _single_entry_source(
@@ -1682,7 +1705,7 @@ def _status_delay_binding_source(
     detail: dict[str, JSONValue],
     emission: ActionDelayEmissionIR,
 ) -> dict[str, JSONValue]:
-    hashes = _postfix_dynamic_hashes(emission.delay_expr)
+    hashes = numeric_dynamic_hashes(emission.delay_expr)
     if len(hashes) != 1:
         return {
             "source_type": "status_instance",
@@ -1773,17 +1796,6 @@ def _single_entry_source(
     }
 
 
-def _postfix_dynamic_hashes(expression: dict[str, JSONValue]) -> list[JSONValue]:
-    raw = expression.get("raw")
-    if not isinstance(raw, dict):
-        return []
-    postfix = raw.get("PostfixExpr")
-    if not isinstance(postfix, dict):
-        return []
-    hashes = postfix.get("DynamicHashes")
-    return list(hashes) if isinstance(hashes, list) else []
-
-
 def _break_base_source_from_evaluation(evaluation: NumericEvaluationResult) -> dict[str, JSONValue]:
     bindings = evaluation.bindings
     operands = bindings.get("dynamic_operands") if isinstance(bindings, dict) else None
@@ -1806,31 +1818,13 @@ def _break_base_source_from_evaluation(evaluation: NumericEvaluationResult) -> d
 
 
 def _break_template_id_from_detail(detail: dict[str, JSONValue]) -> str:
-    source = _json_dict(detail.get("source_trace"))
-    effect_source = source.get("effect_source")
-    evidence = effect_source.get("evidence") if isinstance(effect_source, dict) else None
-    emission_id = evidence.get("break_status_emission_id") if isinstance(evidence, dict) else None
-    if not isinstance(emission_id, str) or not emission_id:
-        return ""
-    parts = emission_id.split(":")
-    if len(parts) < 3:
-        return ""
-    template_name = parts[1]
-    return f"break_template:{template_name}"
+    value = detail.get("break_template_id")
+    return str(value) if isinstance(value, str) else ""
 
 
 def _break_element_from_detail(detail: dict[str, JSONValue]) -> str | None:
-    source = _json_dict(detail.get("source_trace"))
-    effect_source = source.get("effect_source")
-    evidence = effect_source.get("evidence") if isinstance(effect_source, dict) else None
-    emission_id = evidence.get("break_status_emission_id") if isinstance(evidence, dict) else None
-    if not isinstance(emission_id, str) or not emission_id:
-        return None
-    parts = emission_id.split(":")
-    if len(parts) < 3:
-        return None
-    template = parts[1]
-    return template.removeprefix("StanceBreak_") or None
+    value = detail.get("break_element_type")
+    return str(value) if isinstance(value, str) and value else None
 
 
 def _resolve_callback_target_id(
@@ -2182,10 +2176,10 @@ def _dynamic_hash_aliases_for_damage_property_task(
         sibling = tasks.get(sibling_id)
         if sibling is None or sibling.opcode != "SetDynamicValue":
             continue
-        payload = sibling.source.evidence.get("task") if isinstance(sibling.source.evidence, dict) else None
+        payload = sibling.task_payload
         if not isinstance(payload, dict):
             continue
-        hashes = _numeric_dynamic_hashes(payload.get("Value"))
+        hashes = numeric_dynamic_hashes(payload.get("Value"))
         if not hashes:
             continue
         return (
@@ -2194,7 +2188,7 @@ def _dynamic_hash_aliases_for_damage_property_task(
                 "source_kind": "same_predicate_branch_following_set_dynamic_value",
                 "source_task_id": sibling.task_id,
                 "source_task_opcode": sibling.opcode,
-                "raw_path": "Value.PostfixExpr.DynamicHashes[0]",
+                "expression_path": "task_payload.Value.numeric_expression.dynamic_operands[0]",
             },
         )
     return ()
@@ -2205,18 +2199,6 @@ def _parent_child_sequence(parent: StatusCallbackTaskIR, task_id: str) -> tuple[
         if task_id in candidate:
             return tuple(candidate)
     return ()
-
-
-def _numeric_dynamic_hashes(value: object) -> tuple[int, ...]:
-    if not isinstance(value, dict):
-        return ()
-    postfix = value.get("PostfixExpr")
-    if not isinstance(postfix, dict):
-        return ()
-    hashes = postfix.get("DynamicHashes")
-    if not isinstance(hashes, list):
-        return ()
-    return tuple(item for item in hashes if isinstance(item, int))
 
 
 def _trigger_ids_for_event(detail: dict[str, JSONValue], event: str) -> tuple[str, ...] | None:

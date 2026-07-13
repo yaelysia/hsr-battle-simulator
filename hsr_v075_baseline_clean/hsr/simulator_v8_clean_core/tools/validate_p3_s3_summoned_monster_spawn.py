@@ -31,9 +31,17 @@ VALIDATION_VERSION = "p3_s3_summoned_monster_spawn"
 MATRIX_SCHEMA_VERSION = "p3_summoned_monster_spawn_matrix_s3"
 
 
-def run_validation(package_root: Path, tbgd_root: Path, output_dir: Path) -> dict[str, Any]:
-    ir = TBGDLowering(tbgd_root).build()
-    rules = RuleBook(ir)
+def run_validation(
+    package_root: Path,
+    tbgd_root: Path,
+    output_dir: Path,
+    *,
+    rules: RuleBook | None = None,
+) -> dict[str, Any]:
+    lowering_build_count = 0
+    if rules is None:
+        rules = RuleBook(TBGDLowering(tbgd_root).build())
+        lowering_build_count = 1
     static_result = run_static_checks(package_root)
     raw_matrix = _raw_summon_monster_matrix(tbgd_root)
     spawn_matrix = build_p3_s3_spawn_matrix(rules, raw_matrix)
@@ -48,6 +56,7 @@ def run_validation(package_root: Path, tbgd_root: Path, output_dir: Path) -> dic
         "ok": all(item["ok"] for item in checks.values()),
         "build": {
             "tbgd_root": tbgd_root.as_posix(),
+            "lowering_build_count": lowering_build_count,
             "selection_policy": {
                 "mode": "p3_s3_summon_monster_structured_source_and_runtime_validation",
                 "fixed_character_monster_skill_file_hash_or_observation_used": False,

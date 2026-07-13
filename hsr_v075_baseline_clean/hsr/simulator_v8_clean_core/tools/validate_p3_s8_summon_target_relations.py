@@ -11,7 +11,7 @@ from typing import Any
 from .. import BASELINE_VERSION
 from ..core.model import BattleState, JSONValue, UnitState
 from ..core.reducer import MutationReducer
-from ..rules.ir import IRSource, TargetExpressionIR
+from ..rules.ir import IRSource, TargetExpressionIR, TargetExpressionNodeIR
 from ..rules.rulebook import RuleBook
 from ..systems.summon import SummonSystem
 from ..systems.target import TargetExpressionResult, TargetSystem
@@ -308,10 +308,10 @@ def _target_relation_negative_cases(rules: RuleBook, bundle: dict[str, Any]) -> 
             expected_reason="summon_runtime_entity_not_targetable",
             caster_id=owner_id,
         ),
-        "missing_runtime_source_trace": _expect_blocked(
+        "trimmed_runtime_audit_equivalent": _expect_audit_trim_equivalent(
             servant_list,
+            state,
             _without_runtime_source_trace(state, servant_id),
-            expected_reason="summon_runtime_entity_source_trace_missing",
             caster_id=owner_id,
         ),
         "unsupported_target_operation": _expect_blocked(
@@ -321,7 +321,7 @@ def _target_relation_negative_cases(rules: RuleBook, bundle: dict[str, Any]) -> 
             caster_id=owner_id,
         ),
     }
-    checks = {f"{name}_blocked": case["ok"] for name, case in cases.items()}
+    checks = {f"{name}_ok": case["ok"] for name, case in cases.items()}
     checks["all_negative_cases_state_unchanged"] = all(case["state_unchanged"] for case in cases.values())
     checks["ok"] = all(value for key, value in checks.items() if key != "ok")
     return {
@@ -513,6 +513,34 @@ def _expect_blocked(
     }
 
 
+def _expect_audit_trim_equivalent(
+    expression: TargetExpressionIR | None,
+    full_state: BattleState,
+    trimmed_state: BattleState,
+    *,
+    caster_id: str,
+) -> dict[str, Any]:
+    if expression is None:
+        return {"ok": False, "state_unchanged": True, "blocked_reason": "target_expression_missing"}
+    full_before = full_state.snapshot().to_json()
+    trimmed_before = trimmed_state.snapshot().to_json()
+    full = _resolve(expression, full_state, caster_id=caster_id)
+    trimmed = _resolve(expression, trimmed_state, caster_id=caster_id)
+    full_after = full_state.snapshot().to_json()
+    trimmed_after = trimmed_state.snapshot().to_json()
+    return {
+        "ok": full.ok
+        and trimmed.ok
+        and full.target_ids == trimmed.target_ids
+        and full_before == full_after
+        and trimmed_before == trimmed_after,
+        "state_unchanged": full_before == full_after and trimmed_before == trimmed_after,
+        "expression": _expression_sample(expression),
+        "full_resolution": full.to_json(),
+        "trimmed_resolution": trimmed.to_json(),
+    }
+
+
 def _resolve(
     expression: TargetExpressionIR,
     state: BattleState,
@@ -606,18 +634,14 @@ def _validation_only_expression(alias: str) -> TargetExpressionIR:
         target_expression_id=f"validation_only:{alias}",
         expression_kind="TargetAlias",
         alias=alias,
-        payload={
-            "field_name": "validation_only",
-            "node_type": "RPG.GameCore.TargetAlias",
-            "alias": alias,
-            "raw": {"$type": "RPG.GameCore.TargetAlias", "Alias": alias},
-        },
+        payload={"validation_only": True},
         source=IRSource(
             source_path="validation_only:P3-S8",
             raw_type="ValidationOnlyTargetAlias",
             raw_id=alias,
             evidence={"validation_only": True, "alias": alias},
         ),
+        node=TargetExpressionNodeIR(expression_kind="TargetAlias", alias=alias),
         coverage_status="executable",
     )
 

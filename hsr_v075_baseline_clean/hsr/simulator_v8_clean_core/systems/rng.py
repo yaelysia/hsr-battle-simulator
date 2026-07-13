@@ -39,6 +39,7 @@ class RNGRequest:
     outcomes: tuple[RNGOutcome, ...]
     source_trace: dict[str, JSONValue] = field(default_factory=dict)
     metadata: dict[str, JSONValue] = field(default_factory=dict)
+    identity: dict[str, JSONValue] = field(default_factory=dict)
     missing_choice_reason: str = "requires_rng_choice"
     invalid_choice_reason: str = "rng_choice_invalid"
 
@@ -54,6 +55,7 @@ class RNGRequest:
             "outcomes": [outcome.to_json() for outcome in self.outcomes],
             "source_trace": self.source_trace,
             "metadata": self.metadata,
+            "identity": self.identity,
         }
 
 
@@ -89,6 +91,30 @@ class RNGResolution:
         }
 
 
+@dataclass(frozen=True)
+class RNGChoiceLedgerValidation:
+    ok: bool
+    provided_keys: tuple[str, ...]
+    consumed_keys: tuple[str, ...]
+    duplicate_provided_keys: tuple[str, ...] = ()
+    duplicate_consumed_keys: tuple[str, ...] = ()
+    missing_keys: tuple[str, ...] = ()
+    extra_keys: tuple[str, ...] = ()
+    invalid_identity_event_ids: tuple[str, ...] = ()
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "ok": self.ok,
+            "provided_keys": list(self.provided_keys),
+            "consumed_keys": list(self.consumed_keys),
+            "duplicate_provided_keys": list(self.duplicate_provided_keys),
+            "duplicate_consumed_keys": list(self.duplicate_consumed_keys),
+            "missing_keys": list(self.missing_keys),
+            "extra_keys": list(self.extra_keys),
+            "invalid_identity_event_ids": list(self.invalid_identity_event_ids),
+        }
+
+
 def resolve_rng_request(
     request: RNGRequest,
     *,
@@ -99,6 +125,8 @@ def resolve_rng_request(
 ) -> RNGResolution:
     if not request.outcomes:
         return RNGResolution(ok=False, request=request, blocked_reason="rng_outcomes_empty")
+    if not _identity_is_complete(request.identity):
+        return RNGResolution(ok=False, request=request, blocked_reason="rng_decision_identity_incomplete")
 
     if forced_outcome_id:
         selected = _outcome_by_id(request.outcomes, forced_outcome_id)
@@ -158,7 +186,69 @@ def rng_choices_from_payload(payload: dict[str, JSONValue] | None) -> dict[str, 
     raw = payload.get("rng_choices")
     if isinstance(raw, dict):
         return {str(key): value for key, value in raw.items()}
+    ledger = payload.get("rng_choice_ledger")
+    if isinstance(ledger, list):
+        choices: dict[str, JSONValue] = {}
+        for entry in ledger:
+            if not isinstance(entry, dict):
+                continue
+            key = entry.get("choice_key")
+            if isinstance(key, str) and key and key not in choices:
+                choices[key] = entry.get("choice")
+        return choices
     return {}
+
+
+def validate_rng_choice_ledger(
+    payload: dict[str, JSONValue] | None,
+    events: tuple[RNGEvent, ...],
+) -> RNGChoiceLedgerValidation:
+    payload = payload if isinstance(payload, dict) else {}
+    provided_sequence: list[str] = []
+    raw_choices = payload.get("rng_choices")
+    if isinstance(raw_choices, dict):
+        provided_sequence.extend(str(key) for key in raw_choices)
+    raw_ledger = payload.get("rng_choice_ledger")
+    if isinstance(raw_ledger, list):
+        provided_sequence.extend(
+            str(entry.get("choice_key"))
+            for entry in raw_ledger
+            if isinstance(entry, dict) and isinstance(entry.get("choice_key"), str) and entry.get("choice_key")
+        )
+    consumed_sequence: list[str] = []
+    invalid_identity: list[str] = []
+    event_ids_by_key: dict[str, str] = {}
+    for event in events:
+        result = event.result if isinstance(event.result, dict) else {}
+        metadata = event.metadata if isinstance(event.metadata, dict) else {}
+        key = result.get("choice_key") or metadata.get("choice_key")
+        identity = metadata.get("decision_identity")
+        if not isinstance(key, str) or not key:
+            invalid_identity.append(event.event_id)
+            continue
+        if not isinstance(identity, dict) or not _identity_is_complete(identity):
+            invalid_identity.append(event.event_id)
+        consumed_sequence.append(key)
+        event_ids_by_key[event.event_id] = key
+    duplicate_provided = _duplicates(provided_sequence)
+    duplicate_consumed = _duplicates(consumed_sequence)
+    provided = tuple(dict.fromkeys(provided_sequence))
+    consumed = tuple(dict.fromkeys(consumed_sequence))
+    explicit = str(payload.get("rng_mode") or "").lower() in {"explicit", "explicit_ledger", "ledger"}
+    normalized_provided = tuple(event_ids_by_key.get(key, key) for key in provided)
+    missing = tuple(sorted(set(consumed).difference(normalized_provided))) if explicit else ()
+    extra = tuple(sorted(set(normalized_provided).difference(consumed))) if provided else ()
+    ok = not duplicate_provided and not duplicate_consumed and not missing and not extra and not invalid_identity
+    return RNGChoiceLedgerValidation(
+        ok,
+        provided,
+        consumed,
+        duplicate_provided,
+        duplicate_consumed,
+        missing,
+        extra,
+        tuple(invalid_identity),
+    )
 
 
 def rng_mode_from_payload(payload: dict[str, JSONValue] | None, *, default: str = "deterministic_seed") -> str:
@@ -203,6 +293,7 @@ def _resolved(
         "selected_payload": selected_payload,
         "available_rng_outcomes": available_rng_outcomes(request),
         "source_trace": request.source_trace,
+        "decision_identity": request.identity,
     }
     if selected_payload:
         result.update(selected_payload)
@@ -225,6 +316,7 @@ def _resolved(
             "choice_key": request.choice_key,
             "choice_source": choice_source,
             "source_trace": request.source_trace,
+            "decision_identity": request.identity,
             "available_rng_outcomes": available_rng_outcomes(request),
         },
     )
@@ -240,10 +332,48 @@ def _resolved(
 
 
 def _choice_for_request(choices: dict[str, JSONValue], request: RNGRequest) -> tuple[bool, JSONValue]:
-    for key in (request.choice_key, request.event_id, request.rng_type, "default"):
+    for key in (request.choice_key, request.event_id):
         if key in choices:
             return True, choices[key]
     return False, None
+
+
+def choice_key_for_identity(rng_type: str, identity: dict[str, JSONValue]) -> str:
+    stable = json.dumps(identity, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    digest = hashlib.sha1(stable.encode("utf-8")).hexdigest()[:16]
+    return f"rng:{rng_type}:{digest}"
+
+
+def event_id_for_identity(rng_type: str, identity: dict[str, JSONValue], *, event_index: int) -> str:
+    """Build an event id from the same complete identity used by the choice key."""
+
+    stable = json.dumps(identity, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    digest = hashlib.sha1(stable.encode("utf-8")).hexdigest()[:16]
+    return f"rng_event:{event_index}:{rng_type}:{digest}"
+
+
+def _identity_is_complete(identity: dict[str, JSONValue]) -> bool:
+    return (
+        isinstance(identity, dict)
+        and isinstance(identity.get("decision_scope"), str)
+        and bool(identity.get("decision_scope"))
+        and type(identity.get("decision_index")) is int
+        and int(identity["decision_index"]) >= 0
+        and any(
+            isinstance(identity.get(key), str) and bool(identity.get(key))
+            for key in ("action_id", "task_id", "status_id", "target_expression_id", "derived_event_id")
+        )
+    )
+
+
+def _duplicates(values: list[str]) -> tuple[str, ...]:
+    seen: set[str] = set()
+    duplicates: list[str] = []
+    for value in values:
+        if value in seen and value not in duplicates:
+            duplicates.append(value)
+        seen.add(value)
+    return tuple(duplicates)
 
 
 def _outcome_from_choice(outcomes: tuple[RNGOutcome, ...], raw_choice: JSONValue) -> RNGOutcome | None:

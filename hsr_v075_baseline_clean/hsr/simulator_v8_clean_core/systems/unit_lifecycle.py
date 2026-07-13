@@ -70,27 +70,54 @@ class UnitLifecycleSystem:
         is_active = status == "active"
         is_defeated = status == "defeated"
         is_removed = status == "removed"
+        summon_kind = str(unit.flags.get("summon_kind") or "")
+        lifecycle_source = unit.flags.get("lifecycle_source")
+        lifecycle_source = lifecycle_source if isinstance(lifecycle_source, dict) else {}
+        presence = str(lifecycle_source.get("presence") or "") if summon_kind else "field"
+        source_admitted = lifecycle_source.get("admission_status") == "executable" if summon_kind else True
+        is_present = not is_removed and (not summon_kind or (source_admitted and presence == "field"))
+        targetable = lifecycle_source.get("targetable") is True if summon_kind else True
+        actionable = lifecycle_source.get("actionable") is True if summon_kind else True
+        timeline_admitted = (
+            lifecycle_source.get("timeline_admitted") is True or unit.flags.get("timeline_admitted") is True
+            if summon_kind
+            else True
+        )
+        can_act = is_active and is_present and actionable and timeline_admitted
+        can_target = is_active and is_present and targetable
         reason = ""
         if is_removed:
             reason = "unit_removed"
         elif is_defeated:
             reason = "unit_defeated"
+        elif summon_kind and not source_admitted:
+            reason = "summon_lifecycle_source_not_admitted"
+        elif summon_kind and not is_present:
+            reason = f"summon_presence_not_field:{presence or 'missing'}"
+        elif summon_kind and not targetable:
+            reason = "summon_targetable_not_admitted"
         return UnitLifecycleView(
             unit_id=unit_id,
             status=status,
             hp=float(unit.hp),
-            is_present=True,
+            is_present=is_present,
             is_active=is_active,
             is_defeated=is_defeated,
             is_removed=is_removed,
-            can_be_action_actor=is_active,
-            can_be_targeted_alive=is_active,
-            can_receive_damage=is_active,
-            can_keep_queue_entries=not is_removed,
+            can_be_action_actor=can_act,
+            can_be_targeted_alive=can_target,
+            can_receive_damage=can_target,
+            can_keep_queue_entries=not is_removed and (not summon_kind or can_act),
             blocked_reason=reason,
             metadata={
                 "explicit_lifecycle_status": unit.flags.get("lifecycle_status"),
                 "inferred_from_hp": "lifecycle_status" not in unit.flags,
+                "summon_kind": summon_kind,
+                "presence": presence,
+                "targetable": targetable,
+                "actionable": actionable,
+                "timeline_admitted": timeline_admitted,
+                "lifecycle_source": lifecycle_source,
             },
         )
 

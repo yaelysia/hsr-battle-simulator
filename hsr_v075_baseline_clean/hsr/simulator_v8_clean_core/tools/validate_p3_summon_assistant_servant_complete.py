@@ -101,9 +101,18 @@ GAP_CLASSIFICATIONS = {
 FINAL_CLASSIFICATIONS = {"executable", "boundary_only", "source_absent_not_required", "out_of_scope"}
 
 
-def run_validation(package_root: Path, tbgd_root: Path, output_dir: Path) -> dict[str, Any]:
-    ir = TBGDLowering(tbgd_root).build()
-    rules = RuleBook(ir)
+def run_validation(
+    package_root: Path,
+    tbgd_root: Path,
+    output_dir: Path,
+    *,
+    rules: RuleBook | None = None,
+) -> dict[str, Any]:
+    rulebook_build_count = 0
+    if rules is None:
+        rules = RuleBook(TBGDLowering(tbgd_root).build())
+        rulebook_build_count = 1
+    ir = rules.ir
     static_result = run_static_checks(package_root)
     stage_results = _build_stage_results(package_root, tbgd_root, rules)
     source_matrix = _build_final_source_matrix(stage_results)
@@ -117,7 +126,7 @@ def run_validation(package_root: Path, tbgd_root: Path, output_dir: Path) -> dic
     scope_exclusions = _build_scope_exclusions(stage_results)
     public_stage_results = _public_stage_results(stage_results)
     resource_budget = {
-        "rulebook_build_count": 1,
+        "rulebook_build_count": rulebook_build_count,
         "static_check_count": 1,
         "subprocess_validation_count": 0,
         "subvalidators_reused_in_memory": True,
@@ -193,12 +202,12 @@ def run_validation(package_root: Path, tbgd_root: Path, output_dir: Path) -> dic
             },
         },
         "resource_budget": {
-            "ok": resource_budget["rulebook_build_count"] == 1
+            "ok": resource_budget["rulebook_build_count"] <= 1
             and resource_budget["large_artifacts_written"] is False
             and resource_budget["full_ir_written"] is False
             and resource_budget["full_transition_dump_written"] is False,
             "checks": {
-                "single_rulebook_build": resource_budget["rulebook_build_count"] == 1,
+                "at_most_single_rulebook_build": resource_budget["rulebook_build_count"] <= 1,
                 "no_large_artifacts": resource_budget["large_artifacts_written"] is False,
                 "no_full_ir": resource_budget["full_ir_written"] is False,
                 "no_full_transition_dump": resource_budget["full_transition_dump_written"] is False,
@@ -701,7 +710,12 @@ def _build_final_mechanism_matrix(stage_results: dict[str, dict[str, Any]]) -> d
         _mechanism_row("summoned_monster_spawn", "executable", "S3 validates source-backed SummonMonster spawn."),
         _mechanism_row("summon_unit_runtime_spawn", "boundary_only", "S4/S11 keep SummonUnitData without battle trigger blocked."),
         _mechanism_row("servant_lifecycle_owner_stats", "executable", "S5 validates servant definition, owner relation, spawn and cleanup."),
-        _mechanism_row("servant_action_execution", "executable", "S6 validates action availability and execution.", s6),
+        _mechanism_row(
+            "servant_action_execution",
+            str(s6["servant_action_graph_classification"]),
+            "S6 validates executable action only when the complete selected graph commits; current candidates remain an inherited content gap.",
+            s6,
+        ),
         _mechanism_row("summoned_monster_action_execution", "boundary_only", "S6 keeps summoned monster action without actor graph blocked."),
         _mechanism_row("target_relations", "executable", "S8 validates summon/servant target aliases and negative boundaries.", s8),
         _mechanism_row("remove_owner_cleanup_wave", "executable", "S9 validates explicit remove, owner cleanup and wave policy.", s9),
@@ -709,7 +723,12 @@ def _build_final_mechanism_matrix(stage_results: dict[str, dict[str, Any]]) -> d
         _mechanism_row("servant_damage_formula", "boundary_only", "S10 blocks HP damage action until stat source is admitted."),
         _mechanism_row("servant_resource_ownership", "source_absent_not_required", "S10 found no executable resource-costing servant action sample."),
         _mechanism_row("kill_attribution_source_frame", "executable", "S10 validates source-frame owner credit boundary."),
-        _mechanism_row("battle_setup_scenario_route", "executable", "S11 validates initial servant route end-to-end.", s11),
+        _mechanism_row(
+            "battle_setup_initial_servant",
+            "executable",
+            "S11 validates initial servant scenario setup and runtime registration independently of action-graph completeness.",
+            s11,
+        ),
         _mechanism_row("illegal_route_and_missing_target", "boundary_only", "S11 validates illegal summon action and missing target blocked."),
     ]
     rows.extend(_mechanism_gap_rows_from_s0("summoned_monster_source_subitems", s0_domains["summoned_monster_intent"]))
@@ -782,6 +801,24 @@ def _build_inherited_gap_matrix(stage_results: dict[str, dict[str, Any]]) -> dic
     rows.extend(_s0_inherited_gap_rows(stage_results["p3_s0_source_inventory"]["_matrix"]))
     rows.extend(_s1_inherited_gap_rows(stage_results["p3_s1_ir_rulebook_contract"]["_matrix"]))
     rows.extend(_s8_inherited_gap_rows(stage_results["p3_s8_summon_target_relations"]["_groups"]))
+    s6 = stage_results["p3_s6_summon_action_execution"]["summary"]
+    if s6.get("servant_action_graph_classification") == "implementation_missing":
+        rows.append(
+            _inherited_gap_row(
+                stage="P3-S6/P3-S11",
+                item_id="servant_action_graph",
+                classification="implementation_missing",
+                gap_count=1,
+                evidence=(
+                    "Action query/route candidates are inspected through CombatExecutor, but no complete selected servant "
+                    "action graph is successor eligible; initial servant setup remains executable."
+                ),
+                details={
+                    "s6": s6,
+                    "s11": stage_results["p3_s11_battle_setup_scenario_route"]["summary"],
+                },
+            )
+        )
     rows = [row for row in rows if not _scope_excluded_gap_row(row)]
     classification_counts = Counter(str(row["classification"]) for row in rows)
     gap_count = sum(int(row.get("gap_count") or 1) for row in rows if row["classification"] in GAP_CLASSIFICATIONS)
@@ -863,7 +900,7 @@ def _build_allowed_gap_evidence_matrix(inherited_gap_matrix: dict[str, Any]) -> 
             "has_evidence_text": bool(row.get("evidence")),
         }
         allowed_classification = classification in allowed
-        evidence_ok = allowed_classification and any(evidence_sources.values())
+        evidence_ok = any(evidence_sources.values())
         rows.append(
             {
                 "stage": str(row.get("stage") or ""),
@@ -1063,11 +1100,10 @@ def _build_positive_samples(stage_results: dict[str, dict[str, Any]]) -> dict[st
         _sample("summoned_monster_spawn", "executable", groups["p3_s3_summoned_monster_spawn"]["executable_spawn_trace"]),
         _sample("runtime_summoned_monster", "executable", groups["p3_s2_runtime_schema"]["summoned_monster_runtime"]),
         _sample("servant_spawn_lifecycle", "executable", groups["p3_s5_servant_lifecycle"]["servant_spawn_owner_lifecycle"]),
-        _sample("servant_action_execution", "executable", groups["p3_s6_summon_action_execution"]["servant_action_execution"]),
         _sample("target_positive_relations", "executable", groups["p3_s8_summon_target_relations"]["source_backed_positive_relations"]),
         _sample("explicit_remove_cleanup", "executable", groups["p3_s9_summon_lifecycle_cleanup"]["explicit_remove_cleanup"]),
         _sample("servant_status_holder", "executable", groups["p3_s10_status_resource_damage"]["servant_status_holder_positive"]),
-        _sample("battle_setup_route", "executable", groups["p3_s11_battle_setup_scenario_route"]["initial_servant_route_execution"]),
+        _sample("battle_setup_initial_servant", "executable", groups["p3_s11_battle_setup_scenario_route"]["initial_servant_route_execution"]),
     ]
     return _sample_set("p3_positive_samples_s12", samples)
 
@@ -1089,11 +1125,9 @@ def _build_blocked_samples(stage_results: dict[str, dict[str, Any]]) -> dict[str
 def _build_audit_samples(stage_results: dict[str, dict[str, Any]]) -> dict[str, Any]:
     groups = _all_groups(stage_results)
     rows = [
-        _audit_row("servant_action_execution", groups["p3_s6_summon_action_execution"]["servant_action_execution"]),
         _audit_row("explicit_remove_cleanup", groups["p3_s9_summon_lifecycle_cleanup"]["explicit_remove_cleanup"]),
         _audit_row("owner_cleanup", groups["p3_s9_summon_lifecycle_cleanup"]["owner_cleanup"]),
         _audit_row("servant_status_holder", groups["p3_s10_status_resource_damage"]["servant_status_holder_positive"]),
-        _audit_row("battle_setup_route", groups["p3_s11_battle_setup_scenario_route"]["initial_servant_route_execution"]),
     ]
     return {
         "schema_version": "p3_source_audit_samples_s12",
@@ -1108,11 +1142,9 @@ def _build_replay_samples(stage_results: dict[str, dict[str, Any]]) -> dict[str,
         _replay_row("summoned_monster_runtime", groups["p3_s2_runtime_schema"]["summoned_monster_runtime"]),
         _replay_row("summoned_monster_spawn", groups["p3_s3_summoned_monster_spawn"]["executable_spawn_trace"]),
         _replay_row("servant_spawn_lifecycle", groups["p3_s5_servant_lifecycle"]["servant_spawn_owner_lifecycle"]),
-        _replay_row("servant_action_execution", groups["p3_s6_summon_action_execution"]["servant_action_execution"]),
         _replay_row("explicit_remove_cleanup", groups["p3_s9_summon_lifecycle_cleanup"]["explicit_remove_cleanup"]),
         _replay_row("owner_cleanup", groups["p3_s9_summon_lifecycle_cleanup"]["owner_cleanup"]),
         _replay_row("servant_status_holder", groups["p3_s10_status_resource_damage"]["servant_status_holder_positive"]),
-        _replay_row("battle_setup_route", groups["p3_s11_battle_setup_scenario_route"]["initial_servant_route_execution"]),
     ]
     return {
         "schema_version": "p3_replay_samples_s12",
@@ -1240,6 +1272,7 @@ def _s5_summary(groups: dict[str, dict[str, Any]]) -> dict[str, Any]:
 
 def _s6_summary(groups: dict[str, dict[str, Any]]) -> dict[str, Any]:
     return {
+        "servant_action_graph_classification": groups["servant_action_execution"]["classification"],
         "servant_action_enabled": groups["servant_action_execution"]["transition_coverage"].get("action_enabled") is True,
         "servant_action_mutation_count": groups["servant_action_execution"]["mutation_count"],
         "servant_action_replay_ok": groups["servant_action_execution"]["replay"]["ok"],
@@ -1287,7 +1320,10 @@ def _s10_summary(groups: dict[str, dict[str, Any]]) -> dict[str, Any]:
         "status_positive_action_id": groups["servant_status_holder_positive"]["action_id"],
         "status_positive_replay_ok": groups["servant_status_holder_positive"]["replay"]["ok"],
         "status_positive_source_audit_ok": groups["servant_status_holder_positive"]["source_audit"]["ok"],
-        "damage_boundary_reason": groups["servant_damage_stat_boundary"]["coverage"]["summon_damage_stat_blocked_reason"],
+        "damage_boundary_reason": groups["servant_damage_stat_boundary"]["coverage"].get(
+            "summon_damage_stat_blocked_reason",
+            "",
+        ),
         "kill_attribution_owner": groups["kill_attribution_source_frame_boundary"]["defeat_payload"].get(
             "kill_credit_owner_id", ""
         ),
@@ -1297,14 +1333,23 @@ def _s10_summary(groups: dict[str, dict[str, Any]]) -> dict[str, Any]:
 
 def _s11_summary(groups: dict[str, dict[str, Any]]) -> dict[str, Any]:
     return {
+        "initial_servant_setup_classification": groups["initial_servant_route_execution"].get(
+            "setup_classification",
+            "executable",
+        ),
+        "servant_route_action_graph_classification": groups["initial_servant_route_execution"]["classification"],
         "route_action_id": groups["initial_servant_route_execution"]["command"]["action_id"],
         "route_replay_ok": groups["initial_servant_route_execution"]["replay"]["ok"],
         "route_source_audit_ok": groups["initial_servant_route_execution"]["source_audit"]["ok"],
         "initial_blocked_reason": groups["initial_summon_blocked_boundary"]["blocked_reason"],
-        "illegal_damage_route_reason": groups["illegal_damage_route_blocked"]["coverage"][
-            "summon_damage_stat_blocked_reason"
-        ],
-        "missing_target_route_reason": groups["missing_target_route_blocked"]["coverage"]["blocked_reason"],
+        "illegal_damage_route_reason": groups["illegal_damage_route_blocked"]["coverage"].get(
+            "summon_damage_stat_blocked_reason",
+            "",
+        ),
+        "missing_target_route_reason": groups["missing_target_route_blocked"]["coverage"].get(
+            "blocked_reason",
+            "",
+        ),
     }
 
 

@@ -12,10 +12,18 @@ from .. import BASELINE_VERSION
 from ..core.executor import CombatExecutor
 from ..core.model import ActionCommand, BattleState, JSONValue, Mutation, UnitState
 from ..core.reducer import MutationReducer
+from ..rules.engine_rule_registry import (
+    ENGINE_RULE_REGISTRY_VERSION,
+    KILL_ENERGY_RULE_APPLICABILITY,
+    TIMELINE_RULE_APPLICABILITY,
+    ULTIMATE_COST_RULE_APPLICABILITY,
+    build_engine_rule_registry,
+)
 from ..rules.ir import (
     AbilityPhaseIR,
     AbilityTaskIR,
     ActionAbilityBindingIR,
+    ActionAdmissionIR,
     ActionDefinitionIR,
     ActionEventIR,
     ActionPhaseStepIR,
@@ -1377,6 +1385,7 @@ def _evidence_row(hsr_root: Path, spec: EvidenceSpec) -> dict[str, JSONValue]:
 
 
 def _minimal_rulebook() -> RuleBook:
+    engine_rules = build_engine_rule_registry()
     action_ids = ("validation:normal", "validation:foreign", "validation:partial", "validation:ultimate")
     definitions = tuple(
         _action_definition(
@@ -1429,6 +1438,60 @@ def _minimal_rulebook() -> RuleBook:
         ability_tasks=tasks,
         action_events=events,
         combatant_action_sets=(action_set,),
+        action_admissions=(
+            ActionAdmissionIR(
+                admission_id="validation:admission:normal",
+                owner_entity_ref="validation:actor_a",
+                action_id="validation:normal",
+                action_level=1,
+                action_role="turn_action",
+                submission_modes=("external_turn", "queue"),
+                allowed_windows=("idle", "turn_active", "turn_action"),
+                control_kind="external",
+                resource_gate_kind="action_definition",
+                source=_source("admission:normal"),
+                coverage_status="executable",
+            ),
+            ActionAdmissionIR(
+                admission_id="validation:admission:partial",
+                owner_entity_ref="validation:actor_a",
+                action_id="validation:partial",
+                action_level=1,
+                action_role="turn_action",
+                submission_modes=("external_turn", "queue"),
+                allowed_windows=("idle", "turn_active", "turn_action"),
+                control_kind="external",
+                resource_gate_kind="action_definition",
+                source=_source("admission:partial"),
+                coverage_status="executable",
+            ),
+            ActionAdmissionIR(
+                admission_id="validation:admission:foreign",
+                owner_entity_ref="validation:actor_b",
+                action_id="validation:foreign",
+                action_level=1,
+                action_role="turn_action",
+                submission_modes=("external_turn",),
+                allowed_windows=("idle", "turn_active", "turn_action"),
+                control_kind="external",
+                resource_gate_kind="action_definition",
+                source=_source("admission:foreign"),
+                coverage_status="executable",
+            ),
+            ActionAdmissionIR(
+                admission_id="validation:admission:ultimate",
+                owner_entity_ref="validation:actor_a",
+                action_id="validation:ultimate",
+                action_level=1,
+                action_role="insert_action",
+                submission_modes=("insert_window", "queue"),
+                allowed_windows=("ultimate",),
+                control_kind="selectable_window",
+                resource_gate_kind="ultimate_energy",
+                source=_source("admission:ultimate"),
+                coverage_status="executable",
+            ),
+        ),
         timeline_rules=(
             TimelineRuleIR(
                 timeline_rule_id="validation:timeline",
@@ -1437,6 +1500,8 @@ def _minimal_rulebook() -> RuleBook:
                 turn_reset_rule="validation",
                 source_kind="engine_convention",
                 source=_source("timeline"),
+                registry_version=ENGINE_RULE_REGISTRY_VERSION,
+                applicability=TIMELINE_RULE_APPLICABILITY,
             ),
         ),
         resource_rules=(
@@ -1446,6 +1511,8 @@ def _minimal_rulebook() -> RuleBook:
                 operation="set_to_sp_base_after_execution",
                 source_kind="engine_convention",
                 source=_source("ultimate_energy_cost"),
+                registry_version=ENGINE_RULE_REGISTRY_VERSION,
+                applicability=ULTIMATE_COST_RULE_APPLICABILITY,
             ),
             ResourceRuleIR(
                 resource_rule_id="validation:kill_energy_gain",
@@ -1453,8 +1520,14 @@ def _minimal_rulebook() -> RuleBook:
                 operation="add_fixed_after_kill",
                 source_kind="engine_convention",
                 source=_source("kill_energy_gain"),
+                registry_version=ENGINE_RULE_REGISTRY_VERSION,
+                applicability=KILL_ENERGY_RULE_APPLICABILITY,
+                numeric_value=10.0,
             ),
         ),
+        damage_formula_rules=engine_rules.damage_formula_rules,
+        damage_route_rules=engine_rules.damage_route_rules,
+        shield_priority_rules=engine_rules.shield_priority_rules,
     )
     return RuleBook(ir)
 
@@ -1486,6 +1559,7 @@ def _action_definition(
         damage_kind="none",
         damage_formula_family="none",
         source_mode="validation",
+        target_relation="enemy",
     )
 
 
@@ -1560,6 +1634,7 @@ def _action_event(action_id: str) -> ActionEventIR:
         phase_ids=(f"{action_id}:phase",),
         source_mode="validation",
         event_source_status="ability_phase_graph_bound",
+        target_relation="enemy",
     )
 
 
@@ -1641,6 +1716,7 @@ def _decision_state(state: BattleState) -> BattleState:
             **state.global_flags,
             "turn_owner_id": "ally:actor",
             "current_window": "turn_active",
+            "combat_phase": "awaiting_decision",
             "active_turn": {"actor_id": "ally:actor", "turn_kind": "regular", "turn_sequence_index": 1},
             "turn_sequence_index": 1,
         },

@@ -362,6 +362,9 @@ class MutationReducer:
             if field_name == "statuses":
                 assert isinstance(value, list)
                 value = tuple(value)
+            elif field_name == "shield_instances":
+                assert isinstance(value, list)
+                value = tuple(value)
             elif field_name in {"flags", "resources"}:
                 assert isinstance(value, dict)
                 value = dict(value)

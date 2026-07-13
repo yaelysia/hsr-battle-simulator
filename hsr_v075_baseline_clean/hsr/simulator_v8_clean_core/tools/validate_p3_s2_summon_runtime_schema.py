@@ -379,6 +379,10 @@ def _negative_boundary_case(rules: RuleBook) -> dict[str, Any]:
     wrong_schema_state = replace(after_spawn, global_flags={**after_spawn.global_flags, "summon_runtime": wrong_schema_runtime})
     missing_source_state = _state_with_runtime_entity_source_removed(after_spawn, servant_id)
     flag_only_state = _flag_only_servant_state(definition)
+    flag_only_state = replace(
+        flag_only_state,
+        global_flags={**flag_only_state.global_flags, "combat_phase": "awaiting_decision"},
+    )
     before_flag_hash = _snapshot_hash(flag_only_state)
     flag_only_availability = ActionAvailabilitySystem(rules).view(flag_only_state)
     missing_runtime_result = (
@@ -401,6 +405,11 @@ def _negative_boundary_case(rules: RuleBook) -> dict[str, Any]:
         if servant_list_expr is not None
         else None
     )
+    full_source_target = (
+        TargetSystem().resolve_target_expression(after_spawn, servant_list_expr, caster_id="ally:servant_owner")
+        if servant_list_expr is not None
+        else None
+    )
     flag_only_blocked_reasons = [item.reason for item in flag_only_availability.blocked]
     checks = {
         "servant_list_expression_present": servant_list_expr is not None,
@@ -413,15 +422,19 @@ def _negative_boundary_case(rules: RuleBook) -> dict[str, Any]:
         and wrong_schema_result.blocked_reason == "summon_runtime_missing",
         "flag_only_action_state_unchanged": before_flag_hash == _snapshot_hash(flag_only_state),
         "flag_only_action_blocked": not flag_only_availability.choices
-        and any(reason in {"summon_runtime_state_missing", "summon_runtime_entity_missing"} for reason in flag_only_blocked_reasons),
+        and any(
+            "summon_runtime" in reason or "summon_lifecycle_source_not_admitted" in reason
+            for reason in flag_only_blocked_reasons
+        ),
         "flag_only_target_blocked": flag_only_target is not None
         and not flag_only_target.ok
         and flag_only_target.blocked_reason == "summon_runtime_missing",
-        "missing_source_trace_target_blocked": missing_source_target is not None
-        and not missing_source_target.ok
-        and servant_id not in missing_source_target.target_ids,
-        "missing_source_trace_reason_audited": missing_source_target is not None
-        and missing_source_target.blocked_reason == "summon_runtime_entity_source_trace_missing",
+        "missing_source_trace_target_equivalent": missing_source_target is not None
+        and full_source_target is not None
+        and missing_source_target.ok
+        and full_source_target.ok
+        and missing_source_target.target_ids == full_source_target.target_ids
+        and servant_id in missing_source_target.target_ids,
     }
     checks["ok"] = all(value for key, value in checks.items() if key != "ok")
     return {

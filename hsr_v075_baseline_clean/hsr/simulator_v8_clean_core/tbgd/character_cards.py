@@ -213,6 +213,9 @@ def build_character_card_ir(
                 trace_node_ids=tuple(sorted(trace_node_ids_by_card.get(card_id, ()))),
                 eidolon_slot_ids=tuple(sorted(eidolon_slot_ids_by_card.get(card_id, ()))),
                 card_contract=_character_data_card_contract(),
+                dynamic_value_bindings=_json_safe(
+                    row.get("_character_config_dynamic_value_bindings") or {}
+                ),
                 source=IRSource(
                     source_path=relative_path,
                     raw_type=Path(relative_path).stem,

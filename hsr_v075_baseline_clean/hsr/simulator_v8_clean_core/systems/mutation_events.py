@@ -9,6 +9,7 @@ MUTATION_BACKED_EVENT_TYPES = {
     "hp.change",
     "heal.after",
     "shield.change",
+    "shield.exhausted",
     "sp.change",
     "energy.before_change",
     "energy.change",
@@ -84,10 +85,12 @@ def events_for_mutation(
         )
 
     if _is_shield_path(path):
+        before_total = _shield_total(mutation.before)
+        after_total = _shield_total(mutation.after)
         callback_events = ["OnShieldChange", "OnListenShieldChange"]
-        if _numeric_value(mutation.before) <= 0 and _numeric_value(mutation.after) > 0:
+        if before_total <= 0 and after_total > 0:
             callback_events.append("OnListenInitShield")
-        return (
+        events = [
             GameEvent(
                 event_type="shield.change",
                 source_id=event_source_id,
@@ -100,9 +103,34 @@ def events_for_mutation(
                     "callback_events": callback_events,
                     "listener_scope": "being_hit_target_local",
                     "resource": "shield",
+                    "aggregate_before": before_total,
+                    "aggregate_after": after_total,
+                    "exhausted_instance_ids": mutation.metadata.get("exhausted_instance_ids", []),
                 },
             ),
-        )
+        ]
+        exhausted_ids = mutation.metadata.get("exhausted_instance_ids")
+        if isinstance(exhausted_ids, (list, tuple)) and exhausted_ids:
+            events.append(
+                GameEvent(
+                    event_type="shield.exhausted",
+                    source_id=event_source_id,
+                    target_id=target_id,
+                    event_id=f"{event_id_prefix}:shield_exhausted",
+                    window="OnShieldChange",
+                    process_only=True,
+                    payload={
+                        **payload,
+                        "callback_events": ["OnShieldChange", "OnListenShieldChange"],
+                        "listener_scope": "being_hit_target_local",
+                        "resource": "shield",
+                        "exhausted_instance_ids": list(exhausted_ids),
+                        "aggregate_before": before_total,
+                        "aggregate_after": after_total,
+                    },
+                )
+            )
+        return tuple(events)
 
     if path == ("skill_points",):
         sp_target_id = actor_id or target_id
@@ -206,6 +234,34 @@ def before_toughness_event(
             "listener_scope": "being_hit_target_local",
             "pre_mutation_execution_admission": "blocked",
             "blocked_reason": PRE_MUTATION_BLOCK_REASON,
+        },
+    )
+
+
+def before_toughness_calculation_event(
+    *,
+    actor_id: str,
+    target_id: str,
+    event_index: int,
+    packet: dict[str, JSONValue],
+    extra_payload: dict[str, JSONValue] | None = None,
+) -> GameEvent:
+    return GameEvent(
+        event_type="toughness.before_hit",
+        source_id=actor_id,
+        target_id=target_id,
+        event_id=f"event:{event_index}:toughness_before_calculation:{actor_id}:{target_id}",
+        window="OnBeforeBeingStanceDamage",
+        process_only=True,
+        payload={
+            **(extra_payload or {}),
+            "callback_events": ["OnBeforeBeingStanceDamage"],
+            "listener_scope": "being_hit_target_local",
+            "pre_calculation_execution_admission": "executable",
+            "calculation_reloads_updated_state": True,
+            "toughness_packet": packet,
+            "actor_id": actor_id,
+            "target_id": target_id,
         },
     )
 
@@ -334,7 +390,30 @@ def _is_unit_hp_path(path: tuple[str, ...]) -> bool:
 
 
 def _is_shield_path(path: tuple[str, ...]) -> bool:
-    return len(path) == 4 and path[0] == "units" and path[2] == "resources" and path[3] == "shield"
+    return (
+        len(path) == 3
+        and path[0] == "units"
+        and path[2] == "shield_instances"
+    ) or (
+        len(path) == 4
+        and path[0] == "units"
+        and path[2] == "resources"
+        and path[3] == "shield"
+    )
+
+
+def _shield_total(value: JSONValue) -> float:
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    if not isinstance(value, (list, tuple)):
+        return 0.0
+    return sum(
+        float(item.get("remaining", 0.0))
+        for item in value
+        if isinstance(item, dict)
+        and isinstance(item.get("remaining"), (int, float))
+        and not isinstance(item.get("remaining"), bool)
+    )
 
 
 def _is_energy_path(path: tuple[str, ...]) -> bool:

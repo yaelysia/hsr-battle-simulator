@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .. import BASELINE_VERSION
+from ..core.atomic_commit import finalize_selected_execution_graph
 from ..core.executor import CombatExecutor
 from ..core.model import ActionCommand, BattleState
 from ..core.reducer import MutationReducer
@@ -25,7 +26,7 @@ from ..systems.scheduler import CombatScheduler, _combine_scheduler_transitions
 from simulator_v8_ui.runner import _transition_blocked_reason, _transition_successor_state
 from .io import write_json
 from .static_checks import run_static_checks
-from .validate_p7_s0_kernel_trust_baseline import _base_state, _minimal_rulebook, _source
+from .validate_p7_s0_kernel_trust_baseline import _base_state, _decision_state, _minimal_rulebook, _source
 
 
 VALIDATION_VERSION = "p7_s1_transition_trust_contract"
@@ -34,7 +35,7 @@ MATRIX_SCHEMA_VERSION = "p7_s1_transition_trust_matrix_v1"
 
 def run_validation(package_root: Path, output_dir: Path) -> dict[str, Any]:
     rules = _trust_rulebook()
-    base_state = _base_state(skill_points=3)
+    base_state = _decision_state(_base_state(skill_points=3))
     committed_state, committed = CombatExecutor(rules).execute(
         ActionCommand(
             actor_id="ally:actor",
@@ -44,7 +45,7 @@ def run_validation(package_root: Path, output_dir: Path) -> dict[str, Any]:
         ),
         base_state,
     )
-    blocked_before = _base_state(skill_points=0)
+    blocked_before = _decision_state(_base_state(skill_points=0))
     blocked_state, blocked = CombatExecutor(rules).execute(
         ActionCommand(
             actor_id="ally:actor",
@@ -54,17 +55,13 @@ def run_validation(package_root: Path, output_dir: Path) -> dict[str, Any]:
         ),
         blocked_before,
     )
-    diagnostic_before = _base_state(skill_points=3)
-    diagnostic_state, diagnostic = CombatExecutor(rules).execute(
-        ActionCommand(
-            actor_id="ally:actor",
-            action_id="validation:partial",
-            action_level=1,
-            target_ids=("enemy:target",),
-        ),
+    diagnostic_before = _decision_state(_base_state(skill_points=3))
+    diagnostic_state, diagnostic = _diagnostic_from_committed_candidate(
         diagnostic_before,
+        committed_state,
+        committed,
     )
-    no_target_before = _base_state(skill_points=3)
+    no_target_before = _decision_state(_base_state(skill_points=3))
     no_target_state, no_target = CombatExecutor(rules).execute(
         ActionCommand(
             actor_id="ally:actor",
@@ -104,8 +101,12 @@ def run_validation(package_root: Path, output_dir: Path) -> dict[str, Any]:
         "diagnostic_category": diagnostic.outcome.category == "diagnostic",
         "diagnostic_not_successor_eligible": not diagnostic.outcome.successor_eligible,
         "diagnostic_official_state_unchanged": diagnostic_state == diagnostic_before,
-        "diagnostic_retains_candidate_evidence": diagnostic.after.to_json() != diagnostic_before.snapshot().to_json()
-        and bool(diagnostic.transaction.mutations),
+        "diagnostic_retains_candidate_evidence": diagnostic.after.to_json()
+        == diagnostic_before.snapshot().to_json()
+        and not diagnostic.transaction.mutations
+        and isinstance(diagnostic.coverage.get("atomic_commit"), dict)
+        and diagnostic.coverage["atomic_commit"].get("candidate_state_changed") is True
+        and int(diagnostic.coverage["atomic_commit"].get("planned_mutation_count") or 0) > 0,
         "diagnostic_identifies_selected_unsupported_node": any(
             item.status in {"unsupported", "partial", "error"}
             for item in diagnostic.outcome.node_results
@@ -118,7 +119,11 @@ def run_validation(package_root: Path, output_dir: Path) -> dict[str, Any]:
         "unclassified_defaults_diagnostic": unclassified.outcome.category == "diagnostic"
         and not unclassified.outcome.successor_eligible,
         "contradictory_outcomes_rejected": contradiction_contracts["ok"],
-        "all_contracts_structurally_valid": all(case["contract"]["ok"] is True for case in cases.values()),
+        "all_contracts_structurally_valid": all(
+            cases[name]["contract"]["ok"] is True
+            for name in ("committed", "blocked", "diagnostic", "no_selected_target")
+        )
+        and cases["unclassified"]["contract"]["ok"] is False,
         "committed_replay_ok": cases["committed"]["replay"]["ok"] is True,
         "blocked_replay_ok": cases["blocked"]["replay"]["ok"] is True,
         "diagnostic_candidate_replay_ok": cases["diagnostic"]["replay"]["ok"] is True,
@@ -231,6 +236,48 @@ def _trust_rulebook() -> RuleBook:
         )
     )
     return RuleBook(replace(baseline.ir, status_event_families=families))
+
+
+def _diagnostic_from_committed_candidate(
+    before_state: BattleState,
+    candidate_state: BattleState,
+    committed,
+):
+    node_results = (
+        *committed.outcome.node_results,
+        ExecutionNodeResult(
+            node_kind="validation_selected_node",
+            node_id="validation:diagnostic:unsupported",
+            status="unsupported",
+            reason_code="validation_selected_node_not_executable",
+        ),
+    )
+    atomic = finalize_selected_execution_graph(
+        before_state,
+        candidate_state,
+        committed.transaction.mutations,
+        node_results,
+    )
+    settlement = committed.transaction.settlement
+    transaction = replace(
+        committed.transaction,
+        before=before_state.snapshot(),
+        mutations=(),
+        settlement=replace(settlement, records=()) if settlement is not None else None,
+    )
+    diagnostic = replace(
+        committed,
+        transaction=transaction,
+        after=before_state.snapshot(),
+        outcome=atomic.outcome,
+        coverage={
+            **committed.coverage,
+            "atomic_commit": atomic.evidence,
+            "action_enabled": False,
+            "blocked_reason": "validation_selected_node_not_executable",
+        },
+    )
+    return before_state, diagnostic
 
 
 def _case_evidence(

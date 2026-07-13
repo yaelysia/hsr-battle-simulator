@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from ..rules.expression_ir import numeric_dynamic_hash, numeric_dynamic_hashes, numeric_fixed_value
 from ..rules.ir import ActionDefinitionIR, ActionEventIR, DamageEmissionIR, HitProfileIR, ToughnessEmissionIR
 
 
@@ -54,6 +55,9 @@ class TargetPlan:
     target_mode: str
     selection_mode: str
     requested_target_ids: tuple[str, ...]
+    target_relation: str = "unknown"
+    chosen_primary_target_id: str | None = None
+    resolved_impact_group: tuple[str, ...] = ()
     source: str = "action_definition"
     blocked_reason: str = ""
 
@@ -62,6 +66,9 @@ class TargetPlan:
             "target_mode": self.target_mode,
             "selection_mode": self.selection_mode,
             "requested_target_ids": list(self.requested_target_ids),
+            "target_relation": self.target_relation,
+            "chosen_primary_target_id": self.chosen_primary_target_id,
+            "resolved_impact_group": list(self.resolved_impact_group),
             "source": self.source,
             "blocked_reason": self.blocked_reason,
         }
@@ -113,6 +120,7 @@ class DamagePlan:
     target_selection_policy: dict[str, object] | None = None
     value_request: dict[str, object] = field(default_factory=dict)
     value_context: dict[str, object] = field(default_factory=dict)
+    damage_custom_name: str = ""
 
     def to_json(self) -> dict[str, object]:
         return {
@@ -134,6 +142,7 @@ class DamagePlan:
             "target_selection_policy": self.target_selection_policy or {},
             "value_request": self.value_request,
             "value_context": self.value_context,
+            "damage_custom_name": self.damage_custom_name,
         }
 
 
@@ -288,14 +297,21 @@ def build_action_execution_plan(
         _execution_target_plan_source_blocked_reason(action_event.blocked_reason, damage_emissions, toughness_emissions),
         _target_plan_blocked_reason(target_mode),
     )
+    primary_action_target_id = _primary_action_target_id(resolved_target_groups or {})
+    resolved_impact_group = (resolved_target_groups or {}).get(
+        "impact",
+        (resolved_target_groups or {}).get("selected", ()),
+    )
     target_plan = TargetPlan(
         target_mode=target_mode,
         selection_mode=action_event.selection_mode or _selection_mode(target_mode),
         requested_target_ids=requested_target_ids,
+        target_relation=action_event.target_relation,
+        chosen_primary_target_id=primary_action_target_id,
+        resolved_impact_group=resolved_impact_group,
         source="action_event_ir",
         blocked_reason=target_plan_blocked_reason,
     )
-    primary_action_target_id = _primary_action_target_id(resolved_target_groups or {})
     hit_plan = tuple(_hit_plan(profile) for profile in hit_profiles)
     damage_plan = _damage_plan_from_emissions(
         action_definition,
@@ -410,6 +426,7 @@ def _damage_plan_from_emissions(
                     target_selection_policy=profile.target_selection_policy,
                     value_request=value_request,
                     value_context=_damage_value_context(profile),
+                    damage_custom_name=emission.damage_custom_name,
                 )
             )
     return tuple(plans)
@@ -576,7 +593,7 @@ def _toughness_value_request(emission: ToughnessEmissionIR) -> tuple[dict[str, o
                 {
                     "binding_kind": "blocked",
                     "blocked_reason": "toughness_dynamic_binding_source_missing",
-                    "expression": {"kind": "dynamic_hash", "hash": hashes[0]},
+                    "expression": numeric_dynamic_hash(hashes[0]),
                     "required_context_keys": ["dynamic_value_source"],
                     "source_trace": trace,
                 },
@@ -585,7 +602,7 @@ def _toughness_value_request(emission: ToughnessEmissionIR) -> tuple[dict[str, o
         return (
             {
                 "binding_kind": "dynamic_hash",
-                "expression": {"kind": "dynamic_hash", "hash": hashes[0]},
+                "expression": numeric_dynamic_hash(hashes[0]),
                 "required_context_keys": ["dynamic_value_source"],
                 "source_trace": trace,
             },
@@ -654,47 +671,11 @@ def _is_binding_source(value: object) -> bool:
 
 
 def _hashes_from_expression(expression: object) -> set[str]:
-    hashes: set[str] = set()
-    if isinstance(expression, dict):
-        if str(expression.get("kind") or "") == "dynamic_hash" and expression.get("hash") is not None:
-            hashes.add(str(expression.get("hash")))
-        dynamic_hashes = expression.get("DynamicHashes")
-        if isinstance(dynamic_hashes, list):
-            for item in dynamic_hashes:
-                hashes.add(str(item))
-        raw = expression.get("raw")
-        if isinstance(raw, (dict, list)):
-            hashes.update(_hashes_from_expression(raw))
-        postfix = expression.get("PostfixExpr")
-        if isinstance(postfix, dict):
-            hashes.update(_hashes_from_expression(postfix))
-        for key, item in expression.items():
-            if key in {"raw", "PostfixExpr", "source_trace"}:
-                continue
-            if isinstance(item, (dict, list)):
-                hashes.update(_hashes_from_expression(item))
-    elif isinstance(expression, list):
-        for item in expression:
-            hashes.update(_hashes_from_expression(item))
-    return hashes
+    return {str(item) for item in numeric_dynamic_hashes(expression) if item is not None}
 
 
 def _fixed_expr_value(expression: object) -> float | None:
-    if isinstance(expression, bool):
-        return None
-    if isinstance(expression, (int, float)):
-        return float(expression)
-    if not isinstance(expression, dict):
-        return None
-    kind = str(expression.get("kind") or "")
-    if kind == "fixed":
-        value = expression.get("value")
-        return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
-    fixed_value = expression.get("FixedValue")
-    if isinstance(fixed_value, dict):
-        value = fixed_value.get("Value")
-        return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
-    return None
+    return numeric_fixed_value(expression)
 
 
 def _is_explicit_attack(action_definition: ActionDefinitionIR) -> bool:

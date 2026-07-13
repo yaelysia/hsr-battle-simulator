@@ -9,14 +9,17 @@ from ..rules.rulebook import RuleBook
 from .action_preflight import (
     action_binding_blocked_reason,
     action_event_blocked_reason,
+    action_resource_blocked_reason,
     action_resource_plan,
     combined_blocked_reason,
     target_policy_for_action,
 )
+from .action_contract import ActionContractSystem
 from .enemy_action import EnemyActionCandidate, EnemyActionSystem
 from .queue import QueueDrainPlan, QueueSystem
 from .resource import ResourceSystem
 from .scheduler import (
+    TIMELINE_TIE_CHOICE_ACTION_ID,
     _queue_entry_resource_policy,
     _resolution_for_drain_plan,
     queue_plan_requires_external_command,
@@ -36,6 +39,7 @@ ActionAvailabilityMode = Literal[
     "queued_mandatory",
     "queued_selectable",
     "external_selectable",
+    "timeline_actor_selectable",
     "scheduler_required",
     "wave_transition_available",
     "blocked",
@@ -146,13 +150,18 @@ class SelectableWindow:
 @dataclass(frozen=True)
 class ActionChoice:
     choice_id: str
-    choice_kind: Literal["normal_action", "enemy_fixed_sequence", "queue_action", "ultimate_window", "summon_action"]
+    choice_kind: Literal["normal_action", "enemy_fixed_sequence", "queue_action", "ultimate_window", "summon_action", "timeline_actor"]
     control: Literal["external", "mandatory", "selectable"]
     actor_id: str
     actor_side: str
     action_id: str
     action_level: int
     command_template: dict[str, JSONValue]
+    admission_id: str = ""
+    owner_entity_ref: str = ""
+    action_role: str = "unknown"
+    allowed_windows: tuple[str, ...] = ()
+    submission_modes: tuple[str, ...] = ()
     auto_target_ids: tuple[str, ...] = ()
     selectable_target_ids: tuple[str, ...] = ()
     target_policy: dict[str, JSONValue] = field(default_factory=dict)
@@ -175,6 +184,11 @@ class ActionChoice:
             "action_id": self.action_id,
             "action_level": self.action_level,
             "command_template": self.command_template,
+            "admission_id": self.admission_id,
+            "owner_entity_ref": self.owner_entity_ref,
+            "action_role": self.action_role,
+            "allowed_windows": list(self.allowed_windows),
+            "submission_modes": list(self.submission_modes),
             "auto_target_ids": list(self.auto_target_ids),
             "selectable_target_ids": list(self.selectable_target_ids),
             "target_policy": self.target_policy,
@@ -235,6 +249,7 @@ class ActionAvailabilitySystem:
         self.enemy_actions = EnemyActionSystem(rules)
         self.targets = TargetSystem()
         self.resources = ResourceSystem()
+        self.contract = ActionContractSystem(rules)
         self.lifecycle = UnitLifecycleSystem()
         self.wave = WaveSystem(rules)
 
@@ -455,9 +470,45 @@ class ActionAvailabilitySystem:
                 },
             )
 
-        timeline_rule = self.rules.default_timeline_rule()
+        timeline_rule, timeline_rule_blocked_reason = self.rules.select_timeline_rule()
+        if timeline_rule is None:
+            blocked = (
+                BlockedActionReason(
+                    reason=timeline_rule_blocked_reason,
+                    scope="timeline",
+                    metadata={"engine_rule_kind": "timeline"},
+                    source_trace={},
+                ),
+            )
+            return self._blocked_view(state, state_phase, current_window, "", queue, blocked)
         timeline_plan = self.timeline.plan_next_actor(state, timeline_rule)
         if not timeline_plan.ok:
+            if timeline_plan.blocked_reason in {
+                "timeline_tie_priority_missing",
+                "timeline_tie_priority_ambiguous",
+            } and timeline_plan.tied_actor_ids:
+                choices = tuple(
+                    self._timeline_actor_choice(state, timeline_rule, timeline_plan, actor_id)
+                    for actor_id in timeline_plan.tied_actor_ids
+                    if actor_id in state.units
+                )
+                return ActionAvailabilityView(
+                    schema_version=ACTION_AVAILABILITY_SCHEMA_VERSION,
+                    mode="timeline_actor_selectable",
+                    state_phase=state_phase,
+                    current_window=current_window,
+                    turn_owner_id="",
+                    requires_scheduler_step=False,
+                    ordinary_input_blocked=False,
+                    queue=queue,
+                    choices=choices,
+                    coverage={
+                        "selection_controller": "external_timeline_tie_choice",
+                        "timeline_plan": timeline_plan.to_json(),
+                        "choice_count": len(choices),
+                    },
+                    source_trace=timeline_plan.source_trace,
+                )
             blocked = (
                 BlockedActionReason(
                     reason=timeline_plan.blocked_reason or "timeline_plan_blocked",
@@ -493,6 +544,39 @@ class ActionAvailabilitySystem:
                 "selection_controller": "external_after_turn_begin",
             },
             source_trace=timeline_plan.source_trace,
+        )
+
+    def _timeline_actor_choice(self, state, rule, plan, actor_id: str) -> ActionChoice:
+        from .timeline import timeline_tie_choice_id
+
+        actor = state.units[actor_id]
+        choice_id = timeline_tie_choice_id(state, rule, actor_id)
+        return ActionChoice(
+            choice_id=choice_id,
+            choice_kind="timeline_actor",
+            control="external",
+            actor_id=actor_id,
+            actor_side=actor.side,
+            action_id=TIMELINE_TIE_CHOICE_ACTION_ID,
+            action_level=0,
+            command_template={
+                "actor_id": actor_id,
+                "action_id": TIMELINE_TIE_CHOICE_ACTION_ID,
+                "action_level": 0,
+                "target_ids": [],
+                "metadata": {"timeline_choice_id": choice_id},
+            },
+            action_role="timeline_control",
+            allowed_windows=("timeline_tie",),
+            submission_modes=("decision",),
+            target_status="ok",
+            resource_status="not_checked",
+            coverage_status="executable",
+            metadata={
+                "timeline_choice_id": choice_id,
+                "timeline_plan_id": plan.plan_id,
+                "tied_actor_ids": list(plan.tied_actor_ids),
+            },
         )
 
     def _queue_availability(
@@ -587,6 +671,22 @@ class ActionAvailabilitySystem:
                 for target_id in invalid_targets
             ]
             return f"queue_action_target_lifecycle_blocked:{','.join(reasons)}"
+        contract = self.contract.evaluate(
+            state,
+            ActionCommand(
+                actor_id=actor_id,
+                action_id=action_id,
+                action_level=action_level,
+                target_ids=target_ids,
+                source="queue",
+                queue_name=plan.queue_name,
+                metadata={"queue_parent": {"queue_entry": plan.queue_entry}},
+            ),
+            submission_mode="queue",
+            queue_resource_policy=_queue_entry_resource_policy(plan),
+        )
+        if not contract.ok:
+            return contract.blocked_reason or "queue_action_contract_blocked"
         definition = self.rules.action_definition(action_id, action_level)
         if definition is None:
             return "queue_action_definition_missing"
@@ -626,6 +726,22 @@ class ActionAvailabilitySystem:
         boundary_reason = self._queue_action_boundary_blocked_reason(state, plan, resolution)
         if boundary_reason:
             return ()
+        contract = self.contract.evaluate(
+            state,
+            ActionCommand(
+                actor_id=actor_id,
+                action_id=action_id,
+                action_level=action_level,
+                target_ids=target_ids,
+                source="queue",
+                queue_name=plan.queue_name,
+                metadata={"queue_parent": {"queue_entry": plan.queue_entry}},
+            ),
+            submission_mode="queue",
+            queue_resource_policy=_queue_entry_resource_policy(plan),
+        )
+        if not contract.ok or contract.admission is None:
+            return ()
         window_family = str((plan.queue_window or {}).get("window_family") or "")
         control: Literal["mandatory", "selectable"] = "selectable" if queue_plan_requires_external_command(plan, resolution) else "mandatory"
         kind: Literal["queue_action", "ultimate_window"] = "ultimate_window" if window_family == "ultimate" else "queue_action"
@@ -656,6 +772,11 @@ class ActionAvailabilitySystem:
                         },
                     )
                 ),
+                admission_id=contract.admission.admission_id,
+                owner_entity_ref=contract.admission.owner_entity_ref,
+                action_role=contract.admission.action_role,
+                allowed_windows=contract.admission.allowed_windows,
+                submission_modes=contract.admission.submission_modes,
                 auto_target_ids=target_ids,
                 selectable_target_ids=(),
                 target_policy={"source": "queue_target_resolution", "queue_window_plan": plan.queue_window or {}},
@@ -952,6 +1073,19 @@ class ActionAvailabilitySystem:
                         source_trace=source_trace,
                     ),
                 )
+        constraint = self.enemy_actions.candidate_constraint(state, actor.unit_id)
+        if constraint.get("ok") is not True:
+            return (), (
+                BlockedActionReason(
+                    reason=str(constraint.get("blocked_reason") or "enemy_action_constraint_blocked"),
+                    scope="enemy_action_constraint",
+                    actor_id=actor.unit_id,
+                    actor_side=actor.side,
+                    metadata={"candidate_constraint": constraint},
+                ),
+            )
+        if constraint.get("mode") == "external_card_actions":
+            return self._enemy_external_choices(state, actor, constraint)
         candidate = self.enemy_actions.next_candidate(state, actor.unit_id)
         if candidate.status != "available":
             return (), (
@@ -963,6 +1097,27 @@ class ActionAvailabilitySystem:
                     action_id=candidate.action_ref,
                     action_level=candidate.action_level,
                     metadata={"enemy_action_candidate": candidate.to_json()},
+                    source_trace=candidate.source_trace,
+                ),
+            )
+        contract = self.contract.evaluate(
+            state,
+            _command_from_enemy_candidate(candidate),
+            submission_mode="external_turn",
+        )
+        if not contract.ok or contract.admission is None:
+            return (), (
+                BlockedActionReason(
+                    reason=contract.blocked_reason or "enemy_action_contract_blocked",
+                    scope="enemy_fixed_sequence",
+                    actor_id=actor.unit_id,
+                    actor_side=actor.side,
+                    action_id=candidate.action_ref,
+                    action_level=candidate.action_level,
+                    metadata={
+                        "enemy_action_candidate": candidate.to_json(),
+                        "action_contract": contract.to_json(),
+                    },
                     source_trace=candidate.source_trace,
                 ),
             )
@@ -1055,6 +1210,11 @@ class ActionAvailabilitySystem:
                     action_id=candidate.action_ref,
                     action_level=candidate.action_level,
                     command_template=_command_template(_command_from_enemy_candidate(candidate)),
+                    admission_id=contract.admission.admission_id,
+                    owner_entity_ref=contract.admission.owner_entity_ref,
+                    action_role=contract.admission.action_role,
+                    allowed_windows=contract.admission.allowed_windows,
+                    submission_modes=contract.admission.submission_modes,
                     auto_target_ids=candidate.auto_target_ids,
                     selectable_target_ids=candidate.selectable_target_ids,
                     target_policy=candidate.target_policy,
@@ -1077,6 +1237,84 @@ class ActionAvailabilitySystem:
             ),
             (),
         )
+
+    def _enemy_external_choices(
+        self,
+        state: BattleState,
+        actor: UnitState,
+        constraint: dict[str, JSONValue],
+    ) -> tuple[tuple[ActionChoice, ...], tuple[BlockedActionReason, ...]]:
+        action_set = self.rules.combatant_action_set(actor.template_id)
+        if action_set is None:
+            return (), (
+                BlockedActionReason(
+                    reason="combatant_action_set_missing",
+                    scope="enemy_card_actions",
+                    actor_id=actor.unit_id,
+                    actor_side=actor.side,
+                    metadata={"entity_ref": actor.template_id, "candidate_constraint": constraint},
+                ),
+            )
+        if action_set.coverage_status != "executable":
+            return (), (
+                BlockedActionReason(
+                    reason=action_set.blocked_reason
+                    or f"combatant_action_set_not_executable:{action_set.coverage_status}",
+                    scope="enemy_card_actions",
+                    actor_id=actor.unit_id,
+                    actor_side=actor.side,
+                    metadata={"combatant_action_set": action_set.to_json(), "candidate_constraint": constraint},
+                    source_trace=action_set.source.to_json(),
+                ),
+            )
+        choices: list[ActionChoice] = []
+        blocked: list[BlockedActionReason] = []
+        actor_data_card = _actor_data_card_source_trace(self.rules, actor)
+        for skill_index, entry in _sorted_action_set_entries(action_set.skill_index_map):
+            action_id = str(entry.get("action_ref") or "")
+            level = _default_level(entry)
+            reason = self._action_set_entry_blocked_reason(entry, action_id, level)
+            if reason:
+                blocked.append(
+                    BlockedActionReason(
+                        reason=reason,
+                        scope="enemy_card_actions",
+                        actor_id=actor.unit_id,
+                        actor_side=actor.side,
+                        action_id=action_id,
+                        action_level=level,
+                        metadata={"skill_index": skill_index, "action_set_entry": entry},
+                        source_trace=action_set.source.to_json(),
+                    )
+                )
+                continue
+            choice, reason_record = self._normal_action_choice(
+                state,
+                actor,
+                action_id,
+                level,
+                choice_kind="normal_action",
+                source_trace={
+                    "actor_data_card": actor_data_card,
+                    "combatant_action_set": action_set.source.to_json(),
+                    "combatant_action_set_id": action_set.combatant_action_set_id,
+                    "skill_index": skill_index,
+                    "action_set_entry": entry,
+                },
+                metadata={
+                    "selection_controller": "external",
+                    "candidate_kind": "external_card_action",
+                    "candidate_constraint": constraint,
+                    "skill_index": skill_index,
+                    "combatant_action_set_id": action_set.combatant_action_set_id,
+                    "actor_data_card": _compact_actor_data_card(actor_data_card),
+                },
+            )
+            if choice is not None:
+                choices.append(choice)
+            else:
+                blocked.append(reason_record)
+        return tuple(choices), tuple(blocked)
 
     def _normal_action_choice(
         self,
@@ -1101,6 +1339,28 @@ class ActionAvailabilitySystem:
                 source_trace,
                 metadata,
             )
+        contract_command = ActionCommand(
+            actor_id=actor.unit_id,
+            action_id=action_id,
+            action_level=action_level,
+            target_ids=(),
+            source="manual",
+            metadata={"selection_controller": "external", **metadata},
+        )
+        contract = self.contract.evaluate(
+            state,
+            contract_command,
+            submission_mode="external_turn",
+        )
+        if not contract.ok or contract.admission is None:
+            return None, _blocked_action(
+                actor,
+                action_id,
+                action_level,
+                contract.blocked_reason or "action_contract_blocked",
+                source_trace,
+                {**metadata, "action_contract": contract.to_json()},
+            )
         event = self.rules.action_event(action_id, action_level)
         if event is None:
             return None, _blocked_action(actor, action_id, action_level, "action_event_missing", source_trace, metadata)
@@ -1111,7 +1371,8 @@ class ActionAvailabilitySystem:
             actor.unit_id,
             target_policy_for_action(self.rules, definition, event.target_mode, action_event=event),
         )
-        resource_status, resource_reason = self._resource_status(state, actor.unit_id, definition, {})
+        resource_status = "ok" if contract.resource_status == "ok" else "blocked"
+        resource_reason = contract.resource_blocked_reason
         blocked_reason = combined_blocked_reason(
             event_reason,
             binding_reason,
@@ -1140,7 +1401,7 @@ class ActionAvailabilitySystem:
             actor_id=actor.unit_id,
             action_id=action_id,
             action_level=action_level,
-            target_ids=target_result.auto_target_ids,
+            target_ids=(),
             source="manual",
             metadata={"selection_controller": "external", **metadata},
         )
@@ -1154,6 +1415,11 @@ class ActionAvailabilitySystem:
                 action_id=action_id,
                 action_level=action_level,
                 command_template=_command_template(command),
+                admission_id=contract.admission.admission_id,
+                owner_entity_ref=contract.admission.owner_entity_ref,
+                action_role=contract.admission.action_role,
+                allowed_windows=contract.admission.allowed_windows,
+                submission_modes=contract.admission.submission_modes,
                 auto_target_ids=target_result.auto_target_ids,
                 selectable_target_ids=target_result.selectable_target_ids,
                 target_policy=target_result.policy,
@@ -1195,7 +1461,7 @@ class ActionAvailabilitySystem:
         )
         if result.ok:
             return "ok", ""
-        return "blocked", _resource_error_reason(result.errors)
+        return "blocked", action_resource_blocked_reason(result.errors)
 
     def _action_event_admission_reason(self, event: ActionEventIR) -> str:
         if event.coverage_status in {"blocked", "audit_only", "discovered_only", "unsupported"}:
@@ -1243,7 +1509,7 @@ def _command_from_enemy_candidate(candidate: EnemyActionCandidate) -> ActionComm
         actor_id=candidate.actor_id,
         action_id=candidate.action_ref,
         action_level=candidate.action_level,
-        target_ids=candidate.auto_target_ids,
+        target_ids=(),
         source="manual",
         metadata={
             "selection_controller": "external",
@@ -1382,7 +1648,6 @@ def _control_gate_for_actor(state: BattleState, actor: UnitState) -> BlockedActi
         source_trace=source_trace,
     )
 
-
 def _summon_action_admission_blocker(
     state: BattleState,
     actor: UnitState,
@@ -1403,18 +1668,17 @@ def _summon_action_admission_blocker(
     runtime_entity = entities.get(actor.unit_id)
     if not isinstance(runtime_entity, dict):
         return "summon_runtime_entity_missing", {}, summon_source_trace
-    runtime_source_trace = runtime_entity.get("source_trace")
-    if not isinstance(runtime_source_trace, dict) or not runtime_source_trace:
-        return "summon_runtime_source_trace_missing", {"runtime_entity": runtime_entity}, summon_source_trace
+    runtime_source_trace = (
+        dict(runtime_entity.get("source_trace", {}))
+        if isinstance(runtime_entity.get("source_trace"), dict)
+        else {}
+    )
     source_intent_id = actor.flags.get("summon_intent_id")
     if source_intent_id is not None and runtime_entity.get("source_intent_id") != source_intent_id:
         return "summon_runtime_source_binding_mismatch", {"runtime_entity": runtime_entity}, runtime_source_trace
     admission = actor.flags.get("summon_action_admission")
     if not isinstance(admission, dict) or admission.get("coverage_status") != "executable":
         return "summon_action_source_not_admitted", {"runtime_entity": runtime_entity}, runtime_source_trace
-    admission_source_trace = admission.get("source_trace")
-    if not isinstance(admission_source_trace, dict) or not admission_source_trace:
-        return "summon_action_source_trace_missing", {"runtime_entity": runtime_entity, "admission": admission}, runtime_source_trace
     return None
 
 
@@ -1467,12 +1731,3 @@ def _blocked_action(
         metadata=metadata,
         source_trace=source_trace,
     )
-
-
-def _resource_error_reason(errors: tuple[str, ...]) -> str:
-    for error in errors:
-        if error.startswith("insufficient skill points"):
-            return "insufficient_skill_points"
-        if error.startswith("unknown actor_id"):
-            return "resource_unknown_actor"
-    return "resource_plan_failed"

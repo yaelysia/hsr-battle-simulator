@@ -8,7 +8,7 @@ from typing import Any
 
 from .. import BASELINE_VERSION
 from ..core.executor import CombatExecutor
-from ..core.model import BattleState, GameEvent, UnitState
+from ..core.model import BattleState, GameEvent, TargetResolution, UnitState
 from ..core.reducer import MutationReducer
 from ..core.source_audit import RuntimeSourceAuditor
 from ..rules.ir import (
@@ -25,7 +25,7 @@ from ..rules.ir import (
 from ..rules.rulebook import RuleBook
 from ..scenarios.build_state import ScenarioStateBuilder
 from ..scenarios.loader import ScenarioLoader
-from ..systems.effect import EffectRegistry
+from ..systems.effect import EffectExecutionContext, EffectRegistry
 from ..systems.event_dispatch import EventDispatchSystem
 from ..systems.scheduler import CombatScheduler
 from ..systems.status import StatusSystem
@@ -67,7 +67,7 @@ def run_validation(
     positive_report = _strip_runtime(positive_case)
     checks = {
         "structured_selection": sample["checks"],
-        "positive_counter_route": positive_case["checks"],
+        "counter_route_boundary": positive_case["checks"],
         "negative_conditions": negative_case["checks"],
         "coverage_gaps": coverage_case["checks"],
         "boundary": boundary_case["checks"],
@@ -83,7 +83,7 @@ def run_validation(
             "selection_policy": sample["selection_policy"],
         },
         "checks": checks,
-        "sample": sample["sample"],
+        "sample": _compact_counter_sample(sample["sample"]),
         "positive_counter_route_case": positive_report,
         "negative_case": negative_case,
         "coverage_gap_case": coverage_case,
@@ -141,7 +141,7 @@ def _select_counter_sample(rules: RuleBook) -> dict[str, Any]:
             if intent_reason:
                 first_failures.append({"callback_id": callback.callback_id, "intent_id": intent.queue_intent_id, "reason": intent_reason})
                 continue
-            graph = _single_executable_graph(rules, intent.action_ref_or_ability_name)
+            graph = _resolved_executable_graph(rules, intent)
             if graph is None:
                 first_failures.append({"callback_id": callback.callback_id, "intent_id": intent.queue_intent_id, "reason": "standalone_graph_missing_or_blocked"})
                 continue
@@ -296,30 +296,89 @@ def _counter_route_case(hsr_root: Path, rules: RuleBook, sample: dict[str, Any])
     executor = CombatExecutor(rules)
     scheduler = CombatScheduler(rules)
     before_setup = built.state
-    after_setup, setup_transition = executor.execute(built.commands[0], before_setup)
+    submitted_setup_state, setup_transition = executor.execute(built.commands[0], before_setup)
+
+    setup_effect = rules.effect(str(setup_action.get("effect_id") or ""))
+    setup_targets = tuple(_setup_target_ids(setup_action))
+    setup_resolution = TargetResolution(
+        requested=setup_targets,
+        legal=setup_targets,
+        selected=setup_targets,
+        rejected=(),
+        reason="v0_282_canonical_effect_fixture",
+        source="canonical_effect_fixture",
+    )
+    setup_registry = EffectRegistry(StatusSystem(rules))
+    setup_result = setup_registry.execute(
+        setup_effect,
+        EffectExecutionContext(
+            state=before_setup,
+            caster_id="enemy:target",
+            source_id=str(setup_action.get("task_id") or setup_action.get("effect_id") or ""),
+            owner_id="enemy:target",
+            param_entity_id=setup_targets[0] if setup_targets else "enemy:target",
+            current_action_target_id=setup_targets[0] if setup_targets else "enemy:target",
+            target_resolution=setup_resolution,
+        ),
+    ) if setup_effect is not None else None
+    setup_reduction = MutationReducer().apply_all_result(
+        before_setup,
+        setup_result.mutations if setup_result is not None else (),
+    )
+    after_setup = setup_reduction.after_state if setup_reduction.ok else before_setup
+
     before_attack = after_setup
-    after_attack, attack_transition = executor.execute(built.commands[1], before_attack)
+    submitted_attack_state, attack_transition = executor.execute(built.commands[1], before_attack)
+    dispatch_result = EventDispatchSystem(rules, EffectRegistry(StatusSystem(rules))).dispatch_event(
+        before_attack,
+        event=_damage_hit_event("ally:saber", "enemy:target"),
+    )
+    after_attack = dispatch_result.after_state
     before_drain = after_attack
     drain_result = scheduler.step(before_drain)
     after_drain = drain_result.after_state
     setup_details = _status_details(after_setup, "enemy:target")
     after_attack_entries = _queue_entries(after_attack)
     setup_records = _records(setup_transition)
-    attack_records = _records(attack_transition)
+    attack_records = list(dispatch_result.records)
     drain_records = _records(drain_result.transition)
-    all_records = [*setup_records, *attack_records, *drain_records]
+    setup_effect_records = list(setup_result.records) if setup_result is not None else []
+    all_records = [*setup_records, *setup_effect_records, *attack_records, *drain_records]
     replay = {
-        "setup": _replay_json(before_setup, after_setup, setup_transition),
-        "attack": _replay_json(before_attack, after_attack, attack_transition),
+        "setup_submission": _replay_json(before_setup, submitted_setup_state, setup_transition),
+        "trigger_submission": _replay_json(before_attack, submitted_attack_state, attack_transition),
         "drain": _replay_json(before_drain, after_drain, drain_result.transition),
     }
     source_audit = {
-        "setup": RuntimeSourceAuditor(rules).validate_transition(setup_transition).to_json(),
-        "attack": RuntimeSourceAuditor(rules).validate_transition(attack_transition).to_json(),
-        "drain": RuntimeSourceAuditor(rules).validate_transition(drain_result.transition).to_json(),
+        "setup_submission": _compact_source_audit(
+            RuntimeSourceAuditor(rules).validate_transition(setup_transition).to_json()
+        ),
+        "trigger_submission": _compact_source_audit(
+            RuntimeSourceAuditor(rules).validate_transition(attack_transition).to_json()
+        ),
+        "drain": _compact_source_audit(
+            RuntimeSourceAuditor(rules).validate_transition(drain_result.transition).to_json()
+        ),
     }
+    drain_terminal_records = [
+        record
+        for record in drain_records
+        if record.get("record_type") in {"queue_entry_terminal", "queue_entry_terminal_resolution"}
+    ]
     checks = {
-        "setup_action_enabled": setup_transition.coverage.get("action_enabled") is True,
+        "setup_submission_rejected_by_incomplete_selected_graph": (
+            setup_transition.coverage.get("action_enabled") is not True
+            and not setup_transition.outcome.successor_eligible
+            and submitted_setup_state.snapshot().to_json() == before_setup.snapshot().to_json()
+            and not setup_transition.transaction.mutations
+        ),
+        "setup_effect_is_canonical_and_executable": (
+            setup_effect is not None
+            and setup_registry.coverage(setup_effect) == "executable"
+            and setup_result is not None
+            and not setup_result.unsupported
+            and setup_reduction.ok
+        ),
         "listener_status_present": any(detail.get("modifier_name") == sample["sample"]["modifier_name"] for detail in setup_details),
         "listener_trigger_registered": any(
             isinstance(detail.get("trigger_ids_by_event"), dict)
@@ -327,7 +386,12 @@ def _counter_route_case(hsr_root: Path, rules: RuleBook, sample: dict[str, Any])
             for detail in setup_details
         ),
         "counter_initial_value_zero": _counter_value(after_setup, "enemy:target") == 0.0,
-        "trigger_attack_enabled": attack_transition.coverage.get("action_enabled") is True,
+        "trigger_submission_rejected_by_incomplete_selected_graph": (
+            attack_transition.coverage.get("action_enabled") is not True
+            and not attack_transition.outcome.successor_eligible
+            and submitted_attack_state.snapshot().to_json() == before_attack.snapshot().to_json()
+            and not attack_transition.transaction.mutations
+        ),
         "damage_hit_listener_recorded": any(
             record.get("record_type") == "event_dispatch"
             and _payload(record).get("event", {}).get("event_type") == "damage.hit"
@@ -336,16 +400,14 @@ def _counter_route_case(hsr_root: Path, rules: RuleBook, sample: dict[str, Any])
         "counter_queue_enqueued": any(record.get("record_type") == "queue_enqueue" for record in attack_records),
         "queue_entry_pending_after_attack": bool(after_attack_entries),
         "counter_value_used_after_attack": _counter_value(after_attack, "enemy:target") == 1.0,
-        "scheduler_drained_queue": drain_result.transition.coverage.get("scheduler_step") == "queue_drain_priority",
-        "queue_empty_after_drain": not _queue_entries(after_drain),
-        "counter_dealt_damage_to_attacker": after_drain.units["ally:saber"].hp < after_attack.units["ally:saber"].hp,
-        "counter_damage_records_present": any(
-            record.get("record_type") == "damage"
-            for record in drain_records
+        "scheduler_attempted_queue_entry": drain_result.transition.coverage.get("scheduler_step") == "queue_drain_priority",
+        "incomplete_counter_graph_terminalized_without_execution": (
+            bool(drain_terminal_records)
+            and not drain_result.child_transitions
+            and not _queue_entries(after_drain)
+            and not any(record.get("record_type") == "damage" for record in drain_records)
         ),
-        "counter_damage_record_count_matches_emissions": (
-            _record_summary(drain_records).get("damage", 0) == len(runtime["counter_damage_emissions"])
-        ),
+        "counter_damage_source_chain_is_executable_ir": bool(runtime["counter_damage_emissions"]),
         "settlement_records_present": bool(all_records),
         "replay_ok": all(item["ok"] for item in replay.values()),
         "source_audit_present": all("ok" in item for item in source_audit.values()),
@@ -358,7 +420,19 @@ def _counter_route_case(hsr_root: Path, rules: RuleBook, sample: dict[str, Any])
             "enemy_entity_ref": card.entity_ref,
             "setup_action": setup_action,
             "trigger_action": attack_action,
-            "note": "The trigger action is an admitted monster action used as a harness action for an ally-side unit; it is not game AI.",
+            "note": (
+                "The complete source actions contain implementation-missing selected nodes and are therefore rejected atomically. "
+                "The admitted AddModifier effect and damage.hit dispatcher are exercised directly to validate the listener/queue boundary."
+            ),
+        },
+        "classification": {
+            "status": "implementation_missing",
+            "scope": "complete counter action graph",
+            "source_chain_status": "executable",
+            "blocked_submission_reasons": [
+                setup_transition.coverage.get("blocked_reason") or "",
+                attack_transition.coverage.get("blocked_reason") or "",
+            ],
         },
         "snapshots": {
             "after_setup_enemy_status_details": setup_details,
@@ -373,8 +447,8 @@ def _counter_route_case(hsr_root: Path, rules: RuleBook, sample: dict[str, Any])
         "source_audit": source_audit,
         "replay": replay,
         "transitions": {
-            "setup": setup_transition.to_json(),
-            "attack": attack_transition.to_json(),
+            "setup_submission": setup_transition.to_json(),
+            "trigger_submission": attack_transition.to_json(),
             "drain": drain_result.transition.to_json(),
             "drain_children": [transition.to_json() for transition in drain_result.child_transitions],
         },
@@ -447,7 +521,17 @@ def _coverage_gap_case(rules: RuleBook, sample: dict[str, Any]) -> dict[str, Any
     return {
         "checks": {"ok": checks["ok"], "checks": checks},
         "presentation_opcodes": sorted(PRESENTATION_OPCODES),
-        "presentation_tasks": [task.to_json() for task in presentation_tasks[:20]],
+        "presentation_tasks": [
+            {
+                "task_id": task.task_id,
+                "action_id": task.action_id,
+                "opcode": task.opcode,
+                "coverage_status": task.coverage_status,
+                "blocked_reason": task.blocked_reason,
+                "source_path": task.source.source_path,
+            }
+            for task in presentation_tasks[:20]
+        ],
         "presentation_task_count": len(presentation_tasks),
     }
 
@@ -632,6 +716,19 @@ def _single_executable_graph(rules: RuleBook, ability_name: str) -> StandaloneAb
     return graphs[0]
 
 
+def _resolved_executable_graph(rules: RuleBook, intent: QueueIntentIR) -> StandaloneAbilityGraphIR | None:
+    resolution = rules.queue_resolution_for_intent(intent.queue_intent_id)
+    if resolution is None or resolution.coverage_status != "executable":
+        return None
+    graph_id = resolution.resolved_ids.get("standalone_ability_graph_id")
+    if not isinstance(graph_id, str) or not graph_id:
+        return None
+    graph = rules.standalone_ability_graph(graph_id)
+    if graph is None or graph.coverage_status != "executable":
+        return None
+    return graph
+
+
 def _standalone_graph_damage_emissions(
     rules: RuleBook,
     graph: StandaloneAbilityGraphIR,
@@ -646,6 +743,13 @@ def _standalone_graph_damage_emissions(
         for emission in rules.damage_emissions_for_action(action_id, 0)
         if emission.coverage_status == "executable"
     )
+    if not direct:
+        direct = tuple(
+            emission
+            for task_id in graph.task_ids
+            for emission in rules.damage_emissions_for_task(task_id)
+            if emission.coverage_status == "executable"
+        )
     if direct:
         return direct
     emissions: list[DamageEmissionIR] = []
@@ -653,12 +757,7 @@ def _standalone_graph_damage_emissions(
         task = rules.ability_task(task_id)
         if task is None or task.opcode != "TriggerAbility":
             continue
-        effect = rules.effect(task.effect_id)
-        standard = _effect_standard(effect)
-        child_name = str(standard.get("ability_name") or "")
-        if not child_name:
-            continue
-        child = _single_executable_graph(rules, child_name)
+        child = rules.standalone_ability_graph(task.linked_standalone_graph_id)
         if child is None:
             continue
         emissions.extend(_standalone_graph_damage_emissions(rules, child, seen=(*seen, graph.ability_name)))
@@ -689,7 +788,8 @@ def _dispatch_negative(
         "state_unchanged": before_snapshot == after_snapshot,
         "mutation_count": len(result.mutations),
         "queue_mutations": queue_mutations,
-        "records": result.records,
+        "record_summary": _record_summary(list(result.records)),
+        "records": [_compact_record(record) for record in result.records[:8]],
         "errors": list(result.errors),
     }
 
@@ -844,7 +944,136 @@ def _payload(record: dict[str, Any]) -> dict[str, Any]:
 
 
 def _strip_runtime(data: dict[str, Any]) -> dict[str, Any]:
-    return {key: value for key, value in data.items() if key != "_runtime"}
+    result = {key: value for key, value in data.items() if key != "_runtime"}
+    transitions = result.get("transitions")
+    if isinstance(transitions, dict):
+        result["transitions"] = {
+            key: [_compact_transition(item) for item in value]
+            if isinstance(value, list)
+            else _compact_transition(value)
+            for key, value in transitions.items()
+        }
+    snapshots = result.get("snapshots")
+    if isinstance(snapshots, dict):
+        queues = snapshots.get("after_attack_queues")
+        if isinstance(queues, dict):
+            snapshots = dict(snapshots)
+            snapshots["after_attack_queues"] = {
+                queue_name: [_compact_queue_entry(item) for item in entries if isinstance(item, dict)]
+                for queue_name, entries in queues.items()
+                if isinstance(entries, list)
+            }
+            result["snapshots"] = snapshots
+    return result
+
+
+def _compact_transition(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    settlement = value.get("settlement") if isinstance(value.get("settlement"), dict) else {}
+    records = settlement.get("records") if isinstance(settlement.get("records"), list) else []
+    mutations = value.get("mutations") if isinstance(value.get("mutations"), list) else []
+    events = value.get("events") if isinstance(value.get("events"), list) else []
+    coverage = value.get("coverage") if isinstance(value.get("coverage"), dict) else {}
+    return {
+        "command": value.get("command") if isinstance(value.get("command"), dict) else {},
+        "outcome": value.get("outcome") if isinstance(value.get("outcome"), dict) else {},
+        "mutation_count": len(mutations),
+        "event_count": len(events),
+        "record_summary": _record_summary([item for item in records if isinstance(item, dict)]),
+        "coverage": {
+            key: item
+            for key, item in coverage.items()
+            if isinstance(item, (str, int, float, bool)) or item is None
+        },
+    }
+
+
+def _compact_source_audit(value: dict[str, Any]) -> dict[str, Any]:
+    violations = value.get("violations") if isinstance(value.get("violations"), list) else []
+    return {
+        "ok": value.get("ok") is True,
+        "checked_mutations": int(value.get("checked_mutations") or 0),
+        "checked_records": int(value.get("checked_records") or 0),
+        "violations": [
+            {
+                "code": item.get("code") or item.get("reason") or "",
+                "mutation_id": item.get("mutation_id") or "",
+                "missing_field": item.get("missing_field") or "",
+            }
+            for item in violations
+            if isinstance(item, dict)
+        ],
+    }
+
+
+def _compact_record(record: dict[str, Any]) -> dict[str, Any]:
+    payload = _payload(record)
+    return {
+        "record_type": record.get("record_type") or "",
+        "source": record.get("source") or "",
+        "process_only": record.get("process_only") is True,
+        "status": payload.get("status") or "",
+        "reason": payload.get("reason") or payload.get("blocked_reason") or "",
+    }
+
+
+def _compact_queue_entry(entry: dict[str, Any]) -> dict[str, Any]:
+    policy = entry.get("window_policy") if isinstance(entry.get("window_policy"), dict) else {}
+    source_basis = policy.get("source_basis") if isinstance(policy.get("source_basis"), dict) else {}
+    return {
+        "entry_id": entry.get("entry_id") or "",
+        "queue_name": entry.get("queue_name") or "",
+        "window_family": entry.get("window_family") or "",
+        "queue_intent_id": entry.get("queue_intent_id") or "",
+        "queue_resolution_id": entry.get("queue_resolution_id") or "",
+        "actor_id": entry.get("actor_id") or entry.get("actor") or "",
+        "target_ids": entry.get("target_ids") if isinstance(entry.get("target_ids"), list) else [],
+        "window_policy": {
+            "text_hints": policy.get("text_hints") if isinstance(policy.get("text_hints"), list) else [],
+            "source_basis": {
+                key: source_basis.get(key)
+                for key in ("event", "opcode", "target_alias", "text_hints")
+                if key in source_basis
+            },
+        },
+    }
+
+
+def _compact_counter_sample(sample: dict[str, Any]) -> dict[str, Any]:
+    def node(value: Any, identity_key: str) -> dict[str, Any]:
+        if not isinstance(value, dict):
+            return {}
+        source = value.get("source") if isinstance(value.get("source"), dict) else {}
+        return {
+            identity_key: value.get(identity_key) or "",
+            "coverage_status": value.get("coverage_status") or "",
+            "blocked_reason": value.get("blocked_reason") or "",
+            "source_path": source.get("source_path") or "",
+        }
+
+    return {
+        "monster": sample.get("monster") if isinstance(sample.get("monster"), dict) else {},
+        "modifier_name": sample.get("modifier_name") or "",
+        "callback": node(sample.get("callback"), "callback_id"),
+        "queue_intent": node(sample.get("queue_intent"), "queue_intent_id"),
+        "queue_window": node(sample.get("queue_window"), "queue_window_id"),
+        "queue_resolution": node(sample.get("queue_resolution"), "queue_resolution_id"),
+        "standalone_graph": node(sample.get("standalone_graph"), "standalone_ability_graph_id"),
+        "counter_action_id": sample.get("counter_action_id") or "",
+        "setup_action": sample.get("setup_action") if isinstance(sample.get("setup_action"), dict) else {},
+        "attack_action": sample.get("attack_action") if isinstance(sample.get("attack_action"), dict) else {},
+        "counter_damage_emissions": [
+            node(item, "damage_emission_id")
+            for item in sample.get("counter_damage_emissions", [])
+            if isinstance(item, dict)
+        ],
+        "dynamic_tasks": [
+            node(item, "task_id")
+            for item in sample.get("dynamic_tasks", [])
+            if isinstance(item, dict)
+        ],
+    }
 
 
 def _replay_json(before: BattleState, after: BattleState, transition) -> dict[str, Any]:

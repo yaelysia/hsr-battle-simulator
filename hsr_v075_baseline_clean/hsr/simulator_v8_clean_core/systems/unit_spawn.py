@@ -116,13 +116,13 @@ class UnitSpawnPlan:
             raise ValueError(self.blocked_reason or "unit_spawn_plan_blocked")
         if not self.unit:
             raise ValueError("unit_spawn_plan_unit_missing")
-        if not self.source_trace:
-            raise ValueError("unit_spawn_plan_source_trace_missing")
         if not self.birth_template_id:
             raise ValueError("unit_spawn_plan_birth_template_id_missing")
         request = UnitSpawnRequest.from_json(self.request)
         _validate_spawn_request_complete(request)
-        if expected_request is not None and request.to_json() != expected_request.to_json():
+        if expected_request is not None and _spawn_request_identity(request) != _spawn_request_identity(
+            expected_request
+        ):
             raise ValueError("unit_spawn_plan_request_mismatch")
         unit = unit_state_from_payload(self.unit)
         if unit.unit_id != self.unit_id:
@@ -191,7 +191,13 @@ class UnitSpawnSystem:
                 birth_template_id=template.birth_template_id,
                 source_trace=request.entry_source_trace,
                 request=request.to_json(),
-                unit={**fields, "statuses": [], "flags": flags, "resources": resources},
+                unit={
+                    **fields,
+                    "statuses": [],
+                    "shield_instances": [],
+                    "flags": flags,
+                    "resources": resources,
+                },
                 metadata={
                     "spawn_plan_kind": template.spawn_kind,
                     "birth_template_id": template.birth_template_id,
@@ -278,11 +284,10 @@ def _template_request_blocked_reason(
     owner_entity_ref = str(template.request_contract.get("owner_entity_ref") or "")
     if owner_entity_ref and (owner is None or owner.template_id != owner_entity_ref):
         return "unit_birth_template_owner_entity_ref_mismatch"
+    # template_source_role describes which stable request identity owns the
+    # template.  Source traces are audit payloads and must never participate in
+    # runtime admission or equality.
     source_role = str(template.request_contract.get("template_source_role") or "")
-    if source_role == "entry" and template.source.to_json() != request.entry_source_trace:
-        return "unit_birth_template_entry_source_trace_mismatch"
-    if source_role == "source" and template.source.to_json() != request.source_trace:
-        return "unit_birth_template_source_trace_mismatch"
     if source_role not in {"entry", "source"}:
         return "unit_birth_template_source_role_missing"
     return ""
@@ -410,8 +415,6 @@ def _validate_spawn_request_complete(request: UnitSpawnRequest) -> None:
     for field_name in ("unit_id", "birth_template_id", "entity_ref", "source_id", "entry_id"):
         if not getattr(request, field_name):
             raise ValueError(f"unit_spawn_request_{field_name}_missing")
-    if not request.source_trace or not request.entry_source_trace:
-        raise ValueError("unit_spawn_request_source_trace_missing")
     if request.spawn_kind in {"summoned_monster", "servant"}:
         if not request.owner_id or not request.summoner_id:
             raise ValueError("unit_spawn_request_owner_missing")
@@ -441,8 +444,6 @@ def _validate_unit_request_binding(
         raise ValueError("unit_spawn_plan_request_entity_ref_mismatch")
     if plan.metadata.get("spawn_plan_kind") != request.spawn_kind:
         raise ValueError("unit_spawn_plan_request_spawn_kind_mismatch")
-    if plan.source_trace != request.entry_source_trace:
-        raise ValueError("unit_spawn_plan_request_entry_source_mismatch")
     if request.spawn_kind == "summoned_monster":
         expected = {
             "summon_kind": "summoned_monster",
@@ -453,8 +454,6 @@ def _validate_unit_request_binding(
             "summon_entry_index": request.entry_index,
             "summon_entry_copy_index": request.copy_index,
             "summon_spawn_index": request.spawn_index,
-            "summon_source_trace": request.source_trace,
-            "summon_entry_source_trace": request.entry_source_trace,
         }
     elif request.spawn_kind == "servant":
         expected = {
@@ -464,8 +463,6 @@ def _validate_unit_request_binding(
             "servant_definition_id": request.source_id,
             "servant_ref": request.entity_ref,
             "summon_intent_id": request.source_id,
-            "summon_source_trace": request.source_trace,
-            "servant_definition_source_trace": request.entry_source_trace,
         }
     else:
         expected = {
@@ -475,8 +472,6 @@ def _validate_unit_request_binding(
             "wave_position": request.position,
             "position": request.position,
             "wave_entry_id": request.entry_id,
-            "wave_definition_source_trace": request.source_trace,
-            "wave_entry_source_trace": request.entry_source_trace,
         }
     for key, value in expected.items():
         if flags.get(key) != value:
@@ -489,23 +484,33 @@ def _validate_birth_plan_source_fields(request: UnitSpawnRequest, flags: dict[st
     if request.spawn_kind in {"summoned_monster", "servant"}:
         _required_flag_string(flags, "owner_id")
         _required_flag_string(flags, "summoner_id")
-        _required_flag_dict(flags, "summon_source_trace")
-    if request.spawn_kind == "summoned_monster":
-        _required_flag_dict(flags, "summon_entry_source_trace")
-        _required_flag_dict(flags, "combatant_profile_source_trace")
-        _required_flag_dict(flags, "monster_data_card_source_trace")
-    elif request.spawn_kind == "servant":
-        _required_flag_dict(flags, "servant_definition_source_trace")
-    elif request.spawn_kind == "wave_enemy":
+    if request.spawn_kind == "wave_enemy":
         _required_flag_string(flags, "wave_definition_id")
         _required_flag_string(flags, "wave_entry_id")
         _required_flag_int(flags, "stage_level")
         _required_flag_int(flags, "hard_level_group")
-        _required_flag_dict(flags, "stage_level_source_trace")
-        _required_flag_dict(flags, "wave_entry_source_trace")
-        _required_flag_dict(flags, "wave_definition_source_trace")
-        _required_flag_dict(flags, "combatant_profile_source_trace")
-        _required_flag_dict(flags, "monster_data_card_source_trace")
+
+
+def _spawn_request_identity(request: UnitSpawnRequest) -> tuple[JSONValue, ...]:
+    """Behavioral request identity; deliberately excludes audit/source traces."""
+
+    return (
+        request.spawn_kind,
+        request.unit_id,
+        request.birth_template_id,
+        request.entity_ref,
+        request.source_id,
+        request.entry_id,
+        request.owner_id,
+        request.summoner_id,
+        request.entry_index,
+        request.copy_index,
+        request.spawn_index,
+        request.wave_definition_id,
+        request.stage_id,
+        request.wave_index,
+        request.position,
+    )
 
 
 def _required_flag_string(flags: dict[str, JSONValue], key: str) -> str:
@@ -513,13 +518,6 @@ def _required_flag_string(flags: dict[str, JSONValue], key: str) -> str:
     if not isinstance(value, str) or not value:
         raise ValueError(f"unit_spawn_plan_{key}_missing")
     return value
-
-
-def _required_flag_dict(flags: dict[str, JSONValue], key: str) -> dict[str, JSONValue]:
-    value = flags.get(key)
-    if not isinstance(value, dict) or not value:
-        raise ValueError(f"unit_spawn_plan_{key}_missing")
-    return dict(value)
 
 
 def _required_flag_int(flags: dict[str, JSONValue], key: str) -> int:

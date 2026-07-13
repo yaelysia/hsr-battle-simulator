@@ -11,6 +11,7 @@ from ..rules.rulebook import RuleBook
 from .damage import DamageSystem, DamageWindowLedger
 from .effect import EffectRegistry
 from .mutation_events import MUTATION_BACKED_EVENT_TYPES, PRE_MUTATION_BLOCK_REASON
+from .phase_machine import CombatPhaseMachine
 from .status_callbacks import StatusCallbackSystem
 from .timeline import TimelineSystem
 from .trigger import TriggerSystem
@@ -110,7 +111,7 @@ class EventDispatchSystem:
     ) -> None:
         self.rules = rules
         self.reducer = reducer or MutationReducer()
-        self.damage = damage or DamageSystem()
+        self.damage = damage or DamageSystem(rules)
         self.timeline = timeline or TimelineSystem()
         self.trigger_system = trigger_system or TriggerSystem(rules, effect_registry, reducer=self.reducer)
         self.status_callbacks = status_callbacks or StatusCallbackSystem(
@@ -119,6 +120,7 @@ class EventDispatchSystem:
             reducer=self.reducer,
             timeline=self.timeline,
         )
+        self.phases = CombatPhaseMachine()
 
     def dispatch_action_window(
         self,
@@ -155,6 +157,26 @@ class EventDispatchSystem:
         modifier_name: str | None = None,
         damage_window_ledger: DamageWindowLedger | None = None,
     ) -> EventDispatchResult:
+        lifecycle_payload_reason = _lifecycle_event_payload_block_reason(event)
+        if lifecycle_payload_reason:
+            return self.dispatch_blocked(
+                state,
+                event=event,
+                listener_kind="lifecycle_event_dispatch",
+                scope=_event_scope_kind(event),
+                reason=lifecycle_payload_reason,
+                metadata={"event_type": event.event_type},
+            )
+        phase_reason = self.phases.event_blocked_reason(state, event.event_type)
+        if phase_reason:
+            return self.dispatch_blocked(
+                state,
+                event=event,
+                listener_kind="listener_dispatch",
+                scope=_event_scope_kind(event),
+                reason=phase_reason,
+                metadata={"combat_phase": self.phases.current_phase(state)},
+            )
         if command is not None and action_definition is not None and target_resolution is not None:
             result = self._dispatch_action_window_event(
                 state,
@@ -266,6 +288,25 @@ class EventDispatchSystem:
                 "event_aliases": [alias.to_json() for alias in aliases],
             },
         )
+        if _dispatch_only_without_listener(event, aliases):
+            listener_record = _listener_record(
+                event,
+                listener_kind="lifecycle_event_dispatch",
+                listener_id="",
+                source="event_dispatch_system",
+                status="processed",
+                reason="no_admitted_listener_for_lifecycle_event",
+                metadata={
+                    "event_scope_kind": dispatch_scope,
+                    "event_aliases": [alias.to_json() for alias in aliases],
+                },
+            )
+            return EventDispatchResult(
+                after_state=state,
+                events=(event,),
+                records=(dispatch_record, listener_record),
+                listener_records=(listener_record,),
+            )
         matches = self._resolve_listener_matches(
             state,
             event=event,
@@ -526,7 +567,7 @@ class EventDispatchSystem:
                 "unit_order": 999999,
                 "unit_id": str(event.target_id or ""),
                 "status_order": -1,
-                "callback_source_order": "",
+                "callback_execution_order": [],
                 "callback_id": "",
                 "task_order": [],
             },
@@ -647,9 +688,11 @@ SCOPE_PRIORITY = {
 
 
 CANONICAL_EVENT_ALIASES: dict[str, tuple[tuple[str, str, str], ...]] = {
+    "battle.start": (
+        ("OnEnterBattle", "owner_local", ""),
+    ),
     "turn.begin": (
         ("OnListenAllowAction", "owner_local", ""),
-        ("OnEnterBattle", "owner_local", "event_alias_missing:on_enter_battle_requires_battle_start_event"),
     ),
     "turn.end": (
         ("OnListenTurnEnd", "global_listener", ""),
@@ -716,6 +759,49 @@ CANONICAL_EVENT_ALIASES: dict[str, tuple[tuple[str, str, str], ...]] = {
         ("OnWaveMonster", "global_listener", ""),
     ),
 }
+
+LIFECYCLE_DISPATCH_ONLY_EVENT_TYPES = {
+    "wave.started",
+    "wave.cleared",
+    "battle.victory",
+    "battle.defeat",
+    "battle.completed",
+}
+
+
+def _dispatch_only_without_listener(event: GameEvent, aliases: tuple[EventAlias, ...]) -> bool:
+    if event.event_type not in LIFECYCLE_DISPATCH_ONLY_EVENT_TYPES:
+        return False
+    return not any(alias.callback_event and alias.admission_status == "executable" for alias in aliases)
+
+
+def _lifecycle_event_payload_block_reason(event: GameEvent) -> str:
+    payload = event.payload
+    required_by_type = {
+        "wave.started": ("wave_definition_id", "stage_id", "wave_index", "unit_ids"),
+        "wave.cleared": (
+            "wave_definition_id",
+            "stage_id",
+            "wave_index",
+            "cleared_unit_ids",
+            "removed_unit_ids",
+        ),
+        "battle.victory": ("wave_transition_plan",),
+        "battle.defeat": ("wave_transition_plan",),
+        "battle.completed": ("outcome", "wave_definition_id", "stage_id", "wave_index"),
+    }
+    required = required_by_type.get(event.event_type)
+    if required is None:
+        return ""
+    if any(key not in payload for key in required):
+        return f"{event.event_type.replace('.', '_')}_payload_incomplete"
+    if event.event_type == "wave.started":
+        unit_ids = payload.get("unit_ids")
+        if not isinstance(unit_ids, (list, tuple)) or not unit_ids:
+            return "wave_started_unit_ids_missing"
+    if event.event_type == "battle.completed" and payload.get("outcome") not in {"victory", "defeat"}:
+        return "battle_completed_outcome_invalid"
+    return ""
 
 
 def _event_aliases(event: GameEvent, rules: RuleBook | None = None) -> tuple[EventAlias, ...]:
@@ -793,13 +879,10 @@ def _wave_monster_payload_block_reason(event: GameEvent) -> str:
         "unit_id",
         "entry_id",
         "position",
-        "source_trace",
     )
     missing = [key for key in required if key not in payload]
     if missing:
         return "wave_monster_payload_incomplete"
-    if not isinstance(payload.get("source_trace"), dict) or not payload.get("source_trace"):
-        return "wave_monster_source_trace_missing"
     if str(payload.get("unit_id") or "") != str(event.target_id or payload.get("unit_id") or ""):
         return "wave_monster_target_payload_mismatch"
     return ""
@@ -852,6 +935,7 @@ def _event_scope_kind(event: GameEvent) -> str:
         "hp.change",
         "heal.after",
         "shield.change",
+        "shield.exhausted",
         "sp.change",
         "energy.change",
         "energy.before_change",
@@ -1201,11 +1285,11 @@ def _listener_order_key(
     callback: StatusCallbackIR | None,
 ) -> dict[str, JSONValue]:
     unit_order = _unit_order(state, unit_id)
-    callback_source_key = ""
+    callback_execution_order: list[int] = []
     callback_id = ""
     task_order: list[str] = []
     if callback is not None:
-        callback_source_key = f"{callback.source.source_path}:{callback.source.raw_type}:{callback.source.raw_id}"
+        callback_execution_order = [int(item) for item in callback.execution_order]
         callback_id = callback.callback_id
         task_order = list(callback.task_ids)
     return {
@@ -1214,7 +1298,7 @@ def _listener_order_key(
         "unit_order": unit_order,
         "unit_id": unit_id,
         "status_order": status_order,
-        "callback_source_order": callback_source_key,
+        "callback_execution_order": callback_execution_order,
         "callback_id": callback_id,
         "task_order": task_order,
     }
@@ -1226,10 +1310,12 @@ def _match_sort_key(match: ListenerMatch) -> tuple[object, ...]:
         int(order.get("scope_priority") or 999),
         int(order.get("unit_order") or 999999),
         int(order.get("status_order") if isinstance(order.get("status_order"), int) else 999999),
-        str(order.get("callback_source_order") or ""),
-        str(order.get("callback_id") or ""),
-        tuple(str(item) for item in order.get("task_order", []) if isinstance(item, str))
-        if isinstance(order.get("task_order"), list)
+        tuple(
+            int(item)
+            for item in order.get("callback_execution_order", [])
+            if isinstance(item, int) and not isinstance(item, bool)
+        )
+        if isinstance(order.get("callback_execution_order"), list)
         else (),
     )
 
@@ -1366,7 +1452,7 @@ def _listener_records_from_trigger_windows(
                         "unit_order": index,
                         "unit_id": str(metadata.get("actor_id") or "") if isinstance(metadata, dict) else "",
                         "status_order": index,
-                        "callback_source_order": "trigger_system",
+                        "callback_execution_order": [index, 0],
                         "callback_id": str(window.get("trigger_id") or ""),
                         "task_order": [],
                     },

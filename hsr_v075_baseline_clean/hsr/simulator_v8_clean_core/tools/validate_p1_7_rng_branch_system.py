@@ -6,9 +6,9 @@ from pathlib import Path
 from typing import Any
 
 from ..core.model import BattleState, UnitState
-from ..rules.ir import ActionDefinitionIR, IRSource, TargetExpressionIR
+from ..rules.ir import ActionDefinitionIR, IRSource, TargetExpressionIR, TargetExpressionNodeIR
 from ..systems.damage_formula import DamageFormulaInput, DirectDamageFormula
-from ..systems.rng import RNGOutcome, RNGRequest, resolve_rng_request
+from ..systems.rng import RNGOutcome, RNGRequest, choice_key_for_identity, resolve_rng_request
 from ..systems.target import TargetSystem
 
 
@@ -55,6 +55,14 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _rng_helper_cases() -> dict[str, Any]:
+    identity = {
+        "decision_scope": "status_application",
+        "decision_index": 0,
+        "task_id": "validation:status",
+        "status_id": "modifier:test",
+        "target_id": "enemy:target",
+        "derived_event_id": "rng:test:status_apply",
+    }
     request = RNGRequest(
         rng_type="status_apply",
         purpose="base_chance",
@@ -68,6 +76,7 @@ def _rng_helper_cases() -> dict[str, Any]:
             RNGOutcome("fail", payload={"success": False, "value": "fail"}, probability=0.75),
         ),
         source_trace={"validation_source": "rng_helper_contract"},
+        identity=identity,
     )
     missing = resolve_rng_request(request, rng_mode="explicit_ledger")
     invalid = resolve_rng_request(request, rng_mode="explicit_ledger", rng_choices={"status_apply:test": "bad"})
@@ -101,7 +110,20 @@ def _crit_cases() -> dict[str, Any]:
     state = _state()
     action = _action_definition()
     source_trace = {"validation_source": "engine_convention_crit_resource"}
-    choice_key = "crit:ally:actor:validation:action_def:enemy:target"
+    crit_event_id = f"damage_crit:{state.event_index}:{action.definition_id}"
+    crit_identity = {
+        "decision_scope": "damage_crit",
+        "decision_index": 0,
+        "action_id": action.action_id,
+        "action_level": action.level,
+        "definition_id": action.definition_id,
+        "task_id": "damage_formula",
+        "phase_id": "damage",
+        "hit_index": 0,
+        "target_id": "enemy:target",
+        "derived_event_id": crit_event_id,
+    }
+    choice_key = choice_key_for_identity("crit", crit_identity)
     crit = DirectDamageFormula().calculate(
         DamageFormulaInput(
             state=state,
@@ -182,45 +204,59 @@ def _target_random_cases() -> dict[str, Any]:
         target_expression_id="validation:target_shuffle",
         expression_kind="TargetSequence",
         alias="",
-        payload={
-            "raw": {
-                "$type": "RPG.GameCore.TargetSequence",
-                "Sequence": [
-                    {"Alias": "AllEnemy"},
-                    {"$type": "RPG.GameCore.TargetShuffle"},
-                ],
-            }
-        },
+        payload={"audit_case": "target_shuffle"},
         source=IRSource("validation:target_expression", "TargetSequence", "validation"),
+        node=TargetExpressionNodeIR(
+            expression_kind="TargetSequence",
+            children=(
+                TargetExpressionNodeIR(expression_kind="TargetAlias", alias="AllEnemy"),
+                TargetExpressionNodeIR(expression_kind="TargetShuffle"),
+            ),
+        ),
         coverage_status="executable",
     )
+    identity_payload = {
+        "actor_id": "ally:actor",
+        "action_id": "validation:action",
+        "action_level": 1,
+        "task_id": "validation:target_task",
+        "hit_index": 0,
+        "rng_decision_index": 0,
+    }
+    discovery = TargetSystem().resolve_target_expression(
+        state,
+        expression,
+        caster_id="ally:actor",
+        event_payload={**identity_payload, "rng_mode": "deterministic_seed"},
+    )
+    random_key = str(discovery.rng_events[0].metadata.get("choice_key") or "") if discovery.rng_events else ""
     explicit = TargetSystem().resolve_target_expression(
         state,
         expression,
         caster_id="ally:actor",
-        event_payload={"rng_mode": "explicit_ledger", "rng_choices": {"$.TargetSequence[1]": "enemy:left"}},
+        event_payload={**identity_payload, "rng_mode": "explicit_ledger", "rng_choices": {random_key: "enemy:left"}},
     )
-    legacy = TargetSystem().resolve_target_expression(
+    broad = TargetSystem().resolve_target_expression(
         state,
         expression,
         caster_id="ally:actor",
-        event_payload={"target_random_choices": {"default": "enemy:right"}},
+        event_payload={**identity_payload, "rng_mode": "explicit_ledger", "rng_choices": {"default": "enemy:right"}},
     )
     missing = TargetSystem().resolve_target_expression(
         state,
         expression,
         caster_id="ally:actor",
-        event_payload={"rng_mode": "explicit_ledger"},
+        event_payload={**identity_payload, "rng_mode": "explicit_ledger"},
     )
     invalid = TargetSystem().resolve_target_expression(
         state,
         expression,
         caster_id="ally:actor",
-        event_payload={"rng_mode": "explicit_ledger", "rng_choices": {"$.TargetSequence[1]": "missing"}},
+        event_payload={**identity_payload, "rng_mode": "explicit_ledger", "rng_choices": {random_key: "missing"}},
     )
     checks = {
         "explicit_choice_ok": explicit.ok and explicit.target_ids == ("enemy:left",),
-        "legacy_choice_compat_ok": legacy.ok and legacy.target_ids == ("enemy:right",),
+        "broad_default_rejected": not broad.ok,
         "missing_choice_blocked": not missing.ok and missing.blocked_reason == "requires_rng_choice",
         "invalid_choice_blocked": not invalid.ok and invalid.blocked_reason == "target_random_choice_invalid",
         "available_outcomes_on_missing": _steps_have_available_outcomes(missing.to_json()),
@@ -230,7 +266,7 @@ def _target_random_cases() -> dict[str, Any]:
     return {
         "checks": checks,
         "explicit": explicit.to_json(),
-        "legacy": legacy.to_json(),
+        "broad": broad.to_json(),
         "missing": missing.to_json(),
         "invalid": invalid.to_json(),
     }
@@ -246,6 +282,18 @@ def _bounce_cases() -> dict[str, Any]:
         "bounce_policy_id": "validation:bounce_policy",
         "source": {"validation_source": "bounce_policy_contract"},
     }
+    bounce_event_id = f"rng:{state.event_index}:ally:actor:validation:action:1:bounce:1"
+    bounce_identity = {
+        "decision_scope": "bounce_target",
+        "decision_index": 1,
+        "action_id": "validation:action",
+        "action_level": 1,
+        "task_id": "bounce_policy",
+        "hit_index": 1,
+        "target_id": "enemy:target",
+        "derived_event_id": bounce_event_id,
+    }
+    bounce_key = choice_key_for_identity("bounce_target", bounce_identity)
     deterministic_a = TargetSystem().resolve_bounce_hit_target(
         state,
         actor_id="ally:actor",
@@ -279,7 +327,7 @@ def _bounce_cases() -> dict[str, Any]:
         action_level=1,
         event_payload={
             "rng_mode": "explicit_ledger",
-            "rng_choices": {"bounce:ally:actor:validation:action:1:1": "enemy:left"},
+            "rng_choices": {bounce_key: "enemy:left"},
         },
     )
     invalid = TargetSystem().resolve_bounce_hit_target(
@@ -293,7 +341,7 @@ def _bounce_cases() -> dict[str, Any]:
         action_level=1,
         event_payload={
             "rng_mode": "explicit_ledger",
-            "rng_choices": {"bounce:ally:actor:validation:action:1:1": "missing"},
+            "rng_choices": {bounce_key: "missing"},
         },
     )
     checks = {
@@ -342,7 +390,7 @@ def _surface_matrix() -> dict[str, Any]:
             "status": "executable_when_TargetShuffle_or_random_retarget_source_is_executable",
             "source_kind": "target_expression_ir",
             "unified_schema": True,
-            "ledger": "rng_choices; target_random_choices kept as compatibility input",
+            "ledger": "exact choice_key or event_id only",
         },
         {
             "surface": "bounce_target",

@@ -681,6 +681,8 @@ def _ai_policy(tbgd_root: Path, ai_path: str) -> dict[str, JSONValue]:
             "runtime_execution_admitted": False,
             "manual_route_action_execution_admitted": "depends_on_action_ir",
             "enemy_ai_runtime_execution_admitted": False,
+            "candidate_constraint_admitted": False,
+            "selection_controller": "external",
         }
     path = tbgd_root / ai_path
     if not path.exists():
@@ -693,6 +695,8 @@ def _ai_policy(tbgd_root: Path, ai_path: str) -> dict[str, JSONValue]:
             "runtime_execution_admitted": False,
             "manual_route_action_execution_admitted": "depends_on_action_ir",
             "enemy_ai_runtime_execution_admitted": False,
+            "candidate_constraint_admitted": False,
+            "selection_controller": "external",
         }
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -706,6 +710,8 @@ def _ai_policy(tbgd_root: Path, ai_path: str) -> dict[str, JSONValue]:
             "runtime_execution_admitted": False,
             "manual_route_action_execution_admitted": "depends_on_action_ir",
             "enemy_ai_runtime_execution_admitted": False,
+            "candidate_constraint_admitted": False,
+            "selection_controller": "external",
         }
     task_types = sorted(_collect_task_types(data))
     complex_types = sorted(task_type for task_type in task_types if task_type in COMPLEX_AI_TASKS)
@@ -730,6 +736,9 @@ def _ai_policy(tbgd_root: Path, ai_path: str) -> dict[str, JSONValue]:
         "runtime_execution_admitted": False,
         "manual_route_action_execution_admitted": "depends_on_action_ir",
         "enemy_ai_runtime_execution_admitted": False,
+        "candidate_constraint_admitted": admission_status == "executable",
+        "candidate_constraint_kind": "forced_sequence" if admission_status == "executable" else "none",
+        "selection_controller": "external",
     }
 
 

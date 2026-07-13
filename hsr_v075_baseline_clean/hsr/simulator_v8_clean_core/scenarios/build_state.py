@@ -381,6 +381,7 @@ def _apply_timeline_setup(state: BattleState, scenario: ScenarioSpec) -> _SetupA
             after=float(timeline.global_av),
             reason="scenario timeline global action value",
             source="scenario_setup",
+            before_exists="global_av" in state.global_flags,
             metadata={"setup_operation": "timeline_global_av", "source_kind": "scenario_initial_condition"},
         )
     )
@@ -392,6 +393,7 @@ def _apply_timeline_setup(state: BattleState, scenario: ScenarioSpec) -> _SetupA
             after=policy,
             reason="scenario timeline setup policy",
             source="scenario_setup",
+            before_exists="timeline_setup_policy" in state.global_flags,
             metadata={"setup_operation": "timeline_policy", "source_kind": "scenario_initial_condition"},
         )
     )
@@ -404,6 +406,7 @@ def _apply_timeline_setup(state: BattleState, scenario: ScenarioSpec) -> _SetupA
                 after=timeline.turn_owner_id,
                 reason="scenario timeline turn owner",
                 source="scenario_setup",
+                before_exists="turn_owner_id" in state.global_flags,
                 metadata={"setup_operation": "timeline_turn_owner", "source_kind": "scenario_initial_condition"},
             )
         )
@@ -929,7 +932,7 @@ def _initial_wave_runtime(rules: RuleBook, scenario: ScenarioSpec) -> dict[str, 
     blocked_entries = tuple(entry for entry in entries if entry.coverage_status != "executable")
     current_unit_ids = tuple(_wave_unit_id(definition, entry) for entry in executable_entries)
     blocked_reason = ""
-    status = "active"
+    status = "pending_start"
     if definition.coverage_status != "executable":
         blocked_reason = definition.blocked_reason or f"wave_definition_not_executable:{definition.coverage_status}"
         status = "blocked"
@@ -948,7 +951,7 @@ def _initial_wave_runtime(rules: RuleBook, scenario: ScenarioSpec) -> dict[str, 
         "stage_id": definition.stage_id,
         "current_wave_index": current_wave_index,
         "total_waves": definition.wave_count,
-        "started_wave_indices": [current_wave_index] if current_unit_ids else [],
+        "started_wave_indices": [],
         "cleared_wave_indices": [],
         "current_wave_unit_ids": list(current_unit_ids),
         "spawned_unit_ids_by_wave": {str(current_wave_index): list(current_unit_ids)} if current_unit_ids else {},

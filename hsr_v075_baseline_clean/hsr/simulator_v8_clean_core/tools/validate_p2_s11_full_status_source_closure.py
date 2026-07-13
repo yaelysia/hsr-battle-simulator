@@ -51,9 +51,16 @@ BLOCKED_VALIDATION_EVIDENCE = {
 }
 
 
-def run_validation(package_root: Path, tbgd_root: Path, output_dir: Path) -> dict[str, Any]:
-    ir = TBGDLowering(tbgd_root).build()
-    rules = RuleBook(ir)
+def run_validation(
+    package_root: Path,
+    tbgd_root: Path,
+    output_dir: Path,
+    *,
+    rules: RuleBook | None = None,
+) -> dict[str, Any]:
+    if rules is None:
+        rules = RuleBook(TBGDLowering(tbgd_root).build())
+    ir = rules.ir
     static_result = run_static_checks(package_root)
     matrix = build_p2_status_coverage_matrix(tbgd_root, ir, rules)
     inventory_checks = validate_p2_status_inventory_matrix(matrix)

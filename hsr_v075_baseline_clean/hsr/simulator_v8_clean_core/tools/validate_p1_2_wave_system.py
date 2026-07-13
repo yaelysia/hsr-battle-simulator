@@ -19,7 +19,7 @@ from ..systems.effect import EffectRegistry
 from ..systems.event_dispatch import EventDispatchSystem
 from ..systems.scheduler import CombatScheduler
 from ..systems.status import StatusSystem
-from ..systems.target import TargetSystem
+from ..systems.target import TargetPolicy, TargetSystem
 from ..systems.timeline import TimelineSystem
 from ..systems.wave import WaveSystem
 from ..tbgd.lowering import TBGDLowering
@@ -38,16 +38,19 @@ def run_validation(package_root: Path, tbgd_root: Path, output_dir: Path) -> dic
     candidate = _select_wave_definition(rules)
     action_ref, action_level = _select_action_definition(rules)
     setup_case = _initial_setup_case(rules, candidate, action_ref, action_level)
-    pure_query_case = _pure_query_case(rules, setup_case["state"])
-    advance_case = _advance_case(rules, setup_case["state"])
+    start_case = _start_case(rules, setup_case["state"])
+    started_state = start_case["after_state"]
+    pure_query_case = _pure_query_case(rules, started_state)
+    advance_case = _advance_case(rules, started_state)
     victory_case = _victory_case(rules, advance_case["after_state"])
-    defeat_case = _defeat_case(rules, setup_case["state"])
-    blocked_case = _blocked_case(rules, setup_case["state"], candidate)
+    defeat_case = _defeat_case(rules, started_state)
+    blocked_case = _blocked_case(rules, started_state, candidate)
     event_case = _event_case(rules, advance_case["after_state"], advance_case["events"])
-    scheduler_case = _scheduler_case(rules, setup_case["state"])
+    scheduler_case = _scheduler_case(rules, started_state)
     checks = {
         "lowering": _lowering_case(rules, candidate)["checks"],
         "initial_setup": setup_case["checks"],
+        "initial_wave_start": start_case["checks"],
         "pure_query": pure_query_case["checks"],
         "advance": advance_case["checks"],
         "victory": victory_case["checks"],
@@ -80,6 +83,7 @@ def run_validation(package_root: Path, tbgd_root: Path, output_dir: Path) -> dic
             "cases": {
                 "lowering": _lowering_case(rules, candidate),
                 "initial_setup": _strip_state(setup_case),
+                "initial_wave_start": _strip_state(start_case),
                 "pure_query": pure_query_case,
                 "advance": _strip_state(advance_case),
                 "victory": _strip_state(victory_case),
@@ -170,7 +174,9 @@ def _initial_setup_case(
     current_ids = tuple(runtime.get("current_wave_unit_ids", ())) if isinstance(runtime, dict) else ()
     next_ids = tuple(_wave_unit_id(definition, entry) for entry in rules.wave_entries_for_wave(definition.wave_definition_id, 1))
     checks = {
-        "wave_runtime_present": isinstance(runtime, dict) and runtime.get("schema_version") == "p1_2_wave_runtime_v1",
+        "wave_runtime_present": isinstance(runtime, dict)
+        and runtime.get("schema_version") == "p1_2_wave_runtime_v1"
+        and runtime.get("status") == "pending_start",
         "current_wave_units_spawned": all(unit_id in state.units for unit_id in current_ids),
         "current_wave_units_active": all(snapshot["units"][unit_id]["lifecycle_status"] == "active" for unit_id in current_ids),
         "next_wave_units_absent": all(unit_id not in state.units for unit_id in next_ids),
@@ -184,6 +190,42 @@ def _initial_setup_case(
         "state": state,
         "snapshot": snapshot,
         "source_traces": result.source_traces,
+    }
+
+
+def _start_case(rules: RuleBook, state: BattleState) -> dict[str, Any]:
+    before_hash = _snapshot_hash(state)
+    result = CombatScheduler(rules).step(state)
+    after = result.after_state
+    settlement_records = result.transition.transaction.settlement.records if result.transition.transaction.settlement else ()
+    lifecycle_records = [
+        record
+        for record in settlement_records
+        if record.get("record_type") in {"event_dispatch", "event_listener"}
+    ]
+    event_types = tuple(event.event_type for event in result.transition.transaction.events)
+    runtime = after.global_flags.get("wave_runtime")
+    checks = {
+        "initial_wave_start_committed": result.transition.outcome.successor_eligible,
+        "initial_wave_runtime_activated": isinstance(runtime, dict)
+        and runtime.get("status") == "active"
+        and state.wave_index in runtime.get("started_wave_indices", ()),
+        "wave_started_dispatched": "wave.started" in event_types and bool(lifecycle_records),
+        "wave_monster_dispatched": "wave.monster" in event_types
+        and any(
+            record.get("payload", {}).get("event", {}).get("event_type") == "wave.monster"
+            for record in lifecycle_records
+        ),
+        "phase_returns_idle": after.global_flags.get("combat_phase") == "idle",
+        "state_changed_only_by_transition": before_hash != _snapshot_hash(after)
+        and result.transition.transaction.mutations,
+    }
+    checks["ok"] = all(value for key, value in checks.items() if key != "ok")
+    return {
+        "checks": {"ok": checks["ok"], "checks": checks},
+        "state": state,
+        "after_state": after,
+        "transition": result.transition.to_json(),
     }
 
 
@@ -212,7 +254,16 @@ def _advance_case(rules: RuleBook, state: BattleState) -> dict[str, Any]:
     replay = MutationReducer().replay_snapshot(cleared_state, result.mutations, after.snapshot().to_json())
     runtime = after.global_flags.get("wave_runtime")
     next_ids = tuple(runtime.get("current_wave_unit_ids", ())) if isinstance(runtime, dict) else ()
-    targets = TargetSystem().enumerate_action_targets(after, "ally:probe")
+    targets = TargetSystem().enumerate_action_targets(
+        after,
+        "ally:probe",
+        TargetPolicy(
+            policy_id="validation:p1_2:enemy_single",
+            target_relation="enemy",
+            selection_mode="explicit_primary",
+            source_trace={"source_kind": "validation_fixture", "source_id": "p1_2:wave_targetability"},
+        ),
+    )
     timeline_plan = TimelineSystem().plan_next_actor(after, rules.default_timeline_rule())
     skipped = {str(item.get("unit_id")) for item in timeline_plan.skipped_units}
     wave_monster_events = [event for event in result.events if event.event_type == "wave.monster"]
@@ -339,6 +390,7 @@ def _blocked_case(rules: RuleBook, state: BattleState, definition: WaveDefinitio
 
 def _event_case(rules: RuleBook, state: BattleState, events: list[dict[str, Any]]) -> dict[str, Any]:
     dispatcher = EventDispatchSystem(rules, EffectRegistry(StatusSystem(rules)))
+    dispatch_state = replace(state, global_flags={**state.global_flags, "combat_phase": "wave_transition"})
     wave_event_json = next(event for event in events if event["event_type"] == "wave.monster")
     wave_event = GameEvent(
         "wave.monster",
@@ -349,8 +401,11 @@ def _event_case(rules: RuleBook, state: BattleState, events: list[dict[str, Any]
         process_only=True,
         payload=wave_event_json["payload"],
     )
-    dispatch = dispatcher.dispatch_event(state, event=wave_event)
-    fake = dispatcher.dispatch_event(state, event=GameEvent("wave.monster", source_id="wave_system", target_id="enemy:fake"))
+    dispatch = dispatcher.dispatch_event(dispatch_state, event=wave_event)
+    fake = dispatcher.dispatch_event(
+        dispatch_state,
+        event=GameEvent("wave.monster", source_id="wave_system", target_id="enemy:fake"),
+    )
     aliases = _aliases_from_records(dispatch.records)
     fake_aliases = _aliases_from_records(fake.records)
     family = rules.status_event_family("OnWaveMonster")
@@ -358,7 +413,7 @@ def _event_case(rules: RuleBook, state: BattleState, events: list[dict[str, Any]
         "wave_event_routes_to_on_wave_monster": any(alias.get("callback_event") == "OnWaveMonster" for alias in aliases),
         "wave_event_alias_not_payload_blocked": all(alias.get("blocked_dependency") != "wave_monster_payload_incomplete" for alias in aliases),
         "fake_wave_event_blocked": any(alias.get("blocked_dependency") == "wave_monster_payload_incomplete" for alias in fake_aliases),
-        "fake_wave_event_state_unchanged": fake.after_state == state and not fake.mutations,
+        "fake_wave_event_state_unchanged": fake.after_state == dispatch_state and not fake.mutations,
         "on_wave_monster_family_if_present_has_runtime_source": family is None or "wave.monster" in family.runtime_event_sources,
     }
     checks["ok"] = all(value for key, value in checks.items() if key != "ok")

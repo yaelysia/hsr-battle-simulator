@@ -43,9 +43,17 @@ from .validate_p1_3_summon_assistant_servant import (
 VALIDATION_VERSION = "p3_s9_summon_lifecycle_cleanup"
 
 
-def run_validation(package_root: Path, tbgd_root: Path, output_dir: Path) -> dict[str, Any]:
-    ir = TBGDLowering(tbgd_root).build()
-    rules = RuleBook(ir)
+def run_validation(
+    package_root: Path,
+    tbgd_root: Path,
+    output_dir: Path,
+    *,
+    rules: RuleBook | None = None,
+) -> dict[str, Any]:
+    lowering_build_count = 0
+    if rules is None:
+        rules = RuleBook(TBGDLowering(tbgd_root).build())
+        lowering_build_count = 1
     static_result = run_static_checks(package_root)
     servant_definition = _select_executable_servant_definition(rules)
     summon_intent = _select_executable_summon_monster_intent(rules)
@@ -73,7 +81,7 @@ def run_validation(package_root: Path, tbgd_root: Path, output_dir: Path) -> dic
                 "summon_intent_id": summon_intent.summon_intent_id,
             },
             "resource_budget": {
-                "rulebook_build_count": 1,
+                "rulebook_build_count": lowering_build_count,
                 "large_artifacts_written": False,
                 "output_scope": "summary_matrix_and_compact_case_audit_only",
             },

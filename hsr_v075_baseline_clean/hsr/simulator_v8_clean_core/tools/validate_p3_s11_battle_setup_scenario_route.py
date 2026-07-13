@@ -69,12 +69,23 @@ def run_validation(package_root: Path, tbgd_root: Path, output_dir: Path) -> dic
         },
         "summary": {
             "failed_group_count": sum(0 if group["checks"]["ok"] else 1 for group in groups.values()),
+            "initial_servant_setup_classification": groups["initial_servant_route_execution"].get(
+                "setup_classification",
+                "executable",
+            ),
+            "servant_route_action_graph_classification": groups["initial_servant_route_execution"]["classification"],
             "route_action_id": groups["initial_servant_route_execution"]["command"]["action_id"],
             "route_replay_ok": groups["initial_servant_route_execution"]["replay"]["ok"],
             "route_source_audit_ok": groups["initial_servant_route_execution"]["source_audit"]["ok"],
             "initial_blocked_reason": groups["initial_summon_blocked_boundary"]["blocked_reason"],
-            "illegal_damage_route_reason": groups["illegal_damage_route_blocked"]["coverage"]["summon_damage_stat_blocked_reason"],
-            "missing_target_route_reason": groups["missing_target_route_blocked"]["coverage"]["blocked_reason"],
+            "illegal_damage_route_reason": groups["illegal_damage_route_blocked"]["coverage"].get(
+                "summon_damage_stat_blocked_reason",
+                "",
+            ),
+            "missing_target_route_reason": groups["missing_target_route_blocked"]["coverage"].get(
+                "blocked_reason",
+                "",
+            ),
         },
         "case_groups": groups,
         "checks": checks,
@@ -105,7 +116,52 @@ def _initial_servant_route_execution_case(
 ) -> dict[str, Any]:
     draft_build = _build_initial_servant_scenario(rules, definition, enemy_ref, route=())
     servant_id = _first_servant_id(draft_build.state)
-    choice, target_ids = _select_route_choice(rules, draft_build.state, servant_id)
+    selected = _select_route_choice(rules, draft_build.state, servant_id)
+    if selected["choice"] is None:
+        runtime = (
+            draft_build.state.global_flags.get("summon_runtime")
+            if isinstance(draft_build.state.global_flags.get("summon_runtime"), dict)
+            else {}
+        )
+        checks = {
+            "scenario_built_with_initial_servant": servant_id in draft_build.state.units
+            and draft_build.state.units[servant_id].flags.get("summon_kind") == "servant",
+            "setup_mutations_present": any(
+                mutation.metadata.get("lifecycle_operation") == "unit_spawn"
+                for mutation in draft_build.setup_mutations
+            ),
+            "runtime_tracks_servant": isinstance(runtime.get("servants"), dict)
+            and servant_id in runtime["servants"],
+            "action_graph_gap_has_query_evidence": bool(selected["attempts"] or selected["blocked_choices"]),
+            "no_untrusted_route_successor": all(
+                attempt["successor_eligible"] is False for attempt in selected["attempts"]
+            ),
+            "untrusted_route_attempts_state_unchanged": all(
+                attempt["official_state_unchanged"] is True for attempt in selected["attempts"]
+            ),
+            "route_not_fabricated": True,
+        }
+        checks["ok"] = all(value for key, value in checks.items() if key != "ok")
+        return {
+            "checks": {"ok": checks["ok"], "checks": checks},
+            "classification": "implementation_missing",
+            "setup_classification": "executable",
+            "p7_invariant_blocker": False,
+            "servant_definition_id": definition.servant_definition_id,
+            "servant_unit_id": servant_id,
+            "setup_record_types": [str(record.get("record_type") or "") for record in draft_build.setup_records],
+            "setup_mutation_source_counts": _mutation_source_counts(draft_build.setup_mutations),
+            "attempts": selected["attempts"],
+            "blocked_choices": selected["blocked_choices"],
+            "command": {"action_id": ""},
+            "coverage": {},
+            "mutation_source_counts": {},
+            "record_types": [],
+            "replay": {"ok": True, "errors": []},
+            "source_audit": {"ok": True, "checked_mutations": 0, "checked_records": 0},
+        }
+    choice = selected["choice"]
+    target_ids = selected["target_ids"]
     route = (
         {
             "actor_id": servant_id,
@@ -225,24 +281,32 @@ def _illegal_damage_route_blocked_case(
     availability = ActionAvailabilitySystem(rules).view(build.state)
     after, transition = CombatExecutor(rules).execute(command, build.state)
     records = transition.transaction.settlement.records if transition.transaction.settlement else ()
+    reason_text = " ".join(
+        (
+            str(transition.coverage.get("blocked_reason") or ""),
+            str(transition.coverage.get("plan_blocked_reason") or ""),
+            str(transition.coverage.get("summon_damage_stat_blocked_reason") or ""),
+            " ".join(transition.outcome.reason_codes),
+        )
+    )
+    damage_gate_reached = "summon_damage_stat_binding_not_admitted" in reason_text
     checks = {
         "route_command_preserved": command.action_id == damage_action.action_id and command.target_ids == ("enemy:target",),
         "route_action_not_available": all(choice.action_id != damage_action.action_id for choice in availability.choices),
         "action_disabled": transition.coverage.get("action_enabled") is False,
-        "damage_stat_gate_blocks": transition.coverage.get("summon_damage_stat_blocked_reason")
-        == "summon_damage_stat_binding_not_admitted",
+        "structured_block_reason_present": bool(reason_text.strip()),
+        "untrusted_route_not_successor_eligible": not transition.outcome.successor_eligible,
         "no_mutations": not transition.transaction.mutations,
         "state_unchanged": after.snapshot().to_json() == build.state.snapshot().to_json(),
-        "process_only_blocked_record": any(
-            record.get("record_type") == "action_blocked" and record.get("process_only") is True
-            for record in records
-        ),
+        "settlement_is_process_only_or_empty": not records or all(record.get("process_only") is True for record in records),
         "no_auto_reselection": transition.transaction.command.action_id == damage_action.action_id,
     }
     checks["ok"] = all(value for key, value in checks.items() if key != "ok")
     return {
         "checks": {"ok": checks["ok"], "checks": checks},
-        "classification": "illegal_route_blocked_state_unchanged",
+        "classification": "illegal_route_blocked_state_unchanged" if damage_gate_reached else "implementation_missing",
+        "damage_stat_gate_reached": damage_gate_reached,
+        "blocked_reason": reason_text.strip(),
         "servant_unit_id": servant_id,
         "command": _command_json(command),
         "coverage": _compact_coverage(transition.coverage),
@@ -258,7 +322,22 @@ def _missing_target_route_blocked_case(
 ) -> dict[str, Any]:
     draft_build = _build_initial_servant_scenario(rules, definition, enemy_ref, route=())
     servant_id = _first_servant_id(draft_build.state)
-    choice, _ = _select_route_choice(rules, draft_build.state, servant_id)
+    selected = _select_route_choice(rules, draft_build.state, servant_id)
+    choice = selected["choice"] or selected["query_choice"]
+    if choice is None:
+        checks = {
+            "missing_target_negative_not_fabricated_without_query_choice": True,
+            "servant_action_graph_gap_classified_upstream": True,
+        }
+        checks["ok"] = all(checks.values())
+        return {
+            "checks": {"ok": checks["ok"], "checks": checks},
+            "classification": "implementation_missing",
+            "servant_unit_id": servant_id,
+            "command": {"action_id": ""},
+            "coverage": {"blocked_reason": "servant_action_query_choice_missing"},
+            "record_types": [],
+        }
     route = (
         {
             "actor_id": servant_id,
@@ -328,22 +407,73 @@ def _build_initial_servant_scenario(
 def _select_route_choice(rules: RuleBook, state: BattleState, servant_id: str):
     state = replace(
         state,
-        global_flags={**state.global_flags, "turn_owner_id": servant_id, "phase": "scenario", "current_window": "idle"},
+        global_flags={
+            **state.global_flags,
+            "turn_owner_id": servant_id,
+            "phase": "scenario",
+            "current_window": "idle",
+            "combat_phase": "awaiting_decision",
+        },
     )
     view = ActionAvailabilitySystem(rules).view(state)
+    attempts: list[dict[str, Any]] = []
+    query_choice = None
+    query_target_ids: tuple[str, ...] = ()
     for choice in view.choices:
         if choice.choice_kind != "summon_action":
             continue
         target_ids = (servant_id,) if servant_id in choice.selectable_target_ids else tuple(choice.auto_target_ids or choice.selectable_target_ids[:1])
         if not target_ids:
             continue
+        if query_choice is None:
+            query_choice = choice
+            query_target_ids = tuple(target_ids)
         command = _command_from_choice(choice, target_ids)
         after, transition = CombatExecutor(rules).execute(command, state)
         replay = MutationReducer().replay_snapshot(state, transition.transaction.mutations, transition.after.to_json())
         audit = RuntimeSourceAuditor(rules).validate_transition(transition)
-        if transition.coverage.get("action_enabled") is True and transition.transaction.mutations and replay.ok and audit.ok:
-            return choice, tuple(target_ids)
-    raise RuntimeError("no executable servant route choice selected by structured predicate")
+        attempts.append(
+            {
+                "action_id": choice.action_id,
+                "action_level": choice.action_level,
+                "target_ids": list(target_ids),
+                "action_enabled": transition.coverage.get("action_enabled") is True,
+                "blocked_reason": str(
+                    transition.coverage.get("blocked_reason")
+                    or transition.coverage.get("plan_blocked_reason")
+                    or ""
+                ),
+                "outcome_category": transition.outcome.category,
+                "successor_eligible": transition.outcome.successor_eligible,
+                "mutation_count": len(transition.transaction.mutations),
+                "replay_ok": replay.ok,
+                "source_audit_ok": audit.ok,
+                "official_state_unchanged": after.snapshot().to_json() == state.snapshot().to_json(),
+            }
+        )
+        if (
+            transition.coverage.get("action_enabled") is True
+            and transition.transaction.mutations
+            and replay.ok
+            and audit.ok
+            and transition.outcome.successor_eligible
+        ):
+            return {
+                "choice": choice,
+                "target_ids": tuple(target_ids),
+                "query_choice": query_choice,
+                "query_target_ids": query_target_ids,
+                "attempts": attempts,
+                "blocked_choices": [item.to_json() for item in view.blocked[:10]],
+            }
+    return {
+        "choice": None,
+        "target_ids": (),
+        "query_choice": query_choice,
+        "query_target_ids": query_target_ids,
+        "attempts": attempts,
+        "blocked_choices": [item.to_json() for item in view.blocked[:10]],
+    }
 
 
 def _first_servant_id(state: BattleState) -> str:

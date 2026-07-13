@@ -24,20 +24,24 @@ P7 kernel trust and combat semantics repair
 P7-S0 issue baseline accepted
 P7-S1 transition trust result contract accepted
 P7-S2 mutation preconditions and reducer conflict detection accepted
-next stage: P7-S3 selected execution graph atomic commit
+P7-S3..P7-S19 accepted
+P7-DONE accepted at 2026-07-13
+next stage: not selected; plan from retained content gaps
 ```
 
 当前验收口径：
 
 - P1 最小完整战斗纵切已通过。
 - P2 状态系统底座已通过。
-- P3 召唤物 / 忆灵底座已通过，但全正例未完成。
+- P3 召唤物 / 忆灵曾按旧 transition 口径通过底座验收；P7 收紧后 servant action graph 已重新归类为内容缺口，spawn、生命周期、状态、目标关系和来源审计底座仍可依赖。
 - P4 角色卡 / 怪物卡数据卡扩面底座已通过，但全正例未完成。
 - P5 公式 / 动态值 / 参数绑定通用准入底座已通过，但全正例未完成。
 - P6 架构边界回正已完成验收；出生模板、计算入口、访问边界和聚合阻断口径均已收口。
-- P7-S0 问题基线已完成独立验收；24 项问题全部保持 `confirmed_open`，十项 runtime probe 和三项结构化否定证据已固化，未修改 runtime。
+- P7-S0 问题基线已完成独立验收；当时 24 项问题以 `confirmed_open` 固化，随后已在 P7-S1 至 P7-S19 中逐项修正并完成最终验收。
 - P7-S1 Transition 可信结果契约已完成独立验收；不完整、未知和矛盾结果不能冒充正式后继，父 scheduler transition 会保留 diagnostic child 身份。
 - P7-S2 Mutation 前置条件与 reducer 冲突检测已完成独立验收；严格 before/op/after、路径存在性、同路径连续链、结构化冲突、整批回滚、不可变 Mutation JSON 和统一 UnitState codec 均已形成直接证据。
+- P7-S3 至 P7-S19 已完成统一验收；最终总账包含 24 项问题证据、18 个阶段证据和一次共享 RuleBook 的 9 项当前源码回归，空检查、缺项、错误类型及错误源码指纹负例均被拒绝。
+- P7-DONE 已于 2026-07-13 由验收线程勾选。P7 完成的是内核可信执行与当前已准入战斗语义，不代表 P2/P3/P4/P6 保留内容缺口或全角色 / 全怪物 / 全装备 / 全关卡扩面完成。
 
 P6 后的内核深度复审确认：现有 transition / replay / source audit 骨架值得保留，但动作完整性、Mutation 前置校验、动作与目标契约、调度阶段、伤害、护盾、状态概率、RNG、召唤和波次等路径仍有会影响真实战斗结果的问题。P7 用实际代码问题总账和通用不变量逐项回正这些语义，不把旧聚合 `ok=true` 外推为完整正确。
 
@@ -46,10 +50,10 @@ P3/P4/P5 的 `*_all_executable_complete=false` 和 P6 的 `p6_all_mechanisms_rei
 当前推荐下一阶段：
 
 ```text
-P7-S3 selected execution graph atomic commit
+retained content gap planning after P7
 ```
 
-P7-S0、P7-S1 和 P7-S2 已独立验收。下一步只执行 P7-S3：让一次动作实际选择的完整执行图统一预检并原子提交，任一选中节点失败时 mutation 为零且 state unchanged。S3 经独立验收前不得提前执行 S4-S19。P3/P4/P5 既有 admission backlog 和装备 / 构筑 / 关卡环境扩面继续保留。
+P7-S0 至 P7-S19 已全部验收。下一步尚未选定，应从 P2 action-delay callback graph、P3 servant action graph、P4 action formula runtime graph、P6 上游动作图及装备 / 构筑 / 关卡环境扩面中单独规划，不要修改 P7 已完成口径来掩盖这些保留缺口。
 
 ## 2. 下一线程优先入口
 
@@ -119,6 +123,10 @@ P1 过程计划已经归档，不作为默认入口：
 - `../live_validation_reports/v8_p6_architecture_boundary_refactor_checkpoint.md`
 - `../live_validation_reports/v8_p7_s0_kernel_trust_baseline_ready_for_review.md`（S0 执行 evidence；验收结论以 P7 checklist 和检查点提交为准）
 - `../live_validation_reports/v8_p7_s1_transition_trust_contract_ready_for_review.md`（S1 执行 evidence；验收结论以 P7 checklist 和检查点提交为准）
+- `../live_validation_reports/v8_p7_s2_mutation_reducer_contract_ready_for_review.md`（S2 执行 evidence；S2 已另行验收）
+- `../live_validation_reports/v8_p7_s3_selected_graph_atomic_commit_ready_for_review.md` 至 `v8_p7_s18_compact_semantic_state_ready_for_review.md`（S3-S18 专项执行 evidence）
+- `../live_validation_reports/v8_p7_s19_kernel_invariant_aggregate_ready_for_review.md`（S19 执行 evidence；最终裁决见检查点）
+- `../live_validation_reports/v8_p7_kernel_trust_and_combat_semantics_final_checkpoint.md`（P7 统一验收最终检查点）
 
 阶段内 `ready_for_review` 报告是 evidence 索引，不是验收结论本身。最终以对应 `checkpoint` 和验收线程结论为准。
 

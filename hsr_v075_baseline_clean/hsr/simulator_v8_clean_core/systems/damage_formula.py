@@ -5,8 +5,21 @@ import json
 from dataclasses import dataclass, field
 
 from ..core.model import BattleState, JSONValue, RNGEvent, UnitState
+from ..rules.engine_rule_registry import (
+    EngineRuleRegistry,
+    build_engine_rule_registry,
+    evaluate_defense_multiplier,
+    evaluate_resistance_multiplier,
+)
 from ..rules.ir import ActionDefinitionIR
-from .rng import RNGOutcome, RNGRequest, merge_rng_result_payload, resolve_rng_request
+from .rng import (
+    RNGOutcome,
+    RNGRequest,
+    choice_key_for_identity,
+    event_id_for_identity,
+    merge_rng_result_payload,
+    resolve_rng_request,
+)
 from .scaling_basis import resolve_scaling_basis
 
 
@@ -121,6 +134,7 @@ class DamageFormulaInput:
     rng_choices: dict[str, JSONValue] = field(default_factory=dict)
     rng_mode: str | None = None
     direct_modifier_terms: tuple[dict[str, JSONValue], ...] = ()
+    decision_identity: dict[str, JSONValue] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -183,6 +197,9 @@ class DamageFormulaResult:
 
 
 class DirectDamageFormula:
+    def __init__(self, engine_rules: EngineRuleRegistry | None = None) -> None:
+        self.engine_rules = engine_rules or build_engine_rule_registry()
+
     def calculate(self, formula_input: DamageFormulaInput) -> DamageFormulaResult:
         state = formula_input.state
         actor = state.units[formula_input.attacker_id]
@@ -206,8 +223,8 @@ class DirectDamageFormula:
 
         crit_resolution, rng_event, crit_bucket = _resolve_crit(formula_input, actor)
         damage_bonus_mult, damage_bonus_bucket = _damage_bonus_bucket(actor, element)
-        def_mult, defense_bucket = _defense_bucket(actor, target, formula_input)
-        res_mult, resistance_bucket = _resistance_bucket(actor, target, element)
+        def_mult, defense_bucket = _defense_bucket(actor, target, formula_input, self.engine_rules)
+        res_mult, resistance_bucket = _resistance_bucket(actor, target, element, self.engine_rules)
         damage_taken_mult, damage_taken_bucket = _damage_taken_bucket(target)
         damage_reduction_mult, damage_reduction_bucket = _damage_reduction_bucket(target)
         toughness_mult, toughness_bucket = _toughness_state_bucket(target)
@@ -266,11 +283,6 @@ def _resolve_crit(formula_input: DamageFormulaInput, actor: UnitState) -> tuple[
     crit_bonus = sum(float(term.get("value") or 0.0) for term in crit_modifier_terms)
     crit_rate = _clamp(_resource(actor, "critical_chance") + crit_bonus, 0.0, 1.0)
     crit_damage = _resource(actor, "critical_damage")
-    event_id = (
-        f"rng:{formula_input.state.event_index}:"
-        f"{formula_input.attacker_id}:{formula_input.action_definition.definition_id}:"
-        f"{formula_input.target_id}:crit"
-    )
     mode = str(formula_input.crit_mode or "").lower()
     forced_outcome_id = ""
     if mode in {"crit", "forced_crit", "true"}:
@@ -281,11 +293,32 @@ def _resolve_crit(formula_input: DamageFormulaInput, actor: UnitState) -> tuple[
         raise ValueError("expected crit mode is not executable in v0_209")
     elif mode not in {"", "deterministic", "deterministic_seed", "auto"}:
         raise ValueError(f"unknown crit mode {formula_input.crit_mode!r}")
+    identity = {
+        "decision_scope": "damage_crit",
+        "decision_index": 0,
+        "action_id": formula_input.action_definition.action_id,
+        "action_level": formula_input.action_definition.level,
+        "definition_id": formula_input.action_definition.definition_id,
+        "task_id": str(formula_input.decision_identity.get("task_id") or "damage_formula"),
+        "phase_id": str(formula_input.decision_identity.get("phase_id") or "damage"),
+        "hit_index": int(formula_input.decision_identity.get("hit_index") or 0),
+        "target_id": formula_input.target_id,
+        "derived_event_id": str(
+            formula_input.decision_identity.get("derived_event_id")
+            or f"damage_crit:{formula_input.state.event_index}:{formula_input.action_definition.definition_id}"
+        ),
+    }
+    choice_key = choice_key_for_identity("crit", identity)
+    event_id = event_id_for_identity(
+        "crit",
+        identity,
+        event_index=formula_input.state.event_index,
+    )
     request = RNGRequest(
         rng_type="crit",
         purpose="crit",
         event_id=event_id,
-        choice_key=f"crit:{formula_input.attacker_id}:{formula_input.action_definition.definition_id}:{formula_input.target_id}",
+        choice_key=choice_key,
         source="damage_formula",
         before_state=formula_input.state.rng_state,
         decision_kind="probability",
@@ -309,6 +342,7 @@ def _resolve_crit(formula_input: DamageFormulaInput, actor: UnitState) -> tuple[
             "crit_rate": crit_rate,
             "crit_damage": crit_damage,
         },
+        identity=identity,
     )
     resolution_result = resolve_rng_request(
         request,
@@ -374,7 +408,12 @@ def _damage_bonus_bucket(actor: UnitState, element: str | None) -> tuple[float, 
     )
 
 
-def _defense_bucket(actor: UnitState, target: UnitState, formula_input: DamageFormulaInput) -> tuple[float, DamageFormulaBucket]:
+def _defense_bucket(
+    actor: UnitState,
+    target: UnitState,
+    formula_input: DamageFormulaInput,
+    engine_rules: EngineRuleRegistry,
+) -> tuple[float, DamageFormulaBucket]:
     resource_def_reduction = _resource(target, "def_reduction")
     resource_def_ignore = _resource(actor, "def_ignore")
     direct_terms = _direct_modifier_terms(formula_input, bucket="defense", key="defender_defence_added_ratio")
@@ -394,7 +433,11 @@ def _defense_bucket(actor: UnitState, target: UnitState, formula_input: DamageFo
     def_reduction = resource_def_reduction + status_def_reduction
     def_ignore = resource_def_ignore + status_def_ignore
     effective_def = max(0.0, target.defense * (1.0 + defender_added_ratio - def_reduction - def_ignore))
-    multiplier = 1.0 if effective_def <= 0 else 1.0 - effective_def / (effective_def + 200.0 + 10.0 * actor.level)
+    multiplier, engine_rule = evaluate_defense_multiplier(
+        effective_defense=effective_def,
+        attacker_level=actor.level,
+        registry=engine_rules,
+    )
     terms = (
         _applied_term("target.stats", target.unit_id, "defense", "defense", "target", "always", target.defense, "base_target_defense", "unit.defense"),
         _applied_term("target.resources", target.unit_id, "defense", "def_reduction", "target", "always", resource_def_reduction, _neutral_reason(resource_def_reduction), "resources.def_reduction"),
@@ -414,11 +457,17 @@ def _defense_bucket(actor: UnitState, target: UnitState, formula_input: DamageFo
             "status_def_reduction": status_def_reduction,
             "status_def_ignore": status_def_ignore,
             "direct_defender_added_ratio": defender_added_ratio,
+            "engine_rule": engine_rule.to_json(),
         },
     )
 
 
-def _resistance_bucket(actor: UnitState, target: UnitState, element: str | None) -> tuple[float, DamageFormulaBucket]:
+def _resistance_bucket(
+    actor: UnitState,
+    target: UnitState,
+    element: str | None,
+    engine_rules: EngineRuleRegistry,
+) -> tuple[float, DamageFormulaBucket]:
     element_res_key = f"{element}_resistance" if element else ""
     element_pen_key = f"{element}_res_pen" if element else ""
     element_res = _resource(target, element_res_key) if element_res_key else 0.0
@@ -433,7 +482,11 @@ def _resistance_bucket(actor: UnitState, target: UnitState, element: str | None)
     selected_res = (element_res if uses_element_res else all_res) + status_res_delta
     element_pen = _resource(actor, element_pen_key) if element_pen_key else 0.0
     all_pen = _resource(actor, "all_res_pen")
-    multiplier = 1.0 - selected_res + element_pen + all_pen
+    multiplier, engine_rule = evaluate_resistance_multiplier(
+        resistance=selected_res,
+        penetration=element_pen + all_pen,
+        registry=engine_rules,
+    )
     target_res_term = (
         _applied_term("target.resources", target.unit_id, "resistance", element_res_key or "element_resistance", "target", f"element={element}", element_res, _neutral_reason(element_res), f"resources.{element_res_key}" if element_res_key else "resources.<element>_resistance")
         if uses_element_res
@@ -459,7 +512,11 @@ def _resistance_bucket(actor: UnitState, target: UnitState, element: str | None)
         multiplier=multiplier,
         applied_terms=applied_terms,
         skipped_terms=skipped_terms,
-        metadata={"selected_resistance": selected_res, "status_resistance_delta": status_res_delta},
+        metadata={
+            "selected_resistance": selected_res,
+            "status_resistance_delta": status_res_delta,
+            "engine_rule": engine_rule.to_json(),
+        },
     )
 
 
@@ -520,7 +577,7 @@ def _resource(unit: UnitState, key: str) -> float:
     return float(value) if isinstance(value, (int, float)) else 0.0
 
 
-def _status_modifier_terms(
+def status_modifier_terms(
     unit: UnitState,
     *,
     source_type: str,
@@ -591,6 +648,12 @@ def _status_modifier_terms(
                 )
             )
     return total, tuple(applied), tuple(skipped)
+
+
+# Transitional private alias for internal callers; the shared non-direct
+# pipeline imports the public contract above instead of duplicating the status
+# storage schema.
+_status_modifier_terms = status_modifier_terms
 
 
 def _status_details(unit: UnitState) -> tuple[dict[str, JSONValue], ...]:

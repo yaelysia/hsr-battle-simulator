@@ -109,6 +109,10 @@ def _validate_outcome(transition: BattleTransition) -> dict[str, JSONValue]:
     elif outcome.category == "diagnostic":
         if outcome.successor_eligible:
             errors.append("diagnostic transition must not be successor eligible")
+        if not state_unchanged:
+            errors.append("diagnostic transition must keep official state unchanged")
+        if mutation_count:
+            errors.append("diagnostic transition must not contain committed mutations")
         if not outcome.reason_codes:
             errors.append("diagnostic transition reason codes are missing")
     else:

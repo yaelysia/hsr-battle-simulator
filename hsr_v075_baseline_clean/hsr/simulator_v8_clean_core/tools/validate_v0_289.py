@@ -8,7 +8,8 @@ from typing import Any
 
 from .. import BASELINE_VERSION
 from ..core.model import BattleState, TargetResolution, UnitState
-from ..rules.ir import EffectIR, TargetExpressionIR
+from ..rules.expression_ir import CONDITION_EXPRESSION_NODE_SCHEMA
+from ..rules.ir import ConditionIR, EffectIR, TargetExpressionIR, TargetExpressionNodeIR
 from ..rules.rulebook import RuleBook
 from ..systems.status import StatusSystem
 from ..systems.target import TargetSystem
@@ -402,19 +403,30 @@ def _select_blocked_sort_or_fetch(rules: RuleBook) -> TargetExpressionIR:
 
 def _synthetic_boundary_expression(kind: str, raw_id: str) -> TargetExpressionIR:
     if kind == "TargetFilter":
-        raw = {
-            "$type": "RPG.GameCore.TargetFilter",
-            "TargetType": {"$type": "RPG.GameCore.TargetAlias", "Alias": "SkillTargetEntityList"},
-            "Predicate": {"$type": "RPG.GameCore.ByUnsupportedForV0289"},
-        }
+        source = rules_source(raw_id)
+        typed_node = TargetExpressionNodeIR(
+            expression_kind="TargetFilter",
+            candidate=TargetExpressionNodeIR(expression_kind="TargetAlias", alias="SkillTargetEntityList"),
+            predicate=ConditionIR(
+                condition_id=f"validation:v0_289:{raw_id}:predicate",
+                opcode="ByUnsupportedForV0289",
+                payload={},
+                source=source,
+                coverage_status="blocked",
+                expression_schema_version=CONDITION_EXPRESSION_NODE_SCHEMA,
+                blocked_reason="condition_opcode_not_admitted:ByUnsupportedForV0289",
+            ),
+        )
     else:
-        raw = {"$type": "RPG.GameCore.Retarget"}
+        source = rules_source(raw_id)
+        typed_node = TargetExpressionNodeIR(expression_kind="Retarget")
     return TargetExpressionIR(
         target_expression_id=f"validation:v0_289:{raw_id}",
         expression_kind=kind,
         alias="",
-        payload={"raw": raw},
-        source=rules_source(raw_id),
+        payload={"validation_boundary": True},
+        source=source,
+        node=typed_node,
         coverage_status="executable",
         admission_batch="validation_boundary_no_mutation",
     )

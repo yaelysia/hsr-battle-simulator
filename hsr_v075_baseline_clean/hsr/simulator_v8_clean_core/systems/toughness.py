@@ -5,8 +5,12 @@ from dataclasses import dataclass, field
 from ..core.model import BattleState, GameEvent, JSONValue, Mutation
 from ..core.settlement import SettlementRecord
 from ..rules.evaluator import NumericEvaluationContext, NumericEvaluationResult, RuleEvaluator
+from ..rules.engine_rule_registry import EngineRuleRegistry, build_engine_rule_registry
+from ..rules.expression_ir import numeric_fixed
+from ..rules.rulebook import RuleBook
 from .dynamic_values import binding_source_from_store, status_binding_sources, store_from_state
 from .mutation_events import enrich_event_with_mutation_payload
+from .damage_pipeline import DamageStagePipeline
 
 
 @dataclass(frozen=True)
@@ -21,6 +25,7 @@ class ToughnessPacket:
     target_group: str
     coverage_status: str
     source_trace: dict[str, JSONValue]
+    amount_stage: str = "family_base"
     amount_expr: dict[str, JSONValue] = field(default_factory=dict)
     metadata: dict[str, JSONValue] = field(default_factory=dict)
 
@@ -37,6 +42,7 @@ class ToughnessPacket:
             "target_group": self.target_group,
             "coverage_status": self.coverage_status,
             "source_trace": self.source_trace,
+            "amount_stage": self.amount_stage,
             "metadata": self.metadata,
         }
 
@@ -52,6 +58,16 @@ class ToughnessApplicationResult:
 
 
 class ToughnessSystem:
+    def __init__(
+        self,
+        rules: RuleBook | None = None,
+        *,
+        engine_rules: EngineRuleRegistry | None = None,
+    ) -> None:
+        self.engine_rules = engine_rules or (
+            rules.engine_rule_registry() if rules is not None else build_engine_rule_registry()
+        )
+
     def apply_packet(self, state: BattleState, packet: ToughnessPacket) -> ToughnessApplicationResult:
         if packet.coverage_status != "executable":
             return _blocked(packet, f"toughness_emission_not_executable:{packet.coverage_status}")
@@ -81,6 +97,24 @@ class ToughnessSystem:
                 extra={"weaknesses": list(weaknesses)},
                 amount_result=amount_result,
             )
+        if packet.amount_stage != "family_base":
+            return _blocked(packet, f"toughness_amount_stage_mismatch:{packet.amount_stage}:family_base", amount_result)
+        try:
+            pipeline = DamageStagePipeline(self.engine_rules).calculate(
+                state,
+                family="toughness",
+                attacker_id=packet.attacker_id,
+                target_id=packet.target_id,
+                producer_base_amount=amount,
+                element_type=packet.element_type,
+                source_trace=packet.source_trace,
+            )
+        except ValueError as exc:
+            return _blocked(packet, str(exc), amount_result)
+        if not pipeline.ok:
+            return _blocked(packet, pipeline.blocked_reason, amount_result)
+        amount = pipeline.final_amount
+        pipeline_json = pipeline.to_json()
         before = target.toughness
         after = max(0.0, before - amount)
         if after == before:
@@ -90,6 +124,8 @@ class ToughnessSystem:
             **packet.metadata,
             "amount": amount,
             "numeric_evaluation": amount_result.to_json(),
+            "producer_base_amount": pipeline.producer_base_amount,
+            "toughness_pipeline": pipeline_json,
             "weakness_check": {
                 "element_type": packet.element_type,
                 "weaknesses": list(weaknesses),
@@ -123,6 +159,10 @@ class ToughnessSystem:
                     "hit_profile_id": packet.hit_profile_id,
                     "element_type": packet.element_type,
                     "numeric_evaluation": amount_result.to_json(),
+                    "producer_base_amount": pipeline.producer_base_amount,
+                    "toughness_pipeline": pipeline_json,
+                    "applied_terms": list(pipeline.applied_terms),
+                    "skipped_terms": list(pipeline.skipped_terms),
                     "value_resolution": packet.metadata.get("value_resolution", {}),
                     "weakness_check": metadata["weakness_check"],
                 },
@@ -254,7 +294,7 @@ def _skipped(
 def _evaluate_amount(state: BattleState, packet: ToughnessPacket) -> NumericEvaluationResult:
     if packet.amount is not None:
         return RuleEvaluator().evaluate_numeric(
-            {"kind": "fixed", "value": packet.amount},
+            numeric_fixed(packet.amount),
             NumericEvaluationContext(source_trace=packet.source_trace),
         )
     unit_ids = tuple(

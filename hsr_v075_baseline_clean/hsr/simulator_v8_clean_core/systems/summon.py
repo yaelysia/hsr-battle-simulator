@@ -272,6 +272,20 @@ class SummonSystem:
                 intent_id=definition.servant_definition_id,
                 source_trace=definition.source.to_json(),
             )
+        defeated_replacements = _defeated_servant_instances(state, owner_id, definition)
+        replacement_policy = (
+            definition.lifecycle_source.get("replacement_policy")
+            if isinstance(definition.lifecycle_source.get("replacement_policy"), dict)
+            else {}
+        )
+        if defeated_replacements and not _replacement_policy_admitted(replacement_policy):
+            return self._blocked(
+                "servant_spawn",
+                "servant_replacement_policy_missing",
+                owner_id=owner_id,
+                intent_id=definition.servant_definition_id,
+                source_trace=definition.source.to_json(),
+            )
         unit_id = _servant_unit_id(state, definition, owner_id)
         if unit_id in state.units:
             return self._blocked(
@@ -325,6 +339,8 @@ class SummonSystem:
                 "servant_definition": definition.to_json(),
                 "unit_spawn_plans": [spawn_plan.to_json()],
                 "unit_spawn_requests": [spawn_request.to_json()],
+                "replacement_unit_ids": list(defeated_replacements),
+                "replacement_policy": replacement_policy,
             },
         )
 
@@ -497,6 +513,52 @@ class SummonSystem:
             if isinstance(unit.flags.get("servant_runtime_stat_values"), dict)
             else {}
         )
+        replacement_ids = tuple(
+            str(item)
+            for item in plan.metadata.get("replacement_unit_ids", [])
+            if isinstance(item, str) and item
+        )
+        replacement_plan = SummonTransitionPlan(
+            ok=True,
+            operation="remove_summon",
+            actor_id=plan.actor_id,
+            owner_id=plan.owner_id,
+            unit_ids=replacement_ids,
+            intent_id=plan.intent_id,
+            source_trace=plan.source_trace,
+            metadata={
+                "remove_reason": "replace defeated servant",
+                "replacement_policy": plan.metadata.get("replacement_policy")
+                if isinstance(plan.metadata.get("replacement_policy"), dict)
+                else {},
+            },
+        )
+        replacement_mutations: list[Mutation] = []
+        for replacement_id in replacement_ids:
+            replacement_mutations.extend(
+                _remove_cleanup_mutations(
+                    state,
+                    replacement_id,
+                    replacement_plan,
+                    unit_intent_id=plan.intent_id,
+                )
+            )
+            replacement_mutations.extend(
+                self.lifecycle.remove_mutations(
+                    state,
+                    replacement_id,
+                    reason="replace defeated servant",
+                    source="summon_system",
+                    removed_record={
+                        "reason": "servant_replaced",
+                        "replacement_servant_id": unit.unit_id,
+                        "servant_definition_id": plan.intent_id,
+                        "replacement_policy": replacement_plan.metadata["replacement_policy"],
+                        "source_trace": plan.source_trace,
+                    },
+                    source_trace=plan.source_trace,
+                )
+            )
         spawn_mutation = self.lifecycle.spawn_mutation(
             state,
             unit,
@@ -542,10 +604,14 @@ class SummonSystem:
             },
         )
         runtime_before = _summon_runtime(state)
-        runtime_after = _runtime_after_spawn(runtime_before, state, plan, (unit,))
+        runtime_without_replaced = _runtime_after_remove(runtime_before, state, replacement_plan)
+        runtime_after = _runtime_after_spawn(runtime_without_replaced, state, plan, (unit,))
         runtime_mutation = _runtime_mutation(state, runtime_before, runtime_after, plan, "record servant spawn")
-        mutations = (spawn_mutation, runtime_mutation)
-        events = (_spawn_event(state, plan, unit),)
+        mutations = (*replacement_mutations, spawn_mutation, runtime_mutation)
+        events = (
+            *tuple(_remove_event(state, replacement_plan, unit_id) for unit_id in replacement_ids),
+            _spawn_event(state, plan, unit),
+        )
         return SummonTransitionResult(plan, mutations, events, _plan_records(plan, mutations, process_only=False))
 
     def plan_remove(
@@ -567,7 +633,7 @@ class SummonSystem:
                 owner_id=str(unit.flags.get("owner_id") or ""),
                 source_trace=_source_trace_from_unit(unit),
             )
-        if not _remove_source_admitted(source_trace, admission):
+        if not _remove_admitted(admission):
             return self._blocked(
                 "remove_summon",
                 "summon_remove_source_not_admitted",
@@ -630,10 +696,7 @@ class SummonSystem:
             for unit_id in owned
             if unit_id in state.units
             and state.units[unit_id].flags.get("owner_death_policy") == "remove"
-            and _remove_source_admitted(
-                state.units[unit_id].flags.get("owner_death_policy_source_trace")
-                if isinstance(state.units[unit_id].flags.get("owner_death_policy_source_trace"), dict)
-                else None,
+            and _remove_admitted(
                 state.units[unit_id].flags.get("owner_death_policy_admission")
                 if isinstance(state.units[unit_id].flags.get("owner_death_policy_admission"), dict)
                 else None,
@@ -710,49 +773,82 @@ def _spawn_request_plan_blocked_reason(plan: SummonTransitionPlan, expected_kind
             return "summon_plan_spawn_request_unit_id_mismatch"
         if request.owner_id != plan.owner_id or request.summoner_id != plan.owner_id:
             return "summon_plan_spawn_request_owner_mismatch"
-        if request.source_id != plan.intent_id or request.source_trace != plan.source_trace:
-            return "summon_plan_spawn_request_source_mismatch"
+        if request.source_id != plan.intent_id:
+            return "summon_plan_spawn_request_source_identity_mismatch"
         if request.entry_id not in plan.entry_ids:
             return "summon_plan_spawn_request_entry_mismatch"
-        if not request.birth_template_id or not request.entity_ref or not request.entry_source_trace:
+        if not request.birth_template_id or not request.entity_ref:
             return "summon_plan_spawn_request_incomplete"
     return ""
 
 
 def _active_servant_duplicate(state: BattleState, owner_id: str, definition: ServantDefinitionIR) -> str:
-    runtime = _summon_runtime(state)
-    candidates: set[str] = set()
-    by_owner = runtime.get("by_owner") if isinstance(runtime.get("by_owner"), dict) else {}
-    owned = by_owner.get(owner_id) if isinstance(by_owner, dict) else None
-    if isinstance(owned, list):
-        candidates.update(str(item) for item in owned if isinstance(item, str))
-    for unit_id, unit in state.units.items():
-        if unit.flags.get("owner_id") == owner_id:
-            candidates.add(unit_id)
-    entities = runtime.get("entities") if isinstance(runtime.get("entities"), dict) else {}
-    for unit_id in sorted(candidates):
-        unit = state.units.get(unit_id)
-        entry = entities.get(unit_id) if isinstance(entities, dict) else None
-        runtime_active = isinstance(entry, dict) and entry.get("status", "active") == "active"
-        unit_active = unit is not None and unit.flags.get("lifecycle_status", "active") == "active"
-        if not runtime_active and not unit_active:
+    for unit_id, unit in sorted(state.units.items()):
+        if unit.flags.get("owner_id") != owner_id:
             continue
-        entry_ref = str(entry.get("servant_ref") or entry.get("template_ref") or "") if isinstance(entry, dict) else ""
-        unit_ref = str(unit.flags.get("servant_ref") or unit.template_id) if unit is not None else ""
-        entry_intent = str(entry.get("source_intent_id") or "") if isinstance(entry, dict) else ""
-        unit_intent = str(unit.flags.get("servant_definition_id") or unit.flags.get("summon_intent_id") or "") if unit is not None else ""
+        if UnitLifecycleSystem().status_of(unit) != "active":
+            continue
+        unit_ref = str(unit.flags.get("servant_ref") or unit.template_id)
+        unit_intent = str(unit.flags.get("servant_definition_id") or unit.flags.get("summon_intent_id") or "")
         if (
-            entry_ref == definition.servant_ref
-            or unit_ref == definition.servant_ref
-            or entry_intent == definition.servant_definition_id
+            unit_ref == definition.servant_ref
             or unit_intent == definition.servant_definition_id
         ):
             return unit_id
     return ""
 
 
+def _defeated_servant_instances(
+    state: BattleState,
+    owner_id: str,
+    definition: ServantDefinitionIR,
+) -> tuple[str, ...]:
+    return tuple(
+        unit_id
+        for unit_id, unit in sorted(state.units.items())
+        if unit.flags.get("owner_id") == owner_id
+        and UnitLifecycleSystem().status_of(unit) == "defeated"
+        and (
+            str(unit.flags.get("servant_ref") or unit.template_id) == definition.servant_ref
+            or str(unit.flags.get("servant_definition_id") or unit.flags.get("summon_intent_id") or "")
+            == definition.servant_definition_id
+        )
+    )
+
+
+def _replacement_policy_admitted(policy: dict[str, JSONValue]) -> bool:
+    return (
+        policy.get("admission_status") == "executable"
+        and policy.get("mode") == "replace_defeated_same_owner_servant"
+        and policy.get("policy_schema_version") == "servant_replacement_policy_v1"
+        and policy.get("subject_kind") == "servant"
+        and policy.get("owner_scope") == "same_owner"
+        and policy.get("alive_filter") == "alive_only"
+        and policy.get("comparison") == "less_equal_zero"
+        and policy.get("replacement_operation") == "remove_defeated_then_spawn"
+        and bool(policy.get("servant_id"))
+    )
+
+
 def _servant_unit_id(state: BattleState, definition: ServantDefinitionIR, owner_id: str) -> str:
-    seed = "|".join((definition.servant_definition_id, definition.servant_ref, owner_id, str(state.event_index)))
+    instance_ordinal = sum(
+        1
+        for unit in state.units.values()
+        if unit.flags.get("owner_id") == owner_id
+        and (
+            str(unit.flags.get("servant_ref") or unit.template_id) == definition.servant_ref
+            or str(unit.flags.get("servant_definition_id") or unit.flags.get("summon_intent_id") or "")
+            == definition.servant_definition_id
+        )
+    )
+    seed = "|".join(
+        (
+            definition.servant_definition_id,
+            definition.servant_ref,
+            owner_id,
+            str(instance_ordinal),
+        )
+    )
     digest = hashlib.sha1(seed.encode("utf-8")).hexdigest()[:12]
     return f"summon:servant:{digest}"
 
@@ -833,7 +929,7 @@ def _normalize_runtime_entity(unit_id: str, entry: dict[str, JSONValue]) -> dict
     normalized.setdefault("source_intent_id", str(entry.get("source_intent_id") or ""))
     normalized.setdefault("source_entry_id", str(entry.get("source_entry_id") or ""))
     normalized.setdefault("source_entry_trace", entry.get("source_entry_trace") if isinstance(entry.get("source_entry_trace"), dict) else {})
-    normalized.setdefault("targetability", {"targetable": True, "source": normalized.get("source_trace")})
+    normalized.setdefault("targetability", {"targetable": False, "source": {}, "blocked_reason": "targetability_source_missing"})
     normalized.setdefault("actionability", {"actionable": False, "source": normalized.get("source_trace")})
     normalized.setdefault("timeline", {"admitted": bool(entry.get("timeline_admitted")), "source": normalized.get("source_trace")})
     normalized.setdefault("lifetime", {"kind": "unknown", "source": normalized.get("source_trace")})
@@ -887,7 +983,7 @@ def _runtime_after_spawn(
         source_trace = plan.source_trace
         template_ref = str(unit.flags.get("servant_ref") or unit.template_id)
         unique_group = str(unit.flags.get("unique_group") or "")
-        targetable = bool(lifecycle_source.get("targetable", True))
+        targetable = lifecycle_source.get("targetable") is True
         action_admission = unit.flags.get("summon_action_admission") if isinstance(unit.flags.get("summon_action_admission"), dict) else {}
         timeline_source = unit.flags.get("initial_action_value_source_trace") if isinstance(unit.flags.get("initial_action_value_source_trace"), dict) else {}
         created = {
@@ -1241,12 +1337,7 @@ def _intent_id_from_unit(unit: UnitState) -> str:
     return ""
 
 
-def _remove_source_admitted(
-    source_trace: dict[str, JSONValue] | None,
-    admission: dict[str, JSONValue] | None,
-) -> bool:
-    if not isinstance(source_trace, dict) or not source_trace:
-        return False
+def _remove_admitted(admission: dict[str, JSONValue] | None) -> bool:
     if not isinstance(admission, dict):
         return False
     return admission.get("coverage_status") == "executable" and admission.get("remove_source_admitted") is True

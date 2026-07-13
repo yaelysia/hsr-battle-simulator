@@ -122,6 +122,7 @@ def _damage_defeat_case() -> dict[str, Any]:
         attack_type="normal",
         damage_formula_family="hp_loss",
         amount=10.0,
+        amount_stage="fixed_final",
         source_trace=_source("validation_damage").to_json(),
         metadata={
             "damage_source_owner_id": "ally:actor",

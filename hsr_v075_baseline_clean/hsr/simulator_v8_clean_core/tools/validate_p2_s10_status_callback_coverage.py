@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter, defaultdict
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +21,7 @@ from ..core.reducer import MutationReducer
 from ..core.settlement import SettlementTraceabilityValidator
 from ..core.source_audit import RuntimeSourceAuditor
 from ..core.transition_contract import TransitionContractValidator
+from ..core.transition_outcome import ExecutionNodeResult, classify_transition_outcome
 from ..rules.ir import EffectIR, StatusCallbackIR, StatusCallbackTaskIR
 from ..rules.rulebook import RuleBook
 from ..systems.effect import EffectRegistry
@@ -48,9 +50,16 @@ CASTER_ID = "ally:status_caster"
 TARGET_ID = "enemy:status_target"
 
 
-def run_validation(package_root: Path, tbgd_root: Path, output_dir: Path) -> dict[str, Any]:
-    ir = TBGDLowering(tbgd_root).build()
-    rules = RuleBook(ir)
+def run_validation(
+    package_root: Path,
+    tbgd_root: Path,
+    output_dir: Path,
+    *,
+    rules: RuleBook | None = None,
+) -> dict[str, Any]:
+    if rules is None:
+        rules = RuleBook(TBGDLowering(tbgd_root).build())
+    ir = rules.ir
     static_result = run_static_checks(package_root)
     matrix = build_p2_status_coverage_matrix(tbgd_root, ir, rules)
     inventory_checks = validate_p2_status_inventory_matrix(matrix)
@@ -128,6 +137,11 @@ def run_validation(package_root: Path, tbgd_root: Path, output_dir: Path) -> dic
                 "action_delay": delay_case["summary"],
                 "status_damage": status_damage_case["summary"],
             },
+            "content_gaps": {
+                "action_delay_callback_graph": delay_case["summary"]
+            }
+            if delay_case["summary"].get("classification") != "executable"
+            else {},
             "negative_cases": {
                 "missing_status": missing_status_case["summary"],
                 "missing_event_source": missing_event_source_case["summary"],
@@ -557,6 +571,7 @@ def _queue_downstream_sample(intent, rules: RuleBook) -> dict[str, Any]:
 
 
 def _action_delay_case(ir, rules: RuleBook) -> dict[str, Any]:
+    partial_candidates: list[dict[str, Any]] = []
     for callback, task in _iter_root_tasks(ir, rules, {"SetActionDelay"}):
         emissions = tuple(
             emission
@@ -573,7 +588,18 @@ def _action_delay_case(ir, rules: RuleBook) -> dict[str, Any]:
             modifier_name=callback.modifier_name,
             event=callback.event,
         )
-        if any(tuple(mutation.path)[-1] == "action_value" for mutation in result.mutations):
+        has_action_value_mutation = any(tuple(mutation.path)[-1] == "action_value" for mutation in result.mutations)
+        if has_action_value_mutation and not result.ok:
+            partial_candidates.append(
+                {
+                    "callback_id": callback.callback_id,
+                    "task_id": task.task_id,
+                    "errors": list(result.errors),
+                    "mutation_count": len(result.mutations),
+                }
+            )
+            continue
+        if has_action_value_mutation and result.ok:
             transition = _callback_transition(state, result, "p2_s10:action_delay", actor_id=CASTER_ID, target_id=OWNER_ID)
             transition_checks = _transition_checks(rules, transition, before_state=state)
             checks = {
@@ -597,6 +623,28 @@ def _action_delay_case(ir, rules: RuleBook) -> dict[str, Any]:
                 },
                 "case": {"callback": callback.to_json(), "task": task.to_json(), "transition": _compact_transition(transition)},
             }
+    if partial_candidates:
+        checks = {
+            "partial_candidates_classified": True,
+            "partial_mutation_not_claimed_as_committed_transition": True,
+            "complete_callback_graph_not_fabricated": True,
+            "implementation_gap_has_structured_evidence": all(
+                candidate["callback_id"] and candidate["task_id"] and candidate["errors"]
+                for candidate in partial_candidates
+            ),
+        }
+        checks["ok"] = all(value for key, value in checks.items() if key != "ok")
+        return {
+            "checks": {"ok": checks["ok"], "checks": checks},
+            "summary": {
+                "classification": "implementation_missing",
+                "name": "action_delay_callback_graph",
+                "primitive_runtime_candidate_count": len(partial_candidates),
+                "complete_callback_graph_count": 0,
+                "p7_invariant_blocker": False,
+            },
+            "case": {"partial_candidates": partial_candidates[:10]},
+        }
     return _missing_positive_case("action_delay")
 
 
@@ -685,6 +733,7 @@ def _missing_event_source_case(rules: RuleBook) -> dict[str, Any]:
 
 def _missing_wave_payload_case(rules: RuleBook) -> dict[str, Any]:
     state = _state_without_status(None)
+    state = replace(state, global_flags={**state.global_flags, "combat_phase": "wave_transition"})
     before_hash = _snapshot_hash(state)
     event = GameEvent("wave.monster", source_id="wave", target_id=TARGET_ID, window="OnWaveMonster", payload={})
     result = EventDispatchSystem(rules, EffectRegistry(StatusSystem(rules))).dispatch_event(state, event=event)
@@ -1035,6 +1084,19 @@ def _callback_transition(
     target_id: str,
 ) -> BattleTransition:
     command = ActionCommand(actor_id=actor_id, action_id=action_id, action_level=0, target_ids=(target_id,))
+    node = ExecutionNodeResult(
+        node_kind="status_callback_execution",
+        node_id=action_id,
+        status="complete" if result.ok else "blocked",
+        reason_code="" if result.ok else ",".join(result.errors) or "status_callback_execution_blocked",
+    )
+    outcome = classify_transition_outcome(
+        (node,),
+        state_changed=before_state.snapshot().to_json() != result.after_state.snapshot().to_json(),
+        mutation_count=len(result.mutations),
+        preflight_blocked=not result.ok,
+        preflight_reason=node.reason_code,
+    )
     return BattleTransition(
         transaction=ActionTransaction(
             command=command,
@@ -1052,6 +1114,7 @@ def _callback_transition(
             source="status_callback_coverage_validation",
         ),
         rng_events=result.rng_events,
+        outcome=outcome,
         coverage={"validation": VALIDATION_VERSION, "action_id": action_id},
     )
 

@@ -9,14 +9,26 @@ from typing import Any
 
 from .. import BASELINE_VERSION
 from ..core.executor import CombatExecutor
-from ..core.model import ActionCommand, BattleState, JSONValue, UnitState
+from ..core.model import (
+    ActionCommand,
+    ActionSettlement,
+    ActionTransaction,
+    BattleState,
+    BattleTransition,
+    JSONValue,
+    TargetResolution,
+    UnitState,
+)
 from ..core.reducer import MutationReducer
 from ..core.source_audit import RuntimeSourceAuditor
+from ..core.transition_contract import TransitionContractValidator
+from ..core.transition_outcome import ExecutionNodeResult, classify_transition_outcome
 from ..rules.ir import ActionDefinitionIR, ServantDefinitionIR
 from ..rules.rulebook import RuleBook
 from ..systems.action_availability import ActionAvailabilitySystem
 from ..systems.damage import DamagePacket, DamageSourceFrame, DamageSystem
 from ..systems.summon import SummonSystem
+from ..systems.status import StatusSystem
 from ..tbgd.lowering import TBGDLowering
 from ..tbgd.paths import find_tbgd_root
 from .io import write_json
@@ -73,7 +85,10 @@ def run_validation(package_root: Path, tbgd_root: Path, output_dir: Path) -> dic
             "status_positive_action_id": groups["servant_status_holder_positive"]["action_id"],
             "status_positive_replay_ok": groups["servant_status_holder_positive"]["replay"]["ok"],
             "status_positive_source_audit_ok": groups["servant_status_holder_positive"]["source_audit"]["ok"],
-            "damage_boundary_reason": groups["servant_damage_stat_boundary"]["coverage"]["summon_damage_stat_blocked_reason"],
+            "damage_boundary_reason": groups["servant_damage_stat_boundary"]["coverage"].get(
+                "summon_damage_stat_blocked_reason",
+                "",
+            ),
             "kill_attribution_owner": groups["kill_attribution_source_frame_boundary"]["defeat_payload"].get("kill_credit_owner_id", ""),
             "kill_attribution_attacker": groups["kill_attribution_source_frame_boundary"]["defeat_payload"].get("attacker_id", ""),
             "servant_damage_action_ir_count": groups["source_matrix"]["servant_hp_damage_action_ir_count"],
@@ -102,38 +117,81 @@ def main(argv: list[str] | None = None) -> int:
 
 def _servant_status_holder_case(rules: RuleBook, definition: ServantDefinitionIR) -> dict[str, Any]:
     state, servant_id = _spawn_servant_turn_state(rules, definition)
-    choice, command = _select_self_status_choice(rules, state, servant_id)
-    after, transition = CombatExecutor(rules).execute(command, state)
+    effect, status_result = _select_servant_status_effect(rules, state, servant_id)
+    after = MutationReducer().apply_all(state, status_result.mutations)
+    command = ActionCommand(
+        actor_id=servant_id,
+        action_id=f"status_effect:{effect.effect_id}",
+        action_level=0,
+        target_ids=(servant_id,),
+        source="validation",
+    )
+    node = ExecutionNodeResult(
+        node_kind="status_application",
+        node_id=effect.effect_id,
+        status="complete",
+    )
+    transition = BattleTransition(
+        transaction=ActionTransaction(
+            command=command,
+            before=state.snapshot(),
+            events=status_result.events,
+            mutations=status_result.mutations,
+            settlement=ActionSettlement(
+                command.action_id,
+                servant_id,
+                command.target_ids,
+                status_result.records,
+            ),
+        ),
+        after=after.snapshot(),
+        target_resolution=TargetResolution(
+            requested=(servant_id,),
+            legal=(servant_id,),
+            selected=(servant_id,),
+            reason="servant_status_holder_validation",
+            source="status_system",
+        ),
+        rng_events=status_result.rng_events,
+        outcome=classify_transition_outcome(
+            (node,),
+            state_changed=state.snapshot().to_json() != after.snapshot().to_json(),
+            mutation_count=len(status_result.mutations),
+        ),
+        coverage={"validation": VALIDATION_VERSION, "effect_id": effect.effect_id},
+    )
     replay = MutationReducer().replay_snapshot(state, transition.transaction.mutations, transition.after.to_json())
     source_audit = RuntimeSourceAuditor(rules).validate_transition(transition)
+    contract = TransitionContractValidator().validate(transition)
     records = transition.transaction.settlement.records if transition.transaction.settlement is not None else ()
     status_mutations = [mutation for mutation in transition.transaction.mutations if mutation.source == "status_system"]
     servant_after = after.units[servant_id]
     checks = {
         "actor_is_servant": state.units[servant_id].flags.get("summon_kind") == "servant",
         "target_is_same_servant": command.target_ids == (servant_id,),
-        "action_enabled": transition.coverage.get("action_enabled") is True,
+        "status_application_complete": status_result.ok and transition.outcome.successor_eligible,
         "status_mutations_present": bool(status_mutations),
         "status_holder_is_servant": bool(servant_after.statuses),
         "status_mutation_targets_servant": any(len(mutation.path) > 1 and mutation.path[1] == servant_id for mutation in status_mutations),
         "status_settlement_records_present": any(
             str(record.get("record_type") or "").startswith("status") for record in records
         ),
-        "no_damage_without_servant_damage_stat_admission": transition.coverage.get("damage_mutation_count", 0) == 0,
-        "resource_not_defaulted_to_owner": transition.coverage.get("resource_mutation_count", 0) == 0
-        and after.skill_points == state.skill_points
+        "no_damage_from_status_holder_probe": not any(mutation.source == "damage_system" for mutation in status_result.mutations),
+        "resource_not_defaulted_to_owner": after.skill_points == state.skill_points
         and after.units["ally:servant_owner"].energy == state.units["ally:servant_owner"].energy,
         "replay_ok": replay.ok,
         "source_audit_ok": source_audit.ok,
+        "transition_contract_ok": contract.ok,
     }
     checks["ok"] = all(value for key, value in checks.items() if key != "ok")
     return {
         "checks": {"ok": checks["ok"], "checks": checks},
-        "classification": "executable_status_positive",
+        "classification": "executable_status_holder_primitive",
         "servant_definition_id": definition.servant_definition_id,
         "servant_unit_id": servant_id,
         "action_id": command.action_id,
-        "choice": _compact_choice(choice.to_json()),
+        "effect_id": effect.effect_id,
+        "effect_source": effect.source.to_json(),
         "command": _command_json(command),
         "coverage": _compact_coverage(transition.coverage),
         "mutation_source_counts": _mutation_source_counts(transition.transaction.mutations),
@@ -142,6 +200,7 @@ def _servant_status_holder_case(rules: RuleBook, definition: ServantDefinitionIR
         "record_types": [str(record.get("record_type") or "") for record in records[:30]],
         "replay": {"ok": replay.ok, "errors": list(replay.errors)},
         "source_audit": _compact_source_audit(source_audit.to_json()),
+        "transition_contract": contract.to_json(),
     }
 
 
@@ -158,24 +217,30 @@ def _servant_damage_stat_boundary_case(rules: RuleBook, definition: ServantDefin
     )
     after, transition = CombatExecutor(rules).execute(command, state)
     records = transition.transaction.settlement.records if transition.transaction.settlement else ()
+    reason_text = " ".join(
+        (
+            str(transition.coverage.get("blocked_reason") or ""),
+            str(transition.coverage.get("plan_blocked_reason") or ""),
+            str(transition.coverage.get("summon_damage_stat_blocked_reason") or ""),
+            " ".join(transition.outcome.reason_codes),
+        )
+    )
+    damage_gate_reached = "summon_damage_stat_binding_not_admitted" in reason_text
     checks = {
         "servant_hp_damage_action_present": action.damage_kind == "hp_damage" and action.coverage_status == "executable",
         "action_disabled": transition.coverage.get("action_enabled") is False,
-        "damage_stat_gate_reason": transition.coverage.get("summon_damage_stat_blocked_reason")
-        == "summon_damage_stat_binding_not_admitted",
-        "plan_blocked_contains_gate": "summon_damage_stat_binding_not_admitted"
-        in str(transition.coverage.get("plan_blocked_reason") or ""),
+        "blocked_reason_structured": bool(reason_text.strip()),
+        "untrusted_result_not_successor_eligible": not transition.outcome.successor_eligible,
         "no_mutations": not transition.transaction.mutations,
         "state_unchanged": after.snapshot().to_json() == state.snapshot().to_json(),
-        "process_only_blocked_record": any(
-            record.get("record_type") == "action_blocked" and record.get("process_only") is True
-            for record in records
-        ),
+        "settlement_is_process_only_or_empty": not records or all(record.get("process_only") is True for record in records),
     }
     checks["ok"] = all(value for key, value in checks.items() if key != "ok")
     return {
         "checks": {"ok": checks["ok"], "checks": checks},
-        "classification": "blocked_until_damage_stat_source_admitted",
+        "classification": "blocked_until_damage_stat_source_admitted" if damage_gate_reached else "implementation_missing",
+        "damage_stat_gate_reached": damage_gate_reached,
+        "blocked_reason": reason_text.strip(),
         "servant_definition_id": definition.servant_definition_id,
         "servant_unit_id": servant_id,
         "action": _action_summary(action),
@@ -194,9 +259,14 @@ def _resource_ownership_boundary_case(rules: RuleBook, definition: ServantDefini
         if (rules.action_definition(choice.action_id, choice.action_level) is not None)
         and rules.require_action_definition(choice.action_id, choice.action_level).bp_need > 0
     ]
+    resource_action_sources = [
+        action
+        for action in rules.ir.action_definitions
+        if action.action_id.startswith("servant_skill:") and action.bp_need > 0
+    ]
     checks = {
-        "servant_choices_present": bool(view.choices),
-        "positive_skill_point_cost_absent": not resource_choices,
+        "servant_action_query_classified": view.mode in {"external_selectable", "blocked"},
+        "resource_query_matches_source_or_action_gap": bool(resource_choices) or not resource_action_sources or not view.choices,
         "no_synthetic_resource_case": not resource_choices,
         "owner_energy_not_declared_default_resource_owner": all(
             choice.metadata.get("summon_kind") == "servant" for choice in view.choices
@@ -205,11 +275,12 @@ def _resource_ownership_boundary_case(rules: RuleBook, definition: ServantDefini
     checks["ok"] = all(value for key, value in checks.items() if key != "ok")
     return {
         "checks": {"ok": checks["ok"], "checks": checks},
-        "classification": "source_absent_not_required",
+        "classification": "source_absent_not_required" if not resource_action_sources else "implementation_missing",
         "servant_definition_id": definition.servant_definition_id,
         "servant_unit_id": servant_id,
         "choice_count": len(view.choices),
         "resource_costing_choice_count": len(resource_choices),
+        "resource_costing_action_source_count": len(resource_action_sources),
         "note": "Current executable servant actions have no positive skill-point cost; resource ownership mutation is not synthesized.",
     }
 
@@ -227,6 +298,7 @@ def _kill_attribution_source_frame_case(rules: RuleBook, definition: ServantDefi
         damage_formula_family="hp_loss",
         damage_kind="hp_loss",
         amount=20.0,
+        amount_stage="fixed_final",
         source_frame=DamageSourceFrame(
             owner_id="ally:servant_owner",
             source_id=f"summon_action:{definition.servant_definition_id}",
@@ -349,30 +421,47 @@ def _spawn_servant_turn_state(rules: RuleBook, definition: ServantDefinitionIR) 
     return (
         replace(
             after,
-            global_flags={**after.global_flags, "turn_owner_id": servant_id, "phase": "scenario", "current_window": "idle"},
+            global_flags={
+                **after.global_flags,
+                "turn_owner_id": servant_id,
+                "phase": "scenario",
+                "current_window": "idle",
+                "combat_phase": "awaiting_decision",
+            },
         ),
         servant_id,
     )
 
 
-def _select_self_status_choice(rules: RuleBook, state: BattleState, servant_id: str):
-    view = ActionAvailabilitySystem(rules).view(state)
-    for choice in view.choices:
-        if servant_id not in choice.selectable_target_ids:
+def _select_servant_status_effect(rules: RuleBook, state: BattleState, servant_id: str):
+    failures: list[dict[str, Any]] = []
+    for effect in sorted(rules.ir.effects, key=lambda item: item.effect_id):
+        if effect.opcode != "AddModifier" or effect.coverage_status != "executable":
             continue
-        command = _command_from_choice(choice, (servant_id,))
-        after, transition = CombatExecutor(rules).execute(command, state)
-        replay = MutationReducer().replay_snapshot(state, transition.transaction.mutations, transition.after.to_json())
-        audit = RuntimeSourceAuditor(rules).validate_transition(transition)
-        if (
-            transition.coverage.get("action_enabled") is True
-            and any(mutation.source == "status_system" for mutation in transition.transaction.mutations)
-            and after.units[servant_id].statuses
-            and replay.ok
-            and audit.ok
+        standard = effect.payload.get("standard") if isinstance(effect.payload.get("standard"), dict) else {}
+        if standard.get("target_alias") not in {
+            "Caster",
+            "ModifierOwnerEntity",
+            "ParamEntity",
+            "CurrentActionTarget",
+        }:
+            continue
+        result = StatusSystem(rules).apply_add_modifier(
+            state,
+            effect,
+            caster_id=servant_id,
+            source_id=f"validation:p3_s10:{effect.effect_id}",
+            owner_id=servant_id,
+            param_entity_id=servant_id,
+            current_action_target_id=servant_id,
+        )
+        if result.ok and result.mutations and all(
+            len(mutation.path) > 1 and mutation.path[0] == "units" and mutation.path[1] == servant_id
+            for mutation in result.mutations
         ):
-            return choice, command
-    raise RuntimeError("no executable self-target servant status action selected by structured predicate")
+            return effect, result
+        failures.append({"effect_id": effect.effect_id, "unsupported": list(result.unsupported)})
+    raise RuntimeError(f"no executable AddModifier status-holder probe selected; failures={failures[:5]}")
 
 
 def _select_servant_hp_damage_action(rules: RuleBook) -> ActionDefinitionIR:

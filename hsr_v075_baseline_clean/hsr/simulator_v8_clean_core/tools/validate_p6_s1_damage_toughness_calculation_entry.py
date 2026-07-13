@@ -15,6 +15,7 @@ from ..core.source_audit import RuntimeSourceAuditor
 from ..rules.ir import CanonicalIR, ToughnessEmissionIR
 from ..rules.rulebook import RuleBook
 from ..systems.damage import DamagePacket, DamageSystem
+from ..systems.action_contract import _issue_action_submission_authorization
 from ..systems.toughness import ToughnessPacket, ToughnessSystem
 from ..tbgd.lowering import TBGDLowering
 from ..tbgd.paths import find_tbgd_root
@@ -39,11 +40,25 @@ REQUIRED_ROWS = {
 }
 
 
-def run_validation(package_root: Path, tbgd_root: Path, output_dir: Path) -> dict[str, Any]:
-    ir = TBGDLowering(tbgd_root).build()
-    rules = RuleBook(ir)
+def run_validation(
+    package_root: Path,
+    tbgd_root: Path,
+    output_dir: Path,
+    *,
+    rules: RuleBook | None = None,
+) -> dict[str, Any]:
+    shared_rules = rules is not None
+    if rules is None:
+        rules = RuleBook(TBGDLowering(tbgd_root).build())
+    ir = rules.ir
     case = _select_case(ir, rules)
     matrix = build_matrix(package_root, case)
+    matrix["resource_budget"] = {
+        **dict(matrix.get("resource_budget") or {}),
+        "lowering_build_count": 0 if shared_rules else 1,
+        "rulebook_build_count": 0 if shared_rules else 1,
+        "shared_rulebook_reused": shared_rules,
+    }
     matrix_checks = validate_matrix(matrix)
     result = {
         "version": VALIDATION_VERSION,
@@ -92,9 +107,16 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def build_matrix(package_root: Path, case: dict[str, Any]) -> dict[str, Any]:
+    positive_rows = (
+        [_damage_positive_row(case), _toughness_positive_row(case)]
+        if case.get("classification") == "executable"
+        else [
+            _runtime_graph_gap_row(case, "damage_explicit_calculation_entry", "damage_plan"),
+            _runtime_graph_gap_row(case, "toughness_explicit_calculation_entry", "toughness_plan"),
+        ]
+    )
     rows = [
-        _damage_positive_row(case),
-        _toughness_positive_row(case),
+        *positive_rows,
         _damage_negative_row(case),
         _toughness_negative_row(case),
         _static_guard_row(package_root),
@@ -142,10 +164,12 @@ def validate_matrix(matrix: dict[str, Any]) -> dict[str, Any]:
         "required_rows_present": not missing,
         "valid_classifications": not invalid_classifications,
         "row_checks_ok": all(dict(row.get("checks") or {}).get("ok") is True for row in rows.values()),
-        "damage_positive_uses_plan_entry": _row_check(rows, "damage_explicit_calculation_entry", "plan_has_value_request")
-        and _row_check(rows, "damage_explicit_calculation_entry", "resolution_ok"),
-        "toughness_positive_uses_plan_entry": _row_check(rows, "toughness_explicit_calculation_entry", "plan_has_value_request")
-        and _row_check(rows, "toughness_explicit_calculation_entry", "resolution_ok"),
+        "damage_entry_classified": _calculation_entry_row_ok(
+            rows, "damage_explicit_calculation_entry"
+        ),
+        "toughness_entry_classified": _calculation_entry_row_ok(
+            rows, "toughness_explicit_calculation_entry"
+        ),
         "negative_no_mutations": _row_check(rows, "damage_missing_entry_blocked_no_mutation", "no_mutations")
         and _row_check(rows, "toughness_missing_entry_blocked_no_mutation", "no_mutations"),
         "static_guard_ok": _row_check(rows, "executor_trace_mining_static_guard", "no_trace_binding_helper")
@@ -163,18 +187,59 @@ def validate_matrix(matrix: dict[str, Any]) -> dict[str, Any]:
 
 
 def _select_case(ir: CanonicalIR, rules: RuleBook) -> dict[str, Any]:
+    diagnostics: Counter[str] = Counter()
+    diagnostic_samples: list[dict[str, Any]] = []
+    first_runtime_graph_gap: dict[str, Any] | None = None
     for toughness in sorted(ir.toughness_emissions, key=lambda item: (item.action_id, item.level, item.toughness_emission_id)):
+        diagnostics["toughness_seen"] += 1
         if toughness.coverage_status != "executable":
+            diagnostics["toughness_not_executable"] += 1
             continue
         if not _is_fixed_toughness_amount(toughness):
+            diagnostics["toughness_not_fixed"] += 1
             continue
         if not rules.damage_emissions_for_action(toughness.action_id, toughness.level):
+            diagnostics["damage_emission_missing"] += 1
             continue
+        diagnostics["structural_candidate"] += 1
         definition = rules.action_definition(toughness.action_id, toughness.level)
         event = rules.action_event(toughness.action_id, toughness.level)
         if definition is None or event is None or definition.coverage_status != "executable":
+            diagnostics["definition_or_event_not_executable"] += 1
             continue
+        admissions = tuple(
+            item
+            for item in ir.action_admissions
+            if item.action_id == toughness.action_id
+            and item.action_level == toughness.level
+            and item.coverage_status == "executable"
+            and item.submission_modes
+            and item.allowed_windows
+        )
+        if not admissions:
+            diagnostics["action_admission_missing"] += 1
+            continue
+        diagnostics["action_admission_present"] += 1
+        admission = admissions[0]
+        submission_mode = (
+            "queue"
+            if "queue" in admission.submission_modes
+            else admission.submission_modes[0]
+        )
         state = _sample_state()
+        actor = replace(
+            state.units["ally:p6_s1_actor"],
+            template_id=admission.owner_entity_ref,
+        )
+        state = replace(
+            state,
+            units={**state.units, "ally:p6_s1_actor": actor},
+            global_flags={
+                **state.global_flags,
+                "turn_owner_id": actor.unit_id,
+                "current_window": admission.allowed_windows[0],
+            },
+        )
         command = ActionCommand(
             actor_id="ally:p6_s1_actor",
             action_id=toughness.action_id,
@@ -186,13 +251,6 @@ def _select_case(ir: CanonicalIR, rules: RuleBook) -> dict[str, Any]:
                 "selection_predicate": "executable_fixed_toughness_emission_with_damage_emission",
             },
         )
-        after, transition = CombatExecutor(rules).execute(command, state)
-        replay = MutationReducer().replay_snapshot(state, transition.transaction.mutations, transition.after.to_json())
-        audit = RuntimeSourceAuditor(rules).validate_transition(transition)
-        damage_value_resolutions = _value_resolutions_from_mutations(transition.transaction.mutations, "damage_system")
-        toughness_value_resolutions = _value_resolutions_from_mutations(transition.transaction.mutations, "toughness_system")
-        if not (damage_value_resolutions and toughness_value_resolutions and replay.ok and audit.ok):
-            continue
         plan = build_action_execution_plan(
             definition,
             event,
@@ -206,8 +264,105 @@ def _select_case(ir: CanonicalIR, rules: RuleBook) -> dict[str, Any]:
         damage_plan = _first_executable_value_plan(plan.damage_plan)
         toughness_plan = _first_executable_value_plan(plan.toughness_plan)
         if damage_plan is None or toughness_plan is None:
+            diagnostics["calculation_plan_entry_missing"] += 1
+            continue
+        after, transition = CombatExecutor(rules).execute(
+            command,
+            state,
+            submission_authorization=_issue_action_submission_authorization(
+                state=state,
+                submission_mode=submission_mode,
+                actor_id=actor.unit_id,
+                owner_entity_ref=admission.owner_entity_ref,
+                action_id=command.action_id,
+                action_level=command.action_level,
+                window=admission.allowed_windows[0],
+                source_id="validation:p6_s1:structured_action_admission",
+            ),
+        )
+        replay = MutationReducer().replay_snapshot(state, transition.transaction.mutations, transition.after.to_json())
+        audit = RuntimeSourceAuditor(rules).validate_transition(transition)
+        damage_value_resolutions = _value_resolutions_from_mutations(transition.transaction.mutations, "damage_system")
+        toughness_value_resolutions = _value_resolutions_from_mutations(transition.transaction.mutations, "toughness_system")
+        if not (damage_value_resolutions and toughness_value_resolutions and replay.ok and audit.ok):
+            diagnostics[f"outcome:{transition.outcome.category}"] += 1
+            for reason in transition.outcome.reason_codes:
+                diagnostics[f"outcome_reason:{_diagnostic_category(reason)}"] += 1
+            if not damage_value_resolutions:
+                diagnostics["damage_value_resolution_missing"] += 1
+            if not toughness_value_resolutions:
+                diagnostics["toughness_value_resolution_missing"] += 1
+            if not replay.ok:
+                diagnostics["replay_failed"] += 1
+            if not audit.ok:
+                diagnostics["source_audit_failed"] += 1
+                for violation in audit.violations:
+                    diagnostics[f"audit:{_compact_diagnostic(violation.reason)}"] += 1
+            if len(diagnostic_samples) < 5:
+                diagnostic_samples.append(
+                    {
+                        "action_id": toughness.action_id,
+                        "level": toughness.level,
+                        "admission_id": admission.admission_id,
+                        "submission_mode": submission_mode,
+                        "outcome_category": transition.outcome.category,
+                        "outcome_reason_codes": [
+                            _compact_diagnostic(reason)
+                            for reason in transition.outcome.reason_codes[:5]
+                        ],
+                        "coverage_blocked_reason": _compact_diagnostic(
+                            transition.coverage.get("blocked_reason")
+                        ),
+                        "damage_value_resolution_count": len(damage_value_resolutions),
+                        "toughness_value_resolution_count": len(toughness_value_resolutions),
+                        "replay_ok": replay.ok,
+                        "source_audit_ok": audit.ok,
+                        "audit_violations": [
+                            {
+                                "reason": _compact_diagnostic(item.reason),
+                                "mutation_id": item.mutation_id,
+                            }
+                            for item in audit.violations[:5]
+                        ],
+                    }
+                )
+            if first_runtime_graph_gap is None and replay.ok and audit.ok:
+                first_runtime_graph_gap = {
+                    "classification": "implementation_missing",
+                    "rules": rules,
+                    "state": state,
+                    "after": after,
+                    "transition": transition,
+                    "definition": definition,
+                    "command": command,
+                    "plan": plan,
+                    "damage_plan": damage_plan,
+                    "toughness_plan": toughness_plan,
+                    "replay": replay,
+                    "audit": audit,
+                    "damage_value_resolutions": damage_value_resolutions,
+                    "toughness_value_resolutions": toughness_value_resolutions,
+                    "runtime_sample": {
+                        "action_id": toughness.action_id,
+                        "action_level": toughness.level,
+                        "selected_toughness_emission_id": toughness.toughness_emission_id,
+                        "selection_predicate": "executable_fixed_toughness_emission_with_damage_emission",
+                        "action_admission_id": admission.admission_id,
+                        "submission_mode": submission_mode,
+                        "outcome_category": transition.outcome.category,
+                        "outcome_reason_codes": list(transition.outcome.reason_codes),
+                        "successor_eligible": transition.outcome.successor_eligible,
+                        "state_unchanged": after.snapshot().to_json() == state.snapshot().to_json(),
+                        "damage_value_resolution_count": len(damage_value_resolutions),
+                        "toughness_value_resolution_count": len(toughness_value_resolutions),
+                        "replay_ok": replay.ok,
+                        "source_audit_ok": audit.ok,
+                    },
+                    "selection_diagnostics": dict(diagnostics),
+                }
             continue
         return {
+            "classification": "executable",
             "rules": rules,
             "state": state,
             "after": after,
@@ -226,6 +381,8 @@ def _select_case(ir: CanonicalIR, rules: RuleBook) -> dict[str, Any]:
                 "action_level": toughness.level,
                 "selected_toughness_emission_id": toughness.toughness_emission_id,
                 "selection_predicate": "executable_fixed_toughness_emission_with_damage_emission",
+                "action_admission_id": admission.admission_id,
+                "submission_mode": submission_mode,
                 "damage_value_resolution_count": len(damage_value_resolutions),
                 "toughness_value_resolution_count": len(toughness_value_resolutions),
                 "damage_mutation_count": transition.coverage.get("damage_mutation_count", 0),
@@ -234,7 +391,61 @@ def _select_case(ir: CanonicalIR, rules: RuleBook) -> dict[str, Any]:
                 "source_audit_ok": audit.ok,
             },
         }
-    raise RuntimeError("no P6-S1 explicit damage+toughness calculation-entry sample selected")
+    if first_runtime_graph_gap is not None:
+        first_runtime_graph_gap["selection_diagnostics"] = dict(diagnostics)
+        return first_runtime_graph_gap
+    raise RuntimeError(
+        "no P6-S1 explicit damage+toughness calculation-entry sample selected; "
+        f"diagnostics={dict(diagnostics.most_common(20))}; samples={diagnostic_samples}"
+    )
+
+
+def _compact_diagnostic(value: object, *, limit: int = 160) -> str:
+    text = str(value or "")
+    return text if len(text) <= limit else f"{text[:limit]}..."
+
+
+def _diagnostic_category(value: object) -> str:
+    first_reason = str(value or "").split(",", 1)[0]
+    return _compact_diagnostic(first_reason, limit=96)
+
+
+def _runtime_graph_gap_row(
+    case: dict[str, Any],
+    row_id: str,
+    plan_key: str,
+) -> dict[str, JSONValue]:
+    plan = case[plan_key]
+    request = plan.value_request if isinstance(plan.value_request, dict) else {}
+    transition = case["transition"]
+    checks = _checks(
+        {
+            "plan_has_value_request": bool(request)
+            and request.get("binding_kind") not in {"", "blocked"},
+            "real_action_admission_present": bool(
+                case["runtime_sample"].get("action_admission_id")
+            ),
+            "runtime_graph_blocked": transition.outcome.category == "blocked",
+            "no_untrusted_successor": not transition.outcome.successor_eligible,
+            "state_unchanged": case["runtime_sample"].get("state_unchanged") is True,
+            "replay_ok": case["replay"].ok,
+            "source_audit_ok": case["audit"].ok,
+        }
+    )
+    return _row(
+        row_id,
+        classification="implementation_missing",
+        checks=checks,
+        details={
+            "plan_value_request": _request_summary(request),
+            "runtime_graph_gap": {
+                "outcome_category": transition.outcome.category,
+                "reason_codes": list(transition.outcome.reason_codes),
+                "successor_eligible": transition.outcome.successor_eligible,
+            },
+            "selection_diagnostics": case.get("selection_diagnostics", {}),
+        },
+    )
 
 
 def _damage_positive_row(case: dict[str, Any]) -> dict[str, JSONValue]:
@@ -504,6 +715,21 @@ def _checks(checks: dict[str, JSONValue]) -> dict[str, JSONValue]:
 
 def _row_check(rows: dict[str, Any], row_id: str, check_name: str) -> bool:
     return bool(rows.get(row_id, {}).get("checks", {}).get("checks", {}).get(check_name))
+
+
+def _calculation_entry_row_ok(rows: dict[str, Any], row_id: str) -> bool:
+    classification = str(dict(rows.get(row_id) or {}).get("classification") or "")
+    if classification == "executable":
+        return _row_check(rows, row_id, "plan_has_value_request") and _row_check(
+            rows, row_id, "resolution_ok"
+        )
+    return (
+        classification == "implementation_missing"
+        and _row_check(rows, row_id, "plan_has_value_request")
+        and _row_check(rows, row_id, "runtime_graph_blocked")
+        and _row_check(rows, row_id, "no_untrusted_successor")
+        and _row_check(rows, row_id, "state_unchanged")
+    )
 
 
 def _request_summary(request: dict[str, Any]) -> dict[str, JSONValue]:

@@ -107,7 +107,9 @@ class ResourceSystem:
         metadata: dict[str, JSONValue] | None = None,
     ) -> Mutation:
         unit = state.units[unit_id]
-        gain = 10.0
+        if not isinstance(rule.numeric_value, (int, float)) or isinstance(rule.numeric_value, bool):
+            raise ValueError("kill energy engine rule numeric value is missing")
+        gain = float(rule.numeric_value)
         cap = unit.max_energy if unit.max_energy > 0 else unit.energy + gain
         after = max(0.0, min(cap, unit.energy + gain))
         damage_event_id = str(defeated_event_payload.get("damage_event_id") or defeated_event_payload.get("damage_packet_id") or "")

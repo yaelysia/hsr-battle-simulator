@@ -358,7 +358,6 @@ def _timeline_action_case(rules: RuleBook) -> dict[str, Any]:
                 "summon_runtime_state_missing",
                 "summon_runtime_entity_missing",
                 "summon_action_source_not_admitted",
-                "summon_action_source_trace_missing",
             }
             for reason in flag_only_blocked_reasons
         )

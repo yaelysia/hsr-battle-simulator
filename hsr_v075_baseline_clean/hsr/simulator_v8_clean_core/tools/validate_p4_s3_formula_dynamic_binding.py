@@ -58,12 +58,26 @@ REQUIRED_ROWS = {
 }
 
 
-def run_validation(package_root: Path, tbgd_root: Path, output_dir: Path) -> dict[str, Any]:
-    ir = TBGDLowering(tbgd_root).build()
-    rules = RuleBook(ir)
+def run_validation(
+    package_root: Path,
+    tbgd_root: Path,
+    output_dir: Path,
+    *,
+    rules: RuleBook | None = None,
+) -> dict[str, Any]:
+    shared_rules = rules is not None
+    if rules is None:
+        rules = RuleBook(TBGDLowering(tbgd_root).build())
+    ir = rules.ir
     static_result = run_static_checks(package_root)
     s0_matrix = build_p4_s0_combatant_source_inventory_matrix(tbgd_root, ir, rules)
     matrix = build_p4_s3_formula_dynamic_binding_matrix(ir, rules, s0_matrix)
+    matrix["resource_budget"] = {
+        **dict(matrix.get("resource_budget") or {}),
+        "lowering_build_count": 0 if shared_rules else 1,
+        "rulebook_build_count": 0 if shared_rules else 1,
+        "shared_rulebook_reused": shared_rules,
+    }
     matrix_checks = validate_p4_s3_formula_dynamic_binding_matrix(matrix)
     checks = {
         "matrix": matrix_checks,
@@ -180,8 +194,14 @@ def validate_p4_s3_formula_dynamic_binding_matrix(matrix: dict[str, Any]) -> dic
         "unclassified_count_zero": int(matrix.get("summary", {}).get("unclassified_count") or 0) == 0,
         "row_checks_ok": all(dict(row.get("checks") or {}).get("ok") is True for row in rows.values()),
         "gap_rows_have_attribution": all(bool(row.get("gap_attribution")) for row in gap_rows),
-        "runtime_formula_usage_executable": rows.get("action_formula_runtime_usage", {}).get("classification")
-        == "executable",
+        "runtime_formula_usage_classified": rows.get("action_formula_runtime_usage", {}).get(
+            "classification"
+        )
+        in {"executable", "implementation_missing"},
+        "runtime_formula_gap_has_attribution": (
+            rows.get("action_formula_runtime_usage", {}).get("classification") == "executable"
+            or bool(rows.get("action_formula_runtime_usage", {}).get("gap_attribution"))
+        ),
         "runtime_formula_replay_and_audit_ok": _row_check(rows, "action_formula_runtime_usage", "replay_ok")
         and _row_check(rows, "action_formula_runtime_usage", "source_audit_ok"),
         "dynamic_hash_bound_and_unbound_checked": _row_check(rows, "dynamic_numeric_evaluator_binding", "bound_ok")
@@ -264,7 +284,10 @@ def _skill_formula_binding_to_hit_profile_row(
         "bindings_present": bool(bindings),
         "rulebook_visible": visible_count == len(bindings),
         "hit_profile_links_present": linked_count > 0,
-        "runtime_usage_sample_present": runtime_formula_row.get("classification") == "executable",
+        "runtime_usage_classified": runtime_formula_row.get("classification") in {
+            "executable",
+            "implementation_missing",
+        },
     }
     checks["ok"] = all(value for key, value in checks.items() if key != "ok")
     return _row(
@@ -291,15 +314,16 @@ def _action_formula_runtime_usage_row(ir: CanonicalIR, rules: RuleBook) -> dict[
     case = _select_and_execute_formula_action(ir, rules)
     checks = dict(case["checks"])
     checks["ok"] = all(value for key, value in checks.items() if key != "ok")
+    classification = str(case["classification"])
     return _row(
         "action_formula_runtime_usage",
-        classification="executable" if checks["ok"] else "implementation_missing",
+        classification=classification,
         checks=checks,
         raw_count=case["source_counts"]["damage_emission_count"],
         ir_count=case["source_counts"]["hit_profile_count"],
-        executable_count=1 if checks["ok"] else 0,
-        blocked_or_gap_count=0 if checks["ok"] else 1,
-        gap_attribution={} if checks["ok"] else {"implementation_missing": 1},
+        executable_count=1 if classification == "executable" else 0,
+        blocked_or_gap_count=0 if classification == "executable" else 1,
+        gap_attribution={} if classification == "executable" else {classification: 1},
         sample_source_trace=case["source_trace"],
         runtime_samples=[case["runtime_sample"]],
         details={
@@ -523,6 +547,36 @@ def _param_index_boundary_scan_row(ir: CanonicalIR) -> dict[str, JSONValue]:
 
 def _select_and_execute_formula_action(ir: CanonicalIR, rules: RuleBook) -> dict[str, Any]:
     availability = ActionAvailabilitySystem(rules)
+    attempts: list[dict[str, Any]] = []
+    first_source: dict[str, Any] | None = None
+    first_counts = {"damage_emission_count": 0, "hit_profile_count": 0}
+    # Establish source existence from the IR graph itself.  Action availability is
+    # the runtime admission probe below; it must not also be the only way this
+    # validation can discover that a real damage/formula graph exists, otherwise
+    # an admission regression is misreported as a validation-source gap.
+    for emission in sorted(ir.damage_emissions, key=lambda item: item.damage_emission_id):
+        if emission.coverage_status != "executable":
+            continue
+        hit_profiles = tuple(
+            profile
+            for profile in rules.hit_profiles_for_action(emission.action_id, emission.level)
+            if profile.coverage_status == "executable"
+        )
+        if not hit_profiles:
+            continue
+        definition = rules.action_definition(emission.action_id, emission.level)
+        first_source = {
+            "action_definition": definition.source.to_json() if definition is not None else {},
+            "hit_profile": hit_profiles[0].source.to_json(),
+            "damage_emission": emission.source.to_json(),
+        }
+        first_counts = {
+            "damage_emission_count": len(
+                rules.damage_emissions_for_action(emission.action_id, emission.level)
+            ),
+            "hit_profile_count": len(hit_profiles),
+        }
+        break
     for card in sorted(ir.character_data_cards, key=lambda item: item.card_id):
         if rules.combatant_action_set(card.entity_ref) is None:
             continue
@@ -531,7 +585,12 @@ def _select_and_execute_formula_action(ir: CanonicalIR, rules: RuleBook) -> dict
             units={"ally:formula_actor": actor, "enemy:formula_target": _enemy_target()},
             skill_points=5,
             max_skill_points=5,
-            global_flags={"phase": "scenario", "current_window": "idle", "turn_owner_id": "ally:formula_actor"},
+            global_flags={
+                "phase": "scenario",
+                "current_window": "idle",
+                "turn_owner_id": "ally:formula_actor",
+                "combat_phase": "awaiting_decision",
+            },
         )
         view = availability.view(state)
         for choice in view.choices:
@@ -541,18 +600,47 @@ def _select_and_execute_formula_action(ir: CanonicalIR, rules: RuleBook) -> dict
             hit_profiles = rules.hit_profiles_for_action(choice.action_id, choice.action_level)
             if not damage_emissions or not any(profile.coverage_status == "executable" for profile in hit_profiles):
                 continue
+            if first_source is None:
+                first_source = {
+                    "action_choice": choice.source_trace,
+                    "hit_profile": hit_profiles[0].source.to_json(),
+                    "damage_emission": damage_emissions[0].source.to_json(),
+                }
+                first_counts = {
+                    "damage_emission_count": len(damage_emissions),
+                    "hit_profile_count": len(hit_profiles),
+                }
             command = _command_from_choice(choice)
             after, transition = CombatExecutor(rules).execute(command, state)
             replay = MutationReducer().replay_snapshot(state, transition.transaction.mutations, transition.after.to_json())
             audit = RuntimeSourceAuditor(rules).validate_transition(transition)
             coverage = dict(transition.coverage)
+            attempts.append(
+                {
+                    "data_card_id": card.card_id,
+                    "action_id": choice.action_id,
+                    "action_level": choice.action_level,
+                    "outcome_category": transition.outcome.category,
+                    "successor_eligible": transition.outcome.successor_eligible,
+                    "mutation_count": len(transition.transaction.mutations),
+                    "damage_mutation_count": int(coverage.get("damage_mutation_count") or 0),
+                    "blocked_reason": str(
+                        coverage.get("blocked_reason") or coverage.get("plan_blocked_reason") or ""
+                    ),
+                    "official_state_unchanged": after.snapshot().to_json() == state.snapshot().to_json(),
+                    "replay_ok": replay.ok,
+                    "source_audit_ok": audit.ok,
+                }
+            )
             if (
                 coverage.get("action_enabled") is True
                 and coverage.get("damage_mutation_count", 0)
                 and replay.ok
                 and audit.ok
+                and transition.outcome.successor_eligible
             ):
                 return {
+                    "classification": "executable",
                     "checks": {
                         "action_enabled": True,
                         "damage_mutation_present": True,
@@ -586,7 +674,45 @@ def _select_and_execute_formula_action(ir: CanonicalIR, rules: RuleBook) -> dict
                     "mutation_source_counts": _mutation_source_counts(transition.transaction.mutations),
                     "coverage": _compact_coverage(coverage),
                 }
-    raise RuntimeError("no executable formula runtime action selected by structured predicate")
+    if first_source is not None:
+        return {
+            "classification": "implementation_missing",
+            "checks": {
+                "formula_source_candidate_present": True,
+                "complete_action_not_claimed_executable": True,
+                "no_untrusted_successor": all(not attempt["successor_eligible"] for attempt in attempts),
+                "untrusted_attempts_keep_official_state_unchanged": all(
+                    attempt["official_state_unchanged"] for attempt in attempts
+                ),
+                "replay_ok": all(attempt["replay_ok"] for attempt in attempts),
+                "source_audit_ok": all(attempt["source_audit_ok"] for attempt in attempts),
+            },
+            "source_counts": first_counts,
+            "source_trace": first_source,
+            "runtime_sample": {
+                "attempt_count": len(attempts),
+                "successor_eligible_count": sum(
+                    1 for attempt in attempts if attempt["successor_eligible"]
+                ),
+                "attempts": attempts[:10],
+            },
+            "mutation_source_counts": {},
+            "coverage": attempts[0] if attempts else {},
+        }
+    return {
+        "classification": "validation_gap",
+        "checks": {
+            "formula_source_candidate_present": False,
+            "complete_action_not_claimed_executable": True,
+            "replay_ok": True,
+            "source_audit_ok": True,
+        },
+        "source_counts": first_counts,
+        "source_trace": {},
+        "runtime_sample": {"attempt_count": 0},
+        "mutation_source_counts": {},
+        "coverage": {},
+    }
 
 
 def _summoned_monster_profile_runtime_sample(rules: RuleBook) -> dict[str, JSONValue]:

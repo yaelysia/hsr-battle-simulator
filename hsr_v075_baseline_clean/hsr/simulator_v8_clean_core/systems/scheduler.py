@@ -1,7 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+import hashlib
+import json
+from dataclasses import dataclass, field, replace
 
+from ..core.atomic_commit import finalize_selected_execution_graph, records_for_atomic_result
 from ..core.model import (
     ActionCommand,
     ActionSettlement,
@@ -15,18 +18,41 @@ from ..core.model import (
 )
 from ..core.reducer import MutationReducer
 from ..core.settlement import SettlementRecord
-from ..core.transition_outcome import ExecutionNodeResult, ExecutionNodeStatus, classify_transition_outcome
+from ..core.transition_outcome import ExecutionNodeResult, ExecutionNodeStatus
 from ..rules.ir import AbilityPhaseIR, IRSource, QueueResolutionIR
 from ..rules.rulebook import RuleBook
 from .ability import AbilityTaskSystem
 from .effect import EffectRegistry
 from .enemy_action import EnemyActionCandidate, EnemyActionSystem
 from .event_dispatch import EventDispatchSystem
-from .queue import QUEUE_WINDOW_FAMILY_ORDER, QueueDrainPlan, QueueEntry, QueueSystem
+from .queue import QUEUE_DRAIN_STEP_BUDGET, QUEUE_WINDOW_FAMILY_ORDER, QueueDrainPlan, QueueEntry, QueueSystem
+from .phase_machine import (
+    ACTION_EXECUTION,
+    AWAITING_DECISION,
+    IDLE,
+    POST_ACTION,
+    PRE_ACTION,
+    TIMELINE_ADVANCING,
+    TURN_BEGIN,
+    TURN_END,
+    WAVE_TRANSITION,
+    ENDED,
+    CombatPhaseMachine,
+)
 from .resource import ResourceSystem
 from .status import StatusSystem, status_control_gate_for_actor
 from .timeline import TimelineSystem, TurnAdvancePlan, TurnAdvanceResult
 from .wave import WaveSystem
+
+
+_DECISION_AUTHORIZATION_ISSUER = object()
+TIMELINE_TIE_CHOICE_ACTION_ID = "timeline:select_tied_actor"
+
+
+@dataclass(frozen=True)
+class _DecisionAuthorizationSeal:
+    issuer: object = field(repr=False, compare=False)
+    claims: tuple[object, ...]
 
 
 @dataclass(frozen=True)
@@ -34,6 +60,97 @@ class SchedulerStepResult:
     after_state: BattleState
     transition: BattleTransition
     child_transitions: tuple[BattleTransition, ...] = ()
+
+
+@dataclass(frozen=True)
+class DecisionSubmissionAuthorization:
+    decision_id: str
+    state_revision: str
+    actor_id: str
+    action_id: str
+    action_level: int
+    _seal: _DecisionAuthorizationSeal | None = field(default=None, repr=False, compare=False)
+
+    def blocked_reason(self, command: ActionCommand, actual_state_revision: str) -> str:
+        if not _decision_authorization_seal_valid(self):
+            return "decision_submission_authorization_not_issued"
+        if not self.decision_id or not self.state_revision:
+            return "decision_submission_authorization_identity_missing"
+        if self.state_revision != actual_state_revision:
+            return "decision_submission_authorization_state_mismatch"
+        if self.actor_id != command.actor_id:
+            return "decision_submission_authorization_actor_mismatch"
+        if self.action_id != command.action_id or self.action_level != command.action_level:
+            return "decision_submission_authorization_action_mismatch"
+        return ""
+
+
+def _issue_decision_submission_authorization(
+    *,
+    decision_id: str,
+    state_revision: str,
+    actor_id: str,
+    action_id: str,
+    action_level: int,
+) -> DecisionSubmissionAuthorization:
+    authorization = DecisionSubmissionAuthorization(
+        decision_id=decision_id,
+        state_revision=state_revision,
+        actor_id=actor_id,
+        action_id=action_id,
+        action_level=action_level,
+    )
+    return DecisionSubmissionAuthorization(
+        **_decision_authorization_payload(authorization),
+        _seal=_DecisionAuthorizationSeal(
+            issuer=_DECISION_AUTHORIZATION_ISSUER,
+            claims=_decision_authorization_claims(authorization),
+        ),
+    )
+
+
+def _decision_authorization_payload(
+    authorization: DecisionSubmissionAuthorization,
+) -> dict[str, object]:
+    return {
+        "decision_id": authorization.decision_id,
+        "state_revision": authorization.state_revision,
+        "actor_id": authorization.actor_id,
+        "action_id": authorization.action_id,
+        "action_level": authorization.action_level,
+    }
+
+
+def _decision_authorization_claims(
+    authorization: DecisionSubmissionAuthorization,
+) -> tuple[object, ...]:
+    payload = _decision_authorization_payload(authorization)
+    return tuple(payload[key] for key in (
+        "decision_id",
+        "state_revision",
+        "actor_id",
+        "action_id",
+        "action_level",
+    ))
+
+
+def _decision_authorization_seal_valid(authorization: DecisionSubmissionAuthorization) -> bool:
+    seal = authorization._seal
+    return (
+        isinstance(seal, _DecisionAuthorizationSeal)
+        and seal.issuer is _DECISION_AUTHORIZATION_ISSUER
+        and seal.claims == _decision_authorization_claims(authorization)
+    )
+
+
+def _scheduler_state_revision(state: BattleState) -> str:
+    payload = json.dumps(
+        state.snapshot().to_json(),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return f"state:{hashlib.sha256(payload.encode('utf-8')).hexdigest()[:24]}"
 
 
 @dataclass(frozen=True)
@@ -65,11 +182,20 @@ class CombatScheduler:
         self.ability_tasks = AbilityTaskSystem(rules, self.effects, reducer=self.reducer)
         self.event_dispatcher = EventDispatchSystem(rules, self.effects, reducer=self.reducer)
         self.wave = WaveSystem(rules)
+        self.phases = CombatPhaseMachine()
 
     def action_availability(self, state: BattleState):
         from .action_availability import ActionAvailabilitySystem
 
         return ActionAvailabilitySystem(self.rules).view(state)
+
+    def reject_decision_submission(
+        self,
+        state: BattleState,
+        reason: str,
+        payload: dict[str, JSONValue],
+    ) -> SchedulerStepResult:
+        return self._blocked(state, "scheduler:decision_submission", reason, payload)
 
     def initialize_timeline(
         self,
@@ -77,7 +203,14 @@ class CombatScheduler:
         *,
         explicit_overrides: tuple[str, ...] = (),
     ) -> SchedulerStepResult:
-        rule = self.rules.default_timeline_rule()
+        rule, rule_blocked_reason = self.rules.select_timeline_rule()
+        if rule is None:
+            return self._blocked(
+                state,
+                "timeline:initialize",
+                rule_blocked_reason,
+                {"engine_rule_kind": "timeline"},
+            )
         result = self.timeline.initialize_action_values(state, rule, explicit_overrides=explicit_overrides)
         after = self.reducer.apply_all(state, result.mutations)
         return SchedulerStepResult(
@@ -104,6 +237,14 @@ class CombatScheduler:
             return self._blocked(state, "queue:manual_ultimate_request", "manual_ultimate_action_definition_missing", {"command": _command_payload(command)})
         if action_event is None:
             return self._blocked(state, "queue:manual_ultimate_request", "manual_ultimate_action_event_missing", {"command": _command_payload(command)})
+        ultimate_rule, rule_blocked_reason = self.rules.select_resource_rule("ultimate_energy_cost")
+        if ultimate_rule is None:
+            return self._blocked(
+                state,
+                "queue:manual_ultimate_request",
+                rule_blocked_reason,
+                {"command": _command_payload(command), "engine_rule_kind": "ultimate_energy_cost"},
+            )
         if not _is_ultimate_definition(definition.attack_type, definition.skill_effect):
             return self._blocked(
                 state,
@@ -164,6 +305,8 @@ class CombatScheduler:
             target_ids=target_ids,
             priority_source=priority_source,
             source_trace=source_trace,
+            action_level=command.action_level,
+            resource_policy={},
             priority_key="manual_ultimate",
             priority_value=0.0,
             queue_window_id=f"manual_queue_window:ultimate:{queue_intent_id}",
@@ -177,7 +320,7 @@ class CombatScheduler:
                 "drain_via_scheduler": True,
                 "energy_preflight_admitted": True,
                 "energy_cost_policy": "set_actor_energy_to_action_spbase_after_admitted_execution",
-                "resource_rule_id": self.rules.default_ultimate_energy_cost_rule().resource_rule_id,
+                "resource_rule_id": ultimate_rule.resource_rule_id,
             },
             target_resolution=target_resolution,
             owner_id=command.actor_id,
@@ -261,7 +404,13 @@ class CombatScheduler:
         )
         return SchedulerStepResult(after, transition)
 
-    def step(self, state: BattleState, command: ActionCommand | None = None) -> SchedulerStepResult:
+    def step(
+        self,
+        state: BattleState,
+        command: ActionCommand | None = None,
+        *,
+        decision_authorization: DecisionSubmissionAuthorization | None = None,
+    ) -> SchedulerStepResult:
         """Run one scheduler step.
 
         The scheduler owns turn lifecycle ordering only. Queue drain and action
@@ -275,6 +424,67 @@ class CombatScheduler:
                 "battle_ended",
                 {"battle_outcome": str(state.global_flags.get("battle_outcome") or "")},
             )
+
+        if command is not None:
+            if decision_authorization is None:
+                return self._blocked(
+                    state,
+                    "scheduler:decision_submission",
+                    "decision_token_required",
+                    {"command": _command_payload(command)},
+                )
+            authorization_reason = decision_authorization.blocked_reason(
+                command,
+                _scheduler_state_revision(state),
+            )
+            if authorization_reason:
+                return self._blocked(
+                    state,
+                    "scheduler:decision_submission",
+                    authorization_reason,
+                    {
+                        "command": _command_payload(command),
+                        "decision_id": decision_authorization.decision_id,
+                        "state_revision": decision_authorization.state_revision,
+                    },
+                )
+
+        if command is not None and command.action_id == TIMELINE_TIE_CHOICE_ACTION_ID:
+            if str(state.global_flags.get("turn_owner_id") or ""):
+                return self._blocked(
+                    state,
+                    "timeline:tie_choice",
+                    "timeline_tie_choice_not_idle",
+                    {"command": _command_payload(command)},
+                )
+            return self.advance_to_next_turn(
+                state,
+                tie_choice_actor_id=command.actor_id,
+                tie_choice_id=str(command.metadata.get("timeline_choice_id") or ""),
+                tie_choice_source=(
+                    command.metadata.get("source_trace")
+                    if isinstance(command.metadata.get("source_trace"), dict)
+                    else None
+                ),
+            )
+        timeline_rule, rule_blocked_reason = self.rules.select_timeline_rule()
+        if timeline_rule is None:
+            return self._blocked(
+                state,
+                "scheduler:engine_rule",
+                rule_blocked_reason,
+                {"engine_rule_kind": "timeline"},
+            )
+
+        if self.phases.current_phase(state) == TURN_END:
+            if command is not None:
+                return self._blocked(
+                    state,
+                    "scheduler:turn_end",
+                    "decision_not_active",
+                    {"combat_phase": TURN_END, "command": _command_payload(command)},
+                )
+            return self.end_current_turn(state)
 
         queue_step = self._try_queue_drain(state, command=command)
         if queue_step is not None:
@@ -292,21 +502,55 @@ class CombatScheduler:
         if wave_step is not None:
             return wave_step
 
-        begin_result = self.advance_to_next_turn(state)
-        if begin_result.transition.coverage.get("blocked_reason"):
-            return begin_result
 
-        actor_id = begin_result.transition.transaction.command.actor_id
-        if command is None:
+        active_actor_id = str(state.global_flags.get("turn_owner_id") or "")
+        begin_result: SchedulerStepResult | None = None
+        if active_actor_id:
+            actor_id = active_actor_id
+            decision_state = state
+            if command is None:
+                return self._blocked(
+                    state,
+                    "scheduler:decision_required",
+                    "external_decision_required",
+                    {"actor_id": actor_id},
+                )
+        else:
+            if command is not None:
+                return self._blocked(
+                    state,
+                    "scheduler:decision_submission",
+                    "decision_not_active",
+                    {
+                        "command": _command_payload(command),
+                        "decision_id": decision_authorization.decision_id,
+                    },
+                )
+            begin_result = self.advance_to_next_turn(state)
+            if begin_result.transition.coverage.get("blocked_reason"):
+                return begin_result
+            actor_id = begin_result.transition.transaction.command.actor_id
+            decision_state = begin_result.after_state
             return _with_scheduler_record(
                 begin_result,
                 record_type="scheduler_turn_begin_step",
                 payload={
                     "scheduler_step": "turn_begin_only",
                     "actor_id": actor_id,
-                    "blocking_dependency": "manual_route_command_or_ai_policy",
+                    "blocking_dependency": "external_decision",
                 },
             )
+
+        turn_begin_action_id = "scheduler:existing_decision"
+        turn_begin_coverage: dict[str, JSONValue] = {
+            "existing_decision": True,
+            "actor_id": actor_id,
+            "turn_sequence_index": decision_state.global_flags.get("turn_sequence_index", 0),
+        }
+        turn_begin_records: tuple[dict[str, JSONValue], ...] = ()
+        turn_begin_events: tuple[GameEvent, ...] = ()
+        turn_begin_mutations: tuple[Mutation, ...] = ()
+        turn_begin_children: tuple[BattleTransition, ...] = ()
 
         if command.actor_id != actor_id:
             return self._blocked(
@@ -320,50 +564,80 @@ class CombatScheduler:
                 },
             )
 
-        actor = begin_result.after_state.units.get(actor_id)
+        actor = decision_state.units.get(actor_id)
         enemy_candidate: EnemyActionCandidate | None = None
         if actor is not None and actor.side == "enemy":
-            enemy_candidate = self.enemy_actions.next_candidate(begin_result.after_state, actor_id)
-            if enemy_candidate.status != "available":
+            candidate_constraint = self.enemy_actions.candidate_constraint(decision_state, actor_id)
+            if candidate_constraint.get("ok") is not True:
                 return self._blocked(
                     state,
                     "scheduler:enemy_action_candidate_blocked",
-                    enemy_candidate.blocked_reason or "enemy_action_candidate_blocked",
-                    {"enemy_action_candidate": enemy_candidate.to_json(), "command": _command_payload(command)},
+                    str(candidate_constraint.get("blocked_reason") or "enemy_action_candidate_blocked"),
+                    {"candidate_constraint": candidate_constraint, "command": _command_payload(command)},
                 )
-            if command.action_id != enemy_candidate.action_ref or int(command.action_level) != int(enemy_candidate.action_level):
-                return self._blocked(
-                    state,
-                    "scheduler:enemy_action_command_mismatch",
-                    "enemy_action_command_mismatch",
-                    {
-                        "enemy_action_candidate": enemy_candidate.to_json(),
-                        "command": _command_payload(command),
-                    },
-                )
-            target_blocked_reason = _enemy_action_target_blocked_reason(enemy_candidate, command)
-            if target_blocked_reason:
-                return self._blocked(
-                    state,
-                    "scheduler:enemy_action_target_blocked",
-                    target_blocked_reason,
-                    {
-                        "enemy_action_candidate": enemy_candidate.to_json(),
-                        "command": _command_payload(command),
-                    },
-                )
+            if candidate_constraint.get("mode") == "fixed_sequence_constraint":
+                enemy_candidate = self.enemy_actions.next_candidate(decision_state, actor_id)
+                if enemy_candidate.status != "available":
+                    return self._blocked(
+                        state,
+                        "scheduler:enemy_action_candidate_blocked",
+                        enemy_candidate.blocked_reason or "enemy_action_candidate_blocked",
+                        {"enemy_action_candidate": enemy_candidate.to_json(), "command": _command_payload(command)},
+                    )
+                if command.action_id != enemy_candidate.action_ref or int(command.action_level) != int(enemy_candidate.action_level):
+                    return self._blocked(
+                        state,
+                        "scheduler:enemy_action_command_mismatch",
+                        "enemy_action_command_mismatch",
+                        {
+                            "enemy_action_candidate": enemy_candidate.to_json(),
+                            "command": _command_payload(command),
+                        },
+                    )
+                target_blocked_reason = _enemy_action_target_blocked_reason(enemy_candidate, command)
+                if target_blocked_reason:
+                    return self._blocked(
+                        state,
+                        "scheduler:enemy_action_target_blocked",
+                        target_blocked_reason,
+                        {
+                            "enemy_action_candidate": enemy_candidate.to_json(),
+                            "command": _command_payload(command),
+                        },
+                    )
+
+        phase_reason = self.phases.operation_blocked_reason(decision_state, "submit_turn_action")
+        if phase_reason:
+            return self._blocked(
+                state,
+                "scheduler:decision_submission",
+                phase_reason,
+                {"actor_id": actor_id, "combat_phase": self.phases.current_phase(decision_state)},
+            )
+        phase_execution = self.phases.transition(
+            decision_state,
+            ACTION_EXECUTION,
+            actor_id=actor_id,
+            reason="consume external decision and enter action execution",
+            metadata=_phase_rule_metadata(timeline_rule, f"decision:{decision_authorization.decision_id}"),
+        )
+        if not phase_execution.plan.ok:
+            return self._blocked(state, "scheduler:decision_submission", phase_execution.plan.blocked_reason, phase_execution.plan.to_json())
+        action_state = self.reducer.apply_all(decision_state, phase_execution.mutations)
 
         from ..core.executor import CombatExecutor
 
         parent_metadata = {
             "scheduler_parent": {
                 "turn_actor_id": actor_id,
-                "turn_transition_action_id": begin_result.transition.transaction.command.action_id,
-                "turn_sequence_index": begin_result.after_state.global_flags.get("turn_sequence_index", 0),
+                "turn_transition_action_id": turn_begin_action_id,
+                "turn_sequence_index": decision_state.global_flags.get("turn_sequence_index", 0),
+                "decision_id": decision_authorization.decision_id,
+                "state_revision": decision_authorization.state_revision,
                 "source": "timeline_scheduler.step",
             }
         }
-        control_gate = status_control_gate_for_actor(begin_result.after_state.units[actor_id])
+        control_gate = status_control_gate_for_actor(action_state.units[actor_id])
         if control_gate is not None:
             return self._blocked(
                 state,
@@ -372,14 +646,14 @@ class CombatScheduler:
                 {
                     "control_gate": control_gate,
                     "command": _command_payload(command),
-                    "turn_begin_candidate": begin_result.transition.coverage,
+                    "turn_begin_candidate": turn_begin_coverage,
                 },
             )
         scheduled_command = replace(
             command,
             metadata={**command.metadata, **parent_metadata},
         )
-        after_action, action_transition = CombatExecutor(self.rules).execute(scheduled_command, begin_result.after_state)
+        after_action, action_transition = CombatExecutor(self.rules).execute(scheduled_command, action_state)
         cursor_mutation = (
             self.enemy_actions.advance_cursor_mutation(after_action, enemy_candidate, scheduled_command, action_transition)
             if enemy_candidate is not None
@@ -395,9 +669,19 @@ class CombatScheduler:
             if cursor_mutation is not None
             else after_action
         )
+        phase_post_action = self.phases.transition(
+            after_action_for_lifecycle,
+            POST_ACTION,
+            actor_id=actor_id,
+            reason="enter post-action settlement phase",
+            metadata=_phase_rule_metadata(timeline_rule, f"decision:{decision_authorization.decision_id}"),
+        )
+        if not phase_post_action.plan.ok:
+            return self._blocked(state, "scheduler:post_action_phase", phase_post_action.plan.blocked_reason, phase_post_action.plan.to_json())
+        after_post_action = self.reducer.apply_all(after_action_for_lifecycle, phase_post_action.mutations)
         if _has_queue_entries(after_action_for_lifecycle):
-            pending_mutation = self._pending_turn_end_mutation(after_action_for_lifecycle, actor_id, action_transition.transaction.command.action_id)
-            after_pending = self.reducer.apply_all(after_action_for_lifecycle, (pending_mutation,))
+            pending_mutation = self._pending_turn_end_mutation(after_post_action, actor_id, action_transition.transaction.command.action_id)
+            after_pending = self.reducer.apply_all(after_post_action, (pending_mutation,))
             pending_record = SettlementRecord(
                 record_type="scheduler_turn_end_deferred",
                 source="timeline_scheduler",
@@ -420,24 +704,27 @@ class CombatScheduler:
                         "scheduler_action_step",
                         {
                             "scheduler_step": "manual_action_turn_lifecycle_deferred_for_queue",
-                            "turn_begin_action_id": begin_result.transition.transaction.command.action_id,
+                            "turn_begin_action_id": turn_begin_action_id,
                             "child_action_id": action_transition.transaction.command.action_id,
                         "turn_end": "deferred_until_pending_queue_drained",
                         "enemy_action_candidate": enemy_candidate.to_json() if enemy_candidate is not None else {},
                         "enemy_action_cursor_advanced": cursor_mutation is not None,
                     },
                 ),
-                *(begin_result.transition.transaction.settlement.records if begin_result.transition.transaction.settlement else ()),
+                *turn_begin_records,
+                *phase_execution.records,
                 *(action_transition.transaction.settlement.records if action_transition.transaction.settlement else ()),
                 *cursor_records,
+                *phase_post_action.records,
                 pending_record,
             ),
                 events=(
-                    *begin_result.transition.transaction.events,
+                    *turn_begin_events,
+                    *phase_execution.events,
                     GameEvent(
                         "scheduler.action.before",
                         source_id=actor_id,
-                        event_id=f"event:{begin_result.after_state.event_index}:scheduler_action_before:{actor_id}",
+                        event_id=f"event:{decision_state.event_index}:scheduler_action_before:{actor_id}",
                         window="scheduler",
                         process_only=True,
                         payload={"command": _command_payload(scheduled_command)},
@@ -451,6 +738,7 @@ class CombatScheduler:
                         process_only=True,
                         payload={"command": _command_payload(scheduled_command)},
                     ),
+                    *phase_post_action.events,
                     GameEvent(
                         "scheduler.turn_end_deferred",
                         source_id=actor_id,
@@ -461,16 +749,18 @@ class CombatScheduler:
                     ),
                 ),
                 mutations=(
-                    *begin_result.transition.transaction.mutations,
+                    *turn_begin_mutations,
+                    *phase_execution.mutations,
                     *action_transition.transaction.mutations,
                     *((cursor_mutation,) if cursor_mutation is not None else ()),
+                    *phase_post_action.mutations,
                     pending_mutation,
                 ),
                 target_resolution=action_transition.target_resolution,
-                child_transitions=(begin_result.transition, action_transition),
+                child_transitions=(*turn_begin_children, action_transition),
                 coverage={
                     "scheduler_step": "manual_action_turn_lifecycle_deferred_for_queue",
-                    "turn_begin": begin_result.transition.coverage,
+                    "turn_begin": turn_begin_coverage,
                     "action_child": {
                         "command": _command_payload(scheduled_command),
                         "coverage": action_transition.coverage,
@@ -481,15 +771,20 @@ class CombatScheduler:
                         "mutation_id": cursor_mutation.stable_id() if cursor_mutation is not None else "",
                     },
                     "turn_end": {"deferred": True, "reason": "queue_entries_pending_after_action"},
+                    "phase_machine": {
+                        "from_phase": AWAITING_DECISION,
+                        "execution_phase": ACTION_EXECUTION,
+                        "after_action_phase": POST_ACTION,
+                    },
                     "unsupported_hooks": _unsupported_turn_hooks(),
                 },
             )
             return SchedulerStepResult(
                 _eligible_scheduler_state(state, after_pending, combined),
                 combined,
-                child_transitions=(begin_result.transition, action_transition),
+                child_transitions=(*turn_begin_children, action_transition),
             )
-        action_lifecycle = self._apply_status_lifecycle_tick(after_action_for_lifecycle, "ActionPhaseEnd", actor_id=actor_id)
+        action_lifecycle = self._apply_status_lifecycle_tick(after_post_action, "ActionPhaseEnd", actor_id=actor_id)
         end_result = self.end_current_turn(action_lifecycle.after_state)
         combined = _combine_scheduler_transitions(
             before_state=state,
@@ -500,7 +795,7 @@ class CombatScheduler:
                     "scheduler_action_step",
                     {
                         "scheduler_step": "manual_action_turn_lifecycle",
-                        "turn_begin_action_id": begin_result.transition.transaction.command.action_id,
+                        "turn_begin_action_id": turn_begin_action_id,
                         "child_action_id": action_transition.transaction.command.action_id,
                         "action_lifecycle_hook": "ActionPhaseEnd",
                         "turn_end_action_id": end_result.transition.transaction.command.action_id,
@@ -508,18 +803,21 @@ class CombatScheduler:
                         "enemy_action_cursor_advanced": cursor_mutation is not None,
                     },
                 ),
-                *(begin_result.transition.transaction.settlement.records if begin_result.transition.transaction.settlement else ()),
+                *turn_begin_records,
+                *phase_execution.records,
                 *(action_transition.transaction.settlement.records if action_transition.transaction.settlement else ()),
                 *cursor_records,
+                *phase_post_action.records,
                 *action_lifecycle.records,
                 *(end_result.transition.transaction.settlement.records if end_result.transition.transaction.settlement else ()),
             ),
             events=(
-                *begin_result.transition.transaction.events,
+                *turn_begin_events,
+                *phase_execution.events,
                 GameEvent(
                     "scheduler.action.before",
                     source_id=actor_id,
-                    event_id=f"event:{begin_result.after_state.event_index}:scheduler_action_before:{actor_id}",
+                    event_id=f"event:{decision_state.event_index}:scheduler_action_before:{actor_id}",
                     window="scheduler",
                     process_only=True,
                     payload={"command": _command_payload(scheduled_command)},
@@ -533,21 +831,24 @@ class CombatScheduler:
                     process_only=True,
                     payload={"command": _command_payload(scheduled_command)},
                 ),
+                *phase_post_action.events,
                 *action_lifecycle.events,
                 *end_result.transition.transaction.events,
             ),
             mutations=(
-                *begin_result.transition.transaction.mutations,
+                *turn_begin_mutations,
+                *phase_execution.mutations,
                 *action_transition.transaction.mutations,
                 *((cursor_mutation,) if cursor_mutation is not None else ()),
+                *phase_post_action.mutations,
                 *action_lifecycle.mutations,
                 *end_result.transition.transaction.mutations,
             ),
             target_resolution=action_transition.target_resolution,
-            child_transitions=(begin_result.transition, action_transition, end_result.transition),
+            child_transitions=(*turn_begin_children, action_transition, end_result.transition),
             coverage={
                 "scheduler_step": "manual_action_turn_lifecycle",
-                "turn_begin": begin_result.transition.coverage,
+                "turn_begin": turn_begin_coverage,
                 "action_child": {
                     "command": _command_payload(scheduled_command),
                     "coverage": action_transition.coverage,
@@ -559,50 +860,293 @@ class CombatScheduler:
                 },
                 "action_lifecycle": {"life_step_moment": "ActionPhaseEnd", "mutation_count": len(action_lifecycle.mutations)},
                 "turn_end": end_result.transition.coverage,
+                "phase_machine": {
+                    "from_phase": AWAITING_DECISION,
+                    "execution_phase": ACTION_EXECUTION,
+                    "after_action_phase": POST_ACTION,
+                    "final_phase": IDLE,
+                },
                 "unsupported_hooks": _unsupported_turn_hooks(),
             },
         )
         return SchedulerStepResult(
             _eligible_scheduler_state(state, end_result.after_state, combined),
             combined,
-            child_transitions=(begin_result.transition, action_transition, end_result.transition),
+            child_transitions=(*turn_begin_children, action_transition, end_result.transition),
         )
 
-    def advance_to_next_turn(self, state: BattleState) -> SchedulerStepResult:
+    def advance_to_next_turn(
+        self,
+        state: BattleState,
+        *,
+        tie_choice_actor_id: str = "",
+        tie_choice_id: str = "",
+        tie_choice_source: dict[str, JSONValue] | None = None,
+    ) -> SchedulerStepResult:
         queue_step = self._try_queue_drain(state)
         if queue_step is not None:
             return queue_step
 
-        rule = self.rules.default_timeline_rule()
-        plan = self.timeline.plan_next_actor(state, rule)
+        phase_reason = self.phases.operation_blocked_reason(state, "advance_timeline")
+        if phase_reason:
+            return self._blocked(
+                state,
+                "timeline:advance",
+                phase_reason,
+                {"combat_phase": self.phases.current_phase(state)},
+            )
+
+        rule, rule_blocked_reason = self.rules.select_timeline_rule()
+        if rule is None:
+            return self._blocked(
+                state,
+                "timeline:advance",
+                rule_blocked_reason,
+                {"engine_rule_kind": "timeline"},
+            )
+        phase_timeline = self.phases.transition(
+            state,
+            TIMELINE_ADVANCING,
+            reason="advance scheduler to next actor",
+            metadata=_phase_rule_metadata(rule, "phase:timeline_advancing"),
+        )
+        if not phase_timeline.plan.ok:
+            return self._blocked(state, "timeline:advance", phase_timeline.plan.blocked_reason, phase_timeline.plan.to_json())
+        after_phase_timeline = self.reducer.apply_all(state, phase_timeline.mutations)
+        plan = self.timeline.plan_next_actor(
+            after_phase_timeline,
+            rule,
+            tie_choice_actor_id=tie_choice_actor_id,
+            tie_choice_id=tie_choice_id,
+            tie_choice_source=tie_choice_source,
+        )
         if not plan.ok:
             return self._blocked(state, "timeline:advance", plan.blocked_reason, {"turn_advance_plan": plan.to_json()})
 
-        actor = state.units[plan.actor_id]
+        actor = after_phase_timeline.units[plan.actor_id]
         enemy_candidate = None
+
+        advance = self.timeline.advance_to_next_actor(after_phase_timeline, plan)
+        after_advance = self.reducer.apply_all(after_phase_timeline, advance.mutations)
+        phase_begin = self.phases.transition(
+            after_advance,
+            TURN_BEGIN,
+            actor_id=plan.actor_id,
+            reason="enter regular turn begin phase",
+            metadata=_phase_rule_metadata(rule, plan.plan_id),
+        )
+        if not phase_begin.plan.ok:
+            return self._blocked(state, "timeline:advance", phase_begin.plan.blocked_reason, phase_begin.plan.to_json())
+        after_phase_begin = self.reducer.apply_all(after_advance, phase_begin.mutations)
+        begin = self.timeline.begin_turn(after_phase_begin, plan, turn_kind="regular")
+        after_begin = self.reducer.apply_all(after_phase_begin, begin.mutations)
+        turn_begin_event = GameEvent(
+            "turn.begin",
+            source_id=plan.actor_id,
+            target_id=plan.actor_id,
+            event_id=f"event:{after_begin.event_index}:turn_begin_dispatch:{plan.actor_id}",
+            window="turn_begin",
+            process_only=True,
+            payload={
+                "actor_id": plan.actor_id,
+                "turn_kind": "regular",
+                "turn_advance_plan": plan.to_json(),
+                "combat_phase": TURN_BEGIN,
+            },
+        )
+        begin_dispatch = self.event_dispatcher.dispatch_event(after_begin, event=turn_begin_event)
+        phase_pre_action = self.phases.transition(
+            begin_dispatch.after_state,
+            PRE_ACTION,
+            actor_id=plan.actor_id,
+            reason="enter before-action settlement phase",
+            metadata=_phase_rule_metadata(rule, plan.plan_id),
+        )
+        if not phase_pre_action.plan.ok:
+            return self._blocked(state, "timeline:advance", phase_pre_action.plan.blocked_reason, phase_pre_action.plan.to_json())
+        after_phase_pre_action = self.reducer.apply_all(begin_dispatch.after_state, phase_pre_action.mutations)
+        pre_action_lifecycle = self._apply_status_lifecycle_tick(
+            after_phase_pre_action,
+            "ModifierPhase1End",
+            actor_id=plan.actor_id,
+        )
+        control_gate = status_control_gate_for_actor(pre_action_lifecycle.after_state.units[plan.actor_id])
+        if control_gate is not None:
+            phase_control_end = self.phases.transition(
+                pre_action_lifecycle.after_state,
+                TURN_END,
+                actor_id=plan.actor_id,
+                reason="consume regular turn blocked by structured control status",
+                metadata={
+                    **_phase_rule_metadata(rule, plan.plan_id),
+                    "control_gate": control_gate,
+                },
+            )
+            if not phase_control_end.plan.ok:
+                return self._blocked(
+                    state,
+                    "timeline:control_skip",
+                    phase_control_end.plan.blocked_reason,
+                    phase_control_end.plan.to_json(),
+                )
+            after_control_end = self.reducer.apply_all(pre_action_lifecycle.after_state, phase_control_end.mutations)
+            control_event = GameEvent(
+                "turn.control_skipped",
+                source_id=plan.actor_id,
+                target_id=plan.actor_id,
+                event_id=f"event:{after_control_end.event_index}:turn_control_skipped:{plan.actor_id}",
+                window=TURN_END,
+                process_only=True,
+                payload={"control_gate": control_gate, "turn_advance_plan": plan.to_json()},
+            )
+            mutations = (
+                *phase_timeline.mutations,
+                *advance.mutations,
+                *phase_begin.mutations,
+                *begin.mutations,
+                *begin_dispatch.mutations,
+                *phase_pre_action.mutations,
+                *pre_action_lifecycle.mutations,
+                *phase_control_end.mutations,
+            )
+            events = (
+                *phase_timeline.events,
+                *advance.events,
+                *phase_begin.events,
+                *begin.events,
+                *begin_dispatch.events,
+                *phase_pre_action.events,
+                *pre_action_lifecycle.events,
+                *phase_control_end.events,
+                control_event,
+            )
+            records = (
+                *phase_timeline.records,
+                *_mutation_records("timeline_advance", advance.mutations, plan),
+                *phase_begin.records,
+                *_mutation_records("turn_begin", begin.mutations, plan),
+                *begin_dispatch.records,
+                *phase_pre_action.records,
+                *pre_action_lifecycle.records,
+                *phase_control_end.records,
+                *_scheduler_process_records(
+                    "status_control_turn_skipped",
+                    {
+                        "actor_id": plan.actor_id,
+                        "control_gate": control_gate,
+                        "terminal_phase": TURN_END,
+                        "next_scheduler_operation": "end_current_turn",
+                    },
+                ),
+            )
+            transition = _transition(
+                before_state=state,
+                after_state=after_control_end,
+                action_id="timeline:consume_controlled_turn",
+                actor_id=plan.actor_id,
+                events=events,
+                mutations=mutations,
+                records=records,
+                node_results=(
+                    *begin_dispatch.node_results,
+                    _scheduler_node("timeline", "timeline:consume_controlled_turn"),
+                ),
+                coverage={
+                    "turn_advance_plan": plan.to_json(),
+                    "timeline_rule": rule.to_json(),
+                    "control_skip": {
+                        "consumed": True,
+                        "control_gate": control_gate,
+                        "state": "pending_turn_end",
+                    },
+                    "phase_machine": {
+                        "schema_version": "p7_s9_combat_phase_machine_v1",
+                        "path": [IDLE, TIMELINE_ADVANCING, TURN_BEGIN, PRE_ACTION, TURN_END],
+                    },
+                    "pre_action_lifecycle": {
+                        "life_step_moment": "ModifierPhase1End",
+                        "mutation_count": len(pre_action_lifecycle.mutations),
+                    },
+                },
+            )
+            return SchedulerStepResult(
+                _eligible_scheduler_state(state, after_control_end, transition),
+                transition,
+            )
+
         if actor.side == "enemy":
-            enemy_candidate = self.enemy_actions.next_candidate(state, actor.unit_id)
-            if enemy_candidate.status != "available":
+            candidate_constraint = self.enemy_actions.candidate_constraint(
+                pre_action_lifecycle.after_state,
+                actor.unit_id,
+            )
+            if candidate_constraint.get("ok") is not True:
                 return self._blocked(
                     state,
                     "timeline:enemy_action_candidate",
-                    enemy_candidate.blocked_reason or "enemy_action_candidate_blocked",
+                    str(candidate_constraint.get("blocked_reason") or "enemy_action_candidate_blocked"),
                     {
                         "turn_advance_plan": plan.to_json(),
                         "actor_id": actor.unit_id,
-                        "enemy_action_candidate": enemy_candidate.to_json(),
+                        "candidate_constraint": candidate_constraint,
                     },
                 )
-
-        advance = self.timeline.advance_to_next_actor(state, plan)
-        after_advance = self.reducer.apply_all(state, advance.mutations)
-        begin = self.timeline.begin_turn(after_advance, plan, turn_kind="regular")
-        after_begin = self.reducer.apply_all(after_advance, begin.mutations)
-        mutations = (*advance.mutations, *begin.mutations)
-        events = (*advance.events, *begin.events)
+            if candidate_constraint.get("mode") == "fixed_sequence_constraint":
+                enemy_candidate = self.enemy_actions.next_candidate(pre_action_lifecycle.after_state, actor.unit_id)
+                if enemy_candidate.status != "available":
+                    return self._blocked(
+                        state,
+                        "timeline:enemy_action_candidate",
+                        enemy_candidate.blocked_reason or "enemy_action_candidate_blocked",
+                        {
+                            "turn_advance_plan": plan.to_json(),
+                            "actor_id": actor.unit_id,
+                            "enemy_action_candidate": enemy_candidate.to_json(),
+                        },
+                    )
+        phase_decision = self.phases.transition(
+            pre_action_lifecycle.after_state,
+            AWAITING_DECISION,
+            actor_id=plan.actor_id,
+            reason="open external regular-action decision",
+            metadata=_phase_rule_metadata(rule, plan.plan_id),
+        )
+        if not phase_decision.plan.ok:
+            return self._blocked(state, "timeline:advance", phase_decision.plan.blocked_reason, phase_decision.plan.to_json())
+        after_phase_decision = self.reducer.apply_all(pre_action_lifecycle.after_state, phase_decision.mutations)
+        decision_window = self.timeline.open_decision_window(after_phase_decision, plan)
+        after_decision = self.reducer.apply_all(after_phase_decision, decision_window.mutations)
+        mutations = (
+            *phase_timeline.mutations,
+            *advance.mutations,
+            *phase_begin.mutations,
+            *begin.mutations,
+            *begin_dispatch.mutations,
+            *phase_pre_action.mutations,
+            *pre_action_lifecycle.mutations,
+            *phase_decision.mutations,
+            *decision_window.mutations,
+        )
+        events = (
+            *phase_timeline.events,
+            *advance.events,
+            *phase_begin.events,
+            *begin.events,
+            *begin_dispatch.events,
+            *phase_pre_action.events,
+            *pre_action_lifecycle.events,
+            *phase_decision.events,
+            *decision_window.events,
+        )
         records = (
+            *phase_timeline.records,
             *_mutation_records("timeline_advance", advance.mutations, plan),
+            *phase_begin.records,
             *_mutation_records("turn_begin", begin.mutations, plan),
+            *begin_dispatch.records,
+            *phase_pre_action.records,
+            *pre_action_lifecycle.records,
+            *phase_decision.records,
+            *_mutation_records("turn_decision", decision_window.mutations, plan),
             *(
                 _scheduler_process_records(
                     "enemy_action_candidate",
@@ -627,20 +1171,31 @@ class CombatScheduler:
             else ()
         )
         return SchedulerStepResult(
-            after_begin,
+            after_decision,
             _transition(
                 before_state=state,
-                after_state=after_begin,
+                after_state=after_decision,
                 action_id="timeline:advance_to_next_turn",
                 actor_id=plan.actor_id,
                 events=(*events, *candidate_events),
                 mutations=mutations,
                 records=records,
-                node_results=(_scheduler_node("timeline", "timeline:advance_to_next_turn"),),
+                node_results=(
+                    *begin_dispatch.node_results,
+                    _scheduler_node("timeline", "timeline:advance_to_next_turn"),
+                ),
                 coverage={
                     "turn_advance_plan": plan.to_json(),
                     "timeline_rule": rule.to_json(),
                     "enemy_action_candidate": enemy_candidate.to_json() if enemy_candidate is not None else {},
+                    "phase_machine": {
+                        "schema_version": "p7_s9_combat_phase_machine_v1",
+                        "path": [IDLE, TIMELINE_ADVANCING, TURN_BEGIN, PRE_ACTION, AWAITING_DECISION],
+                    },
+                    "pre_action_lifecycle": {
+                        "life_step_moment": "ModifierPhase1End",
+                        "mutation_count": len(pre_action_lifecycle.mutations),
+                    },
                 },
             ),
         )
@@ -653,64 +1208,99 @@ class CombatScheduler:
         actor_id = actor_id or str(state.global_flags.get("turn_owner_id") or "")
         if not actor_id or actor_id not in state.units:
             return self._blocked(state, "timeline:turn_end", "active_turn_missing", {"active_turn": active_turn})
-        rule = self.rules.default_timeline_rule()
-        lifecycle = self._apply_status_lifecycle_tick(state, "ModifierPhase1End", actor_id=actor_id)
-        turn_end_dispatch_enabled = lifecycle.after_state.global_flags.get("admit_turn_end_listener_dispatch") is True
-        if turn_end_dispatch_enabled:
-            turn_end_event = GameEvent(
-                "turn.end",
-                source_id=actor_id,
-                event_id=f"event:{lifecycle.after_state.event_index}:turn_end_dispatch:{actor_id}",
-                window="turn.end",
-                process_only=True,
-                payload={
-                    "actor_id": actor_id,
-                    "listener_scope": "global_listener",
-                    "life_step_moment": "ModifierPhase1End",
-                },
+        rule, rule_blocked_reason = self.rules.select_timeline_rule()
+        if rule is None:
+            return self._blocked(
+                state,
+                "timeline:turn_end",
+                rule_blocked_reason,
+                {"engine_rule_kind": "timeline"},
             )
-            dispatch = self.event_dispatcher.dispatch_event(lifecycle.after_state, event=turn_end_event)
+        already_in_turn_end = self.phases.current_phase(state) == TURN_END
+        if already_in_turn_end:
+            phase_end_events: tuple[GameEvent, ...] = ()
+            phase_end_mutations: tuple[Mutation, ...] = ()
+            phase_end_records: tuple[dict[str, JSONValue], ...] = ()
+            after_phase_end = state
         else:
-            dispatch = self.event_dispatcher.dispatch_blocked(
-                lifecycle.after_state,
-                event=GameEvent(
-                    "turn.end",
-                    source_id=actor_id,
-                    event_id=f"event:{lifecycle.after_state.event_index}:turn_end_dispatch_blocked:{actor_id}",
-                    window="turn.end",
-                    process_only=True,
-                    payload={
-                        "actor_id": actor_id,
-                        "listener_scope": "global_listener",
-                        "life_step_moment": "ModifierPhase1End",
-                    },
-                ),
-                listener_kind="listener_dispatch",
-                scope="global_listener",
-                reason="turn_end_listener_dispatch_requires_explicit_admission",
-                metadata={"actor_id": actor_id, "life_step_moment": "ModifierPhase1End"},
+            phase_end = self.phases.transition(
+                state,
+                TURN_END,
+                actor_id=actor_id,
+                reason="enter regular turn-end settlement phase",
+                metadata=_phase_rule_metadata(rule, f"turn_end:{state.event_index}:{actor_id}"),
             )
+            if not phase_end.plan.ok:
+                return self._blocked(state, "timeline:turn_end", phase_end.plan.blocked_reason, phase_end.plan.to_json())
+            phase_end_events = phase_end.events
+            phase_end_mutations = phase_end.mutations
+            phase_end_records = phase_end.records
+            after_phase_end = self.reducer.apply_all(state, phase_end_mutations)
+        lifecycle = self._apply_status_lifecycle_tick(after_phase_end, "TurnEnd", actor_id=actor_id)
+        turn_end_event = GameEvent(
+            "turn.end",
+            source_id=actor_id,
+            target_id=actor_id,
+            event_id=f"event:{lifecycle.after_state.event_index}:turn_end_dispatch:{actor_id}",
+            window="turn_end",
+            process_only=True,
+            payload={
+                "actor_id": actor_id,
+                "listener_scope": "global_listener",
+                "life_step_moment": "TurnEnd",
+                "combat_phase": TURN_END,
+            },
+        )
+        dispatch = self.event_dispatcher.dispatch_event(lifecycle.after_state, event=turn_end_event)
         result = self.timeline.end_turn(dispatch.after_state, actor_id, rule, turn_kind="regular")
-        after = self.reducer.apply_all(dispatch.after_state, result.mutations)
+        after_timeline_end = self.reducer.apply_all(dispatch.after_state, result.mutations)
+        phase_idle = self.phases.transition(
+            after_timeline_end,
+            IDLE,
+            actor_id=actor_id,
+            reason="close regular turn and return scheduler to idle",
+            metadata=_phase_rule_metadata(rule, result.plan.plan_id),
+        )
+        if not phase_idle.plan.ok:
+            return self._blocked(state, "timeline:turn_end", phase_idle.plan.blocked_reason, phase_idle.plan.to_json())
+        after = self.reducer.apply_all(after_timeline_end, phase_idle.mutations)
         transition = _transition(
             before_state=state,
             after_state=after,
             action_id="timeline:end_current_turn",
             actor_id=actor_id,
-            events=(*lifecycle.events, *dispatch.events, *result.events),
-            mutations=(*lifecycle.mutations, *dispatch.mutations, *result.mutations),
+            events=(
+                *phase_end_events,
+                *lifecycle.events,
+                *dispatch.events,
+                *result.events,
+                *phase_idle.events,
+            ),
+            mutations=(
+                *phase_end_mutations,
+                *lifecycle.mutations,
+                *dispatch.mutations,
+                *result.mutations,
+                *phase_idle.mutations,
+            ),
             records=(
+                *phase_end_records,
                 *lifecycle.records,
                 *dispatch.records,
                 *_mutation_records("turn_end", result.mutations, result.plan),
+                *phase_idle.records,
             ),
             node_results=(*dispatch.node_results, _scheduler_node("timeline", "timeline:end_current_turn")),
             coverage={
                 "timeline_rule": rule.to_json(),
                 "turn_advance_plan": result.plan.to_json(),
                 "status_lifecycle": {
-                    "life_step_moment": "ModifierPhase1End",
+                    "life_step_moment": "TurnEnd",
                     "mutation_count": len(lifecycle.mutations),
+                },
+                "phase_machine": {
+                    "schema_version": "p7_s9_combat_phase_machine_v1",
+                    "path": ([TURN_END, IDLE] if already_in_turn_end else [POST_ACTION, TURN_END, IDLE]),
                 },
             },
         )
@@ -828,36 +1418,123 @@ class CombatScheduler:
                     coverage={"wave_transition": plan.to_json(), "blocked_reason": plan.blocked_reason},
                 ),
             )
-        after = self.reducer.apply_all(state, result.mutations)
-        return SchedulerStepResult(
-            after,
-            _transition(
-                before_state=state,
-                after_state=after,
-                action_id="wave:transition",
-                actor_id="wave_system",
-                events=result.events,
-                mutations=result.mutations,
-                records=result.records,
-                node_results=(_scheduler_node("wave", "wave:transition"),),
-                coverage={"wave_transition": plan.to_json(), "scheduler_step": "wave_transition"},
-            ),
+        phase_enter = self.phases.transition(
+            state,
+            WAVE_TRANSITION,
+            actor_id="wave_system",
+            reason="enter explicit wave lifecycle",
+            metadata={
+                "wave_transition_plan": plan.to_json(),
+                "wave_definition_id": plan.wave_definition_id,
+                "source_trace": plan.source_trace,
+                "lifecycle_operation": "phase_enter",
+            },
+            mutation_source="wave_system",
         )
+        if not phase_enter.plan.ok:
+            return self._blocked(
+                state,
+                "wave:phase_enter",
+                phase_enter.plan.blocked_reason or "wave_phase_enter_blocked",
+                {"wave_transition": plan.to_json(), "phase_transition": phase_enter.plan.to_json()},
+            )
+        mutations: list[Mutation] = list(phase_enter.mutations)
+        events: list[GameEvent] = list(phase_enter.events)
+        records: list[dict[str, JSONValue]] = list(phase_enter.records)
+        nodes: list[ExecutionNodeResult] = [_scheduler_node("wave_phase", "wave:phase_enter")]
+        candidate = self.reducer.apply_all(state, phase_enter.mutations)
+        candidate = self.reducer.apply_all(candidate, result.mutations)
+        mutations.extend(result.mutations)
+        records.extend(result.records)
+        nodes.append(_scheduler_node("wave", "wave:transition"))
+        dispatch_error_count = 0
+        for event in result.events:
+            dispatch = self.event_dispatcher.dispatch_event(candidate, event=event)
+            candidate = dispatch.after_state
+            mutations.extend(dispatch.mutations)
+            events.extend(dispatch.events)
+            records.extend(dispatch.records)
+            nodes.extend(dispatch.node_results)
+            dispatch_error_count += len(dispatch.errors)
+        exit_phase = ENDED if plan.status in {"battle_victory", "battle_defeat"} else IDLE
+        phase_exit = self.phases.transition(
+            candidate,
+            exit_phase,
+            actor_id="wave_system",
+            reason="leave explicit wave lifecycle",
+            metadata={
+                "wave_transition_plan": plan.to_json(),
+                "wave_definition_id": plan.wave_definition_id,
+                "source_trace": plan.source_trace,
+                "lifecycle_operation": "phase_exit",
+            },
+            mutation_source="wave_system",
+        )
+        if not phase_exit.plan.ok:
+            nodes.append(
+                _scheduler_node(
+                    "wave_phase",
+                    "wave:phase_exit",
+                    status="blocked",
+                    reason=phase_exit.plan.blocked_reason or "wave_phase_exit_blocked",
+                )
+            )
+        else:
+            candidate = self.reducer.apply_all(candidate, phase_exit.mutations)
+            mutations.extend(phase_exit.mutations)
+            events.extend(phase_exit.events)
+            records.extend(phase_exit.records)
+            nodes.append(_scheduler_node("wave_phase", "wave:phase_exit"))
+        transition = _transition(
+            before_state=state,
+            after_state=candidate,
+            action_id="wave:transition",
+            actor_id="wave_system",
+            events=tuple(events),
+            mutations=tuple(mutations),
+            records=tuple(records),
+            node_results=tuple(nodes),
+            coverage={
+                "wave_transition": plan.to_json(),
+                "scheduler_step": "wave_transition",
+                "wave_lifecycle": {
+                    "phase_enter": phase_enter.plan.to_json(),
+                    "phase_exit": phase_exit.plan.to_json(),
+                    "dispatched_event_count": len(result.events),
+                    "dispatch_error_count": dispatch_error_count,
+                },
+            },
+        )
+        after = _eligible_scheduler_state(state, candidate, transition)
+        return SchedulerStepResult(after, transition)
 
     def _try_queue_drain(self, state: BattleState, command: ActionCommand | None = None) -> SchedulerStepResult | None:
         plan = select_next_queue_drain_plan(self.rules, self.queue, state)
         if plan is None:
             return None
-        if not plan.ok:
+        if plan.status == "waiting_window":
+            return None
+        queue_phase_reason = self.phases.operation_blocked_reason(state, "resolve_queue_entry")
+        if queue_phase_reason:
             return self._blocked(
                 state,
-                "queue:drain",
+                "queue:phase_admission",
+                queue_phase_reason,
+                {
+                    "drain_plan": plan.to_json(),
+                    "combat_phase": self.phases.current_phase(state),
+                    "phase_operation": "resolve_queue_entry",
+                },
+            )
+        if not plan.ok:
+            return self._terminalize_queue_entry(
+                state,
                 plan.blocked_reason or "queue_drain_blocked",
-                {"drain_plan": plan.to_json()},
+                plan,
             )
         resolution = _resolution_for_drain_plan(self.rules, state, plan)
         if resolution is None:
-            return self._blocked(state, "queue:drain", "queue_resolution_missing", {"drain_plan": plan.to_json()})
+            return self._terminalize_queue_entry(state, "queue_resolution_missing", plan)
         requires_external_command = queue_plan_requires_external_command(plan, resolution)
         if requires_external_command and command is None:
             return self._blocked(
@@ -877,6 +1554,8 @@ class CombatScheduler:
         if resolution.resolved_kind == "action_definition" or _is_extra_turn_action_choice_plan(plan, resolution):
             preflight_reason = self._queue_action_preflight_reason(state, plan, command=command)
             if preflight_reason:
+                if not _queue_submission_rejection_reason(preflight_reason):
+                    return self._terminalize_queue_entry(state, preflight_reason, plan)
                 return self._blocked(
                     state,
                     "queue:action_drain",
@@ -979,12 +1658,35 @@ class CombatScheduler:
                 queue_entry=plan.queue_entry,
                 queue_resolution=resolution.to_json(),
             )
-            after_state = ability_result.after_state
-            mutations = (*mutations, *ability_result.mutations)
+            ability_commit = finalize_selected_execution_graph(
+                after_dequeue,
+                ability_result.after_state,
+                ability_result.mutations,
+                ability_result.node_results,
+                reducer=self.reducer,
+            )
+            if not ability_commit.outcome.successor_eligible:
+                reasons = ",".join(ability_commit.outcome.reason_codes) or ability_commit.outcome.category
+                return self._terminalize_queue_entry(
+                    state,
+                    f"queue_standalone_ability_not_successor:{reasons}",
+                    plan,
+                    child_evidence={
+                        "resolved_kind": "standalone_ability_graph",
+                        "graph_id": graph_id,
+                        "outcome": ability_commit.outcome.to_json(),
+                        "atomic_commit": ability_commit.evidence,
+                        "planned_mutation_count": len(ability_result.mutations),
+                        "published": False,
+                    },
+                )
+            after_state = ability_commit.after_state
+            mutations = (*mutations, *ability_commit.committed_mutations)
             events = (*events, *ability_result.events)
             records.extend(ability_result.records)
         elif resolution.resolved_kind == "action_definition" or _is_extra_turn_action_choice_plan(plan, resolution):
             from ..core.executor import CombatExecutor
+            from .action_contract import _issue_action_submission_authorization
 
             actor_id = str(plan.queue_entry.get("actor_id") or "")
             selected_command = self._queue_action_command_from_plan(plan, command)
@@ -1010,7 +1712,30 @@ class CombatScheduler:
                     }
                 },
             )
-            after_action, action_transition = CombatExecutor(self.rules).execute(queue_command, after_dequeue)
+            actor = after_dequeue.units.get(actor_id)
+            authorization = _issue_action_submission_authorization(
+                state=after_dequeue,
+                submission_mode="queue",
+                actor_id=actor_id,
+                owner_entity_ref=actor.template_id if actor is not None else "",
+                action_id=queue_command.action_id,
+                action_level=queue_command.action_level,
+                window=str((plan.queue_window or {}).get("window_family") or "queue"),
+                source_id=str(plan.queue_entry.get("entry_id") or plan.queue_intent_id),
+            )
+            after_action, action_transition = CombatExecutor(self.rules).execute(
+                queue_command,
+                after_dequeue,
+                submission_authorization=authorization,
+            )
+            if not action_transition.outcome.successor_eligible:
+                reasons = ",".join(action_transition.outcome.reason_codes) or action_transition.outcome.category
+                return self._terminalize_queue_entry(
+                    state,
+                    f"queue_child_transition_not_successor:{reasons}",
+                    plan,
+                    child_transition=action_transition,
+                )
             after_state = after_action
             mutations = (*mutations, *action_transition.transaction.mutations)
             events = (
@@ -1121,18 +1846,103 @@ class CombatScheduler:
             records=tuple(records),
             node_results=(
                 _scheduler_node("queue", "queue:drain_admitted"),
+                *(ability_result.node_results if resolution.resolved_kind == "standalone_ability_graph" else ()),
                 *_child_transition_node_results(child_transitions),
             ),
             coverage={
                 "drain_plan": plan.to_json(),
                 "queue_resolution": resolution.to_json(),
                 "queue_window_plan": plan.queue_window or {},
+                "queue_progress": {
+                    "step_budget": QUEUE_DRAIN_STEP_BUDGET,
+                    "steps_used": 1,
+                    "before_length": len(state.queues.get(plan.queue_name, ())),
+                    "after_length": len(after_state.queues.get(plan.queue_name, ())),
+                    "terminal_disposition": "completed",
+                    "monotonic_progress": len(after_state.queues.get(plan.queue_name, ())) < len(state.queues.get(plan.queue_name, ())),
+                },
+                "phase_machine": {
+                    "operation": "resolve_queue_entry",
+                    "current_phase": self.phases.current_phase(state),
+                    "admitted": True,
+                },
             },
         )
         return SchedulerStepResult(
             _eligible_scheduler_state(state, after_state, transition),
             transition,
             child_transitions=child_transitions,
+        )
+
+    def _terminalize_queue_entry(
+        self,
+        state: BattleState,
+        blocked_reason: str,
+        plan: QueueDrainPlan,
+        *,
+        child_transition: BattleTransition | None = None,
+        child_evidence: dict[str, JSONValue] | None = None,
+    ) -> SchedulerStepResult:
+        terminal_plan = self.queue.plan_terminal_resolution(
+            state,
+            plan,
+            blocked_reason=blocked_reason,
+        )
+        terminal = self.queue.resolve_terminal(state, terminal_plan)
+        after = self.reducer.apply_all(state, terminal.mutations)
+        transition_evidence: dict[str, JSONValue] = (
+            {
+                "action_id": child_transition.transaction.command.action_id,
+                "outcome": child_transition.outcome.to_json(),
+                "mutation_count": len(child_transition.transaction.mutations),
+                "published": False,
+            }
+            if child_transition is not None
+            else (child_evidence or {})
+        )
+        records = (
+            *terminal.records,
+            *_scheduler_process_records(
+                "queue_entry_terminal_resolution",
+                {
+                    "queue_terminal_plan": terminal_plan.to_json(),
+                    "child_transition": transition_evidence,
+                },
+            ),
+        )
+        transition = _transition(
+            before_state=state,
+            after_state=after,
+            action_id=f"queue:{terminal_plan.disposition}",
+            actor_id=str(plan.queue_entry.get("actor_id") or ""),
+            events=terminal.events,
+            mutations=terminal.mutations,
+            records=records,
+            node_results=(
+                _scheduler_node("queue_terminal", f"queue:{terminal_plan.disposition}:{terminal_plan.entry_id}"),
+            ),
+            coverage={
+                "drain_plan": plan.to_json(),
+                "queue_terminal_plan": terminal_plan.to_json(),
+                "child_transition": transition_evidence,
+                "queue_progress": {
+                    "step_budget": QUEUE_DRAIN_STEP_BUDGET,
+                    "steps_used": 1,
+                    "before_length": terminal_plan.before_length,
+                    "after_length": terminal_plan.after_length,
+                    "retained": terminal_plan.retained,
+                    "monotonic_progress": terminal_plan.to_json()["monotonic_progress"],
+                },
+                "phase_machine": {
+                    "operation": "resolve_queue_entry",
+                    "current_phase": self.phases.current_phase(state),
+                    "admitted": True,
+                },
+            },
+        )
+        return SchedulerStepResult(
+            _eligible_scheduler_state(state, after, transition),
+            transition,
         )
 
     def _queue_action_preflight_reason(self, state: BattleState, plan: QueueDrainPlan, *, command: ActionCommand | None = None) -> str:
@@ -1196,6 +2006,9 @@ class CombatScheduler:
         if resource_policy.get("ignore_skill_point_delta") is not True and definition.bp_need > state.skill_points:
             return "queue_action_resource_preflight_failed:insufficient_skill_points"
         if plan.queue_intent_id.startswith("manual_ultimate:"):
+            ultimate_rule, rule_blocked_reason = self.rules.select_resource_rule("ultimate_energy_cost")
+            if ultimate_rule is None:
+                return rule_blocked_reason
             actor = state.units[actor_id]
             if actor.max_energy <= 0 or actor.energy < actor.max_energy:
                 return "manual_ultimate_energy_not_ready_at_drain"
@@ -1468,9 +2281,7 @@ def _status_phase1_lifecycle_event(
     trigger_ids = trigger_ids_by_event.get("OnPhase1") if isinstance(trigger_ids_by_event, dict) else None
     if not isinstance(trigger_ids, list) or not any(isinstance(item, str) and item for item in trigger_ids):
         return None
-    source_trace = detail.get("source_trace")
-    if not isinstance(source_trace, dict) or not source_trace:
-        return None
+    source_trace = detail.get("source_trace") if isinstance(detail.get("source_trace"), dict) else {}
     modifier_name = str(detail.get("modifier_name") or "")
     status_id = str(detail.get("status_id") or "")
     status_instance_id = str(detail.get("instance_id") or "")
@@ -1530,27 +2341,43 @@ def _transition(
     preflight_reason: str = "",
     coverage: dict[str, JSONValue] | None = None,
 ) -> BattleTransition:
+    atomic_commit = finalize_selected_execution_graph(
+        before_state,
+        after_state,
+        mutations,
+        node_results,
+        preflight_blocked=preflight_blocked,
+        preflight_reason=preflight_reason,
+    )
     command = ActionCommand(actor_id=actor_id, action_id=action_id, action_level=0, metadata={"scheduler": "timeline"})
-    settlement = ActionSettlement(action_id=action_id, actor_id=actor_id, target_ids=(), records=records)
+    settlement = ActionSettlement(
+        action_id=action_id,
+        actor_id=actor_id,
+        target_ids=(),
+        records=records_for_atomic_result(records, atomic_commit),
+    )
+    phase_coverage = _phase_coverage(atomic_commit.after_state)
+    requested_coverage = coverage or {}
+    requested_phase = requested_coverage.get("phase_machine")
+    if isinstance(requested_phase, dict):
+        phase_coverage = {**phase_coverage, **requested_phase}
     return BattleTransition(
         transaction=ActionTransaction(
             command=command,
             before=before_state.snapshot(),
             events=events,
-            mutations=mutations,
+            mutations=atomic_commit.committed_mutations,
             trigger_windows=(),
             settlement=settlement,
         ),
-        after=after_state.snapshot(),
+        after=atomic_commit.after_state.snapshot(),
         target_resolution=TargetResolution(reason="scheduler_no_target", source="timeline_scheduler"),
-        outcome=classify_transition_outcome(
-            node_results,
-            state_changed=before_state.snapshot().to_json() != after_state.snapshot().to_json(),
-            mutation_count=len(mutations),
-            preflight_blocked=preflight_blocked,
-            preflight_reason=preflight_reason,
-        ),
-        coverage=coverage or {},
+        outcome=atomic_commit.outcome,
+        coverage={
+            **requested_coverage,
+            "phase_machine": phase_coverage,
+            "atomic_commit": atomic_commit.evidence,
+        },
     )
 
 
@@ -1573,28 +2400,53 @@ def _combine_scheduler_transitions(
         action_level=0,
         metadata={"scheduler": "timeline", "scheduler_step": coverage.get("scheduler_step", "")},
     )
-    settlement = ActionSettlement(action_id=action_id, actor_id=actor_id, target_ids=(), records=records)
+    node_results = (
+        _scheduler_node("scheduler", action_id),
+        *_child_transition_node_results(child_transitions),
+    )
+    atomic_commit = finalize_selected_execution_graph(
+        before_state,
+        after_state,
+        mutations,
+        node_results,
+    )
+    settlement = ActionSettlement(
+        action_id=action_id,
+        actor_id=actor_id,
+        target_ids=(),
+        records=records_for_atomic_result(records, atomic_commit),
+    )
+    phase_coverage = _phase_coverage(atomic_commit.after_state)
+    requested_phase = coverage.get("phase_machine")
+    if isinstance(requested_phase, dict):
+        phase_coverage = {**phase_coverage, **requested_phase}
     return BattleTransition(
         transaction=ActionTransaction(
             command=command,
             before=before_state.snapshot(),
             events=events,
-            mutations=mutations,
+            mutations=atomic_commit.committed_mutations,
             trigger_windows=(),
             settlement=settlement,
         ),
-        after=after_state.snapshot(),
+        after=atomic_commit.after_state.snapshot(),
         target_resolution=target_resolution,
-        outcome=classify_transition_outcome(
-            (
-                _scheduler_node("scheduler", action_id),
-                *_child_transition_node_results(child_transitions),
-            ),
-            state_changed=before_state.snapshot().to_json() != after_state.snapshot().to_json(),
-            mutation_count=len(mutations),
-        ),
-        coverage=coverage,
+        outcome=atomic_commit.outcome,
+        coverage={
+            **coverage,
+            "phase_machine": phase_coverage,
+            "atomic_commit": atomic_commit.evidence,
+        },
     )
+
+
+def _phase_coverage(state: BattleState) -> dict[str, JSONValue]:
+    machine = CombatPhaseMachine()
+    return {
+        "schema_version": "p7_s9_combat_phase_machine_v1",
+        "current_phase": machine.current_phase(state),
+        "allowed_next_phases": list(machine.allowed_next_phases(state)),
+    }
 
 
 def _with_scheduler_record(
@@ -1687,6 +2539,14 @@ def _scheduler_process_records(
             trace={},
         ).to_json(),
     )
+
+
+def _phase_rule_metadata(rule, plan_id: str) -> dict[str, JSONValue]:
+    return {
+        "timeline_rule_id": rule.timeline_rule_id,
+        "turn_advance_plan_id": plan_id,
+        "source_trace": rule.source.to_json(),
+    }
 
 
 def _enemy_action_cursor_record(
@@ -1904,8 +2764,7 @@ def _manual_ultimate_resolution_for_entry(state: BattleState, entry: dict[str, J
     if actor is None or not actor.template_id:
         return None
     source_trace = entry.get("source_trace") if isinstance(entry.get("source_trace"), dict) else {}
-    command = _manual_ultimate_command_payload(source_trace)
-    action_level = command.get("action_level")
+    action_level = entry.get("action_level")
     if not isinstance(action_level, int):
         return None
     source = IRSource(
@@ -1946,9 +2805,8 @@ def _manual_ultimate_dequeue_metadata(rules: RuleBook, plan: QueueDrainPlan) -> 
     if not plan.queue_intent_id.startswith("manual_ultimate:"):
         return {}
     source_trace = plan.queue_entry.get("source_trace") if isinstance(plan.queue_entry.get("source_trace"), dict) else {}
-    command = _manual_ultimate_command_payload(source_trace)
-    action_id = str(command.get("action_id") or plan.resolved_action_id or plan.queue_entry.get("action_or_ability_ref") or "")
-    action_level = command.get("action_level")
+    action_id = str(plan.resolved_action_id or plan.queue_entry.get("action_or_ability_ref") or "")
+    action_level = plan.queue_entry.get("action_level")
     if not isinstance(action_level, int):
         action_level = plan.resolved_action_level if isinstance(plan.resolved_action_level, int) else 0
     definition = rules.action_definition(action_id, action_level) if action_id else None
@@ -1965,21 +2823,24 @@ def _manual_ultimate_dequeue_metadata(rules: RuleBook, plan: QueueDrainPlan) -> 
     }
 
 
-def _manual_ultimate_command_payload(source_trace: dict[str, JSONValue]) -> dict[str, JSONValue]:
-    manual_source = source_trace.get("manual_input_source") if isinstance(source_trace.get("manual_input_source"), dict) else {}
-    evidence = manual_source.get("evidence") if isinstance(manual_source.get("evidence"), dict) else {}
-    command = evidence.get("command") if isinstance(evidence.get("command"), dict) else {}
-    return command
-
-
 def _is_extra_turn_action_choice_plan(plan: QueueDrainPlan, resolution: QueueResolutionIR) -> bool:
     window_family = str((plan.queue_window or {}).get("window_family") or "")
     return window_family == "extra_turn" and resolution.resolved_kind == "extra_turn_action_choice"
 
 
+def _queue_submission_rejection_reason(reason: str) -> bool:
+    return reason in {
+        "queue_selectable_command_missing",
+        "extra_turn_route_action_choice_missing",
+        "extra_turn_route_action_actor_mismatch",
+        "manual_ultimate_action_actor_mismatch",
+        "manual_ultimate_action_mismatch",
+        "manual_ultimate_target_mismatch",
+    }
+
+
 def _queue_entry_resource_policy(plan: QueueDrainPlan) -> dict[str, JSONValue]:
-    source_trace = plan.queue_entry.get("source_trace") if isinstance(plan.queue_entry.get("source_trace"), dict) else {}
-    policy = source_trace.get("queue_intent_resource_policy") if isinstance(source_trace, dict) else None
+    policy = plan.queue_entry.get("resource_policy")
     return policy if isinstance(policy, dict) else {}
 
 

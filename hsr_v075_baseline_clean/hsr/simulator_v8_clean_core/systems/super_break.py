@@ -6,6 +6,7 @@ from ..core.model import BattleState, JSONValue, Mutation
 from ..core.reducer import MutationReducer
 from ..core.settlement import SettlementRecord
 from ..rules.evaluator import NumericEvaluationContext, NumericEvaluationResult, RuleEvaluator
+from ..rules.expression_ir import numeric_dynamic_hashes
 from ..rules.ir import SuperBreakEmissionIR
 from ..rules.rulebook import RuleBook
 from .damage import DamagePacket, DamageSystem
@@ -57,7 +58,7 @@ class SuperBreakSystem:
         reducer: MutationReducer | None = None,
     ) -> None:
         self.rules = rules
-        self.damage = damage or DamageSystem()
+        self.damage = damage or DamageSystem(rules)
         self.reducer = reducer or MutationReducer()
 
     def apply_packet(self, state: BattleState, packet: SuperBreakPacket) -> SuperBreakApplicationResult:
@@ -94,6 +95,7 @@ class SuperBreakSystem:
                 attack_type=emission.attack_type,
                 damage_formula_family="super_break",
                 amount=float(evaluation.value),
+                amount_stage="family_base",
                 element_type=packet.element_type or emission.element_type,
                 super_break_emission_id=emission.super_break_emission_id,
                 break_template_id=emission.template_id,
@@ -183,7 +185,7 @@ def _super_break_binding_source(
     emission: SuperBreakEmissionIR,
     break_base_damage: dict[str, JSONValue],
 ) -> dict[str, JSONValue]:
-    hashes = _postfix_dynamic_hashes(emission.scaling_expr)
+    hashes = numeric_dynamic_hashes(emission.scaling_expr)
     entries: dict[str, JSONValue] = {}
     if len(hashes) >= 1:
         entries["break_base_damage"] = {
@@ -225,17 +227,6 @@ def _super_break_binding_source(
             if isinstance(item, dict) and isinstance(item.get("name"), str)
         },
     }
-
-
-def _postfix_dynamic_hashes(expression: dict[str, JSONValue]) -> list[JSONValue]:
-    raw = expression.get("raw")
-    if not isinstance(raw, dict):
-        return []
-    postfix = raw.get("PostfixExpr")
-    if not isinstance(postfix, dict):
-        return []
-    hashes = postfix.get("DynamicHashes")
-    return list(hashes) if isinstance(hashes, list) else []
 
 
 def _break_base_source_from_evaluation(evaluation: NumericEvaluationResult) -> dict[str, JSONValue]:

@@ -610,6 +610,12 @@ function unitEditHtml(unit) {
       <input data-edit-resource="${escapeHtml(key)}" type="number" step="${escapeHtml(step)}" value="${escapeHtml(editValue(value))}">
     </label>
   `;
+  const readonlyResourceField = (label, value) => `
+    <label class="editField">
+      <span>${escapeHtml(label)}</span>
+      <input type="number" value="${escapeHtml(editValue(value))}" readonly>
+    </label>
+  `;
   return `
     <h3>单位基础</h3>
     <div class="editGrid">
@@ -632,7 +638,7 @@ function unitEditHtml(unit) {
     </div>
     <h3>资源与抗性</h3>
     <div class="editGrid">
-      ${resourceField("护盾", "shield", resources.shield ?? unit.shield)}
+      ${readonlyResourceField("护盾（实例汇总，只读）", unit.shield)}
       ${resourceField("可回复生命", "recoverable_hp", resources.recoverable_hp ?? unit.recoverable_hp)}
       ${resourceField("暴击率", "critical_chance", resources.critical_chance)}
       ${resourceField("暴击伤害", "critical_damage", resources.critical_damage)}

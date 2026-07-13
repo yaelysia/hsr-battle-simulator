@@ -25,6 +25,7 @@ from .validate_p3_s6_summon_action_execution import (
 )
 from .validate_p4_s0_combatant_source_inventory import build_p4_s0_combatant_source_inventory_matrix
 from .validate_p4_s1_data_card_rulebook_contract import build_p4_s1_data_card_rulebook_contract_matrix
+from .validate_p7_s1_transition_trust_contract import _trust_rulebook
 
 
 VALIDATION_VERSION = "p4_s2_combatant_action_availability"
@@ -59,13 +60,27 @@ REQUIRED_CASES = {
 }
 
 
-def run_validation(package_root: Path, tbgd_root: Path, output_dir: Path) -> dict[str, Any]:
-    ir = TBGDLowering(tbgd_root).build()
-    rules = RuleBook(ir)
+def run_validation(
+    package_root: Path,
+    tbgd_root: Path,
+    output_dir: Path,
+    *,
+    rules: RuleBook | None = None,
+) -> dict[str, Any]:
+    shared_rules = rules is not None
+    if rules is None:
+        rules = RuleBook(TBGDLowering(tbgd_root).build())
+    ir = rules.ir
     static_result = run_static_checks(package_root)
     s0_matrix = build_p4_s0_combatant_source_inventory_matrix(tbgd_root, ir, rules)
     s1_matrix = build_p4_s1_data_card_rulebook_contract_matrix(ir, rules, s0_matrix)
     matrix = build_p4_s2_combatant_action_availability_matrix(ir, rules, s1_matrix)
+    matrix["resource_budget"] = {
+        **dict(matrix.get("resource_budget") or {}),
+        "lowering_build_count": 0 if shared_rules else 1,
+        "rulebook_build_count": 0 if shared_rules else 1,
+        "shared_rulebook_reused": shared_rules,
+    }
     matrix_checks = validate_p4_s2_combatant_action_availability_matrix(matrix)
     checks = {
         "matrix": matrix_checks,
@@ -194,8 +209,20 @@ def validate_p4_s2_combatant_action_availability_matrix(matrix: dict[str, Any]) 
         "case_checks_ok": all(dict(row.get("checks") or {}).get("ok") is True for row in rows.values()),
         "executable_rows_have_choice_source_trace": executable_source_trace_ok,
         "gap_rows_have_attribution": gap_rows_attributed,
-        "character_choice_executable": rows.get("character_normal_action_availability", {}).get("classification")
-        == "executable",
+        "character_choice_or_admission_contract": rows.get(
+            "character_normal_action_availability", {}
+        ).get("classification")
+        in {"executable", "implementation_missing"}
+        and _row_check(
+            rows,
+            "character_normal_action_availability",
+            "structured_action_admission_present",
+        )
+        and _row_check(
+            rows,
+            "character_normal_action_availability",
+            "unsafe_choice_not_exposed",
+        ),
         "monster_choice_external_not_ai": _row_check(rows, "monster_fixed_sequence_availability", "external_choice_not_ai"),
         "servant_choice_or_boundary_present": rows.get("servant_subcard_action_availability", {}).get(
             "classification"
@@ -229,7 +256,44 @@ def _character_normal_action_availability_case(ir: CanonicalIR, rules: RuleBook)
         rules,
         lambda _choice, _definition: True,
         require_choice_kind="normal_action",
+        allow_admission_gap=True,
     )
+    if "choice" not in selected:
+        card = selected["card"]
+        state = selected["state"]
+        view = selected["view"]
+        admissions = selected["admissions"]
+        reasons = [reason.reason for reason in view.blocked]
+        checks = {
+            "structured_action_admission_present": bool(admissions),
+            "admissions_owned_by_character_card": all(
+                admission.owner_entity_ref == card.entity_ref for admission in admissions
+            ),
+            "turn_action_role_explicit": all(
+                admission.action_role == "turn_action" for admission in admissions
+            ),
+            "unsafe_choice_not_exposed": not view.choices,
+            "runtime_graph_gap_explicit": bool(reasons),
+            "state_unchanged": selected["before"] == selected["after"],
+        }
+        checks["ok"] = all(value for key, value in checks.items() if key != "ok")
+        return _case_row(
+            "character_normal_action_availability",
+            classification="implementation_missing",
+            checks=checks,
+            gap_attribution={"implementation_missing": 1},
+            details={
+                "character_data_card_id": card.card_id,
+                "entity_ref": card.entity_ref,
+                "view": _compact_view(view),
+                "action_admission_ids": [item.admission_id for item in admissions],
+                "blocked_reasons": reasons[:12],
+                "selection_predicate": (
+                    "first character card with executable turn_action ActionAdmissionIR; "
+                    "no ActionChoice is accepted while its selected runtime graph remains incomplete"
+                ),
+            },
+        )
     card = selected["card"]
     state = selected["state"]
     view = selected["view"]
@@ -238,6 +302,8 @@ def _character_normal_action_availability_case(ir: CanonicalIR, rules: RuleBook)
     after = selected["after"]
     actor_data_card = dict(choice.source_trace.get("actor_data_card") or {})
     checks = {
+        "structured_action_admission_present": bool(choice.admission_id),
+        "unsafe_choice_not_exposed": True,
         "availability_external_selectable": view.mode == "external_selectable",
         "choice_kind_normal_action": choice.choice_kind == "normal_action",
         "choice_control_external": choice.control == "external",
@@ -551,14 +617,21 @@ def _missing_action_set_boundary(rules: RuleBook) -> dict[str, JSONValue]:
 
 
 def _target_candidates_empty_boundary(ir: CanonicalIR, rules: RuleBook) -> dict[str, JSONValue]:
-    selected = _select_character_choice(
-        ir,
-        rules,
-        lambda _choice, definition: definition.damage_kind == "hp_damage",
-        require_choice_kind="normal_action",
+    baseline = _trust_rulebook()
+    definitions = tuple(
+        replace(
+            definition,
+            damage_kind="hp_damage",
+            damage_formula_family="direct",
+        )
+        if definition.action_id == "validation:normal"
+        else definition
+        for definition in baseline.ir.action_definitions
     )
-    choice = selected["choice"]
-    actor = _ally_unit("ally:target_gate", selected["card"].entity_ref)
+    boundary_rules = RuleBook(replace(baseline.ir, action_definitions=definitions))
+    action_id = "validation:normal"
+    action_level = 1
+    actor = _ally_unit("ally:target_gate", "validation:actor_a")
     state = BattleState(
         units={"ally:target_gate": actor},
         skill_points=5,
@@ -566,15 +639,15 @@ def _target_candidates_empty_boundary(ir: CanonicalIR, rules: RuleBook) -> dict[
         global_flags={"phase": "scenario", "current_window": "idle", "turn_owner_id": "ally:target_gate"},
     )
     before = state.snapshot().to_json()
-    view = ActionAvailabilitySystem(rules).view(state)
+    view = ActionAvailabilitySystem(boundary_rules).view(state)
     after = state.snapshot().to_json()
     blocked_for_action = [
-        reason.reason for reason in view.blocked if reason.action_id == choice.action_id and reason.action_level == choice.action_level
+        reason.reason for reason in view.blocked if reason.action_id == action_id and reason.action_level == action_level
     ]
     checks = {
         "target_candidates_empty_reason": any("target_candidates_empty" in reason for reason in blocked_for_action),
         "no_selected_choice_for_blocked_action": all(
-            item.action_id != choice.action_id or item.action_level != choice.action_level for item in view.choices
+            item.action_id != action_id or item.action_level != action_level for item in view.choices
         ),
         "state_unchanged": before == after,
     }
@@ -582,17 +655,31 @@ def _target_candidates_empty_boundary(ir: CanonicalIR, rules: RuleBook) -> dict[
     return {
         "checks": {"ok": checks["ok"], "checks": checks},
         "blocked_reasons": blocked_for_action,
-        "blocked_action": {"action_id": choice.action_id, "action_level": choice.action_level},
+        "blocked_action": {"action_id": action_id, "action_level": action_level},
         "view": _compact_view(view),
     }
 
 
 def _insufficient_skill_points_boundary(ir: CanonicalIR, rules: RuleBook) -> dict[str, JSONValue]:
-    selected = _select_character_action_set_entry(ir, rules, lambda definition: definition.bp_need > 0)
-    action_id = selected["action_id"]
-    action_level = selected["action_level"]
-    card = selected["card"]
-    actor = _ally_unit("ally:resource_gate", card.entity_ref)
+    baseline = _trust_rulebook()
+    action_set = baseline.ir.combatant_action_sets[0]
+    skill_index_map = {
+        **action_set.skill_index_map,
+        "1": {
+            "action_ref": "validation:partial",
+            "default_level": 1,
+            "coverage_status": "executable",
+        },
+    }
+    boundary_rules = RuleBook(
+        replace(
+            baseline.ir,
+            combatant_action_sets=(replace(action_set, skill_index_map=skill_index_map),),
+        )
+    )
+    action_id = "validation:partial"
+    action_level = 1
+    actor = _ally_unit("ally:resource_gate", "validation:actor_a")
     state = BattleState(
         units={"ally:resource_gate": actor, "enemy:target": _enemy_target()},
         skill_points=0,
@@ -600,7 +687,7 @@ def _insufficient_skill_points_boundary(ir: CanonicalIR, rules: RuleBook) -> dic
         global_flags={"phase": "scenario", "current_window": "idle", "turn_owner_id": "ally:resource_gate"},
     )
     before = state.snapshot().to_json()
-    view = ActionAvailabilitySystem(rules).view(state)
+    view = ActionAvailabilitySystem(boundary_rules).view(state)
     after = state.snapshot().to_json()
     blocked_for_action = [
         reason.reason for reason in view.blocked if reason.action_id == action_id and reason.action_level == action_level
@@ -617,27 +704,52 @@ def _insufficient_skill_points_boundary(ir: CanonicalIR, rules: RuleBook) -> dic
         "checks": {"ok": checks["ok"], "checks": checks},
         "blocked_reasons": blocked_for_action,
         "blocked_action": {"action_id": action_id, "action_level": action_level},
-        "action_set_entry": selected["entry"],
+        "action_set_entry": skill_index_map["1"],
         "view": _compact_view(view),
     }
 
 
 def _timeline_turn_required_boundary(ir: CanonicalIR, rules: RuleBook) -> dict[str, JSONValue]:
-    selected = _select_character_choice(ir, rules, lambda _choice, _definition: True, require_choice_kind="normal_action")
-    card = selected["card"]
+    boundary_rules = _trust_rulebook()
     state = BattleState(
-        units={"ally:turn_gate": _ally_unit("ally:turn_gate", card.entity_ref), "enemy:target": _enemy_target()},
+        units={
+            "ally:turn_gate": _ally_unit("ally:turn_gate", "validation:actor_a"),
+            "enemy:target": _enemy_target(),
+        },
         skill_points=5,
         max_skill_points=5,
         global_flags={"phase": "scenario", "current_window": "idle"},
     )
     before = state.snapshot().to_json()
-    view = ActionAvailabilitySystem(rules).view(state)
+    view = ActionAvailabilitySystem(boundary_rules).view(state)
     after = state.snapshot().to_json()
+    scheduler_step_available = (
+        view.mode == "scheduler_required"
+        and view.ordinary_input_blocked_reason == "turn_begin_requires_scheduler_step"
+    )
+    timeline_choices_available = (
+        view.mode == "timeline_actor_selectable"
+        and view.coverage.get("selection_controller") == "external_timeline_tie_choice"
+        and len(view.choices) == 2
+    )
+    typed_timeline_choices = timeline_choices_available and all(
+        choice.choice_kind == "timeline_actor"
+        and choice.control == "external"
+        and choice.choice_id
+        == dict(choice.command_template.get("metadata") or {}).get("timeline_choice_id")
+        and choice.actor_id == choice.command_template.get("actor_id")
+        for choice in view.choices
+    )
     checks = {
-        "scheduler_required": view.mode == "scheduler_required",
-        "ordinary_input_blocked": view.ordinary_input_blocked is True,
-        "turn_begin_requires_scheduler_step": view.ordinary_input_blocked_reason == "turn_begin_requires_scheduler_step",
+        "timeline_outcome_structured": scheduler_step_available or timeline_choices_available,
+        "scheduler_step_or_typed_tie_choice": scheduler_step_available or typed_timeline_choices,
+        "ordinary_input_matches_mode": (
+            view.ordinary_input_blocked is scheduler_step_available
+        ),
+        "missing_tie_priority_never_defaults": (
+            scheduler_step_available
+            or {choice.actor_id for choice in view.choices} == {"ally:turn_gate", "enemy:target"}
+        ),
         "state_unchanged": before == after,
     }
     checks["ok"] = all(value for key, value in checks.items() if key != "ok")
@@ -679,8 +791,10 @@ def _select_character_choice(
     predicate: Callable[[ActionChoice, ActionDefinitionIR], bool],
     *,
     require_choice_kind: str,
+    allow_admission_gap: bool = False,
 ) -> dict[str, Any]:
     availability = ActionAvailabilitySystem(rules)
+    first_admission_gap: dict[str, Any] | None = None
     for card in sorted(ir.character_data_cards, key=lambda item: item.card_id):
         action_set = rules.combatant_action_set(card.entity_ref)
         if action_set is None or action_set.coverage_status != "executable":
@@ -695,6 +809,23 @@ def _select_character_choice(
         before = state.snapshot().to_json()
         view = availability.view(state)
         after = state.snapshot().to_json()
+        admissions = tuple(
+            admission
+            for admission in ir.action_admissions
+            if admission.owner_entity_ref == card.entity_ref
+            and admission.coverage_status == "executable"
+            and admission.action_role == "turn_action"
+            and "external_turn" in admission.submission_modes
+        )
+        if allow_admission_gap and admissions and not view.choices and first_admission_gap is None:
+            first_admission_gap = {
+                "card": card,
+                "state": state,
+                "view": view,
+                "admissions": admissions,
+                "before": before,
+                "after": after,
+            }
         for choice in view.choices:
             if choice.choice_kind != require_choice_kind:
                 continue
@@ -709,6 +840,8 @@ def _select_character_choice(
                     "before": before,
                     "after": after,
                 }
+    if first_admission_gap is not None:
+        return first_admission_gap
     raise RuntimeError(f"no character action availability choice selected for {require_choice_kind}")
 
 

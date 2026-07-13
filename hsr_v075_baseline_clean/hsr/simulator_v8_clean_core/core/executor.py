@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 from .action_plan import DamagePlan, ToughnessPlan, build_action_execution_plan
+from .atomic_commit import finalize_selected_execution_graph, records_for_atomic_result
 from .model import (
     ActionCommand,
     ActionSettlement,
@@ -12,15 +13,21 @@ from .model import (
     GameEvent,
     JSONValue,
     Mutation,
+    TargetResolution,
 )
 from .reducer import MutationReducer
 from .settlement import SettlementRecord
-from .transition_outcome import ExecutionNodeResult, classify_transition_outcome
+from .transition_outcome import ExecutionNodeResult
 from ..rules.evaluator import EvaluationContext, NumericEvaluationContext, RuleEvaluator
 from ..rules.ir import ActionDefinitionIR
 from ..rules.rulebook import RuleBook
 from ..rules.value_binding import ValueBindingRequest, ValueContext, ValueResolution, ValueResolver
 from ..systems.ability import AbilityTaskExecutionResult, AbilityTaskSystem
+from ..systems.action_contract import (
+    ActionContractDecision,
+    ActionContractSystem,
+    ActionSubmissionAuthorization,
+)
 from ..systems.action_preflight import (
     action_binding_blocked_reason,
     action_event_blocked_reason,
@@ -33,13 +40,19 @@ from ..systems.damage import DamagePacket, DamageSystem, DamageSourceFrame, Dama
 from ..systems.dynamic_values import binding_source_from_store, status_binding_sources, store_from_state
 from ..systems.effect import EffectRegistry
 from ..systems.resource import ResourcePlan, ResourceSystem
+from ..systems.rng import rng_choices_from_payload, validate_rng_choice_ledger
 from ..systems.status import StatusSystem
+from ..systems.summon import SummonSystem
 from ..systems.target import TargetSystem
 from ..systems.timeline import TimelinePlan, TimelineSystem
 from ..systems.unit_lifecycle import UnitLifecycleSystem
 from ..systems.toughness import ToughnessPacket, ToughnessSystem
 from ..systems.event_dispatch import EventDispatchResult, EventDispatchSystem
-from ..systems.mutation_events import MUTATION_BACKED_EVENT_TYPES, before_toughness_event, events_for_mutation
+from ..systems.mutation_events import (
+    MUTATION_BACKED_EVENT_TYPES,
+    before_toughness_calculation_event,
+    events_for_mutation,
+)
 
 
 class CombatExecutor:
@@ -52,18 +65,39 @@ class CombatExecutor:
         self.targets = TargetSystem()
         self.timeline = TimelineSystem()
         self.lifecycle = UnitLifecycleSystem()
-        self.damage = DamageSystem()
-        self.toughness = ToughnessSystem()
+        self.damage = DamageSystem(rules)
+        self.toughness = ToughnessSystem(rules)
         self.status = StatusSystem(rules)
+        self.summons = SummonSystem(rules)
         self.effects = EffectRegistry(self.status)
-        self.breaks = BreakSystem(rules, self.effects, reducer=self.reducer)
-        self.ability_tasks = AbilityTaskSystem(rules, self.effects, reducer=self.reducer)
-        self.event_dispatcher = EventDispatchSystem(rules, self.effects, reducer=self.reducer)
+        self.breaks = BreakSystem(rules, self.effects, reducer=self.reducer, damage=self.damage)
+        self.ability_tasks = AbilityTaskSystem(rules, self.effects, reducer=self.reducer, damage=self.damage)
+        self.event_dispatcher = EventDispatchSystem(rules, self.effects, reducer=self.reducer, damage=self.damage)
         self.value_resolver = ValueResolver(rules)
+        self.action_contract = ActionContractSystem(rules)
 
-    def execute(self, command: ActionCommand, state: BattleState) -> tuple[BattleState, BattleTransition]:
+    def execute(
+        self,
+        command: ActionCommand,
+        state: BattleState,
+        *,
+        submission_authorization: ActionSubmissionAuthorization | None = None,
+    ) -> tuple[BattleState, BattleTransition]:
         before = state.snapshot()
         command = _command_with_character_card_level_bonus(command, state, self.rules)
+        queue_resource_policy = _queue_action_resource_policy(command)
+        action_contract = self.action_contract.evaluate(
+            state,
+            command,
+            authorization=submission_authorization,
+            queue_resource_policy=queue_resource_policy,
+        )
+        if not action_contract.ok:
+            return state, _action_contract_blocked_transition(
+                state,
+                command,
+                action_contract,
+            )
         action_definition = self.rules.require_action_definition(command.action_id, command.action_level)
         action_event_ir = self.rules.require_action_event(command.action_id, command.action_level)
         action_binding = self.rules.action_ability_binding(command.action_id, command.action_level)
@@ -131,7 +165,6 @@ class CombatExecutor:
             toughness_emissions=toughness_emissions,
         )
         action_event_plan_payload = _action_event_plan_compat_payload(action_definition, action_event_ir)
-        queue_resource_policy = _queue_action_resource_policy(command)
         resource_plan, resource_value_blocked_reasons = _action_resource_plan_with_value_resolution(
             self.value_resolver,
             command,
@@ -264,7 +297,7 @@ class CombatExecutor:
                 ordered_mutations.extend(dispatch_result.mutations)
                 runtime_records.extend(dispatch_result.records)
         damage_results = []
-        target_rng_events = []
+        target_rng_events = list(target_result.rng_events)
         damage_mutations: tuple[Mutation, ...] = ()
         toughness_results = []
         toughness_mutations: tuple[Mutation, ...] = ()
@@ -513,22 +546,6 @@ class CombatExecutor:
                                 )
                             )
                             continue
-                        modifier_terms, modifier_records = _collect_direct_damage_modifiers(
-                            current_state,
-                            self.rules,
-                            command.actor_id,
-                            damage_packet.target_id,
-                            damage_packet,
-                        )
-                        if modifier_terms or modifier_records:
-                            damage_packet = replace(
-                                damage_packet,
-                                metadata={
-                                    **damage_packet.metadata,
-                                    "direct_modifier_terms": [term for term in modifier_terms],
-                                },
-                            )
-                            runtime_records.extend(modifier_records)
                         before_hit_event = GameEvent(
                             "damage.before_hit",
                             source_id=command.actor_id,
@@ -568,6 +585,24 @@ class CombatExecutor:
                         listener_dispatch_results.append(dispatch_result)
                         ordered_mutations.extend(dispatch_result.mutations)
                         runtime_records.extend(dispatch_result.records)
+                        modifier_terms, modifier_records = _collect_direct_damage_modifiers(
+                            current_state,
+                            self.rules,
+                            command.actor_id,
+                            damage_packet.target_id,
+                            damage_packet,
+                        )
+                        if modifier_terms or modifier_records:
+                            damage_packet = replace(
+                                damage_packet,
+                                metadata={
+                                    **damage_packet.metadata,
+                                    "direct_modifier_terms": [term for term in modifier_terms],
+                                    "modifier_collection_state_event_index": current_state.event_index,
+                                    "modifier_collection_after_before_hit": True,
+                                },
+                            )
+                            runtime_records.extend(modifier_records)
                         damage_result = self.damage.apply_packet(
                             current_state,
                             damage_packet,
@@ -606,11 +641,33 @@ class CombatExecutor:
                                 ordered_mutations.extend(dispatch_result.mutations)
                                 runtime_records.extend(dispatch_result.records)
                         for emitted_event in damage_result.events:
-                            kill_energy_mutation = self._kill_energy_mutation_for_event(
+                            kill_energy_mutation, kill_energy_blocked_reason = self._kill_energy_mutation_for_event(
                                 current_state,
                                 emitted_event,
                                 action_source_metadata,
                             )
+                            if kill_energy_blocked_reason:
+                                execution_node_results.append(
+                                    ExecutionNodeResult(
+                                        node_kind="engine_rule",
+                                        node_id=emitted_event.event_id or "kill_energy_gain",
+                                        status="error",
+                                        reason_code=kill_energy_blocked_reason,
+                                    )
+                                )
+                                runtime_records.append(
+                                    SettlementRecord(
+                                        record_type="engine_rule_blocked",
+                                        source="combat_executor",
+                                        process_only=True,
+                                        payload={
+                                            "rule_kind": "kill_energy_gain",
+                                            "reason": kill_energy_blocked_reason,
+                                            "event_id": emitted_event.event_id,
+                                        },
+                                        trace={"unit_defeated_event": emitted_event.to_json()},
+                                    ).to_json()
+                                )
                             if kill_energy_mutation is not None:
                                 current_state = self.reducer.apply_all(current_state, (kill_energy_mutation,))
                                 ordered_mutations.append(kill_energy_mutation)
@@ -668,34 +725,32 @@ class CombatExecutor:
                                 toughness_plan,
                                 value_resolution=toughness_value_resolution.to_json(),
                             )
+                            stance_before_event = before_toughness_calculation_event(
+                                actor_id=command.actor_id,
+                                target_id=toughness_plan.target_id,
+                                event_index=current_state.event_index,
+                                packet=toughness_packet.to_json(),
+                                extra_payload={
+                                    "action_id": command.action_id,
+                                    "action_level": command.action_level,
+                                    "actor_id": command.actor_id,
+                                    "attacker_id": command.actor_id,
+                                    "primary_action_target_id": toughness_plan.primary_action_target_id,
+                                    "current_hit_target_id": toughness_plan.target_id,
+                                    "source_trace": toughness_plan.source_trace,
+                                },
+                            )
+                            dispatch_result = self.event_dispatcher.dispatch_event(
+                                current_state,
+                                event=stance_before_event,
+                            )
+                            current_state = dispatch_result.after_state
+                            listener_dispatch_results.append(dispatch_result)
+                            ordered_mutations.extend(dispatch_result.mutations)
+                            runtime_records.extend(dispatch_result.records)
                             toughness_result = self.toughness.apply_packet(current_state, toughness_packet)
                             toughness_results.append(toughness_result)
                             toughness_mutations = (*toughness_mutations, *toughness_result.mutations)
-                            for mutation in toughness_result.mutations:
-                                stance_before_event = before_toughness_event(
-                                    mutation,
-                                    actor_id=command.actor_id,
-                                    event_index=current_state.event_index,
-                                    extra_payload={
-                                        "action_id": command.action_id,
-                                        "action_level": command.action_level,
-                                        "actor_id": command.actor_id,
-                                        "attacker_id": command.actor_id,
-                                        "primary_action_target_id": toughness_plan.primary_action_target_id,
-                                        "current_hit_target_id": toughness_plan.target_id,
-                                        "source_trace": toughness_plan.source_trace,
-                                    },
-                                )
-                                if stance_before_event is None:
-                                    continue
-                                dispatch_result = self.event_dispatcher.dispatch_event(
-                                    current_state,
-                                    event=stance_before_event,
-                                )
-                                current_state = dispatch_result.after_state
-                                listener_dispatch_results.append(dispatch_result)
-                                ordered_mutations.extend(dispatch_result.mutations)
-                                runtime_records.extend(dispatch_result.records)
                             current_state = self.reducer.apply_all(current_state, toughness_result.mutations)
                             ordered_mutations.extend(toughness_result.mutations)
                             runtime_records.extend(toughness_result.records)
@@ -742,34 +797,32 @@ class CombatExecutor:
                             toughness_plan,
                             value_resolution=toughness_value_resolution.to_json(),
                         )
+                        stance_before_event = before_toughness_calculation_event(
+                            actor_id=command.actor_id,
+                            target_id=toughness_plan.target_id,
+                            event_index=current_state.event_index,
+                            packet=toughness_packet.to_json(),
+                            extra_payload={
+                                "action_id": command.action_id,
+                                "action_level": command.action_level,
+                                "actor_id": command.actor_id,
+                                "attacker_id": command.actor_id,
+                                "primary_action_target_id": toughness_plan.primary_action_target_id,
+                                "current_hit_target_id": toughness_plan.target_id,
+                                "source_trace": toughness_plan.source_trace,
+                            },
+                        )
+                        dispatch_result = self.event_dispatcher.dispatch_event(
+                            current_state,
+                            event=stance_before_event,
+                        )
+                        current_state = dispatch_result.after_state
+                        listener_dispatch_results.append(dispatch_result)
+                        ordered_mutations.extend(dispatch_result.mutations)
+                        runtime_records.extend(dispatch_result.records)
                         toughness_result = self.toughness.apply_packet(current_state, toughness_packet)
                         toughness_results.append(toughness_result)
                         toughness_mutations = (*toughness_mutations, *toughness_result.mutations)
-                        for mutation in toughness_result.mutations:
-                            stance_before_event = before_toughness_event(
-                                mutation,
-                                actor_id=command.actor_id,
-                                event_index=current_state.event_index,
-                                extra_payload={
-                                    "action_id": command.action_id,
-                                    "action_level": command.action_level,
-                                    "actor_id": command.actor_id,
-                                    "attacker_id": command.actor_id,
-                                    "primary_action_target_id": toughness_plan.primary_action_target_id,
-                                    "current_hit_target_id": toughness_plan.target_id,
-                                    "source_trace": toughness_plan.source_trace,
-                                },
-                            )
-                            if stance_before_event is None:
-                                continue
-                            dispatch_result = self.event_dispatcher.dispatch_event(
-                                current_state,
-                                event=stance_before_event,
-                            )
-                            current_state = dispatch_result.after_state
-                            listener_dispatch_results.append(dispatch_result)
-                            ordered_mutations.extend(dispatch_result.mutations)
-                            runtime_records.extend(dispatch_result.records)
                         current_state = self.reducer.apply_all(current_state, toughness_result.mutations)
                         ordered_mutations.extend(toughness_result.mutations)
                         runtime_records.extend(toughness_result.records)
@@ -863,6 +916,37 @@ class CombatExecutor:
                 ).to_json()
             )
 
+        owner_cleanup_node_results: list[ExecutionNodeResult] = []
+        for owner_id, owner in sorted(current_state.units.items()):
+            if self.lifecycle.status_of(owner) == "active":
+                continue
+            cleanup_plan = self.summons.plan_owner_cleanup(current_state, owner_id)
+            if not cleanup_plan.ok:
+                continue
+            cleanup_result = self.summons.apply_remove(current_state, cleanup_plan)
+            cleanup_reduction = self.reducer.apply_all_result(current_state, cleanup_result.mutations)
+            if not cleanup_reduction.ok:
+                owner_cleanup_node_results.append(
+                    ExecutionNodeResult(
+                        node_kind="summon_owner_cleanup",
+                        node_id=f"summon_owner_cleanup:{owner_id}",
+                        status="blocked",
+                        reason_code=f"summon_owner_cleanup_reducer_conflict:{cleanup_reduction.conflicts[0].code}",
+                    )
+                )
+                continue
+            current_state = cleanup_reduction.after_state
+            ordered_mutations.extend(cleanup_result.mutations)
+            events.extend(cleanup_result.events)
+            runtime_records.extend(cleanup_result.records)
+            owner_cleanup_node_results.append(
+                ExecutionNodeResult(
+                    node_kind="summon_owner_cleanup",
+                    node_id=f"summon_owner_cleanup:{owner_id}",
+                    status="complete",
+                )
+            )
+
         trigger_mutations = tuple(mutation for result in trigger_results for mutation in result.mutations)
         trigger_events = tuple(event for result in trigger_results for event in result.events)
         trigger_rng_events = tuple(event for result in trigger_results for event in result.rng_events)
@@ -888,8 +972,7 @@ class CombatExecutor:
         execution_node_results.extend(_damage_node_results(damage_results))
         execution_node_results.extend(_toughness_node_results(toughness_results))
         execution_node_results.extend(_break_node_results(break_results))
-        mutations = tuple(ordered_mutations)
-        after_state = current_state
+        execution_node_results.extend(owner_cleanup_node_results)
         damage_rng_events = (
             *tuple(target_rng_events),
             *ability_task_rng_events,
@@ -897,6 +980,27 @@ class CombatExecutor:
             *listener_dispatch_rng_events,
             *tuple(event for result in damage_results for event in result.rng_events),
         )
+        rng_ledger_validation = validate_rng_choice_ledger(command.metadata, damage_rng_events)
+        execution_node_results.append(
+            ExecutionNodeResult(
+                node_kind="rng_ledger",
+                node_id=f"rng_ledger:{command.actor_id}:{command.action_id}:{state.event_index}",
+                status="complete" if rng_ledger_validation.ok else "blocked",
+                reason_code="" if rng_ledger_validation.ok else _rng_ledger_blocked_reason(rng_ledger_validation.to_json()),
+            )
+        )
+        planned_mutations = tuple(ordered_mutations)
+        atomic_commit = finalize_selected_execution_graph(
+            state,
+            current_state,
+            planned_mutations,
+            tuple(execution_node_results),
+            reducer=self.reducer,
+            preflight_blocked=not action_enabled,
+            preflight_reason=blocked_reason,
+        )
+        mutations = atomic_commit.committed_mutations
+        after_state = atomic_commit.after_state
 
         records: list[dict[str, JSONValue]] = [
             SettlementRecord(
@@ -1019,6 +1123,15 @@ class CombatExecutor:
             ).to_json(),
         ]
         records.extend(runtime_records)
+        records.append(
+            SettlementRecord(
+                record_type="rng_choice_ledger",
+                source="rng_system",
+                process_only=True,
+                payload=rng_ledger_validation.to_json(),
+                trace={"command_source": command.source, "action_id": command.action_id},
+            ).to_json()
+        )
         if not action_enabled:
             records.append(
                 SettlementRecord(
@@ -1053,6 +1166,7 @@ class CombatExecutor:
                 ).to_json()
             )
 
+        records = list(records_for_atomic_result(tuple(records), atomic_commit))
         settlement = ActionSettlement(
             action_id=command.action_id,
             actor_id=command.actor_id,
@@ -1080,15 +1194,10 @@ class CombatExecutor:
             after=after_state.snapshot(),
             target_resolution=target_result.resolution,
             rng_events=damage_rng_events,
-            outcome=classify_transition_outcome(
-                tuple(execution_node_results),
-                state_changed=before.to_json() != after_state.snapshot().to_json(),
-                mutation_count=len(mutations),
-                preflight_blocked=not action_enabled,
-                preflight_reason=blocked_reason,
-            ),
+            outcome=atomic_commit.outcome,
             coverage={
                 "executor": "v0_221_action_ability_binding",
+                "action_contract": action_contract.to_json(),
                 "action_ability_binding": action_binding.to_json() if action_binding else None,
                 "ability_phase_graph": [phase.to_json() for phase in ability_phases],
                 "ability_task_graph": [task.to_json() for task in ability_tasks],
@@ -1153,26 +1262,29 @@ class CombatExecutor:
                 "toughness_ok": all(result.ok for result in toughness_results) if toughness_results else None,
                 "break_ok": all(result.ok for result in break_results) if break_results else None,
                 "damage_formula_family": action_definition.damage_formula_family,
+                "atomic_commit": atomic_commit.evidence,
             },
         )
-        return (after_state if transition.outcome.successor_eligible else state), transition
+        return after_state, transition
 
     def _kill_energy_mutation_for_event(
         self,
         state: BattleState,
         event: GameEvent,
         action_source_metadata: dict[str, JSONValue],
-    ) -> Mutation | None:
+    ) -> tuple[Mutation | None, str]:
         if event.event_type != "unit.defeated":
-            return None
+            return None, ""
         payload = event.payload if isinstance(event.payload, dict) else {}
         owner_id = str(payload.get("kill_credit_owner_id") or payload.get("killer_id") or "")
         if not owner_id or owner_id not in state.units:
-            return None
+            return None, ""
         owner = state.units[owner_id]
         if owner.max_energy <= 0:
-            return None
-        rule = self.rules.default_kill_energy_gain_rule()
+            return None, ""
+        rule, rule_blocked_reason = self.rules.select_resource_rule("kill_energy_gain")
+        if rule is None:
+            return None, rule_blocked_reason
         metadata = {
             **action_source_metadata,
             "source_trace": {
@@ -1189,8 +1301,8 @@ class CombatExecutor:
             metadata=metadata,
         )
         if mutation.before == mutation.after:
-            return None
-        return mutation
+            return None, ""
+        return mutation, ""
 
 
 def _mutation_record(record_type: str, mutation: Mutation) -> dict[str, JSONValue]:
@@ -1322,18 +1434,12 @@ def _summon_execution_blocked_reason(state: BattleState, command: ActionCommand)
         return "summon_runtime_entity_missing"
     if runtime_entity.get("status", "active") != "active":
         return "summon_runtime_entity_not_active"
-    runtime_source_trace = runtime_entity.get("source_trace")
-    if not isinstance(runtime_source_trace, dict) or not runtime_source_trace:
-        return "summon_runtime_source_trace_missing"
     source_intent_id = actor.flags.get("summon_intent_id")
     if source_intent_id is not None and runtime_entity.get("source_intent_id") != source_intent_id:
         return "summon_runtime_source_binding_mismatch"
     admission = actor.flags.get("summon_action_admission")
     if not isinstance(admission, dict) or admission.get("coverage_status") != "executable":
         return "summon_action_source_not_admitted"
-    admission_source_trace = admission.get("source_trace")
-    if not isinstance(admission_source_trace, dict) or not admission_source_trace:
-        return "summon_action_source_trace_missing"
     return ""
 
 
@@ -1355,12 +1461,7 @@ def _summon_damage_stat_blocked_reason(
         return ""
     summon_kind = str(actor.flags.get("summon_kind") or "")
     if summon_kind == "summoned_monster":
-        source_trace = actor.flags.get("combatant_profile_source_trace")
-        if (
-            actor.flags.get("combatant_profile_coverage_status") == "executable"
-            and isinstance(source_trace, dict)
-            and source_trace
-        ):
+        if actor.flags.get("combatant_profile_coverage_status") == "executable":
             return ""
         return "summon_damage_stat_source_not_admitted"
     admission = actor.flags.get("summon_damage_stat_admission")
@@ -1368,9 +1469,6 @@ def _summon_damage_stat_blocked_reason(
         admission = actor.flags.get("servant_damage_stat_admission")
     if not isinstance(admission, dict) or admission.get("coverage_status") != "executable":
         return "summon_damage_stat_binding_not_admitted"
-    source_trace = admission.get("source_trace")
-    if not isinstance(source_trace, dict) or not source_trace:
-        return "summon_damage_stat_source_trace_missing"
     return ""
 
 
@@ -1515,10 +1613,7 @@ def _queue_action_resource_policy(command: ActionCommand) -> dict[str, JSONValue
     queue_entry = queue_parent.get("queue_entry")
     if not isinstance(queue_entry, dict):
         return {}
-    source_trace = queue_entry.get("source_trace")
-    if not isinstance(source_trace, dict):
-        return {}
-    policy = source_trace.get("queue_intent_resource_policy")
+    policy = queue_entry.get("resource_policy")
     return policy if isinstance(policy, dict) else {}
 
 
@@ -1613,7 +1708,7 @@ def _damage_packet(
             "damage_source_kind": "primary_action_damage",
             "damage_sequence_id": f"action:{command.actor_id}:{command.action_id}:level:{command.action_level}",
             "can_continue_after_lethal": True,
-            "damage_custom_name": _damage_custom_name_from_trace(damage_plan.hit_source_trace),
+            "damage_custom_name": damage_plan.damage_custom_name,
             "hit_index": damage_plan.hit_index,
             "damage_emission_id": damage_plan.damage_emission_id,
             "source_task_id": damage_plan.source_task_id,
@@ -1861,15 +1956,6 @@ def _bounce_policy_from_damage_plan(damage_plan: DamagePlan) -> dict[str, JSONVa
     return policy if isinstance(policy, dict) else {}
 
 
-def _damage_custom_name_from_trace(trace: dict[str, object]) -> str:
-    evidence = trace.get("evidence")
-    if isinstance(evidence, dict):
-        value = evidence.get("damage_custom_name")
-        if isinstance(value, str):
-            return value
-    return ""
-
-
 def _toughness_plans_for_damage_plan(
     toughness_plans: tuple[ToughnessPlan, ...],
     damage_plan: DamagePlan,
@@ -1987,6 +2073,72 @@ def _resolve_plan_value_request(
     return resolver.resolve(request, context)
 
 
+def _action_contract_blocked_transition(
+    state: BattleState,
+    command: ActionCommand,
+    decision: ActionContractDecision,
+) -> BattleTransition:
+    reason = decision.blocked_reason or "action_contract_blocked"
+    node = ExecutionNodeResult(
+        node_kind="action_contract",
+        node_id=f"{command.actor_id}:{command.action_id}:{command.action_level}",
+        status="blocked",
+        reason_code=reason,
+    )
+    atomic = finalize_selected_execution_graph(
+        state,
+        state,
+        (),
+        (node,),
+        preflight_blocked=True,
+        preflight_reason=reason,
+    )
+    trace = (
+        decision.admission.source.to_json()
+        if decision.admission is not None
+        else {}
+    )
+    record = SettlementRecord(
+        record_type="action_contract_blocked",
+        source="action_contract",
+        process_only=True,
+        payload={
+            "reason": reason,
+            "decision": decision.to_json(),
+            "state_unchanged": True,
+        },
+        trace=trace,
+    ).to_json()
+    return BattleTransition(
+        transaction=ActionTransaction(
+            command=command,
+            before=state.snapshot(),
+            mutations=(),
+            settlement=ActionSettlement(
+                action_id=command.action_id,
+                actor_id=command.actor_id,
+                target_ids=command.target_ids,
+                records=(record,),
+            ),
+        ),
+        after=state.snapshot(),
+        target_resolution=TargetResolution(
+            requested=command.target_ids,
+            selected=(),
+            rejected=command.target_ids,
+            reason=reason,
+            metadata={"action_contract": decision.to_json()},
+        ),
+        outcome=atomic.outcome,
+        coverage={
+            "action_contract": decision.to_json(),
+            "action_enabled": False,
+            "blocked_reason": reason,
+            "atomic_commit": atomic.evidence,
+        },
+    )
+
+
 def _blocked_plan_value_resolution(
     request_data: dict[str, object],
     context: ValueContext,
@@ -2085,15 +2237,29 @@ def _damage_metadata(command: ActionCommand) -> dict[str, JSONValue]:
     crit_mode = command.metadata.get("crit_mode")
     if isinstance(crit_mode, str):
         metadata["crit_mode"] = crit_mode
-    rng_choices = command.metadata.get("rng_choices")
-    if isinstance(rng_choices, dict):
-        metadata["rng_choices"] = {str(key): value for key, value in rng_choices.items()}
+    rng_choices = rng_choices_from_payload(command.metadata)
+    if rng_choices:
+        metadata["rng_choices"] = rng_choices
     rng_mode = command.metadata.get("rng_mode")
     if isinstance(rng_mode, str):
         metadata["rng_mode"] = rng_mode
     metadata["is_current_skill_active"] = True
     metadata["is_insert_action"] = command.source == "queue"
     return metadata
+
+
+def _rng_ledger_blocked_reason(validation: dict[str, JSONValue]) -> str:
+    for key, code in (
+        ("duplicate_provided_keys", "rng_choice_ledger_duplicate_key"),
+        ("duplicate_consumed_keys", "rng_decision_identity_collision"),
+        ("invalid_identity_event_ids", "rng_decision_identity_incomplete"),
+        ("missing_keys", "rng_choice_ledger_missing_choice"),
+        ("extra_keys", "rng_choice_ledger_extra_choice"),
+    ):
+        values = validation.get(key)
+        if isinstance(values, list) and values:
+            return f"{code}:{','.join(str(item) for item in values)}"
+    return "rng_choice_ledger_invalid"
 
 
 def _target_groups_from_resolution(metadata: dict[str, JSONValue]) -> dict[str, tuple[str, ...]]:

@@ -2,9 +2,15 @@
 
 ## 0. 一句话状态
 
-当前主线是 `simulator_v8_clean_core`。P1 最终收口、P2 状态系统底座、P3 召唤物体系底座、P4 角色卡 / 怪物卡数据卡扩面底座、P5 公式 / 动态值 / 参数绑定通用准入底座、P6 架构边界回正均已完成当前闭环验收。P6 聚合入口 `validate_p6_architecture_boundary_refactor` 输出 `ok=true`、`stages=4/4`、`ready_for_review=true`、`p6_all_mechanisms_reimplemented=false`；S0 当前 `violation_row_count=0`，P6 自有越界显式延期白名单为空。P6 是边界回正，不是全机制复刻完成。
+当前主线是 `simulator_v8_clean_core`。P1 最终收口、P2 状态系统底座、P4 角色卡 / 怪物卡数据卡扩面底座、P5 公式 / 动态值 / 参数绑定通用准入底座、P6 架构边界回正均有既有闭环验收；P3 的历史检查点曾按旧 transition 口径验收，但 P7 原子提交收紧后重新暴露 servant action graph 的真实 `implementation_missing`，因此当前不能继续称为“原样继承的 P3 底座闭环”。P6 聚合入口 `validate_p6_architecture_boundary_refactor` 的历史输出为 `ok=true`、`stages=4/4`、`ready_for_review=true`、`p6_all_mechanisms_reimplemented=false`；S0 当时 `violation_row_count=0`，P6 自有越界显式延期白名单为空。P6 是边界回正，不是全机制复刻完成。
 
-当前规划主线是 P7 内核可信执行与战斗语义回正。P7-S0 问题基线、P7-S1 Transition 可信结果契约和 P7-S2 Mutation 前置条件与 reducer 冲突检测已经独立验收。Mutation 现在显式区分路径存在性与 null，支持结构化 set/delete/spawn，并在创建时递归冻结 before/after/metadata、缓存 stable ID；reducer 写状态前防御性 thaw，避免原始对象和 BattleState 别名污染。单位状态完整 payload 已收敛到单一 `core/unit_state_codec.py`，reducer/lifecycle/spawn 共同使用。P1-1、P1-2、P1-4 直接回归均通过。下一步只能执行 P7-S3 所选执行图原子提交；P3/P4/P5 admission gap 和内容扩面继续保留。
+P7 内核可信执行与战斗语义回正已于 2026-07-13 完成统一验收。计划 checklist 的 S0-S19 和 P7-DONE 已全部勾选；P7-I01 至 P7-I24 均有当前代码、结构化运行谓词和负例证据。最终验收复跑包含 S1-S18 的 18 份结构化摘要、一次共享 RuleBook 的 9 项当前源码回归，以及空检查、缺项、错误类型和错误源码指纹拒绝负例；最终检查点见 `live_validation_reports/v8_p7_kernel_trust_and_combat_semantics_final_checkpoint.md`。
+
+P7 当前通用能力包括 selected execution graph 原子提交、规则/审计分离、typed expression、动作 ownership/window、选择目标/打击集合、query-submit、显式阶段机、timeline/control、queue 前进、damage/toughness pipeline、shield/HP routing、状态准入、RNG identity/replay、战中召唤、波次事件和 compact semantic state。这些能力已按 P7 当前准入范围验收，不等于全部内容卡和关卡机制已经复刻。
+
+S3-S9 首轮统一验收中暴露的 callback 顺序、来源字段参与行为、动作授权、未知动作和非法阶段等问题均已修正并通过后续验收。S4 AST 门禁会扫描 `core/rules/systems` 全部 runtime 文件；S16/S17 已共享真实 lowering 复跑，servant policy 与 wave definition/entry 的审计字段裁剪不改变行为。
+
+P1-P6 更新口径回归保留真实内容缺口：P1 的 counter/servant action graph、P2 的 action-delay callback graph、P3 的 servant action graph 与 admission/source gap、P4-S3 的 action formula runtime graph、P6-S1 的上游动作图都没有被伪装成 executable。P2 当前分类为 `retained_action_delay_content_gap`；P3 当前分类为 `reopened_servant_action_content_gap`，不再声称历史闭环原样继承。按用户资源要求，P4-P6 使用直接触达验证与既有 checkpoint 组合，没有重复运行完整聚合；统一验收线程可按风险决定是否补跑。
 
 ## 1. 路径与事实来源
 
@@ -175,11 +181,11 @@ P1-9 聚合验收：
 
 后续已修正 servant/忆灵与 P1-8 setup 缺口：`AvatarServantConfig` / `AvatarServantSkillConfig` lowering 到 `ServantDefinitionIR`，runtime 支持 servant spawn/remove、target registry、action availability 和 initial setup；flag-only servant 负例不会被解析为真实目标。
 
-P3 召唤物 / 忆灵聚合验收更正：
+P3 召唤物 / 忆灵聚合口径更正：
 
 - 新增 `tools/validate_p3_summon_assistant_servant_complete.py`，默认只做一次 TBGD lowering / RuleBook 构建，不串联 subprocess，不写完整 Canonical IR 或全量 transition dump。
-- 聚合现在能诚实继承分步矩阵缺口，并把 source/mechanism 宽域正例拆成 executable slice 与 gap 子行；AssistantAvatar 另记为 scope exclusion。这是底座闭环验收通过，不是全正例完成。
-- P3-S12 最新 summary：
+- 聚合现在能诚实继承分步矩阵缺口，并把 source/mechanism 宽域正例拆成 executable slice 与 gap 子行；AssistantAvatar 另记为 scope exclusion。P7 收紧后，servant 初始 setup、生命周期、target registry 和来源审计仍是可依赖底座，但 servant action graph 不再以半执行结果冒充可信后继。
+- 下列 P3-S12 数值是历史检查点，不再代表当前工作树：
   - `ok=true`
   - `validation_gate_ok=true`
   - `p3_summon_foundation_closed=true`
@@ -197,13 +203,14 @@ P3 召唤物 / 忆灵聚合验收更正：
 - source matrix：13 rows，`executable=6`、`boundary_only=2`、`source_absent_not_required=2`、`admission_gap=2`、`source_gap_blocked=1`，`gap_count=2150`。
 - mechanism matrix：19 rows，`executable=11`、`boundary_only=4`、`source_absent_not_required=1`、`admission_gap=2`、`source_gap_blocked=1`，`gap_count=2150`。
 - inherited gap matrix：3 rows，`gap_count=2150`，其中 `admission_gap=2123`、`source_gap_blocked=27`。
-- allowed gap evidence matrix：3 rows，`allowed_gap_count=2150`、`disallowed_gap_count=0`、`all_evidence_ok=true`。P3 底座闭环验收通过；全正例完成仍要求 inherited gap 为 0。
+- allowed gap evidence matrix：3 rows，`allowed_gap_count=2150`、`disallowed_gap_count=0`、`all_evidence_ok=true`。这是历史验收证据；当前 P7 回归必须另外输出 `p3_summon_foundation_closed=false`、`p3_summon_implementation_missing_count>0` 和 `validation_gate_ok_phase_incomplete_with_disallowed_gaps`，直到 servant action graph 被完整实现并重新验收。
+- 该重新打开项归类为“P7 发现的既有内容缺口”，不是 P7 内核不变量修复必须顺带补齐的全 servant 技能扩面。P7 总账可以把它作为明确保留缺口，但不能再输出 `all_p1_p6_regressions_ok=true` 或声称 P3 原样继承。
 - scope exclusion matrix：1 row，AssistantAvatar / `TurnInsertAssistantAbility` `out_of_scope`，raw=5、IR=5、RuleBook visible=5、`p3_gap_count=0`。
 - 正例样本 8 条、blocked / state unchanged 样本 7 条、source audit 样本 5 条、replay 样本 8 条均通过。
 - 当前 P3 可依赖能力：
   - summoned monster source-backed spawn / runtime registry / fixed-sequence action availability / target relation / replay / source audit。
   - `SummonUnitData` / `ConfigSummonUnit` catalog 和非 battle 来源保持 boundary，不会自动 spawn。
-  - servant definition、owner/stat/lifecycle、spawn/remove、action availability、status holder、BattleSetup initial setup 和 scenario route。
+  - servant definition、owner/stat/lifecycle、spawn/remove、action query/admission 边界、status holder、BattleSetup initial setup 和 scenario route；完整 servant action graph 当前保持 `implementation_missing`，不可提交可信后继。
   - AssistantAvatar raw / IR / RuleBook / queue window 可审计，但已移出 P3 summon/servant acceptance；后续单独处理，不能作为 P3 admission gap。
   - summon / servant target relation、remove / owner cleanup / wave policy、status/resource/damage boundary 与击杀归因 source frame。
   - `FriendServantSelect` / AssistantAvatar target boundary 当前 `out_of_scope`；P3-S8 summon/servant target relation 当前 `executable=7`；S0 lifecycle `OnEnterBattle` admission gap 已清零。
@@ -326,32 +333,27 @@ TargetAlias=197061
 
 ## 7. 推荐下一步
 
-推荐下一步只执行 P7-S3 所选执行图原子提交：把一次动作实际选择并触发的全部节点纳入统一预检和提交门，任一节点 blocked、partial、unsupported 或 reducer 冲突时，整次动作必须 mutation 为零且 state unchanged。开始编码前仍须提交独立执行卡，不得提前展开 S4-S19。P7 完成可信状态转移、动作 / 目标 / 调度和核心战斗语义回正前，暂停大规模内容扩面。
+P7 已完成，当前没有尚在执行的阶段。下一步应基于保留缺口重新制定独立计划，优先评估 P2 action-delay callback graph、P3 servant action graph、P4 action formula runtime graph 和 P6 上游动作图；不要把这些内容缺口重新塞回已经完成的 P7。
 
 P7 仍要延续并收紧 P4/P5/P7 的执行结构：
 
 1. 一次只做一个阶段。
 2. 每阶段先提交阶段执行卡，等待确认后再改文件。
 3. 执行线程只能提交 `ready_for_review`，不能自称 `done`，不能改 checklist。
-4. 聚合只能在所有分步均由验收线程确认后实现。
+4. 执行 evidence 与验收裁决继续分离，只有验收线程可以勾选阶段和创建检查点。
 5. 聚合必须继承分步 gap，不能用宽域 executable 正例掩盖内部缺口。
 
 后续仍要继续做 executable / boundary_only / source_absent_not_required / implementation_missing / admission_gap / source_gap_blocked 分流；当前数据库确实无真实来源且不属于当前阶段必做的项继续保持 source_absent_not_required 或 boundary_only。状态、召唤物、数据卡或 action/query 如果被再次触达，应把对应 P2/P3/P4 聚合和直接相关回归列入验证范围。
 
 ## 8. 推荐验证命令
 
-这些命令用于复核当前 P1-P6 已验收底座范围，不代表 P7 发现的问题已经解决，也不是每次小改都要全量运行。P7-S0 已通过自身轻量基线；后续阶段按触达范围选择直接回归，P1-P6 全聚合默认只在 P7-S19 串行运行。在 `hsr_v075_baseline_clean/hsr` 下运行：
+P7 已完成后，日常修改只运行本阶段直接触达验证、`compileall` 和 `git diff --check`。下面的共享回归与 S19 命令仅用于重建 P7 验收 evidence，不是常规健康检查；S19 的 `ready_for_review` 聚合包含“执行线程尚未勾选 Checklist”的预验收权限门，P7-DONE 勾选后的最终裁决以 P7 最终检查点为准。若未来需要重开 P7，必须先建立新的修复阶段和验收口径，不能直接修改已接受检查点。
 
 ```bash
-PYTHONDONTWRITEBYTECODE=1 python3 -B -m simulator_v8_clean_core.tools.validate_p7_s2_mutation_reducer_contract --output-dir /tmp/hsr_v8_p7_s2_mutation_reducer_contract
-PYTHONDONTWRITEBYTECODE=1 python3 -B -m simulator_v8_clean_core.tools.validate_p7_s1_transition_trust_contract --output-dir /tmp/hsr_v8_p7_s1_after_p7_s2
 PYTHONDONTWRITEBYTECODE=1 python3 -m compileall -q simulator_v8_clean_core simulator_v8_ui
-PYTHONDONTWRITEBYTECODE=1 ionice -c3 nice -n 15 python3 -B -m simulator_v8_clean_core.tools.validate_p1_9_phase1_aggregate --output-dir /tmp/hsr_v8_p1_9_current
-PYTHONDONTWRITEBYTECODE=1 ionice -c3 nice -n 15 python3 -B -m simulator_v8_clean_core.tools.validate_p2_status_system_complete --output-dir /tmp/hsr_v8_p2_current
-PYTHONDONTWRITEBYTECODE=1 ionice -c3 nice -n 15 python3 -B -m simulator_v8_clean_core.tools.validate_p3_summon_assistant_servant_complete --output-dir /tmp/hsr_v8_p3_current
-PYTHONDONTWRITEBYTECODE=1 ionice -c3 nice -n 15 python3 -B -m simulator_v8_clean_core.tools.validate_p4_combatant_data_card_expansion --output-dir /tmp/hsr_v8_p4_current
-PYTHONDONTWRITEBYTECODE=1 ionice -c3 nice -n 15 python3 -B -m simulator_v8_clean_core.tools.validate_p5_formula_dynamic_param_binding --output-dir /tmp/hsr_v8_p5_current
-PYTHONDONTWRITEBYTECODE=1 ionice -c3 nice -n 15 python3 -B -m simulator_v8_clean_core.tools.validate_p6_architecture_boundary_refactor --output-dir /tmp/hsr_v8_p6_current
+PYTHONDONTWRITEBYTECODE=1 python3 -B -m simulator_v8_clean_core.tools.validate_p7_current_tree_shared_regressions --output-dir /tmp/p7_current_shared_regressions
+PYTHONDONTWRITEBYTECODE=1 python3 -B -m simulator_v8_clean_core.tools.build_p7_s19_stage_evidence_manifest --stage-root /tmp/p7_current_stages --s6-real-source-evidence /tmp/p7_current_shared_regressions/p7_s6_real_source_evidence.json --output /tmp/p7_current_stages/stage_evidence_manifest_v2.json
+PYTHONDONTWRITEBYTECODE=1 python3 -B -m simulator_v8_clean_core.tools.validate_p7_s19_kernel_invariant_aggregate --regression-root /tmp/p7_s19_regressions --stage-evidence-manifest /tmp/p7_current_stages/stage_evidence_manifest_v2.json --current-regression-manifest /tmp/p7_current_shared_regressions/p7_current_tree_shared_regression_manifest.json --output-dir /tmp/p7_s19_regressions/p7_s19_acceptance
 git diff --check
 ```
 
@@ -365,7 +367,7 @@ git diff --check
 - 不要引入新依赖，除非用户明确批准。
 - 验证输出写 `/tmp` 或版本化输出目录，不污染仓库。
 - 有意义结构阶段要更新 `live_validation_reports/`。
-- 每个较大代码变动后创建 git 检查点提交。
+- 阶段验收通过后再由验收线程创建 git 检查点提交。
 - 阶段汇报要说清：做了什么、没做什么、当前进度、距离最小可用战斗纵切还缺什么、距离完整复刻还缺哪些大模块、验证结果。
 
 ## 10. 下个线程接续提示
@@ -373,7 +375,7 @@ git diff --check
 如果要继续推进，建议开局说清：
 
 ```text
-当前接续 v8 P7-S2 Mutation 前置条件与 reducer 冲突检测验收检查点。先读 CODEX_HANDOFF、README、ARCHITECTURE_BOUNDARY_CONTRACT、PROJECT_GOALS、FORBIDDEN、P7 计划及 S0/S1/S2 evidence。S0、S1、S2 已验收；下一步只能为 P7-S3 所选执行图原子提交提交详细执行卡，重点处理多 task、状态 partial、callback 中间失败和 reducer 冲突时的整动作 state unchanged。UI `enemy_ai_auto_skip` 的既有验证错位继续归 P7-S8，不得在 S3 顺手修复。
+当前接续 v8 P7 最终验收检查点。先读 CODEX_HANDOFF、P7 最终检查点报告和 P7 计划；P7-S0 至 P7-S19 已全部通过验收。开始新阶段前先从保留缺口中选择清晰目标，重点区分内核不变量、内容图缺口和全量内容扩面，不要把 P7 完成解释为全角色、全怪物、全装备或全关卡完成。
 ```
 
 不要从旧 `CODEX_HANDOFF` 的 v7 叙述接续；本文件已经替换为 v8 当前交接手册。

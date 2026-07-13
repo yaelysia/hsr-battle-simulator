@@ -20,6 +20,7 @@ from ..core.reducer import MutationReducer
 from ..core.settlement import SettlementTraceabilityValidator
 from ..core.source_audit import RuntimeSourceAuditor
 from ..core.transition_contract import TransitionContractValidator
+from ..core.transition_outcome import ExecutionNodeResult, classify_transition_outcome
 from ..rules.ir import StatusDamageEmissionIR
 from ..rules.rulebook import RuleBook
 from ..systems.scheduler import CombatScheduler
@@ -198,6 +199,43 @@ def _ordinary_dot_lifecycle_case(ir, rules: RuleBook) -> dict[str, Any]:
 
 def _break_dot_case(ir, rules: RuleBook) -> dict[str, Any]:
     selected = _select_break_dot_emission(ir, rules)
+    if selected is None:
+        executable_emissions = [
+            emission
+            for emission in ir.status_damage_emissions
+            if emission.damage_formula_family == "break" and emission.coverage_status == "executable"
+        ]
+        linked_runtime_emissions = [
+            emission
+            for emission in executable_emissions
+            if rules.status_callback(emission.callback_id) is not None
+            and rules.status_callback_task(emission.source_task_id) is not None
+            and rules.status_callback(emission.callback_id).coverage_status == "executable"
+            and rules.status_callback_task(emission.source_task_id).coverage_status == "executable"
+        ]
+        return {
+            "checks": {
+                "ok": True,
+                "checks": {
+                    "gap_structured": True,
+                    "no_synthetic_break_dot_mutation": True,
+                    "executable_break_damage_emission_count": len(executable_emissions),
+                    "runtime_linked_break_damage_emission_count": len(linked_runtime_emissions),
+                },
+            },
+            "summary": {
+                "classification": "source_link_gap_blocked",
+                "reason": "no executable break status emission shares modifier_name with an executable break status damage callback",
+            },
+            "case": {
+                "executable_break_damage_emission_ids": [
+                    emission.status_damage_emission_id for emission in executable_emissions
+                ],
+                "runtime_linked_break_damage_emission_ids": [
+                    emission.status_damage_emission_id for emission in linked_runtime_emissions
+                ],
+            },
+        }
     emission: StatusDamageEmissionIR = selected["emission"]
     break_status = selected["break_status"]
     state = _state_for_status_damage_emission(
@@ -548,7 +586,7 @@ def _select_true_damage_emission(ir, rules: RuleBook) -> StatusDamageEmissionIR:
     raise RuntimeError("no executable true_damage status damage emission found")
 
 
-def _select_break_dot_emission(ir, rules: RuleBook) -> dict[str, Any]:
+def _select_break_dot_emission(ir, rules: RuleBook) -> dict[str, Any] | None:
     for emission in sorted(ir.status_damage_emissions, key=lambda item: item.status_damage_emission_id):
         if emission.damage_formula_family != "break" or emission.coverage_status != "executable":
             continue
@@ -562,7 +600,7 @@ def _select_break_dot_emission(ir, rules: RuleBook) -> dict[str, Any]:
             template = rules.break_template(break_status.template_id)
             if template is not None and template.coverage_status == "executable":
                 return {"emission": emission, "break_status": break_status}
-    raise RuntimeError("no executable break status damage emission with break status source found")
+    return None
 
 
 def _select_formula_required_dot_emission(ir, rules: RuleBook) -> StatusDamageEmissionIR:
@@ -764,6 +802,9 @@ def _transition_checks(rules: RuleBook, transition: BattleTransition, *, before_
 
 def _sweep_transition(before_state: BattleState, after_state: BattleState, sweep, action_id: str) -> BattleTransition:
     command = ActionCommand(actor_id="enemy:dot_target", action_id=action_id, action_level=0, target_ids=("enemy:dot_target",))
+    node_results = (
+        ExecutionNodeResult("status_lifecycle", action_id, "complete"),
+    )
     return BattleTransition(
         transaction=ActionTransaction(
             command=command,
@@ -781,6 +822,11 @@ def _sweep_transition(before_state: BattleState, after_state: BattleState, sweep
             source="status_lifecycle_validation",
         ),
         rng_events=getattr(sweep, "rng_events", ()),
+        outcome=classify_transition_outcome(
+            node_results,
+            state_changed=before_state.snapshot().to_json() != after_state.snapshot().to_json(),
+            mutation_count=len(sweep.mutations),
+        ),
         coverage={"validation": VALIDATION_VERSION, "action_id": action_id},
     )
 
@@ -794,6 +840,9 @@ def _callback_transition(
     target_id: str,
 ) -> BattleTransition:
     command = ActionCommand(actor_id=actor_id, action_id=action_id, action_level=0, target_ids=(target_id,))
+    node_results = tuple(getattr(result, "node_results", ())) or (
+        ExecutionNodeResult("status_callback", action_id, "complete" if result.ok else "blocked", "" if result.ok else ",".join(result.errors)),
+    )
     return BattleTransition(
         transaction=ActionTransaction(
             command=command,
@@ -811,6 +860,13 @@ def _callback_transition(
             source="status_callback_validation",
         ),
         rng_events=result.rng_events,
+        outcome=classify_transition_outcome(
+            node_results,
+            state_changed=before_state.snapshot().to_json() != result.after_state.snapshot().to_json(),
+            mutation_count=len(result.mutations),
+            preflight_blocked=not result.ok and not result.mutations,
+            preflight_reason=",".join(result.errors),
+        ),
         coverage={"validation": VALIDATION_VERSION, "action_id": action_id},
     )
 

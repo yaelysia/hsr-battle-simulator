@@ -280,9 +280,6 @@ def _dot_damage_percentage_basis_expr(
 def _status_formula_bindings(status_detail: dict[str, JSONValue]) -> tuple[dict[str, JSONValue], ...]:
     bindings = status_detail.get("formula_bindings")
     if not isinstance(bindings, list):
-        source_trace = _json_dict(status_detail.get("source_trace"))
-        bindings = source_trace.get("status_formula_bindings")
-    if not isinstance(bindings, list):
         return ()
     return tuple(item for item in bindings if isinstance(item, dict))
 

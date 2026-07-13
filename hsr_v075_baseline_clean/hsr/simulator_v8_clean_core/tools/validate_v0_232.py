@@ -101,6 +101,13 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _select_break_case(ir, rules: RuleBook) -> dict[str, Any]:
+    for case in _iter_break_cases(ir, rules):
+        return case
+    raise RuntimeError("no structured break case with executable status emission found")
+
+
+def _iter_break_cases(ir, rules: RuleBook):
+    seen: set[tuple[str, int, str]] = set()
     for emission in sorted(ir.toughness_emissions, key=lambda item: item.toughness_emission_id):
         if emission.coverage_status != "executable":
             continue
@@ -126,8 +133,12 @@ def _select_break_case(ir, rules: RuleBook) -> dict[str, Any]:
             continue
         if not _status_definitions_available(rules, status_emissions):
             continue
+        candidate_key = (action.action_id, action.level, emission.element_type)
+        if candidate_key in seen:
+            continue
+        seen.add(candidate_key)
         avatar = _avatar_for_action(ir, action)
-        return {
+        yield {
             "emission": emission,
             "action": action,
             "profile": profile,
@@ -136,7 +147,6 @@ def _select_break_case(ir, rules: RuleBook) -> dict[str, Any]:
             "break_status_emissions": status_emissions,
             "break_damage_emissions": rules.break_damage_emissions_for_template(template.template_id),
         }
-    raise RuntimeError("no structured break case with executable status emission found")
 
 
 def _status_definitions_available(rules: RuleBook, emissions: tuple[BreakStatusEmissionIR, ...]) -> bool:
@@ -291,11 +301,14 @@ def _already_broken_negative_case(rules: RuleBook, state, emission: ToughnessEmi
 
 def _target_broken_after(transition: dict[str, Any]) -> bool:
     units = transition.get("after", {}).get("units", {})
-    target = units.get("enemy:profile_target") if isinstance(units, dict) else None
-    if not isinstance(target, dict):
+    if not isinstance(units, dict):
         return False
-    toughness_state = target.get("toughness_state")
-    return isinstance(toughness_state, dict) and toughness_state.get("broken") is True
+    return any(
+        isinstance(target, dict)
+        and isinstance(target.get("toughness_state"), dict)
+        and target["toughness_state"].get("broken") is True
+        for target in units.values()
+    )
 
 
 def _break_status_emission_id_from_mutation(mutation: dict[str, Any]) -> str:

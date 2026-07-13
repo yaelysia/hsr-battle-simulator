@@ -13,7 +13,11 @@ from ..rules.ir import EffectIR
 from ..rules.rulebook import RuleBook
 from ..systems.action_availability import ActionAvailabilitySystem
 from ..systems.queue import QueueDrainPlan
-from ..systems.scheduler import CombatScheduler
+from ..systems.scheduler import (
+    CombatScheduler,
+    _issue_decision_submission_authorization,
+    _scheduler_state_revision,
+)
 from ..systems.status import StatusSystem, status_control_gate_for_actor
 from ..tbgd.lowering import TBGDLowering
 from ..tbgd.paths import find_tbgd_root
@@ -120,13 +124,24 @@ def _real_control_gate_case(rules: RuleBook) -> dict[str, Any]:
             **after_add.global_flags,
             "phase": "control_validation",
             "current_window": "turn_active",
+            "combat_phase": "awaiting_decision",
             "turn_owner_id": "ally:actor",
             "active_turn": {"actor_id": "ally:actor", "turn_kind": "regular"},
         },
     )
     view = ActionAvailabilitySystem(rules).view(controlled_state)
     command = ActionCommand(actor_id="ally:actor", action_id="validation:blocked_action", action_level=0, target_ids=("enemy:target",))
-    scheduler_step = CombatScheduler(rules).step(controlled_state, command)
+    scheduler_step = CombatScheduler(rules).step(
+        controlled_state,
+        command,
+        decision_authorization=_issue_decision_submission_authorization(
+            decision_id="validation:p2_s6:controlled_submission",
+            state_revision=_scheduler_state_revision(controlled_state),
+            actor_id=command.actor_id,
+            action_id=command.action_id,
+            action_level=command.action_level,
+        ),
+    )
     queue_plan = _queue_plan()
     queue_preflight_reason = CombatScheduler(rules)._queue_action_preflight_reason(
         controlled_state,

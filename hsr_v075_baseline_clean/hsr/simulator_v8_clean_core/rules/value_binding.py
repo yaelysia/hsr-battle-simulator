@@ -5,6 +5,7 @@ from typing import Any
 
 from ..core.model import JSONValue
 from .evaluator import NumericEvaluationContext, RuleEvaluator
+from .expression_ir import numeric_dynamic_hash, numeric_fixed_value
 from .rulebook import RuleBook
 
 
@@ -618,7 +619,7 @@ class ValueResolver:
         if not isinstance(expression, dict) or expression.get("hash") is None:
             return self._blocked(request, context, "dynamic_hash_payload_missing")
         result = self.numeric_evaluator.evaluate_numeric(
-            {"kind": "dynamic_hash", "hash": expression.get("hash")},
+            numeric_dynamic_hash(expression.get("hash")),
             NumericEvaluationContext(
                 dynamic_values=context.dynamic_values or {},
                 binding_sources=context.binding_sources,
@@ -734,17 +735,7 @@ def _numeric_json_value(value: Any) -> float | None:
 
 
 def _static_expression_value(expression: Any) -> float | None:
-    value = _numeric_json_value(expression)
-    if value is not None:
-        return value
-    if not isinstance(expression, dict):
-        return None
-    kind = str(expression.get("kind") or "")
-    if kind == "fixed":
-        return _numeric_json_value(expression.get("value"))
-    if isinstance(expression.get("FixedValue"), dict):
-        return _numeric_json_value(expression.get("FixedValue"))
-    return None
+    return numeric_fixed_value(expression)
 
 
 def _source_trace(item: Any) -> dict[str, JSONValue]:

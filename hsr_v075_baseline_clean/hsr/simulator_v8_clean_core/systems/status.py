@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from dataclasses import dataclass, field
 
 from ..core.model import BattleState, GameEvent, JSONValue, Mutation, RNGEvent, TargetResolution
@@ -10,7 +11,14 @@ from ..rules.evaluator import NumericEvaluationContext, RuleEvaluator
 from ..rules.ir import EffectIR, RuleEntity
 from ..rules.rulebook import RuleBook
 from ..rules.value_binding import ValueBindingRequest, ValueContext, ValueResolver
-from .rng import RNGOutcome, RNGRequest, resolve_rng_request, rng_choices_from_payload, rng_mode_from_payload
+from .rng import (
+    RNGOutcome,
+    RNGRequest,
+    choice_key_for_identity,
+    resolve_rng_request,
+    rng_choices_from_payload,
+    rng_mode_from_payload,
+)
 from .target import TargetSystem
 from .unit_lifecycle import UnitLifecycleSystem
 
@@ -55,6 +63,9 @@ class StatusInstance:
     source_stack_key: str = ""
     control_kind: str = ""
     chance_admission: dict[str, JSONValue] = field(default_factory=dict)
+    break_template_id: str = ""
+    break_element_type: str | None = None
+    break_status_emission_id: str = ""
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -91,6 +102,9 @@ class StatusInstance:
             "source_stack_key": self.source_stack_key,
             "control_kind": self.control_kind,
             "chance_admission": self.chance_admission,
+            "break_template_id": self.break_template_id,
+            "break_element_type": self.break_element_type,
+            "break_status_emission_id": self.break_status_emission_id,
         }
 
 
@@ -196,9 +210,7 @@ def status_control_gate_for_actor(actor: object) -> dict[str, JSONValue] | None:
         status_category = str(detail.get("status_category") or "")
         if not control_kind and status_category != "control":
             continue
-        source_trace = detail.get("source_trace")
-        if not isinstance(source_trace, dict) or not source_trace:
-            continue
+        source_trace = detail.get("source_trace") if isinstance(detail.get("source_trace"), dict) else {}
         status_instance_id = str(detail.get("instance_id") or "")
         reason = f"status_control_gate:{control_kind or status_category}:{status_instance_id}"
         return {
@@ -296,7 +308,7 @@ class StatusSystem:
                 rng_events=target_rng_events,
             )
 
-        definition = _select_modifier_definition(self.rules, modifier_name, effect.source.source_path)
+        definition = _select_modifier_definition(self.rules, modifier_name, effect)
         if definition is None:
             return _unsupported_result(effect, f"unknown modifier definition {modifier_name!r}")
 
@@ -319,7 +331,7 @@ class StatusSystem:
             on_create_dynamic_values = _on_create_define_dynamic_values(
                 self.rules,
                 modifier_name,
-                definition.source.source_path,
+                effect.status_callback_ids,
                 state,
                 target_id=target_id,
                 caster_id=caster_id,
@@ -365,6 +377,7 @@ class StatusSystem:
                 dynamic_values=dynamic_values,
                 binding_sources=binding_sources,
                 value_resolver=self.value_resolver,
+                status_metadata=status_metadata,
             )
             status_id = f"modifier:{modifier_name}"
             same_status_other_source = _same_status_other_source_detail(
@@ -381,17 +394,24 @@ class StatusSystem:
                 same_status_other_source=same_status_other_source,
             )
             unsupported = [*unsupported, *partial_reasons]
-            trigger_ids_by_event = _trigger_ids_by_event(self.rules, modifier_name, definition.source.source_path)
-            if strict_target_admission:
-                blocked_reason = _strict_attached_status_blocked_reason(
-                    standard=standard,
-                    resolved_dynamic_values=resolved_dynamic_values,
-                    duration_admission=duration_admission,
-                    trigger_ids_by_event=trigger_ids_by_event,
-                    unsupported=tuple(unsupported),
-                )
-                if blocked_reason:
-                    return _unsupported_result(effect, blocked_reason)
+            trigger_ids_by_event = _trigger_ids_by_event(
+                self.rules,
+                modifier_name,
+                effect.status_callback_ids,
+            )
+            blocked_reason = _complete_status_admission_blocked_reason(
+                standard=standard,
+                resolved_dynamic_values=resolved_dynamic_values,
+                duration_admission=duration_admission,
+                stack_admission=stack_admission,
+                refresh_admission=refresh_admission,
+                chance_admission=chance_admission,
+                trigger_ids_by_event=trigger_ids_by_event,
+                unsupported=tuple(unsupported),
+                require_listener_free=strict_target_admission,
+            )
+            if blocked_reason:
+                return _unsupported_result(effect, blocked_reason)
             duration = _status_instance_duration_value(duration_admission)
             life_step_moment = str(duration_admission.get("life_step_moment") or "")
             source_stack_key = _source_stack_key(target_id, modifier_name, effect.effect_id, source_id)
@@ -480,6 +500,11 @@ class StatusSystem:
                 source_stack_key=source_stack_key,
                 control_kind=str(status_metadata.get("control_kind") or ""),
                 chance_admission=chance_admission,
+                break_template_id=str(standard.get("break_template_id") or ""),
+                break_element_type=str(standard.get("break_element_type"))
+                if isinstance(standard.get("break_element_type"), str)
+                else None,
+                break_status_emission_id=str(standard.get("break_status_emission_id") or ""),
             )
             plans.append(
                 StatusLifecyclePlan(
@@ -565,19 +590,9 @@ class StatusSystem:
             if not result.ok:
                 return (), result.blocked_reason, trace, result.rng_events
             return result.target_ids, "", trace, result.rng_events
-        target_alias = standard.get("target_alias")
-        target_ids, target_blocked_reason = _resolve_add_modifier_target_ids(
-            state,
-            target_alias,
-            caster_id=caster_id,
-            owner_id=owner_id,
-            param_entity_id=param_entity_id,
-            current_action_target_id=current_action_target_id,
-            target_resolution=target_resolution,
-        )
-        return target_ids, target_blocked_reason, {
-            "legacy_target_alias_resolution": True,
-            "target_alias": target_alias if isinstance(target_alias, str) else "",
+        return (), "target_expression_id_missing", {
+            "target_expression_admission": "blocked",
+            "target_alias_audit": str(standard.get("target_alias") or ""),
         }, ()
 
     def apply_remove_modifier(
@@ -590,23 +605,37 @@ class StatusSystem:
         owner_id: str | None = None,
         param_entity_id: str | None = None,
         current_action_target_id: str | None = None,
+        target_resolution: TargetResolution | None = None,
+        event_payload: dict[str, JSONValue] | None = None,
+        dynamic_values: dict[str, float] | None = None,
+        binding_sources: tuple[dict[str, JSONValue], ...] = (),
     ) -> StatusApplicationResult:
         if effect.opcode not in {"RemoveModifier", "RemoveSelfModifier"}:
             return _unsupported_result(effect, "effect is not RemoveModifier or RemoveSelfModifier")
         standard = effect.payload.get("standard")
         if not isinstance(standard, dict):
             return _unsupported_result(effect, f"{effect.opcode} effect has no standardized payload")
-        target_id = _resolve_target_alias(
-            standard.get("target_alias"),
+        if self.rules is None:
+            return _unsupported_result(effect, "StatusSystem requires RuleBook for RemoveModifier")
+        target_ids, target_blocked_reason, target_expression_trace, target_rng_events = self._resolve_add_modifier_targets(
+            state,
+            standard,
             caster_id=caster_id,
             owner_id=owner_id,
             param_entity_id=param_entity_id,
             current_action_target_id=current_action_target_id,
+            target_resolution=target_resolution,
+            event_payload=event_payload,
+            dynamic_values=dynamic_values,
+            binding_sources=binding_sources,
         )
-        if target_id is None:
-            return _unsupported_result(effect, f"unsupported_or_missing_target_alias:{standard.get('target_alias')}")
-        if target_id not in state.units:
-            return _unsupported_result(effect, f"target unit {target_id!r} is not in state")
+        if target_blocked_reason:
+            return _unsupported_result(
+                effect,
+                target_blocked_reason,
+                trace={"target_expression": target_expression_trace},
+                rng_events=target_rng_events,
+            )
         modifier_name = standard.get("modifier_name")
         status_id_value = standard.get("status_id")
         if isinstance(modifier_name, str) and modifier_name:
@@ -616,24 +645,31 @@ class StatusSystem:
             modifier_name = status_id.removeprefix("modifier:")
         else:
             return _unsupported_result(effect, f"{effect.opcode} has no modifier_name or status_id")
-        before_details = _status_details(unit_flags=state.units[target_id].flags)
-        existing_detail = _find_status_detail(before_details, status_id)
-        plan = StatusLifecyclePlan(
-            operation="remove",
-            target_id=target_id,
-            status_id=status_id,
-            source="status_system",
-            before_details=tuple(before_details),
-            existing_detail=existing_detail,
-            source_trace={"effect_id": effect.effect_id, "effect_source": effect.source.to_json()},
-        )
-        lifecycle_result = self._apply_lifecycle_plan(state, plan)
+        lifecycle_results: list[StatusLifecycleResult] = []
+        for target_id in target_ids:
+            before_details = _status_details(unit_flags=state.units[target_id].flags)
+            existing_detail = _find_status_detail(before_details, status_id)
+            plan = StatusLifecyclePlan(
+                operation="remove",
+                target_id=target_id,
+                status_id=status_id,
+                source="status_system",
+                before_details=tuple(before_details),
+                existing_detail=existing_detail,
+                source_trace={
+                    "effect_id": effect.effect_id,
+                    "effect_source": effect.source.to_json(),
+                    "target_expression": target_expression_trace,
+                },
+            )
+            lifecycle_results.append(self._apply_lifecycle_plan(state, plan))
         return StatusApplicationResult(
-            ok=lifecycle_result.ok,
-            mutations=lifecycle_result.mutations,
-            records=lifecycle_result.records,
-            unsupported=lifecycle_result.unsupported,
-            lifecycle_result=lifecycle_result,
+            ok=bool(lifecycle_results) and all(result.ok for result in lifecycle_results),
+            mutations=tuple(mutation for result in lifecycle_results for mutation in result.mutations),
+            rng_events=target_rng_events,
+            records=tuple(record for result in lifecycle_results for record in result.records),
+            unsupported=tuple(reason for result in lifecycle_results for reason in result.unsupported),
+            lifecycle_result=lifecycle_results[-1] if lifecycle_results else None,
         )
 
     def apply_dispel_status(
@@ -1435,104 +1471,35 @@ def _status_id_fragment(status_id: str) -> str:
     return status_id.replace(":", "_").replace("/", "_")
 
 
-def _resolve_target_alias(
-    alias: object,
-    *,
-    caster_id: str,
-    owner_id: str | None,
-    param_entity_id: str | None,
-    current_action_target_id: str | None,
-) -> str | None:
-    if alias == "Caster":
-        return caster_id
-    if alias == "ModifierOwnerEntity":
-        return owner_id or caster_id
-    if alias == "ParamEntity":
-        return param_entity_id
-    if alias in {"CurrentActionTarget", "AbilityTargetEntity"}:
-        return current_action_target_id
-    return None
-
-
-def _resolve_add_modifier_target_ids(
-    state: BattleState,
-    alias: object,
-    *,
-    caster_id: str,
-    owner_id: str | None,
-    param_entity_id: str | None,
-    current_action_target_id: str | None,
-    target_resolution: TargetResolution | None,
-) -> tuple[tuple[str, ...], str]:
-    if alias in SUPPORTED_ADD_MODIFIER_SINGLE_TARGET_ALIASES:
-        target_id = _resolve_target_alias(
-            alias,
-            caster_id=caster_id,
-            owner_id=owner_id,
-            param_entity_id=param_entity_id,
-            current_action_target_id=current_action_target_id,
-        )
-        if target_id is None and alias == "AbilityTargetEntity" and target_resolution is not None and target_resolution.selected:
-            target_id = target_resolution.selected[0]
-        if target_id is None:
-            return (), f"unsupported_or_missing_target_alias:{alias}"
-        if target_id not in state.units:
-            return (), f"target unit {target_id!r} is not in state"
-        return (target_id,), ""
-    if alias in SUPPORTED_ADD_MODIFIER_GROUP_TARGET_ALIASES:
-        targets, reason = _resolve_add_modifier_group_targets(state, caster_id, str(alias))
-        if reason:
-            return (), reason
-        if not targets:
-            return (), f"target group empty:{alias}"
-        missing = tuple(target_id for target_id in targets if target_id not in state.units)
-        if missing:
-            return (), f"target group contains missing unit:{','.join(missing)}"
-        return targets, ""
-    return (), f"unsupported_or_missing_target_alias:{alias}"
-
-
-def _resolve_add_modifier_group_targets(
-    state: BattleState,
-    caster_id: str,
-    alias: str,
-) -> tuple[tuple[str, ...], str]:
-    caster = state.units.get(caster_id)
-    if caster is None:
-        return (), "caster_missing_for_group_target"
-    targets: list[str] = []
-    lifecycle = UnitLifecycleSystem()
-    for unit_id, unit in sorted(state.units.items()):
-        if not lifecycle.can_target(state, unit_id)[0]:
-            continue
-        if alias == "AllEnemy" and unit.side != caster.side:
-            targets.append(unit_id)
-        elif alias in {"AllTeamMember", "AllLightTeam"} and unit.side == caster.side:
-            targets.append(unit_id)
-        elif alias == "AllTeammate" and unit.side == caster.side and unit_id != caster_id:
-            targets.append(unit_id)
-    return tuple(dict.fromkeys(targets)), ""
-
-
-def _strict_attached_status_blocked_reason(
+def _complete_status_admission_blocked_reason(
     *,
     standard: dict[str, JSONValue],
     resolved_dynamic_values: dict[str, JSONValue],
     duration_admission: dict[str, JSONValue],
+    stack_admission: dict[str, JSONValue],
+    refresh_admission: dict[str, JSONValue],
+    chance_admission: dict[str, JSONValue],
     trigger_ids_by_event: dict[str, tuple[str, ...]],
     unsupported: tuple[str, ...],
+    require_listener_free: bool,
 ) -> str:
     requests = standard.get("dynamic_value_requests")
     if isinstance(requests, dict):
         missing = tuple(str(key) for key in requests if str(key) not in resolved_dynamic_values)
         if missing:
-            return f"attached_status_dynamic_value_unresolved:{','.join(missing)}"
+            return f"status_dynamic_value_unresolved:{','.join(missing)}"
     if duration_admission.get("admission_status") == "blocked":
-        return f"attached_status_duration_blocked:{duration_admission.get('blocked_reason')}"
-    if any(trigger_ids for trigger_ids in trigger_ids_by_event.values()):
+        return f"status_duration_blocked:{duration_admission.get('blocked_reason')}"
+    if stack_admission.get("admission_status") == "blocked":
+        return f"status_stack_blocked:{stack_admission.get('blocked_reason')}"
+    if refresh_admission.get("admission_status") == "blocked":
+        return f"status_refresh_blocked:{refresh_admission.get('blocked_reason')}"
+    if chance_admission.get("admission_status") != "executable":
+        return f"status_probability_blocked:{chance_admission.get('blocked_reason') or 'classification_missing'}"
+    if require_listener_free and any(trigger_ids for trigger_ids in trigger_ids_by_event.values()):
         return "attached_status_listener_not_admitted"
     if unsupported:
-        return f"attached_status_partial_not_admitted:{unsupported[0]}"
+        return f"status_partial_not_admitted:{unsupported[0]}"
     return ""
 
 
@@ -1652,7 +1619,7 @@ def _resolve_dynamic_values(
 def _on_create_define_dynamic_values(
     rules: RuleBook,
     modifier_name: str,
-    source_path: str,
+    callback_ids: tuple[str, ...],
     state: BattleState,
     *,
     target_id: str,
@@ -1664,8 +1631,9 @@ def _on_create_define_dynamic_values(
     source_trace: dict[str, JSONValue],
 ) -> dict[str, JSONValue]:
     values: dict[str, JSONValue] = {"__by_name": {}, "__by_hash": {}, "__evaluations": []}
+    admitted_callback_ids = set(callback_ids)
     for callback in rules.status_callbacks_for_modifier_event(modifier_name, "OnCreate"):
-        if callback.source.source_path != source_path:
+        if admitted_callback_ids and callback.callback_id not in admitted_callback_ids:
             continue
         for task in rules.status_callback_tasks_for_callback(callback.callback_id):
             if task.parent_task_id or task.opcode != "DefineDynamicValue" or not task.effect_id:
@@ -1674,15 +1642,25 @@ def _on_create_define_dynamic_values(
             standard = effect.payload.get("standard") if effect is not None else None
             if effect is None or not isinstance(standard, dict):
                 continue
-            target_alias = standard.get("target_alias")
-            resolved_target = _resolve_target_alias(
-                target_alias,
+            target_expression_id = standard.get("target_expression_id")
+            if not isinstance(target_expression_id, str) or not target_expression_id:
+                continue
+            expression = rules.target_expression(target_expression_id)
+            if expression is None:
+                continue
+            target_result = TargetSystem().resolve_target_expression(
+                state,
+                expression,
                 caster_id=caster_id,
                 owner_id=owner_id,
                 param_entity_id=param_entity_id,
                 current_action_target_id=current_action_target_id,
+                target_resolution=None,
+                event_payload=None,
+                dynamic_values=None,
+                binding_sources=binding_sources,
             )
-            if resolved_target != target_id:
+            if not target_result.ok or target_result.rng_events or target_id not in target_result.target_ids:
                 continue
             value_name = standard.get("value_name")
             if not isinstance(value_name, str) or not value_name:
@@ -1890,7 +1868,7 @@ def _runtime_stack_admission(
             "source_trace": source_trace,
         }
     else:
-        if max_result.expression_kind not in {"fixed", "dynamic_hash", "postfix_expr"}:
+        if not _numeric_evaluation_kind_admitted(max_result.expression_kind):
             return {
                 "admission_status": "blocked",
                 "blocked_reason": f"max_layer_not_admitted:{max_result.expression_kind}",
@@ -1929,7 +1907,7 @@ def _runtime_stack_admission(
                 "layer_add_value_resolution": layer_resolution,
                 "source_trace": source_trace,
             }
-        if layer_result.expression_kind not in {"fixed", "dynamic_hash", "postfix_expr"}:
+        if not _numeric_evaluation_kind_admitted(layer_result.expression_kind):
             return {
                 "admission_status": "blocked",
                 "blocked_reason": f"layer_add_when_stack_not_admitted:{layer_result.expression_kind}",
@@ -2158,6 +2136,7 @@ def _runtime_chance_admission(
     dynamic_values: dict[str, float] | None,
     binding_sources: tuple[dict[str, JSONValue], ...],
     value_resolver: ValueResolver | None = None,
+    status_metadata: dict[str, JSONValue] | None = None,
 ) -> dict[str, JSONValue]:
     source_trace = {"effect_id": effect.effect_id, "effect_source": effect.source.to_json()}
     chance_expr = standard.get("chance")
@@ -2171,6 +2150,15 @@ def _runtime_chance_admission(
         required_context_keys=("status_modifier",),
     )
     if _is_missing_numeric_expr(chance_expr):
+        semantics = standard.get("omitted_chance_semantics")
+        semantics_source = standard.get("omitted_chance_semantics_source")
+        if semantics != "guaranteed_no_resistance" or not isinstance(semantics_source, dict) or not semantics_source:
+            return {
+                "admission_status": "blocked",
+                "blocked_reason": "omitted_chance_semantics_source_missing",
+                "source_trace": source_trace,
+                "value_resolution": chance_value_resolution,
+            }
         base_chance = 1.0
         chance_result = {
             "ok": True,
@@ -2180,7 +2168,35 @@ def _runtime_chance_admission(
             "source_trace": source_trace,
             "blocked_reason": "",
         }
-        source_kind = "chance_omitted_guaranteed"
+        return {
+            "admission_status": "executable",
+            "blocked_reason": "",
+            "classification": "guaranteed",
+            "source_kind": "chance_omitted_guaranteed",
+            "base_chance": base_chance,
+            "effect_hit_rate": 0.0,
+            "effect_resistance": 0.0,
+            "control_resistance": 0.0,
+            "specific_resistance": 0.0,
+            "final_success_probability": 1.0,
+            "requires_rng": False,
+            "guaranteed": True,
+            "applied_terms": [
+                {
+                    "term": "omitted_chance_semantics",
+                    "value": "guaranteed_no_resistance",
+                    "source": semantics_source,
+                }
+            ],
+            "skipped_terms": [
+                {"term": "effect_hit_rate", "reason": "guaranteed_application"},
+                {"term": "effect_resistance", "reason": "guaranteed_application"},
+                {"term": "control_resistance", "reason": "guaranteed_application"},
+            ],
+            "numeric_evaluation": chance_result,
+            "value_resolution": chance_value_resolution,
+            "source_trace": source_trace,
+        }
     else:
         result = RuleEvaluator().evaluate_numeric(
             chance_expr,
@@ -2198,7 +2214,7 @@ def _runtime_chance_admission(
             "numeric_evaluation": result.to_json(),
             "value_resolution": chance_value_resolution,
         }
-        if result.expression_kind not in {"fixed", "dynamic_hash", "postfix_expr"}:
+        if not _numeric_evaluation_kind_admitted(result.expression_kind):
             return {
                 "admission_status": "blocked",
             "blocked_reason": f"chance_not_admitted:{result.expression_kind}",
@@ -2206,31 +2222,108 @@ def _runtime_chance_admission(
             "numeric_evaluation": result.to_json(),
             "value_resolution": chance_value_resolution,
         }
-        if result.value < 0 or result.value > 1:
+        if not math.isfinite(float(result.value)) or result.value < 0:
             return {
                 "admission_status": "blocked",
-            "blocked_reason": "chance_out_of_range",
+            "blocked_reason": "chance_not_finite_or_negative",
             "source_trace": source_trace,
             "numeric_evaluation": result.to_json(),
             "value_resolution": chance_value_resolution,
         }
         base_chance = float(result.value)
         chance_result = result.to_json()
-        source_kind = "effect_chance"
-    effect_hit = _unit_resource(state, caster_id, "effect_hit_rate")
-    effect_resistance = _unit_resource(state, target_id, "effect_resistance")
-    base_success_probability = max(0.0, min(1.0, base_chance * (1.0 + effect_hit)))
-    resist_probability = max(0.0, min(1.0, effect_resistance))
+    metadata = status_metadata or {}
+    category = str(metadata.get("status_category") or "unknown")
+    control_kind = str(metadata.get("control_kind") or "")
+    if category == "buff":
+        classification = "positive_status"
+        effect_hit = 0.0
+        effect_resistance = 0.0
+        control_resistance = 0.0
+        specific_resistance = 0.0
+    elif category == "debuff":
+        classification = "debuff"
+        effect_hit = _clamped_unit_resource(state, caster_id, "effect_hit_rate", lower=0.0, upper=None)
+        effect_resistance = _clamped_unit_resource(state, target_id, "effect_resistance")
+        control_resistance = 0.0
+        specific_resistance = 0.0
+    elif category == "control":
+        classification = "control"
+        effect_hit = _clamped_unit_resource(state, caster_id, "effect_hit_rate", lower=0.0, upper=None)
+        effect_resistance = _clamped_unit_resource(state, target_id, "effect_resistance")
+        control_resistance = _clamped_unit_resource(state, target_id, "control_resistance")
+        specific_resistance = (
+            _clamped_unit_resource(state, target_id, f"control_resistance:{control_kind}")
+            if control_kind
+            else 0.0
+        )
+    elif category == "other":
+        resistance_key = standard.get("special_resistance_key")
+        resistance_source = standard.get("special_resistance_source")
+        if not isinstance(resistance_key, str) or not resistance_key or not isinstance(resistance_source, dict):
+            return {
+                "admission_status": "blocked",
+                "blocked_reason": "special_status_resistance_binding_missing",
+                "status_category": category,
+                "source_trace": source_trace,
+                "numeric_evaluation": chance_result,
+                "value_resolution": chance_value_resolution,
+            }
+        classification = "special_debuff"
+        effect_hit = _clamped_unit_resource(state, caster_id, "effect_hit_rate", lower=0.0, upper=None)
+        effect_resistance = _clamped_unit_resource(state, target_id, "effect_resistance")
+        control_resistance = 0.0
+        specific_resistance = _clamped_unit_resource(state, target_id, resistance_key)
+    else:
+        return {
+            "admission_status": "blocked",
+            "blocked_reason": f"status_probability_category_not_admitted:{category}",
+            "source_trace": source_trace,
+            "numeric_evaluation": chance_result,
+            "value_resolution": chance_value_resolution,
+        }
+    # Base chance is a multiplier, not an already-final probability.  Values
+    # above 100% are valid Canonical IR input; clamping before resistance would
+    # erase their intended interaction with Effect RES.
+    hit_adjusted = base_chance * (1.0 + effect_hit)
+    final_probability = max(
+        0.0,
+        min(
+            1.0,
+            hit_adjusted
+            * (1.0 - effect_resistance)
+            * (1.0 - control_resistance)
+            * (1.0 - specific_resistance),
+        ),
+    )
     return {
         "admission_status": "executable",
         "blocked_reason": "",
-        "source_kind": source_kind,
+        "classification": classification,
+        "source_kind": "effect_chance",
+        "status_category": category,
+        "control_kind": control_kind,
         "base_chance": base_chance,
         "effect_hit_rate": effect_hit,
         "effect_resistance": effect_resistance,
-        "base_success_probability": base_success_probability,
-        "resist_probability": resist_probability,
-        "guaranteed": base_success_probability >= 1.0 and resist_probability <= 0.0,
+        "control_resistance": control_resistance,
+        "specific_resistance": specific_resistance,
+        "hit_adjusted_probability": hit_adjusted,
+        "final_success_probability": final_probability,
+        "requires_rng": 0.0 < final_probability < 1.0,
+        "guaranteed": False,
+        "applied_terms": [
+            {"term": "base_chance", "value": base_chance},
+            {"term": "effect_hit_rate", "value": effect_hit, "applied": classification != "positive_status"},
+            {"term": "effect_resistance", "value": effect_resistance, "applied": classification != "positive_status"},
+            {"term": "control_resistance", "value": control_resistance, "applied": classification == "control"},
+            {"term": "specific_resistance", "value": specific_resistance, "applied": bool(specific_resistance)},
+        ],
+        "skipped_terms": [
+            {"term": "effect_hit_rate", "reason": "positive_status"}
+            if classification == "positive_status"
+            else {"term": "positive_status_bypass", "reason": "negative_status"},
+        ],
         "numeric_evaluation": chance_result,
         "value_resolution": chance_value_resolution,
         "source_trace": source_trace,
@@ -2276,82 +2369,49 @@ def _status_chance_check(
                 {**trace, "immunity_source": immunity},
             ),
         )
-    rng_events: list[RNGEvent] = []
-    base_probability = _probability(chance_admission.get("base_success_probability"), default=1.0)
-    if base_probability < 1.0:
-        event = _status_rng_event(
-            state,
-            rng_type="status_apply",
-            source="status_system",
-            purpose="base_chance",
-            probability=base_probability,
-            trace=trace,
-            event_payload=event_payload,
-            success_outcome_id="success",
-            fail_outcome_id="fail",
+    final_probability = _probability(chance_admission.get("final_success_probability"), default=0.0)
+    if final_probability <= 0.0:
+        return _ChanceCheck(
+            allowed=False,
+            record=_status_apply_process_record("status_apply_failed", "final_probability_zero", trace),
         )
-        rng_events.append(event)
-        result = event.result if isinstance(event.result, dict) else {}
-        if result.get("blocked_reason"):
-            reason = str(result.get("blocked_reason") or "requires_rng_choice")
-            return _ChanceCheck(
-                allowed=False,
-                record=_status_apply_process_record(
-                    "status_blocked",
-                    reason,
-                    {**trace, "rng_event": event.to_json()},
-                ),
-                rng_events=tuple(rng_events),
-                unsupported=(reason,),
-            )
-        if result.get("success") is not True:
-            return _ChanceCheck(
-                allowed=False,
-                record=_status_apply_process_record(
-                    "status_apply_failed",
-                    "chance_failed",
-                    {**trace, "rng_event": event.to_json()},
-                ),
-                rng_events=tuple(rng_events),
-            )
-    resist_probability = _probability(chance_admission.get("resist_probability"), default=0.0)
-    if resist_probability > 0.0:
-        event = _status_rng_event(
-            state,
-            rng_type="status_resist",
-            source="status_system",
-            purpose="effect_resistance",
-            probability=resist_probability,
-            trace=trace,
-            event_payload=event_payload,
-            success_outcome_id="resisted",
-            fail_outcome_id="not_resisted",
+    if final_probability >= 1.0:
+        return _ChanceCheck(allowed=True)
+    event = _status_rng_event(
+        state,
+        rng_type="status_apply",
+        source="status_system",
+        purpose="final_status_application",
+        probability=final_probability,
+        trace=trace,
+        event_payload=event_payload,
+        success_outcome_id="applied",
+        fail_outcome_id="not_applied",
+    )
+    result = event.result if isinstance(event.result, dict) else {}
+    if result.get("blocked_reason"):
+        reason = str(result.get("blocked_reason") or "requires_rng_choice")
+        return _ChanceCheck(
+            allowed=False,
+            record=_status_apply_process_record(
+                "status_blocked",
+                reason,
+                {**trace, "rng_event": event.to_json()},
+            ),
+            rng_events=(event,),
+            unsupported=(reason,),
         )
-        rng_events.append(event)
-        result = event.result if isinstance(event.result, dict) else {}
-        if result.get("blocked_reason"):
-            reason = str(result.get("blocked_reason") or "requires_rng_choice")
-            return _ChanceCheck(
-                allowed=False,
-                record=_status_apply_process_record(
-                    "status_blocked",
-                    reason,
-                    {**trace, "rng_event": event.to_json()},
-                ),
-                rng_events=tuple(rng_events),
-                unsupported=(reason,),
-            )
-        if result.get("success") is True:
-            return _ChanceCheck(
-                allowed=False,
-                record=_status_apply_process_record(
-                    "status_resisted",
-                    "effect_resisted",
-                    {**trace, "rng_event": event.to_json()},
-                ),
-                rng_events=tuple(rng_events),
-            )
-    return _ChanceCheck(allowed=True, rng_events=tuple(rng_events))
+    if result.get("success") is not True:
+        return _ChanceCheck(
+            allowed=False,
+            record=_status_apply_process_record(
+                "status_apply_failed",
+                "final_status_application_failed",
+                {**trace, "rng_event": event.to_json()},
+            ),
+            rng_events=(event,),
+        )
+    return _ChanceCheck(allowed=True, rng_events=(event,))
 
 
 def _status_apply_process_record(
@@ -2413,7 +2473,7 @@ def _runtime_dispel_count_admission(
             "numeric_evaluation": result.to_json(),
             "source_trace": source_trace,
         }
-    if result.expression_kind not in {"fixed", "dynamic_hash", "postfix_expr"}:
+    if not _numeric_evaluation_kind_admitted(result.expression_kind):
         return {
             "admission_status": "blocked",
             "blocked_reason": f"dispel_count_not_admitted:{result.expression_kind}",
@@ -2475,9 +2535,6 @@ def _dispel_candidates(
 def _dispel_detail_skipped_reason(detail: dict[str, JSONValue], standard: dict[str, JSONValue]) -> str:
     if detail.get("can_dispel") is not True:
         return "can_dispel_not_true"
-    source_trace = detail.get("source_trace")
-    if not isinstance(source_trace, dict) or not source_trace:
-        return "source_trace_missing"
     buff_type = str(standard.get("buff_type") or "")
     if not buff_type:
         return ""
@@ -2510,11 +2567,19 @@ def _status_rng_event(
         f"rng:{state.event_index}:{rng_type}:{purpose}:"
         f"{trace.get('caster_id')}:{trace.get('target_id')}:{_status_id_fragment(str(trace.get('status_id') or ''))}"
     )
+    identity = {
+        "decision_scope": "status_application",
+        "decision_index": int(trace.get("decision_index") or 0),
+        "task_id": str(trace.get("effect_id") or "status_system"),
+        "status_id": str(trace.get("status_id") or ""),
+        "target_id": str(trace.get("target_id") or ""),
+        "derived_event_id": str(trace.get("source_stack_key") or event_id),
+    }
     request = RNGRequest(
         rng_type=rng_type,
         purpose=purpose,
         event_id=event_id,
-        choice_key=f"{rng_type}:{purpose}:{trace.get('caster_id')}:{trace.get('target_id')}:{_status_id_fragment(str(trace.get('status_id') or ''))}",
+        choice_key=choice_key_for_identity(rng_type, identity),
         source=source,
         before_state=state.rng_state,
         decision_kind="probability",
@@ -2524,6 +2589,7 @@ def _status_rng_event(
         ),
         source_trace=trace,
         metadata={"probability": probability},
+        identity=identity,
     )
     resolution = resolve_rng_request(
         request,
@@ -2564,11 +2630,19 @@ def _status_choice_rng_event(
         f"rng:{state.event_index}:{rng_type}:{purpose}:"
         f"{trace.get('caster_id')}:{trace.get('target_id')}:{len(candidates)}"
     )
+    identity = {
+        "decision_scope": "status_choice",
+        "decision_index": int(trace.get("decision_index") or 0),
+        "task_id": str(trace.get("effect_id") or "status_system"),
+        "status_id": str(trace.get("status_id") or purpose),
+        "target_id": str(trace.get("target_id") or ""),
+        "derived_event_id": str(trace.get("source_stack_key") or event_id),
+    }
     request = RNGRequest(
         rng_type=rng_type,
         purpose=purpose,
         event_id=event_id,
-        choice_key=f"{rng_type}:{purpose}:{trace.get('caster_id')}:{trace.get('target_id')}",
+        choice_key=choice_key_for_identity(rng_type, identity),
         source=source,
         before_state=state.rng_state,
         decision_kind="choice",
@@ -2588,6 +2662,7 @@ def _status_choice_rng_event(
         ),
         source_trace=trace,
         metadata={"candidate_count": len(candidates), "candidates": list(candidates)},
+        identity=identity,
     )
     resolution = resolve_rng_request(
         request,
@@ -2635,6 +2710,18 @@ def _unit_resource(state: BattleState, unit_id: str, key: str) -> float:
         return 0.0
     value = unit.resources.get(key)
     return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else 0.0
+
+
+def _clamped_unit_resource(
+    state: BattleState,
+    unit_id: str,
+    key: str,
+    *,
+    lower: float = 0.0,
+    upper: float | None = 1.0,
+) -> float:
+    value = max(lower, _unit_resource(state, unit_id, key))
+    return min(upper, value) if upper is not None else value
 
 
 def _status_immunity_source(
@@ -2696,6 +2783,12 @@ def _map_stack_property(property_name: str) -> tuple[str, str, str] | None:
     return None
 
 
+def _numeric_evaluation_kind_admitted(expression_kind: str) -> bool:
+    """Admit executable typed numeric IR kinds produced by RuleEvaluator."""
+
+    return expression_kind in {"fixed", "dynamic_hash", "program"}
+
+
 def _optional_float(expr: object) -> float | None:
     result = RuleEvaluator().evaluate_numeric(expr, NumericEvaluationContext())
     return result.value if result.ok and result.value is not None else None
@@ -2715,7 +2808,14 @@ def _runtime_duration_admission(
     status_metadata: dict[str, JSONValue] | None = None,
     value_resolver: ValueResolver | None = None,
 ) -> dict[str, JSONValue]:
-    source_mode = _duration_source_mode(effect.source.source_path)
+    source_mode = effect.source_mode
+    if not source_mode or source_mode == "unclassified":
+        return {
+            "admission_status": "blocked",
+            "blocked_reason": "duration_source_mode_missing",
+            "source_mode": source_mode or "missing",
+            "effect_source": effect.source.to_json(),
+        }
     if source_mode != "mainline":
         return {
             "admission_status": "blocked",
@@ -2838,7 +2938,7 @@ def _duration_admission_from_expr(
             "numeric_evaluation": result.to_json(),
             "value_resolution": value_resolution,
         }
-    if result.expression_kind not in {"fixed", "dynamic_hash", "postfix_expr"}:
+    if not _numeric_evaluation_kind_admitted(result.expression_kind):
         return {
             "admission_status": "blocked",
             "blocked_reason": f"lifetime_not_fixed:{result.expression_kind}",
@@ -2903,22 +3003,6 @@ def _status_instance_duration_value(duration_admission: dict[str, JSONValue]) ->
     return None
 
 
-def _duration_source_mode(source_path: str) -> str:
-    blocked_markers = (
-        "/Activity/",
-        "/Rogue/",
-        "/GridFight/",
-        "/Fate/",
-        "/Story/",
-        "/Level/",
-        "/SubLevelGraph/",
-        "/ElationBattle/",
-        "Config/Level/",
-        "Config/Gameplays/",
-    )
-    return "special_mode" if any(marker in source_path for marker in blocked_markers) else "mainline"
-
-
 def _number_or_none(value: object) -> float | None:
     return float(value) if isinstance(value, (int, float)) else None
 
@@ -2932,9 +3016,7 @@ def _status_detail_duration_admission(status_detail: dict[str, JSONValue]) -> di
     admission = status_detail.get("duration_admission")
     if isinstance(admission, dict):
         return dict(admission)
-    source_trace = _status_detail_source_trace(status_detail)
-    nested = source_trace.get("duration_admission")
-    return dict(nested) if isinstance(nested, dict) else {}
+    return {}
 
 
 def _unsupported_lifecycle_plan(
@@ -3241,27 +3323,29 @@ def _definition_callback_dynamic_hashes(callback_bindings: object) -> dict[str, 
     return result
 
 
-def _select_modifier_definition(rules: RuleBook, modifier_name: str, source_path: str) -> RuleEntity | None:
+def _select_modifier_definition(rules: RuleBook, modifier_name: str, effect: EffectIR) -> RuleEntity | None:
+    if effect.modifier_definition_id:
+        linked = rules.entity(effect.modifier_definition_id)
+        if linked is None or linked.entity_type != "modifier_definition":
+            return None
+        linked_name = linked.fields.get("modifier_name") or linked.fields.get("ModifierName")
+        return linked if linked_name == modifier_name else None
     definitions = rules.modifier_definitions(modifier_name)
-    if not definitions:
-        return rules.modifier_definition(modifier_name)
-    exact = tuple(definition for definition in definitions if definition.source.source_path == source_path)
-    if exact:
-        return exact[0]
-    if "/Advanced/" in source_path:
-        advanced = tuple(definition for definition in definitions if "/Advanced/" in definition.source.source_path)
-        if len(advanced) == 1:
-            return advanced[0]
-    return definitions[0]
+    return definitions[0] if len(definitions) == 1 else None
 
 
-def _trigger_ids_by_event(rules: RuleBook, modifier_name: str, source_path: str = "") -> dict[str, tuple[str, ...]]:
+def _trigger_ids_by_event(
+    rules: RuleBook,
+    modifier_name: str,
+    callback_ids: tuple[str, ...] = (),
+) -> dict[str, tuple[str, ...]]:
+    admitted_callback_ids = set(callback_ids)
     by_event: dict[str, list[str]] = {}
     for event in sorted({callback.event for callback in rules.ir.status_callbacks if callback.modifier_name == modifier_name}):
         callbacks = tuple(
             callback
             for callback in rules.status_callbacks_for_modifier_event(modifier_name, event)
-            if not source_path or callback.source.source_path == source_path
+            if not admitted_callback_ids or callback.callback_id in admitted_callback_ids
         )
         by_event[event] = [callback.callback_id for callback in callbacks]
     return {event: tuple(callback_ids) for event, callback_ids in sorted(by_event.items())}

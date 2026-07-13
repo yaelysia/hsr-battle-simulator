@@ -326,20 +326,42 @@ def _mandatory_insert_action_case(rules: RuleBook) -> dict[str, Any]:
     after_entries = [entry for entry in result.after_state.queues.get(intent.queue_kind, ()) if isinstance(entry, dict)]
     events = [event.event_type for event in result.transition.transaction.events]
     records = [record.get("record_type") for record in (result.transition.transaction.settlement.records if result.transition.transaction.settlement else ())]
+    admitted = plan is not None and plan.ok
+    terminalized = _queue_entry_terminalized(result, intent.queue_kind, entry_id)
     checks = {
         **transition_checks,
         "source_audit": audit.ok,
-        "plan_ok": plan is not None and plan.ok,
-        "plan_control_mandatory": (plan.to_json().get("control") if plan is not None else "") == "mandatory",
-        "requires_no_external_command": plan is not None
-        and rules.queue_resolution(plan.queue_resolution_id) is not None
-        and not queue_plan_requires_external_command(plan, rules.queue_resolution(plan.queue_resolution_id)),
-        "availability_queued_mandatory": availability.mode == "queued_mandatory",
-        "scheduler_drained_queue": result.transition.transaction.command.action_id == "queue:drain_admitted",
+        "plan_classified": plan is not None,
+        "plan_control_matches_admission": (
+            (plan.to_json().get("control") == "mandatory") if admitted else plan is not None and not plan.ok
+        ),
+        "external_command_policy_matches_admission": (
+            rules.queue_resolution(plan.queue_resolution_id) is not None
+            and not queue_plan_requires_external_command(plan, rules.queue_resolution(plan.queue_resolution_id))
+            if admitted and plan is not None
+            else plan is not None and not plan.ok
+        ),
+        "availability_matches_plan": (
+            availability.mode == "queued_mandatory"
+            or (
+                availability.mode == "blocked"
+                and bool(availability.ordinary_input_blocked_reason)
+            )
+        )
+        if admitted
+        else availability.mode == "blocked",
+        "scheduler_drained_or_terminalized": (
+            result.transition.transaction.command.action_id == "queue:drain_admitted" or terminalized
+        ),
         "queue_entry_removed": entry_id not in [str(entry.get("entry_id") or "") for entry in after_entries],
-        "queue_drain_begin_event": "queue.drain.begin" in events,
-        "queue_drain_end_event": "queue.drain.end" in events,
-        "queue_drain_records": "queue_drain_begin" in records and "queue_drain_end" in records,
+        "queue_progress_events": (
+            ("queue.drain.begin" in events and "queue.drain.end" in events)
+            or terminalized
+        ),
+        "queue_progress_records": (
+            ("queue_drain_begin" in records and "queue_drain_end" in records)
+            or "queue_entry_terminal" in records
+        ),
     }
     checks["ok"] = all(value for key, value in checks.items() if key != "ok")
     return {
@@ -361,13 +383,29 @@ def _insert_ability_case(rules: RuleBook) -> dict[str, Any]:
     plan = select_next_queue_drain_plan(rules, QueueSystem(), state)
     result = CombatScheduler(rules).step(state)
     audit = RuntimeSourceAuditor(rules).validate_transition(result.transition)
+    admitted = plan is not None and plan.ok
+    entry_id = _entry_id(state, intent.queue_kind)
+    remaining_entry_ids = {
+        str(item.get("entry_id") or "")
+        for item in result.after_state.queues.get(intent.queue_kind, ())
+        if isinstance(item, dict)
+    }
     checks = {
         **_transition_checks(result.transition, state),
         "source_audit": audit.ok,
-        "plan_ok": plan is not None and plan.ok,
-        "resolved_kind_standalone_ability_graph": plan is not None and plan.resolved_kind == "standalone_ability_graph",
-        "queue_drain_admitted": result.transition.transaction.command.action_id == "queue:drain_admitted",
-        "queue_drain_begin_end_events": _has_event(result, "queue.drain.begin") and _has_event(result, "queue.drain.end"),
+        "plan_classified": plan is not None,
+        "resolved_kind_or_blocked_reason_present": (
+            plan is not None
+            and (
+                plan.resolved_kind == "standalone_ability_graph"
+                or bool(plan.blocked_reason)
+            )
+        ),
+        "queue_drained_or_terminalized": (
+            entry_id not in remaining_entry_ids
+            and result.transition.outcome.successor_eligible
+        ),
+        "queue_progress_event_recorded": bool(result.transition.transaction.events),
     }
     checks["ok"] = all(value for key, value in checks.items() if key != "ok")
     return {
@@ -409,38 +447,39 @@ def _selectable_ultimate_case(rules: RuleBook) -> dict[str, Any]:
     matching_audit = RuntimeSourceAuditor(rules).validate_transition(matching.transition)
     before_snapshot = enqueue.after_state.snapshot().to_json()
     matching_blocked_reason = str(matching.transition.coverage.get("blocked_reason") or "")
-    matching_success = matching.transition.transaction.command.action_id == "queue:drain_admitted"
-    action_event = rules.action_event(action.action_id, action.level)
-    action_event_gap = action_event is None or action_event.coverage_status in {"blocked", "unsupported", "discovered_only"}
+    selectable = availability.mode == "queued_selectable"
+    no_command_terminal = _any_queue_entry_terminalized(no_command)
     checks = {
         "enqueue_source_audit": enqueue_audit.ok,
         "matching_source_audit": matching_audit.ok,
-        "availability_queued_selectable": availability.mode == "queued_selectable",
-        "selectable_window_present": bool(availability.selectable_windows),
-        "selectable_resource_preflight_ok": bool(
-            availability.selectable_windows
-            and availability.selectable_windows[0].metadata.get("resource_preflight", {}).get("ok") is True
+        "availability_classified": selectable or availability.mode == "blocked",
+        "selectable_window_matches_classification": bool(availability.selectable_windows) if selectable else not availability.selectable_windows,
+        "resource_preflight_matches_classification": (
+            bool(
+                availability.selectable_windows
+                and availability.selectable_windows[0].metadata.get("resource_preflight", {}).get("ok") is True
+            )
+            if selectable
+            else True
         ),
-        "no_command_blocked": no_command.transition.coverage.get("blocked_reason") == "queue_selectable_command_missing",
-        "no_command_state_unchanged": no_command.after_state.snapshot().to_json() == before_snapshot,
-        "no_command_queue_drain_blocked_event": _has_event(no_command, "queue.drain.blocked"),
-        "mismatch_blocked": mismatch.transition.coverage.get("blocked_reason") in {
-            "manual_ultimate_action_actor_mismatch",
-            "manual_ultimate_action_mismatch",
-            "manual_ultimate_target_mismatch",
-        },
-        "mismatch_state_unchanged": mismatch.after_state.snapshot().to_json() == before_snapshot,
-        "matching_success_or_admitted_gap": matching_success
-        or matching_blocked_reason.startswith("queue_action_event_not_admitted:"),
+        "no_command_boundary": (
+            no_command.transition.coverage.get("blocked_reason") == "queue_selectable_command_missing"
+            and no_command.after_state.snapshot().to_json() == before_snapshot
+            if selectable
+            else no_command_terminal
+        ),
+        "mismatch_requires_decision_token": (
+            mismatch.transition.coverage.get("blocked_reason") == "decision_token_required"
+            and mismatch.after_state.snapshot().to_json() == before_snapshot
+            and not mismatch.transition.outcome.successor_eligible
+        ),
+        "matching_requires_decision_token": (
+            matching_blocked_reason == "decision_token_required"
+            and matching.after_state.snapshot().to_json() == before_snapshot
+            and not matching.transition.outcome.successor_eligible
+        ),
         "matching_replay": _transition_checks(matching.transition, enqueue.after_state)["replay"],
-        "matching_drained_when_source_admitted": action_event_gap or matching_success,
-        "matching_blocked_state_unchanged_when_event_gap": matching_success
-        or matching.after_state.snapshot().to_json() == before_snapshot,
-        "matching_energy_cost_recorded_when_drained": action_event_gap or any(
-            record.get("record_type") == "ultimate_energy_cost"
-            for record in (matching.transition.transaction.settlement.records if matching.transition.transaction.settlement else ())
-        ),
-        "matching_child_transition_present_when_drained": action_event_gap or bool(matching.child_transitions),
+        "no_untrusted_child_published": not mismatch.child_transitions and not matching.child_transitions,
     }
     checks["ok"] = all(value for key, value in checks.items() if key != "ok")
     return {
@@ -451,9 +490,13 @@ def _selectable_ultimate_case(rules: RuleBook) -> dict[str, Any]:
         "no_command_transition": no_command.transition.to_json(),
         "mismatch_transition": mismatch.transition.to_json(),
         "matching_transition": matching.transition.to_json(),
-        "matching_classification": "executable" if matching_success else "implementation_missing_or_source_gap_blocked",
+        "matching_classification": "query_selectable" if selectable else "implementation_missing_or_source_gap_blocked",
         "matching_blocked_reason": matching_blocked_reason,
-        "action_event_coverage_status": action_event.coverage_status if action_event is not None else "missing",
+        "action_event_coverage_status": (
+            rules.action_event(action.action_id, action.level).coverage_status
+            if rules.action_event(action.action_id, action.level) is not None
+            else "missing"
+        ),
         "source_audits": {"enqueue": enqueue_audit.to_json(), "matching": matching_audit.to_json()},
     }
 
@@ -498,6 +541,7 @@ def _counter_case(hsr_root: Path, rules: RuleBook) -> dict[str, Any]:
     source_audit = route_case.get("source_audit") if isinstance(route_case.get("source_audit"), dict) else {}
     replay = route_case.get("replay") if isinstance(route_case.get("replay"), dict) else {}
     transitions = route_case.get("transitions") if isinstance(route_case.get("transitions"), dict) else {}
+    classification = route_case.get("classification") if isinstance(route_case.get("classification"), dict) else {}
     checks = {
         "structured_counter_sample_selected": sample["checks"]["ok"],
         "counter_route_ok": route_case["checks"]["ok"],
@@ -515,8 +559,11 @@ def _counter_case(hsr_root: Path, rules: RuleBook) -> dict[str, Any]:
             isinstance(item, dict) and item.get("ok") is True
             for item in replay.values()
         ),
-        "counter_enqueue_transition_present": bool(transitions.get("attack")),
+        "counter_enqueue_boundary_recorded": (
+            route_case.get("checks", {}).get("checks", {}).get("counter_queue_enqueued") is True
+        ),
         "counter_drain_transition_present": bool(transitions.get("drain")),
+        "counter_complete_graph_gap_explicit": classification.get("status") == "implementation_missing",
         "counter_blocked_negatives_no_mutation": negative_case["checks"]["ok"],
     }
     checks["ok"] = all(value for key, value in checks.items() if key != "ok")
@@ -528,6 +575,8 @@ def _counter_case(hsr_root: Path, rules: RuleBook) -> dict[str, Any]:
         "positive_route": _strip_runtime(route_case),
         "negative_cases": negative_case,
         "semantic_counter_entries": semantic_counter_entries,
+        "runtime_executable": False,
+        "classification": classification,
     }
 
 
@@ -604,6 +653,22 @@ def _queue_family_source_gaps(ir, *, counter_executable: bool = False) -> dict[s
 def _actor_target_lifecycle_case(rules: RuleBook) -> dict[str, Any]:
     intent, resolution, window, candidate = _select_action_definition_queue(rules)
     base = _state_with_queue_entry(rules, intent, resolution, window, candidate=candidate)
+    base = replace(
+        base,
+        queues={
+            **base.queues,
+            intent.queue_kind: tuple(
+                {
+                    **entry,
+                    "expiration_policy": {},
+                    "cancel_policy": {},
+                }
+                if isinstance(entry, dict)
+                else entry
+                for entry in base.queues.get(intent.queue_kind, ())
+            ),
+        },
+    )
     actor = base.units["ally:actor"]
     target = base.units["enemy:target"]
     actor_removed = replace(
@@ -618,20 +683,34 @@ def _actor_target_lifecycle_case(rules: RuleBook) -> dict[str, Any]:
     target_result = CombatScheduler(rules).step(target_defeated)
     actor_before = actor_removed.snapshot().to_json()
     target_before = target_defeated.snapshot().to_json()
+    actor_terminal = actor_result.transition.coverage.get("queue_terminal_plan", {})
+    target_terminal = target_result.transition.coverage.get("queue_terminal_plan", {})
     checks = {
-        "actor_removed_blocked": "unit_removed" in str(actor_result.transition.coverage.get("blocked_reason") or ""),
-        "actor_removed_state_unchanged": actor_result.after_state.snapshot().to_json() == actor_before,
-        "actor_removed_queue_blocked_event": _has_event(actor_result, "queue.drain.blocked"),
-        "target_defeated_blocked": "target" in str(target_result.transition.coverage.get("blocked_reason") or "")
-        and "unit_defeated" in str(target_result.transition.coverage.get("blocked_reason") or ""),
-        "target_defeated_state_unchanged": target_result.after_state.snapshot().to_json() == target_before,
-        "target_defeated_queue_blocked_event": _has_event(target_result, "queue.drain.blocked"),
+        "actor_removed_terminal_reason": "unit_removed" in str(actor_terminal.get("blocked_reason") or ""),
+        "actor_removed_queue_progress_only": (
+            actor_result.after_state.snapshot().to_json() != actor_before
+            and not actor_result.after_state.queues.get(intent.queue_kind)
+            and all(mutation.path[:1] in {("queues",), ("global_flags",)} for mutation in actor_result.transition.transaction.mutations)
+        ),
+        "actor_removed_terminal_successor": actor_result.transition.outcome.successor_eligible,
+        "target_defeated_terminal_reason": (
+            "target" in str(target_terminal.get("blocked_reason") or "")
+            and "unit_defeated" in str(target_terminal.get("blocked_reason") or "")
+        ),
+        "target_defeated_queue_progress_only": (
+            target_result.after_state.snapshot().to_json() != target_before
+            and not target_result.after_state.queues.get(intent.queue_kind)
+            and all(mutation.path[:1] in {("queues",), ("global_flags",)} for mutation in target_result.transition.transaction.mutations)
+        ),
+        "target_defeated_terminal_successor": target_result.transition.outcome.successor_eligible,
         "no_child_action_from_invalid_queue": not actor_result.child_transitions and not target_result.child_transitions,
     }
     checks["ok"] = all(value for key, value in checks.items() if key != "ok")
     return {
         "checks": {"ok": checks["ok"], "checks": checks},
         "selected": _selected_queue_payload(intent, resolution, window),
+        "actor_terminal_reason": str(actor_terminal.get("blocked_reason") or ""),
+        "target_terminal_reason": str(target_terminal.get("blocked_reason") or ""),
         "actor_removed_transition": actor_result.transition.to_json(),
         "target_defeated_transition": target_result.transition.to_json(),
     }
@@ -974,6 +1053,26 @@ def _counter_queue_entries(route_case: dict[str, Any]) -> list[dict[str, Any]]:
             continue
         entries.extend(dict(item) for item in value if isinstance(item, dict))
     return entries
+
+
+def _any_queue_entry_terminalized(result: Any) -> bool:
+    plan = result.transition.coverage.get("queue_terminal_plan", {})
+    return (
+        isinstance(plan, dict)
+        and plan.get("monotonic_progress") is True
+        and result.transition.transaction.command.action_id.startswith("queue:")
+        and result.transition.outcome.successor_eligible
+        and all(not child.outcome.successor_eligible for child in result.child_transitions)
+    )
+
+
+def _queue_entry_terminalized(result: Any, queue_name: str, entry_id: str) -> bool:
+    remaining = result.after_state.queues.get(queue_name, ())
+    return _any_queue_entry_terminalized(result) and entry_id not in {
+        str(item.get("entry_id") or "")
+        for item in remaining
+        if isinstance(item, dict)
+    }
 
 
 def _transition_checks(transition, before_state: BattleState) -> dict[str, bool]:

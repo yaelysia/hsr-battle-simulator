@@ -20,6 +20,7 @@ from ..systems.event_dispatch import EventDispatchSystem
 from ..systems.queue import QueueDrainPlan
 from ..systems.scheduler import CombatScheduler
 from ..systems.status import StatusSystem
+from ..systems.target import TargetSystem
 from ..systems.wave import WaveSystem
 from ..tbgd.lowering import TBGDLowering
 from ..tbgd.paths import find_tbgd_root
@@ -48,7 +49,7 @@ def run_validation(package_root: Path, tbgd_root: Path, output_dir: Path) -> dic
     refresh_case = _refresh_case(rules)
     stack_only_refresh_case = _stack_only_refresh_case(rules)
     stack_refresh_case = _stack_refresh_case(rules)
-    chance_cases = _chance_cases(rules, stack_case["modifier_name"])
+    chance_cases = _chance_cases(rules)
     control_case = _control_gate_case(rules, stack_case["status_detail"])
     blocked_case = _blocked_reapply_case(rules, stack_case["effect_ir"], stack_case["after_first_state"])
     dispel_case = _dispel_case(rules)
@@ -449,40 +450,45 @@ def _stack_refresh_case(rules: RuleBook) -> dict[str, Any]:
     }
 
 
-def _chance_cases(rules: RuleBook, modifier_name: str) -> dict[str, Any]:
+def _chance_cases(rules: RuleBook) -> dict[str, Any]:
+    base_effect = _select_probability_effect(rules)
+    modifier_name = _modifier_name(base_effect)
     state = _base_state()
-    failure_effect = _synthetic_add_modifier(modifier_name, "chance_failure", chance={"kind": "fixed", "value": 0.0})
+    target_id = _probability_target_id(rules, base_effect, state)
+    failure_effect = _probability_fixture_effect(base_effect, "chance_failure", chance={"kind": "fixed", "value": 0.0})
     failure = StatusSystem(rules).apply_add_modifier(
         state,
         failure_effect,
         caster_id="ally:actor",
         source_id="validation:p1_4:chance_failure",
         owner_id="ally:actor",
-        current_action_target_id="ally:actor",
+        param_entity_id="enemy:target",
+        current_action_target_id="enemy:target",
     )
     resist_state = replace(
         state,
         units={
             **state.units,
-            "ally:actor": replace(state.units["ally:actor"], resources={"effect_resistance": 1.0}),
+            target_id: replace(state.units[target_id], resources={"effect_resistance": 1.0}),
         },
     )
-    resist_effect = _synthetic_add_modifier(modifier_name, "resisted", chance={"kind": "fixed", "value": 1.0})
+    resist_effect = _probability_fixture_effect(base_effect, "resisted", chance={"kind": "fixed", "value": 1.0})
     resisted = StatusSystem(rules).apply_add_modifier(
         resist_state,
         resist_effect,
         caster_id="ally:actor",
         source_id="validation:p1_4:resisted",
         owner_id="ally:actor",
-        current_action_target_id="ally:actor",
+        param_entity_id="enemy:target",
+        current_action_target_id="enemy:target",
     )
     status_id = f"modifier:{modifier_name}"
     immunity_state = replace(
         state,
         units={
             **state.units,
-            "ally:actor": replace(
-                state.units["ally:actor"],
+            target_id: replace(
+                state.units[target_id],
                 flags={
                     "status_immunities": {
                         status_id: {
@@ -494,22 +500,23 @@ def _chance_cases(rules: RuleBook, modifier_name: str) -> dict[str, Any]:
             ),
         },
     )
-    immunity_effect = _synthetic_add_modifier(modifier_name, "immunity", chance={"kind": "fixed", "value": 1.0})
+    immunity_effect = _probability_fixture_effect(base_effect, "immunity", chance={"kind": "fixed", "value": 1.0})
     immunity = StatusSystem(rules).apply_add_modifier(
         immunity_state,
         immunity_effect,
         caster_id="ally:actor",
         source_id="validation:p1_4:immunity",
         owner_id="ally:actor",
-        current_action_target_id="ally:actor",
+        param_entity_id="enemy:target",
+        current_action_target_id="enemy:target",
     )
     checks = {
         "failure_no_mutation": not failure.mutations,
-        "failure_rng_event": bool(failure.rng_events) and failure.rng_events[0].rng_type == "status_apply",
+        "failure_no_rng": not failure.rng_events,
         "failure_record_type": any(record.get("record_type") == "status_apply_failed" for record in failure.records),
         "resisted_no_mutation": not resisted.mutations,
-        "resisted_rng_event": any(event.rng_type == "status_resist" for event in resisted.rng_events),
-        "resisted_record_type": any(record.get("record_type") == "status_resisted" for record in resisted.records),
+        "resisted_no_rng": not resisted.rng_events,
+        "resisted_record_type": any(record.get("record_type") == "status_apply_failed" for record in resisted.records),
         "immunity_no_mutation": not immunity.mutations,
         "immunity_no_rng": not immunity.rng_events,
         "immunity_record_type": any(record.get("record_type") == "status_immunity" for record in immunity.records),
@@ -517,6 +524,9 @@ def _chance_cases(rules: RuleBook, modifier_name: str) -> dict[str, Any]:
     checks["ok"] = all(value for key, value in checks.items() if key != "ok")
     return {
         "checks": {"ok": checks["ok"], "checks": checks},
+        "modifier_name": modifier_name,
+        "modifier_status_source": rules.status_entity_for_modifier(modifier_name).source.to_json(),
+        "base_effect_source": base_effect.source.to_json(),
         "failure": failure.to_json(),
         "resisted": resisted.to_json(),
         "immunity": immunity.to_json(),
@@ -565,7 +575,10 @@ def _control_gate_case(rules: RuleBook, source_detail: dict[str, Any]) -> dict[s
         "availability_blocked": view.mode == "blocked",
         "blocked_reason_is_control": view.ordinary_input_blocked_reason.startswith("status_control_gate:"),
         "blocked_source_trace_present": bool(view.blocked and view.blocked[0].source_trace),
-        "scheduler_execution_blocked": scheduler_step.transition.transaction.command.action_id == "scheduler:status_control_gate",
+        "scheduler_direct_submission_not_published": (
+            not scheduler_step.transition.outcome.successor_eligible
+            and not scheduler_step.transition.transaction.mutations
+        ),
         "scheduler_state_unchanged": scheduler_step.after_state.snapshot().to_json() == state.snapshot().to_json(),
         "queue_preflight_blocked": queue_preflight_reason.startswith("status_control_gate:"),
         "state_unchanged": state.snapshot().to_json() == state.snapshot().to_json(),
@@ -844,7 +857,10 @@ def _stack_reduce_case(rules: RuleBook) -> dict[str, Any]:
         "missing_existing_blocked": not missing_existing_result.ok,
         "missing_existing_no_mutation": not missing_existing_result.mutations,
         "missing_existing_blocked_record": any(
-            record.get("record_type") == "status_lifecycle_blocked"
+            record.get("record_type") in {"status_unsupported", "status_lifecycle_blocked"}
+            and "stack_reduce_blocked:status_detail_missing" in str(
+                (record.get("payload") or {}).get("reason") or ""
+            )
             for record in missing_existing_result.records
         ),
     }
@@ -1522,6 +1538,40 @@ def _select_stack_effect(rules: RuleBook) -> EffectIR:
     raise RuntimeError(f"no stack AddModifier candidate found; failures={failures[:5]}")
 
 
+def _select_probability_effect(rules: RuleBook) -> EffectIR:
+    failures: list[dict[str, Any]] = []
+    for effect in sorted(rules.ir.effects, key=lambda item: item.effect_id):
+        if not _safe_add_modifier_effect(effect):
+            continue
+        standard = effect.payload.get("standard") if isinstance(effect.payload.get("standard"), dict) else {}
+        modifier_name = standard.get("modifier_name")
+        if not isinstance(modifier_name, str) or not modifier_name:
+            continue
+        entity = rules.status_entity_for_modifier(modifier_name)
+        if entity is None or str(entity.fields.get("StatusType") or "").strip().lower() not in {"debuff", "control"}:
+            continue
+        if len(rules.modifier_definitions(modifier_name)) != 1:
+            continue
+        probe_effect = _probability_fixture_effect(
+            effect,
+            f"probability_probe:{effect.effect_id}",
+            chance={"kind": "fixed", "value": 0.0},
+        )
+        probe = StatusSystem(rules).apply_add_modifier(
+            _base_state(),
+            probe_effect,
+            caster_id="ally:actor",
+            source_id="validation:p1_4:probability_probe",
+            owner_id="ally:actor",
+            param_entity_id="enemy:target",
+            current_action_target_id="enemy:target",
+        )
+        if any(record.get("record_type") == "status_apply_failed" for record in probe.records):
+            return effect
+        failures.append({"effect_id": effect.effect_id, "unsupported": list(probe.unsupported)})
+    raise RuntimeError(f"no admitted Debuff/Control probability modifier candidate found; failures={failures[:5]}")
+
+
 def _select_refresh_effect(rules: RuleBook, *, allow_missing: bool = False) -> EffectIR | None:
     for effect in sorted(rules.ir.effects, key=lambda item: item.effect_id):
         if not _safe_add_modifier_effect(effect):
@@ -1917,26 +1967,53 @@ def _safe_add_modifier_effect(effect: EffectIR) -> bool:
     return isinstance(standard.get("modifier_name"), str) and bool(standard.get("modifier_name"))
 
 
-def _synthetic_add_modifier(modifier_name: str, raw_id: str, *, chance: dict[str, Any]) -> EffectIR:
-    return EffectIR(
+def _probability_fixture_effect(base_effect: EffectIR, raw_id: str, *, chance: dict[str, Any]) -> EffectIR:
+    standard = dict(base_effect.payload.get("standard") or {})
+    standard["chance"] = chance
+    return replace(
+        base_effect,
         effect_id=f"validation:p1_4:{raw_id}",
-        opcode="AddModifier",
         payload={
-            "standard": {
-                "modifier_name": modifier_name,
-                "target_alias": "Caster",
-                "dynamic_values": {},
-                "dynamic_value_requests": {},
-                "lifetime": {"kind": "missing", "reason": "validation_no_duration"},
-                "life_step_moment": "",
-                "layer_add_when_stack": {"kind": "missing", "reason": "validation_no_stack"},
-                "max_layer": {"kind": "missing", "reason": "validation_no_stack"},
-                "chance": chance,
-            }
+            **base_effect.payload,
+            "standard": standard,
+            "validation_probability_override": {
+                "base_effect_id": base_effect.effect_id,
+                "base_effect_source": base_effect.source.to_json(),
+            },
         },
-        source=_validation_source(raw_id),
-        coverage_status="executable",
+        source=IRSource(
+            source_path="simulator_v8_clean_core/tools/validate_p1_4_status_system.py",
+            raw_type="ValidationStatusProbabilityFixture",
+            raw_id=raw_id,
+            evidence={
+                "purpose": "P1-4 process-only probability negative validation",
+                "base_effect_id": base_effect.effect_id,
+                "base_effect_source": base_effect.source.to_json(),
+            },
+        ),
     )
+
+
+def _probability_target_id(rules: RuleBook, effect: EffectIR, state: BattleState) -> str:
+    standard = effect.payload.get("standard") if isinstance(effect.payload.get("standard"), dict) else {}
+    expression_id = standard.get("target_expression_id")
+    expression = rules.target_expression(expression_id) if isinstance(expression_id, str) else None
+    if expression is None:
+        raise RuntimeError(f"probability effect {effect.effect_id} has no typed target expression")
+    result = TargetSystem().resolve_target_expression(
+        state,
+        expression,
+        caster_id="ally:actor",
+        owner_id="ally:actor",
+        param_entity_id="enemy:target",
+        current_action_target_id="enemy:target",
+    )
+    if not result.ok or len(result.target_ids) != 1:
+        raise RuntimeError(
+            f"probability effect {effect.effect_id} target did not resolve to one unit: "
+            f"reason={result.blocked_reason!r} targets={result.target_ids!r}"
+        )
+    return result.target_ids[0]
 
 
 def _validation_source(raw_id: str) -> IRSource:

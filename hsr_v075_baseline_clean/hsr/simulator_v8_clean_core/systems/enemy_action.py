@@ -61,6 +61,50 @@ class EnemyActionSystem:
         self.rules = rules
         self.targets = TargetSystem()
 
+    def candidate_constraint(self, state: BattleState, actor_id: str) -> dict[str, JSONValue]:
+        """Describe whether card data imposes a forced action candidate.
+
+        A blocked/complex AI policy is not a runtime AI implementation.  When
+        its declared selection controller is external, the core must expose
+        admitted card actions without inventing a choice or sequence order.
+        """
+
+        actor = state.units.get(actor_id)
+        if actor is None:
+            return {"ok": False, "mode": "blocked", "blocked_reason": "enemy_actor_missing"}
+        if actor.side != "enemy":
+            return {"ok": False, "mode": "blocked", "blocked_reason": "enemy_action_actor_not_enemy"}
+        card_id = actor.flags.get("monster_data_card_id")
+        if not isinstance(card_id, str) or not card_id:
+            return {"ok": False, "mode": "blocked", "blocked_reason": "enemy_monster_data_card_id_missing"}
+        card = self.rules.monster_data_card(card_id)
+        if card is None:
+            return {"ok": False, "mode": "blocked", "blocked_reason": "enemy_monster_data_card_missing"}
+        policy = card.ai_policy
+        if (
+            policy.get("candidate_constraint_admitted") is True
+            and policy.get("admission_status") == "executable"
+        ):
+            return {
+                "ok": True,
+                "mode": "fixed_sequence_constraint",
+                "monster_data_card_id": card.card_id,
+            }
+        if policy.get("selection_controller") == "external":
+            return {
+                "ok": True,
+                "mode": "external_card_actions",
+                "monster_data_card_id": card.card_id,
+                "ai_policy_status": str(policy.get("admission_status") or ""),
+                "ai_policy_blocked_reason": str(policy.get("blocked_reason") or ""),
+            }
+        return {
+            "ok": False,
+            "mode": "blocked",
+            "monster_data_card_id": card.card_id,
+            "blocked_reason": "enemy_action_selection_controller_not_admitted",
+        }
+
     def next_candidate(self, state: BattleState, actor_id: str) -> EnemyActionCandidate:
         actor = state.units.get(actor_id)
         if actor is None:
@@ -140,14 +184,14 @@ class EnemyActionSystem:
     ) -> ActionCommand:
         if candidate.status != "available":
             raise ValueError(f"blocked enemy action candidate: {candidate.blocked_reason}")
-        selected_targets = target_ids or candidate.auto_target_ids
         return ActionCommand(
             actor_id=candidate.actor_id,
             action_id=candidate.action_ref,
             action_level=candidate.action_level,
-            target_ids=tuple(selected_targets),
-            source="ai",
+            target_ids=tuple(target_ids),
+            source="manual",
             metadata={
+                "selection_controller": "external",
                 "enemy_action_candidate": {
                     "monster_data_card_id": candidate.monster_data_card_id,
                     "sequence_index": candidate.sequence_index,

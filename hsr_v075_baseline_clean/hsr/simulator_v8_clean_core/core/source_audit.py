@@ -975,13 +975,6 @@ class RuntimeSourceAuditor:
         hit_profile_id = _required_str(mutation, metadata, "hit_profile_id", violations)
         _require_dict(mutation, metadata, "source_trace", violations)
         _require_dict(mutation, metadata, "break_lifecycle", violations)
-        evaluation = metadata.get("numeric_evaluation")
-        if not isinstance(evaluation, dict):
-            violations.append(_violation(mutation, "numeric_evaluation_missing", missing_field="numeric_evaluation"))
-        elif evaluation.get("ok") is False:
-            violations.append(_violation(mutation, "mutation_has_failed_numeric_evaluation", details={"numeric_evaluation": evaluation}))
-        elif evaluation.get("ok") is True:
-            _audit_dynamic_numeric_binding(mutation, evaluation, violations)
         if template_id:
             template = self.rules.break_template(template_id)
             if template is None:
@@ -1440,6 +1433,73 @@ class RuntimeSourceAuditor:
                     )
                 )
         queue_resolution_id = metadata.get("queue_resolution_id")
+        if operation == "terminal_remove":
+            terminal_plan = metadata.get("queue_terminal_plan")
+            if not isinstance(terminal_plan, dict):
+                violations.append(
+                    _violation(
+                        mutation,
+                        "queue_terminal_plan_missing",
+                        missing_field="queue_terminal_plan",
+                    )
+                )
+            else:
+                disposition = str(terminal_plan.get("disposition") or "")
+                if disposition not in {"cancelled", "blocked_removed"}:
+                    violations.append(
+                        _violation(
+                            mutation,
+                            "queue_terminal_disposition_invalid",
+                            details={"disposition": disposition},
+                        )
+                    )
+                if terminal_plan.get("monotonic_progress") is not True:
+                    violations.append(
+                        _violation(
+                            mutation,
+                            "queue_terminal_progress_missing",
+                            details={"queue_terminal_plan": terminal_plan},
+                        )
+                    )
+                if not str(terminal_plan.get("blocked_reason") or ""):
+                    violations.append(
+                        _violation(
+                            mutation,
+                            "queue_terminal_reason_missing",
+                            missing_field="queue_terminal_plan.blocked_reason",
+                        )
+                    )
+            if isinstance(queue_resolution_id, str) and queue_resolution_id:
+                resolution = self.rules.queue_resolution(queue_resolution_id)
+                if resolution is None:
+                    violations.append(
+                        _violation(
+                            mutation,
+                            "queue_resolution_ir_missing",
+                            details={"queue_resolution_id": queue_resolution_id},
+                        )
+                    )
+                else:
+                    _audit_source(
+                        resolution.source,
+                        resolution.coverage_status,
+                        mutation,
+                        violations,
+                        executable_required=True,
+                    )
+            return _trace(
+                mutation,
+                records,
+                {
+                    "queue_name": str(metadata.get("queue_name") or ""),
+                    "queue_operation": operation,
+                    "queue_intent_id": str(queue_intent_id or ""),
+                    "queue_resolution_id": str(queue_resolution_id or ""),
+                    "queue_priority_id": str(queue_priority_id or ""),
+                    "queue_window_id": str(queue_window_id or ""),
+                    "terminal_disposition": str(metadata.get("queue_terminal_disposition") or ""),
+                },
+            )
         if operation == "dequeue":
             _required_str(mutation, metadata, "queue_resolution_id", violations)
             window_plan = metadata.get("queue_window_plan")

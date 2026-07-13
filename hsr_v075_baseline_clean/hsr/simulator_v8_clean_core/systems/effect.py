@@ -19,6 +19,7 @@ from .dynamic_values import (
 )
 from .mutation_events import events_for_mutation
 from .status import SUPPORTED_ADD_MODIFIER_ALIASES, SUPPORTED_EFFECT_TARGET_ALIASES, StatusSystem
+from .shield import NORMAL_SHIELD_FAMILIES, ShieldSystem
 
 
 @dataclass(frozen=True)
@@ -54,6 +55,8 @@ class EffectRegistry:
 
     def __init__(self, status_system: StatusSystem | None = None) -> None:
         self.status_system = status_system
+        self.damage_system = DamageSystem(status_system.rules) if status_system is not None else DamageSystem()
+        self.shield_system = ShieldSystem(self.damage_system.engine_rules)
         self._handlers: dict[str, EffectHandler] = {}
         if status_system is not None:
             self.register("AddModifier", self._execute_add_modifier)
@@ -76,6 +79,7 @@ class EffectRegistry:
         self.register("SetDynamicValue", self._execute_set_dynamic_value)
         self.register("SetDynamicValueByAddValue", self._execute_set_dynamic_value_by_add_value)
         self.register("SetDynamicValueByModifierValue", self._execute_set_dynamic_value_by_modifier_value)
+        self.register("OwnerEntityAddAbility", self._execute_owner_entity_add_ability)
 
     def register(self, opcode: str, handler: EffectHandler) -> None:
         self._handlers[opcode] = handler
@@ -145,6 +149,8 @@ class EffectRegistry:
             return "blocked"
         if effect.opcode in {"DefineDynamicValue", "SetDynamicValue", "SetDynamicValueByAddValue", "SetDynamicValueByModifierValue"} and not _dynamic_value_payload_is_executable(effect):
             return "blocked"
+        if effect.opcode == "OwnerEntityAddAbility" and not _ability_attachment_payload_is_executable(effect):
+            return "blocked"
         return "executable"
 
     def _execute_add_modifier(
@@ -194,6 +200,10 @@ class EffectRegistry:
             owner_id=context.owner_id,
             param_entity_id=context.param_entity_id,
             current_action_target_id=context.current_action_target_id,
+            target_resolution=context.target_resolution,
+            event_payload=context.event_payload,
+            dynamic_values=context.dynamic_values,
+            binding_sources=_binding_sources(context),
         )
         return EffectResult(
             events=result.events,
@@ -237,13 +247,13 @@ class EffectRegistry:
         return _execute_fixed_unit_delta(effect, context, kind="heal")
 
     def _execute_shield(self, effect: EffectIR, context: EffectExecutionContext | None) -> EffectResult:
-        return _execute_fixed_unit_delta(effect, context, kind="shield")
+        return _execute_fixed_unit_delta(effect, context, kind="shield", shield_system=self.shield_system)
 
     def _execute_resource_delta(self, effect: EffectIR, context: EffectExecutionContext | None) -> EffectResult:
         return _execute_fixed_unit_delta(effect, context, kind="resource_delta")
 
     def _execute_hp_loss_ratio(self, effect: EffectIR, context: EffectExecutionContext | None) -> EffectResult:
-        return _execute_hp_loss_ratio(effect, context)
+        return _execute_hp_loss_ratio(effect, context, damage_system=self.damage_system)
 
     def _execute_mechanism_bar_state(self, effect: EffectIR, context: EffectExecutionContext | None) -> EffectResult:
         return _execute_mechanism_bar_state(effect, context)
@@ -264,6 +274,13 @@ class EffectRegistry:
     ) -> EffectResult:
         return _execute_set_dynamic_value_by_modifier_value(effect, context)
 
+    def _execute_owner_entity_add_ability(
+        self,
+        effect: EffectIR,
+        context: EffectExecutionContext | None,
+    ) -> EffectResult:
+        return _execute_owner_entity_add_ability(effect, context)
+
 
 def _add_modifier_payload_is_executable(effect: EffectIR) -> bool:
     standard = effect.payload.get("standard")
@@ -272,9 +289,7 @@ def _add_modifier_payload_is_executable(effect: EffectIR) -> bool:
     modifier_name = standard.get("modifier_name")
     if not isinstance(modifier_name, str) or not modifier_name:
         return False
-    if standard.get("target_expression_coverage_status") == "executable":
-        return True
-    return standard.get("target_alias") in SUPPORTED_ADD_MODIFIER_ALIASES
+    return _typed_target_reference_admitted(standard)
 
 
 def _remove_modifier_payload_is_executable(effect: EffectIR) -> bool:
@@ -283,7 +298,7 @@ def _remove_modifier_payload_is_executable(effect: EffectIR) -> bool:
         return False
     has_modifier = isinstance(standard.get("modifier_name"), str) and bool(standard.get("modifier_name"))
     has_status = isinstance(standard.get("status_id"), str) and bool(standard.get("status_id"))
-    return (has_modifier or has_status) and standard.get("target_alias") in SUPPORTED_EFFECT_TARGET_ALIASES
+    return (has_modifier or has_status) and _typed_target_reference_admitted(standard)
 
 
 def _dispel_status_payload_is_executable(effect: EffectIR) -> bool:
@@ -292,9 +307,15 @@ def _dispel_status_payload_is_executable(effect: EffectIR) -> bool:
         return False
     if standard.get("blocked_reason"):
         return False
-    if standard.get("target_expression_coverage_status") == "executable":
-        return True
-    return standard.get("target_alias") in SUPPORTED_ADD_MODIFIER_ALIASES
+    return _typed_target_reference_admitted(standard)
+
+
+def _typed_target_reference_admitted(standard: dict[str, JSONValue]) -> bool:
+    return (
+        isinstance(standard.get("target_expression_id"), str)
+        and bool(standard.get("target_expression_id"))
+        and standard.get("target_expression_coverage_status") == "executable"
+    )
 
 
 def _fixed_payload_is_executable(effect: EffectIR) -> bool:
@@ -370,6 +391,16 @@ def _dynamic_value_payload_is_executable(effect: EffectIR) -> bool:
     return False
 
 
+def _ability_attachment_payload_is_executable(effect: EffectIR) -> bool:
+    standard = effect.payload.get("standard")
+    return (
+        isinstance(standard, dict)
+        and standard.get("target_relation") == "status_owner_entity"
+        and isinstance(standard.get("ability_name"), str)
+        and bool(standard.get("ability_name"))
+    )
+
+
 def _effect_blocked_reason(effect: EffectIR) -> str:
     standard = effect.payload.get("standard")
     if isinstance(standard, dict) and isinstance(standard.get("blocked_reason"), str):
@@ -391,20 +422,19 @@ def _effect_payload_blocked_reason(effect: EffectIR) -> str:
         modifier_name = standard.get("modifier_name")
         if not isinstance(modifier_name, str) or not modifier_name:
             return "modifier_name_missing"
-        if standard.get("target_expression_coverage_status") == "executable":
+        if _typed_target_reference_admitted(standard):
             return ""
         target_expression_reason = standard.get("target_expression_blocked_reason")
         if isinstance(target_expression_reason, str) and target_expression_reason:
             return target_expression_reason
-        if standard.get("target_alias") not in SUPPORTED_ADD_MODIFIER_ALIASES:
-            return f"unsupported_or_missing_target_alias:{standard.get('target_alias')}"
+        return "target_expression_id_missing_or_not_executable"
     if effect.opcode in {"RemoveModifier", "RemoveSelfModifier"}:
         has_modifier = isinstance(standard.get("modifier_name"), str) and bool(standard.get("modifier_name"))
         has_status = isinstance(standard.get("status_id"), str) and bool(standard.get("status_id"))
         if not (has_modifier or has_status):
             return "modifier_name_or_status_id_missing"
-        if standard.get("target_alias") not in SUPPORTED_EFFECT_TARGET_ALIASES:
-            return f"unsupported_or_missing_target_alias:{standard.get('target_alias')}"
+        if not _typed_target_reference_admitted(standard):
+            return "target_expression_id_missing_or_not_executable"
     if effect.opcode in {"Heal", "HealHP", "Shield", "InitShield", "StackShield", "ModifyShield", "ResourceDelta", "ModifySPNew"}:
         if standard.get("target_alias") not in SUPPORTED_EFFECT_TARGET_ALIASES:
             return f"unsupported_or_missing_target_alias:{standard.get('target_alias')}"
@@ -435,6 +465,7 @@ def _execute_fixed_unit_delta(
     context: EffectExecutionContext | None,
     *,
     kind: str,
+    shield_system: ShieldSystem | None = None,
 ) -> EffectResult:
     if context is None:
         return _unsupported_effect(effect, f"{kind} requires EffectExecutionContext")
@@ -518,27 +549,49 @@ def _execute_fixed_unit_delta(
             evaluation=amount_result,
         )
     if kind == "shield":
-        before = float(unit.resources.get("shield", 0.0))
-        after = max(0.0, before + amount)
-        mutation = Mutation(
-            op="set",
-            path=("units", target_id, "resources", "shield"),
-            before=before if "shield" in unit.resources else None,
-            after=after,
-            reason="apply numeric shield effect",
-            source="effect_system",
-            before_exists="shield" in unit.resources,
-            metadata=_effect_metadata(effect, context, standard, amount, amount_result, formula_details=formula_details),
+        effect_source = effect.source.to_json()
+        raw_families = standard.get("absorb_families")
+        absorb_families = (
+            tuple(str(item) for item in raw_families if isinstance(item, str) and item)
+            if isinstance(raw_families, list)
+            else NORMAL_SHIELD_FAMILIES
         )
-        return _mutation_effect_result(
-            effect,
-            kind,
-            mutation,
-            amount,
-            context=context,
+        raw_priority = standard.get("priority")
+        priority = raw_priority if type(raw_priority) is int else 0
+        priority_source = standard.get("priority_source")
+        result = (shield_system or ShieldSystem()).apply_effect(
+            state,
             target_id=target_id,
-            resource="shield",
-            evaluation=amount_result,
+            shield_id=f"effect:{effect.effect_id}",
+            source_id=effect.effect_id,
+            source_kind="effect_ir",
+            opcode=effect.opcode,
+            amount=amount,
+            source_trace={"effect_id": effect.effect_id, "effect_source": effect_source},
+            actor_id=context.caster_id,
+            event_source_id=context.source_id,
+            priority=priority,
+            priority_source=priority_source if isinstance(priority_source, dict) else None,
+            absorb_families=absorb_families,
+            mutation_metadata=_effect_metadata(
+                effect,
+                context,
+                standard,
+                amount,
+                amount_result,
+                formula_details=formula_details,
+            ),
+        )
+        if not result.ok or result.mutation is None:
+            return _unsupported_effect(
+                effect,
+                result.blocked_reason or "shield_application_blocked",
+                {"standard": standard, "numeric_evaluation": amount_result.to_json()},
+            )
+        return EffectResult(
+            events=result.events,
+            mutations=(result.mutation,),
+            records=result.records,
         )
     resource = standard.get("resource")
     if kind == "resource_delta" and resource == "energy":
@@ -589,7 +642,12 @@ def _execute_fixed_unit_delta(
     return _unsupported_effect(effect, f"unsupported_resource_delta:{resource}")
 
 
-def _execute_hp_loss_ratio(effect: EffectIR, context: EffectExecutionContext | None) -> EffectResult:
+def _execute_hp_loss_ratio(
+    effect: EffectIR,
+    context: EffectExecutionContext | None,
+    *,
+    damage_system: DamageSystem | None = None,
+) -> EffectResult:
     if context is None:
         return _unsupported_effect(effect, "hp_loss_ratio requires EffectExecutionContext")
     standard = effect.payload.get("standard")
@@ -636,6 +694,7 @@ def _execute_hp_loss_ratio(effect: EffectIR, context: EffectExecutionContext | N
         attack_type=str(standard.get("attack_type") or "hp_loss"),
         damage_formula_family="hp_loss",
         amount=amount,
+        amount_stage="fixed_final",
         damage_kind="hp_loss",
         element_type=str(standard.get("damage_type") or "") or None,
         source_frame=DamageSourceFrame(
@@ -669,7 +728,7 @@ def _execute_hp_loss_ratio(effect: EffectIR, context: EffectExecutionContext | N
         },
     )
     return _damage_result_to_effect_result(
-        DamageSystem().apply_packet(
+        (damage_system or DamageSystem()).apply_packet(
             context.state,
             packet,
             window_ledger=context.damage_window_ledger,
@@ -759,6 +818,83 @@ def _execute_mechanism_bar_state(effect: EffectIR, context: EffectExecutionConte
             "before": before,
             "after": after,
             "numeric_evaluations": numeric_evaluations,
+        },
+        trace={"effect_source": effect.source.to_json()},
+    ).to_json()
+    return EffectResult(mutations=(mutation,), records=(record,))
+
+
+def _execute_owner_entity_add_ability(
+    effect: EffectIR,
+    context: EffectExecutionContext | None,
+) -> EffectResult:
+    if context is None:
+        return _unsupported_effect(effect, "OwnerEntityAddAbility requires EffectExecutionContext")
+    standard = effect.payload.get("standard")
+    if not isinstance(standard, dict):
+        return _unsupported_effect(effect, "OwnerEntityAddAbility effect has no standardized payload")
+    ability_name = standard.get("ability_name")
+    if not isinstance(ability_name, str) or not ability_name:
+        return _unsupported_effect(effect, "owner entity ability name required", {"standard": standard})
+    target_id = context.owner_id
+    if not isinstance(target_id, str) or not target_id:
+        return _unsupported_effect(effect, "status owner entity required", {"standard": standard})
+    unit = context.state.units.get(target_id)
+    if unit is None:
+        return _unsupported_effect(effect, f"target unit {target_id!r} is not in state")
+    registry_key = "attached_ability_names"
+    raw_before = unit.flags.get(registry_key)
+    if raw_before is None:
+        before: list[str] = []
+    elif isinstance(raw_before, (list, tuple)) and all(isinstance(item, str) and item for item in raw_before):
+        before = list(raw_before)
+    else:
+        return _unsupported_effect(effect, "attached ability registry is malformed")
+    if ability_name in before:
+        record = SettlementRecord(
+            record_type="owner_entity_ability_attachment",
+            source="effect_system",
+            process_only=True,
+            payload={
+                "effect_id": effect.effect_id,
+                "target_id": target_id,
+                "ability_name": ability_name,
+                "already_attached": True,
+            },
+            trace={"effect_source": effect.source.to_json()},
+        ).to_json()
+        return EffectResult(records=(record,))
+    after = [*before, ability_name]
+    mutation = Mutation(
+        op="set",
+        path=("units", target_id, "flags", registry_key),
+        before=before if registry_key in unit.flags else None,
+        after=after,
+        reason="attach canonical ability to status owner entity",
+        source="effect_system",
+        before_exists=registry_key in unit.flags,
+        metadata={
+            "effect_id": effect.effect_id,
+            "opcode": effect.opcode,
+            "source_id": context.source_id,
+            "caster_id": context.caster_id,
+            "target_id": target_id,
+            "ability_name": ability_name,
+            "effect_source": effect.source.to_json(),
+        },
+    )
+    record = SettlementRecord(
+        record_type="owner_entity_ability_attachment",
+        source="effect_system",
+        mutation_id=mutation.stable_id(),
+        process_only=False,
+        payload={
+            "effect_id": effect.effect_id,
+            "target_id": target_id,
+            "ability_name": ability_name,
+            "path": list(mutation.path),
+            "before": before,
+            "after": after,
         },
         trace={"effect_source": effect.source.to_json()},
     ).to_json()
@@ -1043,30 +1179,9 @@ def _find_effect_status_detail(
 ) -> dict[str, JSONValue] | None:
     if target_id not in context.state.units:
         return None
-    direct = find_status_detail(context.state, target_id, modifier_name=effect.source.raw_id)
-    if direct is not None:
-        return direct
-    unit = context.state.units[target_id]
-    details = unit.flags.get("status_details", ())
-    if not isinstance(details, (list, tuple)):
+    if not effect.owner_modifier_name:
         return None
-    matches: list[dict[str, JSONValue]] = []
-    for detail in details:
-        if not isinstance(detail, dict):
-            continue
-        source_trace = detail.get("source_trace")
-        if not isinstance(source_trace, dict):
-            continue
-        modifier_definition = source_trace.get("modifier_definition")
-        effect_source = source_trace.get("effect_source")
-        paths = []
-        if isinstance(modifier_definition, dict):
-            paths.append(str(modifier_definition.get("source_path") or ""))
-        if isinstance(effect_source, dict):
-            paths.append(str(effect_source.get("source_path") or ""))
-        if effect.source.source_path in paths:
-            matches.append(detail)
-    return matches[0] if len(matches) == 1 else None
+    return find_status_detail(context.state, target_id, modifier_name=effect.owner_modifier_name)
 
 
 def _status_dynamic_value_mutation(

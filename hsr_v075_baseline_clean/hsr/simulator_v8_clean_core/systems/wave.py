@@ -15,6 +15,7 @@ WAVE_RUNTIME_SCHEMA_VERSION = "p1_2_wave_runtime_v1"
 
 WaveTransitionStatus = Literal[
     "no_change",
+    "start_current_wave",
     "current_wave_cleared",
     "advance_to_next_wave",
     "battle_victory",
@@ -138,14 +139,6 @@ class WaveSystem:
 
     def plan_transition(self, state: BattleState) -> WaveTransitionPlan:
         runtime = _wave_runtime(state)
-        if runtime and _active_ally_count(state, self.lifecycle) == 0:
-            return WaveTransitionPlan(
-                ok=True,
-                status="battle_defeat",
-                wave_definition_id=str(runtime.get("wave_definition_id") or "") if runtime else "",
-                current_wave_index=_runtime_int(runtime, "current_wave_index", state.wave_index) if runtime else state.wave_index,
-                source_trace=_runtime_source_trace(runtime),
-            )
         if not runtime:
             return WaveTransitionPlan(ok=True, status="no_change", blocked_reason="wave_runtime_not_configured")
         wave_definition_id = str(runtime.get("wave_definition_id") or "")
@@ -172,12 +165,65 @@ class WaveSystem:
                 definition.blocked_reason or f"wave_definition_not_executable:{definition.coverage_status}",
                 source_trace=definition.source.to_json(),
             )
+        definition_reason = _wave_definition_payload_blocked_reason(definition)
+        if definition_reason:
+            return self._blocked(
+                wave_definition_id,
+                current_wave_index,
+                definition_reason,
+                source_trace=definition.source.to_json(),
+            )
+        if _active_ally_count(state, self.lifecycle) == 0:
+            return WaveTransitionPlan(
+                ok=True,
+                status="battle_defeat",
+                wave_definition_id=wave_definition_id,
+                current_wave_index=current_wave_index,
+                source_trace=definition.source.to_json(),
+            )
         current_ids = tuple(_string_items(runtime.get("current_wave_unit_ids")))
         if not current_ids:
             return self._blocked(
                 wave_definition_id,
                 current_wave_index,
                 "current_wave_unit_ids_missing",
+                source_trace=definition.source.to_json(),
+            )
+        if str(runtime.get("status") or "") == "pending_start":
+            entries = self.rules.wave_entries_for_wave(wave_definition_id, current_wave_index)
+            entry_reason = _wave_entries_payload_blocked_reason(definition, entries, current_wave_index)
+            if entry_reason:
+                return self._blocked(
+                    wave_definition_id,
+                    current_wave_index,
+                    entry_reason,
+                    source_trace=definition.source.to_json(),
+                )
+            expected_ids = tuple(_wave_unit_id(definition, entry) for entry in entries)
+            if current_ids != expected_ids:
+                return self._blocked(
+                    wave_definition_id,
+                    current_wave_index,
+                    "current_wave_unit_entry_mismatch",
+                    blocking_unit_ids=current_ids,
+                    source_trace=definition.source.to_json(),
+                )
+            missing_ids = tuple(unit_id for unit_id in current_ids if unit_id not in state.units)
+            if missing_ids:
+                return self._blocked(
+                    wave_definition_id,
+                    current_wave_index,
+                    "current_wave_unit_missing",
+                    blocking_unit_ids=missing_ids,
+                    source_trace=definition.source.to_json(),
+                )
+            return WaveTransitionPlan(
+                ok=True,
+                status="start_current_wave",
+                wave_definition_id=wave_definition_id,
+                current_wave_index=current_wave_index,
+                next_wave_index=current_wave_index,
+                spawn_entries=entries,
                 source_trace=definition.source.to_json(),
             )
         blocking = _blocking_active_enemies(state, self.lifecycle, current_wave_index)
@@ -249,6 +295,15 @@ class WaveSystem:
                     blocking_unit_ids=cleared_ids,
                     source_trace=entry.source.to_json(),
                 )
+            entry_reason = _wave_entry_payload_blocked_reason(definition, entry, next_wave_index)
+            if entry_reason:
+                return self._blocked(
+                    wave_definition_id,
+                    current_wave_index,
+                    entry_reason,
+                    blocking_unit_ids=cleared_ids,
+                    source_trace=entry.source.to_json(),
+                )
             unit_id = _wave_unit_id(definition, entry)
             if unit_id in state.units:
                 return self._blocked(
@@ -315,6 +370,14 @@ class WaveSystem:
         source_trace = plan.source_trace
         if definition is not None:
             source_trace = definition.source.to_json()
+        if definition is None:
+            blocked = self._blocked(
+                plan.wave_definition_id,
+                plan.current_wave_index,
+                "wave_definition_missing",
+                source_trace=source_trace,
+            )
+            return WaveTransitionResult(blocked, (), (), (_plan_record(blocked, (), process_only=True),))
         if plan.status == "battle_defeat":
             mutations = _battle_end_mutations(state, runtime, plan, outcome="defeat", source_trace=source_trace)
             return WaveTransitionResult(
@@ -329,17 +392,32 @@ class WaveSystem:
                         process_only=True,
                         payload={"wave_transition_plan": plan.to_json(), "source_trace": source_trace},
                     ),
+                    _battle_completed_event(state, definition, plan, "defeat", source_trace),
                 ),
                 _plan_records(plan, mutations, process_only=False),
             )
-        if definition is None:
-            blocked = self._blocked(
-                plan.wave_definition_id,
-                plan.current_wave_index,
-                "wave_definition_missing",
-                source_trace=source_trace,
+        if plan.status == "start_current_wave":
+            entries = plan.spawn_entries
+            units = tuple(state.units.get(_wave_unit_id(definition, entry)) for entry in entries)
+            if not entries or any(unit is None for unit in units):
+                blocked = self._blocked(
+                    plan.wave_definition_id,
+                    plan.current_wave_index,
+                    "current_wave_start_payload_incomplete",
+                    source_trace=source_trace,
+                )
+                return WaveTransitionResult(blocked, (), (), (_plan_record(blocked, (), process_only=True),))
+            runtime_after = _runtime_after_current_started(runtime, plan)
+            mutations = (_runtime_mutation(state, runtime, runtime_after, plan, source_trace),)
+            concrete_units = tuple(unit for unit in units if unit is not None)
+            events = (
+                _wave_started_event(state, definition, plan.current_wave_index, concrete_units, source_trace),
+                *(
+                    _wave_monster_event(state, definition, entry, unit)
+                    for entry, unit in zip(entries, concrete_units, strict=True)
+                ),
             )
-            return WaveTransitionResult(blocked, (), (), (_plan_record(blocked, (), process_only=True),))
+            return WaveTransitionResult(plan, mutations, events, _plan_records(plan, mutations, process_only=False))
         if plan.status == "battle_victory":
             remove_mutations = _remove_mutations(self.lifecycle, state, plan, source_trace)
             runtime_after = _runtime_after_battle_end(runtime, plan, outcome="victory")
@@ -352,7 +430,7 @@ class WaveSystem:
                 plan,
                 mutations,
                 (
-                    _wave_cleared_event(state, plan, source_trace),
+                    _wave_cleared_event(state, plan, source_trace, stage_id=definition.stage_id),
                     GameEvent(
                         "battle.victory",
                         source_id="wave_system",
@@ -361,6 +439,7 @@ class WaveSystem:
                         process_only=True,
                         payload={"wave_transition_plan": plan.to_json(), "source_trace": source_trace},
                     ),
+                    _battle_completed_event(state, definition, plan, "victory", source_trace),
                 ),
                 _plan_records(plan, mutations, process_only=False),
             )
@@ -444,20 +523,8 @@ class WaveSystem:
                 ),
             )
             events = (
-                _wave_cleared_event(state, plan, source_trace),
-                GameEvent(
-                    "wave.started",
-                    source_id="wave_system",
-                    event_id=f"event:{state.event_index}:wave:{next_index}:started",
-                    window="wave_transition",
-                    process_only=True,
-                    payload={
-                        "wave_definition_id": definition.wave_definition_id,
-                        "wave_index": next_index,
-                        "unit_ids": [unit.unit_id for unit in spawn_units],
-                        "source_trace": source_trace,
-                    },
-                ),
+                _wave_cleared_event(state, plan, source_trace, stage_id=definition.stage_id),
+                _wave_started_event(state, definition, next_index, spawn_units, source_trace),
                 *(
                     _wave_monster_event(state, definition, entry, unit)
                     for entry, unit in zip(plan.spawn_entries, spawn_units, strict=True)
@@ -565,6 +632,48 @@ def _active_enemy_block_reason(unit: UnitState, current_wave_index: int) -> str:
     return "active_enemy_without_wave_membership"
 
 
+def _wave_definition_payload_blocked_reason(definition: WaveDefinitionIR) -> str:
+    if not definition.wave_definition_id:
+        return "wave_definition_id_missing"
+    if not definition.stage_id:
+        return "wave_stage_id_missing"
+    return ""
+
+
+def _wave_entries_payload_blocked_reason(
+    definition: WaveDefinitionIR,
+    entries: tuple[WaveMonsterEntryIR, ...],
+    wave_index: int,
+) -> str:
+    if not entries:
+        return "wave_entries_missing"
+    for entry in entries:
+        reason = _wave_entry_payload_blocked_reason(definition, entry, wave_index)
+        if reason:
+            return reason
+    return ""
+
+
+def _wave_entry_payload_blocked_reason(
+    definition: WaveDefinitionIR,
+    entry: WaveMonsterEntryIR,
+    wave_index: int,
+) -> str:
+    if entry.coverage_status != "executable":
+        return entry.blocked_reason or f"wave_entry_not_executable:{entry.coverage_status}"
+    if not entry.entry_id:
+        return "wave_entry_id_missing"
+    if entry.wave_index != wave_index:
+        return "wave_entry_index_mismatch"
+    if not entry.birth_template_id:
+        return "wave_entry_birth_template_missing"
+    if not entry.monster_entity_ref:
+        return "wave_entry_monster_entity_missing"
+    if definition.stage_id == "":
+        return "wave_stage_id_missing"
+    return ""
+
+
 def _wave_spawn_request_plan_blocked_reason(
     plan: WaveTransitionPlan,
     definition: WaveDefinitionIR,
@@ -585,8 +694,6 @@ def _wave_spawn_request_plan_blocked_reason(
             return "wave_spawn_request_stage_mismatch"
         if request.entry_id != entry.entry_id or request.position != entry.position:
             return "wave_spawn_request_entry_mismatch"
-        if request.source_trace != definition.source.to_json() or request.entry_source_trace != entry.source.to_json():
-            return "wave_spawn_request_source_mismatch"
     return ""
 
 
@@ -676,6 +783,16 @@ def _runtime_after_current_cleared(runtime: dict[str, JSONValue], plan: WaveTran
     removed[str(plan.current_wave_index)] = list(plan.remove_unit_ids)
     after["removed_unit_ids_by_wave"] = removed
     after["status"] = "between_waves"
+    after["blocked_reason"] = ""
+    return after
+
+
+def _runtime_after_current_started(runtime: dict[str, JSONValue], plan: WaveTransitionPlan) -> dict[str, JSONValue]:
+    after = dict(runtime)
+    started = set(_runtime_int_items(after.get("started_wave_indices")))
+    started.add(plan.current_wave_index)
+    after["started_wave_indices"] = sorted(started)
+    after["status"] = "active"
     after["blocked_reason"] = ""
     return after
 
@@ -838,6 +955,8 @@ def _wave_cleared_event(
     state: BattleState,
     plan: WaveTransitionPlan,
     source_trace: dict[str, JSONValue],
+    *,
+    stage_id: str,
 ) -> GameEvent:
     return GameEvent(
         "wave.cleared",
@@ -847,9 +966,56 @@ def _wave_cleared_event(
         process_only=True,
         payload={
             "wave_definition_id": plan.wave_definition_id,
+            "stage_id": stage_id,
             "wave_index": plan.current_wave_index,
             "cleared_unit_ids": list(plan.cleared_unit_ids),
             "removed_unit_ids": list(plan.remove_unit_ids),
+            "source_trace": source_trace,
+        },
+    )
+
+
+def _wave_started_event(
+    state: BattleState,
+    definition: WaveDefinitionIR,
+    wave_index: int,
+    units: tuple[UnitState, ...],
+    source_trace: dict[str, JSONValue],
+) -> GameEvent:
+    return GameEvent(
+        "wave.started",
+        source_id="wave_system",
+        event_id=f"event:{state.event_index}:wave:{wave_index}:started",
+        window="wave_transition",
+        process_only=True,
+        payload={
+            "wave_definition_id": definition.wave_definition_id,
+            "stage_id": definition.stage_id,
+            "wave_index": wave_index,
+            "unit_ids": [unit.unit_id for unit in units],
+            "source_trace": source_trace,
+        },
+    )
+
+
+def _battle_completed_event(
+    state: BattleState,
+    definition: WaveDefinitionIR,
+    plan: WaveTransitionPlan,
+    outcome: str,
+    source_trace: dict[str, JSONValue],
+) -> GameEvent:
+    return GameEvent(
+        "battle.completed",
+        source_id="wave_system",
+        event_id=f"event:{state.event_index}:battle:completed:{outcome}",
+        window="wave_transition",
+        process_only=True,
+        payload={
+            "outcome": outcome,
+            "wave_definition_id": definition.wave_definition_id,
+            "stage_id": definition.stage_id,
+            "wave_index": plan.current_wave_index,
             "source_trace": source_trace,
         },
     )

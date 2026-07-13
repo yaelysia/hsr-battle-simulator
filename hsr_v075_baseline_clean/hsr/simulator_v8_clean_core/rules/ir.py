@@ -18,6 +18,19 @@ CoverageStatus = Literal[
 ]
 
 
+def _ir_json_value(value: Any) -> JSONValue:
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, dict):
+        return {str(key): _ir_json_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_ir_json_value(item) for item in value]
+    to_json = getattr(value, "to_json", None)
+    if callable(to_json):
+        return _ir_json_value(to_json())
+    raise TypeError(f"unsupported IR JSON value: {type(value).__name__}")
+
+
 @dataclass(frozen=True)
 class IRSource:
     source_path: str
@@ -59,14 +72,72 @@ class ConditionIR:
     payload: dict[str, JSONValue]
     source: IRSource
     coverage_status: CoverageStatus = "unsupported"
+    expression_schema_version: str = ""
+    blocked_reason: str = ""
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
             "condition_id": self.condition_id,
             "opcode": self.opcode,
-            "payload": self.payload,
+            "payload": _ir_json_value(self.payload),
             "source": self.source.to_json(),
             "coverage_status": self.coverage_status,
+            "expression_schema_version": self.expression_schema_version,
+            "blocked_reason": self.blocked_reason,
+        }
+
+
+@dataclass(frozen=True)
+class TargetExpressionNodeIR:
+    expression_kind: str
+    alias: str = ""
+    children: tuple["TargetExpressionNodeIR", ...] = ()
+    candidate: "TargetExpressionNodeIR | None" = None
+    predicate: ConditionIR | None = None
+    target: "TargetExpressionNodeIR | None" = None
+    query_entity_type_mask: str = ""
+    query_alive_state_mask: str = ""
+    query_target: "TargetExpressionNodeIR | None" = None
+    query_compare: "TargetExpressionNodeIR | None" = None
+    fetch_kind: str = ""
+    unique_name: str = ""
+    name: str = ""
+    adjacent_side: str = ""
+    by_random: bool = False
+    max_number_expr: dict[str, JSONValue] = field(default_factory=dict)
+    count_expr: dict[str, JSONValue] = field(default_factory=dict)
+    index_type: str = ""
+    index_expr: dict[str, JSONValue] = field(default_factory=dict)
+    sort_kind: str = ""
+    sort_key: str = ""
+    highest_first: bool = False
+    schema_version: str = "hsr.target_expression_node.v1"
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "schema_version": self.schema_version,
+            "expression_kind": self.expression_kind,
+            "alias": self.alias,
+            "children": [child.to_json() for child in self.children],
+            "candidate": self.candidate.to_json() if self.candidate is not None else None,
+            "predicate": self.predicate.to_json() if self.predicate is not None else None,
+            "target": self.target.to_json() if self.target is not None else None,
+            "query_entity_type_mask": self.query_entity_type_mask,
+            "query_alive_state_mask": self.query_alive_state_mask,
+            "query_target": self.query_target.to_json() if self.query_target is not None else None,
+            "query_compare": self.query_compare.to_json() if self.query_compare is not None else None,
+            "fetch_kind": self.fetch_kind,
+            "unique_name": self.unique_name,
+            "name": self.name,
+            "adjacent_side": self.adjacent_side,
+            "by_random": self.by_random,
+            "max_number_expr": self.max_number_expr,
+            "count_expr": self.count_expr,
+            "index_type": self.index_type,
+            "index_expr": self.index_expr,
+            "sort_kind": self.sort_kind,
+            "sort_key": self.sort_key,
+            "highest_first": self.highest_first,
         }
 
 
@@ -77,6 +148,7 @@ class TargetExpressionIR:
     alias: str
     payload: dict[str, JSONValue]
     source: IRSource
+    node: TargetExpressionNodeIR | None = None
     coverage_status: CoverageStatus = "blocked"
     blocked_reason: str = ""
     admission_batch: str = ""
@@ -88,6 +160,7 @@ class TargetExpressionIR:
             "expression_kind": self.expression_kind,
             "alias": self.alias,
             "payload": self.payload,
+            "node": self.node.to_json() if self.node is not None else None,
             "source": self.source.to_json(),
             "coverage_status": self.coverage_status,
             "blocked_reason": self.blocked_reason,
@@ -103,6 +176,11 @@ class EffectIR:
     payload: dict[str, JSONValue]
     source: IRSource
     coverage_status: CoverageStatus = "unsupported"
+    modifier_definition_id: str = ""
+    status_callback_ids: tuple[str, ...] = ()
+    source_mode: str = "unclassified"
+    link_blocked_reason: str = ""
+    owner_modifier_name: str = ""
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -111,6 +189,11 @@ class EffectIR:
             "payload": self.payload,
             "source": self.source.to_json(),
             "coverage_status": self.coverage_status,
+            "modifier_definition_id": self.modifier_definition_id,
+            "status_callback_ids": list(self.status_callback_ids),
+            "source_mode": self.source_mode,
+            "link_blocked_reason": self.link_blocked_reason,
+            "owner_modifier_name": self.owner_modifier_name,
         }
 
 
@@ -150,6 +233,7 @@ class TriggerIR:
     effects: tuple[str, ...]
     source: IRSource
     coverage_status: CoverageStatus = "audit_only"
+    modifier_name: str = ""
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -159,6 +243,7 @@ class TriggerIR:
             "effects": list(self.effects),
             "source": self.source.to_json(),
             "coverage_status": self.coverage_status,
+            "modifier_name": self.modifier_name,
         }
 
 
@@ -257,6 +342,7 @@ class CharacterDataCardIR:
     trace_node_ids: tuple[str, ...] = ()
     eidolon_slot_ids: tuple[str, ...] = ()
     card_contract: dict[str, JSONValue] = field(default_factory=dict)
+    dynamic_value_bindings: dict[str, JSONValue] = field(default_factory=dict)
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -272,6 +358,7 @@ class CharacterDataCardIR:
             "trace_node_ids": list(self.trace_node_ids),
             "eidolon_slot_ids": list(self.eidolon_slot_ids),
             "card_contract": self.card_contract,
+            "dynamic_value_bindings": self.dynamic_value_bindings,
             "source": self.source.to_json(),
             "coverage_status": self.coverage_status,
             "blocked_reason": self.blocked_reason,
@@ -806,6 +893,7 @@ class DamageEmissionIR:
     source: IRSource
     coverage_status: CoverageStatus = "blocked"
     blocked_reason: str = ""
+    damage_custom_name: str = ""
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -823,6 +911,7 @@ class DamageEmissionIR:
             "source": self.source.to_json(),
             "coverage_status": self.coverage_status,
             "blocked_reason": self.blocked_reason,
+            "damage_custom_name": self.damage_custom_name,
         }
 
 
@@ -959,6 +1048,7 @@ class StatusCallbackIR:
     event: str
     task_ids: tuple[str, ...]
     source: IRSource
+    execution_order: tuple[int, int]
     coverage_status: CoverageStatus = "blocked"
     blocked_reason: str = ""
     scope_kind: str = "status_local"
@@ -979,6 +1069,7 @@ class StatusCallbackIR:
             "source_mode": self.source_mode,
             "admission_status": self.admission_status,
             "blocking_dependency": self.blocking_dependency,
+            "execution_order": list(self.execution_order),
         }
 
 
@@ -1001,6 +1092,8 @@ class StatusCallbackTaskIR:
     failed_task_ids: tuple[str, ...] = ()
     coverage_status: CoverageStatus = "blocked"
     blocked_reason: str = ""
+    task_payload: dict[str, JSONValue] = field(default_factory=dict)
+    retarget_policy: dict[str, JSONValue] = field(default_factory=dict)
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -1021,6 +1114,8 @@ class StatusCallbackTaskIR:
             "source": self.source.to_json(),
             "coverage_status": self.coverage_status,
             "blocked_reason": self.blocked_reason,
+            "task_payload": self.task_payload,
+            "retarget_policy": self.retarget_policy,
         }
 
 
@@ -1359,6 +1454,38 @@ class StandaloneAbilityGraphIR:
 
 
 @dataclass(frozen=True)
+class ActionAdmissionIR:
+    admission_id: str
+    owner_entity_ref: str
+    action_id: str
+    action_level: int
+    action_role: str
+    submission_modes: tuple[str, ...]
+    allowed_windows: tuple[str, ...]
+    control_kind: str
+    resource_gate_kind: str
+    source: IRSource
+    coverage_status: CoverageStatus = "blocked"
+    blocked_reason: str = ""
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "admission_id": self.admission_id,
+            "owner_entity_ref": self.owner_entity_ref,
+            "action_id": self.action_id,
+            "action_level": self.action_level,
+            "action_role": self.action_role,
+            "submission_modes": list(self.submission_modes),
+            "allowed_windows": list(self.allowed_windows),
+            "control_kind": self.control_kind,
+            "resource_gate_kind": self.resource_gate_kind,
+            "source": self.source.to_json(),
+            "coverage_status": self.coverage_status,
+            "blocked_reason": self.blocked_reason,
+        }
+
+
+@dataclass(frozen=True)
 class CombatantActionSetIR:
     combatant_action_set_id: str
     entity_ref: str
@@ -1433,6 +1560,7 @@ class AbilityTaskIR:
     failed_task_ids: tuple[str, ...] = ()
     coverage_status: CoverageStatus = "blocked"
     blocked_reason: str = ""
+    linked_standalone_graph_id: str = ""
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -1455,6 +1583,7 @@ class AbilityTaskIR:
             "source": self.source.to_json(),
             "coverage_status": self.coverage_status,
             "blocked_reason": self.blocked_reason,
+            "linked_standalone_graph_id": self.linked_standalone_graph_id,
         }
 
 
@@ -1510,6 +1639,7 @@ class ActionEventIR:
     phase_ids: tuple[str, ...] = ()
     source_mode: str = "derived"
     event_source_status: str = "derived_from_action_definition"
+    target_relation: str = "unknown"
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -1529,6 +1659,7 @@ class ActionEventIR:
             "phase_ids": list(self.phase_ids),
             "source_mode": self.source_mode,
             "event_source_status": self.event_source_status,
+            "target_relation": self.target_relation,
         }
 
 
@@ -1554,6 +1685,8 @@ class ActionDefinitionIR:
     damage_formula_family: str = "unknown"
     element_type: str | None = None
     source_mode: str = "mainline"
+    skill_trigger_key: str = ""
+    target_relation: str = "unknown"
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -1575,6 +1708,8 @@ class ActionDefinitionIR:
             "damage_formula_family": self.damage_formula_family,
             "element_type": self.element_type,
             "source_mode": self.source_mode,
+            "skill_trigger_key": self.skill_trigger_key,
+            "target_relation": self.target_relation,
             "source": self.source.to_json(),
             "coverage_status": self.coverage_status,
         }
@@ -1624,6 +1759,8 @@ class TimelineRuleIR:
     source: IRSource
     coverage_status: CoverageStatus = "executable"
     blocked_reason: str = ""
+    registry_version: str = ""
+    applicability: str = ""
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -1635,6 +1772,8 @@ class TimelineRuleIR:
             "source": self.source.to_json(),
             "coverage_status": self.coverage_status,
             "blocked_reason": self.blocked_reason,
+            "registry_version": self.registry_version,
+            "applicability": self.applicability,
         }
 
 
@@ -1647,6 +1786,9 @@ class ResourceRuleIR:
     source: IRSource
     coverage_status: CoverageStatus = "executable"
     blocked_reason: str = ""
+    registry_version: str = ""
+    applicability: str = ""
+    numeric_value: float | None = None
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -1657,6 +1799,89 @@ class ResourceRuleIR:
             "source": self.source.to_json(),
             "coverage_status": self.coverage_status,
             "blocked_reason": self.blocked_reason,
+            "registry_version": self.registry_version,
+            "applicability": self.applicability,
+            "numeric_value": self.numeric_value,
+        }
+
+
+@dataclass(frozen=True)
+class DamageFormulaRuleIR:
+    damage_formula_rule_id: str
+    rule_kind: str
+    operation: str
+    numeric_parameters: dict[str, float]
+    source_kind: str
+    source: IRSource
+    coverage_status: CoverageStatus = "executable"
+    blocked_reason: str = ""
+    registry_version: str = ""
+    applicability: str = ""
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "damage_formula_rule_id": self.damage_formula_rule_id,
+            "rule_kind": self.rule_kind,
+            "operation": self.operation,
+            "numeric_parameters": self.numeric_parameters,
+            "source_kind": self.source_kind,
+            "source": self.source.to_json(),
+            "coverage_status": self.coverage_status,
+            "blocked_reason": self.blocked_reason,
+            "registry_version": self.registry_version,
+            "applicability": self.applicability,
+        }
+
+
+@dataclass(frozen=True)
+class DamageRouteRuleIR:
+    damage_route_rule_id: str
+    damage_family: str
+    route_policy: str
+    operation: str
+    source_kind: str
+    source: IRSource
+    coverage_status: CoverageStatus = "executable"
+    blocked_reason: str = ""
+    registry_version: str = ""
+    applicability: str = ""
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "damage_route_rule_id": self.damage_route_rule_id,
+            "damage_family": self.damage_family,
+            "route_policy": self.route_policy,
+            "operation": self.operation,
+            "source_kind": self.source_kind,
+            "source": self.source.to_json(),
+            "coverage_status": self.coverage_status,
+            "blocked_reason": self.blocked_reason,
+            "registry_version": self.registry_version,
+            "applicability": self.applicability,
+        }
+
+
+@dataclass(frozen=True)
+class ShieldPriorityRuleIR:
+    shield_priority_rule_id: str
+    operation: str
+    source_kind: str
+    source: IRSource
+    coverage_status: CoverageStatus = "executable"
+    blocked_reason: str = ""
+    registry_version: str = ""
+    applicability: str = ""
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "shield_priority_rule_id": self.shield_priority_rule_id,
+            "operation": self.operation,
+            "source_kind": self.source_kind,
+            "source": self.source.to_json(),
+            "coverage_status": self.coverage_status,
+            "blocked_reason": self.blocked_reason,
+            "registry_version": self.registry_version,
+            "applicability": self.applicability,
         }
 
 
@@ -1764,8 +1989,12 @@ class CanonicalIR:
     skill_continuations: tuple[SkillContinuationIR, ...] = ()
     standalone_ability_graphs: tuple[StandaloneAbilityGraphIR, ...] = ()
     combatant_action_sets: tuple[CombatantActionSetIR, ...] = ()
+    action_admissions: tuple[ActionAdmissionIR, ...] = ()
     timeline_rules: tuple[TimelineRuleIR, ...] = ()
     resource_rules: tuple[ResourceRuleIR, ...] = ()
+    damage_formula_rules: tuple[DamageFormulaRuleIR, ...] = ()
+    damage_route_rules: tuple[DamageRouteRuleIR, ...] = ()
+    shield_priority_rules: tuple[ShieldPriorityRuleIR, ...] = ()
     super_break_emissions: tuple[SuperBreakEmissionIR, ...] = ()
     target_expressions: tuple[TargetExpressionIR, ...] = ()
     wave_definitions: tuple[WaveDefinitionIR, ...] = ()
@@ -1822,8 +2051,12 @@ class CanonicalIR:
             "skill_continuations": [continuation.to_json() for continuation in self.skill_continuations],
             "standalone_ability_graphs": [graph.to_json() for graph in self.standalone_ability_graphs],
             "combatant_action_sets": [action_set.to_json() for action_set in self.combatant_action_sets],
+            "action_admissions": [admission.to_json() for admission in self.action_admissions],
             "timeline_rules": [rule.to_json() for rule in self.timeline_rules],
             "resource_rules": [rule.to_json() for rule in self.resource_rules],
+            "damage_formula_rules": [rule.to_json() for rule in self.damage_formula_rules],
+            "damage_route_rules": [rule.to_json() for rule in self.damage_route_rules],
+            "shield_priority_rules": [rule.to_json() for rule in self.shield_priority_rules],
             "super_break_emissions": [emission.to_json() for emission in self.super_break_emissions],
             "target_expressions": [expression.to_json() for expression in self.target_expressions],
             "wave_definitions": [definition.to_json() for definition in self.wave_definitions],

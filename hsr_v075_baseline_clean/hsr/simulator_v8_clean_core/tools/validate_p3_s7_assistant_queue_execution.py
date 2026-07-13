@@ -423,8 +423,8 @@ def _state_with_assistant_queue_entry(intent: QueueIntentIR, window: QueueWindow
         },
         owner_id="assistant:validation_owner",
         source_id=intent.callback_id,
-        expiration_policy={"status": "source_gap_blocked"},
-        cancel_policy={"status": "source_gap_blocked"},
+        expiration_policy={},
+        cancel_policy={},
         status="pending",
         drain_status="not_admitted",
     )
@@ -476,13 +476,16 @@ def _reason_tokens(reason: str) -> tuple[str, ...]:
 
 def _assistant_queue_gate_reason(reason: str) -> bool:
     text = str(reason or "")
-    return text.startswith("queue_intent_not_executable:") and any(
+    return bool(text) and any(
         token in text
         for token in (
             "queue_actor_target_alias_not_admitted",
             "queue_ability_target_alias_not_admitted",
             "queue_priority_not_admitted",
             "queue_insert_assistant_ability_not_admitted",
+            "assistant_actor_source_not_admitted",
+            "assistant_stats_source_not_admitted",
+            "assistant_action_graph_source_not_admitted",
         )
     )
 

@@ -6,6 +6,7 @@ from ..core.model import BattleState, GameEvent, JSONValue, Mutation
 from ..core.reducer import MutationReducer
 from ..core.settlement import SettlementRecord
 from ..rules.evaluator import NumericEvaluationContext, NumericEvaluationResult, RuleEvaluator
+from ..rules.expression_ir import numeric_dynamic_hashes
 from ..rules.ir import BreakDamageEmissionIR, BreakStatusEmissionIR, BreakTemplateIR
 from ..rules.rulebook import RuleBook
 from .damage import DamagePacket, DamageSystem
@@ -46,7 +47,7 @@ class BreakSystem:
         self.rules = rules
         self.effects = effects
         self.reducer = reducer or MutationReducer()
-        self.damage = damage or DamageSystem()
+        self.damage = damage or DamageSystem(rules)
         self.event_dispatcher = event_dispatcher or EventDispatchSystem(
             rules,
             effects,
@@ -214,6 +215,7 @@ class BreakSystem:
                 attack_type="ElementDamage",
                 damage_formula_family="break",
                 amount=float(evaluation.value),
+                amount_stage="family_base",
                 element_type=emission.element_type or packet.element_type,
                 break_damage_emission_id=emission.break_damage_emission_id,
                 break_template_id=template.template_id,
@@ -411,8 +413,8 @@ class BreakSystem:
                 ),
                 errors=("break_status_detail_missing",),
             )
-        recovery_source = _break_recovery_source(detail)
-        emission_id = str(recovery_source.get("break_status_emission_id") or "")
+        recovery_contract = _break_recovery_contract(detail)
+        emission_id = str(recovery_contract.get("break_status_emission_id") or "")
         if not emission_id:
             reason = "break_recovery_source_missing"
             return BreakApplicationResult(
@@ -691,7 +693,7 @@ def _break_damage_binding_source(
     break_base_damage: dict[str, JSONValue],
     target_stance: float,
 ) -> dict[str, JSONValue]:
-    hashes = _postfix_dynamic_hashes(emission.scaling_expr)
+    hashes = numeric_dynamic_hashes(emission.scaling_expr)
     entries: dict[str, JSONValue] = {}
     if len(hashes) >= 1:
         entries["break_base_damage"] = {
@@ -736,17 +738,6 @@ def _break_damage_binding_source(
     }
 
 
-def _postfix_dynamic_hashes(expression: dict[str, JSONValue]) -> list[JSONValue]:
-    raw = expression.get("raw")
-    if not isinstance(raw, dict):
-        return []
-    postfix = raw.get("PostfixExpr")
-    if not isinstance(postfix, dict):
-        return []
-    hashes = postfix.get("DynamicHashes")
-    return list(hashes) if isinstance(hashes, list) else []
-
-
 def _break_base_source_from_evaluation(evaluation: NumericEvaluationResult) -> dict[str, JSONValue]:
     bindings = evaluation.bindings
     operands = bindings.get("dynamic_operands") if isinstance(bindings, dict) else None
@@ -768,13 +759,11 @@ def _break_base_source_from_evaluation(evaluation: NumericEvaluationResult) -> d
     return {}
 
 
-def _break_recovery_source(detail: dict[str, JSONValue]) -> dict[str, JSONValue]:
-    source_trace = _json_dict(detail.get("source_trace"))
-    effect_source = source_trace.get("effect_source")
-    evidence = effect_source.get("evidence") if isinstance(effect_source, dict) else None
-    emission_id = evidence.get("break_status_emission_id") if isinstance(evidence, dict) else None
+def _break_recovery_contract(detail: dict[str, JSONValue]) -> dict[str, JSONValue]:
+    emission_id = detail.get("break_status_emission_id")
     if not isinstance(emission_id, str) or not emission_id:
         return {}
+    source_trace = _json_dict(detail.get("source_trace"))
     return {
         "break_status_emission_id": emission_id,
         "source_trace": source_trace,

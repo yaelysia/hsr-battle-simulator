@@ -1,10 +1,16 @@
 from __future__ import annotations
 
-import base64
 from dataclasses import dataclass
 from typing import Any
 
-from .ir import ConditionIR, FormulaIR
+from .ir import ConditionIR, FormulaIR, TargetExpressionNodeIR
+from .expression_ir import (
+    CONDITION_EXPRESSION_NODE_SCHEMA,
+    NUMERIC_EXPRESSION_SCHEMA,
+    is_typed_numeric_expression,
+    numeric_dynamic_hash,
+    numeric_fixed,
+)
 
 
 @dataclass(frozen=True)
@@ -19,6 +25,8 @@ class EvaluationContext:
     event_payload: dict[str, Any] | None = None
     dynamic_values: dict[str, float] | None = None
     binding_sources: tuple[dict[str, Any], ...] = ()
+    resolved_target_groups: dict[str, tuple[str, ...]] | None = None
+    target_resolution_errors: dict[str, str] | None = None
 
 
 @dataclass(frozen=True)
@@ -76,6 +84,7 @@ EXECUTABLE_CONDITION_OPCODES = {
     "ByAny",
     "ByAttackType",
     "ByCompareDynamicValue",
+    "ByCompareCharacterNumber",
     "ByCompareHPRatio",
     "ByCompareModifierValue",
     "ByCompareMonsterID",
@@ -113,6 +122,16 @@ class RuleEvaluator:
         context: EvaluationContext,
     ) -> ConditionEvaluationResult:
         source_trace = condition.source.to_json()
+        if condition.expression_schema_version != CONDITION_EXPRESSION_NODE_SCHEMA:
+            return ConditionEvaluationResult(
+                ok=False,
+                result=None,
+                condition_id=condition.condition_id,
+                opcode=condition.opcode,
+                reason="condition_expression_not_lowered",
+                details={"schema_version": condition.expression_schema_version},
+                source_trace=source_trace,
+            )
         if condition.opcode not in EXECUTABLE_CONDITION_OPCODES:
             return ConditionEvaluationResult(
                 ok=False,
@@ -149,7 +168,7 @@ class RuleEvaluator:
             return None
         if formula.kind == "fixed_value":
             result = self.evaluate_numeric(
-                {"kind": "fixed", "value": expression.get("Value")},
+                numeric_fixed(float(expression.get("Value"))),
                 NumericEvaluationContext(
                     dynamic_values=context.dynamic_values,
                     binding_sources=context.binding_sources,
@@ -159,7 +178,7 @@ class RuleEvaluator:
             return result.value if result.ok else None
         if formula.kind == "dynamic_hash":
             result = self.evaluate_numeric(
-                {"kind": "dynamic_hash", "hash": expression.get("hash")},
+                numeric_dynamic_hash(expression.get("hash")),
                 NumericEvaluationContext(
                     dynamic_values=context.dynamic_values,
                     binding_sources=context.binding_sources,
@@ -172,35 +191,18 @@ class RuleEvaluator:
     def evaluate_numeric(self, expression: Any, context: NumericEvaluationContext | None = None) -> NumericEvaluationResult:
         context = context or NumericEvaluationContext()
         source_trace = dict(context.source_trace or {})
-        if isinstance(expression, (int, float)):
-            return NumericEvaluationResult(
-                ok=True,
-                value=float(expression),
-                expression_kind="fixed",
-                bindings={},
-                source_trace=source_trace,
-            )
-        if expression is None:
+        if not is_typed_numeric_expression(expression):
             return NumericEvaluationResult(
                 ok=False,
                 value=None,
-                expression_kind="missing",
+                expression_kind="not_lowered",
                 bindings={},
                 source_trace=source_trace,
-                blocked_reason="missing",
+                blocked_reason="numeric_expression_not_lowered",
             )
-        if not isinstance(expression, dict):
-            return NumericEvaluationResult(
-                ok=False,
-                value=None,
-                expression_kind="unsupported",
-                bindings={"raw": expression},
-                source_trace=source_trace,
-                blocked_reason="unsupported_numeric_expression",
-            )
-
+        assert isinstance(expression, dict)
         kind = str(expression.get("kind") or "")
-        if kind == "fixed" and isinstance(expression.get("value"), (int, float)):
+        if kind == "fixed" and isinstance(expression.get("value"), (int, float)) and not isinstance(expression.get("value"), bool):
             return NumericEvaluationResult(
                 ok=True,
                 value=float(expression["value"]),
@@ -219,40 +221,25 @@ class RuleEvaluator:
             )
         if kind == "dynamic_hash":
             return _evaluate_dynamic_hash(expression, context, source_trace)
-        if kind == "postfix_expr":
-            return _evaluate_postfix_expr(expression.get("raw") or expression, context, source_trace)
+        if kind == "program" and expression.get("schema_version") == NUMERIC_EXPRESSION_SCHEMA:
+            return _evaluate_numeric_program(expression, context, source_trace)
         if kind == "unsupported":
             return NumericEvaluationResult(
                 ok=False,
                 value=None,
                 expression_kind="unsupported",
-                bindings={"raw": expression.get("raw")},
+                bindings={},
                 source_trace=source_trace,
                 blocked_reason=str(expression.get("reason") or "unsupported_numeric_expression"),
             )
-
-        fixed = expression.get("FixedValue")
-        if isinstance(fixed, dict) and isinstance(fixed.get("Value"), (int, float)):
-            return self.evaluate_numeric(
-                {"kind": "fixed", "value": fixed["Value"]},
-                context,
-            )
-        if isinstance(expression.get("Value"), (int, float)):
-            return self.evaluate_numeric(
-                {"kind": "fixed", "value": expression["Value"]},
-                context,
-            )
-        postfix = expression.get("PostfixExpr")
-        if isinstance(postfix, dict):
-            return _evaluate_postfix_expr(expression, context, source_trace)
 
         return NumericEvaluationResult(
             ok=False,
             value=None,
             expression_kind=kind or "unsupported",
-            bindings={"raw": expression},
+            bindings={},
             source_trace=source_trace,
-            blocked_reason="unsupported_numeric_expression",
+            blocked_reason="typed_numeric_expression_kind_not_supported",
         )
 
 
@@ -264,6 +251,8 @@ def _evaluate_dynamic_hash(
     hash_value = expression.get("hash")
     key = str(hash_value)
     sources_checked: list[dict[str, Any]] = []
+    matches: list[tuple[float, dict[str, Any]]] = []
+    ambiguous_matches: list[dict[str, Any]] = []
     for index, source in enumerate(context.binding_sources):
         value, binding = _lookup_binding_source(source, key)
         sources_checked.append(
@@ -272,29 +261,51 @@ def _evaluate_dynamic_hash(
                 "hit": value is not None,
             }
         )
+        if binding.get("ambiguous") is True:
+            ambiguous_matches.append(binding)
         if value is not None:
-            return NumericEvaluationResult(
-                ok=True,
-                value=value,
-                expression_kind="dynamic_hash",
-                bindings={"hash": hash_value, "key": key, "value": value, **binding},
-                source_trace=source_trace,
-            )
+            matches.append((value, binding))
     values = context.dynamic_values or {}
     if key in values and isinstance(values[key], (int, float)):
+        matches.append(
+            (
+                float(values[key]),
+                {"source_type": "explicit_dynamic_values", "entry_key": key},
+            )
+        )
+        sources_checked.append({"source_type": "explicit_dynamic_values", "hit": True})
+    else:
+        sources_checked.append({"source_type": "explicit_dynamic_values", "hit": False})
+    if ambiguous_matches or len(matches) > 1:
         return NumericEvaluationResult(
-            ok=True,
-            value=float(values[key]),
+            ok=False,
+            value=None,
             expression_kind="dynamic_hash",
             bindings={
                 "hash": hash_value,
                 "key": key,
-                "value": float(values[key]),
-                "source_type": "explicit_dynamic_values",
+                "sources_checked": sources_checked,
+                "match_count": len(matches),
+                "matches": [binding for _, binding in matches],
+                "ambiguous_matches": ambiguous_matches,
+            },
+            source_trace=source_trace,
+            blocked_reason=f"dynamic_hash_binding_ambiguous:{key}",
+        )
+    if matches:
+        value, binding = matches[0]
+        return NumericEvaluationResult(
+            ok=True,
+            value=value,
+            expression_kind="dynamic_hash",
+            bindings={
+                "hash": hash_value,
+                "key": key,
+                "value": value,
+                **binding,
             },
             source_trace=source_trace,
         )
-    sources_checked.append({"source_type": "explicit_dynamic_values", "hit": False})
     return NumericEvaluationResult(
         ok=False,
         value=None,
@@ -305,190 +316,102 @@ def _evaluate_dynamic_hash(
     )
 
 
-def _evaluate_postfix_expr(
+def _evaluate_numeric_program(
     expression: dict[str, Any],
     context: NumericEvaluationContext,
     source_trace: dict[str, Any],
 ) -> NumericEvaluationResult:
-    postfix = expression.get("PostfixExpr") if isinstance(expression.get("PostfixExpr"), dict) else expression
-    if not isinstance(postfix, dict):
+    instructions = expression.get("instructions")
+    if not isinstance(instructions, list):
         return NumericEvaluationResult(
             ok=False,
             value=None,
-            expression_kind="postfix_expr",
-            bindings={"raw": expression},
+            expression_kind="program",
+            bindings={},
             source_trace=source_trace,
-            blocked_reason="postfix_expr_missing",
+            blocked_reason="numeric_program_instructions_missing",
         )
-    opcodes = _decode_postfix_opcodes(postfix.get("OpCodes"))
-    if opcodes is None:
-        return NumericEvaluationResult(
-            ok=False,
-            value=None,
-            expression_kind="postfix_expr",
-            bindings={"raw": expression},
-            source_trace=source_trace,
-            blocked_reason="postfix_opcodes_decode_failed",
-        )
-    fixed_values = _postfix_fixed_values(postfix.get("FixedValues"))
-    dynamic_hashes = postfix.get("DynamicHashes") if isinstance(postfix.get("DynamicHashes"), list) else []
     stack: list[float] = []
-    tokens: list[dict[str, Any]] = []
     dynamic_operands: list[dict[str, Any]] = []
-    errors: list[dict[str, Any]] = []
-    unsupported: list[int] = []
     ended = False
-    index = 0
-    while index < len(opcodes):
-        opcode = opcodes[index]
-        if opcode == 17:
-            tokens.append({"op": "end"})
+    for index, instruction in enumerate(instructions):
+        if not isinstance(instruction, dict):
+            return _numeric_program_blocked("numeric_program_instruction_invalid", source_trace, index)
+        opcode = instruction.get("opcode")
+        if opcode == "end":
+            if index != len(instructions) - 1:
+                return _numeric_program_blocked("numeric_program_tokens_after_end", source_trace, index)
             ended = True
-            index += 1
             continue
-        if opcode == 0:
-            if index + 1 >= len(opcodes):
-                errors.append({"op": opcode, "reason": "missing_fixed_index"})
-                break
-            fixed_index = int(opcodes[index + 1])
-            tokens.append({"op": "fixed", "index": fixed_index})
-            if fixed_index < 0 or fixed_index >= len(fixed_values):
-                errors.append({"op": opcode, "index": fixed_index, "reason": "fixed_operand_unresolved"})
-            else:
-                stack.append(float(fixed_values[fixed_index]))
-            index += 2
+        if opcode == "push_fixed":
+            value = instruction.get("value")
+            if not isinstance(value, (int, float)) or isinstance(value, bool):
+                return _numeric_program_blocked("numeric_program_fixed_operand_invalid", source_trace, index)
+            stack.append(float(value))
             continue
-        if opcode == 1:
-            if index + 1 >= len(opcodes):
-                errors.append({"op": opcode, "reason": "missing_dynamic_index"})
-                break
-            dynamic_index = int(opcodes[index + 1])
-            tokens.append({"op": "dynamic", "index": dynamic_index})
-            if dynamic_index < 0 or dynamic_index >= len(dynamic_hashes):
-                errors.append({"op": opcode, "index": dynamic_index, "reason": "dynamic_hash_missing"})
-            else:
-                dynamic_hash = dynamic_hashes[dynamic_index]
-                result = _evaluate_dynamic_hash(
-                    {"kind": "dynamic_hash", "hash": dynamic_hash, "raw": expression},
-                    context,
+        if opcode == "push_dynamic":
+            result = _evaluate_dynamic_hash(
+                numeric_dynamic_hash(instruction.get("hash")),
+                context,
+                source_trace,
+            )
+            dynamic_operands.append(result.to_json())
+            if not result.ok or result.value is None:
+                return _numeric_program_blocked(
+                    result.blocked_reason or "numeric_program_dynamic_operand_unresolved",
                     source_trace,
+                    index,
+                    dynamic_operands=dynamic_operands,
                 )
-                operand = {
-                    "index": dynamic_index,
-                    "hash": dynamic_hash,
-                    "ok": result.ok,
-                    "value": result.value,
-                    "bindings": result.bindings,
-                    "blocked_reason": result.blocked_reason,
-                }
-                dynamic_operands.append(operand)
-                if not result.ok or result.value is None:
-                    errors.append(
-                        {
-                            "op": opcode,
-                            "index": dynamic_index,
-                            "hash": dynamic_hash,
-                            "reason": result.blocked_reason or "dynamic_operand_unresolved",
-                        }
-                    )
-                else:
-                    stack.append(float(result.value))
-            index += 2
+            stack.append(float(result.value))
             continue
-        if opcode in {2, 3, 4, 5}:
-            op_name = {2: "add", 3: "sub", 4: "mul", 5: "div"}[opcode]
-            tokens.append({"op": op_name})
-            if len(stack) < 2:
-                errors.append({"op": opcode, "reason": "stack_underflow"})
-            else:
-                rhs = stack.pop()
-                lhs = stack.pop()
-                if opcode == 2:
-                    stack.append(lhs + rhs)
-                elif opcode == 3:
-                    stack.append(lhs - rhs)
-                elif opcode == 4:
-                    stack.append(lhs * rhs)
-                elif rhs == 0:
-                    errors.append({"op": opcode, "reason": "division_by_zero"})
-                else:
-                    stack.append(lhs / rhs)
-            index += 1
-            continue
-        unsupported.append(opcode)
-        tokens.append({"op": f"unsupported_{opcode}", "opcode": opcode})
-        index += 1
-
-    bindings = {
-        "raw": expression,
-        "opcodes_bytes": opcodes,
-        "tokens": tokens,
-        "fixed_values": fixed_values,
-        "dynamic_operands": dynamic_operands,
-    }
-    if unsupported:
-        return NumericEvaluationResult(
-            ok=False,
-            value=None,
-            expression_kind="postfix_expr",
-            bindings={**bindings, "unsupported_opcode_bytes": sorted(set(unsupported))},
-            source_trace=source_trace,
-            blocked_reason="unsupported_postfix_opcode",
-        )
-    if errors:
-        return NumericEvaluationResult(
-            ok=False,
-            value=None,
-            expression_kind="postfix_expr",
-            bindings={**bindings, "errors": errors},
-            source_trace=source_trace,
-            blocked_reason=str(errors[0].get("reason") or "postfix_evaluation_error"),
-        )
+        if opcode not in {"add", "sub", "mul", "div"}:
+            return _numeric_program_blocked("numeric_program_opcode_not_admitted", source_trace, index)
+        if len(stack) < 2:
+            return _numeric_program_blocked("numeric_program_stack_underflow", source_trace, index)
+        rhs = stack.pop()
+        lhs = stack.pop()
+        if opcode == "add":
+            stack.append(lhs + rhs)
+        elif opcode == "sub":
+            stack.append(lhs - rhs)
+        elif opcode == "mul":
+            stack.append(lhs * rhs)
+        elif rhs == 0:
+            return _numeric_program_blocked("numeric_program_division_by_zero", source_trace, index)
+        else:
+            stack.append(lhs / rhs)
     if not ended:
-        return NumericEvaluationResult(
-            ok=False,
-            value=None,
-            expression_kind="postfix_expr",
-            bindings=bindings,
-            source_trace=source_trace,
-            blocked_reason="postfix_missing_end_opcode",
-        )
+        return _numeric_program_blocked("numeric_program_end_missing", source_trace, len(instructions))
     if len(stack) != 1:
-        return NumericEvaluationResult(
-            ok=False,
-            value=None,
-            expression_kind="postfix_expr",
-            bindings={**bindings, "final_stack_size": len(stack)},
-            source_trace=source_trace,
-            blocked_reason="postfix_final_stack_size",
-        )
+        return _numeric_program_blocked("numeric_program_final_stack_size", source_trace, len(instructions))
     return NumericEvaluationResult(
         ok=True,
-        value=float(stack[0]),
-        expression_kind="postfix_expr",
-        bindings={**bindings, "pattern": "postfix_add_sub_mul_div"},
+        value=stack[0],
+        expression_kind="program",
+        bindings={"instruction_count": len(instructions), "dynamic_operands": dynamic_operands},
         source_trace=source_trace,
     )
 
 
-def _decode_postfix_opcodes(value: Any) -> list[int] | None:
-    if not isinstance(value, str) or not value:
-        return None
-    try:
-        return list(base64.b64decode(value))
-    except Exception:
-        return None
-
-
-def _postfix_fixed_values(value: Any) -> list[float]:
-    fixed_values: list[float] = []
-    if not isinstance(value, list):
-        return fixed_values
-    for item in value:
-        raw = item.get("Value") if isinstance(item, dict) else item
-        if isinstance(raw, (int, float)):
-            fixed_values.append(float(raw))
-    return fixed_values
+def _numeric_program_blocked(
+    reason: str,
+    source_trace: dict[str, Any],
+    instruction_index: int,
+    *,
+    dynamic_operands: list[dict[str, Any]] | None = None,
+) -> NumericEvaluationResult:
+    return NumericEvaluationResult(
+        ok=False,
+        value=None,
+        expression_kind="program",
+        bindings={
+            "instruction_index": instruction_index,
+            "dynamic_operands": dynamic_operands or [],
+        },
+        source_trace=source_trace,
+        blocked_reason=reason,
+    )
 
 
 def _evaluate_condition_payload(
@@ -673,6 +596,49 @@ def _evaluate_condition_payload(
             {"target_id": target_id, "alive_enemy_ids": alive_enemies, "inverse": payload.get("Inverse") is True},
             source_trace,
         )
+    if opcode == "ByCompareCharacterNumber":
+        errors = context.target_resolution_errors or {}
+        if errors.get("TargetType"):
+            return _condition_blocked(
+                condition_id,
+                opcode,
+                f"target_group_blocked:{errors['TargetType']}",
+                {"target_field": "TargetType"},
+                source_trace,
+            )
+        groups = context.resolved_target_groups or {}
+        if "TargetType" not in groups:
+            return _condition_blocked(
+                condition_id,
+                opcode,
+                "target_group_not_resolved",
+                {"target_field": "TargetType"},
+                source_trace,
+            )
+        expected = evaluator.evaluate_numeric(
+            payload.get("CompareNumber"),
+            NumericEvaluationContext(
+                dynamic_values=context.dynamic_values,
+                binding_sources=context.binding_sources,
+                source_trace=source_trace,
+            ),
+        )
+        if not expected.ok or expected.value is None:
+            return _condition_blocked(
+                condition_id,
+                opcode,
+                f"compare_number_blocked:{expected.blocked_reason}",
+                {"numeric_evaluation": expected.to_json()},
+                source_trace,
+            )
+        return _comparison_condition(
+            condition_id,
+            opcode,
+            float(len(groups["TargetType"])),
+            payload.get("CompareType"),
+            expected.value,
+            source_trace,
+        )
     if opcode == "ByCompareHPRatio":
         target_id, target_details = _resolve_condition_target(payload.get("TargetType"), context)
         if target_id is None:
@@ -706,7 +672,7 @@ def _evaluate_condition_payload(
         if not isinstance(key, str) or not key:
             return _condition_blocked(condition_id, opcode, "dynamic_key_missing", {"payload": payload}, source_trace)
         actual = evaluator.evaluate_numeric(
-            {"kind": "dynamic_hash", "hash": key},
+            numeric_dynamic_hash(key),
             NumericEvaluationContext(
                 dynamic_values=context.dynamic_values,
                 binding_sources=context.binding_sources,
@@ -888,7 +854,7 @@ def _evaluate_condition_payload(
         if not isinstance(predicates, list):
             return _condition_blocked(condition_id, opcode, "predicate_list_missing", {"payload": payload}, source_trace)
         child_results = [
-            _evaluate_raw_condition(evaluator, item, context, condition_id=condition_id, source_trace=source_trace)
+            _evaluate_typed_condition_node(evaluator, item, context, condition_id=condition_id, source_trace=source_trace)
             for item in predicates
         ]
         if opcode == "ByAnd":
@@ -909,25 +875,42 @@ def _evaluate_condition_payload(
         predicate = payload.get("Predicate")
         if not isinstance(predicate, dict):
             return _condition_blocked(condition_id, opcode, "predicate_missing", {"payload": payload}, source_trace)
-        child = _evaluate_raw_condition(evaluator, predicate, context, condition_id=condition_id, source_trace=source_trace)
+        child = _evaluate_typed_condition_node(evaluator, predicate, context, condition_id=condition_id, source_trace=source_trace)
         if not child.ok or child.result is None:
             return _condition_blocked(condition_id, opcode, f"child_blocked:{child.reason}", {"child": child.to_json()}, source_trace)
         return _condition_result(not child.result, condition_id, opcode, "not_child_inverted", {"child": child.to_json()}, source_trace)
     return _condition_blocked(condition_id, opcode, f"condition_opcode_not_supported:{opcode}", {"payload": payload}, source_trace)
 
 
-def _evaluate_raw_condition(
+def _evaluate_typed_condition_node(
     evaluator: RuleEvaluator,
-    raw: object,
+    node: object,
     context: EvaluationContext,
     *,
     condition_id: str,
     source_trace: dict[str, Any],
 ) -> ConditionEvaluationResult:
-    if not isinstance(raw, dict):
-        return _condition_blocked(condition_id, "Unknown", "raw_condition_not_object", {"raw": raw}, source_trace)
-    opcode = _short_gamecore_type(raw.get("$type"))
-    payload = {key: value for key, value in raw.items() if key != "$type"}
+    if not isinstance(node, dict):
+        return _condition_blocked(condition_id, "Unknown", "condition_node_not_object", {}, source_trace)
+    if node.get("schema_version") != CONDITION_EXPRESSION_NODE_SCHEMA:
+        return _condition_blocked(condition_id, "Unknown", "condition_node_schema_missing", {}, source_trace)
+    if node.get("supported") is not True:
+        return _condition_blocked(
+            condition_id,
+            str(node.get("opcode") or "Unknown"),
+            str(node.get("blocked_reason") or "condition_node_not_admitted"),
+            {},
+            source_trace,
+        )
+    opcode = str(node.get("opcode") or "")
+    metadata_keys = {
+        "schema_version",
+        "expression_kind",
+        "opcode",
+        "supported",
+        "blocked_reason",
+    }
+    payload = {key: value for key, value in node.items() if key not in metadata_keys}
     return _evaluate_condition_payload(
         evaluator,
         opcode,
@@ -1032,8 +1015,10 @@ def _resolve_condition_target(alias_value: object, context: EvaluationContext) -
 
 
 def _target_alias(value: object) -> str | None:
+    if isinstance(value, TargetExpressionNodeIR):
+        return value.alias or None
     if isinstance(value, dict):
-        alias = value.get("Alias")
+        alias = value.get("alias")
         if isinstance(alias, str):
             return alias
     return None
@@ -1175,22 +1160,20 @@ def _modifier_value_for_condition(
     return None, f"modifier_value_not_available:{value_type}"
 
 
-def _short_gamecore_type(raw_type: object) -> str:
-    if not isinstance(raw_type, str):
-        return "Unknown"
-    return raw_type.removeprefix("RPG.GameCore.")
-
-
 def _lookup_binding_source(source: dict[str, Any], key: str) -> tuple[float | None, dict[str, Any]]:
     entries = source.get("entries")
     if not isinstance(entries, dict):
         entries = {}
     by_hash = source.get("by_hash")
-    value, entry_key, entry = _lookup_index(entries, by_hash, key)
+    value, entry_key, entry, conflicts = _lookup_index(entries, by_hash, key)
+    if conflicts:
+        return None, _ambiguous_binding_metadata(source, conflicts, matched_by="hash")
     if value is not None:
         return value, _binding_metadata(source, entry_key, entry, matched_by="hash")
     by_name = source.get("by_name")
-    value, entry_key, entry = _lookup_index(entries, by_name, key)
+    value, entry_key, entry, conflicts = _lookup_index(entries, by_name, key)
+    if conflicts:
+        return None, _ambiguous_binding_metadata(source, conflicts, matched_by="name")
     if value is not None:
         return value, _binding_metadata(source, entry_key, entry, matched_by="name")
     values = source.get("values")
@@ -1211,22 +1194,45 @@ def _lookup_index(
     entries: dict[str, Any],
     index: object,
     key: str,
-) -> tuple[float | None, str | None, dict[str, Any] | None]:
+) -> tuple[float | None, str | None, dict[str, Any] | None, tuple[str, ...]]:
     if not isinstance(index, dict) or key not in index:
-        return None, None, None
+        return None, None, None, ()
     indexed = index[key]
     if isinstance(indexed, (int, float)):
-        return float(indexed), None, None
+        return float(indexed), None, None, ()
     if isinstance(indexed, dict) and isinstance(indexed.get("value"), (int, float)):
-        return float(indexed["value"]), None, indexed
+        return float(indexed["value"]), None, indexed, ()
     keys = indexed if isinstance(indexed, list) else [indexed]
+    resolved = tuple(
+        entry_key
+        for entry_key in keys
+        if isinstance(entry_key, str)
+        and isinstance(entries.get(entry_key), dict)
+        and isinstance(entries[entry_key].get("value"), (int, float))
+    )
+    if len(resolved) > 1:
+        return None, None, None, resolved
     for entry_key in keys:
         if not isinstance(entry_key, str):
             continue
         entry = entries.get(entry_key)
         if isinstance(entry, dict) and isinstance(entry.get("value"), (int, float)):
-            return float(entry["value"]), entry_key, entry
-    return None, None, None
+            return float(entry["value"]), entry_key, entry, ()
+    return None, None, None, ()
+
+
+def _ambiguous_binding_metadata(
+    source: dict[str, Any],
+    entry_keys: tuple[str, ...],
+    *,
+    matched_by: str,
+) -> dict[str, Any]:
+    return {
+        "source_type": str(source.get("source_type") or "binding_source"),
+        "matched_by": matched_by,
+        "ambiguous": True,
+        "candidate_entry_keys": list(entry_keys),
+    }
 
 
 def _binding_metadata(

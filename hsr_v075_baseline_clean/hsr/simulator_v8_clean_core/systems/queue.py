@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..core.model import BattleState, GameEvent, JSONValue, Mutation
+from ..core.settlement import SettlementRecord
 from ..rules.ir import QueueResolutionIR
 from .unit_relation import is_opposing_combat_team, is_same_combat_team
 from .unit_lifecycle import UnitLifecycleSystem
@@ -42,6 +43,8 @@ class QueueEntry:
     target_ids: tuple[str, ...]
     priority_source: dict[str, JSONValue]
     source_trace: dict[str, JSONValue]
+    action_level: int | None = None
+    resource_policy: dict[str, JSONValue] | None = None
     priority_key: str = ""
     priority_value: float | None = None
     queue_priority_id: str = ""
@@ -80,6 +83,8 @@ class QueueEntry:
             "expiration_policy": self.expiration_policy or {},
             "cancel_policy": self.cancel_policy or {},
             "source_trace": self.source_trace,
+            "action_level": self.action_level,
+            "resource_policy": self.resource_policy or {},
             "status": self.status,
             "drain_status": self.drain_status,
         }
@@ -223,6 +228,49 @@ class QueueDrainPlan:
         }
 
 
+@dataclass(frozen=True)
+class QueueEntryTerminalPlan:
+    ok: bool
+    disposition: str
+    queue_name: str
+    entry_id: str
+    blocked_reason: str
+    retained: bool
+    source_trace: dict[str, JSONValue]
+    before_length: int
+    after_length: int
+    waiting_for_windows: tuple[str, ...] = ()
+    replacement_target_ids: tuple[str, ...] = ()
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "ok": self.ok,
+            "disposition": self.disposition,
+            "queue_name": self.queue_name,
+            "entry_id": self.entry_id,
+            "blocked_reason": self.blocked_reason,
+            "retained": self.retained,
+            "source_trace": self.source_trace,
+            "before_length": self.before_length,
+            "after_length": self.after_length,
+            "waiting_for_windows": list(self.waiting_for_windows),
+            "replacement_target_ids": list(self.replacement_target_ids),
+            "monotonic_progress": (
+                self.after_length < self.before_length
+                or bool(self.waiting_for_windows)
+                or bool(self.replacement_target_ids)
+            ),
+        }
+
+
+@dataclass(frozen=True)
+class QueueEntryTerminalResult:
+    plan: QueueEntryTerminalPlan
+    mutations: tuple[Mutation, ...]
+    events: tuple[GameEvent, ...]
+    records: tuple[dict[str, JSONValue], ...]
+
+
 QUEUE_WINDOW_FAMILY_ORDER: dict[str, int] = {
     "follow_up": 0,
     "counter": 0,
@@ -235,6 +283,7 @@ QUEUE_WINDOW_FAMILY_ORDER: dict[str, int] = {
     "assistant": 90,
     "unknown": 999,
 }
+QUEUE_DRAIN_STEP_BUDGET = 1
 
 
 def queue_window_family_order(window_family: str) -> int:
@@ -490,6 +539,29 @@ class QueueSystem:
     ) -> QueueDrainPlan:
         entries = self._entries(state, queue_name)
         if not entries:
+            waiting = next(
+                (
+                    entry
+                    for entry in state.queues.get(queue_name, ())
+                    if isinstance(entry, dict) and _waiting_for_other_window(state, entry)
+                ),
+                None,
+            )
+            if waiting is not None:
+                return QueueDrainPlan(
+                    False,
+                    "waiting_window",
+                    queue_name,
+                    waiting,
+                    str(waiting.get("queue_intent_id") or ""),
+                    str(waiting.get("queue_resolution_id") or ""),
+                    "queue_waiting_for_window",
+                    {"queue_entry_source": waiting.get("source_trace", {})},
+                    queue_window={
+                        "window_family": str(waiting.get("window_family") or ""),
+                        "waiting_for_windows": waiting.get("waiting_for_windows", []),
+                    },
+                )
             return QueueDrainPlan(False, "blocked", queue_name, {}, "", "", "queue_empty_or_legacy_entry")
         plans = [
             self._plan_entry(
@@ -501,6 +573,8 @@ class QueueSystem:
             )
             for index, entry in enumerate(entries)
         ]
+        if not plans[0].ok:
+            return plans[0]
         admitted = [plan for plan in plans if plan.ok]
         if not admitted:
             return plans[0]
@@ -515,7 +589,11 @@ class QueueSystem:
         )[0]
 
     def _entries(self, state: BattleState, queue_name: str) -> tuple[dict[str, JSONValue], ...]:
-        return tuple(entry for entry in state.queues.get(queue_name, ()) if isinstance(entry, dict))
+        return tuple(
+            entry
+            for entry in state.queues.get(queue_name, ())
+            if isinstance(entry, dict) and not _waiting_for_other_window(state, entry)
+        )
 
     def _plan_entry(
         self,
@@ -531,6 +609,32 @@ class QueueSystem:
         queue_intent_id = str(entry.get("queue_intent_id") or "")
         if not queue_intent_id:
             return QueueDrainPlan(False, "blocked", queue_name, entry, "", "", "queue_entry_missing_intent_id")
+        source_status_reason = _source_status_blocked_reason(state, entry)
+        if source_status_reason:
+            return QueueDrainPlan(
+                False,
+                "blocked",
+                queue_name,
+                entry,
+                queue_intent_id,
+                "",
+                source_status_reason,
+                {"queue_entry_source": entry.get("source_trace", {})},
+                drain_order=drain_order,
+            )
+        expiration_reason = _expiration_blocked_reason(state, entry)
+        if expiration_reason:
+            return QueueDrainPlan(
+                False,
+                "blocked",
+                queue_name,
+                entry,
+                queue_intent_id,
+                "",
+                expiration_reason,
+                {"queue_entry_source": entry.get("source_trace", {})},
+                drain_order=drain_order,
+            )
         if resolution is None:
             return QueueDrainPlan(
                 False,
@@ -1044,6 +1148,11 @@ class QueueSystem:
             action_ref = value if isinstance(value, str) else ""
         elif isinstance(dequeued, str):
             action_ref = dequeued
+        requested_operation = (
+            str(metadata.get("queue_operation") or "dequeue")
+            if isinstance(metadata, dict)
+            else "dequeue"
+        )
         return Mutation(
             op="set",
             path=("queues", queue_name),
@@ -1055,7 +1164,7 @@ class QueueSystem:
             metadata={
                 **(metadata or {}),
                 "queue_name": queue_name,
-                "queue_operation": "dequeue",
+                "queue_operation": requested_operation,
                 "action_ref": action_ref,
                 "queue_entry": dequeued,
                 "dequeue_entry_id": entry_id or "",
@@ -1096,6 +1205,173 @@ class QueueSystem:
             },
         )
 
+    def plan_terminal_resolution(
+        self,
+        state: BattleState,
+        plan: QueueDrainPlan,
+        *,
+        blocked_reason: str | None = None,
+    ) -> QueueEntryTerminalPlan:
+        entry = plan.queue_entry
+        entry_id = str(entry.get("entry_id") or "")
+        reason = blocked_reason or plan.blocked_reason or "queue_entry_execution_blocked"
+        current = tuple(state.queues.get(plan.queue_name, ()))
+        source_trace = _terminal_source_trace(plan)
+        cancel_policy = entry.get("cancel_policy") if isinstance(entry.get("cancel_policy"), dict) else {}
+        wait_for_windows = _admitted_wait_windows(cancel_policy, source_trace)
+        current_window = str(state.global_flags.get("current_window") or "")
+        if wait_for_windows and current_window not in wait_for_windows:
+            return QueueEntryTerminalPlan(
+                ok=True,
+                disposition="waiting_window",
+                queue_name=plan.queue_name,
+                entry_id=entry_id,
+                blocked_reason=reason,
+                retained=True,
+                source_trace=source_trace,
+                before_length=len(current),
+                after_length=len(current),
+                waiting_for_windows=wait_for_windows,
+            )
+        replacement_targets = _admitted_retarget_ids(state, cancel_policy, source_trace)
+        if replacement_targets:
+            return QueueEntryTerminalPlan(
+                ok=True,
+                disposition="retargeted",
+                queue_name=plan.queue_name,
+                entry_id=entry_id,
+                blocked_reason=reason,
+                retained=True,
+                source_trace=source_trace,
+                before_length=len(current),
+                after_length=len(current),
+                replacement_target_ids=replacement_targets,
+            )
+        disposition = "cancelled" if _is_invalid_entry_reason(reason) else "blocked_removed"
+        return QueueEntryTerminalPlan(
+            ok=True,
+            disposition=disposition,
+            queue_name=plan.queue_name,
+            entry_id=entry_id,
+            blocked_reason=reason,
+            retained=False,
+            source_trace=source_trace,
+            before_length=len(current),
+            after_length=max(0, len(current) - 1),
+        )
+
+    def resolve_terminal(
+        self,
+        state: BattleState,
+        terminal: QueueEntryTerminalPlan,
+    ) -> QueueEntryTerminalResult:
+        if not terminal.ok:
+            return QueueEntryTerminalResult(terminal, (), (), ())
+        current = tuple(state.queues.get(terminal.queue_name, ()))
+        index = next(
+            (
+                item_index
+                for item_index, item in enumerate(current)
+                if isinstance(item, dict) and str(item.get("entry_id") or "") == terminal.entry_id
+            ),
+            -1,
+        )
+        if index < 0:
+            raise ValueError(f"queue terminal entry not found: {terminal.entry_id}")
+        entry = current[index]
+        assert isinstance(entry, dict)
+        if terminal.disposition in {"cancelled", "blocked_removed"}:
+            priority_source = entry.get("priority_source") if isinstance(entry.get("priority_source"), dict) else {}
+            mutation = self.dequeue_entry(
+                state,
+                terminal.queue_name,
+                terminal.entry_id,
+                "queue_system",
+                metadata={
+                    "queue_operation": "terminal_remove",
+                    "queue_terminal_plan": terminal.to_json(),
+                    "queue_terminal_disposition": terminal.disposition,
+                    "queue_intent_id": str(entry.get("queue_intent_id") or ""),
+                    "queue_resolution_id": str(terminal.source_trace.get("queue_resolution_id") or entry.get("queue_resolution_id") or ""),
+                    "queue_priority_id": str(entry.get("queue_priority_id") or priority_source.get("queue_priority_id") or ""),
+                    "priority_key": str(entry.get("priority_key") or priority_source.get("priority_key") or ""),
+                    "priority_value": entry.get("priority_value", priority_source.get("priority_value")),
+                    "queue_window_id": str(entry.get("queue_window_id") or ""),
+                    "window_family": str(entry.get("window_family") or ""),
+                    "queue_window_plan": {
+                        "queue_window_id": str(entry.get("queue_window_id") or ""),
+                        "window_family": str(entry.get("window_family") or ""),
+                        "window_policy": entry.get("window_policy") if isinstance(entry.get("window_policy"), dict) else {},
+                    },
+                    "source_trace": terminal.source_trace,
+                },
+            )
+        else:
+            updated_entry = dict(entry)
+            if terminal.disposition == "waiting_window":
+                updated_entry.update(
+                    {
+                        "status": "waiting_window",
+                        "drain_status": "waiting_window",
+                        "waiting_for_windows": list(terminal.waiting_for_windows),
+                        "last_blocked_reason": terminal.blocked_reason,
+                    }
+                )
+            elif terminal.disposition == "retargeted":
+                updated_entry.update(
+                    {
+                        "target_ids": list(terminal.replacement_target_ids),
+                        "status": "pending",
+                        "drain_status": "retargeted",
+                        "last_blocked_reason": terminal.blocked_reason,
+                    }
+                )
+            else:
+                raise ValueError(f"unsupported queue terminal disposition: {terminal.disposition}")
+            updated = (*current[:index], updated_entry, *current[index + 1 :])
+            mutation = Mutation(
+                op="set",
+                path=("queues", terminal.queue_name),
+                before=list(current),
+                after=list(updated),
+                reason=f"queue entry terminal transition: {terminal.disposition}",
+                source="queue_system",
+                metadata={
+                    "queue_name": terminal.queue_name,
+                    "queue_operation": "terminal_transition",
+                    "queue_entry": entry,
+                    "queue_intent_id": str(entry.get("queue_intent_id") or ""),
+                    "queue_priority_id": str(entry.get("queue_priority_id") or ""),
+                    "queue_window_id": str(entry.get("queue_window_id") or ""),
+                    "window_family": str(entry.get("window_family") or ""),
+                    "queue_terminal_plan": terminal.to_json(),
+                    "queue_terminal_disposition": terminal.disposition,
+                    "source_trace": terminal.source_trace,
+                },
+            )
+        payload = {
+            "queue_terminal_plan": terminal.to_json(),
+            "queue_entry": entry,
+            "mutation_path": list(mutation.path),
+        }
+        event = GameEvent(
+            "queue.entry.terminal",
+            source_id=str(entry.get("actor_id") or ""),
+            event_id=f"event:{state.event_index}:queue_terminal:{terminal.entry_id}:{terminal.disposition}",
+            window="queue",
+            process_only=True,
+            payload=payload,
+        )
+        record = SettlementRecord(
+            record_type="queue_entry_terminal",
+            source="queue_system",
+            mutation_id=mutation.stable_id(),
+            process_only=False,
+            payload=payload,
+            trace=terminal.source_trace,
+        ).to_json()
+        return QueueEntryTerminalResult(terminal, (mutation,), (event,), (record,))
+
 
 def _first_nonempty_tuple(*values: Any) -> tuple[str, ...]:
     for value in values:
@@ -1111,6 +1387,99 @@ def _nonempty_tuple(value: Any) -> tuple[str, ...]:
     if isinstance(value, (tuple, list)):
         return tuple(str(item) for item in value if isinstance(item, str) and item)
     return ()
+
+
+def _waiting_for_other_window(state: BattleState, entry: dict[str, JSONValue]) -> bool:
+    if str(entry.get("status") or "") != "waiting_window":
+        return False
+    waiting = _nonempty_tuple(entry.get("waiting_for_windows"))
+    if not waiting:
+        return False
+    current = str(state.global_flags.get("current_window") or "")
+    return current not in waiting
+
+
+def _source_status_blocked_reason(state: BattleState, entry: dict[str, JSONValue]) -> str:
+    policy = entry.get("cancel_policy") if isinstance(entry.get("cancel_policy"), dict) else {}
+    if policy.get("requires_source_status_active") is not True:
+        return ""
+    instance_id = str(policy.get("source_status_instance_id") or entry.get("source_id") or "")
+    owner_id = str(policy.get("source_status_owner_id") or entry.get("owner_id") or entry.get("actor_id") or "")
+    owner = state.units.get(owner_id)
+    if owner is None or not instance_id:
+        return "queue_source_status_inactive"
+    details = owner.flags.get("status_details", ())
+    active = any(
+        isinstance(detail, dict)
+        and str(detail.get("instance_id") or "") == instance_id
+        and not str(detail.get("lifecycle_state") or "active").startswith(("expired", "removed"))
+        for detail in details
+        if isinstance(details, (list, tuple))
+    )
+    return "" if active else "queue_source_status_inactive"
+
+
+def _expiration_blocked_reason(state: BattleState, entry: dict[str, JSONValue]) -> str:
+    policy = entry.get("expiration_policy") if isinstance(entry.get("expiration_policy"), dict) else {}
+    expires_at = policy.get("expires_at_event_index")
+    if isinstance(expires_at, (int, float)) and not isinstance(expires_at, bool):
+        if state.event_index > int(expires_at):
+            return "queue_window_expired:event_index"
+    valid_windows = _nonempty_tuple(policy.get("valid_windows"))
+    if policy.get("expire_on_window_mismatch") is True and valid_windows:
+        current = str(state.global_flags.get("current_window") or "")
+        if current not in valid_windows:
+            return f"queue_window_expired:{current or 'missing'}"
+    return ""
+
+
+def _terminal_source_trace(plan: QueueDrainPlan) -> dict[str, JSONValue]:
+    entry_source = plan.queue_entry.get("source_trace") if isinstance(plan.queue_entry, dict) else None
+    trace = plan.source_trace if isinstance(plan.source_trace, dict) else {}
+    return {
+        **trace,
+        **({"queue_entry_source": entry_source} if isinstance(entry_source, dict) and entry_source else {}),
+        "queue_intent_id": plan.queue_intent_id,
+        "queue_resolution_id": plan.queue_resolution_id,
+    }
+
+
+def _admitted_wait_windows(
+    cancel_policy: dict[str, JSONValue],
+    source_trace: dict[str, JSONValue],
+) -> tuple[str, ...]:
+    if cancel_policy.get("wait_policy_admitted") is not True:
+        return ()
+    return _nonempty_tuple(cancel_policy.get("wait_for_windows"))
+
+
+def _admitted_retarget_ids(
+    state: BattleState,
+    cancel_policy: dict[str, JSONValue],
+    source_trace: dict[str, JSONValue],
+) -> tuple[str, ...]:
+    if cancel_policy.get("retarget_policy_admitted") is not True:
+        return ()
+    target_ids = _nonempty_tuple(cancel_policy.get("retarget_target_ids"))
+    lifecycle = UnitLifecycleSystem()
+    if not target_ids or not all(lifecycle.can_target(state, target_id, allow_defeated=False)[0] for target_id in target_ids):
+        return ()
+    return target_ids
+
+
+def _is_invalid_entry_reason(reason: str) -> bool:
+    prefixes = (
+        "queue_action_actor_",
+        "queue_action_target_",
+        "queue_source_status_",
+        "queue_window_expired",
+        "queue_entry_",
+        "queue_priority_",
+        "queue_window_ir_",
+        "queue_window_family_",
+        "queue_expiration_policy_",
+    )
+    return reason.startswith(prefixes)
 
 
 def _units_by_relative_side(state: BattleState, actor_id: str, *, enemy: bool) -> tuple[str, ...]:

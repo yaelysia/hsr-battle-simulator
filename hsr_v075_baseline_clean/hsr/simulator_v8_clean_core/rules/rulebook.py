@@ -1,11 +1,21 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Callable, Iterable, TypeVar
 
+from .engine_rule_registry import (
+    EngineRuleRegistry,
+    ENGINE_RULE_REGISTRY_VERSION,
+    KILL_ENERGY_RULE_APPLICABILITY,
+    TIMELINE_RULE_APPLICABILITY,
+    ULTIMATE_COST_RULE_APPLICABILITY,
+    engine_rule_admission_reason,
+)
 from .ir import (
     AbilityPhaseIR,
     AbilityTaskIR,
     ActionAbilityBindingIR,
+    ActionAdmissionIR,
     ActionDefinitionIR,
     ActionDelayEmissionIR,
     ActionEventIR,
@@ -27,7 +37,9 @@ from .ir import (
     CombatantProfileIR,
     ConditionIR,
     DamageEmissionIR,
+    DamageFormulaRuleIR,
     DamageModifierIR,
+    DamageRouteRuleIR,
     EffectIR,
     ExtraActionPolicyIR,
     FormulaIR,
@@ -42,6 +54,7 @@ from .ir import (
     RuleEntity,
     SkillContinuationIR,
     SkillFormulaBindingIR,
+    ShieldPriorityRuleIR,
     StandaloneAbilityGraphIR,
     StatusCallbackIR,
     StatusCallbackTaskIR,
@@ -85,7 +98,7 @@ class RuleBook:
             self,
             "_modifier_definitions_by_name",
             {
-                key: tuple(sorted(value, key=lambda item: (item.source.source_path, item.entity_id)))
+                key: tuple(sorted(value, key=lambda item: item.entity_id))
                 for key, value in modifier_definitions_by_name.items()
             },
         )
@@ -93,7 +106,7 @@ class RuleBook:
             self,
             "_status_entities_by_modifier",
             {
-                key: tuple(sorted(value, key=lambda item: (item.source.source_path, item.entity_id)))
+                key: tuple(sorted(value, key=lambda item: item.entity_id))
                 for key, value in status_entities_by_modifier.items()
             },
         )
@@ -559,7 +572,7 @@ class RuleBook:
             self,
             "_status_callbacks_by_modifier_event",
             {
-                key: tuple(sorted(value, key=lambda item: item.callback_id))
+                key: tuple(sorted(value, key=lambda item: item.execution_order))
                 for key, value in status_callbacks_by_modifier_event.items()
             },
         )
@@ -567,7 +580,7 @@ class RuleBook:
             self,
             "_status_callbacks_by_event",
             {
-                key: tuple(sorted(value, key=lambda item: (item.modifier_name, item.callback_id)))
+                key: tuple(sorted(value, key=lambda item: item.execution_order))
                 for key, value in status_callbacks_by_event.items()
             },
         )
@@ -575,7 +588,7 @@ class RuleBook:
             self,
             "_status_callbacks_by_event_scope",
             {
-                key: tuple(sorted(value, key=lambda item: (item.modifier_name, item.callback_id)))
+                key: tuple(sorted(value, key=lambda item: item.execution_order))
                 for key, value in status_callbacks_by_event_scope.items()
             },
         )
@@ -583,7 +596,7 @@ class RuleBook:
             self,
             "_status_callbacks_by_modifier_event_scope",
             {
-                key: tuple(sorted(value, key=lambda item: item.callback_id))
+                key: tuple(sorted(value, key=lambda item: item.execution_order))
                 for key, value in status_callbacks_by_modifier_event_scope.items()
             },
         )
@@ -766,7 +779,7 @@ class RuleBook:
             self,
             "_standalone_ability_graphs_by_name",
             {
-                key: tuple(sorted(value, key=lambda item: (item.source.source_path, item.standalone_ability_graph_id)))
+                key: tuple(sorted(value, key=lambda item: item.standalone_ability_graph_id))
                 for key, value in standalone_ability_graphs_by_name.items()
             },
         )
@@ -774,6 +787,32 @@ class RuleBook:
             self,
             "_combatant_action_sets",
             {action_set.entity_ref: action_set for action_set in self.ir.combatant_action_sets},
+        )
+        action_admissions, action_admission_conflicts = _unique_index(
+            self.ir.action_admissions,
+            lambda admission: admission.admission_id,
+        )
+        object.__setattr__(self, "_action_admissions", action_admissions)
+        object.__setattr__(self, "_action_admission_conflicts", action_admission_conflicts)
+        action_admissions_by_owner_action: dict[
+            tuple[str, str, int], list[ActionAdmissionIR]
+        ] = {}
+        for admission in self.ir.action_admissions:
+            action_admissions_by_owner_action.setdefault(
+                (
+                    admission.owner_entity_ref,
+                    admission.action_id,
+                    admission.action_level,
+                ),
+                [],
+            ).append(admission)
+        object.__setattr__(
+            self,
+            "_action_admissions_by_owner_action",
+            {
+                key: tuple(sorted(value, key=lambda item: item.admission_id))
+                for key, value in action_admissions_by_owner_action.items()
+            },
         )
         object.__setattr__(
             self,
@@ -784,6 +823,21 @@ class RuleBook:
             self,
             "_resource_rules",
             {rule.resource_rule_id: rule for rule in self.ir.resource_rules},
+        )
+        object.__setattr__(
+            self,
+            "_damage_formula_rules",
+            {rule.damage_formula_rule_id: rule for rule in self.ir.damage_formula_rules},
+        )
+        object.__setattr__(
+            self,
+            "_damage_route_rules",
+            {rule.damage_route_rule_id: rule for rule in self.ir.damage_route_rules},
+        )
+        object.__setattr__(
+            self,
+            "_shield_priority_rules",
+            {rule.shield_priority_rule_id: rule for rule in self.ir.shield_priority_rules},
         )
         object.__setattr__(
             self,
@@ -801,11 +855,12 @@ class RuleBook:
                 for key, value in super_break_emissions_by_template.items()
             },
         )
-        object.__setattr__(
-            self,
-            "_target_expressions",
-            {expression.target_expression_id: expression for expression in self.ir.target_expressions},
+        target_expressions, target_expression_conflicts = _unique_index(
+            self.ir.target_expressions,
+            lambda expression: expression.target_expression_id,
         )
+        object.__setattr__(self, "_target_expressions", target_expressions)
+        object.__setattr__(self, "_target_expression_conflicts", target_expression_conflicts)
         wave_definitions_by_stage: dict[str, list[WaveDefinitionIR]] = {}
         wave_entries_by_definition_wave: dict[tuple[str, int], list[WaveMonsterEntryIR]] = {}
         for definition in self.ir.wave_definitions:
@@ -837,13 +892,25 @@ class RuleBook:
             },
         )
         object.__setattr__(self, "_effects", {effect.effect_id: effect for effect in self.ir.effects})
-        object.__setattr__(self, "_conditions", {condition.condition_id: condition for condition in self.ir.conditions})
+        conditions, condition_conflicts = _unique_index(
+            self.ir.conditions,
+            lambda condition: condition.condition_id,
+        )
+        object.__setattr__(self, "_conditions", conditions)
+        object.__setattr__(self, "_condition_conflicts", condition_conflicts)
         object.__setattr__(self, "_triggers", {trigger.trigger_id: trigger for trigger in self.ir.triggers})
-        object.__setattr__(self, "_formulas", {formula.formula_id: formula for formula in self.ir.formulas})
+        formulas, formula_conflicts = _unique_index(
+            self.ir.formulas,
+            lambda formula: formula.formula_id,
+        )
+        object.__setattr__(self, "_formulas", formulas)
+        object.__setattr__(self, "_formula_conflicts", formula_conflicts)
         triggers_by_modifier: dict[str, list[TriggerIR]] = {}
         triggers_by_modifier_event: dict[tuple[str, str], list[TriggerIR]] = {}
         for trigger in self.ir.triggers:
-            modifier_name = trigger.source.raw_id
+            modifier_name = trigger.modifier_name
+            if not modifier_name:
+                continue
             triggers_by_modifier.setdefault(modifier_name, []).append(trigger)
             triggers_by_modifier_event.setdefault((modifier_name, trigger.event), []).append(trigger)
         object.__setattr__(
@@ -911,7 +978,7 @@ class RuleBook:
         card = self.character_data_card(card_id)
         if card is None:
             return {}
-        bindings = card.source.evidence.get("character_config_dynamic_value_bindings")
+        bindings = card.dynamic_value_bindings
         if not isinstance(bindings, dict):
             return {}
         return _json_object_copy(bindings)
@@ -1011,14 +1078,38 @@ class RuleBook:
     def condition(self, condition_id: str) -> ConditionIR | None:
         return self._conditions.get(condition_id)
 
+    def condition_resolution(self, condition_id: str) -> tuple[ConditionIR | None, str]:
+        if condition_id in self._condition_conflicts:
+            return None, "condition_reference_ambiguous"
+        condition = self._conditions.get(condition_id)
+        return (condition, "" if condition is not None else "condition_reference_missing")
+
     def trigger(self, trigger_id: str) -> TriggerIR | None:
         return self._triggers.get(trigger_id)
 
     def formula(self, formula_id: str) -> FormulaIR | None:
         return self._formulas.get(formula_id)
 
+    def formula_resolution(self, formula_id: str) -> tuple[FormulaIR | None, str]:
+        if formula_id in self._formula_conflicts:
+            return None, "formula_reference_ambiguous"
+        formula = self._formulas.get(formula_id)
+        return (formula, "" if formula is not None else "formula_reference_missing")
+
     def target_expression(self, target_expression_id: str) -> TargetExpressionIR | None:
         return self._target_expressions.get(target_expression_id)
+
+    def target_expression_resolution(
+        self,
+        target_expression_id: str,
+    ) -> tuple[TargetExpressionIR | None, str]:
+        if target_expression_id in self._target_expression_conflicts:
+            return None, "target_expression_reference_ambiguous"
+        expression = self._target_expressions.get(target_expression_id)
+        return (
+            expression,
+            "" if expression is not None else "target_expression_reference_missing",
+        )
 
     def target_expressions(self) -> tuple[TargetExpressionIR, ...]:
         return self.ir.target_expressions
@@ -1286,17 +1377,89 @@ class RuleBook:
     def combatant_action_sets(self) -> tuple[CombatantActionSetIR, ...]:
         return tuple(sorted(self.ir.combatant_action_sets, key=lambda item: item.combatant_action_set_id))
 
+    def action_admission(self, admission_id: str) -> ActionAdmissionIR | None:
+        return self._action_admissions.get(admission_id)
+
+    def action_admissions_for(
+        self,
+        owner_entity_ref: str,
+        action_id: str,
+        action_level: int,
+    ) -> tuple[ActionAdmissionIR, ...]:
+        return self._action_admissions_by_owner_action.get(
+            (owner_entity_ref, action_id, action_level),
+            (),
+        )
+
+    def action_admission_resolution(
+        self,
+        owner_entity_ref: str,
+        action_id: str,
+        action_level: int,
+        submission_mode: str,
+    ) -> tuple[ActionAdmissionIR | None, str]:
+        candidates = self.action_admissions_for(owner_entity_ref, action_id, action_level)
+        if not candidates:
+            return None, "action_admission_missing"
+        admitted = tuple(
+            candidate
+            for candidate in candidates
+            if submission_mode in candidate.submission_modes
+        )
+        if not admitted:
+            roles = ",".join(sorted({candidate.action_role for candidate in candidates}))
+            return None, f"action_submission_mode_not_admitted:{submission_mode}:{roles}"
+        if len(admitted) != 1:
+            return None, "action_admission_ambiguous"
+        admission = admitted[0]
+        if admission.coverage_status != "executable":
+            return None, admission.blocked_reason or (
+                f"action_admission_not_executable:{admission.coverage_status}"
+            )
+        return admission, ""
+
     def timeline_rule(self, timeline_rule_id: str) -> TimelineRuleIR | None:
         return self._timeline_rules.get(timeline_rule_id)
 
     def default_timeline_rule(self) -> TimelineRuleIR:
-        rules = sorted(self.ir.timeline_rules, key=lambda item: item.timeline_rule_id)
+        rule, reason = self.select_timeline_rule()
+        if rule is None:
+            raise KeyError(reason)
+        return rule
+
+    def select_timeline_rule(self) -> tuple[TimelineRuleIR | None, str]:
+        rules = tuple(sorted(self.ir.timeline_rules, key=lambda item: item.timeline_rule_id))
         if not rules:
-            raise KeyError("missing timeline rule")
-        return rules[0]
+            return None, "timeline_engine_rule_missing"
+        if len(rules) != 1:
+            return None, "timeline_engine_rule_ambiguous"
+        reason = engine_rule_admission_reason(
+            rules[0],
+            expected_applicability=TIMELINE_RULE_APPLICABILITY,
+        )
+        return (None, reason) if reason else (rules[0], "")
 
     def resource_rule(self, resource_rule_id: str) -> ResourceRuleIR | None:
         return self._resource_rules.get(resource_rule_id)
+
+    def damage_formula_rule(self, damage_formula_rule_id: str) -> DamageFormulaRuleIR | None:
+        return self._damage_formula_rules.get(damage_formula_rule_id)
+
+    def damage_route_rule(self, damage_route_rule_id: str) -> DamageRouteRuleIR | None:
+        return self._damage_route_rules.get(damage_route_rule_id)
+
+    def shield_priority_rule(self, shield_priority_rule_id: str) -> ShieldPriorityRuleIR | None:
+        return self._shield_priority_rules.get(shield_priority_rule_id)
+
+    def engine_rule_registry(self) -> EngineRuleRegistry:
+        return EngineRuleRegistry(
+            registry_version=ENGINE_RULE_REGISTRY_VERSION,
+            timeline_rules=self.ir.timeline_rules,
+            resource_rules=self.ir.resource_rules,
+            damage_formula_rules=self.ir.damage_formula_rules,
+            damage_route_rules=self.ir.damage_route_rules,
+            shield_priority_rules=self.ir.shield_priority_rules,
+        )
 
     def resource_rules_by_kind(self, rule_kind: str) -> tuple[ResourceRuleIR, ...]:
         return tuple(
@@ -1307,16 +1470,35 @@ class RuleBook:
         )
 
     def default_ultimate_energy_cost_rule(self) -> ResourceRuleIR:
-        rules = self.resource_rules_by_kind("ultimate_energy_cost")
-        if not rules:
-            raise KeyError("missing ultimate energy cost resource rule")
-        return rules[0]
+        rule, reason = self.select_resource_rule("ultimate_energy_cost")
+        if rule is None:
+            raise KeyError(reason)
+        return rule
 
     def default_kill_energy_gain_rule(self) -> ResourceRuleIR:
-        rules = self.resource_rules_by_kind("kill_energy_gain")
+        rule, reason = self.select_resource_rule("kill_energy_gain")
+        if rule is None:
+            raise KeyError(reason)
+        return rule
+
+    def select_resource_rule(self, rule_kind: str) -> tuple[ResourceRuleIR | None, str]:
+        rules = self.resource_rules_by_kind(rule_kind)
         if not rules:
-            raise KeyError("missing kill energy gain resource rule")
-        return rules[0]
+            return None, f"resource_engine_rule_missing:{rule_kind}"
+        if len(rules) != 1:
+            return None, f"resource_engine_rule_ambiguous:{rule_kind}"
+        applicability = {
+            "ultimate_energy_cost": ULTIMATE_COST_RULE_APPLICABILITY,
+            "kill_energy_gain": KILL_ENERGY_RULE_APPLICABILITY,
+        }.get(rule_kind)
+        if applicability is None:
+            return None, f"resource_engine_rule_kind_not_admitted:{rule_kind}"
+        reason = engine_rule_admission_reason(
+            rules[0],
+            expected_applicability=applicability,
+            numeric_value_required=rule_kind == "kill_energy_gain",
+        )
+        return (None, reason) if reason else (rules[0], "")
 
     def super_break_emission(self, emission_id: str) -> SuperBreakEmissionIR | None:
         return self._super_break_emissions.get(emission_id)
@@ -1387,6 +1569,27 @@ def _json_object_copy(value: dict[str, JSONValue]) -> dict[str, JSONValue]:
     for key, item in value.items():
         copied[str(key)] = _json_copy(item)
     return copied
+
+
+_IndexItem = TypeVar("_IndexItem")
+
+
+def _unique_index(
+    items: Iterable[_IndexItem],
+    key_getter: Callable[[_IndexItem], str],
+) -> tuple[dict[str, _IndexItem], frozenset[str]]:
+    grouped: dict[str, list[_IndexItem]] = {}
+    for item in items:
+        grouped.setdefault(key_getter(item), []).append(item)
+    conflicts = frozenset(key for key, candidates in grouped.items() if len(candidates) != 1)
+    return (
+        {
+            key: candidates[0]
+            for key, candidates in grouped.items()
+            if key not in conflicts
+        },
+        conflicts,
+    )
 
 
 def _json_copy(value: JSONValue) -> JSONValue:

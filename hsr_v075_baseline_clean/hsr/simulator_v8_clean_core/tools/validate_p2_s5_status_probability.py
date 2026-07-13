@@ -14,7 +14,7 @@ from ..core.source_audit import RuntimeSourceAuditor
 from ..rules.ir import EffectIR
 from ..rules.rulebook import RuleBook
 from ..systems.status import StatusApplicationResult, StatusSystem
-from ..systems.wave import _unit_from_wave_entry
+from ..systems.unit_spawn import UnitSpawnRequest, UnitSpawnSystem
 from ..tbgd.lowering import TBGDLowering
 from ..tbgd.paths import find_tbgd_root
 from .io import write_json
@@ -109,8 +109,8 @@ def run_validation(package_root: Path, tbgd_root: Path, output_dir: Path) -> dic
 
 def _dynamic_chance_case(rules: RuleBook) -> dict[str, Any]:
     candidate = _select_dynamic_chance_candidate(rules)
-    success_payload = _rng_payload(candidate, "status_apply", "base_chance", "success")
-    fail_payload = _rng_payload(candidate, "status_apply", "base_chance", "fail")
+    success_payload = _rng_payload(candidate, "status_apply", "final_status_application", "applied")
+    fail_payload = _rng_payload(candidate, "status_apply", "final_status_application", "not_applied")
     success = _apply_candidate(rules, candidate, chance_value=0.5, event_payload=success_payload)
     failure = _apply_candidate(rules, candidate, chance_value=0.5, event_payload=fail_payload)
     repeat_failure = _apply_candidate(rules, candidate, chance_value=0.5, event_payload=fail_payload)
@@ -161,7 +161,7 @@ def _effect_hit_case(rules: RuleBook, candidate: dict[str, Any]) -> dict[str, An
     checks = {
         "effect_hit_applies_without_base_rng": result.ok and bool(result.mutations),
         "effect_hit_rate_recorded": chance_admission.get("effect_hit_rate") == 1.0,
-        "base_success_probability_capped": chance_admission.get("base_success_probability") == 1.0,
+        "final_success_probability_capped": chance_admission.get("final_success_probability") == 1.0,
         "no_status_apply_rng_needed": not _has_rng(result, "status_apply"),
         "source_audit": RuntimeSourceAuditor(rules).validate_transition(
             _status_transition(state, result, "p2_s5:effect_hit")
@@ -178,14 +178,13 @@ def _effect_hit_case(rules: RuleBook, candidate: dict[str, Any]) -> dict[str, An
 
 def _effect_resistance_case(rules: RuleBook, candidate: dict[str, Any]) -> dict[str, Any]:
     state = _state_with_resource(candidate, "target", "effect_resistance", 1.0)
-    payload = _rng_payload(candidate, "status_resist", "effect_resistance", "resisted")
-    result = _apply_candidate(rules, candidate, chance_value=1.0, state=state, event_payload=payload)["result"]
-    repeat = _apply_candidate(rules, candidate, chance_value=1.0, state=state, event_payload=payload)["result"]
+    result = _apply_candidate(rules, candidate, chance_value=1.0, state=state)["result"]
+    repeat = _apply_candidate(rules, candidate, chance_value=1.0, state=state)["result"]
     checks = {
         "resisted_no_mutation": not result.mutations,
-        "resisted_record_type": _has_record(result, "status_resisted"),
-        "resisted_rng_event": _has_rng(result, "status_resist"),
-        "resisted_choice_replayed": _rng_choice_source(result) == "explicit_ledger",
+        "resisted_record_type": _has_record(result, "status_apply_failed"),
+        "zero_final_probability_no_rng": not result.rng_events,
+        "single_final_decision_model": not _has_rng(result, "status_resist"),
         "state_unchanged": _snapshot_hash(state) == _snapshot_hash(MutationReducer().apply_all(state, result.mutations)),
         "same_choice_same_result": _result_signature(result) == _result_signature(repeat),
     }
@@ -264,6 +263,30 @@ def _profile_status_resistance_case(rules: RuleBook) -> dict[str, Any]:
     }
 
 
+def _unit_from_wave_entry(rules: RuleBook, definition, entry):
+    template = rules.unit_birth_template(entry.birth_template_id)
+    if template is None:
+        raise ValueError("wave_unit_birth_template_missing")
+    request = UnitSpawnRequest(
+        spawn_kind="wave_enemy",
+        unit_id=f"validation:p2_s5:{entry.entry_id}",
+        birth_template_id=entry.birth_template_id,
+        entity_ref=entry.monster_entity_ref,
+        source_id=definition.wave_definition_id,
+        entry_id=entry.entry_id,
+        wave_definition_id=definition.wave_definition_id,
+        stage_id=definition.stage_id,
+        wave_index=entry.wave_index,
+        position=entry.position,
+        source_trace=definition.source.to_json(),
+        entry_source_trace=entry.source.to_json(),
+    )
+    plan = UnitSpawnSystem().plan(template, request)
+    if not plan.ok:
+        raise ValueError(plan.blocked_reason or "wave_unit_spawn_plan_blocked")
+    return plan.to_unit(expected_request=request)
+
+
 def _chance_resist_immunity_matrix(rules: RuleBook) -> dict[str, Any]:
     chance_kind_counts = Counter()
     status_type_counts = Counter()
@@ -289,7 +312,7 @@ def _chance_resist_immunity_matrix(rules: RuleBook) -> dict[str, Any]:
         "effect_hit": _family_entry("executable", 1, "runtime reads caster resources.effect_hit_rate; character card maps StatusProbabilityBase to effect_hit_rate."),
         "effect_resistance": _family_entry("executable", profile_status_resistance, "monster StatusResistanceBase projects to resources.effect_resistance."),
         "base_chance_failure": _family_entry("executable", chance_kind_counts.get("dynamic_hash", 0), "explicit RNG ledger can select failed base chance."),
-        "effect_resisted": _family_entry("executable", profile_status_resistance, "effect_resistance branch records status_resisted and no mutation."),
+        "effect_resisted": _family_entry("executable", profile_status_resistance, "effect resistance contributes to one final application probability; zero probability needs no RNG."),
         "status_immunity": _family_entry("boundary_only", 1, "runtime admits explicit status_immunities source; no status table immunity field is projected."),
         "control_resistance": _family_entry("source_absent_not_required", 0, "no separate control-resistance status source is projected in current IR."),
         "control_immunity": _family_entry("source_absent_not_required", 0, "no separate control-immunity status source is projected in current IR."),
@@ -330,6 +353,14 @@ def _select_dynamic_chance_candidate(rules: RuleBook) -> dict[str, Any]:
         modifier_name = standard.get("modifier_name")
         if not isinstance(modifier_name, str) or not modifier_name:
             continue
+        status_entity = rules.status_entity_for_modifier(modifier_name)
+        status_type = str(
+            status_entity.fields.get("StatusType")
+            if status_entity is not None
+            else ""
+        ).lower()
+        if status_type not in {"debuff", "control"}:
+            continue
         if _modifier_definition_for_effect(rules, effect) is None:
             continue
         target_id = _target_id_for_standard(standard)
@@ -347,7 +378,7 @@ def _select_dynamic_chance_candidate(rules: RuleBook) -> dict[str, Any]:
             rules,
             candidate,
             chance_value=0.5,
-            event_payload=_rng_payload(candidate, "status_apply", "base_chance", "success"),
+            event_payload=_rng_payload(candidate, "status_apply", "final_status_application", "applied"),
         )["result"]
         if result.ok and result.mutations:
             return candidate

@@ -25,15 +25,19 @@ from ..core.transition_contract import TransitionContractValidator
 from ..rules.rulebook import RuleBook
 from ..scenarios import IdentityResolver, ScenarioLoader, ScenarioStateBuilder
 from ..systems.action_availability import ActionAvailabilitySystem
+from ..systems.break_system import BreakSystem
 from ..systems.effect import EffectRegistry
 from ..systems.status import StatusSystem
 from ..systems.target import TargetPolicy, TargetSystem
+from ..systems.toughness import ToughnessPacket
 from ..tbgd.lowering import TBGDLowering
 from ..tbgd.paths import find_tbgd_root
 from .io import write_json
 from .static_checks import run_static_checks
 from .validate_p1_1_unit_lifecycle import _damage_defeat_case
 from .validate_p1_4_status_system import (
+    _LifecycleResultAdapter,
+    _base_state as _status_base_state,
     _chance_cases,
     _control_gate_case,
     _dispel_case,
@@ -47,6 +51,7 @@ from .validate_p1_4_status_system import (
     _stack_only_refresh_case,
     _stack_reduce_case,
     _stack_refresh_source_counts,
+    _status_transition,
 )
 from .validate_p1_5_queue_window_system import (
     _actor_target_lifecycle_case,
@@ -75,6 +80,7 @@ from .validate_p1_8_battle_setup import (
     _select_initial_status_case,
     _select_two_wave_definition,
 )
+from .validate_v0_232 import _break_status_checks, _break_transition_checks, _select_break_case
 
 
 VALIDATION_VERSION = "p1_9_phase1_aggregate"
@@ -110,9 +116,11 @@ def run_validation(
     *,
     write_large_artifacts: bool = False,
     include_direct_regression_summaries: bool = False,
+    rules: RuleBook | None = None,
 ) -> dict[str, Any]:
-    ir = TBGDLowering(tbgd_root).build()
-    rules = RuleBook(ir)
+    if rules is None:
+        rules = RuleBook(TBGDLowering(tbgd_root).build())
+    ir = rules.ir
 
     action = _select_avatar_action(rules)
     enemy_ref = _select_enemy_entity(rules)
@@ -225,7 +233,7 @@ def run_validation(
             "p1_3.servant_runtime",
             "P1-3",
             "executable",
-            "passed" if servant_case["checks"]["ok"] else "failed",
+            "passed" if servant_case["setup_checks"]["ok"] else "failed",
             positive_case_count=1,
             negative_case_count=1,
             mutation_count=servant_case["setup_mutation_count"],
@@ -235,7 +243,7 @@ def run_validation(
             source_audit_ok=servant_case["source_trace_count"] > 0,
             notes=[
                 "servant definition is admitted from AvatarServantConfig/AvatarServantSkillConfig",
-                "spawn/action availability/target registry are validated as executable runtime paths",
+                "spawn and target registry are executable; incomplete servant action graphs are inherited separately as an implementation gap",
             ],
         ),
         _item(
@@ -243,7 +251,7 @@ def run_validation(
             "P1-4",
             "executable",
             "passed" if setup_case["status"]["ok"] and direct_cases["status_regression"]["checks"]["ok"] else "failed",
-            positive_case_count=8,
+            positive_case_count=9,
             negative_case_count=4,
             mutation_count=setup_case["status"]["mutation_count"],
             blocked_count=1 if blocked_status_case["checks"]["ok"] else 0,
@@ -252,7 +260,7 @@ def run_validation(
             source_audit_ok=status_transition_case["source_audit"]["ok"],
             notes=[
                 "setup source trace counted from nested status lifecycle/status_instance; audit uses direct status transition",
-                "direct P1-4 regression covers refresh, stack, chance/resist/immunity, duration, expire, DoT, deterministic dispel, and blocked boundaries",
+                "direct P1-4 regression covers refresh, stack, chance/resist/immunity, duration, expire, DoT, deterministic dispel, real break status mutation, and blocked boundaries",
             ],
         ),
         _item(
@@ -392,12 +400,21 @@ def run_validation(
         if item["source_state"] == "implementation_missing"
     ]
     minimum_slice_blockers.extend(item_id for item_id in implementation_missing_items if item_id not in minimum_slice_blockers)
+    full_acceptance_blockers = [
+        row["item_id"]
+        for row in source_gap_matrix
+        if row["phase1_full_acceptance_blocker"] is True
+    ]
+    full_acceptance_blockers.extend(
+        item_id for item_id in implementation_missing_items if item_id not in full_acceptance_blockers
+    )
     ok = (
         all(item["validation_state"] in {"passed", "expected_blocked", "skipped_by_scope"} for item in matrix)
         and all(_matrix_item_audit_ok(item) for item in matrix)
         and all(_check_ok(value) for value in checks.values())
     )
     phase1_minimum_battle_slice = ok and not minimum_slice_blockers
+    phase1_full_acceptance = ok and not full_acceptance_blockers
     summary = {
         "version": VALIDATION_VERSION,
         "baseline_version": BASELINE_VERSION,
@@ -406,8 +423,8 @@ def run_validation(
         "phase1_repair_substrate_accepted": ok,
         "phase1_minimum_battle_slice": phase1_minimum_battle_slice,
         "phase1_minimum_battle_slice_blocked_by": minimum_slice_blockers,
-        "phase1_full_acceptance": phase1_minimum_battle_slice,
-        "phase1_full_acceptance_blocked_by": minimum_slice_blockers,
+        "phase1_full_acceptance": phase1_full_acceptance,
+        "phase1_full_acceptance_blocked_by": full_acceptance_blockers,
         "build": {
             "tbgd_root": tbgd_root.as_posix(),
             "selection_policy": {
@@ -439,6 +456,37 @@ def run_validation(
             "implementation_missing": "the phase objective still lacks lowering/admission/runtime support and blocks the P1 minimum battle slice",
         },
         "checks": checks,
+        "direct_regression_checks": {
+            "lifecycle": direct_cases["lifecycle"]["checks"],
+            "servant_setup": servant_case["setup_checks"],
+            "servant_action": servant_case["action_checks"],
+            "status": direct_cases["status_regression"]["checks"],
+            "status_cases": {
+                key: value.get("checks", {})
+                for key, value in direct_cases["status_regression"].get("cases", {}).items()
+                if key in {"chance", "control", "stack_reduce", "break_status"} and isinstance(value, dict)
+            },
+            "break_status_evidence": direct_cases["status_regression"]
+            .get("cases", {})
+            .get("break_status", {}),
+            "queue": direct_cases["queue_regression"]["checks"],
+            "queue_cases": {
+                key: value.get("checks", {})
+                for key, value in direct_cases["queue_regression"].get("cases", {}).items()
+                if key in {"mandatory_insert_action", "insert_ability", "selectable_ultimate", "actor_target_lifecycle"}
+                and isinstance(value, dict)
+            },
+            "queue_case_evidence": {
+                "actor_target_lifecycle": {
+                    key: direct_cases["queue_regression"]
+                    .get("cases", {})
+                    .get("actor_target_lifecycle", {})
+                    .get(key, "")
+                    for key in ("actor_terminal_reason", "target_terminal_reason")
+                }
+            },
+            "target": target_case["checks"],
+        },
         "resource_policy": {
             "single_tbgd_lowering": True,
             "default_high_io_scripts_run": False,
@@ -546,7 +594,7 @@ def _status_regression_cases(rules: RuleBook) -> dict[str, Any]:
         "stack_cap": _compact_case(stack_case),
         "refresh": _compact_case(_refresh_case(rules)),
         "stack_only_refresh": _compact_case(_stack_only_refresh_case(rules)),
-        "chance": _compact_case(_chance_cases(rules, stack_case["modifier_name"])),
+        "chance": _compact_case(_chance_cases(rules)),
         "control": _compact_case(_control_gate_case(rules, stack_case["status_detail"])),
         "duration_owner": _compact_case(_duration_owner_case(rules)),
         "expire_remove": _compact_case(_expire_remove_case(rules)),
@@ -554,12 +602,107 @@ def _status_regression_cases(rules: RuleBook) -> dict[str, Any]:
         "dispel": _compact_case(dispel_case),
         "random_dispel": _compact_case(_random_dispel_replay_case(rules, dispel_case)),
         "stack_reduce": _compact_case(_stack_reduce_case(rules)),
+        "break_status": _compact_case(_break_status_runtime_case(rules)),
     }
     checks = {key: _case_ok(value) for key, value in cases.items()}
     checks["ok"] = all(value for key, value in checks.items() if key != "ok")
     return {
         "checks": {"ok": checks["ok"], "checks": checks},
         "cases": cases,
+    }
+
+
+def _break_status_runtime_case(rules: RuleBook) -> dict[str, Any]:
+    case = _select_break_case(rules.ir, rules)
+    emission = case["emission"]
+    state = _status_base_state()
+    target = state.units["enemy:target"]
+    target = replace(target, toughness=0.0, max_toughness=max(target.max_toughness, 100.0))
+    state = replace(state, units={**state.units, target.unit_id: target})
+    packet = ToughnessPacket(
+        attacker_id="ally:actor",
+        target_id="enemy:target",
+        toughness_emission_id=emission.toughness_emission_id,
+        source_task_id=emission.source_task_id,
+        hit_profile_id=emission.hit_profile_id,
+        element_type=emission.element_type,
+        amount=None,
+        amount_expr=emission.toughness_amount_expr,
+        target_group=emission.target_group,
+        coverage_status="executable",
+        source_trace=emission.source.to_json(),
+        metadata={"primary_action_target_id": "enemy:target"},
+    )
+    result = BreakSystem(rules, EffectRegistry(StatusSystem(rules))).enter_break(state, packet)
+    transition = _status_transition(
+        state,
+        _LifecycleResultAdapter(result),
+        f"validation:real_break:{case['action'].action_id}",
+    )
+    transition_json = transition.to_json()
+    source_audit = RuntimeSourceAuditor(rules).validate_transition(transition)
+    replay = MutationReducer().replay_snapshot(state, result.mutations, result.after_state.snapshot().to_json())
+    traceability = SettlementTraceabilityValidator().validate(
+        transition.transaction.settlement,
+        transition.transaction.mutations,
+    )
+    transition_checks = _break_transition_checks(transition_json)
+    status_checks = _break_status_checks(case["break_status_emissions"], transition_json)
+    typed_targets: list[dict[str, Any]] = []
+    for emission in case["break_status_emissions"]:
+        if emission.coverage_status != "executable":
+            continue
+        effect = rules.effect(emission.effect_id)
+        standard = effect.payload.get("standard", {}) if effect is not None else {}
+        expression_id = standard.get("target_expression_id") if isinstance(standard, dict) else None
+        expression = rules.target_expression(expression_id) if isinstance(expression_id, str) else None
+        typed_targets.append(
+            {
+                "break_status_emission_id": emission.break_status_emission_id,
+                "effect_id": emission.effect_id,
+                "target_expression_id": expression_id or "",
+                "target_alias": expression.alias if expression is not None else "",
+                "coverage_status": expression.coverage_status if expression is not None else "missing",
+                "typed_node_present": expression is not None and expression.node is not None,
+            }
+        )
+    checks = {
+        "real_break_execution_ok": result.ok,
+        "real_break_after_state_matches_mutations": transition.after.to_json() == result.after_state.snapshot().to_json(),
+        "real_break_source_audit_ok": source_audit.ok,
+        "real_break_replay_ok": replay.ok,
+        "real_break_settlement_traceability_ok": traceability.ok,
+        "real_break_transition_ok": transition_checks.get("ok") is True,
+        "real_break_status_mutation_ok": status_checks.get("ok") is True,
+        "executable_break_targets_present": bool(typed_targets),
+        "executable_break_targets_typed": bool(typed_targets)
+        and all(
+            item["target_expression_id"]
+            and item["coverage_status"] == "executable"
+            and item["typed_node_present"] is True
+            for item in typed_targets
+        ),
+        "param_entity_target_preserved": any(item["target_alias"] == "ParamEntity" for item in typed_targets),
+    }
+    return {
+        "checks": {"ok": all(checks.values()), "checks": checks},
+        "execution_checks": {
+            "result_ok": result.ok,
+            "errors": list(result.errors),
+            "mutation_count": len(result.mutations),
+            "record_count": len(result.records),
+            "source_audit": source_audit.to_json(),
+            "replay": replay.to_json(),
+            "settlement_traceability": traceability.to_json(),
+        },
+        "transition_checks": transition_checks,
+        "status_checks": status_checks,
+        "typed_targets": typed_targets,
+        "selected_action": {
+            "action_id": case["action"].action_id,
+            "action_level": case["action"].level,
+            "element_type": case["emission"].element_type,
+        },
     }
 
 
@@ -572,7 +715,10 @@ def _queue_regression_cases(hsr_root: Path, rules: RuleBook) -> dict[str, Any]:
         "extra_turn": _compact_case(_extra_turn_case(rules.ir, rules)),
         "counter_route": _compact_case(counter_case),
         "family_gaps": _compact_case(
-            _queue_family_source_gaps(rules.ir, counter_executable=counter_case["checks"]["ok"])
+            _queue_family_source_gaps(
+                rules.ir,
+                counter_executable=counter_case.get("runtime_executable") is True,
+            )
         ),
         "actor_target_lifecycle": _compact_case(_actor_target_lifecycle_case(rules)),
         "conditional_queue": _compact_case(_conditional_queue_case(rules.ir, rules)),
@@ -809,10 +955,10 @@ def _aggregate_wave_case(rules: RuleBook, state: BattleState, wave_definition_id
 
 def _aggregate_target_case(state: BattleState, transition: BattleTransition) -> dict[str, Any]:
     system = TargetSystem()
-    explicit = system.resolve_explicit_targets(state, "ally:actor", ("enemy:target",), policy=TargetPolicy())
-    invalid = system.resolve_explicit_targets(state, "ally:actor", ("enemy:missing",), policy=TargetPolicy())
+    policy = TargetPolicy(target_relation="enemy")
+    explicit = system.resolve_explicit_targets(state, "ally:actor", ("enemy:target",), policy=policy)
+    invalid = system.resolve_explicit_targets(state, "ally:actor", ("enemy:missing",), policy=policy)
     checks = {
-        "transition_target_resolution_ok": _target_resolution_ok(transition.target_resolution),
         "explicit_target_ok": explicit.ok and explicit.resolution.selected == ("enemy:target",),
         "invalid_target_blocked": not invalid.ok,
         "invalid_target_no_rng": not invalid.rng_events,
@@ -882,8 +1028,23 @@ def _servant_initial_summon_case(rules: RuleBook, enemy_ref: str) -> dict[str, A
         and any(unit_id in caster_servant_result.target_ids for unit_id in servant_units),
     }
     checks["ok"] = all(value for key, value in checks.items() if key != "ok")
+    setup_check_names = {
+        "definition_executable",
+        "setup_not_blocked",
+        "servant_spawned",
+        "setup_mutation_present",
+        "runtime_tracks_servant",
+        "caster_servant_target_expression_present",
+        "caster_servant_target_resolves",
+    }
+    setup_checks = {key: value for key, value in checks.items() if key in setup_check_names}
+    setup_checks["ok"] = all(setup_checks.values())
+    action_checks = {"action_availability_ok": checks["action_availability_ok"]}
+    action_checks["ok"] = all(action_checks.values())
     return {
         "checks": {"ok": checks["ok"], "checks": checks},
+        "setup_checks": {"ok": setup_checks["ok"], "checks": setup_checks},
+        "action_checks": {"ok": action_checks["ok"], "checks": action_checks},
         "servant_definition_id": definition.servant_definition_id,
         "servant_ref": definition.servant_ref,
         "servant_unit_ids": list(servant_units),
@@ -1051,6 +1212,7 @@ def _source_gap_matrix(
                 reason=json.dumps(row, ensure_ascii=False, sort_keys=True) if row else "no current queue window sources",
                 runtime_guarded_path=True,
                 blocked_no_mutation=True,
+                minimum_slice_blocker=False,
             )
         )
     sort_cases = direct_cases["target_sort"].get("cases", {})
@@ -1080,6 +1242,24 @@ def _source_gap_matrix(
         )
     owner_case = fetch_cases.get("owner", {})
     owner_is_gap = _is_source_gap(owner_case)
+    rows.append(
+        _gap_row(
+            "p1_3.servant_action_graph",
+            "P1-3",
+            "servant action selected graph",
+            source_state="executable" if servant_case["action_checks"]["ok"] else "implementation_missing",
+            gap_classification="executable"
+            if servant_case["action_checks"]["ok"]
+            else "servant_selected_action_graph_incomplete",
+            evidence_mode="servant_action_availability",
+            reason="servant action is externally selectable"
+            if servant_case["action_checks"]["ok"]
+            else "servant is spawned and targetable, but its selected action graph contains unimplemented semantic nodes",
+            runtime_guarded_path=True,
+            blocked_no_mutation=True,
+            minimum_slice_blocker=False,
+        )
+    )
     rows.append(
         _gap_row(
             "p1_6.owner_fetch",
@@ -1132,11 +1312,11 @@ def _source_gap_matrix(
             "p1_8.servant_initial_setup",
             "P1-8",
             "servant initial setup",
-            source_state="executable" if servant_case["checks"]["ok"] else "implementation_missing",
-            gap_classification="executable" if servant_case["checks"]["ok"] else "servant_definition_runtime_setup_admission_gap",
+            source_state="executable" if servant_case["setup_checks"]["ok"] else "implementation_missing",
+            gap_classification="executable" if servant_case["setup_checks"]["ok"] else "servant_definition_runtime_setup_admission_gap",
             evidence_mode="servant_runtime_positive_case",
             reason="servant setup spawned a unit from executable ServantDefinitionIR"
-            if servant_case["checks"]["ok"]
+            if servant_case["setup_checks"]["ok"]
             else "servant setup positive case failed",
             runtime_guarded_path=True,
             blocked_no_mutation=True,
@@ -1172,6 +1352,7 @@ def _gap_row(
     runtime_guarded_path: bool,
     blocked_no_mutation: bool,
     blocked_records: list[dict[str, Any]] | None = None,
+    minimum_slice_blocker: bool | None = None,
 ) -> dict[str, Any]:
     if source_state not in SOURCE_STATES:
         raise ValueError(f"invalid source_state: {source_state}")
@@ -1188,8 +1369,11 @@ def _gap_row(
         "reason": reason,
         "runtime_guarded_path": runtime_guarded_path,
         "blocked_no_mutation": blocked_no_mutation,
-        "phase1_minimum_battle_slice_blocker": source_state
-        in {"lowering_gap", "admission_gap", "validation_gap", "implementation_missing"},
+        "phase1_minimum_battle_slice_blocker": (
+            source_state in {"lowering_gap", "admission_gap", "validation_gap", "implementation_missing"}
+            if minimum_slice_blocker is None
+            else minimum_slice_blocker
+        ),
         "phase1_full_acceptance_blocker": source_state
         in {"lowering_gap", "admission_gap", "validation_gap", "implementation_missing"},
         "blocked_records": blocked_records or [],
@@ -1517,6 +1701,8 @@ def _compact_case(case: Any) -> dict[str, Any]:
         "blocked_reason",
         "matching_classification",
         "matching_blocked_reason",
+        "actor_terminal_reason",
+        "target_terminal_reason",
         "action_event_coverage_status",
         "unknown_count",
         "assistant_count",
@@ -1526,6 +1712,13 @@ def _compact_case(case: Any) -> dict[str, Any]:
         "same_tag_insert_precheck_intent_count",
         "executable_window_count",
         "rows",
+        "selected_action",
+        "rejected_candidate_count",
+        "rejected_candidates",
+        "execution_checks",
+        "transition_checks",
+        "status_checks",
+        "typed_targets",
     ):
         if key in data:
             compact[key] = _json_safe(data[key])

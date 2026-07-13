@@ -7,7 +7,7 @@ from ..core.reducer import MutationReducer
 from ..core.settlement import SettlementRecord
 from ..core.transition_outcome import ExecutionNodeResult
 from ..rules.evaluator import EvaluationContext, NumericEvaluationContext, RuleEvaluator
-from ..rules.ir import AbilityPhaseIR, AbilityTaskIR, ActionDefinitionIR, IRSource
+from ..rules.ir import AbilityPhaseIR, AbilityTaskIR, ActionDefinitionIR, IRSource, TargetExpressionNodeIR
 from ..rules.rulebook import RuleBook
 from .damage import DamagePacket, DamageSourceFrame, DamageSystem, DamageWindowLedger
 from .dynamic_values import (
@@ -17,6 +17,9 @@ from .dynamic_values import (
     store_from_state,
 )
 from .effect import EffectExecutionContext, EffectRegistry
+from .summon import SummonSystem
+from .ability_task_contract import is_process_only_ability_task
+from .target import TargetSystem
 
 
 @dataclass(frozen=True)
@@ -45,7 +48,9 @@ class AbilityTaskSystem:
         self.effect_registry = effect_registry
         self.evaluator = evaluator or RuleEvaluator()
         self.reducer = reducer or MutationReducer()
-        self.damage = damage or DamageSystem()
+        self.damage = damage or DamageSystem(rules)
+        self.summons = SummonSystem(rules)
+        self.targets = TargetSystem()
 
     def execute_callback(
         self,
@@ -287,6 +292,23 @@ class AbilityTaskSystem:
                 primary_target=primary_target,
                 target_resolution=target_resolution,
             )
+        if task.opcode == "SummonMonster":
+            return self.execute_summon_monster_task(
+                state,
+                task,
+                command=command,
+            )
+        if is_process_only_ability_task(task):
+            return state, [], [], [], [
+                _task_process_record(
+                    task,
+                    ok=True,
+                    blocked_reason="process_only_ability_task",
+                    effect_id=task.effect_id,
+                    effect_opcode=task.opcode,
+                    effect_coverage="process_only",
+                )
+            ]
         if self.rules.damage_emissions_for_task(task.task_id):
             return self._execute_damage_task(
                 state,
@@ -328,7 +350,15 @@ class AbilityTaskSystem:
                 param_entity_id=primary_target or command.actor_id,
                 current_action_target_id=primary_target,
                 target_resolution=target_resolution,
-                event_payload=_rng_event_payload_from_command(command),
+                event_payload={
+                    **_rng_event_payload_from_command(command),
+                    "actor_id": command.actor_id,
+                    "action_id": command.action_id,
+                    "action_level": command.action_level,
+                    "task_id": task.task_id,
+                    "hit_index": task.task_index,
+                    "rng_decision_index": task.task_index,
+                },
                 binding_sources=_binding_sources(
                     self.rules,
                     state,
@@ -354,6 +384,75 @@ class AbilityTaskSystem:
             )
         )
         return after, list(result.mutations), list(result.events), list(result.rng_events), records
+
+    def execute_summon_monster_task(
+        self,
+        state: BattleState,
+        task: AbilityTaskIR,
+        *,
+        command: ActionCommand,
+    ) -> tuple[BattleState, list[Mutation], list[GameEvent], list[RNGEvent], list[dict[str, JSONValue]]]:
+        intents = tuple(
+            intent
+            for intent in self.rules.summon_monster_intents()
+            if intent.source_task_id == task.task_id
+        )
+        if len(intents) != 1:
+            reason = "summon_monster_intent_missing" if not intents else "summon_monster_intent_ambiguous"
+            return state, [], [], [], [_task_process_record(task, ok=False, blocked_reason=reason)]
+        intent = intents[0]
+        if intent.coverage_status != "executable":
+            return state, [], [], [], [
+                _task_process_record(
+                    task,
+                    ok=False,
+                    blocked_reason=intent.blocked_reason
+                    or f"summon_monster_intent_not_executable:{intent.coverage_status}",
+                )
+            ]
+        if intent.source_task_id != task.task_id or intent.owner_scope != "caster":
+            return state, [], [], [], [
+                _task_process_record(task, ok=False, blocked_reason="summon_monster_intent_task_binding_mismatch")
+            ]
+        plan = self.summons.plan_spawn_from_intent(state, intent, owner_id=command.actor_id)
+        result = self.summons.apply_spawn(state, plan)
+        if not result.plan.ok:
+            return state, [], [], [], [
+                *result.records,
+                _task_process_record(
+                    task,
+                    ok=False,
+                    blocked_reason=result.plan.blocked_reason or "summon_monster_spawn_blocked",
+                ),
+            ]
+        reduction = self.reducer.apply_all_result(state, result.mutations)
+        if not reduction.ok:
+            return state, [], [], [], [
+                _task_process_record(
+                    task,
+                    ok=False,
+                    blocked_reason=f"summon_monster_reducer_conflict:{reduction.conflicts[0].code}",
+                )
+            ]
+        records = [
+            *result.records,
+            _task_process_record(
+                task,
+                ok=True,
+                effect_id=task.effect_id,
+                effect_opcode=task.opcode,
+                effect_coverage="executable",
+                mutation_count=len(result.mutations),
+                record_count=len(result.records),
+            ),
+        ]
+        return (
+            reduction.after_state,
+            list(result.mutations),
+            list(result.events),
+            [],
+            records,
+        )
 
     def _execute_trigger_ability_task(
         self,
@@ -393,15 +492,17 @@ class AbilityTaskSystem:
         depth = int(command.metadata.get("standalone_depth") or 0)
         if depth >= 4:
             return state, [], [], [], [_task_process_record(task, ok=False, blocked_reason="trigger_ability_depth_limit", effect_id=effect.effect_id, effect_opcode=effect.opcode)]
-        graphs = self.rules.standalone_ability_graphs_by_name(ability_name)
-        if not graphs:
-            return state, [], [], [], [_task_process_record(task, ok=False, blocked_reason=f"standalone_ability_graph_missing:{ability_name}", effect_id=effect.effect_id, effect_opcode=effect.opcode)]
-        source_path = task.source.source_path
-        same_source = tuple(graph for graph in graphs if graph.source.source_path == source_path)
-        selected_graphs = same_source or graphs
-        if len(selected_graphs) != 1:
-            return state, [], [], [], [_task_process_record(task, ok=False, blocked_reason=f"standalone_ability_graph_ambiguous:{ability_name}", effect_id=effect.effect_id, effect_opcode=effect.opcode)]
-        graph = selected_graphs[0]
+        graph = self.rules.standalone_ability_graph(task.linked_standalone_graph_id)
+        if graph is None or graph.ability_name != ability_name:
+            return state, [], [], [], [
+                _task_process_record(
+                    task,
+                    ok=False,
+                    blocked_reason="standalone_ability_graph_link_missing_or_mismatched",
+                    effect_id=effect.effect_id,
+                    effect_opcode=effect.opcode,
+                )
+            ]
         phases = tuple(
             phase
             for phase_id in graph.phase_ids
@@ -584,6 +685,40 @@ class AbilityTaskSystem:
         if condition is None:
             record = _task_process_record(task, ok=False, blocked_reason="missing_predicate_condition")
             return state, [], [], [], [record]
+        binding_sources = _binding_sources(
+            self.rules,
+            state,
+            command.actor_id,
+            primary_target,
+            action_level=command.action_level,
+            current_action_trigger_key=_action_trigger_key(action_definition),
+        )
+        event_payload = {
+            **_event_payload(command, action_definition, primary_target, target_resolution),
+            "task_id": task.task_id,
+            "hit_index": task.task_index,
+            "rng_decision_index": task.task_index,
+        }
+        resolved_target_groups: dict[str, tuple[str, ...]] = {}
+        target_resolution_errors: dict[str, str] = {}
+        for field_name, node in condition.payload.items():
+            if not isinstance(node, TargetExpressionNodeIR):
+                continue
+            target_result = self.targets.resolve_expression_node(
+                state,
+                node,
+                caster_id=command.actor_id,
+                owner_id=command.actor_id,
+                param_entity_id=primary_target or command.actor_id,
+                current_action_target_id=primary_target,
+                target_resolution=target_resolution,
+                event_payload=event_payload,
+                binding_sources=binding_sources,
+            )
+            if target_result.ok:
+                resolved_target_groups[field_name] = target_result.target_ids
+            else:
+                target_resolution_errors[field_name] = target_result.blocked_reason
         result = self.evaluator.evaluate_condition_result(
             condition,
             EvaluationContext(
@@ -593,15 +728,10 @@ class AbilityTaskSystem:
                 owner_id=command.actor_id,
                 param_entity_id=primary_target or command.actor_id,
                 current_action_target_id=primary_target,
-                event_payload=_event_payload(command, action_definition, primary_target, target_resolution),
-                binding_sources=_binding_sources(
-                    self.rules,
-                    state,
-                    command.actor_id,
-                    primary_target,
-                    action_level=command.action_level,
-                    current_action_trigger_key=_action_trigger_key(action_definition),
-                ),
+                event_payload=event_payload,
+                binding_sources=binding_sources,
+                resolved_target_groups=resolved_target_groups,
+                target_resolution_errors=target_resolution_errors,
             ),
         )
         if not result.ok or result.result is None:
@@ -772,8 +902,7 @@ def _binding_sources(
 
 
 def _action_trigger_key(action_definition: ActionDefinitionIR) -> str:
-    value = action_definition.source.evidence.get("skill_trigger_key")
-    return str(value) if isinstance(value, str) else ""
+    return action_definition.skill_trigger_key
 
 
 def _damage_targets_for_emission(

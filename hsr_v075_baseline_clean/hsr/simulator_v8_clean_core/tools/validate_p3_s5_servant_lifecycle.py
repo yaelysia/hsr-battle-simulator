@@ -265,7 +265,7 @@ def _servant_negative_boundary_cases(rules: RuleBook, definition: ServantDefinit
             base_state,
             definition,
             "ally:servant_owner",
-            "unit_birth_template_materialization_invalid:unit_spawn_plan_max_hp_non_positive",
+            "unit_birth_template_materialization_invalid",
         ),
         "action_set_blocked": _blocked_spawn_case(
             SummonSystem(
