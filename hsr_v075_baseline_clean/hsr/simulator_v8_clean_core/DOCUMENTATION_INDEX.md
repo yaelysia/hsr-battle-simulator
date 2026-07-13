@@ -13,20 +13,17 @@ hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/
 最近完成阶段：
 
 ```text
-P6 architecture boundary refactor accepted
-checkpoint: v8_p6_architecture_boundary_refactor_checkpoint.md
+P8-S0 equipment source and mechanism baseline accepted
+checkpoint: v8_p8_s0_equipment_source_inventory_ready_for_review.md
 ```
 
 当前规划阶段：
 
 ```text
-P7 kernel trust and combat semantics repair
-P7-S0 issue baseline accepted
-P7-S1 transition trust result contract accepted
-P7-S2 mutation preconditions and reducer conflict detection accepted
-P7-S3..P7-S19 accepted
-P7-DONE accepted at 2026-07-13
-next stage: not selected; plan from retained content gaps
+P8 equipment build, light-cone and relic assembly
+P8 task plan established
+P8-S0 equipment source and mechanism baseline accepted
+next stage: P8-S1 typed equipment and build architecture
 ```
 
 当前验收口径：
@@ -50,10 +47,10 @@ P3/P4/P5 的 `*_all_executable_complete=false` 和 P6 的 `p6_all_mechanisms_rei
 当前推荐下一阶段：
 
 ```text
-retained content gap planning after P7
+P8-S1 typed equipment and build architecture
 ```
 
-P7-S0 至 P7-S19 已全部验收。下一步尚未选定，应从 P2 action-delay callback graph、P3 servant action graph、P4 action formula runtime graph、P6 上游动作图及装备 / 构筑 / 关卡环境扩面中单独规划，不要修改 P7 已完成口径来掩盖这些保留缺口。
+P7-S0 至 P7-S19 已全部验收，P8-S0 来源基线也已通过独立验收。当前装备 / 构筑主线下一步只执行 P8-S1；不能修改 P7 已完成口径来掩盖保留缺口，也不能把 P4 的 `boundary_only` 字符串声明当作装备接口已经存在。
 
 ## 2. 下一线程优先入口
 
@@ -67,6 +64,7 @@ P7-S0 至 P7-S19 已全部验收。下一步尚未选定，应从 P2 action-dela
 6. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/FORBIDDEN.md`
 7. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/DOCUMENTATION_INDEX.md`
 8. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/P7_KERNEL_TRUST_AND_COMBAT_SEMANTICS_REPAIR_TASK_PLAN.md`
+9. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/P8_EQUIPMENT_BUILD_LIGHT_CONE_RELIC_TASK_PLAN.md`
 
 如果任务涉及具体阶段，再读对应阶段计划和 checkpoint。
 
@@ -97,6 +95,7 @@ P7-S0 至 P7-S19 已全部验收。下一步尚未选定，应从 P2 action-dela
 - `P5_FORMULA_DYNAMIC_PARAM_BINDING_TASK_PLAN.md`
 - `P6_ARCHITECTURE_BOUNDARY_REFACTOR_TASK_PLAN.md`
 - `P7_KERNEL_TRUST_AND_COMBAT_SEMANTICS_REPAIR_TASK_PLAN.md`
+- `P8_EQUIPMENT_BUILD_LIGHT_CONE_RELIC_TASK_PLAN.md`
 
 P1 过程计划已经归档，不作为默认入口：
 

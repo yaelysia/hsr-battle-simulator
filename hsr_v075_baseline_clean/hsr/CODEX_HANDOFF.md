@@ -8,6 +8,8 @@ P7 内核可信执行与战斗语义回正已于 2026-07-13 完成统一验收�
 
 P7 当前通用能力包括 selected execution graph 原子提交、规则/审计分离、typed expression、动作 ownership/window、选择目标/打击集合、query-submit、显式阶段机、timeline/control、queue 前进、damage/toughness pipeline、shield/HP routing、状态准入、RNG identity/replay、战中召唤、波次事件和 compact semantic state。这些能力已按 P7 当前准入范围验收，不等于全部内容卡和关卡机制已经复刻。
 
+当前已建立 P8 光锥、遗器与角色构筑装配计划，P8-S0 装备来源与机制基线已经通过独立验收，下一步只执行 P8-S1 类型化装备与构筑架构。P8 的架构方向是：角色卡、光锥卡、遗器卡作为并列内容来源，玩家构筑引用具体实例，L2 构筑装配器生成静态属性贡献、已启用机制和来源账本，runtime 只消费装配结果。P4 的 `card_contract.equipment_boundary` 只是旧 `boundary_only` 声明，不是正式装备接口。
+
 S3-S9 首轮统一验收中暴露的 callback 顺序、来源字段参与行为、动作授权、未知动作和非法阶段等问题均已修正并通过后续验收。S4 AST 门禁会扫描 `core/rules/systems` 全部 runtime 文件；S16/S17 已共享真实 lowering 复跑，servant policy 与 wave definition/entry 的审计字段裁剪不改变行为。
 
 P1-P6 更新口径回归保留真实内容缺口：P1 的 counter/servant action graph、P2 的 action-delay callback graph、P3 的 servant action graph 与 admission/source gap、P4-S3 的 action formula runtime graph、P6-S1 的上游动作图都没有被伪装成 executable。P2 当前分类为 `retained_action_delay_content_gap`；P3 当前分类为 `reopened_servant_action_content_gap`，不再声称历史闭环原样继承。按用户资源要求，P4-P6 使用直接触达验证与既有 checkpoint 组合，没有重复运行完整聚合；统一验收线程可按风险决定是否补跑。
@@ -279,6 +281,7 @@ P1 minimum 已完成，但完整复刻仍远未完成：
 - 全角色行迹。
 - 光锥。
 - 内圈/外圈遗器及套装效果。
+- 上述装备与构筑缺口已经由 `P8_EQUIPMENT_BUILD_LIGHT_CONE_RELIC_TASK_PLAN.md` 拆为 S0-S21；S20 以希儿、《于夜色中》、四件“繁星璀璨的天才”和两件“繁星竞技场”验证完整正式构筑纵切，S21 才做全量聚合。未经逐阶段验收不能提前宣称底座或全量内容完成。
 
 怪物还没完整：
 
@@ -375,7 +378,7 @@ git diff --check
 如果要继续推进，建议开局说清：
 
 ```text
-当前接续 v8 P7 最终验收检查点。先读 CODEX_HANDOFF、P7 最终检查点报告和 P7 计划；P7-S0 至 P7-S19 已全部通过验收。开始新阶段前先从保留缺口中选择清晰目标，重点区分内核不变量、内容图缺口和全量内容扩面，不要把 P7 完成解释为全角色、全怪物、全装备或全关卡完成。
+当前接续 v8 P7 最终验收检查点和已验收的 P8-S0 装备来源基线。先读 CODEX_HANDOFF、架构边界合同、P7 最终检查点、P8 计划和 P8-S0 报告；下一步只执行 P8-S1 类型化装备与构筑架构。执行线程先提交详细执行卡，只能交 ready_for_review，不得修改 P8 唯一 checklist，也不得把 P4 的字符串式装备边界当作可用接口。
 ```
 
 不要从旧 `CODEX_HANDOFF` 的 v7 叙述接续；本文件已经替换为 v8 当前交接手册。

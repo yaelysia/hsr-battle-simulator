@@ -33,9 +33,9 @@ turnbasedgamedata-main -> TBGD compiler/lowering -> Canonical IR -> Combat Core
 最近检查点：
 
 ```text
-P7 kernel trust and combat semantics repair
-最近代码检查点：P7 内核可信执行与战斗语义回正最终验收
-当前规划主线：P7-S0 至 P7-S19 已全部通过验收；下一大型阶段尚未确定，继续规划时必须继承 P2/P3/P4/P6 保留的真实内容缺口
+P8 equipment build, light-cone and relic assembly
+最近代码检查点：P8-S0 装备来源与机制基线验收
+当前规划主线：P8 光锥、遗器与角色构筑装配；P8-S0 已通过验收，下一步只执行 P8-S1 类型化装备与构筑架构
 ```
 
 当前 v8 已建立的底层范围包括：
@@ -59,6 +59,8 @@ P7 kernel trust and combat semantics repair
 - P7-S1 Transition 可信结果契约已经独立验收：`committed`、`blocked`、`diagnostic` 三类结果机器可读，未知、矛盾或不完整结果不可作为正式后继；executor、scheduler 和 UI consumer 已接入 outcome，完整原子提交由后续 S3 收口。
 - P7-S2 Mutation 前置条件与 reducer 冲突检测已经独立验收：Mutation 显式区分路径缺失与 null，before/op/after 和同路径链由生产 reducer 强制校验，冲突整批 state unchanged；Mutation JSON 在创建边界递归冻结、stable ID 固定，写状态前防御性解别名；UnitState 完整 payload 统一由 core codec 编解码。
 - P7-S0 至 P7-S19 已全部通过验收，P7-I01 至 P7-I24 均有当前代码和结构化负例证据；最终聚合包含 S1-S18 的 18 份阶段摘要、一次共享 RuleBook 的 9 项当前源码回归和自包含旧证据拒绝负例。P7 完成的是内核可信执行与当前已准入战斗语义，不代表 P2 action-delay callback graph、P3 servant action graph 或全角色 / 全怪物 / 全装备 / 全关卡内容扩面已经完成。
+- P8 光锥、遗器与角色构筑装配计划已经建立，严格按 S0-S21 执行。P8 将角色卡、光锥卡、遗器卡作为并列内容来源，由独立构筑装配器生成战斗单位；S20 使用希儿、《于夜色中》、四件“繁星璀璨的天才”和两件“繁星竞技场”完成正式端到端构筑纵切；旧 `card_contract.equipment_boundary` 只是 P4 的职责隔离声明，不是可用装备接口。
+- P8-S0 装备来源与机制基线已经独立验收：当前主来源、辅助候选、发布状态、引用图、全能力文件机制扫描、特殊模式、未知类型和 source fingerprint 均有结构化 evidence；重复身份、缺引用、孤立成长 / 叠影记录、空表、陈旧指纹和漏候选负例均会失败。S0 没有新增正式装备 IR，也没有改变 runtime。
 - `simulator_v8_ui/` 本地 UI 测试台，用于 scenario 编排和审计展示，不进入规则系统。
 
 当前仍未完整实现的大块：
@@ -119,12 +121,13 @@ v8 当前只保留少数高密度长期文档，避免文档膨胀影响索引�
 12. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/P5_FORMULA_DYNAMIC_PARAM_BINDING_TASK_PLAN.md`
 13. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/P6_ARCHITECTURE_BOUNDARY_REFACTOR_TASK_PLAN.md`
 14. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/P7_KERNEL_TRUST_AND_COMBAT_SEMANTICS_REPAIR_TASK_PLAN.md`
-15. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p7_kernel_trust_and_combat_semantics_final_checkpoint.md`
-16. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p5_formula_dynamic_param_binding_checkpoint.md`
-17. `hsr_v075_baseline_clean/hsr/live_validation_reports/archive/phase1/v8_p1_final_acceptance_checkpoint_v0_292.md`
-18. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_status_target_event_database_audit_checkpoint_v0_287.md`
-19. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_ir_checkpoint_v0_288.md`
-20. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_sequence_filter_retarget_checkpoint_v0_289.md`
+15. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/P8_EQUIPMENT_BUILD_LIGHT_CONE_RELIC_TASK_PLAN.md`
+16. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p7_kernel_trust_and_combat_semantics_final_checkpoint.md`
+17. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p5_formula_dynamic_param_binding_checkpoint.md`
+18. `hsr_v075_baseline_clean/hsr/live_validation_reports/archive/phase1/v8_p1_final_acceptance_checkpoint_v0_292.md`
+19. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_status_target_event_database_audit_checkpoint_v0_287.md`
+20. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_ir_checkpoint_v0_288.md`
+21. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_sequence_filter_retarget_checkpoint_v0_289.md`
 
 P1 过程计划和中间报告已经归档，默认不要作为当前线程入口：
 
@@ -174,13 +177,16 @@ hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/FORBIDDEN.md
 
 - 角色卡负责角色自身：基础面板、技能、行迹、星魂、特殊资源、角色召唤物入口。
 - 怪物卡负责怪物自身：面板、技能、被动、阶段、弱点、抗性、召唤怪入口。
-- 装备与构筑输入主要作为角色卡装配输入；怪物等级、模板、阶段和特殊覆盖作为怪物卡或环境装配输入。P4 只预留 hook，不完整实现光锥、遗器、套装和关卡机制。
+- 角色卡、光锥卡和遗器卡是并列内容来源。角色构筑输入引用具体装备实例，L2 构筑装配器负责校验、聚合静态属性和选择动态机制，再生成可进入战斗的装配结果；装备规则不能复制进角色卡，runtime 也不能直接理解构筑或 raw 装备表。
+- 怪物等级、模板、阶段和特殊覆盖作为怪物卡或环境装配输入。P4 的装备字符串边界只用于禁止当时的 runtime 假执行，不是稳定 slot/hook，也不能作为 P8 完成证据。
 - 角色召唤物归属角色卡。servant / 忆灵这类有独立属性、技能、行动和生命周期的单位，应通过角色卡子卡或派生 combatant card 接入。
 - 怪物召唤物优先复用已有怪物卡。召唤者只提供 spawn intent、owner/summoner relation、生命周期和清理策略；被召唤单位自身规则仍来自怪物卡。
 - 动作查询归属可行动单位的数据卡或子卡；目标查询归属 action definition。每个 action 自己声明合法目标、目标选择规则和实际打击范围。
 - 关卡、环境、战斗事件是独立后续层，不能为了当前阶段完成而伪装成角色或怪物机制。
 
 “真实预留”不是空字段。后续计划中如果要求预留装备、构筑、召唤物、环境或推演器接口，必须同时有明确归属、稳定 slot/hook、admission 边界、blocked/state unchanged 负例验证和后续归属记录。
+
+字符串式 `card_contract`、future owner 说明或 `boundary_only` 报告只能证明职责暂未越界，不能证明扩展接口存在。正式装备体系必须区分装备定义、玩家实例、构筑输入和装配结果，并有类型化 RuleBook query、来源账本、非法输入负例和 runtime 消费链。
 
 UI 可以提前设计最终形态的入口和信息架构，用来倒查底层接口缺口；但不能为了 UI 层牺牲底层内核质量。UI view model 可以做适配，core / IR / RuleBook / runtime 不能为了界面方便引入硬编码、伪来源、默认 fallback 或不通用字段。若 UI 需求和内核通用性、来源审计、数据归属冲突，执行线程必须暂停并询问用户决定方向。
 
@@ -315,6 +321,7 @@ P4 的执行质量明显改善，后续大型计划应沿用这个正向模式�
 - UI 是倒查内部接口的工作台，不是内核设计的上级约束。为了 UI 体验牺牲 core 通用性、来源追溯或 runtime 干净度时，必须停下询问。
 - `turnbasedgamedata-main` 当前是配置数据来源，不是可直接调用的 battle engine。不能因为看到 battle/ability 配置就假设存在现成状态转移系统，也不能反过来用自造规则替代 lowering。
 - P4 的正面经验：执行质量提升不是因为目标写得更大，而是因为目标被拆成严格顺序、每阶段只有一个清晰完成口径、执行线程只能提交 evidence、验收线程负责勾选和提交。后续计划优先复用这种结构，尤其是角色/怪物全量扩面、动态公式、目标系统、波次/关卡环境这类长线任务。
+- 大型通用内容体系在分机制闭合后、最终全量聚合前，应增加一个真实组合的端到端参考实例，用来证明各子系统能通过正式接口协作。固定角色和装备只允许出现在 example manifest、focused 验证和报告中；不能进入 core 特判，也不能用一个示例替代结构化全量 coverage。
 - transition/replay/source audit 自洽不等于战斗语义完整。每个结果必须有权威可信类别；只有所选执行图完整、Mutation 前置条件成立且原子提交的结果才能作为推演器下一状态，partial / blocked / diagnostic 必须 state unchanged。
 - 动作查询与提交必须满足 round trip：同一决策状态中，查询给出的每个动作和目标都可原样提交，未给出的命令必须被拒绝；只读查询不得推进时间线、重复触发回合开始或改变当前行动者。
 - `source_trace`、source/evidence 和审计 payload 只能用于解释来源，不能作为 runtime 行为输入。边界静态检查必须覆盖“从审计信息取规则”的行为路径，不能只检查 raw import 或敏感 token。
