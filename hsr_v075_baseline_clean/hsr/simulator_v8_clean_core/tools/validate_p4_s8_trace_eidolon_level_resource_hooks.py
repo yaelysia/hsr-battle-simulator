@@ -130,7 +130,7 @@ def build_p4_s8_trace_eidolon_level_resource_hooks_matrix(ir: CanonicalIR, rules
         _eidolon_skill_level_assembly_runtime_row(ir, rules),
         _action_level_ladder_matrix_row(ir, rules),
         _startup_listener_resource_matrix_row(ir, rules),
-        _equipment_build_input_hook_boundary_row(ir, rules),
+        build_p4_s8_equipment_boundary_matrix_row(ir, rules),
         _invalid_eidolon_level_boundary_row(ir, rules),
     ]
     matrix = {str(row["row_id"]): row for row in rows}
@@ -176,6 +176,9 @@ def validate_p4_s8_trace_eidolon_level_resource_hooks_matrix(matrix: dict[str, A
         if str(row.get("classification") or "unclassified") not in CLASSIFICATION_STATES
     )
     gap_rows = [row for row in rows.values() if str(row.get("classification") or "") in GAP_STATES]
+    equipment_boundary_validation = validate_p4_s8_equipment_boundary_matrix_row(
+        dict(rows.get("equipment_build_input_hook_boundary") or {})
+    )
     checks = {
         "required_rows_present": not missing,
         "valid_classifications": not invalid_classifications,
@@ -186,11 +189,7 @@ def validate_p4_s8_trace_eidolon_level_resource_hooks_matrix(matrix: dict[str, A
         == "executable",
         "eidolon_skill_level_runtime_executable": rows.get("eidolon_skill_level_assembly_runtime", {}).get("classification")
         == "executable",
-        "equipment_boundary_has_no_runtime_rule": _row_check(
-            rows,
-            "equipment_build_input_hook_boundary",
-            "no_equipment_runtime_mutation_without_build_input",
-        ),
+        "equipment_typed_boundary_migration_complete": equipment_boundary_validation["ok"],
         "invalid_eidolon_rejected": _row_check(
             rows,
             "invalid_eidolon_level_boundary",
@@ -203,6 +202,7 @@ def validate_p4_s8_trace_eidolon_level_resource_hooks_matrix(matrix: dict[str, A
         "checks": checks,
         "missing_rows": missing,
         "invalid_classifications": invalid_classifications,
+        "equipment_boundary_validation": equipment_boundary_validation,
     }
 
 
@@ -518,35 +518,60 @@ def _startup_listener_resource_matrix_row(ir: CanonicalIR, rules: RuleBook) -> d
     )
 
 
-def _equipment_build_input_hook_boundary_row(ir: CanonicalIR, rules: RuleBook) -> dict[str, JSONValue]:
+def build_p4_s8_equipment_boundary_matrix_row(
+    ir: CanonicalIR,
+    rules: RuleBook,
+) -> dict[str, JSONValue]:
     cards = tuple(ir.character_data_cards)
-    cards_with_boundary = tuple(
-        card for card in cards if isinstance(card.card_contract.get("equipment_boundary"), dict)
+    legacy_boundary_cards = tuple(
+        card for card in cards if "equipment_boundary" in card.card_contract
     )
-    sample_card = cards_with_boundary[0] if cards_with_boundary else (cards[0] if cards else None)
+    sample_card = cards[0] if cards else None
     unit_flags: dict[str, JSONValue] = {}
     unit_resources: dict[str, float] = {}
+    equipment_setup_mutations: tuple[Any, ...] = ()
     if sample_card is not None:
         built = ScenarioStateBuilder(rules).build(_single_avatar_scenario("p4_s8_equipment_boundary", sample_card))
         unit = built.state.units["ally:subject"]
         unit_flags = dict(unit.flags)
         unit_resources = dict(unit.resources)
+        equipment_setup_mutations = tuple(
+            mutation
+            for mutation in built.setup_mutations
+            if any(
+                token in str(mutation).lower()
+                for token in ("light_cone", "lightcone", "relic", "ornament", "equipment")
+            )
+        )
     forbidden_tokens = ("light_cone", "lightcone", "relic", "ornament", "equipment")
     has_equipment_runtime_key = any(
         token in str(key).lower()
         for key in (*unit_flags.keys(), *unit_resources.keys())
         for token in forbidden_tokens
     )
+    character_card_source = (
+        Path(__file__).resolve().parents[1] / "tbgd" / "character_cards.py"
+    ).read_text(encoding="utf-8")
+    eligibility_resolutions = tuple(
+        rules.character_equipment_eligibility_for_card(card.card_id)
+        for card in cards
+    )
     checks = {
         "cards_present": bool(cards),
-        "all_cards_have_equipment_boundary": len(cards_with_boundary) == len(cards),
-        "equipment_boundary_owner_recorded": all(
-            dict(card.card_contract.get("equipment_boundary") or {}).get("light_cones") == "external_equipment_card"
-            and dict(card.card_contract.get("equipment_boundary") or {}).get("relics") == "external_equipment_card"
-            for card in cards
+        "legacy_string_boundary_absent_from_source": '"equipment_boundary"' not in character_card_source,
+        "legacy_string_boundary_absent_from_generated_cards": not legacy_boundary_cards,
+        "typed_equipment_eligibility_field_present": all(
+            hasattr(card, "equipment_eligibility_id") for card in cards
+        ),
+        "current_unbound_equipment_eligibility_queries_blocked": bool(eligibility_resolutions)
+        and all(
+            resolution.resolution_status == "blocked"
+            and resolution.value is None
+            and resolution.blocked_reason == "character_equipment_eligibility_unbound"
+            for resolution in eligibility_resolutions
         ),
         "no_equipment_runtime_mutation_without_build_input": not has_equipment_runtime_key,
-        "runtime_does_not_read_equipment_rules": True,
+        "no_equipment_setup_mutation_without_build_input": not equipment_setup_mutations,
     }
     checks["ok"] = all(value for key, value in checks.items() if key != "ok")
     return _row(
@@ -555,16 +580,50 @@ def _equipment_build_input_hook_boundary_row(ir: CanonicalIR, rules: RuleBook) -
         checks=checks,
         raw_count=len(cards),
         ir_count=len(cards),
-        rulebook_visible_count=len(cards_with_boundary),
+        rulebook_visible_count=len(eligibility_resolutions),
         executable_count=0,
         blocked_or_gap_count=0,
         sample_source_trace=_source(sample_card),
         details={
             "card_count": len(cards),
-            "cards_with_equipment_boundary": len(cards_with_boundary),
-            "future_owner": "external_equipment_card via CharacterDataCardIR.card_contract.equipment_boundary",
+            "legacy_boundary_card_count": len(legacy_boundary_cards),
+            "typed_eligibility_ref_count": sum(bool(card.equipment_eligibility_id) for card in cards),
+            "blocked_eligibility_query_count": sum(
+                resolution.resolution_status == "blocked"
+                for resolution in eligibility_resolutions
+            ),
+            "equipment_setup_mutation_count": len(equipment_setup_mutations),
+            "future_owner": "CanonicalIR character equipment eligibility plus per-build equipment input",
         },
     )
+
+
+def validate_p4_s8_equipment_boundary_matrix_row(row: dict[str, Any]) -> dict[str, Any]:
+    required_checks = {
+        "cards_present",
+        "legacy_string_boundary_absent_from_source",
+        "legacy_string_boundary_absent_from_generated_cards",
+        "typed_equipment_eligibility_field_present",
+        "current_unbound_equipment_eligibility_queries_blocked",
+        "no_equipment_runtime_mutation_without_build_input",
+        "no_equipment_setup_mutation_without_build_input",
+    }
+    check_envelope = dict(row.get("checks") or {})
+    row_checks = dict(check_envelope.get("checks") or {})
+    checks = {
+        "row_id_preserved": row.get("row_id") == "equipment_build_input_hook_boundary",
+        "classification_is_boundary_only": row.get("classification") == "boundary_only",
+        "required_checks_present": required_checks.issubset(row_checks),
+        "all_required_checks_true": all(row_checks.get(key) is True for key in required_checks),
+        "row_ok": check_envelope.get("ok") is True and row_checks.get("ok") is True,
+        "legacy_boundary_count_zero": int(row.get("details", {}).get("legacy_boundary_card_count") or 0) == 0,
+        "equipment_setup_mutation_count_zero": int(
+            row.get("details", {}).get("equipment_setup_mutation_count") or 0
+        )
+        == 0,
+    }
+    checks["ok"] = all(value is True for value in checks.values())
+    return {"ok": checks["ok"], "checks": checks}
 
 
 def _invalid_eidolon_level_boundary_row(ir: CanonicalIR, rules: RuleBook) -> dict[str, JSONValue]:

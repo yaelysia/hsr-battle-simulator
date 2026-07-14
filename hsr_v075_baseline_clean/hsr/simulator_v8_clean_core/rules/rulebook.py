@@ -3,6 +3,21 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable, Iterable, TypeVar
 
+from ..equipment.models import (
+    CharacterEquipmentEligibilityIR,
+    EQUIPMENT_RESOLVABLE_COVERAGE_STATES,
+    EquipmentDefinition,
+    EquipmentDefinitionKey,
+    EquipmentDefinitionResolution,
+    EquipmentDefinitionT,
+    EquipmentMechanismRefIR,
+    EquipmentResolutionCandidate,
+    LightConeDefinitionIR,
+    RelicAffixDefinitionIR,
+    RelicSetDefinitionIR,
+    RelicSetThresholdIR,
+    RelicTemplateDefinitionIR,
+)
 from .engine_rule_registry import (
     EngineRuleRegistry,
     ENGINE_RULE_REGISTRY_VERSION,
@@ -139,6 +154,78 @@ class RuleBook:
             self,
             "_monster_data_cards_by_entity_ref",
             {card.entity_ref: card for card in self.ir.monster_data_cards},
+        )
+        equipment_catalogs: tuple[
+            tuple[str, type[EquipmentDefinition], tuple[object, ...]],
+            ...,
+        ] = (
+            (
+                "character_equipment_eligibility",
+                CharacterEquipmentEligibilityIR,
+                self.ir.character_equipment_eligibilities,
+            ),
+            ("light_cone", LightConeDefinitionIR, self.ir.light_cone_definitions),
+            ("relic_template", RelicTemplateDefinitionIR, self.ir.relic_template_definitions),
+            ("relic_affix", RelicAffixDefinitionIR, self.ir.relic_affix_definitions),
+            ("relic_set", RelicSetDefinitionIR, self.ir.relic_set_definitions),
+            ("relic_set_threshold", RelicSetThresholdIR, self.ir.relic_set_thresholds),
+            ("equipment_mechanism", EquipmentMechanismRefIR, self.ir.equipment_mechanism_refs),
+        )
+        equipment_definitions: list[EquipmentDefinition] = []
+        equipment_definitions_by_key: dict[EquipmentDefinitionKey, list[EquipmentDefinition]] = {}
+        equipment_definitions_by_identity: dict[str, list[EquipmentDefinition]] = {}
+        invalid_equipment_catalog_entry_count = 0
+        for declared_kind, _expected_type, definitions in equipment_catalogs:
+            for definition in definitions:
+                if not isinstance(
+                    definition,
+                    (
+                        CharacterEquipmentEligibilityIR,
+                        LightConeDefinitionIR,
+                        RelicTemplateDefinitionIR,
+                        RelicAffixDefinitionIR,
+                        RelicSetDefinitionIR,
+                        RelicSetThresholdIR,
+                        EquipmentMechanismRefIR,
+                    ),
+                ):
+                    invalid_equipment_catalog_entry_count += 1
+                    continue
+                equipment_definitions.append(definition)
+                declared_key = EquipmentDefinitionKey(
+                    declared_kind,
+                    definition.definition_key.definition_identity,
+                )
+                equipment_definitions_by_key.setdefault(declared_key, []).append(definition)
+                equipment_definitions_by_identity.setdefault(
+                    declared_key.definition_identity,
+                    [],
+                ).append(definition)
+        object.__setattr__(
+            self,
+            "_equipment_definitions",
+            tuple(sorted(equipment_definitions, key=_equipment_definition_sort_key)),
+        )
+        object.__setattr__(
+            self,
+            "_invalid_equipment_catalog_entry_count",
+            invalid_equipment_catalog_entry_count,
+        )
+        object.__setattr__(
+            self,
+            "_equipment_definitions_by_key",
+            {
+                key: tuple(sorted(definitions, key=_equipment_definition_sort_key))
+                for key, definitions in equipment_definitions_by_key.items()
+            },
+        )
+        object.__setattr__(
+            self,
+            "_equipment_definitions_by_identity",
+            {
+                identity: tuple(sorted(definitions, key=_equipment_definition_sort_key))
+                for identity, definitions in equipment_definitions_by_identity.items()
+            },
         )
         object.__setattr__(
             self,
@@ -989,6 +1076,181 @@ class RuleBook:
     def monster_data_card_for_entity(self, entity_ref: str) -> MonsterDataCardIR | None:
         return self._monster_data_cards_by_entity_ref.get(entity_ref)
 
+    def equipment_definitions(self) -> tuple[EquipmentDefinition, ...]:
+        return self._equipment_definitions
+
+    def character_equipment_eligibility(
+        self,
+        definition_identity: str,
+    ) -> EquipmentDefinitionResolution[CharacterEquipmentEligibilityIR]:
+        key = EquipmentDefinitionKey("character_equipment_eligibility", definition_identity)
+        return self._equipment_definition_resolution(key, CharacterEquipmentEligibilityIR)
+
+    def character_equipment_eligibility_for_card(
+        self,
+        card_id: str,
+    ) -> EquipmentDefinitionResolution[CharacterEquipmentEligibilityIR]:
+        card = self.character_data_card(card_id)
+        if card is None:
+            return EquipmentDefinitionResolution(
+                resolution_status="blocked",
+                requested_key=EquipmentDefinitionKey("character_equipment_eligibility", card_id),
+                expected_kind="character_equipment_eligibility",
+                value=None,
+                blocked_reason="character_data_card_missing",
+            )
+        if not card.equipment_eligibility_id:
+            return EquipmentDefinitionResolution(
+                resolution_status="blocked",
+                requested_key=EquipmentDefinitionKey("character_equipment_eligibility", card.card_id),
+                expected_kind="character_equipment_eligibility",
+                value=None,
+                blocked_reason="character_equipment_eligibility_unbound",
+            )
+        resolution = self.character_equipment_eligibility(card.equipment_eligibility_id)
+        if (
+            resolution.resolution_status == "resolved"
+            and resolution.value is not None
+            and resolution.value.character_card_id != card.card_id
+        ):
+            return EquipmentDefinitionResolution(
+                resolution_status="blocked",
+                requested_key=resolution.requested_key,
+                expected_kind="character_equipment_eligibility",
+                value=None,
+                candidates=resolution.candidates,
+                blocked_reason="character_equipment_eligibility_owner_mismatch",
+            )
+        return resolution
+
+    def light_cone_definition(
+        self,
+        definition_identity: str,
+    ) -> EquipmentDefinitionResolution[LightConeDefinitionIR]:
+        key = EquipmentDefinitionKey("light_cone", definition_identity)
+        return self._equipment_definition_resolution(key, LightConeDefinitionIR)
+
+    def relic_template_definition(
+        self,
+        definition_identity: str,
+    ) -> EquipmentDefinitionResolution[RelicTemplateDefinitionIR]:
+        key = EquipmentDefinitionKey("relic_template", definition_identity)
+        return self._equipment_definition_resolution(key, RelicTemplateDefinitionIR)
+
+    def relic_affix_definition(
+        self,
+        definition_identity: str,
+    ) -> EquipmentDefinitionResolution[RelicAffixDefinitionIR]:
+        key = EquipmentDefinitionKey("relic_affix", definition_identity)
+        return self._equipment_definition_resolution(key, RelicAffixDefinitionIR)
+
+    def relic_set_definition(
+        self,
+        definition_identity: str,
+    ) -> EquipmentDefinitionResolution[RelicSetDefinitionIR]:
+        key = EquipmentDefinitionKey("relic_set", definition_identity)
+        return self._equipment_definition_resolution(key, RelicSetDefinitionIR)
+
+    def relic_set_threshold(
+        self,
+        definition_identity: str,
+    ) -> EquipmentDefinitionResolution[RelicSetThresholdIR]:
+        key = EquipmentDefinitionKey("relic_set_threshold", definition_identity)
+        return self._equipment_definition_resolution(key, RelicSetThresholdIR)
+
+    def equipment_mechanism_ref(
+        self,
+        definition_identity: str,
+    ) -> EquipmentDefinitionResolution[EquipmentMechanismRefIR]:
+        key = EquipmentDefinitionKey("equipment_mechanism", definition_identity)
+        return self._equipment_definition_resolution(key, EquipmentMechanismRefIR)
+
+    def _equipment_definition_resolution(
+        self,
+        key: EquipmentDefinitionKey,
+        expected_type: type[EquipmentDefinitionT],
+    ) -> EquipmentDefinitionResolution[EquipmentDefinitionT]:
+        exact_candidates = self._equipment_definitions_by_key.get(key, ())
+        if not exact_candidates:
+            diagnostic_candidates = self._equipment_definitions_by_identity.get(
+                key.definition_identity,
+                (),
+            )
+            return EquipmentDefinitionResolution(
+                resolution_status="blocked",
+                requested_key=key,
+                expected_kind=key.definition_kind,
+                value=None,
+                candidates=tuple(
+                    EquipmentResolutionCandidate.from_definition(candidate)
+                    for candidate in diagnostic_candidates
+                ),
+                blocked_reason=(
+                    "equipment_definition_kind_mismatch"
+                    if diagnostic_candidates
+                    else "equipment_definition_missing"
+                ),
+            )
+        candidates = tuple(
+            EquipmentResolutionCandidate.from_definition(candidate)
+            for candidate in exact_candidates
+        )
+        if len(exact_candidates) != 1:
+            return EquipmentDefinitionResolution(
+                resolution_status="blocked",
+                requested_key=key,
+                expected_kind=key.definition_kind,
+                value=None,
+                candidates=candidates,
+                blocked_reason="equipment_definition_ambiguous",
+            )
+        selected = exact_candidates[0]
+        if type(selected) is not expected_type:
+            return EquipmentDefinitionResolution(
+                resolution_status="blocked",
+                requested_key=key,
+                expected_kind=key.definition_kind,
+                value=None,
+                candidates=candidates,
+                blocked_reason="equipment_definition_object_type_mismatch",
+            )
+        if selected.definition_key != key:
+            return EquipmentDefinitionResolution(
+                resolution_status="blocked",
+                requested_key=key,
+                expected_kind=key.definition_kind,
+                value=None,
+                candidates=candidates,
+                blocked_reason="equipment_definition_canonical_key_mismatch",
+            )
+        if selected.coverage_status not in EQUIPMENT_RESOLVABLE_COVERAGE_STATES:
+            return EquipmentDefinitionResolution(
+                resolution_status="blocked",
+                requested_key=key,
+                expected_kind=key.definition_kind,
+                value=None,
+                candidates=candidates,
+                blocked_reason="equipment_definition_not_lowered",
+            )
+        if isinstance(selected, EquipmentMechanismRefIR) and self.standalone_ability_graph(
+            selected.graph_ref_id
+        ) is None:
+            return EquipmentDefinitionResolution(
+                resolution_status="blocked",
+                requested_key=key,
+                expected_kind=key.definition_kind,
+                value=None,
+                candidates=candidates,
+                blocked_reason="equipment_mechanism_graph_missing",
+            )
+        return EquipmentDefinitionResolution(
+            resolution_status="resolved",
+            requested_key=key,
+            expected_kind=key.definition_kind,
+            value=selected,
+            candidates=candidates,
+        )
+
     def summon_unit_definition(self, summon_definition_id: str) -> SummonUnitDefinitionIR | None:
         return self._summon_unit_definitions.get(summon_definition_id)
 
@@ -1562,6 +1824,18 @@ class RuleBook:
         if entities:
             return entities[0]
         return None
+
+
+def _equipment_definition_sort_key(
+    definition: EquipmentDefinition,
+) -> tuple[str, str, str, str, str]:
+    return (
+        definition.definition_key.definition_kind,
+        definition.definition_key.definition_identity,
+        definition.source.source_path,
+        definition.source.raw_id,
+        str(definition.source.evidence.get("json_path") or ""),
+    )
 
 
 def _json_object_copy(value: dict[str, JSONValue]) -> dict[str, JSONValue]:

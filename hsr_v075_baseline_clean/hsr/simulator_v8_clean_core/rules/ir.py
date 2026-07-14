@@ -3,19 +3,16 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-
-JSONValue = None | bool | int | float | str | list["JSONValue"] | dict[str, "JSONValue"]
-CoverageStatus = Literal[
-    "discovered_only",
-    "lowered",
-    "executable",
-    "validated",
-    "blocked",
-    "supported_alias",
-    "audit_only",
-    "unsupported",
-    "skipped_with_reason",
-]
+from ..equipment.models import (
+    CharacterEquipmentEligibilityIR,
+    EquipmentMechanismRefIR,
+    LightConeDefinitionIR,
+    RelicAffixDefinitionIR,
+    RelicSetDefinitionIR,
+    RelicSetThresholdIR,
+    RelicTemplateDefinitionIR,
+)
+from ..ir_types import CoverageStatus, IRSource, JSONValue
 
 
 def _ir_json_value(value: Any) -> JSONValue:
@@ -29,22 +26,6 @@ def _ir_json_value(value: Any) -> JSONValue:
     if callable(to_json):
         return _ir_json_value(to_json())
     raise TypeError(f"unsupported IR JSON value: {type(value).__name__}")
-
-
-@dataclass(frozen=True)
-class IRSource:
-    source_path: str
-    raw_type: str
-    raw_id: str
-    evidence: dict[str, JSONValue] = field(default_factory=dict)
-
-    def to_json(self) -> dict[str, JSONValue]:
-        return {
-            "source_path": self.source_path,
-            "raw_type": self.raw_type,
-            "raw_id": self.raw_id,
-            "evidence": self.evidence,
-        }
 
 
 @dataclass(frozen=True)
@@ -343,6 +324,7 @@ class CharacterDataCardIR:
     eidolon_slot_ids: tuple[str, ...] = ()
     card_contract: dict[str, JSONValue] = field(default_factory=dict)
     dynamic_value_bindings: dict[str, JSONValue] = field(default_factory=dict)
+    equipment_eligibility_id: str = ""
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -359,6 +341,7 @@ class CharacterDataCardIR:
             "eidolon_slot_ids": list(self.eidolon_slot_ids),
             "card_contract": self.card_contract,
             "dynamic_value_bindings": self.dynamic_value_bindings,
+            "equipment_eligibility_id": self.equipment_eligibility_id,
             "source": self.source.to_json(),
             "coverage_status": self.coverage_status,
             "blocked_reason": self.blocked_reason,
@@ -1950,6 +1933,13 @@ class CanonicalIR:
     avatar_profiles: tuple[AvatarProfileIR, ...] = ()
     character_data_cards: tuple[CharacterDataCardIR, ...] = ()
     monster_data_cards: tuple[MonsterDataCardIR, ...] = ()
+    character_equipment_eligibilities: tuple[CharacterEquipmentEligibilityIR, ...] = ()
+    light_cone_definitions: tuple[LightConeDefinitionIR, ...] = ()
+    relic_template_definitions: tuple[RelicTemplateDefinitionIR, ...] = ()
+    relic_affix_definitions: tuple[RelicAffixDefinitionIR, ...] = ()
+    relic_set_definitions: tuple[RelicSetDefinitionIR, ...] = ()
+    relic_set_thresholds: tuple[RelicSetThresholdIR, ...] = ()
+    equipment_mechanism_refs: tuple[EquipmentMechanismRefIR, ...] = ()
     summon_unit_definitions: tuple[SummonUnitDefinitionIR, ...] = ()
     unit_birth_templates: tuple[UnitBirthTemplateIR, ...] = ()
     summon_monster_intents: tuple[SummonMonsterIntentIR, ...] = ()
@@ -2012,6 +2002,15 @@ class CanonicalIR:
             "avatar_profiles": [profile.to_json() for profile in self.avatar_profiles],
             "character_data_cards": [card.to_json() for card in self.character_data_cards],
             "monster_data_cards": [card.to_json() for card in self.monster_data_cards],
+            "character_equipment_eligibilities": [
+                eligibility.to_json() for eligibility in self.character_equipment_eligibilities
+            ],
+            "light_cone_definitions": [definition.to_json() for definition in self.light_cone_definitions],
+            "relic_template_definitions": [definition.to_json() for definition in self.relic_template_definitions],
+            "relic_affix_definitions": [definition.to_json() for definition in self.relic_affix_definitions],
+            "relic_set_definitions": [definition.to_json() for definition in self.relic_set_definitions],
+            "relic_set_thresholds": [threshold.to_json() for threshold in self.relic_set_thresholds],
+            "equipment_mechanism_refs": [reference.to_json() for reference in self.equipment_mechanism_refs],
             "summon_unit_definitions": [definition.to_json() for definition in self.summon_unit_definitions],
             "unit_birth_templates": [template.to_json() for template in self.unit_birth_templates],
             "summon_monster_intents": [intent.to_json() for intent in self.summon_monster_intents],

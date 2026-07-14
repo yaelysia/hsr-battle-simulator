@@ -303,10 +303,6 @@ def _character_data_card_contract() -> dict[str, JSONValue]:
             "independent_rank_toggle_allowed": False,
             "runtime_effects_must_enter_as_mechanism_slots": True,
         },
-        "equipment_boundary": {
-            "relics": "external_equipment_card",
-            "light_cones": "external_equipment_card",
-        },
     }
 
 

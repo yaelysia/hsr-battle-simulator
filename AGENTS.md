@@ -34,8 +34,8 @@ turnbasedgamedata-main -> TBGD compiler/lowering -> Canonical IR -> Combat Core
 
 ```text
 P8 equipment build, light-cone and relic assembly
-最近代码检查点：P8-S0 装备来源与机制基线验收
-当前规划主线：P8 光锥、遗器与角色构筑装配；P8-S0 已通过验收，下一步只执行 P8-S1 类型化装备与构筑架构
+最近代码检查点：P8-S1 类型化装备与构筑架构验收
+当前规划主线：P8 光锥、遗器与角色构筑装配；P8-S0 至 P8-S1 已通过验收，下一步只执行 P8-S2 正式角色构筑输入与基础面板
 ```
 
 当前 v8 已建立的底层范围包括：
@@ -61,6 +61,7 @@ P8 equipment build, light-cone and relic assembly
 - P7-S0 至 P7-S19 已全部通过验收，P7-I01 至 P7-I24 均有当前代码和结构化负例证据；最终聚合包含 S1-S18 的 18 份阶段摘要、一次共享 RuleBook 的 9 项当前源码回归和自包含旧证据拒绝负例。P7 完成的是内核可信执行与当前已准入战斗语义，不代表 P2 action-delay callback graph、P3 servant action graph 或全角色 / 全怪物 / 全装备 / 全关卡内容扩面已经完成。
 - P8 光锥、遗器与角色构筑装配计划已经建立，严格按 S0-S21 执行。P8 将角色卡、光锥卡、遗器卡作为并列内容来源，由独立构筑装配器生成战斗单位；S20 使用希儿、《于夜色中》、四件“繁星璀璨的天才”和两件“繁星竞技场”完成正式端到端构筑纵切；旧 `card_contract.equipment_boundary` 只是 P4 的职责隔离声明，不是可用装备接口。
 - P8-S0 装备来源与机制基线已经独立验收：当前主来源、辅助候选、发布状态、引用图、全能力文件机制扫描、特殊模式、未知类型和 source fingerprint 均有结构化 evidence；重复身份、缺引用、孤立成长 / 叠影记录、空表、陈旧指纹和漏候选负例均会失败。S0 没有新增正式装备 IR，也没有改变 runtime。
+- P8-S1 类型化装备与构筑架构已经独立验收：装备定义、玩家实例、构筑输入和装配结果已经分离；Canonical IR 与 RuleBook 具备类型化定义集合、命名空间身份、窄查询和结构化 blocked 结果；构筑及装配结果递归不可变并保留静态、动态和来源通道。旧字符串式装备边界已退役。S1 尚未 lower 真实装备，也不计算数值、合法性或执行装备效果。
 - `simulator_v8_ui/` 本地 UI 测试台，用于 scenario 编排和审计展示，不进入规则系统。
 
 当前仍未完整实现的大块：
