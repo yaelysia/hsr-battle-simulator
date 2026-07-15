@@ -11,15 +11,15 @@ turnbasedgamedata-main -> TBGD compiler/lowering -> Canonical IR / 数据卡 IR 
 当前最近检查点：
 
 ```text
-P8-S2 formal character build input and base panel accepted
-最近检查点：P8-S2 已完成独立验收，正式角色可由 source-backed 构筑生成无装备基础面板；尚未 lower 真实光锥或遗器
-检查点报告：../live_validation_reports/v8_p8_s2_character_build_base_panel_ready_for_review.md
+P8-S3 light-cone data cards and source linkage accepted
+最近检查点：P8-S3 已完成独立验收，当前已发布光锥均已形成 source-backed 类型化数据卡；尚未创建玩家光锥实例或执行装备效果
+检查点报告：../live_validation_reports/v8_p8_s3_light_cone_data_cards_ready_for_review.md
 ```
 
 当前推荐下一阶段：
 
 ```text
-P8-S3 light-cone data cards and source linkage
+P8-S4 light-cone instance, growth and path activation decision
 计划文档：P8_EQUIPMENT_BUILD_LIGHT_CONE_RELIC_TASK_PLAN.md
 ```
 
@@ -106,6 +106,7 @@ L0 来源编译层：TBGD raw -> lowering -> Canonical IR / 数据卡 IR
 - P8-S0 装备来源与机制基线已经通过独立验收。
 - P8-S1 类型化装备与构筑架构已经通过独立验收；定义、实例、构筑和装配结果已经分离，RuleBook 查询及 blocked 边界可用，但尚未 lower 真实装备、计算装备数值或执行装备效果。
 - P8-S2 正式角色构筑输入与基础面板已经通过独立验收；晋阶成长、能量上限、行迹和星魂子来源通过统一贡献账本装配，正式 scenario 不再接受手填最终面板。未准入的特殊资源、辅助单位技能和额外效果保持 blocked；光锥与遗器仍为空构筑。
+- P8-S3 光锥数据卡与来源关联已经通过独立验收；当前 162 张已发布光锥的身份、晋阶成长、叠影参数、静态属性和唯一能力记录来源均已进入类型化目录，并可由 RuleBook 查询。能力图、玩家实例、指定等级数值和装备效果仍未接通。
 - 本地 UI 测试台 `simulator_v8_ui/`，作为测试编排与审计展示层，不作为规则系统。
 
 ## 当前仍未完整落地的大块
@@ -148,4 +149,4 @@ git diff --check
 
 ## 下一阶段建议
 
-下一步只执行 P8-S2 正式角色构筑输入与基础面板。S2 经独立验收前不得提前实现 S3-S20。阶段开始前先提交详细执行卡；执行线程只能提交 `ready_for_review`，由验收线程检查代码、谓词和 evidence 后勾选唯一 checklist。
+下一步只执行 P8-S4 光锥实例、成长与命途激活决策。S4 经独立验收前不得提前实现 S5-S20。阶段开始前先提交详细执行卡；执行线程只能提交 `ready_for_review`，由验收线程检查代码、谓词和 evidence 后勾选唯一 checklist。

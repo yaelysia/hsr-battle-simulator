@@ -1267,6 +1267,30 @@ class RuleBook:
                 candidates=candidates,
                 blocked_reason="equipment_mechanism_graph_missing",
             )
+        mechanism_ref_ids = getattr(selected, "mechanism_ref_ids", ())
+        if len(mechanism_ref_ids) != len(set(mechanism_ref_ids)):
+            return EquipmentDefinitionResolution(
+                resolution_status="blocked",
+                requested_key=key,
+                expected_kind=key.definition_kind,
+                value=None,
+                candidates=candidates,
+                blocked_reason="equipment_mechanism_reference_duplicate",
+            )
+        for mechanism_key in mechanism_ref_ids:
+            mechanism_resolution = self._equipment_definition_resolution(
+                mechanism_key,
+                EquipmentMechanismRefIR,
+            )
+            if mechanism_resolution.resolution_status != "resolved":
+                return EquipmentDefinitionResolution(
+                    resolution_status="blocked",
+                    requested_key=key,
+                    expected_kind=key.definition_kind,
+                    value=None,
+                    candidates=candidates,
+                    blocked_reason="equipment_mechanism_reference_unresolved",
+                )
         return EquipmentDefinitionResolution(
             resolution_status="resolved",
             requested_key=key,

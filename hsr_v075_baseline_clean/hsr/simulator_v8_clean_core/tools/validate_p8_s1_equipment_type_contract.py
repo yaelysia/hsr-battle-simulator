@@ -23,8 +23,14 @@ from ..equipment.models import (
     EquipmentMechanismRefIR,
     EquipmentResolutionCandidate,
     EquipmentSourceLedgerEntry,
+    LightConeAbilitySourceIR,
     LightConeDefinitionIR,
     LightConeInstanceInput,
+    LightConeParameterIR,
+    LightConePromotionTierIR,
+    LightConePromotionValueIR,
+    LightConeStaticPropertyIR,
+    LightConeSuperimpositionLevelIR,
     RelicAffixDefinitionIR,
     RelicInstanceInput,
     RelicSetDefinitionIR,
@@ -45,6 +51,14 @@ from ..rules.ir import (
     StandaloneAbilityGraphIR,
 )
 from ..rules.rulebook import RuleBook
+from ..tbgd.equipment_inventory_contract import (
+    FINGERPRINT_REQUIRED_FIELDS,
+    PRIMARY_FINGERPRINT_ALGORITHM,
+    PRIMARY_FINGERPRINT_COVERAGE,
+    S0_SUMMARY_SCHEMA_VERSION,
+    load_s0_summary_fail_closed,
+    validate_s0_summary_payload,
+)
 from .io import write_json
 from .validate_p4_s8_trace_eidolon_level_resource_hooks import (
     build_p4_s8_equipment_boundary_matrix_row,
@@ -54,12 +68,6 @@ from .validate_p4_s8_trace_eidolon_level_resource_hooks import (
 
 VALIDATION_VERSION = "p8_s1_equipment_type_contract"
 SUMMARY_SCHEMA_VERSION = "p8_s1_equipment_type_contract_summary_v1"
-S0_SUMMARY_SCHEMA_VERSION = "p8_s0_equipment_source_inventory_summary_v1"
-PRIMARY_FINGERPRINT_ALGORITHM = "sha256-path-and-full-content-v1"
-PRIMARY_FINGERPRINT_COVERAGE = "full_content_for_every_primary_source_file"
-FINGERPRINT_REQUIRED_FIELDS = frozenset(
-    {"algorithm", "sha256", "file_count", "byte_count", "paths", "coverage"}
-)
 CANONICAL_EQUIPMENT_DEFINITION_FIELDS = frozenset(
     {
         "character_equipment_eligibilities",
@@ -80,73 +88,6 @@ FORBIDDEN_CANONICAL_BUILD_FIELDS = frozenset(
         "player_equipment_instances",
     }
 )
-
-
-def validate_s0_summary_payload(payload: object) -> dict[str, Any]:
-    row = payload if isinstance(payload, dict) else {}
-    fingerprint = row.get("primary_source_fingerprint")
-    fingerprint_row = fingerprint if isinstance(fingerprint, dict) else {}
-    paths = fingerprint_row.get("paths")
-    file_count = fingerprint_row.get("file_count")
-    byte_count = fingerprint_row.get("byte_count")
-    sha256 = fingerprint_row.get("sha256")
-    try:
-        validate_equipment_source_fingerprint(fingerprint_row)
-    except (TypeError, ValueError):
-        production_fingerprint_valid = False
-    else:
-        production_fingerprint_valid = True
-    checks = {
-        "summary_is_object": isinstance(payload, dict),
-        "schema_exact": row.get("schema_version") == S0_SUMMARY_SCHEMA_VERSION,
-        "s0_ok_is_true": row.get("ok") is True,
-        "s0_ready_for_review_is_true": row.get("ready_for_review") is True,
-        "primary_fingerprint_is_object": isinstance(fingerprint, dict),
-        "production_fingerprint_validation_passed": production_fingerprint_valid,
-        "primary_fingerprint_fields_complete": FINGERPRINT_REQUIRED_FIELDS.issubset(fingerprint_row),
-        "primary_fingerprint_algorithm_exact": fingerprint_row.get("algorithm")
-        == PRIMARY_FINGERPRINT_ALGORITHM,
-        "primary_fingerprint_coverage_is_full": fingerprint_row.get("coverage")
-        == PRIMARY_FINGERPRINT_COVERAGE,
-        "primary_fingerprint_sha256_shape": isinstance(sha256, str)
-        and len(sha256) == 64
-        and all(character in "0123456789abcdef" for character in sha256),
-        "primary_fingerprint_file_count_positive": isinstance(file_count, int)
-        and not isinstance(file_count, bool)
-        and file_count > 0,
-        "primary_fingerprint_byte_count_positive": isinstance(byte_count, int)
-        and not isinstance(byte_count, bool)
-        and byte_count > 0,
-        "primary_fingerprint_paths_complete": isinstance(paths, list)
-        and bool(paths)
-        and all(isinstance(path, str) and bool(path) for path in paths)
-        and len(paths) == file_count
-        and len(set(paths)) == len(paths),
-    }
-    checks["ok"] = all(value is True for value in checks.values())
-    return {
-        "ok": checks["ok"],
-        "checks": checks,
-        "reason": "" if checks["ok"] else "p8_s0_summary_fail_closed",
-    }
-
-
-def load_s0_summary_fail_closed(path: Path) -> dict[str, Any]:
-    if not path.is_file():
-        raise ValueError(f"P8-S0 summary is missing: {path}")
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise ValueError(f"P8-S0 summary cannot be read as JSON: {path}") from exc
-    validation = validate_s0_summary_payload(payload)
-    if validation["ok"] is not True:
-        failed = sorted(
-            key
-            for key, value in dict(validation["checks"]).items()
-            if key != "ok" and value is not True
-        )
-        raise ValueError(f"P8-S0 summary failed closed checks: {failed}")
-    return cast(dict[str, Any], payload)
 
 
 def run_validation(s0_summary_path: Path, output_dir: Path) -> dict[str, Any]:
@@ -312,13 +253,71 @@ def _build_definition_fixture(
         coverage_status="lowered",
         blocked_reason="",
     )
+    promotion_values = tuple(
+        LightConePromotionValueIR(field_name=name, exact_value=value, source=source)
+        for name, value in (
+            ("base_hp", "10"),
+            ("hp_per_level", "1"),
+            ("base_attack", "5"),
+            ("attack_per_level", "0.5"),
+            ("base_defence", "4"),
+            ("defence_per_level", "0.4"),
+        )
+    )
+    promotion_tier = LightConePromotionTierIR(
+        promotion_stage=0,
+        promotion_field_present=False,
+        max_level=20,
+        stat_values=promotion_values,
+        source=source,
+    )
+    parameter = LightConeParameterIR(
+        parameter_index=0,
+        exact_value="0.1",
+        source=source,
+    )
+    static_property = LightConeStaticPropertyIR(
+        property_index=0,
+        property_type="FixtureProperty",
+        exact_value="0.2",
+        source=source,
+    )
+    superimposition_level = LightConeSuperimpositionLevelIR(
+        skill_id="fixture:skill",
+        level=1,
+        ability_name="FixtureLightConeAbility",
+        skill_name_hash="fixture:skill-name-hash",
+        skill_description_hash="fixture:skill-description-hash",
+        parameters=(parameter,),
+        static_properties=(static_property,),
+        source=source,
+    )
+    ability_source = LightConeAbilitySourceIR(
+        ability_name="FixtureLightConeAbility",
+        record_index=0,
+        source=make_equipment_source(
+            source_path="fixture/equipment_ability.json",
+            raw_type="AbilityList",
+            raw_id="FixtureLightConeAbility",
+            json_path="$.AbilityList[0]",
+            source_fingerprint=fingerprint,
+            source_kind="validation_fixture",
+        ),
+    )
     light_cone = LightConeDefinitionIR(
         definition_key=light_cone_key,
         raw_equipment_id=shared_identity,
+        publication_status="published",
+        release_field_present=True,
+        equipment_name_hash="fixture:equipment-name-hash",
         path_type="FixturePath",
         rarity="fixture",
-        promotion_ref_ids=("fixture:promotion",),
-        superimposition_ref_id="fixture:superimposition",
+        max_promotion=0,
+        max_superimposition=1,
+        skill_id="fixture:skill",
+        promotion_tiers=(promotion_tier,),
+        superimposition_levels=(superimposition_level,),
+        ability_source=ability_source,
         mechanism_ref_ids=(mechanism_key,),
         source=source,
         coverage_status="lowered",
@@ -1084,6 +1083,12 @@ def _public_model_immutability_negative_checks(
     public_models = (
         EquipmentDefinitionKey,
         CharacterEquipmentEligibilityIR,
+        LightConePromotionValueIR,
+        LightConePromotionTierIR,
+        LightConeParameterIR,
+        LightConeStaticPropertyIR,
+        LightConeSuperimpositionLevelIR,
+        LightConeAbilitySourceIR,
         LightConeDefinitionIR,
         RelicTemplateDefinitionIR,
         RelicAffixDefinitionIR,
@@ -1114,15 +1119,15 @@ def _public_model_immutability_negative_checks(
     eligibility_before = eligibility.to_json()
     path_values.append("LateMutation")
 
-    promotion_values = ["fixture:promotion"]
+    promotion_values = [fixture["light_cone"].promotion_tiers[0]]
     mechanism_values = [fixture["mechanism"].definition_key]
     light_cone = replace(
         fixture["light_cone"],
-        promotion_ref_ids=cast(Any, promotion_values),
+        promotion_tiers=cast(Any, promotion_values),
         mechanism_ref_ids=cast(Any, mechanism_values),
     )
     light_cone_before = light_cone.to_json()
-    promotion_values.append("late")
+    promotion_values.append(fixture["light_cone"].promotion_tiers[0])
     mechanism_values.append(fixture["mechanism"].definition_key)
 
     affix_parameters = ["fixture:value-param"]
@@ -1219,7 +1224,7 @@ def _public_model_immutability_negative_checks(
         "definition_string_tuple_has_mutable_member": _raises(
             lambda: replace(
                 fixture["light_cone"],
-                promotion_ref_ids=cast(Any, [["mutable"]]),
+                promotion_tiers=cast(Any, [["mutable"]]),
             ),
             TypeError,
         ),

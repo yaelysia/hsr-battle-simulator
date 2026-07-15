@@ -280,7 +280,25 @@ def load_equipment_source_snapshot(tbgd_root: Path) -> EquipmentSourceSnapshot:
         ability_documents.append(document)
         loaded.append((relative_path, raw))
 
-    loaded.sort(key=lambda item: item[0])
+    fingerprint = build_primary_equipment_source_fingerprint(loaded)
+    return EquipmentSourceSnapshot(
+        tbgd_root=root,
+        table_documents=table_documents,
+        ability_documents=tuple(ability_documents),
+        missing_required_paths=tuple(sorted(missing_required_paths)),
+        parse_errors=tuple(parse_errors),
+        primary_source_fingerprint=fingerprint,
+        primary_bytes_read=int(fingerprint["byte_count"]),
+        primary_json_parse_count=len(loaded),
+    )
+
+
+def build_primary_equipment_source_fingerprint(
+    loaded_sources: Iterable[tuple[str, bytes]],
+) -> dict[str, Any]:
+    """Fingerprint raw primary bytes; callers may use different semantic parsers."""
+
+    loaded = sorted(tuple(loaded_sources), key=lambda item: item[0])
     fingerprint_digest = hashlib.sha256()
     fingerprint_paths: list[str] = []
     fingerprint_bytes = 0
@@ -292,7 +310,7 @@ def load_equipment_source_snapshot(tbgd_root: Path) -> EquipmentSourceSnapshot:
         fingerprint_paths.append(relative_path)
         fingerprint_bytes += len(raw)
 
-    fingerprint = {
+    return {
         "schema_version": EQUIPMENT_DISCOVERY_SCHEMA_VERSION,
         "algorithm": PRIMARY_FINGERPRINT_ALGORITHM,
         "sha256": fingerprint_digest.hexdigest(),
@@ -301,16 +319,6 @@ def load_equipment_source_snapshot(tbgd_root: Path) -> EquipmentSourceSnapshot:
         "paths": fingerprint_paths,
         "coverage": "full_content_for_every_primary_source_file",
     }
-    return EquipmentSourceSnapshot(
-        tbgd_root=root,
-        table_documents=table_documents,
-        ability_documents=tuple(ability_documents),
-        missing_required_paths=tuple(sorted(missing_required_paths)),
-        parse_errors=tuple(parse_errors),
-        primary_source_fingerprint=fingerprint,
-        primary_bytes_read=fingerprint_bytes,
-        primary_json_parse_count=len(loaded),
-    )
 
 
 def discover_equipment_candidate_paths(tbgd_root: Path) -> tuple[Path, ...]:

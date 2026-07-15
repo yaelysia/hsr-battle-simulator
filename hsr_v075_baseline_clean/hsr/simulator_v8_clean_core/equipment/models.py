@@ -4,6 +4,8 @@ import hashlib
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from decimal import Decimal, InvalidOperation
+from pathlib import PurePosixPath
 from typing import Generic, Literal, TypeVar, cast
 
 from ..build_types import StaticStatContribution
@@ -24,6 +26,22 @@ EquipmentResolutionStatus = Literal["resolved", "blocked"]
 AssemblyStatus = Literal["assembled", "blocked"]
 ActivationStatus = Literal["active", "inactive", "blocked"]
 LedgerChannel = Literal["static", "dynamic", "activation"]
+LightConePublicationStatus = Literal["published", "unpublished", "status_unknown"]
+
+LIGHT_CONE_PUBLICATION_STATES = frozenset(
+    {"published", "unpublished", "status_unknown"}
+)
+LIGHT_CONE_PROMOTION_VALUE_FIELD_ORDER = (
+    "base_hp",
+    "hp_per_level",
+    "base_attack",
+    "attack_per_level",
+    "base_defence",
+    "defence_per_level",
+)
+LIGHT_CONE_PROMOTION_VALUE_FIELDS = frozenset(
+    LIGHT_CONE_PROMOTION_VALUE_FIELD_ORDER
+)
 
 EQUIPMENT_DEFINITION_KINDS: frozenset[str] = frozenset(
     {
@@ -56,6 +74,7 @@ EQUIPMENT_RESOLVABLE_COVERAGE_STATES = frozenset(
 FINGERPRINT_REQUIRED_FIELDS = frozenset(
     {"algorithm", "sha256", "file_count", "byte_count", "paths", "coverage"}
 )
+FINGERPRINT_ALLOWED_FIELDS = FINGERPRINT_REQUIRED_FIELDS | {"schema_version"}
 SOURCE_BEHAVIOR_FIELDS = frozenset(
     {
         "activation_status",
@@ -137,6 +156,56 @@ def _integer(value: object, field_name: str) -> int:
     return value
 
 
+def _boolean(value: object, field_name: str) -> bool:
+    if not isinstance(value, bool):
+        raise TypeError(f"{field_name} must be a boolean")
+    return value
+
+
+def _require_exact_fields(
+    row: Mapping[str, object],
+    expected: frozenset[str],
+    field_name: str,
+) -> None:
+    unknown = sorted(set(row).difference(expected))
+    if unknown:
+        raise ValueError(f"{field_name} contains unknown fields: {unknown}")
+
+
+def _canonical_decimal_text(value: Decimal) -> str:
+    if not value.is_finite():
+        raise ValueError("equipment decimal values must be finite")
+    if value == 0:
+        return "0"
+    text = format(value, "f")
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return text
+
+
+def exact_decimal_text(value: object, field_name: str = "exact_value") -> str:
+    """Validate canonical decimal text at the typed IR/JSON boundary."""
+
+    if not isinstance(value, str):
+        raise TypeError(f"{field_name} must be canonical decimal text")
+    try:
+        decimal_value = Decimal(value)
+    except InvalidOperation as exc:
+        raise ValueError(f"{field_name} must be a decimal string") from exc
+    canonical = _canonical_decimal_text(decimal_value)
+    if value != canonical:
+        raise ValueError(f"{field_name} must use canonical decimal text")
+    return canonical
+
+
+def raw_exact_decimal_text(value: object, field_name: str = "raw_value") -> str:
+    """Project raw JSON numbers; strings and binary floats are never raw numbers."""
+
+    if isinstance(value, bool) or not isinstance(value, (int, Decimal)):
+        raise TypeError(f"{field_name} must be a raw int or Decimal")
+    return _canonical_decimal_text(Decimal(value))
+
+
 def _optional_mapping(value: object, field_name: str) -> Mapping[str, object] | None:
     if value is None:
         return None
@@ -162,6 +231,9 @@ def _canonical_fingerprint(value: Mapping[str, JSONValue]) -> str:
 
 
 def validate_equipment_source_fingerprint(value: Mapping[str, object]) -> None:
+    unknown = sorted(set(value).difference(FINGERPRINT_ALLOWED_FIELDS))
+    if unknown:
+        raise ValueError(f"source fingerprint contains unknown fields: {unknown}")
     missing = sorted(FINGERPRINT_REQUIRED_FIELDS.difference(value))
     if missing:
         raise ValueError(f"source fingerprint missing fields: {missing}")
@@ -226,6 +298,11 @@ def _require_equipment_source(source: IRSource) -> None:
     _require_text(source.raw_id, "source.raw_id")
     if not isinstance(source.evidence, FrozenJSONDict):
         raise TypeError("equipment source evidence must be recursively frozen at the creation boundary")
+    _require_exact_fields(
+        source.evidence,
+        frozenset({"json_path", "source_kind", "source_fingerprint"}),
+        "equipment source evidence",
+    )
     forbidden_fields = sorted(SOURCE_BEHAVIOR_FIELDS.intersection(source.evidence))
     if forbidden_fields:
         raise ValueError(
@@ -244,7 +321,17 @@ def _require_equipment_source(source: IRSource) -> None:
 
 def _source_from_json(value: object) -> IRSource:
     source = _mapping(value, "source")
+    _require_exact_fields(
+        source,
+        frozenset({"source_path", "raw_type", "raw_id", "evidence"}),
+        "source",
+    )
     evidence = _mapping(source.get("evidence"), "source.evidence")
+    _require_exact_fields(
+        evidence,
+        frozenset({"json_path", "source_kind", "source_fingerprint"}),
+        "source.evidence",
+    )
     fingerprint = _mapping(evidence.get("source_fingerprint"), "source.evidence.source_fingerprint")
     source_kind = _text(evidence.get("source_kind"), "source.evidence.source_kind")
     if source_kind not in EQUIPMENT_SOURCE_KINDS:
@@ -293,7 +380,12 @@ class EquipmentDefinitionKey:
     @classmethod
     def from_json(cls, value: object) -> EquipmentDefinitionKey:
         row = _mapping(value, "definition_key")
-        return cls(
+        _require_exact_fields(
+            row,
+            frozenset({"definition_kind", "definition_identity", "stable_id"}),
+            "definition_key",
+        )
+        result = cls(
             definition_kind=cast(
                 EquipmentDefinitionKind,
                 _text(row.get("definition_kind"), "definition_key.definition_kind"),
@@ -303,6 +395,10 @@ class EquipmentDefinitionKey:
                 "definition_key.definition_identity",
             ),
         )
+        stable_id = _text(row.get("stable_id"), "definition_key.stable_id")
+        if stable_id != result.stable_id:
+            raise ValueError("definition_key.stable_id does not match canonical identity")
+        return result
 
 
 @dataclass(frozen=True)
@@ -354,13 +450,344 @@ class CharacterEquipmentEligibilityIR:
 
 
 @dataclass(frozen=True)
+class LightConePromotionValueIR:
+    field_name: str
+    exact_value: str
+    source: IRSource
+
+    def __post_init__(self) -> None:
+        if self.field_name not in LIGHT_CONE_PROMOTION_VALUE_FIELDS:
+            raise ValueError(f"unsupported light-cone promotion value field {self.field_name!r}")
+        exact_decimal_text(self.exact_value, f"promotion_values.{self.field_name}")
+        _require_equipment_source(self.source)
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "field_name": self.field_name,
+            "exact_value": self.exact_value,
+            "source": self.source.to_json(),
+        }
+
+    @classmethod
+    def from_json(cls, value: object) -> LightConePromotionValueIR:
+        row = _mapping(value, "light_cone_promotion_value")
+        _require_exact_fields(
+            row,
+            frozenset({"field_name", "exact_value", "source"}),
+            "light_cone_promotion_value",
+        )
+        return cls(
+            field_name=_text(row.get("field_name"), "field_name"),
+            exact_value=_text(row.get("exact_value"), "exact_value"),
+            source=_source_from_json(row.get("source")),
+        )
+
+
+@dataclass(frozen=True)
+class LightConePromotionTierIR:
+    promotion_stage: int
+    promotion_field_present: bool
+    max_level: int
+    stat_values: tuple[LightConePromotionValueIR, ...]
+    source: IRSource
+
+    def __post_init__(self) -> None:
+        _require_integer(self.promotion_stage, "promotion_stage")
+        if self.promotion_stage < 0:
+            raise ValueError("promotion_stage must be non-negative")
+        _boolean(self.promotion_field_present, "promotion_field_present")
+        if not self.promotion_field_present and self.promotion_stage != 0:
+            raise ValueError("missing Promotion field is only valid for stage zero")
+        _require_integer(self.max_level, "max_level")
+        if self.max_level <= 0:
+            raise ValueError("light-cone promotion max_level must be positive")
+        values = cast(
+            tuple[LightConePromotionValueIR, ...],
+            _typed_tuple(self.stat_values, LightConePromotionValueIR, "stat_values"),
+        )
+        object.__setattr__(self, "stat_values", values)
+        fields = tuple(item.field_name for item in values)
+        if fields != LIGHT_CONE_PROMOTION_VALUE_FIELD_ORDER:
+            raise ValueError(
+                "light-cone promotion tier requires each exact stat field once in canonical order"
+            )
+        _require_equipment_source(self.source)
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "promotion_stage": self.promotion_stage,
+            "promotion_field_present": self.promotion_field_present,
+            "max_level": self.max_level,
+            "stat_values": [item.to_json() for item in self.stat_values],
+            "source": self.source.to_json(),
+        }
+
+    @classmethod
+    def from_json(cls, value: object) -> LightConePromotionTierIR:
+        row = _mapping(value, "light_cone_promotion_tier")
+        _require_exact_fields(
+            row,
+            frozenset(
+                {
+                    "promotion_stage",
+                    "promotion_field_present",
+                    "max_level",
+                    "stat_values",
+                    "source",
+                }
+            ),
+            "light_cone_promotion_tier",
+        )
+        return cls(
+            promotion_stage=_integer(row.get("promotion_stage"), "promotion_stage"),
+            promotion_field_present=_boolean(
+                row.get("promotion_field_present"), "promotion_field_present"
+            ),
+            max_level=_integer(row.get("max_level"), "max_level"),
+            stat_values=tuple(
+                LightConePromotionValueIR.from_json(item)
+                for item in _sequence(row.get("stat_values"), "stat_values")
+            ),
+            source=_source_from_json(row.get("source")),
+        )
+
+
+@dataclass(frozen=True)
+class LightConeParameterIR:
+    parameter_index: int
+    exact_value: str
+    source: IRSource
+
+    def __post_init__(self) -> None:
+        _require_integer(self.parameter_index, "parameter_index")
+        if self.parameter_index < 0:
+            raise ValueError("parameter_index must be non-negative")
+        exact_decimal_text(self.exact_value, "parameter exact_value")
+        _require_equipment_source(self.source)
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "parameter_index": self.parameter_index,
+            "exact_value": self.exact_value,
+            "source": self.source.to_json(),
+        }
+
+    @classmethod
+    def from_json(cls, value: object) -> LightConeParameterIR:
+        row = _mapping(value, "light_cone_parameter")
+        _require_exact_fields(
+            row,
+            frozenset({"parameter_index", "exact_value", "source"}),
+            "light_cone_parameter",
+        )
+        return cls(
+            parameter_index=_integer(row.get("parameter_index"), "parameter_index"),
+            exact_value=_text(row.get("exact_value"), "exact_value"),
+            source=_source_from_json(row.get("source")),
+        )
+
+
+@dataclass(frozen=True)
+class LightConeStaticPropertyIR:
+    property_index: int
+    property_type: str
+    exact_value: str
+    source: IRSource
+
+    def __post_init__(self) -> None:
+        _require_integer(self.property_index, "property_index")
+        if self.property_index < 0:
+            raise ValueError("property_index must be non-negative")
+        _require_text(self.property_type, "property_type")
+        exact_decimal_text(self.exact_value, "static property exact_value")
+        _require_equipment_source(self.source)
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "property_index": self.property_index,
+            "property_type": self.property_type,
+            "exact_value": self.exact_value,
+            "source": self.source.to_json(),
+        }
+
+    @classmethod
+    def from_json(cls, value: object) -> LightConeStaticPropertyIR:
+        row = _mapping(value, "light_cone_static_property")
+        _require_exact_fields(
+            row,
+            frozenset({"property_index", "property_type", "exact_value", "source"}),
+            "light_cone_static_property",
+        )
+        return cls(
+            property_index=_integer(row.get("property_index"), "property_index"),
+            property_type=_text(row.get("property_type"), "property_type"),
+            exact_value=_text(row.get("exact_value"), "exact_value"),
+            source=_source_from_json(row.get("source")),
+        )
+
+
+@dataclass(frozen=True)
+class LightConeSuperimpositionLevelIR:
+    skill_id: str
+    level: int
+    ability_name: str
+    skill_name_hash: str
+    skill_description_hash: str
+    parameters: tuple[LightConeParameterIR, ...]
+    static_properties: tuple[LightConeStaticPropertyIR, ...]
+    source: IRSource
+
+    def __post_init__(self) -> None:
+        _require_text(self.skill_id, "skill_id")
+        _require_integer(self.level, "superimposition level")
+        if self.level <= 0:
+            raise ValueError("superimposition level must be positive")
+        _require_text(self.ability_name, "ability_name")
+        _require_text(self.skill_name_hash, "skill_name_hash")
+        _require_text(self.skill_description_hash, "skill_description_hash")
+        parameters = cast(
+            tuple[LightConeParameterIR, ...],
+            _typed_tuple(self.parameters, LightConeParameterIR, "parameters"),
+        )
+        properties = cast(
+            tuple[LightConeStaticPropertyIR, ...],
+            _typed_tuple(
+                self.static_properties,
+                LightConeStaticPropertyIR,
+                "static_properties",
+            ),
+        )
+        if tuple(item.parameter_index for item in parameters) != tuple(range(len(parameters))):
+            raise ValueError("light-cone parameter indices must be contiguous and ordered")
+        if tuple(item.property_index for item in properties) != tuple(range(len(properties))):
+            raise ValueError("light-cone property indices must be contiguous and ordered")
+        object.__setattr__(self, "parameters", parameters)
+        object.__setattr__(self, "static_properties", properties)
+        _require_equipment_source(self.source)
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "skill_id": self.skill_id,
+            "level": self.level,
+            "ability_name": self.ability_name,
+            "skill_name_hash": self.skill_name_hash,
+            "skill_description_hash": self.skill_description_hash,
+            "parameters": [item.to_json() for item in self.parameters],
+            "static_properties": [item.to_json() for item in self.static_properties],
+            "source": self.source.to_json(),
+        }
+
+    @classmethod
+    def from_json(cls, value: object) -> LightConeSuperimpositionLevelIR:
+        row = _mapping(value, "light_cone_superimposition_level")
+        _require_exact_fields(
+            row,
+            frozenset(
+                {
+                    "skill_id",
+                    "level",
+                    "ability_name",
+                    "skill_name_hash",
+                    "skill_description_hash",
+                    "parameters",
+                    "static_properties",
+                    "source",
+                }
+            ),
+            "light_cone_superimposition_level",
+        )
+        return cls(
+            skill_id=_text(row.get("skill_id"), "skill_id"),
+            level=_integer(row.get("level"), "level"),
+            ability_name=_text(row.get("ability_name"), "ability_name"),
+            skill_name_hash=_text(row.get("skill_name_hash"), "skill_name_hash"),
+            skill_description_hash=_text(
+                row.get("skill_description_hash"), "skill_description_hash"
+            ),
+            parameters=tuple(
+                LightConeParameterIR.from_json(item)
+                for item in _sequence(row.get("parameters"), "parameters")
+            ),
+            static_properties=tuple(
+                LightConeStaticPropertyIR.from_json(item)
+                for item in _sequence(row.get("static_properties"), "static_properties")
+            ),
+            source=_source_from_json(row.get("source")),
+        )
+
+
+@dataclass(frozen=True)
+class LightConeAbilitySourceIR:
+    ability_name: str
+    record_index: int
+    source: IRSource
+
+    def __post_init__(self) -> None:
+        _require_text(self.ability_name, "ability_name")
+        _require_integer(self.record_index, "ability record_index")
+        if self.record_index < 0:
+            raise ValueError("ability record_index must be non-negative")
+        _require_equipment_source(self.source)
+        if self.source.raw_type != "AbilityList" or self.source.raw_id != self.ability_name:
+            raise ValueError("ability source must identify the matching AbilityList record")
+        if self.source.evidence.get("json_path") != f"$.AbilityList[{self.record_index}]":
+            raise ValueError("ability source json_path must match record_index")
+        if self.source.evidence.get("source_kind") == "tbgd":
+            source_path = PurePosixPath(self.source.source_path)
+            if (
+                source_path.is_absolute()
+                or ".." in source_path.parts
+                or self.source.source_path != source_path.as_posix()
+                or not self.source.source_path.startswith("Config/ConfigAbility/Equip/")
+                or source_path.suffix != ".json"
+                or source_path.name.endswith(".layout.json")
+            ):
+                raise ValueError("TBGD ability source is outside the equipment ability namespace")
+            fingerprint = _mapping(
+                self.source.evidence.get("source_fingerprint"),
+                "ability source fingerprint",
+            )
+            paths = fingerprint.get("paths")
+            if not isinstance(paths, (list, tuple)) or self.source.source_path not in paths:
+                raise ValueError("TBGD ability source is not present in the source fingerprint")
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "ability_name": self.ability_name,
+            "record_index": self.record_index,
+            "source": self.source.to_json(),
+        }
+
+    @classmethod
+    def from_json(cls, value: object) -> LightConeAbilitySourceIR:
+        row = _mapping(value, "light_cone_ability_source")
+        _require_exact_fields(
+            row,
+            frozenset({"ability_name", "record_index", "source"}),
+            "light_cone_ability_source",
+        )
+        return cls(
+            ability_name=_text(row.get("ability_name"), "ability_name"),
+            record_index=_integer(row.get("record_index"), "record_index"),
+            source=_source_from_json(row.get("source")),
+        )
+
+
+@dataclass(frozen=True)
 class LightConeDefinitionIR:
     definition_key: EquipmentDefinitionKey
     raw_equipment_id: str
+    publication_status: LightConePublicationStatus
+    release_field_present: bool
+    equipment_name_hash: str
     path_type: str
     rarity: str
-    promotion_ref_ids: tuple[str, ...]
-    superimposition_ref_id: str
+    max_promotion: int
+    max_superimposition: int
+    skill_id: str
+    promotion_tiers: tuple[LightConePromotionTierIR, ...]
+    superimposition_levels: tuple[LightConeSuperimpositionLevelIR, ...]
+    ability_source: LightConeAbilitySourceIR | None
     mechanism_ref_ids: tuple[EquipmentDefinitionKey, ...]
     source: IRSource
     coverage_status: CoverageStatus = "blocked"
@@ -369,30 +796,82 @@ class LightConeDefinitionIR:
     def __post_init__(self) -> None:
         _require_kind(self.definition_key, "light_cone")
         _require_text(self.raw_equipment_id, "raw_equipment_id")
+        if self.definition_key.definition_identity != self.raw_equipment_id:
+            raise ValueError("light-cone definition identity must match raw_equipment_id")
+        if self.publication_status not in LIGHT_CONE_PUBLICATION_STATES:
+            raise ValueError(f"invalid light-cone publication_status {self.publication_status!r}")
+        _boolean(self.release_field_present, "release_field_present")
+        if self.publication_status in {"published", "unpublished"} and not self.release_field_present:
+            raise ValueError("published/unpublished light-cone status requires the raw Release field")
+        if not self.release_field_present and self.publication_status != "status_unknown":
+            raise ValueError("missing raw Release field must remain status_unknown")
+        _require_text(self.equipment_name_hash, "equipment_name_hash")
         _require_text(self.path_type, "path_type")
-        _require_string(self.rarity, "rarity")
-        _require_string(self.superimposition_ref_id, "superimposition_ref_id")
-        object.__setattr__(
-            self,
-            "promotion_ref_ids",
-            _string_tuple(self.promotion_ref_ids, "promotion_ref_ids"),
+        _require_text(self.rarity, "rarity")
+        _require_integer(self.max_promotion, "max_promotion")
+        _require_integer(self.max_superimposition, "max_superimposition")
+        if self.max_promotion < 0 or self.max_superimposition <= 0:
+            raise ValueError("light-cone max promotion/rank values are invalid")
+        _require_text(self.skill_id, "skill_id")
+        promotion_tiers = cast(
+            tuple[LightConePromotionTierIR, ...],
+            _typed_tuple(self.promotion_tiers, LightConePromotionTierIR, "promotion_tiers"),
         )
-        object.__setattr__(
-            self,
-            "mechanism_ref_ids",
-            cast(
-                tuple[EquipmentDefinitionKey, ...],
-                _typed_tuple(
-                    self.mechanism_ref_ids,
-                    EquipmentDefinitionKey,
-                    "mechanism_ref_ids",
-                ),
+        levels = cast(
+            tuple[LightConeSuperimpositionLevelIR, ...],
+            _typed_tuple(
+                self.superimposition_levels,
+                LightConeSuperimpositionLevelIR,
+                "superimposition_levels",
             ),
         )
-        for key in self.mechanism_ref_ids:
+        mechanisms = cast(
+            tuple[EquipmentDefinitionKey, ...],
+            _typed_tuple(
+                self.mechanism_ref_ids,
+                EquipmentDefinitionKey,
+                "mechanism_ref_ids",
+            ),
+        )
+        for key in mechanisms:
             _require_kind(key, "equipment_mechanism")
+        if len(mechanisms) != len(set(mechanisms)):
+            raise ValueError("light-cone mechanism references must be unique")
+        if self.ability_source is not None and not isinstance(
+            self.ability_source, LightConeAbilitySourceIR
+        ):
+            raise TypeError("ability_source must be LightConeAbilitySourceIR or None")
+        object.__setattr__(self, "promotion_tiers", promotion_tiers)
+        object.__setattr__(self, "superimposition_levels", levels)
+        object.__setattr__(self, "mechanism_ref_ids", mechanisms)
         _require_equipment_source(self.source)
         _validate_coverage(self.coverage_status, self.blocked_reason)
+        if self.coverage_status == "lowered":
+            if self.blocked_reason:
+                raise ValueError("lowered light-cone definitions cannot have blocked_reason")
+            if tuple(item.promotion_stage for item in promotion_tiers) != tuple(
+                range(self.max_promotion + 1)
+            ):
+                raise ValueError("lowered light-cone promotion tiers must be complete and ordered")
+            if tuple(item.level for item in levels) != tuple(
+                range(1, self.max_superimposition + 1)
+            ):
+                raise ValueError("lowered light-cone superimposition levels must be complete and ordered")
+            if any(item.skill_id != self.skill_id for item in levels):
+                raise ValueError("lowered light-cone superimposition skill identity mismatch")
+            ability_names = {item.ability_name for item in levels}
+            if self.ability_source is None or ability_names != {self.ability_source.ability_name}:
+                raise ValueError("lowered light-cone ability source must match every rank row")
+            sources: list[IRSource] = [self.source]
+            sources.extend(item.source for item in promotion_tiers)
+            sources.extend(value.source for item in promotion_tiers for value in item.stat_values)
+            sources.extend(item.source for item in levels)
+            sources.extend(value.source for item in levels for value in item.parameters)
+            sources.extend(value.source for item in levels for value in item.static_properties)
+            sources.append(self.ability_source.source)
+            fingerprints = [item.evidence.get("source_fingerprint") for item in sources]
+            if any(value != fingerprints[0] for value in fingerprints[1:]):
+                raise ValueError("lowered light-cone sources must share one source content fingerprint")
 
     def to_json(self) -> dict[str, JSONValue]:
         return _definition_json(
@@ -402,10 +881,21 @@ class LightConeDefinitionIR:
             self.blocked_reason,
             {
                 "raw_equipment_id": self.raw_equipment_id,
+                "publication_status": self.publication_status,
+                "release_field_present": self.release_field_present,
+                "equipment_name_hash": self.equipment_name_hash,
                 "path_type": self.path_type,
                 "rarity": self.rarity,
-                "promotion_ref_ids": list(self.promotion_ref_ids),
-                "superimposition_ref_id": self.superimposition_ref_id,
+                "max_promotion": self.max_promotion,
+                "max_superimposition": self.max_superimposition,
+                "skill_id": self.skill_id,
+                "promotion_tiers": [item.to_json() for item in self.promotion_tiers],
+                "superimposition_levels": [
+                    item.to_json() for item in self.superimposition_levels
+                ],
+                "ability_source": self.ability_source.to_json()
+                if self.ability_source is not None
+                else None,
                 "mechanism_ref_ids": [key.to_json() for key in self.mechanism_ref_ids],
             },
         )
@@ -413,16 +903,63 @@ class LightConeDefinitionIR:
     @classmethod
     def from_json(cls, value: object) -> LightConeDefinitionIR:
         row = _mapping(value, "light_cone_definition")
+        _require_exact_fields(
+            row,
+            frozenset(
+                {
+                    "definition_key",
+                    "raw_equipment_id",
+                    "publication_status",
+                    "release_field_present",
+                    "equipment_name_hash",
+                    "path_type",
+                    "rarity",
+                    "max_promotion",
+                    "max_superimposition",
+                    "skill_id",
+                    "promotion_tiers",
+                    "superimposition_levels",
+                    "ability_source",
+                    "mechanism_ref_ids",
+                    "source",
+                    "coverage_status",
+                    "blocked_reason",
+                }
+            ),
+            "light_cone_definition",
+        )
+        ability_source = row.get("ability_source")
         return cls(
             definition_key=EquipmentDefinitionKey.from_json(row.get("definition_key")),
             raw_equipment_id=_text(row.get("raw_equipment_id"), "raw_equipment_id"),
-            path_type=_text(row.get("path_type"), "path_type"),
-            rarity=_text(row.get("rarity", ""), "rarity"),
-            promotion_ref_ids=tuple(
-                _text(item, "promotion_ref_ids[]")
-                for item in _sequence(row.get("promotion_ref_ids"), "promotion_ref_ids")
+            publication_status=cast(
+                LightConePublicationStatus,
+                _text(row.get("publication_status"), "publication_status"),
             ),
-            superimposition_ref_id=_text(row.get("superimposition_ref_id", ""), "superimposition_ref_id"),
+            release_field_present=_boolean(
+                row.get("release_field_present"), "release_field_present"
+            ),
+            equipment_name_hash=_text(row.get("equipment_name_hash"), "equipment_name_hash"),
+            path_type=_text(row.get("path_type"), "path_type"),
+            rarity=_text(row.get("rarity"), "rarity"),
+            max_promotion=_integer(row.get("max_promotion"), "max_promotion"),
+            max_superimposition=_integer(
+                row.get("max_superimposition"), "max_superimposition"
+            ),
+            skill_id=_text(row.get("skill_id"), "skill_id"),
+            promotion_tiers=tuple(
+                LightConePromotionTierIR.from_json(item)
+                for item in _sequence(row.get("promotion_tiers"), "promotion_tiers")
+            ),
+            superimposition_levels=tuple(
+                LightConeSuperimpositionLevelIR.from_json(item)
+                for item in _sequence(
+                    row.get("superimposition_levels"), "superimposition_levels"
+                )
+            ),
+            ability_source=LightConeAbilitySourceIR.from_json(ability_source)
+            if ability_source is not None
+            else None,
             mechanism_ref_ids=tuple(
                 EquipmentDefinitionKey.from_json(item)
                 for item in _sequence(row.get("mechanism_ref_ids"), "mechanism_ref_ids")

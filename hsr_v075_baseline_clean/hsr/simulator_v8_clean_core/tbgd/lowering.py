@@ -10,9 +10,14 @@ from typing import Any
 
 from .coverage import classify_opcode
 from .character_cards import build_character_card_ir
+from .light_cone_cards import (
+    build_light_cone_catalog,
+    require_complete_light_cone_catalog,
+)
 from .monster_cards import build_monster_card_ir
 from .paths import relative_source_path
 from .. import BASELINE_VERSION
+from ..immutable_json import thaw_json
 from ..rules.evaluator import NumericEvaluationContext, RuleEvaluator
 from ..rules.engine_rule_registry import build_engine_rule_registry
 from ..rules.expression_ir import (
@@ -255,6 +260,8 @@ class TBGDLowering:
         self.limits = limits or LoweringLimits()
 
     def build(self) -> CanonicalIR:
+        light_cone_catalog = build_light_cone_catalog(self.tbgd_root)
+        light_cone_definitions = require_complete_light_cone_catalog(light_cone_catalog)
         entities: list[RuleEntity] = []
         action_definitions: list[ActionDefinitionIR] = []
         triggers: list[TriggerIR] = []
@@ -544,6 +551,7 @@ class TBGDLowering:
             avatar_profiles=tuple(avatar_profiles),
             character_data_cards=tuple(character_data_cards),
             monster_data_cards=tuple(monster_data_cards),
+            light_cone_definitions=tuple(light_cone_definitions),
             summon_unit_definitions=tuple(summon_unit_definitions),
             unit_birth_templates=tuple(unit_birth_templates),
             summon_monster_intents=tuple(summon_monster_intents),
@@ -610,6 +618,13 @@ class TBGDLowering:
                     and len(selected_ability_files) < len(ability_files),
                     "callbacks": self.limits.max_callbacks_per_file is not None,
                 },
+                "equipment_source_content_fingerprint": thaw_json(
+                    light_cone_catalog.source_content_fingerprint
+                ),
+                "light_cone_catalog_definition_fingerprint": thaw_json(
+                    light_cone_catalog.catalog_definition_fingerprint
+                ),
+                "light_cone_catalog_limited": False,
                 "table_status": table_stats,
                 "ability_file_status": {
                     "raw_count": len(ability_files),

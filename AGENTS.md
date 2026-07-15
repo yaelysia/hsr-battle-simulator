@@ -34,8 +34,8 @@ turnbasedgamedata-main -> TBGD compiler/lowering -> Canonical IR -> Combat Core
 
 ```text
 P8 equipment build, light-cone and relic assembly
-最近代码检查点：P8-S2 正式角色构筑输入与基础面板验收
-当前规划主线：P8 光锥、遗器与角色构筑装配；P8-S0 至 P8-S2 已通过验收，下一步只执行 P8-S3 光锥数据卡与来源关联
+最近代码检查点：P8-S3 光锥数据卡与来源关联验收
+当前规划主线：P8 光锥、遗器与角色构筑装配；P8-S0 至 P8-S3 已通过验收，下一步只执行 P8-S4 光锥实例、成长与命途激活决策
 ```
 
 当前 v8 已建立的底层范围包括：
@@ -63,6 +63,7 @@ P8 equipment build, light-cone and relic assembly
 - P8-S0 装备来源与机制基线已经独立验收：当前主来源、辅助候选、发布状态、引用图、全能力文件机制扫描、特殊模式、未知类型和 source fingerprint 均有结构化 evidence；重复身份、缺引用、孤立成长 / 叠影记录、空表、陈旧指纹和漏候选负例均会失败。S0 没有新增正式装备 IR，也没有改变 runtime。
 - P8-S1 类型化装备与构筑架构已经独立验收：装备定义、玩家实例、构筑输入和装配结果已经分离；Canonical IR 与 RuleBook 具备类型化定义集合、命名空间身份、窄查询和结构化 blocked 结果；构筑及装配结果递归不可变并保留静态、动态和来源通道。旧字符串式装备边界已退役。S1 尚未 lower 真实装备，也不计算数值、合法性或执行装备效果。
 - P8-S2 正式角色构筑输入与基础面板已经独立验收：角色晋阶成长、能量上限、行迹与星魂子来源进入类型化构筑装配和统一贡献账本；正式 scenario 必须使用 source-backed 构筑，不能手填最终面板或行动值。当前常规能量角色已有真实 `assembled + admitted` 正例，未准入的辅助单位技能、额外效果和特殊资源会诚实 blocked。S2 仍未 lower 光锥或遗器。
+- P8-S3 光锥数据卡与来源关联已经独立验收：当前 162 张已发布光锥全部由三张核心表和装备能力文件投影为类型化定义，晋阶、叠影、静态属性、精确数值和唯一能力记录来源均可审计；完整目录已接入 Canonical IR 与 RuleBook。S3 不创建玩家实例、不计算指定等级属性，也不生成或执行光锥能力图。
 - `simulator_v8_ui/` 本地 UI 测试台，用于 scenario 编排和审计展示，不进入规则系统。
 
 当前仍未完整实现的大块：
@@ -340,6 +341,7 @@ P4 的执行质量明显改善，后续大型计划应沿用这个正向模式�
 - ability graph 中视觉/同步任务可以由一份集中、精确的 process-only opcode 契约承载，但未知 opcode 不能因此宽泛跳过。带语义的 task（条件、召唤、能力附着等）必须有 typed IR、真实 runtime consumer 和负例；不能因为 EffectIR 是 audit-only 或任务看似不影响数值就标 complete。
 - `@dataclass(frozen=True)` 只冻结字段重新绑定，不会冻结嵌套 dict/list。Mutation、RNG choice、queue intent 等可信指令若包含可变 JSON，必须在创建边界递归防御性冻结或复制，并在写入 state 前再次解别名；stable ID 必须在指令创建后保持不变，验证要包含原始输入、指令内部容器和序列化副本的别名污染负例。
 - UnitState、spawn payload、snapshot entity 等共享状态结构的字段集合、数字规范和编解码必须只有一个 core 层契约；reducer、lifecycle、spawn/setup 只能复用，不能各自复制一套默认值和字段校验，否则新增字段时必然分叉。
+- 完整来源目录不能只校验最终成功归属的定义。无法归属的成长/叠影行、缺身份的能力记录、伪造或未纳入来源指纹的文件路径都必须阻断目录完成；数据卡携带的机制引用还必须由 RuleBook 递归确认目标定义和能力图真实存在，不能只验证引用字段格式。
 
 ## 快照与结算目标摘要
 
