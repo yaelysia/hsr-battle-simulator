@@ -143,6 +143,7 @@ def _initial_setup_case(
             UnitSpec(
                 unit_id="ally:probe",
                 side="ally",
+                build_mode="kernel_fixture",
                 entity_ref=_select_avatar_entity(rules),
                 panel=PanelInput(
                     explicit_fields=("max_hp", "hp", "attack", "defense", "speed", "energy", "max_energy", "flags"),

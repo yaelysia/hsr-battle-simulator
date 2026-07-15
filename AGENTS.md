@@ -34,8 +34,8 @@ turnbasedgamedata-main -> TBGD compiler/lowering -> Canonical IR -> Combat Core
 
 ```text
 P8 equipment build, light-cone and relic assembly
-最近代码检查点：P8-S1 类型化装备与构筑架构验收
-当前规划主线：P8 光锥、遗器与角色构筑装配；P8-S0 至 P8-S1 已通过验收，下一步只执行 P8-S2 正式角色构筑输入与基础面板
+最近代码检查点：P8-S2 正式角色构筑输入与基础面板验收
+当前规划主线：P8 光锥、遗器与角色构筑装配；P8-S0 至 P8-S2 已通过验收，下一步只执行 P8-S3 光锥数据卡与来源关联
 ```
 
 当前 v8 已建立的底层范围包括：
@@ -62,6 +62,7 @@ P8 equipment build, light-cone and relic assembly
 - P8 光锥、遗器与角色构筑装配计划已经建立，严格按 S0-S21 执行。P8 将角色卡、光锥卡、遗器卡作为并列内容来源，由独立构筑装配器生成战斗单位；S20 使用希儿、《于夜色中》、四件“繁星璀璨的天才”和两件“繁星竞技场”完成正式端到端构筑纵切；旧 `card_contract.equipment_boundary` 只是 P4 的职责隔离声明，不是可用装备接口。
 - P8-S0 装备来源与机制基线已经独立验收：当前主来源、辅助候选、发布状态、引用图、全能力文件机制扫描、特殊模式、未知类型和 source fingerprint 均有结构化 evidence；重复身份、缺引用、孤立成长 / 叠影记录、空表、陈旧指纹和漏候选负例均会失败。S0 没有新增正式装备 IR，也没有改变 runtime。
 - P8-S1 类型化装备与构筑架构已经独立验收：装备定义、玩家实例、构筑输入和装配结果已经分离；Canonical IR 与 RuleBook 具备类型化定义集合、命名空间身份、窄查询和结构化 blocked 结果；构筑及装配结果递归不可变并保留静态、动态和来源通道。旧字符串式装备边界已退役。S1 尚未 lower 真实装备，也不计算数值、合法性或执行装备效果。
+- P8-S2 正式角色构筑输入与基础面板已经独立验收：角色晋阶成长、能量上限、行迹与星魂子来源进入类型化构筑装配和统一贡献账本；正式 scenario 必须使用 source-backed 构筑，不能手填最终面板或行动值。当前常规能量角色已有真实 `assembled + admitted` 正例，未准入的辅助单位技能、额外效果和特殊资源会诚实 blocked。S2 仍未 lower 光锥或遗器。
 - `simulator_v8_ui/` 本地 UI 测试台，用于 scenario 编排和审计展示，不进入规则系统。
 
 当前仍未完整实现的大块：
@@ -326,6 +327,7 @@ P4 的执行质量明显改善，后续大型计划应沿用这个正向模式�
 - transition/replay/source audit 自洽不等于战斗语义完整。每个结果必须有权威可信类别；只有所选执行图完整、Mutation 前置条件成立且原子提交的结果才能作为推演器下一状态，partial / blocked / diagnostic 必须 state unchanged。
 - 动作查询与提交必须满足 round trip：同一决策状态中，查询给出的每个动作和目标都可原样提交，未给出的命令必须被拒绝；只读查询不得推进时间线、重复触发回合开始或改变当前行动者。
 - `source_trace`、source/evidence 和审计 payload 只能用于解释来源，不能作为 runtime 行为输入。边界静态检查必须覆盖“从审计信息取规则”的行为路径，不能只检查 raw import 或敏感 token。
+- 序列化执行计划内部的多份来源彼此一致不等于来源真实。消费端必须把请求来源锚定到原始请求，把模板派生的属性、数据卡、时间线和生命周期来源锚定到 RuleBook 中可信 IR；比较时只忽略 evidence 说明文字。负例必须整体替换所有内部来源副本且保持业务身份不变，证明伪来源仍会 blocked、零 mutation、state unchanged。
 - 内核验收必须包含通用不变量，至少覆盖动作所有权、目标基数、护盾吸收、回合 / DoT / 控制顺序、独立 RNG 身份、Mutation before 冲突、队列前进保证和 partial no-mutation；阶段聚合 `ok=true` 不能替代这些检查。
 - 收紧 runtime fallback 时必须同步审计所有 IR 生产入口，不能只迁移普通 ability task。全局模板、击破模板、状态 callback、波次、召唤和其他派生 lowering 只要会生成 executable effect，也必须经过同一 typed target / numeric / condition 投影；否则旧 fallback 移除后会把真实机制静默变成 blocked。
 - 最终聚合中的“证据当前有效”必须有真实依据，不能只读取旧 summary 的 `ok=true`。至少要覆盖所有会影响当前代码的阶段（包括已早期验收的 transition / reducer），验证关键阶段完成字段而不只看顶层 `ok`，并防止旧产物在代码修改后继续冒充当前回归；共享一次 RuleBook 的串行现跑优先于重复全量构建。

@@ -586,6 +586,20 @@ function damageDetailHtml(records) {
 
 function unitEditHtml(unit) {
   const scenarioUnit = scenarioUnitFor(unit.unit_id) || {};
+  const buildMode = scenarioUnit.build_mode || "kernel_fixture";
+  if (buildMode === "assembled_character_build") {
+    const build = scenarioUnit.character_build || {};
+    return `
+      <h3>角色构筑模式</h3>
+      <p><strong>assembled_character_build</strong></p>
+      <p class="mutedText">正式面板由角色构筑装配结果生成；此 JSON 工作台仅展示构筑身份，不提供面板或行迹开关编辑。</p>
+      ${kvTable("构筑身份", [
+        ["构筑 ID", build.build_id || "—"],
+        ["角色卡", build.character_card_id || "—"],
+        ["输入 fingerprint", build.input_fingerprint || "—"],
+      ])}
+    `;
+  }
   const panel = scenarioUnit.panel || {};
   const resources = panel.resources || {};
   const flags = panel.flags || {};
@@ -692,6 +706,9 @@ async function applyUnitEdit(unitId) {
   const scenario = parseEditor("scenarioEditor");
   const unit = (scenario.units || []).find((item) => item && item.unit_id === unitId);
   if (!unit) throw new Error(`找不到单位：${unitId}`);
+  if ((unit.build_mode || "kernel_fixture") !== "kernel_fixture") {
+    throw new Error("正式角色构筑只能通过 JSON 构筑输入修改，不能写入旧面板或行迹 flags");
+  }
   unit.panel = unit.panel || {};
   unit.panel.resources = unit.panel.resources || {};
   unit.panel.flags = unit.panel.flags || {};

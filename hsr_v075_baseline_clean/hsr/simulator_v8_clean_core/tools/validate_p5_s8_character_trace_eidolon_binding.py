@@ -393,10 +393,12 @@ def _missing_context_negative_case(
 
 def _character_gap_visibility_case(ir: CanonicalIR) -> dict[str, Any]:
     trace_slots = tuple(
-        slot for slot in ir.character_mechanism_slots if slot.mechanism_kind in {"trace_static_stat_bonus", "trace_ability_hook"}
+        slot for slot in ir.character_mechanism_slots if slot.mechanism_kind.startswith("trace_")
     )
     eidolon_slots = tuple(slot for slot in ir.character_eidolon_slots)
-    eidolon_mechanisms = tuple(slot for slot in ir.character_mechanism_slots if slot.mechanism_kind == "eidolon_rank_effect")
+    eidolon_mechanisms = tuple(
+        slot for slot in ir.character_mechanism_slots if slot.mechanism_kind.startswith("eidolon_")
+    )
     blocked_reasons = Counter(
         str(slot.blocked_reason or f"slot_not_executable:{slot.coverage_status}")
         for slot in (*trace_slots, *eidolon_mechanisms)

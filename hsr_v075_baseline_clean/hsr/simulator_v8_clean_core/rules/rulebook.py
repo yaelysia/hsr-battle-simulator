@@ -411,10 +411,34 @@ class RuleBook:
             "_combatant_profiles_by_profile_id",
             {profile.profile_id: profile for profile in self.ir.combatant_profiles},
         )
+        action_definition_candidates: dict[tuple[str, int], list[ActionDefinitionIR]] = {}
+        for definition in self.ir.action_definitions:
+            action_definition_candidates.setdefault(
+                (definition.action_id, definition.level),
+                [],
+            ).append(definition)
+        frozen_action_definition_candidates = {
+            key: tuple(
+                sorted(
+                    values,
+                    key=_action_definition_candidate_sort_key,
+                )
+            )
+            for key, values in action_definition_candidates.items()
+        }
+        object.__setattr__(
+            self,
+            "_action_definition_candidates",
+            frozen_action_definition_candidates,
+        )
         object.__setattr__(
             self,
             "_action_definitions",
-            {(definition.action_id, definition.level): definition for definition in self.ir.action_definitions},
+            {
+                key: candidates[0]
+                for key, candidates in frozen_action_definition_candidates.items()
+                if len(candidates) == 1
+            },
         )
         damage_modifiers_by_callback: dict[str, list[DamageModifierIR]] = {}
         for modifier in self.ir.damage_modifiers:
@@ -1396,6 +1420,13 @@ class RuleBook:
     def action_definition(self, action_id: str, level: int) -> ActionDefinitionIR | None:
         return self._action_definitions.get((action_id, level))
 
+    def action_definition_candidates(
+        self,
+        action_id: str,
+        level: int,
+    ) -> tuple[ActionDefinitionIR, ...]:
+        return self._action_definition_candidates.get((action_id, level), ())
+
     def require_action_definition(self, action_id: str, level: int) -> ActionDefinitionIR:
         definition = self.action_definition(action_id, level)
         if definition is None:
@@ -1407,7 +1438,13 @@ class RuleBook:
 
     def action_levels(self, action_id: str) -> tuple[int, ...]:
         return tuple(
-            sorted(definition.level for definition in self.ir.action_definitions if definition.action_id == action_id)
+            sorted(
+                {
+                    definition.level
+                    for definition in self.ir.action_definitions
+                    if definition.action_id == action_id
+                }
+            )
         )
 
     def action_definition_source_trace(self, action_id: str, level: int) -> dict[str, object] | None:
@@ -1835,6 +1872,16 @@ def _equipment_definition_sort_key(
         definition.source.source_path,
         definition.source.raw_id,
         str(definition.source.evidence.get("json_path") or ""),
+    )
+
+
+def _action_definition_candidate_sort_key(
+    definition: ActionDefinitionIR,
+) -> tuple[str, str, str]:
+    return (
+        definition.definition_id,
+        definition.source.source_path,
+        definition.source.raw_id,
     )
 
 

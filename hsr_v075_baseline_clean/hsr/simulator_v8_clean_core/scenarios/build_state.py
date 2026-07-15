@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from .identity import IdentityResolver
 from .schema import InitialStatusSpec, InitialSummonSpec, PanelInput, RNGSetupSpec, ScenarioSpec, UnitSpec
+from ..builds.character_assembler import assemble_character_build, validate_character_build_admission
+from ..builds.models import CharacterBuildAssemblyResult
 from ..core.model import ActionCommand, BattleState, GameEvent, JSONValue, Mutation, RNGEvent, UnitState
 from ..core.reducer import MutationReducer
 from ..rules.ir import CombatantProfileIR, WaveDefinitionIR, WaveMonsterEntryIR
@@ -27,6 +30,7 @@ class ScenarioBuildResult:
     setup_events: tuple[GameEvent, ...] = ()
     setup_rng_events: tuple[RNGEvent, ...] = ()
     blocked_setup: tuple[dict[str, JSONValue], ...] = ()
+    character_build_results: tuple[CharacterBuildAssemblyResult, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -58,8 +62,101 @@ class ScenarioStateBuilder:
         eidolon_startup_specs: list[dict[str, Any]] = []
         trace_startup_specs: list[dict[str, Any]] = []
         passive_startup_specs: list[dict[str, Any]] = []
+        character_build_results: list[CharacterBuildAssemblyResult] = []
         for unit in scenario.units:
             panel = unit.panel
+            if unit.build_mode == "assembled_character_build":
+                if unit.character_build is None or unit.initial_condition is None or panel is not None:
+                    raise ValueError(
+                        f"unit {unit.unit_id}: incomplete formal character build boundary"
+                    )
+                assembly = assemble_character_build(self.rules, unit.character_build)
+                admission_errors = validate_character_build_admission(
+                    self.rules,
+                    unit.character_build,
+                    assembly,
+                )
+                if admission_errors:
+                    reasons = (*assembly.blocked_reasons, *admission_errors)
+                    raise ValueError(f"unit {unit.unit_id}: {'; '.join(sorted(set(reasons)))}")
+                if assembly.base_panel is None:
+                    raise ValueError(f"unit {unit.unit_id}: admitted build has no base panel")
+                character_build_results.append(assembly)
+                formal_flags, formal_startup_specs = _formal_character_activation(
+                    self.rules,
+                    unit,
+                    assembly,
+                )
+                if unit.position is not None:
+                    formal_flags["position"] = unit.position
+                for startup_spec in formal_startup_specs:
+                    trace_startup_specs.append({"unit_id": unit.unit_id, **startup_spec})
+                base_panel = assembly.base_panel
+                resources = {
+                    "critical_chance": float(base_panel.critical_chance),
+                    "critical_damage": float(base_panel.critical_damage),
+                    "base_aggro": float(base_panel.base_aggro),
+                    **{
+                        item.property_type: float(item.exact_value)
+                        for item in base_panel.additional_resources
+                    },
+                }
+                max_hp = float(base_panel.max_hp)
+                max_energy = float(base_panel.max_energy)
+                units[unit.unit_id] = UnitState(
+                    unit_id=unit.unit_id,
+                    side=unit.side,
+                    template_id=unit.entity_ref,
+                    level=unit.level,
+                    max_hp=max_hp,
+                    hp=max_hp,
+                    attack=float(base_panel.attack),
+                    defense=float(base_panel.defense),
+                    speed=float(base_panel.speed),
+                    energy=float(unit.initial_condition.initial_energy),
+                    max_energy=max_energy,
+                    toughness=0.0,
+                    max_toughness=0.0,
+                    action_value=0.0,
+                    statuses=(),
+                    flags=formal_flags,
+                    resources=resources,
+                )
+                source_traces.extend(
+                    contribution.source.to_json() for contribution in assembly.contribution_ledger
+                )
+                source_traces.extend(
+                    source.source.to_json()
+                    for level in assembly.effective_skill_levels
+                    for source in level.sources
+                )
+                source_traces.extend(
+                    level.action_record_source.to_json()
+                    for level in assembly.effective_skill_levels
+                )
+                source_traces.extend(
+                    level.action_definition_source.to_json()
+                    for level in assembly.effective_skill_levels
+                )
+                source_traces.extend(
+                    mechanism.source.to_json()
+                    for mechanism in assembly.admitted_dynamic_mechanism_refs
+                )
+                setup_records.append(
+                    {
+                        "record_type": "character_build_assembly",
+                        "source_kind": "canonical_ir_character_build",
+                        "status": "admitted",
+                        "unit_id": unit.unit_id,
+                        "input_fingerprint": assembly.input_fingerprint,
+                        "result_fingerprint": assembly.result_fingerprint,
+                        "effective_skill_level_count": len(assembly.effective_skill_levels),
+                        "legacy_trace_eidolon_paths_bypassed": True,
+                    }
+                )
+                continue
+            if panel is None:
+                raise ValueError(f"unit {unit.unit_id}: kernel_fixture requires panel input")
             flags = dict(panel.flags)
             if unit.position is not None:
                 flags["position"] = unit.position
@@ -219,6 +316,7 @@ class ScenarioStateBuilder:
             setup_events=setup_result.events,
             setup_rng_events=setup_result.rng_events,
             blocked_setup=setup_result.blocked,
+            character_build_results=tuple(character_build_results),
         )
 
 
@@ -884,10 +982,15 @@ def _wave_unit_spec(
     plan = UnitSpawnSystem().plan(template, request)
     if not plan.ok:
         raise ValueError(f"wave entry {entry.entry_id}: {plan.blocked_reason or 'unit birth template blocked'}")
-    unit = plan.to_unit(expected_request=request)
+    unit = plan.to_unit(
+        expected_request=request,
+        expected_template=template,
+        owner=None,
+    )
     return UnitSpec(
         unit_id=unit_id,
         side="enemy",
+        build_mode="kernel_fixture",
         entity_ref=entry.monster_entity_ref,
         level=unit.level,
         position=entry.position,
@@ -1040,7 +1143,7 @@ def _trace_runtime_activation(
                 key = str(term.get("target_key") or "")
                 value_resolution = _fixed_numeric_value_resolution(
                     value_resolver,
-                    term.get("value"),
+                    _kernel_fixture_exact_numeric(term.get("value")),
                     data_card_id=card_id,
                     data_card_kind="character",
                     source_trace=slot.source.to_json(),
@@ -1113,6 +1216,94 @@ def _trace_runtime_activation(
         "resource_deltas": resource_deltas,
         "startup_specs": startup_specs,
     }
+
+
+def _kernel_fixture_exact_numeric(value: object) -> object:
+    if not isinstance(value, str):
+        return value
+    try:
+        number = Decimal(value)
+    except InvalidOperation:
+        return value
+    return float(number) if number.is_finite() else value
+
+
+def _formal_character_activation(
+    rules: RuleBook,
+    unit: UnitSpec,
+    assembly: CharacterBuildAssemblyResult,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    if unit.character_build is None:
+        raise ValueError("formal character activation requires character_build")
+    flags: dict[str, Any] = {
+        "build_mode": "assembled_character_build",
+        "character_data_card_id": unit.character_build.character_card_id,
+        "character_build_input_fingerprint": assembly.input_fingerprint,
+        "character_build_result_fingerprint": assembly.result_fingerprint,
+        "character_build_battle_admission_status": assembly.battle_admission_status,
+        "legacy_trace_runtime_activation_bypassed": True,
+        "legacy_eidolon_runtime_activation_bypassed": True,
+        "admitted_character_mechanism_ref_ids": tuple(
+            ref.mechanism_ref_id for ref in assembly.admitted_dynamic_mechanism_refs
+        ),
+        "effective_skill_levels_by_action_id": {
+            level.action_id: level.effective_level
+            for level in assembly.effective_skill_levels
+        },
+        "effective_skill_level_sources": {
+            level.action_id: tuple(source.to_json() for source in level.sources)
+            for level in assembly.effective_skill_levels
+        },
+        "effective_skill_level_action_definitions": {
+            level.action_id: {
+                "definition_id": level.action_definition_id,
+                "level": level.effective_level,
+                "action_record_source": level.action_record_source.to_json(),
+                "source": level.action_definition_source.to_json(),
+            }
+            for level in assembly.effective_skill_levels
+        },
+    }
+    startup_specs: list[dict[str, Any]] = []
+    for mechanism in assembly.admitted_dynamic_mechanism_refs:
+        slot = rules.character_mechanism_slot(mechanism.source_ref.definition_identity)
+        if slot is None:
+            raise ValueError(f"admitted character mechanism slot disappeared: {mechanism.mechanism_ref_id}")
+        if mechanism.mechanism_kind in {"trace_ability", "eidolon_ability"}:
+            graph = rules.standalone_ability_graph(mechanism.target_ref_id)
+            if graph is None or graph.coverage_status != "executable":
+                raise ValueError(f"admitted character mechanism graph disappeared: {mechanism.mechanism_ref_id}")
+            admission = slot.semantics.get("startup_admission")
+            admitted_task_ids: tuple[str, ...] = ()
+            if isinstance(admission, dict):
+                raw_tasks = admission.get("admitted_tasks")
+                if isinstance(raw_tasks, (list, tuple)):
+                    admitted_task_ids = tuple(
+                        str(item.get("task_id"))
+                        for item in raw_tasks
+                        if isinstance(item, dict) and item.get("task_id")
+                    )
+            startup_specs.append(
+                {
+                    "kind": f"formal_{mechanism.mechanism_kind}",
+                    "slot": slot,
+                    "slot_id": slot.mechanism_slot_id,
+                    "slot_id_field": "mechanism_slot_id",
+                    "graph_ref_id": graph.standalone_ability_graph_id,
+                    "ability_name": graph.ability_name,
+                    "param_values": tuple(_number_items(slot.semantics.get("param_values"))),
+                    "dynamic_value_bindings": slot.semantics.get("dynamic_value_bindings"),
+                    "dynamic_value_binding_mode": (
+                        "configured_by_hash_required"
+                        if mechanism.mechanism_kind == "trace_ability"
+                        else "request_order_fallback"
+                    ),
+                    "admitted_task_ids": admitted_task_ids,
+                }
+            )
+        else:
+            raise ValueError(f"unsupported admitted character mechanism kind: {mechanism.mechanism_kind}")
+    return flags, startup_specs
 
 
 def _passive_runtime_activation(rules: RuleBook, card: object | None) -> dict[str, Any]:
@@ -1412,11 +1603,22 @@ def _apply_startup_ability_effects(
         slot_id = str(spec.get("slot_id") or getattr(slot, "eidolon_slot_id", "") or getattr(slot, "mechanism_slot_id", ""))
         slot_id_field = str(spec.get("slot_id_field") or "slot_id")
         trace_node_id = str(spec.get("trace_node_id") or "")
-        graphs = tuple(
-            graph
-            for graph in rules.standalone_ability_graphs_by_name(ability_name)
-            if graph.coverage_status == "executable"
-        )
+        graph_ref_id = spec.get("graph_ref_id")
+        if isinstance(graph_ref_id, str) and graph_ref_id:
+            referenced_graph = rules.standalone_ability_graph(graph_ref_id)
+            graphs = (
+                (referenced_graph,)
+                if referenced_graph is not None
+                and referenced_graph.coverage_status == "executable"
+                and referenced_graph.ability_name == ability_name
+                else ()
+            )
+        else:
+            graphs = tuple(
+                graph
+                for graph in rules.standalone_ability_graphs_by_name(ability_name)
+                if graph.coverage_status == "executable"
+            )
         if len(graphs) != 1:
             traces.append(
                 _startup_trace_payload(

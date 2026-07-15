@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Literal
 
+from ..build_types import ir_source_from_json
 from ..core.model import ActionCommand, BattleState, JSONValue, UnitState
+from ..ir_types import same_ir_source_raw_row
 from ..rules.ir import ActionDefinitionIR, ActionEventIR, QueueResolutionIR
 from ..rules.rulebook import RuleBook
 from .action_preflight import (
@@ -894,10 +897,46 @@ class ActionAvailabilitySystem:
         choices: list[ActionChoice] = []
         blocked: list[BlockedActionReason] = []
         actor_data_card = _actor_data_card_source_trace(self.rules, actor)
-        for skill_index, entry in _sorted_action_set_entries(action_set.skill_index_map):
+        sorted_entries = _sorted_action_set_entries(action_set.skill_index_map)
+        formal_build = actor.flags.get("build_mode") == "assembled_character_build"
+        formal_mapping_reason = ""
+        if formal_build:
+            expected_action_ids = {
+                str(entry.get("action_ref") or "")
+                for _skill_index, entry in sorted_entries
+                if str(entry.get("action_ref") or "")
+            }
+            for flag_name in (
+                "effective_skill_levels_by_action_id",
+                "effective_skill_level_sources",
+                "effective_skill_level_action_definitions",
+            ):
+                raw_mapping = actor.flags.get(flag_name)
+                if not isinstance(raw_mapping, Mapping):
+                    formal_mapping_reason = f"formal_build_{flag_name}_missing_or_invalid"
+                    break
+                if set(raw_mapping) != expected_action_ids:
+                    formal_mapping_reason = f"formal_build_{flag_name}_identity_set_mismatch"
+                    break
+        for skill_index, entry in sorted_entries:
             action_id = str(entry.get("action_ref") or "")
             level = _default_level(entry)
-            reason = self._action_set_entry_blocked_reason(entry, action_id, level)
+            reason = self._action_set_entry_blocked_reason(
+                entry,
+                action_id,
+                level,
+                require_level=not formal_build,
+            )
+            formal_level_trace: dict[str, JSONValue] = {}
+            if not reason and formal_build:
+                if formal_mapping_reason:
+                    reason = formal_mapping_reason
+                    level = 0
+                else:
+                    level, reason, formal_level_trace = self._formal_character_action_level(
+                        actor,
+                        action_id,
+                    )
             if reason:
                 blocked.append(
                     BlockedActionReason(
@@ -908,7 +947,10 @@ class ActionAvailabilitySystem:
                         action_id=action_id,
                         action_level=level,
                         metadata={"skill_index": skill_index, "action_set_entry": entry},
-                        source_trace=action_set.source.to_json(),
+                        source_trace={
+                            "combatant_action_set": action_set.source.to_json(),
+                            **formal_level_trace,
+                        },
                     )
                 )
                 continue
@@ -924,6 +966,7 @@ class ActionAvailabilitySystem:
                     "combatant_action_set_id": action_set.combatant_action_set_id,
                     "skill_index": skill_index,
                     "action_set_entry": entry,
+                    **formal_level_trace,
                 },
                 metadata={
                     "skill_index": skill_index,
@@ -936,6 +979,104 @@ class ActionAvailabilitySystem:
             else:
                 blocked.append(reason)
         return tuple(choices), tuple(blocked)
+
+    def _formal_character_action_level(
+        self,
+        actor: UnitState,
+        action_id: str,
+    ) -> tuple[int, str, dict[str, JSONValue]]:
+        raw_levels = actor.flags.get("effective_skill_levels_by_action_id")
+        raw_sources = actor.flags.get("effective_skill_level_sources")
+        raw_definitions = actor.flags.get("effective_skill_level_action_definitions")
+        if not all(
+            isinstance(value, Mapping)
+            for value in (raw_levels, raw_sources, raw_definitions)
+        ):
+            return 0, "formal_build_skill_level_mapping_missing_or_invalid", {}
+        raw_level = raw_levels.get(action_id)
+        if (
+            not isinstance(raw_level, int)
+            or isinstance(raw_level, bool)
+            or raw_level <= 0
+        ):
+            return 0, "formal_build_skill_level_value_invalid", {}
+        source_rows = raw_sources.get(action_id)
+        if not isinstance(source_rows, (list, tuple)) or not source_rows:
+            return raw_level, "formal_build_skill_level_sources_missing_or_invalid", {}
+        for source_row in source_rows:
+            if not isinstance(source_row, Mapping):
+                return raw_level, "formal_build_skill_level_sources_missing_or_invalid", {}
+            source_ref = source_row.get("source_ref")
+            source = source_row.get("source")
+            if (
+                not isinstance(source_ref, Mapping)
+                or not str(source_ref.get("definition_kind") or "")
+                or not str(source_ref.get("definition_identity") or "")
+                or not isinstance(source, Mapping)
+                or not str(source.get("source_path") or "")
+                or not str(source.get("raw_type") or "")
+                or not str(source.get("raw_id") or "")
+            ):
+                return raw_level, "formal_build_skill_level_sources_missing_or_invalid", {}
+        stored_definition = raw_definitions.get(action_id)
+        if not isinstance(stored_definition, Mapping):
+            return raw_level, "formal_build_action_definition_binding_missing_or_invalid", {}
+        candidates = self.rules.action_definition_candidates(action_id, raw_level)
+        if len(candidates) != 1:
+            return (
+                raw_level,
+                "formal_build_action_definition_missing"
+                if not candidates
+                else "formal_build_action_definition_not_unique",
+                {},
+            )
+        definition = candidates[0]
+        if definition.coverage_status != "executable":
+            return raw_level, "formal_build_action_definition_not_executable", {}
+        try:
+            action_record_source = ir_source_from_json(
+                stored_definition.get("action_record_source"),
+                "formal_build_action_record_source",
+            )
+            stored_definition_source = ir_source_from_json(
+                stored_definition.get("source"),
+                "formal_build_action_definition_source",
+            )
+        except (TypeError, ValueError):
+            return raw_level, "formal_build_action_raw_row_source_invalid", {}
+        if (
+            stored_definition.get("definition_id") != definition.definition_id
+            or stored_definition.get("level") != raw_level
+            or stored_definition_source != definition.source
+        ):
+            return raw_level, "formal_build_action_definition_binding_mismatch", {}
+        try:
+            same_raw_row = same_ir_source_raw_row(
+                action_record_source,
+                definition.source,
+                expected_level=raw_level,
+            )
+        except (TypeError, ValueError):
+            return raw_level, "formal_build_action_raw_row_identity_invalid", {}
+        if not same_raw_row:
+            return raw_level, "formal_build_action_definition_raw_row_mismatch", {}
+        return (
+            raw_level,
+            "",
+            {
+                "character_build_effective_skill_level": {
+                    "action_id": action_id,
+                    "effective_level": raw_level,
+                    "level_sources": list(source_rows),
+                    "action_definition": {
+                        "definition_id": definition.definition_id,
+                        "level": definition.level,
+                        "action_record_source": action_record_source.to_json(),
+                        "source": definition.source.to_json(),
+                    },
+                }
+            },
+        )
 
     def _summon_choices(
         self,
@@ -1468,12 +1609,19 @@ class ActionAvailabilitySystem:
             return event.blocked_reason or f"action_event_not_executable:{event.coverage_status}"
         return action_event_blocked_reason(event)
 
-    def _action_set_entry_blocked_reason(self, entry: dict[str, JSONValue], action_id: str, level: int) -> str:
+    def _action_set_entry_blocked_reason(
+        self,
+        entry: dict[str, JSONValue],
+        action_id: str,
+        level: int,
+        *,
+        require_level: bool = True,
+    ) -> str:
         if entry.get("coverage_status") != "executable":
             return str(entry.get("blocked_reason") or f"action_set_entry_not_executable:{entry.get('coverage_status')}")
         if not action_id:
             return "action_set_entry_action_ref_missing"
-        if level <= 0:
+        if require_level and level <= 0:
             return "action_set_entry_default_level_missing"
         return ""
 

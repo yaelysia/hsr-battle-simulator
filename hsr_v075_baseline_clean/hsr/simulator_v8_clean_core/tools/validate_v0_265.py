@@ -430,7 +430,7 @@ def _trace_and_eidolon_case(rules: RuleBook, card: CharacterDataCardIR) -> dict[
                 and bool(slot.blocked_reason)
             )
             for slot in slots
-            if slot.mechanism_kind == "eidolon_rank_effect"
+            if slot.mechanism_kind.startswith("eidolon_")
         ),
     }
     checks["ok"] = all(value for key, value in checks.items() if key != "ok")

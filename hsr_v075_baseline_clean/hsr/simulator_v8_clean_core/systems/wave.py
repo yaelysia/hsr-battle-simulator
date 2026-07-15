@@ -465,10 +465,32 @@ class WaveSystem:
                     source_trace=source_trace,
                 )
                 return WaveTransitionResult(blocked, (), (), (_plan_record(blocked, (), process_only=True),))
+            templates = tuple(
+                self.rules.unit_birth_template(request.birth_template_id)
+                for request in plan.spawn_requests
+            )
+            if any(template is None for template in templates):
+                blocked = self._blocked(
+                    plan.wave_definition_id,
+                    plan.current_wave_index,
+                    "wave_unit_birth_template_missing",
+                    source_trace=source_trace,
+                )
+                return WaveTransitionResult(blocked, (), (), (_plan_record(blocked, (), process_only=True),))
             try:
                 spawn_units = tuple(
-                    spawn_plan.to_unit(expected_request=request)
-                    for spawn_plan, request in zip(spawn_plans, plan.spawn_requests, strict=True)
+                    spawn_plan.to_unit(
+                        expected_request=request,
+                        expected_template=template,
+                        owner=None,
+                    )
+                    for spawn_plan, request, template in zip(
+                        spawn_plans,
+                        plan.spawn_requests,
+                        templates,
+                        strict=True,
+                    )
+                    if template is not None
                 )
             except ValueError as exc:
                 blocked = self._blocked(

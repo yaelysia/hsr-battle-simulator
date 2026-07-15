@@ -224,11 +224,16 @@ def _build_source_family_rows(
             raw_path_or_field="ExcelOutput/AvatarPromotionConfig.json",
             raw_count=raw["AvatarPromotionConfig"],
             raw_source_samples=raw_samples["AvatarPromotionConfig"],
-            ir_container="AvatarProfileIR.base_stats_by_promotion",
-            ir_items=tuple(profile for profile in ir.avatar_profiles if profile.base_stats_by_promotion),
+            ir_container="AvatarProfileIR.promotion_tiers",
+            ir_items=tuple(
+                tier
+                for profile in ir.avatar_profiles
+                for tier in profile.promotion_tiers
+                if tier.source.source_path == "ExcelOutput/AvatarPromotionConfig.json"
+            ),
             rules=rules,
             rulebook_query_surface="RuleBook.avatar_profile(avatar_id)",
-            projection_predicate="AvatarProfileIR.base_stats_by_promotion is non-empty",
+            projection_predicate="AvatarProfileIR.promotion_tiers is non-empty and typed",
             notes="Promotion data is projected into avatar profile stats; S0 records that it is not a standalone runtime rule.",
             future_owner="Character profile/stat assembly",
         )

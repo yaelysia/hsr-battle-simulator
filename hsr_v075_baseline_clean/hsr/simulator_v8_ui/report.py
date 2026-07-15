@@ -391,7 +391,14 @@ def scenario_to_json(scenario: ScenarioSpec) -> dict[str, JSONValue]:
                 "level": unit.level,
                 "eidolon_level": unit.eidolon_level,
                 "position": unit.position,
-                "panel": asdict(unit.panel),
+                "build_mode": unit.build_mode,
+                "panel": asdict(unit.panel) if unit.panel is not None else None,
+                "character_build": (
+                    unit.character_build.to_json() if unit.character_build is not None else None
+                ),
+                "initial_condition": (
+                    unit.initial_condition.to_json() if unit.initial_condition is not None else None
+                ),
             }
             for unit in scenario.units
         ],
@@ -460,6 +467,15 @@ def panel_source_breakdown(
             "trace_resource_adjustments": _dict(flags.get("trace_resource_adjustments")),
             "trace_blocked_slots": _list(flags.get("trace_static_stat_blocked_slots")),
             "trace_source_traces": _list(flags.get("trace_source_traces")),
+            "effective_skill_levels": _dict(
+                flags.get("effective_skill_levels_by_action_id")
+            ),
+            "effective_skill_level_sources": _dict(
+                flags.get("effective_skill_level_sources")
+            ),
+            "effective_skill_level_action_definitions": _dict(
+                flags.get("effective_skill_level_action_definitions")
+            ),
             "eidolon": {
                 "character_data_card_id": flags.get("character_data_card_id"),
                 "requested_level": flags.get("eidolon_level_requested"),

@@ -79,7 +79,9 @@ def _seele_card(rules: RuleBook) -> CharacterDataCardIR:
 def _eidolon_card_case(rules: RuleBook, card: CharacterDataCardIR) -> dict[str, Any]:
     slots = rules.character_eidolon_slots_for_card(card.card_id)
     mechanism_slots = rules.character_mechanism_slots_for_card(card.card_id)
-    eidolon_effect_slots = [slot for slot in mechanism_slots if slot.mechanism_kind == "eidolon_rank_effect"]
+    eidolon_effect_slots = [
+        slot for slot in mechanism_slots if slot.mechanism_kind.startswith("eidolon_")
+    ]
     rank_ids = tuple(slot.rank_id for slot in slots)
     checks = {
         "enhanced_seele_card": card.source.evidence.get("version_kind") == "enhanced",
@@ -162,6 +164,7 @@ def _state_for_eidolon_level(rules: RuleBook, eidolon_level: int):
             UnitSpec(
                 unit_id="ally:seele",
                 side="ally",
+                build_mode="kernel_fixture",
                 entity_ref=SEELE_ENTITY_REF,
                 level=80,
                 eidolon_level=eidolon_level,

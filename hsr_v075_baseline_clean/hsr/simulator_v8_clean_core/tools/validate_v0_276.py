@@ -237,6 +237,7 @@ def _state_with_trace(
             UnitSpec(
                 unit_id="ally:seele",
                 side="ally",
+                build_mode="kernel_fixture",
                 entity_ref=card.entity_ref,
                 level=80,
                 eidolon_level=0,
@@ -254,6 +255,7 @@ def _state_with_trace(
             UnitSpec(
                 unit_id="enemy:target",
                 side="enemy",
+                build_mode="kernel_fixture",
                 entity_ref="monster:1002011",
                 level=80,
                 panel=PanelInput(

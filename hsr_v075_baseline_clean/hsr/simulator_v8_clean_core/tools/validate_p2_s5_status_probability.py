@@ -284,7 +284,11 @@ def _unit_from_wave_entry(rules: RuleBook, definition, entry):
     plan = UnitSpawnSystem().plan(template, request)
     if not plan.ok:
         raise ValueError(plan.blocked_reason or "wave_unit_spawn_plan_blocked")
-    return plan.to_unit(expected_request=request)
+    return plan.to_unit(
+        expected_request=request,
+        expected_template=template,
+        owner=None,
+    )
 
 
 def _chance_resist_immunity_matrix(rules: RuleBook) -> dict[str, Any]:

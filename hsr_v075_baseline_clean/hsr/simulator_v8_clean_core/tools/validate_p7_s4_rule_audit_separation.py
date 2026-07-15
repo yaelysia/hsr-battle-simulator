@@ -85,6 +85,16 @@ UNIT_SPAWN_BEHAVIOR_FUNCTIONS = frozenset(
         "_spawn_request_identity",
     }
 )
+UNIT_SPAWN_SOURCE_PROOF_FUNCTIONS = frozenset(
+    {
+        "_validate_birth_plan_source_fields",
+        "_validate_expected_birth_template_source",
+        "_validate_nested_source_proofs",
+        "_spawn_request_source_proof_blocked_reason",
+        "_required_source_trace_identity",
+        "_require_matching_flag_source",
+    }
+)
 TRACE_GATE_REASON_FRAGMENTS = (
     "source_trace_missing",
     "source_trace_mismatch",
@@ -95,7 +105,14 @@ AUDIT_IDENTITY_KEYS = frozenset(
     {"source_path", "raw_type", "raw_id", "evidence", "predicate_path", "create_task_path"}
 )
 AUDIT_NORMALIZATION_FUNCTIONS = frozenset(
-    {"_binding_sources_from_expression", "_validate_shield_instances"}
+    {
+        "_action_definition_candidate_sort_key",
+        "_binding_sources_from_expression",
+        "_equipment_definition_sort_key",
+        "_formal_character_action_level",
+        "_validate_shield_instances",
+        *UNIT_SPAWN_SOURCE_PROOF_FUNCTIONS,
+    }
 )
 
 
@@ -250,6 +267,14 @@ def _unit_spawn_audit_trim_equivalence() -> dict[str, Any]:
             "servant_definition_id": {"binding_kind": "request_field", "field": "source_id"},
             "servant_ref": {"binding_kind": "request_field", "field": "entity_ref"},
             "summon_intent_id": {"binding_kind": "request_field", "field": "source_id"},
+            "summon_source_trace": {
+                "binding_kind": "request_field",
+                "field": "source_trace",
+            },
+            "servant_definition_source_trace": {
+                "binding_kind": "request_field",
+                "field": "entry_source_trace",
+            },
         },
         resource_specs={},
         request_contract={
@@ -277,26 +302,63 @@ def _unit_spawn_audit_trim_equivalence() -> dict[str, Any]:
         source_trace=source.to_json(),
         entry_source_trace=source.to_json(),
     )
+    annotated_source = replace(source, evidence={"detail": "different_audit_annotation"})
+    annotated = replace(
+        request,
+        source_trace=annotated_source.to_json(),
+        entry_source_trace=annotated_source.to_json(),
+    )
     trimmed = replace(request, source_trace={}, entry_source_trace={})
     system = UnitSpawnSystem()
     full_plan = system.plan(template, request, owner=owner)
+    annotated_plan = system.plan(template, annotated, owner=owner)
     trimmed_plan = system.plan(template, trimmed, owner=owner)
-    full_unit = full_plan.to_unit(expected_request=request) if full_plan.ok else None
-    trimmed_unit = trimmed_plan.to_unit(expected_request=trimmed) if trimmed_plan.ok else None
+    full_unit = (
+        full_plan.to_unit(
+            expected_request=request,
+            expected_template=template,
+            owner=owner,
+        )
+        if full_plan.ok
+        else None
+    )
+    annotated_unit = (
+        annotated_plan.to_unit(
+            expected_request=annotated,
+            expected_template=template,
+            owner=owner,
+        )
+        if annotated_plan.ok
+        else None
+    )
     identity_mismatch = system.plan(
         template,
-        replace(trimmed, source_id="validation:wrong_source"),
+        replace(request, source_id="validation:wrong_source"),
         owner=owner,
     )
+    behavioral_flags = lambda unit: {
+        key: value
+        for key, value in (unit.flags.items() if unit is not None else ())
+        if key not in {"summon_source_trace", "servant_definition_source_trace"}
+    }
     return {
         "ok": full_plan.ok
-        and trimmed_plan.ok
-        and full_unit == trimmed_unit
+        and annotated_plan.ok
+        and full_unit is not None
+        and annotated_unit is not None
+        and replace(full_unit, flags=behavioral_flags(full_unit))
+        == replace(annotated_unit, flags=behavioral_flags(annotated_unit))
+        and not trimmed_plan.ok
         and not identity_mismatch.ok
         and identity_mismatch.blocked_reason == "unit_birth_template_request_contract_mismatch:source_id",
         "full_plan_ok": full_plan.ok,
+        "annotated_plan_ok": annotated_plan.ok,
         "trimmed_plan_ok": trimmed_plan.ok,
-        "behavior_units_equal": full_unit == trimmed_unit,
+        "missing_source_proof_blocked": not trimmed_plan.ok,
+        "behavior_units_equal_after_audit_projection": full_unit is not None
+        and annotated_unit is not None
+        and replace(full_unit, flags=behavioral_flags(full_unit))
+        == replace(annotated_unit, flags=behavioral_flags(annotated_unit)),
         "identity_mismatch_blocked": not identity_mismatch.ok,
         "identity_mismatch_reason": identity_mismatch.blocked_reason,
     }
@@ -1006,6 +1068,8 @@ def _static_boundary(package_root: Path) -> dict[str, Any]:
         if relative == "systems/unit_spawn.py":
             for function in (node for node in ast.walk(tree) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))):
                 if function.name not in UNIT_SPAWN_BEHAVIOR_FUNCTIONS:
+                    continue
+                if function.name in UNIT_SPAWN_SOURCE_PROOF_FUNCTIONS:
                     continue
                 for node in ast.walk(function):
                     if isinstance(node, ast.Attribute) and node.attr in {"source_trace", "entry_source_trace"}:

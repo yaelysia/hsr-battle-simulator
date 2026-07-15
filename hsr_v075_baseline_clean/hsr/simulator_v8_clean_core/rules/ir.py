@@ -281,16 +281,64 @@ class CombatantProfileIR:
 
 
 @dataclass(frozen=True)
+class AvatarPromotionTierIR:
+    promotion_tier_id: str
+    avatar_id: str
+    promotion: int
+    promotion_field_present: bool
+    max_level: int
+    hp_base: str
+    hp_add: str
+    attack_base: str
+    attack_add: str
+    defense_base: str
+    defense_add: str
+    speed_base: str
+    critical_chance: str
+    critical_damage: str
+    base_aggro: str
+    source: IRSource
+    coverage_status: CoverageStatus = "blocked"
+    blocked_reason: str = ""
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "promotion_tier_id": self.promotion_tier_id,
+            "avatar_id": self.avatar_id,
+            "promotion": self.promotion,
+            "promotion_field_present": self.promotion_field_present,
+            "max_level": self.max_level,
+            "hp_base": self.hp_base,
+            "hp_add": self.hp_add,
+            "attack_base": self.attack_base,
+            "attack_add": self.attack_add,
+            "defense_base": self.defense_base,
+            "defense_add": self.defense_add,
+            "speed_base": self.speed_base,
+            "critical_chance": self.critical_chance,
+            "critical_damage": self.critical_damage,
+            "base_aggro": self.base_aggro,
+            "source": self.source.to_json(),
+            "coverage_status": self.coverage_status,
+            "blocked_reason": self.blocked_reason,
+        }
+
+
+@dataclass(frozen=True)
 class AvatarProfileIR:
     avatar_profile_id: str
     avatar_id: str
     base_type: str
     damage_type: str
     skill_ids: tuple[str, ...]
-    base_stats_by_promotion: dict[str, JSONValue]
+    promotion_tiers: tuple[AvatarPromotionTierIR, ...]
+    max_energy: str | None
+    max_energy_source: IRSource | None
     source: IRSource
     coverage_status: CoverageStatus = "blocked"
     blocked_reason: str = ""
+    resource_mode: Literal["standard_energy", "special_resource", "source_missing"] = "standard_energy"
+    special_resource_source: IRSource | None = None
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -299,7 +347,13 @@ class AvatarProfileIR:
             "base_type": self.base_type,
             "damage_type": self.damage_type,
             "skill_ids": list(self.skill_ids),
-            "base_stats_by_promotion": self.base_stats_by_promotion,
+            "promotion_tiers": [tier.to_json() for tier in self.promotion_tiers],
+            "max_energy": self.max_energy,
+            "max_energy_source": self.max_energy_source.to_json() if self.max_energy_source else None,
+            "resource_mode": self.resource_mode,
+            "special_resource_source": (
+                self.special_resource_source.to_json() if self.special_resource_source else None
+            ),
             "source": self.source.to_json(),
             "coverage_status": self.coverage_status,
             "blocked_reason": self.blocked_reason,
@@ -659,6 +713,15 @@ class CharacterTraceNodeIR:
     source: IRSource
     coverage_status: CoverageStatus = "blocked"
     blocked_reason: str = ""
+    level: int = 1
+    max_level: int = 1
+    default_unlocked: bool = False
+    required_promotion: int | None = None
+    required_character_level: int | None = None
+    prerequisite_trace_ids: tuple[str, ...] = ()
+    level_up_skill_ids: tuple[str, ...] = ()
+    extra_effect_ids: tuple[str, ...] = ()
+    simple_extra_effect_ids: tuple[str, ...] = ()
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -667,6 +730,15 @@ class CharacterTraceNodeIR:
             "avatar_id": self.avatar_id,
             "trace_id": self.trace_id,
             "trace_kind": self.trace_kind,
+            "level": self.level,
+            "max_level": self.max_level,
+            "default_unlocked": self.default_unlocked,
+            "required_promotion": self.required_promotion,
+            "required_character_level": self.required_character_level,
+            "prerequisite_trace_ids": list(self.prerequisite_trace_ids),
+            "level_up_skill_ids": list(self.level_up_skill_ids),
+            "extra_effect_ids": list(self.extra_effect_ids),
+            "simple_extra_effect_ids": list(self.simple_extra_effect_ids),
             "linked_mechanism_slot_ids": list(self.linked_mechanism_slot_ids),
             "source": self.source.to_json(),
             "coverage_status": self.coverage_status,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 from ..core.model import JSONValue, UnitState
@@ -111,24 +112,58 @@ class UnitSpawnPlan:
             metadata=dict(raw.get("metadata") or {}) if isinstance(raw.get("metadata"), dict) else {},
         )
 
-    def to_unit(self, expected_request: UnitSpawnRequest | None = None) -> UnitState:
+    def to_unit(
+        self,
+        *,
+        expected_request: UnitSpawnRequest,
+        expected_template: UnitBirthTemplateIR,
+        owner: UnitState | None,
+    ) -> UnitState:
         if not self.ok:
             raise ValueError(self.blocked_reason or "unit_spawn_plan_blocked")
         if not self.unit:
             raise ValueError("unit_spawn_plan_unit_missing")
         if not self.birth_template_id:
             raise ValueError("unit_spawn_plan_birth_template_id_missing")
+        if not isinstance(expected_request, UnitSpawnRequest):
+            raise ValueError("unit_spawn_plan_expected_request_missing")
+        if not isinstance(expected_template, UnitBirthTemplateIR):
+            raise ValueError("unit_spawn_plan_expected_template_missing")
         request = UnitSpawnRequest.from_json(self.request)
         _validate_spawn_request_complete(request)
-        if expected_request is not None and _spawn_request_identity(request) != _spawn_request_identity(
+        _validate_spawn_request_complete(expected_request)
+        if _spawn_request_identity(request) != _spawn_request_identity(expected_request):
+            raise ValueError("unit_spawn_plan_request_mismatch")
+        if _spawn_request_source_identity(request) != _spawn_request_source_identity(
             expected_request
         ):
-            raise ValueError("unit_spawn_plan_request_mismatch")
+            raise ValueError("unit_spawn_plan_request_source_mismatch")
+        template_reason = _template_request_blocked_reason(
+            expected_template,
+            expected_request,
+            owner,
+        )
+        if template_reason:
+            raise ValueError(f"unit_spawn_plan_expected_template_invalid:{template_reason}")
+        if expected_template.coverage_status != "executable":
+            raise ValueError("unit_spawn_plan_expected_template_not_executable")
+        if self.birth_template_id != expected_template.birth_template_id:
+            raise ValueError("unit_spawn_plan_expected_template_id_mismatch")
+        _validate_expected_birth_template_source(self, expected_template)
+        expected_unit = _materialize_unit_payload(
+            expected_template,
+            expected_request,
+            owner,
+        )
+        _validate_nested_source_proofs(self.unit, "unit")
+        _validate_nested_source_proofs(expected_unit, "expected_unit")
+        if _evidence_neutral_json(self.unit) != _evidence_neutral_json(expected_unit):
+            raise ValueError("unit_spawn_plan_template_payload_mismatch")
         unit = unit_state_from_payload(self.unit)
         if unit.unit_id != self.unit_id:
             raise ValueError("unit_spawn_plan_unit_id_mismatch")
         flags = dict(unit.flags)
-        _validate_birth_plan_source_fields(request, flags)
+        _validate_birth_plan_source_fields(self, request, flags)
         _validate_unit_request_binding(self, request, self.unit, flags)
         return unit
 
@@ -153,58 +188,28 @@ class UnitSpawnSystem:
                 source_trace=request.entry_source_trace,
             )
         try:
-            fields: dict[str, JSONValue] = {"unit_id": request.unit_id}
-            for field_name in (
-                "side",
-                "template_id",
-                "level",
-                "max_hp",
-                "hp",
-                "attack",
-                "defense",
-                "speed",
-                "energy",
-                "max_energy",
-                "toughness",
-                "max_toughness",
-                "action_value",
-            ):
-                if field_name not in template.unit_field_specs:
-                    raise ValueError(f"unit_birth_template_field_missing:{field_name}")
-                fields[field_name] = _resolve_spec(
-                    template.unit_field_specs[field_name],
-                    request=request,
-                    owner=owner,
-                    fields=fields,
-                )
-            flags = {
-                key: _resolve_spec(spec, request=request, owner=owner, fields=fields)
-                for key, spec in template.flag_specs.items()
-            }
-            resources = {
-                key: _resolve_spec(spec, request=request, owner=owner, fields=fields)
-                for key, spec in template.resource_specs.items()
-            }
+            unit = _materialize_unit_payload(template, request, owner)
             plan = UnitSpawnPlan(
                 ok=True,
                 unit_id=request.unit_id,
                 birth_template_id=template.birth_template_id,
                 source_trace=request.entry_source_trace,
                 request=request.to_json(),
-                unit={
-                    **fields,
-                    "statuses": [],
-                    "shield_instances": [],
-                    "flags": flags,
-                    "resources": resources,
-                },
+                unit=unit,
                 metadata={
                     "spawn_plan_kind": template.spawn_kind,
                     "birth_template_id": template.birth_template_id,
                     "birth_template_source_trace": template.source.to_json(),
+                    "template_source_role": template.request_contract.get(
+                        "template_source_role"
+                    ),
                 },
             )
-            plan.to_unit(expected_request=request)
+            plan.to_unit(
+                expected_request=request,
+                expected_template=template,
+                owner=owner,
+            )
             return plan
         except ValueError as exc:
             return self._blocked(
@@ -254,6 +259,9 @@ def _template_request_blocked_reason(
         _validate_spawn_request_complete(request)
     except ValueError as exc:
         return str(exc)
+    source_reason = _spawn_request_source_proof_blocked_reason(template, request)
+    if source_reason:
+        return source_reason
     if template.birth_template_id != request.birth_template_id:
         return "unit_birth_template_id_mismatch"
     if template.spawn_kind != request.spawn_kind:
@@ -284,13 +292,77 @@ def _template_request_blocked_reason(
     owner_entity_ref = str(template.request_contract.get("owner_entity_ref") or "")
     if owner_entity_ref and (owner is None or owner.template_id != owner_entity_ref):
         return "unit_birth_template_owner_entity_ref_mismatch"
-    # template_source_role describes which stable request identity owns the
-    # template.  Source traces are audit payloads and must never participate in
-    # runtime admission or equality.
     source_role = str(template.request_contract.get("template_source_role") or "")
-    if source_role not in {"entry", "source"}:
-        return "unit_birth_template_source_role_missing"
+    expected_source_role = "source" if request.spawn_kind == "wave_enemy" else "entry"
+    if source_role != expected_source_role:
+        return "unit_birth_template_source_role_mismatch"
     return ""
+
+
+def _materialize_unit_payload(
+    template: UnitBirthTemplateIR,
+    request: UnitSpawnRequest,
+    owner: UnitState | None,
+) -> dict[str, JSONValue]:
+    fields: dict[str, JSONValue] = {"unit_id": request.unit_id}
+    for field_name in (
+        "side",
+        "template_id",
+        "level",
+        "max_hp",
+        "hp",
+        "attack",
+        "defense",
+        "speed",
+        "energy",
+        "max_energy",
+        "toughness",
+        "max_toughness",
+        "action_value",
+    ):
+        if field_name not in template.unit_field_specs:
+            raise ValueError(f"unit_birth_template_field_missing:{field_name}")
+        fields[field_name] = _resolve_spec(
+            template.unit_field_specs[field_name],
+            request=request,
+            owner=owner,
+            fields=fields,
+        )
+    flags = {
+        key: _resolve_spec(spec, request=request, owner=owner, fields=fields)
+        for key, spec in template.flag_specs.items()
+    }
+    resources = {
+        key: _resolve_spec(spec, request=request, owner=owner, fields=fields)
+        for key, spec in template.resource_specs.items()
+    }
+    return {
+        **fields,
+        "statuses": [],
+        "shield_instances": [],
+        "flags": flags,
+        "resources": resources,
+    }
+
+
+def _evidence_neutral_json(value: JSONValue) -> JSONValue:
+    if isinstance(value, list):
+        return [_evidence_neutral_json(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    if all(
+        isinstance(value.get(key), str) and bool(str(value.get(key)).strip())
+        for key in ("source_path", "raw_type", "raw_id")
+    ):
+        return {
+            "source_path": str(value["source_path"]),
+            "raw_type": str(value["raw_type"]),
+            "raw_id": str(value["raw_id"]),
+        }
+    return {
+        str(key): _evidence_neutral_json(item)
+        for key, item in value.items()
+    }
 
 
 def _resolve_spec(
@@ -480,15 +552,204 @@ def _validate_unit_request_binding(
         raise ValueError("unit_spawn_plan_request_stage_level_mismatch")
 
 
-def _validate_birth_plan_source_fields(request: UnitSpawnRequest, flags: dict[str, JSONValue]) -> None:
-    if request.spawn_kind in {"summoned_monster", "servant"}:
+def _validate_birth_plan_source_fields(
+    plan: UnitSpawnPlan,
+    request: UnitSpawnRequest,
+    flags: dict[str, JSONValue],
+) -> None:
+    request_source_identity = _required_source_trace_identity(
+        request.source_trace,
+        "request_source_trace",
+    )
+    entry_source_identity = _required_source_trace_identity(
+        request.entry_source_trace,
+        "request_entry_source_trace",
+    )
+    if _required_source_trace_identity(plan.source_trace, "plan_source_trace") != entry_source_identity:
+        raise ValueError("unit_spawn_plan_source_proof_mismatch")
+    expected_source_role = "source" if request.spawn_kind == "wave_enemy" else "entry"
+    if plan.metadata.get("template_source_role") != expected_source_role:
+        raise ValueError("unit_spawn_plan_template_source_role_mismatch")
+    template_source_identity = _required_source_trace_identity(
+        plan.metadata.get("birth_template_source_trace"),
+        "birth_template_source_trace",
+    )
+    expected_template_identity = (
+        request_source_identity
+        if expected_source_role == "source"
+        else entry_source_identity
+    )
+    if template_source_identity != expected_template_identity:
+        raise ValueError("unit_spawn_plan_birth_template_source_mismatch")
+    if request.spawn_kind == "summoned_monster":
         _required_flag_string(flags, "owner_id")
         _required_flag_string(flags, "summoner_id")
-    if request.spawn_kind == "wave_enemy":
+        _require_matching_flag_source(
+            flags,
+            "summon_source_trace",
+            request_source_identity,
+        )
+        _require_matching_flag_source(
+            flags,
+            "summon_entry_source_trace",
+            entry_source_identity,
+        )
+    elif request.spawn_kind == "servant":
+        _required_flag_string(flags, "owner_id")
+        _required_flag_string(flags, "summoner_id")
+        _require_matching_flag_source(
+            flags,
+            "summon_source_trace",
+            request_source_identity,
+        )
+        _require_matching_flag_source(
+            flags,
+            "servant_definition_source_trace",
+            entry_source_identity,
+        )
+    else:
         _required_flag_string(flags, "wave_definition_id")
         _required_flag_string(flags, "wave_entry_id")
         _required_flag_int(flags, "stage_level")
         _required_flag_int(flags, "hard_level_group")
+        _require_matching_flag_source(
+            flags,
+            "wave_definition_source_trace",
+            request_source_identity,
+        )
+        _require_matching_flag_source(
+            flags,
+            "wave_entry_source_trace",
+            entry_source_identity,
+        )
+        stage_source_identity = _required_source_trace_identity(
+            flags.get("stage_level_source_trace"),
+            "stage_level_source_trace",
+        )
+        stage_level_policy = flags.get("stage_level_policy")
+        if not isinstance(stage_level_policy, Mapping):
+            raise ValueError("unit_spawn_plan_stage_level_policy_missing")
+        if _required_source_trace_identity(
+            stage_level_policy.get("source_trace"),
+            "stage_level_policy_source_trace",
+        ) != stage_source_identity:
+            raise ValueError("unit_spawn_plan_stage_level_source_mismatch")
+
+
+def _validate_expected_birth_template_source(
+    plan: UnitSpawnPlan,
+    expected_template: UnitBirthTemplateIR,
+) -> None:
+    if _required_source_trace_identity(
+        plan.metadata.get("birth_template_source_trace"),
+        "birth_template_source_trace",
+    ) != _required_source_trace_identity(
+        expected_template.source.to_json(),
+        "expected_birth_template_source_trace",
+    ):
+        raise ValueError("unit_spawn_plan_expected_template_source_mismatch")
+
+
+def _validate_nested_source_proofs(value: JSONValue, field_name: str) -> None:
+    if isinstance(value, list):
+        for index, item in enumerate(value):
+            _validate_nested_source_proofs(item, f"{field_name}_{index}")
+        return
+    if not isinstance(value, dict):
+        return
+    identity_keys = ("source_path", "raw_type", "raw_id")
+    if all(key in value for key in identity_keys):
+        _required_source_trace_identity(value, field_name)
+        return
+    for key, item in value.items():
+        _validate_nested_source_proofs(item, f"{field_name}_{key}")
+
+
+def _spawn_request_source_proof_blocked_reason(
+    template: UnitBirthTemplateIR,
+    request: UnitSpawnRequest,
+) -> str:
+    try:
+        request_source_identity = _required_source_trace_identity(
+            request.source_trace,
+            "request_source_trace",
+        )
+        entry_source_identity = _required_source_trace_identity(
+            request.entry_source_trace,
+            "request_entry_source_trace",
+        )
+        template_source_identity = _required_source_trace_identity(
+            template.source.to_json(),
+            "birth_template_source_trace",
+        )
+    except ValueError as exc:
+        return str(exc)
+    source_role = str(template.request_contract.get("template_source_role") or "")
+    expected_source_role = "source" if request.spawn_kind == "wave_enemy" else "entry"
+    if source_role != expected_source_role:
+        return "unit_birth_template_source_role_mismatch"
+    expected_template_identity = (
+        request_source_identity
+        if source_role == "source"
+        else entry_source_identity
+    )
+    if template_source_identity != expected_template_identity:
+        return "unit_birth_template_source_identity_mismatch"
+    return ""
+
+
+def _required_source_trace_identity(
+    value: object,
+    field_name: str,
+) -> tuple[tuple[str, str, str], ...]:
+    if not isinstance(value, Mapping):
+        raise ValueError(f"unit_spawn_plan_{field_name}_missing")
+    identity_keys = ("source_path", "raw_type", "raw_id")
+    if any(key in value for key in identity_keys):
+        identity: list[str] = []
+        for key in identity_keys:
+            item = value.get(key)
+            if not isinstance(item, str) or not item.strip():
+                raise ValueError(f"unit_spawn_plan_{field_name}_{key}_missing")
+            identity.append(item)
+        evidence = value.get("evidence")
+        if not isinstance(evidence, Mapping):
+            raise ValueError(f"unit_spawn_plan_{field_name}_evidence_missing")
+        return ((identity[0], identity[1], identity[2]),)
+    nested_identities: list[tuple[str, str, str]] = []
+    for key, item in sorted(value.items(), key=lambda pair: str(pair[0])):
+        if not isinstance(item, Mapping):
+            continue
+        nested_identities.extend(
+            _required_source_trace_identity(item, f"{field_name}_{key}")
+        )
+    if not nested_identities:
+        raise ValueError(f"unit_spawn_plan_{field_name}_identity_missing")
+    return tuple(sorted(set(nested_identities)))
+
+
+def _spawn_request_source_identity(
+    request: UnitSpawnRequest,
+) -> tuple[
+    tuple[tuple[str, str, str], ...],
+    tuple[tuple[str, str, str], ...],
+]:
+    return (
+        _required_source_trace_identity(request.source_trace, "request_source_trace"),
+        _required_source_trace_identity(
+            request.entry_source_trace,
+            "request_entry_source_trace",
+        ),
+    )
+
+
+def _require_matching_flag_source(
+    flags: dict[str, JSONValue],
+    key: str,
+    expected_identity: tuple[tuple[str, str, str], ...],
+) -> None:
+    if _required_source_trace_identity(flags.get(key), key) != expected_identity:
+        raise ValueError(f"unit_spawn_plan_{key}_mismatch")
 
 
 def _spawn_request_identity(request: UnitSpawnRequest) -> tuple[JSONValue, ...]:

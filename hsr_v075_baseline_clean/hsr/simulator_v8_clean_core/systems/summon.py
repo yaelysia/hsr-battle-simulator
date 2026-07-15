@@ -390,10 +390,33 @@ class SummonSystem:
                 source_trace=plan.source_trace,
             )
             return SummonTransitionResult(blocked, (), (), (_plan_record(blocked, (), process_only=True),))
+        templates = tuple(
+            self.rules.unit_birth_template(request.birth_template_id)
+            for request in plan.spawn_requests
+        )
+        if any(template is None for template in templates):
+            blocked = self._blocked(
+                plan.operation,
+                "summon_unit_birth_template_missing",
+                owner_id=plan.owner_id,
+                intent_id=plan.intent_id,
+                source_trace=plan.source_trace,
+            )
+            return SummonTransitionResult(blocked, (), (), (_plan_record(blocked, (), process_only=True),))
         try:
             units = tuple(
-                spawn_plan.to_unit(expected_request=request)
-                for spawn_plan, request in zip(spawn_plans, plan.spawn_requests, strict=True)
+                spawn_plan.to_unit(
+                    expected_request=request,
+                    expected_template=template,
+                    owner=owner,
+                )
+                for spawn_plan, request, template in zip(
+                    spawn_plans,
+                    plan.spawn_requests,
+                    templates,
+                    strict=True,
+                )
+                if template is not None
             )
         except ValueError as exc:
             blocked = self._blocked(
@@ -497,8 +520,22 @@ class SummonSystem:
                 source_trace=plan.source_trace,
             )
             return SummonTransitionResult(blocked, (), (), (_plan_record(blocked, (), process_only=True),))
+        template = self.rules.unit_birth_template(plan.spawn_requests[0].birth_template_id)
+        if template is None:
+            blocked = self._blocked(
+                plan.operation,
+                "servant_unit_birth_template_missing",
+                owner_id=plan.owner_id,
+                intent_id=plan.intent_id,
+                source_trace=plan.source_trace,
+            )
+            return SummonTransitionResult(blocked, (), (), (_plan_record(blocked, (), process_only=True),))
         try:
-            unit = spawn_plans[0].to_unit(expected_request=plan.spawn_requests[0])
+            unit = spawn_plans[0].to_unit(
+                expected_request=plan.spawn_requests[0],
+                expected_template=template,
+                owner=owner,
+            )
         except ValueError as exc:
             blocked = self._blocked(
                 plan.operation,

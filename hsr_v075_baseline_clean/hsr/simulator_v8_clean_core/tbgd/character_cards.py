@@ -3,10 +3,13 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, replace
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+from ..build_types import canonical_decimal
 from ..rules.ir import (
+    AvatarPromotionTierIR,
     AvatarProfileIR,
     BouncePolicyIR,
     CharacterDataCardIR,
@@ -174,10 +177,11 @@ def build_character_card_ir(
     mechanism_slots.extend(skill_param_slots)
     mechanism_slots.extend(trace_slots)
     mechanism_slots.extend(
-        _eidolon_mechanism_slot(slot)
+        mechanism_slot
         for slots in eidolon_slots_by_card.values()
         for slot in slots
         if slot.linked_mechanism_slot_ids
+        for mechanism_slot in _eidolon_mechanism_slots(slot)
     )
     mechanism_slot_ids_by_card: dict[str, list[str]] = {}
     for slot in mechanism_slots:
@@ -188,7 +192,13 @@ def build_character_card_ir(
     for relative_path, row_index, row in avatar_rows:
         avatar_id = str(row["AvatarID"])
         promotion_rows = promotion_rows_by_avatar.get(avatar_id, [])
-        profile = _avatar_profile_from_row(relative_path, row_index, row, promotion_rows)
+        profile = _avatar_profile_from_row(
+            tbgd_root,
+            relative_path,
+            row_index,
+            row,
+            promotion_rows,
+        )
         avatar_profiles.append(profile)
         card_id = f"character_data_card:avatar:{avatar_id}"
         skill_ids = tuple(str(skill_id) for skill_id in row.get("SkillList") or ())
@@ -231,6 +241,12 @@ def build_character_card_ir(
                         "enhanced_row_index": _json_safe(row.get("_character_card_enhanced_row_index")),
                         "enhanced_id": _json_safe(row.get("_character_card_enhanced_id")),
                         "enhanced_skill_list": _json_safe(row.get("_character_card_enhanced_skill_list") or []),
+                        "base_rank_id_list": _json_safe(
+                            row.get("_character_card_base_rank_id_list") or row.get("RankIDList") or []
+                        ),
+                        "enhanced_rank_id_list": _json_safe(
+                            row.get("_character_card_enhanced_rank_id_list") or []
+                        ),
                         "enhanced_overrides_base": str(row.get("_character_card_version_kind") or "base") == "enhanced",
                         "character_config_dynamic_value_bindings": _json_safe(
                             row.get("_character_config_dynamic_value_bindings") or {}
@@ -331,10 +347,11 @@ def _action_set_by_card(
             card_id = skill_to_card.get(raw_id)
             if not card_id:
                 continue
+            level = int(_number_value(row.get("Level"), 1.0))
             action = {
                 "action_id": f"{entity_type}:{raw_id}",
                 "raw_skill_id": raw_id,
-                "level": int(_number_value(row.get("Level"), 1.0)),
+                "level": level,
                 "skill_trigger_key": str(row.get("SkillTriggerKey") or ""),
                 "skill_effect": str(row.get("SkillEffect") or ""),
                 "attack_type": str(row.get("AttackType") or ""),
@@ -346,6 +363,7 @@ def _action_set_by_card(
                     evidence={
                         "row_index": row_index,
                         "id_key": id_key,
+                        "level": level,
                         "builder": "character_action_set_v0_265",
                     },
                 ).to_json(),
@@ -423,48 +441,85 @@ def _bounce_mechanism_slot(policy: BouncePolicyIR) -> CharacterMechanismSlotIR:
     )
 
 
-def _eidolon_mechanism_slot(slot: CharacterEidolonSlotIR) -> CharacterMechanismSlotIR:
-    mechanism_slot_id = slot.linked_mechanism_slot_ids[0]
+def _eidolon_mechanism_slots(slot: CharacterEidolonSlotIR) -> tuple[CharacterMechanismSlotIR, ...]:
     skill_add_level_list = slot.semantics.get("skill_add_level_list")
     rank_ability = slot.semantics.get("rank_ability")
     extra_effect_id_list = slot.semantics.get("extra_effect_id_list")
+    common_linked_ids = {
+        "eidolon_slot_id": slot.eidolon_slot_id,
+        "rank_id": slot.rank_id,
+        "rank": slot.rank,
+    }
+    activation = {
+        "kind": "eidolon_prefix_toggle",
+        "required_eidolon_level": slot.rank,
+        "enabled_when_requested_level_at_least": slot.rank,
+        "prefix_closed": True,
+    }
+    result: list[CharacterMechanismSlotIR] = []
     if isinstance(skill_add_level_list, dict) and skill_add_level_list:
-        coverage_status = "executable"
-        blocked_reason = ""
-        runtime_system = "character_card_assembly.skill_level_bonus"
-    elif isinstance(rank_ability, (list, tuple)) and rank_ability:
-        coverage_status = "executable"
-        blocked_reason = ""
-        runtime_system = "event_dispatch_or_effect_registry"
-    elif isinstance(extra_effect_id_list, (list, tuple)) and extra_effect_id_list:
-        coverage_status = "blocked"
-        blocked_reason = "eidolon_extra_effect_id_runtime_admission_pending"
-        runtime_system = "event_dispatch_or_effect_registry"
-    else:
-        coverage_status = "blocked"
-        blocked_reason = "eidolon_slot_has_no_runtime_effect_source"
-        runtime_system = "character_card_assembly"
-    return CharacterMechanismSlotIR(
-        mechanism_slot_id=mechanism_slot_id,
-        character_data_card_id=slot.character_data_card_id,
-        mechanism_kind="eidolon_rank_effect",
-        runtime_system=runtime_system,
-        linked_ir_ids={
-            "eidolon_slot_id": slot.eidolon_slot_id,
-            "rank_id": slot.rank_id,
-            "rank": slot.rank,
-        },
-        activation={
-            "kind": "eidolon_prefix_toggle",
-            "required_eidolon_level": slot.rank,
-            "enabled_when_requested_level_at_least": slot.rank,
-            "prefix_closed": True,
-        },
-        semantics=slot.semantics,
-        source=slot.source,
-        coverage_status=coverage_status,
-        blocked_reason=blocked_reason,
-    )
+        result.append(
+            CharacterMechanismSlotIR(
+                mechanism_slot_id=f"character_mechanism_slot:{slot.character_data_card_id}:eidolon:{slot.rank}:skill_level",
+                character_data_card_id=slot.character_data_card_id,
+                mechanism_kind="eidolon_skill_level",
+                runtime_system="character_card_assembly.skill_level_bonus",
+                linked_ir_ids=common_linked_ids,
+                activation=activation,
+                semantics={"skill_add_level_list": skill_add_level_list},
+                source=slot.source,
+                coverage_status="executable",
+            )
+        )
+    if isinstance(rank_ability, (list, tuple)) and rank_ability:
+        result.append(
+            CharacterMechanismSlotIR(
+                mechanism_slot_id=f"character_mechanism_slot:{slot.character_data_card_id}:eidolon:{slot.rank}:ability",
+                character_data_card_id=slot.character_data_card_id,
+                mechanism_kind="eidolon_ability_hook",
+                runtime_system="event_dispatch_or_effect_registry",
+                linked_ir_ids=common_linked_ids,
+                activation=activation,
+                semantics={
+                    "rank_ability": rank_ability,
+                    "param_values": slot.semantics.get("param_values") or [],
+                    "dynamic_value_bindings": slot.semantics.get("dynamic_value_bindings") or {},
+                },
+                source=slot.source,
+                coverage_status="executable",
+            )
+        )
+    if isinstance(extra_effect_id_list, (list, tuple)) and extra_effect_id_list:
+        result.append(
+            CharacterMechanismSlotIR(
+                mechanism_slot_id=f"character_mechanism_slot:{slot.character_data_card_id}:eidolon:{slot.rank}:extra_effect",
+                character_data_card_id=slot.character_data_card_id,
+                mechanism_kind="eidolon_extra_effect",
+                runtime_system="event_dispatch_or_effect_registry",
+                linked_ir_ids=common_linked_ids,
+                activation=activation,
+                semantics={"extra_effect_id_list": extra_effect_id_list},
+                source=slot.source,
+                coverage_status="blocked",
+                blocked_reason="eidolon_extra_effect_id_runtime_admission_pending",
+            )
+        )
+    if not result:
+        result.append(
+            CharacterMechanismSlotIR(
+                mechanism_slot_id=f"character_mechanism_slot:{slot.character_data_card_id}:eidolon:{slot.rank}:unbound",
+                character_data_card_id=slot.character_data_card_id,
+                mechanism_kind="eidolon_unbound",
+                runtime_system="character_card_assembly",
+                linked_ir_ids=common_linked_ids,
+                activation=activation,
+                semantics={},
+                source=slot.source,
+                coverage_status="blocked",
+                blocked_reason="eidolon_slot_has_no_runtime_effect_source",
+            )
+        )
+    return tuple(result)
 
 
 def _trace_static_stat_terms(status_add_list: list[Any]) -> tuple[list[dict[str, JSONValue]], str]:
@@ -476,9 +531,9 @@ def _trace_static_stat_terms(status_add_list: list[Any]) -> tuple[list[dict[str,
         raw_value = _value_field(item.get("Value"))
         if property_type not in TRACE_STATIC_STAT_PROPERTY_MAP:
             return mapped, f"trace_static_stat_property_not_admitted:{property_type or 'missing'}"
-        if not isinstance(raw_value, (int, float)):
+        if not isinstance(raw_value, (int, float, Decimal)):
             return mapped, f"trace_static_stat_value_not_numeric:{property_type}"
-        value = float(raw_value)
+        value = canonical_decimal(raw_value, f"StatusAddList[{index}].Value")
         application_kind, target_key = TRACE_STATIC_STAT_PROPERTY_MAP[property_type]
         mapped.append(
             {
@@ -495,6 +550,47 @@ def _trace_static_stat_terms(status_add_list: list[Any]) -> tuple[list[dict[str,
     return mapped, ""
 
 
+def _trace_unlock_requirements(
+    row: dict[str, Any],
+) -> tuple[int | None, int | None, tuple[str, ...], str]:
+    errors: list[str] = []
+
+    def optional_positive_int(field_name: str, *, allow_zero: bool) -> int | None:
+        if field_name not in row:
+            return None
+        value = row.get(field_name)
+        minimum = 0 if allow_zero else 1
+        if not isinstance(value, int) or isinstance(value, bool) or value < minimum:
+            errors.append(f"trace_unlock_{field_name}_invalid")
+            return None
+        return value
+
+    required_promotion = optional_positive_int("AvatarPromotionLimit", allow_zero=True)
+    required_character_level = optional_positive_int("AvatarLevelLimit", allow_zero=False)
+    raw_prerequisites = row.get("PrePoint")
+    prerequisite_trace_ids: list[str] = []
+    if not isinstance(raw_prerequisites, list):
+        errors.append("trace_unlock_PrePoint_missing_or_not_list")
+    else:
+        for value in raw_prerequisites:
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, str))
+                or not str(value).strip()
+            ):
+                errors.append("trace_unlock_PrePoint_identity_invalid")
+                continue
+            prerequisite_trace_ids.append(str(value))
+    if len(set(prerequisite_trace_ids)) != len(prerequisite_trace_ids):
+        errors.append("trace_unlock_PrePoint_duplicate")
+    return (
+        required_promotion,
+        required_character_level,
+        tuple(prerequisite_trace_ids),
+        ";".join(sorted(set(errors))),
+    )
+
+
 def _trace_nodes_and_slots(
     tbgd_root: Path,
     *,
@@ -509,7 +605,7 @@ def _trace_nodes_and_slots(
         if not path.exists():
             continue
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
+            data = json.loads(path.read_text(encoding="utf-8"), parse_float=Decimal)
         except Exception:
             continue
         if not isinstance(data, list):
@@ -547,6 +643,27 @@ def _trace_nodes_and_slots(
                 },
             )
             linked_slot_ids: list[str] = []
+            default_unlocked = row.get("DefaultUnlock") is True
+            (
+                required_promotion,
+                required_character_level,
+                prerequisite_trace_ids,
+                unlock_requirement_error,
+            ) = _trace_unlock_requirements(row)
+            source = IRSource(
+                source_path=source.source_path,
+                raw_type=source.raw_type,
+                raw_id=source.raw_id,
+                evidence={
+                    **source.evidence,
+                    "avatar_promotion_limit_present": "AvatarPromotionLimit" in row,
+                    "avatar_promotion_limit": _json_safe(row.get("AvatarPromotionLimit")),
+                    "avatar_level_limit_present": "AvatarLevelLimit" in row,
+                    "avatar_level_limit": _json_safe(row.get("AvatarLevelLimit")),
+                    "pre_point_present": "PrePoint" in row,
+                    "pre_point": _json_safe(row.get("PrePoint")),
+                },
+            )
             status_add_list = row.get("StatusAddList")
             if isinstance(status_add_list, list) and status_add_list:
                 slot_id = f"character_mechanism_slot:{card_id}:trace:{point_id}:{level}:static_status_add"
@@ -562,7 +679,7 @@ def _trace_nodes_and_slots(
                         activation={
                             "kind": "trace_toggle",
                             "trace_node_id": trace_node_id,
-                            "default_enabled": bool(row.get("DefaultUnlock") is True),
+                            "default_enabled": default_unlocked,
                         },
                         semantics={
                             "status_add_list": _json_safe(status_add_list),
@@ -588,7 +705,7 @@ def _trace_nodes_and_slots(
                         activation={
                             "kind": "trace_toggle",
                             "trace_node_id": trace_node_id,
-                            "default_enabled": bool(row.get("DefaultUnlock") is True),
+                            "default_enabled": default_unlocked,
                         },
                         semantics={
                             "ability_name": ability_name,
@@ -606,6 +723,59 @@ def _trace_nodes_and_slots(
                         blocked_reason="trace_ability_effect_not_admitted_v0_265",
                     )
                 )
+            level_up_skill_ids = tuple(str(value) for value in row.get("LevelUpSkillID") or ())
+            if level_up_skill_ids:
+                slot_id = f"character_mechanism_slot:{card_id}:trace:{point_id}:{level}:skill_level"
+                linked_slot_ids.append(slot_id)
+                slots.append(
+                    CharacterMechanismSlotIR(
+                        mechanism_slot_id=slot_id,
+                        character_data_card_id=card_id,
+                        mechanism_kind="trace_skill_level",
+                        runtime_system="character_card_assembly.skill_level",
+                        linked_ir_ids={"trace_node_id": trace_node_id},
+                        activation={
+                            "kind": "trace_unlock",
+                            "trace_node_id": trace_node_id,
+                            "default_enabled": default_unlocked,
+                        },
+                        semantics={
+                            "node_level": level,
+                            "level_up_skill_ids": list(level_up_skill_ids),
+                        },
+                        source=source,
+                        coverage_status="executable",
+                        blocked_reason="",
+                    )
+                )
+            extra_effect_ids = tuple(str(value) for value in row.get("ExtraEffectIDList") or ())
+            simple_extra_effect_ids = tuple(
+                str(value) for value in row.get("SimpleExtraEffectIDList") or ()
+            )
+            if extra_effect_ids or simple_extra_effect_ids:
+                slot_id = f"character_mechanism_slot:{card_id}:trace:{point_id}:{level}:extra_effect"
+                linked_slot_ids.append(slot_id)
+                slots.append(
+                    CharacterMechanismSlotIR(
+                        mechanism_slot_id=slot_id,
+                        character_data_card_id=card_id,
+                        mechanism_kind="trace_extra_effect",
+                        runtime_system="event_dispatch_or_effect_registry",
+                        linked_ir_ids={"trace_node_id": trace_node_id},
+                        activation={
+                            "kind": "trace_unlock",
+                            "trace_node_id": trace_node_id,
+                            "default_enabled": default_unlocked,
+                        },
+                        semantics={
+                            "extra_effect_ids": list(extra_effect_ids),
+                            "simple_extra_effect_ids": list(simple_extra_effect_ids),
+                        },
+                        source=source,
+                        coverage_status="blocked",
+                        blocked_reason="trace_extra_effect_runtime_admission_pending",
+                    )
+                )
             trace_nodes.append(
                 CharacterTraceNodeIR(
                     trace_node_id=trace_node_id,
@@ -614,8 +784,18 @@ def _trace_nodes_and_slots(
                     trace_id=point_id,
                     trace_kind=str(row.get("PointType") or ""),
                     linked_mechanism_slot_ids=tuple(linked_slot_ids),
+                    level=level,
+                    max_level=int(_number_value(row.get("MaxLevel"), level)),
+                    default_unlocked=default_unlocked,
+                    required_promotion=required_promotion,
+                    required_character_level=required_character_level,
+                    prerequisite_trace_ids=prerequisite_trace_ids,
+                    level_up_skill_ids=level_up_skill_ids,
+                    extra_effect_ids=extra_effect_ids,
+                    simple_extra_effect_ids=simple_extra_effect_ids,
                     source=source,
-                    coverage_status="executable",
+                    coverage_status="blocked" if unlock_requirement_error else "executable",
+                    blocked_reason=unlock_requirement_error,
                 )
             )
     return trace_nodes, slots
@@ -714,7 +894,7 @@ def _eidolon_slots_from_avatar_row(
         rank_row: dict[str, Any] = {}
         if rank_row_info is not None:
             rank_relative_path, rank_row_index, rank_row = rank_row_info
-        mechanism_slot_id = f"character_mechanism_slot:{card_id}:eidolon:{index + 1}" if rank_row_info else ""
+        mechanism_slot_ids: list[str] = []
         coverage_status = "executable" if rank_id and rank_row_info else "blocked"
         blocked_reason = ""
         if not rank_id:
@@ -735,6 +915,23 @@ def _eidolon_slots_from_avatar_row(
             "effect_application_boundary": "character_mechanism_slot",
             "runtime_effects_are_not_implicit": True,
         }
+        if rank_row_info is not None:
+            if semantics["skill_add_level_list"]:
+                mechanism_slot_ids.append(
+                    f"character_mechanism_slot:{card_id}:eidolon:{index + 1}:skill_level"
+                )
+            if semantics["rank_ability"]:
+                mechanism_slot_ids.append(
+                    f"character_mechanism_slot:{card_id}:eidolon:{index + 1}:ability"
+                )
+            if semantics["extra_effect_id_list"]:
+                mechanism_slot_ids.append(
+                    f"character_mechanism_slot:{card_id}:eidolon:{index + 1}:extra_effect"
+                )
+            if not mechanism_slot_ids:
+                mechanism_slot_ids.append(
+                    f"character_mechanism_slot:{card_id}:eidolon:{index + 1}:unbound"
+                )
         slots.append(
             CharacterEidolonSlotIR(
                 eidolon_slot_id=f"character_eidolon_slot:{card_id}:rank:{index + 1}",
@@ -742,7 +939,7 @@ def _eidolon_slots_from_avatar_row(
                 avatar_id=avatar_id,
                 rank=index + 1,
                 rank_id=rank_id,
-                linked_mechanism_slot_ids=(mechanism_slot_id,) if mechanism_slot_id else (),
+                linked_mechanism_slot_ids=tuple(mechanism_slot_ids),
                 source=IRSource(
                     source_path=rank_relative_path or relative_path,
                     raw_type=Path(rank_relative_path or relative_path).stem,
@@ -966,7 +1163,7 @@ def _avatar_rows(tbgd_root: Path, *, max_records_per_table: int | None) -> list[
         if not path.exists():
             continue
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
+            data = json.loads(path.read_text(encoding="utf-8"), parse_float=Decimal)
         except Exception:
             continue
         if not isinstance(data, list):
@@ -977,6 +1174,9 @@ def _avatar_rows(tbgd_root: Path, *, max_records_per_table: int | None) -> list[
                 copied["_character_card_version_kind"] = "base"
                 copied["_character_card_base_source_path"] = relative_path
                 copied["_character_card_base_row_index"] = row_index
+                if "SPNeed" in row:
+                    copied["_character_card_max_energy_source_path"] = relative_path
+                    copied["_character_card_max_energy_source_row_index"] = row_index
                 base_rows.append((relative_path, row_index, copied))
     enhanced_rows = _enhanced_avatar_rows(tbgd_root, max_records_per_table=max_records_per_table)
     enhanced_by_avatar = {str(row["AvatarID"]): (relative_path, row_index, row) for relative_path, row_index, row in enhanced_rows}
@@ -998,10 +1198,20 @@ def _avatar_rows(tbgd_root: Path, *, max_records_per_table: int | None) -> list[
         merged["_character_card_base_source_path"] = base_relative_path
         merged["_character_card_base_row_index"] = base_row_index
         merged["_character_card_base_skill_list"] = _json_safe(base_row.get("SkillList") or [])
+        merged["_character_card_base_rank_id_list"] = _json_safe(base_row.get("RankIDList") or [])
         merged["_character_card_enhanced_source_path"] = enhanced_relative_path
         merged["_character_card_enhanced_row_index"] = enhanced_row_index
         merged["_character_card_enhanced_id"] = enhanced_row.get("EnhancedID")
         merged["_character_card_enhanced_skill_list"] = _json_safe(enhanced_row.get("SkillList") or [])
+        merged["_character_card_enhanced_rank_id_list"] = _json_safe(
+            enhanced_row.get("RankIDList") or []
+        )
+        if "SPNeed" in enhanced_row:
+            merged["_character_card_max_energy_source_path"] = enhanced_relative_path
+            merged["_character_card_max_energy_source_row_index"] = enhanced_row_index
+        elif "SPNeed" in base_row:
+            merged["_character_card_max_energy_source_path"] = base_relative_path
+            merged["_character_card_max_energy_source_row_index"] = base_row_index
         rows.append((enhanced_relative_path, enhanced_row_index, merged))
         seen.add(avatar_id)
     for enhanced_relative_path, enhanced_row_index, enhanced_row in enhanced_rows:
@@ -1014,6 +1224,12 @@ def _avatar_rows(tbgd_root: Path, *, max_records_per_table: int | None) -> list[
         copied["_character_card_enhanced_row_index"] = enhanced_row_index
         copied["_character_card_enhanced_id"] = enhanced_row.get("EnhancedID")
         copied["_character_card_enhanced_skill_list"] = _json_safe(enhanced_row.get("SkillList") or [])
+        copied["_character_card_enhanced_rank_id_list"] = _json_safe(
+            enhanced_row.get("RankIDList") or []
+        )
+        if "SPNeed" in enhanced_row:
+            copied["_character_card_max_energy_source_path"] = enhanced_relative_path
+            copied["_character_card_max_energy_source_row_index"] = enhanced_row_index
         rows.append((enhanced_relative_path, enhanced_row_index, copied))
     return rows
 
@@ -1077,7 +1293,7 @@ def _enhanced_avatar_rows(tbgd_root: Path, *, max_records_per_table: int | None)
     if not path.exists():
         return []
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"), parse_float=Decimal)
     except Exception:
         return []
     if not isinstance(data, list):
@@ -1089,21 +1305,25 @@ def _enhanced_avatar_rows(tbgd_root: Path, *, max_records_per_table: int | None)
     return rows
 
 
-def _promotion_rows_by_avatar(tbgd_root: Path) -> dict[str, list[dict[str, Any]]]:
-    rows: dict[str, list[dict[str, Any]]] = {}
+def _promotion_rows_by_avatar(
+    tbgd_root: Path,
+) -> dict[str, list[tuple[str, int, dict[str, Any]]]]:
+    rows: dict[str, list[tuple[str, int, dict[str, Any]]]] = {}
     for relative_path in ("ExcelOutput/AvatarPromotionConfig.json", "ExcelOutput/AvatarPromotionConfigLD.json"):
         path = tbgd_root / relative_path
         if not path.exists():
             continue
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
+            data = json.loads(path.read_text(encoding="utf-8"), parse_float=Decimal)
         except Exception:
             continue
         if not isinstance(data, list):
             continue
-        for row in data:
+        for row_index, row in enumerate(data):
             if isinstance(row, dict) and row.get("AvatarID") is not None:
-                rows.setdefault(str(row["AvatarID"]), []).append(row)
+                rows.setdefault(str(row["AvatarID"]), []).append(
+                    (relative_path, row_index, row)
+                )
     return rows
 
 
@@ -1357,49 +1577,154 @@ def _attach_bounce_policy_to_formula_binding(
 
 
 def _avatar_profile_from_row(
+    tbgd_root: Path,
     relative_path: str,
     row_index: int,
     row: dict[str, Any],
-    promotion_rows: list[dict[str, Any]],
+    promotion_rows: list[tuple[str, int, dict[str, Any]]],
 ) -> AvatarProfileIR:
     avatar_id = str(row["AvatarID"])
     skill_ids = tuple(str(skill_id) for skill_id in row.get("SkillList") or ())
-    base_stats_by_promotion = _avatar_base_stats_by_promotion(promotion_rows)
+    promotion_tiers, promotion_blocked_reason = _avatar_promotion_tiers(
+        avatar_id,
+        promotion_rows,
+    )
+    profile_source = IRSource(
+        source_path=relative_path,
+        raw_type=Path(relative_path).stem,
+        raw_id=avatar_id,
+        evidence={
+            "row_index": row_index,
+            "skill_list": _json_safe(row.get("SkillList")),
+            "json_path": str(row.get("JsonPath") or ""),
+            "version_kind": str(row.get("_character_card_version_kind") or "base"),
+            "base_source_path": str(row.get("_character_card_base_source_path") or relative_path),
+            "base_row_index": _json_safe(row.get("_character_card_base_row_index")),
+            "base_skill_list": _json_safe(row.get("_character_card_base_skill_list") or []),
+            "enhanced_source_path": str(row.get("_character_card_enhanced_source_path") or ""),
+            "enhanced_row_index": _json_safe(row.get("_character_card_enhanced_row_index")),
+            "enhanced_id": _json_safe(row.get("_character_card_enhanced_id")),
+            "enhanced_skill_list": _json_safe(row.get("_character_card_enhanced_skill_list") or []),
+            "enhanced_overrides_base": str(row.get("_character_card_version_kind") or "base") == "enhanced",
+            "promotion_row_count": len(promotion_rows),
+            "max_energy_field_present": "SPNeed" in row,
+            "max_energy_raw_path": "SPNeed",
+            "max_energy_source_path": str(
+                row.get("_character_card_max_energy_source_path") or relative_path
+            ),
+            "max_energy_source_row_index": _json_safe(
+                row.get("_character_card_max_energy_source_row_index", row_index)
+            ),
+            "builder": "character_data_card_p8_s2",
+        },
+    )
+    max_energy, max_energy_reason = _exact_decimal_field(row.get("SPNeed"), "SPNeed")
+    special_resource_source = None
+    resource_mode = "standard_energy"
+    if "SPNeed" not in row:
+        special_resource_source = _special_resource_source_from_avatar_config(
+            tbgd_root,
+            avatar_id,
+            row,
+        )
+        if special_resource_source is not None:
+            resource_mode = "special_resource"
+            max_energy_reason = "avatar_special_resource_source_present_but_not_lowered"
+        else:
+            resource_mode = "source_missing"
+            max_energy_reason = "avatar_max_energy_source_missing"
+    max_energy_source = (
+        IRSource(
+            source_path=str(
+                row.get("_character_card_max_energy_source_path") or relative_path
+            ),
+            raw_type=Path(
+                str(row.get("_character_card_max_energy_source_path") or relative_path)
+            ).stem,
+            raw_id=f"{avatar_id}:SPNeed",
+            evidence={
+                "row_index": int(
+                    row.get("_character_card_max_energy_source_row_index", row_index)
+                ),
+                "avatar_id": avatar_id,
+                "raw_path": "SPNeed",
+                "field_present": "SPNeed" in row,
+                "raw_value": _json_safe(row.get("SPNeed")),
+            },
+        )
+        if max_energy is not None
+        else None
+    )
     blocked_reason = ""
     if not skill_ids:
         blocked_reason = "avatar_skill_list_missing"
-    elif not base_stats_by_promotion:
-        blocked_reason = "avatar_promotion_base_stats_missing"
+    elif promotion_blocked_reason:
+        blocked_reason = promotion_blocked_reason
+    elif max_energy_reason or max_energy is None:
+        blocked_reason = max_energy_reason or "avatar_max_energy_source_missing"
     return AvatarProfileIR(
         avatar_profile_id=f"avatar_profile:{avatar_id}",
         avatar_id=avatar_id,
         base_type=str(row.get("AvatarBaseType") or ""),
         damage_type=str(row.get("DamageType") or ""),
         skill_ids=skill_ids,
-        base_stats_by_promotion=base_stats_by_promotion,
-        source=IRSource(
-            source_path=relative_path,
-            raw_type=Path(relative_path).stem,
-            raw_id=avatar_id,
-            evidence={
-                "row_index": row_index,
-                "skill_list": _json_safe(row.get("SkillList")),
-                "json_path": str(row.get("JsonPath") or ""),
-                "version_kind": str(row.get("_character_card_version_kind") or "base"),
-                "base_source_path": str(row.get("_character_card_base_source_path") or relative_path),
-                "base_row_index": _json_safe(row.get("_character_card_base_row_index")),
-                "base_skill_list": _json_safe(row.get("_character_card_base_skill_list") or []),
-                "enhanced_source_path": str(row.get("_character_card_enhanced_source_path") or ""),
-                "enhanced_row_index": _json_safe(row.get("_character_card_enhanced_row_index")),
-                "enhanced_id": _json_safe(row.get("_character_card_enhanced_id")),
-                "enhanced_skill_list": _json_safe(row.get("_character_card_enhanced_skill_list") or []),
-                "enhanced_overrides_base": str(row.get("_character_card_version_kind") or "base") == "enhanced",
-                "promotion_row_count": len(promotion_rows),
-                "builder": "character_data_card_v0_262",
-            },
-        ),
+        promotion_tiers=promotion_tiers,
+        max_energy=max_energy,
+        max_energy_source=max_energy_source,
+        resource_mode=resource_mode,  # type: ignore[arg-type]
+        special_resource_source=special_resource_source,
+        source=profile_source,
         coverage_status="blocked" if blocked_reason else "executable",
         blocked_reason=blocked_reason,
+    )
+
+
+def _special_resource_source_from_avatar_config(
+    tbgd_root: Path,
+    avatar_id: str,
+    avatar_row: dict[str, Any],
+) -> IRSource | None:
+    avatar_json_path = avatar_row.get("JsonPath")
+    if not isinstance(avatar_json_path, str) or not avatar_json_path:
+        return None
+    avatar_stem = Path(avatar_json_path).stem.removesuffix("_Config")
+    if not avatar_stem:
+        return None
+    relative_path = f"Config/ConfigAbility/Avatar/{avatar_stem}_Ability.json"
+    path = tbgd_root / relative_path
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    matches: list[str] = []
+
+    def walk(value: object, json_path: str) -> None:
+        if isinstance(value, dict):
+            if value.get("$type") == "RPG.GameCore.SetSummonerEnergyBarState":
+                matches.append(json_path)
+            for key, child in value.items():
+                walk(child, f"{json_path}.{key}")
+        elif isinstance(value, list):
+            for index, child in enumerate(value):
+                walk(child, f"{json_path}[{index}]")
+
+    walk(data, "$")
+    if not matches:
+        return None
+    return IRSource(
+        source_path=relative_path,
+        raw_type="RPG.GameCore.SetSummonerEnergyBarState",
+        raw_id=f"{avatar_id}:special_resource",
+        evidence={
+            "avatar_id": avatar_id,
+            "avatar_json_path": avatar_json_path,
+            "ability_path_derived_from_avatar_json_path": True,
+            "matched_node_count": len(matches),
+            "matched_json_paths": matches,
+            "classification": "structured_special_resource_source_present_not_lowered",
+        },
     )
 
 
@@ -1417,29 +1742,126 @@ def _load_text_map(tbgd_root: Path) -> dict[str, str]:
     return {}
 
 
-def _avatar_base_stats_by_promotion(rows: list[dict[str, Any]]) -> dict[str, JSONValue]:
-    result: dict[str, JSONValue] = {}
-    for index, row in enumerate(rows):
-        if not isinstance(row, dict):
-            continue
+_PROMOTION_DECIMAL_FIELDS = (
+    "HPBase",
+    "HPAdd",
+    "AttackBase",
+    "AttackAdd",
+    "DefenceBase",
+    "DefenceAdd",
+    "SpeedBase",
+    "CriticalChance",
+    "CriticalDamage",
+    "BaseAggro",
+)
+
+
+def _exact_decimal_field(value: Any, field_name: str) -> tuple[str | None, str]:
+    raw_value = value.get("Value") if isinstance(value, dict) else value
+    if not isinstance(raw_value, (int, Decimal)) or isinstance(raw_value, bool):
+        return None, f"{field_name}_missing_or_not_exact_numeric"
+    try:
+        return canonical_decimal(raw_value, field_name), ""
+    except (TypeError, ValueError):
+        return None, f"{field_name}_invalid_decimal"
+
+
+def _avatar_promotion_tiers(
+    avatar_id: str,
+    rows: list[tuple[str, int, dict[str, Any]]],
+) -> tuple[tuple[AvatarPromotionTierIR, ...], str]:
+    tiers: list[AvatarPromotionTierIR] = []
+    row_signatures: dict[int, list[tuple[object, ...]]] = {}
+    integrity_errors: list[str] = []
+    for relative_path, row_index, row in rows:
+        field_present = "Promotion" in row
+        raw_promotion = row.get("Promotion")
+        if field_present and (not isinstance(raw_promotion, int) or isinstance(raw_promotion, bool)):
+            promotion = -1
+            row_errors = ["promotion_not_integer"]
+        else:
+            promotion = int(raw_promotion) if field_present else 0
+            row_errors = []
+        if promotion < 0:
+            row_errors.append("promotion_negative")
         max_level = row.get("MaxLevel")
-        key = str(max_level if isinstance(max_level, int) else index)
-        stats = {
-            "max_level": _json_safe(row.get("MaxLevel")),
-            "attack_base": _value_field(row.get("AttackBase")),
-            "attack_add": _value_field(row.get("AttackAdd")),
-            "defense_base": _value_field(row.get("DefenceBase")),
-            "defense_add": _value_field(row.get("DefenceAdd")),
-            "hp_base": _value_field(row.get("HPBase")),
-            "hp_add": _value_field(row.get("HPAdd")),
-            "speed_base": _value_field(row.get("SpeedBase")),
-            "critical_chance": _value_field(row.get("CriticalChance")),
-            "critical_damage": _value_field(row.get("CriticalDamage")),
-            "base_aggro": _value_field(row.get("BaseAggro")),
-        }
-        if any(isinstance(value, (int, float)) for value in stats.values()):
-            result[key] = stats
-    return result
+        if not isinstance(max_level, int) or isinstance(max_level, bool) or max_level <= 0:
+            row_errors.append("promotion_max_level_invalid")
+            typed_max_level = 0
+        else:
+            typed_max_level = max_level
+        exact_values: dict[str, str] = {}
+        for field_name in _PROMOTION_DECIMAL_FIELDS:
+            exact_value, error = _exact_decimal_field(row.get(field_name), field_name)
+            if error or exact_value is None:
+                row_errors.append(error or f"{field_name}_missing")
+                exact_values[field_name] = "0"
+            else:
+                exact_values[field_name] = exact_value
+        source = IRSource(
+            source_path=relative_path,
+            raw_type=Path(relative_path).stem,
+            raw_id=f"{avatar_id}:{promotion}:{row_index}",
+            evidence={
+                "row_index": row_index,
+                "avatar_id": avatar_id,
+                "promotion_raw_path": "Promotion",
+                "promotion_field_present": field_present,
+                "promotion_zero_semantic_from_missing_field": not field_present,
+                "raw_promotion": _json_safe(raw_promotion),
+                "max_level_raw_path": "MaxLevel",
+                "stat_raw_paths": list(_PROMOTION_DECIMAL_FIELDS),
+            },
+        )
+        signature = (
+            typed_max_level,
+            *(exact_values[name] for name in _PROMOTION_DECIMAL_FIELDS),
+        )
+        row_signatures.setdefault(promotion, []).append(signature)
+        tiers.append(
+            AvatarPromotionTierIR(
+                promotion_tier_id=f"avatar_promotion_tier:{avatar_id}:{promotion}",
+                avatar_id=avatar_id,
+                promotion=promotion,
+                promotion_field_present=field_present,
+                max_level=typed_max_level,
+                hp_base=exact_values["HPBase"],
+                hp_add=exact_values["HPAdd"],
+                attack_base=exact_values["AttackBase"],
+                attack_add=exact_values["AttackAdd"],
+                defense_base=exact_values["DefenceBase"],
+                defense_add=exact_values["DefenceAdd"],
+                speed_base=exact_values["SpeedBase"],
+                critical_chance=exact_values["CriticalChance"],
+                critical_damage=exact_values["CriticalDamage"],
+                base_aggro=exact_values["BaseAggro"],
+                source=source,
+                coverage_status="blocked" if row_errors else "executable",
+                blocked_reason=";".join(sorted(set(row_errors))),
+            )
+        )
+        integrity_errors.extend(row_errors)
+    if not tiers:
+        integrity_errors.append("avatar_promotion_tiers_missing")
+    duplicate_promotions = sorted(
+        promotion for promotion, signatures in row_signatures.items() if len(signatures) > 1
+    )
+    if duplicate_promotions:
+        conflict_promotions = [
+            promotion
+            for promotion in duplicate_promotions
+            if len(set(row_signatures[promotion])) > 1
+        ]
+        integrity_errors.append(
+            "promotion_tier_conflict" if conflict_promotions else "promotion_tier_duplicate"
+        )
+    non_negative_promotions = sorted(promotion for promotion in row_signatures if promotion >= 0)
+    if non_negative_promotions:
+        expected = list(range(non_negative_promotions[-1] + 1))
+        if non_negative_promotions != expected:
+            integrity_errors.append("promotion_tier_missing_or_non_contiguous")
+    ordered = tuple(sorted(tiers, key=lambda tier: (tier.promotion, tier.source.source_path, tier.source.raw_id)))
+    return ordered, ";".join(sorted(set(error for error in integrity_errors if error)))
 
 
 def _text_hash(value: Any) -> str:
@@ -1544,9 +1966,9 @@ def _limit_sequence(items: list[Any], limit: int | None) -> list[Any]:
 
 def _number_value(value: Any, default: float = 0.0) -> float:
     extracted = _value_field(value)
-    if isinstance(extracted, (int, float)):
+    if isinstance(extracted, (int, float, Decimal)):
         return float(extracted)
-    if isinstance(value, (int, float)):
+    if isinstance(value, (int, float, Decimal)):
         return float(value)
     return default
 
@@ -1557,16 +1979,16 @@ def _number_items(value: Any) -> tuple[float, ...]:
     result: list[float] = []
     for item in value:
         extracted = _value_field(item)
-        if isinstance(extracted, (int, float)):
+        if isinstance(extracted, (int, float, Decimal)):
             result.append(float(extracted))
     return tuple(result)
 
 
-def _value_field(value: Any) -> float | int | None:
+def _value_field(value: Any) -> Decimal | float | int | None:
     if isinstance(value, dict):
         inner = value.get("Value")
-        return inner if isinstance(inner, (int, float)) else None
-    return value if isinstance(value, (int, float)) else None
+        return inner if isinstance(inner, (int, float, Decimal)) else None
+    return value if isinstance(value, (int, float, Decimal)) else None
 
 
 def _list_json_values(value: Any) -> list[JSONValue]:

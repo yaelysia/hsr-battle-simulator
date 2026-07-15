@@ -178,6 +178,7 @@ def _build_result_for_eidolon_level(rules: RuleBook, eidolon_level: int):
             UnitSpec(
                 unit_id="ally:seele",
                 side="ally",
+                build_mode="kernel_fixture",
                 entity_ref=SEELE_ENTITY_REF,
                 level=80,
                 eidolon_level=eidolon_level,

@@ -40,6 +40,7 @@
   "units": [
     {
       "entity_ref": "avatar:1014",
+      "build_mode": "kernel_fixture",
       "level": 80,
       "panel": {
         "attack": 3200,
@@ -60,6 +61,7 @@
     },
     {
       "entity_ref": "monster:1002011",
+      "build_mode": "kernel_fixture",
       "level": 80,
       "panel": {
         "attack": 1000,

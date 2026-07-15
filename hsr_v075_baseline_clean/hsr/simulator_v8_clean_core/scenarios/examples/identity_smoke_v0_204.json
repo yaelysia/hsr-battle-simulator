@@ -14,6 +14,7 @@
       "unit_id": "ally:saber",
       "side": "ally",
       "entity_ref": "avatar:1014",
+      "build_mode": "kernel_fixture",
       "level": 80,
       "position": 1,
       "panel": {
@@ -34,6 +35,7 @@
       "unit_id": "enemy:target",
       "side": "enemy",
       "entity_ref": "monster:1002011",
+      "build_mode": "kernel_fixture",
       "level": 80,
       "position": 1,
       "panel": {

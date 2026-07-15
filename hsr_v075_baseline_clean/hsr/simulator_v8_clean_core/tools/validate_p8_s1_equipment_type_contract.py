@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, cast, get_type_hints
 
 from .. import BASELINE_VERSION
+from ..build_types import BuildSourceRef, StatCalculation
 from ..immutable_json import freeze_json, thaw_json
 from ..equipment.models import (
     CharacterEquipmentEligibilityIR,
@@ -927,9 +928,14 @@ def _build_and_assembly_checks(
     source = _fixture_source(fingerprint, "assembly")
     static = StaticStatContribution(
         contribution_id="fixture:static-contribution",
+        contribution_pool="flat",
         property_type="AttackFlat",
-        exact_value="1/1",
-        definition_key=fixture["light_cone"].definition_key,
+        exact_value="1",
+        source_ref=BuildSourceRef(
+            fixture["light_cone"].definition_key.definition_kind,
+            fixture["light_cone"].definition_key.definition_identity,
+        ),
+        calculation=StatCalculation("constant", "1"),
         source=source,
     )
     dynamic = DynamicMechanismSelection(

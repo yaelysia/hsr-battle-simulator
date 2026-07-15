@@ -11,15 +11,15 @@ turnbasedgamedata-main -> TBGD compiler/lowering -> Canonical IR / 数据卡 IR 
 当前最近检查点：
 
 ```text
-P8-S1 typed equipment and build architecture accepted
-最近检查点：P8-S1 已完成独立验收，尚未 lower 真实装备或修改 runtime 行为
-检查点报告：../live_validation_reports/v8_p8_s1_equipment_type_contract_ready_for_review.md
+P8-S2 formal character build input and base panel accepted
+最近检查点：P8-S2 已完成独立验收，正式角色可由 source-backed 构筑生成无装备基础面板；尚未 lower 真实光锥或遗器
+检查点报告：../live_validation_reports/v8_p8_s2_character_build_base_panel_ready_for_review.md
 ```
 
 当前推荐下一阶段：
 
 ```text
-P8-S2 formal character build input and base panel
+P8-S3 light-cone data cards and source linkage
 计划文档：P8_EQUIPMENT_BUILD_LIGHT_CONE_RELIC_TASK_PLAN.md
 ```
 
@@ -105,6 +105,7 @@ L0 来源编译层：TBGD raw -> lowering -> Canonical IR / 数据卡 IR
 - P7-S0 至 P7-S19 和 P7-DONE 已全部通过最终验收；P7 完成内核可信执行与当前已准入战斗语义，不代表全内容完成。
 - P8-S0 装备来源与机制基线已经通过独立验收。
 - P8-S1 类型化装备与构筑架构已经通过独立验收；定义、实例、构筑和装配结果已经分离，RuleBook 查询及 blocked 边界可用，但尚未 lower 真实装备、计算装备数值或执行装备效果。
+- P8-S2 正式角色构筑输入与基础面板已经通过独立验收；晋阶成长、能量上限、行迹和星魂子来源通过统一贡献账本装配，正式 scenario 不再接受手填最终面板。未准入的特殊资源、辅助单位技能和额外效果保持 blocked；光锥与遗器仍为空构筑。
 - 本地 UI 测试台 `simulator_v8_ui/`，作为测试编排与审计展示层，不作为规则系统。
 
 ## 当前仍未完整落地的大块

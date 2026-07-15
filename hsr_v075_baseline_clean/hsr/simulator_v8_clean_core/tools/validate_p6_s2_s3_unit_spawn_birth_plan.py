@@ -10,6 +10,7 @@ from .. import BASELINE_VERSION
 from ..core.model import BattleState, JSONValue, UnitState
 from ..rules.rulebook import RuleBook
 from ..systems.summon import SummonSystem
+from ..systems.unit_spawn import UnitSpawnPlan
 from ..systems.wave import WAVE_RUNTIME_SCHEMA_VERSION, WaveSystem
 from ..tbgd.lowering import TBGDLowering
 from ..tbgd.paths import find_tbgd_root
@@ -24,7 +25,7 @@ from .validate_p1_8_battle_setup import _select_two_wave_definition
 
 
 VALIDATION_VERSION = "p6_s2_s3_unit_spawn_birth_plan"
-MATRIX_SCHEMA_VERSION = "p6_s2_s3_unit_spawn_birth_plan_matrix_v2"
+MATRIX_SCHEMA_VERSION = "p6_s2_s3_unit_spawn_birth_plan_matrix_v3"
 
 CLASSIFICATION_STATES = {"executable", "boundary_guard", "implementation_missing"}
 REQUIRED_ROWS = {
@@ -136,8 +137,14 @@ def build_matrix(package_root: Path, rules: RuleBook) -> dict[str, Any]:
             "servant_runtime_sample_count": 1,
             "wave_runtime_sample_count": 1,
             "negative_missing_birth_plan_count": 3,
-            "negative_incomplete_birth_plan_count": 14,
-            "negative_tampered_birth_plan_count": 17,
+            "negative_incomplete_birth_plan_count": sum(
+                len(case["incomplete_results"])
+                for case in (summon_case, servant_case, wave_case)
+            ),
+            "negative_tampered_birth_plan_count": sum(
+                len(case["tampered_results"])
+                for case in (summon_case, servant_case, wave_case)
+            ),
             "full_ir_written": False,
             "full_rulebook_written": False,
             "full_transition_dump_written": False,
@@ -212,6 +219,12 @@ def _summon_case(rules: RuleBook) -> dict[str, Any]:
         label: system.apply_spawn(state, replace(plan, metadata=_metadata_with_first_spawn_plan(plan.metadata, spawn_plan)))
         for label, spawn_plan in _tampered_summon_spawn_plans(spawn_plans).items()
     }
+    evidence_annotation_result = _apply_annotated_summon_plan(
+        system,
+        state,
+        plan,
+        spawn_plans,
+    )
     return {
         "intent_id": intent.summon_intent_id,
         "plan": plan,
@@ -222,6 +235,8 @@ def _summon_case(rules: RuleBook) -> dict[str, Any]:
         "incomplete_state_unchanged": state.snapshot().to_json() == state_before,
         "tampered_results": tampered_results,
         "tampered_state_unchanged": state.snapshot().to_json() == state_before,
+        "evidence_annotation_result": evidence_annotation_result,
+        "unanchored_consumption_rejected": _unanchored_consumption_rejected(spawn_plans),
     }
 
 
@@ -250,6 +265,12 @@ def _servant_case(rules: RuleBook) -> dict[str, Any]:
         )
         for label, spawn_plan in _tampered_servant_spawn_plans(spawn_plans).items()
     }
+    evidence_annotation_result = _apply_annotated_servant_plan(
+        system,
+        state,
+        plan,
+        spawn_plans,
+    )
     return {
         "servant_definition_id": definition.servant_definition_id,
         "plan": plan,
@@ -260,6 +281,8 @@ def _servant_case(rules: RuleBook) -> dict[str, Any]:
         "incomplete_state_unchanged": state.snapshot().to_json() == state_before,
         "tampered_results": tampered_results,
         "tampered_state_unchanged": state.snapshot().to_json() == state_before,
+        "evidence_annotation_result": evidence_annotation_result,
+        "unanchored_consumption_rejected": _unanchored_consumption_rejected(spawn_plans),
     }
 
 
@@ -323,6 +346,12 @@ def _wave_case(rules: RuleBook) -> dict[str, Any]:
         label: system.apply_transition(state, replace(plan, spawn_unit_plans=(spawn_plan, *spawn_plans[1:])))
         for label, spawn_plan in _tampered_wave_spawn_plans(spawn_plans).items()
     }
+    evidence_annotation_result = _apply_annotated_wave_plan(
+        system,
+        state,
+        plan,
+        spawn_plans,
+    )
     return {
         "definition": definition,
         "wave_definition_id": definition.wave_definition_id,
@@ -334,6 +363,8 @@ def _wave_case(rules: RuleBook) -> dict[str, Any]:
         "incomplete_state_unchanged": state.snapshot().to_json() == state_before,
         "tampered_results": tampered_results,
         "tampered_state_unchanged": state.snapshot().to_json() == state_before,
+        "evidence_annotation_result": evidence_annotation_result,
+        "unanchored_consumption_rejected": _unanchored_consumption_rejected(spawn_plans),
     }
 
 
@@ -388,6 +419,7 @@ def _unit_birth_template_ir_projection_row(package_root: Path, rules: RuleBook) 
 
 
 def _summon_positive_row(case: dict[str, Any]) -> dict[str, JSONValue]:
+    evidence_result = case["evidence_annotation_result"]
     checks = _checks(
         {
             "plan_ok": case["plan"].ok,
@@ -399,6 +431,9 @@ def _summon_positive_row(case: dict[str, Any]) -> dict[str, JSONValue]:
                 for mutation in case["result"].mutations
                 if isinstance(mutation.after, dict) and mutation.metadata.get("lifecycle_operation") == "unit_spawn"
             ),
+            "evidence_annotation_only_allowed": evidence_result.plan.ok
+            and bool(evidence_result.mutations),
+            "unanchored_consumption_rejected": bool(case["unanchored_consumption_rejected"]),
         }
     )
     return _row("summoned_monster_birth_plan_positive", checks, case, "executable")
@@ -434,12 +469,16 @@ def _summon_tampered_negative_row(case: dict[str, Any]) -> dict[str, JSONValue]:
 
 
 def _servant_positive_row(case: dict[str, Any]) -> dict[str, JSONValue]:
+    evidence_result = case["evidence_annotation_result"]
     checks = _checks(
         {
             "plan_ok": case["plan"].ok,
             "birth_plans_present": bool(case["spawn_plans"]),
             "birth_plan_count_matches_units": len(case["spawn_plans"]) == len(case["plan"].unit_ids),
             "spawn_mutation_present": bool(case["result"].mutations),
+            "evidence_annotation_only_allowed": evidence_result.plan.ok
+            and bool(evidence_result.mutations),
+            "unanchored_consumption_rejected": bool(case["unanchored_consumption_rejected"]),
         }
     )
     return _row("servant_birth_plan_positive", checks, case, "executable")
@@ -475,6 +514,7 @@ def _servant_tampered_negative_row(case: dict[str, Any]) -> dict[str, JSONValue]
 
 
 def _wave_positive_row(case: dict[str, Any]) -> dict[str, JSONValue]:
+    evidence_result = case["evidence_annotation_result"]
     checks = _checks(
         {
             "plan_advances": case["plan"].status == "advance_to_next_wave",
@@ -483,6 +523,12 @@ def _wave_positive_row(case: dict[str, Any]) -> dict[str, JSONValue]:
             "spawn_mutation_present": any(
                 mutation.metadata.get("lifecycle_operation") == "unit_spawn" for mutation in case["result"].mutations
             ),
+            "evidence_annotation_only_allowed": evidence_result.plan.ok
+            and any(
+                mutation.metadata.get("lifecycle_operation") == "unit_spawn"
+                for mutation in evidence_result.mutations
+            ),
+            "unanchored_consumption_rejected": bool(case["unanchored_consumption_rejected"]),
         }
     )
     return _row("wave_birth_plan_positive", checks, case, "executable")
@@ -566,6 +612,16 @@ def _incomplete_birth_plan_row(
     checks = _checks(
         {
             "variant_count": len(results) >= 4,
+            "source_proof_variants_present": {
+                "missing_plan_source_trace",
+                "missing_request_source_trace",
+                "missing_request_entry_source_trace",
+                "missing_birth_template_source_trace",
+            }.issubset(results)
+            and any(label.startswith("missing_unit_") for label in results),
+            "wave_stage_level_source_variant_present": row_id
+            != "wave_incomplete_birth_plan_negative"
+            or "missing_stage_level_source" in results,
             "all_variants_blocked": all(not result.plan.ok for result in results.values()),
             "all_reasons_present": all(bool(result.plan.blocked_reason) for result in results.values()),
             "all_reasons_mark_invalid_spawn_plan": all(
@@ -597,9 +653,34 @@ def _tampered_birth_plan_row(
     expected_reason_prefix: str,
 ) -> dict[str, JSONValue]:
     results = case["tampered_results"]
+    template_results = {
+        label: result
+        for label, result in results.items()
+        if label.startswith("template_")
+    }
+    required_wave_template_labels = {
+        "template_level_source_consistent_replacement",
+        "template_panel_source_consistent_replacement",
+        "template_data_card_source_consistent_replacement",
+        "template_timeline_source_consistent_replacement",
+    }
     checks = _checks(
         {
             "variant_count": len(results) >= 5,
+            "consistent_complete_source_replacement_present": (
+                "all_source_proofs_consistent_replacement" in results
+            ),
+            "template_source_replacement_present": bool(template_results),
+            "wave_template_source_categories_present": (
+                row_id != "wave_tampered_birth_plan_negative"
+                or required_wave_template_labels.issubset(results)
+            ),
+            "template_source_replacements_reach_template_anchor": bool(template_results)
+            and all(
+                "unit_spawn_plan_template_payload_mismatch"
+                in str(result.plan.blocked_reason)
+                for result in template_results.values()
+            ),
             "all_variants_blocked": all(not result.plan.ok for result in results.values()),
             "all_reasons_present": all(bool(result.plan.blocked_reason) for result in results.values()),
             "all_reasons_mark_invalid_spawn_plan": all(
@@ -638,10 +719,13 @@ def _static_guard_row(package_root: Path) -> dict[str, JSONValue]:
     checks = _checks(
         {
             "summon_apply_consumes_birth_plan": "spawn_plans_from_metadata(plan.metadata)" in apply_spawn,
+            "summon_apply_resolves_trusted_birth_template": "self.rules.unit_birth_template(" in apply_spawn,
             "summon_apply_no_unit_from_entry_call": "self._unit_from_entry(" not in apply_spawn,
             "servant_apply_consumes_birth_plan": "spawn_plans_from_metadata(plan.metadata)" in apply_servant,
+            "servant_apply_resolves_trusted_birth_template": "self.rules.unit_birth_template(" in apply_servant,
             "servant_apply_no_unit_from_definition_call": "self._unit_from_servant_definition(" not in apply_servant,
             "wave_apply_consumes_birth_plan": "spawn_plans_from_metadata" in apply_wave,
+            "wave_apply_resolves_trusted_birth_template": "self.rules.unit_birth_template(" in apply_wave,
             "wave_apply_no_unit_from_wave_entry_call": "_unit_from_wave_entry(" not in apply_wave,
             "summon_plan_uses_birth_template": "self.rules.unit_birth_template(" in plan_summon
             and "self.unit_spawn.plan(" in plan_summon,
@@ -653,6 +737,10 @@ def _static_guard_row(package_root: Path) -> dict[str, JSONValue]:
             "unit_spawn_materializer_no_content_lookup": all(
                 token not in unit_spawn_source
                 for token in ("combatant_profile(", "monster_data_card_for_entity", "servant_definition(")
+            ),
+            "unit_spawn_consumption_requires_template_anchor": (
+                "expected_template: UnitBirthTemplateIR" in unit_spawn_source
+                and "unit_spawn_plan_template_payload_mismatch" in unit_spawn_source
             ),
             "unit_birth_template_ir_present": "class UnitBirthTemplateIR:" in ir_source
             and "unit_birth_templates: tuple[UnitBirthTemplateIR" in ir_source,
@@ -711,7 +799,7 @@ def _incomplete_summon_spawn_plans(spawn_plans: tuple[dict[str, JSONValue], ...]
     return _incomplete_spawn_plan_variants(
         spawn_plans,
         owner_flag="owner_id",
-        source_flag="summon_source_trace",
+        source_flags=("summon_source_trace", "summon_entry_source_trace"),
     )
 
 
@@ -719,7 +807,7 @@ def _incomplete_servant_spawn_plans(spawn_plans: tuple[dict[str, JSONValue], ...
     return _incomplete_spawn_plan_variants(
         spawn_plans,
         owner_flag="owner_id",
-        source_flag="servant_definition_source_trace",
+        source_flags=("summon_source_trace", "servant_definition_source_trace"),
     )
 
 
@@ -727,7 +815,7 @@ def _incomplete_wave_spawn_plans(spawn_plans: tuple[dict[str, JSONValue], ...]) 
     variants = _incomplete_spawn_plan_variants(
         spawn_plans,
         owner_flag="wave_definition_id",
-        source_flag="wave_entry_source_trace",
+        source_flags=("wave_definition_source_trace", "wave_entry_source_trace"),
     )
     if spawn_plans:
         variants["missing_level"] = _corrupt_spawn_plan(spawn_plans[0], remove_unit_keys=("level",))
@@ -744,7 +832,9 @@ def _tampered_summon_spawn_plans(
     if not spawn_plans:
         return {}
     first = spawn_plans[0]
-    injected_trace = {"source_path": "validation/tampered", "raw_type": "Tampered", "raw_id": "injected"}
+    injected_trace = _complete_tampered_source_trace("summon_injected")
+    replaced_source = _complete_tampered_source_trace("summon_source_replaced")
+    replaced_entry = _complete_tampered_source_trace("summon_entry_replaced")
     return {
         "unit_identity": _tamper_spawn_plan(
             first,
@@ -774,6 +864,24 @@ def _tampered_summon_spawn_plans(
             request_updates={"entry_id": "summon_entry:injected", "entry_source_trace": injected_trace},
             flag_updates={"summon_entry_id": "summon_entry:injected", "summon_entry_source_trace": injected_trace},
         ),
+        "all_source_proofs_consistent_replacement": _tamper_spawn_plan(
+            first,
+            plan_updates={"source_trace": replaced_entry},
+            request_updates={
+                "source_trace": replaced_source,
+                "entry_source_trace": replaced_entry,
+            },
+            flag_updates={
+                "summon_source_trace": replaced_source,
+                "summon_entry_source_trace": replaced_entry,
+            },
+            metadata_updates={"birth_template_source_trace": replaced_entry},
+        ),
+        "template_lifecycle_source_consistent_replacement": _template_source_variant(
+            first,
+            label="summon_lifecycle",
+            flag_keys=("lifecycle_source",),
+        ),
     }
 
 
@@ -783,7 +891,9 @@ def _tampered_servant_spawn_plans(
     if not spawn_plans:
         return {}
     first = spawn_plans[0]
-    injected_trace = {"source_path": "validation/tampered", "raw_type": "Tampered", "raw_id": "injected"}
+    injected_trace = _complete_tampered_source_trace("servant_injected")
+    replaced_source = _complete_tampered_source_trace("servant_source_replaced")
+    replaced_entry = _complete_tampered_source_trace("servant_entry_replaced")
     return {
         "unit_identity": _tamper_spawn_plan(
             first,
@@ -819,6 +929,24 @@ def _tampered_servant_spawn_plans(
                 "servant_definition_source_trace": injected_trace,
             },
         ),
+        "all_source_proofs_consistent_replacement": _tamper_spawn_plan(
+            first,
+            plan_updates={"source_trace": replaced_entry},
+            request_updates={
+                "source_trace": replaced_source,
+                "entry_source_trace": replaced_entry,
+            },
+            flag_updates={
+                "summon_source_trace": replaced_source,
+                "servant_definition_source_trace": replaced_entry,
+            },
+            metadata_updates={"birth_template_source_trace": replaced_entry},
+        ),
+        "template_lifecycle_source_consistent_replacement": _template_source_variant(
+            first,
+            label="servant_lifecycle",
+            flag_keys=("lifecycle_source", "owner_death_policy_source_trace"),
+        ),
     }
 
 
@@ -828,7 +956,9 @@ def _tampered_wave_spawn_plans(
     if not spawn_plans:
         return {}
     first = spawn_plans[0]
-    injected_trace = {"source_path": "validation/tampered", "raw_type": "Tampered", "raw_id": "injected"}
+    injected_trace = _complete_tampered_source_trace("wave_injected")
+    replaced_source = _complete_tampered_source_trace("wave_source_replaced")
+    replaced_entry = _complete_tampered_source_trace("wave_entry_replaced")
     return {
         "unit_identity": _tamper_spawn_plan(
             first,
@@ -865,6 +995,256 @@ def _tampered_wave_spawn_plans(
             request_updates={"position": 999},
             flag_updates={"position": 999, "wave_position": 999},
         ),
+        "all_source_proofs_consistent_replacement": _tamper_spawn_plan(
+            first,
+            plan_updates={"source_trace": replaced_entry},
+            request_updates={
+                "source_trace": replaced_source,
+                "entry_source_trace": replaced_entry,
+            },
+            flag_updates={
+                "wave_definition_source_trace": replaced_source,
+                "wave_entry_source_trace": replaced_entry,
+            },
+            metadata_updates={"birth_template_source_trace": replaced_source},
+        ),
+        **_wave_template_source_variants(first),
+    }
+
+
+def _wave_template_source_variants(
+    plan: dict[str, JSONValue],
+) -> dict[str, dict[str, JSONValue]]:
+    flags = _spawn_plan_flags(plan)
+    initial_action_value = flags.get("initial_action_value_source_trace")
+    timeline_source = (
+        initial_action_value.get("timeline_rule_source")
+        if isinstance(initial_action_value, dict)
+        else None
+    )
+    return {
+        "template_level_source_consistent_replacement": _template_source_variant(
+            plan,
+            label="wave_level",
+            flag_keys=(
+                "stage_level_source_trace",
+                "stage_level_policy",
+                "wave_stat_scaling",
+                "initial_action_value_source_trace",
+            ),
+            target_source=flags.get("stage_level_source_trace"),
+        ),
+        "template_panel_source_consistent_replacement": _template_source_variant(
+            plan,
+            label="wave_panel",
+            flag_keys=(
+                "combatant_profile_source_trace",
+                "wave_stat_scaling",
+                "initial_action_value_source_trace",
+                "resistance_source_trace",
+                "status_resistance_source_trace",
+            ),
+            target_source=flags.get("combatant_profile_source_trace"),
+        ),
+        "template_data_card_source_consistent_replacement": _template_source_variant(
+            plan,
+            label="wave_data_card",
+            flag_keys=("monster_data_card_source_trace",),
+            target_source=flags.get("monster_data_card_source_trace"),
+        ),
+        "template_timeline_source_consistent_replacement": _template_source_variant(
+            plan,
+            label="wave_timeline",
+            flag_keys=("initial_action_value_source_trace",),
+            target_source=timeline_source,
+        ),
+    }
+
+
+def _template_source_variant(
+    plan: dict[str, JSONValue],
+    *,
+    label: str,
+    flag_keys: tuple[str, ...],
+    target_source: JSONValue | None = None,
+) -> dict[str, JSONValue]:
+    tampered = _json_safe(plan)
+    if not isinstance(tampered, dict):
+        return {}
+    flags = _spawn_plan_flags(tampered)
+    identities = _source_leaf_identities(target_source)
+    if not identities:
+        identities = tuple(
+            sorted(
+                {
+                    identity
+                    for key in flag_keys
+                    for identity in _source_leaf_identities(flags.get(key))
+                }
+            )
+        )
+    replacements = {
+        identity: _complete_tampered_source_trace(
+            f"{label}_{index}_{identity[1]}_{identity[2]}"
+        )
+        for index, identity in enumerate(identities)
+    }
+    for key in flag_keys:
+        if key in flags:
+            flags[key] = _replace_source_leaf_identities(flags[key], replacements)
+    return tampered
+
+
+def _spawn_plan_flags(plan: dict[str, JSONValue]) -> dict[str, JSONValue]:
+    unit = plan.get("unit")
+    if not isinstance(unit, dict):
+        return {}
+    flags = unit.get("flags")
+    return flags if isinstance(flags, dict) else {}
+
+
+def _source_leaf_identities(value: JSONValue | None) -> tuple[tuple[str, str, str], ...]:
+    if isinstance(value, list):
+        return tuple(
+            sorted(
+                {
+                    identity
+                    for item in value
+                    for identity in _source_leaf_identities(item)
+                }
+            )
+        )
+    if not isinstance(value, dict):
+        return ()
+    identity = tuple(value.get(key) for key in ("source_path", "raw_type", "raw_id"))
+    if all(isinstance(item, str) and item for item in identity):
+        return ((str(identity[0]), str(identity[1]), str(identity[2])),)
+    return tuple(
+        sorted(
+            {
+                identity
+                for item in value.values()
+                for identity in _source_leaf_identities(item)
+            }
+        )
+    )
+
+
+def _replace_source_leaf_identities(
+    value: JSONValue,
+    replacements: dict[tuple[str, str, str], dict[str, JSONValue]],
+) -> JSONValue:
+    if isinstance(value, list):
+        return [_replace_source_leaf_identities(item, replacements) for item in value]
+    if not isinstance(value, dict):
+        return value
+    identity = tuple(value.get(key) for key in ("source_path", "raw_type", "raw_id"))
+    if all(isinstance(item, str) and item for item in identity):
+        replacement = replacements.get(
+            (str(identity[0]), str(identity[1]), str(identity[2]))
+        )
+        return dict(replacement) if replacement is not None else value
+    return {
+        str(key): _replace_source_leaf_identities(item, replacements)
+        for key, item in value.items()
+    }
+
+
+def _apply_annotated_summon_plan(
+    system: SummonSystem,
+    state: BattleState,
+    plan: Any,
+    spawn_plans: tuple[dict[str, JSONValue], ...],
+) -> Any:
+    annotated = _annotated_first_spawn_plan(spawn_plans)
+    return system.apply_spawn(
+        state,
+        replace(
+            plan,
+            metadata=_metadata_with_first_spawn_plan(plan.metadata, annotated),
+        ),
+    )
+
+
+def _apply_annotated_servant_plan(
+    system: SummonSystem,
+    state: BattleState,
+    plan: Any,
+    spawn_plans: tuple[dict[str, JSONValue], ...],
+) -> Any:
+    annotated = _annotated_first_spawn_plan(spawn_plans)
+    return system.apply_spawn_servant(
+        state,
+        replace(
+            plan,
+            metadata=_metadata_with_first_spawn_plan(plan.metadata, annotated),
+        ),
+    )
+
+
+def _apply_annotated_wave_plan(
+    system: WaveSystem,
+    state: BattleState,
+    plan: Any,
+    spawn_plans: tuple[dict[str, JSONValue], ...],
+) -> Any:
+    annotated = _annotated_first_spawn_plan(spawn_plans)
+    return system.apply_transition(
+        state,
+        replace(plan, spawn_unit_plans=(annotated, *spawn_plans[1:])),
+    )
+
+
+def _annotated_first_spawn_plan(
+    spawn_plans: tuple[dict[str, JSONValue], ...],
+) -> dict[str, JSONValue]:
+    if not spawn_plans:
+        return {}
+    annotated = _annotate_source_evidence(spawn_plans[0])
+    return annotated if isinstance(annotated, dict) else {}
+
+
+def _annotate_source_evidence(value: JSONValue) -> JSONValue:
+    if isinstance(value, list):
+        return [_annotate_source_evidence(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    annotated = {
+        str(key): _annotate_source_evidence(item)
+        for key, item in value.items()
+    }
+    if all(isinstance(annotated.get(key), str) for key in ("source_path", "raw_type", "raw_id")):
+        evidence = annotated.get("evidence")
+        if isinstance(evidence, dict):
+            annotated["evidence"] = {
+                **evidence,
+                "validation_annotation": "audit wording changed; stable raw identity preserved",
+            }
+    return annotated
+
+
+def _unanchored_consumption_rejected(
+    spawn_plans: tuple[dict[str, JSONValue], ...],
+) -> bool:
+    if not spawn_plans:
+        return False
+    plan = UnitSpawnPlan.from_json(spawn_plans[0])
+    try:
+        plan.to_unit()  # type: ignore[call-arg]
+    except TypeError:
+        return True
+    return False
+
+
+def _complete_tampered_source_trace(label: str) -> dict[str, JSONValue]:
+    return {
+        "source_path": f"validation/tampered/{label}.json",
+        "raw_type": "TamperedSource",
+        "raw_id": label,
+        "evidence": {
+            "builder": "p6_s2_s3_source_anchor_negative",
+            "detail": "format-complete source proof with unrelated stable identity",
+        },
     }
 
 
@@ -900,31 +1280,62 @@ def _incomplete_spawn_plan_variants(
     spawn_plans: tuple[dict[str, JSONValue], ...],
     *,
     owner_flag: str,
-    source_flag: str,
+    source_flags: tuple[str, ...],
 ) -> dict[str, dict[str, JSONValue]]:
     if not spawn_plans:
         return {}
     first = spawn_plans[0]
-    return {
+    variants = {
         "missing_max_hp": _corrupt_spawn_plan(first, remove_unit_keys=("max_hp",)),
         "missing_speed": _corrupt_spawn_plan(first, remove_unit_keys=("speed",)),
         "missing_owner_or_identity": _corrupt_spawn_plan(first, remove_flag_keys=(owner_flag,)),
-        "missing_source_trace": _corrupt_spawn_plan(first, remove_plan_keys=("source_trace",), remove_flag_keys=(source_flag,)),
+        "missing_plan_source_trace": _corrupt_spawn_plan(
+            first,
+            remove_plan_keys=("source_trace",),
+        ),
+        "missing_request_source_trace": _corrupt_spawn_plan(
+            first,
+            remove_request_keys=("source_trace",),
+        ),
+        "missing_request_entry_source_trace": _corrupt_spawn_plan(
+            first,
+            remove_request_keys=("entry_source_trace",),
+        ),
+        "missing_birth_template_source_trace": _corrupt_spawn_plan(
+            first,
+            remove_metadata_keys=("birth_template_source_trace",),
+        ),
     }
+    variants.update(
+        {
+            f"missing_unit_{source_flag}": _corrupt_spawn_plan(
+                first,
+                remove_flag_keys=(source_flag,),
+            )
+            for source_flag in source_flags
+        }
+    )
+    return variants
 
 
 def _corrupt_spawn_plan(
     plan: dict[str, JSONValue],
     *,
     remove_plan_keys: tuple[str, ...] = (),
+    remove_request_keys: tuple[str, ...] = (),
     remove_unit_keys: tuple[str, ...] = (),
     remove_flag_keys: tuple[str, ...] = (),
+    remove_metadata_keys: tuple[str, ...] = (),
 ) -> dict[str, JSONValue]:
     corrupted = _json_safe(plan)
     if not isinstance(corrupted, dict):
         return {}
     for key in remove_plan_keys:
         corrupted.pop(key, None)
+    request = corrupted.get("request")
+    if isinstance(request, dict):
+        for key in remove_request_keys:
+            request.pop(key, None)
     unit = corrupted.get("unit")
     if isinstance(unit, dict):
         for key in remove_unit_keys:
@@ -933,6 +1344,10 @@ def _corrupt_spawn_plan(
         if isinstance(flags, dict):
             for key in remove_flag_keys:
                 flags.pop(key, None)
+    metadata = corrupted.get("metadata")
+    if isinstance(metadata, dict):
+        for key in remove_metadata_keys:
+            metadata.pop(key, None)
     return corrupted
 
 
@@ -941,7 +1356,7 @@ def _compact_details(value: Any) -> dict[str, JSONValue]:
         return {}
     result: dict[str, JSONValue] = {}
     for key, item in value.items():
-        if key in {"plan", "result", "missing_result"}:
+        if key in {"plan", "result", "missing_result", "evidence_annotation_result"}:
             result[key] = _object_summary(item)
         elif key == "definition" and hasattr(item, "wave_definition_id"):
             result[key] = {

@@ -310,7 +310,7 @@ class TBGDLowering:
         skill_formula_bindings = [*skill_formula_bindings, *monster_cards.skill_formula_bindings]
         combatant_profiles = self._lower_combatant_profiles()
         wave_definitions = self._lower_wave_definitions(entities, combatant_profiles, monster_data_cards)
-        action_definitions = list(self._lower_action_definitions().values())
+        action_definitions = self._lower_action_definitions()
         (
             action_ability_bindings,
             ability_phases,
@@ -2729,8 +2729,8 @@ class TBGDLowering:
             )
         return entities
 
-    def _lower_action_definitions(self) -> dict[tuple[str, int], ActionDefinitionIR]:
-        definitions: dict[tuple[str, int], ActionDefinitionIR] = {}
+    def _lower_action_definitions(self) -> list[ActionDefinitionIR]:
+        definitions: list[ActionDefinitionIR] = []
         monster_target_sources = self._monster_skill_target_mode_sources()
         for relative_path, entity_type, id_key in ACTION_DEFINITION_TABLES:
             path = self.tbgd_root / relative_path
@@ -2753,7 +2753,7 @@ class TBGDLowering:
                     if entity_type == "monster_skill"
                     else None,
                 )
-                definitions[(definition.action_id, definition.level)] = definition
+                definitions.append(definition)
         return definitions
 
     def _monster_skill_target_mode_sources(self) -> dict[str, dict[str, Any]]:
@@ -6133,6 +6133,36 @@ def _action_definition_from_row(
         skill_trigger_key=str(row.get("SkillTriggerKey") or ""),
         target_relation=target_relation,
     )
+
+
+def build_character_action_definition_ir(
+    tbgd_root: Path,
+    *,
+    max_records_per_table: int | None = None,
+) -> tuple[ActionDefinitionIR, ...]:
+    """Build only character-owned action definitions without full TBGD lowering."""
+
+    definitions: list[ActionDefinitionIR] = []
+    for relative_path, entity_type, id_key in CHARACTER_ACTION_DEFINITION_TABLES:
+        path = tbgd_root / relative_path
+        if not path.exists():
+            continue
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, list):
+            continue
+        for row_index, row in enumerate(_limit_sequence(data, max_records_per_table)):
+            if not isinstance(row, dict) or id_key not in row:
+                continue
+            definitions.append(
+                _action_definition_from_row(
+                    relative_path,
+                    entity_type,
+                    id_key,
+                    row_index,
+                    row,
+                )
+            )
+    return tuple(definitions)
 
 
 def _link_trigger_ability_graphs(

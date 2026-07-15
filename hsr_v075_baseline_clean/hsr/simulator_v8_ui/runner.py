@@ -672,6 +672,8 @@ def _avatar_profile_summary(profile: Any) -> dict[str, JSONValue]:
         "base_type": getattr(profile, "base_type", ""),
         "damage_type": getattr(profile, "damage_type", ""),
         "skill_ids": list(getattr(profile, "skill_ids", ())),
+        "promotion_tier_count": len(getattr(profile, "promotion_tiers", ())),
+        "max_energy": getattr(profile, "max_energy", None),
         "coverage_status": getattr(profile, "coverage_status", ""),
         "blocked_reason": getattr(profile, "blocked_reason", ""),
         "source": _source_json(profile),

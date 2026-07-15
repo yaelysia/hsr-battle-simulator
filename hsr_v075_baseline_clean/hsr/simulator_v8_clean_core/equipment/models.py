@@ -6,6 +6,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Generic, Literal, TypeVar, cast
 
+from ..build_types import StaticStatContribution
 from ..immutable_json import FrozenJSONDict, freeze_json, thaw_json
 from ..ir_types import CoverageStatus, IRSource, JSONValue
 
@@ -1096,43 +1097,6 @@ class EquipmentBuildInput:
 
 
 @dataclass(frozen=True)
-class StaticStatContribution:
-    contribution_id: str
-    property_type: str
-    exact_value: str
-    definition_key: EquipmentDefinitionKey
-    source: IRSource
-
-    def __post_init__(self) -> None:
-        _require_text(self.contribution_id, "contribution_id")
-        _require_text(self.property_type, "property_type")
-        _require_text(self.exact_value, "exact_value")
-        if not isinstance(self.definition_key, EquipmentDefinitionKey):
-            raise TypeError("static contribution definition_key must be EquipmentDefinitionKey")
-        _require_equipment_source(self.source)
-
-    def to_json(self) -> dict[str, JSONValue]:
-        return {
-            "contribution_id": self.contribution_id,
-            "property_type": self.property_type,
-            "exact_value": self.exact_value,
-            "definition_key": self.definition_key.to_json(),
-            "source": self.source.to_json(),
-        }
-
-    @classmethod
-    def from_json(cls, value: object) -> StaticStatContribution:
-        row = _mapping(value, "static_stat_contribution")
-        return cls(
-            contribution_id=_text(row.get("contribution_id"), "contribution_id"),
-            property_type=_text(row.get("property_type"), "property_type"),
-            exact_value=_text(row.get("exact_value"), "exact_value"),
-            definition_key=EquipmentDefinitionKey.from_json(row.get("definition_key")),
-            source=_source_from_json(row.get("source")),
-        )
-
-
-@dataclass(frozen=True)
 class DynamicMechanismSelection:
     selection_id: str
     mechanism_key: EquipmentDefinitionKey
@@ -1331,6 +1295,10 @@ class EquipmentAssemblyResult:
                 ),
             ),
         )
+        for contribution in self.static_contributions:
+            if contribution.source_ref.definition_kind not in EQUIPMENT_DEFINITION_KINDS:
+                raise ValueError("equipment static contribution has a non-equipment source_ref")
+            _require_equipment_source(contribution.source)
         object.__setattr__(
             self,
             "dynamic_mechanisms",

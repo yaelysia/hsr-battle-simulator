@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
+from ..builds.models import CharacterBuildInput, CharacterInitialConditionInput
 from ..core.model import JSONValue, UnitSide
 
 
@@ -47,10 +48,13 @@ class UnitSpec:
     unit_id: str
     side: UnitSide
     entity_ref: str
+    build_mode: Literal["kernel_fixture", "assembled_character_build"]
     level: int = 80
     eidolon_level: int = 0
     position: int | None = None
-    panel: PanelInput = field(default_factory=PanelInput)
+    panel: PanelInput | None = field(default_factory=PanelInput)
+    character_build: CharacterBuildInput | None = None
+    initial_condition: CharacterInitialConditionInput | None = None
 
 
 @dataclass(frozen=True)

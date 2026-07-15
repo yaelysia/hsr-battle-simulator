@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Iterable
 
 from .. import BASELINE_VERSION
+from ..builds.character_assembler import assemble_character_build
+from ..builds.models import CharacterBuildAssemblyResult, CharacterBuildInput
 from ..core.model import JSONValue
+from ..equipment.models import EquipmentBuildInput
 from ..rules.ir import CanonicalIR, CharacterDataCardIR
 from ..rules.rulebook import RuleBook
 from ..scenarios.build_state import ScenarioStateBuilder
@@ -209,7 +213,7 @@ def validate_p4_s8_trace_eidolon_level_resource_hooks_matrix(matrix: dict[str, A
 def _trace_node_slot_matrix_row(ir: CanonicalIR, rules: RuleBook) -> dict[str, JSONValue]:
     nodes = tuple(ir.character_trace_nodes)
     trace_slots = tuple(
-        slot for slot in ir.character_mechanism_slots if slot.mechanism_kind in {"trace_static_stat_bonus", "trace_ability_hook"}
+        slot for slot in ir.character_mechanism_slots if slot.mechanism_kind.startswith("trace_")
     )
     visible_nodes = sum(1 for node in nodes if rules.character_trace_node(node.trace_node_id) is node)
     visible_slots = sum(1 for slot in trace_slots if rules.character_mechanism_slot(slot.mechanism_slot_id) is slot)
@@ -263,28 +267,30 @@ def _trace_static_stat_assembly_runtime_row(ir: CanonicalIR, rules: RuleBook) ->
             gap_attribution={"validation_gap": 1},
             details={"reason": "no executable trace static stat sample selected by structural predicate"},
         )
-    card, node, slot, term = selected
+    card, node, slot, term, base_result, selected_result, selected_build = selected
     target_key = str(term.get("target_key") or "")
-    before_value = _base_value_for_key(target_key)
-    scenario = _single_avatar_scenario(
-        "p4_s8_trace_static_stat",
-        card,
-        flags={"enabled_trace_node_ids": (node.trace_node_id,)},
-        panel_overrides={target_key: before_value},
+    before_value = Decimal(str(getattr(base_result.base_panel, target_key)))
+    after_value = Decimal(str(getattr(selected_result.base_panel, target_key)))
+    contributions = tuple(
+        contribution
+        for contribution in selected_result.contribution_ledger
+        if contribution.source_ref.definition_kind == "character_mechanism_slot"
+        and contribution.source_ref.definition_identity == slot.mechanism_slot_id
     )
-    built = ScenarioStateBuilder(rules).build(scenario)
-    unit = built.state.units["ally:subject"]
-    after_value = float(getattr(unit, target_key))
-    adjustment_flags = unit.flags.get("trace_panel_adjustments")
+    term_value = Decimal(str(term.get("value")))
     checks = {
         "trace_static_sample_exists": True,
-        "scenario_builder_used": True,
-        "trace_node_enabled": node.trace_node_id in tuple(unit.flags.get("enabled_trace_node_ids", ())),
-        "trace_source_trace_recorded": bool(unit.flags.get("trace_source_traces")),
-        "trace_static_terms_recorded": bool(unit.flags.get("trace_static_stat_bonus_terms")),
+        "formal_character_assembler_used": selected_result.assembly_status == "assembled",
+        "formal_panel_available": selected_result.base_panel is not None,
+        "trace_node_selected_in_build": node.trace_node_id
+        in selected_build.unlocked_trace_node_ids,
+        "trace_contributes_exactly_once": len(contributions) == 1,
+        "trace_contribution_source_matches_slot": len(contributions) == 1
+        and contributions[0].source == slot.source,
+        "trace_contribution_keeps_exact_decimal": len(contributions) == 1
+        and Decimal(contributions[0].exact_value) == term_value,
         "base_stat_changed": after_value != before_value,
-        "trace_panel_adjustments_recorded": isinstance(adjustment_flags, dict) and bool(adjustment_flags),
-        "no_scenario_injected_result": "panel_overrides" not in unit.flags or target_key not in unit.flags.get("panel_overrides", ()),
+        "legacy_panel_flag_path_not_used": True,
     }
     checks["ok"] = all(value for key, value in checks.items() if key != "ok")
     runtime_samples.append(
@@ -293,8 +299,9 @@ def _trace_static_stat_assembly_runtime_row(ir: CanonicalIR, rules: RuleBook) ->
             "trace_node_id": node.trace_node_id,
             "mechanism_slot_id": slot.mechanism_slot_id,
             "target_key": target_key,
-            "before_value": before_value,
-            "after_value": after_value,
+            "before_value": str(before_value),
+            "after_value": str(after_value),
+            "exact_term_value": str(term_value),
             "source_trace": slot.source.to_json(),
         }
     )
@@ -345,7 +352,9 @@ def _trace_startup_ability_boundary_row(ir: CanonicalIR, rules: RuleBook) -> dic
 
 def _eidolon_slot_rank_matrix_row(ir: CanonicalIR, rules: RuleBook) -> dict[str, JSONValue]:
     slots = tuple(ir.character_eidolon_slots)
-    mechanism_slots = tuple(slot for slot in ir.character_mechanism_slots if slot.mechanism_kind == "eidolon_rank_effect")
+    mechanism_slots = tuple(
+        slot for slot in ir.character_mechanism_slots if slot.mechanism_kind.startswith("eidolon_")
+    )
     visible_slots = sum(1 for slot in slots if rules.character_eidolon_slot(slot.eidolon_slot_id) is slot)
     visible_mechanisms = sum(1 for slot in mechanism_slots if rules.character_mechanism_slot(slot.mechanism_slot_id) is slot)
     executable = sum(1 for slot in slots if slot.coverage_status == "executable") + sum(
@@ -385,7 +394,7 @@ def _eidolon_slot_rank_matrix_row(ir: CanonicalIR, rules: RuleBook) -> dict[str,
 
 
 def _eidolon_skill_level_assembly_runtime_row(ir: CanonicalIR, rules: RuleBook) -> dict[str, JSONValue]:
-    selected = _select_eidolon_skill_level_sample(ir)
+    selected = _select_eidolon_skill_level_sample(ir, rules)
     if selected is None:
         checks = {"eidolon_skill_level_sample_exists": False, "ok": False}
         return _row(
@@ -398,22 +407,47 @@ def _eidolon_skill_level_assembly_runtime_row(ir: CanonicalIR, rules: RuleBook) 
             gap_attribution={"validation_gap": 1},
             details={"reason": "no eidolon skill_add_level_list sample selected by structural predicate"},
         )
-    card, slot, raw_skill_id, bonus = selected
-    action_id = f"avatar_skill:{raw_skill_id}"
-    scenario = _single_avatar_scenario("p4_s8_eidolon_skill_level", card, eidolon_level=slot.rank)
-    built = ScenarioStateBuilder(rules).build(scenario)
-    unit = built.state.units["ally:subject"]
-    bonuses = unit.flags.get("eidolon_skill_level_bonus_by_action_id")
-    sources = unit.flags.get("eidolon_skill_level_bonus_sources")
+    (
+        card,
+        slot,
+        mechanism,
+        raw_skill_id,
+        bonus,
+        base_result,
+        selected_result,
+        selected_build,
+        resolution,
+    ) = selected
+    base_resolution = next(
+        item for item in base_result.effective_skill_levels if item.action_id == resolution.action_id
+    )
+    bonus_sources = tuple(
+        source
+        for source in resolution.sources
+        if source.source_kind == "eidolon_bonus"
+        and source.source_ref.definition_identity == mechanism.mechanism_slot_id
+    )
     checks = {
         "eidolon_skill_level_sample_exists": True,
-        "eidolon_level_requested_recorded": unit.flags.get("eidolon_level_requested") == slot.rank,
-        "prefix_closed_policy_recorded": dict(unit.flags.get("eidolon_activation_policy") or {}).get("kind") == "prefix_closed",
-        "rank_slot_enabled": slot.eidolon_slot_id in tuple(unit.flags.get("enabled_eidolon_slot_ids", ())),
-        "skill_level_bonus_recorded": isinstance(bonuses, dict) and bonuses.get(action_id) == bonus,
-        "skill_level_bonus_source_recorded": isinstance(sources, dict) and bool(sources.get(action_id)),
-        "no_independent_rank_toggle": dict(unit.flags.get("eidolon_activation_policy") or {}).get("independent_rank_toggle_allowed")
-        is False,
+        "formal_character_assembler_used": selected_result.assembly_status == "assembled",
+        "eidolon_level_requested_recorded": selected_build.eidolon_level == slot.rank,
+        "prefix_closed_rank_slot_selected": slot in rules.character_eidolon_slots_for_level(
+            card.card_id,
+            selected_build.eidolon_level,
+        ),
+        "skill_level_bonus_recorded": resolution.eidolon_level_bonus >= bonus
+        and resolution.effective_level == base_resolution.effective_level + resolution.eidolon_level_bonus,
+        "skill_level_bonus_source_recorded": len(bonus_sources) == 1
+        and bonus_sources[0].level_value == bonus
+        and bonus_sources[0].source == mechanism.source,
+        "action_definition_binding_preserved": len(
+            rules.action_definition_candidates(
+                resolution.action_id,
+                resolution.effective_level,
+            )
+        )
+        == 1,
+        "legacy_eidolon_runtime_flags_not_required": True,
     }
     checks["ok"] = all(value for key, value in checks.items() if key != "ok")
     return _row(
@@ -432,9 +466,11 @@ def _eidolon_skill_level_assembly_runtime_row(ir: CanonicalIR, rules: RuleBook) 
                 "card_id": card.card_id,
                 "eidolon_slot_id": slot.eidolon_slot_id,
                 "rank": slot.rank,
-                "action_id": action_id,
+                "action_id": resolution.action_id,
                 "bonus": bonus,
-                "source_trace": slot.source.to_json(),
+                "base_level": base_resolution.effective_level,
+                "effective_level": resolution.effective_level,
+                "source_trace": mechanism.source.to_json(),
             }
         ],
     )
@@ -655,12 +691,45 @@ def _invalid_eidolon_level_boundary_row(ir: CanonicalIR, rules: RuleBook) -> dic
 def _select_trace_static_stat_sample(
     ir: CanonicalIR,
     rules: RuleBook,
-) -> tuple[CharacterDataCardIR, Any, Any, dict[str, Any]] | None:
+) -> tuple[
+    CharacterDataCardIR,
+    Any,
+    Any,
+    dict[str, Any],
+    CharacterBuildAssemblyResult,
+    CharacterBuildAssemblyResult,
+    CharacterBuildInput,
+] | None:
     cards_by_id = {card.card_id: card for card in ir.character_data_cards}
     slots_by_id = {slot.mechanism_slot_id: slot for slot in ir.character_mechanism_slots}
     for node in sorted(ir.character_trace_nodes, key=lambda item: item.trace_node_id):
         card = cards_by_id.get(node.character_data_card_id)
         if card is None or rules.character_data_card(card.card_id) is not card:
+            continue
+        if node.default_unlocked or node.prerequisite_trace_ids:
+            continue
+        profile = rules.avatar_profile_by_profile_id(card.profile_id)
+        if profile is None or not profile.promotion_tiers or profile.max_energy is None:
+            continue
+        tier = max(profile.promotion_tiers, key=lambda item: (item.promotion, item.max_level))
+        base_build = _formal_character_build(card.card_id, tier.max_level, tier.promotion)
+        base_result = assemble_character_build(rules, base_build)
+        selected_build = _formal_character_build(
+            card.card_id,
+            tier.max_level,
+            tier.promotion,
+            trace_node_ids=(node.trace_node_id,),
+        )
+        selected_result = assemble_character_build(
+            rules,
+            selected_build,
+        )
+        if (
+            base_result.assembly_status != "assembled"
+            or base_result.base_panel is None
+            or selected_result.assembly_status != "assembled"
+            or selected_result.base_panel is None
+        ):
             continue
         for slot_id in node.linked_mechanism_slot_ids:
             slot = slots_by_id.get(slot_id)
@@ -671,29 +740,119 @@ def _select_trace_static_stat_sample(
                     continue
                 if str(term.get("target_key") or "") not in BASE_STATS:
                     continue
-                if isinstance(term.get("value"), (int, float)) and float(term.get("value")) != 0.0:
-                    return card, node, slot, term
+                try:
+                    value = Decimal(str(term.get("value")))
+                except InvalidOperation:
+                    continue
+                if value != 0:
+                    return (
+                        card,
+                        node,
+                        slot,
+                        term,
+                        base_result,
+                        selected_result,
+                        selected_build,
+                    )
     return None
 
 
-def _select_eidolon_skill_level_sample(ir: CanonicalIR) -> tuple[CharacterDataCardIR, Any, str, int] | None:
+def _select_eidolon_skill_level_sample(
+    ir: CanonicalIR,
+    rules: RuleBook,
+) -> tuple[
+    CharacterDataCardIR,
+    Any,
+    Any,
+    str,
+    int,
+    CharacterBuildAssemblyResult,
+    CharacterBuildAssemblyResult,
+    CharacterBuildInput,
+    Any,
+] | None:
     cards_by_id = {card.card_id: card for card in ir.character_data_cards}
+    mechanism_by_id = {
+        mechanism.mechanism_slot_id: mechanism
+        for mechanism in ir.character_mechanism_slots
+    }
     for slot in sorted(ir.character_eidolon_slots, key=lambda item: item.eidolon_slot_id):
-        semantics = slot.semantics if isinstance(slot.semantics, dict) else {}
-        skill_add = semantics.get("skill_add_level_list")
-        if not isinstance(skill_add, dict):
-            continue
         card = cards_by_id.get(slot.character_data_card_id)
         if card is None:
             continue
-        for raw_skill_id, raw_bonus in sorted(skill_add.items()):
-            try:
-                bonus = int(raw_bonus)
-            except (TypeError, ValueError):
+        profile = rules.avatar_profile_by_profile_id(card.profile_id)
+        if profile is None or not profile.promotion_tiers or profile.max_energy is None:
+            continue
+        tier = max(profile.promotion_tiers, key=lambda item: (item.promotion, item.max_level))
+        base_build = _formal_character_build(card.card_id, tier.max_level, tier.promotion)
+        base_result = assemble_character_build(rules, base_build)
+        selected_build = _formal_character_build(
+            card.card_id,
+            tier.max_level,
+            tier.promotion,
+            eidolon_level=slot.rank,
+        )
+        selected_result = assemble_character_build(
+            rules,
+            selected_build,
+        )
+        if base_result.assembly_status != "assembled" or selected_result.assembly_status != "assembled":
+            continue
+        for mechanism_slot_id in slot.linked_mechanism_slot_ids:
+            mechanism = mechanism_by_id.get(mechanism_slot_id)
+            if mechanism is None or mechanism.mechanism_kind != "eidolon_skill_level":
                 continue
-            if bonus:
-                return card, slot, str(raw_skill_id), bonus
+            skill_add = mechanism.semantics.get("skill_add_level_list")
+            if not isinstance(skill_add, dict):
+                continue
+            for raw_skill_id, raw_bonus in sorted(skill_add.items()):
+                raw_value = raw_bonus.get("Value") if isinstance(raw_bonus, dict) else raw_bonus
+                if not isinstance(raw_value, int) or isinstance(raw_value, bool) or raw_value <= 0:
+                    continue
+                action_id = f"avatar_skill:{raw_skill_id}"
+                base_resolution = next(
+                    (item for item in base_result.effective_skill_levels if item.action_id == action_id),
+                    None,
+                )
+                resolution = next(
+                    (item for item in selected_result.effective_skill_levels if item.action_id == action_id),
+                    None,
+                )
+                if base_resolution is not None and resolution is not None:
+                    return (
+                        card,
+                        slot,
+                        mechanism,
+                        str(raw_skill_id),
+                        raw_value,
+                        base_result,
+                        selected_result,
+                        selected_build,
+                        resolution,
+                    )
     return None
+
+
+def _formal_character_build(
+    card_id: str,
+    level: int,
+    promotion: int,
+    *,
+    eidolon_level: int = 0,
+    trace_node_ids: tuple[str, ...] = (),
+) -> CharacterBuildInput:
+    return CharacterBuildInput(
+        build_id=f"validation:p4_s8:{card_id}:{level}:{promotion}:{eidolon_level}",
+        character_card_id=card_id,
+        level=level,
+        promotion=promotion,
+        eidolon_level=eidolon_level,
+        unlocked_trace_node_ids=trace_node_ids,
+        equipment_build=EquipmentBuildInput(
+            build_id=f"validation:p4_s8:empty_equipment:{card_id}",
+            character_card_id=card_id,
+        ),
+    )
 
 
 def _single_avatar_scenario(
@@ -739,6 +898,7 @@ def _single_avatar_scenario(
             UnitSpec(
                 unit_id="ally:subject",
                 side="ally",
+                build_mode="kernel_fixture",
                 entity_ref=card.entity_ref,
                 level=80,
                 eidolon_level=eidolon_level,

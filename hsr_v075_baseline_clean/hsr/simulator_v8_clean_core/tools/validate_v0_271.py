@@ -122,6 +122,7 @@ def _trace_static_stat_case(rules: RuleBook) -> dict[str, Any]:
                 UnitSpec(
                     unit_id="ally:trace",
                     side="ally",
+                    build_mode="kernel_fixture",
                     entity_ref=card.entity_ref,
                     panel=_replace_panel_flags(base_panel, {"enabled_trace_node_ids": (trace_node_id,)}),
                 ),
@@ -137,6 +138,7 @@ def _trace_static_stat_case(rules: RuleBook) -> dict[str, Any]:
                 UnitSpec(
                     unit_id="ally:trace",
                     side="ally",
+                    build_mode="kernel_fixture",
                     entity_ref=card.entity_ref,
                     panel=base_panel,
                 ),
@@ -206,7 +208,7 @@ def _eidolon_generic_case(rules: RuleBook) -> dict[str, Any]:
     effect_slots = [
         slot
         for slot in rules.character_mechanism_slots_for_card(card.card_id)
-        if slot.mechanism_kind == "eidolon_rank_effect"
+        if slot.mechanism_kind.startswith("eidolon_")
     ]
     checks = {
         "eidolon_prefix_e0_empty": tuple(flags0.get("enabled_eidolon_ranks", ())) == (),
@@ -348,6 +350,7 @@ def _state_for_eidolon(rules: RuleBook, card: CharacterDataCardIR, eidolon_level
                 UnitSpec(
                     unit_id="ally:eidolon",
                     side="ally",
+                    build_mode="kernel_fixture",
                     entity_ref=card.entity_ref,
                     eidolon_level=eidolon_level,
                     panel=PanelInput(max_hp=1000, attack=100, defense=100, speed=100, energy=0, max_energy=120),

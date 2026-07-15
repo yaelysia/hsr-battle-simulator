@@ -5,6 +5,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+from ..builds.models import CharacterBuildInput, CharacterInitialConditionInput
 from ..core.model import JSONValue
 from .schema import (
     BattleSetupSpec,
@@ -41,6 +42,17 @@ class ScenarioLoader:
         if not route:
             raise ValueError("scenario.route must not be empty")
         battle_setup = _battle_setup(data)
+        if any(unit.build_mode == "assembled_character_build" for unit in units):
+            timeline = battle_setup.timeline
+            if (
+                timeline is not None
+                and timeline.mode == "runtime_initialize"
+                and (timeline.action_values or timeline.explicit_overrides)
+            ):
+                raise ValueError(
+                    "formal character builds cannot provide action_values or explicit_overrides "
+                    "when timeline mode is runtime_initialize"
+                )
         skill_points = _resolved_skill_points(data, battle_setup)
         max_skill_points = _resolved_max_skill_points(data, battle_setup)
         if skill_points < 0:
@@ -77,7 +89,42 @@ def _unit(data: Any, index: int) -> UnitSpec:
     if not isinstance(data, dict):
         raise TypeError(f"units[{index}] must be an object")
     path = f"units[{index}]"
-    panel_data = _optional_json_dict(data, "panel", f"{path}.panel", default={})
+    allowed_unit_fields = {
+        "unit_id",
+        "side",
+        "entity_ref",
+        "level",
+        "eidolon_level",
+        "position",
+        "build_mode",
+        "panel",
+        "character_build",
+        "initial_condition",
+    }
+    extra_fields = sorted(set(data).difference(allowed_unit_fields))
+    if extra_fields:
+        raise ValueError(f"{path} contains unsupported fields: {extra_fields}")
+    build_mode = _required_str(data, "build_mode", f"{path}.build_mode")
+    if build_mode not in {"kernel_fixture", "assembled_character_build"}:
+        raise ValueError(f"{path}.build_mode is not supported")
+    if build_mode == "assembled_character_build":
+        if data.get("panel") is not None:
+            raise ValueError(f"{path}.panel must be null or absent in assembled character build mode")
+        if not isinstance(data.get("character_build"), dict):
+            raise TypeError(f"{path}.character_build must be an object")
+        if not isinstance(data.get("initial_condition"), dict):
+            raise TypeError(f"{path}.initial_condition must be an object")
+        character_build = CharacterBuildInput.from_json(data["character_build"])
+        initial_condition = CharacterInitialConditionInput.from_json(data["initial_condition"])
+        panel_data: dict[str, Any] = {}
+        panel = None
+    else:
+        if data.get("character_build") is not None or data.get("initial_condition") is not None:
+            raise ValueError(f"{path} kernel_fixture cannot carry formal character build fields")
+        character_build = None
+        initial_condition = None
+        panel_data = _optional_json_dict(data, "panel", f"{path}.panel", default={})
+        panel = None
     if "hp" in panel_data and "hp_ratio" in panel_data:
         raise ValueError(f"{path}.panel.hp and {path}.panel.hp_ratio cannot both be set")
     if "energy" in panel_data and "energy_ratio" in panel_data:
@@ -95,24 +142,25 @@ def _unit(data: Any, index: int) -> UnitSpec:
     eidolon_level = _optional_int(data, "eidolon_level", f"{path}.eidolon_level", default=0)
     if eidolon_level < 0 or eidolon_level > 6:
         raise ValueError(f"{path}.eidolon_level must be between 0 and 6")
-    panel = PanelInput(
-        explicit_fields=tuple(str(key) for key in panel_data.keys()),
-        max_hp=_optional_float(panel_data, "max_hp", f"{path}.panel.max_hp", default=1.0),
-        hp=_optional_float(panel_data, "hp", f"{path}.panel.hp"),
-        hp_ratio=hp_ratio,
-        attack=_optional_float(panel_data, "attack", f"{path}.panel.attack", default=0.0),
-        defense=_optional_float(panel_data, "defense", f"{path}.panel.defense", default=0.0),
-        speed=_optional_float(panel_data, "speed", f"{path}.panel.speed", default=100.0),
-        energy=_optional_float(panel_data, "energy", f"{path}.panel.energy", default=0.0),
-        energy_ratio=energy_ratio,
-        max_energy=_optional_float(panel_data, "max_energy", f"{path}.panel.max_energy", default=0.0),
-        toughness=_optional_float(panel_data, "toughness", f"{path}.panel.toughness", default=0.0),
-        max_toughness=_optional_float(panel_data, "max_toughness", f"{path}.panel.max_toughness", default=0.0),
-        action_value=_optional_float(panel_data, "action_value", f"{path}.panel.action_value", default=0.0),
-        resources=_float_dict(panel_data.get("resources", {}), f"{path}.panel.resources"),
-        flags=_optional_json_dict(panel_data, "flags", f"{path}.panel.flags", default={}),
-        statuses=tuple(_str_list(panel_data.get("statuses", ()), f"{path}.panel.statuses")),
-    )
+    if build_mode == "kernel_fixture":
+        panel = PanelInput(
+            explicit_fields=tuple(str(key) for key in panel_data.keys()),
+            max_hp=_optional_float(panel_data, "max_hp", f"{path}.panel.max_hp", default=1.0),
+            hp=_optional_float(panel_data, "hp", f"{path}.panel.hp"),
+            hp_ratio=hp_ratio,
+            attack=_optional_float(panel_data, "attack", f"{path}.panel.attack", default=0.0),
+            defense=_optional_float(panel_data, "defense", f"{path}.panel.defense", default=0.0),
+            speed=_optional_float(panel_data, "speed", f"{path}.panel.speed", default=100.0),
+            energy=_optional_float(panel_data, "energy", f"{path}.panel.energy", default=0.0),
+            energy_ratio=energy_ratio,
+            max_energy=_optional_float(panel_data, "max_energy", f"{path}.panel.max_energy", default=0.0),
+            toughness=_optional_float(panel_data, "toughness", f"{path}.panel.toughness", default=0.0),
+            max_toughness=_optional_float(panel_data, "max_toughness", f"{path}.panel.max_toughness", default=0.0),
+            action_value=_optional_float(panel_data, "action_value", f"{path}.panel.action_value", default=0.0),
+            resources=_float_dict(panel_data.get("resources", {}), f"{path}.panel.resources"),
+            flags=_optional_json_dict(panel_data, "flags", f"{path}.panel.flags", default={}),
+            statuses=tuple(_str_list(panel_data.get("statuses", ()), f"{path}.panel.statuses")),
+        )
     return UnitSpec(
         unit_id=_required_str(data, "unit_id", f"{path}.unit_id"),
         side=side,  # type: ignore[arg-type]
@@ -120,7 +168,10 @@ def _unit(data: Any, index: int) -> UnitSpec:
         level=level,
         eidolon_level=eidolon_level,
         position=_optional_int(data, "position", f"{path}.position") if "position" in data else None,
+        build_mode=build_mode,  # type: ignore[arg-type]
         panel=panel,
+        character_build=character_build,
+        initial_condition=initial_condition,
     )
 
 
