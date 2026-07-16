@@ -125,7 +125,7 @@ def assemble_equipment_build(
             ),
         )
 
-    contributions = _light_cone_base_contributions(instance, tier)
+    base_contributions = _light_cone_base_contributions(instance, tier)
     basis = EquipmentActivationBasis(
         basis_kind="light_cone_path_equality",
         comparison_policy="exact_internal_path_identity_equality",
@@ -147,8 +147,17 @@ def assemble_equipment_build(
         reason_code="light_cone_path_match" if active else "light_cone_path_mismatch",
         basis=basis,
     )
-    blockers = _active_passive_blockers(rules, definition, rank) if active else ()
-    contribution_ids = tuple(item.contribution_id for item in contributions)
+    passive_contributions = (
+        _light_cone_passive_contributions(instance, rank) if active else ()
+    )
+    contributions = (*base_contributions, *passive_contributions)
+    blockers = _active_ability_blockers(rules, definition) if active else ()
+    base_contribution_ids = tuple(
+        item.contribution_id for item in base_contributions
+    )
+    passive_contribution_ids = tuple(
+        item.contribution_id for item in passive_contributions
+    )
     selection = LightConeAssemblySelection(
         instance_id=instance.instance_id,
         instance_fingerprint=instance.instance_fingerprint,
@@ -166,7 +175,8 @@ def assemble_equipment_build(
         promotion_source=tier.source,
         superimposition_source=rank.source,
         ability_source=definition.ability_source.source,
-        base_contribution_ids=contribution_ids,
+        base_contribution_ids=base_contribution_ids,
+        passive_contribution_ids=passive_contribution_ids,
     )
     source_ledger = tuple(
         EquipmentSourceLedgerEntry(
@@ -478,28 +488,40 @@ def _light_cone_base_contributions(
     return tuple(result)
 
 
-def _active_passive_blockers(
+def _light_cone_passive_contributions(
+    instance: LightConeInstanceInput,
+    rank: LightConeSuperimpositionLevelIR,
+) -> tuple[StaticStatContribution, ...]:
+    source_ref = BuildSourceRef(
+        "light_cone",
+        instance.definition_key.definition_identity,
+    )
+    return tuple(
+        StaticStatContribution(
+            contribution_id=(
+                f"light_cone_passive:{instance.instance_id}:"
+                f"rank:{rank.level}:property:{item.property_index}"
+            ),
+            contribution_pool=item.contribution_pool,
+            property_type=item.canonical_property_type,
+            exact_value=item.exact_value,
+            source_ref=source_ref,
+            calculation=StatCalculation(
+                item.calculation_kind,
+                item.exact_value,
+            ),
+            source=item.source,
+        )
+        for item in rank.static_properties
+    )
+
+
+def _active_ability_blockers(
     rules: RuleBook,
     definition: LightConeDefinitionIR,
-    rank: LightConeSuperimpositionLevelIR,
 ) -> tuple[EquipmentBattleAdmissionBlocker, ...]:
-    blockers: list[EquipmentBattleAdmissionBlocker] = []
-    if rank.static_properties:
-        blockers.append(
-            EquipmentBattleAdmissionBlocker(
-                blocker_id=(
-                    f"equipment_battle_blocker:{definition.definition_key.stable_id}:"
-                    f"rank:{rank.level}:static_passive"
-                ),
-                channel="static_passive",
-                target_definition_key=definition.definition_key,
-                gap_classification="implementation_missing",
-                reason_code="light_cone_static_passive_consumer_missing",
-                source_refs=tuple(item.source for item in rank.static_properties),
-            )
-        )
     classification, reason = _dynamic_ability_gap(rules, definition)
-    blockers.append(
+    return (
         EquipmentBattleAdmissionBlocker(
             blocker_id=(
                 f"equipment_battle_blocker:{definition.definition_key.stable_id}:"
@@ -510,9 +532,8 @@ def _active_passive_blockers(
             gap_classification=classification,
             reason_code=reason,
             source_refs=(definition.ability_source.source,),
-        )
+        ),
     )
-    return tuple(blockers)
 
 
 def _dynamic_ability_gap(

@@ -9,6 +9,7 @@ from decimal import Decimal
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal, cast
 
+from ..build_types import static_property_binding
 from ..equipment.models import (
     EquipmentDefinitionKey,
     LightConeAbilitySourceIR,
@@ -33,9 +34,9 @@ from .equipment_discovery import (
 )
 
 
-LIGHT_CONE_CATALOG_SCHEMA_VERSION = "p8.light_cone_catalog.v1"
+LIGHT_CONE_CATALOG_SCHEMA_VERSION = "p8.light_cone_catalog.v2"
 LIGHT_CONE_CATALOG_FINGERPRINT_ALGORITHM = (
-    "sha256-canonical-light-cone-definition-catalog-v1"
+    "sha256-canonical-light-cone-definition-catalog-v2"
 )
 LIGHT_CONE_TABLE_ROLES = (
     "equipment_config",
@@ -1221,6 +1222,20 @@ def _build_static_properties(
                 )
             )
             continue
+        binding = static_property_binding(property_type)
+        if binding is None:
+            valid = False
+            issues.append(
+                _issue(
+                    "equipment_skill_property_type_not_admitted",
+                    PRIMARY_TABLE_ROLES["equipment_skill_config"],
+                    f"$[{row_index}].AbilityProperty[{index}].PropertyType",
+                    f"{skill_id}:{level}:{index}",
+                    publication_status,
+                    f"PropertyType is not mapped to a canonical contribution channel: {property_type}",
+                )
+            )
+            continue
         try:
             exact_value = raw_exact_decimal_text(raw_value, "light-cone static property")
         except (TypeError, ValueError) as exc:
@@ -1240,6 +1255,9 @@ def _build_static_properties(
             LightConeStaticPropertyIR(
                 property_index=index,
                 property_type=property_type,
+                contribution_pool=binding.contribution_pool,
+                canonical_property_type=binding.canonical_property_type,
+                calculation_kind=binding.calculation_kind,
                 exact_value=exact_value,
                 source=make_equipment_source(
                     source_path=PRIMARY_TABLE_ROLES["equipment_skill_config"],

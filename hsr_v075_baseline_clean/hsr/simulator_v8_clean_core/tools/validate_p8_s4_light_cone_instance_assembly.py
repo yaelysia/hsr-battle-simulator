@@ -53,7 +53,7 @@ from .io import write_json
 
 
 VALIDATION_VERSION = "p8_s4_light_cone_instance_assembly"
-SUMMARY_SCHEMA_VERSION = "p8_s4_light_cone_instance_assembly_summary_v1"
+SUMMARY_SCHEMA_VERSION = "p8_s4_light_cone_instance_assembly_summary_v2"
 _ENEMY_ENTITY_ID = "monster:p8_s4_validation_target"
 
 
@@ -151,8 +151,11 @@ def run_validation(tbgd_root: Path, output_dir: Path) -> dict[str, Any]:
                 "typed battle admission, character-build propagation, and team instance uniqueness"
             ),
             "deferred": (
-                "light-cone static passive consumption (P8-S5), equipment ability graph lowering/binding/execution "
+                "equipment ability graph lowering/binding/execution "
                 "(P8-S6), and every relic stage"
+            ),
+            "not_asserted_by_this_regression": (
+                "P8-S5 static-passive completeness; the S5 validator owns full static-property coverage"
             ),
         },
     }
@@ -376,6 +379,8 @@ def _formal_positive_checks(rules: RuleBook, cases: dict[str, Any]) -> dict[str,
     cross_equipment = cases["cross_equipment_result"]
     same_equipment = cases["same_equipment_result"]
     empty_equipment = empty.equipment_assembly_result
+    cross_selection = cross_equipment.light_cone_selection
+    same_selection = same_equipment.light_cone_selection
     checks = {
         "empty_equipment_assembled_and_battle_admitted": empty.assembly_status
         == "assembled"
@@ -388,13 +393,19 @@ def _formal_positive_checks(rules: RuleBook, cases: dict[str, Any]) -> dict[str,
         == "assembled"
         and cross.battle_admission_status == "admitted"
         and _activation_status(cross) == "inactive"
+        and cross_selection is not None
+        and len(cross_selection.base_contribution_ids) == 6
+        and not cross_selection.passive_contribution_ids
         and len(cross_equipment.static_contributions) == 6
         and not cross_equipment.battle_admission_blockers,
         "same_path_assembled_base_applied_passive_active_and_battle_blocked": same.assembly_status
         == "assembled"
         and same.battle_admission_status == "blocked"
         and _activation_status(same) == "active"
-        and len(same_equipment.static_contributions) == 6
+        and same_selection is not None
+        and len(same_selection.base_contribution_ids) == 6
+        and len(same_equipment.static_contributions)
+        == 6 + len(same_selection.passive_contribution_ids)
         and bool(same_equipment.battle_admission_blockers),
         "cross_path_formal_character_admission_rebuild_passes": not validate_character_build_admission(
             rules, cases["cross_build"], cross
@@ -518,6 +529,7 @@ def _growth_oracle_checks(
                     promotion=tier.promotion_stage,
                 )
                 result = assemble_equipment_build(rules, build)
+                boundary_selection = result.light_cone_selection
                 compare("boundary_assembly_status", result.assembly_status, "assembled")
                 compare(
                     "boundary_admission_rebuild",
@@ -555,6 +567,9 @@ def _growth_oracle_checks(
                     property_type: tuple(
                         item
                         for item in result.static_contributions
+                        if boundary_selection is not None
+                        and item.contribution_id
+                        in boundary_selection.base_contribution_ids
                         if item.property_type == property_type
                     )
                     for property_type, _, _ in property_fields
@@ -659,7 +674,12 @@ def _growth_oracle_checks(
                     selection.static_property_indices,
                     tuple(range(len(raw_properties))) if isinstance(raw_properties, list) else (),
                 )
-            signature = tuple(item.to_json() for item in result.static_contributions)
+            signature = tuple(
+                item.to_json()
+                for item in result.static_contributions
+                if selection is not None
+                and item.contribution_id in selection.base_contribution_ids
+            )
             if base_signature is None:
                 base_signature = signature
             compare("base_stats_independent_of_superimposition", signature, base_signature)
@@ -711,7 +731,6 @@ def _source_and_gap_checks(
     activation = same_result.activation_decisions[0]
     blockers = {item.channel: item for item in same_result.battle_admission_blockers}
     dynamic = blockers.get("dynamic_ability")
-    static = blockers.get("static_passive")
     assembler_source = inspect.getsource(
         __import__(
             "simulator_v8_clean_core.builds.equipment_assembler",
@@ -731,11 +750,14 @@ def _source_and_gap_checks(
                 "mechanism_payload",
             }
         ),
-        "base_and_growth_operands_have_separate_real_sources": all(
+        "base_and_growth_operands_have_separate_real_sources": selection
+        is not None
+        and all(
             len(
                 {
                     item.source.evidence.get("json_path")
                     for item in same_result.static_contributions
+                    if item.contribution_id in selection.base_contribution_ids
                     if item.property_type == property_type
                 }
             )
@@ -748,8 +770,8 @@ def _source_and_gap_checks(
         and activation.basis.policy_origin == "build_assembly_rule"
         and activation.basis.comparison_policy
         == "exact_internal_path_identity_equality",
-        "static_passive_gap_is_implementation_missing": static is not None
-        and static.gap_classification == "implementation_missing",
+        "s4_regression_does_not_require_retired_static_passive_blocker": "static_passive"
+        not in blockers,
         "dynamic_ability_gap_is_lowering_gap_from_rulebook_fact": dynamic is not None
         and dynamic.gap_classification == "lowering_gap"
         and same_definition.ability_source is not None
@@ -1148,26 +1170,8 @@ def _negative_matrix(
         foreign_definition.superimposition_levels,
         key=lambda item: item.level,
     )
-    wrong_rank_source = replace(
-        definition,
-        superimposition_levels=(
-            replace(selected_rank, source=foreign_rank.source),
-            *tuple(
-                item
-                for item in definition.superimposition_levels
-                if item.level != selected_rank.level
-            ),
-        ),
-    )
-    wrong_rank_rules = RuleBook(
-        replace(ir, light_cone_definitions=(wrong_rank_source,))
-    )
-    rows["superimposition_source_mismatch"] = _assembly_blocked_with_reason(
-        assemble_equipment_build(
-            wrong_rank_rules,
-            _equipment_build(card_id, wrong_rank_source, "wrong-rank-source"),
-        ),
-        "light_cone_superimposition_source_binding_mismatch",
+    rows["superimposition_source_mismatch"] = _raises(
+        lambda: replace(selected_rank, source=foreign_rank.source)
     )
 
     ability_source = definition.ability_source
@@ -1393,7 +1397,7 @@ def _negative_matrix(
         **checks,
         "rows": rows,
         "required_rows": sorted(required_rows),
-        "rulebook_build_count": 11,
+        "rulebook_build_count": 10,
     }
 
 
@@ -1406,9 +1410,12 @@ def _model_contract_checks(cases: dict[str, Any]) -> dict[str, Any]:
         "late-mutation"
     )
     ordinary_json["static_contributions"].clear()
+    selection = result.light_cone_selection
     source_keys = {
         item.source.evidence.get("json_path")
         for item in result.static_contributions
+        if selection is not None
+        and item.contribution_id in selection.base_contribution_ids
     }
     checks = {
         "ordinary_json_dicts_and_lists_are_accepted": parsed.to_json()

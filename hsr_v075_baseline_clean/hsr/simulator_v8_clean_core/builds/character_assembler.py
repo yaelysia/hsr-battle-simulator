@@ -238,13 +238,20 @@ def validate_character_build_admission(
                 contribution.source_ref.definition_identity
             )
             instance = build.equipment_build.light_cone
-            tier_sources = (
+            selected_light_cone_sources = (
                 tuple(
                     value.source
                     for tier in resolution.value.promotion_tiers
                     if instance is not None
                     and tier.promotion_stage == instance.promotion
                     for value in tier.stat_values
+                )
+                + tuple(
+                    value.source
+                    for rank in resolution.value.superimposition_levels
+                    if instance is not None
+                    and rank.level == instance.superimposition
+                    for value in rank.static_properties
                 )
                 if resolution.resolution_status == "resolved"
                 and resolution.value is not None
@@ -254,7 +261,7 @@ def validate_character_build_admission(
                 instance is None
                 or instance.definition_key.definition_identity
                 != contribution.source_ref.definition_identity
-                or contribution.source not in tier_sources
+                or contribution.source not in selected_light_cone_sources
             ):
                 errors.append(
                     f"contribution_source_not_resolvable:{contribution.contribution_id}"

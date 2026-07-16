@@ -284,11 +284,30 @@ def _build_definition_fixture(
         exact_value="0.1",
         source=source,
     )
+    rank_source = make_equipment_source(
+        source_path="fixture/equipment/EquipmentSkillConfig.json",
+        raw_type="EquipmentSkillConfig",
+        raw_id="fixture:skill:1",
+        json_path="$[0]",
+        source_fingerprint=fingerprint,
+        source_kind="validation_fixture",
+    )
+    static_property_source = make_equipment_source(
+        source_path="fixture/equipment/EquipmentSkillConfig.json",
+        raw_type="EquipmentSkillStaticProperty",
+        raw_id="fixture:skill:1:0",
+        json_path="$[0].AbilityProperty[0].Value.Value",
+        source_fingerprint=fingerprint,
+        source_kind="validation_fixture",
+    )
     static_property = LightConeStaticPropertyIR(
         property_index=0,
-        property_type="FixtureProperty",
+        property_type="AttackAddedRatio",
+        contribution_pool="percentage",
+        canonical_property_type="attack",
+        calculation_kind="ratio",
         exact_value="0.2",
-        source=source,
+        source=static_property_source,
     )
     superimposition_level = LightConeSuperimpositionLevelIR(
         skill_id="fixture:skill",
@@ -298,7 +317,7 @@ def _build_definition_fixture(
         skill_description_hash="fixture:skill-description-hash",
         parameters=(parameter,),
         static_properties=(static_property,),
-        source=source,
+        source=rank_source,
     )
     ability_source = LightConeAbilitySourceIR(
         ability_name="FixtureLightConeAbility",
@@ -1025,10 +1044,16 @@ def _build_and_assembly_checks(
         definition_key=fixture["mechanism"].definition_key,
         source=source,
     )
+    static_ledger = EquipmentSourceLedgerEntry(
+        ledger_entry_id=f"equipment_source:{static.contribution_id}",
+        channel="static",
+        definition_key=fixture["light_cone"].definition_key,
+        source=static.source,
+    )
     static_inputs = [static]
     dynamic_inputs = [dynamic]
     activation_inputs = [activation]
-    ledger_inputs = [ledger]
+    ledger_inputs = [static_ledger, ledger]
     selection = LightConeAssemblySelection(
         instance_id=light_cone_instance.instance_id,
         instance_fingerprint=light_cone_instance.instance_fingerprint,
@@ -1038,13 +1063,14 @@ def _build_and_assembly_checks(
         superimposition_level=light_cone_instance.superimposition,
         skill_id="fixture:skill",
         parameter_indices=(0,),
-        static_property_indices=(0,),
+        static_property_indices=(),
         ability_name="FixtureLightConeAbility",
         ability_record_index=0,
         promotion_source=promotion_source,
         superimposition_source=superimposition_source,
         ability_source=ability_source,
         base_contribution_ids=(static.contribution_id,),
+        passive_contribution_ids=(),
     )
     assembled = EquipmentAssemblyResult(
         assembly_id="fixture:assembled",

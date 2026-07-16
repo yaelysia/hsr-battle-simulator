@@ -11,15 +11,15 @@ turnbasedgamedata-main -> TBGD compiler/lowering -> Canonical IR / 数据卡 IR 
 当前最近检查点：
 
 ```text
-P8-S4 light-cone instance, growth and path activation decision accepted
-最近检查点：P8-S4 已完成独立验收，玩家光锥实例、精确成长贡献、命途激活决策和战斗准入已经接入正式构筑；光锥静态被动与动态能力仍未执行
-检查点报告：../live_validation_reports/v8_p8_s4_light_cone_instance_assembly_ready_for_review.md
+P8-S5 light-cone static contributions accepted
+最近检查点：P8-S5 已完成独立验收，575 条光锥静态属性已按命途激活决策进入统一贡献账本，来源、归属和联合伪造边界均已闭合；动态能力仍未执行
+检查点报告：../live_validation_reports/v8_p8_s5_light_cone_static_contributions_ready_for_review.md
 ```
 
 当前推荐下一阶段：
 
 ```text
-P8-S5 light-cone static contributions / P8-S9 relic definition cards
+P8-S6 light-cone dynamic startup / P8-S9 relic definition cards in an isolated worktree
 计划文档：P8_EQUIPMENT_BUILD_LIGHT_CONE_RELIC_TASK_PLAN.md
 ```
 
@@ -108,6 +108,7 @@ L0 来源编译层：TBGD raw -> lowering -> Canonical IR / 数据卡 IR
 - P8-S2 正式角色构筑输入与基础面板已经通过独立验收；晋阶成长、能量上限、行迹和星魂子来源通过统一贡献账本装配，正式 scenario 不再接受手填最终面板。未准入的特殊资源、辅助单位技能和额外效果保持 blocked；光锥与遗器仍为空构筑。
 - P8-S3 光锥数据卡与来源关联已经通过独立验收；当前 162 张已发布光锥的身份、晋阶成长、叠影参数、静态属性和唯一能力记录来源均已进入类型化目录，并可由 RuleBook 查询。能力图、玩家实例、指定等级数值和装备效果仍未接通。
 - P8-S4 光锥实例、成长与命途激活决策已经通过独立验收；指定实例可按等级、晋阶和叠影生成精确基础贡献，命途失配只关闭被动并保留基础属性，同实例队伍复用和非法来源 / 成长输入会被拒绝。同命途静态被动与动态能力尚未准入时，正式战斗保持 blocked。
+- P8-S5 光锥静态属性贡献已经通过独立验收；810 个叠影档位完整分类，575 条静态属性按统一映射进入共享贡献账本并与角色面板归并。命途匹配时每项恰好应用一次，命途失配时不夹带被动；来源记录、光锥归属、账本和 fingerprint 的联合伪造均被拒绝。动态能力仍保持 lowering gap。
 - 本地 UI 测试台 `simulator_v8_ui/`，作为测试编排与审计展示层，不作为规则系统。
 
 ## 当前仍未完整落地的大块
@@ -150,4 +151,4 @@ git diff --check
 
 ## 下一阶段建议
 
-P8-S4 已验收。后续可从同一 S4 检查点在独立 worktree 分别开始 P8-S5 光锥静态贡献和 P8-S9 遗器定义卡；每条轨内部严格串行。执行线程直接读取对应预写执行卡，只能提交 `ready_for_review`，由验收线程检查代码、谓词和 evidence 后勾选唯一 checklist。
+P8-S5 已验收。当前光锥轨下一步只执行 P8-S6 动态能力绑定与启动生命周期；遗器轨若并行，仍必须从已验收的 S4 检查点建立独立 worktree 后从 P8-S9 开始。每条轨内部严格串行，执行线程只能提交 `ready_for_review`，由验收线程检查代码、谓词和 evidence 后勾选唯一 checklist。

@@ -9,9 +9,12 @@ from pathlib import PurePosixPath
 from typing import Generic, Literal, TypeVar, cast
 
 from ..build_types import (
+    CalculationKind,
+    ContributionPool,
     StaticStatContribution,
     immutable_ir_source,
     ir_source_from_json,
+    static_property_binding,
 )
 from ..immutable_json import FrozenJSONDict, freeze_json, thaw_json
 from ..ir_types import CoverageStatus, IRSource, JSONValue
@@ -648,6 +651,9 @@ class LightConeParameterIR:
 class LightConeStaticPropertyIR:
     property_index: int
     property_type: str
+    contribution_pool: ContributionPool
+    canonical_property_type: str
+    calculation_kind: CalculationKind
     exact_value: str
     source: IRSource
 
@@ -656,6 +662,17 @@ class LightConeStaticPropertyIR:
         if self.property_index < 0:
             raise ValueError("property_index must be non-negative")
         _require_text(self.property_type, "property_type")
+        binding = static_property_binding(self.property_type)
+        if binding is None:
+            raise ValueError(
+                f"light-cone static property type is not admitted: {self.property_type}"
+            )
+        if (
+            self.contribution_pool != binding.contribution_pool
+            or self.canonical_property_type != binding.canonical_property_type
+            or self.calculation_kind != binding.calculation_kind
+        ):
+            raise ValueError("light-cone static property binding does not match the shared mapping")
         exact_decimal_text(self.exact_value, "static property exact_value")
         _require_equipment_source(self.source)
 
@@ -663,6 +680,9 @@ class LightConeStaticPropertyIR:
         return {
             "property_index": self.property_index,
             "property_type": self.property_type,
+            "contribution_pool": self.contribution_pool,
+            "canonical_property_type": self.canonical_property_type,
+            "calculation_kind": self.calculation_kind,
             "exact_value": self.exact_value,
             "source": self.source.to_json(),
         }
@@ -672,12 +692,33 @@ class LightConeStaticPropertyIR:
         row = _mapping(value, "light_cone_static_property")
         _require_exact_fields(
             row,
-            frozenset({"property_index", "property_type", "exact_value", "source"}),
+            frozenset(
+                {
+                    "property_index",
+                    "property_type",
+                    "contribution_pool",
+                    "canonical_property_type",
+                    "calculation_kind",
+                    "exact_value",
+                    "source",
+                }
+            ),
             "light_cone_static_property",
         )
         return cls(
             property_index=_integer(row.get("property_index"), "property_index"),
             property_type=_text(row.get("property_type"), "property_type"),
+            contribution_pool=cast(
+                ContributionPool,
+                _text(row.get("contribution_pool"), "contribution_pool"),
+            ),
+            canonical_property_type=_text(
+                row.get("canonical_property_type"), "canonical_property_type"
+            ),
+            calculation_kind=cast(
+                CalculationKind,
+                _text(row.get("calculation_kind"), "calculation_kind"),
+            ),
             exact_value=_text(row.get("exact_value"), "exact_value"),
             source=_source_from_json(row.get("source")),
         )
@@ -718,6 +759,25 @@ class LightConeSuperimpositionLevelIR:
             raise ValueError("light-cone parameter indices must be contiguous and ordered")
         if tuple(item.property_index for item in properties) != tuple(range(len(properties))):
             raise ValueError("light-cone property indices must be contiguous and ordered")
+        rank_json_path = self.source.evidence.get("json_path")
+        if (
+            self.source.raw_type == "EquipmentSkillConfig"
+            and isinstance(rank_json_path, str)
+            and rank_json_path
+            and any(
+                item.source.raw_type != "EquipmentSkillStaticProperty"
+                or item.source.raw_id
+                != f"{self.skill_id}:{self.level}:{item.property_index}"
+                or item.source.source_path != self.source.source_path
+                or item.source.evidence.get("json_path")
+                != (
+                    f"{rank_json_path}.AbilityProperty["
+                    f"{item.property_index}].Value.Value"
+                )
+                for item in properties
+            )
+        ):
+            raise ValueError("light-cone static property source does not match its rank row")
         object.__setattr__(self, "parameters", parameters)
         object.__setattr__(self, "static_properties", properties)
         _require_equipment_source(self.source)
@@ -1819,6 +1879,7 @@ class LightConeAssemblySelection:
     superimposition_source: IRSource
     ability_source: IRSource
     base_contribution_ids: tuple[str, ...]
+    passive_contribution_ids: tuple[str, ...]
     selection_fingerprint: str = field(init=False)
 
     def __post_init__(self) -> None:
@@ -1852,6 +1913,29 @@ class LightConeAssemblySelection:
         if not contribution_ids or len(set(contribution_ids)) != len(contribution_ids):
             raise ValueError("base contribution identities must be non-empty and unique")
         object.__setattr__(self, "base_contribution_ids", contribution_ids)
+        passive_contribution_ids = _string_tuple(
+            self.passive_contribution_ids,
+            "passive_contribution_ids",
+        ) if self.passive_contribution_ids else ()
+        if len(set(passive_contribution_ids)) != len(passive_contribution_ids):
+            raise ValueError("passive contribution identities must be unique")
+        if set(contribution_ids).intersection(passive_contribution_ids):
+            raise ValueError("base and passive contribution identities must be disjoint")
+        expected_passive_contribution_ids = tuple(
+            f"light_cone_passive:{self.instance_id}:rank:{self.superimposition_level}:property:{property_index}"
+            for property_index in self.static_property_indices
+        )
+        if passive_contribution_ids and (
+            passive_contribution_ids != expected_passive_contribution_ids
+        ):
+            raise ValueError(
+                "passive contribution identities must match the selected rank properties"
+            )
+        object.__setattr__(
+            self,
+            "passive_contribution_ids",
+            passive_contribution_ids,
+        )
         for source in (
             self.promotion_source,
             self.superimposition_source,
@@ -1910,6 +1994,7 @@ class LightConeAssemblySelection:
             "superimposition_source": self.superimposition_source.to_json(),
             "ability_source": self.ability_source.to_json(),
             "base_contribution_ids": list(self.base_contribution_ids),
+            "passive_contribution_ids": list(self.passive_contribution_ids),
         }
 
     def to_json(self) -> dict[str, JSONValue]:
@@ -1938,6 +2023,7 @@ class LightConeAssemblySelection:
                 "superimposition_source",
                 "ability_source",
                 "base_contribution_ids",
+                "passive_contribution_ids",
                 "selection_fingerprint",
             }
         )
@@ -1977,6 +2063,13 @@ class LightConeAssemblySelection:
                 _text(item, "base_contribution_ids[]")
                 for item in _sequence(
                     row.get("base_contribution_ids"), "base_contribution_ids"
+                )
+            ),
+            passive_contribution_ids=tuple(
+                _text(item, "passive_contribution_ids[]")
+                for item in _sequence(
+                    row.get("passive_contribution_ids"),
+                    "passive_contribution_ids",
                 )
             ),
         )
@@ -2405,6 +2498,11 @@ class EquipmentAssemblyResult:
                 ),
             ),
         )
+        contribution_id_values = tuple(
+            item.contribution_id for item in self.static_contributions
+        )
+        if len(contribution_id_values) != len(set(contribution_id_values)):
+            raise ValueError("equipment static contribution identities must be unique")
         for contribution in self.static_contributions:
             if contribution.source_ref.definition_kind not in EQUIPMENT_DEFINITION_KINDS:
                 raise ValueError("equipment static contribution has a non-equipment source_ref")
@@ -2457,6 +2555,36 @@ class EquipmentAssemblyResult:
                 ),
             ),
         )
+        ledger_entry_ids = tuple(item.ledger_entry_id for item in self.source_ledger)
+        if len(ledger_entry_ids) != len(set(ledger_entry_ids)):
+            raise ValueError("equipment source ledger identities must be unique")
+        static_ledger = {
+            item.ledger_entry_id: item
+            for item in self.source_ledger
+            if item.channel == "static"
+        }
+        expected_static_ledger_ids = {
+            f"equipment_source:{item.contribution_id}"
+            for item in self.static_contributions
+        }
+        if set(static_ledger) != expected_static_ledger_ids:
+            raise ValueError(
+                "equipment static contributions require exactly one matching source ledger entry"
+            )
+        for contribution in self.static_contributions:
+            entry = static_ledger[
+                f"equipment_source:{contribution.contribution_id}"
+            ]
+            if (
+                entry.definition_key.definition_kind
+                != contribution.source_ref.definition_kind
+                or entry.definition_key.definition_identity
+                != contribution.source_ref.definition_identity
+                or entry.source != contribution.source
+            ):
+                raise ValueError(
+                    "equipment static contribution source does not match its ledger entry"
+                )
         object.__setattr__(
             self,
             "diagnostics",
@@ -2501,9 +2629,10 @@ class EquipmentAssemblyResult:
                         "empty S4 equipment results cannot expose light-cone result channels"
                     )
             else:
-                contribution_ids = {
-                    item.contribution_id for item in self.static_contributions
+                contributions_by_id = {
+                    item.contribution_id: item for item in self.static_contributions
                 }
+                contribution_ids = set(contributions_by_id)
                 if not set(self.light_cone_selection.base_contribution_ids).issubset(
                     contribution_ids
                 ):
@@ -2535,16 +2664,87 @@ class EquipmentAssemblyResult:
                     raise ValueError(
                         "light-cone base contributions must reference the selected definition"
                     )
-                if contribution_ids != set(
-                    self.light_cone_selection.base_contribution_ids
+                if any(
+                    contribution.source_ref.definition_kind != "light_cone"
+                    or contribution.source_ref.definition_identity
+                    != self.light_cone_selection.definition_key.definition_identity
+                    or static_ledger[
+                        f"equipment_source:{contribution.contribution_id}"
+                    ].definition_key
+                    != self.light_cone_selection.definition_key
+                    for contribution in self.static_contributions
                 ):
                     raise ValueError(
-                        "S4 light-cone results cannot carry unselected static passive contributions"
+                        "all light-cone static contributions and ledger entries must belong to the selected definition"
                     )
+                if contribution_ids != set(
+                    self.light_cone_selection.base_contribution_ids
+                ).union(self.light_cone_selection.passive_contribution_ids):
+                    raise ValueError(
+                        "light-cone results cannot carry unselected static contributions"
+                    )
+                activation = matching_decisions[0]
+                expected_passive_ids = tuple(
+                    f"light_cone_passive:{self.light_cone_selection.instance_id}:"
+                    f"rank:{self.light_cone_selection.superimposition_level}:"
+                    f"property:{property_index}"
+                    for property_index in self.light_cone_selection.static_property_indices
+                )
+                if activation.activation_status == "active":
+                    if (
+                        self.light_cone_selection.passive_contribution_ids
+                        != expected_passive_ids
+                    ):
+                        raise ValueError(
+                            "active light-cone passives must exactly match the selected rank properties"
+                        )
+                    rank_json_path = (
+                        self.light_cone_selection.superimposition_source.evidence.get(
+                            "json_path"
+                        )
+                    )
+                    rank_source_fingerprint = (
+                        self.light_cone_selection.superimposition_source.evidence.get(
+                            "source_fingerprint"
+                        )
+                    )
+                    if not isinstance(rank_json_path, str) or not rank_json_path:
+                        raise ValueError(
+                            "selected light-cone rank requires a concrete raw record path"
+                        )
+                    for property_index, contribution_id in zip(
+                        self.light_cone_selection.static_property_indices,
+                        expected_passive_ids,
+                        strict=True,
+                    ):
+                        contribution = contributions_by_id[contribution_id]
+                        source = contribution.source
+                        if (
+                            source.raw_type != "EquipmentSkillStaticProperty"
+                            or source.raw_id
+                            != (
+                                f"{self.light_cone_selection.skill_id}:"
+                                f"{self.light_cone_selection.superimposition_level}:"
+                                f"{property_index}"
+                            )
+                            or source.source_path
+                            != self.light_cone_selection.superimposition_source.source_path
+                            or source.evidence.get("json_path")
+                            != (
+                                f"{rank_json_path}.AbilityProperty["
+                                f"{property_index}].Value.Value"
+                            )
+                            or source.evidence.get("source_fingerprint")
+                            != rank_source_fingerprint
+                        ):
+                            raise ValueError(
+                                "light-cone passive contribution source does not match the selected rank property"
+                            )
                 if (
-                    matching_decisions[0].activation_status == "inactive"
+                    activation.activation_status == "inactive"
                     and (
-                        self.dynamic_mechanisms
+                        self.light_cone_selection.passive_contribution_ids
+                        or self.dynamic_mechanisms
                         or self.battle_admission_blockers
                     )
                 ):

@@ -7,7 +7,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
-from ..build_types import canonical_decimal
+from ..build_types import canonical_decimal, static_property_binding
 from ..equipment.models import (
     CharacterEquipmentEligibilityIR,
     EquipmentDefinitionKey,
@@ -45,27 +45,6 @@ SKILL_TEXT_BASIS_WORDS: dict[str, str] = {
     "攻击力": "attack",
     "生命上限": "max_hp",
     "防御力": "defense",
-}
-
-TRACE_STATIC_STAT_PROPERTY_MAP: dict[str, tuple[str, str]] = {
-    "AttackAddedRatio": ("base_stat_ratio", "attack"),
-    "HPAddedRatio": ("base_stat_ratio", "max_hp"),
-    "DefenceAddedRatio": ("base_stat_ratio", "defense"),
-    "SpeedDelta": ("base_stat_delta", "speed"),
-    "CriticalChanceBase": ("resource_delta", "critical_chance"),
-    "CriticalDamageBase": ("resource_delta", "critical_damage"),
-    "BreakDamageAddedRatioBase": ("resource_delta", "break_damage_added_ratio"),
-    "StatusProbabilityBase": ("resource_delta", "effect_hit_rate"),
-    "StatusResistanceBase": ("resource_delta", "effect_resistance"),
-    "AllDamageTypeAddedRatio": ("resource_delta", "damage_added_ratio"),
-    "PhysicalAddedRatio": ("resource_delta", "Physical_damage_added_ratio"),
-    "FireAddedRatio": ("resource_delta", "Fire_damage_added_ratio"),
-    "IceAddedRatio": ("resource_delta", "Ice_damage_added_ratio"),
-    "ThunderAddedRatio": ("resource_delta", "Thunder_damage_added_ratio"),
-    "WindAddedRatio": ("resource_delta", "Wind_damage_added_ratio"),
-    "QuantumAddedRatio": ("resource_delta", "Quantum_damage_added_ratio"),
-    "ImaginaryAddedRatio": ("resource_delta", "Imaginary_damage_added_ratio"),
-    "ElationDamageAddedRatioBase": ("resource_delta", "elation_damage_added_ratio"),
 }
 
 SKILL_TEXT_DAMAGE_BINDING_PATTERNS: tuple[re.Pattern[str], ...] = (
@@ -555,18 +534,18 @@ def _trace_static_stat_terms(status_add_list: list[Any]) -> tuple[list[dict[str,
             return mapped, "trace_static_stat_item_not_object"
         property_type = str(item.get("PropertyType") or "")
         raw_value = _value_field(item.get("Value"))
-        if property_type not in TRACE_STATIC_STAT_PROPERTY_MAP:
+        binding = static_property_binding(property_type)
+        if binding is None:
             return mapped, f"trace_static_stat_property_not_admitted:{property_type or 'missing'}"
         if not isinstance(raw_value, (int, float, Decimal)):
             return mapped, f"trace_static_stat_value_not_numeric:{property_type}"
         value = canonical_decimal(raw_value, f"StatusAddList[{index}].Value")
-        application_kind, target_key = TRACE_STATIC_STAT_PROPERTY_MAP[property_type]
         mapped.append(
             {
                 "index": index,
                 "property_type": property_type,
-                "application_kind": application_kind,
-                "target_key": target_key,
+                "application_kind": binding.application_kind,
+                "target_key": binding.canonical_property_type,
                 "value": value,
                 "raw_path": f"StatusAddList[{index}]",
             }

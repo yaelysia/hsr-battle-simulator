@@ -24,6 +24,7 @@ from ..tbgd.equipment_inventory_contract import (
 )
 from ..tbgd.light_cone_cards import (
     LIGHT_CONE_CATALOG_FINGERPRINT_ALGORITHM,
+    LIGHT_CONE_CATALOG_SCHEMA_VERSION,
     LightConeCatalogBuildError,
     LightConeCatalogBuildResult,
     LightConeCatalogSourceBundle,
@@ -221,6 +222,9 @@ def _positive_checks(
         ).build_light_cone_catalog
     )
     checks = {
+        "catalog_schema_version_exact": catalog.to_summary_json()["schema_version"]
+        == LIGHT_CONE_CATALOG_SCHEMA_VERSION
+        == "p8.light_cone_catalog.v2",
         "catalog_complete": catalog.catalog_complete is True,
         "published_card_set_nonempty": catalog.published_source_count > 0,
         "published_cards_all_lowered": catalog.published_lowered_count

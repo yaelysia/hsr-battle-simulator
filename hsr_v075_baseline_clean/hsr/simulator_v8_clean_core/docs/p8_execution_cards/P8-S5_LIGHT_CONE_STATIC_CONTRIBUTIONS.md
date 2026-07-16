@@ -13,6 +13,8 @@
 
 S3 已保存每个叠影档位的有序静态属性及真实来源；S4 负责光锥实例成长、基础生命/攻击/防御和命途激活决策。S4 当前装配结果会记录被选叠影的静态属性索引，但本阶段开始前必须确认这些属性尚未进入正式静态贡献账本，也没有被 character assembler 或 scenario 重复消费。
 
+当前完整 S3 目录按“叠影档位有无静态属性”和“光锥定义有无唯一能力来源”扫描，只存在两类真实记录：无静态属性但有能力来源，以及静态属性与能力来源并存；“只有静态属性而没有能力来源”是当前真实空集。当前各类数量必须写入 evidence 并与实时发现结果核对，但不能作为生产代码常量。这里的“有能力来源”只表示 S3 已关联真实能力记录，不表示动态能力图已经 lower 或可执行。
+
 本阶段完成后：光锥基础三维始终按合法实例贡献；叠影行的静态被动属性只在命途激活为 active 时进入统一账本。两类贡献拥有不同贡献身份、计算通道、来源和激活证据。无静态属性是合法空集合；有静态属性却无法类型化或绑定数值时，正式装配必须 blocked，不能静默漏项。
 
 本阶段不执行条件、modifier、callback 或动态 ability；这些仍属于 S6-S8。
@@ -23,7 +25,7 @@ S3 已保存每个叠影档位的有序静态属性及真实来源；S4 负责�
 - 复用 S2 的基础、百分比、固定值、资源四类贡献通道；不得创建光锥专用面板算法。
 - 以 S4 的激活决策控制被动静态属性；命途失配时基础三维保留，被动静态项为零。
 - 在 `EquipmentAssemblyResult` 和 source ledger 中保留实例、光锥定义、叠影等级、属性项目和激活决策的关联。
-- 对 S3 目录按结构选出三类真实来源：无静态属性、只有静态属性、静态属性与动态能力并存。
+- 对完整 S3 目录做结构化来源分类：当前实际存在的“无静态属性但有能力来源”和“静态属性与能力来源并存”必须各有真实正例；“只有静态属性而没有能力来源”必须按当前空集如实记录，禁止合成正例。
 - 原子迁移受影响的 S1/S2/S4 fixture 和 JSON codec，不保留旧静态属性副本。
 
 ## 本阶段不做
@@ -47,7 +49,9 @@ S3 已保存每个叠影档位的有序静态属性及真实来源；S4 负责�
 
 | 目标 | 必须成立 | 证据 |
 |---|---|---|
-| 三类来源均被识别 | 三个结构集合非空，且按字段/能力关系选样 | `source_class_matrix.json` |
+| 来源分类闭合 | 每个已发现叠影档位恰好进入一个结构类别，各类数量之和等于实时发现总数 | `source_class_matrix.json` |
+| 真实正例与空集诚实 | 当前两个非空类别均按字段/能力来源关系选样；静态但无能力来源类别记录为零且没有合成正例 | `source_class_matrix.json` |
+| S3 能力来源不回退 | 每个叠影档位仍能关联所属光锥的唯一能力来源；缺失、歧义或错绑均视为 S3 回归并阻止 S5 | source integrity matrix |
 | 同命途静态被动生效 | 当前叠影每一项恰好一个贡献，数值由 S3 Decimal 字符串重算 | `static_contribution_matrix.json` |
 | 异命途只禁被动 | 基础三维不变，被动贡献和动态机制均为空 | path mismatch case |
 | 无静态属性合法 | assembly 可成功且不是 gap | empty-static case |
@@ -70,7 +74,13 @@ S3 已保存每个叠影档位的有序静态属性及真实来源；S4 负责�
 ## 结构化验收谓词
 
 ```text
-real_source_classes_non_empty=true
+source_class_partition_complete=true
+source_class_counts_match_discovered_rows=true
+no_static_with_ability_source_class_non_empty=true
+static_with_ability_source_class_non_empty=true
+current_static_only_source_absent=true
+absent_source_class_has_no_synthetic_positive=true
+all_discovered_ranks_have_unique_ability_source=true
 base_and_passive_channels_separate=true
 path_match_static_properties_applied_once=true
 path_mismatch_base_stats_retained=true
@@ -91,7 +101,8 @@ runtime_behavior_changed=false
 - S3 真实静态属性存在但未进入贡献账本：`implementation_missing`，本阶段必须修复。
 - raw 有属性但 S3 未投影：`lowering_gap`，必须回修通用 S3 lowering；不能称 source gap。
 - IR 完整但验证没选到：`validation_gap`，先修结构谓词。
-- 当前类别真实为空只允许对“某种样例类别”报告数据事实；不得伪造 fixture 冒充真实来源。
+- 当前“只有静态属性而没有能力来源”类别为真实空集：这不是 S5 blocker，也不要求 executable 正例；必须报告当前来源事实，并证明没有用 fixture 冒充真实来源。
+- 空集事实不能写成永久生产规则。未来来源若出现该类别，分类器必须能够如实纳入；是否需要回修 S3 能力来源契约，应按届时真实来源另行审查。
 - 发现某静态项目实际依赖条件或事件时，不能常驻装配；将其归入 S6-S8 并保留 battle admission blocker。若无法可靠分类，停止并交回规划线程。
 
 ## 验证命令与资源
@@ -106,22 +117,22 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX=/tmp/hsr_v8_p8_s5_pycache python3 
 git diff --check
 ```
 
-只有修改到 P5 value binding 时才追加 `validate_p5_s1_value_binding_contract`。不得运行完整 ability transition、P1-P7 聚合或 `validate_v0_209`。主验证最多构建一次 focused RuleBook，只输出 summary、三类矩阵、负例和少量来源样本。
+只有修改到 P5 value binding 时才追加 `validate_p5_s1_value_binding_contract`。不得运行完整 ability transition、P1-P7 聚合或 `validate_v0_209`。主验证最多构建一次 focused RuleBook，只输出 summary、来源分类矩阵、负例和少量来源样本。
 
 ## Ready-for-review 产物
 
 - 实现 diff 与调用者迁移清单。
-- 当前 source fingerprint、三类真实来源数量和样例选择谓词。
+- 当前 source fingerprint、各来源类别数量、真实空集事实和样例选择谓词。
 - 结构化 summary、source matrix、negative matrix、source walkback。
 - 所有命令的退出状态、产物大小和 RuleBook 构建次数。
 - 未运行验证及理由、剩余 blocker；不得写 `done`。
 
 ## 唯一执行清单（仅验收线程可勾）
 
-- [ ] 三类真实来源已按结构识别，无固定 ID 主选择器。
-- [ ] 基础三维与被动静态贡献已分离，命途匹配/失配行为正确。
-- [ ] 每项贡献只消费一次并可反查真实来源。
-- [ ] 缺失、未知、重复和伪来源负例均 fail-closed。
-- [ ] 动态能力未提前执行，S2/S4 直接回归通过。
-- [ ] 代码结构、不可变性、fingerprint 和资源预算经人工复核通过。
-- [ ] `ready_for_review` evidence 完整，阶段无未关闭 blocker。
+- [x] 完整来源分类已按结构闭合；当前两个非空类别有真实正例，空类别无伪造正例，且无固定 ID 主选择器。
+- [x] 基础三维与被动静态贡献已分离，命途匹配/失配行为正确。
+- [x] 每项贡献只消费一次并可反查真实来源。
+- [x] 缺失、未知、重复和伪来源负例均 fail-closed。
+- [x] 动态能力未提前执行，S2/S4 直接回归通过。
+- [x] 代码结构、不可变性、fingerprint 和资源预算经人工复核通过。
+- [x] `ready_for_review` evidence 完整，阶段无未关闭 blocker。

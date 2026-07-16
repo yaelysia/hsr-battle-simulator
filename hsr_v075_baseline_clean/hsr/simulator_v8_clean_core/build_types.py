@@ -5,6 +5,7 @@ import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
+from types import MappingProxyType
 from typing import Literal, cast
 
 from .immutable_json import FrozenJSONDict, freeze_json, thaw_json
@@ -40,6 +41,107 @@ def canonical_decimal(value: object, field_name: str) -> str:
     if number == 0:
         return "0"
     return format(number.normalize(), "f")
+
+
+@dataclass(frozen=True)
+class StaticPropertyBinding:
+    contribution_pool: ContributionPool
+    canonical_property_type: str
+    calculation_kind: CalculationKind
+    application_kind: Literal["base_stat_ratio", "base_stat_delta", "resource_delta"]
+
+    def __post_init__(self) -> None:
+        if self.contribution_pool not in {"percentage", "flat", "resource"}:
+            raise ValueError("static property bindings must use percentage, flat, or resource pools")
+        require_text(self.canonical_property_type, "canonical_property_type")
+        expected = {
+            "percentage": ("ratio", "base_stat_ratio"),
+            "flat": ("flat", "base_stat_delta"),
+            "resource": ("resource", "resource_delta"),
+        }[self.contribution_pool]
+        if (self.calculation_kind, self.application_kind) != expected:
+            raise ValueError("static property binding channels are inconsistent")
+
+
+_STATIC_PROPERTY_BINDINGS: Mapping[str, StaticPropertyBinding] = MappingProxyType(
+    {
+        "AttackAddedRatio": StaticPropertyBinding(
+            "percentage", "attack", "ratio", "base_stat_ratio"
+        ),
+        "HPAddedRatio": StaticPropertyBinding(
+            "percentage", "max_hp", "ratio", "base_stat_ratio"
+        ),
+        "DefenceAddedRatio": StaticPropertyBinding(
+            "percentage", "defense", "ratio", "base_stat_ratio"
+        ),
+        "SpeedAddedRatio": StaticPropertyBinding(
+            "percentage", "speed", "ratio", "base_stat_ratio"
+        ),
+        "SpeedDelta": StaticPropertyBinding(
+            "flat", "speed", "flat", "base_stat_delta"
+        ),
+        "BaseSpeed": StaticPropertyBinding(
+            "flat", "speed", "flat", "base_stat_delta"
+        ),
+        "CriticalChanceBase": StaticPropertyBinding(
+            "resource", "critical_chance", "resource", "resource_delta"
+        ),
+        "CriticalDamageBase": StaticPropertyBinding(
+            "resource", "critical_damage", "resource", "resource_delta"
+        ),
+        "BreakDamageAddedRatioBase": StaticPropertyBinding(
+            "resource", "break_damage_added_ratio", "resource", "resource_delta"
+        ),
+        "StatusProbabilityBase": StaticPropertyBinding(
+            "resource", "effect_hit_rate", "resource", "resource_delta"
+        ),
+        "StatusResistanceBase": StaticPropertyBinding(
+            "resource", "effect_resistance", "resource", "resource_delta"
+        ),
+        "AllDamageTypeAddedRatio": StaticPropertyBinding(
+            "resource", "damage_added_ratio", "resource", "resource_delta"
+        ),
+        "PhysicalAddedRatio": StaticPropertyBinding(
+            "resource", "Physical_damage_added_ratio", "resource", "resource_delta"
+        ),
+        "FireAddedRatio": StaticPropertyBinding(
+            "resource", "Fire_damage_added_ratio", "resource", "resource_delta"
+        ),
+        "IceAddedRatio": StaticPropertyBinding(
+            "resource", "Ice_damage_added_ratio", "resource", "resource_delta"
+        ),
+        "ThunderAddedRatio": StaticPropertyBinding(
+            "resource", "Thunder_damage_added_ratio", "resource", "resource_delta"
+        ),
+        "WindAddedRatio": StaticPropertyBinding(
+            "resource", "Wind_damage_added_ratio", "resource", "resource_delta"
+        ),
+        "QuantumAddedRatio": StaticPropertyBinding(
+            "resource", "Quantum_damage_added_ratio", "resource", "resource_delta"
+        ),
+        "ImaginaryAddedRatio": StaticPropertyBinding(
+            "resource", "Imaginary_damage_added_ratio", "resource", "resource_delta"
+        ),
+        "ElationDamageAddedRatioBase": StaticPropertyBinding(
+            "resource", "elation_damage_added_ratio", "resource", "resource_delta"
+        ),
+        "SPRatioBase": StaticPropertyBinding(
+            "resource", "energy_regeneration_rate", "resource", "resource_delta"
+        ),
+        "HealRatioBase": StaticPropertyBinding(
+            "resource", "outgoing_healing_ratio", "resource", "resource_delta"
+        ),
+        "HealTakenRatio": StaticPropertyBinding(
+            "resource", "incoming_healing_ratio", "resource", "resource_delta"
+        ),
+    }
+)
+
+
+def static_property_binding(raw_property_type: str) -> StaticPropertyBinding | None:
+    if not isinstance(raw_property_type, str) or not raw_property_type.strip():
+        return None
+    return _STATIC_PROPERTY_BINDINGS.get(raw_property_type)
 
 
 def canonical_json_fingerprint(value: Mapping[str, JSONValue]) -> str:
