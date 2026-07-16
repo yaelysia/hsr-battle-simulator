@@ -302,6 +302,9 @@ class TBGDLowering:
         )
         avatar_profiles = character_cards.avatar_profiles
         character_data_cards = character_cards.character_data_cards
+        character_equipment_eligibilities = (
+            character_cards.character_equipment_eligibilities
+        )
         character_mechanism_slots = list(character_cards.character_mechanism_slots)
         character_trace_nodes = character_cards.character_trace_nodes
         character_eidolon_slots = character_cards.character_eidolon_slots
@@ -550,6 +553,9 @@ class TBGDLowering:
             entities=tuple(entities),
             avatar_profiles=tuple(avatar_profiles),
             character_data_cards=tuple(character_data_cards),
+            character_equipment_eligibilities=tuple(
+                character_equipment_eligibilities
+            ),
             monster_data_cards=tuple(monster_data_cards),
             light_cone_definitions=tuple(light_cone_definitions),
             summon_unit_definitions=tuple(summon_unit_definitions),

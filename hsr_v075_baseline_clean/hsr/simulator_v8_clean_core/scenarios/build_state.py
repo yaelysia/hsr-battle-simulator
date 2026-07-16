@@ -142,6 +142,29 @@ class ScenarioStateBuilder:
                     mechanism.source.to_json()
                     for mechanism in assembly.admitted_dynamic_mechanism_refs
                 )
+                equipment_result = assembly.equipment_assembly_result
+                if equipment_result is None:
+                    raise ValueError(
+                        f"unit {unit.unit_id}: admitted build has no equipment assembly result"
+                    )
+                if equipment_result.light_cone_selection is not None:
+                    selection = equipment_result.light_cone_selection
+                    source_traces.extend(
+                        source.to_json()
+                        for source in (
+                            selection.promotion_source,
+                            selection.superimposition_source,
+                            selection.ability_source,
+                        )
+                    )
+                source_traces.extend(
+                    source.to_json()
+                    for decision in equipment_result.activation_decisions
+                    for source in (
+                        decision.basis.character_path_source,
+                        decision.basis.light_cone_path_source,
+                    )
+                )
                 setup_records.append(
                     {
                         "record_type": "character_build_assembly",
@@ -150,6 +173,16 @@ class ScenarioStateBuilder:
                         "unit_id": unit.unit_id,
                         "input_fingerprint": assembly.input_fingerprint,
                         "result_fingerprint": assembly.result_fingerprint,
+                        "equipment_build_fingerprint": equipment_result.build_fingerprint,
+                        "equipment_result_fingerprint": equipment_result.result_fingerprint,
+                        "equipment_battle_admission_status": (
+                            equipment_result.battle_admission_status
+                        ),
+                        "light_cone_activation_status": (
+                            equipment_result.activation_decisions[0].activation_status
+                            if equipment_result.activation_decisions
+                            else None
+                        ),
                         "effective_skill_level_count": len(assembly.effective_skill_levels),
                         "legacy_trace_eidolon_paths_bypassed": True,
                     }

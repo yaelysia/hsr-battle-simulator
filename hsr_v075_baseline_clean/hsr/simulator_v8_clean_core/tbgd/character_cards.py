@@ -8,6 +8,10 @@ from pathlib import Path
 from typing import Any
 
 from ..build_types import canonical_decimal
+from ..equipment.models import (
+    CharacterEquipmentEligibilityIR,
+    EquipmentDefinitionKey,
+)
 from ..rules.ir import (
     AvatarPromotionTierIR,
     AvatarProfileIR,
@@ -29,6 +33,7 @@ SkillTableSpec = tuple[str, str, str]
 class CharacterCardBuildResult:
     avatar_profiles: list[AvatarProfileIR]
     character_data_cards: list[CharacterDataCardIR]
+    character_equipment_eligibilities: list[CharacterEquipmentEligibilityIR]
     character_mechanism_slots: list[CharacterMechanismSlotIR]
     character_trace_nodes: list[CharacterTraceNodeIR]
     character_eidolon_slots: list[CharacterEidolonSlotIR]
@@ -189,6 +194,7 @@ def build_character_card_ir(
             mechanism_slot_ids_by_card.setdefault(slot.character_data_card_id, []).append(slot.mechanism_slot_id)
     avatar_profiles: list[AvatarProfileIR] = []
     character_cards: list[CharacterDataCardIR] = []
+    character_equipment_eligibilities: list[CharacterEquipmentEligibilityIR] = []
     for relative_path, row_index, row in avatar_rows:
         avatar_id = str(row["AvatarID"])
         promotion_rows = promotion_rows_by_avatar.get(avatar_id, [])
@@ -201,6 +207,24 @@ def build_character_card_ir(
         )
         avatar_profiles.append(profile)
         card_id = f"character_data_card:avatar:{avatar_id}"
+        equipment_eligibility_id = ""
+        if profile.base_type.strip():
+            equipment_eligibility_id = card_id
+            character_equipment_eligibilities.append(
+                CharacterEquipmentEligibilityIR(
+                    definition_key=EquipmentDefinitionKey(
+                        "character_equipment_eligibility",
+                        card_id,
+                    ),
+                    character_card_id=card_id,
+                    character_profile_id=profile.avatar_profile_id,
+                    character_path_type=profile.base_type,
+                    passive_activation_path_types=(profile.base_type,),
+                    source=profile.source,
+                    coverage_status="lowered",
+                    blocked_reason="",
+                )
+            )
         skill_ids = tuple(str(skill_id) for skill_id in row.get("SkillList") or ())
         binding_ids = tuple(sorted(bindings_by_card.get(card_id, ())))
         bounce_policy_ids = tuple(sorted(bounce_policy_ids_by_card.get(card_id, ())))
@@ -226,6 +250,7 @@ def build_character_card_ir(
                 dynamic_value_bindings=_json_safe(
                     row.get("_character_config_dynamic_value_bindings") or {}
                 ),
+                equipment_eligibility_id=equipment_eligibility_id,
                 source=IRSource(
                     source_path=relative_path,
                     raw_type=Path(relative_path).stem,
@@ -267,6 +292,7 @@ def build_character_card_ir(
     return CharacterCardBuildResult(
         avatar_profiles=avatar_profiles,
         character_data_cards=character_cards,
+        character_equipment_eligibilities=character_equipment_eligibilities,
         character_mechanism_slots=mechanism_slots,
         character_trace_nodes=trace_nodes,
         character_eidolon_slots=list(

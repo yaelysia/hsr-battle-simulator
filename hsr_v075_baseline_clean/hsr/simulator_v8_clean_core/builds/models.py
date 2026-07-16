@@ -16,7 +16,7 @@ from ..build_types import (
     require_sha256,
     require_text,
 )
-from ..equipment.models import EquipmentBuildInput
+from ..equipment.models import EquipmentAssemblyResult, EquipmentBuildInput
 from ..immutable_json import thaw_json
 from ..ir_types import IRSource, JSONValue, same_ir_source_raw_row
 
@@ -559,6 +559,7 @@ class CharacterBuildAssemblyResult:
     assembly_status: AssemblyStatus
     battle_admission_status: BattleAdmissionStatus
     input_fingerprint: str
+    equipment_assembly_result: EquipmentAssemblyResult | None = None
     base_panel: CharacterBasePanel | None = None
     contribution_ledger: tuple[StaticStatContribution, ...] = ()
     effective_skill_levels: tuple[CharacterSkillLevelResolution, ...] = ()
@@ -573,6 +574,13 @@ class CharacterBuildAssemblyResult:
         if self.battle_admission_status not in {"admitted", "blocked"}:
             raise ValueError("invalid battle_admission_status")
         require_sha256(self.input_fingerprint, "input_fingerprint")
+        if self.equipment_assembly_result is not None and not isinstance(
+            self.equipment_assembly_result,
+            EquipmentAssemblyResult,
+        ):
+            raise TypeError(
+                "equipment_assembly_result must be EquipmentAssemblyResult or None"
+            )
         contributions = self._typed_unique_sorted(
             self.contribution_ledger,
             StaticStatContribution,
@@ -607,7 +615,12 @@ class CharacterBuildAssemblyResult:
                 item.source_ref.definition_kind
                 for item in contributions
                 if item.source_ref.definition_kind
-                not in {"avatar_promotion_tier", "avatar_profile", "character_mechanism_slot"}
+                not in {
+                    "avatar_promotion_tier",
+                    "avatar_profile",
+                    "character_mechanism_slot",
+                    "light_cone",
+                }
             }
         )
         if invalid_contribution_source_kinds:
@@ -629,6 +642,13 @@ class CharacterBuildAssemblyResult:
                 raise ValueError("blocked character assembly cannot expose formal result channels")
             if self.battle_admission_status != "blocked" or not reasons:
                 raise ValueError("blocked character assembly requires blocked battle admission and reasons")
+            if (
+                self.equipment_assembly_result is not None
+                and self.equipment_assembly_result.assembly_status != "blocked"
+            ):
+                raise ValueError(
+                    "blocked character assembly may only retain a blocked equipment result"
+                )
         else:
             if (
                 not isinstance(self.base_panel, CharacterBasePanel)
@@ -636,6 +656,23 @@ class CharacterBuildAssemblyResult:
             ):
                 raise ValueError(
                     "assembled character result requires panel and contribution ledger"
+                )
+            if (
+                self.equipment_assembly_result is None
+                or self.equipment_assembly_result.assembly_status != "assembled"
+            ):
+                raise ValueError(
+                    "assembled character result requires an assembled equipment result"
+                )
+            contribution_json_by_id = {
+                item.contribution_id: item.to_json() for item in contributions
+            }
+            if any(
+                contribution_json_by_id.get(item.contribution_id) != item.to_json()
+                for item in self.equipment_assembly_result.static_contributions
+            ):
+                raise ValueError(
+                    "character contribution ledger is missing equipment contributions"
                 )
             expected_panel = _panel_values_from_contributions(contributions)
             encoded_panel = {
@@ -658,10 +695,21 @@ class CharacterBuildAssemblyResult:
                 raise ValueError("assembled character result cannot carry static blocked reasons")
             if diagnostics and self.battle_admission_status != "blocked":
                 raise ValueError("unadmitted selected mechanisms must block battle admission")
-            if self.battle_admission_status == "blocked" and not diagnostics:
-                raise ValueError("blocked battle admission requires an unadmitted mechanism diagnostic")
-            if self.battle_admission_status == "admitted" and diagnostics:
-                raise ValueError("admitted battle result cannot carry unadmitted mechanisms")
+            equipment_blocks_battle = (
+                self.equipment_assembly_result.battle_admission_status == "blocked"
+            )
+            if self.battle_admission_status == "blocked" and not (
+                diagnostics or equipment_blocks_battle
+            ):
+                raise ValueError(
+                    "blocked battle admission requires a typed character or equipment blocker"
+                )
+            if self.battle_admission_status == "admitted" and (
+                diagnostics or equipment_blocks_battle
+            ):
+                raise ValueError(
+                    "admitted battle result cannot carry unadmitted character or equipment channels"
+                )
             if self.battle_admission_status == "admitted" and not skill_levels:
                 raise ValueError("admitted character result requires effective skill levels")
         object.__setattr__(
@@ -693,6 +741,11 @@ class CharacterBuildAssemblyResult:
             "assembly_status": self.assembly_status,
             "battle_admission_status": self.battle_admission_status,
             "input_fingerprint": self.input_fingerprint,
+            "equipment_assembly_result": (
+                self.equipment_assembly_result.to_json()
+                if self.equipment_assembly_result is not None
+                else None
+            ),
             "base_panel": self.base_panel.to_json() if self.base_panel is not None else None,
             "contribution_ledger": [item.to_json() for item in self.contribution_ledger],
             "effective_skill_levels": [item.to_json() for item in self.effective_skill_levels],
@@ -717,6 +770,7 @@ class CharacterBuildAssemblyResult:
                 "assembly_status",
                 "battle_admission_status",
                 "input_fingerprint",
+                "equipment_assembly_result",
                 "base_panel",
                 "contribution_ledger",
                 "effective_skill_levels",
@@ -733,6 +787,7 @@ class CharacterBuildAssemblyResult:
             return tuple(raw)
 
         panel = row.get("base_panel")
+        equipment_result = row.get("equipment_assembly_result")
         result = cls(
             assembly_status=cast(AssemblyStatus, require_text(row.get("assembly_status"), "assembly_status")),
             battle_admission_status=cast(
@@ -740,6 +795,11 @@ class CharacterBuildAssemblyResult:
                 require_text(row.get("battle_admission_status"), "battle_admission_status"),
             ),
             input_fingerprint=require_text(row.get("input_fingerprint"), "input_fingerprint"),
+            equipment_assembly_result=(
+                EquipmentAssemblyResult.from_json(equipment_result)
+                if equipment_result is not None
+                else None
+            ),
             base_panel=CharacterBasePanel.from_json(panel) if panel is not None else None,
             contribution_ledger=tuple(
                 StaticStatContribution.from_json(item) for item in sequence("contribution_ledger")

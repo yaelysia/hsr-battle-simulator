@@ -4,6 +4,7 @@ from collections.abc import Mapping
 
 from .schema import ScenarioSpec, ScenarioValidationResult
 from ..builds.character_assembler import assemble_character_build
+from ..builds.equipment_assembler import validate_equipment_instance_uniqueness
 from ..rules.rulebook import RuleBook
 
 
@@ -26,6 +27,15 @@ class IdentityResolver:
         units_by_id = {unit.unit_id: unit for unit in scenario.units}
         if len(unit_ids) != len(scenario.units):
             errors.append("unit_id values must be unique")
+        formal_equipment_builds = tuple(
+            unit.character_build.equipment_build
+            for unit in scenario.units
+            if unit.build_mode == "assembled_character_build"
+            and unit.character_build is not None
+        )
+        errors.extend(
+            validate_equipment_instance_uniqueness(formal_equipment_builds)
+        )
 
         for unit in scenario.units:
             if unit.build_mode == "assembled_character_build":
@@ -72,8 +82,10 @@ class IdentityResolver:
                         errors.append(
                             f"unit {unit.unit_id}: embedded equipment build character identity mismatch"
                         )
-                    if build.equipment_build.light_cone is not None or build.equipment_build.relics:
-                        errors.append(f"unit {unit.unit_id}: P8-S2 formal equipment build must be empty")
+                    if build.equipment_build.relics:
+                        errors.append(
+                            f"unit {unit.unit_id}: P8-S4 formal relic instances are not admitted"
+                        )
             elif unit.build_mode == "kernel_fixture":
                 if unit.panel is None:
                     errors.append(f"unit {unit.unit_id}: kernel_fixture requires panel input")

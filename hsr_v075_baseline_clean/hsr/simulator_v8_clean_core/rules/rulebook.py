@@ -1145,6 +1145,49 @@ class RuleBook:
                 candidates=resolution.candidates,
                 blocked_reason="character_equipment_eligibility_owner_mismatch",
             )
+        if resolution.resolution_status == "resolved" and resolution.value is not None:
+            profile = self.avatar_profile_by_profile_id(card.profile_id)
+            if profile is None:
+                return EquipmentDefinitionResolution(
+                    resolution_status="blocked",
+                    requested_key=resolution.requested_key,
+                    expected_kind="character_equipment_eligibility",
+                    value=None,
+                    candidates=resolution.candidates,
+                    blocked_reason="character_equipment_eligibility_profile_missing",
+                )
+            eligibility = resolution.value
+            if eligibility.character_profile_id != profile.avatar_profile_id:
+                return EquipmentDefinitionResolution(
+                    resolution_status="blocked",
+                    requested_key=resolution.requested_key,
+                    expected_kind="character_equipment_eligibility",
+                    value=None,
+                    candidates=resolution.candidates,
+                    blocked_reason="character_equipment_eligibility_profile_mismatch",
+                )
+            if (
+                eligibility.character_path_type != profile.base_type
+                or eligibility.character_path_type
+                not in eligibility.passive_activation_path_types
+            ):
+                return EquipmentDefinitionResolution(
+                    resolution_status="blocked",
+                    requested_key=resolution.requested_key,
+                    expected_kind="character_equipment_eligibility",
+                    value=None,
+                    candidates=resolution.candidates,
+                    blocked_reason="character_equipment_eligibility_path_mismatch",
+                )
+            if eligibility.source != profile.source:
+                return EquipmentDefinitionResolution(
+                    resolution_status="blocked",
+                    requested_key=resolution.requested_key,
+                    expected_kind="character_equipment_eligibility",
+                    value=None,
+                    candidates=resolution.candidates,
+                    blocked_reason="character_equipment_eligibility_source_mismatch",
+                )
         return resolution
 
     def light_cone_definition(

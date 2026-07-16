@@ -26,7 +26,8 @@ P8-S0 equipment source and mechanism baseline accepted
 P8-S1 typed equipment and build architecture accepted
 P8-S2 formal character build input and base panel accepted
 P8-S3 light-cone data cards and source linkage accepted
-next stage: P8-S4 light-cone instance, growth and path activation decision
+P8-S4 light-cone instance, growth and path activation decision accepted
+next stages: P8-S5 light-cone static contributions / P8-S9 relic definition cards in isolated worktrees
 ```
 
 当前验收口径：
@@ -42,7 +43,7 @@ next stage: P8-S4 light-cone instance, growth and path activation decision
 - P7-S2 Mutation 前置条件与 reducer 冲突检测已完成独立验收；严格 before/op/after、路径存在性、同路径连续链、结构化冲突、整批回滚、不可变 Mutation JSON 和统一 UnitState codec 均已形成直接证据。
 - P7-S3 至 P7-S19 已完成统一验收；最终总账包含 24 项问题证据、18 个阶段证据和一次共享 RuleBook 的 9 项当前源码回归，空检查、缺项、错误类型及错误源码指纹负例均被拒绝。
 - P7-DONE 已于 2026-07-13 由验收线程勾选。P7 完成的是内核可信执行与当前已准入战斗语义，不代表 P2/P3/P4/P6 保留内容缺口或全角色 / 全怪物 / 全装备 / 全关卡扩面完成。
-- P8-S0 装备来源与机制基线、P8-S1 类型化装备与构筑架构、P8-S2 正式角色构筑输入与基础面板、P8-S3 光锥数据卡与来源关联均已独立验收。当前已具备 source-backed 无装备角色面板和完整已发布光锥定义目录，但尚未创建玩家光锥实例、计算指定等级贡献或执行装备效果。
+- P8-S0 装备来源与机制基线、P8-S1 类型化装备与构筑架构、P8-S2 正式角色构筑输入与基础面板、P8-S3 光锥数据卡与来源关联、P8-S4 光锥实例与成长装配均已独立验收。当前已具备 source-backed 角色面板、完整已发布光锥定义目录、玩家光锥实例、指定等级基础贡献和命途激活决策；光锥静态被动、动态能力和遗器仍未完成。
 
 P6 后的内核深度复审确认：现有 transition / replay / source audit 骨架值得保留，但动作完整性、Mutation 前置校验、动作与目标契约、调度阶段、伤害、护盾、状态概率、RNG、召唤和波次等路径仍有会影响真实战斗结果的问题。P7 用实际代码问题总账和通用不变量逐项回正这些语义，不把旧聚合 `ok=true` 外推为完整正确。
 
@@ -51,10 +52,11 @@ P3/P4/P5 的 `*_all_executable_complete=false` 和 P6 的 `p6_all_mechanisms_rei
 当前推荐下一阶段：
 
 ```text
-P8-S4 light-cone instance, growth and path activation decision
+P8-S5 light-cone static contributions
+P8-S9 relic definition cards (isolated worktree only when parallel)
 ```
 
-P7-S0 至 P7-S19 已全部验收，P8-S0 至 P8-S3 也已通过独立验收。当前装备 / 构筑主线下一步只执行 P8-S4；不能修改 P7 已完成口径来掩盖保留缺口，也不能把 S3 的光锥定义目录误读为玩家实例、指定等级贡献或装备效果已经完成。
+P7-S0 至 P7-S19 已全部验收，P8-S0 至 P8-S4 也已通过独立验收。后续可从同一 S4 检查点分别推进 S5 光锥轨和 S9 遗器轨，但必须使用独立 worktree；不能把 S4 的基础成长与激活决策误读为静态被动、动态能力或遗器已经完成。
 
 ## 2. 下一线程优先入口
 
@@ -100,6 +102,7 @@ P7-S0 至 P7-S19 已全部验收，P8-S0 至 P8-S3 也已通过独立验收。�
 - `P6_ARCHITECTURE_BOUNDARY_REFACTOR_TASK_PLAN.md`
 - `P7_KERNEL_TRUST_AND_COMBAT_SEMANTICS_REPAIR_TASK_PLAN.md`
 - `P8_EQUIPMENT_BUILD_LIGHT_CONE_RELIC_TASK_PLAN.md`
+- `docs/p8_execution_cards/README.md`：P8-S5 至 S21 的独立执行卡、双轨依赖图、推荐推理等级和执行模式。
 
 P1 过程计划已经归档，不作为默认入口：
 
@@ -109,10 +112,12 @@ P1 过程计划已经归档，不作为默认入口：
 
 - 只保留一套执行 checklist。
 - 每阶段只做一个明确目标。
-- 执行线程先提交阶段执行卡。
+- 规划线程先维护并确认阶段执行卡；执行线程核对当前事实后只实施该卡。
 - 执行线程只提交 `ready_for_review`。
 - 验收线程复核后才勾 checklist。
 - 聚合阶段最后做，并继承所有分步 gap。
+
+P8-S4 已验收。S5-S8 光锥轨与 S9-S17 遗器轨可以从同一 S4 检查点建立不同 Git worktree 并行；轨内仍严格串行，S18 只有两轨均验收并合并后才能开始。同一工作区禁止并行修改。
 
 ## 5. 验收报告入口
 
@@ -130,6 +135,7 @@ P1 过程计划已经归档，不作为默认入口：
 - `../live_validation_reports/v8_p7_s3_selected_graph_atomic_commit_ready_for_review.md` 至 `v8_p7_s18_compact_semantic_state_ready_for_review.md`（S3-S18 专项执行 evidence）
 - `../live_validation_reports/v8_p7_s19_kernel_invariant_aggregate_ready_for_review.md`（S19 执行 evidence；最终裁决见检查点）
 - `../live_validation_reports/v8_p7_kernel_trust_and_combat_semantics_final_checkpoint.md`（P7 统一验收最终检查点）
+- `../live_validation_reports/v8_p8_s4_light_cone_instance_assembly_ready_for_review.md`（P8-S4 执行 evidence；S4 已由验收线程复核并形成代码检查点）
 
 阶段内 `ready_for_review` 报告是 evidence 索引，不是验收结论本身。最终以对应 `checkpoint` 和验收线程结论为准。
 

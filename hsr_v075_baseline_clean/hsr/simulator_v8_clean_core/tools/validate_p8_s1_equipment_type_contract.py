@@ -14,9 +14,11 @@ from ..immutable_json import freeze_json, thaw_json
 from ..equipment.models import (
     CharacterEquipmentEligibilityIR,
     DynamicMechanismSelection,
+    EquipmentActivationBasis,
     EquipmentActivationDecision,
     EquipmentAssemblyDiagnostic,
     EquipmentAssemblyResult,
+    EquipmentBattleAdmissionBlocker,
     EquipmentBuildInput,
     EquipmentDefinitionKey,
     EquipmentDefinitionResolution,
@@ -24,6 +26,7 @@ from ..equipment.models import (
     EquipmentResolutionCandidate,
     EquipmentSourceLedgerEntry,
     LightConeAbilitySourceIR,
+    LightConeAssemblySelection,
     LightConeDefinitionIR,
     LightConeInstanceInput,
     LightConeParameterIR,
@@ -43,6 +46,7 @@ from ..equipment.models import (
 )
 from ..rules import ir as rules_ir_module
 from ..rules.ir import (
+    AvatarProfileIR,
     CanonicalIR,
     CharacterDataCardIR,
     IRSource,
@@ -67,7 +71,7 @@ from .validate_p4_s8_trace_eidolon_level_resource_hooks import (
 
 
 VALIDATION_VERSION = "p8_s1_equipment_type_contract"
-SUMMARY_SCHEMA_VERSION = "p8_s1_equipment_type_contract_summary_v1"
+SUMMARY_SCHEMA_VERSION = "p8_s1_equipment_type_contract_summary_v2"
 CANONICAL_EQUIPMENT_DEFINITION_FIELDS = frozenset(
     {
         "character_equipment_eligibilities",
@@ -167,11 +171,13 @@ def run_validation(s0_summary_path: Path, output_dir: Path) -> dict[str, Any]:
         "ready_for_review": ok,
         "p8_s1_type_contract_established": ok,
         "checklist_modified": False,
-        "runtime_behavior_changed": False,
-        "scenario_schema_changed": False,
-        "real_equipment_directory_lowered": False,
-        "equipment_effect_executed": False,
-        "p8_s2_or_later_started": False,
+        "validation_scope": {
+            "mutates_runtime_behavior": False,
+            "mutates_scenario_schema": False,
+            "reads_real_equipment_directory": False,
+            "executes_equipment_effects": False,
+            "asserts_current_p8_s2_or_later_state": False,
+        },
         "s0_summary": {
             "path": s0_summary_path.resolve().as_posix(),
             "schema_version": s0_summary.get("schema_version"),
@@ -182,17 +188,17 @@ def run_validation(s0_summary_path: Path, output_dir: Path) -> dict[str, Any]:
         "checks": checks,
         "resource_budget": resource_budget,
         "scope": {
-            "implemented": (
+            "validated_regression": (
                 "typed equipment definitions, namespaced keys, typed RuleBook resolutions, "
                 "per-build identity/input/result contracts, source-only audit boundary, and P4 boundary migration"
             ),
-            "deferred": (
-                "real equipment lowering, character level/promotion/trace/eidolon assembly, slot/affix/value/set legality, "
-                "effect activation, final panel, runtime, snapshot and replay"
+            "not_asserted_by_this_regression": (
+                "the current implementation state of P8-S2 and later phases; their own validators "
+                "are authoritative for real lowering, assembly, scenario, and runtime behavior"
             ),
         },
         "observations": {
-            "current_character_eligibility_state": "typed_but_unbound_and_blocked",
+            "fixture_character_eligibility_state": "typed_resolved_with_profile_and_source_binding",
             "fixture_dynamic_mechanism_states": ["lowered", "blocked"],
             "fixture_mechanism_payload_policy": "generic_graph_identity_only",
             "source_ledger_behavior_role": "audit_only",
@@ -227,7 +233,7 @@ def _build_definition_fixture(
     )
     eligibility_key = EquipmentDefinitionKey(
         "character_equipment_eligibility",
-        "fixture:eligibility",
+        card_id,
     )
     mechanism_key = EquipmentDefinitionKey("equipment_mechanism", "fixture:mechanism")
     set_key = EquipmentDefinitionKey("relic_set", "fixture:set")
@@ -240,8 +246,10 @@ def _build_definition_fixture(
     eligibility = CharacterEquipmentEligibilityIR(
         definition_key=eligibility_key,
         character_card_id=card_id,
-        allowed_light_cone_paths=("FixturePath",),
-        source=source,
+        character_profile_id="fixture:profile",
+        character_path_type="FixturePath",
+        passive_activation_path_types=("FixturePath",),
+        source=graph_source,
         coverage_status="lowered",
         blocked_reason="",
     )
@@ -383,8 +391,23 @@ def _build_definition_fixture(
         blocked_reason="fixture_character_card",
         equipment_eligibility_id=eligibility_key.definition_identity,
     )
+    profile = AvatarProfileIR(
+        avatar_profile_id="fixture:profile",
+        avatar_id="fixture:avatar",
+        base_type="FixturePath",
+        damage_type="FixtureDamage",
+        skill_ids=(),
+        promotion_tiers=(),
+        max_energy=None,
+        max_energy_source=None,
+        source=graph_source,
+        coverage_status="blocked",
+        blocked_reason="fixture_character_profile",
+        resource_mode="source_missing",
+    )
     ir = CanonicalIR(
         version=BASELINE_VERSION,
+        avatar_profiles=(profile,),
         character_data_cards=(card,),
         character_equipment_eligibilities=(eligibility,),
         light_cone_definitions=(light_cone,),
@@ -399,6 +422,7 @@ def _build_definition_fixture(
         "source": source,
         "shared_identity": shared_identity,
         "card": card,
+        "profile": profile,
         "eligibility": eligibility,
         "light_cone": light_cone,
         "relic": relic,
@@ -891,7 +915,7 @@ def _build_and_assembly_checks(
     light_cone_instance = LightConeInstanceInput(
         instance_id="fixture:light-cone-instance",
         definition_key=fixture["light_cone"].definition_key,
-        level=0,
+        level=1,
         promotion=0,
         superimposition=1,
     )
@@ -925,6 +949,38 @@ def _build_and_assembly_checks(
     build_round_trip = EquipmentBuildInput.from_json(build_input.to_json())
 
     source = _fixture_source(fingerprint, "assembly")
+    promotion_source = make_equipment_source(
+        source_path="fixture/equipment/EquipmentPromotionConfig.json",
+        raw_type="EquipmentPromotionConfig",
+        raw_id=f"{fixture['shared_identity']}:0",
+        json_path="$[0]",
+        source_fingerprint=fingerprint,
+        source_kind="validation_fixture",
+    )
+    superimposition_source = make_equipment_source(
+        source_path="fixture/equipment/EquipmentSkillConfig.json",
+        raw_type="EquipmentSkillConfig",
+        raw_id="fixture:skill:1",
+        json_path="$[0]",
+        source_fingerprint=fingerprint,
+        source_kind="validation_fixture",
+    )
+    ability_source = make_equipment_source(
+        source_path="fixture/equipment/FixtureLightConeAbility.json",
+        raw_type="AbilityList",
+        raw_id="FixtureLightConeAbility",
+        json_path="$.AbilityList[0]",
+        source_fingerprint=fingerprint,
+        source_kind="validation_fixture",
+    )
+    light_cone_path_source = make_equipment_source(
+        source_path="fixture/equipment/EquipmentConfig.json",
+        raw_type="EquipmentConfig",
+        raw_id=fixture["shared_identity"],
+        json_path="$[0]",
+        source_fingerprint=fingerprint,
+        source_kind="validation_fixture",
+    )
     static = StaticStatContribution(
         contribution_id="fixture:static-contribution",
         contribution_pool="flat",
@@ -935,7 +991,7 @@ def _build_and_assembly_checks(
             fixture["light_cone"].definition_key.definition_identity,
         ),
         calculation=StatCalculation("constant", "1"),
-        source=source,
+        source=promotion_source,
     )
     dynamic = DynamicMechanismSelection(
         selection_id="fixture:dynamic-selection",
@@ -945,12 +1001,23 @@ def _build_and_assembly_checks(
         coverage_status="lowered",
         blocked_reason="",
     )
+    activation_basis = EquipmentActivationBasis(
+        basis_kind="light_cone_path_equality",
+        comparison_policy="exact_internal_path_identity_equality",
+        policy_origin="build_assembly_rule",
+        character_eligibility_key=fixture["eligibility"].definition_key,
+        light_cone_definition_key=fixture["light_cone"].definition_key,
+        character_path_type="FixturePath",
+        light_cone_path_type="FixturePath",
+        character_path_source=fixture["profile"].source,
+        light_cone_path_source=light_cone_path_source,
+    )
     activation = EquipmentActivationDecision(
         decision_id="fixture:activation-decision",
         definition_key=fixture["light_cone"].definition_key,
-        activation_status="inactive",
-        reason="S1_does_not_activate_equipment",
-        source=source,
+        activation_status="active",
+        reason_code="light_cone_path_match",
+        basis=activation_basis,
     )
     ledger = EquipmentSourceLedgerEntry(
         ledger_entry_id="fixture:ledger",
@@ -962,10 +1029,29 @@ def _build_and_assembly_checks(
     dynamic_inputs = [dynamic]
     activation_inputs = [activation]
     ledger_inputs = [ledger]
+    selection = LightConeAssemblySelection(
+        instance_id=light_cone_instance.instance_id,
+        instance_fingerprint=light_cone_instance.instance_fingerprint,
+        definition_key=fixture["light_cone"].definition_key,
+        level=light_cone_instance.level,
+        promotion_stage=light_cone_instance.promotion,
+        superimposition_level=light_cone_instance.superimposition,
+        skill_id="fixture:skill",
+        parameter_indices=(0,),
+        static_property_indices=(0,),
+        ability_name="FixtureLightConeAbility",
+        ability_record_index=0,
+        promotion_source=promotion_source,
+        superimposition_source=superimposition_source,
+        ability_source=ability_source,
+        base_contribution_ids=(static.contribution_id,),
+    )
     assembled = EquipmentAssemblyResult(
         assembly_id="fixture:assembled",
         build_fingerprint=build_input.build_fingerprint,
         assembly_status="assembled",
+        battle_admission_status="admitted",
+        light_cone_selection=selection,
         static_contributions=cast(Any, static_inputs),
         dynamic_mechanisms=cast(Any, dynamic_inputs),
         activation_decisions=cast(Any, activation_inputs),
@@ -986,6 +1072,7 @@ def _build_and_assembly_checks(
         assembly_id="fixture:blocked",
         build_fingerprint=build_input.build_fingerprint,
         assembly_status="blocked",
+        battle_admission_status="blocked",
         diagnostics=(
             EquipmentAssemblyDiagnostic(
                 diagnostic_id="fixture:blocked-diagnostic",
@@ -1000,23 +1087,19 @@ def _build_and_assembly_checks(
             assembly_id="fixture:invalid-blocked",
             build_fingerprint=build_input.build_fingerprint,
             assembly_status="blocked",
+            battle_admission_status="blocked",
             static_contributions=(static,),
             diagnostics=(EquipmentAssemblyDiagnostic("fixture:invalid", "fixture_invalid"),),
         ),
         ValueError,
     )
-    active_decision = EquipmentActivationDecision(
-        decision_id="fixture:active-decision",
-        definition_key=fixture["light_cone"].definition_key,
-        activation_status="active",
-        reason="",
-        source=source,
-    )
+    active_decision = replace(activation, decision_id="fixture:active-decision")
     blocked_active_decision_rejected = _raises(
         lambda: EquipmentAssemblyResult(
             assembly_id="fixture:invalid-blocked-active",
             build_fingerprint=build_input.build_fingerprint,
             assembly_status="blocked",
+            battle_admission_status="blocked",
             activation_decisions=(active_decision,),
             diagnostics=(
                 EquipmentAssemblyDiagnostic(
@@ -1060,7 +1143,8 @@ def _build_and_assembly_checks(
         "blocked_nonempty_formal_channel_rejected": blocked_nonempty_rejected,
         "blocked_active_activation_decision_rejected": blocked_active_decision_rejected,
         "fixture_dynamic_mechanism_never_executable": dynamic.coverage_status in {"lowered", "blocked"},
-        "fixture_activation_never_active": activation.activation_status in {"inactive", "blocked"},
+        "fixture_activation_is_derived_from_typed_basis": activation.activation_status
+        == ("active" if activation.basis.values_match else "inactive"),
         "dynamic_reference_is_generic_graph_identity_only": dynamic.graph_ref_id
         == fixture["graph"].standalone_ability_graph_id
         and set(dynamic.to_json()).isdisjoint({"effects", "tasks", "modifiers", "effect_payload"}),
@@ -1103,18 +1187,39 @@ def _public_model_immutability_negative_checks(
         EquipmentBuildInput,
         StaticStatContribution,
         DynamicMechanismSelection,
+        LightConeAssemblySelection,
+        EquipmentActivationBasis,
         EquipmentActivationDecision,
+        EquipmentBattleAdmissionBlocker,
         EquipmentSourceLedgerEntry,
         EquipmentAssemblyDiagnostic,
         EquipmentAssemblyResult,
     )
     source = _fixture_source(fingerprint, "public-model-negatives")
     candidate = EquipmentResolutionCandidate.from_definition(fixture["light_cone"])
+    activation_basis = EquipmentActivationBasis(
+        basis_kind="light_cone_path_equality",
+        comparison_policy="exact_internal_path_identity_equality",
+        policy_origin="build_assembly_rule",
+        character_eligibility_key=fixture["eligibility"].definition_key,
+        light_cone_definition_key=fixture["light_cone"].definition_key,
+        character_path_type="FixturePath",
+        light_cone_path_type="FixturePath",
+        character_path_source=fixture["profile"].source,
+        light_cone_path_source=make_equipment_source(
+            source_path="fixture/equipment/EquipmentConfig.json",
+            raw_type="EquipmentConfig",
+            raw_id=fixture["shared_identity"],
+            json_path="$[0]",
+            source_fingerprint=fingerprint,
+            source_kind="validation_fixture",
+        ),
+    )
 
     path_values = ["FixturePath"]
     eligibility = replace(
         fixture["eligibility"],
-        allowed_light_cone_paths=cast(Any, path_values),
+        passive_activation_path_types=cast(Any, path_values),
     )
     eligibility_before = eligibility.to_json()
     path_values.append("LateMutation")
@@ -1241,6 +1346,7 @@ def _public_model_immutability_negative_checks(
                 assembly_id="fixture:bad-assembly",
                 build_fingerprint="0" * 64,
                 assembly_status="assembled",
+                battle_admission_status="admitted",
                 static_contributions=cast(Any, [[]]),
             ),
             TypeError,
@@ -1255,15 +1361,15 @@ def _public_model_immutability_negative_checks(
             ),
             TypeError,
         ),
-        "activation_reason_mutable_list": _raises(
+        "activation_reason_code_mutable_list": _raises(
             lambda: EquipmentActivationDecision(
                 "fixture:bad-activation",
                 fixture["light_cone"].definition_key,
-                "inactive",
+                "active",
                 cast(Any, []),
-                source,
+                activation_basis,
             ),
-            TypeError,
+            ValueError,
         ),
     }
     detached_checks = {

@@ -17,7 +17,24 @@ P8 完成后，“这名角色装备了什么”和“这些装备产生了什�
 
 本文档只有最后一节是唯一可打标 checklist。背景、数据观察、问题总账、阶段目标和验收说明都不是第二套清单。
 
-执行线程必须严格按 `P8-S0` 至 `P8-S21` 顺序工作，一次只执行一个阶段。开始每个阶段前必须先提交阶段执行卡，等待规划 / 验收线程确认后才允许修改文件。后续阶段只能作为依赖背景，不能提前实现、提前出报告或混入当前阶段 evidence。
+### S5-S21 直接执行入口
+
+`P8-S0` 至 `P8-S4` 保留本文档中的阶段目标和既有验收记录。`P8-S5` 至 `P8-S21` 已由规划线程预先拆成单阶段执行卡，统一入口为：
+
+```text
+docs/p8_execution_cards/README.md
+```
+
+从 `P8-S5` 开始，执行线程不得只凭本文档中的阶段摘要自行展开实现，也不再临时重写一份执行卡。正确流程是：
+
+1. 确认对应前置阶段已经验收并形成 Git 检查点。
+2. 读取执行卡索引和当前阶段的唯一执行卡。
+3. 只读核对卡内事实与当前代码；轻微事实变化写入报告，若变化影响目标、职责或验收谓词则停止并交回规划线程修订卡片。
+4. 一次只实施一张卡，达到 `ready_for_review` 后立即停止，不提前进入下一阶段。
+
+本文档负责 P8 总目标、全局红线、阶段依赖和唯一 checklist；单阶段执行卡负责当前阶段的具体目标、验收谓词、拟改范围和验证预算。两者出现实质冲突时，执行线程不得自行选择其中一套，应停止实施并由规划线程原子修订总计划与执行卡。
+
+除第 7.1 节明确允许的双 worktree 分轨外，执行线程必须按 `P8-S0` 至 `P8-S21` 的依赖顺序工作。后续阶段只能作为依赖背景，不能提前实现、提前出报告或混入当前阶段 evidence。
 
 执行线程最多只能提交 `ready_for_review`，不能自称 `done`，不能修改本文档最后的 checklist。验收线程必须阅读真实代码、复核结构化矩阵、运行本阶段最小验证，并检查通用性、来源边界、扩展性和负例，验收通过后才勾选阶段并建立代码检查点。纯文档调整不要求单独提交检查点。
 
@@ -296,9 +313,56 @@ P8 完成后，系统必须具备以下能力：
 | P8-S20 | 建立希儿、《于夜色中》与 4+2 遗器的完整构筑纵切 | I18，端到端复核 I03-I16 |
 | P8-S21 | 当前源码全量聚合、回归与文档收口 | I17，复核 I01-I18 |
 
+### 7.1 P8-S5 至 S21 的执行依赖
+
+剩余阶段的详细执行卡已集中在：
+
+```text
+docs/p8_execution_cards/
+```
+
+卡片文件索引如下。该表只提供导航，不构成第二套执行清单；每张卡的详细目标和验收要求以对应文件为准，统一协议与推荐执行配置以目录中的 `README.md` 为准。
+
+| 阶段 | 唯一执行卡 |
+|---|---|
+| P8-S5 | [`P8-S5_LIGHT_CONE_STATIC_CONTRIBUTIONS.md`](docs/p8_execution_cards/P8-S5_LIGHT_CONE_STATIC_CONTRIBUTIONS.md) |
+| P8-S6 | [`P8-S6_LIGHT_CONE_DYNAMIC_STARTUP.md`](docs/p8_execution_cards/P8-S6_LIGHT_CONE_DYNAMIC_STARTUP.md) |
+| P8-S7 | [`P8-S7_LIGHT_CONE_STATUS_CONDITION_LISTENER_CLOSURE.md`](docs/p8_execution_cards/P8-S7_LIGHT_CONE_STATUS_CONDITION_LISTENER_CLOSURE.md) |
+| P8-S8 | [`P8-S8_LIGHT_CONE_REMAINING_GAMEPLAY_CLOSURE.md`](docs/p8_execution_cards/P8-S8_LIGHT_CONE_REMAINING_GAMEPLAY_CLOSURE.md) |
+| P8-S9 | [`P8-S9_RELIC_DEFINITION_CARDS.md`](docs/p8_execution_cards/P8-S9_RELIC_DEFINITION_CARDS.md) |
+| P8-S10 | [`P8-S10_RELIC_INSTANCE_LEGALITY.md`](docs/p8_execution_cards/P8-S10_RELIC_INSTANCE_LEGALITY.md) |
+| P8-S11 | [`P8-S11_RELIC_MAIN_AFFIX.md`](docs/p8_execution_cards/P8-S11_RELIC_MAIN_AFFIX.md) |
+| P8-S12 | [`P8-S12_RELIC_SUB_AFFIX_ROLLS.md`](docs/p8_execution_cards/P8-S12_RELIC_SUB_AFFIX_ROLLS.md) |
+| P8-S13 | [`P8-S13_RELIC_SET_THRESHOLDS.md`](docs/p8_execution_cards/P8-S13_RELIC_SET_THRESHOLDS.md) |
+| P8-S14 | [`P8-S14_RELIC_STATIC_CONTRIBUTIONS.md`](docs/p8_execution_cards/P8-S14_RELIC_STATIC_CONTRIBUTIONS.md) |
+| P8-S15 | [`P8-S15_RELIC_SET_DYNAMIC_STARTUP.md`](docs/p8_execution_cards/P8-S15_RELIC_SET_DYNAMIC_STARTUP.md) |
+| P8-S16 | [`P8-S16_RELIC_SET_STATUS_CONDITION_LISTENER_CLOSURE.md`](docs/p8_execution_cards/P8-S16_RELIC_SET_STATUS_CONDITION_LISTENER_CLOSURE.md) |
+| P8-S17 | [`P8-S17_RELIC_SET_REMAINING_GAMEPLAY_CLOSURE.md`](docs/p8_execution_cards/P8-S17_RELIC_SET_REMAINING_GAMEPLAY_CLOSURE.md) |
+| P8-S18 | [`P8-S18_FINAL_PANEL_AND_BIRTH_ORDER.md`](docs/p8_execution_cards/P8-S18_FINAL_PANEL_AND_BIRTH_ORDER.md) |
+| P8-S19 | [`P8-S19_QUERY_AUDIT_SNAPSHOT_REPLAY.md`](docs/p8_execution_cards/P8-S19_QUERY_AUDIT_SNAPSHOT_REPLAY.md) |
+| P8-S20 | [`P8-S20_SEELE_COMPLETE_BUILD_SLICE.md`](docs/p8_execution_cards/P8-S20_SEELE_COMPLETE_BUILD_SLICE.md) |
+| P8-S21 | [`P8-S21_CURRENT_SOURCE_AGGREGATE.md`](docs/p8_execution_cards/P8-S21_CURRENT_SOURCE_AGGREGATE.md) |
+
+P8 的问题依赖不是一条绝对串行链。S4 验收并形成代码检查点后，允许按以下 DAG 推进：
+
+```text
+accepted S4
+   |-- S5 -> S6 -> S7 -> S8 --------|
+   |                                 |-> S18 -> S19 -> S20 -> S21
+   |-- S9 -> S10 -> ... -> S17 -----|
+```
+
+- 光锥轨和遗器轨只有在不同 Git worktree、从同一已验收 S4 commit 出发时才允许并行；同一工作区仍禁止并行实施。
+- 两条轨内部保持严格阶段顺序，每阶段都要独立 `ready_for_review`、验收和提交检查点。
+- S18 是硬汇合点，只有 S8、S17 均验收且两个轨道的检查点已合并后才能开始。
+- S18-S21 恢复严格串行，不能让两个分支继续分别修改共享装配、出生、查询或 replay 契约。
+- 执行卡中的推荐模型、推理等级和普通/Goal 模式是资源与风险建议，不降低任何验收口径。
+
 ## 8. 阶段执行卡规格
 
-每个阶段开始前，执行线程必须提交一份只针对当前阶段的执行卡，至少包含：
+P8-S5 至 S21 的执行卡由规划线程预先维护。执行线程开始前必须读取对应卡，只读核对已验收基线、当前代码调用链和数据事实；事实偏差不影响目标时应在 `ready_for_review` 中说明，偏差会改变目标、职责或验收谓词时必须停止并交回规划线程修订，不能自行改写卡或提前实施相邻阶段。
+
+未来没有预写卡的阶段，仍需在改文件前由规划线程产出并确认一份只针对当前阶段的执行卡。执行卡至少包含：
 
 ```text
 阶段与对应问题编号：
@@ -347,7 +411,7 @@ ready_for_review evidence：
   - 尚未关闭的真实 blocker。
 ```
 
-执行卡不得只复述阶段标题。涉及数值的阶段必须写出独立 oracle 来源和边界值；涉及全量覆盖的阶段必须写出当前总数如何动态获得、如何防空集合和如何证明没有漏扫文件。
+执行卡不得只复述阶段标题。涉及数值的阶段必须写出独立 oracle 来源和边界值；涉及全量覆盖的阶段必须写出当前总数如何动态获得、如何防空集合和如何证明没有漏扫文件。执行线程只能提交 `ready_for_review` evidence；卡内和总计划中的勾选项均由验收线程维护。
 
 ## 9. P8-S0 装备来源与机制基线
 
@@ -1366,7 +1430,7 @@ P8 装备相关 raw 语料本身约数 MB，正常 focused discovery 不应反�
 - [x] P8-S1 已用类型化装备卡、构筑输入和装配结果替换字符串式弱预留，并建立 RuleBook 窄查询边界。
 - [x] P8-S2 已建立正式角色构筑输入和无装备 source-backed 基础面板，正式模式不再依赖 UI 手填最终面板。
 - [x] P8-S3 已完整 lower 当前已发布光锥的身份、成长、叠影、静态属性和唯一 ability 引用。
-- [ ] P8-S4 已实现光锥实例、等级 / 晋阶 / 叠影数值及命途匹配激活决策，失配时仅被动失效。
+- [x] P8-S4 已实现光锥实例、等级 / 晋阶 / 叠影数值及命途匹配激活决策，失配时仅被动失效。
 - [ ] P8-S5 已接通光锥静态属性贡献，基础属性与被动属性分离且来源可追溯。
 - [ ] P8-S6 已接通光锥动态参数、ability graph 和启动生命周期，命途失配及 partial graph 不产生效果。
 - [ ] P8-S7 已闭合当前光锥属性、状态、条件、动态值和监听 gameplay 机制族。

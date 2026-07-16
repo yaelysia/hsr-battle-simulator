@@ -36,7 +36,7 @@ from .io import write_json
 
 
 VALIDATION_VERSION = "p8_s3_light_cone_data_cards"
-SUMMARY_SCHEMA_VERSION = "p8_s3_light_cone_data_cards_summary_v1"
+SUMMARY_SCHEMA_VERSION = "p8_s3_light_cone_data_cards_summary_v2"
 
 
 def run_validation(
@@ -83,7 +83,11 @@ def run_validation(
         "ready_for_review": ok,
         "checklist_modified": False,
         "git_commit_created": False,
-        "p8_s4_or_later_started": False,
+        "validation_scope": {
+            "asserts_current_p8_s4_or_later_state": False,
+            "builds_light_cone_instances": False,
+            "assembles_character_panels": False,
+        },
         "published_cards_all_lowered": positive["published_cards_all_lowered"],
         "published_card_blocked_count": catalog.published_blocked_count,
         "numeric_values_never_pass_through_float": positive[
@@ -116,13 +120,13 @@ def run_validation(
             "serial_execution": True,
         },
         "scope": {
-            "implemented": (
+            "validated_regression": (
                 "full published light-cone definition catalog, exact Decimal-derived growth and rank data, "
                 "unique raw ability-record binding, atomic CanonicalIR admission, and typed RuleBook lookup"
             ),
-            "deferred": (
-                "player light-cone instances, selected-level value calculation, static contribution assembly, "
-                "ability graph lowering/binding, activation, scenario and runtime"
+            "not_asserted_by_this_regression": (
+                "the current implementation state of P8-S4 and later phases; their own validators "
+                "are authoritative for instances, selected-level assembly, activation, scenario, and runtime"
             ),
         },
     }

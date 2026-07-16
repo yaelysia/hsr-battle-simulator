@@ -990,6 +990,9 @@ def run_character_card_source_validation(tbgd_root: Path, output_dir: Path) -> d
             version=BASELINE_VERSION,
             avatar_profiles=tuple(card_result.avatar_profiles),
             character_data_cards=tuple(card_result.character_data_cards),
+            character_equipment_eligibilities=tuple(
+                card_result.character_equipment_eligibilities
+            ),
             character_mechanism_slots=tuple(card_result.character_mechanism_slots),
             character_trace_nodes=tuple(card_result.character_trace_nodes),
             character_eidolon_slots=tuple(card_result.character_eidolon_slots),
@@ -2267,6 +2270,7 @@ def _model_contract_checks(
         contribution_ledger=contribution_values,
         effective_skill_levels=skill_level_values,
         admitted_dynamic_mechanism_refs=mechanism_values,
+        equipment_assembly_result=base_result.equipment_assembly_result,
     )
     detached_json = detached_result.to_json()
     contribution_values.clear()
@@ -2661,7 +2665,7 @@ def _scenario_boundary_checks(
         "same_trace_enabled_and_disabled_rejected_in_kernel_fixture": not IdentityResolver(
             rules
         ).validate(overlap_scenario).ok,
-        "nonempty_equipment_is_blocked_in_s2": result_is_blocked(
+        "unknown_light_cone_is_blocked_by_typed_equipment_resolution": result_is_blocked(
             assemble_character_build(rules, nonempty_build)
         ),
         "formal_timeline_positive_contains_no_player_action_value": (

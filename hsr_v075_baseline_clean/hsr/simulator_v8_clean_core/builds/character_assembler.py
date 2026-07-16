@@ -9,6 +9,7 @@ from ..build_types import (
     StaticStatContribution,
     ir_source_from_json,
 )
+from ..equipment.models import EquipmentAssemblyResult
 from ..ir_types import same_ir_source_raw_row
 from ..rules.ir import (
     AvatarPromotionTierIR,
@@ -26,6 +27,10 @@ from .models import (
     CharacterPanelResource,
     CharacterSkillLevelResolution,
     CharacterSkillLevelSource,
+)
+from .equipment_assembler import (
+    assemble_equipment_build,
+    validate_equipment_assembly_admission,
 )
 
 
@@ -67,11 +72,16 @@ def assemble_character_build(
         static_errors.append("avatar_profile_character_identity_mismatch")
     elif profile.coverage_status != "executable":
         static_errors.append(profile.blocked_reason or "avatar_profile_not_executable")
-    equipment = build.equipment_build
-    if equipment.light_cone is not None or equipment.relics:
-        static_errors.append("p8_s2_non_empty_equipment_not_admitted")
     if static_errors or profile is None:
         return _blocked(build, *static_errors)
+
+    equipment_result = assemble_equipment_build(rules, build.equipment_build)
+    if equipment_result.assembly_status != "assembled":
+        return _blocked(
+            build,
+            *(diagnostic.reason for diagnostic in equipment_result.diagnostics),
+            equipment_result=equipment_result,
+        )
 
     tier, tier_errors = _promotion_tier(profile.promotion_tiers, build.promotion, build.level)
     if tier_errors or tier is None:
@@ -103,6 +113,7 @@ def assemble_character_build(
             source=profile.max_energy_source,
         )
     )
+    contributions.extend(equipment_result.static_contributions)
     diagnostics: list[CharacterMechanismDiagnostic] = list(skill_level_diagnostics)
     admitted_refs: list[CharacterMechanismRef] = []
     for node in selected_nodes:
@@ -153,8 +164,14 @@ def assemble_character_build(
         panel = _panel_from_ledger(contributions)
         return CharacterBuildAssemblyResult(
             assembly_status="assembled",
-            battle_admission_status="blocked" if diagnostics else "admitted",
+            battle_admission_status=(
+                "blocked"
+                if diagnostics
+                or equipment_result.battle_admission_status == "blocked"
+                else "admitted"
+            ),
             input_fingerprint=build.input_fingerprint,
+            equipment_assembly_result=equipment_result,
             base_panel=panel,
             contribution_ledger=tuple(contributions),
             effective_skill_levels=tuple(skill_levels),
@@ -176,6 +193,18 @@ def validate_character_build_admission(
         errors.append("assembly_result_does_not_match_canonical_rulebook_rebuild")
     if result.input_fingerprint != build.input_fingerprint:
         errors.append("assembly_input_fingerprint_mismatch")
+    if result.equipment_assembly_result is None:
+        errors.append("equipment_assembly_result_missing")
+    else:
+        errors.extend(
+            validate_equipment_assembly_admission(
+                rules,
+                build.equipment_build,
+                result.equipment_assembly_result,
+            )
+        )
+        if result.equipment_assembly_result.battle_admission_status != "admitted":
+            errors.append("equipment_build_not_admitted_for_battle")
     if result.assembly_status != "assembled" or result.battle_admission_status != "admitted":
         errors.append("character_build_not_admitted_for_battle")
     if result.unadmitted_mechanism_diagnostics:
@@ -204,6 +233,32 @@ def validate_character_build_admission(
             slot = rules.character_mechanism_slot(contribution.source_ref.definition_identity)
             if slot is None or slot.source != contribution.source:
                 errors.append(f"contribution_source_not_resolvable:{contribution.contribution_id}")
+        elif contribution.source_ref.definition_kind == "light_cone":
+            resolution = rules.light_cone_definition(
+                contribution.source_ref.definition_identity
+            )
+            instance = build.equipment_build.light_cone
+            tier_sources = (
+                tuple(
+                    value.source
+                    for tier in resolution.value.promotion_tiers
+                    if instance is not None
+                    and tier.promotion_stage == instance.promotion
+                    for value in tier.stat_values
+                )
+                if resolution.resolution_status == "resolved"
+                and resolution.value is not None
+                else ()
+            )
+            if (
+                instance is None
+                or instance.definition_key.definition_identity
+                != contribution.source_ref.definition_identity
+                or contribution.source not in tier_sources
+            ):
+                errors.append(
+                    f"contribution_source_not_resolvable:{contribution.contribution_id}"
+                )
         else:
             errors.append(f"contribution_source_kind_not_admitted:{contribution.contribution_id}")
     card_actions = card.action_set.get("actions") if card is not None else None
@@ -339,12 +394,22 @@ def validate_character_build_admission(
     return tuple(sorted(set(errors)))
 
 
-def _blocked(build: CharacterBuildInput, *reasons: str) -> CharacterBuildAssemblyResult:
+def _blocked(
+    build: CharacterBuildInput,
+    *reasons: str,
+    equipment_result: EquipmentAssemblyResult | None = None,
+) -> CharacterBuildAssemblyResult:
+    if equipment_result is not None and not isinstance(
+        equipment_result,
+        EquipmentAssemblyResult,
+    ):
+        raise TypeError("equipment_result must be EquipmentAssemblyResult or None")
     normalized = tuple(sorted(set(reason for reason in reasons if reason)))
     return CharacterBuildAssemblyResult(
         assembly_status="blocked",
         battle_admission_status="blocked",
         input_fingerprint=build.input_fingerprint,
+        equipment_assembly_result=equipment_result,
         blocked_reasons=normalized or ("character_build_blocked_without_reason",),
     )
 

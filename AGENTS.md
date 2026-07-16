@@ -34,8 +34,8 @@ turnbasedgamedata-main -> TBGD compiler/lowering -> Canonical IR -> Combat Core
 
 ```text
 P8 equipment build, light-cone and relic assembly
-最近代码检查点：P8-S3 光锥数据卡与来源关联验收
-当前规划主线：P8 光锥、遗器与角色构筑装配；P8-S0 至 P8-S3 已通过验收，下一步只执行 P8-S4 光锥实例、成长与命途激活决策
+最近代码检查点：P8-S4 光锥实例、成长与命途激活决策验收
+当前规划主线：P8 光锥、遗器与角色构筑装配；P8-S0 至 P8-S4 已通过验收，后续可从同一 S4 检查点在独立 worktree 分别推进光锥轨 P8-S5 和遗器轨 P8-S9
 ```
 
 当前 v8 已建立的底层范围包括：
@@ -64,6 +64,7 @@ P8 equipment build, light-cone and relic assembly
 - P8-S1 类型化装备与构筑架构已经独立验收：装备定义、玩家实例、构筑输入和装配结果已经分离；Canonical IR 与 RuleBook 具备类型化定义集合、命名空间身份、窄查询和结构化 blocked 结果；构筑及装配结果递归不可变并保留静态、动态和来源通道。旧字符串式装备边界已退役。S1 尚未 lower 真实装备，也不计算数值、合法性或执行装备效果。
 - P8-S2 正式角色构筑输入与基础面板已经独立验收：角色晋阶成长、能量上限、行迹与星魂子来源进入类型化构筑装配和统一贡献账本；正式 scenario 必须使用 source-backed 构筑，不能手填最终面板或行动值。当前常规能量角色已有真实 `assembled + admitted` 正例，未准入的辅助单位技能、额外效果和特殊资源会诚实 blocked。S2 仍未 lower 光锥或遗器。
 - P8-S3 光锥数据卡与来源关联已经独立验收：当前 162 张已发布光锥全部由三张核心表和装备能力文件投影为类型化定义，晋阶、叠影、静态属性、精确数值和唯一能力记录来源均可审计；完整目录已接入 Canonical IR 与 RuleBook。S3 不创建玩家实例、不计算指定等级属性，也不生成或执行光锥能力图。
+- P8-S4 光锥实例、成长与命途激活决策已经独立验收：玩家构筑可引用具体光锥实例，并按等级、晋阶和叠影以精确十进制装配生命、攻击、防御基础贡献；任意角色均可装备任意光锥，命途失配只令被动 inactive，基础贡献仍生效。命途匹配但静态被动或动态能力尚未准入时，保留只读面板并诚实阻断正式战斗。实例复用、非法成长、来源错绑、类型混淆和 fingerprint 篡改均有结构化负例。
 - `simulator_v8_ui/` 本地 UI 测试台，用于 scenario 编排和审计展示，不进入规则系统。
 
 当前仍未完整实现的大块：
@@ -75,7 +76,7 @@ P8 equipment build, light-cone and relic assembly
 - 目标系统剩余部分：更多排序、随机、fetch、相邻目标、唯一实体、召唤物/servant 扩展目标、特殊玩法目标。
 - 全怪物技能、全怪物被动、阶段切换、召唤、波次、关卡倍率。
 - 敌方行动候选扩面、波次系统扩面、P3 inherited summon/target gaps、servant damage formula、特殊战斗模式；敌方 AI 不进入 core，由外部推演器控制。
-- 光锥、遗器、环境、关卡机制。
+- 光锥静态被动与动态能力、遗器、环境、关卡机制。
 - `OnCustomEvent`、`OnWaveMonster` 等需要真实事件源或波次系统的回调。
 
 ## 工作区目录
@@ -125,12 +126,13 @@ v8 当前只保留少数高密度长期文档，避免文档膨胀影响索引�
 13. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/P6_ARCHITECTURE_BOUNDARY_REFACTOR_TASK_PLAN.md`
 14. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/P7_KERNEL_TRUST_AND_COMBAT_SEMANTICS_REPAIR_TASK_PLAN.md`
 15. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/P8_EQUIPMENT_BUILD_LIGHT_CONE_RELIC_TASK_PLAN.md`
-16. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p7_kernel_trust_and_combat_semantics_final_checkpoint.md`
-17. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p5_formula_dynamic_param_binding_checkpoint.md`
-18. `hsr_v075_baseline_clean/hsr/live_validation_reports/archive/phase1/v8_p1_final_acceptance_checkpoint_v0_292.md`
-19. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_status_target_event_database_audit_checkpoint_v0_287.md`
-20. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_ir_checkpoint_v0_288.md`
-21. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_sequence_filter_retarget_checkpoint_v0_289.md`
+16. `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/docs/p8_execution_cards/README.md`
+17. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p7_kernel_trust_and_combat_semantics_final_checkpoint.md`
+18. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_p5_formula_dynamic_param_binding_checkpoint.md`
+19. `hsr_v075_baseline_clean/hsr/live_validation_reports/archive/phase1/v8_p1_final_acceptance_checkpoint_v0_292.md`
+20. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_status_target_event_database_audit_checkpoint_v0_287.md`
+21. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_ir_checkpoint_v0_288.md`
+22. `hsr_v075_baseline_clean/hsr/live_validation_reports/v8_target_expression_sequence_filter_retarget_checkpoint_v0_289.md`
 
 P1 过程计划和中间报告已经归档，默认不要作为当前线程入口：
 
@@ -225,9 +227,9 @@ UI 只能消费 core/API 输出的战斗事实、合法动作、合法目标、�
 - 阶段红线：列出常见误判，防止“看起来可用”冒充完成。
 - 最小验证：只列本阶段必须跑的验证和触发条件。
 
-计划必须显式要求一次只执行一个阶段。后续阶段只能作为背景，不允许提前实现、提前打勾或把后续目标混进当前阶段。若阶段内容太多，应继续拆子阶段，而不是把大量目标塞进一个阶段。
+单个执行线程一次只允许执行一个阶段。后续阶段只能作为背景，不允许提前实现、提前打勾或把后续目标混进当前阶段。若阶段内容太多，应继续拆子阶段，而不是把大量目标塞进一个阶段。只有依赖图明确互不依赖、各自从同一已验收 commit 建立独立 Git worktree 时，才允许多个线程并行不同轨道；同一工作区禁止并行实现，汇合阶段必须等待所有前置轨验收并合并。
 
-每个阶段开始前必须先产出阶段执行卡，并等待确认后再改文件。执行卡必须具体到详细阶段目标、验收标准、目标与证据映射、目标产物、拟改文件、拟新增或修改的函数/脚本/页面、结构化判定谓词、blocked/gap/deferred 条件、验证命令、明确不跑的验证及理由、资源限峰值措施、最终 evidence。执行卡不能只是复述计划条款。
+每个阶段开始前必须先由规划线程产出并确认阶段执行卡，再允许执行线程改文件。执行线程先只读核对当前代码与数据事实；轻微偏差可在报告中说明，若偏差改变目标、职责或验收谓词，必须停止并交回规划线程修订，不得自行改卡。执行卡必须具体到详细阶段目标、验收标准、目标与证据映射、目标产物、拟改文件、拟新增或修改的函数/脚本/页面、结构化判定谓词、blocked/gap/deferred 条件、验证命令、明确不跑的验证及理由、资源限峰值措施、最终 evidence。执行卡不能只是复述计划条款。
 
 执行卡里的目标和验收必须写细。目标要说明“完成后系统应变成什么样”，验收要逐条说明“做到什么才算通过、出现什么不能通过、用哪份代码/验证/报告证明”。禁止只写一句话目标，也禁止用“验证通过”“边界收紧”“契约优化”这类抽象说法替代可检查标准。
 
@@ -240,6 +242,8 @@ UI 只能消费 core/API 输出的战斗事实、合法动作、合法目标、�
 计划文档只能有一套执行清单。背景、设计原则、页面规划、契约说明、风险矩阵只能作为参考资料，不能再写成另一套“完成要求 / 验收要求 / 防漏验收”清单；否则执行线程会在多个清单之间失焦。需要验收或打标的内容必须集中到对应阶段小节。
 
 P4 的执行质量明显改善，后续大型计划应沿用这个正向模式：先用背景和约束建立方向，但把可执行内容压缩到唯一阶段清单；每阶段只做一个目标，先提交阶段执行卡，再产出 `ready_for_review` 证据包；最终聚合只能在所有分步验收后实现，且必须继承分步矩阵中的 gap。这个结构能显著降低执行线程偷跑、漏做、自勾和用聚合脚本掩盖分步问题的概率。
+
+P8-S5 至 S21 已采用“规划线程预写执行卡库”的新流程，入口为 `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/docs/p8_execution_cards/README.md`。执行线程不再临时重写目标，只核对事实、实施当前卡并提交 `ready_for_review`。每张卡同时给出推荐模型、推理等级和普通/Goal 模式；Goal 的目标也只能覆盖一张卡，不能自动跨阶段。
 
 本项目是未完成模拟器，计划和验收不能把目标写得过大过泛。每个阶段、每个 checklist 项都应先按来源和实现状态拆成三态：
 

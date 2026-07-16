@@ -8,7 +8,11 @@ from decimal import Decimal, InvalidOperation
 from pathlib import PurePosixPath
 from typing import Generic, Literal, TypeVar, cast
 
-from ..build_types import StaticStatContribution
+from ..build_types import (
+    StaticStatContribution,
+    immutable_ir_source,
+    ir_source_from_json,
+)
 from ..immutable_json import FrozenJSONDict, freeze_json, thaw_json
 from ..ir_types import CoverageStatus, IRSource, JSONValue
 
@@ -24,9 +28,16 @@ EquipmentDefinitionKind = Literal[
 ]
 EquipmentResolutionStatus = Literal["resolved", "blocked"]
 AssemblyStatus = Literal["assembled", "blocked"]
+BattleAdmissionStatus = Literal["admitted", "blocked"]
 ActivationStatus = Literal["active", "inactive", "blocked"]
 LedgerChannel = Literal["static", "dynamic", "activation"]
 LightConePublicationStatus = Literal["published", "unpublished", "status_unknown"]
+EquipmentGapClassification = Literal[
+    "lowering_gap",
+    "admission_gap",
+    "implementation_missing",
+]
+EquipmentBattleBlockerChannel = Literal["static_passive", "dynamic_ability"]
 
 LIGHT_CONE_PUBLICATION_STATES = frozenset(
     {"published", "unpublished", "status_unknown"}
@@ -405,7 +416,9 @@ class EquipmentDefinitionKey:
 class CharacterEquipmentEligibilityIR:
     definition_key: EquipmentDefinitionKey
     character_card_id: str
-    allowed_light_cone_paths: tuple[str, ...]
+    character_profile_id: str
+    character_path_type: str
+    passive_activation_path_types: tuple[str, ...]
     source: IRSource
     coverage_status: CoverageStatus = "blocked"
     blocked_reason: str = "character_equipment_eligibility_not_lowered"
@@ -413,12 +426,27 @@ class CharacterEquipmentEligibilityIR:
     def __post_init__(self) -> None:
         _require_kind(self.definition_key, "character_equipment_eligibility")
         _require_text(self.character_card_id, "character_card_id")
+        if self.definition_key.definition_identity != self.character_card_id:
+            raise ValueError("character equipment eligibility identity must match character_card_id")
+        _require_text(self.character_profile_id, "character_profile_id")
+        _require_text(self.character_path_type, "character_path_type")
         object.__setattr__(
             self,
-            "allowed_light_cone_paths",
-            _string_tuple(self.allowed_light_cone_paths, "allowed_light_cone_paths"),
+            "passive_activation_path_types",
+            _string_tuple(
+                self.passive_activation_path_types,
+                "passive_activation_path_types",
+            ),
         )
-        _require_equipment_source(self.source)
+        if not self.passive_activation_path_types:
+            raise ValueError("character equipment eligibility requires activation path types")
+        if len(set(self.passive_activation_path_types)) != len(
+            self.passive_activation_path_types
+        ):
+            raise ValueError("passive activation path types must be unique")
+        if self.character_path_type not in self.passive_activation_path_types:
+            raise ValueError("character path must be present in passive activation path types")
+        object.__setattr__(self, "source", immutable_ir_source(self.source))
         _validate_coverage(self.coverage_status, self.blocked_reason)
 
     def to_json(self) -> dict[str, JSONValue]:
@@ -429,21 +457,50 @@ class CharacterEquipmentEligibilityIR:
             self.blocked_reason,
             {
                 "character_card_id": self.character_card_id,
-                "allowed_light_cone_paths": list(self.allowed_light_cone_paths),
+                "character_profile_id": self.character_profile_id,
+                "character_path_type": self.character_path_type,
+                "passive_activation_path_types": list(
+                    self.passive_activation_path_types
+                ),
             },
         )
 
     @classmethod
     def from_json(cls, value: object) -> CharacterEquipmentEligibilityIR:
         row = _mapping(value, "character_equipment_eligibility")
+        _require_exact_fields(
+            row,
+            frozenset(
+                {
+                    "definition_key",
+                    "character_card_id",
+                    "character_profile_id",
+                    "character_path_type",
+                    "passive_activation_path_types",
+                    "source",
+                    "coverage_status",
+                    "blocked_reason",
+                }
+            ),
+            "character_equipment_eligibility",
+        )
         return cls(
             definition_key=EquipmentDefinitionKey.from_json(row.get("definition_key")),
             character_card_id=_text(row.get("character_card_id"), "character_card_id"),
-            allowed_light_cone_paths=tuple(
-                _text(item, "allowed_light_cone_paths[]")
-                for item in _sequence(row.get("allowed_light_cone_paths"), "allowed_light_cone_paths")
+            character_profile_id=_text(
+                row.get("character_profile_id"), "character_profile_id"
             ),
-            source=_source_from_json(row.get("source")),
+            character_path_type=_text(
+                row.get("character_path_type"), "character_path_type"
+            ),
+            passive_activation_path_types=tuple(
+                _text(item, "passive_activation_path_types[]")
+                for item in _sequence(
+                    row.get("passive_activation_path_types"),
+                    "passive_activation_path_types",
+                )
+            ),
+            source=ir_source_from_json(row.get("source")),
             coverage_status=_coverage_from_json(row),
             blocked_reason=_text(row.get("blocked_reason", ""), "blocked_reason"),
         )
@@ -1322,7 +1379,10 @@ class EquipmentResolutionCandidate:
         if not isinstance(self.definition_key, EquipmentDefinitionKey):
             raise TypeError("resolution candidate definition_key must be EquipmentDefinitionKey")
         _require_text(self.object_type, "object_type")
-        _require_equipment_source(self.source)
+        if self.definition_key.definition_kind == "character_equipment_eligibility":
+            object.__setattr__(self, "source", immutable_ir_source(self.source))
+        else:
+            _require_equipment_source(self.source)
 
     @property
     def diagnostic_id(self) -> str:
@@ -1348,10 +1408,20 @@ class EquipmentResolutionCandidate:
     @classmethod
     def from_json(cls, value: object) -> EquipmentResolutionCandidate:
         row = _mapping(value, "resolution_candidate")
+        _require_exact_fields(
+            row,
+            frozenset({"definition_key", "object_type", "diagnostic_id", "source"}),
+            "resolution_candidate",
+        )
+        key = EquipmentDefinitionKey.from_json(row.get("definition_key"))
         return cls(
-            definition_key=EquipmentDefinitionKey.from_json(row.get("definition_key")),
+            definition_key=key,
             object_type=_text(row.get("object_type"), "object_type"),
-            source=_source_from_json(row.get("source")),
+            source=(
+                ir_source_from_json(row.get("source"))
+                if key.definition_kind == "character_equipment_eligibility"
+                else _source_from_json(row.get("source"))
+            ),
         )
 
 
@@ -1454,6 +1524,7 @@ class LightConeInstanceInput:
     level: int
     promotion: int
     superimposition: int
+    instance_fingerprint: str = field(init=False)
 
     def __post_init__(self) -> None:
         _require_text(self.instance_id, "light_cone.instance_id")
@@ -1461,8 +1532,13 @@ class LightConeInstanceInput:
         _require_integer(self.level, "light_cone.level")
         _require_integer(self.promotion, "light_cone.promotion")
         _require_integer(self.superimposition, "light_cone.superimposition")
+        object.__setattr__(
+            self,
+            "instance_fingerprint",
+            _canonical_fingerprint(self._fingerprint_payload()),
+        )
 
-    def to_json(self) -> dict[str, JSONValue]:
+    def _fingerprint_payload(self) -> dict[str, JSONValue]:
         return {
             "instance_id": self.instance_id,
             "definition_key": self.definition_key.to_json(),
@@ -1471,16 +1547,41 @@ class LightConeInstanceInput:
             "superimposition": self.superimposition,
         }
 
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            **self._fingerprint_payload(),
+            "instance_fingerprint": self.instance_fingerprint,
+        }
+
     @classmethod
     def from_json(cls, value: object) -> LightConeInstanceInput:
         row = _mapping(value, "light_cone_instance")
-        return cls(
+        _require_exact_fields(
+            row,
+            frozenset(
+                {
+                    "instance_id",
+                    "definition_key",
+                    "level",
+                    "promotion",
+                    "superimposition",
+                    "instance_fingerprint",
+                }
+            ),
+            "light_cone_instance",
+        )
+        result = cls(
             instance_id=_text(row.get("instance_id"), "instance_id"),
             definition_key=EquipmentDefinitionKey.from_json(row.get("definition_key")),
             level=_integer(row.get("level"), "level"),
             promotion=_integer(row.get("promotion"), "promotion"),
             superimposition=_integer(row.get("superimposition"), "superimposition"),
         )
+        encoded = _text(row.get("instance_fingerprint"), "instance_fingerprint")
+        _require_sha256(encoded, "instance_fingerprint")
+        if encoded != result.instance_fingerprint:
+            raise ValueError("light-cone instance fingerprint mismatch")
+        return result
 
 
 @dataclass(frozen=True)
@@ -1613,6 +1714,20 @@ class EquipmentBuildInput:
     @classmethod
     def from_json(cls, value: object) -> EquipmentBuildInput:
         row = _mapping(value, "equipment_build_input")
+        _require_exact_fields(
+            row,
+            frozenset(
+                {
+                    "build_id",
+                    "character_card_id",
+                    "light_cone",
+                    "relics",
+                    "identity_labels",
+                    "build_fingerprint",
+                }
+            ),
+            "equipment_build_input",
+        )
         light_cone = _optional_mapping(row.get("light_cone"), "light_cone")
         result = cls(
             build_id=_text(row.get("build_id"), "build_id"),
@@ -1627,8 +1742,9 @@ class EquipmentBuildInput:
                 for key, item in _mapping(row.get("identity_labels"), "identity_labels").items()
             },
         )
-        encoded_fingerprint = row.get("build_fingerprint")
-        if encoded_fingerprint is not None and encoded_fingerprint != result.build_fingerprint:
+        encoded_fingerprint = _text(row.get("build_fingerprint"), "build_fingerprint")
+        _require_sha256(encoded_fingerprint, "build_fingerprint")
+        if encoded_fingerprint != result.build_fingerprint:
             raise ValueError("equipment build fingerprint does not match the encoded payload")
         return result
 
@@ -1662,6 +1778,20 @@ class DynamicMechanismSelection:
     @classmethod
     def from_json(cls, value: object) -> DynamicMechanismSelection:
         row = _mapping(value, "dynamic_mechanism_selection")
+        _require_exact_fields(
+            row,
+            frozenset(
+                {
+                    "selection_id",
+                    "mechanism_key",
+                    "graph_ref_id",
+                    "source",
+                    "coverage_status",
+                    "blocked_reason",
+                }
+            ),
+            "dynamic_mechanism_selection",
+        )
         return cls(
             selection_id=_text(row.get("selection_id"), "selection_id"),
             mechanism_key=EquipmentDefinitionKey.from_json(row.get("mechanism_key")),
@@ -1673,37 +1803,354 @@ class DynamicMechanismSelection:
 
 
 @dataclass(frozen=True)
+class LightConeAssemblySelection:
+    instance_id: str
+    instance_fingerprint: str
+    definition_key: EquipmentDefinitionKey
+    level: int
+    promotion_stage: int
+    superimposition_level: int
+    skill_id: str
+    parameter_indices: tuple[int, ...]
+    static_property_indices: tuple[int, ...]
+    ability_name: str
+    ability_record_index: int
+    promotion_source: IRSource
+    superimposition_source: IRSource
+    ability_source: IRSource
+    base_contribution_ids: tuple[str, ...]
+    selection_fingerprint: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        _require_text(self.instance_id, "light-cone selection instance_id")
+        _require_sha256(self.instance_fingerprint, "instance_fingerprint")
+        _require_kind(self.definition_key, "light_cone")
+        for field_name in ("level", "promotion_stage", "superimposition_level"):
+            _require_integer(getattr(self, field_name), field_name)
+        if self.level <= 0 or self.promotion_stage < 0 or self.superimposition_level <= 0:
+            raise ValueError("light-cone selection progression is outside the valid type boundary")
+        _require_text(self.skill_id, "skill_id")
+        _require_text(self.ability_name, "ability_name")
+        _require_integer(self.ability_record_index, "ability_record_index")
+        if self.ability_record_index < 0:
+            raise ValueError("ability_record_index must be non-negative")
+        for field_name in ("parameter_indices", "static_property_indices"):
+            raw = getattr(self, field_name)
+            if not isinstance(raw, (list, tuple)) or not all(
+                isinstance(item, int) and not isinstance(item, bool) and item >= 0
+                for item in raw
+            ):
+                raise TypeError(f"{field_name} must contain non-negative integers")
+            values = tuple(raw)
+            if values != tuple(sorted(set(values))):
+                raise ValueError(f"{field_name} must be unique and ordered")
+            object.__setattr__(self, field_name, values)
+        contribution_ids = _string_tuple(
+            self.base_contribution_ids,
+            "base_contribution_ids",
+        )
+        if not contribution_ids or len(set(contribution_ids)) != len(contribution_ids):
+            raise ValueError("base contribution identities must be non-empty and unique")
+        object.__setattr__(self, "base_contribution_ids", contribution_ids)
+        for source in (
+            self.promotion_source,
+            self.superimposition_source,
+            self.ability_source,
+        ):
+            _require_equipment_source(source)
+        if (
+            self.promotion_source.raw_type != "EquipmentPromotionConfig"
+            or self.promotion_source.raw_id
+            != f"{self.definition_key.definition_identity}:{self.promotion_stage}"
+        ):
+            raise ValueError("promotion selection source identity mismatch")
+        if (
+            self.superimposition_source.raw_type != "EquipmentSkillConfig"
+            or self.superimposition_source.raw_id
+            != f"{self.skill_id}:{self.superimposition_level}"
+        ):
+            raise ValueError("superimposition selection source identity mismatch")
+        if (
+            self.ability_source.raw_type != "AbilityList"
+            or self.ability_source.raw_id != self.ability_name
+            or self.ability_source.evidence.get("json_path")
+            != f"$.AbilityList[{self.ability_record_index}]"
+        ):
+            raise ValueError("ability selection source identity mismatch")
+        fingerprints = tuple(
+            source.evidence.get("source_fingerprint")
+            for source in (
+                self.promotion_source,
+                self.superimposition_source,
+                self.ability_source,
+            )
+        )
+        if any(item != fingerprints[0] for item in fingerprints[1:]):
+            raise ValueError("light-cone selection sources must share one source fingerprint")
+        object.__setattr__(
+            self,
+            "selection_fingerprint",
+            _canonical_fingerprint(self._fingerprint_payload()),
+        )
+
+    def _fingerprint_payload(self) -> dict[str, JSONValue]:
+        return {
+            "instance_id": self.instance_id,
+            "instance_fingerprint": self.instance_fingerprint,
+            "definition_key": self.definition_key.to_json(),
+            "level": self.level,
+            "promotion_stage": self.promotion_stage,
+            "superimposition_level": self.superimposition_level,
+            "skill_id": self.skill_id,
+            "parameter_indices": list(self.parameter_indices),
+            "static_property_indices": list(self.static_property_indices),
+            "ability_name": self.ability_name,
+            "ability_record_index": self.ability_record_index,
+            "promotion_source": self.promotion_source.to_json(),
+            "superimposition_source": self.superimposition_source.to_json(),
+            "ability_source": self.ability_source.to_json(),
+            "base_contribution_ids": list(self.base_contribution_ids),
+        }
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            **self._fingerprint_payload(),
+            "selection_fingerprint": self.selection_fingerprint,
+        }
+
+    @classmethod
+    def from_json(cls, value: object) -> LightConeAssemblySelection:
+        row = _mapping(value, "light_cone_assembly_selection")
+        fields = frozenset(
+            {
+                "instance_id",
+                "instance_fingerprint",
+                "definition_key",
+                "level",
+                "promotion_stage",
+                "superimposition_level",
+                "skill_id",
+                "parameter_indices",
+                "static_property_indices",
+                "ability_name",
+                "ability_record_index",
+                "promotion_source",
+                "superimposition_source",
+                "ability_source",
+                "base_contribution_ids",
+                "selection_fingerprint",
+            }
+        )
+        _require_exact_fields(row, fields, "light_cone_assembly_selection")
+        result = cls(
+            instance_id=_text(row.get("instance_id"), "instance_id"),
+            instance_fingerprint=_text(
+                row.get("instance_fingerprint"), "instance_fingerprint"
+            ),
+            definition_key=EquipmentDefinitionKey.from_json(row.get("definition_key")),
+            level=_integer(row.get("level"), "level"),
+            promotion_stage=_integer(row.get("promotion_stage"), "promotion_stage"),
+            superimposition_level=_integer(
+                row.get("superimposition_level"), "superimposition_level"
+            ),
+            skill_id=_text(row.get("skill_id"), "skill_id"),
+            parameter_indices=tuple(
+                _integer(item, "parameter_indices[]")
+                for item in _sequence(row.get("parameter_indices"), "parameter_indices")
+            ),
+            static_property_indices=tuple(
+                _integer(item, "static_property_indices[]")
+                for item in _sequence(
+                    row.get("static_property_indices"), "static_property_indices"
+                )
+            ),
+            ability_name=_text(row.get("ability_name"), "ability_name"),
+            ability_record_index=_integer(
+                row.get("ability_record_index"), "ability_record_index"
+            ),
+            promotion_source=_source_from_json(row.get("promotion_source")),
+            superimposition_source=_source_from_json(
+                row.get("superimposition_source")
+            ),
+            ability_source=_source_from_json(row.get("ability_source")),
+            base_contribution_ids=tuple(
+                _text(item, "base_contribution_ids[]")
+                for item in _sequence(
+                    row.get("base_contribution_ids"), "base_contribution_ids"
+                )
+            ),
+        )
+        encoded = _text(row.get("selection_fingerprint"), "selection_fingerprint")
+        _require_sha256(encoded, "selection_fingerprint")
+        if encoded != result.selection_fingerprint:
+            raise ValueError("light-cone selection fingerprint mismatch")
+        return result
+
+
+@dataclass(frozen=True)
+class EquipmentActivationBasis:
+    basis_kind: Literal["light_cone_path_equality"]
+    comparison_policy: Literal["exact_internal_path_identity_equality"]
+    policy_origin: Literal["build_assembly_rule"]
+    character_eligibility_key: EquipmentDefinitionKey
+    light_cone_definition_key: EquipmentDefinitionKey
+    character_path_type: str
+    light_cone_path_type: str
+    character_path_source: IRSource
+    light_cone_path_source: IRSource
+
+    def __post_init__(self) -> None:
+        if self.basis_kind != "light_cone_path_equality":
+            raise ValueError("unsupported equipment activation basis kind")
+        if self.comparison_policy != "exact_internal_path_identity_equality":
+            raise ValueError("unsupported equipment activation comparison policy")
+        if self.policy_origin != "build_assembly_rule":
+            raise ValueError("equipment activation policy must remain a derived build rule")
+        _require_kind(
+            self.character_eligibility_key,
+            "character_equipment_eligibility",
+        )
+        _require_kind(self.light_cone_definition_key, "light_cone")
+        _require_text(self.character_path_type, "character_path_type")
+        _require_text(self.light_cone_path_type, "light_cone_path_type")
+        object.__setattr__(
+            self,
+            "character_path_source",
+            immutable_ir_source(self.character_path_source),
+        )
+        _require_equipment_source(self.light_cone_path_source)
+        if (
+            self.light_cone_path_source.raw_id
+            != self.light_cone_definition_key.definition_identity
+        ):
+            raise ValueError("light-cone activation path source identity mismatch")
+
+    @property
+    def values_match(self) -> bool:
+        return self.character_path_type == self.light_cone_path_type
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "basis_kind": self.basis_kind,
+            "comparison_policy": self.comparison_policy,
+            "policy_origin": self.policy_origin,
+            "character_eligibility_key": self.character_eligibility_key.to_json(),
+            "light_cone_definition_key": self.light_cone_definition_key.to_json(),
+            "character_path_type": self.character_path_type,
+            "light_cone_path_type": self.light_cone_path_type,
+            "character_path_source": self.character_path_source.to_json(),
+            "light_cone_path_source": self.light_cone_path_source.to_json(),
+        }
+
+    @classmethod
+    def from_json(cls, value: object) -> EquipmentActivationBasis:
+        row = _mapping(value, "equipment_activation_basis")
+        _require_exact_fields(
+            row,
+            frozenset(
+                {
+                    "basis_kind",
+                    "comparison_policy",
+                    "policy_origin",
+                    "character_eligibility_key",
+                    "light_cone_definition_key",
+                    "character_path_type",
+                    "light_cone_path_type",
+                    "character_path_source",
+                    "light_cone_path_source",
+                }
+            ),
+            "equipment_activation_basis",
+        )
+        return cls(
+            basis_kind=cast(
+                Literal["light_cone_path_equality"],
+                _text(row.get("basis_kind"), "basis_kind"),
+            ),
+            comparison_policy=cast(
+                Literal["exact_internal_path_identity_equality"],
+                _text(row.get("comparison_policy"), "comparison_policy"),
+            ),
+            policy_origin=cast(
+                Literal["build_assembly_rule"],
+                _text(row.get("policy_origin"), "policy_origin"),
+            ),
+            character_eligibility_key=EquipmentDefinitionKey.from_json(
+                row.get("character_eligibility_key")
+            ),
+            light_cone_definition_key=EquipmentDefinitionKey.from_json(
+                row.get("light_cone_definition_key")
+            ),
+            character_path_type=_text(
+                row.get("character_path_type"), "character_path_type"
+            ),
+            light_cone_path_type=_text(
+                row.get("light_cone_path_type"), "light_cone_path_type"
+            ),
+            character_path_source=ir_source_from_json(
+                row.get("character_path_source")
+            ),
+            light_cone_path_source=_source_from_json(
+                row.get("light_cone_path_source")
+            ),
+        )
+
+
+@dataclass(frozen=True)
 class EquipmentActivationDecision:
     decision_id: str
     definition_key: EquipmentDefinitionKey
     activation_status: ActivationStatus
-    reason: str
-    source: IRSource
+    reason_code: str
+    basis: EquipmentActivationBasis
 
     def __post_init__(self) -> None:
         _require_text(self.decision_id, "decision_id")
         if not isinstance(self.definition_key, EquipmentDefinitionKey):
             raise TypeError("activation decision definition_key must be EquipmentDefinitionKey")
+        _require_kind(self.definition_key, "light_cone")
         _require_string(self.activation_status, "activation_status")
-        if self.activation_status not in {"active", "inactive", "blocked"}:
+        if self.activation_status not in {"active", "inactive"}:
             raise ValueError("invalid activation_status")
-        _require_string(self.reason, "activation reason")
-        if self.activation_status != "active" and not self.reason:
-            raise ValueError("inactive or blocked activation decisions require a reason")
-        _require_equipment_source(self.source)
+        _require_text(self.reason_code, "activation reason_code")
+        if not isinstance(self.basis, EquipmentActivationBasis):
+            raise TypeError("activation decision basis must be EquipmentActivationBasis")
+        if self.basis.light_cone_definition_key != self.definition_key:
+            raise ValueError("activation decision basis definition mismatch")
+        expected_status = "active" if self.basis.values_match else "inactive"
+        expected_reason = (
+            "light_cone_path_match"
+            if self.basis.values_match
+            else "light_cone_path_mismatch"
+        )
+        if self.activation_status != expected_status or self.reason_code != expected_reason:
+            raise ValueError("activation decision does not match the derived path comparison")
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
             "decision_id": self.decision_id,
             "definition_key": self.definition_key.to_json(),
             "activation_status": self.activation_status,
-            "reason": self.reason,
-            "source": self.source.to_json(),
+            "reason_code": self.reason_code,
+            "basis": self.basis.to_json(),
         }
 
     @classmethod
     def from_json(cls, value: object) -> EquipmentActivationDecision:
         row = _mapping(value, "equipment_activation_decision")
+        _require_exact_fields(
+            row,
+            frozenset(
+                {
+                    "decision_id",
+                    "definition_key",
+                    "activation_status",
+                    "reason_code",
+                    "basis",
+                }
+            ),
+            "equipment_activation_decision",
+        )
         return cls(
             decision_id=_text(row.get("decision_id"), "decision_id"),
             definition_key=EquipmentDefinitionKey.from_json(row.get("definition_key")),
@@ -1711,8 +2158,98 @@ class EquipmentActivationDecision:
                 ActivationStatus,
                 _text(row.get("activation_status"), "activation_status"),
             ),
-            reason=_text(row.get("reason", ""), "reason"),
-            source=_source_from_json(row.get("source")),
+            reason_code=_text(row.get("reason_code"), "reason_code"),
+            basis=EquipmentActivationBasis.from_json(row.get("basis")),
+        )
+
+
+@dataclass(frozen=True)
+class EquipmentBattleAdmissionBlocker:
+    blocker_id: str
+    channel: EquipmentBattleBlockerChannel
+    target_definition_key: EquipmentDefinitionKey
+    gap_classification: EquipmentGapClassification
+    reason_code: str
+    source_refs: tuple[IRSource, ...]
+
+    def __post_init__(self) -> None:
+        _require_text(self.blocker_id, "blocker_id")
+        if self.channel not in {"static_passive", "dynamic_ability"}:
+            raise ValueError("invalid equipment battle blocker channel")
+        _require_kind(self.target_definition_key, "light_cone")
+        if self.gap_classification not in {
+            "lowering_gap",
+            "admission_gap",
+            "implementation_missing",
+        }:
+            raise ValueError("invalid equipment gap classification")
+        _require_text(self.reason_code, "reason_code")
+        if not isinstance(self.source_refs, (list, tuple)) or not self.source_refs:
+            raise TypeError("equipment battle blockers require source_refs")
+        sources = tuple(self.source_refs)
+        for source in sources:
+            _require_equipment_source(source)
+        object.__setattr__(
+            self,
+            "source_refs",
+            tuple(
+                sorted(
+                    sources,
+                    key=lambda item: (
+                        item.source_path,
+                        item.raw_type,
+                        item.raw_id,
+                        str(item.evidence.get("json_path") or ""),
+                    ),
+                )
+            ),
+        )
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "blocker_id": self.blocker_id,
+            "channel": self.channel,
+            "target_definition_key": self.target_definition_key.to_json(),
+            "gap_classification": self.gap_classification,
+            "reason_code": self.reason_code,
+            "source_refs": [source.to_json() for source in self.source_refs],
+        }
+
+    @classmethod
+    def from_json(cls, value: object) -> EquipmentBattleAdmissionBlocker:
+        row = _mapping(value, "equipment_battle_admission_blocker")
+        _require_exact_fields(
+            row,
+            frozenset(
+                {
+                    "blocker_id",
+                    "channel",
+                    "target_definition_key",
+                    "gap_classification",
+                    "reason_code",
+                    "source_refs",
+                }
+            ),
+            "equipment_battle_admission_blocker",
+        )
+        return cls(
+            blocker_id=_text(row.get("blocker_id"), "blocker_id"),
+            channel=cast(
+                EquipmentBattleBlockerChannel,
+                _text(row.get("channel"), "channel"),
+            ),
+            target_definition_key=EquipmentDefinitionKey.from_json(
+                row.get("target_definition_key")
+            ),
+            gap_classification=cast(
+                EquipmentGapClassification,
+                _text(row.get("gap_classification"), "gap_classification"),
+            ),
+            reason_code=_text(row.get("reason_code"), "reason_code"),
+            source_refs=tuple(
+                _source_from_json(item)
+                for item in _sequence(row.get("source_refs"), "source_refs")
+            ),
         )
 
 
@@ -1743,6 +2280,18 @@ class EquipmentSourceLedgerEntry:
     @classmethod
     def from_json(cls, value: object) -> EquipmentSourceLedgerEntry:
         row = _mapping(value, "equipment_source_ledger_entry")
+        _require_exact_fields(
+            row,
+            frozenset(
+                {
+                    "ledger_entry_id",
+                    "channel",
+                    "definition_key",
+                    "source",
+                }
+            ),
+            "equipment_source_ledger_entry",
+        )
         return cls(
             ledger_entry_id=_text(row.get("ledger_entry_id"), "ledger_entry_id"),
             channel=cast(LedgerChannel, _text(row.get("channel"), "channel")),
@@ -1791,6 +2340,18 @@ class EquipmentAssemblyDiagnostic:
     @classmethod
     def from_json(cls, value: object) -> EquipmentAssemblyDiagnostic:
         row = _mapping(value, "equipment_assembly_diagnostic")
+        _require_exact_fields(
+            row,
+            frozenset(
+                {
+                    "diagnostic_id",
+                    "reason",
+                    "requested_key",
+                    "candidates",
+                }
+            ),
+            "equipment_assembly_diagnostic",
+        )
         requested_key = _optional_mapping(row.get("requested_key"), "requested_key")
         return cls(
             diagnostic_id=_text(row.get("diagnostic_id"), "diagnostic_id"),
@@ -1808,9 +2369,12 @@ class EquipmentAssemblyResult:
     assembly_id: str
     build_fingerprint: str
     assembly_status: AssemblyStatus
+    battle_admission_status: BattleAdmissionStatus
+    light_cone_selection: LightConeAssemblySelection | None = None
     static_contributions: tuple[StaticStatContribution, ...] = ()
     dynamic_mechanisms: tuple[DynamicMechanismSelection, ...] = ()
     activation_decisions: tuple[EquipmentActivationDecision, ...] = ()
+    battle_admission_blockers: tuple[EquipmentBattleAdmissionBlocker, ...] = ()
     source_ledger: tuple[EquipmentSourceLedgerEntry, ...] = ()
     diagnostics: tuple[EquipmentAssemblyDiagnostic, ...] = ()
     result_fingerprint: str = field(init=False)
@@ -1820,6 +2384,15 @@ class EquipmentAssemblyResult:
         _require_text(self.build_fingerprint, "build_fingerprint")
         _require_sha256(self.build_fingerprint, "build_fingerprint")
         _require_string(self.assembly_status, "assembly_status")
+        if self.battle_admission_status not in {"admitted", "blocked"}:
+            raise ValueError("invalid equipment battle_admission_status")
+        if self.light_cone_selection is not None and not isinstance(
+            self.light_cone_selection,
+            LightConeAssemblySelection,
+        ):
+            raise TypeError(
+                "light_cone_selection must be LightConeAssemblySelection or None"
+            )
         object.__setattr__(
             self,
             "static_contributions",
@@ -1862,6 +2435,18 @@ class EquipmentAssemblyResult:
         )
         object.__setattr__(
             self,
+            "battle_admission_blockers",
+            cast(
+                tuple[EquipmentBattleAdmissionBlocker, ...],
+                _typed_tuple(
+                    self.battle_admission_blockers,
+                    EquipmentBattleAdmissionBlocker,
+                    "battle_admission_blockers",
+                ),
+            ),
+        )
+        object.__setattr__(
+            self,
             "source_ledger",
             cast(
                 tuple[EquipmentSourceLedgerEntry, ...],
@@ -1885,17 +2470,95 @@ class EquipmentAssemblyResult:
             ),
         )
         if self.assembly_status == "blocked":
-            if self.static_contributions or self.dynamic_mechanisms:
-                raise ValueError("blocked assembly results must have empty static and dynamic channels")
-            if any(
-                decision.activation_status == "active"
-                for decision in self.activation_decisions
+            if (
+                self.light_cone_selection is not None
+                or self.static_contributions
+                or self.dynamic_mechanisms
+                or self.activation_decisions
+                or self.battle_admission_blockers
+                or self.source_ledger
             ):
-                raise ValueError("blocked assembly results cannot contain active activation decisions")
-            if not self.diagnostics:
+                raise ValueError("blocked assembly results must have empty formal result channels")
+            if self.battle_admission_status != "blocked" or not self.diagnostics:
                 raise ValueError("blocked assembly results require diagnostics")
         elif self.assembly_status != "assembled":
             raise ValueError(f"invalid assembly_status {self.assembly_status!r}")
+        else:
+            if self.battle_admission_status == "admitted":
+                if self.battle_admission_blockers:
+                    raise ValueError("admitted equipment results cannot carry battle blockers")
+            elif not self.battle_admission_blockers:
+                raise ValueError("assembled but battle-blocked equipment requires blockers")
+            if self.light_cone_selection is None:
+                if (
+                    self.static_contributions
+                    or self.dynamic_mechanisms
+                    or self.activation_decisions
+                    or self.battle_admission_blockers
+                    or self.source_ledger
+                ):
+                    raise ValueError(
+                        "empty S4 equipment results cannot expose light-cone result channels"
+                    )
+            else:
+                contribution_ids = {
+                    item.contribution_id for item in self.static_contributions
+                }
+                if not set(self.light_cone_selection.base_contribution_ids).issubset(
+                    contribution_ids
+                ):
+                    raise ValueError(
+                        "light-cone selection base contributions are missing from the assembly result"
+                    )
+                matching_decisions = tuple(
+                    decision
+                    for decision in self.activation_decisions
+                    if decision.definition_key
+                    == self.light_cone_selection.definition_key
+                )
+                if len(matching_decisions) != 1:
+                    raise ValueError(
+                        "light-cone selections require exactly one matching activation decision"
+                    )
+                selected_base_contributions = tuple(
+                    contribution
+                    for contribution in self.static_contributions
+                    if contribution.contribution_id
+                    in self.light_cone_selection.base_contribution_ids
+                )
+                if any(
+                    contribution.source_ref.definition_kind != "light_cone"
+                    or contribution.source_ref.definition_identity
+                    != self.light_cone_selection.definition_key.definition_identity
+                    for contribution in selected_base_contributions
+                ):
+                    raise ValueError(
+                        "light-cone base contributions must reference the selected definition"
+                    )
+                if contribution_ids != set(
+                    self.light_cone_selection.base_contribution_ids
+                ):
+                    raise ValueError(
+                        "S4 light-cone results cannot carry unselected static passive contributions"
+                    )
+                if (
+                    matching_decisions[0].activation_status == "inactive"
+                    and (
+                        self.dynamic_mechanisms
+                        or self.battle_admission_blockers
+                    )
+                ):
+                    raise ValueError(
+                        "inactive light-cone passives cannot expose passive result channels"
+                    )
+                if any(
+                    blocker.target_definition_key
+                    != self.light_cone_selection.definition_key
+                    for blocker in self.battle_admission_blockers
+                ):
+                    raise ValueError(
+                        "light-cone battle blockers must target the selected definition"
+                    )
         object.__setattr__(self, "result_fingerprint", _canonical_fingerprint(self._fingerprint_payload()))
 
     def _fingerprint_payload(self) -> dict[str, JSONValue]:
@@ -1903,9 +2566,18 @@ class EquipmentAssemblyResult:
             "assembly_id": self.assembly_id,
             "build_fingerprint": self.build_fingerprint,
             "assembly_status": self.assembly_status,
+            "battle_admission_status": self.battle_admission_status,
+            "light_cone_selection": (
+                self.light_cone_selection.to_json()
+                if self.light_cone_selection is not None
+                else None
+            ),
             "static_contributions": [item.to_json() for item in self.static_contributions],
             "dynamic_mechanisms": [item.to_json() for item in self.dynamic_mechanisms],
             "activation_decisions": [item.to_json() for item in self.activation_decisions],
+            "battle_admission_blockers": [
+                item.to_json() for item in self.battle_admission_blockers
+            ],
             "source_ledger": [item.to_json() for item in self.source_ledger],
             "diagnostics": [item.to_json() for item in self.diagnostics],
         }
@@ -1916,10 +2588,40 @@ class EquipmentAssemblyResult:
     @classmethod
     def from_json(cls, value: object) -> EquipmentAssemblyResult:
         row = _mapping(value, "equipment_assembly_result")
+        _require_exact_fields(
+            row,
+            frozenset(
+                {
+                    "assembly_id",
+                    "build_fingerprint",
+                    "assembly_status",
+                    "battle_admission_status",
+                    "light_cone_selection",
+                    "static_contributions",
+                    "dynamic_mechanisms",
+                    "activation_decisions",
+                    "battle_admission_blockers",
+                    "source_ledger",
+                    "diagnostics",
+                    "result_fingerprint",
+                }
+            ),
+            "equipment_assembly_result",
+        )
+        selection = row.get("light_cone_selection")
         result = cls(
             assembly_id=_text(row.get("assembly_id"), "assembly_id"),
             build_fingerprint=_text(row.get("build_fingerprint"), "build_fingerprint"),
             assembly_status=cast(AssemblyStatus, _text(row.get("assembly_status"), "assembly_status")),
+            battle_admission_status=cast(
+                BattleAdmissionStatus,
+                _text(row.get("battle_admission_status"), "battle_admission_status"),
+            ),
+            light_cone_selection=(
+                LightConeAssemblySelection.from_json(selection)
+                if selection is not None
+                else None
+            ),
             static_contributions=tuple(
                 StaticStatContribution.from_json(item)
                 for item in _sequence(row.get("static_contributions"), "static_contributions")
@@ -1932,6 +2634,13 @@ class EquipmentAssemblyResult:
                 EquipmentActivationDecision.from_json(item)
                 for item in _sequence(row.get("activation_decisions"), "activation_decisions")
             ),
+            battle_admission_blockers=tuple(
+                EquipmentBattleAdmissionBlocker.from_json(item)
+                for item in _sequence(
+                    row.get("battle_admission_blockers"),
+                    "battle_admission_blockers",
+                )
+            ),
             source_ledger=tuple(
                 EquipmentSourceLedgerEntry.from_json(item)
                 for item in _sequence(row.get("source_ledger"), "source_ledger")
@@ -1941,8 +2650,9 @@ class EquipmentAssemblyResult:
                 for item in _sequence(row.get("diagnostics"), "diagnostics")
             ),
         )
-        encoded_fingerprint = row.get("result_fingerprint")
-        if encoded_fingerprint is not None and encoded_fingerprint != result.result_fingerprint:
+        encoded_fingerprint = _text(row.get("result_fingerprint"), "result_fingerprint")
+        _require_sha256(encoded_fingerprint, "result_fingerprint")
+        if encoded_fingerprint != result.result_fingerprint:
             raise ValueError("equipment assembly result fingerprint does not match the encoded payload")
         return result
 
