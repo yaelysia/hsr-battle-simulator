@@ -17,6 +17,13 @@ from .light_cone_cards import (
 from .monster_cards import build_monster_card_ir
 from .paths import relative_source_path
 from .. import BASELINE_VERSION
+from ..equipment.models import (
+    EquipmentAbilityParameterReadIR,
+    EquipmentDefinitionKey,
+    EquipmentMechanismRefIR,
+    LightConeDefinitionIR,
+    make_equipment_source,
+)
 from ..immutable_json import thaw_json
 from ..rules.evaluator import NumericEvaluationContext, RuleEvaluator
 from ..rules.engine_rule_registry import build_engine_rule_registry
@@ -401,6 +408,30 @@ class TBGDLowering:
             standalone_formulas,
             standalone_target_expressions,
         ) = self._lower_standalone_ability_graphs(selected_ability_files)
+        (
+            equipment_ability_graphs,
+            equipment_phases,
+            equipment_tasks,
+            equipment_effects,
+            equipment_conditions,
+            equipment_formulas,
+            equipment_target_expressions,
+            equipment_parameter_reads,
+        ) = self._lower_equipment_ability_graphs(light_cone_definitions)
+        standalone_ability_graphs.extend(equipment_ability_graphs)
+        standalone_phases.extend(equipment_phases)
+        standalone_tasks.extend(equipment_tasks)
+        standalone_effects.extend(equipment_effects)
+        standalone_conditions.extend(equipment_conditions)
+        standalone_formulas.extend(equipment_formulas)
+        standalone_target_expressions.extend(equipment_target_expressions)
+        light_cone_definitions, equipment_mechanism_refs = (
+            _attach_light_cone_equipment_mechanism_refs(
+                light_cone_definitions,
+                equipment_ability_graphs,
+                equipment_parameter_reads,
+            )
+        )
         ability_phases.extend(standalone_phases)
         ability_tasks.extend(standalone_tasks)
         effects.extend(standalone_effects)
@@ -558,6 +589,8 @@ class TBGDLowering:
             ),
             monster_data_cards=tuple(monster_data_cards),
             light_cone_definitions=tuple(light_cone_definitions),
+            equipment_ability_parameter_reads=tuple(equipment_parameter_reads),
+            equipment_mechanism_refs=tuple(equipment_mechanism_refs),
             summon_unit_definitions=tuple(summon_unit_definitions),
             unit_birth_templates=tuple(unit_birth_templates),
             summon_monster_intents=tuple(summon_monster_intents),
@@ -631,6 +664,20 @@ class TBGDLowering:
                     light_cone_catalog.catalog_definition_fingerprint
                 ),
                 "light_cone_catalog_limited": False,
+                "equipment_ability_graph_status": {
+                    "graph_count": len(equipment_ability_graphs),
+                    "executable_count": sum(
+                        1
+                        for graph in equipment_ability_graphs
+                        if graph.coverage_status == "executable"
+                    ),
+                    "partial_count": sum(
+                        1
+                        for graph in equipment_ability_graphs
+                        if graph.coverage_status != "executable"
+                    ),
+                    "parameter_read_count": len(equipment_parameter_reads),
+                },
                 "table_status": table_stats,
                 "ability_file_status": {
                     "raw_count": len(ability_files),
@@ -1797,6 +1844,171 @@ class TBGDLowering:
                     )
                 )
         return graphs, phases, tasks, effects, conditions, formulas, target_expressions
+
+    def _lower_equipment_ability_graphs(
+        self,
+        light_cone_definitions: tuple[LightConeDefinitionIR, ...],
+    ) -> tuple[
+        list[StandaloneAbilityGraphIR],
+        list[AbilityPhaseIR],
+        list[AbilityTaskIR],
+        list[EffectIR],
+        list[ConditionIR],
+        list[FormulaIR],
+        list[TargetExpressionIR],
+        list[EquipmentAbilityParameterReadIR],
+    ]:
+        """Lower S3 source rows into the existing standalone graph namespace.
+
+        Equipment graph identity is the source document plus the raw AbilityList
+        row.  AbilityName remains content, never graph identity.
+        """
+
+        graphs: list[StandaloneAbilityGraphIR] = []
+        phases: list[AbilityPhaseIR] = []
+        tasks: list[AbilityTaskIR] = []
+        effects: list[EffectIR] = []
+        conditions: list[ConditionIR] = []
+        formulas: list[FormulaIR] = []
+        target_expressions: list[TargetExpressionIR] = []
+        parameter_reads: list[EquipmentAbilityParameterReadIR] = []
+        documents: dict[str, dict[str, Any]] = {}
+        seen_rows: set[tuple[str, int]] = set()
+
+        for definition in light_cone_definitions:
+            ability_source = definition.ability_source
+            if ability_source is None:
+                continue
+            relative = ability_source.source.source_path
+            row_key = (relative, ability_source.record_index)
+            if row_key in seen_rows:
+                continue
+            seen_rows.add(row_key)
+            document = documents.get(relative)
+            if document is None:
+                path = self.tbgd_root / relative
+                try:
+                    parsed = json.loads(path.read_text(encoding="utf-8"))
+                except Exception:
+                    continue
+                if not isinstance(parsed, dict):
+                    continue
+                document = parsed
+                documents[relative] = document
+            ability_list = document.get("AbilityList")
+            if (
+                not isinstance(ability_list, list)
+                or ability_source.record_index < 0
+                or ability_source.record_index >= len(ability_list)
+            ):
+                continue
+            ability = ability_list[ability_source.record_index]
+            if not isinstance(ability, dict):
+                continue
+            ability_name = ability.get("Name") or ability.get("AbilityName")
+            if ability_name != ability_source.ability_name:
+                continue
+
+            identity = f"{relative}:ability_list_row:{ability_source.record_index}"
+            graph_id = f"standalone_equipment_ability_graph:{identity}"
+            phase_id = f"standalone_equipment_ability_phase:{identity}"
+            action_id = f"standalone_ability:{ability_name}"
+            definition_ref = _StandaloneActionRef(action_id=action_id, level=0)
+            lowered = self._lower_ability_phase_tasks(
+                definition=definition_ref,  # type: ignore[arg-type]
+                phase_id=phase_id,
+                ability_name=ability_name,
+                ability=ability,
+                ability_path=relative,
+                target_alias_registry=(
+                    document.get("GlobalTargetAlias")
+                    if isinstance(document.get("GlobalTargetAlias"), dict)
+                    else {}
+                ),
+            )
+            tasks.extend(lowered.ability_tasks)
+            effects.extend(lowered.effects)
+            conditions.extend(lowered.conditions)
+            formulas.extend(lowered.formulas)
+            target_expressions.extend(lowered.target_expressions)
+            task_ids = tuple(task.task_id for task in lowered.ability_tasks)
+            executable_task_ids = tuple(
+                task.task_id
+                for task in lowered.ability_tasks
+                if task.coverage_status == "executable" and task.effect_id
+            )
+
+            reads, invalid_read = _lower_equipment_parameter_reads(
+                graph_ref_id=graph_id,
+                ability=ability,
+                ability_source=ability_source.source,
+                ability_name=ability_name,
+                record_index=ability_source.record_index,
+            )
+            parameter_reads.extend(reads)
+            nested_modifiers = ability.get("Modifiers")
+            has_unlowered_nested_graph = isinstance(nested_modifiers, dict) and bool(
+                nested_modifiers
+            )
+            if invalid_read:
+                graph_status = "blocked"
+                graph_reason = "equipment_ability_parameter_read_invalid"
+            elif has_unlowered_nested_graph:
+                graph_status = "blocked"
+                graph_reason = "equipment_ability_nested_modifier_graph_not_lowered"
+            elif not task_ids:
+                graph_status = "blocked"
+                graph_reason = "equipment_ability_has_no_lowered_tasks"
+            elif len(executable_task_ids) != len(task_ids):
+                graph_status = "blocked"
+                graph_reason = "equipment_ability_task_graph_partial"
+            else:
+                graph_status = "executable"
+                graph_reason = ""
+
+            phase = AbilityPhaseIR(
+                phase_id=phase_id,
+                binding_id=graph_id,
+                action_id=action_id,
+                level=0,
+                ability_name=ability_name,
+                phase_index=0,
+                target_info=(
+                    _json_safe(ability.get("TargetInfo"))
+                    if isinstance(ability.get("TargetInfo"), dict)
+                    else {}
+                ),
+                opcode_summary=_ability_opcode_summary(ability),
+                callback_summaries=_ability_callback_summaries(ability),
+                source=ability_source.source,
+                coverage_status="lowered",
+                blocked_reason="",
+                task_ids=task_ids,
+            )
+            phases.append(phase)
+            graphs.append(
+                StandaloneAbilityGraphIR(
+                    standalone_ability_graph_id=graph_id,
+                    ability_name=ability_name,
+                    source_mode="mainline_equipment",
+                    phase_ids=(phase_id,),
+                    task_ids=task_ids,
+                    executable_task_ids=executable_task_ids,
+                    source=ability_source.source,
+                    coverage_status=graph_status,
+                    blocked_reason=graph_reason,
+                )
+            )
+        return (
+            graphs,
+            phases,
+            tasks,
+            effects,
+            conditions,
+            formulas,
+            target_expressions,
+            parameter_reads,
+        )
 
     def _avatar_skill_rows_by_skill_id(self) -> dict[str, dict[str, Any]]:
         rows: dict[str, dict[str, Any]] = {}
@@ -7064,6 +7276,158 @@ def _ability_map(ability_data: dict[str, Any]) -> dict[str, dict[str, Any]]:
         if isinstance(name, str) and name:
             result[name] = ability
     return result
+
+
+def _lower_equipment_parameter_reads(
+    *,
+    graph_ref_id: str,
+    ability: dict[str, Any],
+    ability_source: IRSource,
+    ability_name: str,
+    record_index: int,
+) -> tuple[list[EquipmentAbilityParameterReadIR], bool]:
+    dynamic_values = ability.get("DynamicValues")
+    if not isinstance(dynamic_values, dict):
+        return [], False
+    fingerprint = thaw_json(ability_source.evidence.get("source_fingerprint"))
+    if not isinstance(fingerprint, dict):
+        return [], True
+    reads: list[EquipmentAbilityParameterReadIR] = []
+    invalid = False
+    for value_type, values in sorted(dynamic_values.items(), key=lambda item: str(item[0])):
+        if not isinstance(value_type, str) or not isinstance(values, dict):
+            continue
+        for dynamic_hash, value_definition in sorted(
+            values.items(),
+            key=lambda item: str(item[0]),
+        ):
+            if not isinstance(value_definition, dict):
+                continue
+            read_info = value_definition.get("ReadInfo")
+            if not isinstance(read_info, dict) or read_info.get("Type") != "SkillEquip":
+                continue
+            parameter_index = read_info.get("Index")
+            dynamic_hash_text = str(dynamic_hash)
+            if (
+                not dynamic_hash_text
+                or not isinstance(parameter_index, int)
+                or isinstance(parameter_index, bool)
+                or parameter_index < 0
+            ):
+                invalid = True
+                continue
+            parameter_read_id = (
+                f"equipment_parameter_read:{ability_source.source_path}:"
+                f"json_path:$.AbilityList[{record_index}]:"
+                f"value_type:{value_type}:dynamic_hash:{dynamic_hash_text}:"
+                f"parameter_index:{parameter_index}"
+            )
+            reads.append(
+                EquipmentAbilityParameterReadIR(
+                    parameter_read_id=parameter_read_id,
+                    graph_ref_id=graph_ref_id,
+                    dynamic_hash=dynamic_hash_text,
+                    parameter_index=parameter_index,
+                    value_type=value_type,
+                    source=make_equipment_source(
+                        source_path=ability_source.source_path,
+                        raw_type="EquipmentAbilityParameterRead",
+                        raw_id=(
+                            f"{ability_name}:{dynamic_hash_text}:{parameter_index}"
+                        ),
+                        json_path=(
+                            f"$.AbilityList[{record_index}].DynamicValues."
+                            f"{value_type}.{dynamic_hash_text}.ReadInfo"
+                        ),
+                        source_fingerprint=fingerprint,
+                    ),
+                    coverage_status="lowered",
+                    blocked_reason="",
+                )
+            )
+    read_ids = tuple(item.parameter_read_id for item in reads)
+    dynamic_hashes = tuple(item.dynamic_hash for item in reads)
+    if len(read_ids) != len(set(read_ids)) or len(dynamic_hashes) != len(set(dynamic_hashes)):
+        invalid = True
+    return sorted(reads, key=lambda item: (item.parameter_index, item.dynamic_hash)), invalid
+
+
+def _attach_light_cone_equipment_mechanism_refs(
+    definitions: tuple[LightConeDefinitionIR, ...],
+    graphs: list[StandaloneAbilityGraphIR],
+    parameter_reads: list[EquipmentAbilityParameterReadIR],
+) -> tuple[tuple[LightConeDefinitionIR, ...], tuple[EquipmentMechanismRefIR, ...]]:
+    graphs_by_source: dict[tuple[str, str, str, str, str], list[StandaloneAbilityGraphIR]] = {}
+    for graph in graphs:
+        graphs_by_source.setdefault(_equipment_source_identity(graph.source), []).append(graph)
+    reads_by_graph: dict[str, list[EquipmentAbilityParameterReadIR]] = {}
+    for parameter_read in parameter_reads:
+        reads_by_graph.setdefault(parameter_read.graph_ref_id, []).append(parameter_read)
+
+    linked_definitions: list[LightConeDefinitionIR] = []
+    mechanism_refs: list[EquipmentMechanismRefIR] = []
+    for definition in definitions:
+        ability_source = definition.ability_source
+        if ability_source is None:
+            linked_definitions.append(definition)
+            continue
+        matching_graphs = graphs_by_source.get(
+            _equipment_source_identity(ability_source.source),
+            (),
+        )
+        if len(matching_graphs) != 1:
+            linked_definitions.append(definition)
+            continue
+        graph = matching_graphs[0]
+        mechanism_key = EquipmentDefinitionKey(
+            "equipment_mechanism",
+            (
+                f"light_cone:{definition.definition_key.definition_identity}:"
+                f"ability_record:{ability_source.record_index}"
+            ),
+        )
+        graph_reads = tuple(
+            sorted(
+                reads_by_graph.get(graph.standalone_ability_graph_id, ()),
+                key=lambda item: (
+                    item.parameter_index,
+                    item.dynamic_hash,
+                    item.parameter_read_id,
+                ),
+            )
+        )
+        mechanism_refs.append(
+            EquipmentMechanismRefIR(
+                definition_key=mechanism_key,
+                graph_ref_id=graph.standalone_ability_graph_id,
+                parameter_binding_ids=tuple(
+                    item.parameter_read_id for item in graph_reads
+                ),
+                source=ability_source.source,
+                coverage_status="lowered",
+                blocked_reason="",
+            )
+        )
+        linked_definitions.append(
+            replace(definition, mechanism_ref_ids=(mechanism_key,))
+        )
+    return tuple(linked_definitions), tuple(mechanism_refs)
+
+
+def _equipment_source_identity(source: IRSource) -> tuple[str, str, str, str, str]:
+    fingerprint = source.evidence.get("source_fingerprint")
+    fingerprint_sha = (
+        str(fingerprint.get("sha256") or "")
+        if isinstance(fingerprint, dict)
+        else ""
+    )
+    return (
+        source.source_path,
+        source.raw_type,
+        source.raw_id,
+        str(source.evidence.get("json_path") or ""),
+        fingerprint_sha,
+    )
 
 
 def _ability_opcode_summary(ability: dict[str, Any]) -> dict[str, Any]:

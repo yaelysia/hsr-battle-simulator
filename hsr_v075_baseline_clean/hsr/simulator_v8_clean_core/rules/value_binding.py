@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
+from ..build_types import immutable_ir_source
 from ..core.model import JSONValue
+from ..ir_types import IRSource
 from .evaluator import NumericEvaluationContext, RuleEvaluator
 from .expression_ir import numeric_dynamic_hash, numeric_fixed_value
 from .rulebook import RuleBook
@@ -181,6 +184,161 @@ class ValueResolution:
             "request": self.request,
             "delegate_resolution": self.delegate_resolution,
             "context_keys": list(self.context_keys),
+        }
+
+
+def _canonical_exact_decimal(value: object, field_name: str) -> str:
+    if not isinstance(value, str):
+        raise TypeError(f"{field_name} must be canonical decimal text")
+    try:
+        number = Decimal(value)
+    except InvalidOperation as exc:
+        raise ValueError(f"{field_name} must be decimal text") from exc
+    if not number.is_finite():
+        raise ValueError(f"{field_name} must be finite")
+    if number == 0:
+        canonical = "0"
+    else:
+        canonical = format(number, "f")
+        if "." in canonical:
+            canonical = canonical.rstrip("0").rstrip(".")
+    if value != canonical:
+        raise ValueError(f"{field_name} must use canonical decimal text")
+    return canonical
+
+
+@dataclass(frozen=True)
+class ExactEquipmentValueBindingRequest:
+    binding_kind: str
+    binding_id: str
+    target_definition_identity: str
+    graph_ref_id: str
+    parameter_read_id: str
+    value_type: str
+    dynamic_hash: str
+    parameter_index: int
+    skill_id: str
+    superimposition_level: int
+    exact_value: str
+    value_source: IRSource
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "binding_kind",
+            "binding_id",
+            "target_definition_identity",
+            "graph_ref_id",
+            "parameter_read_id",
+            "value_type",
+            "dynamic_hash",
+            "skill_id",
+        ):
+            value = getattr(self, field_name)
+            if not isinstance(value, str) or not value:
+                raise ValueError(f"{field_name} must be a non-empty string")
+        if not isinstance(self.parameter_index, int) or isinstance(self.parameter_index, bool):
+            raise TypeError("parameter_index must be an integer")
+        if self.parameter_index < 0:
+            raise ValueError("parameter_index must be non-negative")
+        if (
+            not isinstance(self.superimposition_level, int)
+            or isinstance(self.superimposition_level, bool)
+        ):
+            raise TypeError("superimposition_level must be an integer")
+        if self.superimposition_level <= 0:
+            raise ValueError("superimposition_level must be positive")
+        object.__setattr__(
+            self,
+            "exact_value",
+            _canonical_exact_decimal(self.exact_value, "exact_value"),
+        )
+        object.__setattr__(self, "value_source", immutable_ir_source(self.value_source))
+
+
+@dataclass(frozen=True)
+class ExactEquipmentValueResolution:
+    ok: bool
+    binding_kind: str
+    binding_id: str
+    graph_ref_id: str
+    parameter_read_id: str
+    value_type: str
+    dynamic_hash: str
+    parameter_index: int
+    exact_value: str | None
+    read_source: IRSource | None
+    value_source: IRSource
+    blocked_reason: str = ""
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.ok, bool):
+            raise TypeError("exact equipment resolution ok must be boolean")
+        for field_name in (
+            "binding_kind",
+            "binding_id",
+            "graph_ref_id",
+            "parameter_read_id",
+            "value_type",
+            "dynamic_hash",
+        ):
+            value = getattr(self, field_name)
+            if not isinstance(value, str) or not value:
+                raise ValueError(f"{field_name} must be a non-empty string")
+        if not isinstance(self.parameter_index, int) or isinstance(
+            self.parameter_index,
+            bool,
+        ):
+            raise TypeError("parameter_index must be an integer")
+        if self.parameter_index < 0:
+            raise ValueError("parameter_index must be non-negative")
+        object.__setattr__(
+            self,
+            "value_source",
+            immutable_ir_source(self.value_source),
+        )
+        if self.ok:
+            if self.exact_value is None or self.read_source is None:
+                raise ValueError(
+                    "successful exact equipment resolutions require value and read source"
+                )
+            object.__setattr__(
+                self,
+                "exact_value",
+                _canonical_exact_decimal(self.exact_value, "exact_value"),
+            )
+            object.__setattr__(
+                self,
+                "read_source",
+                immutable_ir_source(self.read_source),
+            )
+            if self.blocked_reason:
+                raise ValueError(
+                    "successful exact equipment resolutions cannot carry blocked_reason"
+                )
+        elif (
+            self.exact_value is not None
+            or self.read_source is not None
+            or not isinstance(self.blocked_reason, str)
+            or not self.blocked_reason
+        ):
+            raise ValueError(
+                "blocked exact equipment resolutions require only a blocked reason"
+            )
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "ok": self.ok,
+            "binding_kind": self.binding_kind,
+            "binding_id": self.binding_id,
+            "graph_ref_id": self.graph_ref_id,
+            "parameter_read_id": self.parameter_read_id,
+            "value_type": self.value_type,
+            "dynamic_hash": self.dynamic_hash,
+            "parameter_index": self.parameter_index,
+            "exact_value": self.exact_value,
+            "read_source": self.read_source.to_json() if self.read_source is not None else None,
+            "value_source": self.value_source.to_json(),
+            "blocked_reason": self.blocked_reason,
         }
 
 
@@ -567,6 +725,100 @@ class ValueResolver:
         if request.binding_kind == "dynamic_hash":
             return self._resolve_dynamic_hash(request, context)
         return self._resolve_runtime_numeric_expression(request, context)
+
+    def resolve_equipment_rank_parameter(
+        self,
+        request: ExactEquipmentValueBindingRequest,
+    ) -> ExactEquipmentValueResolution:
+        def blocked(reason: str) -> ExactEquipmentValueResolution:
+            return ExactEquipmentValueResolution(
+                ok=False,
+                binding_kind=request.binding_kind,
+                binding_id=request.binding_id,
+                graph_ref_id=request.graph_ref_id,
+                parameter_read_id=request.parameter_read_id,
+                value_type=request.value_type,
+                dynamic_hash=request.dynamic_hash,
+                parameter_index=request.parameter_index,
+                exact_value=None,
+                read_source=None,
+                value_source=request.value_source,
+                blocked_reason=reason,
+            )
+
+        if request.binding_kind != "equipment_rank_parameter":
+            return blocked(f"unknown_exact_binding_kind:{request.binding_kind}")
+        definition_resolution = self.rules.light_cone_definition(
+            request.target_definition_identity
+        )
+        if (
+            definition_resolution.resolution_status != "resolved"
+            or definition_resolution.value is None
+        ):
+            return blocked(
+                definition_resolution.blocked_reason
+                or "equipment_parameter_definition_unresolved"
+            )
+        definition = definition_resolution.value
+        if definition.skill_id != request.skill_id:
+            return blocked("equipment_parameter_skill_identity_mismatch")
+        ranks = tuple(
+            rank
+            for rank in definition.superimposition_levels
+            if rank.level == request.superimposition_level
+        )
+        if len(ranks) != 1 or ranks[0].skill_id != request.skill_id:
+            return blocked("equipment_parameter_rank_unresolved")
+        parameter_read = self.rules.equipment_ability_parameter_read(
+            request.parameter_read_id
+        )
+        if parameter_read is None:
+            return blocked("equipment_parameter_read_missing_or_duplicate")
+        if parameter_read.coverage_status not in {"lowered", "executable", "validated"}:
+            return blocked(
+                f"equipment_parameter_read_not_lowered:{parameter_read.coverage_status}"
+            )
+        if (
+            parameter_read.graph_ref_id != request.graph_ref_id
+            or parameter_read.value_type != request.value_type
+            or parameter_read.dynamic_hash != request.dynamic_hash
+            or parameter_read.parameter_index != request.parameter_index
+        ):
+            return blocked("equipment_parameter_read_identity_mismatch")
+        mechanisms = tuple(
+            self.rules.equipment_mechanism_ref(key.definition_identity)
+            for key in definition.mechanism_ref_ids
+        )
+        if len(mechanisms) != 1 or mechanisms[0].value is None:
+            return blocked("equipment_parameter_mechanism_unresolved")
+        mechanism = mechanisms[0].value
+        if (
+            mechanism.graph_ref_id != request.graph_ref_id
+            or request.parameter_read_id not in mechanism.parameter_binding_ids
+        ):
+            return blocked("equipment_parameter_read_not_bound_to_definition")
+        rank = ranks[0]
+        if request.parameter_index >= len(rank.parameters):
+            return blocked("equipment_parameter_index_out_of_range")
+        parameter = rank.parameters[request.parameter_index]
+        if (
+            parameter.exact_value != request.exact_value
+            or parameter.source != request.value_source
+        ):
+            return blocked("equipment_parameter_value_source_mismatch")
+        return ExactEquipmentValueResolution(
+            ok=True,
+            binding_kind=request.binding_kind,
+            binding_id=request.binding_id,
+            graph_ref_id=request.graph_ref_id,
+            parameter_read_id=request.parameter_read_id,
+            value_type=request.value_type,
+            dynamic_hash=request.dynamic_hash,
+            parameter_index=request.parameter_index,
+            exact_value=request.exact_value,
+            read_source=parameter_read.source,
+            value_source=request.value_source,
+        )
 
     def _resolve_combatant_profile_base_stat(
         self,

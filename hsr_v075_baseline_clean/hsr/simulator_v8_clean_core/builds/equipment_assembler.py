@@ -13,13 +13,16 @@ from ..equipment.models import (
     EquipmentBattleAdmissionBlocker,
     EquipmentBuildInput,
     EquipmentDefinitionResolution,
+    EquipmentDynamicParameterBinding,
     EquipmentSourceLedgerEntry,
+    DynamicMechanismSelection,
     LightConeAssemblySelection,
     LightConeDefinitionIR,
     LightConeInstanceInput,
     LightConePromotionTierIR,
     LightConeSuperimpositionLevelIR,
 )
+from ..rules.value_binding import ExactEquipmentValueBindingRequest, ValueResolver
 from ..rules.rulebook import RuleBook
 
 
@@ -151,7 +154,17 @@ def assemble_equipment_build(
         _light_cone_passive_contributions(instance, rank) if active else ()
     )
     contributions = (*base_contributions, *passive_contributions)
-    blockers = _active_ability_blockers(rules, definition) if active else ()
+    dynamic_mechanisms, blockers = (
+        _active_dynamic_mechanisms(
+            rules,
+            build,
+            instance,
+            definition,
+            rank,
+        )
+        if active
+        else ((), ())
+    )
     base_contribution_ids = tuple(
         item.contribution_id for item in base_contributions
     )
@@ -207,7 +220,7 @@ def assemble_equipment_build(
         battle_admission_status="blocked" if blockers else "admitted",
         light_cone_selection=selection,
         static_contributions=contributions,
-        dynamic_mechanisms=(),
+        dynamic_mechanisms=dynamic_mechanisms,
         activation_decisions=(activation,),
         battle_admission_blockers=blockers,
         source_ledger=source_ledger,
@@ -516,23 +529,169 @@ def _light_cone_passive_contributions(
     )
 
 
-def _active_ability_blockers(
+def _active_dynamic_mechanisms(
     rules: RuleBook,
+    build: EquipmentBuildInput,
+    instance: LightConeInstanceInput,
     definition: LightConeDefinitionIR,
-) -> tuple[EquipmentBattleAdmissionBlocker, ...]:
+    rank: LightConeSuperimpositionLevelIR,
+) -> tuple[
+    tuple[DynamicMechanismSelection, ...],
+    tuple[EquipmentBattleAdmissionBlocker, ...],
+]:
     classification, reason = _dynamic_ability_gap(rules, definition)
-    return (
-        EquipmentBattleAdmissionBlocker(
-            blocker_id=(
-                f"equipment_battle_blocker:{definition.definition_key.stable_id}:"
-                "dynamic_ability"
+    if classification != "implementation_missing":
+        return (), (_dynamic_ability_blocker(definition, classification, reason),)
+    if len(definition.mechanism_ref_ids) != 1:
+        return (), (
+            _dynamic_ability_blocker(
+                definition,
+                "admission_gap",
+                "light_cone_dynamic_ability_binding_not_unique",
             ),
-            channel="dynamic_ability",
-            target_definition_key=definition.definition_key,
-            gap_classification=classification,
-            reason_code=reason,
-            source_refs=(definition.ability_source.source,),
+        )
+    mechanism_resolution = rules.equipment_mechanism_ref(
+        definition.mechanism_ref_ids[0].definition_identity
+    )
+    if (
+        mechanism_resolution.resolution_status != "resolved"
+        or mechanism_resolution.value is None
+    ):
+        return (), (
+            _dynamic_ability_blocker(
+                definition,
+                "admission_gap",
+                mechanism_resolution.blocked_reason
+                or "light_cone_dynamic_ability_binding_not_admitted",
+            ),
+        )
+    mechanism = mechanism_resolution.value
+    graph = rules.standalone_ability_graph(mechanism.graph_ref_id)
+    if graph is None or graph.source != definition.ability_source.source:
+        return (), (
+            _dynamic_ability_blocker(
+                definition,
+                "admission_gap",
+                "light_cone_dynamic_ability_graph_source_mismatch",
+            ),
+        )
+
+    resolver = ValueResolver(rules)
+    bindings: list[EquipmentDynamicParameterBinding] = []
+    for parameter_read_id in mechanism.parameter_binding_ids:
+        parameter_read = rules.equipment_ability_parameter_read(parameter_read_id)
+        if parameter_read is None:
+            return (), (
+                _dynamic_ability_blocker(
+                    definition,
+                    "admission_gap",
+                    "light_cone_dynamic_parameter_read_missing_or_duplicate",
+                ),
+            )
+        if parameter_read.parameter_index >= len(rank.parameters):
+            return (), (
+                _dynamic_ability_blocker(
+                    definition,
+                    "admission_gap",
+                    "light_cone_dynamic_parameter_index_out_of_range",
+                ),
+            )
+        parameter = rank.parameters[parameter_read.parameter_index]
+        binding_id = (
+            f"equipment_rank_parameter:{instance.instance_id}:rank:{rank.level}:"
+            f"read:{parameter_read.parameter_read_id}"
+        )
+        resolution = resolver.resolve_equipment_rank_parameter(
+            ExactEquipmentValueBindingRequest(
+                binding_kind="equipment_rank_parameter",
+                binding_id=binding_id,
+                target_definition_identity=(
+                    definition.definition_key.definition_identity
+                ),
+                graph_ref_id=graph.standalone_ability_graph_id,
+                parameter_read_id=parameter_read.parameter_read_id,
+                value_type=parameter_read.value_type,
+                dynamic_hash=parameter_read.dynamic_hash,
+                parameter_index=parameter_read.parameter_index,
+                skill_id=rank.skill_id,
+                superimposition_level=rank.level,
+                exact_value=parameter.exact_value,
+                value_source=parameter.source,
+            )
+        )
+        if (
+            not resolution.ok
+            or resolution.exact_value is None
+            or resolution.read_source is None
+        ):
+            return (), (
+                _dynamic_ability_blocker(
+                    definition,
+                    "admission_gap",
+                    resolution.blocked_reason
+                    or "light_cone_dynamic_parameter_binding_blocked",
+                ),
+            )
+        bindings.append(
+            EquipmentDynamicParameterBinding(
+                binding_id=binding_id,
+                parameter_read_id=parameter_read.parameter_read_id,
+                graph_ref_id=graph.standalone_ability_graph_id,
+                value_type=parameter_read.value_type,
+                dynamic_hash=parameter_read.dynamic_hash,
+                parameter_index=parameter_read.parameter_index,
+                exact_value=resolution.exact_value,
+                read_source=resolution.read_source,
+                value_source=resolution.value_source,
+            )
+        )
+
+    graph_executable = graph.coverage_status == "executable"
+    selection = DynamicMechanismSelection(
+        selection_id=(
+            f"equipment_dynamic_selection:{instance.instance_id}:"
+            f"rank:{rank.level}:{mechanism.definition_key.stable_id}"
         ),
+        mechanism_key=mechanism.definition_key,
+        target_definition_key=definition.definition_key,
+        graph_ref_id=graph.standalone_ability_graph_id,
+        equipment_instance_id=instance.instance_id,
+        wearer_character_card_id=build.character_card_id,
+        skill_id=rank.skill_id,
+        superimposition_level=rank.level,
+        parameter_bindings=tuple(bindings),
+        source=definition.ability_source.source,
+        coverage_status="executable" if graph_executable else "blocked",
+        blocked_reason="" if graph_executable else (
+            graph.blocked_reason or "light_cone_dynamic_ability_graph_partial"
+        ),
+    )
+    if graph_executable:
+        return (selection,), ()
+    return (selection,), (
+        _dynamic_ability_blocker(
+            definition,
+            "implementation_missing",
+            selection.blocked_reason,
+        ),
+    )
+
+
+def _dynamic_ability_blocker(
+    definition: LightConeDefinitionIR,
+    classification: str,
+    reason: str,
+) -> EquipmentBattleAdmissionBlocker:
+    return EquipmentBattleAdmissionBlocker(
+        blocker_id=(
+            f"equipment_battle_blocker:{definition.definition_key.stable_id}:"
+            "dynamic_ability"
+        ),
+        channel="dynamic_ability",
+        target_definition_key=definition.definition_key,
+        gap_classification=classification,
+        reason_code=reason,
+        source_refs=(definition.ability_source.source,),
     )
 
 
@@ -586,6 +745,13 @@ def _same_ability_source_record(
         return False
     return bool(
         graph_source.source_path == equipment_source.source_path
+        and graph_source.raw_type == equipment_source.raw_type == "AbilityList"
         and graph_source.raw_id == ability_name
-        and graph_source.evidence.get("ability_index") == record_index
+        and equipment_source.raw_id == ability_name
+        and graph_source.evidence.get("json_path")
+        == f"$.AbilityList[{record_index}]"
+        and equipment_source.evidence.get("json_path")
+        == f"$.AbilityList[{record_index}]"
+        and graph_source.evidence.get("source_fingerprint")
+        == equipment_source.evidence.get("source_fingerprint")
     )

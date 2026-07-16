@@ -117,10 +117,10 @@ git diff --check
 
 ## 唯一执行清单（仅验收线程可勾）
 
-- [ ] 装备能力已引用真实 Canonical IR 图，未伪造 graph identity 或复制 payload。
-- [ ] 叠影参数通过通用 ValueResolver 精确绑定且来源完整。
-- [ ] 静态出生后只注册一次，owner 与多 wearer 隔离正确。
-- [ ] 命途失配和所有 partial/伪来源路径均零动态、state unchanged。
-- [ ] S7/S8 未支持 family 被诚实保留为 battle blocker，没有部分执行。
-- [ ] P5/P7 直接回归和人工代码审查通过。
-- [ ] `ready_for_review` evidence 完整，阶段无入口层 blocker。
+- [x] 装备能力已引用真实 Canonical IR 图，未伪造 graph identity 或复制 payload。
+- [x] 叠影参数通过通用 ValueResolver 精确绑定且来源完整。
+- [x] 静态出生后只注册一次，owner 与多 wearer 隔离正确。
+- [x] 命途失配和所有 partial/伪来源路径均零动态、state unchanged。
+- [x] S7/S8 未支持 family 被诚实保留为 battle blocker，没有部分执行。
+- [x] P5/P7 直接回归和人工代码审查通过。
+- [x] `ready_for_review` evidence 完整，阶段无入口层 blocker。

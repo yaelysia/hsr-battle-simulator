@@ -1349,6 +1349,71 @@ class RelicSetThresholdIR:
 
 
 @dataclass(frozen=True)
+class EquipmentAbilityParameterReadIR:
+    parameter_read_id: str
+    graph_ref_id: str
+    dynamic_hash: str
+    parameter_index: int
+    value_type: str
+    source: IRSource
+    coverage_status: CoverageStatus = "lowered"
+    blocked_reason: str = ""
+
+    def __post_init__(self) -> None:
+        _require_text(self.parameter_read_id, "parameter_read_id")
+        _require_text(self.graph_ref_id, "graph_ref_id")
+        _require_text(self.dynamic_hash, "dynamic_hash")
+        _require_integer(self.parameter_index, "parameter_index")
+        if self.parameter_index < 0:
+            raise ValueError("equipment ability parameter_index must be non-negative")
+        _require_text(self.value_type, "value_type")
+        _require_equipment_source(self.source)
+        _validate_coverage(self.coverage_status, self.blocked_reason)
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "parameter_read_id": self.parameter_read_id,
+            "graph_ref_id": self.graph_ref_id,
+            "dynamic_hash": self.dynamic_hash,
+            "parameter_index": self.parameter_index,
+            "value_type": self.value_type,
+            "source": self.source.to_json(),
+            "coverage_status": self.coverage_status,
+            "blocked_reason": self.blocked_reason,
+        }
+
+    @classmethod
+    def from_json(cls, value: object) -> EquipmentAbilityParameterReadIR:
+        row = _mapping(value, "equipment_ability_parameter_read")
+        _require_exact_fields(
+            row,
+            frozenset(
+                {
+                    "parameter_read_id",
+                    "graph_ref_id",
+                    "dynamic_hash",
+                    "parameter_index",
+                    "value_type",
+                    "source",
+                    "coverage_status",
+                    "blocked_reason",
+                }
+            ),
+            "equipment_ability_parameter_read",
+        )
+        return cls(
+            parameter_read_id=_text(row.get("parameter_read_id"), "parameter_read_id"),
+            graph_ref_id=_text(row.get("graph_ref_id"), "graph_ref_id"),
+            dynamic_hash=_text(row.get("dynamic_hash"), "dynamic_hash"),
+            parameter_index=_integer(row.get("parameter_index"), "parameter_index"),
+            value_type=_text(row.get("value_type"), "value_type"),
+            source=_source_from_json(row.get("source")),
+            coverage_status=_coverage_from_json(row),
+            blocked_reason=_text(row.get("blocked_reason", ""), "blocked_reason"),
+        )
+
+
+@dataclass(frozen=True)
 class EquipmentMechanismRefIR:
     definition_key: EquipmentDefinitionKey
     graph_ref_id: str
@@ -1810,10 +1875,91 @@ class EquipmentBuildInput:
 
 
 @dataclass(frozen=True)
+class EquipmentDynamicParameterBinding:
+    binding_id: str
+    parameter_read_id: str
+    graph_ref_id: str
+    value_type: str
+    dynamic_hash: str
+    parameter_index: int
+    exact_value: str
+    read_source: IRSource
+    value_source: IRSource
+
+    def __post_init__(self) -> None:
+        _require_text(self.binding_id, "binding_id")
+        _require_text(self.parameter_read_id, "parameter_read_id")
+        _require_text(self.graph_ref_id, "graph_ref_id")
+        _require_text(self.value_type, "value_type")
+        _require_text(self.dynamic_hash, "dynamic_hash")
+        _require_integer(self.parameter_index, "parameter_index")
+        if self.parameter_index < 0:
+            raise ValueError("dynamic equipment parameter_index must be non-negative")
+        object.__setattr__(
+            self,
+            "exact_value",
+            exact_decimal_text(self.exact_value, "dynamic parameter exact_value"),
+        )
+        _require_equipment_source(self.read_source)
+        _require_equipment_source(self.value_source)
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "binding_id": self.binding_id,
+            "parameter_read_id": self.parameter_read_id,
+            "graph_ref_id": self.graph_ref_id,
+            "value_type": self.value_type,
+            "dynamic_hash": self.dynamic_hash,
+            "parameter_index": self.parameter_index,
+            "exact_value": self.exact_value,
+            "read_source": self.read_source.to_json(),
+            "value_source": self.value_source.to_json(),
+        }
+
+    @classmethod
+    def from_json(cls, value: object) -> EquipmentDynamicParameterBinding:
+        row = _mapping(value, "equipment_dynamic_parameter_binding")
+        _require_exact_fields(
+            row,
+            frozenset(
+                {
+                    "binding_id",
+                    "parameter_read_id",
+                    "graph_ref_id",
+                    "value_type",
+                    "dynamic_hash",
+                    "parameter_index",
+                    "exact_value",
+                    "read_source",
+                    "value_source",
+                }
+            ),
+            "equipment_dynamic_parameter_binding",
+        )
+        return cls(
+            binding_id=_text(row.get("binding_id"), "binding_id"),
+            parameter_read_id=_text(row.get("parameter_read_id"), "parameter_read_id"),
+            graph_ref_id=_text(row.get("graph_ref_id"), "graph_ref_id"),
+            value_type=_text(row.get("value_type"), "value_type"),
+            dynamic_hash=_text(row.get("dynamic_hash"), "dynamic_hash"),
+            parameter_index=_integer(row.get("parameter_index"), "parameter_index"),
+            exact_value=_text(row.get("exact_value"), "exact_value"),
+            read_source=_source_from_json(row.get("read_source")),
+            value_source=_source_from_json(row.get("value_source")),
+        )
+
+
+@dataclass(frozen=True)
 class DynamicMechanismSelection:
     selection_id: str
     mechanism_key: EquipmentDefinitionKey
+    target_definition_key: EquipmentDefinitionKey
     graph_ref_id: str
+    equipment_instance_id: str
+    wearer_character_card_id: str
+    skill_id: str
+    superimposition_level: int
+    parameter_bindings: tuple[EquipmentDynamicParameterBinding, ...]
     source: IRSource
     coverage_status: CoverageStatus
     blocked_reason: str = ""
@@ -1821,7 +1967,29 @@ class DynamicMechanismSelection:
     def __post_init__(self) -> None:
         _require_text(self.selection_id, "selection_id")
         _require_kind(self.mechanism_key, "equipment_mechanism")
+        _require_kind(self.target_definition_key, "light_cone")
         _require_text(self.graph_ref_id, "graph_ref_id")
+        _require_text(self.equipment_instance_id, "equipment_instance_id")
+        _require_text(self.wearer_character_card_id, "wearer_character_card_id")
+        _require_text(self.skill_id, "skill_id")
+        _require_integer(self.superimposition_level, "superimposition_level")
+        if self.superimposition_level <= 0:
+            raise ValueError("dynamic mechanism superimposition_level must be positive")
+        bindings = cast(
+            tuple[EquipmentDynamicParameterBinding, ...],
+            _typed_tuple(
+                self.parameter_bindings,
+                EquipmentDynamicParameterBinding,
+                "parameter_bindings",
+            ),
+        )
+        if len({item.binding_id for item in bindings}) != len(bindings):
+            raise ValueError("dynamic equipment parameter binding identities must be unique")
+        if len({item.parameter_read_id for item in bindings}) != len(bindings):
+            raise ValueError("dynamic equipment parameter reads must be selected at most once")
+        if any(item.graph_ref_id != self.graph_ref_id for item in bindings):
+            raise ValueError("dynamic equipment parameter bindings must reference the selected graph")
+        object.__setattr__(self, "parameter_bindings", bindings)
         _require_equipment_source(self.source)
         _validate_coverage(self.coverage_status, self.blocked_reason)
 
@@ -1829,7 +1997,13 @@ class DynamicMechanismSelection:
         return {
             "selection_id": self.selection_id,
             "mechanism_key": self.mechanism_key.to_json(),
+            "target_definition_key": self.target_definition_key.to_json(),
             "graph_ref_id": self.graph_ref_id,
+            "equipment_instance_id": self.equipment_instance_id,
+            "wearer_character_card_id": self.wearer_character_card_id,
+            "skill_id": self.skill_id,
+            "superimposition_level": self.superimposition_level,
+            "parameter_bindings": [item.to_json() for item in self.parameter_bindings],
             "source": self.source.to_json(),
             "coverage_status": self.coverage_status,
             "blocked_reason": self.blocked_reason,
@@ -1844,7 +2018,13 @@ class DynamicMechanismSelection:
                 {
                     "selection_id",
                     "mechanism_key",
+                    "target_definition_key",
                     "graph_ref_id",
+                    "equipment_instance_id",
+                    "wearer_character_card_id",
+                    "skill_id",
+                    "superimposition_level",
+                    "parameter_bindings",
                     "source",
                     "coverage_status",
                     "blocked_reason",
@@ -1855,7 +2035,30 @@ class DynamicMechanismSelection:
         return cls(
             selection_id=_text(row.get("selection_id"), "selection_id"),
             mechanism_key=EquipmentDefinitionKey.from_json(row.get("mechanism_key")),
+            target_definition_key=EquipmentDefinitionKey.from_json(
+                row.get("target_definition_key")
+            ),
             graph_ref_id=_text(row.get("graph_ref_id"), "graph_ref_id"),
+            equipment_instance_id=_text(
+                row.get("equipment_instance_id"),
+                "equipment_instance_id",
+            ),
+            wearer_character_card_id=_text(
+                row.get("wearer_character_card_id"),
+                "wearer_character_card_id",
+            ),
+            skill_id=_text(row.get("skill_id"), "skill_id"),
+            superimposition_level=_integer(
+                row.get("superimposition_level"),
+                "superimposition_level",
+            ),
+            parameter_bindings=tuple(
+                EquipmentDynamicParameterBinding.from_json(item)
+                for item in _sequence(
+                    row.get("parameter_bindings"),
+                    "parameter_bindings",
+                )
+            ),
             source=_source_from_json(row.get("source")),
             coverage_status=_coverage_from_json(row),
             blocked_reason=_text(row.get("blocked_reason", ""), "blocked_reason"),
@@ -2684,6 +2887,106 @@ class EquipmentAssemblyResult:
                         "light-cone results cannot carry unselected static contributions"
                     )
                 activation = matching_decisions[0]
+                for mechanism in self.dynamic_mechanisms:
+                    if (
+                        mechanism.target_definition_key
+                        != self.light_cone_selection.definition_key
+                        or mechanism.equipment_instance_id
+                        != self.light_cone_selection.instance_id
+                        or mechanism.skill_id != self.light_cone_selection.skill_id
+                        or mechanism.superimposition_level
+                        != self.light_cone_selection.superimposition_level
+                        or mechanism.source
+                        != self.light_cone_selection.ability_source
+                    ):
+                        raise ValueError(
+                            "light-cone dynamic mechanisms must belong to the selected instance and ability source"
+                        )
+                    rank_json_path = (
+                        self.light_cone_selection.superimposition_source.evidence.get(
+                            "json_path"
+                        )
+                    )
+                    ability_json_path = (
+                        self.light_cone_selection.ability_source.evidence.get(
+                            "json_path"
+                        )
+                    )
+                    rank_fingerprint = (
+                        self.light_cone_selection.superimposition_source.evidence.get(
+                            "source_fingerprint"
+                        )
+                    )
+                    ability_fingerprint = (
+                        self.light_cone_selection.ability_source.evidence.get(
+                            "source_fingerprint"
+                        )
+                    )
+                    if not isinstance(rank_json_path, str) or not isinstance(
+                        ability_json_path,
+                        str,
+                    ):
+                        raise ValueError(
+                            "light-cone dynamic parameter sources require raw record paths"
+                        )
+                    for binding in mechanism.parameter_bindings:
+                        if binding.parameter_index not in self.light_cone_selection.parameter_indices:
+                            raise ValueError(
+                                "dynamic parameter binding does not select a rank parameter"
+                            )
+                        if binding.parameter_read_id != (
+                            f"equipment_parameter_read:"
+                            f"{self.light_cone_selection.ability_source.source_path}:"
+                            f"json_path:{ability_json_path}:"
+                            f"value_type:{binding.value_type}:"
+                            f"dynamic_hash:{binding.dynamic_hash}:"
+                            f"parameter_index:{binding.parameter_index}"
+                        ):
+                            raise ValueError(
+                                "dynamic parameter read identity does not match its source node"
+                            )
+                        if (
+                            binding.value_source.raw_type != "EquipmentSkillParameter"
+                            or binding.value_source.raw_id
+                            != (
+                                f"{self.light_cone_selection.skill_id}:"
+                                f"{self.light_cone_selection.superimposition_level}:"
+                                f"{binding.parameter_index}"
+                            )
+                            or binding.value_source.source_path
+                            != self.light_cone_selection.superimposition_source.source_path
+                            or binding.value_source.evidence.get("json_path")
+                            != (
+                                f"{rank_json_path}.ParamList["
+                                f"{binding.parameter_index}].Value"
+                            )
+                            or binding.value_source.evidence.get("source_fingerprint")
+                            != rank_fingerprint
+                        ):
+                            raise ValueError(
+                                "dynamic parameter value source does not match the selected rank row"
+                            )
+                        if (
+                            binding.read_source.raw_type
+                            != "EquipmentAbilityParameterRead"
+                            or binding.read_source.raw_id
+                            != (
+                                f"{self.light_cone_selection.ability_name}:"
+                                f"{binding.dynamic_hash}:{binding.parameter_index}"
+                            )
+                            or binding.read_source.source_path
+                            != self.light_cone_selection.ability_source.source_path
+                            or binding.read_source.evidence.get("json_path")
+                            != (
+                                f"{ability_json_path}.DynamicValues."
+                                f"{binding.value_type}.{binding.dynamic_hash}.ReadInfo"
+                            )
+                            or binding.read_source.evidence.get("source_fingerprint")
+                            != ability_fingerprint
+                        ):
+                            raise ValueError(
+                                "dynamic parameter read source does not match the selected ability row"
+                            )
                 expected_passive_ids = tuple(
                     f"light_cone_passive:{self.light_cone_selection.instance_id}:"
                     f"rank:{self.light_cone_selection.superimposition_level}:"
@@ -2751,6 +3054,21 @@ class EquipmentAssemblyResult:
                     raise ValueError(
                         "inactive light-cone passives cannot expose passive result channels"
                     )
+                if activation.activation_status == "active":
+                    if self.battle_admission_status == "admitted" and (
+                        len(self.dynamic_mechanisms) != 1
+                        or self.dynamic_mechanisms[0].coverage_status != "executable"
+                    ):
+                        raise ValueError(
+                            "battle-admitted active light-cone abilities require one executable dynamic selection"
+                        )
+                    if any(
+                        mechanism.coverage_status == "blocked"
+                        for mechanism in self.dynamic_mechanisms
+                    ) and not self.battle_admission_blockers:
+                        raise ValueError(
+                            "blocked dynamic selections require a battle admission blocker"
+                        )
                 if any(
                     blocker.target_definition_key
                     != self.light_cone_selection.definition_key

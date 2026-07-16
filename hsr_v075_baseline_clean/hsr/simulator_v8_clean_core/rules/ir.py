@@ -5,6 +5,7 @@ from typing import Any, Literal
 
 from ..equipment.models import (
     CharacterEquipmentEligibilityIR,
+    EquipmentAbilityParameterReadIR,
     EquipmentMechanismRefIR,
     LightConeDefinitionIR,
     RelicAffixDefinitionIR,
@@ -2011,6 +2012,7 @@ class CanonicalIR:
     relic_affix_definitions: tuple[RelicAffixDefinitionIR, ...] = ()
     relic_set_definitions: tuple[RelicSetDefinitionIR, ...] = ()
     relic_set_thresholds: tuple[RelicSetThresholdIR, ...] = ()
+    equipment_ability_parameter_reads: tuple[EquipmentAbilityParameterReadIR, ...] = ()
     equipment_mechanism_refs: tuple[EquipmentMechanismRefIR, ...] = ()
     summon_unit_definitions: tuple[SummonUnitDefinitionIR, ...] = ()
     unit_birth_templates: tuple[UnitBirthTemplateIR, ...] = ()
@@ -2082,6 +2084,10 @@ class CanonicalIR:
             "relic_affix_definitions": [definition.to_json() for definition in self.relic_affix_definitions],
             "relic_set_definitions": [definition.to_json() for definition in self.relic_set_definitions],
             "relic_set_thresholds": [threshold.to_json() for threshold in self.relic_set_thresholds],
+            "equipment_ability_parameter_reads": [
+                parameter_read.to_json()
+                for parameter_read in self.equipment_ability_parameter_reads
+            ],
             "equipment_mechanism_refs": [reference.to_json() for reference in self.equipment_mechanism_refs],
             "summon_unit_definitions": [definition.to_json() for definition in self.summon_unit_definitions],
             "unit_birth_templates": [template.to_json() for template in self.unit_birth_templates],

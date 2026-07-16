@@ -115,7 +115,10 @@ def run_validation(tbgd_root: Path, output_dir: Path) -> dict[str, Any]:
         "ready_for_review": ok,
         "checklist_modified": False,
         "git_commit_created": False,
-        "p8_s5_or_later_started": False,
+        "validation_scope": {
+            "historical_stage": "P8-S4",
+            "asserts_current_p8_s5_or_later_state": False,
+        },
         "checks": checks,
         "formal_cases": {
             "character_card_id": cases["card"].card_id,
@@ -125,7 +128,7 @@ def run_validation(tbgd_root: Path, output_dir: Path) -> dict[str, Any]:
             "same_path_activation": _activation_status(cases["same_result"]),
             "same_path_battle_admission": cases["same_result"].battle_admission_status,
         },
-        "gap_classification": {
+        "historical_s4_fixture_gap_classification": {
             blocker.channel: blocker.gap_classification
             for blocker in cases["same_equipment_result"].battle_admission_blockers
         },
@@ -151,11 +154,12 @@ def run_validation(tbgd_root: Path, output_dir: Path) -> dict[str, Any]:
                 "typed battle admission, character-build propagation, and team instance uniqueness"
             ),
             "deferred": (
-                "equipment ability graph lowering/binding/execution "
-                "(P8-S6), and every relic stage"
+                "equipment ability gameplay-family execution (P8-S7/P8-S8), "
+                "and every relic stage"
             ),
             "not_asserted_by_this_regression": (
-                "P8-S5 static-passive completeness; the S5 validator owns full static-property coverage"
+                "current P8-S5 static-passive completeness or P8-S6 graph/binding/startup state; "
+                "their own validators are authoritative"
             ),
         },
     }
@@ -772,13 +776,13 @@ def _source_and_gap_checks(
         == "exact_internal_path_identity_equality",
         "s4_regression_does_not_require_retired_static_passive_blocker": "static_passive"
         not in blockers,
-        "dynamic_ability_gap_is_lowering_gap_from_rulebook_fact": dynamic is not None
+        "s4_fixture_without_s6_catalog_reports_lowering_gap": dynamic is not None
         and dynamic.gap_classification == "lowering_gap"
         and same_definition.ability_source is not None
         and not rules.standalone_ability_graphs_by_name(
             same_definition.ability_source.ability_name
         ),
-        "current_generic_graph_lowering_rejects_every_equipment_ability_source": all(
+        "pre_s6_generic_graph_admission_excludes_equipment_sources": all(
             definition.ability_source is not None
             and not _standalone_ability_source_admitted(
                 definition.ability_source.source.source_path
@@ -1216,16 +1220,11 @@ def _negative_matrix(
             reason_code="light_cone_path_mismatch",
         )
     )
-    forged_admitted = replace(
-        same_result,
-        battle_admission_status="admitted",
-        battle_admission_blockers=(),
-    )
-    rows["forged_active_admitted_result_rejected_by_canonical_rebuild"] = bool(
-        validate_equipment_assembly_admission(
-            rules,
-            cases["same_build"].equipment_build,
-            forged_admitted,
+    rows["forged_active_admitted_result_rejected_by_canonical_rebuild"] = _raises(
+        lambda: replace(
+            same_result,
+            battle_admission_status="admitted",
+            battle_admission_blockers=(),
         )
     )
     damaged_instance = thaw_json(
@@ -1336,7 +1335,15 @@ def _negative_matrix(
             "equipment_mechanism",
             "validation:p8_s4:cross-path-dynamic",
         ),
+        target_definition_key=cross_result.light_cone_selection.definition_key,
         graph_ref_id="validation:p8_s4:cross-path-graph",
+        equipment_instance_id=cross_result.light_cone_selection.instance_id,
+        wearer_character_card_id=cases["cross_build"].character_card_id,
+        skill_id=cross_result.light_cone_selection.skill_id,
+        superimposition_level=(
+            cross_result.light_cone_selection.superimposition_level
+        ),
+        parameter_bindings=(),
         source=cases["cross_definition"].ability_source.source,
         coverage_status="lowered",
         blocked_reason="",

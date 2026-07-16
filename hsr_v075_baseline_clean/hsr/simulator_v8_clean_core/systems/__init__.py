@@ -1,4 +1,8 @@
 from .damage import DamageSystem
+from .ability_provider import (
+    AbilityProviderRegistrationResult,
+    register_dynamic_ability_providers,
+)
 from .damage_formula import DamageFormulaResult, DirectDamageFormula, ModifierLedger
 from .damage_pipeline import (
     DAMAGE_FAMILY_STAGE_MATRIX,
@@ -38,6 +42,8 @@ from .wave import WaveRuntimeView, WaveSystem, WaveTransitionPlan, WaveTransitio
 
 __all__ = [
     "DamageSystem",
+    "AbilityProviderRegistrationResult",
+    "register_dynamic_ability_providers",
     "DamageFormulaResult",
     "DirectDamageFormula",
     "ModifierLedger",

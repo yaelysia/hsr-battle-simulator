@@ -6,6 +6,7 @@ from typing import Callable, Iterable, TypeVar
 from ..equipment.models import (
     CharacterEquipmentEligibilityIR,
     EQUIPMENT_RESOLVABLE_COVERAGE_STATES,
+    EquipmentAbilityParameterReadIR,
     EquipmentDefinition,
     EquipmentDefinitionKey,
     EquipmentDefinitionResolution,
@@ -226,6 +227,16 @@ class RuleBook:
                 identity: tuple(sorted(definitions, key=_equipment_definition_sort_key))
                 for identity, definitions in equipment_definitions_by_identity.items()
             },
+        )
+        equipment_parameter_reads, equipment_parameter_read_conflicts = _unique_index(
+            self.ir.equipment_ability_parameter_reads,
+            lambda item: item.parameter_read_id,
+        )
+        object.__setattr__(self, "_equipment_parameter_reads", equipment_parameter_reads)
+        object.__setattr__(
+            self,
+            "_equipment_parameter_read_conflicts",
+            equipment_parameter_read_conflicts,
         )
         object.__setattr__(
             self,
@@ -881,10 +892,15 @@ class RuleBook:
         standalone_ability_graphs_by_name: dict[str, list[StandaloneAbilityGraphIR]] = {}
         for graph in self.ir.standalone_ability_graphs:
             standalone_ability_graphs_by_name.setdefault(graph.ability_name, []).append(graph)
+        standalone_ability_graphs, standalone_ability_graph_conflicts = _unique_index(
+            self.ir.standalone_ability_graphs,
+            lambda graph: graph.standalone_ability_graph_id,
+        )
+        object.__setattr__(self, "_standalone_ability_graphs", standalone_ability_graphs)
         object.__setattr__(
             self,
-            "_standalone_ability_graphs",
-            {graph.standalone_ability_graph_id: graph for graph in self.ir.standalone_ability_graphs},
+            "_standalone_ability_graph_conflicts",
+            standalone_ability_graph_conflicts,
         )
         object.__setattr__(
             self,
@@ -1232,6 +1248,12 @@ class RuleBook:
         key = EquipmentDefinitionKey("equipment_mechanism", definition_identity)
         return self._equipment_definition_resolution(key, EquipmentMechanismRefIR)
 
+    def equipment_ability_parameter_read(
+        self,
+        parameter_read_id: str,
+    ) -> EquipmentAbilityParameterReadIR | None:
+        return self._equipment_parameter_reads.get(parameter_read_id)
+
     def _equipment_definition_resolution(
         self,
         key: EquipmentDefinitionKey,
@@ -1299,17 +1321,44 @@ class RuleBook:
                 candidates=candidates,
                 blocked_reason="equipment_definition_not_lowered",
             )
-        if isinstance(selected, EquipmentMechanismRefIR) and self.standalone_ability_graph(
-            selected.graph_ref_id
-        ) is None:
-            return EquipmentDefinitionResolution(
-                resolution_status="blocked",
-                requested_key=key,
-                expected_kind=key.definition_kind,
-                value=None,
-                candidates=candidates,
-                blocked_reason="equipment_mechanism_graph_missing",
+        if isinstance(selected, EquipmentMechanismRefIR):
+            graph = self.standalone_ability_graph(selected.graph_ref_id)
+            if graph is None:
+                return EquipmentDefinitionResolution(
+                    resolution_status="blocked",
+                    requested_key=key,
+                    expected_kind=key.definition_kind,
+                    value=None,
+                    candidates=candidates,
+                    blocked_reason="equipment_mechanism_graph_missing_or_duplicate",
+                )
+            if graph.source != selected.source:
+                return EquipmentDefinitionResolution(
+                    resolution_status="blocked",
+                    requested_key=key,
+                    expected_kind=key.definition_kind,
+                    value=None,
+                    candidates=candidates,
+                    blocked_reason="equipment_mechanism_graph_source_mismatch",
+                )
+            parameter_reads = tuple(
+                self.equipment_ability_parameter_read(binding_id)
+                for binding_id in selected.parameter_binding_ids
             )
+            if any(
+                read is None
+                or read.graph_ref_id != selected.graph_ref_id
+                or not _equipment_parameter_read_matches_graph(read, graph)
+                for read in parameter_reads
+            ):
+                return EquipmentDefinitionResolution(
+                    resolution_status="blocked",
+                    requested_key=key,
+                    expected_kind=key.definition_kind,
+                    value=None,
+                    candidates=candidates,
+                    blocked_reason="equipment_mechanism_parameter_read_unresolved",
+                )
         mechanism_ref_ids = getattr(selected, "mechanism_ref_ids", ())
         if len(mechanism_ref_ids) != len(set(mechanism_ref_ids)):
             return EquipmentDefinitionResolution(
@@ -1333,6 +1382,20 @@ class RuleBook:
                     value=None,
                     candidates=candidates,
                     blocked_reason="equipment_mechanism_reference_unresolved",
+                )
+            if isinstance(selected, LightConeDefinitionIR) and (
+                selected.ability_source is None
+                or mechanism_resolution.value is None
+                or mechanism_resolution.value.source
+                != selected.ability_source.source
+            ):
+                return EquipmentDefinitionResolution(
+                    resolution_status="blocked",
+                    requested_key=key,
+                    expected_kind=key.definition_kind,
+                    value=None,
+                    candidates=candidates,
+                    blocked_reason="equipment_mechanism_reference_source_mismatch",
                 )
         return EquipmentDefinitionResolution(
             resolution_status="resolved",
@@ -1928,6 +1991,39 @@ class RuleBook:
         if entities:
             return entities[0]
         return None
+
+
+def _equipment_parameter_read_matches_graph(
+    parameter_read: EquipmentAbilityParameterReadIR,
+    graph: StandaloneAbilityGraphIR,
+) -> bool:
+    graph_json_path = graph.source.evidence.get("json_path")
+    read_json_path = parameter_read.source.evidence.get("json_path")
+    return bool(
+        isinstance(graph_json_path, str)
+        and isinstance(read_json_path, str)
+        and parameter_read.source.raw_type == "EquipmentAbilityParameterRead"
+        and parameter_read.source.raw_id
+        == (
+            f"{graph.ability_name}:{parameter_read.dynamic_hash}:"
+            f"{parameter_read.parameter_index}"
+        )
+        and parameter_read.source.source_path == graph.source.source_path
+        and parameter_read.parameter_read_id
+        == (
+            f"equipment_parameter_read:{graph.source.source_path}:"
+            f"json_path:{graph_json_path}:value_type:{parameter_read.value_type}:"
+            f"dynamic_hash:{parameter_read.dynamic_hash}:"
+            f"parameter_index:{parameter_read.parameter_index}"
+        )
+        and read_json_path
+        == (
+            f"{graph_json_path}.DynamicValues.{parameter_read.value_type}."
+            f"{parameter_read.dynamic_hash}.ReadInfo"
+        )
+        and parameter_read.source.evidence.get("source_fingerprint")
+        == graph.source.evidence.get("source_fingerprint")
+    )
 
 
 def _equipment_definition_sort_key(

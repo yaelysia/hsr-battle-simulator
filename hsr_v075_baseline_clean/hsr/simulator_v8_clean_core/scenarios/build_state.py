@@ -10,10 +10,12 @@ from ..builds.character_assembler import assemble_character_build, validate_char
 from ..builds.models import CharacterBuildAssemblyResult
 from ..core.model import ActionCommand, BattleState, GameEvent, JSONValue, Mutation, RNGEvent, UnitState
 from ..core.reducer import MutationReducer
+from ..equipment.models import DynamicMechanismSelection
 from ..rules.ir import CombatantProfileIR, WaveDefinitionIR, WaveMonsterEntryIR
 from ..rules.rulebook import RuleBook
 from ..rules.value_binding import ValueBindingRequest, ValueContext, ValueResolver
 from ..systems.effect import EffectRegistry
+from ..systems.ability_provider import register_dynamic_ability_providers
 from ..systems.status import StatusSystem
 from ..systems.summon import SummonSystem
 from ..systems.unit_lifecycle import UnitLifecycleSystem
@@ -62,6 +64,7 @@ class ScenarioStateBuilder:
         eidolon_startup_specs: list[dict[str, Any]] = []
         trace_startup_specs: list[dict[str, Any]] = []
         passive_startup_specs: list[dict[str, Any]] = []
+        equipment_provider_specs: list[tuple[str, DynamicMechanismSelection]] = []
         character_build_results: list[CharacterBuildAssemblyResult] = []
         for unit in scenario.units:
             panel = unit.panel
@@ -82,7 +85,11 @@ class ScenarioStateBuilder:
                 if assembly.base_panel is None:
                     raise ValueError(f"unit {unit.unit_id}: admitted build has no base panel")
                 character_build_results.append(assembly)
-                formal_flags, formal_startup_specs = _formal_character_activation(
+                (
+                    formal_flags,
+                    formal_startup_specs,
+                    formal_equipment_providers,
+                ) = _formal_character_activation(
                     self.rules,
                     unit,
                     assembly,
@@ -91,6 +98,10 @@ class ScenarioStateBuilder:
                     formal_flags["position"] = unit.position
                 for startup_spec in formal_startup_specs:
                     trace_startup_specs.append({"unit_id": unit.unit_id, **startup_spec})
+                equipment_provider_specs.extend(
+                    (unit.unit_id, selection)
+                    for selection in formal_equipment_providers
+                )
                 base_panel = assembly.base_panel
                 resources = {
                     "critical_chance": float(base_panel.critical_chance),
@@ -163,6 +174,21 @@ class ScenarioStateBuilder:
                     for source in (
                         decision.basis.character_path_source,
                         decision.basis.light_cone_path_source,
+                    )
+                )
+                source_traces.extend(
+                    source.to_json()
+                    for mechanism in equipment_result.dynamic_mechanisms
+                    for source in (
+                        mechanism.source,
+                        *(
+                            binding_source
+                            for binding in mechanism.parameter_bindings
+                            for binding_source in (
+                                binding.read_source,
+                                binding.value_source,
+                            )
+                        ),
                     )
                 )
                 setup_records.append(
@@ -315,6 +341,18 @@ class ScenarioStateBuilder:
             global_flags=global_flags,
             rng_state=_scenario_rng_state(scenario),
         )
+        provider_result = register_dynamic_ability_providers(
+            state,
+            self.rules,
+            tuple(equipment_provider_specs),
+        )
+        if not provider_result.ok:
+            raise ValueError(
+                "equipment ability provider startup blocked: "
+                f"{provider_result.blocked_reason}"
+            )
+        state = provider_result.after_state
+        setup_records.extend(provider_result.records)
         state, startup_traces = _apply_startup_ability_effects(
             state,
             self.rules,
@@ -345,7 +383,7 @@ class ScenarioStateBuilder:
             commands=commands,
             source_traces=tuple(source_traces),
             setup_records=tuple(setup_records),
-            setup_mutations=setup_result.mutations,
+            setup_mutations=(*provider_result.mutations, *setup_result.mutations),
             setup_events=setup_result.events,
             setup_rng_events=setup_result.rng_events,
             blocked_setup=setup_result.blocked,
@@ -1265,7 +1303,11 @@ def _formal_character_activation(
     rules: RuleBook,
     unit: UnitSpec,
     assembly: CharacterBuildAssemblyResult,
-) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+) -> tuple[
+    dict[str, Any],
+    list[dict[str, Any]],
+    tuple[DynamicMechanismSelection, ...],
+]:
     if unit.character_build is None:
         raise ValueError("formal character activation requires character_build")
     flags: dict[str, Any] = {
@@ -1336,7 +1378,16 @@ def _formal_character_activation(
             )
         else:
             raise ValueError(f"unsupported admitted character mechanism kind: {mechanism.mechanism_kind}")
-    return flags, startup_specs
+    equipment_result = assembly.equipment_assembly_result
+    if equipment_result is None:
+        raise ValueError("formal character activation requires equipment assembly result")
+    equipment_providers = tuple(equipment_result.dynamic_mechanisms)
+    if any(
+        selection.coverage_status != "executable" or selection.blocked_reason
+        for selection in equipment_providers
+    ):
+        raise ValueError("battle-admitted character build contains blocked equipment mechanism")
+    return flags, startup_specs, equipment_providers
 
 
 def _passive_runtime_activation(rules: RuleBook, card: object | None) -> dict[str, Any]:

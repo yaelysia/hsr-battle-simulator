@@ -11,15 +11,15 @@ turnbasedgamedata-main -> TBGD compiler/lowering -> Canonical IR / 数据卡 IR 
 当前最近检查点：
 
 ```text
-P8-S5 light-cone static contributions accepted
-最近检查点：P8-S5 已完成独立验收，575 条光锥静态属性已按命途激活决策进入统一贡献账本，来源、归属和联合伪造边界均已闭合；动态能力仍未执行
-检查点报告：../live_validation_reports/v8_p8_s5_light_cone_static_contributions_ready_for_review.md
+P8-S6 light-cone dynamic startup accepted
+最近检查点：P8-S6 已完成独立验收，真实光锥能力图引用、叠影参数绑定和正式场景 provider 启动链已闭合；当前嵌套 modifier / callback gameplay family 仍保持 blocked
+检查点报告：../live_validation_reports/v8_p8_s6_light_cone_dynamic_startup_ready_for_review.md
 ```
 
 当前推荐下一阶段：
 
 ```text
-P8-S6 light-cone dynamic startup / P8-S9 relic definition cards in an isolated worktree
+P8-S7 light-cone status/condition/listener closure / P8-S9 relic definition cards in an isolated worktree
 计划文档：P8_EQUIPMENT_BUILD_LIGHT_CONE_RELIC_TASK_PLAN.md
 ```
 
@@ -151,4 +151,4 @@ git diff --check
 
 ## 下一阶段建议
 
-P8-S5 已验收。当前光锥轨下一步只执行 P8-S6 动态能力绑定与启动生命周期；遗器轨若并行，仍必须从已验收的 S4 检查点建立独立 worktree 后从 P8-S9 开始。每条轨内部严格串行，执行线程只能提交 `ready_for_review`，由验收线程检查代码、谓词和 evidence 后勾选唯一 checklist。
+P8-S6 已验收。当前光锥轨下一步只执行 P8-S7 状态、条件与监听闭环；遗器轨若并行，仍必须从已验收的 S4 检查点建立独立 worktree 后从 P8-S9 开始。每条轨内部严格串行，执行线程只能提交 `ready_for_review`，由验收线程检查代码、谓词和 evidence 后勾选唯一 checklist。

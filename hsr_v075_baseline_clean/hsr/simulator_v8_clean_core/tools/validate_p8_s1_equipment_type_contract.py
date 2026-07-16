@@ -16,6 +16,7 @@ from ..equipment.models import (
     DynamicMechanismSelection,
     EquipmentActivationBasis,
     EquipmentActivationDecision,
+    EquipmentAbilityParameterReadIR,
     EquipmentAssemblyDiagnostic,
     EquipmentAssemblyResult,
     EquipmentBattleAdmissionBlocker,
@@ -221,14 +222,33 @@ def _build_definition_fixture(
         raw_id="fixture:generic-graph",
         evidence={"fixture": True},
     )
+    ability_record_source = make_equipment_source(
+        source_path="fixture/equipment_ability.json",
+        raw_type="AbilityList",
+        raw_id="FixtureLightConeAbility",
+        json_path="$.AbilityList[0]",
+        source_fingerprint=fingerprint,
+        source_kind="validation_fixture",
+    )
+    parameter_read_source = make_equipment_source(
+        source_path="fixture/equipment_ability.json",
+        raw_type="EquipmentAbilityParameterRead",
+        raw_id="FixtureLightConeAbility:fixture:param-hash:0",
+        json_path=(
+            "$.AbilityList[0].DynamicValues.Floats."
+            "fixture:param-hash.ReadInfo"
+        ),
+        source_fingerprint=fingerprint,
+        source_kind="validation_fixture",
+    )
     graph = StandaloneAbilityGraphIR(
         standalone_ability_graph_id="fixture:generic-graph",
-        ability_name="FixtureGenericGraph",
+        ability_name="FixtureLightConeAbility",
         source_mode="validation_fixture",
         phase_ids=(),
         task_ids=(),
         executable_task_ids=(),
-        source=graph_source,
+        source=ability_record_source,
         coverage_status="lowered",
     )
     eligibility_key = EquipmentDefinitionKey(
@@ -253,11 +273,26 @@ def _build_definition_fixture(
         coverage_status="lowered",
         blocked_reason="",
     )
+    parameter_read_id = (
+        "equipment_parameter_read:fixture/equipment_ability.json:"
+        "json_path:$.AbilityList[0]:value_type:Floats:"
+        "dynamic_hash:fixture:param-hash:parameter_index:0"
+    )
     mechanism = EquipmentMechanismRefIR(
         definition_key=mechanism_key,
         graph_ref_id=graph.standalone_ability_graph_id,
-        parameter_binding_ids=("fixture:param-binding",),
-        source=source,
+        parameter_binding_ids=(parameter_read_id,),
+        source=ability_record_source,
+        coverage_status="lowered",
+        blocked_reason="",
+    )
+    parameter_read = EquipmentAbilityParameterReadIR(
+        parameter_read_id=parameter_read_id,
+        graph_ref_id=graph.standalone_ability_graph_id,
+        dynamic_hash="fixture:param-hash",
+        parameter_index=0,
+        value_type="Floats",
+        source=parameter_read_source,
         coverage_status="lowered",
         blocked_reason="",
     )
@@ -322,14 +357,7 @@ def _build_definition_fixture(
     ability_source = LightConeAbilitySourceIR(
         ability_name="FixtureLightConeAbility",
         record_index=0,
-        source=make_equipment_source(
-            source_path="fixture/equipment_ability.json",
-            raw_type="AbilityList",
-            raw_id="FixtureLightConeAbility",
-            json_path="$.AbilityList[0]",
-            source_fingerprint=fingerprint,
-            source_kind="validation_fixture",
-        ),
+        source=ability_record_source,
     )
     light_cone = LightConeDefinitionIR(
         definition_key=light_cone_key,
@@ -434,6 +462,7 @@ def _build_definition_fixture(
         relic_affix_definitions=(affix,),
         relic_set_definitions=(relic_set,),
         relic_set_thresholds=(threshold,),
+        equipment_ability_parameter_reads=(parameter_read,),
         equipment_mechanism_refs=(mechanism,),
         standalone_ability_graphs=(graph,),
     )
@@ -719,7 +748,8 @@ def _query_negative_matrix(
         "mechanism_missing_generic_graph": {
             "rejected": missing_graph.resolution_status == "blocked"
             and missing_graph.value is None
-            and missing_graph.blocked_reason == "equipment_mechanism_graph_missing",
+            and missing_graph.blocked_reason
+            == "equipment_mechanism_graph_missing_or_duplicate",
             "resolution": missing_graph.to_json(),
         },
         "wrong_object_placed_in_light_cone_catalog": {
@@ -1015,10 +1045,16 @@ def _build_and_assembly_checks(
     dynamic = DynamicMechanismSelection(
         selection_id="fixture:dynamic-selection",
         mechanism_key=fixture["mechanism"].definition_key,
+        target_definition_key=fixture["light_cone"].definition_key,
         graph_ref_id=fixture["graph"].standalone_ability_graph_id,
-        source=source,
-        coverage_status="lowered",
-        blocked_reason="",
+        equipment_instance_id=light_cone_instance.instance_id,
+        wearer_character_card_id=fixture["card"].card_id,
+        skill_id="fixture:skill",
+        superimposition_level=1,
+        parameter_bindings=(),
+        source=ability_source,
+        coverage_status="blocked",
+        blocked_reason="fixture_dynamic_not_executable",
     )
     activation_basis = EquipmentActivationBasis(
         basis_kind="light_cone_path_equality",
@@ -1050,6 +1086,14 @@ def _build_and_assembly_checks(
         definition_key=fixture["light_cone"].definition_key,
         source=static.source,
     )
+    dynamic_blocker = EquipmentBattleAdmissionBlocker(
+        blocker_id="fixture:dynamic-blocker",
+        channel="dynamic_ability",
+        target_definition_key=fixture["light_cone"].definition_key,
+        gap_classification="implementation_missing",
+        reason_code="fixture_dynamic_not_executable",
+        source_refs=(ability_source,),
+    )
     static_inputs = [static]
     dynamic_inputs = [dynamic]
     activation_inputs = [activation]
@@ -1076,11 +1120,12 @@ def _build_and_assembly_checks(
         assembly_id="fixture:assembled",
         build_fingerprint=build_input.build_fingerprint,
         assembly_status="assembled",
-        battle_admission_status="admitted",
+        battle_admission_status="blocked",
         light_cone_selection=selection,
         static_contributions=cast(Any, static_inputs),
         dynamic_mechanisms=cast(Any, dynamic_inputs),
         activation_decisions=cast(Any, activation_inputs),
+        battle_admission_blockers=(dynamic_blocker,),
         source_ledger=cast(Any, ledger_inputs),
     )
     assembled_json_before_input_mutation = assembled.to_json()
@@ -1288,7 +1333,7 @@ def _public_model_immutability_negative_checks(
     static_refs.append("late")
     threshold_mechanisms.append(fixture["mechanism"].definition_key)
 
-    parameter_bindings = ["fixture:param-binding"]
+    parameter_bindings = list(fixture["mechanism"].parameter_binding_ids)
     mechanism = replace(
         fixture["mechanism"],
         parameter_binding_ids=cast(Any, parameter_bindings),
@@ -1379,11 +1424,17 @@ def _public_model_immutability_negative_checks(
         ),
         "dynamic_coverage_mutable_list": _raises(
             lambda: DynamicMechanismSelection(
-                "fixture:bad-dynamic",
-                fixture["mechanism"].definition_key,
-                fixture["graph"].standalone_ability_graph_id,
-                source,
-                cast(Any, []),
+                selection_id="fixture:bad-dynamic",
+                mechanism_key=fixture["mechanism"].definition_key,
+                target_definition_key=fixture["light_cone"].definition_key,
+                graph_ref_id=fixture["graph"].standalone_ability_graph_id,
+                equipment_instance_id="fixture:bad-instance",
+                wearer_character_card_id=fixture["card"].card_id,
+                skill_id="fixture:skill",
+                superimposition_level=1,
+                parameter_bindings=(),
+                source=source,
+                coverage_status=cast(Any, []),
             ),
             TypeError,
         ),
