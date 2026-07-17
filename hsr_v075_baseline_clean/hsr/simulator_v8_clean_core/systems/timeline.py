@@ -7,6 +7,7 @@ from ..core.model import BattleState, GameEvent, JSONValue, Mutation
 from ..core.settlement import SettlementRecord
 from ..rules.ir import TimelineRuleIR
 from .unit_lifecycle import UnitLifecycleSystem
+from .unit_stats import effective_unit_stat
 
 
 @dataclass(frozen=True)
@@ -112,7 +113,8 @@ class TimelineSystem:
         for unit_id, unit in sorted(state.units.items()):
             if unit_id in explicit:
                 continue
-            action_value = self.full_action_value(unit.speed, rule)
+            speed = effective_unit_stat(unit, "speed")
+            action_value = self.full_action_value(speed.value, rule)
             mutations.append(
                 Mutation(
                     op="set",
@@ -121,7 +123,7 @@ class TimelineSystem:
                     after=action_value,
                     reason="initialize action value from speed",
                     source="timeline_system",
-                    metadata={**metadata, "unit_id": unit_id, "speed": unit.speed},
+                    metadata={**metadata, "unit_id": unit_id, "effective_speed": speed.to_json()},
                     mutation_id=f"mutation:timeline:init_av:{unit_id}:{action_value}",
                 )
             )
@@ -392,7 +394,8 @@ class TimelineSystem:
             source_trace=rule.source.to_json(),
         )
         metadata = _timeline_metadata_from_plan(plan, "turn_end", "end_turn")
-        reset_av = self.full_action_value(unit.speed, rule) if turn_kind == "regular" else unit.action_value
+        speed = effective_unit_stat(unit, "speed")
+        reset_av = self.full_action_value(speed.value, rule) if turn_kind == "regular" else unit.action_value
         mutations = (
             Mutation(
                 op="set",
@@ -401,7 +404,7 @@ class TimelineSystem:
                 after=reset_av,
                 reason="reset actor action value after turn",
                 source="timeline_system",
-                metadata={**metadata, "speed": unit.speed, "turn_kind": turn_kind},
+                metadata={**metadata, "effective_speed": speed.to_json(), "turn_kind": turn_kind},
                 mutation_id=f"mutation:timeline:end_turn_reset:{actor_id}:{state.event_index}:{reset_av}",
             ),
             Mutation(

@@ -3,11 +3,12 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from ..core.model import BattleState, GameEvent, JSONValue, Mutation, RNGEvent, TargetResolution
 from ..core.settlement import SettlementRecord
 from ..rules.evaluator import NumericEvaluationContext, RuleEvaluator
+from ..rules.expression_ir import numeric_dynamic_hashes
 from ..rules.ir import EffectIR, RuleEntity
 from ..rules.rulebook import RuleBook
 from ..rules.value_binding import ValueBindingRequest, ValueContext, ValueResolver
@@ -21,6 +22,7 @@ from .rng import (
 )
 from .target import TargetSystem
 from .unit_lifecycle import UnitLifecycleSystem
+from .unit_stats import effective_unit_stat
 
 
 SUPPORTED_EFFECT_TARGET_ALIASES = {"Caster", "ModifierOwnerEntity", "ParamEntity", "CurrentActionTarget"}
@@ -59,6 +61,7 @@ class StatusInstance:
     lifecycle_state: str = "active"
     status_type: str = "Unknown"
     status_category: str = "unknown"
+    behavior_flags: tuple[str, ...] = ()
     can_dispel: bool | None = None
     source_stack_key: str = ""
     control_kind: str = ""
@@ -98,6 +101,7 @@ class StatusInstance:
             "lifecycle_state": self.lifecycle_state,
             "status_type": self.status_type,
             "status_category": self.status_category,
+            "behavior_flags": list(self.behavior_flags),
             "can_dispel": self.can_dispel,
             "source_stack_key": self.source_stack_key,
             "control_kind": self.control_kind,
@@ -353,12 +357,14 @@ class StatusSystem:
                 definition,
                 effect,
                 binding_sources,
+                dynamic_values=resolved_dynamic_values,
                 status_metadata=status_metadata,
                 value_resolver=self.value_resolver,
             )
             stack_admission = _runtime_stack_admission(
                 standard,
                 effect,
+                dynamic_values=resolved_dynamic_values,
                 binding_sources=binding_sources,
                 value_resolver=self.value_resolver,
             )
@@ -468,6 +474,9 @@ class StatusSystem:
                     "modifier_name": modifier_name,
                     "modifier_definition": definition.source.to_json(),
                     "status_config": status_metadata.get("source"),
+                    "status_type": status_metadata.get("status_type"),
+                    "status_category": status_metadata.get("status_category"),
+                    "behavior_flags": status_metadata.get("behavior_flags", []),
                     "target_alias": target_alias if isinstance(target_alias, str) else "",
                     "target_expression": target_expression_trace,
                     "resolved_target_ids": list(target_ids),
@@ -496,6 +505,11 @@ class StatusSystem:
                 lifecycle_state="active_partial" if partial_reasons else "active",
                 status_type=str(status_metadata.get("status_type") or "Unknown"),
                 status_category=str(status_metadata.get("status_category") or "unknown"),
+                behavior_flags=tuple(
+                    str(flag)
+                    for flag in status_metadata.get("behavior_flags", [])
+                    if isinstance(flag, str)
+                ),
                 can_dispel=status_metadata.get("can_dispel") if isinstance(status_metadata.get("can_dispel"), bool) else None,
                 source_stack_key=source_stack_key,
                 control_kind=str(status_metadata.get("control_kind") or ""),
@@ -1119,7 +1133,20 @@ def _apply_add_lifecycle_plan(state: BattleState, plan: StatusLifecyclePlan) -> 
         trace=plan.source_trace,
     ).to_json()
     records.append(legacy_record)
-    mutations = (status_mutation, detail_mutation) if status_mutation is not None else (detail_mutation,)
+    speed_mutation = _status_speed_progress_mutation(
+        state,
+        plan,
+        before_details=before_details,
+        after_details=after_details,
+    )
+    if speed_mutation is not None:
+        mutation_ids.append(speed_mutation.stable_id())
+        records.append(_status_speed_progress_record(plan, speed_mutation))
+    mutations = tuple(
+        mutation
+        for mutation in (status_mutation, detail_mutation, speed_mutation)
+        if mutation is not None
+    )
     return StatusLifecycleResult(
         ok=True,
         operation=plan.operation,
@@ -1209,16 +1236,29 @@ def _apply_remove_lifecycle_plan(state: BattleState, plan: StatusLifecyclePlan) 
         },
         trace=plan.source_trace,
     ).to_json()
+    speed_mutation = _status_speed_progress_mutation(
+        state,
+        plan,
+        before_details=before_details,
+        after_details=after_details,
+    )
+    records = [status_id_record, detail_record]
+    mutation_ids = [status_mutation.stable_id(), detail_mutation.stable_id()]
+    mutations: tuple[Mutation, ...] = (status_mutation, detail_mutation)
+    if speed_mutation is not None:
+        mutations = (*mutations, speed_mutation)
+        mutation_ids.append(speed_mutation.stable_id())
+        records.append(_status_speed_progress_record(plan, speed_mutation))
     return StatusLifecycleResult(
         ok=True,
         operation=plan.operation,
-        mutations=(status_mutation, detail_mutation),
+        mutations=mutations,
         events=_status_lifecycle_events(
             plan,
             state,
-            mutation_ids=(status_mutation.stable_id(), detail_mutation.stable_id()),
+            mutation_ids=tuple(mutation_ids),
         ),
-        records=(status_id_record, detail_record),
+        records=tuple(records),
         lifecycle_plan=plan,
         lifecycle_state="removed",
     )
@@ -1343,16 +1383,29 @@ def _apply_expire_lifecycle_plan(state: BattleState, plan: StatusLifecyclePlan) 
         },
         trace=plan.source_trace,
     ).to_json()
+    speed_mutation = _status_speed_progress_mutation(
+        state,
+        plan,
+        before_details=before_details,
+        after_details=after_details,
+    )
+    records = [status_record, detail_record]
+    mutation_ids = [status_mutation.stable_id(), detail_mutation.stable_id()]
+    mutations: tuple[Mutation, ...] = (status_mutation, detail_mutation)
+    if speed_mutation is not None:
+        mutations = (*mutations, speed_mutation)
+        mutation_ids.append(speed_mutation.stable_id())
+        records.append(_status_speed_progress_record(plan, speed_mutation))
     return StatusLifecycleResult(
         ok=True,
         operation=plan.operation,
-        mutations=(status_mutation, detail_mutation),
+        mutations=mutations,
         events=_status_lifecycle_events(
             plan,
             state,
-            mutation_ids=(status_mutation.stable_id(), detail_mutation.stable_id()),
+            mutation_ids=tuple(mutation_ids),
         ),
-        records=(status_record, detail_record),
+        records=tuple(records),
         lifecycle_plan=plan,
         lifecycle_state="expired",
     )
@@ -1377,6 +1430,63 @@ def _blocked_lifecycle_result(plan: StatusLifecyclePlan, reason: str) -> StatusL
     )
 
 
+def _status_speed_progress_mutation(
+    state: BattleState,
+    plan: StatusLifecyclePlan,
+    *,
+    before_details: list[JSONValue],
+    after_details: list[JSONValue],
+) -> Mutation | None:
+    unit = state.units[plan.target_id]
+    before_speed = effective_unit_stat(unit, "speed")
+    after_flags = dict(unit.flags)
+    after_flags["status_details"] = after_details
+    after_speed = effective_unit_stat(replace(unit, flags=after_flags), "speed")
+    if math.isclose(before_speed.value, after_speed.value, rel_tol=0.0, abs_tol=1e-12):
+        return None
+    if before_speed.value <= 0.0 or after_speed.value <= 0.0:
+        return None
+    after_action_value = float(unit.action_value) * before_speed.value / after_speed.value
+    if math.isclose(float(unit.action_value), after_action_value, rel_tol=0.0, abs_tol=1e-12):
+        return None
+    return Mutation(
+        op="set",
+        path=("units", plan.target_id, "action_value"),
+        before=float(unit.action_value),
+        after=after_action_value,
+        reason=f"preserve action progress after status speed {plan.operation}",
+        source="status_system",
+        metadata={
+            "operation": plan.operation,
+            "status_id": plan.status_id,
+            "before_effective_speed": before_speed.to_json(),
+            "after_effective_speed": after_speed.to_json(),
+            "lifecycle_plan": plan.to_json(),
+        },
+    )
+
+
+def _status_speed_progress_record(
+    plan: StatusLifecyclePlan,
+    mutation: Mutation,
+) -> dict[str, JSONValue]:
+    return SettlementRecord(
+        record_type="timeline_adjustment",
+        source="status_system",
+        mutation_id=mutation.stable_id(),
+        process_only=False,
+        payload={
+            "operation": "status_speed_progress_preservation",
+            "status_operation": plan.operation,
+            "status_id": plan.status_id,
+            "before_action_value": mutation.before,
+            "after_action_value": mutation.after,
+            "lifecycle_plan": plan.to_json(),
+        },
+        trace=plan.source_trace,
+    ).to_json()
+
+
 def _status_lifecycle_events(
     plan: StatusLifecyclePlan,
     state: BattleState,
@@ -1389,19 +1499,39 @@ def _status_lifecycle_events(
     modifier_name = ""
     status_instance_id = ""
     caster_id = ""
+    status_type = "Unknown"
+    status_category = "unknown"
+    behavior_flags: tuple[str, ...] = ()
     remove_like = plan.operation in {"remove", "expire", "dispel", "stack_reduce_remove"}
     if remove_like and isinstance(plan.existing_detail, dict):
         modifier_name = str(plan.existing_detail.get("modifier_name") or "")
         status_instance_id = str(plan.existing_detail.get("instance_id") or "")
         caster_id = str(plan.existing_detail.get("caster_id") or "")
+        status_type = str(plan.existing_detail.get("status_type") or "Unknown")
+        status_category = str(plan.existing_detail.get("status_category") or "unknown")
+        behavior_flags = tuple(
+            str(flag)
+            for flag in plan.existing_detail.get("behavior_flags", [])
+            if isinstance(flag, str)
+        )
     elif plan.status_instance is not None:
         modifier_name = plan.status_instance.modifier_name
         status_instance_id = plan.status_instance.instance_id
         caster_id = plan.status_instance.caster_id
+        status_type = plan.status_instance.status_type
+        status_category = plan.status_instance.status_category
+        behavior_flags = plan.status_instance.behavior_flags
     if not modifier_name and isinstance(plan.existing_detail, dict):
         modifier_name = str(plan.existing_detail.get("modifier_name") or "")
         status_instance_id = str(plan.existing_detail.get("instance_id") or "")
         caster_id = str(plan.existing_detail.get("caster_id") or "")
+        status_type = str(plan.existing_detail.get("status_type") or "Unknown")
+        status_category = str(plan.existing_detail.get("status_category") or "unknown")
+        behavior_flags = tuple(
+            str(flag)
+            for flag in plan.existing_detail.get("behavior_flags", [])
+            if isinstance(flag, str)
+        )
     events: list[GameEvent] = []
     for callback_event in callback_events:
         events.append(
@@ -1424,6 +1554,10 @@ def _status_lifecycle_events(
                     "modifier_name": modifier_name,
                     "status_id": plan.status_id,
                     "status_instance_id": status_instance_id,
+                    "caster_id": caster_id,
+                    "status_type": status_type,
+                    "status_category": status_category,
+                    "behavior_flags": list(behavior_flags),
                     "mutation_ids": list(mutation_ids),
                     "source_trace": plan.source_trace,
                 },
@@ -1825,15 +1959,27 @@ def _runtime_stack_admission(
     standard: dict[str, JSONValue],
     effect: EffectIR,
     *,
+    dynamic_values: dict[str, float] | None = None,
     binding_sources: tuple[dict[str, JSONValue], ...],
     value_resolver: ValueResolver | None = None,
 ) -> dict[str, JSONValue]:
     source_trace = {"effect_id": effect.effect_id, "effect_source": effect.source.to_json()}
+    max_dynamic_values, max_binding_sources = _status_numeric_context(
+        standard.get("max_layer"),
+        dynamic_values,
+        binding_sources,
+    )
+    layer_dynamic_values, layer_binding_sources = _status_numeric_context(
+        standard.get("layer_add_when_stack"),
+        dynamic_values,
+        binding_sources,
+    )
     max_resolution = _runtime_numeric_value_resolution(
         value_resolver,
         standard.get("max_layer"),
         modifier_name=str(standard.get("modifier_name") or ""),
-        binding_sources=binding_sources,
+        dynamic_values=max_dynamic_values,
+        binding_sources=max_binding_sources,
         source_trace=source_trace,
         required_context_keys=("status_modifier",),
     )
@@ -1841,17 +1987,26 @@ def _runtime_stack_admission(
         value_resolver,
         standard.get("layer_add_when_stack"),
         modifier_name=str(standard.get("modifier_name") or ""),
-        binding_sources=binding_sources,
+        dynamic_values=layer_dynamic_values,
+        binding_sources=layer_binding_sources,
         source_trace=source_trace,
         required_context_keys=("status_modifier",),
     )
     max_result = RuleEvaluator().evaluate_numeric(
         standard.get("max_layer"),
-        NumericEvaluationContext(binding_sources=binding_sources, source_trace=source_trace),
+        NumericEvaluationContext(
+            dynamic_values=max_dynamic_values,
+            binding_sources=max_binding_sources,
+            source_trace=source_trace,
+        ),
     )
     layer_result = RuleEvaluator().evaluate_numeric(
         standard.get("layer_add_when_stack"),
-        NumericEvaluationContext(binding_sources=binding_sources, source_trace=source_trace),
+        NumericEvaluationContext(
+            dynamic_values=layer_dynamic_values,
+            binding_sources=layer_binding_sources,
+            source_trace=source_trace,
+        ),
     )
     if _is_missing_numeric_expr(standard.get("max_layer")):
         max_stacks = 1
@@ -2708,6 +2863,8 @@ def _unit_resource(state: BattleState, unit_id: str, key: str) -> float:
     unit = state.units.get(unit_id)
     if unit is None:
         return 0.0
+    if key in {"critical_chance", "critical_damage", "effect_hit_rate", "effect_resistance"}:
+        return effective_unit_stat(unit, key).value
     value = unit.resources.get(key)
     return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else 0.0
 
@@ -2756,6 +2913,50 @@ def _status_immunity_source(
 
 
 def _map_stack_property(property_name: str) -> tuple[str, str, str] | None:
+    common_properties = {
+        "AttackAddedRatio": ("attribute", "attack_added_ratio", "actor"),
+        "AttackDelta": ("attribute", "attack_delta", "actor"),
+        "DefenceAddedRatio": ("attribute", "defense_added_ratio", "target"),
+        "DefenseAddedRatio": ("attribute", "defense_added_ratio", "target"),
+        "DefenceDelta": ("attribute", "defense_delta", "target"),
+        "DefenseDelta": ("attribute", "defense_delta", "target"),
+        "SpeedAddedRatio": ("attribute", "speed_added_ratio", "actor"),
+        "SpeedDelta": ("attribute", "speed_delta", "actor"),
+        "CriticalChanceBase": ("crit", "critical_chance", "actor"),
+        "CriticalDamageBase": ("crit", "critical_damage", "actor"),
+        "BreakDamageAddedRatioBase": (
+            "break_bonus",
+            "break_damage_added_ratio",
+            "actor",
+        ),
+        "BreakDamageExtraAddedRatio": (
+            "break_bonus",
+            "break_damage_extra_added_ratio",
+            "actor",
+        ),
+        "StatusProbabilityBase": ("status_probability", "effect_hit_rate", "actor"),
+        "StatusResistanceBase": ("status_probability", "effect_resistance", "target"),
+        "SPRatioBase": ("resource", "energy_regeneration_rate", "actor"),
+        "HealRatioBase": ("healing", "outgoing_healing_ratio", "actor"),
+        "HealTakenRatio": ("healing", "incoming_healing_ratio", "target"),
+        "HealRatioConvert": ("healing", "healing_ratio_convert", "actor"),
+        "ShieldAddedRatio": ("shield", "shield_added_ratio", "actor"),
+        "ElationDamageAddedRatioBase": (
+            "damage_bonus",
+            "elation_damage_added_ratio",
+            "actor",
+        ),
+        "DotDamageAddedRatio": ("damage_bonus", "dot_damage_added_ratio", "actor"),
+        "AggroAddedRatio": ("aggro", "aggro_added_ratio", "actor"),
+        "AllDamageReduce": ("damage_reduction", "damage_reduction", "target"),
+        "AllDamageTypeResistance": (
+            "resistance",
+            "all_resistance_delta",
+            "target",
+        ),
+    }
+    if property_name in common_properties:
+        return common_properties[property_name]
     element_prefixes = {
         "Physical": "Physical",
         "Fire": "Fire",
@@ -2774,7 +2975,11 @@ def _map_stack_property(property_name: str) -> tuple[str, str, str] | None:
             return ("resistance", f"{prefix}_resistance_delta", "target")
     if property_name == "AllResistanceDelta":
         return ("resistance", "all_resistance_delta", "target")
-    if property_name in {"DamageTakenRatio", "AllDamageTakenRatio"}:
+    if property_name in {
+        "DamageTakenRatio",
+        "AllDamageTakenRatio",
+        "AllDamageTypeTakenRatio",
+    }:
         return ("damage_taken", "damage_taken_ratio", "target")
     if property_name in {"DefenceReduce", "DefenseReduce", "DefenceReduction", "DefenseReduction"}:
         return ("defense", "def_reduction", "target")
@@ -2805,6 +3010,7 @@ def _runtime_duration_admission(
     effect: EffectIR,
     binding_sources: tuple[dict[str, JSONValue], ...] = (),
     *,
+    dynamic_values: dict[str, float] | None = None,
     status_metadata: dict[str, JSONValue] | None = None,
     value_resolver: ValueResolver | None = None,
 ) -> dict[str, JSONValue]:
@@ -2832,6 +3038,7 @@ def _runtime_duration_admission(
         standard_moment or definition_moment,
         source_kind="effect",
         source_trace={"effect_id": effect.effect_id, "effect_source": effect.source.to_json()},
+        dynamic_values=dynamic_values,
         binding_sources=binding_sources,
         value_resolver=value_resolver,
         modifier_name=str(standard.get("modifier_name") or ""),
@@ -2849,6 +3056,7 @@ def _runtime_duration_admission(
         definition_moment,
         source_kind="modifier_definition",
         source_trace={"modifier_definition": definition.source.to_json()},
+        dynamic_values=dynamic_values,
         binding_sources=binding_sources,
         value_resolver=value_resolver,
         modifier_name=str(standard.get("modifier_name") or ""),
@@ -2872,7 +3080,12 @@ def _admit_default_unit_status_lifecycle(
     if admission.get("blocked_reason") != "life_step_moment_missing":
         return admission
     status_category = str(status_metadata.get("status_category") or "")
-    if status_category not in {"buff", "debuff"}:
+    if status_category not in {"buff", "debuff", "other", "control", "unknown"}:
+        return admission
+    if (
+        status_category == "unknown"
+        and not isinstance(status_metadata.get("modifier_definition_source"), dict)
+    ):
         return admission
     if _number_or_none(admission.get("remaining_duration")) is None:
         return admission
@@ -2891,6 +3104,9 @@ def _admit_default_unit_status_lifecycle(
                 "status_type": status_metadata.get("status_type"),
                 "status_category": status_category,
                 "status_config": status_metadata.get("source"),
+                "modifier_definition_source": status_metadata.get(
+                    "modifier_definition_source"
+                ),
             },
         },
     }
@@ -2902,21 +3118,32 @@ def _duration_admission_from_expr(
     *,
     source_kind: str,
     source_trace: dict[str, JSONValue],
+    dynamic_values: dict[str, float] | None = None,
     binding_sources: tuple[dict[str, JSONValue], ...] = (),
     value_resolver: ValueResolver | None = None,
     modifier_name: str = "",
 ) -> dict[str, JSONValue]:
+    context_dynamic_values, context_binding_sources = _status_numeric_context(
+        lifetime_expr,
+        dynamic_values,
+        binding_sources,
+    )
     value_resolution = _runtime_numeric_value_resolution(
         value_resolver,
         lifetime_expr,
         modifier_name=modifier_name,
-        binding_sources=binding_sources,
+        dynamic_values=context_dynamic_values,
+        binding_sources=context_binding_sources,
         source_trace=source_trace,
         required_context_keys=("status_modifier",),
     )
     result = RuleEvaluator().evaluate_numeric(
         lifetime_expr,
-        NumericEvaluationContext(binding_sources=binding_sources, source_trace=source_trace),
+        NumericEvaluationContext(
+            dynamic_values=context_dynamic_values,
+            binding_sources=context_binding_sources,
+            source_trace=source_trace,
+        ),
     )
     if _is_missing_numeric_expr(lifetime_expr):
         return {
@@ -2982,6 +3209,27 @@ def _duration_admission_from_expr(
         "numeric_evaluation": result.to_json(),
         "value_resolution": value_resolution,
     }
+
+
+def _status_numeric_context(
+    expression: object,
+    dynamic_values: dict[str, float] | None,
+    binding_sources: tuple[dict[str, JSONValue], ...],
+) -> tuple[dict[str, float], tuple[dict[str, JSONValue], ...]]:
+    """Select one provenance channel for each status numeric expression.
+
+    ``resolved_dynamic_values`` are produced from the supplied binding sources.
+    Passing both copies to RuleEvaluator makes the same raw binding look like
+    two independent candidates.  Prefer the normalized status-local copy only
+    when it closes every dynamic operand; otherwise keep the original audited
+    sources and omit the partial copy so conflicts still fail closed.
+    """
+
+    normalized = _numeric_bindings(dynamic_values)
+    hashes = tuple(str(value) for value in numeric_dynamic_hashes(expression))
+    if hashes and all(key in normalized for key in hashes):
+        return normalized, ()
+    return {}, binding_sources
 
 
 def _admitted_duration_value(duration_admission: dict[str, JSONValue]) -> float | None:
@@ -3224,27 +3472,35 @@ def _is_missing_numeric_expr(expr: object) -> bool:
 
 def _status_metadata(rules: RuleBook, modifier_name: str, definition: RuleEntity | None = None) -> dict[str, JSONValue]:
     entity = rules.status_entity_for_modifier(modifier_name)
-    if entity is None:
-        return {
-            "status_type": "Unknown",
-            "status_category": "unknown",
-            "can_dispel": None,
-            "control_kind": "",
-            "source": None,
-        }
-    status_type = str(entity.fields.get("StatusType") or entity.fields.get("status_type") or "Unknown")
-    can_dispel = entity.fields.get("CanDispel")
-    control_kind = str(entity.fields.get("ControlKind") or entity.fields.get("control_kind") or "")
-    status_category = _status_category(status_type)
     behavior_flags = tuple(
         str(flag)
         for flag in (definition.fields.get("behavior_flags") if definition is not None else ())
         if isinstance(flag, str)
     )
+    if entity is None:
+        control_kind = _control_kind_from_behavior_flags(behavior_flags)
+        status_category = _status_category_from_behavior_flags(behavior_flags)
+        if control_kind:
+            status_category = "control"
+        return {
+            "status_type": "Unknown",
+            "status_category": status_category,
+            "can_dispel": None,
+            "control_kind": control_kind,
+            "source": None,
+            "modifier_definition_source": definition.source.to_json() if definition is not None else None,
+            "behavior_flags": list(behavior_flags),
+        }
+    status_type = str(entity.fields.get("StatusType") or entity.fields.get("status_type") or "Unknown")
+    can_dispel = entity.fields.get("CanDispel")
+    control_kind = str(entity.fields.get("ControlKind") or entity.fields.get("control_kind") or "")
+    status_category = _status_category(status_type)
     control_flag = _control_kind_from_behavior_flags(behavior_flags)
     if control_flag:
         status_category = "control"
         control_kind = control_kind or control_flag
+    elif status_category == "unknown":
+        status_category = _status_category_from_behavior_flags(behavior_flags)
     return {
         "status_type": status_type,
         "status_category": status_category,
@@ -3266,6 +3522,32 @@ def _status_category(status_type: str) -> str:
         return "other"
     if normalized == "control":
         return "control"
+    return "unknown"
+
+
+def _status_category_from_behavior_flags(
+    behavior_flags: tuple[str, ...],
+) -> str:
+    """Project a category only from explicit TBGD behavior markers.
+
+    Canonical modifier definitions do not always have a matching status
+    entity.  In that case DOT and stat-down/up flags are the remaining
+    classification evidence.  Unrecognised flags deliberately stay unknown.
+    """
+
+    normalized = tuple(flag.strip().lower() for flag in behavior_flags)
+    if any(
+        flag.startswith("stat_dot")
+        or (flag.startswith("stat_") and flag.endswith("down"))
+        for flag in normalized
+    ):
+        return "debuff"
+    if any(
+        flag == "shield"
+        or (flag.startswith("stat_") and flag.endswith("up"))
+        for flag in normalized
+    ):
+        return "buff"
     return "unknown"
 
 

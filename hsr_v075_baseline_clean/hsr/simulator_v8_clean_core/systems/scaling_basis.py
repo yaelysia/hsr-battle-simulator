@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from ..core.model import BattleState, JSONValue, UnitState
+from .unit_stats import effective_unit_stat
 
 
 @dataclass(frozen=True)
@@ -101,18 +102,18 @@ def _unit_stat_value(unit: UnitState, stat: str) -> float | None:
     if stat == "max_hp":
         return float(unit.max_hp)
     if stat == "attack":
-        return float(unit.attack)
+        return effective_unit_stat(unit, "attack").value
     if stat == "defense":
-        return float(unit.defense)
+        return effective_unit_stat(unit, "defense").value
     if stat == "speed":
-        return float(unit.speed)
+        return effective_unit_stat(unit, "speed").value
     if stat == "toughness":
         return float(unit.toughness)
     if stat == "max_toughness":
         return float(unit.max_toughness)
     resource_value = unit.resources.get(stat)
-    if isinstance(resource_value, (int, float)):
-        return float(resource_value)
+    if isinstance(resource_value, (int, float)) and not isinstance(resource_value, bool):
+        return effective_unit_stat(unit, stat).value
     return None
 
 

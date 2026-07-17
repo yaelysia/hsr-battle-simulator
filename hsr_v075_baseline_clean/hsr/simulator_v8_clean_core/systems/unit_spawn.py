@@ -342,6 +342,7 @@ def _materialize_unit_payload(
         "shield_instances": [],
         "flags": flags,
         "resources": resources,
+        "stat_pools": [],
     }
 
 

@@ -281,8 +281,22 @@ class DirectDamageFormula:
 def _resolve_crit(formula_input: DamageFormulaInput, actor: UnitState) -> tuple[CritResolution, RNGEvent, DamageFormulaBucket]:
     crit_modifier_terms = _direct_modifier_terms(formula_input, bucket="crit", key="critical_chance")
     crit_bonus = sum(float(term.get("value") or 0.0) for term in crit_modifier_terms)
-    crit_rate = _clamp(_resource(actor, "critical_chance") + crit_bonus, 0.0, 1.0)
-    crit_damage = _resource(actor, "critical_damage")
+    status_crit_rate, status_crit_rate_terms, status_crit_rate_skipped = _status_modifier_terms(
+        actor,
+        source_type="actor.status",
+        bucket="crit",
+        keys=("critical_chance",),
+    )
+    status_crit_damage, status_crit_damage_terms, status_crit_damage_skipped = _status_modifier_terms(
+        actor,
+        source_type="actor.status",
+        bucket="crit",
+        keys=("critical_damage",),
+    )
+    base_crit_rate = _resource(actor, "critical_chance")
+    base_crit_damage = _resource(actor, "critical_damage")
+    crit_rate = _clamp(base_crit_rate + status_crit_rate + crit_bonus, 0.0, 1.0)
+    crit_damage = base_crit_damage + status_crit_damage
     mode = str(formula_input.crit_mode or "").lower()
     forced_outcome_id = ""
     if mode in {"crit", "forced_crit", "true"}:
@@ -374,11 +388,19 @@ def _resolve_crit(formula_input: DamageFormulaInput, actor: UnitState) -> tuple[
         bucket="crit",
         multiplier=multiplier,
         applied_terms=(
-            _applied_term("actor.resources", actor.unit_id, "crit", "critical_chance", "actor", "always", crit_rate, "crit_rate_clamped", "resources.critical_chance"),
-            _applied_term("actor.resources", actor.unit_id, "crit", "critical_damage", "actor", "is_crit" if is_crit else "not_crit", crit_damage, "crit_damage_available", "resources.critical_damage"),
+            _applied_term("actor.resources", actor.unit_id, "crit", "critical_chance", "actor", "always", base_crit_rate, "base_crit_rate", "resources.critical_chance"),
+            _applied_term("actor.resources", actor.unit_id, "crit", "critical_damage", "actor", "is_crit" if is_crit else "not_crit", base_crit_damage, "base_crit_damage", "resources.critical_damage"),
+            *status_crit_rate_terms,
+            *status_crit_damage_terms,
             *tuple(_direct_modifier_applied_term(term, "crit") for term in crit_modifier_terms),
         ),
-        metadata={**resolution.to_json(), "direct_modifier_bonus": crit_bonus},
+        skipped_terms=(*status_crit_rate_skipped, *status_crit_damage_skipped),
+        metadata={
+            **resolution.to_json(),
+            "direct_modifier_bonus": crit_bonus,
+            "status_crit_rate_bonus": status_crit_rate,
+            "status_crit_damage_bonus": status_crit_damage,
+        },
     )
     return resolution, rng_event, bucket
 
@@ -432,7 +454,29 @@ def _defense_bucket(
     )
     def_reduction = resource_def_reduction + status_def_reduction
     def_ignore = resource_def_ignore + status_def_ignore
-    effective_def = max(0.0, target.defense * (1.0 + defender_added_ratio - def_reduction - def_ignore))
+    status_defense_ratio, target_attribute_terms, target_attribute_skipped = _status_modifier_terms(
+        target,
+        source_type="target.status",
+        bucket="attribute",
+        keys=("defense_added_ratio",),
+    )
+    status_defense_flat, target_attribute_flat_terms, target_attribute_flat_skipped = _status_modifier_terms(
+        target,
+        source_type="target.status",
+        bucket="attribute",
+        keys=("defense_delta",),
+    )
+    effective_def = max(
+        0.0,
+        target.defense * (
+            1.0
+            + status_defense_ratio
+            + defender_added_ratio
+            - def_reduction
+            - def_ignore
+        )
+        + status_defense_flat,
+    )
     multiplier, engine_rule = evaluate_defense_multiplier(
         effective_defense=effective_def,
         attacker_level=actor.level,
@@ -443,6 +487,8 @@ def _defense_bucket(
         _applied_term("target.resources", target.unit_id, "defense", "def_reduction", "target", "always", resource_def_reduction, _neutral_reason(resource_def_reduction), "resources.def_reduction"),
         _applied_term("actor.resources", actor.unit_id, "defense", "def_ignore", "actor", "always", resource_def_ignore, _neutral_reason(resource_def_ignore), "resources.def_ignore"),
         *tuple(_direct_modifier_applied_term(term, "defense") for term in direct_terms),
+        *target_attribute_terms,
+        *target_attribute_flat_terms,
         *target_status_terms,
         *actor_status_terms,
     )
@@ -450,12 +496,19 @@ def _defense_bucket(
         bucket="defense",
         multiplier=multiplier,
         applied_terms=terms,
-        skipped_terms=(*target_skipped_terms, *actor_skipped_terms),
+        skipped_terms=(
+            *target_attribute_skipped,
+            *target_attribute_flat_skipped,
+            *target_skipped_terms,
+            *actor_skipped_terms,
+        ),
         metadata={
             "effective_defense": effective_def,
             "actor_level": actor.level,
             "status_def_reduction": status_def_reduction,
             "status_def_ignore": status_def_ignore,
+            "status_defense_added_ratio": status_defense_ratio,
+            "status_defense_delta": status_defense_flat,
             "direct_defender_added_ratio": defender_added_ratio,
             "engine_rule": engine_rule.to_json(),
         },

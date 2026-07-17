@@ -13,8 +13,8 @@ hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/
 最近完成阶段：
 
 ```text
-P8-S5 light-cone static contributions accepted
-checkpoint: v8_p8_s5_light_cone_static_contributions_ready_for_review.md
+P8-S7 light-cone status/condition/listener closure accepted
+checkpoint: v8_p8_s7_light_cone_status_condition_listener_closure_ready_for_review.md
 ```
 
 当前规划阶段：
@@ -29,7 +29,8 @@ P8-S3 light-cone data cards and source linkage accepted
 P8-S4 light-cone instance, growth and path activation decision accepted
 P8-S5 light-cone static contributions accepted
 P8-S6 light-cone dynamic startup accepted
-next stages: P8-S7 light-cone status/condition/listener closure / P8-S9 relic definition cards in an isolated worktree
+P8-S7 light-cone status/condition/listener closure accepted
+next stages: P8-S8 light-cone remaining gameplay closure / P8-S9 relic definition cards in an isolated worktree
 ```
 
 当前验收口径：
@@ -45,7 +46,7 @@ next stages: P8-S7 light-cone status/condition/listener closure / P8-S9 relic de
 - P7-S2 Mutation 前置条件与 reducer 冲突检测已完成独立验收；严格 before/op/after、路径存在性、同路径连续链、结构化冲突、整批回滚、不可变 Mutation JSON 和统一 UnitState codec 均已形成直接证据。
 - P7-S3 至 P7-S19 已完成统一验收；最终总账包含 24 项问题证据、18 个阶段证据和一次共享 RuleBook 的 9 项当前源码回归，空检查、缺项、错误类型及错误源码指纹负例均被拒绝。
 - P7-DONE 已于 2026-07-13 由验收线程勾选。P7 完成的是内核可信执行与当前已准入战斗语义，不代表 P2/P3/P4/P6 保留内容缺口或全角色 / 全怪物 / 全装备 / 全关卡扩面完成。
-- P8-S0 装备来源与机制基线、P8-S1 类型化装备与构筑架构、P8-S2 正式角色构筑输入与基础面板、P8-S3 光锥数据卡与来源关联、P8-S4 光锥实例与成长装配、P8-S5 光锥静态属性贡献、P8-S6 光锥动态能力入口与启动生命周期均已独立验收。当前已具备 source-backed 角色面板、完整已发布光锥定义目录、玩家光锥实例、指定等级基础贡献、命途激活决策、静态被动归并和动态 provider 启动边界；光锥 gameplay family 和遗器仍未完成。
+- P8-S0 装备来源与机制基线、P8-S1 类型化装备与构筑架构、P8-S2 正式角色构筑输入与基础面板、P8-S3 光锥数据卡与来源关联、P8-S4 光锥实例与成长装配、P8-S5 光锥静态属性贡献、P8-S6 光锥动态能力入口与启动生命周期、P8-S7 属性 / 状态 / 条件 / 动态值 / 监听机制族均已独立验收。当前 18 个纯 S7 光锥图可以正式执行，144 个含 S8 分支的图继续整体 blocked；S8 剩余 gameplay family 和遗器仍未完成。
 
 P6 后的内核深度复审确认：现有 transition / replay / source audit 骨架值得保留，但动作完整性、Mutation 前置校验、动作与目标契约、调度阶段、伤害、护盾、状态概率、RNG、召唤和波次等路径仍有会影响真实战斗结果的问题。P7 用实际代码问题总账和通用不变量逐项回正这些语义，不把旧聚合 `ok=true` 外推为完整正确。
 
@@ -54,11 +55,11 @@ P3/P4/P5 的 `*_all_executable_complete=false` 和 P6 的 `p6_all_mechanisms_rei
 当前推荐下一阶段：
 
 ```text
-P8-S7 light-cone status/condition/listener closure
+P8-S8 light-cone remaining gameplay closure
 P8-S9 relic definition cards (isolated worktree only when parallel)
 ```
 
-P7-S0 至 P7-S19 已全部验收，P8-S0 至 P8-S6 也已通过独立验收。当前主工作区从 S7 继续光锥轨；遗器轨只有从 S4 检查点建立独立 worktree 时才可并行从 S9 开始。不能把 S6 的能力入口与 provider 启动误读为光锥 gameplay family 或遗器已经完成。
+P7-S0 至 P7-S19 已全部验收，P8-S0 至 P8-S7 也已通过独立验收。当前主工作区从 S8 继续光锥轨；遗器轨只有从 S4 检查点建立独立 worktree 时才可并行从 S9 开始。不能把 S7 的第一批 gameplay family 闭合误读为全部光锥机制或遗器已经完成。
 
 ## 2. 下一线程优先入口
 
@@ -119,7 +120,7 @@ P1 过程计划已经归档，不作为默认入口：
 - 验收线程复核后才勾 checklist。
 - 聚合阶段最后做，并继承所有分步 gap。
 
-P8-S6 已验收。当前主工作区的光锥轨从 S7 继续；S9-S17 遗器轨只有从 S4 检查点建立独立 Git worktree 时才可并行。轨内仍严格串行，S18 只有两轨均验收并合并后才能开始。同一工作区禁止并行修改。
+P8-S7 已验收。当前主工作区的光锥轨从 S8 继续；S9-S17 遗器轨只有从 S4 检查点建立独立 Git worktree 时才可并行。轨内仍严格串行，S18 只有两轨均验收并合并后才能开始。同一工作区禁止并行修改。
 
 ## 5. 验收报告入口
 
@@ -140,6 +141,7 @@ P8-S6 已验收。当前主工作区的光锥轨从 S7 继续；S9-S17 遗器轨
 - `../live_validation_reports/v8_p8_s4_light_cone_instance_assembly_ready_for_review.md`（P8-S4 执行 evidence；S4 已由验收线程复核并形成代码检查点）
 - `../live_validation_reports/v8_p8_s5_light_cone_static_contributions_ready_for_review.md`（P8-S5 执行 evidence；S5 已由验收线程复核并形成代码检查点）
 - `../live_validation_reports/v8_p8_s6_light_cone_dynamic_startup_ready_for_review.md`（P8-S6 执行 evidence；S6 已由验收线程复核并形成代码检查点）
+- `../live_validation_reports/v8_p8_s7_light_cone_status_condition_listener_closure_ready_for_review.md`（P8-S7 执行 evidence；S7 已由验收线程复核并形成代码检查点）
 
 阶段内 `ready_for_review` 报告是 evidence 索引，不是验收结论本身。最终以对应 `checkpoint` 和验收线程结论为准。
 

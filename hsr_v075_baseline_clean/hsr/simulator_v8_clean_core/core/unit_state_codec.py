@@ -4,7 +4,7 @@ import math
 from typing import Any
 
 from .immutable_json import thaw_json
-from .model import JSONValue, UnitState
+from .model import JSONValue, UnitState, UnitStatPool
 
 
 UNIT_STATE_FLOAT_FIELDS = frozenset(
@@ -32,6 +32,7 @@ UNIT_STATE_PAYLOAD_FIELDS = frozenset(
         "shield_instances",
         "flags",
         "resources",
+        "stat_pools",
     }
 )
 UNIT_STATE_MUTABLE_FIELDS = frozenset(
@@ -60,6 +61,7 @@ def unit_state_to_payload(unit: UnitState) -> dict[str, JSONValue]:
         "shield_instances": [thaw_json(instance) for instance in unit.shield_instances],
         "flags": flags,
         "resources": resources,
+        "stat_pools": [pool.to_json() for pool in unit.stat_pools],
     }
     _validate_payload_identity(payload)
     _validate_unit_values(payload)
@@ -80,10 +82,13 @@ def unit_state_from_payload(payload: Any) -> UnitState:
     shield_instances = raw["shield_instances"]
     flags = raw["flags"]
     resources = raw["resources"]
+    stat_pools = raw["stat_pools"]
     assert isinstance(statuses, list)
     assert isinstance(shield_instances, list)
     assert isinstance(flags, dict)
     assert isinstance(resources, dict)
+    if not isinstance(stat_pools, list):
+        raise ValueError("unit state stat_pools must be a JSON array")
     return UnitState(
         unit_id=raw["unit_id"],
         side=raw["side"],  # type: ignore[arg-type]
@@ -94,6 +99,45 @@ def unit_state_from_payload(payload: Any) -> UnitState:
         shield_instances=tuple(shield_instances),
         flags=flags,
         resources={key: _finite_number(value, f"resources.{key}") for key, value in resources.items()},
+        stat_pools=tuple(_unit_stat_pool_from_payload(item) for item in stat_pools),
+    )
+
+
+def _unit_stat_pool_from_payload(value: Any) -> UnitStatPool:
+    if not isinstance(value, dict):
+        raise ValueError("unit stat pool payload must be a JSON object")
+    fields = {
+        "property_type",
+        "base_value",
+        "static_percentage",
+        "static_flat",
+        "base_contribution_ids",
+        "percentage_contribution_ids",
+        "flat_contribution_ids",
+    }
+    if set(value) != fields:
+        raise ValueError("unit stat pool payload fields mismatch")
+    property_type = value.get("property_type")
+    if not isinstance(property_type, str) or not property_type:
+        raise ValueError("unit stat pool property_type must be a non-empty string")
+    contribution_fields = {}
+    for field_name in (
+        "base_contribution_ids",
+        "percentage_contribution_ids",
+        "flat_contribution_ids",
+    ):
+        entries = value.get(field_name)
+        if not isinstance(entries, list):
+            raise ValueError(f"unit stat pool {field_name} must be a JSON array")
+        contribution_fields[field_name] = tuple(entries)
+    return UnitStatPool(
+        property_type=property_type,
+        base_value=_finite_number(value.get("base_value"), "stat_pools.base_value"),
+        static_percentage=_finite_number(
+            value.get("static_percentage"), "stat_pools.static_percentage"
+        ),
+        static_flat=_finite_number(value.get("static_flat"), "stat_pools.static_flat"),
+        **contribution_fields,
     )
 
 

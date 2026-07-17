@@ -201,6 +201,12 @@ class ToughnessSystem:
                     trace=packet.source_trace,
                 ).to_json()
             )
+        callback_events = ["OnBeingStanceDamage"]
+        if after <= 0 and not bool(target.flags.get("broken", False)):
+            # Toughness has been committed, but BreakSystem has not entered the
+            # break lifecycle yet. This is the unique production boundary for
+            # callbacks whose source semantics are "before being broken".
+            callback_events.append("OnBeforeBeingBreak")
         hit_event = GameEvent(
             event_type="toughness.hit",
             source_id=packet.attacker_id,
@@ -208,7 +214,7 @@ class ToughnessSystem:
             window="damage",
             process_only=True,
             payload={
-                "callback_events": ["OnBeingStanceDamage"],
+                "callback_events": callback_events,
                 "attacker_id": packet.attacker_id,
                 "actor_id": packet.attacker_id,
                 "target_id": packet.target_id,

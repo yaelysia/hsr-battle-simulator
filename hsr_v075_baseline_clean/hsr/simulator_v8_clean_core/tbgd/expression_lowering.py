@@ -65,9 +65,23 @@ def _lower_postfix_program(postfix: dict[str, Any]) -> dict[str, JSONValue]:
             stack_depth += 1
             index += 2
             continue
-        operation = {2: "add", 3: "sub", 4: "mul", 5: "div"}.get(opcode)
+        operation = {
+            2: "add",
+            3: "sub",
+            4: "mul",
+            5: "div",
+            # GameCore postfix opcode 14 is unary negation.  Current equipment
+            # sources use it for reductions such as defence and speed down.
+            14: "negate",
+        }.get(opcode)
         if operation is None:
             return numeric_unsupported(f"unsupported_postfix_opcode:{opcode}")
+        if operation == "negate":
+            if stack_depth < 1:
+                return numeric_unsupported("postfix_stack_underflow")
+            instructions.append({"opcode": operation})
+            index += 1
+            continue
         if stack_depth < 2:
             return numeric_unsupported("postfix_stack_underflow")
         instructions.append({"opcode": operation})
@@ -102,6 +116,11 @@ def _fold_fixed_program(instructions: tuple[dict[str, JSONValue], ...]) -> float
             if not isinstance(value, (int, float)) or isinstance(value, bool):
                 return None
             stack.append(float(value))
+            continue
+        if opcode == "negate":
+            if not stack:
+                return None
+            stack[-1] = -stack[-1]
             continue
         if len(stack) < 2:
             return None

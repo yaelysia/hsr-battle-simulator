@@ -11,6 +11,7 @@ from ..rules.expression_ir import (
     numeric_fixed_value,
 )
 from ..rules.ir import TargetExpressionIR, TargetExpressionNodeIR
+from ..unit_eligibility import runtime_unit_is_unselectable
 from .rng import (
     RNGOutcome,
     RNGRequest,
@@ -501,7 +502,7 @@ class TargetSystem:
         actor = state.units[actor_id]
         return tuple(
             unit_id
-            for unit_id, unit in state.units.items()
+            for unit_id, unit in sorted(state.units.items())
             if is_opposing_combat_team(actor, unit) and self.lifecycle.can_target(state, unit_id, allow_defeated=allow_defeated)[0]
         )
 
@@ -1470,7 +1471,17 @@ def _resolve_target_alias_ids(
     target_resolution: TargetResolution | None,
     event_payload: dict[str, JSONValue],
 ) -> tuple[tuple[str, ...], str]:
-    if alias in {"Caster", "ModifierOwnerEntity", "ParamEntity", "CurrentActionTarget", "AbilityTargetEntity"}:
+    if alias in {
+        "AbilityTargetEntity",
+        "Caster",
+        "CurrentActionTarget",
+        "CurrentTurnOwnerEntity",
+        "DamageAttackerEntity",
+        "DamageDefenderEntity",
+        "ModifierOwnerEntity",
+        "ParamEntity",
+        "ParamEntity2",
+    }:
         target_id = _resolve_single_alias(
             alias,
             caster_id=caster_id,
@@ -1478,14 +1489,33 @@ def _resolve_target_alias_ids(
             param_entity_id=param_entity_id,
             current_action_target_id=current_action_target_id,
             target_resolution=target_resolution,
+            event_payload=event_payload,
         )
         if target_id is None:
             return (), f"unsupported_or_missing_target_alias:{alias}"
         if target_id not in state.units:
             return (), f"target unit {target_id!r} is not in state"
         return (target_id,), ""
-    if alias in {"SkillTargetEntityList", "ParamEntitySkillTargetEntityList"}:
-        return _target_ids_from_resolution_or_payload(state, target_resolution, event_payload)
+    if alias in {
+        "AttackTargetList",
+        "ParamEntityAttackTargetList",
+        "ParamEntitySkillTargetEntityList",
+        "SkillSubTargetEntityList",
+        "SkillTargetEntityList",
+    }:
+        if alias in {"SkillTargetEntityList", "ParamEntitySkillTargetEntityList"}:
+            return _target_ids_from_resolution_or_payload(state, target_resolution, event_payload)
+        keys = {
+            "AttackTargetList": ("attack_target_ids", "selected_target_ids", "target_ids"),
+            "ParamEntityAttackTargetList": ("param_entity_attack_target_ids", "attack_target_ids", "selected_target_ids"),
+            "SkillSubTargetEntityList": ("skill_sub_target_ids", "sub_target_ids"),
+        }[alias]
+        return _target_ids_from_payload(
+            state,
+            event_payload,
+            keys,
+            missing_reason=f"{alias}_missing",
+        )
     if alias == "ParamEntityList":
         return _target_ids_from_payload(
             state,
@@ -1530,6 +1560,7 @@ def _resolve_single_alias(
     param_entity_id: str | None,
     current_action_target_id: str | None,
     target_resolution: TargetResolution | None,
+    event_payload: dict[str, JSONValue],
 ) -> str | None:
     if alias == "Caster":
         return caster_id
@@ -1537,11 +1568,42 @@ def _resolve_single_alias(
         return owner_id
     if alias == "ParamEntity":
         return param_entity_id
+    if alias == "ParamEntity2":
+        return _first_payload_target(
+            event_payload,
+            ("param_entity_2_id", "param_entity2_id", "secondary_target_id"),
+        )
+    if alias == "DamageDefenderEntity":
+        return _first_payload_target(
+            event_payload,
+            ("current_hit_target_id", "damage_defender_id", "primary_target_id", "target_id", "event_target_id"),
+        ) or current_action_target_id
+    if alias == "DamageAttackerEntity":
+        return _first_payload_target(
+            event_payload,
+            ("damage_attacker_id", "actor_id", "source_id", "event_source_id"),
+        ) or caster_id
+    if alias == "CurrentTurnOwnerEntity":
+        return _first_payload_target(
+            event_payload,
+            ("turn_owner_id", "actor_id", "event_source_id"),
+        )
     if alias in {"CurrentActionTarget", "AbilityTargetEntity"}:
         if current_action_target_id:
             return current_action_target_id
         if alias == "AbilityTargetEntity" and target_resolution is not None and target_resolution.selected:
             return target_resolution.selected[0]
+    return None
+
+
+def _first_payload_target(
+    payload: dict[str, JSONValue],
+    keys: tuple[str, ...],
+) -> str | None:
+    for key in keys:
+        value = payload.get(key)
+        if isinstance(value, str) and value:
+            return value
     return None
 
 
@@ -1556,6 +1618,8 @@ def _resolve_group_alias(
     targets: list[str] = []
     for unit_id, unit in sorted(state.units.items()):
         if not UnitLifecycleSystem().can_target(state, unit_id)[0]:
+            continue
+        if unit_is_unselectable(state, unit_id) and alias != "AllEnemyWithUnSelectable":
             continue
         if alias in {"AllEnemy", "AllEnemyWithUnSelectable"} and is_opposing_combat_team(caster, unit):
             targets.append(unit_id)
@@ -2907,16 +2971,16 @@ def _is_battle_event_unit(state: BattleState, unit_id: str) -> bool:
     return unit.flags.get("entity_type") == "battle_event" or unit.flags.get("battle_event_subtype") is not None
 
 
-def _is_unselectable_unit(state: BattleState, unit_id: str) -> bool:
+def unit_is_unselectable(state: BattleState, unit_id: str) -> bool:
+    """Return the canonical runtime target-selectability decision for one unit."""
     unit = state.units.get(unit_id)
     if unit is None:
         return True
-    return bool(
-        unit.flags.get("unselectable") is True
-        or unit.flags.get("target_unselectable") is True
-        or unit.flags.get("is_unselectable") is True
-        or unit.flags.get("selectable") is False
-    )
+    return runtime_unit_is_unselectable(unit)
+
+
+def _is_unselectable_unit(state: BattleState, unit_id: str) -> bool:
+    return unit_is_unselectable(state, unit_id)
 
 
 def _is_character_change_target_unit(state: BattleState, unit_id: str) -> bool:

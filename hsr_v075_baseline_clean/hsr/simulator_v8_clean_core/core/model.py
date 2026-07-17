@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -12,6 +13,58 @@ from .transition_outcome import TransitionOutcome, unclassified_transition_outco
 JSONValue = None | bool | int | float | str | list["JSONValue"] | dict[str, "JSONValue"]
 UnitSide = Literal["ally", "enemy", "summon"]
 MutationOp = Literal["set", "delete", "spawn"]
+UNIT_STAT_POOL_PANEL_FIELDS = frozenset(
+    {"max_hp", "attack", "defense", "speed", "max_energy"}
+)
+
+
+@dataclass(frozen=True)
+class UnitStatPool:
+    """One runtime base-stat pool preserved from the formal build ledger."""
+
+    property_type: str
+    base_value: float
+    static_percentage: float = 0.0
+    static_flat: float = 0.0
+    base_contribution_ids: tuple[str, ...] = ()
+    percentage_contribution_ids: tuple[str, ...] = ()
+    flat_contribution_ids: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.property_type, str) or not self.property_type:
+            raise ValueError("unit stat pool requires a non-empty property_type")
+        for field_name in ("base_value", "static_percentage", "static_flat"):
+            value = getattr(self, field_name)
+            if not isinstance(value, (int, float)) or isinstance(value, bool):
+                raise TypeError(f"unit stat pool {field_name} must be numeric")
+            numeric = float(value)
+            if not math.isfinite(numeric):
+                raise ValueError(f"unit stat pool {field_name} must be finite")
+            object.__setattr__(self, field_name, numeric)
+        for field_name in (
+            "base_contribution_ids",
+            "percentage_contribution_ids",
+            "flat_contribution_ids",
+        ):
+            values = getattr(self, field_name)
+            if not isinstance(values, (list, tuple)) or not all(
+                isinstance(item, str) and item for item in values
+            ):
+                raise TypeError(f"unit stat pool {field_name} must contain non-empty strings")
+            if len(set(values)) != len(values):
+                raise ValueError(f"unit stat pool {field_name} contains duplicate identities")
+            object.__setattr__(self, field_name, tuple(sorted(values)))
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "property_type": self.property_type,
+            "base_value": self.base_value,
+            "static_percentage": self.static_percentage,
+            "static_flat": self.static_flat,
+            "base_contribution_ids": list(self.base_contribution_ids),
+            "percentage_contribution_ids": list(self.percentage_contribution_ids),
+            "flat_contribution_ids": list(self.flat_contribution_ids),
+        }
 
 
 @dataclass(frozen=True)
@@ -40,6 +93,42 @@ class UnitState:
     shield_instances: tuple[dict[str, JSONValue], ...] = ()
     flags: dict[str, JSONValue] = field(default_factory=dict)
     resources: dict[str, float] = field(default_factory=dict)
+    stat_pools: tuple[UnitStatPool, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.stat_pools, (list, tuple)) or not all(
+            isinstance(pool, UnitStatPool) for pool in self.stat_pools
+        ):
+            raise TypeError("unit stat_pools must contain UnitStatPool values")
+        pools = tuple(self.stat_pools)
+        property_types = tuple(pool.property_type for pool in pools)
+        if len(set(property_types)) != len(property_types):
+            raise ValueError("unit stat_pools contain duplicate property types")
+        if property_types != tuple(sorted(property_types)):
+            raise ValueError("unit stat_pools must use canonical property ordering")
+        unsupported = sorted(set(property_types).difference(UNIT_STAT_POOL_PANEL_FIELDS))
+        if unsupported:
+            raise ValueError(f"unit stat_pools contain unsupported properties: {unsupported}")
+        for pool in pools:
+            expected = (
+                pool.base_value * (1.0 + pool.static_percentage)
+                + pool.static_flat
+            )
+            panel_value = getattr(self, pool.property_type)
+            if not isinstance(panel_value, (int, float)) or isinstance(panel_value, bool):
+                raise TypeError(
+                    f"unit panel field {pool.property_type} must be numeric"
+                )
+            if not math.isfinite(float(panel_value)) or not math.isclose(
+                float(panel_value),
+                expected,
+                rel_tol=1e-12,
+                abs_tol=1e-9,
+            ):
+                raise ValueError(
+                    f"unit panel field {pool.property_type} does not match its stat pool"
+                )
+        object.__setattr__(self, "stat_pools", pools)
 
     def to_snapshot(self) -> dict[str, JSONValue]:
         shield = sum(
@@ -109,6 +198,7 @@ class UnitState:
             "modifiers": list(self.flags.get("modifiers", ())),
             "flags": dict(sorted(self.flags.items())),
             "resources": dict(sorted(self.resources.items())),
+            "stat_pools": [pool.to_json() for pool in self.stat_pools],
         }
 
 

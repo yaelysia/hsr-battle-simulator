@@ -12,6 +12,7 @@ from ..core.model import BattleState, JSONValue
 from ..core.reducer import MutationReducer
 from ..core.source_audit import RuntimeSourceAuditor
 from ..rules.ir import EffectIR
+from ..rules.expression_ir import numeric_dynamic_hashes
 from ..rules.rulebook import RuleBook
 from ..systems.status import StatusApplicationResult, StatusSystem
 from ..systems.unit_spawn import UnitSpawnRequest, UnitSpawnSystem
@@ -211,8 +212,15 @@ def _unbound_chance_negative_case(rules: RuleBook, candidate: dict[str, Any]) ->
     checks = {
         "unbound_blocked": not result.ok,
         "unbound_no_mutation": not result.mutations,
-        "unbound_record": _has_record(result, "status_blocked"),
-        "unbound_reason": any(str(reason).startswith("dynamic_hash_unbound") for reason in result.unsupported),
+        "unbound_record": _has_record(result, "status_unsupported"),
+        "unbound_reason": any(
+            str(reason)
+            == (
+                "status_probability_blocked:dynamic_hash_unbound:"
+                f"{candidate['chance_hash']}"
+            )
+            for reason in result.unsupported
+        ),
         "state_unchanged": _snapshot_hash(state) == _snapshot_hash(MutationReducer().apply_all(state, result.mutations)),
     }
     checks["ok"] = all(value for key, value in checks.items() if key != "ok")
@@ -377,12 +385,32 @@ def _select_dynamic_chance_candidate(rules: RuleBook) -> dict[str, Any]:
             "status_id": f"modifier:{modifier_name}",
             "target_id": target_id,
             "chance_hash": str(chance_hash),
+            "supporting_dynamic_hashes": sorted(
+                _supporting_dynamic_hashes(
+                    standard,
+                    chance_hash=str(chance_hash),
+                )
+            ),
         }
+        probe = _apply_candidate(
+            rules,
+            candidate,
+            chance_value=0.5,
+            event_payload={"rng_mode": "explicit", "rng_choices": {}},
+        )["result"]
+        rng_choice_key = _rng_choice_key_from_result(probe)
+        if rng_choice_key:
+            candidate["rng_choice_key"] = rng_choice_key
         result = _apply_candidate(
             rules,
             candidate,
             chance_value=0.5,
-            event_payload=_rng_payload(candidate, "status_apply", "final_status_application", "applied"),
+            event_payload=_rng_payload(
+                candidate,
+                "status_apply",
+                "final_status_application",
+                "applied",
+            ),
         )["result"]
         if result.ok and result.mutations:
             return candidate
@@ -399,7 +427,14 @@ def _apply_candidate(
     event_payload: dict[str, JSONValue] | None = None,
 ) -> dict[str, Any]:
     state = state or _base_state()
-    dynamic_values = {candidate["chance_hash"]: float(chance_value)} if chance_value is not None else None
+    dynamic_values = {
+        str(value_hash): 1.0
+        for value_hash in candidate.get("supporting_dynamic_hashes", ())
+    }
+    if chance_value is not None:
+        dynamic_values[candidate["chance_hash"]] = float(chance_value)
+    if not dynamic_values:
+        dynamic_values = None
     result = StatusSystem(rules).apply_add_modifier(
         state,
         candidate["effect"],
@@ -412,6 +447,23 @@ def _apply_candidate(
         event_payload=event_payload,
     )
     return {"state": state, "result": result}
+
+
+def _supporting_dynamic_hashes(
+    standard: dict[str, Any],
+    *,
+    chance_hash: str,
+) -> set[str]:
+    result: set[str] = set()
+    dynamic_values = standard.get("dynamic_values")
+    if isinstance(dynamic_values, dict):
+        for expression in dynamic_values.values():
+            result.update(
+                str(value_hash)
+                for value_hash in numeric_dynamic_hashes(expression)
+            )
+    result.discard(chance_hash)
+    return result
 
 
 def _target_id_for_standard(standard: dict[str, Any]) -> str | None:
@@ -427,9 +479,22 @@ def _rng_payload(candidate: dict[str, Any], rng_type: str, purpose: str, outcome
     return {
         "rng_mode": "explicit",
         "rng_choices": {
-            _choice_key(candidate, rng_type, purpose): outcome,
+            str(candidate.get("rng_choice_key") or _choice_key(candidate, rng_type, purpose)): outcome,
         },
     }
+
+
+def _rng_choice_key_from_result(result: StatusApplicationResult) -> str:
+    for event in result.rng_events:
+        payload = event.result if isinstance(event.result, dict) else {}
+        choice_key = payload.get("choice_key")
+        if isinstance(choice_key, str) and choice_key:
+            return choice_key
+        metadata = event.metadata if isinstance(event.metadata, dict) else {}
+        choice_key = metadata.get("choice_key")
+        if isinstance(choice_key, str) and choice_key:
+            return choice_key
+    return ""
 
 
 def _choice_key(candidate: dict[str, Any], rng_type: str, purpose: str) -> str:
@@ -527,6 +592,10 @@ def _json_case_without_runtime_candidate(case: dict[str, Any]) -> dict[str, Any]
             "status_id": str(candidate.get("status_id") or ""),
             "target_id": str(candidate.get("target_id") or ""),
             "chance_hash": str(candidate.get("chance_hash") or ""),
+            "supporting_dynamic_hashes": list(
+                candidate.get("supporting_dynamic_hashes") or ()
+            ),
+            "rng_choice_key": str(candidate.get("rng_choice_key") or ""),
         }
     return _json_without_state(data)
 

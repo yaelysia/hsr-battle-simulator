@@ -20,6 +20,7 @@ from .dynamic_values import (
 from .mutation_events import events_for_mutation
 from .status import SUPPORTED_ADD_MODIFIER_ALIASES, SUPPORTED_EFFECT_TARGET_ALIASES, StatusSystem
 from .shield import NORMAL_SHIELD_FAMILIES, ShieldSystem
+from .unit_stats import effective_unit_stat
 
 
 @dataclass(frozen=True)
@@ -44,6 +45,7 @@ class EffectExecutionContext:
     event_payload: dict[str, JSONValue] | None = None
     dynamic_values: dict[str, float] | None = None
     binding_sources: tuple[dict[str, JSONValue], ...] = ()
+    shadowed_status_instance_ids: tuple[str, ...] = ()
     damage_window_ledger: DamageWindowLedger | None = None
 
 
@@ -1258,6 +1260,9 @@ def _modifier_value(detail: dict[str, JSONValue], value_name: object) -> tuple[f
     if value_name == "Layer":
         value = detail.get("stacks")
         return (float(value), "ok") if isinstance(value, (int, float)) else (None, "source_layer_not_numeric")
+    if value_name == "MaxLayer":
+        value = detail.get("max_stacks")
+        return (float(value), "ok") if isinstance(value, (int, float)) else (None, "source_max_layer_not_numeric")
     if value_name == "LifeTime":
         for key in ("remaining_duration", "duration"):
             value = detail.get(key)
@@ -1379,7 +1384,12 @@ def _binding_sources(context: EffectExecutionContext) -> tuple[dict[str, JSONVal
         )
         if isinstance(unit_id, str) and unit_id
     )
-    status_sources = status_binding_sources(context.state, unit_ids)
+    shadowed_status_instance_ids = set(context.shadowed_status_instance_ids)
+    status_sources = tuple(
+        source
+        for source in status_binding_sources(context.state, unit_ids)
+        if source.get("status_instance_id") not in shadowed_status_instance_ids
+    )
     store_source = binding_source_from_store(context.state.global_flags.get("dynamic_value_store"))
     return (*status_sources, *context.binding_sources, store_source)
 
@@ -1502,8 +1512,10 @@ def _resolve_formula_amount(
         details["base_value"] = caster.max_hp
         return caster.max_hp * raw_value, details, ""
     if formula_base == "caster.defense":
-        details["base_value"] = caster.defense
-        return caster.defense * raw_value, details, ""
+        effective_defense = effective_unit_stat(caster, "defense")
+        details["base_value"] = effective_defense.value
+        details["effective_stat"] = effective_defense.to_json()
+        return effective_defense.value * raw_value, details, ""
     return 0.0, details, f"unsupported_formula:formula_base_not_supported:{formula_base}"
 
 

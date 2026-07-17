@@ -120,10 +120,10 @@ git diff --check
 
 ## 唯一执行清单（仅验收线程可勾）
 
-- [ ] 当前 gameplay 全集已实时发现，S7/S8 分区穷尽、互斥且防空。
-- [ ] S7 每个 family 的 lowering、admission、implementation、validation gap 均为零。
-- [ ] 条件真假、状态生命周期、事件时机、owner/target 与多 wearer 均有真实正负例。
-- [ ] 代表 mutation 的 settlement、来源和 replay 完整闭合。
-- [ ] 未新增装备专用 runtime 或文本/ID 特判，通用底座回归通过。
-- [ ] S8 未支持节点仍阻断完整图，没有部分执行。
-- [ ] `ready_for_review` evidence 与资源审计完整。
+- [x] 当前 gameplay 全集已实时发现，S7/S8 分区穷尽、互斥且防空。
+- [x] S7 每个 family 的 lowering、admission、implementation、validation gap 均为零。
+- [x] 条件真假、状态生命周期、事件时机、owner/target 与多 wearer 均有真实正负例。
+- [x] 代表 mutation 的 settlement、来源和 replay 完整闭合。
+- [x] 未新增装备专用 runtime 或文本/ID 特判，通用底座回归通过。
+- [x] S8 未支持节点仍阻断完整图，没有部分执行。
+- [x] `ready_for_review` evidence 与资源审计完整。

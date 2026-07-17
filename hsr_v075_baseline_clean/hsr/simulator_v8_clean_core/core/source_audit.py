@@ -17,6 +17,11 @@ NON_MUTATING_STATUSES = {
 }
 
 MUTATION_SOURCE_POLICIES: dict[str, dict[str, JSONValue]] = {
+    "scenario_setup": {
+        "required_ir": ["ScenarioSpec typed initial condition"],
+        "required_metadata": ["setup_operation", "source_kind", "scenario_id"],
+        "coverage_required": "typed scenario initial condition; never TBGD or engine-rule evidence",
+    },
     "combat_executor.timeline": {
         "required_ir": ["ActionDefinitionIR", "ActionEventIR"],
         "required_metadata": ["action_id", "action_level", "definition_id", "action_event_id", "source_trace"],
@@ -66,6 +71,11 @@ MUTATION_SOURCE_POLICIES: dict[str, dict[str, JSONValue]] = {
         "required_ir": ["TriggerIR or StatusCallbackIR"],
         "required_metadata": ["event", "listener_kind", "scope"],
         "coverage_required": "process-only dispatch records; mutating listener effects keep their underlying source",
+    },
+    "ability_provider_registry": {
+        "required_ir": ["LightConeDefinitionIR + EquipmentMechanismRefIR + StandaloneAbilityGraphIR"],
+        "required_metadata": ["owner_unit_id", "provider_ids", "providers", "source_trace"],
+        "coverage_required": "resolved equipment mechanism and executable canonical ability graph",
     },
     "queue_system": {
         "required_ir": ["QueueIntentIR + QueuePriorityIR + QueueWindowIR for enqueue; QueueIntentIR + QueueResolutionIR + QueuePriorityIR + QueueWindowIR + QueueWindowPlan for dequeue; extra_turn additionally requires QueueLifecyclePolicyIR + ExtraActionPolicyIR"],
@@ -186,6 +196,14 @@ class RuntimeSourceAuditor:
             return self._audit_status_mutation(mutation, records, violations)
         if mutation.source == "effect_system":
             return self._audit_effect_mutation(mutation, records, violations)
+        if mutation.source == "ability_provider_registry":
+            return self._audit_ability_provider_mutation(
+                mutation, records, violations
+            )
+        if mutation.source == "scenario_setup":
+            return self._audit_scenario_setup_mutation(
+                mutation, records, violations
+            )
         if mutation.source in {"queue_system", "combat_executor.queue"}:
             return self._audit_queue_mutation(mutation, records, violations)
         if mutation.source == "enemy_action_system":
@@ -196,6 +214,248 @@ class RuntimeSourceAuditor:
             return self._audit_summon_mutation(mutation, records, violations)
         violations.append(_violation(mutation, "unsupported_mutation_source", details={"records": list(records)}))
         return _trace(mutation, records, {})
+
+    def _audit_scenario_setup_mutation(
+        self,
+        mutation: Mutation,
+        records: tuple[dict[str, JSONValue], ...],
+        violations: list[SourceAuditViolation],
+    ) -> dict[str, JSONValue]:
+        metadata = mutation.metadata
+        operation = _required_str(mutation, metadata, "setup_operation", violations)
+        source_kind = _required_str(mutation, metadata, "source_kind", violations)
+        scenario_id = _required_str(mutation, metadata, "scenario_id", violations)
+        if source_kind and source_kind != "scenario_initial_condition":
+            violations.append(
+                _violation(
+                    mutation,
+                    "scenario_setup_source_kind_invalid",
+                    details={"source_kind": source_kind},
+                )
+            )
+        allowed_paths = {
+            "timeline_global_av": ("global_flags", "global_av"),
+            "timeline_policy": ("global_flags", "timeline_setup_policy"),
+            "timeline_turn_owner": ("global_flags", "turn_owner_id"),
+        }
+        expected_path = allowed_paths.get(operation or "")
+        if operation == "explicit_action_value":
+            expected_path = (
+                ("units", str(metadata.get("unit_id") or ""), "action_value")
+                if metadata.get("unit_id")
+                else None
+            )
+        if expected_path is None or mutation.path != expected_path:
+            violations.append(
+                _violation(
+                    mutation,
+                    "scenario_setup_path_invalid",
+                    details={
+                        "setup_operation": operation or "",
+                        "expected": list(expected_path or ()),
+                        "actual": list(mutation.path),
+                    },
+                )
+            )
+        matching_records = tuple(
+            record
+            for record in records
+            if record.get("record_type") == "scenario_setup_mutation"
+            and record.get("source") == "scenario_setup"
+            and isinstance(record.get("payload"), dict)
+            and record["payload"].get("setup_operation") == operation
+            and record["payload"].get("path") == list(mutation.path)
+            and record["payload"].get("after") == mutation.after
+            and isinstance(record.get("trace"), dict)
+            and record["trace"].get("source_kind")
+            == "scenario_initial_condition"
+            and record["trace"].get("scenario_id") == scenario_id
+        )
+        if not matching_records:
+            violations.append(
+                _violation(
+                    mutation,
+                    "scenario_setup_settlement_mismatch",
+                    details={"setup_operation": operation or ""},
+                )
+            )
+        return _trace(
+            mutation,
+            records,
+            {
+                "setup_operation": operation or "",
+                "source_kind": source_kind or "",
+                "scenario_id": scenario_id or "",
+            },
+        )
+
+    def _audit_ability_provider_mutation(
+        self,
+        mutation: Mutation,
+        records: tuple[dict[str, JSONValue], ...],
+        violations: list[SourceAuditViolation],
+    ) -> dict[str, JSONValue]:
+        metadata = mutation.metadata
+        owner_unit_id = _required_str(
+            mutation, metadata, "owner_unit_id", violations
+        )
+        provider_ids = metadata.get("provider_ids")
+        providers = metadata.get("providers")
+        _require_dict(mutation, metadata, "source_trace", violations)
+        expected_path = (
+            "units",
+            owner_unit_id,
+            "flags",
+            "ability_providers",
+        ) if owner_unit_id else ()
+        if expected_path and mutation.path != expected_path:
+            violations.append(
+                _violation(
+                    mutation,
+                    "ability_provider_registry_path_invalid",
+                    details={
+                        "expected": list(expected_path),
+                        "actual": list(mutation.path),
+                    },
+                )
+            )
+        if (
+            not isinstance(provider_ids, (list, tuple))
+            or not provider_ids
+            or not all(isinstance(item, str) and item for item in provider_ids)
+        ):
+            violations.append(
+                _violation(
+                    mutation,
+                    "ability_provider_ids_invalid",
+                    missing_field="provider_ids",
+                )
+            )
+            provider_ids = ()
+        if (
+            not isinstance(providers, (list, tuple))
+            or not providers
+            or not all(isinstance(item, dict) for item in providers)
+        ):
+            violations.append(
+                _violation(
+                    mutation,
+                    "ability_provider_payloads_invalid",
+                    missing_field="providers",
+                )
+            )
+            providers = ()
+        actual_provider_ids = tuple(
+            str(provider.get("provider_id") or "")
+            for provider in providers
+            if isinstance(provider, dict)
+        )
+        if tuple(provider_ids) != actual_provider_ids:
+            violations.append(
+                _violation(
+                    mutation,
+                    "ability_provider_ids_do_not_match_payloads",
+                    details={
+                        "provider_ids": list(provider_ids),
+                        "payload_provider_ids": list(actual_provider_ids),
+                    },
+                )
+            )
+        for provider in providers:
+            if not isinstance(provider, dict):
+                continue
+            graph_ref_id = str(provider.get("graph_ref_id") or "")
+            graph = self.rules.standalone_ability_graph(graph_ref_id)
+            provider_source = provider.get("source")
+            if (
+                graph is None
+                or graph.coverage_status != "executable"
+                or provider_source != graph.source.to_json()
+            ):
+                violations.append(
+                    _violation(
+                        mutation,
+                        "ability_provider_graph_missing_partial_or_wrong_source",
+                        details={"graph_ref_id": graph_ref_id},
+                    )
+                )
+            else:
+                _audit_source(
+                    graph.source,
+                    graph.coverage_status,
+                    mutation,
+                    violations,
+                    executable_required=True,
+                )
+            mechanism_key = provider.get("mechanism_key")
+            mechanism_identity = (
+                mechanism_key.get("definition_identity")
+                if isinstance(mechanism_key, dict)
+                else None
+            )
+            mechanism_resolution = (
+                self.rules.equipment_mechanism_ref(mechanism_identity)
+                if isinstance(mechanism_identity, str) and mechanism_identity
+                else None
+            )
+            mechanism = (
+                mechanism_resolution.value
+                if mechanism_resolution is not None
+                and mechanism_resolution.resolution_status == "resolved"
+                else None
+            )
+            if mechanism is None or mechanism.graph_ref_id != graph_ref_id:
+                violations.append(
+                    _violation(
+                        mutation,
+                        "ability_provider_mechanism_reference_unresolved",
+                        details={
+                            "mechanism_identity": mechanism_identity or "",
+                            "graph_ref_id": graph_ref_id,
+                        },
+                    )
+                )
+            definition_key = provider.get("target_definition_key")
+            definition_identity = (
+                definition_key.get("definition_identity")
+                if isinstance(definition_key, dict)
+                else None
+            )
+            definition_resolution = (
+                self.rules.light_cone_definition(definition_identity)
+                if isinstance(definition_identity, str) and definition_identity
+                else None
+            )
+            definition = (
+                definition_resolution.value
+                if definition_resolution is not None
+                and definition_resolution.resolution_status == "resolved"
+                else None
+            )
+            if (
+                definition is None
+                or mechanism_key not in (
+                    key.to_json() for key in definition.mechanism_ref_ids
+                )
+            ):
+                violations.append(
+                    _violation(
+                        mutation,
+                        "ability_provider_light_cone_definition_mismatch",
+                        details={
+                            "definition_identity": definition_identity or "",
+                            "mechanism_identity": mechanism_identity or "",
+                        },
+                    )
+                )
+        return _trace(
+            mutation,
+            records,
+            {
+                "owner_unit_id": owner_unit_id or "",
+                "provider_ids": list(provider_ids),
+            },
+        )
 
     def _audit_action_source_mutation(
         self,

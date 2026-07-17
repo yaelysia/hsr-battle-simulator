@@ -370,7 +370,7 @@ class EventDispatchSystem:
             listener_records.append(listener_record)
             records.append(listener_record)
             if match.status != "matched":
-                if match.reason:
+                if match.status == "blocked" and match.reason:
                     errors.append(match.reason)
                 continue
             result = self.status_callbacks.execute(
@@ -733,12 +733,30 @@ CANONICAL_EVENT_ALIASES: dict[str, tuple[tuple[str, str, str], ...]] = {
         ("OnBeforeDying", "owner_local", ""),
     ),
     "damage.hit": (
-        ("OnBeforeHit", "per_hit_target_local", "event_alias_missing:on_before_hit_requires_pre_damage_event"),
-        ("OnAfterHitAll", "actor_local", ""),
         ("OnAfterHit", "per_hit_target_local", ""),
-        ("OnAfterBeingAttacked", "being_hit_target_local", ""),
         ("OnHit", "per_hit_target_local", "downstream_intent_missing:per_hit_listener_execution_not_admitted"),
         ("OnBeingHit", "being_hit_target_local", "downstream_intent_missing:being_hit_listener_execution_not_admitted"),
+    ),
+    "damage.before_hit": (
+        ("OnBeforeHit", "per_hit_target_local", ""),
+    ),
+    "damage.hit_sequence.before": (
+        ("OnBeforeHitAll", "actor_local", ""),
+    ),
+    "damage.hit_sequence.after": (
+        ("OnAfterHitAll", "actor_local", ""),
+    ),
+    "damage.target_attack.before": (
+        ("OnBeforeBeingAttacked", "being_hit_target_local", ""),
+    ),
+    "damage.target_attack.after": (
+        ("OnAfterBeingAttacked", "being_hit_target_local", ""),
+    ),
+    "damage.target_hit_sequence.before": (
+        ("OnBeforeBeingHitAll", "being_hit_target_local", ""),
+    ),
+    "damage.target_hit_sequence.after": (
+        ("OnAfterBeingHitAll", "being_hit_target_local", ""),
     ),
     "toughness.hit": (
         ("OnHit", "per_hit_target_local", "downstream_intent_missing:per_hit_listener_execution_not_admitted"),
@@ -931,6 +949,18 @@ def _event_scope_kind(event: GameEvent) -> str:
         return value
     if event.event_type in {"damage.before_hit", "damage.hit", "toughness.hit"}:
         return "per_hit_target_local"
+    if event.event_type in {
+        "damage.hit_sequence.before",
+        "damage.hit_sequence.after",
+    }:
+        return "actor_local"
+    if event.event_type in {
+        "damage.target_attack.before",
+        "damage.target_attack.after",
+        "damage.target_hit_sequence.before",
+        "damage.target_hit_sequence.after",
+    }:
+        return "being_hit_target_local"
     if event.event_type in {
         "hp.change",
         "heal.after",

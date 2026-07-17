@@ -4,6 +4,11 @@ from dataclasses import dataclass, replace
 from typing import Literal
 
 from ..core.model import BattleState, JSONValue, Mutation, UnitState
+from ..unit_eligibility import (
+    runtime_unit_is_on_field,
+    runtime_unit_lifecycle_status,
+    runtime_unit_source_is_targetable,
+)
 from ..core.unit_state_codec import unit_state_to_payload
 
 
@@ -75,8 +80,8 @@ class UnitLifecycleSystem:
         lifecycle_source = lifecycle_source if isinstance(lifecycle_source, dict) else {}
         presence = str(lifecycle_source.get("presence") or "") if summon_kind else "field"
         source_admitted = lifecycle_source.get("admission_status") == "executable" if summon_kind else True
-        is_present = not is_removed and (not summon_kind or (source_admitted and presence == "field"))
-        targetable = lifecycle_source.get("targetable") is True if summon_kind else True
+        is_present = runtime_unit_is_on_field(unit)
+        targetable = runtime_unit_source_is_targetable(unit)
         actionable = lifecycle_source.get("actionable") is True if summon_kind else True
         timeline_admitted = (
             lifecycle_source.get("timeline_admitted") is True or unit.flags.get("timeline_admitted") is True
@@ -122,12 +127,7 @@ class UnitLifecycleSystem:
         )
 
     def status_of(self, unit: UnitState) -> UnitLifecycleStatus:
-        raw = unit.flags.get("lifecycle_status")
-        if isinstance(raw, str) and raw in self.VALID_STATUSES:
-            return raw  # type: ignore[return-value]
-        if unit.hp <= 0:
-            return "defeated"
-        return "active"
+        return runtime_unit_lifecycle_status(unit)  # type: ignore[return-value]
 
     def can_act(self, state: BattleState, unit_id: str) -> tuple[bool, str]:
         view = self.view(state, unit_id)

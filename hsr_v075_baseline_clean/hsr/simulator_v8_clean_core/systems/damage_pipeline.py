@@ -244,9 +244,30 @@ class DamageStagePipeline:
                 stage=stage,
                 keys=("def_ignore",),
             )
+            status_defense_ratio, target_attribute_terms, target_attribute_skipped = _status_terms(
+                target,
+                source_type="target.status",
+                stage="attribute",
+                keys=("defense_added_ratio",),
+            )
+            status_defense_flat, target_attribute_flat_terms, target_attribute_flat_skipped = _status_terms(
+                target,
+                source_type="target.status",
+                stage="attribute",
+                keys=("defense_delta",),
+            )
             effective = max(
                 0.0,
-                target.defense * (1.0 - reduction - status_reduction - ignore - status_ignore),
+                target.defense
+                * (
+                    1.0
+                    + status_defense_ratio
+                    - reduction
+                    - status_reduction
+                    - ignore
+                    - status_ignore
+                )
+                + status_defense_flat,
             )
             multiplier, engine_rule = evaluate_defense_multiplier(
                 effective_defense=effective,
@@ -261,15 +282,24 @@ class DamageStagePipeline:
                     _applied(stage, "defense", target.defense, "target.stats"),
                     _applied(stage, "def_reduction", reduction, "target.resources"),
                     _applied(stage, "def_ignore", ignore, "actor.resources"),
+                    *target_attribute_terms,
+                    *target_attribute_flat_terms,
                     *target_status_terms,
                     *actor_status_terms,
                 ),
-                skipped_terms=(*target_status_skipped, *actor_status_skipped),
+                skipped_terms=(
+                    *target_attribute_skipped,
+                    *target_attribute_flat_skipped,
+                    *target_status_skipped,
+                    *actor_status_skipped,
+                ),
                 metadata={
                     "effective_defense": effective,
                     "actor_level": actor.level,
                     "status_def_reduction": status_reduction,
                     "status_def_ignore": status_ignore,
+                    "status_defense_added_ratio": status_defense_ratio,
+                    "status_defense_delta": status_defense_flat,
                     "engine_rule": engine_rule.to_json(),
                 },
             )

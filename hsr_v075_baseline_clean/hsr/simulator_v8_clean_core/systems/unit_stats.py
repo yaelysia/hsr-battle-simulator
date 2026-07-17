@@ -1,0 +1,182 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from ..core.model import JSONValue, UnitState
+
+
+@dataclass(frozen=True)
+class EffectiveUnitStat:
+    stat: str
+    base_value: float
+    static_ratio: float
+    ratio_delta: float
+    static_flat: float
+    flat_delta: float
+    value: float
+    source_terms: tuple[dict[str, JSONValue], ...] = ()
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "stat": self.stat,
+            "base_value": self.base_value,
+            "static_ratio": self.static_ratio,
+            "ratio_delta": self.ratio_delta,
+            "static_flat": self.static_flat,
+            "flat_delta": self.flat_delta,
+            "value": self.value,
+            "source_terms": [dict(term) for term in self.source_terms],
+        }
+
+
+_BASE_STAT_MODIFIERS: dict[str, tuple[str, str, str]] = {
+    "attack": ("attribute", "attack_added_ratio", "attack_delta"),
+    "defense": ("attribute", "defense_added_ratio", "defense_delta"),
+    "speed": ("attribute", "speed_added_ratio", "speed_delta"),
+}
+
+_RESOURCE_STAT_MODIFIERS: dict[str, tuple[str, str]] = {
+    "critical_chance": ("crit", "critical_chance"),
+    "critical_damage": ("crit", "critical_damage"),
+    "effect_hit_rate": ("status_probability", "effect_hit_rate"),
+    "effect_resistance": ("status_probability", "effect_resistance"),
+}
+
+
+def status_modifier_has_direct_combat_consumer(bucket: str, key: str) -> bool:
+    """Whether this runtime modifier key is consumed by the S7 stat layer."""
+    return any(
+        bucket == configured_bucket and key in configured_keys
+        for configured_bucket, *configured_keys in (
+            *_BASE_STAT_MODIFIERS.values(),
+            *_RESOURCE_STAT_MODIFIERS.values(),
+        )
+    )
+
+
+def effective_unit_stat(unit: UnitState, stat: str) -> EffectiveUnitStat:
+    base_config = _BASE_STAT_MODIFIERS.get(stat)
+    if base_config is not None:
+        bucket, ratio_key, flat_key = base_config
+        stat_pool = {
+            pool.property_type: pool for pool in unit.stat_pools
+        }.get(stat)
+        base_value = (
+            stat_pool.base_value
+            if stat_pool is not None
+            else _direct_base_stat(unit, stat)
+        )
+        static_ratio = (
+            stat_pool.static_percentage if stat_pool is not None else 0.0
+        )
+        static_flat = stat_pool.static_flat if stat_pool is not None else 0.0
+        ratio_delta, ratio_terms = _status_modifier_total(unit, bucket, (ratio_key,))
+        flat_delta, flat_terms = _status_modifier_total(unit, bucket, (flat_key,))
+        value = (
+            base_value * (1.0 + static_ratio + ratio_delta)
+            + static_flat
+            + flat_delta
+        )
+        return EffectiveUnitStat(
+            stat=stat,
+            base_value=base_value,
+            static_ratio=static_ratio,
+            ratio_delta=ratio_delta,
+            static_flat=static_flat,
+            flat_delta=flat_delta,
+            value=value,
+            source_terms=(*ratio_terms, *flat_terms),
+        )
+
+    resource_config = _RESOURCE_STAT_MODIFIERS.get(stat)
+    if resource_config is not None:
+        bucket, key = resource_config
+        base_value = _resource_value(unit, stat)
+        flat_delta, terms = _status_modifier_total(unit, bucket, (key,))
+        return EffectiveUnitStat(
+            stat=stat,
+            base_value=base_value,
+            static_ratio=0.0,
+            ratio_delta=0.0,
+            static_flat=0.0,
+            flat_delta=flat_delta,
+            value=base_value + flat_delta,
+            source_terms=terms,
+        )
+
+    return EffectiveUnitStat(
+        stat=stat,
+        base_value=_direct_or_resource_value(unit, stat),
+        static_ratio=0.0,
+        ratio_delta=0.0,
+        static_flat=0.0,
+        flat_delta=0.0,
+        value=_direct_or_resource_value(unit, stat),
+    )
+
+
+def _direct_base_stat(unit: UnitState, stat: str) -> float:
+    return float(getattr(unit, stat))
+
+
+def _direct_or_resource_value(unit: UnitState, stat: str) -> float:
+    if stat in {"hp", "max_hp", "attack", "defense", "speed", "energy", "max_energy", "toughness", "max_toughness", "action_value"}:
+        return float(getattr(unit, stat))
+    return _resource_value(unit, stat)
+
+
+def _resource_value(unit: UnitState, key: str) -> float:
+    value = unit.resources.get(key, 0.0)
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    return 0.0
+
+
+def _status_modifier_total(
+    unit: UnitState,
+    bucket: str,
+    keys: tuple[str, ...],
+) -> tuple[float, tuple[dict[str, JSONValue], ...]]:
+    allowed_keys = set(keys)
+    total = 0.0
+    terms: list[dict[str, JSONValue]] = []
+    for detail in _status_details(unit):
+        instance_id = str(detail.get("instance_id") or detail.get("status_id") or "")
+        modifiers = detail.get("modifiers")
+        if not isinstance(modifiers, (list, tuple)):
+            continue
+        for modifier_index, modifier in enumerate(modifiers):
+            if not isinstance(modifier, dict):
+                continue
+            if modifier.get("bucket") != bucket or modifier.get("key") not in allowed_keys:
+                continue
+            value = modifier.get("value")
+            if not isinstance(value, (int, float)) or isinstance(value, bool):
+                continue
+            numeric_value = float(value)
+            total += numeric_value
+            terms.append(
+                {
+                    "status_instance_id": instance_id,
+                    "bucket": bucket,
+                    "key": str(modifier.get("key") or ""),
+                    "value": numeric_value,
+                    "raw_path": str(
+                        modifier.get("raw_path")
+                        or f"status_details.{instance_id}.modifiers[{modifier_index}]"
+                    ),
+                    "source_trace": (
+                        dict(detail.get("source_trace"))
+                        if isinstance(detail.get("source_trace"), dict)
+                        else {}
+                    ),
+                }
+            )
+    return total, tuple(terms)
+
+
+def _status_details(unit: UnitState) -> tuple[dict[str, JSONValue], ...]:
+    details = unit.flags.get("status_details", ())
+    if not isinstance(details, (list, tuple)):
+        return ()
+    return tuple(detail for detail in details if isinstance(detail, dict))

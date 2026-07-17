@@ -11,6 +11,13 @@ from ..rules.expression_ir import numeric_dynamic_hashes, numeric_fixed, numeric
 from ..rules.ir import ActionDelayEmissionIR, QueueIntentIR, StatusCallbackIR, StatusCallbackTaskIR, StatusDamageEmissionIR
 from ..rules.rulebook import RuleBook
 from ..rules.value_binding import ValueBindingRequest, ValueContext, ValueResolver
+from ..unit_eligibility import (
+    runtime_unit_is_dark_team,
+    runtime_unit_is_light_team,
+    runtime_unit_is_target_candidate,
+    runtime_units_are_opposing_combat_teams,
+    runtime_units_share_combat_team,
+)
 from .damage import DamagePacket, DamageSourceFrame, DamageSystem, DamageWindowLedger
 from .dot_formula import DotFormula, DotFormulaInput
 from .dynamic_values import binding_source_from_store, find_status_detail, status_binding_sources, store_from_state, upsert_dynamic_value
@@ -20,6 +27,7 @@ from .queue import QueueEntry, QueueSystem, QueueTargetResolver
 from .status import StatusSystem
 from .timeline import TimelineSystem
 from .unit_lifecycle import UnitLifecycleSystem
+from .unit_stats import effective_unit_stat
 
 
 @dataclass(frozen=True)
@@ -148,6 +156,29 @@ class StatusCallbackSystem:
             records.extend(result.records)
             events.extend(result.events)
             errors.extend(result.errors)
+        if errors:
+            reason = f"status_callback_group_atomic_rollback:{errors[0]}"
+            return StatusCallbackExecutionResult(
+                ok=False,
+                after_state=state,
+                records=(
+                    _callback_blocked_record(
+                        modifier_name=modifier_name,
+                        event=event,
+                        reason=reason,
+                        trace=_json_dict(detail.get("source_trace")),
+                    ),
+                ),
+                errors=tuple(errors),
+                node_results=(
+                    ExecutionNodeResult(
+                        node_kind="status_callback_group",
+                        node_id=f"{unit_id}:{modifier_name}:{event}",
+                        status="blocked",
+                        reason_code="status_callback_group_atomic_precheck_failed",
+                    ),
+                ),
+            )
         return StatusCallbackExecutionResult(
             ok=not errors,
             after_state=current_state,
@@ -222,14 +253,35 @@ class StatusCallbackSystem:
             records.extend(result.records)
             events.extend(result.events)
             errors.extend(result.errors)
+        if errors:
+            reason = f"status_callback_atomic_rollback:{errors[0]}"
+            return StatusCallbackExecutionResult(
+                ok=False,
+                after_state=state,
+                records=(
+                    _callback_blocked_record(
+                        callback=callback,
+                        detail=detail,
+                        reason=reason,
+                    ),
+                ),
+                errors=tuple(errors),
+                node_results=(
+                    ExecutionNodeResult(
+                        node_kind="status_callback",
+                        node_id=callback.callback_id,
+                        status="blocked",
+                        reason_code="status_callback_atomic_precheck_failed",
+                    ),
+                ),
+            )
         return StatusCallbackExecutionResult(
-            ok=not errors,
+            ok=True,
             after_state=current_state,
             mutations=tuple(mutations),
             rng_events=tuple(rng_events),
             records=tuple(records),
             events=tuple(events),
-            errors=tuple(errors),
         )
 
     def _execute_task(
@@ -242,10 +294,69 @@ class StatusCallbackSystem:
         tasks: dict[str, StatusCallbackTaskIR],
         damage_window_ledger: DamageWindowLedger | None,
     ) -> StatusCallbackExecutionResult:
+        if task.blocked_reason == "equipment_task_family_non_gameplay":
+            return StatusCallbackExecutionResult(
+                ok=True,
+                after_state=state,
+                records=(
+                    _task_blocked_record(
+                        callback,
+                        task,
+                        detail,
+                        "",
+                        ok=True,
+                        mutation_count=0,
+                        record_count=1,
+                    ),
+                ),
+            )
         if task.opcode == "PredicateTaskList":
             return self._execute_predicate_task(state, callback, task, detail, trigger_event, tasks, damage_window_ledger)
         if task.opcode == "Retarget":
             return self._execute_retarget_task(state, callback, task, detail, trigger_event, tasks, damage_window_ledger)
+        structured_s7_opcodes = {
+            "StackProperty",
+            "SetDynamicValueByCharacterCount",
+            "SetDynamicValueByCopying",
+            "SetDynamicValueByCountOfBaseType",
+            "SetDynamicValueByHPRatio",
+            "SetDynamicValueByProperty",
+            "SetDynamicValueByStatusCount",
+            "SetDynamicValueByWeaknessCount",
+            "SetModifierDynamicValue",
+        }
+        if task.opcode in structured_s7_opcodes and task.coverage_status != "executable":
+            reason = task.blocked_reason or f"status_callback_task_not_executable:{task.coverage_status}"
+            return StatusCallbackExecutionResult(
+                ok=False,
+                after_state=state,
+                records=(_task_blocked_record(callback, task, detail, reason),),
+                errors=(reason,),
+            )
+        if task.opcode == "StackProperty":
+            return StatusCallbackExecutionResult(
+                ok=True,
+                after_state=state,
+                records=(
+                    _task_blocked_record(
+                        callback,
+                        task,
+                        detail,
+                        "",
+                        ok=True,
+                        mutation_count=0,
+                        record_count=1,
+                    ),
+                ),
+            )
+        if task.opcode in structured_s7_opcodes:
+            return self._execute_context_dynamic_value_task(
+                state,
+                callback,
+                task,
+                detail,
+                trigger_event,
+            )
         delay_emissions = [
             emission
             for emission in self.rules.action_delay_emissions_for_callback(callback.callback_id)
@@ -399,14 +510,30 @@ class StatusCallbackSystem:
             records.extend(child_result.records)
             events.extend(child_result.events)
             errors.extend(child_result.errors)
+        if errors:
+            reason = f"predicate_child_atomic_rollback:{errors[0]}"
+            return StatusCallbackExecutionResult(
+                ok=False,
+                after_state=state,
+                records=(
+                    _task_blocked_record(
+                        callback,
+                        task,
+                        detail,
+                        reason,
+                        condition_result=result.to_json(),
+                        selected_child_ids=selected_child_ids,
+                    ),
+                ),
+                errors=tuple(errors),
+            )
         return StatusCallbackExecutionResult(
-            ok=not errors,
+            ok=True,
             after_state=current_state,
             mutations=tuple(mutations),
             rng_events=tuple(rng_events),
             records=tuple(records),
             events=tuple(events),
-            errors=tuple(errors),
         )
 
     def _execute_retarget_task(
@@ -601,6 +728,125 @@ class StatusCallbackSystem:
             records=records,
             events=result.events,
             errors=result.unsupported,
+        )
+
+    def _execute_context_dynamic_value_task(
+        self,
+        state: BattleState,
+        callback: StatusCallbackIR,
+        task: StatusCallbackTaskIR,
+        detail: dict[str, JSONValue],
+        trigger_event: GameEvent | None,
+    ) -> StatusCallbackExecutionResult:
+        if task.coverage_status != "executable":
+            reason = task.blocked_reason or "context_dynamic_value_task_not_executable"
+            return StatusCallbackExecutionResult(
+                ok=False,
+                after_state=state,
+                records=(_task_blocked_record(callback, task, detail, reason),),
+                errors=(reason,),
+            )
+        payload = task.task_payload
+        dynamic_key = payload.get("DynamicKey") or payload.get("ToDynamicKey")
+        if not isinstance(dynamic_key, str) or not dynamic_key:
+            reason = "dynamic_value_name_required"
+            return StatusCallbackExecutionResult(
+                ok=False,
+                after_state=state,
+                records=(_task_blocked_record(callback, task, detail, reason),),
+                errors=(reason,),
+            )
+        value, value_source, blocked_reason = _context_dynamic_value(
+            state,
+            task,
+            detail,
+            trigger_event,
+        )
+        if value is None:
+            reason = blocked_reason or "context_dynamic_value_unresolved"
+            return StatusCallbackExecutionResult(
+                ok=False,
+                after_state=state,
+                records=(_task_blocked_record(callback, task, detail, reason),),
+                errors=(reason,),
+            )
+        explicit_target_alias = (
+            payload.get("ToTargetType")
+            or payload.get("WriteTargetType")
+            or payload.get("TargetType")
+        )
+        target_alias = str(explicit_target_alias or "ModifierOwnerEntity")
+        target_id = _resolve_callback_target_id(detail, target_alias, trigger_event)
+        if not target_id and explicit_target_alias is None:
+            target_id = str(detail.get("owner_id") or "")
+        if target_id not in state.units:
+            reason = f"context_dynamic_value_target_missing:{target_alias}"
+            return StatusCallbackExecutionResult(
+                ok=False,
+                after_state=state,
+                records=(_task_blocked_record(callback, task, detail, reason),),
+                errors=(reason,),
+            )
+        before = store_from_state(state)
+        source_trace = {
+            "status_callback_source": callback.source.to_json(),
+            "status_task_source": task.source.to_json(),
+            "status_instance_source": _json_dict(detail.get("source_trace")),
+            "trigger_event": (
+                trigger_event.to_json() if trigger_event is not None else {}
+            ),
+        }
+        after = upsert_dynamic_value(
+            before,
+            scope="status_callback",
+            owner_id=target_id,
+            value=float(value),
+            value_name=dynamic_key,
+            status_id=str(detail.get("status_id") or ""),
+            status_instance_id=str(detail.get("instance_id") or ""),
+            effect_id=task.task_id,
+            source_trace=source_trace,
+        )
+        mutation = Mutation(
+            op="set",
+            path=("global_flags", "dynamic_value_store"),
+            before=(before if "dynamic_value_store" in state.global_flags else None),
+            after=after,
+            reason="set context-derived dynamic value",
+            source="status_callback_system",
+            before_exists="dynamic_value_store" in state.global_flags,
+            metadata={
+                "callback_id": callback.callback_id,
+                "task_id": task.task_id,
+                "modifier_name": callback.modifier_name,
+                "dynamic_key": dynamic_key,
+                "value": float(value),
+                "value_source": value_source,
+                "source_trace": source_trace,
+            },
+        )
+        after_state = self.reducer.apply_all(state, (mutation,))
+        record = SettlementRecord(
+            record_type="status_callback_dynamic_value",
+            source="status_callback_system",
+            mutation_id=mutation.stable_id(),
+            process_only=False,
+            payload={
+                "callback_id": callback.callback_id,
+                "task_id": task.task_id,
+                "modifier_name": callback.modifier_name,
+                "dynamic_key": dynamic_key,
+                "target_id": target_id,
+                "value": float(value),
+                "value_source": value_source,
+            },
+            trace=source_trace,
+        ).to_json()
+        return StatusCallbackExecutionResult(
+            ok=True,
+            after_state=after_state,
+            mutations=(mutation,),
+            records=(record,),
         )
 
     def _execute_list_target_effect_task(
@@ -1650,7 +1896,10 @@ def _unique_ids(*values: object) -> tuple[str, ...]:
 
 
 def _unit_alive(state: BattleState, unit_id: str) -> bool:
-    return UnitLifecycleSystem().can_target(state, unit_id)[0]
+    unit = state.units.get(unit_id)
+    return bool(
+        unit is not None and runtime_unit_is_target_candidate(unit)
+    )
 
 
 def _alive_enemy_ids_for_status_owner(state: BattleState, detail: dict[str, JSONValue]) -> tuple[str, ...]:
@@ -1660,8 +1909,9 @@ def _alive_enemy_ids_for_status_owner(state: BattleState, detail: dict[str, JSON
         return ()
     return tuple(
         unit_id
-        for unit_id, unit in state.units.items()
-        if unit.side != owner.side and UnitLifecycleSystem().can_target(state, unit_id)[0]
+        for unit_id, unit in sorted(state.units.items())
+        if runtime_units_are_opposing_combat_teams(owner, unit)
+        and runtime_unit_is_target_candidate(unit)
     )
 
 
@@ -1837,12 +2087,361 @@ def _resolve_callback_target_id(
         return str(detail.get("owner_id") or "")
     if alias == "Caster":
         return str(detail.get("caster_id") or "")
-    if alias in {"ParamEntity", "CurrentActionTarget", "AbilityTargetEntity"}:
+    if alias in {
+        "ActualOwner",
+        "ModifierOwnerSummoner",
+        "ModifierOwnerEntity.GetSummoner",
+    }:
+        owner_id = str(detail.get("owner_id") or "")
+        return _unit_relation_id_from_detail(detail, owner_id, "summoner_id", "owner_id")
+    if alias in {
+        "ParamEntity",
+        "CurrentActionTarget",
+        "AbilityTargetEntity",
+        "DamageDefenderEntity",
+    }:
         payload = event.payload if event is not None and isinstance(event.payload, dict) else {}
-        return _first_payload_str(payload, ("param_entity_id", "current_hit_target_id", "primary_target_id", "target_id")) or (
+        return _first_payload_str(payload, ("param_entity_id", "current_hit_target_id", "damage_defender_id", "primary_target_id", "target_id")) or (
             str(event.target_id or "") if event is not None else ""
         )
+    if alias == "DamageAttackerEntity":
+        payload = event.payload if event is not None and isinstance(event.payload, dict) else {}
+        return _first_payload_str(payload, ("damage_attacker_id", "actor_id", "source_id")) or (
+            str(event.source_id or "") if event is not None else ""
+        )
+    if alias == "CurrentTurnOwnerEntity":
+        payload = event.payload if event is not None and isinstance(event.payload, dict) else {}
+        return _first_payload_str(payload, ("turn_owner_id", "actor_id")) or (
+            str(event.source_id or "") if event is not None else ""
+        )
+    if alias == "ParamEntity2":
+        payload = event.payload if event is not None and isinstance(event.payload, dict) else {}
+        return _first_payload_str(payload, ("param_entity_2_id", "param_entity2_id", "secondary_target_id"))
     return ""
+
+
+def _context_dynamic_value(
+    state: BattleState,
+    task: StatusCallbackTaskIR,
+    detail: dict[str, JSONValue],
+    event: GameEvent | None,
+) -> tuple[float | None, dict[str, JSONValue], str]:
+    payload = task.task_payload
+    opcode = task.opcode
+    if opcode == "SetModifierDynamicValue":
+        evaluation = _evaluate_callback_numeric(
+            payload.get("NewValue"),
+            state,
+            detail,
+            task,
+        )
+        if not evaluation.ok or evaluation.value is None:
+            return None, {"numeric_evaluation": evaluation.to_json()}, (
+                evaluation.blocked_reason or "new_dynamic_value_unresolved"
+            )
+        return evaluation.value, {"numeric_evaluation": evaluation.to_json()}, ""
+
+    explicit_read_alias = (
+        payload.get("ReadTargetType")
+        or payload.get("FromTargetType")
+        or payload.get("BaseTypeSourceTarget")
+        or payload.get("TargetType")
+    )
+    read_alias = str(explicit_read_alias or "ModifierOwnerEntity")
+    if opcode == "SetDynamicValueByCharacterCount" and read_alias in {
+        "AllEnemy",
+        "AllEnemyWithUnSelectable",
+        "AllLightTeam",
+        "AllLightTeam.RemoveServant",
+        "AllTeamMember",
+        "AllTeamMemberWithUnselectable",
+    }:
+        target_ids = _callback_target_group(state, detail, event, read_alias)
+        if not target_ids and not state.units.get(
+            str(detail.get("owner_id") or detail.get("caster_id") or "")
+        ):
+            return None, {"target_alias": read_alias}, "character_count_owner_missing"
+        if payload.get("AliveOnly") is True:
+            target_ids = tuple(
+                unit_id
+                for unit_id in target_ids
+                if float(state.units[unit_id].hp) > 0
+            )
+        return float(len(target_ids)), {
+            "kind": "character_count",
+            "target_alias": read_alias,
+            "target_ids": list(target_ids),
+        }, ""
+    target_id = _resolve_callback_target_id(detail, read_alias, event)
+    if not target_id and explicit_read_alias is None:
+        target_id = str(detail.get("owner_id") or "")
+    if not target_id:
+        return None, {"target_alias": read_alias}, f"context_dynamic_value_target_unresolved:{read_alias}"
+    target = state.units.get(target_id)
+
+    if opcode == "SetDynamicValueByHPRatio":
+        if target is None or target.max_hp <= 0:
+            return None, {"target_id": target_id}, "hp_ratio_target_missing"
+        return (
+            float(target.hp) / float(target.max_hp),
+            {"kind": "hp_ratio", "target_id": target_id},
+            "",
+        )
+    if opcode == "SetDynamicValueByProperty":
+        if target is None:
+            return None, {"target_id": target_id}, "property_target_missing"
+        property_name = payload.get("SourceProperty")
+        value = _unit_property_value(target, property_name)
+        if value is None:
+            return None, {
+                "target_id": target_id,
+                "property": property_name,
+            }, "unit_property_not_available"
+        return value, {
+            "kind": "unit_property",
+            "target_id": target_id,
+            "property": property_name,
+        }, ""
+    if opcode == "SetDynamicValueByCharacterCount":
+        target_ids = _callback_target_group(
+            state,
+            detail,
+            event,
+            read_alias,
+        )
+        if payload.get("AliveOnly") is True:
+            target_ids = tuple(
+                unit_id
+                for unit_id in target_ids
+                if float(state.units[unit_id].hp) > 0
+            )
+        return float(len(target_ids)), {
+            "kind": "character_count",
+            "target_alias": read_alias,
+            "target_ids": list(target_ids),
+        }, ""
+    if opcode == "SetDynamicValueByCountOfBaseType":
+        group_alias = str(payload.get("TargetType") or "AllLightTeam.RemoveServant")
+        target_ids = _callback_target_group(state, detail, event, group_alias)
+        if target is None:
+            return None, {"target_id": target_id}, "base_type_source_target_missing"
+        base_type = _unit_base_type(target)
+        if not base_type:
+            return None, {"target_id": target_id}, "base_type_source_missing"
+        matches = tuple(
+            unit_id
+            for unit_id in target_ids
+            if _unit_base_type(state.units[unit_id]) == base_type
+        )
+        return float(len(matches)), {
+            "kind": "matching_base_type_count",
+            "base_type": base_type,
+            "target_ids": list(target_ids),
+            "matching_target_ids": list(matches),
+        }, ""
+    if opcode == "SetDynamicValueByStatusCount":
+        if target is None:
+            return None, {"target_id": target_id}, "status_count_target_missing"
+        details = target.flags.get("status_details", ())
+        if not isinstance(details, (list, tuple)):
+            return None, {"target_id": target_id}, "status_details_invalid"
+        admitted = tuple(
+            item
+            for item in details
+            if isinstance(item, dict)
+            and item.get("status_category") == "debuff"
+        )
+        return float(len(admitted)), {
+            "kind": "debuff_status_count",
+            "target_id": target_id,
+            "status_instance_ids": [
+                str(item.get("instance_id") or "") for item in admitted
+            ],
+        }, ""
+    if opcode == "SetDynamicValueByWeaknessCount":
+        if target is None:
+            return None, {"target_id": target_id}, "weakness_target_missing"
+        weaknesses = target.flags.get("weaknesses", ())
+        if not isinstance(weaknesses, (list, tuple)):
+            return None, {"target_id": target_id}, "weaknesses_invalid"
+        return float(len(tuple(dict.fromkeys(str(item) for item in weaknesses)))), {
+            "kind": "weakness_count",
+            "target_id": target_id,
+            "weaknesses": list(weaknesses),
+        }, ""
+    if opcode == "SetDynamicValueByCopying":
+        source_modifier = payload.get("FromModifierName")
+        source_key = payload.get("FromDynamicKey")
+        if not isinstance(source_modifier, str) or not source_modifier:
+            return None, {}, "copy_source_modifier_missing"
+        if not isinstance(source_key, str) or not source_key:
+            return None, {}, "copy_source_dynamic_key_missing"
+        source_detail = find_status_detail(
+            state,
+            target_id,
+            modifier_name=source_modifier,
+        )
+        if source_detail is None:
+            return None, {"target_id": target_id}, "copy_source_modifier_missing"
+        value = _status_dynamic_value(source_detail, source_key)
+        if value is None:
+            return None, {
+                "target_id": target_id,
+                "source_modifier": source_modifier,
+                "source_key": source_key,
+            }, "copy_source_dynamic_value_missing"
+        return value, {
+            "kind": "copy_status_dynamic_value",
+            "target_id": target_id,
+            "source_modifier": source_modifier,
+            "source_key": source_key,
+            "source_instance_id": source_detail.get("instance_id"),
+        }, ""
+    return None, {"opcode": opcode}, "context_dynamic_value_opcode_not_supported"
+
+
+def _evaluate_callback_numeric(
+    expression: object,
+    state: BattleState,
+    detail: dict[str, JSONValue],
+    task: StatusCallbackTaskIR,
+) -> NumericEvaluationResult:
+    owner_id = str(detail.get("owner_id") or "")
+    caster_id = str(detail.get("caster_id") or owner_id)
+    return RuleEvaluator().evaluate_numeric(
+        expression,
+        NumericEvaluationContext(
+            binding_sources=(
+                *status_binding_sources(
+                    state,
+                    tuple(
+                        unit_id
+                        for unit_id in (owner_id, caster_id)
+                        if unit_id
+                    ),
+                ),
+                binding_source_from_store(store_from_state(state)),
+            ),
+            source_trace={
+                "status_task_source": task.source.to_json(),
+                "status_instance_source": _json_dict(detail.get("source_trace")),
+            },
+        ),
+    )
+
+
+def _callback_target_group(
+    state: BattleState,
+    detail: dict[str, JSONValue],
+    event: GameEvent | None,
+    alias: str,
+) -> tuple[str, ...]:
+    owner_id = str(detail.get("owner_id") or detail.get("caster_id") or "")
+    owner = state.units.get(owner_id)
+    if alias in {"AllEnemy", "AllEnemyWithUnSelectable"} and owner is not None:
+        include_unselectable = alias == "AllEnemyWithUnSelectable"
+        return tuple(
+            unit_id
+            for unit_id, unit in sorted(state.units.items())
+            if runtime_units_are_opposing_combat_teams(owner, unit)
+            and runtime_unit_is_target_candidate(
+                unit,
+                include_unselectable=include_unselectable,
+            )
+        )
+    if alias in {"AllLightTeam", "AllLightTeam.RemoveServant"}:
+        return tuple(
+            unit_id
+            for unit_id, unit in sorted(state.units.items())
+            if runtime_unit_is_light_team(unit)
+            and runtime_unit_is_target_candidate(unit)
+            and (
+                "RemoveServant" not in alias
+                or unit.flags.get("summon_kind") != "servant"
+            )
+        )
+    if alias == "AllDarkTeam":
+        return tuple(
+            unit_id
+            for unit_id, unit in sorted(state.units.items())
+            if runtime_unit_is_dark_team(unit)
+            and runtime_unit_is_target_candidate(unit)
+        )
+    if alias in {
+        "AllTeamMember",
+        "AllTeamMemberWithUnselectable",
+        "AllTeammate",
+    } and owner is not None:
+        include_unselectable = alias == "AllTeamMemberWithUnselectable"
+        return tuple(
+            unit_id
+            for unit_id, unit in sorted(state.units.items())
+            if runtime_units_share_combat_team(owner, unit)
+            and runtime_unit_is_target_candidate(
+                unit,
+                include_unselectable=include_unselectable,
+            )
+            and (alias != "AllTeammate" or unit_id != owner_id)
+        )
+    resolved = _resolve_callback_target_id(detail, alias, event)
+    return (resolved,) if resolved in state.units else ()
+
+
+def _unit_property_value(unit, property_name: object) -> float | None:
+    direct = {
+        "CurrentHP": unit.hp,
+        "Defence": effective_unit_stat(unit, "defense").value,
+        "MaxHP": unit.max_hp,
+        "Speed": effective_unit_stat(unit, "speed").value,
+    }
+    if property_name in direct:
+        return float(direct[property_name])
+    resource_keys = {
+        "BreakDamageAddedRatio": "break_damage_added_ratio",
+        "CriticalDamage": "critical_damage",
+        "StatusResistanceBase": "effect_resistance",
+    }
+    resource_key = resource_keys.get(property_name)
+    if resource_key:
+        return effective_unit_stat(unit, resource_key).value
+    return None
+
+
+def _unit_base_type(unit) -> str:
+    for key in ("avatar_base_type", "path", "base_type"):
+        value = unit.flags.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return ""
+
+
+def _status_dynamic_value(detail: dict[str, JSONValue], key: str) -> float | None:
+    values = detail.get("dynamic_values")
+    if not isinstance(values, dict):
+        return None
+    direct = values.get(key)
+    if isinstance(direct, (int, float)):
+        return float(direct)
+    by_name = values.get("__by_name")
+    if isinstance(by_name, dict):
+        value = by_name.get(key)
+        if isinstance(value, (int, float)):
+            return float(value)
+    return None
+
+
+def _unit_relation_id_from_detail(
+    detail: dict[str, JSONValue],
+    owner_id: str,
+    *keys: str,
+) -> str:
+    source_trace = detail.get("source_trace")
+    for container in (detail, source_trace if isinstance(source_trace, dict) else {}):
+        for key in keys:
+            value = container.get(key)
+            if isinstance(value, str) and value:
+                return value
+    return owner_id
 
 
 def _resolve_queue_alias(detail: dict[str, JSONValue], event: GameEvent | None, target_alias: str | None) -> str:
@@ -2037,7 +2636,11 @@ def _condition_context(
     detail: dict[str, JSONValue],
     event: GameEvent | None,
 ) -> EvaluationContext:
-    payload = event.payload if event is not None and isinstance(event.payload, dict) else {}
+    payload = dict(event.payload) if event is not None and isinstance(event.payload, dict) else {}
+    if event is not None:
+        payload.setdefault("event_source_id", event.source_id)
+        payload.setdefault("event_target_id", event.target_id)
+        payload.setdefault("event_window", event.window)
     owner_id = str(detail.get("owner_id") or "")
     caster_id = str(detail.get("caster_id") or owner_id)
     target_id = _first_payload_str(payload, ("current_hit_target_id", "primary_target_id", "target_id")) or (
@@ -2053,7 +2656,7 @@ def _condition_context(
         param_entity_id=param_entity_id or None,
         current_action_target_id=target_id or None,
         status_detail=detail,
-        event_payload=dict(payload),
+        event_payload=payload,
         binding_sources=(
             *status_binding_sources(state, unit_ids),
             binding_source_from_store(store_from_state(state)),
@@ -2068,7 +2671,11 @@ def _effect_context(
     event: GameEvent | None,
     damage_window_ledger: DamageWindowLedger | None = None,
 ) -> EffectExecutionContext:
-    payload = event.payload if event is not None and isinstance(event.payload, dict) else {}
+    payload = dict(event.payload) if event is not None and isinstance(event.payload, dict) else {}
+    if event is not None:
+        payload.setdefault("event_source_id", event.source_id)
+        payload.setdefault("event_target_id", event.target_id)
+        payload.setdefault("event_window", event.window)
     owner_id = str(detail.get("owner_id") or "")
     caster_id = str(detail.get("caster_id") or owner_id)
     target_id = _first_payload_str(payload, ("current_hit_target_id", "primary_target_id", "target_id")) or (
@@ -2076,6 +2683,13 @@ def _effect_context(
     )
     param_entity_id = _first_payload_str(payload, ("param_entity_id",)) or target_id
     unit_ids = tuple(unit_id for unit_id in (owner_id, caster_id, param_entity_id) if unit_id)
+    current_status_instance_id = str(detail.get("instance_id") or "")
+    binding_sources = tuple(
+        source
+        for source in status_binding_sources(state, unit_ids)
+        if not current_status_instance_id
+        or source.get("status_instance_id") != current_status_instance_id
+    )
     return EffectExecutionContext(
         state=state,
         caster_id=caster_id,
@@ -2083,13 +2697,37 @@ def _effect_context(
         owner_id=owner_id,
         param_entity_id=param_entity_id or None,
         current_action_target_id=target_id or None,
-        event_payload=dict(payload),
+        event_payload=payload,
+        dynamic_values=_status_runtime_bindings(detail),
         binding_sources=(
-            *status_binding_sources(state, unit_ids),
+            *binding_sources,
             binding_source_from_store(store_from_state(state)),
+        ),
+        shadowed_status_instance_ids=(
+            (current_status_instance_id,) if current_status_instance_id else ()
         ),
         damage_window_ledger=damage_window_ledger,
     )
+
+
+def _status_runtime_bindings(
+    detail: dict[str, JSONValue],
+) -> dict[str, float]:
+    raw = detail.get("dynamic_values")
+    if not isinstance(raw, dict):
+        return {}
+    bindings: dict[str, float] = {}
+    for key, value in raw.items():
+        if not str(key).startswith("__") and isinstance(value, (int, float)) and not isinstance(value, bool):
+            bindings[str(key)] = float(value)
+    for index_key in ("__by_name", "__by_hash"):
+        indexed = raw.get(index_key)
+        if not isinstance(indexed, dict):
+            continue
+        for key, value in indexed.items():
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                bindings[str(key)] = float(value)
+    return bindings
 
 
 def _first_payload_str(payload: dict[str, JSONValue], keys: tuple[str, ...]) -> str:
@@ -2117,15 +2755,7 @@ def _list_alias_targets(
         fallback = _first_payload_str(payload, ("current_hit_target_id", "primary_target_id", "target_id"))
         return (fallback,) if fallback and fallback in state.units else ()
     if alias == "AllEnemyWithUnSelectable":
-        owner_id = str(detail.get("owner_id") or detail.get("caster_id") or "")
-        owner = state.units.get(owner_id)
-        if owner is None:
-            return ()
-        return tuple(
-            unit_id
-            for unit_id, unit in state.units.items()
-            if unit.side != owner.side
-        )
+        return _callback_target_group(state, detail, event, alias)
     return ()
 
 

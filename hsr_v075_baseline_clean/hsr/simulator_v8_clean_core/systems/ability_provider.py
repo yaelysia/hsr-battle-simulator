@@ -193,31 +193,42 @@ def register_dynamic_ability_providers(
                     unit_id=unit_id,
                     provider_id=provider_id,
                     provider=requested_by_id[provider_id],
+                    mutation_id=None,
                 )
                 for provider_id in sorted(requested_by_id)
             )
             continue
-        mutations.append(
-            Mutation(
-                op="set",
-                path=("units", unit_id, "flags", "ability_providers"),
-                before=before if "ability_providers" in unit.flags else None,
-                before_exists="ability_providers" in unit.flags,
-                after=after,
-                reason="register_canonical_ability_provider",
-                source="ability_provider_registry",
-                metadata={
-                    "provider_ids": sorted(requested_by_id),
-                    "owner_unit_id": unit_id,
+        mutation = Mutation(
+            op="set",
+            path=("units", unit_id, "flags", "ability_providers"),
+            before=before if "ability_providers" in unit.flags else None,
+            before_exists="ability_providers" in unit.flags,
+            after=after,
+            reason="register_canonical_ability_provider",
+            source="ability_provider_registry",
+            metadata={
+                "provider_ids": sorted(requested_by_id),
+                "owner_unit_id": unit_id,
+                "providers": [
+                    requested_by_id[provider_id]
+                    for provider_id in sorted(requested_by_id)
+                ],
+                "source_trace": {
+                    "provider_sources": [
+                        requested_by_id[provider_id]["source"]
+                        for provider_id in sorted(requested_by_id)
+                    ],
                 },
-            )
+            },
         )
+        mutations.append(mutation)
         records.extend(
             _provider_registration_record(
                 status="registered",
                 unit_id=unit_id,
                 provider_id=provider_id,
                 provider=requested_by_id[provider_id],
+                mutation_id=mutation.stable_id(),
             )
             for provider_id in sorted(requested_by_id)
         )
@@ -240,12 +251,16 @@ def _provider_registration_record(
     unit_id: str,
     provider_id: str,
     provider: dict[str, JSONValue],
+    mutation_id: str | None,
 ) -> dict[str, JSONValue]:
     bindings = provider["parameter_bindings"]
     if not isinstance(bindings, list):
         raise TypeError("canonical provider parameter bindings must be a list")
     return {
         "record_type": "ability_provider_registration",
+        "source": "ability_provider_registry",
+        "mutation_id": mutation_id,
+        "process_only": mutation_id is None,
         "status": status,
         "unit_id": unit_id,
         "provider_id": provider_id,

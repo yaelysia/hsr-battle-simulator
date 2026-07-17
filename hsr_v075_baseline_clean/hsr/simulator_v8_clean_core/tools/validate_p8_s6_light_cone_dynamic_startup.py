@@ -47,7 +47,7 @@ from .io import write_json
 
 
 VALIDATION_VERSION = "p8_s6_light_cone_dynamic_startup"
-SUMMARY_SCHEMA_VERSION = "p8_s6_light_cone_dynamic_startup_summary_v1"
+SUMMARY_SCHEMA_VERSION = "p8_s6_light_cone_dynamic_startup_summary_v2"
 
 
 def run_validation(tbgd_root: Path, output_dir: Path) -> dict[str, Any]:
@@ -60,7 +60,7 @@ def run_validation(tbgd_root: Path, output_dir: Path) -> dict[str, Any]:
     startup_matrix = _startup_matrix(bundle, sample)
     negative_matrix = _negative_matrix(bundle, sample)
     family_matrix = _family_gap_matrix(bundle)
-    source_walkback = _source_walkback(bundle, sample, startup_matrix)
+    source_walkback = _source_walkback(bundle, startup_matrix)
     runtime_boundary = _runtime_boundary()
 
     predicates = {
@@ -105,7 +105,7 @@ def run_validation(tbgd_root: Path, output_dir: Path) -> dict[str, Any]:
         ],
         "all_dynamic_sources_walk_back": source_walkback["ok"],
         "negative_matrix_complete": negative_matrix["ok"],
-        "current_family_gaps_preserved": family_matrix["ok"],
+        "current_graph_admission_states_preserved": family_matrix["ok"],
     }
     predicates["ok"] = all(
         value is True
@@ -139,7 +139,6 @@ def run_validation(tbgd_root: Path, output_dir: Path) -> dict[str, Any]:
         "ready_for_review": predicates["ok"],
         "checklist_modified": False,
         "git_commit_created": False,
-        "p8_s7_started": False,
         "predicates": predicates,
         "counts": {
             "published_light_cone_count": len(bundle["definitions"]),
@@ -169,9 +168,9 @@ def run_validation(tbgd_root: Path, output_dir: Path) -> dict[str, Any]:
             "artifacts": sorted(artifacts),
         },
         "deferred": {
-            "stage": "P8-S7/P8-S8",
+            "stage": "P8-S8",
             "classification": "implementation_missing",
-            "reason": "equipment ability nested modifier/callback gameplay families remain partial",
+            "reason": "remaining equipment ability graphs keep explicit blocked reasons after the P8-S7 closure",
         },
     }
     write_json(
@@ -257,6 +256,7 @@ def _focused_bundle(tbgd_root: Path) -> dict[str, Any]:
         "mechanism_refs": mechanism_refs,
         "ir": ir,
         "rules": RuleBook(ir),
+        "tbgd_root": tbgd_root,
     }
 
 
@@ -647,6 +647,112 @@ def _character_build(
     )
 
 
+def _current_formal_startup_context(bundle: dict[str, Any]) -> dict[str, Any]:
+    rules: RuleBook = bundle["rules"]
+    graph_by_id = {
+        graph.standalone_ability_graph_id: graph for graph in bundle["graphs"]
+    }
+    cards = {
+        card.card_id: card
+        for card in bundle["characters"].character_data_cards
+    }
+    eligibilities_by_path: dict[str, list[Any]] = {}
+    for eligibility in bundle["characters"].character_equipment_eligibilities:
+        eligibilities_by_path.setdefault(
+            eligibility.character_path_type, []
+        ).append(eligibility)
+    candidates: list[tuple[LightConeDefinitionIR, Any]] = []
+    for definition in bundle["definitions"]:
+        if not definition.mechanism_ref_ids:
+            continue
+        mechanism = rules.equipment_mechanism_ref(
+            definition.mechanism_ref_ids[0].definition_identity
+        ).value
+        graph = (
+            graph_by_id.get(mechanism.graph_ref_id)
+            if mechanism is not None
+            else None
+        )
+        if graph is None or graph.coverage_status != "executable":
+            continue
+        for eligibility in eligibilities_by_path.get(
+            definition.path_type, ()
+        ):
+            card = cards.get(eligibility.character_card_id)
+            if card is not None:
+                candidates.append((definition, card))
+    errors: list[str] = []
+    for definition, card in sorted(
+        candidates,
+        key=lambda item: (
+            item[0].ability_source.source.source_path,
+            item[0].ability_source.record_index,
+            item[1].card_id,
+        ),
+    ):
+        equipment_build, equipment_result = _assembly(
+            rules,
+            card.card_id,
+            definition,
+            instance_id="validation:p8_s6:formal-current",
+            rank=1,
+        )
+        character_build = _character_build(
+            card.card_id,
+            "formal-current",
+            equipment_build,
+        )
+        character_result = assemble_character_build(rules, character_build)
+        if (
+            equipment_result.battle_admission_status != "admitted"
+            or character_result.battle_admission_status != "admitted"
+        ):
+            continue
+        scenario = ScenarioSpec(
+            scenario_id="validation:p8_s6:formal-provider-startup",
+            version=BASELINE_VERSION,
+            units=(
+                UnitSpec(
+                    unit_id="ally:formal-provider",
+                    side="ally",
+                    entity_ref=card.entity_ref,
+                    build_mode="assembled_character_build",
+                    level=character_build.level,
+                    eidolon_level=character_build.eidolon_level,
+                    panel=None,
+                    character_build=character_build,
+                    initial_condition=CharacterInitialConditionInput(
+                        hp_mode="full",
+                        initial_energy="0",
+                    ),
+                ),
+            ),
+            route=(),
+            battle_setup=BattleSetupSpec(
+                timeline=TimelineSetupSpec(mode="runtime_initialize")
+            ),
+        )
+        try:
+            built = ScenarioStateBuilder(rules).build(scenario)
+            rebuilt = ScenarioStateBuilder(rules).build(scenario)
+        except ValueError as exc:
+            errors.append(str(exc))
+            continue
+        return {
+            "card": card,
+            "definition": definition,
+            "equipment_result": equipment_result,
+            "character_result": character_result,
+            "scenario": scenario,
+            "built": built,
+            "rebuilt": rebuilt,
+        }
+    raise ValueError(
+        "no currently executable formal equipment startup sample: "
+        f"{errors[:5]}"
+    )
+
+
 def _startup_matrix(bundle: dict[str, Any], sample: dict[str, Any]) -> dict[str, Any]:
     rules: RuleBook = bundle["rules"]
     card = sample["card"]
@@ -680,7 +786,7 @@ def _startup_matrix(bundle: dict[str, Any], sample: dict[str, Any]) -> dict[str,
         ),
     )
     admitted_rules = RuleBook(admitted_ir)
-    rank_one_build, rank_one = _assembly(admitted_rules, card.card_id, definition, instance_id="validation:p8_s6:owner-a", rank=1)
+    _, rank_one = _assembly(admitted_rules, card.card_id, definition, instance_id="validation:p8_s6:owner-a", rank=1)
     _, rank_two = _assembly(admitted_rules, card.card_id, definition, instance_id="validation:p8_s6:owner-b", rank=2)
     initial = BattleState(
         units={
@@ -743,41 +849,17 @@ def _startup_matrix(bundle: dict[str, Any], sample: dict[str, Any]) -> dict[str,
         admitted_rules,
         (),
     )
-    formal_character_build = _character_build(
-        card.card_id,
-        "formal-scenario-provider",
-        rank_one_build,
+    from .validate_p8_s7_light_cone_status_condition_listener_closure import (
+        _with_s7_status_closure,
     )
-    formal_character_result = assemble_character_build(
-        admitted_rules,
-        formal_character_build,
-    )
-    formal_scenario = ScenarioSpec(
-        scenario_id="validation:p8_s6:formal-provider-startup",
-        version=BASELINE_VERSION,
-        units=(
-            UnitSpec(
-                unit_id="ally:formal-provider",
-                side="ally",
-                entity_ref=card.entity_ref,
-                build_mode="assembled_character_build",
-                level=formal_character_build.level,
-                eidolon_level=formal_character_build.eidolon_level,
-                panel=None,
-                character_build=formal_character_build,
-                initial_condition=CharacterInitialConditionInput(
-                    hp_mode="full",
-                    initial_energy="0",
-                ),
-            ),
-        ),
-        route=(),
-        battle_setup=BattleSetupSpec(
-            timeline=TimelineSetupSpec(mode="runtime_initialize")
-        ),
-    )
-    formal_built = ScenarioStateBuilder(admitted_rules).build(formal_scenario)
-    formal_rebuilt = ScenarioStateBuilder(admitted_rules).build(formal_scenario)
+
+    formal_bundle = _with_s7_status_closure(bundle, bundle["tbgd_root"])
+    formal_rules: RuleBook = formal_bundle["rules"]
+    formal_context = _current_formal_startup_context(formal_bundle)
+    formal_character_result = formal_context["character_result"]
+    formal_built = formal_context["built"]
+    formal_rebuilt = formal_context["rebuilt"]
+    formal_selection = formal_context["equipment_result"].dynamic_mechanisms[0]
     formal_unit = formal_built.state.units["ally:formal-provider"]
     formal_providers = formal_unit.flags.get("ability_providers", ())
     rebuilt_providers = formal_rebuilt.state.units[
@@ -803,8 +885,8 @@ def _startup_matrix(bundle: dict[str, Any], sample: dict[str, Any]) -> dict[str,
     )
     restored_registration = register_dynamic_ability_providers(
         restored_state,
-        admitted_rules,
-        (("ally:formal-provider", rank_one.dynamic_mechanisms[0]),),
+        formal_rules,
+        (("ally:formal-provider", formal_selection),),
     )
     checks = {
         "selected_partial_graph_blocks_battle": partial.assembly_status == "assembled"
@@ -891,6 +973,9 @@ def _startup_matrix(bundle: dict[str, Any], sample: dict[str, Any]) -> dict[str,
         "snapshot_provider_count": len(snapshot_providers),
         "multi_owner_provider_ids": list(provider_ids),
         "formal_scenario": {
+            "definition_identity": formal_context[
+                "definition"
+            ].definition_key.definition_identity,
             "character_battle_admission_status": formal_character_result.battle_admission_status,
             "provider_count": len(formal_providers),
             "provider_mutations": [
@@ -1285,33 +1370,46 @@ def _family_gap_matrix(bundle: dict[str, Any]) -> dict[str, Any]:
         {
             "opcode": opcode,
             "raw_node_count": count,
-            "classification": "implementation_missing",
-            "owner_stage": "P8-S7/P8-S8",
+            "inventory_role": "s6_raw_family_discovery",
         }
         for opcode, count in sorted(opcode_counts.items())
     ]
     production_graphs = bundle["graphs"]
+    executable_graphs = tuple(
+        graph for graph in production_graphs if graph.coverage_status == "executable"
+    )
+    blocked_graphs = tuple(
+        graph for graph in production_graphs if graph.coverage_status != "executable"
+    )
     checks = {
         "all_partial_graphs_have_reason": all(
-            graph.coverage_status == "executable" or bool(graph.blocked_reason)
-            for graph in production_graphs
+            bool(graph.blocked_reason) for graph in blocked_graphs
         ),
-        "current_partial_graphs_not_executed": all(
-            graph.coverage_status != "executable" for graph in production_graphs
-        ),
+        "current_partial_graphs_remain_blocked": bool(blocked_graphs),
+        "downstream_admitted_graphs_are_explicit": bool(executable_graphs)
+        and all(not graph.blocked_reason for graph in executable_graphs),
+        "graph_partition_is_lossless": len(executable_graphs)
+        + len(blocked_graphs)
+        == len(production_graphs),
         "family_rows_nonempty": bool(rows),
     }
     checks["ok"] = all(checks.values())
-    return {"schema_version": "p8_s6_family_gap_matrix_v1", "ok": checks["ok"], "checks": checks, "rows": rows}
+    return {
+        "schema_version": "p8_s6_family_gap_matrix_v2",
+        "ok": checks["ok"],
+        "checks": checks,
+        "current_graph_counts": {
+            "executable": len(executable_graphs),
+            "blocked": len(blocked_graphs),
+        },
+        "rows": rows,
+    }
 
 
 def _source_walkback(
     bundle: dict[str, Any],
-    sample: dict[str, Any],
     startup_matrix: dict[str, Any],
 ) -> dict[str, Any]:
-    definition = sample["definition"]
-    ability_source = definition.ability_source
     formal_scenario = startup_matrix.get("formal_scenario", {})
     records = (
         formal_scenario.get("provider_records", [])
@@ -1321,6 +1419,29 @@ def _source_walkback(
     if not records:
         records = startup_matrix.get("first_registration", [])
     record = records[0] if isinstance(records, list) and records else {}
+    semantic_key = record.get("semantic_key", {}) if isinstance(record, dict) else {}
+    mechanism_key = (
+        semantic_key.get("mechanism_key", {})
+        if isinstance(semantic_key, dict)
+        else {}
+    )
+    mechanism_identity = (
+        mechanism_key.get("definition_identity")
+        if isinstance(mechanism_key, dict)
+        else None
+    )
+    definition = next(
+        (
+            candidate
+            for candidate in bundle["definitions"]
+            if any(
+                key.definition_identity == mechanism_identity
+                for key in candidate.mechanism_ref_ids
+            )
+        ),
+        None,
+    )
+    ability_source = definition.ability_source if definition is not None else None
     graph_ref_id = record.get("graph_ref_id") if isinstance(record, dict) else None
     graph = (
         bundle["rules"].standalone_ability_graph(graph_ref_id)
@@ -1328,10 +1449,8 @@ def _source_walkback(
         else None
     )
     mechanism = (
-        bundle["rules"].equipment_mechanism_ref(
-            definition.mechanism_ref_ids[0].definition_identity
-        ).value
-        if definition.mechanism_ref_ids
+        bundle["rules"].equipment_mechanism_ref(mechanism_identity).value
+        if isinstance(mechanism_identity, str)
         else None
     )
     ok = bool(
@@ -1351,7 +1470,7 @@ def _source_walkback(
     return {
         "schema_version": "p8_s6_source_walkback_v1",
         "ok": ok,
-        "definition_key": definition.definition_key.to_json(),
+        "definition_key": definition.definition_key.to_json() if definition else {},
         "ability_name": ability_source.ability_name if ability_source else "",
         "ability_record_index": ability_source.record_index if ability_source else None,
         "provider_registration": record,

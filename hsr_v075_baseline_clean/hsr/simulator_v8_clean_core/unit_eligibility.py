@@ -1,0 +1,121 @@
+from __future__ import annotations
+
+from collections.abc import Mapping
+from typing import Literal, Protocol
+
+
+RuntimeCombatTeam = Literal["ally", "enemy", "neutral"]
+
+
+class RuntimeUnitView(Protocol):
+    hp: float
+    side: str
+    flags: Mapping[str, object]
+
+
+def runtime_unit_combat_team(unit: RuntimeUnitView) -> RuntimeCombatTeam:
+    """Return the source-backed combat allegiance used by every consumer."""
+    side = getattr(unit, "side", None)
+    if side == "ally":
+        return "ally"
+    if side == "enemy":
+        return "enemy"
+    flags = getattr(unit, "flags", {})
+    team_side = flags.get("team_side") if isinstance(flags, Mapping) else None
+    if team_side == "ally":
+        return "ally"
+    if team_side == "enemy":
+        return "enemy"
+    return "neutral"
+
+
+def runtime_units_share_combat_team(
+    left: RuntimeUnitView,
+    right: RuntimeUnitView,
+) -> bool:
+    left_team = runtime_unit_combat_team(left)
+    right_team = runtime_unit_combat_team(right)
+    return left_team != "neutral" and left_team == right_team
+
+
+def runtime_units_are_opposing_combat_teams(
+    left: RuntimeUnitView,
+    right: RuntimeUnitView,
+) -> bool:
+    left_team = runtime_unit_combat_team(left)
+    right_team = runtime_unit_combat_team(right)
+    return (
+        left_team in {"ally", "enemy"}
+        and right_team in {"ally", "enemy"}
+        and left_team != right_team
+    )
+
+
+def runtime_unit_is_light_team(unit: RuntimeUnitView) -> bool:
+    return runtime_unit_combat_team(unit) == "ally"
+
+
+def runtime_unit_is_dark_team(unit: RuntimeUnitView) -> bool:
+    return runtime_unit_combat_team(unit) == "enemy"
+
+
+def runtime_unit_lifecycle_status(unit: RuntimeUnitView) -> str:
+    """Return the canonical lifecycle status used by runtime target consumers."""
+    raw = unit.flags.get("lifecycle_status")
+    if isinstance(raw, str) and raw in {"active", "defeated", "removed"}:
+        return raw
+    return "defeated" if float(unit.hp) <= 0.0 else "active"
+
+
+def runtime_unit_is_on_field(unit: RuntimeUnitView) -> bool:
+    """Whether a non-removed unit has an admitted on-field presence."""
+    if runtime_unit_lifecycle_status(unit) == "removed":
+        return False
+    summon_kind = unit.flags.get("summon_kind")
+    if not isinstance(summon_kind, str) or not summon_kind:
+        return True
+    lifecycle_source = unit.flags.get("lifecycle_source")
+    if not isinstance(lifecycle_source, Mapping):
+        return False
+    return (
+        lifecycle_source.get("admission_status") == "executable"
+        and lifecycle_source.get("presence") == "field"
+    )
+
+
+def runtime_unit_source_is_targetable(unit: RuntimeUnitView) -> bool:
+    """Return the source-backed targetability bit for summoned units."""
+    summon_kind = unit.flags.get("summon_kind")
+    if not isinstance(summon_kind, str) or not summon_kind:
+        return True
+    lifecycle_source = unit.flags.get("lifecycle_source")
+    return bool(
+        isinstance(lifecycle_source, Mapping)
+        and lifecycle_source.get("targetable") is True
+    )
+
+
+def runtime_unit_is_unselectable(unit: RuntimeUnitView) -> bool:
+    """Normalize all admitted runtime spellings of the unselectable flag."""
+    return bool(
+        unit.flags.get("unselectable") is True
+        or unit.flags.get("target_unselectable") is True
+        or unit.flags.get("is_unselectable") is True
+        or unit.flags.get("selectable") is False
+    )
+
+
+def runtime_unit_is_target_candidate(
+    unit: RuntimeUnitView,
+    *,
+    include_unselectable: bool = False,
+) -> bool:
+    """Shared participation gate for target, condition and callback traversals."""
+    return (
+        runtime_unit_lifecycle_status(unit) == "active"
+        and runtime_unit_is_on_field(unit)
+        and runtime_unit_source_is_targetable(unit)
+        and (
+            include_unselectable or not runtime_unit_is_unselectable(unit)
+        )
+    )

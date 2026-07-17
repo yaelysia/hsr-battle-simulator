@@ -8,13 +8,24 @@ from .identity import IdentityResolver
 from .schema import InitialStatusSpec, InitialSummonSpec, PanelInput, RNGSetupSpec, ScenarioSpec, UnitSpec
 from ..builds.character_assembler import assemble_character_build, validate_character_build_admission
 from ..builds.models import CharacterBuildAssemblyResult
-from ..core.model import ActionCommand, BattleState, GameEvent, JSONValue, Mutation, RNGEvent, UnitState
+from ..core.model import (
+    ActionCommand,
+    BattleState,
+    GameEvent,
+    JSONValue,
+    Mutation,
+    RNGEvent,
+    UnitState,
+    UnitStatPool,
+)
 from ..core.reducer import MutationReducer
+from ..core.settlement import SettlementRecord
 from ..equipment.models import DynamicMechanismSelection
 from ..rules.ir import CombatantProfileIR, WaveDefinitionIR, WaveMonsterEntryIR
 from ..rules.rulebook import RuleBook
 from ..rules.value_binding import ValueBindingRequest, ValueContext, ValueResolver
 from ..systems.effect import EffectRegistry
+from ..systems.event_dispatch import EventDispatchSystem
 from ..systems.ability_provider import register_dynamic_ability_providers
 from ..systems.status import StatusSystem
 from ..systems.summon import SummonSystem
@@ -65,6 +76,7 @@ class ScenarioStateBuilder:
         trace_startup_specs: list[dict[str, Any]] = []
         passive_startup_specs: list[dict[str, Any]] = []
         equipment_provider_specs: list[tuple[str, DynamicMechanismSelection]] = []
+        equipment_startup_specs: list[dict[str, Any]] = []
         character_build_results: list[CharacterBuildAssemblyResult] = []
         for unit in scenario.units:
             panel = unit.panel
@@ -102,6 +114,13 @@ class ScenarioStateBuilder:
                     (unit.unit_id, selection)
                     for selection in formal_equipment_providers
                 )
+                equipment_startup_specs.extend(
+                    {
+                        "unit_id": unit.unit_id,
+                        **_equipment_startup_spec(self.rules, selection),
+                    }
+                    for selection in formal_equipment_providers
+                )
                 base_panel = assembly.base_panel
                 resources = {
                     "critical_chance": float(base_panel.critical_chance),
@@ -132,6 +151,7 @@ class ScenarioStateBuilder:
                     statuses=(),
                     flags=formal_flags,
                     resources=resources,
+                    stat_pools=_runtime_stat_pools(assembly),
                 )
                 source_traces.extend(
                     contribution.source.to_json() for contribution in assembly.contribution_ledger
@@ -353,16 +373,59 @@ class ScenarioStateBuilder:
             )
         state = provider_result.after_state
         setup_records.extend(provider_result.records)
-        state, startup_traces = _apply_startup_ability_effects(
+        startup_result = _apply_startup_ability_effects(
             state,
             self.rules,
-            [*eidolon_startup_specs, *trace_startup_specs, *passive_startup_specs],
+            [
+                *eidolon_startup_specs,
+                *trace_startup_specs,
+                *passive_startup_specs,
+                *equipment_startup_specs,
+            ],
         )
+        state = startup_result.state
+        startup_traces = startup_result.source_traces
+        setup_records.extend(startup_result.records)
+        equipment_startup_blocked = tuple(
+            trace
+            for trace in startup_traces
+            if trace.get("kind") == "formal_equipment_ability"
+            and trace.get("status") == "blocked"
+        )
+        if equipment_startup_blocked:
+            reasons = tuple(
+                str(trace.get("reason") or "equipment_startup_blocked")
+                for trace in equipment_startup_blocked
+            )
+            raise ValueError(
+                "equipment ability startup blocked: "
+                + "; ".join(sorted(set(reasons)))
+            )
         source_traces.extend(startup_traces)
         setup_result = _apply_battle_setup(self.rules, state, scenario)
         state = setup_result.state
         setup_records.extend(setup_result.records)
         source_traces.extend(setup_result.source_traces)
+        battle_setup_event_result = _dispatch_battle_setup_event(
+            self.rules,
+            state,
+            scenario,
+        )
+        if battle_setup_event_result.blocked:
+            raise ValueError(
+                "battle setup listener dispatch blocked: "
+                + "; ".join(
+                    sorted(
+                        {
+                            str(item.get("blocked_reason") or "listener_blocked")
+                            for item in battle_setup_event_result.blocked
+                        }
+                    )
+                )
+            )
+        state = battle_setup_event_result.state
+        setup_records.extend(battle_setup_event_result.records)
+        source_traces.extend(battle_setup_event_result.source_traces)
         route_unit_errors = _validate_route_units_after_setup(scenario, state)
         if route_unit_errors:
             raise ValueError("; ".join(route_unit_errors))
@@ -383,10 +446,27 @@ class ScenarioStateBuilder:
             commands=commands,
             source_traces=tuple(source_traces),
             setup_records=tuple(setup_records),
-            setup_mutations=(*provider_result.mutations, *setup_result.mutations),
-            setup_events=setup_result.events,
-            setup_rng_events=setup_result.rng_events,
-            blocked_setup=setup_result.blocked,
+            setup_mutations=(
+                *provider_result.mutations,
+                *startup_result.mutations,
+                *setup_result.mutations,
+                *battle_setup_event_result.mutations,
+            ),
+            setup_events=(
+                *startup_result.events,
+                *setup_result.events,
+                *battle_setup_event_result.events,
+            ),
+            setup_rng_events=(
+                *startup_result.rng_events,
+                *setup_result.rng_events,
+                *battle_setup_event_result.rng_events,
+            ),
+            blocked_setup=(
+                *startup_result.blocked,
+                *setup_result.blocked,
+                *battle_setup_event_result.blocked,
+            ),
             character_build_results=tuple(character_build_results),
         )
 
@@ -401,6 +481,44 @@ def _validate_route_units_after_setup(scenario: ScenarioSpec, state: BattleState
             if target_id not in unit_ids:
                 errors.append(f"route[{index}]: unknown target_id {target_id!r}")
     return tuple(errors)
+
+
+def _runtime_stat_pools(
+    assembly: CharacterBuildAssemblyResult,
+) -> tuple[UnitStatPool, ...]:
+    values: dict[str, dict[str, Decimal]] = {}
+    source_ids: dict[str, dict[str, list[str]]] = {}
+    for contribution in assembly.contribution_ledger:
+        if contribution.contribution_pool not in {"base", "percentage", "flat"}:
+            continue
+        property_values = values.setdefault(
+            contribution.property_type,
+            {"base": Decimal(0), "percentage": Decimal(0), "flat": Decimal(0)},
+        )
+        property_values[contribution.contribution_pool] += Decimal(
+            contribution.exact_value
+        )
+        property_sources = source_ids.setdefault(
+            contribution.property_type,
+            {"base": [], "percentage": [], "flat": []},
+        )
+        property_sources[contribution.contribution_pool].append(
+            contribution.contribution_id
+        )
+    return tuple(
+        UnitStatPool(
+            property_type=property_type,
+            base_value=float(pool_values["base"]),
+            static_percentage=float(pool_values["percentage"]),
+            static_flat=float(pool_values["flat"]),
+            base_contribution_ids=tuple(source_ids[property_type]["base"]),
+            percentage_contribution_ids=tuple(
+                source_ids[property_type]["percentage"]
+            ),
+            flat_contribution_ids=tuple(source_ids[property_type]["flat"]),
+        )
+        for property_type, pool_values in sorted(values.items())
+    )
 
 
 def _scenario_skill_points(scenario: ScenarioSpec) -> int:
@@ -514,6 +632,64 @@ def _apply_battle_setup(rules: RuleBook, state: BattleState, scenario: ScenarioS
     )
 
 
+def _dispatch_battle_setup_event(
+    rules: RuleBook,
+    state: BattleState,
+    scenario: ScenarioSpec,
+) -> _SetupApplyResult:
+    event = GameEvent(
+        event_type="battle.setup",
+        source_id="scenario:setup",
+        event_id=f"event:scenario_setup:{scenario.scenario_id}",
+        window="battle_setup",
+        process_only=True,
+        payload={
+            "scenario_id": scenario.scenario_id,
+            "source_kind": "scenario_initial_condition",
+            "unit_ids": list(sorted(state.units)),
+        },
+    )
+    result = EventDispatchSystem(
+        rules,
+        EffectRegistry(StatusSystem(rules)),
+        reducer=MutationReducer(),
+    ).dispatch_event(state, event=event)
+    blocked = (
+        (
+            {
+                "record_type": "setup_battle_event",
+                "source_kind": "scenario_initial_condition",
+                "status": "blocked",
+                "blocked_reason": ";".join(result.errors)
+                or "battle_setup_listener_dispatch_blocked",
+                "process_only": True,
+                "produced_mutation": False,
+                "scenario_id": scenario.scenario_id,
+            },
+        )
+        if result.errors
+        else ()
+    )
+    return _SetupApplyResult(
+        state=result.after_state if not blocked else state,
+        records=tuple(result.records),
+        mutations=tuple(result.mutations) if not blocked else (),
+        events=(event, *result.events) if not blocked else (event,),
+        rng_events=tuple(result.rng_events) if not blocked else (),
+        blocked=blocked,
+        source_traces=(
+            {
+                "kind": "scenario_battle_setup_event",
+                "scenario_id": scenario.scenario_id,
+                "event_id": event.event_id,
+                "listener_record_count": len(result.listener_records),
+                "mutation_count": len(result.mutations),
+                "status": "blocked" if blocked else "applied",
+            },
+        ),
+    )
+
+
 def _rng_setup_is_explicit(rng: RNGSetupSpec) -> bool:
     return bool(rng.rng_mode or rng.rng_choices or (rng.rng_state is not None and rng.rng_state != "deterministic"))
 
@@ -563,7 +739,11 @@ def _apply_timeline_setup(state: BattleState, scenario: ScenarioSpec) -> _SetupA
             reason="scenario timeline setup policy",
             source="scenario_setup",
             before_exists="timeline_setup_policy" in state.global_flags,
-            metadata={"setup_operation": "timeline_policy", "source_kind": "scenario_initial_condition"},
+            metadata={
+                "setup_operation": "timeline_policy",
+                "source_kind": "scenario_initial_condition",
+                "scenario_id": scenario.scenario_id,
+            },
         )
     )
     if timeline.turn_owner_id is not None:
@@ -576,10 +756,23 @@ def _apply_timeline_setup(state: BattleState, scenario: ScenarioSpec) -> _SetupA
                 reason="scenario timeline turn owner",
                 source="scenario_setup",
                 before_exists="turn_owner_id" in state.global_flags,
-                metadata={"setup_operation": "timeline_turn_owner", "source_kind": "scenario_initial_condition"},
+                metadata={
+                    "setup_operation": "timeline_turn_owner",
+                    "source_kind": "scenario_initial_condition",
+                    "scenario_id": scenario.scenario_id,
+                },
             )
         )
     if timeline.mode == "runtime_initialize":
+        mutations[0] = replace(
+            mutations[0],
+            metadata={
+                **mutations[0].metadata,
+                "scenario_id": scenario.scenario_id,
+            },
+            mutation_id="",
+        )
+        records.extend(_timeline_mutation_records(mutations, scenario.scenario_id))
         after = MutationReducer().apply_all(state, tuple(mutations))
         return _SetupApplyResult(state=after, records=tuple(records), mutations=tuple(mutations))
     for unit_id, action_value in sorted(timeline.action_values.items()):
@@ -595,22 +788,49 @@ def _apply_timeline_setup(state: BattleState, scenario: ScenarioSpec) -> _SetupA
                 "setup_operation": "explicit_action_value",
                 "source_kind": "scenario_initial_condition",
                 "unit_id": unit_id,
+                "scenario_id": scenario.scenario_id,
             },
         )
         mutations.append(mutation)
-        records.append(
-            {
-                "record_type": "setup_timeline_action_value",
-                "source_kind": "scenario_initial_condition",
-                "status": "applied",
-                "unit_id": unit_id,
-                "before": unit.action_value,
-                "after": float(action_value),
-                "mutation_id": mutation.stable_id(),
-            }
-        )
+    mutations[0] = replace(
+        mutations[0],
+        metadata={
+            **mutations[0].metadata,
+            "scenario_id": scenario.scenario_id,
+        },
+        mutation_id="",
+    )
+    records.extend(_timeline_mutation_records(mutations, scenario.scenario_id))
     after = MutationReducer().apply_all(state, tuple(mutations))
     return _SetupApplyResult(state=after, records=tuple(records), mutations=tuple(mutations))
+
+
+def _timeline_mutation_records(
+    mutations: list[Mutation],
+    scenario_id: str,
+) -> tuple[dict[str, JSONValue], ...]:
+    return tuple(
+        SettlementRecord(
+            record_type="scenario_setup_mutation",
+            source="scenario_setup",
+            mutation_id=mutation.stable_id(),
+            payload={
+                "setup_operation": str(
+                    mutation.metadata.get("setup_operation") or ""
+                ),
+                "path": list(mutation.path),
+                "before": mutation.before,
+                "before_exists": mutation.before_exists,
+                "after": mutation.after,
+                "after_exists": mutation.after_exists,
+            },
+            trace={
+                "source_kind": "scenario_initial_condition",
+                "scenario_id": scenario_id,
+            },
+        ).to_json()
+        for mutation in mutations
+    )
 
 
 def _timeline_setup_blocked(state: BattleState, timeline: object) -> dict[str, JSONValue] | None:
@@ -1390,6 +1610,64 @@ def _formal_character_activation(
     return flags, startup_specs, equipment_providers
 
 
+def _equipment_startup_spec(
+    rules: RuleBook,
+    selection: DynamicMechanismSelection,
+) -> dict[str, Any]:
+    graph = rules.standalone_ability_graph(selection.graph_ref_id)
+    if graph is None or graph.coverage_status != "executable":
+        raise ValueError("admitted equipment startup graph disappeared")
+    definition_resolution = rules.light_cone_definition(
+        selection.target_definition_key.definition_identity
+    )
+    definition = definition_resolution.value
+    if definition_resolution.resolution_status != "resolved" or definition is None:
+        raise ValueError("admitted equipment startup definition disappeared")
+    ranks = tuple(
+        rank
+        for rank in definition.superimposition_levels
+        if rank.level == selection.superimposition_level
+    )
+    if len(ranks) != 1 or ranks[0].skill_id != selection.skill_id:
+        raise ValueError("admitted equipment startup rank disappeared")
+    rank = ranks[0]
+    bindings_by_hash: dict[str, dict[str, Any]] = {}
+    for binding in selection.parameter_bindings:
+        if binding.parameter_index >= len(rank.parameters):
+            raise ValueError("admitted equipment startup parameter index is invalid")
+        parameter = rank.parameters[binding.parameter_index]
+        if (
+            parameter.exact_value != binding.exact_value
+            or parameter.source != binding.value_source
+        ):
+            raise ValueError("admitted equipment startup parameter source changed")
+        prior = bindings_by_hash.get(binding.dynamic_hash)
+        current = {
+            "param_index": binding.parameter_index,
+            "parameter_read_id": binding.parameter_read_id,
+            "read_source": binding.read_source.to_json(),
+            "value_source": binding.value_source.to_json(),
+        }
+        if prior is not None and prior != current:
+            raise ValueError("admitted equipment startup dynamic hash is ambiguous")
+        bindings_by_hash[binding.dynamic_hash] = current
+    return {
+        "kind": "formal_equipment_ability",
+        "slot": selection,
+        "slot_id": selection.selection_id,
+        "slot_id_field": "selection_id",
+        "graph_ref_id": graph.standalone_ability_graph_id,
+        "ability_name": graph.ability_name,
+        "param_values": tuple(
+            float(parameter.exact_value)
+            for parameter in rank.parameters
+        ),
+        "dynamic_value_bindings": {"by_hash": bindings_by_hash},
+        "dynamic_value_binding_mode": "configured_by_hash_required",
+        "admitted_task_ids": graph.executable_task_ids,
+    }
+
+
 def _passive_runtime_activation(rules: RuleBook, card: object | None) -> dict[str, Any]:
     if card is None:
         return {"flags": {}, "startup_specs": []}
@@ -1671,14 +1949,24 @@ def _apply_startup_ability_effects(
     state: BattleState,
     rules: RuleBook,
     startup_specs: list[dict[str, Any]],
-) -> tuple[BattleState, tuple[dict[str, object], ...]]:
+) -> _SetupApplyResult:
     if not startup_specs:
-        return state, ()
+        return _SetupApplyResult(state)
     reducer = MutationReducer()
     status_system = StatusSystem(rules)
     effect_registry = EffectRegistry(status_system)
+    event_dispatch = EventDispatchSystem(
+        rules,
+        effect_registry,
+        reducer=reducer,
+    )
     current = state
-    traces: list[dict[str, object]] = []
+    traces: list[dict[str, JSONValue]] = []
+    records: list[dict[str, JSONValue]] = []
+    mutations: list[Mutation] = []
+    events: list[GameEvent] = []
+    rng_events: list[RNGEvent] = []
+    blocked: list[dict[str, JSONValue]] = []
     for spec in startup_specs:
         unit_id = str(spec.get("unit_id") or "")
         ability_name = str(spec.get("ability_name") or "")
@@ -1704,8 +1992,7 @@ def _apply_startup_ability_effects(
                 if graph.coverage_status == "executable"
             )
         if len(graphs) != 1:
-            traces.append(
-                _startup_trace_payload(
+            trace = _startup_trace_payload(
                     kind=kind,
                     unit_id=unit_id,
                     ability_name=ability_name,
@@ -1716,7 +2003,8 @@ def _apply_startup_ability_effects(
                     reason="startup_ability_graph_missing_or_ambiguous",
                     extra={"graph_count": len(graphs)},
                 )
-            )
+            traces.append(trace)
+            blocked.append(trace)
             continue
         graph = graphs[0]
         admitted_task_ids = set(_string_items(spec.get("admitted_task_ids")))
@@ -1729,8 +2017,7 @@ def _apply_startup_ability_effects(
                     continue
                 effect = rules.effect(task.effect_id)
                 if effect is None:
-                    traces.append(
-                        _startup_blocked_trace(
+                    trace = _startup_blocked_trace(
                             kind,
                             unit_id,
                             ability_name,
@@ -1741,12 +2028,12 @@ def _apply_startup_ability_effects(
                             task.task_id,
                             "startup_effect_missing",
                         )
-                    )
+                    traces.append(trace)
+                    blocked.append(trace)
                     continue
                 coverage = effect_registry.coverage(effect)
                 if coverage != "executable":
-                    traces.append(
-                        _startup_blocked_trace(
+                    trace = _startup_blocked_trace(
                             kind,
                             unit_id,
                             ability_name,
@@ -1757,12 +2044,12 @@ def _apply_startup_ability_effects(
                             task.task_id,
                             f"startup_effect_not_executable:{coverage}",
                         )
-                    )
+                    traces.append(trace)
+                    blocked.append(trace)
                     continue
                 dynamic_values, binding_trace = _startup_dynamic_values(effect.payload.get("standard"), spec)
                 if binding_trace.get("admission_status") == "blocked":
-                    traces.append(
-                        _startup_blocked_trace(
+                    trace = _startup_blocked_trace(
                             kind,
                             unit_id,
                             ability_name,
@@ -1774,10 +2061,12 @@ def _apply_startup_ability_effects(
                             str(binding_trace.get("blocked_reason") or "startup_dynamic_value_binding_blocked"),
                             binding_trace=binding_trace,
                         )
-                    )
+                    traces.append(trace)
+                    blocked.append(trace)
                     continue
+                before_task = current
                 result = status_system.apply_add_modifier(
-                    current,
+                    before_task,
                     effect,
                     caster_id=unit_id,
                     source_id=f"{kind}:{slot_id}:{ability_name}:{task.task_id}",
@@ -1787,31 +2076,94 @@ def _apply_startup_ability_effects(
                     dynamic_values=dynamic_values,
                     binding_sources=(),
                 )
-                current = reducer.apply_all(current, result.mutations)
-                applied_count += len(result.mutations)
-                traces.append(
-                    _startup_trace_payload(
+                candidate_state = reducer.apply_all(before_task, result.mutations)
+                task_mutations: list[Mutation] = list(result.mutations)
+                task_records: list[dict[str, JSONValue]] = list(result.records)
+                task_events: list[GameEvent] = list(result.events)
+                task_rng_events: list[RNGEvent] = list(result.rng_events)
+                listener_mutation_count = 0
+                listener_record_count = 0
+                listener_dispatch_count = 0
+                listener_errors: list[str] = []
+                if result.ok:
+                    for lifecycle_event in result.events:
+                        listener_dispatch_count += 1
+                        dispatch_result = event_dispatch.dispatch_event(
+                            candidate_state,
+                            event=lifecycle_event,
+                        )
+                        candidate_state = dispatch_result.after_state
+                        task_mutations.extend(dispatch_result.mutations)
+                        task_records.extend(dispatch_result.records)
+                        task_events.extend(dispatch_result.events)
+                        task_rng_events.extend(dispatch_result.rng_events)
+                        listener_mutation_count += len(dispatch_result.mutations)
+                        listener_record_count += len(dispatch_result.records)
+                        listener_errors.extend(dispatch_result.errors)
+                startup_ok = result.ok and not listener_errors
+                current = candidate_state if startup_ok else before_task
+                if startup_ok:
+                    applied_count += len(task_mutations)
+                    mutations.extend(task_mutations)
+                    records.extend(task_records)
+                    events.extend(task_events)
+                    rng_events.extend(task_rng_events)
+                trace = _startup_trace_payload(
                         kind=kind,
                         unit_id=unit_id,
                         ability_name=ability_name,
                         slot_id=slot_id,
                         slot_id_field=slot_id_field,
                         trace_node_id=trace_node_id,
-                        status="applied" if result.ok else "blocked",
+                        status="applied" if startup_ok else "blocked",
+                        reason=(
+                            ";".join(listener_errors)
+                            if listener_errors
+                            else (
+                                ";".join(result.unsupported)
+                                if not result.ok
+                                else ""
+                            )
+                        ),
                         extra={
                             "standalone_ability_graph_id": graph.standalone_ability_graph_id,
                             "task_id": task.task_id,
                             "effect_id": effect.effect_id,
                             "mutation_count": len(result.mutations),
+                            "listener_mutation_count": listener_mutation_count,
+                            "listener_record_count": listener_record_count,
+                            "listener_dispatch_count": listener_dispatch_count,
+                            "listener_errors": listener_errors,
                             "unsupported": list(result.unsupported),
                             "dynamic_value_binding": binding_trace,
                             "source": getattr(slot, "source", None).to_json() if getattr(slot, "source", None) else {},
                         },
                     )
-                )
+                traces.append(trace)
+                if not startup_ok:
+                    blocked.append(trace)
+                    reason = str(trace.get("reason") or "startup_ability_atomic_rollback")
+                    records.append(
+                        SettlementRecord(
+                            record_type="startup_ability_blocked",
+                            source="scenario_state_builder",
+                            process_only=True,
+                            payload={
+                                "reason": reason,
+                                "unit_id": unit_id,
+                                "ability_name": ability_name,
+                                "task_id": task.task_id,
+                                "state_unchanged": True,
+                            },
+                            trace={
+                                "ability_graph_source": graph.source.to_json(),
+                                "task_source": task.source.to_json(),
+                                "effect_source": effect.source.to_json(),
+                            },
+                        ).to_json()
+                    )
         if applied_count == 0:
-            traces.append(
-                _startup_trace_payload(
+            trace = _startup_trace_payload(
                     kind=kind,
                     unit_id=unit_id,
                     ability_name=ability_name,
@@ -1822,8 +2174,17 @@ def _apply_startup_ability_effects(
                     reason="startup_ability_has_no_admitted_on_start_add_modifier",
                     extra={"standalone_ability_graph_id": graph.standalone_ability_graph_id},
                 )
-            )
-    return current, tuple(traces)
+            traces.append(trace)
+            blocked.append(trace)
+    return _SetupApplyResult(
+        state=current,
+        records=tuple(records),
+        mutations=tuple(mutations),
+        events=tuple(events),
+        rng_events=tuple(rng_events),
+        blocked=tuple(blocked),
+        source_traces=tuple(traces),
+    )
 
 
 def _startup_dynamic_values(

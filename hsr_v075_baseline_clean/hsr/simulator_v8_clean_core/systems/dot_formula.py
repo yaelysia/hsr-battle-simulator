@@ -7,6 +7,7 @@ from ..rules.evaluator import NumericEvaluationContext, NumericEvaluationResult,
 from ..rules.ir import StatusDamageEmissionIR
 from .dynamic_values import binding_source_from_status_detail, binding_source_from_store, store_from_state
 from .scaling_basis import resolve_scaling_basis
+from .unit_stats import effective_unit_stat
 
 
 @dataclass(frozen=True)
@@ -192,14 +193,16 @@ class DotFormula:
                     base_eval,
                     extra_eval=extra_eval,
                 )
-            extra_damage = max(0.0, float(caster.defense) * float(extra_eval.value))
+            effective_defense = effective_unit_stat(caster, "defense")
+            extra_damage = max(0.0, effective_defense.value * float(extra_eval.value))
             terms.append(
                 {
                     "bucket": "extra_damage",
                     "key": "ExtraFormulaType.ByDefence",
                     "applied": True,
                     "base_stat": "caster.defense",
-                    "base_value": float(caster.defense),
+                    "base_value": effective_defense.value,
+                    "effective_stat": effective_defense.to_json(),
                     "ratio": float(extra_eval.value),
                     "value": extra_damage,
                     "source": "AttackProperty.ExtraDamagePercentage",

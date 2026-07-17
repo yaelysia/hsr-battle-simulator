@@ -3,6 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from ..unit_eligibility import (
+    runtime_unit_is_dark_team,
+    runtime_unit_is_light_team,
+    runtime_unit_is_target_candidate,
+    runtime_unit_is_unselectable,
+    runtime_units_are_opposing_combat_teams,
+    runtime_units_share_combat_team,
+)
 from .ir import ConditionIR, FormulaIR, TargetExpressionNodeIR
 from .expression_ir import (
     CONDITION_EXPRESSION_NODE_SCHEMA,
@@ -83,21 +91,34 @@ EXECUTABLE_CONDITION_OPCODES = {
     "ByAnd",
     "ByAny",
     "ByAttackType",
+    "ByCheckModifierCallBackBehaviorFlag",
+    "ByCheckModifierCallBackIsSelf",
+    "ByCheckModifierCallBackName",
+    "ByCheckModifierCallBackStatusType",
+    "ByCompareAbilityProperty",
+    "ByCompareCharacterID",
     "ByCompareDynamicValue",
     "ByCompareCharacterNumber",
+    "ByCompareCurrentModifierStatusType",
     "ByCompareHPRatio",
     "ByCompareModifierValue",
     "ByCompareMonsterID",
     "ByCompareDamageCustomName",
     "ByCompareTarget",
+    "ByCompareTargetCount",
     "ByContainBehaviorFlag",
     "ByContainsParamFlag",
+    "ByCurrentSkillName",
     "ByCurrentSkillType",
     "ByIsContainModifier",
     "ByHaveEnemyAlive",
     "ByIsCurrentSkillActive",
     "ByIsInsertAction",
+    "ByIsTeammate",
+    "ByIsTurnOwnerEntity",
     "ByNot",
+    "ByStatusCount",
+    "ByTargetAliveState",
     "ByTargetListIntersects",
     "ByTargetEntityType",
     "ByTargetTeam",
@@ -365,6 +386,15 @@ def _evaluate_numeric_program(
                 )
             stack.append(float(result.value))
             continue
+        if opcode == "negate":
+            if not stack:
+                return _numeric_program_blocked(
+                    "numeric_program_stack_underflow",
+                    source_trace,
+                    index,
+                )
+            stack[-1] = -stack[-1]
+            continue
         if opcode not in {"add", "sub", "mul", "div"}:
             return _numeric_program_blocked("numeric_program_opcode_not_admitted", source_trace, index)
         if len(stack) < 2:
@@ -447,9 +477,225 @@ def _evaluate_condition_payload(
         )
     if opcode == "AlwaysTrue":
         return _condition_result(True, condition_id, opcode, "condition_true", {}, source_trace)
+    event_payload = context.event_payload or {}
+    if opcode == "ByCheckModifierCallBackIsSelf":
+        explicit = event_payload.get("is_self")
+        detail = context.status_detail or {}
+        event_instance_id = event_payload.get("status_instance_id")
+        listener_instance_id = detail.get("instance_id")
+        if isinstance(explicit, bool):
+            matched = explicit
+        elif isinstance(event_instance_id, str) and isinstance(listener_instance_id, str):
+            matched = bool(event_instance_id) and event_instance_id == listener_instance_id
+        else:
+            return _condition_blocked(
+                condition_id,
+                opcode,
+                "modifier_callback_self_identity_missing",
+                {"event_instance_id": event_instance_id, "listener_instance_id": listener_instance_id},
+                source_trace,
+            )
+        return _condition_result(
+            matched,
+            condition_id,
+            opcode,
+            "modifier_callback_self_identity_compared",
+            {"event_instance_id": event_instance_id, "listener_instance_id": listener_instance_id},
+            source_trace,
+        )
+    if opcode == "ByCheckModifierCallBackName":
+        expected = _value_field(payload.get("ModifierName"))
+        actual = event_payload.get("modifier_name")
+        if not isinstance(expected, str) or not expected:
+            return _condition_blocked(condition_id, opcode, "modifier_name_missing", {}, source_trace)
+        if not isinstance(actual, str) or not actual:
+            return _condition_blocked(condition_id, opcode, "callback_modifier_name_missing", {}, source_trace)
+        return _condition_result(
+            actual == expected,
+            condition_id,
+            opcode,
+            "modifier_callback_name_compared",
+            {"expected": expected, "actual": actual},
+            source_trace,
+        )
+    if opcode in {
+        "ByCheckModifierCallBackStatusType",
+        "ByCompareCurrentModifierStatusType",
+    }:
+        expected = _value_field(payload.get("TargetStatusType"))
+        actual = event_payload.get("status_type")
+        if not isinstance(expected, str) or not expected:
+            return _condition_blocked(condition_id, opcode, "target_status_type_missing", {}, source_trace)
+        if not isinstance(actual, str) or not actual:
+            return _condition_blocked(condition_id, opcode, "callback_status_type_missing", {}, source_trace)
+        return _condition_result(
+            actual == expected,
+            condition_id,
+            opcode,
+            "modifier_callback_status_type_compared",
+            {"expected": expected, "actual": actual},
+            source_trace,
+        )
+    if opcode == "ByCheckModifierCallBackBehaviorFlag":
+        expected = payload.get("Flag")
+        if not isinstance(expected, str) or not expected:
+            return _condition_blocked(condition_id, opcode, "behavior_flag_missing", {}, source_trace)
+        raw_flags = event_payload.get("behavior_flags")
+        if not isinstance(raw_flags, (list, tuple)):
+            return _condition_blocked(condition_id, opcode, "callback_behavior_flags_missing", {}, source_trace)
+        flags = tuple(str(item) for item in raw_flags if isinstance(item, str))
+        return _condition_result(
+            expected in flags,
+            condition_id,
+            opcode,
+            "modifier_callback_behavior_flag_checked",
+            {"expected": expected, "behavior_flags": list(flags)},
+            source_trace,
+        )
+    if opcode == "ByCompareAbilityProperty":
+        target_id, target_details = _resolve_condition_target(payload.get("TargetType"), context)
+        if target_id is None:
+            return _condition_blocked(condition_id, opcode, "target_alias_unresolved", target_details, source_trace)
+        unit = _state_unit(context, target_id)
+        actual = _unit_ability_property(unit, payload.get("Property"))
+        if actual is None:
+            return _condition_blocked(
+                condition_id,
+                opcode,
+                "ability_property_not_available",
+                {"target_id": target_id, "property": payload.get("Property")},
+                source_trace,
+            )
+        expected = evaluator.evaluate_numeric(
+            payload.get("CompareValue"),
+            NumericEvaluationContext(
+                dynamic_values=context.dynamic_values,
+                binding_sources=context.binding_sources,
+                source_trace=source_trace,
+            ),
+        )
+        if not expected.ok or expected.value is None:
+            return _condition_blocked(condition_id, opcode, expected.blocked_reason or "compare_value_blocked", {}, source_trace)
+        return _comparison_condition(condition_id, opcode, actual, payload.get("CompareType"), expected.value, source_trace)
+    if opcode == "ByCompareCharacterID":
+        target_id, target_details = _resolve_condition_target(payload.get("TargetType"), context)
+        if target_id is None:
+            return _condition_blocked(condition_id, opcode, "target_alias_unresolved", target_details, source_trace)
+        unit = _state_unit(context, target_id)
+        actual = _unit_character_id(unit)
+        if actual is None:
+            return _condition_blocked(condition_id, opcode, "target_character_id_missing", {"target_id": target_id}, source_trace)
+        expected = evaluator.evaluate_numeric(
+            payload.get("TargetCharacterID"),
+            NumericEvaluationContext(binding_sources=context.binding_sources, source_trace=source_trace),
+        )
+        if not expected.ok or expected.value is None:
+            return _condition_blocked(condition_id, opcode, expected.blocked_reason or "target_character_id_blocked", {}, source_trace)
+        return _comparison_condition(
+            condition_id,
+            opcode,
+            float(actual),
+            payload.get("CompareType") or "Equal",
+            expected.value,
+            source_trace,
+        )
+    if opcode == "ByCompareTargetCount":
+        target_ids, target_details = _condition_target_ids(payload.get("TargetType"), context)
+        if target_ids is None:
+            return _condition_blocked(condition_id, opcode, "target_group_unresolved", target_details, source_trace)
+        if payload.get("AliveOnly") is True:
+            target_ids = tuple(
+                target_id
+                for target_id in target_ids
+                if _unit_is_alive(_state_unit(context, target_id))
+            )
+        expected = evaluator.evaluate_numeric(
+            payload.get("Number"),
+            NumericEvaluationContext(binding_sources=context.binding_sources, source_trace=source_trace),
+        )
+        if not expected.ok or expected.value is None:
+            return _condition_blocked(condition_id, opcode, expected.blocked_reason or "target_count_blocked", {}, source_trace)
+        return _comparison_condition(
+            condition_id,
+            opcode,
+            float(len(target_ids)),
+            payload.get("CompareType"),
+            expected.value,
+            source_trace,
+        )
+    if opcode == "ByCurrentSkillName":
+        expected = _value_field(payload.get("SkillName"))
+        actual = event_payload.get("skill_name") or event_payload.get("SkillName")
+        if not isinstance(expected, str) or not expected:
+            return _condition_blocked(condition_id, opcode, "skill_name_missing", {}, source_trace)
+        if not isinstance(actual, str) or not actual:
+            return _condition_blocked(condition_id, opcode, "current_skill_name_missing", {}, source_trace)
+        return _condition_result(actual == expected, condition_id, opcode, "skill_name_compared", {"expected": expected, "actual": actual}, source_trace)
+    if opcode == "ByIsTeammate":
+        target_id, target_details = _resolve_condition_target(payload.get("TargetType"), context)
+        owner_id = context.owner_id or context.actor_id
+        target = _state_unit(context, target_id) if target_id else None
+        owner = _state_unit(context, str(owner_id)) if owner_id else None
+        if target is None or owner is None:
+            return _condition_blocked(condition_id, opcode, "teammate_identity_missing", target_details, source_trace)
+        matched = runtime_units_share_combat_team(owner, target)
+        return _condition_result(matched, condition_id, opcode, "teammate_checked", {"owner_id": owner_id, "target_id": target_id}, source_trace)
+    if opcode == "ByIsTurnOwnerEntity":
+        target_id, target_details = _resolve_condition_target(payload.get("TargetType"), context)
+        turn_owner_id = event_payload.get("turn_owner_id") or event_payload.get("actor_id") or event_payload.get("event_source_id")
+        if target_id is None or not isinstance(turn_owner_id, str) or not turn_owner_id:
+            return _condition_blocked(condition_id, opcode, "turn_owner_identity_missing", target_details, source_trace)
+        return _condition_result(target_id == turn_owner_id, condition_id, opcode, "turn_owner_compared", {"target_id": target_id, "turn_owner_id": turn_owner_id}, source_trace)
+    if opcode == "ByStatusCount":
+        target_id, target_details = _resolve_condition_target(payload.get("TargetType"), context)
+        unit = _state_unit(context, target_id) if target_id else None
+        if unit is None:
+            return _condition_blocked(condition_id, opcode, "status_count_target_missing", target_details, source_trace)
+        details = getattr(unit, "flags", {}).get("status_details", ())
+        if not isinstance(details, (list, tuple)):
+            return _condition_blocked(condition_id, opcode, "status_details_invalid", {"target_id": target_id}, source_trace)
+        debuffs = tuple(
+            detail
+            for detail in details
+            if isinstance(detail, dict)
+            and str(detail.get("status_category") or "").lower() == "debuff"
+        )
+        expected = evaluator.evaluate_numeric(
+            payload.get("CompareValue"),
+            NumericEvaluationContext(
+                dynamic_values=context.dynamic_values,
+                binding_sources=context.binding_sources,
+                source_trace=source_trace,
+            ),
+        )
+        if not expected.ok or expected.value is None:
+            return _condition_blocked(condition_id, opcode, expected.blocked_reason or "status_count_compare_blocked", {}, source_trace)
+        return _comparison_condition(condition_id, opcode, float(len(debuffs)), payload.get("CompareType"), expected.value, source_trace)
+    if opcode == "ByTargetAliveState":
+        target_id, target_details = _resolve_condition_target(payload.get("TargetType"), context)
+        unit = _state_unit(context, target_id) if target_id else None
+        if unit is None:
+            return _condition_blocked(condition_id, opcode, "alive_state_target_missing", target_details, source_trace)
+        if payload.get("AliveStateMask") != "Mask_AliveOrRevivable":
+            return _condition_blocked(condition_id, opcode, "alive_state_mask_not_supported", {"mask": payload.get("AliveStateMask")}, source_trace)
+        return _condition_blocked(
+            condition_id,
+            opcode,
+            "revivable_lifecycle_state_not_available",
+            {
+                "target_id": target_id,
+                "alive": _unit_is_alive(unit),
+                "mask": "Mask_AliveOrRevivable",
+            },
+            source_trace,
+        )
     if opcode == "ByCurrentSkillType":
-        expected = payload.get("SkillType") or "Normal"
+        expected = payload.get("SkillType")
+        if not isinstance(expected, str) or not expected:
+            return _condition_blocked(condition_id, opcode, "skill_type_expected_missing", {"payload": payload}, source_trace)
         actual = (context.event_payload or {}).get("SkillType") or (context.event_payload or {}).get("skill_type")
+        if not isinstance(actual, str) or not actual:
+            return _condition_blocked(condition_id, opcode, "skill_type_context_missing", {"expected": expected}, source_trace)
         return _condition_result(
             expected == actual,
             condition_id,
@@ -460,9 +706,11 @@ def _evaluate_condition_payload(
         )
     if opcode == "ByAttackType":
         expected = payload.get("AttackTypes")
-        if not isinstance(expected, list):
+        if not isinstance(expected, list) or not expected or any(not isinstance(item, str) or not item for item in expected):
             return _condition_blocked(condition_id, opcode, "attack_types_missing", {"payload": payload}, source_trace)
         actual = (context.event_payload or {}).get("AttackType") or (context.event_payload or {}).get("attack_type")
+        if not isinstance(actual, str) or not actual:
+            return _condition_blocked(condition_id, opcode, "attack_type_context_missing", {"expected": expected}, source_trace)
         return _condition_result(
             str(actual) in {str(item) for item in expected},
             condition_id,
@@ -472,22 +720,25 @@ def _evaluate_condition_payload(
             source_trace,
         )
     if opcode == "ByTargetTeam":
-        target_id, target_details = _resolve_condition_target(payload.get("TargetType"), context)
-        if target_id is None:
+        target_ids, target_details = _condition_target_ids(payload.get("TargetType"), context)
+        if target_ids is None:
             return _condition_blocked(condition_id, opcode, "target_alias_unresolved", target_details, source_trace)
-        unit = _state_unit(context, target_id)
-        if unit is None:
-            return _condition_blocked(condition_id, opcode, "target_unit_missing", {"target_id": target_id}, source_trace)
         expected = payload.get("Team")
-        result, reason = _team_matches(unit, expected)
-        if result is None:
-            return _condition_blocked(condition_id, opcode, reason, {"expected": expected, "target_id": target_id}, source_trace)
+        checked: list[dict[str, Any]] = []
+        for target_id in target_ids:
+            unit = _state_unit(context, target_id)
+            if unit is None:
+                return _condition_blocked(condition_id, opcode, "target_unit_missing", {"target_id": target_id}, source_trace)
+            result, reason = _team_matches(unit, expected)
+            if result is None:
+                return _condition_blocked(condition_id, opcode, reason, {"expected": expected, "target_id": target_id}, source_trace)
+            checked.append({"target_id": target_id, "side": getattr(unit, "side", None), "matched": result})
         return _condition_result(
-            result,
+            bool(checked) and all(item["matched"] is True for item in checked),
             condition_id,
             opcode,
             "target_team_compared",
-            {"expected": expected, "target_id": target_id, "side": getattr(unit, "side", None)},
+            {"expected": expected, "targets": checked},
             source_trace,
         )
     if opcode == "ByIsContainModifier":
@@ -705,10 +956,18 @@ def _evaluate_condition_payload(
             )
         return _comparison_condition(condition_id, opcode, actual.value, payload.get("CompareType"), compare_value.value, source_trace)
     if opcode == "ByCompareModifierValue":
-        target_id, target_details = _resolve_condition_target(payload.get("TargetType"), context)
+        target_id, target_details = _resolve_condition_target(
+            payload.get("TargetType") or "ModifierOwnerEntity",
+            context,
+        )
         if target_id is None:
             return _condition_blocked(condition_id, opcode, "target_alias_unresolved", target_details, source_trace)
-        actual_value, actual_reason = _modifier_value_for_condition(context, target_id, payload.get("ValueType"))
+        actual_value, actual_reason = _modifier_value_for_condition(
+            context,
+            target_id,
+            _value_field(payload.get("ModifierName")),
+            payload.get("ValueType") or "Layer",
+        )
         if actual_value is None:
             return _condition_blocked(condition_id, opcode, actual_reason, {"target_id": target_id}, source_trace)
         compare_value = evaluator.evaluate_numeric(
@@ -820,20 +1079,19 @@ def _evaluate_condition_payload(
             source_trace,
         )
     if opcode == "ByTargetListIntersects":
-        first_id, first_details = _resolve_condition_target(payload.get("FirstTargetType"), context)
-        if first_id is None:
+        first_targets, first_details = _condition_target_ids(payload.get("FirstTargetType"), context)
+        if first_targets is None:
             return _condition_blocked(condition_id, opcode, "first_target_alias_unresolved", first_details, source_trace)
-        second_alias = _target_alias(payload.get("SecondTargetType"))
-        second_targets = _target_list_for_alias(second_alias, context)
+        second_targets, second_details = _condition_target_ids(payload.get("SecondTargetType"), context)
         if second_targets is None:
             return _condition_blocked(
                 condition_id,
                 opcode,
-                f"second_target_list_alias_not_supported:{second_alias or 'missing'}",
-                {"payload": payload},
+                "second_target_alias_unresolved",
+                second_details,
                 source_trace,
             )
-        matched = first_id in second_targets
+        matched = bool(set(first_targets) & set(second_targets))
         if payload.get("Inverse") is True:
             matched = not matched
         return _condition_result(
@@ -842,8 +1100,7 @@ def _evaluate_condition_payload(
             opcode,
             "target_list_intersection_checked",
             {
-                "first_target_id": first_id,
-                "second_alias": second_alias,
+                "first_target_ids": sorted(first_targets),
                 "second_target_ids": sorted(second_targets),
                 "inverse": payload.get("Inverse") is True,
             },
@@ -1003,15 +1260,166 @@ def _compare(actual: float, compare_type: object, expected: float) -> bool | Non
 
 def _resolve_condition_target(alias_value: object, context: EvaluationContext) -> tuple[str | None, dict[str, Any]]:
     alias = _target_alias(alias_value)
+    payload = context.event_payload or {}
     mapping = {
         "Caster": context.actor_id,
         "ModifierOwnerEntity": context.owner_id or context.actor_id,
         "ParamEntity": context.param_entity_id or context.target_id,
         "CurrentActionTarget": context.current_action_target_id or context.target_id,
+        "AbilityTargetEntity": context.current_action_target_id or context.target_id,
+        "DamageDefenderEntity": _first_string(
+            payload,
+            "current_hit_target_id",
+            "damage_defender_id",
+            "primary_target_id",
+            "target_id",
+            "event_target_id",
+        )
+        or context.target_id,
+        "DamageAttackerEntity": _first_string(
+            payload,
+            "damage_attacker_id",
+            "actor_id",
+            "source_id",
+            "event_source_id",
+        )
+        or context.actor_id,
+        "CurrentTurnOwnerEntity": _first_string(
+            payload,
+            "turn_owner_id",
+            "actor_id",
+            "event_source_id",
+        ),
+        "ParamEntity2": _first_string(
+            payload,
+            "param_entity_2_id",
+            "param_entity2_id",
+            "secondary_target_id",
+        ),
     }
     if alias in mapping and mapping[alias] is not None:
         return str(mapping[alias]), {"alias": alias}
     return None, {"alias": alias, "supported_aliases": sorted(mapping)}
+
+
+def _condition_target_ids(
+    alias_value: object,
+    context: EvaluationContext,
+) -> tuple[tuple[str, ...] | None, dict[str, Any]]:
+    alias = _target_alias(alias_value)
+    target_id, details = _resolve_condition_target(alias_value, context)
+    if target_id is not None:
+        return (target_id,), details
+    payload = context.event_payload or {}
+    key_groups = {
+        "AttackTargetList": (
+            "attack_target_ids",
+            "selected_target_ids",
+            "target_ids",
+        ),
+        "ParamEntityAttackTargetList": (
+            "param_entity_attack_target_ids",
+            "attack_target_ids",
+            "selected_target_ids",
+        ),
+        "SkillTargetEntityList": (
+            "skill_target_ids",
+            "selected_target_ids",
+            "target_ids",
+        ),
+        "ParamEntitySkillTargetEntityList": (
+            "param_entity_skill_target_ids",
+            "skill_target_ids",
+            "selected_target_ids",
+        ),
+        "SkillSubTargetEntityList": (
+            "skill_sub_target_ids",
+            "sub_target_ids",
+        ),
+    }
+    if alias in key_groups:
+        result = _payload_unit_ids(payload, key_groups[alias])
+        if result:
+            return result, {"alias": alias, "source": "event_payload"}
+        return None, {"alias": alias, "reason": "event_target_list_missing"}
+    state = context.state
+    units = getattr(state, "units", None)
+    if not isinstance(units, dict):
+        return None, {"alias": alias, "reason": "state_units_missing"}
+    owner_id = context.owner_id or context.actor_id
+    owner = units.get(owner_id) if owner_id else None
+    if alias in {
+        "AllDarkTeam",
+        "AllEnemy",
+        "AllEnemyWithUnSelectable",
+        "AllLightTeam",
+        "AllTeamMember",
+        "AllTeammate",
+        "AllUnselectable",
+    }:
+        result: list[str] = []
+        include_unselectable = alias in {
+            "AllEnemyWithUnSelectable",
+            "AllUnselectable",
+        }
+        for unit_id, unit in sorted(units.items()):
+            if not runtime_unit_is_target_candidate(
+                unit,
+                include_unselectable=include_unselectable,
+            ):
+                continue
+            if alias == "AllDarkTeam" and runtime_unit_is_dark_team(unit):
+                result.append(unit_id)
+            elif alias == "AllLightTeam" and runtime_unit_is_light_team(unit):
+                result.append(unit_id)
+            elif (
+                alias in {"AllEnemy", "AllEnemyWithUnSelectable"}
+                and owner is not None
+                and runtime_units_are_opposing_combat_teams(owner, unit)
+            ):
+                result.append(unit_id)
+            elif (
+                alias == "AllTeamMember"
+                and owner is not None
+                and runtime_units_share_combat_team(owner, unit)
+            ):
+                result.append(unit_id)
+            elif (
+                alias == "AllTeammate"
+                and owner is not None
+                and unit_id != owner_id
+                and runtime_units_share_combat_team(owner, unit)
+            ):
+                result.append(unit_id)
+            elif alias == "AllUnselectable" and runtime_unit_is_unselectable(unit):
+                result.append(unit_id)
+        return tuple(result), {"alias": alias, "source": "battle_state"}
+    if alias == "GridFight_AllBackEnd":
+        result = _target_list_for_alias(alias, context)
+        return (result, {"alias": alias}) if result is not None else (None, {"alias": alias})
+    return None, {"alias": alias, "reason": "target_alias_not_admitted"}
+
+
+def _payload_unit_ids(
+    payload: dict[str, Any],
+    keys: tuple[str, ...],
+) -> tuple[str, ...]:
+    result: list[str] = []
+    for key in keys:
+        value = payload.get(key)
+        values = value if isinstance(value, (list, tuple)) else (value,)
+        for item in values:
+            if isinstance(item, str) and item and item not in result:
+                result.append(item)
+    return tuple(result)
+
+
+def _first_string(payload: dict[str, Any], *keys: str) -> str | None:
+    for key in keys:
+        value = payload.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return None
 
 
 def _target_alias(value: object) -> str | None:
@@ -1038,12 +1446,64 @@ def _state_unit(context: EvaluationContext, unit_id: str) -> Any | None:
     return None
 
 
+def _unit_ability_property(unit: Any | None, property_name: object) -> float | None:
+    if unit is None or not isinstance(property_name, str):
+        return None
+    if property_name == "Shield":
+        shields = getattr(unit, "shield_instances", ())
+        if not isinstance(shields, (list, tuple)):
+            return None
+        return sum(
+            float(item.get("remaining", 0.0))
+            for item in shields
+            if isinstance(item, dict)
+            and isinstance(item.get("remaining"), (int, float))
+            and not isinstance(item.get("remaining"), bool)
+        )
+    if property_name == "BreakDamageAddedRatio":
+        resources = getattr(unit, "resources", {})
+        if not isinstance(resources, dict):
+            return None
+        for key in ("BreakDamageAddedRatio", "break_damage_added_ratio"):
+            value = resources.get(key)
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                return float(value)
+        return None
+    return None
+
+
+def _unit_character_id(unit: Any | None) -> int | None:
+    if unit is None:
+        return None
+    flags = getattr(unit, "flags", {})
+    if isinstance(flags, dict):
+        for key in ("character_id", "avatar_id", "profile_id"):
+            value = flags.get(key)
+            if isinstance(value, int) and not isinstance(value, bool):
+                return value
+            if isinstance(value, str) and value.isdigit():
+                return int(value)
+    template_id = str(getattr(unit, "template_id", "") or "")
+    if template_id.startswith("avatar:"):
+        tail = template_id.rsplit(":", 1)[-1]
+        if tail.isdigit():
+            return int(tail)
+    return None
+
+
+def _unit_is_alive(unit: Any | None) -> bool:
+    if unit is None:
+        return False
+    flags = getattr(unit, "flags", {})
+    lifecycle = str(flags.get("lifecycle_status") or "") if isinstance(flags, dict) else ""
+    return lifecycle not in {"defeated", "removed"} and float(getattr(unit, "hp", 0.0) or 0.0) > 0
+
+
 def _team_matches(unit: Any, expected: object) -> tuple[bool | None, str]:
-    side = getattr(unit, "side", None)
     if expected == "TeamLight":
-        return side in {"ally", "summon"}, "ok"
+        return runtime_unit_is_light_team(unit), "ok"
     if expected == "TeamDark":
-        return side == "enemy", "ok"
+        return runtime_unit_is_dark_team(unit), "ok"
     return None, f"team_not_supported:{expected}"
 
 
@@ -1140,6 +1600,7 @@ def _unit_monster_id(unit: Any) -> int | None:
 def _modifier_value_for_condition(
     context: EvaluationContext,
     target_id: str,
+    modifier_name: object,
     value_type: object,
 ) -> tuple[float | None, str]:
     details: list[dict[str, Any]] = []
@@ -1151,13 +1612,21 @@ def _modifier_value_for_condition(
     if isinstance(raw_details, (list, tuple)):
         details.extend(item for item in raw_details if isinstance(item, dict))
     for detail in details:
+        if (
+            isinstance(modifier_name, str)
+            and modifier_name
+            and detail.get("modifier_name") != modifier_name
+        ):
+            continue
         if value_type == "Layer" and isinstance(detail.get("stacks"), (int, float)):
             return float(detail["stacks"]), "ok"
         if value_type == "LifeTime":
             for key in ("remaining_duration", "duration"):
                 if isinstance(detail.get(key), (int, float)):
                     return float(detail[key]), "ok"
-    return None, f"modifier_value_not_available:{value_type}"
+        if value_type == "MaxLayer" and isinstance(detail.get("max_stacks"), (int, float)):
+            return float(detail["max_stacks"]), "ok"
+    return None, f"modifier_value_not_available:{modifier_name}:{value_type}"
 
 
 def _lookup_binding_source(source: dict[str, Any], key: str) -> tuple[float | None, dict[str, Any]]:
