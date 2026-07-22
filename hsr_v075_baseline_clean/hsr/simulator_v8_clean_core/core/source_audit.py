@@ -32,6 +32,18 @@ MUTATION_SOURCE_POLICIES: dict[str, dict[str, JSONValue]] = {
         "required_metadata": ["timeline_rule_id", "turn_advance_plan_id", "source_trace"],
         "coverage_required": "TimelineRuleIR executable or explicit engine_convention",
     },
+    "battle_state_transition_system": {
+        "required_ir": ["BattleStateTransitionIR"],
+        "required_metadata": [
+            "battle_state_transition_rule_id",
+            "trigger_kind",
+            "trigger_identity",
+            "runtime_event_type",
+            "callback_event",
+            "source_trace",
+        ],
+        "coverage_required": "source-backed shared battle-state transition executable",
+    },
     "combat_executor.resources": {
         "required_ir": ["ActionDefinitionIR", "ActionEventIR", "ResourceRuleIR for admitted resource operation"],
         "required_metadata": ["action_id", "action_level", "definition_id", "action_event_id", "source_trace"],
@@ -182,6 +194,12 @@ class RuntimeSourceAuditor:
             return self._audit_action_source_mutation(mutation, records, violations, require_action_event=True)
         if mutation.source == "timeline_system":
             return self._audit_timeline_rule_mutation(mutation, records, violations)
+        if mutation.source == "battle_state_transition_system":
+            return self._audit_battle_state_transition_mutation(
+                mutation,
+                records,
+                violations,
+            )
         if mutation.source == "combat_executor.resources":
             return self._audit_action_source_mutation(mutation, records, violations, require_action_event=True)
         if mutation.source == "damage_system":
@@ -658,6 +676,139 @@ class RuntimeSourceAuditor:
             },
         )
 
+    def _audit_battle_state_transition_mutation(
+        self,
+        mutation: Mutation,
+        records: tuple[dict[str, JSONValue], ...],
+        violations: list[SourceAuditViolation],
+    ) -> dict[str, JSONValue]:
+        metadata = mutation.metadata
+        transition_rule_id = _required_str(
+            mutation,
+            metadata,
+            "battle_state_transition_rule_id",
+            violations,
+        )
+        trigger_kind = _required_str(
+            mutation,
+            metadata,
+            "trigger_kind",
+            violations,
+        )
+        trigger_identity = _required_str(
+            mutation,
+            metadata,
+            "trigger_identity",
+            violations,
+        )
+        runtime_event_type = _required_str(
+            mutation,
+            metadata,
+            "runtime_event_type",
+            violations,
+        )
+        callback_event = _required_str(
+            mutation,
+            metadata,
+            "callback_event",
+            violations,
+        )
+        _require_dict(
+            mutation,
+            metadata,
+            "source_trace",
+            violations,
+        )
+        source_trace = (
+            metadata.get("source_trace")
+            if isinstance(metadata.get("source_trace"), dict)
+            else {}
+        )
+        rule = (
+            self.rules.battle_state_transition(transition_rule_id)
+            if transition_rule_id
+            else None
+        )
+        if rule is None:
+            violations.append(
+                _violation(
+                    mutation,
+                    "battle_state_transition_rule_missing",
+                    details={"transition_rule_id": transition_rule_id or ""},
+                )
+            )
+        else:
+            if rule.coverage_status != "executable":
+                violations.append(
+                    _violation(
+                        mutation,
+                        "battle_state_transition_rule_not_executable",
+                        details={
+                            "transition_rule_id": rule.transition_rule_id,
+                            "coverage_status": rule.coverage_status,
+                        },
+                    )
+                )
+            contract_matches = (
+                tuple(mutation.path) == rule.state_path
+                and trigger_kind == rule.trigger_kind
+                and trigger_identity == rule.trigger_identity
+                and runtime_event_type == rule.runtime_event_type
+                and callback_event == rule.callback_event
+                and type(mutation.after) is type(rule.after_value)
+                and mutation.after == rule.after_value
+                and source_trace == rule.source.to_json()
+            )
+            if not contract_matches:
+                violations.append(
+                    _violation(
+                        mutation,
+                        "battle_state_transition_contract_mismatch",
+                        details={
+                            "transition_rule_id": rule.transition_rule_id,
+                            "expected_path": list(rule.state_path),
+                            "expected_runtime_event_type": (
+                                rule.runtime_event_type
+                            ),
+                            "expected_callback_event": rule.callback_event,
+                        },
+                    )
+                )
+            if mutation.before_exists:
+                if (
+                    type(mutation.before) is not type(rule.before_value)
+                    or mutation.before != rule.before_value
+                ):
+                    violations.append(
+                        _violation(
+                            mutation,
+                            "battle_state_transition_before_value_mismatch",
+                        )
+                    )
+            elif not rule.allow_missing_before:
+                violations.append(
+                    _violation(
+                        mutation,
+                        "battle_state_transition_missing_before_not_admitted",
+                    )
+                )
+            _audit_source(
+                rule.source,
+                rule.coverage_status,
+                mutation,
+                violations,
+                executable_required=False,
+            )
+        return _trace(
+            mutation,
+            records,
+            {
+                "battle_state_transition_rule_id": transition_rule_id or "",
+                "trigger_kind": trigger_kind or "",
+                "trigger_identity": trigger_identity or "",
+            },
+        )
+
     def _audit_wave_mutation(
         self,
         mutation: Mutation,
@@ -792,7 +943,19 @@ class RuntimeSourceAuditor:
         if metadata.get("damage_formula_family") == "dot" and metadata.get("status_damage_emission_id"):
             return self._audit_status_dot_damage_mutation(mutation, records, violations)
         if metadata.get("damage_formula_family") == "true_damage" and metadata.get("status_damage_emission_id"):
-            return self._audit_status_true_damage_mutation(mutation, records, violations)
+            return self._audit_status_direct_damage_mutation(
+                mutation,
+                records,
+                violations,
+                expected_family="true_damage",
+            )
+        if metadata.get("damage_formula_family") == "additional" and metadata.get("status_damage_emission_id"):
+            return self._audit_status_direct_damage_mutation(
+                mutation,
+                records,
+                violations,
+                expected_family="additional",
+            )
         if metadata.get("damage_formula_family") == "break" and metadata.get("status_damage_emission_id"):
             return self._audit_status_callback_damage_mutation(mutation, records, violations)
         if metadata.get("damage_formula_family") == "break":
@@ -1059,11 +1222,13 @@ class RuntimeSourceAuditor:
             },
         )
 
-    def _audit_status_true_damage_mutation(
+    def _audit_status_direct_damage_mutation(
         self,
         mutation: Mutation,
         records: tuple[dict[str, JSONValue], ...],
         violations: list[SourceAuditViolation],
+        *,
+        expected_family: str,
     ) -> dict[str, JSONValue]:
         metadata = mutation.metadata
         emission_id = _required_str(mutation, metadata, "status_damage_emission_id", violations)
@@ -1099,12 +1264,12 @@ class RuntimeSourceAuditor:
                 violations.append(_violation(mutation, "status_damage_emission_missing", details={"status_damage_emission_id": emission_id}))
             else:
                 _audit_source(emission.source, emission.coverage_status, mutation, violations, executable_required=True)
-                if emission.damage_formula_family != "true_damage":
+                if emission.damage_formula_family != expected_family:
                     violations.append(
                         _violation(
                             mutation,
                             "status_damage_family_mismatch",
-                            details={"expected": "true_damage", "actual": emission.damage_formula_family},
+                            details={"expected": expected_family, "actual": emission.damage_formula_family},
                         )
                     )
                 if callback_id and emission.callback_id != callback_id:
@@ -1118,7 +1283,7 @@ class RuntimeSourceAuditor:
                 "status_damage_emission_id": emission_id or "",
                 "status_callback_id": callback_id or "",
                 "source_task_id": task_id or "",
-                "damage_formula_family": "true_damage",
+                "damage_formula_family": expected_family,
             },
         )
 
@@ -1320,7 +1485,20 @@ class RuntimeSourceAuditor:
             return self._audit_status_callback_dynamic_value_mutation(mutation, records, violations)
         callback_id = _required_str(mutation, metadata, "callback_id", violations)
         task_id = _required_str(mutation, metadata, "task_id", violations)
-        delay_id = _required_str(mutation, metadata, "action_delay_emission_id", violations)
+        is_current_skill_delay_cost = mutation.path == (
+            "global_flags",
+            "turn_action_delay_cost_modifiers",
+        )
+        delay_id = (
+            None
+            if is_current_skill_delay_cost
+            else _required_str(
+                mutation,
+                metadata,
+                "action_delay_emission_id",
+                violations,
+            )
+        )
         _require_dict(mutation, metadata, "source_trace", violations)
         evaluation = metadata.get("numeric_evaluation")
         if not isinstance(evaluation, dict):
@@ -1343,6 +1521,14 @@ class RuntimeSourceAuditor:
                 _audit_source(task.source, task.coverage_status, mutation, violations, executable_required=True)
                 if callback_id and task.callback_id != callback_id:
                     violations.append(_violation(mutation, "status_callback_task_callback_mismatch", details={"expected": task.callback_id, "actual": callback_id}))
+                if is_current_skill_delay_cost and task.opcode != "ModifyCurrentSkillDelayCost":
+                    violations.append(
+                        _violation(
+                            mutation,
+                            "current_skill_delay_cost_task_opcode_mismatch",
+                            details={"actual": task.opcode},
+                        )
+                    )
         if delay_id:
             emission = self.rules.action_delay_emission(delay_id)
             if emission is None:

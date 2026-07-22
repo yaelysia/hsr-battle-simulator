@@ -6,6 +6,10 @@ from ..core.model import ActionCommand, BattleState, GameEvent, JSONValue, Mutat
 from ..core.reducer import MutationReducer
 from ..core.settlement import SettlementRecord
 from ..core.transition_outcome import ExecutionNodeResult
+from ..resource_event_contract import (
+    resource_scope_for_callback,
+    resource_scope_for_event,
+)
 from ..rules.ir import ActionDefinitionIR, StatusCallbackIR, StatusEventFamilyIR
 from ..rules.rulebook import RuleBook
 from .damage import DamageSystem, DamageWindowLedger
@@ -45,6 +49,7 @@ class ListenerMatch:
     order_key: dict[str, JSONValue] | None = None
     event_alias: dict[str, JSONValue] | None = None
     blocked_category: str = ""
+    status_detail: dict[str, JSONValue] | None = None
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -119,6 +124,7 @@ class EventDispatchSystem:
             damage=self.damage,
             reducer=self.reducer,
             timeline=self.timeline,
+            effect_registry=effect_registry,
         )
         self.phases = CombatPhaseMachine()
 
@@ -165,6 +171,19 @@ class EventDispatchSystem:
                 listener_kind="lifecycle_event_dispatch",
                 scope=_event_scope_kind(event),
                 reason=lifecycle_payload_reason,
+                metadata={"event_type": event.event_type},
+            )
+        transition_payload_reason = _battle_state_transition_event_block_reason(
+            event,
+            self.rules,
+        )
+        if transition_payload_reason:
+            return self.dispatch_blocked(
+                state,
+                event=event,
+                listener_kind="battle_state_transition_event_dispatch",
+                scope=_event_scope_kind(event),
+                reason=transition_payload_reason,
                 metadata={"event_type": event.event_type},
             )
         phase_reason = self.phases.event_blocked_reason(state, event.event_type)
@@ -380,6 +399,7 @@ class EventDispatchSystem:
                 event=match.callback_event,
                 trigger_event=event,
                 damage_window_ledger=damage_window_ledger,
+                detail_override=match.status_detail,
             )
             current_state = result.after_state
             mutations.extend(result.mutations)
@@ -391,7 +411,7 @@ class EventDispatchSystem:
             child_depth = _event_mutation_depth(event)
             if child_depth < 1:
                 for emitted_event in result.events:
-                    if emitted_event.event_type not in MUTATION_BACKED_EVENT_TYPES:
+                    if emitted_event.event_type not in CALLBACK_EMITTED_EVENT_TYPES:
                         continue
                     child_event = replace(
                         emitted_event,
@@ -445,6 +465,14 @@ class EventDispatchSystem:
         unit_id: str | None,
         modifier_name: str | None,
     ) -> tuple[ListenerMatch, ...]:
+        aliases = tuple(
+            alias
+            for alias in aliases
+            if not _optional_missing_mutation_alias(event, alias)
+            and not _non_gameplay_alias(self.rules, alias)
+        )
+        if not aliases:
+            return ()
         pre_mutation_reason = _pre_mutation_listener_block_reason(event)
         if pre_mutation_reason:
             return tuple(
@@ -461,12 +489,20 @@ class EventDispatchSystem:
         if unit_id and modifier_name:
             return self._explicit_status_matches(state, event, aliases, unit_id, modifier_name)
         matches: list[ListenerMatch] = []
+        detached_detail = _detached_status_detail(event)
         for alias in aliases:
             if not alias.callback_event or alias.admission_status != "executable":
                 matches.append(_alias_blocked_match(event, alias, state))
                 continue
             for callback in self.rules.status_callbacks_for_event_scope(alias.callback_event, alias.scope_kind):
-                for detail in _status_details_for_modifier(state, callback.modifier_name):
+                details = _status_details_for_modifier(state, callback.modifier_name)
+                if (
+                    detached_detail is not None
+                    and callback.modifier_name
+                    == str(detached_detail.get("modifier_name") or "")
+                ):
+                    details = (*details, detached_detail)
+                for detail in details:
                     match = _match_callback_to_event(event, callback, detail, explicit=False, alias=alias, state=state)
                     if match is not None:
                         matches.append(match)
@@ -481,6 +517,14 @@ class EventDispatchSystem:
         modifier_name: str,
     ) -> tuple[ListenerMatch, ...]:
         detail = _status_detail_for_unit_modifier(state, unit_id, modifier_name)
+        if detail is None:
+            detached = _detached_status_detail(event)
+            if (
+                detached is not None
+                and str(detached.get("owner_id") or "") == unit_id
+                and str(detached.get("modifier_name") or "") == modifier_name
+            ):
+                detail = detached
         if detail is None:
             return (
                 ListenerMatch(
@@ -771,11 +815,18 @@ CANONICAL_EVENT_ALIASES: dict[str, tuple[tuple[str, str, str], ...]] = {
         ("OnDestroy", "status_local", "event_alias_missing:on_destroy_requires_status_destroy_event"),
     ),
     "custom.event": (
-        ("OnCustomEvent", "owner_local", "event_alias_missing:custom_event_source_not_admitted"),
+        ("OnCustomEvent", "owner_local", ""),
     ),
     "wave.monster": (
         ("OnWaveMonster", "global_listener", ""),
     ),
+}
+
+
+CALLBACK_EMITTED_EVENT_TYPES = MUTATION_BACKED_EVENT_TYPES | {
+    "custom.event",
+    "summon.spawned",
+    "summon.removed",
 }
 
 LIFECYCLE_DISPATCH_ONLY_EVENT_TYPES = {
@@ -788,13 +839,36 @@ LIFECYCLE_DISPATCH_ONLY_EVENT_TYPES = {
 
 
 def _dispatch_only_without_listener(event: GameEvent, aliases: tuple[EventAlias, ...]) -> bool:
-    if event.event_type not in LIFECYCLE_DISPATCH_ONLY_EVENT_TYPES:
+    if (
+        event.event_type not in LIFECYCLE_DISPATCH_ONLY_EVENT_TYPES
+        and event.event_type not in MUTATION_BACKED_EVENT_TYPES
+    ):
         return False
     return not any(alias.callback_event and alias.admission_status == "executable" for alias in aliases)
 
 
 def _lifecycle_event_payload_block_reason(event: GameEvent) -> str:
     payload = event.payload
+    if event.event_type == "status.lifecycle" and payload.get(
+        "lifecycle_operation"
+    ) in {"remove", "expire", "dispel", "stack_reduce_remove"}:
+        detail = payload.get("status_detail")
+        if not isinstance(detail, dict):
+            return "status_lifecycle_removed_detail_missing"
+        identities = (
+            ("owner_id", event.target_id),
+            ("modifier_name", payload.get("modifier_name")),
+            ("instance_id", payload.get("status_instance_id")),
+        )
+        if any(
+            not isinstance(expected, str)
+            or not expected
+            or detail.get(key) != expected
+            for key, expected in identities
+        ):
+            return "status_lifecycle_removed_detail_identity_mismatch"
+        if not isinstance(detail.get("source_trace"), dict):
+            return "status_lifecycle_removed_detail_source_missing"
     required_by_type = {
         "wave.started": ("wave_definition_id", "stage_id", "wave_index", "unit_ids"),
         "wave.cleared": (
@@ -822,6 +896,73 @@ def _lifecycle_event_payload_block_reason(event: GameEvent) -> str:
     return ""
 
 
+def _battle_state_transition_event_block_reason(
+    event: GameEvent,
+    rules: RuleBook,
+) -> str:
+    if event.event_type not in {
+        "elation.time.started",
+        "elation.time.ended",
+    }:
+        return ""
+    payload = event.payload
+    metadata = payload.get("metadata")
+    if (
+        payload.get("mutation_backed_event") is not True
+        or payload.get("mutation_path")
+        != ["global_flags", "elation_time_active"]
+        or payload.get("source") != "battle_state_transition_system"
+        or not isinstance(metadata, dict)
+    ):
+        return "battle_state_transition_event_producer_evidence_missing"
+    transition_rule_id = metadata.get("battle_state_transition_rule_id")
+    if not isinstance(transition_rule_id, str) or not transition_rule_id:
+        return "battle_state_transition_event_rule_identity_missing"
+    rule = rules.battle_state_transition(transition_rule_id)
+    candidates = rules.battle_state_transitions_for_runtime_event(
+        event.event_type
+    )
+    if (
+        rule is None
+        or len(candidates) != 1
+        or candidates[0].transition_rule_id != transition_rule_id
+        or rule.coverage_status != "executable"
+    ):
+        return "battle_state_transition_event_rule_unresolved"
+    expected_before = rule.before_value
+    actual_before = payload.get("before")
+    if (
+        payload.get("after") != rule.after_value
+        or type(payload.get("after")) is not type(rule.after_value)
+        or (
+            payload.get("before") is not None
+            and (
+                actual_before != expected_before
+                or type(actual_before) is not type(expected_before)
+            )
+        )
+        or event.window != rule.callback_event
+        or payload.get("callback_events") != [rule.callback_event]
+        or metadata.get("trigger_kind") != rule.trigger_kind
+        or metadata.get("trigger_identity") != rule.trigger_identity
+        or metadata.get("runtime_event_type") != rule.runtime_event_type
+        or metadata.get("callback_event") != rule.callback_event
+        or payload.get("source_trace") != rule.source.to_json()
+        or metadata.get("source_trace") != rule.source.to_json()
+    ):
+        return "battle_state_transition_event_contract_mismatch"
+    return ""
+
+
+def _detached_status_detail(event: GameEvent) -> dict[str, JSONValue] | None:
+    if event.event_type != "status.lifecycle" or event.payload.get(
+        "lifecycle_operation"
+    ) not in {"remove", "expire", "dispel", "stack_reduce_remove"}:
+        return None
+    detail = event.payload.get("status_detail")
+    return dict(detail) if isinstance(detail, dict) else None
+
+
 def _event_aliases(event: GameEvent, rules: RuleBook | None = None) -> tuple[EventAlias, ...]:
     if event.event_type == "wave.monster":
         payload_reason = _wave_monster_payload_block_reason(event)
@@ -837,37 +978,45 @@ def _event_aliases(event: GameEvent, rules: RuleBook | None = None) -> tuple[Eve
                 ),
             )
     aliases: list[EventAlias] = []
+    explicit_callback_events: set[str] = set()
     raw_events = event.payload.get("callback_events")
     if isinstance(raw_events, (list, tuple)):
         for item in raw_events:
             if isinstance(item, str) and item:
+                explicit_callback_events.add(item)
                 aliases.append(_event_alias_for_callback(event, item, "event.payload.callback_events", rules))
     for key in ("callback_event", "tbgd_event"):
         value = event.payload.get(key)
         if isinstance(value, str) and value:
+            explicit_callback_events.add(value)
             aliases.append(_event_alias_for_callback(event, value, f"event.payload.{key}", rules))
     if event.window.startswith("On"):
+        explicit_callback_events.add(event.window)
         aliases.append(_event_alias_for_callback(event, event.window, "event.window", rules))
+    families = rules.status_event_families_for_runtime_event(event.event_type) if rules is not None else ()
+    for family in families:
+        if explicit_callback_events and not _family_matches_explicit_callback(
+            family.callback_event,
+            explicit_callback_events,
+        ):
+            continue
+        aliases.append(_event_alias_for_family(event, family, f"status_event_family:{event.event_type}"))
     if not aliases:
-        families = rules.status_event_families_for_runtime_event(event.event_type) if rules is not None else ()
-        for family in families:
-            aliases.append(_event_alias_for_family(event, family, f"status_event_family:{event.event_type}"))
-        if not aliases:
-            for callback_event, scope_kind, blocked_dependency in CANONICAL_EVENT_ALIASES.get(event.event_type, ()):
-                family = rules.status_event_family(callback_event) if rules is not None else None
-                if family is not None:
-                    aliases.append(_event_alias_for_family(event, family, f"canonical_event_alias_fallback:{event.event_type}"))
-                    continue
-                aliases.append(
-                    EventAlias(
-                        callback_event=callback_event,
-                        scope_kind=scope_kind,
-                        source_basis=f"canonical_event_alias:{event.event_type}",
-                        admission_status="blocked" if blocked_dependency else "executable",
-                        blocked_dependency=blocked_dependency,
-                        runtime_event_source=event.event_type,
-                    )
+        for callback_event, scope_kind, blocked_dependency in CANONICAL_EVENT_ALIASES.get(event.event_type, ()):
+            family = rules.status_event_family(callback_event) if rules is not None else None
+            if family is not None:
+                aliases.append(_event_alias_for_family(event, family, f"canonical_event_alias_fallback:{event.event_type}"))
+                continue
+            aliases.append(
+                EventAlias(
+                    callback_event=callback_event,
+                    scope_kind=scope_kind,
+                    source_basis=f"canonical_event_alias:{event.event_type}",
+                    admission_status="blocked" if blocked_dependency else "executable",
+                    blocked_dependency=blocked_dependency,
+                    runtime_event_source=event.event_type,
                 )
+            )
     deduped: list[EventAlias] = []
     seen: set[tuple[str, str]] = set()
     for alias in aliases:
@@ -887,6 +1036,24 @@ def _event_aliases(event: GameEvent, rules: RuleBook | None = None) -> tuple[Eve
             blocked_dependency="event_alias_missing",
         ),
     )
+
+
+def _family_matches_explicit_callback(
+    callback_event: str,
+    explicit_callback_events: set[str],
+) -> bool:
+    if callback_event in explicit_callback_events:
+        return True
+    callback_key = _callback_companion_key(callback_event)
+    return bool(callback_key) and any(
+        _callback_companion_key(explicit) == callback_key
+        for explicit in explicit_callback_events
+    )
+
+
+def _callback_companion_key(callback_event: str) -> str:
+    value = callback_event.removeprefix("On")
+    return value.removeprefix("Listen")
 
 
 def _wave_monster_payload_block_reason(event: GameEvent) -> str:
@@ -931,6 +1098,9 @@ def _event_alias_for_family(event: GameEvent, family: StatusEventFamilyIR, sourc
     if family.coverage_status != "executable" or family.admission_status != "executable":
         admission_status = "blocked"
         blocked_dependency = blocked_dependency or f"status_event_family_not_executable:{family.coverage_status}"
+    elif event.event_type not in family.runtime_event_sources:
+        admission_status = "blocked"
+        blocked_dependency = f"event_source_not_admitted_for_family:{event.event_type}"
     return EventAlias(
         callback_event=family.callback_event,
         scope_kind=family.default_scope_kind or _scope_kind_for_callback_event(event, family.callback_event),
@@ -947,6 +1117,9 @@ def _event_scope_kind(event: GameEvent) -> str:
     value = event.payload.get("listener_scope")
     if isinstance(value, str) and value:
         return value
+    resource_scope = resource_scope_for_event(event.event_type)
+    if resource_scope:
+        return resource_scope
     if event.event_type in {"damage.before_hit", "damage.hit", "toughness.hit"}:
         return "per_hit_target_local"
     if event.event_type in {
@@ -966,9 +1139,6 @@ def _event_scope_kind(event: GameEvent) -> str:
         "heal.after",
         "shield.change",
         "shield.exhausted",
-        "sp.change",
-        "energy.change",
-        "energy.before_change",
         "toughness.before_hit",
         "action_delay.changed",
     }:
@@ -990,6 +1160,9 @@ def _scope_kind_for_callback_event(event: GameEvent, callback_event: str) -> str
     explicit = event.payload.get("listener_scope")
     if isinstance(explicit, str) and explicit:
         return explicit
+    resource_scope = resource_scope_for_callback(callback_event)
+    if resource_scope:
+        return resource_scope
     if callback_event == "OnListenAllowAction":
         return "owner_local"
     if callback_event in {"OnAfterDealHeal", "OnBeforeDealHeal"}:
@@ -1000,9 +1173,6 @@ def _scope_kind_for_callback_event(event: GameEvent, callback_event: str) -> str
         "OnAfterBeingHeal",
         "OnBeforeBeingHeal",
         "OnShieldChange",
-        "OnSPChange",
-        "OnEnergyPointChange",
-        "OnBeforeEnergyPointChange",
         "OnBeforeBeingStanceDamage",
         "OnBeingStanceDamage",
         "OnActionDelayEffect",
@@ -1023,6 +1193,8 @@ def _scope_kind_for_callback_event(event: GameEvent, callback_event: str) -> str
         "OnListenInsertAbilityFinish",
     }:
         return "actor_local"
+    if callback_event == "OnSnapshotCreate":
+        return "global_listener"
     if callback_event.startswith("OnListen"):
         return "global_listener"
     if (
@@ -1043,6 +1215,7 @@ def _scope_kind_for_callback_event(event: GameEvent, callback_event: str) -> str
     if callback_event in {
         "OnStack",
         "OnPhase1",
+        "OnPhase2",
         "OnCreate",
         "OnDestroy",
         "OnModifierAdd",
@@ -1103,6 +1276,9 @@ def _match_callback_to_event(
     if not scope_ok:
         status = "skipped"
         reason = scope_reason
+    elif callback.blocked_reason == "equipment_event_family_non_gameplay":
+        status = "skipped"
+        reason = "non_gameplay_listener_excluded"
     elif not _status_detail_admits_callback(detail, callback):
         status = "skipped"
         reason = "status_trigger_id_not_admitted_for_event"
@@ -1132,26 +1308,13 @@ def _match_callback_to_event(
         order_key=_listener_order_key(state, scope_kind, unit_id, status_order, callback),
         event_alias=alias.to_json(),
         blocked_category=_blocked_category(reason),
+        status_detail=detail,
     )
 
 
 def _global_listener_auto_admitted(event: GameEvent, callback: StatusCallbackIR, alias: EventAlias) -> bool:
     return (
-        event.event_type == "action.after_attack"
-        and alias.callback_event == "OnListenAfterAttack"
-        and callback.event == "OnListenAfterAttack"
-        and alias.admission_status == "executable"
-    ) or (
-        event.event_type == "turn.end"
-        and alias.callback_event == "OnListenTurnEnd"
-        and callback.event == "OnListenTurnEnd"
-        and alias.admission_status == "executable"
-    ) or (
-        (
-            event.event_type in MUTATION_BACKED_EVENT_TYPES
-            or event.event_type in {"status.lifecycle", "break.triggered"}
-        )
-        and alias.callback_event.startswith("OnListen")
+        bool(event.event_type)
         and callback.event == alias.callback_event
         and alias.admission_status == "executable"
     )
@@ -1265,6 +1428,30 @@ def _alias_blocked_match(
         order_key=_listener_order_key(state, alias.scope_kind, target_unit, -1, None),
         event_alias=alias.to_json(),
         blocked_category=_blocked_category(reason),
+    )
+
+
+def _optional_missing_mutation_alias(event: GameEvent, alias: EventAlias) -> bool:
+    """Skip an absent optional listener on an already admitted mutation.
+
+    Mutation producers may expose several TBGD callback spellings.  A focused
+    RuleBook legitimately contains only the families used by its content; a
+    missing family cannot execute and therefore must not roll back the
+    mutation.  Existing-but-blocked families remain fail-closed.
+    """
+
+    return (
+        event.event_type in MUTATION_BACKED_EVENT_TYPES
+        and alias.admission_status != "executable"
+        and alias.blocked_dependency.startswith("status_event_family_missing:")
+    )
+
+
+def _non_gameplay_alias(rules: RuleBook, alias: EventAlias) -> bool:
+    callbacks = rules.status_callbacks_for_event(alias.callback_event)
+    return bool(callbacks) and all(
+        callback.blocked_reason == "equipment_event_family_non_gameplay"
+        for callback in callbacks
     )
 
 

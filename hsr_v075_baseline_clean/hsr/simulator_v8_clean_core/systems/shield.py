@@ -74,6 +74,8 @@ class ShieldSystem:
         priority_rule_id: str = SHIELD_PRIORITY_RULE_ID,
         priority_rule_version: str = ENGINE_RULE_REGISTRY_VERSION,
         absorb_families: tuple[str, ...] = NORMAL_SHIELD_FAMILIES,
+        owner_modifier_name: str = "",
+        status_instance_id: str = "",
         mutation_source: str = "effect_system",
         mutation_metadata: dict[str, JSONValue] | None = None,
     ) -> ShieldApplicationResult:
@@ -131,6 +133,8 @@ class ShieldSystem:
                     "shield_priority_rule_id": priority_rule.shield_priority_rule_id,
                     "registry_version": priority_rule.registry_version,
                 },
+                owner_modifier_name=owner_modifier_name,
+                status_instance_id=status_instance_id,
             )
             after.append(instance)
         else:
@@ -176,6 +180,8 @@ class ShieldSystem:
                 "source_trace": source_trace,
                 "priority_source": resolved_priority_source,
                 "priority_rule": priority_rule.to_json(),
+                "owner_modifier_name": owner_modifier_name,
+                "status_instance_id": status_instance_id,
             },
         )
         record = SettlementRecord(
@@ -194,6 +200,87 @@ class ShieldSystem:
                 "instance_count_before": len(before),
                 "instance_count_after": len(after),
                 "numeric_evaluation": (mutation_metadata or {}).get("numeric_evaluation", {}),
+            },
+            trace=source_trace,
+        ).to_json()
+        return ShieldApplicationResult(
+            True,
+            mutation=mutation,
+            events=events_for_mutation(
+                mutation,
+                actor_id=actor_id,
+                source_id=event_source_id,
+                event_index=state.event_index,
+            ),
+            records=(record,),
+        )
+
+    def remove_status_instance_shields(
+        self,
+        state: BattleState,
+        *,
+        target_id: str,
+        owner_modifier_name: str,
+        status_instance_id: str,
+        actor_id: str,
+        event_source_id: str,
+        source_trace: dict[str, JSONValue],
+        mutation_source: str = "effect_system",
+        mutation_metadata: dict[str, JSONValue] | None = None,
+    ) -> ShieldApplicationResult:
+        target = state.units.get(target_id)
+        if target is None:
+            return ShieldApplicationResult(False, blocked_reason="shield_target_missing")
+        if not owner_modifier_name or not status_instance_id or not actor_id:
+            return ShieldApplicationResult(
+                False,
+                blocked_reason="shield_removal_source_identity_incomplete",
+            )
+        before = [dict(item) for item in target.shield_instances]
+        matched = [
+            item
+            for item in before
+            if item.get("owner_modifier_name") == owner_modifier_name
+            and item.get("status_instance_id") == status_instance_id
+        ]
+        if not matched:
+            return ShieldApplicationResult(
+                False,
+                blocked_reason="shield_removal_source_instance_missing",
+            )
+        after = _ordered([item for item in before if item not in matched])
+        removed_instance_ids = tuple(
+            sorted(str(item.get("instance_id") or "") for item in matched)
+        )
+        mutation = Mutation(
+            op="set",
+            path=("units", target_id, "shield_instances"),
+            before=before,
+            after=after,
+            reason="remove shields owned by current status instance",
+            source=mutation_source,
+            metadata={
+                **(mutation_metadata or {}),
+                "owner_modifier_name": owner_modifier_name,
+                "status_instance_id": status_instance_id,
+                "removed_instance_ids": list(removed_instance_ids),
+                "aggregate_before": _aggregate(before),
+                "aggregate_after": _aggregate(after),
+                "source_trace": source_trace,
+            },
+        )
+        record = SettlementRecord(
+            record_type="shield_remove",
+            source="shield_system",
+            mutation_id=mutation.stable_id(),
+            process_only=False,
+            payload={
+                "target_id": target_id,
+                "owner_modifier_name": owner_modifier_name,
+                "status_instance_id": status_instance_id,
+                "removed_instance_ids": list(removed_instance_ids),
+                "aggregate_before": _aggregate(before),
+                "aggregate_after": _aggregate(after),
             },
             trace=source_trace,
         ).to_json()
@@ -385,6 +472,8 @@ def _instance(
     source_trace: dict[str, JSONValue],
     priority_source: dict[str, JSONValue],
     priority_rule: dict[str, JSONValue],
+    owner_modifier_name: str,
+    status_instance_id: str,
 ) -> dict[str, JSONValue]:
     return {
         "instance_id": f"{shield_id}:source:{source_id}:actor:{source_actor_id}",
@@ -401,6 +490,8 @@ def _instance(
         "source_trace": source_trace,
         "priority_audit": priority_source,
         "priority_rule": priority_rule,
+        "owner_modifier_name": owner_modifier_name,
+        "status_instance_id": status_instance_id,
     }
 
 

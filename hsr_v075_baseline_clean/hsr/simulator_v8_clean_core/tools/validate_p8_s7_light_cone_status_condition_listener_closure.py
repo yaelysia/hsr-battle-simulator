@@ -29,6 +29,10 @@ from ..core.model import (
 from ..core.reducer import MutationReducer
 from ..core.source_audit import RuntimeSourceAuditor
 from ..core.unit_state_codec import unit_state_from_payload, unit_state_to_payload
+from ..resource_event_contract import (
+    resource_callback_runtime_sources,
+    resource_scope_for_callback,
+)
 from ..rules.evaluator import (
     EvaluationContext,
     NumericEvaluationContext,
@@ -37,12 +41,14 @@ from ..rules.evaluator import (
 )
 from ..rules.ir import (
     CanonicalIR,
+    BreakDamageEmissionIR,
     BreakTemplateIR,
     ConditionIR,
     DamageEmissionIR,
     EffectIR,
     HitProfileIR,
     IRSource,
+    RuleEntity,
     ActionPhaseStepIR,
     AbilityTaskIR,
     StatusCallbackIR,
@@ -99,6 +105,7 @@ from ..tbgd.lowering import (
     _block_status_callback_tasks_by_callback,
     _block_status_callbacks_by_event_family,
     _condition_payload_executable,
+    _equipment_reachable_modifier_names,
     _equipment_nested_modifier_stage,
     _link_status_effect_runtime_fields,
     _lower_status_event_families,
@@ -250,6 +257,7 @@ def run_validation(tbgd_root: Path, output_dir: Path) -> dict[str, Any]:
             "s7_source_node_count": inventory["counts"]["s7"],
             "s8_source_node_count": inventory["counts"]["s8"],
             "non_gameplay_source_node_count": inventory["counts"]["non_gameplay"],
+            "unreferenced_source_node_count": inventory["counts"]["unreferenced"],
             "s7_family_row_count": sum(
                 row["stage"] == "s7" for row in inventory["rows"]
             ),
@@ -405,7 +413,11 @@ def _family_inventory(bundle: dict[str, Any]) -> dict[str, Any]:
                     or "descendant of a structurally classified non-gameplay branch"
                 )
                 if stage == "non_gameplay"
-                else ""
+                else (
+                    "raw modifier definition is retained, but no exact-name path reaches it from the selected equipment ability root"
+                    if stage == "unreferenced"
+                    else ""
+                )
             ),
         }
         for (kind, family, stage), count in sorted(counts.items())
@@ -431,6 +443,11 @@ def _family_inventory(bundle: dict[str, Any]) -> dict[str, Any]:
             bool(row["structured_evidence"])
             for row in rows
             if row["stage"] == "non_gameplay"
+        ),
+        "unreferenced_evidence_complete": all(
+            bool(row["structured_evidence"])
+            for row in rows
+            if row["stage"] == "unreferenced"
         ),
     }
     checks["ok"] = all(checks.values())
@@ -460,6 +477,13 @@ def _scan_raw_families(bundle: dict[str, Any]) -> list[dict[str, str]]:
             document,
             selected_ability_indices=frozenset(selected),
         )
+        reachable_by_ability = {
+            ability_index: _equipment_reachable_modifier_names(
+                document,
+                ability_index,
+            )
+            for ability_index in selected
+        }
         ability_list = document.get("AbilityList")
         if not isinstance(ability_list, list):
             raise ValueError(f"{relative}: AbilityList missing")
@@ -468,9 +492,14 @@ def _scan_raw_families(bundle: dict[str, Any]) -> list[dict[str, str]]:
             if not isinstance(ability, dict):
                 raise ValueError(f"{relative}: ability row invalid")
             ability_nested_stage = _equipment_nested_modifier_stage(
-                lowering._modifier_maps(
-                    document,
-                    selected_ability_indices=frozenset({ability_index}),
+                tuple(
+                    modifier_row
+                    for modifier_row in lowering._modifier_maps(
+                        document,
+                        selected_ability_indices=frozenset({ability_index}),
+                    )
+                    if modifier_row[1]
+                    in reachable_by_ability.get(ability_index, frozenset())
                 )
             )
             ability_inherited_stage = (
@@ -490,6 +519,25 @@ def _scan_raw_families(bundle: dict[str, Any]) -> list[dict[str, str]]:
                         inherited_stage=ability_inherited_stage,
                     )
         for _, modifier_name, modifier, context in modifier_maps:
+            referenced_indices = context.get("referenced_by_ability_indices")
+            candidate_indices = (
+                tuple(
+                    index
+                    for index in referenced_indices
+                    if isinstance(index, int) and not isinstance(index, bool)
+                )
+                if isinstance(referenced_indices, list)
+                else (
+                    (context.get("ability_index"),)
+                    if isinstance(context.get("ability_index"), int)
+                    and not isinstance(context.get("ability_index"), bool)
+                    else ()
+                )
+            )
+            modifier_reachable = any(
+                modifier_name in reachable_by_ability.get(index, frozenset())
+                for index in candidate_indices
+            )
             callbacks = modifier.get("_CallbackList")
             if not isinstance(callbacks, list):
                 continue
@@ -500,13 +548,15 @@ def _scan_raw_families(bundle: dict[str, Any]) -> list[dict[str, str]]:
                 event = str(callback.get("Event") or "")
                 tasks = callback.get("CallbackConfig")
                 stage = classify_equipment_callback(event, tasks)
+                if not modifier_reachable:
+                    stage = "unreferenced"
                 callback_json_path = (
                     f"{context.get('json_path')}._CallbackList[{callback_index}]"
                 )
                 linked_stage = linked_modifier_stages.get(
                     (relative, callback_json_path)
                 )
-                if linked_stage in {"s8", "unknown"}:
+                if stage != "unreferenced" and linked_stage in {"s8", "unknown"}:
                     stage = linked_stage
                 rows.append(
                     _family_row(
@@ -675,7 +725,7 @@ def _scan_task(
         return
     family = _short_type(task.get("$type"))
     stage = classify_equipment_task(family, task)
-    if inherited_stage in {"s8", "non_gameplay", "unknown"}:
+    if inherited_stage in {"s8", "non_gameplay", "unreferenced", "unknown"}:
         stage = inherited_stage
     semantic_family = family
     if family == "StackProperty":
@@ -715,7 +765,7 @@ def _scan_condition(
 ) -> None:
     family = _short_type(condition.get("$type"))
     stage = classify_equipment_condition(family, condition)
-    if inherited_stage in {"s8", "non_gameplay", "unknown"}:
+    if inherited_stage in {"s8", "non_gameplay", "unreferenced", "unknown"}:
         stage = inherited_stage
     rows.append(_family_row("condition", f"{family}:{stage}", stage, identity))
     _scan_targets_and_values(
@@ -765,7 +815,7 @@ def _scan_targets_and_values(
     raw_type = _short_type(value.get("$type"))
     if raw_type.startswith("Target"):
         stage = classify_equipment_target(value)
-        if inherited_stage in {"s8", "non_gameplay", "unknown"}:
+        if inherited_stage in {"s8", "non_gameplay", "unreferenced", "unknown"}:
             stage = inherited_stage
         family = raw_type
         if raw_type == "TargetAlias":
@@ -776,6 +826,7 @@ def _scan_targets_and_values(
     if value_stage != "unknown" and inherited_stage in {
         "s8",
         "non_gameplay",
+        "unreferenced",
         "unknown",
     }:
         value_stage = inherited_stage
@@ -3493,6 +3544,16 @@ def _production_event_chain(
         source=source,
         coverage_status="executable",
     )
+    break_damage_emission = BreakDamageEmissionIR(
+        break_damage_emission_id="validation:p8_s7:production-break-damage",
+        template_id="validation:p8_s7:break-template",
+        source_task_id="validation:p8_s7:production-break-damage-task",
+        element_type="Fire",
+        damage_formula_family="break",
+        scaling_expr=numeric_fixed(1.0),
+        source=source,
+        coverage_status="executable",
+    )
     production_source_tasks = (
         *(
             AbilityTaskIR(
@@ -3525,19 +3586,42 @@ def _production_event_chain(
             source=source,
             coverage_status="executable",
         ),
+        AbilityTaskIR(
+            task_id=break_damage_emission.source_task_id,
+            phase_id="validation:p8_s7:audit-source-phase",
+            action_id="validation:p8_s7:audit-source-action",
+            level=level,
+            ability_name="validation:p8_s7:production-action",
+            callback_kind="OnBreak",
+            task_index=len(damage_emissions) + 1,
+            task_path="validation/p8_s7/production_break_damage",
+            branch="root",
+            opcode="DamageByBreak",
+            source=source,
+            coverage_status="executable",
+        ),
     )
     event_families = list(bundle["ir"].status_event_families)
     existing_callback_events = {
         family.callback_event for family in event_families
     }
-    for callback_event, runtime_event in (
-        ("OnBeforeBeingStanceDamage", "toughness.before_hit"),
-        ("OnBeingStanceDamage", "toughness.hit"),
-        ("OnBeingBreak", "break.triggered"),
-        ("OnBeforeEnergyPointChange", "energy.before_change"),
-        ("OnEnergyPointChange", "energy.change"),
-        ("OnListenAfterAttack", "action.after_attack"),
-        ("OnListenHPChange", "hp.change"),
+    resource_event_rows = tuple(
+        (
+            callback_event,
+            runtime_sources[0],
+            resource_scope_for_callback(callback_event),
+        )
+        for callback_event, runtime_sources in sorted(
+            resource_callback_runtime_sources().items()
+        )
+    )
+    for callback_event, runtime_event, scope_kind in (
+        ("OnBeforeBeingStanceDamage", "toughness.before_hit", "global_listener"),
+        ("OnBeingStanceDamage", "toughness.hit", "global_listener"),
+        ("OnBeingBreak", "break.triggered", "global_listener"),
+        ("OnListenAfterAttack", "action.after_attack", "global_listener"),
+        ("OnListenHPChange", "hp.change", "global_listener"),
+        *resource_event_rows,
     ):
         if callback_event in existing_callback_events:
             continue
@@ -3548,7 +3632,7 @@ def _production_event_chain(
                 ),
                 callback_event=callback_event,
                 event_family="validation_production_dependency",
-                default_scope_kind="global_listener",
+                default_scope_kind=scope_kind,
                 runtime_event_sources=(runtime_event,),
                 source_basis="kernel_fixture_production_event_dependency",
                 source=source,
@@ -3557,8 +3641,66 @@ def _production_event_chain(
             )
         )
     base_ir = bundle["ir"]
+    base_status_producer_effect = next(
+        effect
+        for effect in sorted(
+            base_ir.effects,
+            key=lambda item: (item.source.source_path, item.effect_id),
+        )
+        if effect.opcode == "AddModifier"
+        and effect.coverage_status == "executable"
+        and isinstance(effect.payload.get("standard"), dict)
+        and effect.payload["standard"].get("target_alias") == "ParamEntity"
+        and effect.payload["standard"].get("target_expression_id")
+        and not effect.payload["standard"].get("dynamic_value_requests")
+    )
+    producer_modifier_name = "ValidationP8S7EventProducerDebuff"
+    producer_definition_id = f"modifier_definition:{producer_modifier_name}"
+    producer_standard = {
+        **base_status_producer_effect.payload["standard"],
+        "modifier_name": producer_modifier_name,
+        "dynamic_values": {},
+        "dynamic_value_requests": {},
+        "lifetime": numeric_fixed(2.0),
+        "life_step_moment": "ModifierPhase1End",
+        "duration_admission": {
+            "admission_status": "executable",
+            "blocked_reason": "",
+            "life_step_moment": "ModifierPhase1End",
+            "lifetime_expr": numeric_fixed(2.0),
+        },
+        "layer_add_when_stack": numeric_fixed(1.0),
+        "max_layer": numeric_fixed(2.0),
+        "chance": numeric_fixed(1.0),
+        "chance_field_present": True,
+    }
+    status_producer_effect = replace(
+        base_status_producer_effect,
+        effect_id="validation:p8_s7:status-event-producer-effect",
+        payload={
+            **base_status_producer_effect.payload,
+            "standard": producer_standard,
+        },
+        source=source,
+        modifier_definition_id=producer_definition_id,
+        status_callback_ids=(),
+        owner_modifier_name="",
+    )
+    status_producer_definition = RuleEntity(
+        entity_id=producer_definition_id,
+        entity_type="modifier_definition",
+        fields={
+            "modifier_name": producer_modifier_name,
+            "StatusType": "Debuff",
+            "behavior_flags": ["STAT_DefenceDown"],
+        },
+        source=source,
+        coverage_status="executable",
+    )
     production_ir = replace(
         base_ir,
+        entities=(*base_ir.entities, status_producer_definition),
+        effects=(*base_ir.effects, status_producer_effect),
         action_definitions=definitions,
         action_ability_bindings=fixture_ir.action_ability_bindings,
         ability_phases=fixture_ir.ability_phases,
@@ -3583,12 +3725,49 @@ def _production_event_chain(
                 coverage_status="executable",
             ),
         ),
+        break_damage_emissions=(break_damage_emission,),
         status_event_families=tuple(event_families),
     )
     rules = RuleBook(production_ir)
-    decision_system = DecisionSystem(rules)
 
-    def execute_turn(*, target_hp: float, target_toughness: float) -> Any:
+    def execute_turn(
+        *,
+        target_hp: float,
+        target_toughness: float,
+        attack_type: str = "Normal",
+        target_id: str = "enemy:target",
+        target_mode: str = "single",
+        target_relation: str = "enemy",
+    ) -> Any:
+        # Produce each skill-type context through the real decision/scheduler/
+        # executor chain.  Merely rewriting an emitted event payload would not
+        # prove that the runtime producer preserves the action definition.
+        case_ir = replace(
+            production_ir,
+            action_definitions=tuple(
+                replace(
+                    definition,
+                    attack_type=attack_type,
+                    target_mode=target_mode,
+                    target_relation=target_relation,
+                )
+                if definition.action_id == action_id and definition.level == level
+                else definition
+                for definition in production_ir.action_definitions
+            ),
+            action_events=tuple(
+                replace(
+                    event,
+                    target_mode=target_mode,
+                    target_relation=target_relation,
+                )
+                if event.action_id == action_id and event.level == level
+                else event
+                for event in production_ir.action_events
+            ),
+        )
+        case_rules = RuleBook(case_ir)
+        decision_system = DecisionSystem(case_rules)
         initial = _p7_base_state(target_hp=target_hp)
         target = initial.units["enemy:target"]
         target = replace(
@@ -3605,7 +3784,7 @@ def _production_event_chain(
             choice
             for choice in advance.decision.availability.choices
             if choice.action_id == action_id
-            and "enemy:target" in choice.selectable_target_ids
+            and target_id in choice.selectable_target_ids
         )
         if not advance.decision.ready or len(choices) != 1:
             return {
@@ -3613,15 +3792,24 @@ def _production_event_chain(
                 "reason": "production_action_decision_missing",
                 "advance": advance,
                 "submit": None,
+                "rules": case_rules,
+                "attack_type": attack_type,
             }
         choice = choices[0]
         command = ActionCommand(
             actor_id=choice.actor_id,
             action_id=choice.action_id,
             action_level=choice.action_level,
-            target_ids=("enemy:target",),
+            target_ids=(target_id,),
             source="manual",
-            metadata=dict(choice.command_template.get("metadata") or {}),
+            metadata={
+                **dict(choice.command_template.get("metadata") or {}),
+                # The production chain must exercise the critical-hit event
+                # payload consumed by real equipment callbacks.  The common
+                # damage formula still produces the outcome; this only fixes
+                # the controllable RNG branch for the focused probe.
+                "crit_mode": "forced_crit",
+            },
         )
         submit = decision_system.submit(
             advance.after_state,
@@ -3634,13 +3822,40 @@ def _production_event_chain(
             "advance": advance,
             "submit": submit,
             "transitions": transitions,
+            "rules": case_rules,
+            "attack_type": attack_type,
         }
 
     ordinary = execute_turn(target_hp=1000.0, target_toughness=100.0)
     breaking = execute_turn(target_hp=1000.0, target_toughness=0.5)
+    skill = execute_turn(
+        target_hp=1000.0,
+        target_toughness=100.0,
+        attack_type="Skill",
+    )
+    ultimate = execute_turn(
+        target_hp=1000.0,
+        target_toughness=100.0,
+        attack_type="Ultra",
+    )
+    self_target_ultimate = execute_turn(
+        target_hp=1000.0,
+        target_toughness=100.0,
+        attack_type="Ultra",
+        target_id="ally:actor",
+        target_mode="self_or_team",
+        target_relation="self",
+    )
+    production_cases = (
+        ordinary,
+        breaking,
+        skill,
+        ultimate,
+        self_target_ultimate,
+    )
     transitions = tuple(
         transition
-        for case in (ordinary, breaking)
+        for case in production_cases
         for transition in case.get("transitions", ())
     )
     defeat_state = _p7_base_state(target_hp=1.0)
@@ -3709,13 +3924,17 @@ def _production_event_chain(
         if family.coverage_status == "executable"
         and family.admission_status == "executable"
     )
-    audits = [RuntimeSourceAuditor(rules).validate_transition(item) for item in transitions]
+    audits = [
+        RuntimeSourceAuditor(case["rules"]).validate_transition(transition)
+        for case in production_cases
+        for transition in case.get("transitions", ())
+    ]
     replay_rows = []
     for transition in transitions:
         before_state = next(
             (
                 case["advance"].after_state
-                for case in (ordinary, breaking)
+                for case in production_cases
                 if case.get("submit") is not None
                 and case["submit"].transition is transition
             ),
@@ -3810,6 +4029,11 @@ def _production_event_chain(
     checks = {
         "ordinary_production_turn_committed": ordinary["ok"],
         "breaking_production_turn_committed": breaking["ok"],
+        "skill_production_turn_committed": skill["ok"],
+        "ultimate_production_turn_committed": ultimate["ok"],
+        "self_target_ultimate_production_turn_committed": (
+            self_target_ultimate["ok"]
+        ),
         "defeat_production_chain_closed": defeat_result.ok
         and defeat_after.units["enemy:target"].hp == 0.0
         and any(event.event_type == "unit.defeated" for event in defeat_result.events)
@@ -3836,6 +4060,18 @@ def _production_event_chain(
         ),
         "two_hit_listener_windows_have_canonical_order": (
             ordinary_timing_sequence == expected_timing_sequence
+        ),
+        "skill_and_ultimate_contexts_come_from_action_producer": all(
+            any(
+                event.event_type in {
+                    "action.window.before_skill_use",
+                    "action.window.after_skill_use",
+                }
+                and event.payload.get("skill_type") == case["attack_type"]
+                for transition in case.get("transitions", ())
+                for event in transition.transaction.events
+            )
+            for case in (skill, ultimate)
         ),
     }
     checks["ok"] = all(checks.values())

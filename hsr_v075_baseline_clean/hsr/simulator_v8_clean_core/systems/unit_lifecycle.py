@@ -267,6 +267,11 @@ class UnitLifecycleSystem:
         common = {
             "source_trace": source_trace,
             "removed_record": removed_record,
+            # OnListenAvatarBaseTypeChange observes the effective roster
+            # composition.  Keep the departing unit's typed path on the
+            # trusted lifecycle mutation because the unit may no longer be
+            # queryable after the mutation is reduced.
+            "removed_unit_base_type": _unit_base_type(unit),
         }
         return (
             Mutation(
@@ -304,3 +309,11 @@ class UnitLifecycleSystem:
             "blocked_reason": reason,
             "state_unchanged": True,
         }
+
+
+def _unit_base_type(unit: UnitState) -> str:
+    for key in ("avatar_base_type", "path", "base_type"):
+        value = unit.flags.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return ""

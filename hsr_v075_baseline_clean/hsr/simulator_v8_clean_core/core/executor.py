@@ -275,6 +275,41 @@ class CombatExecutor:
         runtime_records: list[dict[str, JSONValue]] = [
             *(_mutation_record("timeline", mutation) for mutation in timeline_mutations),
         ]
+        if action_enabled and action_definition.attack_type == "Ultra":
+            prepare_event = GameEvent(
+                event_type="action.ultimate.prepare",
+                source_id=command.actor_id,
+                target_id=command.actor_id,
+                event_id=(
+                    f"event:{current_state.event_index}:ultimate_prepare:"
+                    f"{command.actor_id}:{command.action_id}:{command.action_level}"
+                ),
+                window="OnUltraSkillPrepare",
+                process_only=True,
+                payload={
+                    "callback_events": ["OnUltraSkillPrepare"],
+                    "listener_scope": "owner_local",
+                    "action_id": command.action_id,
+                    "action_level": command.action_level,
+                    "actor_id": command.actor_id,
+                    "attacker_id": command.actor_id,
+                    "target_id": command.actor_id,
+                    "param_entity_id": command.actor_id,
+                    "selected_target_ids": list(target_result.resolution.selected),
+                    "attack_type": action_definition.attack_type,
+                    "skill_type": _condition_skill_type(action_definition),
+                    "source_trace": action_definition_trace,
+                },
+            )
+            prepare_result = self.event_dispatcher.dispatch_event(
+                current_state,
+                event=prepare_event,
+            )
+            current_state = prepare_result.after_state
+            listener_dispatch_results.append(prepare_result)
+            ordered_mutations.extend(prepare_result.mutations)
+            runtime_records.extend(prepare_result.records)
+            events = (*events, prepare_event, *prepare_result.events)
         for mutation in resource_mutations:
             current_state = self.reducer.apply_all(current_state, (mutation,))
             ordered_mutations.append(mutation)
@@ -307,6 +342,10 @@ class CombatExecutor:
         damage_window_ledger = DamageWindowLedger()
         action_hit_targets: list[str] = []
         hit_sequence_started = False
+        hit_sequence_is_critical = False
+        target_hit_sequence_is_critical: dict[str, bool] = {}
+        hit_sequence_final_damage = 0.0
+        target_hit_sequence_final_damage: dict[str, float] = {}
         target_hit_sequences_started: set[str] = set()
 
         def dispatch_listener_window(event: GameEvent) -> None:
@@ -345,6 +384,9 @@ class CombatExecutor:
                                 "toughness.hit",
                                 "break.triggered",
                                 "unit.defeated",
+                                "custom.event",
+                                "summon.spawned",
+                                "summon.removed",
                                 *MUTATION_BACKED_EVENT_TYPES,
                             }:
                                 continue
@@ -657,6 +699,39 @@ class CombatExecutor:
                             window_ledger=damage_window_ledger,
                         )
                         damage_results.append(damage_result)
+                        hit_is_critical = any(
+                            emitted_event.event_type == "damage.hit"
+                            and emitted_event.payload.get("is_critical") is True
+                            for emitted_event in damage_result.events
+                        )
+                        hit_final_damage = sum(
+                            float(amount)
+                            for emitted_event in damage_result.events
+                            if emitted_event.event_type == "damage.hit"
+                            and isinstance(
+                                (amount := emitted_event.payload.get("amount")),
+                                (int, float),
+                            )
+                            and not isinstance(amount, bool)
+                        )
+                        hit_sequence_final_damage += hit_final_damage
+                        target_hit_sequence_final_damage[damage_packet.target_id] = (
+                            target_hit_sequence_final_damage.get(
+                                damage_packet.target_id,
+                                0.0,
+                            )
+                            + hit_final_damage
+                        )
+                        hit_sequence_is_critical = (
+                            hit_sequence_is_critical or hit_is_critical
+                        )
+                        target_hit_sequence_is_critical[damage_packet.target_id] = (
+                            target_hit_sequence_is_critical.get(
+                                damage_packet.target_id,
+                                False,
+                            )
+                            or hit_is_critical
+                        )
                         damage_mutations = (*damage_mutations, *damage_result.mutations)
                         current_state = self.reducer.apply_all(current_state, damage_result.mutations)
                         ordered_mutations.extend(damage_result.mutations)
@@ -912,6 +987,9 @@ class CombatExecutor:
                             "toughness.hit",
                             "break.triggered",
                             "unit.defeated",
+                            "custom.event",
+                            "summon.spawned",
+                            "summon.removed",
                             *MUTATION_BACKED_EVENT_TYPES,
                         }:
                             continue
@@ -935,6 +1013,14 @@ class CombatExecutor:
                             selected_target_ids=target_result.resolution.selected,
                             primary_target_id=action_execution_plan.primary_action_target_id,
                             source_trace=action_source_metadata.get("source_trace", {}),
+                            is_critical=target_hit_sequence_is_critical.get(
+                                hit_target_id,
+                                False,
+                            ),
+                            final_damage=target_hit_sequence_final_damage.get(
+                                hit_target_id,
+                                0.0,
+                            ),
                         )
                     )
             if hit_sequence_started:
@@ -951,6 +1037,8 @@ class CombatExecutor:
                         selected_target_ids=target_result.resolution.selected,
                         primary_target_id=action_execution_plan.primary_action_target_id,
                         source_trace=action_source_metadata.get("source_trace", {}),
+                        is_critical=hit_sequence_is_critical,
+                        final_damage=hit_sequence_final_damage,
                     )
                 )
             for hit_target_id in dict.fromkeys(action_hit_targets):
@@ -975,6 +1063,10 @@ class CombatExecutor:
                         "target_ids": list(target_result.resolution.selected),
                         "attack_type": action_definition.attack_type,
                         "skill_effect": action_definition.skill_effect,
+                        "is_critical": target_hit_sequence_is_critical.get(
+                            hit_target_id,
+                            False,
+                        ),
                         "source_trace": action_source_metadata.get("source_trace", {}),
                     },
                 )
@@ -1862,9 +1954,6 @@ def _collect_direct_damage_modifiers(
     target = state.units.get(target_id)
     if actor is None or target is None:
         return (), ()
-    details = actor.flags.get("status_details", ())
-    if not isinstance(details, (list, tuple)):
-        return (), ()
     evaluator = RuleEvaluator()
     terms: list[dict[str, JSONValue]] = []
     records: list[dict[str, JSONValue]] = []
@@ -1879,29 +1968,49 @@ def _collect_direct_damage_modifiers(
         "SkillType": packet.metadata.get("SkillType"),
         "skill_type": packet.metadata.get("skill_type"),
     }
-    for detail in details:
-        if not isinstance(detail, dict):
+    callback_sources = (
+        (actor, ("OnBeforeAttack", "OnBeforeHitAll", "OnBeforeHit")),
+        (target, ("OnBeforeBeingHitAll", "OnBeforeBeingHit")),
+    )
+    for status_unit, callback_events in callback_sources:
+        details = status_unit.flags.get("status_details", ())
+        if not isinstance(details, (list, tuple)):
             continue
-        modifier_name = str(detail.get("modifier_name") or "")
-        owner_id = str(detail.get("owner_id") or actor_id)
-        callback_ids = _trigger_ids_for_detail_event(detail, "OnBeforeHitAll")
-        callbacks = rules.status_callbacks_for_modifier_event_scope(modifier_name, "OnBeforeHitAll", "actor_local")
-        if callback_ids is not None:
-            callbacks = tuple(callback for callback in callbacks if callback.callback_id in callback_ids)
-        for callback in callbacks:
-            callback_terms, callback_records = _collect_callback_damage_modifiers(
-                state,
-                rules,
-                evaluator,
-                callback_id=callback.callback_id,
-                actor_id=actor_id,
-                owner_id=owner_id,
-                target_id=target_id,
-                detail=detail,
-                event_payload=event_payload,
-            )
-            terms.extend(callback_terms)
-            records.extend(callback_records)
+        for detail in details:
+            if not isinstance(detail, dict):
+                continue
+            modifier_name = str(detail.get("modifier_name") or "")
+            owner_id = str(detail.get("owner_id") or status_unit.unit_id)
+            for callback_event in callback_events:
+                callback_ids = _trigger_ids_for_detail_event(
+                    detail,
+                    callback_event,
+                )
+                callbacks = rules.status_callbacks_for_modifier_event(
+                    modifier_name,
+                    callback_event,
+                )
+                if callback_ids is not None:
+                    callbacks = tuple(
+                        callback
+                        for callback in callbacks
+                        if callback.callback_id in callback_ids
+                    )
+                for callback in callbacks:
+                    callback_terms, callback_records = _collect_callback_damage_modifiers(
+                        state,
+                        rules,
+                        evaluator,
+                        callback_id=callback.callback_id,
+                        callback_event=callback_event,
+                        actor_id=actor_id,
+                        owner_id=owner_id,
+                        target_id=target_id,
+                        detail=detail,
+                        event_payload=event_payload,
+                    )
+                    terms.extend(callback_terms)
+                    records.extend(callback_records)
     return tuple(terms), tuple(records)
 
 
@@ -1911,6 +2020,7 @@ def _collect_callback_damage_modifiers(
     evaluator: RuleEvaluator,
     *,
     callback_id: str,
+    callback_event: str,
     actor_id: str,
     owner_id: str,
     target_id: str,
@@ -1987,7 +2097,7 @@ def _collect_callback_damage_modifiers(
                         "damage_modifier_id": modifier.damage_modifier_id,
                         "callback_id": callback_id,
                         "source_task_id": child.task_id,
-                        "condition": "OnBeforeHitAll_condition_passed",
+                        "condition": f"{callback_event}_condition_passed",
                         "numeric_evaluation": evaluation.to_json(),
                         "source_trace": modifier.source.to_json(),
                     }
@@ -2339,6 +2449,8 @@ def _damage_listener_window_event(
     selected_target_ids: tuple[str, ...],
     primary_target_id: str | None,
     source_trace: dict[str, JSONValue],
+    is_critical: bool | None = None,
+    final_damage: float | None = None,
 ) -> GameEvent:
     event_token = event_type.replace(".", "_")
     return GameEvent(
@@ -2370,6 +2482,9 @@ def _damage_listener_window_event(
             "skill_effect": action_definition.skill_effect,
             "is_current_skill_active": True,
             "is_insert_action": command.source == "queue",
+            "is_critical": is_critical,
+            "amount": final_damage,
+            "final_damage": final_damage,
             "source_trace": source_trace,
         },
     )

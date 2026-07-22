@@ -3,19 +3,28 @@ from __future__ import annotations
 from dataclasses import replace
 
 from ..core.model import GameEvent, JSONValue, Mutation
+from ..resource_event_contract import (
+    TEAM_SKILL_POINT_EVENT_CONTRACT,
+    UNIT_ENERGY_EVENT_CONTRACT,
+    resource_event_contract_for_path,
+    resource_production_event_types,
+)
 
 
-MUTATION_BACKED_EVENT_TYPES = {
+MUTATION_BACKED_EVENT_TYPES = frozenset({
     "hp.change",
     "heal.after",
     "shield.change",
     "shield.exhausted",
-    "sp.change",
-    "energy.before_change",
-    "energy.change",
     "toughness.before_hit",
     "action_delay.changed",
-}
+    "unit.created",
+    "unit.removed",
+    "unit.base_type.changed",
+    "weakness.stacked",
+    "elation.time.started",
+    "elation.time.ended",
+}) | resource_production_event_types()
 
 PRE_MUTATION_BLOCK_REASON = "pre_mutation_listener_recompute_not_admitted"
 
@@ -41,6 +50,131 @@ def events_for_mutation(
     event_source_id = source_id or actor_id or _payload_str(payload, "source_id") or mutation.source
     target_id = _target_id_for_path(path)
     event_id_prefix = f"event:{event_index}:mutation_backed:{mutation.stable_id()}"
+
+    if len(path) == 2 and path[0] == "units" and mutation.op == "spawn":
+        events = [
+            GameEvent(
+                event_type="unit.created",
+                source_id=event_source_id,
+                target_id=target_id,
+                event_id=f"{event_id_prefix}:unit_created",
+                window="OnListenCharacterCreate",
+                process_only=True,
+                payload={
+                    **payload,
+                    "callback_events": ["OnListenCharacterCreate", "OnSnapshotCreate"],
+                    "listener_scope": "global_listener",
+                    "unit_id": target_id,
+                    "param_entity_id": target_id,
+                },
+            ),
+        ]
+        base_type = _spawned_unit_base_type(mutation.after)
+        if base_type:
+            events.append(
+                _unit_base_type_changed_event(
+                    mutation,
+                    event_source_id=event_source_id,
+                    event_id_prefix=event_id_prefix,
+                    target_id=target_id,
+                    before="",
+                    after=base_type,
+                    roster_operation="unit_spawn",
+                    payload=payload,
+                )
+            )
+        return tuple(events)
+
+    if _is_unit_removed_path(path, mutation):
+        events = [
+            GameEvent(
+                event_type="unit.removed",
+                source_id=event_source_id,
+                target_id=target_id,
+                event_id=f"{event_id_prefix}:unit_removed",
+                window="OnListenCharacterEscape",
+                process_only=True,
+                payload={
+                    **payload,
+                    "callback_events": ["OnListenCharacterEscape"],
+                    "listener_scope": "global_listener",
+                    "unit_id": target_id,
+                    "param_entity_id": target_id,
+                },
+            ),
+        ]
+        base_type = mutation.metadata.get("removed_unit_base_type")
+        if isinstance(base_type, str) and base_type:
+            events.append(
+                _unit_base_type_changed_event(
+                    mutation,
+                    event_source_id=event_source_id,
+                    event_id_prefix=event_id_prefix,
+                    target_id=target_id,
+                    before=base_type,
+                    after="",
+                    roster_operation="unit_remove",
+                    payload=payload,
+                )
+            )
+        return tuple(events)
+
+    if _is_unit_base_type_path(path) and mutation.before != mutation.after:
+        return (
+            _unit_base_type_changed_event(
+                mutation,
+                event_source_id=event_source_id,
+                event_id_prefix=event_id_prefix,
+                target_id=target_id,
+                before=mutation.before,
+                after=mutation.after,
+                roster_operation="unit_base_type_change",
+                payload=payload,
+            ),
+        )
+
+    added_weaknesses = _added_weaknesses(path, mutation)
+    if added_weaknesses:
+        return (
+            GameEvent(
+                event_type="weakness.stacked",
+                source_id=event_source_id,
+                target_id=target_id,
+                event_id=f"{event_id_prefix}:weakness_stacked",
+                window="OnStackWeakness",
+                process_only=True,
+                payload={
+                    **payload,
+                    "callback_events": ["OnStackWeakness"],
+                    "listener_scope": "owner_local",
+                    "unit_id": target_id,
+                    "param_entity_id": target_id,
+                    "added_weaknesses": list(added_weaknesses),
+                },
+            ),
+        )
+
+    elation_event_type = _elation_time_event_type(path, mutation)
+    if elation_event_type:
+        callback_event = (
+            "OnListenElationTimeStart"
+            if elation_event_type == "elation.time.started"
+            else "OnListenElationTimeEnd"
+        )
+        return (
+            GameEvent(
+                event_type=elation_event_type,
+                source_id=event_source_id,
+                event_id=f"{event_id_prefix}:{elation_event_type.replace('.', '_')}",
+                window=callback_event,
+                process_only=True,
+                payload={
+                    **payload,
+                    "callback_events": [callback_event],
+                    "listener_scope": "global_listener",
+                },
+            ),
+        )
 
     if _is_unit_hp_path(path):
         delta = _numeric_delta(mutation.before, mutation.after)
@@ -132,54 +266,67 @@ def events_for_mutation(
             )
         return tuple(events)
 
-    if path == ("skill_points",):
-        sp_target_id = actor_id or target_id
+    resource_contract = resource_event_contract_for_path(path)
+    if resource_contract is TEAM_SKILL_POINT_EVENT_CONTRACT:
+        if payload.get("delta") in {None, 0, 0.0}:
+            return ()
+        bp_actor_id = actor_id or target_id
         return (
             GameEvent(
-                event_type="sp.change",
+                event_type=resource_contract.after_event_type,
                 source_id=event_source_id,
-                target_id=sp_target_id,
-                event_id=f"{event_id_prefix}:sp_change",
-                window="OnSPChange",
+                target_id=bp_actor_id,
+                event_id=f"{event_id_prefix}:bp_change",
+                window=resource_contract.after_callback_events[0],
                 process_only=True,
                 payload={
                     **payload,
-                    "callback_events": ["OnSPChange"],
-                    "listener_scope": "being_hit_target_local",
-                    "resource": "skill_points",
-                    "target_id": sp_target_id,
+                    "callback_events": list(resource_contract.after_callback_events),
+                    "listener_scope": resource_contract.scope_kind,
+                    "resource": resource_contract.payload_resource,
+                    "resource_event_contract_id": resource_contract.contract_id,
+                    "target_id": bp_actor_id,
+                    "param_entity_id": bp_actor_id,
+                    "change_value": payload.get("delta"),
                 },
             ),
         )
 
-    if _is_energy_path(path):
+    if resource_contract is UNIT_ENERGY_EVENT_CONTRACT:
+        if payload.get("delta") in {None, 0, 0.0}:
+            return ()
         after_event = GameEvent(
-            event_type="energy.change",
+            event_type=resource_contract.after_event_type,
             source_id=event_source_id,
             target_id=target_id,
             event_id=f"{event_id_prefix}:energy_change",
-            window="OnEnergyPointChange",
+            window=resource_contract.after_callback_events[0],
             process_only=True,
             payload={
                 **payload,
-                "callback_events": ["OnEnergyPointChange"],
-                "listener_scope": "being_hit_target_local",
-                "resource": "energy",
+                "callback_events": list(resource_contract.after_callback_events),
+                "listener_scope": resource_contract.scope_kind,
+                "resource": resource_contract.payload_resource,
+                "resource_event_contract_id": resource_contract.contract_id,
+                "change_value": payload.get("delta"),
             },
         )
         if not include_before:
             return (after_event,)
         before_event = GameEvent(
-            event_type="energy.before_change",
+            event_type=resource_contract.before_event_type,
             source_id=event_source_id,
             target_id=target_id,
             event_id=f"{event_id_prefix}:energy_before_change",
-            window="OnBeforeEnergyPointChange",
+            window=resource_contract.before_callback_events[0],
             process_only=True,
             payload={
                 **payload,
-                "callback_events": ["OnBeforeEnergyPointChange"],
-                "listener_scope": "being_hit_target_local",
+                "callback_events": list(resource_contract.before_callback_events),
+                "listener_scope": resource_contract.scope_kind,
+                "resource": resource_contract.payload_resource,
+                "resource_event_contract_id": resource_contract.contract_id,
+                "change_value": payload.get("delta"),
                 "pre_mutation_execution_admission": "blocked",
                 "blocked_reason": PRE_MUTATION_BLOCK_REASON,
             },
@@ -208,6 +355,117 @@ def events_for_mutation(
         )
 
     return ()
+
+
+def _is_unit_removed_path(path: tuple[str, ...], mutation: Mutation) -> bool:
+    if len(path) != 4 or path[0] != "units" or path[2] != "flags":
+        return False
+    if path[3] not in {"lifecycle_status", "lifecycle_state"}:
+        return False
+    return str(mutation.after or "").lower() in {"removed", "escaped"}
+
+
+def _is_unit_base_type_path(path: tuple[str, ...]) -> bool:
+    return (
+        len(path) == 4
+        and path[0] == "units"
+        and path[2] == "flags"
+        and path[3] in {"avatar_base_type", "path", "base_type"}
+    )
+
+
+def _spawned_unit_base_type(value: JSONValue) -> str:
+    if not isinstance(value, dict):
+        return ""
+    flags = value.get("flags")
+    if not isinstance(flags, dict):
+        return ""
+    for key in ("avatar_base_type", "path", "base_type"):
+        base_type = flags.get(key)
+        if isinstance(base_type, str) and base_type:
+            return base_type
+    return ""
+
+
+def _unit_base_type_changed_event(
+    mutation: Mutation,
+    *,
+    event_source_id: str,
+    event_id_prefix: str,
+    target_id: str,
+    before: JSONValue,
+    after: JSONValue,
+    roster_operation: str,
+    payload: dict[str, JSONValue],
+) -> GameEvent:
+    return GameEvent(
+        event_type="unit.base_type.changed",
+        source_id=event_source_id,
+        target_id=target_id,
+        event_id=f"{event_id_prefix}:unit_base_type_changed:{roster_operation}",
+        window="OnListenAvatarBaseTypeChange",
+        process_only=True,
+        payload={
+            **payload,
+            "callback_events": ["OnListenAvatarBaseTypeChange"],
+            "listener_scope": "global_listener",
+            "unit_id": target_id,
+            "param_entity_id": target_id,
+            "base_type_before": before,
+            "base_type_after": after,
+            "roster_operation": roster_operation,
+            "source_mutation_id": mutation.stable_id(),
+        },
+    )
+
+
+def _added_weaknesses(path: tuple[str, ...], mutation: Mutation) -> tuple[str, ...]:
+    if len(path) != 4 or path[0] != "units" or path[2:] != ("flags", "weaknesses"):
+        return ()
+    before_values = mutation.before if isinstance(mutation.before, (list, tuple)) else ()
+    after_values = mutation.after if isinstance(mutation.after, (list, tuple)) else ()
+    before = {str(item) for item in before_values if isinstance(item, str) and item}
+    after = {str(item) for item in after_values if isinstance(item, str) and item}
+    return tuple(sorted(after.difference(before)))
+
+
+def _elation_time_event_type(path: tuple[str, ...], mutation: Mutation) -> str:
+    if len(path) != 2 or path[0] != "global_flags":
+        return ""
+    if path[1] != "elation_time_active":
+        return ""
+    metadata = mutation.metadata
+    if (
+        mutation.source != "battle_state_transition_system"
+        or not isinstance(
+            metadata.get("battle_state_transition_rule_id"), str
+        )
+        or not metadata.get("battle_state_transition_rule_id")
+        or not isinstance(metadata.get("trigger_kind"), str)
+        or not metadata.get("trigger_kind")
+        or not isinstance(metadata.get("trigger_identity"), str)
+        or not metadata.get("trigger_identity")
+        or not isinstance(metadata.get("runtime_event_type"), str)
+        or not isinstance(metadata.get("callback_event"), str)
+        or not isinstance(metadata.get("source_trace"), dict)
+    ):
+        return ""
+    before = bool(mutation.before) if mutation.before_exists else False
+    after = bool(mutation.after) if mutation.after_exists else False
+    if before == after:
+        return ""
+    event_type = "elation.time.started" if after else "elation.time.ended"
+    callback_event = (
+        "OnListenElationTimeStart"
+        if after
+        else "OnListenElationTimeEnd"
+    )
+    if (
+        metadata.get("runtime_event_type") != event_type
+        or metadata.get("callback_event") != callback_event
+    ):
+        return ""
+    return event_type
 
 
 def before_toughness_event(
@@ -321,10 +579,9 @@ def _target_id_for_path(path: tuple[str, ...]) -> str:
 
 
 def _resource_for_path(path: tuple[str, ...], metadata: dict[str, JSONValue]) -> str:
-    if path == ("skill_points",):
-        return "skill_points"
-    if len(path) >= 3 and path[0] == "units" and path[2] == "energy":
-        return "energy"
+    resource_contract = resource_event_contract_for_path(path)
+    if resource_contract is not None:
+        return resource_contract.payload_resource
     if len(path) >= 4 and path[0] == "units" and path[2] == "resources":
         return path[3]
     resource = metadata.get("resource")
@@ -414,10 +671,6 @@ def _shield_total(value: JSONValue) -> float:
         and isinstance(item.get("remaining"), (int, float))
         and not isinstance(item.get("remaining"), bool)
     )
-
-
-def _is_energy_path(path: tuple[str, ...]) -> bool:
-    return len(path) == 3 and path[0] == "units" and path[2] == "energy"
 
 
 def _is_toughness_path(path: tuple[str, ...]) -> bool:

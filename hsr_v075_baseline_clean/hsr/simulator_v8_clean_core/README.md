@@ -11,15 +11,15 @@ turnbasedgamedata-main -> TBGD compiler/lowering -> Canonical IR / 数据卡 IR 
 当前最近检查点：
 
 ```text
-P8-S7 light-cone status/condition/listener closure accepted
-最近检查点：P8-S7 已完成独立验收，当前光锥属性、状态、条件、动态值与监听机制族已闭合；18 个纯 S7 图可正式执行，144 个含 S8 分支的图继续整体 blocked
-检查点报告：../live_validation_reports/v8_p8_s7_light_cone_status_condition_listener_closure_ready_for_review.md
+P8-S8 light-cone remaining gameplay closure accepted
+最近检查点：P8-S8 已完成独立验收，当前 162 张已发布光锥的完整 gameplay 图均已闭合；148 张已通过正式角色构筑启动，14 张记忆命途光锥只因角色侧忆灵构筑缺口保持外部阻断
+检查点报告：../live_validation_reports/v8_p8_s8_remaining_gameplay_ready_for_review.md
 ```
 
 当前推荐下一阶段：
 
 ```text
-P8-S8 light-cone remaining gameplay closure / P8-S9 relic definition cards in an isolated worktree
+P8-S9 relic definition cards；记忆角色与忆灵 owned-combatant 构筑按独立角色任务补齐
 计划文档：P8_EQUIPMENT_BUILD_LIGHT_CONE_RELIC_TASK_PLAN.md
 ```
 
@@ -151,4 +151,4 @@ git diff --check
 
 ## 下一阶段建议
 
-P8-S7 已验收。当前光锥轨下一步只执行 P8-S8 剩余 gameplay 机制闭环；遗器轨若并行，仍必须从已验收的 S4 检查点建立独立 worktree 后从 P8-S9 开始。每条轨内部严格串行，执行线程只能提交 `ready_for_review`，由验收线程检查代码、谓词和 evidence 后勾选唯一 checklist。
+P8-S8 已验收，光锥轨已完成当前目录的机制闭环。下一阶段从 P8-S9 开始遗器定义卡；记忆角色与忆灵 owned-combatant 构筑仍按独立角色任务补齐。遗器轨内部严格串行，执行线程只能提交 `ready_for_review`，由验收线程检查代码、谓词和 evidence 后勾选唯一 checklist；S18 仍须等待遗器轨 S17 完成并合并。

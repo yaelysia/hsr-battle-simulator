@@ -12,7 +12,7 @@ from .ir import (
 )
 
 
-ENGINE_RULE_REGISTRY_VERSION = "hsr_v8_engine_rules_v1"
+ENGINE_RULE_REGISTRY_VERSION = "hsr_v8_engine_rules_v3"
 ENGINE_RULE_SOURCE_KIND = "engine_convention"
 TIMELINE_RULE_APPLICABILITY = "all timeline units with positive effective speed"
 ULTIMATE_COST_RULE_APPLICABILITY = "admitted ultimate action committed from the ultimate queue window"
@@ -20,10 +20,29 @@ KILL_ENERGY_RULE_APPLICABILITY = "living kill-credit owner with a positive maxim
 DAMAGE_DEFENSE_RULE_APPLICABILITY = "direct and admitted non-direct damage defense stages"
 DAMAGE_RESISTANCE_RULE_APPLICABILITY = "direct and admitted non-direct damage resistance stages"
 SHIELD_PRIORITY_RULE_APPLICABILITY = "all source-distinguished shield instances"
-NORMAL_DAMAGE_ROUTE_FAMILIES = ("direct", "dot", "break", "super_break", "true_damage")
+NORMAL_DAMAGE_ROUTE_FAMILIES = (
+    "direct",
+    "additional",
+    "dot",
+    "break",
+    "super_break",
+    "true_damage",
+)
 HP_LOSS_ROUTE_FAMILIES = ("hp_loss",)
 DAMAGE_ROUTE_APPLICABILITY = "damage family exact match before HP mutation"
 SHIELD_PRIORITY_RULE_ID = "shield_priority_rule:engine_convention:priority_then_creation_order_v1"
+ZERO_FLOOR_DYNAMIC_HASH = -1226284721
+ZERO_FLOOR_DYNAMIC_RULE_KIND = "typed_numeric_max_zero_floor_operand"
+ZERO_FLOOR_DYNAMIC_RULE_APPLICABILITY = (
+    "typed numeric program using the undeclared dynamic hash as an operand of variadic max"
+)
+RANGE_ZERO_FLOOR_DYNAMIC_HASH = 339799074
+RANGE_ZERO_FLOOR_DYNAMIC_RULE_KIND = (
+    "typed_numeric_range_max_zero_floor_operand"
+)
+RANGE_ZERO_FLOOR_DYNAMIC_RULE_APPLICABILITY = (
+    "typed numeric range program using the undeclared dynamic hash only as a direct operand of variadic max"
+)
 
 
 @dataclass(frozen=True)
@@ -118,6 +137,40 @@ def build_engine_rule_registry() -> EngineRuleRegistry:
                 registry_version=ENGINE_RULE_REGISTRY_VERSION,
                 applicability=DAMAGE_RESISTANCE_RULE_APPLICABILITY,
             ),
+            DamageFormulaRuleIR(
+                damage_formula_rule_id="damage_formula_rule:engine_convention:typed_numeric_max_zero_floor_v1",
+                rule_kind=ZERO_FLOOR_DYNAMIC_RULE_KIND,
+                operation="bind_undeclared_dynamic_hash_to_zero_only_inside_typed_variadic_max_program",
+                numeric_parameters={
+                    "dynamic_hash": float(ZERO_FLOOR_DYNAMIC_HASH),
+                    "numeric_value": 0.0,
+                },
+                source_kind=ENGINE_RULE_SOURCE_KIND,
+                source=_source(
+                    "NumericExpressionEngineConvention",
+                    "typed_numeric_max_zero_floor_v1",
+                    "The current and legacy expression streams consistently use this undeclared first operand as the zero floor of variadic max; the absence of a declared raw binding is preserved as an explicit engine convention.",
+                ),
+                registry_version=ENGINE_RULE_REGISTRY_VERSION,
+                applicability=ZERO_FLOOR_DYNAMIC_RULE_APPLICABILITY,
+            ),
+            DamageFormulaRuleIR(
+                damage_formula_rule_id="damage_formula_rule:engine_convention:typed_numeric_range_max_zero_floor_v1",
+                rule_kind=RANGE_ZERO_FLOOR_DYNAMIC_RULE_KIND,
+                operation="bind_undeclared_dynamic_hash_to_zero_only_inside_typed_variadic_max_program",
+                numeric_parameters={
+                    "dynamic_hash": float(RANGE_ZERO_FLOOR_DYNAMIC_HASH),
+                    "numeric_value": 0.0,
+                },
+                source_kind=ENGINE_RULE_SOURCE_KIND,
+                source=_source(
+                    "NumericExpressionEngineConvention",
+                    "typed_numeric_range_max_zero_floor_v1",
+                    "TBGD range and clamp programs consistently use this undeclared direct Max operand as their zero floor; the missing raw declaration remains explicit as an engine convention.",
+                ),
+                registry_version=ENGINE_RULE_REGISTRY_VERSION,
+                applicability=RANGE_ZERO_FLOOR_DYNAMIC_RULE_APPLICABILITY,
+            ),
         ),
         damage_route_rules=tuple(
             DamageRouteRuleIR(
@@ -197,6 +250,169 @@ def select_damage_formula_rule(
         return None, f"damage_formula_engine_rule_kind_not_admitted:{rule_kind}"
     reason = engine_rule_admission_reason(rules[0], expected_applicability=applicability)
     return (None, reason) if reason else (rules[0], "")
+
+
+def engine_numeric_binding_source(
+    expression: object,
+    registry: EngineRuleRegistry | None = None,
+) -> tuple[dict[str, object] | None, str]:
+    """Return the audited engine binding only for its exact typed-program shape."""
+
+    specifications = (
+        (
+            ZERO_FLOOR_DYNAMIC_HASH,
+            ZERO_FLOOR_DYNAMIC_RULE_KIND,
+            ZERO_FLOOR_DYNAMIC_RULE_APPLICABILITY,
+        ),
+        (
+            RANGE_ZERO_FLOOR_DYNAMIC_HASH,
+            RANGE_ZERO_FLOOR_DYNAMIC_RULE_KIND,
+            RANGE_ZERO_FLOOR_DYNAMIC_RULE_APPLICABILITY,
+        ),
+    )
+    present = tuple(
+        specification
+        for specification in specifications
+        if _contains_zero_floor_dynamic_hash(expression, specification[0])
+    )
+    if not present:
+        return None, ""
+    if any(
+        not _is_zero_floor_program(expression, dynamic_hash)
+        for dynamic_hash, _, _ in present
+    ):
+        return None, "engine_zero_floor_program_shape_not_admitted"
+    rule_registry = registry or build_engine_rule_registry()
+    entries: dict[str, object] = {}
+    by_hash: dict[str, str] = {}
+    for expected_hash, rule_kind, applicability in present:
+        rules = tuple(
+            rule
+            for rule in rule_registry.damage_formula_rules
+            if rule.rule_kind == rule_kind
+        )
+        if not rules:
+            return None, "engine_zero_floor_rule_missing"
+        if len(rules) != 1:
+            return None, "engine_zero_floor_rule_ambiguous"
+        rule = rules[0]
+        reason = engine_rule_admission_reason(
+            rule,
+            expected_applicability=applicability,
+        )
+        if reason:
+            return None, reason
+        if rule.operation != "bind_undeclared_dynamic_hash_to_zero_only_inside_typed_variadic_max_program":
+            return None, "engine_zero_floor_rule_operation_mismatch"
+        dynamic_hash = rule.numeric_parameters.get("dynamic_hash")
+        numeric_value = rule.numeric_parameters.get("numeric_value")
+        if (
+            not isinstance(dynamic_hash, (int, float))
+            or isinstance(dynamic_hash, bool)
+            or int(dynamic_hash) != expected_hash
+            or float(dynamic_hash) != float(expected_hash)
+            or not isinstance(numeric_value, (int, float))
+            or isinstance(numeric_value, bool)
+            or float(numeric_value) != 0.0
+        ):
+            return None, "engine_zero_floor_rule_parameters_mismatch"
+        entry_key = rule.damage_formula_rule_id
+        entries[entry_key] = {
+            "value": 0.0,
+            "hash": str(expected_hash),
+            "rule_id": rule.damage_formula_rule_id,
+            "operation": rule.operation,
+            "registry_version": rule.registry_version,
+            "source_trace": rule.source.to_json(),
+        }
+        by_hash[str(expected_hash)] = entry_key
+    return {
+        "source_type": "engine_numeric_convention",
+        "entries": entries,
+        "by_hash": by_hash,
+        "by_name": {},
+    }, ""
+
+
+def _is_zero_floor_program(expression: object, dynamic_hash: int) -> bool:
+    if not isinstance(expression, dict) or expression.get("kind") != "program":
+        return False
+    instructions = expression.get("instructions")
+    if not isinstance(instructions, list):
+        return False
+    # Each stack entry tracks (zero_hash_count, zero_hashes_admitted_by_max,
+    # is_the_unmodified_zero_hash_leaf).  Binding is safe only when every
+    # occurrence of the undeclared hash is consumed as a direct operand of a
+    # typed ``max`` instruction.  Merely appearing somewhere in the same
+    # program as an unrelated max is not sufficient evidence.
+    stack: list[tuple[int, int, bool]] = []
+    ended = False
+    for index, instruction in enumerate(instructions):
+        if not isinstance(instruction, dict):
+            return False
+        opcode = instruction.get("opcode")
+        if opcode == "end":
+            if index != len(instructions) - 1:
+                return False
+            ended = True
+            continue
+        if opcode == "push_dynamic":
+            is_zero_hash = instruction.get("hash") == dynamic_hash
+            stack.append((1 if is_zero_hash else 0, 0, is_zero_hash))
+            continue
+        if opcode == "push_fixed":
+            stack.append((0, 0, False))
+            continue
+        if opcode == "negate":
+            if not stack:
+                return False
+            zero_count, admitted_count, _ = stack.pop()
+            stack.append((zero_count, admitted_count, False))
+            continue
+        if opcode == "max":
+            operand_count = instruction.get("operand_count")
+            if (
+                not isinstance(operand_count, int)
+                or isinstance(operand_count, bool)
+                or operand_count < 2
+                or len(stack) < operand_count
+            ):
+                return False
+            operands = stack[-operand_count:]
+            del stack[-operand_count:]
+            zero_count = sum(item[0] for item in operands)
+            admitted_count = sum(item[1] for item in operands) + sum(
+                1 for item in operands if item[2]
+            )
+            stack.append((zero_count, admitted_count, False))
+            continue
+        if opcode not in {"add", "sub", "mul", "div"} or len(stack) < 2:
+            return False
+        rhs = stack.pop()
+        lhs = stack.pop()
+        stack.append((lhs[0] + rhs[0], lhs[1] + rhs[1], False))
+    if not ended or len(stack) != 1:
+        return False
+    zero_count, admitted_count, _ = stack[0]
+    return zero_count > 0 and admitted_count == zero_count
+
+
+def _contains_zero_floor_dynamic_hash(
+    expression: object,
+    dynamic_hash: int,
+) -> bool:
+    if not isinstance(expression, dict) or expression.get("kind") != "program":
+        return False
+    instructions = expression.get("instructions")
+    return bool(
+        isinstance(instructions, list)
+        and any(
+            isinstance(instruction, dict)
+            and instruction.get("opcode") == "push_dynamic"
+            and instruction.get("hash") == dynamic_hash
+            for instruction in instructions
+        )
+    )
 
 
 def evaluate_defense_multiplier(

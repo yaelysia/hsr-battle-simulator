@@ -9,6 +9,10 @@ from typing import Any, Literal
 
 from simulator_v8_clean_core.core.executor import CombatExecutor
 from simulator_v8_clean_core.core.model import ActionCommand, BattleState, JSONValue
+from simulator_v8_clean_core.core.transition_consumer import (
+    transition_blocked_reason as _transition_blocked_reason,
+    transition_successor_state as _transition_successor_state,
+)
 from simulator_v8_clean_core.rules.ir import CanonicalIR
 from simulator_v8_clean_core.rules.rulebook import RuleBook
 from simulator_v8_clean_core.scenarios import IdentityResolver, ScenarioLoader, ScenarioStateBuilder
@@ -592,33 +596,10 @@ def _state_without_unit_flags(
     return replace(state, units=units)
 
 
-def _transition_blocked_reason(transition_json: dict[str, JSONValue]) -> str:
-    outcome = _dict(transition_json.get("outcome"))
-    if outcome.get("category") == "committed" and outcome.get("successor_eligible") is True:
-        return ""
-    for reason in _list(outcome.get("reason_codes")):
-        if isinstance(reason, str) and reason:
-            return reason
-    if outcome:
-        return "transition_outcome_not_successor_eligible"
-    return ""
-
-
 def _blocked_actor_id(transition_json: dict[str, JSONValue]) -> str:
     command = _dict(transition_json.get("command"))
     actor_id = command.get("actor_id")
     return actor_id if isinstance(actor_id, str) else ""
-
-
-def _transition_successor_state(
-    before_state: BattleState,
-    candidate_after_state: BattleState,
-    transition_json: dict[str, JSONValue],
-) -> BattleState:
-    outcome = _dict(transition_json.get("outcome"))
-    if outcome.get("category") == "committed" and outcome.get("successor_eligible") is True:
-        return candidate_after_state
-    return before_state
 
 
 def _prompt_preparation_blocked_record(

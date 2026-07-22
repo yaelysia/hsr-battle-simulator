@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from math import isclose
+from math import isclose, isfinite
 
 from ..core.model import BattleState, GameEvent, JSONValue, Mutation
 from ..core.settlement import SettlementRecord
@@ -386,6 +386,34 @@ class TimelineSystem:
 
     def end_turn(self, state: BattleState, actor_id: str, rule: TimelineRuleIR, *, turn_kind: str = "regular") -> TurnAdvanceResult:
         unit = state.units[actor_id]
+        normalized_delay_cost = 0.0
+        consumed_delay_keys: tuple[str, ...] = ()
+        delay_cost_sources: tuple[dict[str, JSONValue], ...] = ()
+        delay_registry_after: dict[str, JSONValue] | None = None
+        delay_registry_before = state.global_flags.get(
+            "turn_action_delay_cost_modifiers"
+        )
+        if turn_kind == "regular":
+            (
+                normalized_delay_cost,
+                consumed_delay_keys,
+                delay_cost_sources,
+                delay_registry_after,
+                delay_reason,
+            ) = _turn_action_delay_cost(state, actor_id)
+            if delay_reason:
+                return TurnAdvanceResult(
+                    TurnAdvancePlan(
+                        ok=False,
+                        timeline_rule_id=rule.timeline_rule_id,
+                        actor_id=actor_id,
+                        plan_id=f"turn_advance_plan:{state.event_index}:{actor_id}:end",
+                        source_trace=rule.source.to_json(),
+                        blocked_reason=delay_reason,
+                    ),
+                    (),
+                    (),
+                )
         plan = TurnAdvancePlan(
             ok=True,
             timeline_rule_id=rule.timeline_rule_id,
@@ -395,8 +423,20 @@ class TimelineSystem:
         )
         metadata = _timeline_metadata_from_plan(plan, "turn_end", "end_turn")
         speed = effective_unit_stat(unit, "speed")
-        reset_av = self.full_action_value(speed.value, rule) if turn_kind == "regular" else unit.action_value
-        mutations = (
+        base_reset_av = self.full_action_value(speed.value, rule)
+        reset_av = (
+            base_reset_av * max(0.0, 1.0 + normalized_delay_cost)
+            if turn_kind == "regular"
+            else unit.action_value
+        )
+        metadata = {
+            **metadata,
+            "normalized_action_delay_cost": normalized_delay_cost,
+            "consumed_action_delay_cost_keys": list(consumed_delay_keys),
+            "action_delay_cost_sources": list(delay_cost_sources),
+            "base_reset_action_value": base_reset_av,
+        }
+        mutations = [
             Mutation(
                 op="set",
                 path=("units", actor_id, "action_value"),
@@ -407,7 +447,37 @@ class TimelineSystem:
                 metadata={**metadata, "effective_speed": speed.to_json(), "turn_kind": turn_kind},
                 mutation_id=f"mutation:timeline:end_turn_reset:{actor_id}:{state.event_index}:{reset_av}",
             ),
-            Mutation(
+        ]
+        if consumed_delay_keys:
+            if delay_registry_after:
+                mutations.append(
+                    Mutation(
+                        op="set",
+                        path=("global_flags", "turn_action_delay_cost_modifiers"),
+                        before=delay_registry_before,
+                        after=delay_registry_after,
+                        reason="consume current actor action delay cost modifiers",
+                        source="timeline_system",
+                        metadata=metadata,
+                    )
+                )
+            else:
+                mutations.append(
+                    Mutation(
+                        op="delete",
+                        path=("global_flags", "turn_action_delay_cost_modifiers"),
+                        before=delay_registry_before,
+                        after=None,
+                        reason="consume current actor action delay cost modifiers",
+                        source="timeline_system",
+                        before_exists=True,
+                        after_exists=False,
+                        metadata=metadata,
+                    )
+                )
+        mutations.extend(
+            (
+                Mutation(
                 op="set",
                 path=("global_flags", "current_window"),
                 before=state.global_flags.get("current_window"),
@@ -417,7 +487,7 @@ class TimelineSystem:
                 before_exists="current_window" in state.global_flags,
                 metadata=metadata,
                 mutation_id=f"mutation:timeline:turn_window:{actor_id}:{state.event_index}:idle",
-            ),
+                ),
             Mutation(
                 op="delete",
                 path=("global_flags", "active_turn"),
@@ -428,7 +498,7 @@ class TimelineSystem:
                 after_exists=False,
                 metadata=metadata,
                 mutation_id=f"mutation:timeline:active_turn_clear:{actor_id}:{state.event_index}",
-            ),
+                ),
             Mutation(
                 op="delete",
                 path=("global_flags", "turn_owner_id"),
@@ -440,9 +510,10 @@ class TimelineSystem:
                 after_exists=False,
                 metadata=metadata,
                 mutation_id=f"mutation:timeline:turn_owner_clear:{actor_id}:{state.event_index}",
-            ),
+                ),
+            )
         )
-        return TurnAdvanceResult(plan, mutations, ())
+        return TurnAdvanceResult(plan, tuple(mutations), ())
 
     def open_decision_window(self, state: BattleState, plan: TurnAdvancePlan) -> TurnAdvanceResult:
         metadata = _timeline_metadata_from_plan(plan, "turn_decision", "open_decision_window")
@@ -742,6 +813,52 @@ class TimelineSystem:
         if plan.reset_actor_av:
             mutations.append(self.set_action_value(state, actor_id, 0.0, plan.source, metadata))
         return TimelinePlanResult(tuple(mutations), events)
+
+
+def _turn_action_delay_cost(
+    state: BattleState,
+    actor_id: str,
+) -> tuple[
+    float,
+    tuple[str, ...],
+    tuple[dict[str, JSONValue], ...],
+    dict[str, JSONValue] | None,
+    str,
+]:
+    raw = state.global_flags.get("turn_action_delay_cost_modifiers")
+    if raw is None:
+        return 0.0, (), (), None, ""
+    if not isinstance(raw, dict):
+        return 0.0, (), (), None, "turn_action_delay_cost_registry_invalid"
+    total = 0.0
+    consumed: list[str] = []
+    sources: list[dict[str, JSONValue]] = []
+    remaining: dict[str, JSONValue] = {}
+    for identity, entry in sorted(raw.items(), key=lambda item: str(item[0])):
+        if not isinstance(identity, str) or not identity or not isinstance(entry, dict):
+            return 0.0, (), (), None, "turn_action_delay_cost_entry_invalid"
+        entry_actor_id = entry.get("actor_id")
+        value = entry.get("normalized_value")
+        source_trace = entry.get("source_trace")
+        if (
+            not isinstance(entry_actor_id, str)
+            or not entry_actor_id
+            or not isinstance(value, (int, float))
+            or isinstance(value, bool)
+            or not isfinite(float(value))
+            or not isinstance(source_trace, dict)
+            or not source_trace
+        ):
+            return 0.0, (), (), None, "turn_action_delay_cost_entry_invalid"
+        if entry_actor_id != actor_id:
+            remaining[identity] = entry
+            continue
+        total += float(value)
+        consumed.append(identity)
+        sources.append(source_trace)
+    if not isfinite(total):
+        return 0.0, (), (), None, "turn_action_delay_cost_sum_invalid"
+    return total, tuple(consumed), tuple(sources), remaining, ""
 
 
 def _timeline_metadata(rule: TimelineRuleIR, phase: str, operation: str) -> dict[str, JSONValue]:

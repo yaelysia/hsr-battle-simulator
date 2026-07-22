@@ -540,7 +540,7 @@ def _active_dynamic_mechanisms(
     tuple[EquipmentBattleAdmissionBlocker, ...],
 ]:
     classification, reason = _dynamic_ability_gap(rules, definition)
-    if classification != "implementation_missing":
+    if classification != "executable":
         return (), (_dynamic_ability_blocker(definition, classification, reason),)
     if len(definition.mechanism_ref_ids) != 1:
         return (), (
@@ -730,7 +730,13 @@ def _dynamic_ability_gap(
         for item in resolved
     ):
         return "admission_gap", "light_cone_dynamic_ability_binding_not_admitted"
-    return "implementation_missing", "light_cone_dynamic_ability_consumer_missing"
+    graph = matching_graphs[0]
+    if graph.coverage_status != "executable":
+        return (
+            "implementation_missing",
+            graph.blocked_reason or "light_cone_dynamic_ability_consumer_missing",
+        )
+    return "executable", ""
 
 
 def _same_ability_source_record(

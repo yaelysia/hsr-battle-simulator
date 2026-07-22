@@ -1,4 +1,5 @@
 from .ir import (
+    BattleStateTransitionIR,
     CanonicalIR,
     ConditionIR,
     EffectIR,
@@ -13,6 +14,7 @@ from .evaluator import EvaluationContext, RuleEvaluator
 from .rulebook import RuleBook
 
 __all__ = [
+    "BattleStateTransitionIR",
     "CanonicalIR",
     "ConditionIR",
     "EffectIR",

@@ -431,6 +431,10 @@ class WaveSystem:
                 mutations,
                 (
                     _wave_cleared_event(state, plan, source_trace, stage_id=definition.stage_id),
+                    *(
+                        _wave_unit_removed_event(state, plan, unit_id, source_trace)
+                        for unit_id in plan.remove_unit_ids
+                    ),
                     GameEvent(
                         "battle.victory",
                         source_id="wave_system",
@@ -546,6 +550,10 @@ class WaveSystem:
             )
             events = (
                 _wave_cleared_event(state, plan, source_trace, stage_id=definition.stage_id),
+                *(
+                    _wave_unit_removed_event(state, plan, unit_id, source_trace)
+                    for unit_id in plan.remove_unit_ids
+                ),
                 _wave_started_event(state, definition, next_index, spawn_units, source_trace),
                 *(
                     _wave_monster_event(state, definition, entry, unit)
@@ -1061,11 +1069,36 @@ def _wave_monster_event(
             "stage_id": definition.stage_id,
             "wave_index": entry.wave_index,
             "unit_id": unit.unit_id,
+            "param_entity_id": unit.unit_id,
             "entry_id": entry.entry_id,
             "position": entry.position,
             "monster_entity_ref": entry.monster_entity_ref,
             "monster_raw_id": entry.monster_raw_id,
             "source_trace": entry.source.to_json(),
+        },
+    )
+
+
+def _wave_unit_removed_event(
+    state: BattleState,
+    plan: WaveTransitionPlan,
+    unit_id: str,
+    source_trace: dict[str, JSONValue],
+) -> GameEvent:
+    return GameEvent(
+        "unit.removed",
+        source_id="wave_system",
+        target_id=unit_id,
+        event_id=f"event:{state.event_index}:wave:{plan.current_wave_index}:removed:{unit_id}",
+        window="OnListenCharacterEscape",
+        process_only=True,
+        payload={
+            "wave_transition_plan": plan.to_json(),
+            "unit_id": unit_id,
+            "param_entity_id": unit_id,
+            "callback_events": ["OnListenCharacterEscape"],
+            "listener_scope": "global_listener",
+            "source_trace": source_trace,
         },
     )
 

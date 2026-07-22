@@ -1142,6 +1142,7 @@ class StatusCallbackTaskIR:
     source: IRSource
     effect_id: str = ""
     condition_id: str = ""
+    target_expression_id: str = ""
     parent_task_id: str = ""
     child_task_ids: tuple[str, ...] = ()
     success_task_ids: tuple[str, ...] = ()
@@ -1163,6 +1164,7 @@ class StatusCallbackTaskIR:
             "opcode": self.opcode,
             "effect_id": self.effect_id,
             "condition_id": self.condition_id,
+            "target_expression_id": self.target_expression_id,
             "parent_task_id": self.parent_task_id,
             "child_task_ids": list(self.child_task_ids),
             "success_task_ids": list(self.success_task_ids),
@@ -1494,6 +1496,8 @@ class StandaloneAbilityGraphIR:
     source: IRSource
     coverage_status: CoverageStatus = "blocked"
     blocked_reason: str = ""
+    status_callback_ids: tuple[str, ...] = ()
+    non_gameplay_callback_ids: tuple[str, ...] = ()
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -1506,6 +1510,8 @@ class StandaloneAbilityGraphIR:
             "source": self.source.to_json(),
             "coverage_status": self.coverage_status,
             "blocked_reason": self.blocked_reason,
+            "status_callback_ids": list(self.status_callback_ids),
+            "non_gameplay_callback_ids": list(self.non_gameplay_callback_ids),
         }
 
 
@@ -1862,6 +1868,40 @@ class ResourceRuleIR:
 
 
 @dataclass(frozen=True)
+class BattleStateTransitionIR:
+    """Source-backed transition for a shared battle-state event window."""
+
+    transition_rule_id: str
+    trigger_kind: str
+    trigger_identity: str
+    state_path: tuple[str, ...]
+    before_value: JSONValue
+    after_value: JSONValue
+    runtime_event_type: str
+    callback_event: str
+    source: IRSource
+    coverage_status: CoverageStatus = "blocked"
+    blocked_reason: str = ""
+    allow_missing_before: bool = False
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "transition_rule_id": self.transition_rule_id,
+            "trigger_kind": self.trigger_kind,
+            "trigger_identity": self.trigger_identity,
+            "state_path": list(self.state_path),
+            "before_value": _ir_json_value(self.before_value),
+            "after_value": _ir_json_value(self.after_value),
+            "runtime_event_type": self.runtime_event_type,
+            "callback_event": self.callback_event,
+            "source": self.source.to_json(),
+            "coverage_status": self.coverage_status,
+            "blocked_reason": self.blocked_reason,
+            "allow_missing_before": self.allow_missing_before,
+        }
+
+
+@dataclass(frozen=True)
 class DamageFormulaRuleIR:
     damage_formula_rule_id: str
     rule_kind: str
@@ -2056,6 +2096,7 @@ class CanonicalIR:
     action_admissions: tuple[ActionAdmissionIR, ...] = ()
     timeline_rules: tuple[TimelineRuleIR, ...] = ()
     resource_rules: tuple[ResourceRuleIR, ...] = ()
+    battle_state_transitions: tuple[BattleStateTransitionIR, ...] = ()
     damage_formula_rules: tuple[DamageFormulaRuleIR, ...] = ()
     damage_route_rules: tuple[DamageRouteRuleIR, ...] = ()
     shield_priority_rules: tuple[ShieldPriorityRuleIR, ...] = ()
@@ -2131,6 +2172,10 @@ class CanonicalIR:
             "action_admissions": [admission.to_json() for admission in self.action_admissions],
             "timeline_rules": [rule.to_json() for rule in self.timeline_rules],
             "resource_rules": [rule.to_json() for rule in self.resource_rules],
+            "battle_state_transitions": [
+                transition.to_json()
+                for transition in self.battle_state_transitions
+            ],
             "damage_formula_rules": [rule.to_json() for rule in self.damage_formula_rules],
             "damage_route_rules": [rule.to_json() for rule in self.damage_route_rules],
             "shield_priority_rules": [rule.to_json() for rule in self.shield_priority_rules],

@@ -91,6 +91,7 @@ class TriggerSystem:
         mutations: list[Mutation] = []
         rng_events: list[RNGEvent] = []
         records: list[dict[str, JSONValue]] = []
+        effect_events: list[GameEvent] = []
         window_records: list[dict[str, JSONValue]] = []
         primary_target = target_resolution.selected[0] if target_resolution.selected else None
         selected_targets = target_resolution.selected
@@ -224,6 +225,7 @@ class TriggerSystem:
                     current = self.reducer.apply_all(current, result.mutations)
                     mutations.extend(result.mutations)
                     rng_events.extend(result.rng_events)
+                    effect_events.extend(result.events)
                     records.extend(result.records)
                     if result.unsupported and not result.records:
                         records.append(
@@ -294,6 +296,7 @@ class TriggerSystem:
                     "mutation_count": len(mutations),
                 },
             ),
+            *effect_events,
         )
         return TriggerWindowResult(
             after_state=current,

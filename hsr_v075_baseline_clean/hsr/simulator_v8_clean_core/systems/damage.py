@@ -21,6 +21,7 @@ from .shield import HPDamageRoute, ShieldSystem
 
 DamageFormulaFamily = Literal[
     "direct",
+    "additional",
     "dot",
     "break",
     "super_break",
@@ -63,6 +64,14 @@ DAMAGE_FAMILY_POLICIES: dict[str, DamageFamilyPolicy] = {
         uses_direct_multiplier_ledger=True,
         bypasses_normal_multipliers=False,
         source_requirement="executable DamageEmissionIR + HitProfileIR + ActionDefinitionIR",
+    ),
+    "additional": DamageFamilyPolicy(
+        family="additional",
+        runtime_status="executable_with_admitted_status_damage_amount",
+        record_type="additional_damage",
+        uses_direct_multiplier_ledger=False,
+        bypasses_normal_multipliers=False,
+        source_requirement="executable StatusDamageEmissionIR with admitted additional-damage amount",
     ),
     "dot": DamageFamilyPolicy(
         family="dot",
@@ -309,7 +318,7 @@ class DamageSystem:
             result = self._apply_break_damage(state, packet, dead_target_continuation=dead_target_continuation)
         elif packet.damage_formula_family == "super_break":
             result = self._apply_super_break_damage(state, packet, dead_target_continuation=dead_target_continuation)
-        elif packet.damage_formula_family == "dot":
+        elif packet.damage_formula_family in {"additional", "dot"}:
             result = self._apply_dot_damage(state, packet, dead_target_continuation=dead_target_continuation)
         elif packet.damage_formula_family in {"true_damage", "hp_loss"}:
             result = self._apply_fixed_hp_delta(state, packet, dead_target_continuation=dead_target_continuation)
@@ -345,10 +354,12 @@ class DamageSystem:
         *,
         dead_target_continuation: bool = False,
     ) -> DamageApplicationResult:
+        is_dot = packet.damage_formula_family == "dot"
+        record_type = "dot_damage" if is_dot else "additional_damage"
         if packet.amount is None:
-            return _damage_error(packet, "dot damage requires admitted amount")
+            return _damage_error(packet, f"{record_type} requires admitted amount")
         if not packet.status_damage_emission_id:
-            return _damage_error(packet, "dot damage requires status_damage_emission_id")
+            return _damage_error(packet, f"{record_type} requires status_damage_emission_id")
         pipeline = _non_direct_pipeline(
             state,
             packet,
@@ -381,7 +392,7 @@ class DamageSystem:
             path=("units", packet.target_id, "hp"),
             before=target.hp,
             after=after,
-            reason="apply dot damage",
+            reason=f"apply {record_type}",
             source="damage_system",
             metadata=metadata,
         )
@@ -390,7 +401,7 @@ class DamageSystem:
             packet,
             before_hp=target.hp,
             after_hp=after,
-            record_type="dot_damage",
+            record_type=record_type,
             hp_mutation=mutation,
         )
         lifecycle_mutation_id = _lifecycle_defeat_mutation_id(lifecycle_mutations)
@@ -431,7 +442,7 @@ class DamageSystem:
             ok=True,
             events=route.events + _damage_events(
                 packet,
-                record_type="dot_damage",
+                record_type=record_type,
                 amount=final_damage,
                 before_hp=target.hp,
                 after_hp=after,
@@ -443,7 +454,7 @@ class DamageSystem:
             records=(
                 *route.records,
                 SettlementRecord(
-                    record_type="dot_damage",
+                    record_type=record_type,
                     source="damage_system",
                     mutation_id=(
                         mutation.stable_id()
@@ -558,6 +569,7 @@ class DamageSystem:
                     amount=final_damage,
                     before_hp=target.hp,
                     after_hp=target.hp,
+                    is_critical=formula_result.crit_resolution.is_crit,
                 ),
                 rng_events=formula_result.rng_events,
                 records=(
@@ -598,6 +610,7 @@ class DamageSystem:
                 before_hp=target.hp,
                 after_hp=after,
                 lifecycle_mutation_id=lifecycle_mutation_id,
+                is_critical=formula_result.crit_resolution.is_crit,
             ),
             mutations=((route.shield_mutation,) if route.shield_mutation is not None else ())
             + ((mutation,) if mutation is not None else ())
@@ -1150,6 +1163,7 @@ def _non_direct_pipeline(
             target_id=packet.target_id,
             producer_base_amount=float(packet.amount),
             element_type=packet.element_type,
+            attack_type=packet.attack_type,
             source_trace=packet.source_trace,
         )
     except ValueError as exc:
@@ -1321,6 +1335,7 @@ def _damage_events(
     before_hp: float,
     after_hp: float,
     lifecycle_mutation_id: str = "",
+    is_critical: bool = False,
 ) -> tuple[GameEvent, ...]:
     hit_event = _damage_hit_event(
         packet,
@@ -1328,6 +1343,7 @@ def _damage_events(
         amount=amount,
         before_hp=before_hp,
         after_hp=after_hp,
+        is_critical=is_critical,
     )
     defeat_event = _damage_defeat_event(
         packet,
@@ -1337,10 +1353,24 @@ def _damage_events(
         before_hp=before_hp,
         after_hp=after_hp,
         lifecycle_mutation_id=lifecycle_mutation_id,
+        is_critical=is_critical,
     )
     if defeat_event is None:
         return (hit_event,)
-    return (hit_event, defeat_event)
+    before_dying_event = GameEvent(
+        event_type="unit.before_dying",
+        source_id=defeat_event.source_id,
+        target_id=defeat_event.target_id,
+        window="OnBeforeDying",
+        process_only=True,
+        payload={
+            **defeat_event.payload,
+            "callback_events": ["OnBeforeDying"],
+            "listener_scope": "owner_local",
+            "death_transition_stage": "before_dying",
+        },
+    )
+    return (hit_event, before_dying_event, defeat_event)
 
 
 def _damage_hit_event(
@@ -1350,6 +1380,7 @@ def _damage_hit_event(
     amount: float,
     before_hp: float,
     after_hp: float,
+    is_critical: bool,
 ) -> GameEvent:
     source_frame = source_frame_for_packet(packet)
     return GameEvent(
@@ -1381,6 +1412,7 @@ def _damage_hit_event(
             "amount": amount,
             "target_before_hp": before_hp,
             "target_after_hp": after_hp,
+            "is_critical": is_critical,
             "attack_type": packet.attack_type,
             "SkillType": packet.metadata.get("SkillType"),
             "skill_type": packet.metadata.get("skill_type"),
@@ -1412,6 +1444,7 @@ def _damage_defeat_event(
     before_hp: float,
     after_hp: float,
     lifecycle_mutation_id: str = "",
+    is_critical: bool = False,
 ) -> GameEvent | None:
     if before_hp <= 0 or after_hp > 0:
         return None
@@ -1448,6 +1481,7 @@ def _damage_defeat_event(
             "amount": amount,
             "target_before_hp": before_hp,
             "target_after_hp": after_hp,
+            "is_critical": is_critical,
             "caused_by_damage": True,
             "defeated_by_damage": True,
             "kill_credit_rule": "hp_transition_positive_to_zero",

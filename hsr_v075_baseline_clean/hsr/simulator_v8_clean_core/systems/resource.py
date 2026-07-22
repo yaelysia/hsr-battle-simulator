@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from ..core.model import BattleState, JSONValue, Mutation
+from ..core.model import BattleState, JSONValue, Mutation, UnitState
 from ..rules.ir import ResourceRuleIR
+from .unit_stats import effective_unit_stat
 
 
 @dataclass(frozen=True)
@@ -50,8 +51,13 @@ class ResourceSystem:
 
     def change_unit_energy(self, state: BattleState, unit_id: str, delta: float, source: str) -> Mutation:
         unit = state.units[unit_id]
-        cap = unit.max_energy if unit.max_energy > 0 else unit.energy + delta
-        new_energy = max(0.0, min(cap, unit.energy + delta))
+        effective_delta, regeneration = _effective_energy_delta(unit, delta)
+        cap = (
+            unit.max_energy
+            if unit.max_energy > 0
+            else unit.energy + effective_delta
+        )
+        new_energy = max(0.0, min(cap, unit.energy + effective_delta))
         return Mutation(
             op="set",
             path=("units", unit_id, "energy"),
@@ -59,7 +65,13 @@ class ResourceSystem:
             after=new_energy,
             reason="change unit energy",
             source=source,
-            metadata={"delta": delta},
+            metadata={
+                "delta": effective_delta,
+                "raw_delta": delta,
+                "energy_regeneration_rate": (
+                    regeneration.to_json() if regeneration is not None else None
+                ),
+            },
             mutation_id=f"mutation:{unit_id}:energy:{state.event_index}:{delta}",
         )
 
@@ -109,7 +121,8 @@ class ResourceSystem:
         unit = state.units[unit_id]
         if not isinstance(rule.numeric_value, (int, float)) or isinstance(rule.numeric_value, bool):
             raise ValueError("kill energy engine rule numeric value is missing")
-        gain = float(rule.numeric_value)
+        raw_gain = float(rule.numeric_value)
+        gain, regeneration = _effective_energy_delta(unit, raw_gain)
         cap = unit.max_energy if unit.max_energy > 0 else unit.energy + gain
         after = max(0.0, min(cap, unit.energy + gain))
         damage_event_id = str(defeated_event_payload.get("damage_event_id") or defeated_event_payload.get("damage_packet_id") or "")
@@ -131,6 +144,10 @@ class ResourceSystem:
                 "before_energy": unit.energy,
                 "after_energy": after,
                 "energy_gain": gain,
+                "raw_energy_gain": raw_gain,
+                "energy_regeneration_rate": (
+                    regeneration.to_json() if regeneration is not None else None
+                ),
                 "defeated_event_payload": defeated_event_payload,
                 "kill_credit_owner_id": str(defeated_event_payload.get("kill_credit_owner_id") or ""),
                 "kill_credit_source_id": str(defeated_event_payload.get("kill_credit_source_id") or ""),
@@ -197,3 +214,11 @@ class ResourceSystem:
 
 def _plan_metadata(plan: ResourcePlan) -> dict[str, JSONValue]:
     return dict(plan.metadata or {})
+
+
+def _effective_energy_delta(unit: UnitState, delta: float):
+    if delta <= 0.0:
+        return float(delta), None
+    regeneration = effective_unit_stat(unit, "energy_regeneration_rate")
+    multiplier = max(0.0, 1.0 + regeneration.value)
+    return float(delta) * multiplier, regeneration

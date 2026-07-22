@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from ..core.model import JSONValue, UnitState
+from ..rules.evaluator import NumericEvaluationContext, RuleEvaluator
 
 
 @dataclass(frozen=True)
@@ -40,6 +41,10 @@ _RESOURCE_STAT_MODIFIERS: dict[str, tuple[str, str]] = {
     "critical_damage": ("crit", "critical_damage"),
     "effect_hit_rate": ("status_probability", "effect_hit_rate"),
     "effect_resistance": ("status_probability", "effect_resistance"),
+    "outgoing_healing_ratio": ("healing", "outgoing_healing_ratio"),
+    "incoming_healing_ratio": ("healing", "incoming_healing_ratio"),
+    "shield_added_ratio": ("shield", "shield_added_ratio"),
+    "energy_regeneration_rate": ("resource", "energy_regeneration_rate"),
 }
 
 
@@ -55,6 +60,24 @@ def status_modifier_has_direct_combat_consumer(bucket: str, key: str) -> bool:
 
 
 def effective_unit_stat(unit: UnitState, stat: str) -> EffectiveUnitStat:
+    if stat == "base_aggro":
+        base_value = _resource_value(unit, "base_aggro")
+        ratio_delta, terms = _status_modifier_total(
+            unit,
+            "aggro",
+            ("aggro_added_ratio",),
+        )
+        return EffectiveUnitStat(
+            stat=stat,
+            base_value=base_value,
+            static_ratio=0.0,
+            ratio_delta=ratio_delta,
+            static_flat=0.0,
+            flat_delta=0.0,
+            value=max(0.0, base_value * (1.0 + ratio_delta)),
+            source_terms=terms,
+        )
+
     base_config = _BASE_STAT_MODIFIERS.get(stat)
     if base_config is not None:
         bucket, ratio_key, flat_key = base_config
@@ -150,10 +173,10 @@ def _status_modifier_total(
                 continue
             if modifier.get("bucket") != bucket or modifier.get("key") not in allowed_keys:
                 continue
-            value = modifier.get("value")
-            if not isinstance(value, (int, float)) or isinstance(value, bool):
+            value = status_modifier_numeric_value(detail, modifier)
+            if value is None:
                 continue
-            numeric_value = float(value)
+            numeric_value = value
             total += numeric_value
             terms.append(
                 {
@@ -173,6 +196,51 @@ def _status_modifier_total(
                 }
             )
     return total, tuple(terms)
+
+
+def status_modifier_numeric_value(
+    detail: dict[str, JSONValue],
+    modifier: dict[str, JSONValue],
+) -> float | None:
+    value = modifier.get("value")
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    expression = modifier.get("value_expr")
+    if not isinstance(expression, dict):
+        return None
+    dynamic_values = detail.get("dynamic_values")
+    if not isinstance(dynamic_values, dict):
+        return None
+    bindings: dict[str, float] = {}
+    for key, item in dynamic_values.items():
+        if (
+            not str(key).startswith("__")
+            and isinstance(item, (int, float))
+            and not isinstance(item, bool)
+        ):
+            bindings[str(key)] = float(item)
+    for index_key in ("__by_name", "__by_hash"):
+        indexed = dynamic_values.get(index_key)
+        if not isinstance(indexed, dict):
+            continue
+        for key, item in indexed.items():
+            if isinstance(item, (int, float)) and not isinstance(item, bool):
+                bindings[str(key)] = float(item)
+    result = RuleEvaluator().evaluate_numeric(
+        expression,
+        NumericEvaluationContext(
+            dynamic_values=bindings,
+            source_trace={
+                "status_instance_source": (
+                    dict(detail.get("source_trace"))
+                    if isinstance(detail.get("source_trace"), dict)
+                    else {}
+                ),
+                "modifier_raw_path": str(modifier.get("raw_path") or ""),
+            },
+        ),
+    )
+    return float(result.value) if result.ok and result.value is not None else None
 
 
 def _status_details(unit: UnitState) -> tuple[dict[str, JSONValue], ...]:

@@ -12,6 +12,11 @@ from .damage_pipeline import (
 )
 from .effect import EffectExecutionContext, EffectRegistry, EffectResult
 from .event_dispatch import EventDispatchResult, EventDispatchSystem
+from .battle_state_transition import (
+    BattleStateTransitionRequest,
+    BattleStateTransitionResult,
+    BattleStateTransitionSystem,
+)
 from .queue import (
     QUEUE_DRAIN_STEP_BUDGET,
     QueueEntryTerminalPlan,
@@ -56,6 +61,9 @@ __all__ = [
     "EffectResult",
     "EventDispatchSystem",
     "EventDispatchResult",
+    "BattleStateTransitionRequest",
+    "BattleStateTransitionResult",
+    "BattleStateTransitionSystem",
     "QueueSystem",
     "QueueEntryTerminalPlan",
     "QueueEntryTerminalResult",

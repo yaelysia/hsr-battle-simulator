@@ -1391,7 +1391,10 @@ def _spawn_event(state: BattleState, plan: SummonTransitionPlan, unit: UnitState
         payload={
             "summon_transition_plan": plan.to_json(),
             "unit_id": unit.unit_id,
+            "param_entity_id": unit.unit_id,
             "summon_kind": str(unit.flags.get("summon_kind") or ""),
+            "callback_events": ["OnListenCharacterCreate", "OnSnapshotCreate"],
+            "listener_scope": "global_listener",
             "source_trace": plan.source_trace,
         },
     )
@@ -1405,7 +1408,14 @@ def _remove_event(state: BattleState, plan: SummonTransitionPlan, unit_id: str) 
         event_id=f"event:{state.event_index}:summon:removed:{unit_id}",
         window="summon",
         process_only=True,
-        payload={"summon_transition_plan": plan.to_json(), "unit_id": unit_id},
+        payload={
+            "summon_transition_plan": plan.to_json(),
+            "unit_id": unit_id,
+            "param_entity_id": unit_id,
+            "callback_events": ["OnListenCharacterEscape"],
+            "listener_scope": "global_listener",
+            "source_trace": plan.source_trace,
+        },
     )
 
 

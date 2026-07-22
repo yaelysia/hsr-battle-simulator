@@ -5,12 +5,17 @@ from dataclasses import dataclass, field, replace
 from typing import Any
 
 from ..core.model import BattleState, JSONValue, RNGEvent, TargetResolution
-from ..rules.evaluator import EvaluationContext, NumericEvaluationContext, RuleEvaluator
+from ..rules.evaluator import (
+    EvaluationContext,
+    NumericEvaluationContext,
+    RuleEvaluator,
+    _condition_target_key,
+)
 from ..rules.expression_ir import (
     TARGET_EXPRESSION_NODE_SCHEMA,
     numeric_fixed_value,
 )
-from ..rules.ir import TargetExpressionIR, TargetExpressionNodeIR
+from ..rules.ir import ConditionIR, TargetExpressionIR, TargetExpressionNodeIR
 from ..unit_eligibility import runtime_unit_is_unselectable
 from .rng import (
     RNGOutcome,
@@ -22,6 +27,7 @@ from .rng import (
 )
 from .unit_relation import is_dark_team, is_light_team, is_opposing_combat_team, is_same_combat_team
 from .unit_lifecycle import UnitLifecycleSystem
+from .unit_stats import effective_unit_stat
 
 
 SUPPORTED_SUMMON_RUNTIME_SCHEMA_VERSIONS = {"p1_3_summon_runtime_v1", "p3_summon_runtime_v2"}
@@ -231,6 +237,49 @@ class TargetSystem:
             rng_events=result.rng_events,
         )
 
+    def resolve_condition_target_groups(
+        self,
+        state: BattleState,
+        condition: ConditionIR,
+        *,
+        caster_id: str,
+        owner_id: str | None = None,
+        param_entity_id: str | None = None,
+        current_action_target_id: str | None = None,
+        event_payload: dict[str, JSONValue] | None = None,
+        dynamic_values: dict[str, float] | None = None,
+        binding_sources: tuple[dict[str, JSONValue], ...] = (),
+    ) -> tuple[dict[str, tuple[str, ...]], dict[str, str]]:
+        """Resolve every typed target operand required by a condition.
+
+        Condition evaluation itself remains pure and fail-closed. Consumers
+        that own the target system use this method to provide the exact target
+        groups, including composite aliases and TargetSequence operations.
+        """
+
+        resolved: dict[str, tuple[str, ...]] = {}
+        errors: dict[str, str] = {}
+        for node in _condition_target_nodes(condition):
+            key = _condition_target_key(node)
+            if key in resolved or key in errors:
+                continue
+            result = self.resolve_expression_node(
+                state,
+                node,
+                caster_id=caster_id,
+                owner_id=owner_id,
+                param_entity_id=param_entity_id,
+                current_action_target_id=current_action_target_id,
+                event_payload=event_payload,
+                dynamic_values=dynamic_values,
+                binding_sources=binding_sources,
+            )
+            if result.ok:
+                resolved[key] = result.target_ids
+            else:
+                errors[key] = result.blocked_reason
+        return resolved, errors
+
     def enumerate_action_targets(
         self,
         state: BattleState,
@@ -274,7 +323,12 @@ class TargetSystem:
                 ok=True,
                 auto_target_ids=auto_targets,
                 policy=policy_payload,
-                metadata={"actor_id": actor_id, "target_mode": policy.target_mode},
+                metadata=_target_enumeration_metadata(
+                    state,
+                    actor_id,
+                    auto_targets,
+                    policy.target_mode,
+                ),
             )
         if policy.selection_min == 1 and policy.selection_max == 1:
             selectable = candidates
@@ -289,7 +343,12 @@ class TargetSystem:
                 ok=True,
                 selectable_target_ids=selectable,
                 policy=policy_payload,
-                metadata={"actor_id": actor_id, "target_mode": policy.target_mode},
+                metadata=_target_enumeration_metadata(
+                    state,
+                    actor_id,
+                    selectable,
+                    policy.target_mode,
+                ),
             )
         return TargetEnumerationResult(
             ok=False,
@@ -876,6 +935,7 @@ def _resolve_inline_expression(
             current_action_target_id=current_action_target_id,
             target_resolution=target_resolution,
             event_payload=event_payload,
+            previous_targets=previous_targets,
             path=path,
         )
     if expression_kind == "TargetQuery":
@@ -1045,6 +1105,25 @@ def _evaluate_target_query_compare_predicate(
     }
 
 
+def _condition_target_nodes(condition: ConditionIR) -> tuple[TargetExpressionNodeIR, ...]:
+    nodes: list[TargetExpressionNodeIR] = []
+
+    def visit(value: object) -> None:
+        if isinstance(value, TargetExpressionNodeIR):
+            nodes.append(value)
+            return
+        if isinstance(value, dict):
+            for item in value.values():
+                visit(item)
+            return
+        if isinstance(value, (list, tuple)):
+            for item in value:
+                visit(item)
+
+    visit(condition.payload)
+    return tuple(nodes)
+
+
 def _resolve_filter_expression(
     state: BattleState,
     raw: TargetExpressionNodeIR | None,
@@ -1094,6 +1173,24 @@ def _resolve_filter_expression(
     selected: list[str] = []
     condition_results: list[JSONValue] = []
     for candidate_id in candidate_targets:
+        condition_event_payload = {
+            **event_payload,
+            "target_id": candidate_id,
+            "param_entity_id": candidate_id,
+        }
+        resolved_target_groups, target_resolution_errors = (
+            TargetSystem().resolve_condition_target_groups(
+                state,
+                condition,
+                caster_id=caster_id,
+                owner_id=owner_id,
+                param_entity_id=candidate_id,
+                current_action_target_id=current_action_target_id or candidate_id,
+                event_payload=condition_event_payload,
+                dynamic_values=dynamic_values,
+                binding_sources=binding_sources,
+            )
+        )
         result = evaluator.evaluate_condition_result(
             condition,
             EvaluationContext(
@@ -1103,9 +1200,11 @@ def _resolve_filter_expression(
                 owner_id=owner_id,
                 param_entity_id=candidate_id,
                 current_action_target_id=current_action_target_id or candidate_id,
-                event_payload={**event_payload, "target_id": candidate_id, "param_entity_id": candidate_id},
+                event_payload=condition_event_payload,
                 dynamic_values=dynamic_values,
                 binding_sources=binding_sources,
+                resolved_target_groups=resolved_target_groups,
+                target_resolution_errors=target_resolution_errors,
             ),
         )
         condition_results.append(result.to_json())
@@ -1195,8 +1294,18 @@ def _resolve_retarget_expression(
         if filter_result.blocked_reason:
             return _inline_result(path, "Retarget", "", (), filter_result.blocked_reason, steps, tuple(rng_events))
         candidate_targets = filter_result.target_ids
+    max_number_expr = raw.max_number_expr
+    if (
+        isinstance(max_number_expr, dict)
+        and max_number_expr.get("kind") == "missing"
+    ):
+        # TBGD omits MaxNumber for the ordinary Retarget form.  The typed
+        # node retains that omission as evidence; runtime applies the schema
+        # default (the whole deterministic set, or the one result selected by
+        # ByRandom) instead of attempting to evaluate a synthetic number.
+        max_number_expr = None
     max_number, max_step, max_reason = _positive_int_from_numeric(
-        raw.max_number_expr or None,
+        max_number_expr or None,
         dynamic_values=dynamic_values,
         binding_sources=binding_sources,
         source_trace={"target_expression_path": path, "field": "MaxNumber"},
@@ -1246,6 +1355,7 @@ def _resolve_fetch_expression(
     current_action_target_id: str | None,
     target_resolution: TargetResolution | None,
     event_payload: dict[str, JSONValue],
+    previous_targets: tuple[str, ...],
     path: str,
 ) -> _ExpressionResolution:
     if raw is None:
@@ -1275,6 +1385,11 @@ def _resolve_fetch_expression(
         if reason:
             return _inline_result(path, expression_kind, "", (), reason)
         return _validated_target_result(state, path, expression_kind, target_ids, "target_fetch_param_entity_list")
+    if expression_kind == "TargetFetchActualOwner":
+        if not previous_targets:
+            return _inline_result(path, expression_kind, "", (), "target_fetch_actual_owner_input_missing")
+        selected, reason, steps = _actual_owners_for_targets(state, previous_targets)
+        return _inline_result(path, expression_kind, "", selected, reason, steps)
     if expression_kind == "TargetFetchPartner":
         return _resolve_partner_fetch(state, raw.name, caster_id=caster_id, path=path)
     if expression_kind == "TargetFetchUniqueNameEntity":
@@ -1478,6 +1593,7 @@ def _resolve_target_alias_ids(
         "CurrentTurnOwnerEntity",
         "DamageAttackerEntity",
         "DamageDefenderEntity",
+        "LevelEntity",
         "ModifierOwnerEntity",
         "ParamEntity",
         "ParamEntity2",
@@ -1500,10 +1616,17 @@ def _resolve_target_alias_ids(
         "AttackTargetList",
         "ParamEntityAttackTargetList",
         "ParamEntitySkillTargetEntityList",
+        "ModifierOwnerSkillTargetEntityList",
         "SkillSubTargetEntityList",
         "SkillTargetEntityList",
+        "TurnActionEntitySkillTarget",
     }:
-        if alias in {"SkillTargetEntityList", "ParamEntitySkillTargetEntityList"}:
+        if alias in {
+            "SkillTargetEntityList",
+            "ParamEntitySkillTargetEntityList",
+            "ModifierOwnerSkillTargetEntityList",
+            "TurnActionEntitySkillTarget",
+        }:
             return _target_ids_from_resolution_or_payload(state, target_resolution, event_payload)
         keys = {
             "AttackTargetList": ("attack_target_ids", "selected_target_ids", "target_ids"),
@@ -1527,7 +1650,19 @@ def _resolve_target_alias_ids(
         return _battle_event_entity_list(state)
     if alias in {"GridFight_AllBackEnd", "GridFight_AllBackEndRoleOnly", "GridFight_AllBackEndActivedRoleOnly"}:
         return _grid_fight_entity_list(state, alias)
-    if alias in {"AllEnemy", "AllTeamMember", "AllLightTeam", "AllDarkTeam", "AllTeammate", "TeamFormation", "AllEnemyWithUnSelectable"}:
+    if alias in {
+        "AllEnemy",
+        "AllTeamMember",
+        "AllTeamMemberWithUnselectable",
+        "AllLightTeam",
+        "AllLightTeamWithUnselectable",
+        "AllDarkTeam",
+        "AllDarkTeamWithUnselectable",
+        "AllTeammate",
+        "AllTeammateWithUnselectable",
+        "TeamFormation",
+        "AllEnemyWithUnSelectable",
+    }:
         return _resolve_group_alias(state, caster_id, alias)
     if alias == "AllUnselectable":
         return (
@@ -1566,6 +1701,8 @@ def _resolve_single_alias(
         return caster_id
     if alias == "ModifierOwnerEntity":
         return owner_id
+    if alias == "LevelEntity":
+        return _first_payload_target(event_payload, ("level_entity_id",)) or "level:global"
     if alias == "ParamEntity":
         return param_entity_id
     if alias == "ParamEntity2":
@@ -1619,17 +1756,27 @@ def _resolve_group_alias(
     for unit_id, unit in sorted(state.units.items()):
         if not UnitLifecycleSystem().can_target(state, unit_id)[0]:
             continue
-        if unit_is_unselectable(state, unit_id) and alias != "AllEnemyWithUnSelectable":
+        if unit_is_unselectable(state, unit_id) and alias not in {
+            "AllEnemyWithUnSelectable",
+            "AllLightTeamWithUnselectable",
+            "AllDarkTeamWithUnselectable",
+            "AllTeamMemberWithUnselectable",
+            "AllTeammateWithUnselectable",
+        }:
             continue
         if alias in {"AllEnemy", "AllEnemyWithUnSelectable"} and is_opposing_combat_team(caster, unit):
             targets.append(unit_id)
-        elif alias in {"AllTeamMember", "TeamFormation"} and is_same_combat_team(caster, unit):
+        elif alias in {
+            "AllTeamMember",
+            "AllTeamMemberWithUnselectable",
+            "TeamFormation",
+        } and is_same_combat_team(caster, unit):
             targets.append(unit_id)
-        elif alias == "AllLightTeam" and is_light_team(unit):
+        elif alias in {"AllLightTeam", "AllLightTeamWithUnselectable"} and is_light_team(unit):
             targets.append(unit_id)
-        elif alias == "AllDarkTeam" and is_dark_team(unit):
+        elif alias in {"AllDarkTeam", "AllDarkTeamWithUnselectable"} and is_dark_team(unit):
             targets.append(unit_id)
-        elif alias == "AllTeammate" and is_same_combat_team(caster, unit) and unit_id != caster_id:
+        elif alias in {"AllTeammate", "AllTeammateWithUnselectable"} and is_same_combat_team(caster, unit) and unit_id != caster_id:
             targets.append(unit_id)
     if not targets:
         return (), f"target group empty:{alias}"
@@ -2168,11 +2315,10 @@ def _safe_alias_expansion(alias: str) -> tuple[str, tuple[dict[str, JSONValue], 
         "AbilityTargetRightEntity": ("AbilityTargetEntity", ({"kind": "TargetMapAdjoinEntity", "SideType": "Right"},)),
         "AllLightTeamIgnoreServant": ("AllLightTeam", ({"kind": "TargetRemoveServant"},)),
         "AllLightTeamOnlyAddSPOnceForServant": ("AllLightTeam", ({"kind": "TargetRemoveServant"},)),
-        "AllLightTeamWithAllLightTeamUnselectable": ("AllLightTeam", ()),
-        "AllLightTeamWithAllUnselectableLightTeam": ("AllLightTeam", ()),
-        "AllTeamMemberWithUnselectable": ("AllTeamMember", ()),
+        "AllLightTeamWithAllLightTeamUnselectable": ("AllLightTeamWithUnselectable", ()),
+        "AllLightTeamWithAllUnselectableLightTeam": ("AllLightTeamWithUnselectable", ()),
+        "AllDarkTeamWithAllDarkTeamUnselectable": ("AllDarkTeamWithUnselectable", ()),
         "AllTeammateOnlyAddSPOnceForServant": ("AllTeammate", ({"kind": "TargetRemoveServant"},)),
-        "AllTeammateWithUnselectable": ("AllTeammate", ()),
         "AllEnemyIgnoreServant": ("AllEnemy", ({"kind": "TargetRemoveServant"},)),
         "CasterSummoner": ("Caster", ({"kind": "TargetMapSummoner"},)),
         "LightTeamLeftWithoutServant": (
@@ -2256,6 +2402,14 @@ def _dot_alias_operation(op: str) -> dict[str, JSONValue] | None:
         "GetSummoner": {"kind": "TargetMapSummoner"},
         "WithSummoner": {"kind": "TargetWithSummoner"},
         "GetSummonedMinions": {"kind": "TargetMapSummonedMinions"},
+        "GetSkillAllTarget": {
+            "kind": "TargetSkillAllTarget",
+            "operation": "GetSkillAllTarget",
+        },
+        "GetSkillTarget": {
+            "kind": "TargetSkillAllTarget",
+            "operation": "GetSkillTarget",
+        },
     }
     return mapping.get(op)
 
@@ -2320,6 +2474,35 @@ def _apply_alias_operation(
             candidate_targets,
             _typed_alias_operation_node(operation),
             path=path,
+        )
+    if kind == "TargetSkillAllTarget":
+        target_ids, reason = _target_ids_from_payload(
+            state,
+            event_payload,
+            (
+                "skill_target_ids",
+                "selected_target_ids",
+                "requested_target_ids",
+                "target_ids",
+            ),
+            missing_reason="skill_all_targets_missing",
+        )
+        return _inline_result(
+            path,
+            "TargetAliasOperation",
+            "",
+            target_ids,
+            reason,
+            [
+                {
+                    "operation": str(
+                        operation.get("operation") or "GetSkillAllTarget"
+                    ),
+                    "candidate_pool_before": list(candidate_targets),
+                    "selected_targets": list(target_ids),
+                    "source": "event_payload",
+                }
+            ],
         )
     if kind == "TargetMapServant":
         selected, reason, steps = _servants_for_targets(state, candidate_targets)
@@ -2937,6 +3120,53 @@ def _summoners_for_targets(
     return tuple(dict.fromkeys(selected)), "", steps
 
 
+def _actual_owners_for_targets(
+    state: BattleState,
+    candidate_targets: tuple[str, ...],
+) -> tuple[tuple[str, ...], str, list[JSONValue]]:
+    """Resolve each entity to the combat owner that should receive attribution.
+
+    Ordinary combatants own themselves. Summoned entities require the same
+    source-backed runtime ownership relation used by GetSummoner; missing or
+    removed summon ownership remains fail-closed.
+    """
+
+    selected: list[str] = []
+    skipped: list[JSONValue] = []
+    for unit_id in candidate_targets:
+        unit = state.units.get(unit_id)
+        if unit is None:
+            skipped.append({"unit_id": unit_id, "reason": "unit_missing"})
+            continue
+        if unit.flags.get("summon_kind") not in {"servant", "summoned_monster"}:
+            selected.append(unit_id)
+            continue
+        owners, reason, owner_steps = _summoners_for_targets(state, (unit_id,))
+        if reason:
+            skipped.append(
+                {
+                    "unit_id": unit_id,
+                    "reason": reason,
+                    "owner_resolution_steps": owner_steps,
+                }
+            )
+            continue
+        selected.extend(owners)
+    steps = [
+        {
+            "operation": "GetActualOwner",
+            "candidate_pool_before": list(candidate_targets),
+            "selected_targets": list(dict.fromkeys(selected)),
+            "skipped_targets": skipped,
+        }
+    ]
+    if skipped:
+        return (), "target_fetch_actual_owner_incomplete", steps
+    if not selected:
+        return (), "target_fetch_actual_owner_empty", steps
+    return tuple(dict.fromkeys(selected)), "", steps
+
+
 def _is_servant_unit(state: BattleState, unit_id: str) -> bool:
     unit = state.units.get(unit_id)
     return bool(unit is not None and unit.side == "summon" and unit.flags.get("summon_kind") == "servant")
@@ -3221,6 +3451,38 @@ def _selection_cardinality_blocked_reason(
     if count > policy.selection_max:
         return f"target_selection_too_many:{count}:{policy.selection_max}"
     return ""
+
+
+def _target_enumeration_metadata(
+    state: BattleState,
+    actor_id: str,
+    target_ids: tuple[str, ...],
+    target_mode: str,
+) -> dict[str, JSONValue]:
+    metadata: dict[str, JSONValue] = {
+        "actor_id": actor_id,
+        "target_mode": target_mode,
+    }
+    actor = state.units.get(actor_id)
+    if actor is None or not is_dark_team(actor):
+        return metadata
+    aggro_rows = {
+        target_id: effective_unit_stat(state.units[target_id], "base_aggro")
+        for target_id in target_ids
+    }
+    total = sum(row.value for row in aggro_rows.values())
+    metadata["aggro_selection"] = {
+        "mode": "external_weighted_choice",
+        "total_weight": total,
+        "targets": {
+            target_id: {
+                **row.to_json(),
+                "probability": row.value / total if total > 0.0 else None,
+            }
+            for target_id, row in aggro_rows.items()
+        },
+    }
+    return metadata
 
 
 def _targetability_reason(

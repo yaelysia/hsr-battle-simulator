@@ -32,8 +32,30 @@ def store_from_state(state: BattleState) -> dict[str, JSONValue]:
     return normalized_dynamic_value_store(state.global_flags.get("dynamic_value_store"))
 
 
-def binding_source_from_store(store: object) -> dict[str, JSONValue]:
+def binding_source_from_store(
+    store: object,
+    *,
+    excluded_status_instance_ids: tuple[str, ...] = (),
+    excluded_hashes: tuple[str, ...] = (),
+    excluded_names: tuple[str, ...] = (),
+) -> dict[str, JSONValue]:
     normalized = normalized_dynamic_value_store(store)
+    excluded = {item for item in excluded_status_instance_ids if item}
+    excluded_hash_keys = {str(item) for item in excluded_hashes if str(item)}
+    excluded_name_keys = {str(item) for item in excluded_names if str(item)}
+    if excluded or excluded_hash_keys or excluded_name_keys:
+        entries = normalized.get("entries")
+        filtered_entries = {
+            key: entry
+            for key, entry in (entries.items() if isinstance(entries, dict) else ())
+            if not isinstance(entry, dict)
+            or (
+                str(entry.get("status_instance_id") or "") not in excluded
+                and str(entry.get("hash") or "") not in excluded_hash_keys
+                and str(entry.get("name") or "") not in excluded_name_keys
+            )
+        }
+        normalized = _reindex({"entries": filtered_entries})
     return {
         "source_type": "dynamic_value_store",
         "entries": normalized["entries"],
@@ -298,8 +320,16 @@ def binding_source_from_status_detail(
             }
             entries[_entry_key(entry)] = entry
     if isinstance(dynamic_values, dict):
+        indexed_hash_values = dynamic_values.get("__by_hash")
+        indexed_hash_keys = (
+            {str(key) for key in indexed_hash_values}
+            if isinstance(indexed_hash_values, dict)
+            else set()
+        )
         for key, value in dynamic_values.items():
             if key.startswith("__") or not isinstance(value, (int, float)):
+                continue
+            if str(key) in indexed_hash_keys:
                 continue
             entry = {
                 "scope": "status",
@@ -312,7 +342,7 @@ def binding_source_from_status_detail(
                 "source_trace": source_trace,
             }
             entries[_entry_key(entry)] = entry
-        by_hash = dynamic_values.get("__by_hash")
+        by_hash = indexed_hash_values
         if isinstance(by_hash, dict):
             for key, value in by_hash.items():
                 if not isinstance(value, (int, float)):

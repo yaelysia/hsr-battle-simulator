@@ -44,6 +44,7 @@ from .ir import (
     MonsterDataCardIR,
     PassiveMechanismSlotIR,
     BreakBaseDamageIR,
+    BattleStateTransitionIR,
     BreakDamageEmissionIR,
     BreakStatusEmissionIR,
     BreakTemplateIR,
@@ -951,6 +952,57 @@ class RuleBook:
             "_resource_rules",
             {rule.resource_rule_id: rule for rule in self.ir.resource_rules},
         )
+        battle_state_transitions, battle_state_transition_conflicts = (
+            _unique_index(
+                self.ir.battle_state_transitions,
+                lambda item: item.transition_rule_id,
+            )
+        )
+        object.__setattr__(
+            self,
+            "_battle_state_transitions",
+            battle_state_transitions,
+        )
+        object.__setattr__(
+            self,
+            "_battle_state_transition_conflicts",
+            battle_state_transition_conflicts,
+        )
+        battle_state_transitions_by_trigger: dict[
+            tuple[str, str], list[BattleStateTransitionIR]
+        ] = {}
+        battle_state_transitions_by_runtime_event: dict[
+            str, list[BattleStateTransitionIR]
+        ] = {}
+        for transition in self.ir.battle_state_transitions:
+            battle_state_transitions_by_trigger.setdefault(
+                (transition.trigger_kind, transition.trigger_identity),
+                [],
+            ).append(transition)
+            battle_state_transitions_by_runtime_event.setdefault(
+                transition.runtime_event_type,
+                [],
+            ).append(transition)
+        object.__setattr__(
+            self,
+            "_battle_state_transitions_by_trigger",
+            {
+                key: tuple(
+                    sorted(value, key=lambda item: item.transition_rule_id)
+                )
+                for key, value in battle_state_transitions_by_trigger.items()
+            },
+        )
+        object.__setattr__(
+            self,
+            "_battle_state_transitions_by_runtime_event",
+            {
+                key: tuple(
+                    sorted(value, key=lambda item: item.transition_rule_id)
+                )
+                for key, value in battle_state_transitions_by_runtime_event.items()
+            },
+        )
         object.__setattr__(
             self,
             "_damage_formula_rules",
@@ -1341,6 +1393,17 @@ class RuleBook:
                     candidates=candidates,
                     blocked_reason="equipment_mechanism_graph_source_mismatch",
                 )
+            if selected.coverage_status == "executable":
+                graph_reason = self._equipment_graph_runtime_closure_reason(graph)
+                if graph_reason:
+                    return EquipmentDefinitionResolution(
+                        resolution_status="blocked",
+                        requested_key=key,
+                        expected_kind=key.definition_kind,
+                        value=None,
+                        candidates=candidates,
+                        blocked_reason=graph_reason,
+                    )
             parameter_reads = tuple(
                 self.equipment_ability_parameter_read(binding_id)
                 for binding_id in selected.parameter_binding_ids
@@ -1404,6 +1467,61 @@ class RuleBook:
             value=selected,
             candidates=candidates,
         )
+
+    def _equipment_graph_runtime_closure_reason(
+        self,
+        graph: StandaloneAbilityGraphIR,
+    ) -> str:
+        if graph.coverage_status != "executable" or graph.blocked_reason:
+            return "equipment_mechanism_graph_not_executable"
+        if len(graph.task_ids) != len(set(graph.task_ids)) or len(
+            graph.status_callback_ids
+        ) != len(set(graph.status_callback_ids)):
+            return "equipment_mechanism_graph_runtime_reference_duplicate"
+        tasks = tuple(self.ability_task(task_id) for task_id in graph.task_ids)
+        if any(task is None for task in tasks):
+            return "equipment_mechanism_graph_task_missing"
+        executable_task_ids = tuple(
+            task.task_id
+            for task in tasks
+            if task is not None and task.coverage_status == "executable"
+        )
+        if executable_task_ids != graph.executable_task_ids:
+            return "equipment_mechanism_graph_task_admission_mismatch"
+        callbacks = tuple(
+            self.status_callback(callback_id)
+            for callback_id in graph.status_callback_ids
+        )
+        if any(callback is None for callback in callbacks):
+            return "equipment_mechanism_graph_callback_missing"
+        if any(
+            callback is not None
+            and (
+                callback.coverage_status != "executable"
+                or callback.admission_status != "executable"
+                or not _equipment_callback_matches_graph(callback, graph)
+            )
+            for callback in callbacks
+        ):
+            return "equipment_mechanism_graph_callback_admission_mismatch"
+        non_gameplay_callbacks = tuple(
+            self.status_callback(callback_id)
+            for callback_id in graph.non_gameplay_callback_ids
+        )
+        if any(callback is None for callback in non_gameplay_callbacks):
+            return "equipment_mechanism_graph_non_gameplay_callback_missing"
+        if any(
+            callback is not None
+            and (
+                callback.blocked_reason != "equipment_event_family_non_gameplay"
+                or not _equipment_callback_matches_graph(callback, graph)
+            )
+            for callback in non_gameplay_callbacks
+        ):
+            return "equipment_mechanism_graph_non_gameplay_classification_mismatch"
+        if not graph.task_ids and not graph.status_callback_ids:
+            return "equipment_mechanism_graph_runtime_nodes_missing"
+        return ""
 
     def summon_unit_definition(self, summon_definition_id: str) -> SummonUnitDefinitionIR | None:
         return self._summon_unit_definitions.get(summon_definition_id)
@@ -1871,6 +1989,56 @@ class RuleBook:
     def resource_rule(self, resource_rule_id: str) -> ResourceRuleIR | None:
         return self._resource_rules.get(resource_rule_id)
 
+    def battle_state_transition(
+        self,
+        transition_rule_id: str,
+    ) -> BattleStateTransitionIR | None:
+        return self._battle_state_transitions.get(transition_rule_id)
+
+    def battle_state_transitions_for_runtime_event(
+        self,
+        runtime_event_type: str,
+    ) -> tuple[BattleStateTransitionIR, ...]:
+        return self._battle_state_transitions_by_runtime_event.get(
+            runtime_event_type,
+            (),
+        )
+
+    def battle_state_transition_resolution_for_trigger(
+        self,
+        trigger_kind: str,
+        trigger_identity: str,
+    ) -> tuple[BattleStateTransitionIR | None, str]:
+        candidates = self._battle_state_transitions_by_trigger.get(
+            (trigger_kind, trigger_identity),
+            (),
+        )
+        if not candidates:
+            return None, "battle_state_transition_missing"
+        if len(candidates) != 1:
+            return None, "battle_state_transition_ambiguous"
+        transition = candidates[0]
+        if transition.transition_rule_id in self._battle_state_transition_conflicts:
+            return None, "battle_state_transition_identity_conflict"
+        if transition.coverage_status != "executable":
+            return None, transition.blocked_reason or (
+                "battle_state_transition_not_executable:"
+                f"{transition.coverage_status}"
+            )
+        if (
+            not transition.transition_rule_id
+            or not transition.trigger_kind
+            or not transition.trigger_identity
+            or not transition.state_path
+            or not transition.runtime_event_type
+            or not transition.callback_event
+            or not transition.source.source_path
+            or not transition.source.raw_type
+            or not transition.source.raw_id
+        ):
+            return None, "battle_state_transition_contract_incomplete"
+        return transition, ""
+
     def damage_formula_rule(self, damage_formula_rule_id: str) -> DamageFormulaRuleIR | None:
         return self._damage_formula_rules.get(damage_formula_rule_id)
 
@@ -1991,6 +2159,17 @@ class RuleBook:
         if entities:
             return entities[0]
         return None
+
+
+def _equipment_callback_matches_graph(
+    callback: StatusCallbackIR,
+    graph: StandaloneAbilityGraphIR,
+) -> bool:
+    return bool(
+        callback.source.source_path == graph.source.source_path
+        and callback.source.evidence.get("equipment_ability_source")
+        == graph.source.to_json()
+    )
 
 
 def _equipment_parameter_read_matches_graph(

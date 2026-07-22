@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+import json
 from dataclasses import dataclass
 from typing import Any
 
@@ -108,6 +110,18 @@ EXECUTABLE_CONDITION_OPCODES = {
     "ByCompareTargetCount",
     "ByContainBehaviorFlag",
     "ByContainsParamFlag",
+    "ByCharacterDamageType",
+    "ByCompareChangeValue",
+    "ByCompareParamValue",
+    "ByCompareSPRatio",
+    "ByCompareWaveCount",
+    "ByHasStanceWeak",
+    "ByInTurnBasedGameModeState",
+    "ByIsDamageCritical",
+    "ByIsPropertyValueMinOrMax",
+    "ByIsTargetValid",
+    "ByIsTopActionDelayTarget",
+    "ByRandomChance",
     "ByCurrentSkillName",
     "ByCurrentSkillType",
     "ByIsContainModifier",
@@ -271,6 +285,25 @@ def _evaluate_dynamic_hash(
 ) -> NumericEvaluationResult:
     hash_value = expression.get("hash")
     key = str(hash_value)
+    values = context.dynamic_values or {}
+    explicit_value = values.get(key)
+    if isinstance(explicit_value, (int, float)) and not isinstance(
+        explicit_value,
+        bool,
+    ):
+        return NumericEvaluationResult(
+            ok=True,
+            value=float(explicit_value),
+            expression_kind="dynamic_hash",
+            bindings={
+                "hash": hash_value,
+                "key": key,
+                "value": float(explicit_value),
+                "source_type": "explicit_dynamic_values",
+                "entry_key": key,
+            },
+            source_trace=source_trace,
+        )
     sources_checked: list[dict[str, Any]] = []
     matches: list[tuple[float, dict[str, Any]]] = []
     ambiguous_matches: list[dict[str, Any]] = []
@@ -286,17 +319,7 @@ def _evaluate_dynamic_hash(
             ambiguous_matches.append(binding)
         if value is not None:
             matches.append((value, binding))
-    values = context.dynamic_values or {}
-    if key in values and isinstance(values[key], (int, float)):
-        matches.append(
-            (
-                float(values[key]),
-                {"source_type": "explicit_dynamic_values", "entry_key": key},
-            )
-        )
-        sources_checked.append({"source_type": "explicit_dynamic_values", "hit": True})
-    else:
-        sources_checked.append({"source_type": "explicit_dynamic_values", "hit": False})
+    sources_checked.append({"source_type": "explicit_dynamic_values", "hit": False})
     if ambiguous_matches or len(matches) > 1:
         return NumericEvaluationResult(
             ok=False,
@@ -394,6 +417,28 @@ def _evaluate_numeric_program(
                     index,
                 )
             stack[-1] = -stack[-1]
+            continue
+        if opcode == "max":
+            operand_count = instruction.get("operand_count")
+            if (
+                not isinstance(operand_count, int)
+                or isinstance(operand_count, bool)
+                or operand_count < 2
+            ):
+                return _numeric_program_blocked(
+                    "numeric_program_variadic_operand_count_invalid",
+                    source_trace,
+                    index,
+                )
+            if len(stack) < operand_count:
+                return _numeric_program_blocked(
+                    "numeric_program_stack_underflow",
+                    source_trace,
+                    index,
+                )
+            operands = stack[-operand_count:]
+            del stack[-operand_count:]
+            stack.append(max(operands))
             continue
         if opcode not in {"add", "sub", "mul", "div"}:
             return _numeric_program_blocked("numeric_program_opcode_not_admitted", source_trace, index)
@@ -678,15 +723,35 @@ def _evaluate_condition_payload(
             return _condition_blocked(condition_id, opcode, "alive_state_target_missing", target_details, source_trace)
         if payload.get("AliveStateMask") != "Mask_AliveOrRevivable":
             return _condition_blocked(condition_id, opcode, "alive_state_mask_not_supported", {"mask": payload.get("AliveStateMask")}, source_trace)
-        return _condition_blocked(
+        if _unit_is_alive(unit):
+            return _condition_result(
+                True,
+                condition_id,
+                opcode,
+                "target_alive",
+                {"target_id": target_id, "revive_charges": None},
+                source_trace,
+            )
+        resources = getattr(unit, "resources", None)
+        revive_charges = (
+            resources.get("revive_charges")
+            if isinstance(resources, dict)
+            else None
+        )
+        if not _finite_number(revive_charges):
+            return _condition_blocked(
+                condition_id,
+                opcode,
+                "revivable_resource_state_missing",
+                {"target_id": target_id, "alive": False},
+                source_trace,
+            )
+        return _condition_result(
+            float(revive_charges) > 0,
             condition_id,
             opcode,
-            "revivable_lifecycle_state_not_available",
-            {
-                "target_id": target_id,
-                "alive": _unit_is_alive(unit),
-                "mask": "Mask_AliveOrRevivable",
-            },
+            "revivable_resource_checked",
+            {"target_id": target_id, "revive_charges": float(revive_charges)},
             source_trace,
         )
     if opcode == "ByCurrentSkillType":
@@ -792,6 +857,136 @@ def _evaluate_condition_payload(
             {"flag": flag, "flags": sorted(flags), "inverse": payload.get("Inverse") is True},
             source_trace,
         )
+    if opcode == "ByCharacterDamageType":
+        target_id, target_details = _resolve_condition_target(payload.get("TargetType"), context)
+        unit = _state_unit(context, target_id) if target_id else None
+        expected = payload.get("DamageType")
+        actual = _unit_damage_type(unit)
+        if unit is None or not isinstance(expected, str) or not expected:
+            return _condition_blocked(condition_id, opcode, "character_damage_type_identity_missing", target_details, source_trace)
+        if actual is None:
+            return _condition_blocked(condition_id, opcode, "character_damage_type_source_missing", {"target_id": target_id}, source_trace)
+        return _condition_result(actual == expected, condition_id, opcode, "character_damage_type_compared", {"target_id": target_id, "expected": expected, "actual": actual}, source_trace)
+    if opcode in {"ByCompareChangeValue", "ByCompareParamValue"}:
+        keys = (
+            ("change_value", "delta", "value")
+            if opcode == "ByCompareChangeValue"
+            else ("param_value", "change_value", "delta", "value")
+        )
+        actual = _first_event_number(event_payload, keys)
+        expected = evaluator.evaluate_numeric(
+            payload.get("CompareValue"),
+            NumericEvaluationContext(
+                dynamic_values=context.dynamic_values,
+                binding_sources=context.binding_sources,
+                source_trace=source_trace,
+            ),
+        )
+        if actual is None:
+            return _condition_blocked(condition_id, opcode, "event_change_value_missing", {"keys": list(keys)}, source_trace)
+        if not expected.ok or expected.value is None:
+            return _condition_blocked(condition_id, opcode, expected.blocked_reason or "compare_value_blocked", {}, source_trace)
+        return _comparison_condition(condition_id, opcode, actual, payload.get("CompareType"), expected.value, source_trace)
+    if opcode == "ByCompareSPRatio":
+        target_id, target_details = _resolve_condition_target(payload.get("TargetType"), context)
+        unit = _state_unit(context, target_id) if target_id else None
+        if unit is None:
+            return _condition_blocked(condition_id, opcode, "sp_ratio_target_missing", target_details, source_trace)
+        maximum = getattr(unit, "max_energy", None)
+        current = getattr(unit, "energy", None)
+        if not _finite_number(maximum) or float(maximum) <= 0 or not _finite_number(current):
+            return _condition_blocked(condition_id, opcode, "sp_ratio_resource_missing", {"target_id": target_id}, source_trace)
+        expected = evaluator.evaluate_numeric(payload.get("CompareValue"), NumericEvaluationContext(dynamic_values=context.dynamic_values, binding_sources=context.binding_sources, source_trace=source_trace))
+        if not expected.ok or expected.value is None:
+            return _condition_blocked(condition_id, opcode, expected.blocked_reason or "compare_value_blocked", {}, source_trace)
+        return _comparison_condition(condition_id, opcode, float(current) / float(maximum), payload.get("CompareType"), expected.value, source_trace)
+    if opcode == "ByCompareWaveCount":
+        state = context.state
+        if state is None or not isinstance(getattr(state, "wave_index", None), int):
+            return _condition_blocked(condition_id, opcode, "wave_count_state_missing", {}, source_trace)
+        explicit = getattr(state, "global_flags", {}).get("wave_count")
+        actual = float(explicit) if _finite_number(explicit) else float(state.wave_index + 1)
+        expected = evaluator.evaluate_numeric(payload.get("CompareValue"), NumericEvaluationContext(dynamic_values=context.dynamic_values, binding_sources=context.binding_sources, source_trace=source_trace))
+        if not expected.ok or expected.value is None:
+            return _condition_blocked(condition_id, opcode, expected.blocked_reason or "compare_value_blocked", {}, source_trace)
+        return _comparison_condition(condition_id, opcode, actual, payload.get("CompareType"), expected.value, source_trace)
+    if opcode == "ByHasStanceWeak":
+        target_id, target_details = _resolve_condition_target(payload.get("TargetType"), context)
+        unit = _state_unit(context, target_id) if target_id else None
+        weak_type = payload.get("WeakType")
+        expected = weak_type.get("DamageType") if isinstance(weak_type, dict) else None
+        if unit is None or not isinstance(expected, str) or not expected:
+            return _condition_blocked(condition_id, opcode, "stance_weakness_identity_missing", target_details, source_trace)
+        weaknesses = _unit_weaknesses(unit)
+        if weaknesses is None:
+            return _condition_blocked(condition_id, opcode, "stance_weakness_source_missing", {"target_id": target_id}, source_trace)
+        return _condition_result(expected in weaknesses, condition_id, opcode, "stance_weakness_checked", {"target_id": target_id, "expected": expected, "weaknesses": sorted(weaknesses)}, source_trace)
+    if opcode == "ByInTurnBasedGameModeState":
+        state = context.state
+        mode = getattr(state, "global_flags", {}).get("turn_based_game_mode_state") if state is not None else None
+        if not isinstance(mode, (bool, str)):
+            return _condition_blocked(condition_id, opcode, "turn_based_game_mode_state_missing", {}, source_trace)
+        active = mode is True or mode in {"active", "running", "entered"}
+        return _condition_result(active, condition_id, opcode, "turn_based_game_mode_state_checked", {"mode": mode}, source_trace)
+    if opcode == "ByIsDamageCritical":
+        critical = event_payload.get("is_critical")
+        if not isinstance(critical, bool):
+            return _condition_blocked(condition_id, opcode, "damage_critical_context_missing", {}, source_trace)
+        return _condition_result(critical, condition_id, opcode, "damage_critical_checked", {"is_critical": critical}, source_trace)
+    if opcode == "ByIsPropertyValueMinOrMax":
+        target_id, target_details = _resolve_condition_target(payload.get("TargetType"), context)
+        compare_ids, compare_details = _condition_target_ids(payload.get("CompareTargetType"), context)
+        if target_id is None or compare_ids is None:
+            return _condition_blocked(condition_id, opcode, "property_compare_targets_missing", {**target_details, **compare_details}, source_trace)
+        values = _unit_property_ratios(context, compare_ids, payload.get("PropertyRatioType"))
+        if values is None or target_id not in values:
+            return _condition_blocked(condition_id, opcode, "property_ratio_not_available", {"target_id": target_id}, source_trace)
+        minimum = min(values.values())
+        matched = abs(values[target_id] - minimum) <= 1e-12
+        return _condition_result(matched, condition_id, opcode, "minimum_property_ratio_checked", {"target_id": target_id, "values": values, "minimum": minimum}, source_trace)
+    if opcode == "ByIsTargetValid":
+        target_id, target_details = _resolve_condition_target(payload.get("TargetType"), context)
+        unit = _state_unit(context, target_id) if target_id else None
+        if unit is None:
+            return _condition_result(False, condition_id, opcode, "target_missing", target_details, source_trace)
+        valid = runtime_unit_is_target_candidate(unit)
+        return _condition_result(valid, condition_id, opcode, "target_validity_checked", {"target_id": target_id}, source_trace)
+    if opcode == "ByIsTopActionDelayTarget":
+        target_id, target_details = _resolve_condition_target(payload.get("TargetType"), context)
+        compare_ids, compare_details = _condition_target_ids(payload.get("CompareTargetType"), context)
+        exclude_ids: tuple[str, ...] = ()
+        if payload.get("ExcludeTargetType") is not None:
+            resolved_exclude, exclude_details = _condition_target_ids(payload.get("ExcludeTargetType"), context)
+            if resolved_exclude is None:
+                return _condition_blocked(condition_id, opcode, "action_delay_exclude_targets_missing", exclude_details, source_trace)
+            exclude_ids = resolved_exclude
+        if target_id is None or compare_ids is None:
+            return _condition_blocked(condition_id, opcode, "action_delay_compare_targets_missing", {**target_details, **compare_details}, source_trace)
+        candidates = tuple(unit_id for unit_id in compare_ids if unit_id not in set(exclude_ids))
+        values = {
+            unit_id: float(getattr(_state_unit(context, unit_id), "action_value"))
+            for unit_id in candidates
+            if _finite_number(getattr(_state_unit(context, unit_id), "action_value", None))
+        }
+        if target_id not in values or not values:
+            return _condition_blocked(condition_id, opcode, "action_delay_value_missing", {"target_id": target_id, "candidates": list(candidates)}, source_trace)
+        top = min(values.values())
+        return _condition_result(abs(values[target_id] - top) <= 1e-12, condition_id, opcode, "top_action_delay_target_checked", {"target_id": target_id, "values": values, "top": top}, source_trace)
+    if opcode == "ByRandomChance":
+        selected = event_payload.get("condition_random_result")
+        if not isinstance(selected, bool):
+            return _condition_blocked(condition_id, opcode, "random_condition_requires_rng_context", {}, source_trace)
+        return _condition_result(
+            selected,
+            condition_id,
+            opcode,
+            "random_condition_result_consumed",
+            {
+                "choice_key": event_payload.get("condition_random_choice_key"),
+                "selected": selected,
+            },
+            source_trace,
+        )
     if opcode == "ByIsInsertAction":
         payload_value = (context.event_payload or {}).get("is_insert_action")
         matched = payload_value is True
@@ -848,22 +1043,16 @@ def _evaluate_condition_payload(
             source_trace,
         )
     if opcode == "ByCompareCharacterNumber":
-        errors = context.target_resolution_errors or {}
-        if errors.get("TargetType"):
-            return _condition_blocked(
-                condition_id,
-                opcode,
-                f"target_group_blocked:{errors['TargetType']}",
-                {"target_field": "TargetType"},
-                source_trace,
-            )
-        groups = context.resolved_target_groups or {}
-        if "TargetType" not in groups:
+        target_ids, target_details = _condition_target_ids(
+            payload.get("TargetType"),
+            context,
+        )
+        if target_ids is None:
             return _condition_blocked(
                 condition_id,
                 opcode,
                 "target_group_not_resolved",
-                {"target_field": "TargetType"},
+                target_details,
                 source_trace,
             )
         expected = evaluator.evaluate_numeric(
@@ -885,7 +1074,7 @@ def _evaluate_condition_payload(
         return _comparison_condition(
             condition_id,
             opcode,
-            float(len(groups["TargetType"])),
+            float(len(target_ids)),
             payload.get("CompareType"),
             expected.value,
             source_trace,
@@ -956,10 +1145,17 @@ def _evaluate_condition_payload(
             )
         return _comparison_condition(condition_id, opcode, actual.value, payload.get("CompareType"), compare_value.value, source_trace)
     if opcode == "ByCompareModifierValue":
-        target_id, target_details = _resolve_condition_target(
-            payload.get("TargetType") or "ModifierOwnerEntity",
-            context,
-        )
+        if payload.get("TargetType") is None:
+            target_id = context.owner_id or context.actor_id
+            target_details = {
+                "alias": "ModifierOwnerEntity",
+                "source": "tbgd_condition_default",
+            }
+        else:
+            target_id, target_details = _resolve_condition_target(
+                payload.get("TargetType"),
+                context,
+            )
         if target_id is None:
             return _condition_blocked(condition_id, opcode, "target_alias_unresolved", target_details, source_trace)
         actual_value, actual_reason = _modifier_value_for_condition(
@@ -988,9 +1184,9 @@ def _evaluate_condition_payload(
             )
         return _comparison_condition(condition_id, opcode, actual_value, payload.get("CompareType"), compare_value.value, source_trace)
     if opcode == "ByCompareTarget":
-        left_id, left_details = _resolve_condition_target(payload.get("TargetType"), context)
-        right_id, right_details = _resolve_condition_target(payload.get("CompareType"), context)
-        if left_id is None or right_id is None:
+        left_ids, left_details = _condition_target_ids(payload.get("TargetType"), context)
+        right_ids, right_details = _condition_target_ids(payload.get("CompareType"), context)
+        if left_ids is None or right_ids is None:
             return _condition_blocked(
                 condition_id,
                 opcode,
@@ -998,6 +1194,16 @@ def _evaluate_condition_payload(
                 {"left": left_details, "right": right_details},
                 source_trace,
             )
+        if len(left_ids) != 1 or len(right_ids) != 1:
+            return _condition_blocked(
+                condition_id,
+                opcode,
+                "target_identity_requires_singleton",
+                {"left_target_ids": list(left_ids), "right_target_ids": list(right_ids)},
+                source_trace,
+            )
+        left_id = left_ids[0]
+        right_id = right_ids[0]
         return _condition_result(
             left_id == right_id,
             condition_id,
@@ -1306,6 +1512,20 @@ def _condition_target_ids(
     alias_value: object,
     context: EvaluationContext,
 ) -> tuple[tuple[str, ...] | None, dict[str, Any]]:
+    target_key = _condition_target_key(alias_value)
+    errors = context.target_resolution_errors or {}
+    if target_key in errors:
+        return None, {
+            "target_key": target_key,
+            "reason": errors[target_key],
+            "source": "pre_resolved_target_expression",
+        }
+    groups = context.resolved_target_groups or {}
+    if target_key in groups:
+        return groups[target_key], {
+            "target_key": target_key,
+            "source": "pre_resolved_target_expression",
+        }
     alias = _target_alias(alias_value)
     target_id, details = _resolve_condition_target(alias_value, context)
     if target_id is not None:
@@ -1353,13 +1573,23 @@ def _condition_target_ids(
         "AllEnemy",
         "AllEnemyWithUnSelectable",
         "AllLightTeam",
+        "AllLightTeamWithUnselectable",
+        "AllLightTeamWithAllLightTeamUnselectable",
+        "AllLightTeamWithAllUnselectableLightTeam",
         "AllTeamMember",
+        "AllTeamMemberWithUnselectable",
         "AllTeammate",
+        "AllTeammateWithUnselectable",
         "AllUnselectable",
     }:
         result: list[str] = []
         include_unselectable = alias in {
             "AllEnemyWithUnSelectable",
+            "AllLightTeamWithUnselectable",
+            "AllLightTeamWithAllLightTeamUnselectable",
+            "AllLightTeamWithAllUnselectableLightTeam",
+            "AllTeamMemberWithUnselectable",
+            "AllTeammateWithUnselectable",
             "AllUnselectable",
         }
         for unit_id, unit in sorted(units.items()):
@@ -1370,7 +1600,12 @@ def _condition_target_ids(
                 continue
             if alias == "AllDarkTeam" and runtime_unit_is_dark_team(unit):
                 result.append(unit_id)
-            elif alias == "AllLightTeam" and runtime_unit_is_light_team(unit):
+            elif alias in {
+                "AllLightTeam",
+                "AllLightTeamWithUnselectable",
+                "AllLightTeamWithAllLightTeamUnselectable",
+                "AllLightTeamWithAllUnselectableLightTeam",
+            } and runtime_unit_is_light_team(unit):
                 result.append(unit_id)
             elif (
                 alias in {"AllEnemy", "AllEnemyWithUnSelectable"}
@@ -1379,13 +1614,13 @@ def _condition_target_ids(
             ):
                 result.append(unit_id)
             elif (
-                alias == "AllTeamMember"
+                alias in {"AllTeamMember", "AllTeamMemberWithUnselectable"}
                 and owner is not None
                 and runtime_units_share_combat_team(owner, unit)
             ):
                 result.append(unit_id)
             elif (
-                alias == "AllTeammate"
+                alias in {"AllTeammate", "AllTeammateWithUnselectable"}
                 and owner is not None
                 and unit_id != owner_id
                 and runtime_units_share_combat_team(owner, unit)
@@ -1398,6 +1633,18 @@ def _condition_target_ids(
         result = _target_list_for_alias(alias, context)
         return (result, {"alias": alias}) if result is not None else (None, {"alias": alias})
     return None, {"alias": alias, "reason": "target_alias_not_admitted"}
+
+
+def _condition_target_key(value: object) -> str:
+    if isinstance(value, TargetExpressionNodeIR):
+        return "node:" + json.dumps(
+            value.to_json(),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    alias = _target_alias(value)
+    return f"alias:{alias}" if alias else "target:missing"
 
 
 def _payload_unit_ids(
@@ -1443,6 +1690,67 @@ def _state_unit(context: EvaluationContext, unit_id: str) -> Any | None:
     units = getattr(state, "units", None)
     if isinstance(units, dict):
         return units.get(unit_id)
+    return None
+
+
+def _finite_number(value: object) -> bool:
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(float(value))
+    )
+
+
+def _first_event_number(
+    payload: dict[str, Any],
+    keys: tuple[str, ...],
+) -> float | None:
+    for key in keys:
+        value = payload.get(key)
+        if _finite_number(value):
+            return float(value)
+    return None
+
+
+def _unit_damage_type(unit: Any | None) -> str | None:
+    flags = getattr(unit, "flags", None)
+    if not isinstance(flags, dict):
+        return None
+    for key in ("damage_type", "element", "DamageType"):
+        value = flags.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
+def _unit_weaknesses(unit: Any | None) -> set[str] | None:
+    if unit is None:
+        return None
+    flags = getattr(unit, "flags", None)
+    if not isinstance(flags, dict):
+        return None
+    values = flags.get("weaknesses")
+    if not isinstance(values, (list, tuple, set)):
+        return None
+    return {str(item) for item in values if isinstance(item, str) and item}
+
+
+def _unit_property_ratios(
+    context: EvaluationContext,
+    unit_ids: tuple[str, ...],
+    property_ratio_type: object,
+) -> dict[str, float] | None:
+    if property_ratio_type != "HPRatio":
+        return None
+    values: dict[str, float] = {}
+    for unit_id in unit_ids:
+        unit = _state_unit(context, unit_id)
+        hp = getattr(unit, "hp", None)
+        maximum = getattr(unit, "max_hp", None)
+        if not _finite_number(hp) or not _finite_number(maximum) or float(maximum) <= 0:
+            return None
+        values[unit_id] = float(hp) / float(maximum)
+    return values
     return None
 
 

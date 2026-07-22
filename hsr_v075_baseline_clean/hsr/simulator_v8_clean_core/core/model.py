@@ -221,15 +221,20 @@ class BattleState:
             "dynamic_value_store": {"entries": {}, "by_hash": {}, "by_name": {}},
             **self.global_flags,
         }
+        combat_units = {
+            unit_id: unit
+            for unit_id, unit in self.units.items()
+            if not unit.flags.get("system_entity_kind")
+        }
         teams = {
-            "ally": [unit_id for unit_id, unit in sorted(self.units.items()) if unit.side == "ally"],
-            "enemy": [unit_id for unit_id, unit in sorted(self.units.items()) if unit.side == "enemy"],
-            "summon": [unit_id for unit_id, unit in sorted(self.units.items()) if unit.side == "summon"],
+            "ally": [unit_id for unit_id, unit in sorted(combat_units.items()) if unit.side == "ally"],
+            "enemy": [unit_id for unit_id, unit in sorted(combat_units.items()) if unit.side == "enemy"],
+            "summon": [unit_id for unit_id, unit in sorted(combat_units.items()) if unit.side == "summon"],
         }
         active_teams = {
-            "ally": [unit_id for unit_id, unit in sorted(self.units.items()) if unit.side == "ally" and _unit_lifecycle_status(unit) == "active"],
-            "enemy": [unit_id for unit_id, unit in sorted(self.units.items()) if unit.side == "enemy" and _unit_lifecycle_status(unit) == "active"],
-            "summon": [unit_id for unit_id, unit in sorted(self.units.items()) if unit.side == "summon" and _unit_lifecycle_status(unit) == "active"],
+            "ally": [unit_id for unit_id, unit in sorted(combat_units.items()) if unit.side == "ally" and _unit_lifecycle_status(unit) == "active"],
+            "enemy": [unit_id for unit_id, unit in sorted(combat_units.items()) if unit.side == "enemy" and _unit_lifecycle_status(unit) == "active"],
+            "summon": [unit_id for unit_id, unit in sorted(combat_units.items()) if unit.side == "summon" and _unit_lifecycle_status(unit) == "active"],
         }
         return Snapshot(
             {
@@ -267,7 +272,7 @@ class BattleState:
                     "last_advanced_delta": float(global_flags.get("last_advanced_delta", 0.0)),
                     "turn_sequence_index": int(global_flags.get("turn_sequence_index", 0)),
                     "action_values": {
-                        unit_id: unit.action_value for unit_id, unit in sorted(self.units.items())
+                        unit_id: unit.action_value for unit_id, unit in sorted(combat_units.items())
                     },
                     "queues": {key: list(value) for key, value in sorted(self.queues.items())},
                 },

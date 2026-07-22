@@ -20,10 +20,14 @@ from ..core.transition_outcome import (
     classify_transition_outcome,
     unclassified_transition_outcome,
 )
+from ..core.transition_consumer import (
+    transition_blocked_reason as _transition_blocked_reason,
+    transition_successor_state as _transition_successor_state,
+)
+from ..resource_event_contract import UNIT_ENERGY_EVENT_CONTRACT
 from ..rules.ir import StatusEventFamilyIR
 from ..rules.rulebook import RuleBook
 from ..systems.scheduler import CombatScheduler, _combine_scheduler_transitions
-from simulator_v8_ui.runner import _transition_blocked_reason, _transition_successor_state
 from .io import write_json
 from .static_checks import run_static_checks
 from .validate_p7_s0_kernel_trust_baseline import _base_state, _decision_state, _minimal_rulebook, _source
@@ -222,17 +226,21 @@ def _trust_rulebook() -> RuleBook:
             status_event_family_id=f"validation:event_family:{callback_event}",
             callback_event=callback_event,
             event_family="validation",
-            default_scope_kind="global_listener",
+            default_scope_kind=scope_kind,
             runtime_event_sources=(runtime_event,),
             source_basis="validation_structured_event_family",
             source=_source(f"event_family:{callback_event}"),
             coverage_status="executable",
             admission_status="executable",
         )
-        for callback_event, runtime_event in (
-            ("OnBeforeSkillUse", "action.window.before_skill_use"),
-            ("OnAfterSkillUse", "action.window.after_skill_use"),
-            ("OnSPChange", "resource.sp_changed"),
+        for callback_event, runtime_event, scope_kind in (
+            ("OnBeforeSkillUse", "action.window.before_skill_use", "global_listener"),
+            ("OnAfterSkillUse", "action.window.after_skill_use", "global_listener"),
+            (
+                UNIT_ENERGY_EVENT_CONTRACT.after_callback_events[-1],
+                UNIT_ENERGY_EVENT_CONTRACT.after_event_type,
+                UNIT_ENERGY_EVENT_CONTRACT.scope_kind,
+            ),
         )
     )
     return RuleBook(replace(baseline.ir, status_event_families=families))

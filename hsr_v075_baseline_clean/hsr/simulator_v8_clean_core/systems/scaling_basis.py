@@ -15,6 +15,7 @@ class ScalingBasisResult:
     stat: str
     value: float | None
     source_trace: dict[str, JSONValue] = field(default_factory=dict)
+    source_terms: tuple[dict[str, JSONValue], ...] = ()
     blocked_reason: str = ""
 
     def to_json(self) -> dict[str, JSONValue]:
@@ -26,6 +27,7 @@ class ScalingBasisResult:
             "stat": self.stat,
             "value": self.value,
             "source_trace": self.source_trace,
+            "source_terms": [dict(term) for term in self.source_terms],
             "blocked_reason": self.blocked_reason,
         }
 
@@ -67,7 +69,7 @@ def resolve_scaling_basis(
         return _blocked("scaling_basis_unit_missing", trace, basis_kind=kind, unit_ref=unit_ref, unit_id=unit_id)
 
     stat = str(basis.get("stat") or "")
-    value = _unit_stat_value(unit, stat)
+    value, source_terms = _unit_stat_value(unit, stat)
     if value is None:
         return _blocked(
             f"scaling_basis_stat_not_supported:{stat or 'missing'}",
@@ -85,6 +87,7 @@ def resolve_scaling_basis(
         stat=stat,
         value=value,
         source_trace=trace,
+        source_terms=source_terms,
     )
 
 
@@ -96,25 +99,26 @@ def _resolve_unit_id(unit_ref: str, attacker_id: str, target_id: str) -> str:
     return ""
 
 
-def _unit_stat_value(unit: UnitState, stat: str) -> float | None:
+def _unit_stat_value(
+    unit: UnitState,
+    stat: str,
+) -> tuple[float | None, tuple[dict[str, JSONValue], ...]]:
     if stat == "hp":
-        return float(unit.hp)
+        return float(unit.hp), ()
     if stat == "max_hp":
-        return float(unit.max_hp)
-    if stat == "attack":
-        return effective_unit_stat(unit, "attack").value
-    if stat == "defense":
-        return effective_unit_stat(unit, "defense").value
-    if stat == "speed":
-        return effective_unit_stat(unit, "speed").value
+        return float(unit.max_hp), ()
+    if stat in {"attack", "defense", "speed"}:
+        effective = effective_unit_stat(unit, stat)
+        return effective.value, effective.source_terms
     if stat == "toughness":
-        return float(unit.toughness)
+        return float(unit.toughness), ()
     if stat == "max_toughness":
-        return float(unit.max_toughness)
+        return float(unit.max_toughness), ()
     resource_value = unit.resources.get(stat)
     if isinstance(resource_value, (int, float)) and not isinstance(resource_value, bool):
-        return effective_unit_stat(unit, stat).value
-    return None
+        effective = effective_unit_stat(unit, stat)
+        return effective.value, effective.source_terms
+    return None, ()
 
 
 def _blocked(

@@ -34,8 +34,8 @@ turnbasedgamedata-main -> TBGD compiler/lowering -> Canonical IR -> Combat Core
 
 ```text
 P8 equipment build, light-cone and relic assembly
-最近代码检查点：P8-S7 光锥属性、状态、条件与监听机制族验收
-当前规划主线：P8 光锥、遗器与角色构筑装配；P8-S0 至 P8-S7 已通过验收，当前光锥轨下一步只执行 P8-S8 剩余 gameplay 机制闭环
+最近代码检查点：P8-S8 光锥剩余 gameplay 机制闭环验收
+当前规划主线：P8 光锥、遗器与角色构筑装配；P8-S0 至 P8-S8 已通过验收，光锥轨已收口，下一阶段为 P8-S9 遗器定义卡
 ```
 
 当前 v8 已建立的底层范围包括：
@@ -68,18 +68,19 @@ P8 equipment build, light-cone and relic assembly
 - P8-S5 光锥静态属性贡献已经独立验收：当前 810 个叠影档位完整分类，575 条静态属性以精确十进制和独立来源进入统一贡献账本；命途匹配时静态被动恰好应用一次，命途失配时仅保留基础属性。贡献身份、所选叠影、原始记录、光锥归属、来源账本和 fingerprint 的一致性均由结果模型及联合伪造负例约束。动态能力仍未 lower 或执行，同命途正式战斗继续诚实 blocked。
 - P8-S6 光锥动态能力绑定与启动生命周期已经独立验收：162 条真实能力记录形成稳定 Canonical IR 图引用，407 条装备参数读取按完整节点身份精确绑定，2,035 次叠影参数解析保留十进制与来源；provider 以单位、装备实例和机制形成语义唯一身份，并经正式场景构筑链在 UnitState 建立后原子注册。S6 验收时 162 个生产图均因嵌套 modifier / callback family 未闭合而 blocked；后续 S7 已回收其中纯 S7 图。
 - P8-S7 光锥属性、状态、条件与监听机制族已经独立验收：当前 4,472 个原始能力机制节点形成互斥且穷尽的 S7/S8/non-gameplay 分区，986 个 S7 节点无 lowering、admission、implementation 或 validation gap；18 个纯 S7 光锥图可经正式构筑进入战斗，144 个含 S8 分支的图继续整体 blocked。属性池、状态生命周期、条件真假、动态值、监听窗口、召唤单位阵营、owner/target、多 wearer、settlement、source audit 和 replay 均有结构化正负例；没有部分执行或装备专用 runtime。
+- P8-S8 光锥剩余 gameplay 机制已经独立验收：当前 162 张已发布光锥的完整机制图全部 executable，S8 的 3,464 个 gameplay 来源节点、64 个任务族、23 个属性消费族、51 个事件族、41 个条件族和 1,312 条数值表达式均无 lowering/admission/implementation/validation gap；伤害、治疗、护盾、资源、生命、时间线、目标、RNG 和共享战斗状态均复用通用系统，装备侧失败、unknown、专用 runtime handler 和 raw runtime 读取均为零。148 张光锥已通过同命途正式角色构筑启动；14 张记忆命途光锥仅因角色侧 owned-combatant/忆灵构筑尚未完成而保持结构化外部阻断，不能据此声称全目录正式入战完成。
 - `simulator_v8_ui/` 本地 UI 测试台，用于 scenario 编排和审计展示，不进入规则系统。
 
 当前仍未完整实现的大块：
 
-- 完整角色面板装配：全量角色行迹、光锥动态能力、内圈/外圈遗器及套装效果。
+- 完整角色面板装配：全量角色行迹、记忆角色与忆灵 owned-combatant 构筑、内圈/外圈遗器及套装效果。
 - P5 保留的 admission gap 逐类回收：公式参数、动态值、自定义值、召唤参数、状态数值、资源和数据卡上下文的全正例扩面。
 - 大量角色卡人工解释与验证。
 - 状态系统长线扩面：全角色、全怪物、装备、关卡带来的新状态来源和特殊事件源。
 - 目标系统剩余部分：更多排序、随机、fetch、相邻目标、唯一实体、召唤物/servant 扩展目标、特殊玩法目标。
 - 全怪物技能、全怪物被动、阶段切换、召唤、波次、关卡倍率。
 - 敌方行动候选扩面、波次系统扩面、P3 inherited summon/target gaps、servant damage formula、特殊战斗模式；敌方 AI 不进入 core，由外部推演器控制。
-- P8-S8 尚待闭合的光锥伤害、治疗、护盾、资源、复杂目标、时间线与 RNG gameplay family，以及遗器、环境、关卡机制。
+- P8-S9 至 S17 尚待完成的遗器定义、实例、词条、套装及动态机制，以及环境、关卡机制。
 - `OnCustomEvent`、`OnWaveMonster` 等需要真实事件源或波次系统的回调。
 
 ## 工作区目录
@@ -326,6 +327,9 @@ P8-S5 至 S21 已采用“规划线程预写执行卡库”的新流程，入口
 - 推演器不能承担底层规则。它只像玩家一样查询、选择、提交和读取结果；技能可用性、目标范围、状态结算、伤害公式、敌方动作候选、blocked reason 都必须由 core / 数据卡 / RuleBook 给出。
 - 动作属于可行动单位的数据卡或子卡，目标属于 action definition。不要让 UI、scenario、route 或未来推演器猜测 action/target 规则。
 - 角色召唤物归属角色卡，servant / 忆灵应通过角色卡子卡或派生 combatant card 表达；怪物召唤物优先绑定已有怪物卡，只额外记录召唤者、owner/summoner relation 和生命周期。
+- TBGD 的缩写不能按字面猜规则含义。当前数据中 TeamBoostPoint / BP 对应队伍战技点，而 SP、`ModifySPNew`、`OnSPChange` 属于单位能量语义；必须沿生产 mutation、事件 payload、callback 消费和真实来源一起确认。纠正旧语义时应删除无生产者的 runtime event，不为 v8 保留兼容别名，并同步迁移冻结旧假设的验证。
+- 将缺口改归属为外部阶段时，必须同步检查目录启动、family coverage、事件链、任务链和最终聚合中的全部下游口径；只在一个矩阵里排除会造成同一事实一处 deferred、一处仍报实现失败。外部依赖必须保留数量、来源和阻断原因，不能从总账消失。
+- 专项验证通过不等于完整聚合已正确接入该证据。聚合若验证同一语义，应直接复用专项证据或使用等价的稳定选样；不得重新挑一个“能返回成功但没有目标 mutation”的宽松样例，导致专项与聚合对同一源码给出相反结论。
 - 装备、构筑、关卡、环境等未来接入点在当前阶段只能做真实预留：必须有归属、slot/hook、blocked 负例和后续阶段记录；空字段或 placeholder 不算预留完成。
 - UI 早期可以做完整入口和 mock 视觉，但所有入口必须标 readiness；mock only 不能保存成正式 scenario、不能导出 route、不能参与验收。
 - UI 是倒查内部接口的工作台，不是内核设计的上级约束。为了 UI 体验牺牲 core 通用性、来源追溯或 runtime 干净度时，必须停下询问。

@@ -6,6 +6,7 @@ import math
 from dataclasses import dataclass, field, replace
 
 from ..core.model import BattleState, GameEvent, JSONValue, Mutation, RNGEvent, TargetResolution
+from ..core.reducer import MutationReducer
 from ..core.settlement import SettlementRecord
 from ..rules.evaluator import NumericEvaluationContext, RuleEvaluator
 from ..rules.expression_ir import numeric_dynamic_hashes
@@ -22,14 +23,25 @@ from .rng import (
 )
 from .target import TargetSystem
 from .unit_lifecycle import UnitLifecycleSystem
+from .unit_relation import is_opposing_combat_team
 from .unit_stats import effective_unit_stat
 
 
 SUPPORTED_EFFECT_TARGET_ALIASES = {"Caster", "ModifierOwnerEntity", "ParamEntity", "CurrentActionTarget"}
 SUPPORTED_ADD_MODIFIER_SINGLE_TARGET_ALIASES = SUPPORTED_EFFECT_TARGET_ALIASES | {"AbilityTargetEntity"}
-SUPPORTED_ADD_MODIFIER_GROUP_TARGET_ALIASES = {"AllEnemy", "AllTeamMember", "AllLightTeam", "AllTeammate"}
+SUPPORTED_ADD_MODIFIER_GROUP_TARGET_ALIASES = {
+    "AllEnemy",
+    "AllEnemyWithUnSelectable",
+    "AllTeamMember",
+    "AllTeamMemberWithUnselectable",
+    "AllLightTeam",
+    "AllLightTeamWithUnselectable",
+    "AllDarkTeam",
+    "AllDarkTeamWithUnselectable",
+    "AllTeammate",
+    "AllTeammateWithUnselectable",
+}
 SUPPORTED_ADD_MODIFIER_ALIASES = SUPPORTED_ADD_MODIFIER_SINGLE_TARGET_ALIASES | SUPPORTED_ADD_MODIFIER_GROUP_TARGET_ALIASES
-STRICT_ATTACHED_STATUS_TARGET_ALIASES = {"AbilityTargetEntity"} | SUPPORTED_ADD_MODIFIER_GROUP_TARGET_ALIASES
 SUPPORTED_DURATION_LIFE_STEP_MOMENTS = {"ModifierPhase1End", "ActionPhaseEnd"}
 
 
@@ -279,6 +291,8 @@ class StatusSystem:
         event_payload: dict[str, JSONValue] | None = None,
         dynamic_values: dict[str, float] | None = None,
         binding_sources: tuple[dict[str, JSONValue], ...] = (),
+        retained_runtime_hashes: tuple[str, ...] = (),
+        _addition_chain: tuple[str, ...] = (),
     ) -> StatusApplicationResult:
         if effect.opcode != "AddModifier":
             return _unsupported_result(effect, "effect is not AddModifier")
@@ -315,6 +329,34 @@ class StatusSystem:
         definition = _select_modifier_definition(self.rules, modifier_name, effect)
         if definition is None:
             return _unsupported_result(effect, f"unknown modifier definition {modifier_name!r}")
+        if modifier_name in _addition_chain:
+            return _unsupported_result(
+                effect,
+                f"modifier addition cycle:{'->'.join((*_addition_chain, modifier_name))}",
+            )
+        if not target_ids:
+            return StatusApplicationResult(
+                ok=True,
+                rng_events=target_rng_events,
+                records=(
+                    SettlementRecord(
+                        record_type="status_application_empty_group",
+                        source="status_system",
+                        process_only=True,
+                        payload={
+                            "effect_id": effect.effect_id,
+                            "modifier_name": modifier_name,
+                            "target_alias": str(target_alias or ""),
+                            "state_unchanged": True,
+                        },
+                        trace={
+                            "effect_source": effect.source.to_json(),
+                            "modifier_definition": definition.source.to_json(),
+                            "target_expression": target_expression_trace,
+                        },
+                    ).to_json(),
+                ),
+            )
 
         plans: list[StatusLifecyclePlan] = []
         lifecycle_results: list[StatusLifecycleResult] = []
@@ -323,7 +365,6 @@ class StatusSystem:
         rng_events: list[RNGEvent] = list(target_rng_events)
         blocked_reasons: list[str] = []
         target_resolution_trace = target_resolution.to_json() if target_resolution is not None else None
-        strict_target_admission = target_alias in STRICT_ATTACHED_STATUS_TARGET_ALIASES
         for target_id in target_ids:
             resolved_dynamic_values = _resolve_dynamic_values(
                 standard,
@@ -331,6 +372,7 @@ class StatusSystem:
                 dynamic_values,
                 binding_sources,
                 {"effect_id": effect.effect_id, "effect_source": effect.source.to_json()},
+                retained_runtime_hashes,
             )
             on_create_dynamic_values = _on_create_define_dynamic_values(
                 self.rules,
@@ -374,6 +416,13 @@ class StatusSystem:
                 duration_admission,
                 effect,
             )
+            if existing_detail is None:
+                existing_detail = _replacement_status_detail(
+                    before_details,
+                    status_id=f"modifier:{modifier_name}",
+                    stacking=str(refresh_admission.get("stacking") or ""),
+                    caster_id=caster_id,
+                )
             chance_admission = _runtime_chance_admission(
                 standard,
                 effect,
@@ -398,6 +447,17 @@ class StatusSystem:
                 stack_admission,
                 refresh_admission,
                 same_status_other_source=same_status_other_source,
+                exact_same_source_reapplication=_exact_same_source_reapplication(
+                    existing_detail,
+                    caster_id=caster_id,
+                    dynamic_values=resolved_dynamic_values,
+                    modifiers=modifiers,
+                )
+                or _parameterless_same_source_reapplication(
+                    existing_detail,
+                    caster_id=caster_id,
+                    standard=standard,
+                ),
             )
             unsupported = [*unsupported, *partial_reasons]
             trigger_ids_by_event = _trigger_ids_by_event(
@@ -414,7 +474,11 @@ class StatusSystem:
                 chance_admission=chance_admission,
                 trigger_ids_by_event=trigger_ids_by_event,
                 unsupported=tuple(unsupported),
-                require_listener_free=strict_target_admission,
+                # Attached callbacks are executed from the emitted
+                # status.lifecycle events by EventDispatchSystem.  Rejecting
+                # them solely because the resolved target is a group would
+                # discard valid source-backed team effects.
+                require_listener_free=False,
             )
             if blocked_reason:
                 return _unsupported_result(effect, blocked_reason)
@@ -547,7 +611,7 @@ class StatusSystem:
         lifecycle_result = lifecycle_results[-1] if lifecycle_results else None
         ok = all(result.ok for result in lifecycle_results) if lifecycle_results else bool(process_records)
         ok = ok and not blocked_reasons
-        return StatusApplicationResult(
+        base_result = StatusApplicationResult(
             ok=ok,
             mutations=mutations,
             events=events,
@@ -556,6 +620,101 @@ class StatusSystem:
             unsupported=unsupported,
             status_instance=status_instances[-1] if status_instances else None,
             lifecycle_result=lifecycle_result,
+        )
+        if not base_result.ok:
+            return base_result
+        addition_effect_ids = definition.fields.get("addition_effect_ids", ())
+        if not isinstance(addition_effect_ids, (list, tuple)):
+            return _unsupported_result(
+                effect,
+                "modifier addition effect identities are malformed",
+            )
+        if not addition_effect_ids:
+            return base_result
+
+        reduction = MutationReducer().apply_all_result(state, base_result.mutations)
+        if not reduction.ok:
+            return _unsupported_result(
+                effect,
+                "modifier addition parent mutations cannot be reduced atomically",
+            )
+        working_state = reduction.after_state
+        combined_mutations = list(base_result.mutations)
+        combined_events = list(base_result.events)
+        combined_rng_events = list(base_result.rng_events)
+        combined_records = list(base_result.records)
+        for addition_effect_id in addition_effect_ids:
+            if not isinstance(addition_effect_id, str) or not addition_effect_id:
+                return _unsupported_result(
+                    effect,
+                    "modifier addition effect identity is invalid",
+                )
+            addition_effect = self.rules.effect(addition_effect_id)
+            if addition_effect is None or addition_effect.opcode != "AddModifier":
+                return _unsupported_result(
+                    effect,
+                    f"modifier addition effect is missing:{addition_effect_id}",
+                )
+            addition_standard = addition_effect.payload.get("standard")
+            addition_parent = (
+                addition_standard.get("addition_parent_modifier_name")
+                if isinstance(addition_standard, dict)
+                else None
+            )
+            if (
+                addition_parent != modifier_name
+                or addition_effect.owner_modifier_name != modifier_name
+                or addition_effect.source.source_path != definition.source.source_path
+            ):
+                return _unsupported_result(
+                    effect,
+                    f"modifier addition source binding mismatch:{addition_effect_id}",
+                )
+            addition_result = self.apply_add_modifier(
+                working_state,
+                addition_effect,
+                caster_id=caster_id,
+                source_id=source_id,
+                owner_id=owner_id,
+                param_entity_id=param_entity_id,
+                current_action_target_id=current_action_target_id,
+                target_resolution=target_resolution,
+                event_payload=event_payload,
+                dynamic_values=dynamic_values,
+                binding_sources=binding_sources,
+                retained_runtime_hashes=retained_runtime_hashes,
+                _addition_chain=(*_addition_chain, modifier_name),
+            )
+            if not addition_result.ok:
+                return StatusApplicationResult(
+                    ok=False,
+                    unsupported=(
+                        f"modifier addition failed:{addition_effect_id}",
+                        *addition_result.unsupported,
+                    ),
+                )
+            child_reduction = MutationReducer().apply_all_result(
+                working_state,
+                addition_result.mutations,
+            )
+            if not child_reduction.ok:
+                return _unsupported_result(
+                    effect,
+                    f"modifier addition mutations conflict:{addition_effect_id}",
+                )
+            working_state = child_reduction.after_state
+            combined_mutations.extend(addition_result.mutations)
+            combined_events.extend(addition_result.events)
+            combined_rng_events.extend(addition_result.rng_events)
+            combined_records.extend(addition_result.records)
+        return StatusApplicationResult(
+            ok=True,
+            mutations=tuple(combined_mutations),
+            events=tuple(combined_events),
+            rng_events=tuple(combined_rng_events),
+            records=tuple(combined_records),
+            status_instance=base_result.status_instance,
+            lifecycle_result=base_result.lifecycle_result,
         )
 
     def _resolve_add_modifier_targets(
@@ -602,6 +761,13 @@ class StatusSystem:
             )
             trace = result.to_json()
             if not result.ok:
+                empty_group_reason = f"target group empty:{expression.alias}"
+                if (
+                    expression.alias in SUPPORTED_ADD_MODIFIER_GROUP_TARGET_ALIASES
+                    and result.blocked_reason == empty_group_reason
+                ):
+                    trace["empty_group_admission"] = "source_resolved_no_effect"
+                    return (), "", trace, result.rng_events
                 return (), result.blocked_reason, trace, result.rng_events
             return result.target_ids, "", trace, result.rng_events
         return (), "target_expression_id_missing", {
@@ -859,6 +1025,26 @@ class StatusSystem:
     def _apply_lifecycle_plan(self, state: BattleState, plan: StatusLifecyclePlan) -> StatusLifecycleResult:
         if plan.operation in {"add", "refresh", "replace", "stack", "stack_refresh", "stack_reduce", "refresh_or_replace_partial", "replace_partial"}:
             return _apply_add_lifecycle_plan(state, plan)
+        if plan.operation == "idempotent":
+            return StatusLifecycleResult(
+                ok=True,
+                operation=plan.operation,
+                records=(
+                    SettlementRecord(
+                        record_type="status_lifecycle_idempotent",
+                        source="status_system",
+                        process_only=True,
+                        payload={
+                            "status_id": plan.status_id,
+                            "target_id": plan.target_id,
+                            "state_unchanged": True,
+                        },
+                        trace=plan.source_trace,
+                    ).to_json(),
+                ),
+                lifecycle_plan=plan,
+                lifecycle_state="active",
+            )
         if plan.operation in {"remove", "dispel", "stack_reduce_remove"}:
             return _apply_remove_lifecycle_plan(state, plan)
         if plan.operation == "tick":
@@ -1555,11 +1741,20 @@ def _status_lifecycle_events(
                     "status_id": plan.status_id,
                     "status_instance_id": status_instance_id,
                     "caster_id": caster_id,
+                    # TBGD status-listener conditions use ParamEntity2 as the
+                    # entity that applied the modifier, then may map it through
+                    # TargetFetchActualOwner for summon-aware ownership checks.
+                    "param_entity_2_id": caster_id,
                     "status_type": status_type,
                     "status_category": status_category,
                     "behavior_flags": list(behavior_flags),
                     "mutation_ids": list(mutation_ids),
                     "source_trace": plan.source_trace,
+                    "status_detail": (
+                        dict(plan.existing_detail)
+                        if remove_like and isinstance(plan.existing_detail, dict)
+                        else None
+                    ),
                 },
             )
         )
@@ -1569,7 +1764,14 @@ def _status_lifecycle_events(
 def _status_lifecycle_callback_events(plan: StatusLifecyclePlan) -> tuple[str, ...]:
     dot_add_events = ("OnModifierDotAdd",) if _plan_is_dot_status(plan) else ()
     if plan.operation == "add":
-        return ("OnCreate", "OnModifierAdd", "OnAddModifierSuc", "OnListenModifierAdd", *dot_add_events)
+        return (
+            "OnCreate",
+            "OnStack",
+            "OnModifierAdd",
+            "OnAddModifierSuc",
+            "OnListenModifierAdd",
+            *dot_add_events,
+        )
     if plan.operation in {"stack", "stack_reduce"}:
         return ("OnStack", "OnModifierAdd", "OnModifierOnStack", "OnListenModifierOnStack")
     if plan.operation in {"refresh", "replace", "refresh_or_replace_partial", "replace_partial"}:
@@ -1643,12 +1845,28 @@ def _resolve_dynamic_values(
     runtime_bindings: dict[str, float] | None,
     binding_sources: tuple[dict[str, JSONValue], ...],
     source_trace: dict[str, JSONValue],
+    retained_runtime_hashes: tuple[str, ...] = (),
 ) -> dict[str, JSONValue]:
+    definition_bindings = definition.fields.get("dynamic_value_bindings")
+    callback_definition_bindings = _definition_callback_dynamic_hashes(
+        definition.fields.get("callback_dynamic_hashes")
+    )
+    definition_binding_evidence = _json_safe(
+        definition_bindings if isinstance(definition_bindings, dict) else {}
+    )
+    if (
+        isinstance(definition_binding_evidence, dict)
+        and callback_definition_bindings
+    ):
+        definition_binding_evidence = {
+            **definition_binding_evidence,
+            "callback_by_hash": _json_safe(callback_definition_bindings),
+        }
     values: dict[str, JSONValue] = {
         "__by_name": {},
         "__by_hash": {},
         "__evaluations": [],
-        "__definition_bindings": _json_safe(definition.fields.get("dynamic_value_bindings", {})),
+        "__definition_bindings": definition_binding_evidence,
         "__dynamic_value_requests": _json_safe(standard.get("dynamic_value_requests", {})),
     }
     bindings = _numeric_bindings(runtime_bindings)
@@ -1656,7 +1874,45 @@ def _resolve_dynamic_values(
     by_hash: dict[str, JSONValue] = {}
     evaluations: list[JSONValue] = []
     resolved_values_in_order: list[float] = []
+    declared_hashes = {
+        str(hash_key)
+        for hash_key in (
+            definition_bindings.get("by_hash", {})
+            if isinstance(definition_bindings, dict)
+            and isinstance(definition_bindings.get("by_hash"), dict)
+            else {}
+        )
+    }
+    callback_hashes = set(
+        _definition_callback_dynamic_hashes(
+            definition.fields.get("callback_dynamic_hashes")
+        )
+    )
+    requests = standard.get("dynamic_value_requests")
+    request_hashes = {
+        str(hash_key)
+        for request in (requests.values() if isinstance(requests, dict) else ())
+        if isinstance(request, dict)
+        for hash_key in (
+            numeric_dynamic_hashes(request.get("expr"))
+            or ((request.get("hash"),) if request.get("hash") is not None else ())
+        )
+    }
+    status_control_hashes = {
+        str(hash_key)
+        for field_name in ("lifetime", "layer_add_when_stack", "max_layer", "chance")
+        for hash_key in numeric_dynamic_hashes(standard.get(field_name))
+    }
+    admitted_runtime_hashes = (
+        declared_hashes
+        | callback_hashes
+        | request_hashes
+        | status_control_hashes
+        | {str(hash_key) for hash_key in retained_runtime_hashes if str(hash_key)}
+    )
     for key, value in bindings.items():
+        if str(key) not in admitted_runtime_hashes:
+            continue
         by_hash[str(key)] = value
         values[str(key)] = value
         evaluations.append(
@@ -1671,12 +1927,30 @@ def _resolve_dynamic_values(
                 },
             }
         )
+    for hash_key in sorted(admitted_runtime_hashes):
+        if hash_key in by_hash:
+            continue
+        result = RuleEvaluator().evaluate_numeric(
+            {"kind": "dynamic_hash", "hash": hash_key},
+            NumericEvaluationContext(
+                dynamic_values=bindings,
+                binding_sources=binding_sources,
+                source_trace=source_trace,
+            ),
+        )
+        evaluations.append(
+            {
+                "name": f"binding_source_hash:{hash_key}",
+                "result": result.to_json(),
+            }
+        )
+        if result.ok and result.value is not None:
+            value = float(result.value)
+            by_hash[hash_key] = value
+            values[hash_key] = value
     dynamic_values = standard.get("dynamic_values")
     if not isinstance(dynamic_values, dict):
-        values["__by_name"] = by_name
-        values["__by_hash"] = by_hash
-        values["__evaluations"] = evaluations
-        return values
+        dynamic_values = {}
     for key, expr in dynamic_values.items():
         result = RuleEvaluator().evaluate_numeric(
             expr,
@@ -1696,30 +1970,6 @@ def _resolve_dynamic_values(
             if isinstance(hash_key, str):
                 by_hash[hash_key] = result.value
                 values[hash_key] = result.value
-    definition_bindings = definition.fields.get("dynamic_value_bindings")
-    if isinstance(definition_bindings, dict):
-        for hash_key, binding in _definition_dynamic_hash_bindings(definition_bindings).items():
-            index = binding.get("index")
-            if isinstance(index, int) and 0 <= index < len(resolved_values_in_order):
-                value = resolved_values_in_order[index]
-                by_hash[str(hash_key)] = value
-                values[str(hash_key)] = value
-                evaluations.append(
-                    {
-                        "name": f"definition_hash:{hash_key}",
-                        "result": {
-                            "ok": True,
-                            "value": value,
-                            "expression_kind": "definition_dynamic_value_binding",
-                            "bindings": {
-                                "hash": str(hash_key),
-                                "index": index,
-                                "source_type": "modifier_definition_dynamic_value_binding",
-                            },
-                            "source_trace": source_trace,
-                        },
-                    }
-                )
     callback_bindings = definition.fields.get("callback_dynamic_hashes")
     callback_hashes = _definition_callback_dynamic_hashes(callback_bindings)
     if len(resolved_values_in_order) == 1 and len(callback_hashes) == 1:
@@ -1744,6 +1994,136 @@ def _resolve_dynamic_values(
                     },
                 }
             )
+    # Ability/modifier-local ``Type=None`` entries are source-declared mutable
+    # callback slots.  They have no external reader and therefore begin at
+    # numeric zero until a callback writer replaces them.  Named slots retain
+    # their DynamicKey relation; anonymous slots remain hash-only, so this
+    # never guesses a name/hash mapping.  Externally sourced or undeclared
+    # hashes still remain fail-closed.
+    definition_by_hash = (
+        definition_bindings.get("by_hash")
+        if isinstance(definition_bindings, dict)
+        else None
+    )
+    definition_by_name = (
+        definition_bindings.get("by_name")
+        if isinstance(definition_bindings, dict)
+        else None
+    )
+    for dynamic_name, named_binding in (
+        definition_by_name.items()
+        if isinstance(definition_by_name, dict)
+        else ()
+    ):
+        hashes = (
+            named_binding.get("hashes")
+            if isinstance(named_binding, dict)
+            else None
+        )
+        if not isinstance(hashes, (list, tuple)):
+            continue
+        for raw_hash in hashes:
+            hash_key = str(raw_hash)
+            hash_binding = (
+                definition_by_hash.get(hash_key)
+                if isinstance(definition_by_hash, dict)
+                else None
+            )
+            read_info = (
+                hash_binding.get("read_info")
+                if isinstance(hash_binding, dict)
+                else None
+            )
+            if (
+                hash_key in by_hash
+                or not isinstance(read_info, dict)
+                or str(read_info.get("Type") or "") != "None"
+                or hash_binding.get("source_scope") not in {
+                    "ability_dynamic_values",
+                    "modifier_dynamic_values",
+                }
+            ):
+                continue
+            named_value = by_name.get(str(dynamic_name))
+            value = (
+                float(named_value)
+                if isinstance(named_value, (int, float))
+                and not isinstance(named_value, bool)
+                else 0.0
+            )
+            by_hash[hash_key] = value
+            by_name[str(dynamic_name)] = value
+            values[hash_key] = value
+            values[str(dynamic_name)] = value
+            evaluations.append(
+                {
+                    "name": f"ability_internal_default:{dynamic_name}:{hash_key}",
+                    "result": {
+                        "ok": True,
+                        "value": value,
+                        "expression_kind": (
+                            "modifier_named_dynamic_input_binding"
+                            if named_value is not None
+                            else "ability_internal_dynamic_default"
+                        ),
+                        "bindings": {
+                            "hash": hash_key,
+                            "dynamic_key": str(dynamic_name),
+                            "source_type": (
+                                "named_dynamic_value_to_declared_type_none_slot"
+                                if named_value is not None
+                                else "ability_dynamic_values_type_none"
+                            ),
+                            "source_json_path": str(
+                                hash_binding.get("source_json_path") or ""
+                            ),
+                        },
+                        "source_trace": source_trace,
+                    },
+                }
+            )
+    for hash_key in sorted(
+        _definition_dynamic_hash_bindings(
+            definition_bindings
+            if isinstance(definition_bindings, dict)
+            else {}
+        )
+    ):
+        if hash_key in by_hash:
+            continue
+        hash_binding = (
+            definition_by_hash.get(hash_key)
+            if isinstance(definition_by_hash, dict)
+            else None
+        )
+        if (
+            not isinstance(hash_binding, dict)
+            or hash_binding.get("source_scope") not in {
+                "ability_dynamic_values",
+                "modifier_dynamic_values",
+            }
+        ):
+            continue
+        by_hash[hash_key] = 0.0
+        values[hash_key] = 0.0
+        evaluations.append(
+            {
+                "name": f"ability_internal_hash_default:{hash_key}",
+                "result": {
+                    "ok": True,
+                    "value": 0.0,
+                    "expression_kind": "declared_type_none_dynamic_slot_default",
+                    "bindings": {
+                        "hash": hash_key,
+                        "source_type": "ability_dynamic_values_type_none",
+                        "source_json_path": str(
+                            hash_binding.get("source_json_path") or ""
+                        ),
+                    },
+                    "source_trace": source_trace,
+                },
+            }
+        )
     values["__by_name"] = by_name
     values["__by_hash"] = by_hash
     values["__evaluations"] = evaluations
@@ -1868,6 +2248,18 @@ def _runtime_modifiers(
     stack_properties = definition.fields.get("stack_properties")
     if not isinstance(stack_properties, list):
         return modifiers, unsupported
+    definition_bindings = definition.fields.get("dynamic_value_bindings")
+    internal_hashes = set(
+        _definition_dynamic_hash_bindings(definition_bindings).keys()
+        if isinstance(definition_bindings, dict)
+        else ()
+    )
+    callback_hashes = set(
+        _definition_callback_dynamic_hashes(
+            definition.fields.get("callback_dynamic_hashes")
+        ).keys()
+    )
+    deferred_hashes = internal_hashes & callback_hashes
     for index, item in enumerate(stack_properties):
         if not isinstance(item, dict):
             continue
@@ -1880,6 +2272,36 @@ def _runtime_modifiers(
             continue
         value, reason = _resolve_stack_property_value(item.get("value_expr"), dynamic_values)
         if value is None:
+            missing_hash = reason.removeprefix("dynamic_hash_unbound:")
+            if (
+                reason.startswith("dynamic_hash_unbound:")
+                and missing_hash in deferred_hashes
+            ):
+                bucket, key, scope = mapped
+                modifiers.append(
+                    {
+                        "bucket": bucket,
+                        "key": key,
+                        "value": None,
+                        "value_expr": _json_safe(item.get("value_expr")),
+                        "value_mode": "modifier_internal_dynamic",
+                        "deferred_dynamic_hashes": sorted(
+                            str(value)
+                            for value in numeric_dynamic_hashes(
+                                item.get("value_expr")
+                            )
+                        ),
+                        "scope": scope,
+                        "property": property_name,
+                        "raw_path": str(
+                            item.get("raw_path")
+                            or f"stack_properties[{index}]"
+                        ),
+                        "applied_reason": "status_stack_property_dynamic",
+                        "condition": f"property={property_name}",
+                    }
+                )
+                continue
             unsupported.append(f"unsupported_formula:{property_name}:{reason}")
             continue
         bucket, key, scope = mapped
@@ -2389,6 +2811,21 @@ def _runtime_chance_admission(
         chance_result = result.to_json()
     metadata = status_metadata or {}
     category = str(metadata.get("status_category") or "unknown")
+    category_source = "status_metadata"
+    if (
+        category == "unknown"
+        and isinstance(standard.get("target_expression_id"), str)
+        and bool(standard.get("target_expression_id"))
+    ):
+        caster = state.units.get(caster_id)
+        target = state.units.get(target_id)
+        if caster is not None and target is not None and is_opposing_combat_team(caster, target):
+            # Some source modifiers are hidden hostile marks: they carry an
+            # explicit chance and a typed target expression, but no StatusConfig
+            # row or behavior flag.  Their opposing-team application is an
+            # engine admission rule, not a fabricated TBGD status declaration.
+            category = "debuff"
+            category_source = "engine_rule:explicit_chance_opposing_target"
     control_kind = str(metadata.get("control_kind") or "")
     if category == "buff":
         classification = "positive_status"
@@ -2457,6 +2894,7 @@ def _runtime_chance_admission(
         "classification": classification,
         "source_kind": "effect_chance",
         "status_category": category,
+        "status_category_source": category_source,
         "control_kind": control_kind,
         "base_chance": base_chance,
         "effect_hit_rate": effect_hit,
@@ -2939,7 +3377,11 @@ def _map_stack_property(property_name: str) -> tuple[str, str, str] | None:
         "SPRatioBase": ("resource", "energy_regeneration_rate", "actor"),
         "HealRatioBase": ("healing", "outgoing_healing_ratio", "actor"),
         "HealTakenRatio": ("healing", "incoming_healing_ratio", "target"),
-        "HealRatioConvert": ("healing", "healing_ratio_convert", "actor"),
+        # TBGD uses HealRatioConvert for a dynamically converted outgoing-heal
+        # bonus (for example, a source property converted above a threshold).
+        # It belongs to the same final healing bucket as HealRatioBase; the raw
+        # property name and path remain on the modifier for audit.
+        "HealRatioConvert": ("healing", "outgoing_healing_ratio", "actor"),
         "ShieldAddedRatio": ("shield", "shield_added_ratio", "actor"),
         "ElationDamageAddedRatioBase": (
             "damage_bonus",
@@ -3379,6 +3821,33 @@ def _same_status_other_source_detail(
     return None
 
 
+def _replacement_status_detail(
+    details: list[JSONValue],
+    *,
+    status_id: str,
+    stacking: str,
+    caster_id: str,
+) -> dict[str, JSONValue] | None:
+    """Resolve only replacement identities explicitly declared by TBGD.
+
+    A source/effect identity distinguishes independently stackable instances,
+    but it is not the replacement namespace for ``Replace`` or
+    ``ReplaceByCaster``.  The latter deliberately permits another source task
+    from the same caster to replace the existing status.  More specific
+    policies such as ``ReplaceByCasterAbility`` remain fail-closed until their
+    ability identity is represented explicitly.
+    """
+
+    if stacking not in {"Replace", "ReplaceByCaster"}:
+        return None
+    for item in details:
+        if not isinstance(item, dict) or item.get("status_id") != status_id:
+            continue
+        if stacking == "Replace" or item.get("caster_id") == caster_id:
+            return item
+    return None
+
+
 def _find_status_detail(details: list[JSONValue], status_id: str) -> dict[str, JSONValue] | None:
     for item in details:
         if isinstance(item, dict) and item.get("status_id") == status_id:
@@ -3409,6 +3878,7 @@ def _application_semantics(
     refresh_admission: dict[str, JSONValue],
     *,
     same_status_other_source: dict[str, JSONValue] | None,
+    exact_same_source_reapplication: bool,
 ) -> tuple[str, list[str]]:
     reasons: list[str] = []
     operation = "add"
@@ -3449,6 +3919,8 @@ def _application_semantics(
             operation = "refresh"
         elif replace_executable:
             operation = "replace"
+        elif exact_same_source_reapplication:
+            operation = "idempotent"
         elif refresh_status == "blocked":
             operation = "reapply_blocked"
             reasons.append(f"refresh_blocked:{refresh_admission.get('blocked_reason')}")
@@ -3466,6 +3938,43 @@ def _application_semantics(
     return operation, reasons
 
 
+def _exact_same_source_reapplication(
+    existing_detail: dict[str, JSONValue] | None,
+    *,
+    caster_id: str,
+    dynamic_values: dict[str, JSONValue],
+    modifiers: list[dict[str, JSONValue]],
+) -> bool:
+    if existing_detail is None or str(existing_detail.get("caster_id") or "") != caster_id:
+        return False
+    return (
+        _json_safe(existing_detail.get("dynamic_values"))
+        == _json_safe(dynamic_values)
+        and _json_safe(existing_detail.get("modifiers"))
+        == _json_safe(modifiers)
+    )
+
+
+def _parameterless_same_source_reapplication(
+    existing_detail: dict[str, JSONValue] | None,
+    *,
+    caster_id: str,
+    standard: dict[str, JSONValue],
+) -> bool:
+    """Admit an exact semantic re-listen of a permanent parameterless status."""
+
+    if existing_detail is None or str(existing_detail.get("caster_id") or "") != caster_id:
+        return False
+    dynamic_values = standard.get("dynamic_values")
+    if isinstance(dynamic_values, dict) and dynamic_values:
+        return False
+    for key in ("lifetime", "layer_add_when_stack", "max_layer", "chance"):
+        expression = standard.get(key)
+        if not isinstance(expression, dict) or expression.get("kind") != "missing":
+            return False
+    return True
+
+
 def _is_missing_numeric_expr(expr: object) -> bool:
     return isinstance(expr, dict) and expr.get("kind") == "missing"
 
@@ -3478,12 +3987,24 @@ def _status_metadata(rules: RuleBook, modifier_name: str, definition: RuleEntity
         if isinstance(flag, str)
     )
     if entity is None:
+        definition_status_type = (
+            definition.fields.get("StatusType")
+            if definition is not None
+            else None
+        )
+        status_type = (
+            definition_status_type
+            if isinstance(definition_status_type, str) and definition_status_type
+            else "Unknown"
+        )
         control_kind = _control_kind_from_behavior_flags(behavior_flags)
-        status_category = _status_category_from_behavior_flags(behavior_flags)
+        status_category = _status_category(status_type)
+        if status_category == "unknown":
+            status_category = _status_category_from_behavior_flags(behavior_flags)
         if control_kind:
             status_category = "control"
         return {
-            "status_type": "Unknown",
+            "status_type": status_type,
             "status_category": status_category,
             "can_dispel": None,
             "control_kind": control_kind,

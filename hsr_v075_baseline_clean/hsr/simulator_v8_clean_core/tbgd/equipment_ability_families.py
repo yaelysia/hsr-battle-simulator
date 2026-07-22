@@ -84,7 +84,6 @@ S8_TASK_FAMILIES = frozenset(
         "SetDynamicValueByMaxBP",
         "SetDynamicValueByVariateType",
         "SetResilience",
-        "TriggerEffect",
     }
 )
 
@@ -95,6 +94,7 @@ NON_GAMEPLAY_TASK_FAMILIES = frozenset(
         "SetDynamicValueByPropertyClientOnly",
         "StackStatusDesc",
         "ToggleSkillPreShow",
+        "TriggerEffect",
         "WaitSecond",
     }
 )
@@ -259,6 +259,28 @@ def classify_equipment_task(
         base_types = raw_task.get("BaseTypeList")
         if isinstance(base_types, list) and base_types:
             return "s8"
+    if raw_family == "TriggerEffect":
+        gameplay_fields = set(raw_task) - {
+            "$type",
+            "EffectPath",
+            "AttachPoint",
+            "AttachTargetType",
+            "TargetType",
+            "Offset",
+            "Rotation",
+            "Scale",
+            "UseTargetRotation",
+            "ForceSimulateImmediately",
+            "PositionOffset",
+        }
+        effect_path = raw_task.get("EffectPath")
+        return (
+            "non_gameplay"
+            if not gameplay_fields
+            and isinstance(effect_path, str)
+            and bool(effect_path)
+            else "unknown"
+        )
     if raw_family == "SetDynamicValueByProperty":
         if raw_task.get("Value") == "MaxSP":
             return "s8"
@@ -343,9 +365,6 @@ def classify_equipment_callback(
 ) -> EquipmentFamilyStage:
     """Classify the executable callback branch, not only its event label."""
 
-    event_stage = classify_equipment_family("event", raw_event)
-    if event_stage != "s7":
-        return event_stage
     if not isinstance(raw_tasks, list):
         return "unknown"
     if not raw_tasks:
@@ -359,10 +378,17 @@ def classify_equipment_callback(
         )
     if "unknown" in task_stages:
         return "unknown"
-    if "s8" in task_stages:
-        return "s8"
+    # A presentation-only callback remains non-gameplay even when its event
+    # label belongs to a gameplay stage.  Classifying the event first made
+    # OnCustomEvent + ModifierAttachEffect look like an unimplemented combat
+    # producer although the callback contains no state-affecting node.
     if all(stage == "non_gameplay" for stage in task_stages):
         return "non_gameplay"
+    event_stage = classify_equipment_family("event", raw_event)
+    if event_stage != "s7":
+        return event_stage
+    if "s8" in task_stages:
+        return "s8"
     return "s7"
 
 
@@ -484,6 +510,7 @@ def non_gameplay_evidence(kind: str, raw_family: str) -> str:
         ("task", "SetDynamicValueByPropertyClientOnly"): "raw type explicitly declares client-only property read",
         ("task", "StackStatusDesc"): "status description stacking only",
         ("task", "ToggleSkillPreShow"): "skill pre-show UI state only",
+        ("task", "TriggerEffect"): "visual effect path/attachment task without battle-state payload",
         ("task", "WaitSecond"): "presentation timing wait without battle-state semantics",
         ("event", "OnAimAtTargetsRefresh_CL"): "raw event explicitly declares client-only target preview refresh",
     }

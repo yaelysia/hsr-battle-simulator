@@ -65,6 +65,25 @@ def _lower_postfix_program(postfix: dict[str, Any]) -> dict[str, JSONValue]:
             stack_depth += 1
             index += 2
             continue
+        if opcode == 16:
+            if index + 1 >= len(opcodes):
+                return numeric_unsupported("postfix_variadic_operand_count_missing")
+            # GameCore's variadic Max stores the number of *additional*
+            # operands in the following byte.  The same raw formulas in the
+            # preserved pre-enum-expansion mirror use opcode 9; current data
+            # shifted it to 16 together with the end opcode (10 -> 17).
+            additional_operands = int(opcodes[index + 1])
+            operand_count = additional_operands + 1
+            if additional_operands < 1:
+                return numeric_unsupported("postfix_variadic_operand_count_invalid")
+            if stack_depth < operand_count:
+                return numeric_unsupported("postfix_stack_underflow")
+            instructions.append(
+                {"opcode": "max", "operand_count": operand_count}
+            )
+            stack_depth -= operand_count - 1
+            index += 2
+            continue
         operation = {
             2: "add",
             3: "sub",
@@ -121,6 +140,19 @@ def _fold_fixed_program(instructions: tuple[dict[str, JSONValue], ...]) -> float
             if not stack:
                 return None
             stack[-1] = -stack[-1]
+            continue
+        if opcode == "max":
+            operand_count = instruction.get("operand_count")
+            if (
+                not isinstance(operand_count, int)
+                or isinstance(operand_count, bool)
+                or operand_count < 2
+                or len(stack) < operand_count
+            ):
+                return None
+            operands = stack[-operand_count:]
+            del stack[-operand_count:]
+            stack.append(max(operands))
             continue
         if len(stack) < 2:
             return None

@@ -1327,11 +1327,20 @@ class CombatScheduler:
                 if isinstance(item, dict)
             )
             for detail in details:
-                phase1_event = _status_phase1_lifecycle_event(current, unit_id, detail, life_step_moment)
-                if phase1_event is not None:
+                status_removed_during_phase = False
+                for phase_event_name in ("OnPhase1", "OnPhase2"):
+                    phase_event = _status_phase_lifecycle_event(
+                        current,
+                        unit_id,
+                        detail,
+                        life_step_moment,
+                        phase_event_name,
+                    )
+                    if phase_event is None:
+                        continue
                     dispatch = self.event_dispatcher.dispatch_status_callback(
                         current,
-                        event=phase1_event,
+                        event=phase_event,
                         unit_id=unit_id,
                         modifier_name=str(detail.get("modifier_name") or ""),
                     )
@@ -1347,8 +1356,11 @@ class CombatScheduler:
                         str(detail.get("instance_id") or ""),
                     )
                     if refreshed_detail is None:
-                        continue
+                        status_removed_during_phase = True
+                        break
                     detail = refreshed_detail
+                if status_removed_during_phase:
+                    continue
                 result = self.status.apply_lifecycle_tick(current, unit_id, detail, life_step_moment)
                 records.extend(result.records)
                 events.extend(result.events)
@@ -2275,10 +2287,26 @@ def _status_phase1_lifecycle_event(
     detail: dict[str, JSONValue],
     life_step_moment: str,
 ) -> GameEvent | None:
+    return _status_phase_lifecycle_event(
+        state,
+        unit_id,
+        detail,
+        life_step_moment,
+        "OnPhase1",
+    )
+
+
+def _status_phase_lifecycle_event(
+    state: BattleState,
+    unit_id: str,
+    detail: dict[str, JSONValue],
+    life_step_moment: str,
+    callback_event: str,
+) -> GameEvent | None:
     if life_step_moment != "ModifierPhase1End":
         return None
     trigger_ids_by_event = detail.get("trigger_ids_by_event")
-    trigger_ids = trigger_ids_by_event.get("OnPhase1") if isinstance(trigger_ids_by_event, dict) else None
+    trigger_ids = trigger_ids_by_event.get(callback_event) if isinstance(trigger_ids_by_event, dict) else None
     if not isinstance(trigger_ids, list) or not any(isinstance(item, str) and item for item in trigger_ids):
         return None
     source_trace = detail.get("source_trace") if isinstance(detail.get("source_trace"), dict) else {}
@@ -2291,13 +2319,13 @@ def _status_phase1_lifecycle_event(
         source_id=caster_id,
         target_id=unit_id,
         event_id=(
-            f"event:{state.event_index}:status_lifecycle:OnPhase1:"
+            f"event:{state.event_index}:status_lifecycle:{callback_event}:"
             f"{unit_id}:{status_id.replace(':', '_')}:{status_instance_id}"
         ),
-        window="OnPhase1",
+        window=callback_event,
         process_only=True,
         payload={
-            "callback_event": "OnPhase1",
+            "callback_event": callback_event,
             "listener_scope": "status_local",
             "lifecycle_operation": "tick",
             "life_step_moment": life_step_moment,

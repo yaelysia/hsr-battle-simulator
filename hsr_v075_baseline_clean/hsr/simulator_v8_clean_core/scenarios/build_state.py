@@ -22,6 +22,7 @@ from ..core.reducer import MutationReducer
 from ..core.settlement import SettlementRecord
 from ..equipment.models import DynamicMechanismSelection
 from ..rules.ir import CombatantProfileIR, WaveDefinitionIR, WaveMonsterEntryIR
+from ..rules.expression_ir import numeric_dynamic_hashes
 from ..rules.rulebook import RuleBook
 from ..rules.value_binding import ValueBindingRequest, ValueContext, ValueResolver
 from ..systems.effect import EffectRegistry
@@ -332,6 +333,48 @@ class ScenarioStateBuilder:
                 resources=resources,
             )
 
+        level_entity_sources = _level_entity_sources_for_startup_specs(
+            self.rules,
+            [
+                *eidolon_startup_specs,
+                *trace_startup_specs,
+                *passive_startup_specs,
+                *equipment_startup_specs,
+            ],
+        )
+        if level_entity_sources:
+            if "level:global" in units:
+                raise ValueError("scenario unit identity conflicts with canonical LevelEntity")
+            units["level:global"] = UnitState(
+                unit_id="level:global",
+                side="ally",
+                template_id="system_entity:level",
+                level=1,
+                max_hp=1.0,
+                hp=1.0,
+                speed=0.0,
+                flags={
+                    "system_entity_kind": "level",
+                    "lifecycle_status": "active",
+                    "unselectable": True,
+                    "selectable": False,
+                    "timeline_admitted": False,
+                    "system_entity_sources": level_entity_sources,
+                },
+            )
+            source_traces.extend(level_entity_sources)
+            setup_records.append(
+                {
+                    "record_type": "setup_system_entity",
+                    "source_kind": "canonical_target_expression",
+                    "status": "admitted",
+                    "unit_id": "level:global",
+                    "system_entity_kind": "level",
+                    "source_count": len(level_entity_sources),
+                    "source_trace": {"target_expression_sources": level_entity_sources},
+                }
+            )
+
         global_flags = dict(scenario.global_flags)
         wave_runtime = _initial_wave_runtime(self.rules, scenario)
         if wave_runtime:
@@ -637,6 +680,78 @@ def _dispatch_battle_setup_event(
     state: BattleState,
     scenario: ScenarioSpec,
 ) -> _SetupApplyResult:
+    dispatcher = EventDispatchSystem(
+        rules,
+        EffectRegistry(StatusSystem(rules)),
+        reducer=MutationReducer(),
+    )
+    current = state
+    records: list[dict[str, JSONValue]] = []
+    mutations: list[Mutation] = []
+    events: list[GameEvent] = []
+    rng_events: list[RNGEvent] = []
+    source_traces: list[dict[str, object]] = []
+    errors: list[str] = []
+    for unit_id in sorted(state.units):
+        unit = state.units[unit_id]
+        if unit.flags.get("system_entity_kind"):
+            source_traces.append(
+                {
+                    "kind": "scenario_system_entity_creation_event_exclusion",
+                    "scenario_id": scenario.scenario_id,
+                    "unit_id": unit_id,
+                    "system_entity_kind": str(unit.flags.get("system_entity_kind") or ""),
+                    "reason": "canonical system entities are target anchors, not spawned combat units",
+                    "status": "process_only",
+                }
+            )
+            continue
+        entity = rules.entity(unit.template_id)
+        if entity is None:
+            errors.append(f"unit_creation_source_missing:{unit_id}:{unit.template_id}")
+            break
+        source_trace = entity.source.to_json()
+        creation_event = GameEvent(
+            event_type="unit.created",
+            source_id="scenario:setup",
+            target_id=unit_id,
+            event_id=f"event:scenario_setup:{scenario.scenario_id}:unit_created:{unit_id}",
+            window="OnListenCharacterCreate",
+            process_only=True,
+            payload={
+                "scenario_id": scenario.scenario_id,
+                "source_kind": "canonical_ir_entity",
+                "unit_id": unit_id,
+                "target_id": unit_id,
+                "param_entity_id": unit_id,
+                "entity_id": entity.entity_id,
+                "entity_type": entity.entity_type,
+                "callback_events": ["OnListenCharacterCreate", "OnSnapshotCreate"],
+                "listener_scope": "global_listener",
+                "source_trace": source_trace,
+            },
+        )
+        result = dispatcher.dispatch_event(current, event=creation_event)
+        events.extend((creation_event, *result.events))
+        if result.errors:
+            errors.extend(result.errors)
+            break
+        current = result.after_state
+        records.extend(result.records)
+        mutations.extend(result.mutations)
+        rng_events.extend(result.rng_events)
+        source_traces.append(
+            {
+                "kind": "scenario_unit_created_event",
+                "scenario_id": scenario.scenario_id,
+                "event_id": creation_event.event_id,
+                "unit_id": unit_id,
+                "entity_source": source_trace,
+                "mutation_count": len(result.mutations),
+                "status": "applied",
+            }
+        )
+
     event = GameEvent(
         event_type="battle.setup",
         source_id="scenario:setup",
@@ -649,41 +764,51 @@ def _dispatch_battle_setup_event(
             "unit_ids": list(sorted(state.units)),
         },
     )
-    result = EventDispatchSystem(
-        rules,
-        EffectRegistry(StatusSystem(rules)),
-        reducer=MutationReducer(),
-    ).dispatch_event(state, event=event)
+    result = dispatcher.dispatch_event(current, event=event) if not errors else None
+    if result is not None:
+        events.extend((event, *result.events))
+        errors.extend(result.errors)
+        if not result.errors:
+            current = result.after_state
+            records.extend(result.records)
+            mutations.extend(result.mutations)
+            rng_events.extend(result.rng_events)
     blocked = (
         (
             {
                 "record_type": "setup_battle_event",
                 "source_kind": "scenario_initial_condition",
                 "status": "blocked",
-                "blocked_reason": ";".join(result.errors)
+                "blocked_reason": ";".join(errors)
                 or "battle_setup_listener_dispatch_blocked",
                 "process_only": True,
                 "produced_mutation": False,
                 "scenario_id": scenario.scenario_id,
             },
         )
-        if result.errors
+        if errors
         else ()
     )
+    if blocked:
+        records = [blocked[0]]
+        mutations = []
+        rng_events = []
+        source_traces = []
     return _SetupApplyResult(
-        state=result.after_state if not blocked else state,
-        records=tuple(result.records),
-        mutations=tuple(result.mutations) if not blocked else (),
-        events=(event, *result.events) if not blocked else (event,),
-        rng_events=tuple(result.rng_events) if not blocked else (),
+        state=current if not blocked else state,
+        records=tuple(records),
+        mutations=tuple(mutations),
+        events=tuple(events) if not blocked else tuple(item for item in events if item.process_only),
+        rng_events=tuple(rng_events),
         blocked=blocked,
         source_traces=(
+            *source_traces,
             {
                 "kind": "scenario_battle_setup_event",
                 "scenario_id": scenario.scenario_id,
                 "event_id": event.event_id,
-                "listener_record_count": len(result.listener_records),
-                "mutation_count": len(result.mutations),
+                "listener_record_count": len(result.listener_records) if result is not None else 0,
+                "mutation_count": len(result.mutations) if result is not None else 0,
                 "status": "blocked" if blocked else "applied",
             },
         ),
@@ -1559,6 +1684,29 @@ def _formal_character_activation(
             for level in assembly.effective_skill_levels
         },
     }
+    card = rules.character_data_card(unit.character_build.character_card_id)
+    profile = (
+        rules.avatar_profile_by_profile_id(card.profile_id)
+        if card is not None
+        else None
+    )
+    if profile is None or not profile.damage_type:
+        raise ValueError("formal character activation requires source-backed damage type")
+    flags["damage_type"] = profile.damage_type
+    flags["damage_type_source"] = profile.source.to_json()
+    eligibility_resolution = rules.character_equipment_eligibility_for_card(
+        unit.character_build.character_card_id
+    )
+    eligibility = eligibility_resolution.value
+    if (
+        eligibility_resolution.resolution_status != "resolved"
+        or eligibility is None
+    ):
+        raise ValueError(
+            "formal character activation requires source-backed character path"
+        )
+    flags["avatar_base_type"] = eligibility.character_path_type
+    flags["avatar_base_type_source"] = eligibility.source.to_json()
     startup_specs: list[dict[str, Any]] = []
     for mechanism in assembly.admitted_dynamic_mechanism_refs:
         slot = rules.character_mechanism_slot(mechanism.source_ref.definition_identity)
@@ -1945,6 +2093,100 @@ def _eidolon_runtime_activation(value_resolver: ValueResolver, eidolon_slots: tu
     return {"flags": flags, "startup_specs": startup_specs}
 
 
+def _level_entity_sources_for_startup_specs(
+    rules: RuleBook,
+    startup_specs: list[dict[str, Any]],
+) -> list[dict[str, JSONValue]]:
+    """Return the canonical target rows that require the global level entity."""
+
+    rows: dict[tuple[str, str, str], dict[str, JSONValue]] = {}
+    for spec in startup_specs:
+        graph_ref_id = spec.get("graph_ref_id")
+        ability_name = str(spec.get("ability_name") or "")
+        if isinstance(graph_ref_id, str) and graph_ref_id:
+            graph = rules.standalone_ability_graph(graph_ref_id)
+            graphs = (graph,) if graph is not None else ()
+        else:
+            graphs = rules.standalone_ability_graphs_by_name(ability_name)
+        for graph in graphs:
+            if graph.coverage_status != "executable":
+                continue
+            tasks: list[object] = [
+                task
+                for task_id in graph.task_ids
+                if (task := rules.ability_task(task_id)) is not None
+            ]
+            for callback_id in graph.status_callback_ids:
+                tasks.extend(rules.status_callback_tasks_for_callback(callback_id))
+            for task in tasks:
+                target_expression_id = str(
+                    getattr(task, "target_expression_id", "") or ""
+                )
+                effect_id = str(getattr(task, "effect_id", "") or "")
+                effect = rules.effect(effect_id) if effect_id else None
+                standard = (
+                    effect.payload.get("standard")
+                    if effect is not None and isinstance(effect.payload, dict)
+                    else None
+                )
+                if not target_expression_id and isinstance(standard, dict):
+                    target_expression_id = str(
+                        standard.get("target_expression_id") or ""
+                    )
+                expression = (
+                    rules.target_expression(target_expression_id)
+                    if target_expression_id
+                    else None
+                )
+                target_alias = (
+                    expression.alias
+                    if expression is not None
+                    else (
+                        str(standard.get("target_alias") or "")
+                        if isinstance(standard, dict)
+                        else ""
+                    )
+                )
+                if target_alias != "LevelEntity":
+                    continue
+                if expression is not None:
+                    if expression.coverage_status != "executable":
+                        continue
+                    target_identity = expression.target_expression_id
+                    target_source_kind = "target_expression"
+                    target_source = expression.source.to_json()
+                elif effect is not None and isinstance(standard, dict):
+                    # Status-callback effects retain a canonical TargetAlias in
+                    # their typed effect payload even when no standalone target
+                    # expression row is emitted.  That effect row is the trusted
+                    # source for provisioning the shared LevelEntity.
+                    if effect.coverage_status != "executable":
+                        continue
+                    target_identity = effect.effect_id
+                    target_source_kind = "effect_target_alias"
+                    target_source = effect.source.to_json()
+                else:
+                    continue
+                task_id = str(getattr(task, "task_id", "") or "")
+                key = (
+                    graph.standalone_ability_graph_id,
+                    task_id,
+                    target_identity,
+                )
+                rows[key] = {
+                    "standalone_ability_graph_id": graph.standalone_ability_graph_id,
+                    "ability_name": graph.ability_name,
+                    "task_id": task_id,
+                    "target_alias": target_alias,
+                    "target_identity": target_identity,
+                    "target_source_kind": target_source_kind,
+                    "graph_source": graph.source.to_json(),
+                    "task_source": getattr(task, "source").to_json(),
+                    "target_source": target_source,
+                }
+    return [rows[key] for key in sorted(rows)]
+
+
 def _apply_startup_ability_effects(
     state: BattleState,
     rules: RuleBook,
@@ -2008,13 +2250,14 @@ def _apply_startup_ability_effects(
             continue
         graph = graphs[0]
         admitted_task_ids = set(_string_items(spec.get("admitted_task_ids")))
-        applied_count = 0
+        candidate_task_count = 0
         for phase_id in graph.phase_ids:
             for task in rules.ability_tasks_for_phase(phase_id):
                 if admitted_task_ids and task.task_id not in admitted_task_ids:
                     continue
                 if task.callback_kind != "OnStart" or task.parent_task_id or task.opcode != "AddModifier" or not task.effect_id:
                     continue
+                candidate_task_count += 1
                 effect = rules.effect(task.effect_id)
                 if effect is None:
                     trace = _startup_blocked_trace(
@@ -2075,6 +2318,17 @@ def _apply_startup_ability_effects(
                     current_action_target_id=unit_id,
                     dynamic_values=dynamic_values,
                     binding_sources=(),
+                    retained_runtime_hashes=tuple(
+                        sorted(
+                            {
+                                str(binding["hash"])
+                                for binding in binding_trace.get("bindings", ())
+                                if isinstance(binding, dict)
+                                and isinstance(binding.get("hash"), (str, int))
+                                and str(binding["hash"]) in dynamic_values
+                            }
+                        )
+                    ),
                 )
                 candidate_state = reducer.apply_all(before_task, result.mutations)
                 task_mutations: list[Mutation] = list(result.mutations)
@@ -2103,7 +2357,6 @@ def _apply_startup_ability_effects(
                 startup_ok = result.ok and not listener_errors
                 current = candidate_state if startup_ok else before_task
                 if startup_ok:
-                    applied_count += len(task_mutations)
                     mutations.extend(task_mutations)
                     records.extend(task_records)
                     events.extend(task_events)
@@ -2162,7 +2415,7 @@ def _apply_startup_ability_effects(
                             },
                         ).to_json()
                     )
-        if applied_count == 0:
+        if candidate_task_count == 0:
             trace = _startup_trace_payload(
                     kind=kind,
                     unit_id=unit_id,
@@ -2199,21 +2452,42 @@ def _startup_dynamic_values(
     if not isinstance(configured_by_hash, dict):
         configured_by_hash = {}
     requests = standard.get("dynamic_value_requests")
-    if not isinstance(requests, dict) or not requests:
+    if not isinstance(requests, dict):
+        requests = {}
+    hash_requests, fixed_request_names = _startup_numeric_hash_requests(
+        standard,
+        requests,
+    )
+    if spec.get("dynamic_value_binding_mode") == "configured_by_hash_required":
+        requested_hashes = {str(item["hash"]) for item in hash_requests}
+        for hash_key in sorted(configured_by_hash):
+            if hash_key in requested_hashes:
+                continue
+            hash_requests.append(
+                {
+                    "name": f"graph_parameter:{hash_key}",
+                    "hash": hash_key,
+                    "expose_name": False,
+                    "numeric_fields": ["graph_parameter_binding"],
+                }
+            )
+    if not hash_requests:
         if configured_by_hash:
             return _eidolon_configured_dynamic_values(params, configured_by_hash, spec)
-        return {}, {"admission_status": "not_applicable", "reason": "no_dynamic_value_requests"}
-    request_items = [(str(name), request) for name, request in requests.items() if isinstance(request, dict)]
+        return {}, {
+            "admission_status": "not_applicable",
+            "reason": (
+                "all_startup_numeric_values_are_fixed_in_ir"
+                if fixed_request_names
+                else "no_startup_dynamic_value_requests"
+            ),
+            "fixed_request_names": fixed_request_names,
+        }
     dynamic_values: dict[str, float] = {}
     bindings: list[dict[str, object]] = []
-    for index, (name, request) in enumerate(request_items):
-        raw_hash = request.get("hash")
-        if raw_hash is None:
-            return {}, {
-                "admission_status": "blocked",
-                "blocked_reason": "startup_dynamic_value_request_hash_missing",
-                "request_name": name,
-            }
+    for index, request in enumerate(hash_requests):
+        name = request["name"]
+        raw_hash = request["hash"]
         configured = configured_by_hash.get(str(raw_hash))
         param_index = index
         binding_source_kind = "startup_param_request_order"
@@ -2236,13 +2510,13 @@ def _startup_dynamic_values(
                 "request_name": name,
                 "hash": str(raw_hash),
             }
-        elif len(params) != len(request_items):
+        elif len(params) != len(hash_requests):
             return {}, {
                 "admission_status": "blocked",
                 "blocked_reason": "startup_param_binding_missing",
                 "param_count": len(params),
-                "request_count": len(request_items),
-                "request_names": [item_name for item_name, _ in request_items],
+                "request_count": len(hash_requests),
+                "request_names": [item["name"] for item in hash_requests],
                 "hash": str(raw_hash),
             }
         if param_index < 0 or param_index >= len(params):
@@ -2255,7 +2529,8 @@ def _startup_dynamic_values(
                 "param_count": len(params),
             }
         value = float(params[param_index])
-        dynamic_values[name] = value
+        if request["expose_name"]:
+            dynamic_values[name] = value
         dynamic_values[str(raw_hash)] = value
         bindings.append(
             {
@@ -2263,6 +2538,7 @@ def _startup_dynamic_values(
                 "hash": str(raw_hash),
                 "param_index": param_index,
                 "value": value,
+                "numeric_fields": list(request["numeric_fields"]),
                 "binding_source_kind": binding_source_kind,
                 "binding_source": configured if isinstance(configured, dict) else {},
             }
@@ -2271,11 +2547,70 @@ def _startup_dynamic_values(
         "admission_status": "executable",
         "source_kind": f"{str(spec.get('kind') or 'startup_ability')}_param_to_dynamic_value_request",
         "bindings": bindings,
+        "fixed_request_names": fixed_request_names,
         "slot_id": str(spec.get("slot_id") or ""),
         "trace_node_id": str(spec.get("trace_node_id") or ""),
         "eidolon_slot_id": str(getattr(spec.get("slot"), "eidolon_slot_id", "")),
         "rank_id": str(getattr(spec.get("slot"), "rank_id", "")),
     }
+
+
+def _startup_numeric_hash_requests(
+    standard: dict[str, object],
+    requests: dict[str, object],
+) -> tuple[list[dict[str, object]], list[str]]:
+    """Collect every typed numeric hash consumed while adding a status.
+
+    ``DynamicValues`` is only one consumer.  Duration, stack, refresh and
+    chance expressions are evaluated by the same generic status application
+    and must use the same source-backed parameter bindings.  Requests are
+    deduplicated by hash while retaining every field that consumes it.
+    """
+
+    fixed_request_names: list[str] = []
+    rows_by_hash: dict[str, dict[str, object]] = {}
+
+    def add(name: str, expression: object, *, expose_name: bool) -> None:
+        if isinstance(expression, dict) and expression.get("kind") == "fixed":
+            fixed_request_names.append(name)
+            return
+        hashes = tuple(numeric_dynamic_hashes(expression))
+        for raw_hash in hashes:
+            hash_key = str(raw_hash)
+            row = rows_by_hash.get(hash_key)
+            if row is None:
+                rows_by_hash[hash_key] = {
+                    "name": name,
+                    "hash": raw_hash,
+                    "expose_name": expose_name and len(hashes) == 1,
+                    "numeric_fields": [name],
+                }
+                continue
+            fields = row["numeric_fields"]
+            if isinstance(fields, list) and name not in fields:
+                fields.append(name)
+            if expose_name and len(hashes) == 1:
+                row["name"] = name
+                row["expose_name"] = True
+
+    for name, request in requests.items():
+        if not isinstance(request, dict):
+            continue
+        expression = request.get("expr")
+        raw_hash = request.get("hash")
+        if raw_hash is not None and not numeric_dynamic_hashes(expression):
+            expression = {
+                "schema_version": "hsr.numeric_expression.v1",
+                "kind": "dynamic_hash",
+                "supported": True,
+                "hash": raw_hash,
+            }
+        add(str(name), expression, expose_name=True)
+
+    for field_name in ("lifetime", "layer_add_when_stack", "max_layer", "chance"):
+        add(field_name, standard.get(field_name), expose_name=False)
+
+    return list(rows_by_hash.values()), sorted(set(fixed_request_names))
 
 
 def _eidolon_configured_dynamic_values(

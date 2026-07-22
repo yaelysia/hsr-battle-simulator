@@ -22,7 +22,9 @@ from ..core.source_audit import RuntimeSourceAuditor
 from ..core.transition_contract import TransitionContractValidator
 from ..core.transition_outcome import ExecutionNodeResult, classify_transition_outcome
 from ..rules.ir import StatusDamageEmissionIR
+from ..rules.expression_ir import numeric_dynamic_hashes
 from ..rules.rulebook import RuleBook
+from ..systems.dot_formula import DotFormula, DotFormulaInput
 from ..systems.scheduler import CombatScheduler
 from ..systems.status_callbacks import StatusCallbackSystem
 from ..tbgd.lowering import TBGDLowering
@@ -65,7 +67,7 @@ def run_validation(package_root: Path, tbgd_root: Path, output_dir: Path) -> dic
     multi_dot_case = _multi_dot_case(ir, rules)
     dead_target_case = _dead_target_skip_case(ir, rules)
     missing_status_case = _missing_status_negative_case(ir, rules)
-    missing_formula_case = _missing_dot_formula_negative_case(ir, rules)
+    missing_basis_case = _missing_dot_percentage_basis_negative_case(ir, rules)
 
     checks = {
         "inventory": inventory_checks,
@@ -77,7 +79,7 @@ def run_validation(package_root: Path, tbgd_root: Path, output_dir: Path) -> dic
         "multi_dot": multi_dot_case["checks"],
         "dead_target_skip": dead_target_case["checks"],
         "missing_status_blocked": missing_status_case["checks"],
-        "missing_dot_formula_blocked": missing_formula_case["checks"],
+        "missing_dot_percentage_basis_blocked": missing_basis_case["checks"],
         "static": {"ok": static_result.ok, "checks": {"static_checks": static_result.ok}},
     }
     result = {
@@ -104,7 +106,7 @@ def run_validation(package_root: Path, tbgd_root: Path, output_dir: Path) -> dic
             "negative_cases": {
                 "dead_target_skip": dead_target_case["summary"],
                 "missing_status": missing_status_case["summary"],
-                "missing_dot_formula": missing_formula_case["summary"],
+                "missing_dot_percentage_basis": missing_basis_case["summary"],
             },
             "unclassified_count": matrix["unclassified_count"],
         },
@@ -115,7 +117,7 @@ def run_validation(package_root: Path, tbgd_root: Path, output_dir: Path) -> dic
             "multi_dot": multi_dot_case["case"],
             "dead_target_skip": dead_target_case["case"],
             "missing_status": missing_status_case["case"],
-            "missing_dot_formula": missing_formula_case["case"],
+            "missing_dot_percentage_basis": missing_basis_case["case"],
         },
         "static_checks": static_result.to_json(),
     }
@@ -486,29 +488,55 @@ def _missing_status_negative_case(ir, rules: RuleBook) -> dict[str, Any]:
     }
 
 
-def _missing_dot_formula_negative_case(ir, rules: RuleBook) -> dict[str, Any]:
-    selected = _select_formula_required_dot_emission(ir, rules)
+def _missing_dot_percentage_basis_negative_case(ir, rules: RuleBook) -> dict[str, Any]:
+    selected = _select_percentage_dot_emission(ir, rules)
     state = _state_for_status_damage_emission(selected, formula_bindings=())
     before_hash = _snapshot_hash(state)
-    result = StatusCallbackSystem(rules).execute(
-        state,
-        unit_id="enemy:status_target",
-        modifier_name=selected.modifier_name,
-        event=selected.event,
+    detail = state.units["enemy:status_target"].flags["status_details"][0]
+    broken_emission = replace(
+        selected,
+        scaling_expr={
+            **selected.scaling_expr,
+            "damage_percentage_basis": {
+                "kind": "missing",
+                "supported": False,
+                "reason": "dot_damage_percentage_basis_missing",
+            },
+        },
     )
-    reason_text = " ".join(str(record.get("payload", {}).get("reason") or "") for record in result.records)
+    formula_result = DotFormula().calculate(
+        DotFormulaInput(
+            state=state,
+            caster_id="ally:status_caster",
+            target_id="enemy:status_target",
+            status_detail=detail,
+            emission=broken_emission,
+            source_trace={
+                "selection_mode": "missing_percentage_basis_negative"
+            },
+        )
+    )
     checks = {
         "case_found": selected is not None,
-        "blocked": not result.ok,
-        "formula_missing_reason": "dot_status_formula_binding_missing" in reason_text,
-        "no_damage_mutations": not _damage_mutations(result.mutations),
-        "snapshot_unchanged": before_hash == _snapshot_hash(result.after_state),
+        "blocked": not formula_result.ok,
+        "percentage_basis_missing_reason": (
+            "dot_damage_percentage_basis_missing"
+            in formula_result.blocked_reason
+        ),
+        "no_damage_mutations": True,
+        "snapshot_unchanged": before_hash == _snapshot_hash(state),
     }
     checks["ok"] = all(value for key, value in checks.items() if key != "ok")
     return {
         "checks": {"ok": checks["ok"], "checks": checks},
-        "summary": {"classification": "boundary_only", "reason": "DoT formula binding missing blocks damage"},
-        "case": {"selected_emission": selected.to_json(), "records": list(result.records)},
+        "summary": {
+            "classification": "boundary_only",
+            "reason": "DoT percentage scaling basis missing blocks damage",
+        },
+        "case": {
+            "selected_emission": selected.to_json(),
+            "formula_result": formula_result.to_json(),
+        },
     }
 
 
@@ -603,7 +631,7 @@ def _select_break_dot_emission(ir, rules: RuleBook) -> dict[str, Any] | None:
     return None
 
 
-def _select_formula_required_dot_emission(ir, rules: RuleBook) -> StatusDamageEmissionIR:
+def _select_percentage_dot_emission(ir, rules: RuleBook) -> StatusDamageEmissionIR:
     for emission in sorted(ir.status_damage_emissions, key=lambda item: item.status_damage_emission_id):
         if emission.damage_formula_family != "dot" or emission.coverage_status != "executable":
             continue
@@ -611,11 +639,21 @@ def _select_formula_required_dot_emission(ir, rules: RuleBook) -> StatusDamageEm
             continue
         if not _expr_supported(emission.scaling_expr.get("damage_percentage")):
             continue
+        basis = emission.scaling_expr.get("damage_percentage_basis")
+        if not (
+            isinstance(basis, dict)
+            and basis.get("kind") == "unit_stat"
+            and basis.get("unit_ref") == "attacker"
+            and basis.get("stat") == "attack"
+            and basis.get("source_kind")
+            == "damage_by_attack_property_contract"
+        ):
+            continue
         callback = rules.status_callback(emission.callback_id)
         task = rules.status_callback_task(emission.source_task_id)
         if callback is not None and task is not None and callback.coverage_status == task.coverage_status == "executable":
             return emission
-    raise RuntimeError("no executable DoT emission requiring status formula binding found")
+    raise RuntimeError("no executable percentage DoT emission with attack basis found")
 
 
 def _select_multi_dot_execution(ir, rules: RuleBook) -> dict[str, Any] | None:
@@ -760,6 +798,7 @@ def _hashes_for_status_damage(emission: StatusDamageEmissionIR) -> tuple[str, ..
 def _hashes_in(value: object) -> set[str]:
     hashes: set[str] = set()
     if isinstance(value, dict):
+        hashes.update(str(item) for item in numeric_dynamic_hashes(value))
         if value.get("kind") == "dynamic_hash" and value.get("hash") is not None:
             hashes.add(str(value.get("hash")))
         raw = value.get("raw")

@@ -15,12 +15,14 @@ class RuntimeUnitView(Protocol):
 
 def runtime_unit_combat_team(unit: RuntimeUnitView) -> RuntimeCombatTeam:
     """Return the source-backed combat allegiance used by every consumer."""
+    flags = getattr(unit, "flags", {})
+    if isinstance(flags, Mapping) and flags.get("system_entity_kind"):
+        return "neutral"
     side = getattr(unit, "side", None)
     if side == "ally":
         return "ally"
     if side == "enemy":
         return "enemy"
-    flags = getattr(unit, "flags", {})
     team_side = flags.get("team_side") if isinstance(flags, Mapping) else None
     if team_side == "ally":
         return "ally"
@@ -69,6 +71,8 @@ def runtime_unit_lifecycle_status(unit: RuntimeUnitView) -> str:
 
 def runtime_unit_is_on_field(unit: RuntimeUnitView) -> bool:
     """Whether a non-removed unit has an admitted on-field presence."""
+    if unit.flags.get("system_entity_kind"):
+        return False
     if runtime_unit_lifecycle_status(unit) == "removed":
         return False
     summon_kind = unit.flags.get("summon_kind")
@@ -85,6 +89,8 @@ def runtime_unit_is_on_field(unit: RuntimeUnitView) -> bool:
 
 def runtime_unit_source_is_targetable(unit: RuntimeUnitView) -> bool:
     """Return the source-backed targetability bit for summoned units."""
+    if unit.flags.get("system_entity_kind"):
+        return False
     summon_kind = unit.flags.get("summon_kind")
     if not isinstance(summon_kind, str) or not summon_kind:
         return True

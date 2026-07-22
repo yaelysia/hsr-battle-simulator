@@ -9,6 +9,8 @@ from ..core.model import BattleState, UnitState
 from ..core.reducer import MutationReducer
 from ..rules.engine_rule_registry import (
     ENGINE_RULE_REGISTRY_VERSION,
+    HP_LOSS_ROUTE_FAMILIES,
+    NORMAL_DAMAGE_ROUTE_FAMILIES,
     SHIELD_PRIORITY_RULE_ID,
     build_engine_rule_registry,
 )
@@ -291,7 +293,10 @@ def _versioned_route_registry_case() -> dict[str, Any]:
     registry = build_engine_rule_registry()
     routes = {rule.damage_family: rule for rule in registry.damage_route_rules}
     priority = registry.shield_priority_rules
-    expected_families = {"direct", "dot", "break", "super_break", "true_damage", "hp_loss"}
+    expected_families = {
+        *NORMAL_DAMAGE_ROUTE_FAMILIES,
+        *HP_LOSS_ROUTE_FAMILIES,
+    }
     checks = _checks(
         {
             "registry_version_exact": registry.registry_version == ENGINE_RULE_REGISTRY_VERSION,

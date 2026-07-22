@@ -21,6 +21,7 @@ from .rng import (
     resolve_rng_request,
 )
 from .scaling_basis import resolve_scaling_basis
+from .unit_stats import status_modifier_numeric_value
 
 
 @dataclass(frozen=True)
@@ -208,7 +209,6 @@ class DirectDamageFormula:
         element = formula_input.element_type
 
         scaling_ratio = formula_input.scaling_ratio
-        flat_damage = 0.0
         basis_result = resolve_scaling_basis(
             state,
             attacker_id=formula_input.attacker_id,
@@ -219,14 +219,66 @@ class DirectDamageFormula:
         if not basis_result.ok or basis_result.value is None:
             raise ValueError(basis_result.blocked_reason or "scaling_basis_not_admitted")
         scaling_value = basis_result.value
-        base_damage = max(0.0, scaling_value * scaling_ratio + flat_damage)
+        attack_ratio_terms = _direct_modifier_terms(
+            formula_input,
+            bucket="base",
+            key="attack_added_ratio",
+        )
+        attack_added_ratio = sum(
+            float(term.get("value") or 0.0) for term in attack_ratio_terms
+        )
+        flat_terms = _direct_modifier_terms(
+            formula_input,
+            bucket="base",
+            key="damage_value",
+        )
+        flat_damage = sum(float(term.get("value") or 0.0) for term in flat_terms)
+        adjusted_scaling_value = scaling_value * (1.0 + attack_added_ratio)
+        base_bucket = DamageFormulaBucket(
+            bucket="base",
+            multiplier=1.0,
+            applied_terms=(
+                _applied_term(
+                    "scaling_basis",
+                    formula_input.attacker_id,
+                    "base",
+                    basis_result.stat,
+                    "attacker",
+                    "always",
+                    scaling_value,
+                    "resolved_scaling_basis",
+                    "scaling_basis.value",
+                ),
+                *tuple(
+                    _direct_modifier_applied_term(term, "base")
+                    for term in (*attack_ratio_terms, *flat_terms)
+                ),
+            ),
+            metadata={
+                "unmodified_scaling_value": scaling_value,
+                "attack_added_ratio": attack_added_ratio,
+                "adjusted_scaling_value": adjusted_scaling_value,
+                "flat_damage": flat_damage,
+            },
+        )
+        base_damage = max(0.0, adjusted_scaling_value * scaling_ratio + flat_damage)
 
         crit_resolution, rng_event, crit_bucket = _resolve_crit(formula_input, actor)
-        damage_bonus_mult, damage_bonus_bucket = _damage_bonus_bucket(actor, element)
+        damage_bonus_mult, damage_bonus_bucket = _damage_bonus_bucket(
+            actor,
+            element,
+            formula_input,
+        )
         def_mult, defense_bucket = _defense_bucket(actor, target, formula_input, self.engine_rules)
         res_mult, resistance_bucket = _resistance_bucket(actor, target, element, self.engine_rules)
-        damage_taken_mult, damage_taken_bucket = _damage_taken_bucket(target)
-        damage_reduction_mult, damage_reduction_bucket = _damage_reduction_bucket(target)
+        damage_taken_mult, damage_taken_bucket = _damage_taken_bucket(
+            target,
+            formula_input,
+        )
+        damage_reduction_mult, damage_reduction_bucket = _damage_reduction_bucket(
+            target,
+            formula_input,
+        )
         toughness_mult, toughness_bucket = _toughness_state_bucket(target)
         final_damage = max(
             0.0,
@@ -242,6 +294,7 @@ class DirectDamageFormula:
         ledger = ModifierLedger(
             formula_family="direct",
             buckets=(
+                base_bucket,
                 crit_bucket,
                 damage_bonus_bucket,
                 defense_bucket,
@@ -281,6 +334,14 @@ class DirectDamageFormula:
 def _resolve_crit(formula_input: DamageFormulaInput, actor: UnitState) -> tuple[CritResolution, RNGEvent, DamageFormulaBucket]:
     crit_modifier_terms = _direct_modifier_terms(formula_input, bucket="crit", key="critical_chance")
     crit_bonus = sum(float(term.get("value") or 0.0) for term in crit_modifier_terms)
+    crit_damage_modifier_terms = _direct_modifier_terms(
+        formula_input,
+        bucket="crit",
+        key="critical_damage",
+    )
+    crit_damage_bonus = sum(
+        float(term.get("value") or 0.0) for term in crit_damage_modifier_terms
+    )
     status_crit_rate, status_crit_rate_terms, status_crit_rate_skipped = _status_modifier_terms(
         actor,
         source_type="actor.status",
@@ -296,7 +357,7 @@ def _resolve_crit(formula_input: DamageFormulaInput, actor: UnitState) -> tuple[
     base_crit_rate = _resource(actor, "critical_chance")
     base_crit_damage = _resource(actor, "critical_damage")
     crit_rate = _clamp(base_crit_rate + status_crit_rate + crit_bonus, 0.0, 1.0)
-    crit_damage = base_crit_damage + status_crit_damage
+    crit_damage = base_crit_damage + status_crit_damage + crit_damage_bonus
     mode = str(formula_input.crit_mode or "").lower()
     forced_outcome_id = ""
     if mode in {"crit", "forced_crit", "true"}:
@@ -393,11 +454,16 @@ def _resolve_crit(formula_input: DamageFormulaInput, actor: UnitState) -> tuple[
             *status_crit_rate_terms,
             *status_crit_damage_terms,
             *tuple(_direct_modifier_applied_term(term, "crit") for term in crit_modifier_terms),
+            *tuple(
+                _direct_modifier_applied_term(term, "crit")
+                for term in crit_damage_modifier_terms
+            ),
         ),
         skipped_terms=(*status_crit_rate_skipped, *status_crit_damage_skipped),
         metadata={
             **resolution.to_json(),
             "direct_modifier_bonus": crit_bonus,
+            "direct_critical_damage_bonus": crit_damage_bonus,
             "status_crit_rate_bonus": status_crit_rate,
             "status_crit_damage_bonus": status_crit_damage,
         },
@@ -405,28 +471,52 @@ def _resolve_crit(formula_input: DamageFormulaInput, actor: UnitState) -> tuple[
     return resolution, rng_event, bucket
 
 
-def _damage_bonus_bucket(actor: UnitState, element: str | None) -> tuple[float, DamageFormulaBucket]:
+def _damage_bonus_bucket(
+    actor: UnitState,
+    element: str | None,
+    formula_input: DamageFormulaInput,
+) -> tuple[float, DamageFormulaBucket]:
     all_bonus = _resource(actor, "damage_added_ratio")
     element_key = f"{element}_damage_added_ratio" if element else ""
     element_bonus = _resource(actor, element_key) if element_key else 0.0
+    specialized_keys: tuple[str, ...] = ()
+    if formula_input.attack_type in {"Pursued", "ElationDamage"}:
+        specialized_keys = ("elation_damage_added_ratio",)
+    elif formula_input.attack_type == "DOT":
+        specialized_keys = ("dot_damage_added_ratio",)
+    status_keys = (
+        ("damage_added_ratio", element_key, *specialized_keys)
+        if element_key
+        else ("damage_added_ratio", *specialized_keys)
+    )
     status_bonus, status_terms, skipped_terms = _status_modifier_terms(
         actor,
         source_type="actor.status",
         bucket="damage_bonus",
-        keys=("damage_added_ratio", element_key) if element_key else ("damage_added_ratio",),
+        keys=status_keys,
     )
-    multiplier = 1.0 + all_bonus + element_bonus + status_bonus
+    direct_terms = _direct_modifier_terms(
+        formula_input,
+        bucket="damage_bonus",
+        key="damage_added_ratio",
+    )
+    direct_bonus = sum(float(term.get("value") or 0.0) for term in direct_terms)
+    multiplier = 1.0 + all_bonus + element_bonus + status_bonus + direct_bonus
     terms = (
         _applied_term("actor.resources", actor.unit_id, "damage_bonus", "damage_added_ratio", "actor", "always", all_bonus, _neutral_reason(all_bonus), "resources.damage_added_ratio"),
         _applied_term("actor.resources", actor.unit_id, "damage_bonus", element_key or "element_damage_added_ratio", "actor", f"element={element}", element_bonus, _neutral_reason(element_bonus), f"resources.{element_key}" if element_key else "resources.<element>_damage_added_ratio"),
         *status_terms,
+        *tuple(
+            _direct_modifier_applied_term(term, "damage_bonus")
+            for term in direct_terms
+        ),
     )
     return multiplier, DamageFormulaBucket(
         bucket="damage_bonus",
         multiplier=multiplier,
         applied_terms=terms,
         skipped_terms=skipped_terms,
-        metadata={"status_bonus": status_bonus},
+        metadata={"status_bonus": status_bonus, "direct_bonus": direct_bonus},
     )
 
 
@@ -573,7 +663,10 @@ def _resistance_bucket(
     )
 
 
-def _damage_taken_bucket(target: UnitState) -> tuple[float, DamageFormulaBucket]:
+def _damage_taken_bucket(
+    target: UnitState,
+    formula_input: DamageFormulaInput,
+) -> tuple[float, DamageFormulaBucket]:
     resource_value = _resource(target, "damage_taken_ratio")
     status_value, status_terms, status_skipped_terms = _status_modifier_terms(
         target,
@@ -581,7 +674,13 @@ def _damage_taken_bucket(target: UnitState) -> tuple[float, DamageFormulaBucket]
         bucket="damage_taken",
         keys=("damage_taken_ratio",),
     )
-    value = resource_value + status_value
+    direct_terms = _direct_modifier_terms(
+        formula_input,
+        bucket="damage_taken",
+        key="damage_taken_ratio",
+    )
+    direct_value = sum(float(term.get("value") or 0.0) for term in direct_terms)
+    value = resource_value + status_value + direct_value
     multiplier = 1.0 + value
     return multiplier, DamageFormulaBucket(
         bucket="damage_taken",
@@ -589,21 +688,54 @@ def _damage_taken_bucket(target: UnitState) -> tuple[float, DamageFormulaBucket]
         applied_terms=(
             _applied_term("target.resources", target.unit_id, "damage_taken", "damage_taken_ratio", "target", "always", resource_value, _neutral_reason(resource_value), "resources.damage_taken_ratio"),
             *status_terms,
+            *tuple(
+                _direct_modifier_applied_term(term, "damage_taken")
+                for term in direct_terms
+            ),
         ),
         skipped_terms=status_skipped_terms,
-        metadata={"status_damage_taken_ratio": status_value},
+        metadata={
+            "status_damage_taken_ratio": status_value,
+            "direct_damage_taken_ratio": direct_value,
+        },
     )
 
 
-def _damage_reduction_bucket(target: UnitState) -> tuple[float, DamageFormulaBucket]:
-    value = _resource(target, "damage_reduction")
+def _damage_reduction_bucket(
+    target: UnitState,
+    formula_input: DamageFormulaInput,
+) -> tuple[float, DamageFormulaBucket]:
+    resource_value = _resource(target, "damage_reduction")
+    status_value, status_terms, status_skipped_terms = _status_modifier_terms(
+        target,
+        source_type="target.status",
+        bucket="damage_reduction",
+        keys=("damage_reduction",),
+    )
+    direct_terms = _direct_modifier_terms(
+        formula_input,
+        bucket="damage_reduction",
+        key="damage_reduction",
+    )
+    direct_value = sum(float(term.get("value") or 0.0) for term in direct_terms)
+    value = resource_value + status_value + direct_value
     multiplier = max(0.0, 1.0 - value)
     return multiplier, DamageFormulaBucket(
         bucket="damage_reduction",
         multiplier=multiplier,
         applied_terms=(
-            _applied_term("target.resources", target.unit_id, "damage_reduction", "damage_reduction", "target", "always", value, _neutral_reason(value), "resources.damage_reduction"),
+            _applied_term("target.resources", target.unit_id, "damage_reduction", "damage_reduction", "target", "always", resource_value, _neutral_reason(resource_value), "resources.damage_reduction"),
+            *status_terms,
+            *tuple(
+                _direct_modifier_applied_term(term, "damage_reduction")
+                for term in direct_terms
+            ),
         ),
+        skipped_terms=status_skipped_terms,
+        metadata={
+            "status_damage_reduction": status_value,
+            "direct_damage_reduction": direct_value,
+        },
     )
 
 
@@ -670,8 +802,8 @@ def status_modifier_terms(
                     )
                 )
                 continue
-            value = modifier.get("value")
-            if not isinstance(value, (int, float)):
+            value = status_modifier_numeric_value(detail, modifier)
+            if value is None:
                 skipped.append(
                     _skipped_term(
                         source_type,
@@ -685,7 +817,7 @@ def status_modifier_terms(
                     )
                 )
                 continue
-            value_float = float(value)
+            value_float = value
             total += value_float
             applied.append(
                 _applied_term(

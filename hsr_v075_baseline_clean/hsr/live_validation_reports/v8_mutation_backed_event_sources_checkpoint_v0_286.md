@@ -1,5 +1,7 @@
 # v0_286 已有底层 mutation 的状态监听事件源补齐
 
+> 当前语义替代说明（P8-S8）：本文当时使用的笼统“SP”表述不再作为当前资源契约。现行契约为：队伍战技点 `BattleState.skill_points` 只产生 `bp.change` 并对应 `OnListenBpChange`；角色能量 `UnitState.energy` 产生 `energy.before_change` / `energy.change`，对应 `OnBeforeEnergyPointChange`、`OnEnergyPointChange` 和 `OnSPChange`。旧 `sp.change` 已退役且不保留兼容入口。历史结果本身不改写。
+
 ## 本阶段完成
 
 - 新增 `systems/mutation_events.py`，把已提交的 `Mutation` 统一转换为 process-only `GameEvent`。

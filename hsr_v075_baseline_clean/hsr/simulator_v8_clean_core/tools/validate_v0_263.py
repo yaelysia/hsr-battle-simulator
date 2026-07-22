@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +14,7 @@ from ..core.snapshot_contract import SnapshotCompletenessValidator
 from ..core.source_audit import RuntimeSourceAuditor
 from ..core.transition_contract import TransitionContractValidator
 from ..rules.ir import CanonicalIR, SkillFormulaBindingIR, StatusDamageEmissionIR
+from ..rules.expression_ir import numeric_dynamic_hashes
 from ..rules.rulebook import RuleBook
 from ..systems.damage import DamageWindowLedger
 from ..systems.dot_formula import DotFormula, DotFormulaInput
@@ -31,14 +33,14 @@ def run_validation(package_root: Path, tbgd_root: Path, output_dir: Path) -> dic
     rules = RuleBook(ir)
     dot_case = _select_executable_percentage_dot_case(ir, rules)
     dot_result = _execute_percentage_dot_case(rules, dot_case)
-    dot_missing_binding = _missing_dot_formula_binding_case(rules, dot_case)
+    dot_missing_basis = _missing_dot_percentage_basis_case(rules, dot_case)
     multihit_case = _select_multihit_action_case(ir, rules)
     multihit_result = _execute_multihit_case(rules, multihit_case)
     source_matrix = _source_matrix(ir, dot_case, multihit_case)
     static_result = run_static_checks(package_root)
     checks = {
         "percentage_dot": dot_result["checks"],
-        "missing_dot_formula_binding": dot_missing_binding["checks"],
+        "missing_dot_percentage_basis": dot_missing_basis["checks"],
         "multihit_direct": multihit_result["checks"],
         "source_matrix": _source_matrix_checks(source_matrix),
         "static": {"ok": static_result.ok, "checks": {"static_checks": static_result.ok}},
@@ -51,14 +53,14 @@ def run_validation(package_root: Path, tbgd_root: Path, output_dir: Path) -> dic
             "tbgd_root": tbgd_root.as_posix(),
             "selection_policy": (
                 "Select by structured IR predicates only: executable DOT StatusDamageEmissionIR, "
-                "same ability-file character-card dot formula slot, and executable multi-hit DamageEmissionIR."
+                "DamageByAttackProperty attack basis, source-backed numeric slot, and executable multi-hit DamageEmissionIR."
             ),
             "sampled": ir.metadata.get("sampled", {}),
         },
         "checks": checks,
         "percentage_dot_case": dot_result,
         "multihit_case": multihit_result,
-        "negative_cases": {"missing_dot_formula_binding": dot_missing_binding},
+        "negative_cases": {"missing_dot_percentage_basis": dot_missing_basis},
         "source_matrix": source_matrix,
         "static_checks": static_result.to_json(),
     }
@@ -146,10 +148,10 @@ def _execute_percentage_dot_case(rules: RuleBook, case: dict[str, Any] | None) -
         "state_changed": before != after,
         "hp_mutation_present": bool(dot_mutations),
         "hp_reduced": result.after_state.units["enemy:dot_target"].hp < state.units["enemy:dot_target"].hp,
-        "uses_status_formula_binding_basis": bool(
+        "uses_damage_by_attack_property_basis": bool(
             basis_terms
             and basis_terms[0].get("basis_result", {}).get("source_trace", {}).get("scaling_basis", {}).get("source_kind")
-            == "character_data_card_skill_formula"
+            == "damage_by_attack_property_contract"
         ),
         "no_direct_crit_ledger": all(
             mutation.metadata.get("normal_multiplier_terms") == []
@@ -172,22 +174,33 @@ def _execute_percentage_dot_case(rules: RuleBook, case: dict[str, Any] | None) -
     }
 
 
-def _missing_dot_formula_binding_case(rules: RuleBook, case: dict[str, Any] | None) -> dict[str, Any]:
+def _missing_dot_percentage_basis_case(rules: RuleBook, case: dict[str, Any] | None) -> dict[str, Any]:
     if case is None:
         return {"checks": {"ok": False, "case_found": False}}
     emission: StatusDamageEmissionIR = case["emission"]
     binding: SkillFormulaBindingIR = case["formula_binding"]
-    state = _state_for_dot_case(emission, binding, bind_dynamic=True, include_formula_binding=False)
+    state = _state_for_dot_case(emission, binding, bind_dynamic=True, include_formula_binding=True)
     before = state.snapshot().to_json()
     detail = state.units["enemy:dot_target"].flags["status_details"][0]
+    broken_emission = replace(
+        emission,
+        scaling_expr={
+            **emission.scaling_expr,
+            "damage_percentage_basis": {
+                "kind": "missing",
+                "supported": False,
+                "reason": "dot_damage_percentage_basis_missing",
+            },
+        },
+    )
     formula_result = DotFormula().calculate(
         DotFormulaInput(
             state=state,
             caster_id="ally:dot_caster",
             target_id="enemy:dot_target",
             status_detail=detail,
-            emission=emission,
-            source_trace={"selection_mode": "missing_formula_binding_negative"},
+            emission=broken_emission,
+            source_trace={"selection_mode": "missing_percentage_basis_negative"},
         )
     )
     after = state.snapshot().to_json()
@@ -196,7 +209,7 @@ def _missing_dot_formula_binding_case(rules: RuleBook, case: dict[str, Any] | No
         "blocked": formula_result.ok is False,
         "no_mutation": True,
         "snapshot_unchanged": before == after,
-        "blocked_reason_specific": "dot_status_formula_binding_missing" in formula_result.blocked_reason,
+        "blocked_reason_specific": "dot_damage_percentage_basis_missing" in formula_result.blocked_reason,
     }
     checks["ok"] = all(checks.values())
     return {"checks": checks, "formula_result": formula_result.to_json()}
@@ -479,16 +492,7 @@ def _hashes_for_dot_emission(emission: StatusDamageEmissionIR) -> tuple[str, ...
 
 
 def _hashes_from_expr(expression: Any) -> list[str]:
-    if not isinstance(expression, dict):
-        return []
-    if expression.get("kind") == "dynamic_hash" and expression.get("hash") is not None:
-        return [str(expression["hash"])]
-    raw = expression.get("raw") if isinstance(expression.get("raw"), dict) else expression
-    postfix = raw.get("PostfixExpr") if isinstance(raw, dict) else None
-    if not isinstance(postfix, dict):
-        return []
-    values = postfix.get("DynamicHashes")
-    return [str(value) for value in values] if isinstance(values, list) else []
+    return [str(value) for value in numeric_dynamic_hashes(expression)]
 
 
 def _expr_kind(value: Any) -> str:
@@ -518,6 +522,14 @@ def _source_matrix(ir: CanonicalIR, dot_case: dict[str, Any] | None, multihit_ca
         and _expr_kind(emission.scaling_expr.get("damage_value")) == "missing"
         and _expr_supported(emission.scaling_expr.get("damage_percentage"))
     ]
+    task_sourced_dot_percentage = [
+        emission
+        for emission in executable_dot_percentage
+        if emission.scaling_expr.get("damage_percentage_basis", {}).get(
+            "source_kind"
+        )
+        == "damage_by_attack_property_contract"
+    ]
     formula_sourced_hit_profiles = [
         profile
         for profile in ir.hit_profiles
@@ -534,8 +546,13 @@ def _source_matrix(ir: CanonicalIR, dot_case: dict[str, Any] | None, multihit_ca
         },
         "dot_percentage": {
             "executable_count": len(executable_dot_percentage),
+            "task_sourced_basis_count": len(task_sourced_dot_percentage),
+            "all_executable_use_damage_by_attack_property_basis": (
+                len(task_sourced_dot_percentage)
+                == len(executable_dot_percentage)
+            ),
             "selected_case": dot_case["emission"].status_damage_emission_id if dot_case else "",
-            "selected_formula_slot": dot_case["formula_binding"].formula_slot_id if dot_case else "",
+            "selected_numeric_slot": dot_case["formula_binding"].formula_slot_id if dot_case else "",
         },
         "multihit": {
             "formula_sourced_hit_profile_count": len(formula_sourced_hit_profiles),
@@ -543,7 +560,7 @@ def _source_matrix(ir: CanonicalIR, dot_case: dict[str, Any] | None, multihit_ca
             "selected_level": multihit_case["level"] if multihit_case else 0,
         },
         "blocked_policy": {
-            "missing_formula_slot": "process_only_no_mutation",
+            "missing_percentage_basis": "process_only_no_mutation",
             "unknown_basis": "blocked",
             "param_out_of_range": "blocked",
         },
@@ -554,6 +571,11 @@ def _source_matrix_checks(matrix: dict[str, Any]) -> dict[str, Any]:
     checks = {
         "direct_executable_uses_character_data_card": bool(matrix["direct"]["all_executable_use_character_data_card_formula"]),
         "dot_percentage_executable_exists": int(matrix["dot_percentage"]["executable_count"]) > 0,
+        "dot_percentage_uses_damage_by_attack_property_basis": bool(
+            matrix["dot_percentage"][
+                "all_executable_use_damage_by_attack_property_basis"
+            ]
+        ),
         "dot_percentage_selected": bool(matrix["dot_percentage"]["selected_case"]),
         "multihit_formula_sourced_profiles_exist": int(matrix["multihit"]["formula_sourced_hit_profile_count"]) > 1,
         "multihit_selected": bool(matrix["multihit"]["selected_action"]),

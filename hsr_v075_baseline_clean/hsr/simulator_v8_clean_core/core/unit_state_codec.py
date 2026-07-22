@@ -241,6 +241,8 @@ def _validate_shield_instances(value: Any) -> None:
         "source_trace",
         "priority_audit",
         "priority_rule",
+        "owner_modifier_name",
+        "status_instance_id",
     }
     seen: set[str] = set()
     for instance in instances:
@@ -259,6 +261,10 @@ def _validate_shield_instances(value: Any) -> None:
             raise ValueError("shield instance source_actor_id is required")
         if not isinstance(instance.get("source_kind"), str) or not instance["source_kind"]:
             raise ValueError("shield instance source_kind is required")
+        if not isinstance(instance.get("owner_modifier_name"), str):
+            raise ValueError("shield instance owner_modifier_name must be a string")
+        if not isinstance(instance.get("status_instance_id"), str):
+            raise ValueError("shield instance status_instance_id must be a string")
         remaining = instance.get("remaining")
         capacity = instance.get("capacity")
         if (

@@ -26,6 +26,7 @@ DAMAGE_STAGE_ORDER = (
 )
 
 DAMAGE_FAMILY_STAGE_MATRIX: dict[str, tuple[str, ...]] = {
+    "additional": ("damage_bonus", "defense", "resistance", "damage_taken", "damage_reduction", "toughness_state"),
     "dot": ("damage_bonus", "defense", "resistance", "damage_taken", "damage_reduction", "toughness_state"),
     "break": ("break_bonus", "defense", "resistance", "damage_taken", "damage_reduction"),
     "super_break": ("break_bonus", "defense", "resistance", "damage_taken", "damage_reduction"),
@@ -123,6 +124,7 @@ class DamageStagePipeline:
         producer_base_amount: float,
         element_type: str | None,
         source_trace: dict[str, JSONValue],
+        attack_type: str | None = None,
     ) -> DamagePipelineResult:
         if family not in DAMAGE_FAMILY_STAGE_MATRIX:
             return DamagePipelineResult(
@@ -154,7 +156,15 @@ class DamageStagePipeline:
             )
         applicable = set(DAMAGE_FAMILY_STAGE_MATRIX[family])
         buckets = tuple(
-            self._bucket(stage, applicable, actor, target, element_type, family)
+            self._bucket(
+                stage,
+                applicable,
+                actor,
+                target,
+                element_type,
+                family,
+                attack_type,
+            )
             for stage in DAMAGE_STAGE_ORDER
         )
         final = max(0.0, float(producer_base_amount))
@@ -180,6 +190,7 @@ class DamageStagePipeline:
         target: UnitState,
         element_type: str | None,
         family: str,
+        attack_type: str | None,
     ) -> DamageStageBucket:
         if stage not in applicable:
             return DamageStageBucket(
@@ -192,11 +203,21 @@ class DamageStagePipeline:
             all_bonus = _resource(actor, "damage_added_ratio")
             element_key = f"{element_type}_damage_added_ratio" if element_type else ""
             element_bonus = _resource(actor, element_key) if element_key else 0.0
+            specialized_keys: tuple[str, ...] = ()
+            if family == "dot" or attack_type == "DOT":
+                specialized_keys = ("dot_damage_added_ratio",)
+            elif attack_type in {"Pursued", "ElationDamage"}:
+                specialized_keys = ("elation_damage_added_ratio",)
+            status_keys = (
+                ("damage_added_ratio", element_key, *specialized_keys)
+                if element_key
+                else ("damage_added_ratio", *specialized_keys)
+            )
             status_bonus, status_terms, status_skipped = _status_terms(
                 actor,
                 source_type="actor.status",
                 stage=stage,
-                keys=("damage_added_ratio", element_key) if element_key else ("damage_added_ratio",),
+                keys=status_keys,
             )
             return DamageStageBucket(
                 stage,
@@ -216,7 +237,10 @@ class DamageStagePipeline:
                 actor,
                 source_type="actor.status",
                 stage=stage,
-                keys=("break_damage_added_ratio",),
+                keys=(
+                    "break_damage_added_ratio",
+                    "break_damage_extra_added_ratio",
+                ),
             )
             return DamageStageBucket(
                 stage,
