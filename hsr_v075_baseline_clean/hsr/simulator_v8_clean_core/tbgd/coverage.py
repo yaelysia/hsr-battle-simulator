@@ -58,6 +58,36 @@ KNOWN_AUDIT_CONDITIONS = {
 }
 
 
+# These task families only synchronize presentation/timeline state around an
+# already selected ability. Lowering records that classification explicitly on
+# AbilityTaskIR; runtime never infers it from the opcode.
+PROCESS_ONLY_ABILITY_TASK_OPCODES = frozenset(
+    {
+        "LookAt",
+        "DamagePerformFinish",
+        "GlobalMainIntensityEffect",
+        "GlobalTimeSlow",
+        "MoveToTargetPosition",
+        "SetTeamFormation",
+        "SkillExecutionStart",
+        "SkillPerformFinish",
+        "TriggerAnimState",
+        "TriggerAnimStateWithMove",
+        "VCameraConfigChange",
+        "WaitAnimState",
+        "WaitSecond",
+    }
+)
+
+
+def ability_task_execution_mode(opcode: str) -> str:
+    return (
+        "process_only"
+        if opcode in PROCESS_ONLY_ABILITY_TASK_OPCODES
+        else "runtime_effect"
+    )
+
+
 @dataclass(frozen=True)
 class CoverageMatrix:
     discovery_summary: dict[str, Any]

@@ -78,6 +78,7 @@ from .ir import (
     StatusDamageEmissionIR,
     StatusEventFamilyIR,
     ServantDefinitionIR,
+    ServantOwnerRelationIR,
     SummonMonsterIntentIR,
     SummonUnitDefinitionIR,
     SuperBreakEmissionIR,
@@ -301,26 +302,98 @@ class RuleBook:
                 for key, value in assistant_ability_resolutions_by_ability_id.items()
             },
         )
-        object.__setattr__(
-            self,
-            "_servant_definitions",
-            {definition.servant_definition_id: definition for definition in self.ir.servant_definitions},
+        servant_definitions, definition_id_conflicts = _unique_index(
+            self.ir.servant_definitions,
+            lambda definition: definition.servant_definition_id,
         )
-        object.__setattr__(
-            self,
-            "_servant_definitions_by_ref",
-            {definition.servant_ref: definition for definition in self.ir.servant_definitions if definition.servant_ref},
+        if definition_id_conflicts:
+            raise ValueError(
+                "duplicate servant definition identities: "
+                + ", ".join(sorted(definition_id_conflicts))
+            )
+        servant_definitions_by_ref, definition_ref_conflicts = _unique_index(
+            (
+                definition
+                for definition in self.ir.servant_definitions
+                if definition.servant_ref
+            ),
+            lambda definition: definition.servant_ref,
         )
+        if definition_ref_conflicts:
+            raise ValueError(
+                "duplicate servant definition refs: "
+                + ", ".join(sorted(definition_ref_conflicts))
+            )
+        object.__setattr__(self, "_servant_definitions", servant_definitions)
+        object.__setattr__(self, "_servant_definitions_by_ref", servant_definitions_by_ref)
         servant_definitions_by_owner: dict[str, list[ServantDefinitionIR]] = {}
+        relation_rows = tuple(
+            relation
+            for definition in self.ir.servant_definitions
+            for relation in definition.owner_relations
+        )
+        servant_owner_relations, relation_id_conflicts = _unique_index(
+            relation_rows,
+            lambda relation: relation.owner_relation_id,
+        )
+        if relation_id_conflicts:
+            raise ValueError(
+                "duplicate servant owner relation identities: "
+                + ", ".join(sorted(relation_id_conflicts))
+            )
+        semantic_relation_counts: dict[tuple[str, str], int] = {}
+        for key in (
+            (definition.servant_definition_id, relation.owner_entity_ref)
+            for definition in self.ir.servant_definitions
+            for relation in definition.owner_relations
+        ):
+            semantic_relation_counts[key] = semantic_relation_counts.get(key, 0) + 1
+        duplicate_semantic_relations = sorted(
+            key
+            for key, count in semantic_relation_counts.items()
+            if count != 1
+        )
+        if duplicate_semantic_relations:
+            raise ValueError(
+                "duplicate servant owner relation semantics: "
+                + ", ".join(
+                    f"{definition_id}:{owner_ref}"
+                    for definition_id, owner_ref in duplicate_semantic_relations
+                )
+            )
+        servant_definitions_by_owned_skill: dict[
+            tuple[str, str], list[ServantDefinitionIR]
+        ] = {}
         for definition in self.ir.servant_definitions:
-            if definition.owner_entity_ref:
-                servant_definitions_by_owner.setdefault(definition.owner_entity_ref, []).append(definition)
+            for relation in definition.owner_relations:
+                if relation.coverage_status != "executable":
+                    continue
+                servant_definitions_by_owner.setdefault(
+                    relation.owner_entity_ref,
+                    [],
+                ).append(definition)
+                for skill_id in relation.auxiliary_skill_ids:
+                    servant_definitions_by_owned_skill.setdefault(
+                        (relation.owner_entity_ref, skill_id),
+                        [],
+                    ).append(definition)
+        object.__setattr__(self, "_servant_owner_relations", servant_owner_relations)
         object.__setattr__(
             self,
             "_servant_definitions_by_owner",
             {
                 key: tuple(sorted(value, key=lambda item: item.servant_definition_id))
                 for key, value in servant_definitions_by_owner.items()
+            },
+        )
+        object.__setattr__(
+            self,
+            "_servant_definitions_by_owned_skill",
+            {
+                key: tuple(
+                    sorted(value, key=lambda item: item.servant_definition_id)
+                )
+                for key, value in servant_definitions_by_owned_skill.items()
             },
         )
         mechanism_slots_by_card: dict[str, list[CharacterMechanismSlotIR]] = {}
@@ -1564,6 +1637,22 @@ class RuleBook:
 
     def servant_definitions_for_owner(self, owner_entity_ref: str) -> tuple[ServantDefinitionIR, ...]:
         return self._servant_definitions_by_owner.get(owner_entity_ref, ())
+
+    def servant_owner_relation(
+        self,
+        owner_relation_id: str,
+    ) -> ServantOwnerRelationIR | None:
+        return self._servant_owner_relations.get(owner_relation_id)
+
+    def servant_definitions_for_owned_skill(
+        self,
+        owner_entity_ref: str,
+        skill_id: str,
+    ) -> tuple[ServantDefinitionIR, ...]:
+        return self._servant_definitions_by_owned_skill.get(
+            (owner_entity_ref, skill_id),
+            (),
+        )
 
     def servant_definitions(self) -> tuple[ServantDefinitionIR, ...]:
         return tuple(sorted(self.ir.servant_definitions, key=lambda item: item.servant_definition_id))

@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 
 from ..core.model import BattleState, GameEvent, JSONValue, Mutation
 from ..core.settlement import SettlementRecord
 from ..rules.evaluator import NumericEvaluationContext, NumericEvaluationResult, RuleEvaluator
 from ..rules.engine_rule_registry import EngineRuleRegistry, build_engine_rule_registry
-from ..rules.expression_ir import numeric_fixed
+from ..rules.expression_ir import is_typed_numeric_expression, numeric_fixed
 from ..rules.rulebook import RuleBook
 from .dynamic_values import binding_source_from_store, status_binding_sources, store_from_state
 from .mutation_events import enrich_event_with_mutation_payload
@@ -69,25 +70,20 @@ class ToughnessSystem:
         )
 
     def apply_packet(self, state: BattleState, packet: ToughnessPacket) -> ToughnessApplicationResult:
-        if packet.coverage_status != "executable":
-            return _blocked(packet, f"toughness_emission_not_executable:{packet.coverage_status}")
-        amount_result = _evaluate_amount(state, packet)
-        if not amount_result.ok or amount_result.value is None:
-            return _blocked(packet, amount_result.blocked_reason or "toughness_amount_not_executable", amount_result)
-        amount = amount_result.value
-        if amount <= 0:
-            return _skipped(packet, "toughness_amount_not_positive", amount_result=amount_result)
+        source_reason = _packet_source_blocked_reason(packet)
+        if source_reason:
+            return _blocked(packet, source_reason)
         target = state.units.get(packet.target_id)
         if target is None:
             return _blocked(packet, "target_missing")
         if target.max_toughness <= 0:
-            return _skipped(packet, "target_has_no_toughness", amount_result=amount_result)
+            return _skipped(packet, "target_has_no_toughness")
         if target.toughness <= 0:
-            return _skipped(packet, "target_toughness_already_depleted", amount_result=amount_result)
+            return _skipped(packet, "target_toughness_already_depleted")
         if bool(target.flags.get("weakness_locked", False)):
-            return _skipped(packet, "target_weakness_locked", amount_result=amount_result)
+            return _skipped(packet, "target_weakness_locked")
         if bool(target.flags.get("mute_break", False)):
-            return _skipped(packet, "target_mute_break", amount_result=amount_result)
+            return _skipped(packet, "target_mute_break")
         weaknesses = tuple(str(item) for item in target.flags.get("weaknesses", ()) if isinstance(item, str))
         force_stance_damage = bool(target.flags.get("force_stance_damage", False))
         if packet.element_type and packet.element_type not in weaknesses and not force_stance_damage:
@@ -95,10 +91,13 @@ class ToughnessSystem:
                 packet,
                 "element_not_in_target_weaknesses",
                 extra={"weaknesses": list(weaknesses)},
-                amount_result=amount_result,
             )
-        if packet.amount_stage != "family_base":
-            return _blocked(packet, f"toughness_amount_stage_mismatch:{packet.amount_stage}:family_base", amount_result)
+        amount_result = _evaluate_amount(state, packet)
+        if not amount_result.ok or amount_result.value is None:
+            return _blocked(packet, amount_result.blocked_reason or "toughness_amount_not_executable", amount_result)
+        amount = amount_result.value
+        if amount <= 0:
+            return _skipped(packet, "toughness_amount_not_positive", amount_result=amount_result)
         try:
             pipeline = DamageStagePipeline(self.engine_rules).calculate(
                 state,
@@ -243,6 +242,36 @@ class ToughnessSystem:
         )
 
 
+def _packet_source_blocked_reason(packet: ToughnessPacket) -> str:
+    if packet.coverage_status != "executable":
+        return f"toughness_emission_not_executable:{packet.coverage_status}"
+    if packet.amount_stage != "family_base":
+        return f"toughness_amount_stage_mismatch:{packet.amount_stage}:family_base"
+    if packet.amount is not None:
+        if (
+            isinstance(packet.amount, bool)
+            or not isinstance(packet.amount, (int, float))
+            or not math.isfinite(float(packet.amount))
+        ):
+            return "toughness_amount_not_finite"
+        return ""
+    if not is_typed_numeric_expression(packet.amount_expr):
+        return "toughness_amount_expression_not_typed"
+    if packet.amount_expr.get("supported") is not True:
+        return str(
+            packet.amount_expr.get("reason")
+            or packet.amount_expr.get("blocked_reason")
+            or "toughness_amount_expression_not_supported"
+        )
+    if packet.amount_expr.get("kind") in {"missing", "unsupported"}:
+        return str(
+            packet.amount_expr.get("reason")
+            or packet.amount_expr.get("blocked_reason")
+            or "toughness_amount_expression_not_supported"
+        )
+    return ""
+
+
 def _blocked(
     packet: ToughnessPacket,
     reason: str,
@@ -312,6 +341,15 @@ def _evaluate_amount(state: BattleState, packet: ToughnessPacket) -> NumericEval
         packet.amount_expr,
         NumericEvaluationContext(
             binding_sources=(
+                *(
+                    tuple(
+                        item
+                        for item in (packet.metadata.get("value_binding_sources") or ())
+                        if isinstance(item, dict)
+                    )
+                    if isinstance(packet.metadata.get("value_binding_sources"), (list, tuple))
+                    else ()
+                ),
                 *status_binding_sources(state, unit_ids),
                 binding_source_from_store(store_from_state(state)),
             ),

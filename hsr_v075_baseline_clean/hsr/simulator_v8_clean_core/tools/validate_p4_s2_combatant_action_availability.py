@@ -415,7 +415,7 @@ def _servant_subcard_action_availability_case(rules: RuleBook) -> dict[str, JSON
         sample_actor=_compact_unit(state.units[choice.actor_id]),
         details={
             "servant_definition_id": definition.servant_definition_id,
-            "owner_entity_ref": definition.owner_entity_ref,
+            "owner_entity_refs": list(definition.owner_entity_refs),
             "view": _compact_view(view),
             "selection_predicate": "ServantDefinitionIR executable unit representation with summon_action choice",
         },

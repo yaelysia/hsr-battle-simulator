@@ -8,17 +8,31 @@ from pathlib import Path
 from typing import Any
 
 from .. import BASELINE_VERSION
+from ..builds.character_assembler import assemble_character_build
+from ..builds.models import (
+    CharacterBuildInput,
+    CharacterInitialConditionInput,
+    CharacterInitialResourceValue,
+)
 from ..core.model import BattleState, UnitState
 from ..core.reducer import MutationReducer
+from ..equipment.models import EquipmentBuildInput
 from ..rules.ir import ServantDefinitionIR, UnitBirthTemplateIR
 from ..rules.rulebook import RuleBook
+from ..scenarios.build_state import ScenarioStateBuilder
+from ..scenarios.schema import (
+    BattleSetupSpec,
+    PanelInput,
+    ScenarioSpec,
+    TimelineSetupSpec,
+    UnitSpec,
+)
 from ..systems.summon import SummonSystem
 from ..tbgd.lowering import TBGDLowering
 from ..tbgd.paths import find_tbgd_root
 from .io import write_json
 from .static_checks import run_static_checks
 from .validate_p1_3_summon_assistant_servant import (
-    _base_servant_state,
     _first_servant_id,
     _select_executable_servant_definition,
 )
@@ -51,7 +65,7 @@ def run_validation(package_root: Path, tbgd_root: Path, output_dir: Path) -> dic
                 "mode": "structured_servant_definition_owner_stat_lifecycle_predicates",
                 "fixed_character_monster_skill_file_hash_or_observation_used": False,
                 "selected_servant_definition_id": definition.servant_definition_id,
-                "selected_owner_entity_ref": definition.owner_entity_ref,
+                "selected_owner_entity_refs": list(definition.owner_entity_refs),
             },
         },
         "summary": {
@@ -103,14 +117,20 @@ def _servant_definition_matrix(tbgd_root: Path, rules: RuleBook) -> dict[str, An
         "executable_definition_present": bool(executable),
         "rulebook_lookup_by_id": all(rules.servant_definition(item.servant_definition_id) == item for item in definitions),
         "rulebook_lookup_by_owner": all(
-            item in rules.servant_definitions_for_owner(item.owner_entity_ref)
+            item in rules.servant_definitions_for_owner(relation.owner_entity_ref)
             for item in executable
-            if item.owner_entity_ref
+            for relation in item.owner_relations
+            if relation.coverage_status == "executable"
         ),
-        "owner_entity_source_admitted": all(
-            isinstance(item.stat_source.get("owner_source"), dict)
-            and item.stat_source["owner_source"].get("admission_status") == "executable"
-            and item.owner_entity_ref == item.stat_source["owner_source"].get("owner_entity_ref")
+        "owner_relation_source_admitted": all(
+            item.owner_relations
+            and all(
+                relation.coverage_status == "executable"
+                and relation.owner_entity_ref
+                and relation.owner_character_card_id
+                and relation.sources
+                for relation in item.owner_relations
+            )
             for item in executable
         ),
         "action_set_has_executable_bindings": all(item.action_set.get("executable_binding_ids") for item in executable),
@@ -122,9 +142,17 @@ def _servant_definition_matrix(tbgd_root: Path, rules: RuleBook) -> dict[str, An
             and item.stat_source.get("formula", {}).get("speed") == "owner.speed * speed_inherit + speed_base"
             for item in executable
         ),
-        "attack_defense_boundary_declared": all(
-            item.stat_source.get("schema_carry_fields", {}).get("attack", {}).get("source_status") == "schema_carry_only"
-            and item.stat_source.get("schema_carry_fields", {}).get("defense", {}).get("source_status") == "schema_carry_only"
+        "attack_defense_owner_sync_declared": all(
+            item.stat_source.get("owner_sync_fields", {}).get("attack", {}).get("admission_status")
+            == "executable"
+            and item.stat_source.get("owner_sync_fields", {}).get("attack", {}).get("binding_kind")
+            == "owner_field"
+            and item.stat_source.get("owner_sync_fields", {}).get("attack", {}).get("source_trace")
+            and item.stat_source.get("owner_sync_fields", {}).get("defense", {}).get("admission_status")
+            == "executable"
+            and item.stat_source.get("owner_sync_fields", {}).get("defense", {}).get("binding_kind")
+            == "owner_field"
+            and item.stat_source.get("owner_sync_fields", {}).get("defense", {}).get("source_trace")
             for item in executable
         ),
         "timeline_source_executable": all(
@@ -152,9 +180,14 @@ def _servant_definition_matrix(tbgd_root: Path, rules: RuleBook) -> dict[str, An
 
 
 def _servant_spawn_owner_lifecycle_case(rules: RuleBook, definition: ServantDefinitionIR) -> dict[str, Any]:
-    state = _base_servant_state(definition)
+    state = _formal_servant_state(rules, definition)
     system = SummonSystem(rules)
-    plan = system.plan_spawn_servant(state, definition, owner_id="ally:servant_owner")
+    plan = system.plan_spawn_servant(
+        state,
+        definition,
+        owner_id="ally:servant_owner",
+        spawn_source=definition.spawn_sources[0],
+    )
     result = system.apply_spawn_servant(state, plan)
     after = MutationReducer().apply_all(state, result.mutations)
     replay = MutationReducer().replay_snapshot(state, result.mutations, after.snapshot().to_json())
@@ -165,6 +198,28 @@ def _servant_spawn_owner_lifecycle_case(rules: RuleBook, definition: ServantDefi
     servant_runtime_entry = (runtime.get("servants") or {}).get(servant_id) if isinstance(runtime.get("servants"), dict) else {}
     spawn_mutation = _first_spawn_mutation(result.mutations)
     expected_stats = _expected_servant_stats(state.units["ally:servant_owner"], definition)
+    runtime_stat_values = servant.flags.get("servant_runtime_stat_values")
+    materialized_values = (
+        runtime_stat_values.get("materialized_values")
+        if isinstance(runtime_stat_values, dict)
+        else {}
+    )
+    damage_stat_admission = servant.flags.get("servant_damage_stat_admission")
+    damage_stat_bindings = (
+        tuple(damage_stat_admission.get("stat_bindings") or ())
+        if isinstance(damage_stat_admission, dict)
+        else ()
+    )
+    materialized_attack = (
+        materialized_values.get("attack")
+        if isinstance(materialized_values, dict)
+        else None
+    )
+    materialized_defense = (
+        materialized_values.get("defense")
+        if isinstance(materialized_values, dict)
+        else None
+    )
     cleanup_plan = system.plan_owner_cleanup(after, "ally:servant_owner")
     cleanup_result = system.apply_remove(after, cleanup_plan)
     after_cleanup = MutationReducer().apply_all(after, cleanup_result.mutations)
@@ -185,16 +240,33 @@ def _servant_spawn_owner_lifecycle_case(rules: RuleBook, definition: ServantDefi
         "spawn_plan_ok": plan.ok and plan.operation == "servant_spawn",
         "spawned_unit_is_owner_bound_servant": servant.flags.get("summon_kind") == "servant"
         and servant.flags.get("owner_id") == "ally:servant_owner"
-        and servant.flags.get("owner_entity_ref") == definition.owner_entity_ref
+        and servant.flags.get("owner_entity_ref")
+        == state.units["ally:servant_owner"].template_id
         and servant.template_id == definition.servant_ref,
         "hp_speed_match_source_formula": _near(servant.max_hp, expected_stats["max_hp"])
         and _near(servant.hp, expected_stats["max_hp"])
         and _near(servant.speed, expected_stats["speed"]),
-        "attack_defense_boundary_carried": servant.flags.get("servant_runtime_stat_values", {}).get("attack_source_status")
-        == "schema_carry_only"
-        and servant.flags.get("servant_runtime_stat_values", {}).get("defense_source_status") == "schema_carry_only"
+        "attack_defense_owned_build_materialized": isinstance(
+            materialized_values,
+            dict,
+        )
         and _near(servant.attack, state.units["ally:servant_owner"].attack)
-        and _near(servant.defense, state.units["ally:servant_owner"].defense),
+        and _near(servant.defense, state.units["ally:servant_owner"].defense)
+        and isinstance(materialized_attack, (int, float))
+        and not isinstance(materialized_attack, bool)
+        and _near(float(materialized_attack), servant.attack)
+        and isinstance(materialized_defense, (int, float))
+        and not isinstance(materialized_defense, bool)
+        and _near(float(materialized_defense), servant.defense)
+        and isinstance(damage_stat_admission, dict)
+        and damage_stat_admission.get("coverage_status") == "executable"
+        and damage_stat_admission.get("owned_build_fingerprint")
+        == runtime_stat_values.get("owned_build_fingerprint")
+        and len(damage_stat_bindings) == 4
+        and all(
+            isinstance(binding, dict) and binding.get("sources")
+            for binding in damage_stat_bindings
+        ),
         "timeline_and_action_admitted": servant.flags.get("timeline_admitted") is True
         and servant.action_value > 0.0
         and servant.flags.get("summon_action_admitted") is True
@@ -247,7 +319,7 @@ def _servant_spawn_owner_lifecycle_case(rules: RuleBook, definition: ServantDefi
 
 def _servant_negative_boundary_cases(rules: RuleBook, definition: ServantDefinitionIR) -> dict[str, Any]:
     system = SummonSystem(rules)
-    base_state = _base_servant_state(definition)
+    base_state = _formal_servant_state(rules, definition)
     template = rules.unit_birth_template(definition.birth_template_id)
     if template is None:
         raise RuntimeError("executable servant definition must reference a unit birth template")
@@ -328,7 +400,12 @@ def _blocked_spawn_case(
     expected_reason: str,
 ) -> dict[str, Any]:
     before = state.snapshot().to_json()
-    plan = system.plan_spawn_servant(state, definition, owner_id=owner_id)
+    plan = system.plan_spawn_servant(
+        state,
+        definition,
+        owner_id=owner_id,
+        spawn_source=definition.spawn_sources[0],
+    )
     result = system.apply_spawn_servant(state, plan)
     after = MutationReducer().apply_all(state, result.mutations)
     reason_ok = plan.blocked_reason == expected_reason or expected_reason in plan.blocked_reason
@@ -349,8 +426,13 @@ def _blocked_spawn_case(
 
 def _duplicate_servant_case(rules: RuleBook, definition: ServantDefinitionIR) -> dict[str, Any]:
     system = SummonSystem(rules)
-    state = _base_servant_state(definition)
-    first_plan = system.plan_spawn_servant(state, definition, owner_id="ally:servant_owner")
+    state = _formal_servant_state(rules, definition)
+    first_plan = system.plan_spawn_servant(
+        state,
+        definition,
+        owner_id="ally:servant_owner",
+        spawn_source=definition.spawn_sources[0],
+    )
     first_result = system.apply_spawn_servant(state, first_plan)
     after_first = MutationReducer().apply_all(state, first_result.mutations)
     return _blocked_spawn_case(
@@ -359,6 +441,115 @@ def _duplicate_servant_case(rules: RuleBook, definition: ServantDefinitionIR) ->
         definition,
         "ally:servant_owner",
         "servant_duplicate_active_policy_missing",
+    )
+
+
+def _formal_servant_state(
+    rules: RuleBook,
+    definition: ServantDefinitionIR,
+) -> BattleState:
+    enemy = next(
+        (
+            entity
+            for entity in sorted(rules.ir.entities, key=lambda item: item.entity_id)
+            if entity.entity_type == "monster"
+        ),
+        None,
+    )
+    if enemy is None:
+        raise RuntimeError("servant lifecycle validation enemy source missing")
+    for relation in sorted(
+        definition.owner_relations,
+        key=lambda item: item.owner_relation_id,
+    ):
+        if relation.coverage_status != "executable":
+            continue
+        card = rules.character_data_card(relation.owner_character_card_id)
+        if card is None or card.entity_ref != relation.owner_entity_ref:
+            continue
+        build = CharacterBuildInput(
+            build_id=f"validation:p3_s5:owner:{relation.owner_relation_id}",
+            character_card_id=card.card_id,
+            level=1,
+            promotion=0,
+            eidolon_level=0,
+            unlocked_trace_node_ids=(),
+            equipment_build=EquipmentBuildInput(
+                build_id=f"validation:p3_s5:equipment:{relation.owner_relation_id}",
+                character_card_id=card.card_id,
+            ),
+        )
+        assembly = assemble_character_build(rules, build)
+        child = next(
+            (
+                item
+                for item in assembly.owned_combatant_results
+                if item.servant_definition_id == definition.servant_definition_id
+            ),
+            None,
+        )
+        if (
+            assembly.battle_admission_status != "admitted"
+            or child is None
+            or child.battle_admission_status != "admitted"
+        ):
+            continue
+        initial_condition = (
+            CharacterInitialConditionInput(hp_mode="full", initial_energy="0")
+            if not assembly.resource_bindings
+            else CharacterInitialConditionInput(
+                hp_mode="full",
+                initial_energy=None,
+                initial_resource_values=tuple(
+                    CharacterInitialResourceValue(
+                        resource_definition_id=binding.resource_definition_id,
+                    )
+                    for binding in assembly.resource_bindings
+                ),
+            )
+        )
+        scenario = ScenarioSpec(
+            scenario_id=f"validation:p3_s5:formal:{relation.owner_relation_id}",
+            version=VALIDATION_VERSION,
+            units=(
+                UnitSpec(
+                    unit_id="ally:servant_owner",
+                    side="ally",
+                    entity_ref=card.entity_ref,
+                    build_mode="assembled_character_build",
+                    level=build.level,
+                    eidolon_level=build.eidolon_level,
+                    position=1,
+                    panel=None,
+                    character_build=build,
+                    initial_condition=initial_condition,
+                ),
+                UnitSpec(
+                    unit_id="enemy:target",
+                    side="enemy",
+                    entity_ref=enemy.entity_id,
+                    build_mode="kernel_fixture",
+                    panel=PanelInput(
+                        max_hp=1000.0,
+                        hp=1000.0,
+                        attack=100.0,
+                        defense=100.0,
+                        speed=90.0,
+                        toughness=100.0,
+                        max_toughness=100.0,
+                        flags={"position": 5, "weaknesses": ()},
+                    ),
+                ),
+            ),
+            route=(),
+            battle_setup=BattleSetupSpec(
+                world_level=6,
+                timeline=TimelineSetupSpec(mode="runtime_initialize"),
+            ),
+        )
+        return ScenarioStateBuilder(rules).build(scenario).state
+    raise RuntimeError(
+        "no source-backed admitted owner build for executable servant definition"
     )
 
 
@@ -378,10 +569,7 @@ class _TemplateOverrideRuleBook:
 
 def _template_with_non_positive_stats(template: UnitBirthTemplateIR) -> UnitBirthTemplateIR:
     unit_field_specs = deepcopy(template.unit_field_specs)
-    spec = dict(unit_field_specs.get("max_hp") or {})
-    spec["scale"] = 0.0
-    spec["offset"] = 0.0
-    unit_field_specs["max_hp"] = spec
+    unit_field_specs["speed"] = 0.0
     return replace(template, unit_field_specs=unit_field_specs)
 
 

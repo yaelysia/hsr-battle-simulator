@@ -24,7 +24,10 @@ from .validate_p1_8_battle_setup import (
     _select_avatar_action_for_entity,
     _select_enemy_entity,
 )
-from .validate_p1_3_summon_assistant_servant import _select_executable_servant_definition
+from .validate_p1_3_summon_assistant_servant import (
+    _select_executable_servant_definition,
+    _select_servant_owner_entity_ref,
+)
 from .validate_p3_s6_summon_action_execution import _command_from_choice
 
 
@@ -223,12 +226,13 @@ def _initial_summon_blocked_boundary_case(
     definition: ServantDefinitionIR,
     enemy_ref: str,
 ) -> dict[str, Any]:
-    action = _select_avatar_action_for_entity(rules, definition.owner_entity_ref)
-    base = _base_scenario_data_for_avatar(rules, action, definition.owner_entity_ref, enemy_ref)
+    owner_entity_ref = _select_servant_owner_entity_ref(definition)
+    action = _select_avatar_action_for_entity(rules, owner_entity_ref)
+    base = _base_scenario_data_for_avatar(rules, action, owner_entity_ref, enemy_ref)
     base["scenario_id"] = "p3_s11_no_initial_summon_base"
     baseline = ScenarioStateBuilder(rules).build(ScenarioLoader().load_dict(base))
     blocked_ref = _select_battle_unit_summon_ref(rules)
-    data = _base_scenario_data_for_avatar(rules, action, definition.owner_entity_ref, enemy_ref)
+    data = _base_scenario_data_for_avatar(rules, action, owner_entity_ref, enemy_ref)
     data["scenario_id"] = "p3_s11_initial_battle_unit_summon_blocked"
     data["battle_setup"] = {
         "initial_summons": [
@@ -383,8 +387,9 @@ def _build_initial_servant_scenario(
     *,
     route: tuple[dict[str, Any], ...],
 ):
-    owner_action = _select_avatar_action_for_entity(rules, definition.owner_entity_ref)
-    data = _base_scenario_data_for_avatar(rules, owner_action, definition.owner_entity_ref, enemy_ref)
+    owner_entity_ref = _select_servant_owner_entity_ref(definition)
+    owner_action = _select_avatar_action_for_entity(rules, owner_entity_ref)
+    data = _base_scenario_data_for_avatar(rules, owner_action, owner_entity_ref, enemy_ref)
     data["scenario_id"] = "p3_s11_initial_servant_route"
     data["version"] = VALIDATION_VERSION
     if route:

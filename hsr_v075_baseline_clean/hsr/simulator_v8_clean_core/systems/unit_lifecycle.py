@@ -101,6 +101,10 @@ class UnitLifecycleSystem:
             reason = f"summon_presence_not_field:{presence or 'missing'}"
         elif summon_kind and not targetable:
             reason = "summon_targetable_not_admitted"
+        elif summon_kind and not actionable:
+            reason = "summon_actionable_not_admitted"
+        elif summon_kind and not timeline_admitted:
+            reason = "summon_timeline_not_admitted"
         return UnitLifecycleView(
             unit_id=unit_id,
             status=status,

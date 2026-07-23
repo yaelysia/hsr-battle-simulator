@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from ..build_types import canonical_decimal, static_property_binding
+from ..dynamic_key_hash import tbgd_dynamic_key_hash
 from ..equipment.models import (
     CharacterEquipmentEligibilityIR,
     EquipmentDefinitionKey,
@@ -23,7 +24,15 @@ from ..rules.ir import (
     IRSource,
     JSONValue,
     SkillFormulaBindingIR,
+    SpecialResourceDefinitionIR,
+    SpecialResourceInitializerIR,
 )
+from ..rules.expression_ir import (
+    is_typed_numeric_expression,
+    numeric_dynamic_hashes,
+    numeric_fixed_value,
+)
+from .expression_lowering import lower_numeric_expression
 
 
 SkillTableSpec = tuple[str, str, str]
@@ -174,6 +183,15 @@ def build_character_card_ir(
     avatar_profiles: list[AvatarProfileIR] = []
     character_cards: list[CharacterDataCardIR] = []
     character_equipment_eligibilities: list[CharacterEquipmentEligibilityIR] = []
+    special_resource_skill_rows = _avatar_skill_parameter_rows(
+        tbgd_root,
+        skill_ids={
+            str(skill_id)
+            for _relative_path, _row_index, row in avatar_rows
+            if "SPNeed" not in row
+            for skill_id in row.get("SkillList") or ()
+        },
+    )
     for relative_path, row_index, row in avatar_rows:
         avatar_id = str(row["AvatarID"])
         promotion_rows = promotion_rows_by_avatar.get(avatar_id, [])
@@ -183,6 +201,7 @@ def build_character_card_ir(
             row_index,
             row,
             promotion_rows,
+            special_resource_skill_rows,
         )
         avatar_profiles.append(profile)
         card_id = f"character_data_card:avatar:{avatar_id}"
@@ -1587,6 +1606,9 @@ def _avatar_profile_from_row(
     row_index: int,
     row: dict[str, Any],
     promotion_rows: list[tuple[str, int, dict[str, Any]]],
+    special_resource_skill_rows: dict[
+        tuple[str, str], tuple[tuple[int, dict[str, Any]], ...]
+    ],
 ) -> AvatarProfileIR:
     avatar_id = str(row["AvatarID"])
     skill_ids = tuple(str(skill_id) for skill_id in row.get("SkillList") or ())
@@ -1624,17 +1646,24 @@ def _avatar_profile_from_row(
         },
     )
     max_energy, max_energy_reason = _exact_decimal_field(row.get("SPNeed"), "SPNeed")
+    special_resource_definition = None
     special_resource_source = None
     resource_mode = "standard_energy"
     if "SPNeed" not in row:
-        special_resource_source = _special_resource_source_from_avatar_config(
+        special_resource_definition = _special_resource_definition_from_avatar_config(
             tbgd_root,
             avatar_id,
             row,
+            special_resource_skill_rows,
         )
-        if special_resource_source is not None:
+        if special_resource_definition is not None:
             resource_mode = "special_resource"
-            max_energy_reason = "avatar_special_resource_source_present_but_not_lowered"
+            special_resource_source = special_resource_definition.source
+            max_energy_reason = (
+                special_resource_definition.blocked_reason
+                if special_resource_definition.coverage_status != "executable"
+                else ""
+            )
         else:
             resource_mode = "source_missing"
             max_energy_reason = "avatar_max_energy_source_missing"
@@ -1665,8 +1694,12 @@ def _avatar_profile_from_row(
         blocked_reason = "avatar_skill_list_missing"
     elif promotion_blocked_reason:
         blocked_reason = promotion_blocked_reason
-    elif max_energy_reason or max_energy is None:
+    elif resource_mode == "standard_energy" and (max_energy_reason or max_energy is None):
         blocked_reason = max_energy_reason or "avatar_max_energy_source_missing"
+    elif resource_mode == "source_missing":
+        blocked_reason = max_energy_reason or "avatar_resource_source_missing"
+    elif resource_mode == "special_resource" and max_energy_reason:
+        blocked_reason = max_energy_reason
     return AvatarProfileIR(
         avatar_profile_id=f"avatar_profile:{avatar_id}",
         avatar_id=avatar_id,
@@ -1678,17 +1711,19 @@ def _avatar_profile_from_row(
         max_energy_source=max_energy_source,
         resource_mode=resource_mode,  # type: ignore[arg-type]
         special_resource_source=special_resource_source,
+        special_resource_definition=special_resource_definition,
         source=profile_source,
         coverage_status="blocked" if blocked_reason else "executable",
         blocked_reason=blocked_reason,
     )
 
 
-def _special_resource_source_from_avatar_config(
+def _special_resource_definition_from_avatar_config(
     tbgd_root: Path,
     avatar_id: str,
     avatar_row: dict[str, Any],
-) -> IRSource | None:
+    skill_rows: dict[tuple[str, str], tuple[tuple[int, dict[str, Any]], ...]],
+) -> SpecialResourceDefinitionIR | None:
     avatar_json_path = avatar_row.get("JsonPath")
     if not isinstance(avatar_json_path, str) or not avatar_json_path:
         return None
@@ -1703,22 +1738,71 @@ def _special_resource_source_from_avatar_config(
         data = json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return None
-    matches: list[str] = []
-
-    def walk(value: object, json_path: str) -> None:
-        if isinstance(value, dict):
-            if value.get("$type") == "RPG.GameCore.SetSummonerEnergyBarState":
-                matches.append(json_path)
-            for key, child in value.items():
-                walk(child, f"{json_path}.{key}")
-        elif isinstance(value, list):
-            for index, child in enumerate(value):
-                walk(child, f"{json_path}[{index}]")
-
-    walk(data, "$")
-    if not matches:
+    object_nodes = tuple(_walk_json_objects(data))
+    bar_nodes = tuple(
+        (json_path, node)
+        for json_path, node in object_nodes
+        if _short_raw_type(node) == "SetSummonerEnergyBarState"
+    )
+    if not bar_nodes:
         return None
-    return IRSource(
+    current_properties = {
+        value
+        for _json_path, node in object_nodes
+        for value in (node.get("Property"), node.get("Value"))
+        if isinstance(value, str)
+        and value.startswith("Current")
+        and value.endswith("SpecialSP")
+    }
+    maximum_properties = {
+        value
+        for _json_path, node in object_nodes
+        for value in (node.get("Property"), node.get("Value"))
+        if isinstance(value, str)
+        and value.startswith("Max")
+        and value.endswith("SpecialSP")
+    }
+    reasons: list[str] = []
+    if len(current_properties) != 1:
+        reasons.append("special_resource_current_property_missing_or_ambiguous")
+    if len(maximum_properties) != 1:
+        reasons.append("special_resource_maximum_property_missing_or_ambiguous")
+    current_property = next(iter(current_properties), "")
+    maximum_property = next(iter(maximum_properties), "")
+    initializer: SpecialResourceInitializerIR | None = None
+    initializer_task_names: tuple[str, ...] = ()
+    initializer_sources: tuple[IRSource, ...] = ()
+    if current_property and maximum_property:
+        (
+            initializer,
+            initializer_task_names,
+            initializer_sources,
+            initializer_reasons,
+        ) = _special_resource_initializer_from_sources(
+            tbgd_root=tbgd_root,
+            avatar_id=avatar_id,
+            avatar_row=avatar_row,
+            ability_source_path=relative_path,
+            object_nodes=object_nodes,
+            current_property=current_property,
+            maximum_property=maximum_property,
+            skill_rows=skill_rows,
+        )
+        reasons.extend(initializer_reasons)
+    else:
+        reasons.append("special_resource_initializer_properties_unresolved")
+    bar_sources = tuple(
+        _special_resource_node_source(
+            relative_path,
+            avatar_id,
+            json_path,
+            node,
+        )
+        for json_path, node in bar_nodes
+    )
+    sources = _unique_ir_sources((*bar_sources, *initializer_sources))
+    blocked_reason = ";".join(reasons)
+    primary_source = IRSource(
         source_path=relative_path,
         raw_type="RPG.GameCore.SetSummonerEnergyBarState",
         raw_id=f"{avatar_id}:special_resource",
@@ -1726,11 +1810,684 @@ def _special_resource_source_from_avatar_config(
             "avatar_id": avatar_id,
             "avatar_json_path": avatar_json_path,
             "ability_path_derived_from_avatar_json_path": True,
-            "matched_node_count": len(matches),
-            "matched_json_paths": matches,
-            "classification": "structured_special_resource_source_present_not_lowered",
+            "matched_node_count": len(bar_nodes),
+            "matched_json_paths": [path for path, _node in bar_nodes],
+            "current_properties": sorted(current_properties),
+            "maximum_properties": sorted(maximum_properties),
+            "initializer_task_names": list(initializer_task_names),
+            "initializer_id": initializer.initializer_id if initializer else "",
+            "classification": "typed_special_resource_definition",
         },
     )
+    return SpecialResourceDefinitionIR(
+        resource_definition_id=f"special_resource_definition:avatar:{avatar_id}",
+        current_property=current_property,
+        maximum_property=maximum_property,
+        current_resource_key=_runtime_resource_key(current_property),
+        maximum_resource_key=_runtime_resource_key(maximum_property),
+        initial_current_mode="ability_battle_entry_initializer",
+        maximum_initialization_mode="ability_initializer",
+        initializer_task_names=initializer_task_names,
+        initializer=initializer,
+        supporting_sources=sources,
+        source=primary_source,
+        coverage_status="blocked" if blocked_reason else "executable",
+        blocked_reason=blocked_reason,
+    )
+
+
+def _avatar_skill_parameter_rows(
+    tbgd_root: Path,
+    *,
+    skill_ids: set[str],
+) -> dict[tuple[str, str], tuple[tuple[int, dict[str, Any]], ...]]:
+    if not skill_ids:
+        return {}
+    path = tbgd_root / "ExcelOutput/AvatarSkillConfig.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"), parse_float=Decimal)
+    except Exception:
+        return {}
+    grouped: dict[tuple[str, str], list[tuple[int, dict[str, Any]]]] = {}
+    if isinstance(data, list):
+        for row_index, row in enumerate(data):
+            if not isinstance(row, dict) or str(row.get("SkillID")) not in skill_ids:
+                continue
+            trigger_key = row.get("SkillTriggerKey")
+            if not isinstance(trigger_key, str) or not trigger_key:
+                continue
+            grouped.setdefault((str(row["SkillID"]), trigger_key), []).append(
+                (row_index, row)
+            )
+    return {key: tuple(rows) for key, rows in grouped.items()}
+
+
+def _special_resource_initializer_from_sources(
+    *,
+    tbgd_root: Path,
+    avatar_id: str,
+    avatar_row: dict[str, Any],
+    ability_source_path: str,
+    object_nodes: tuple[tuple[str, dict[str, Any]], ...],
+    current_property: str,
+    maximum_property: str,
+    skill_rows: dict[tuple[str, str], tuple[tuple[int, dict[str, Any]], ...]],
+) -> tuple[
+    SpecialResourceInitializerIR | None,
+    tuple[str, ...],
+    tuple[IRSource, ...],
+    tuple[str, ...],
+]:
+    reasons: list[str] = []
+    template_candidates: list[tuple[str, dict[str, Any]]] = []
+    for json_path, node in object_nodes:
+        task_list = node.get("TaskList")
+        task_name = node.get("Name")
+        if not isinstance(task_name, str) or not task_name or not isinstance(task_list, list):
+            continue
+        stack_nodes = tuple(
+            child
+            for _child_path, child in _walk_json_objects(task_list)
+            if _short_raw_type(child) == "StackProperty"
+            and child.get("Property") == maximum_property
+        )
+        if stack_nodes:
+            template_candidates.append((json_path, node))
+    if len(template_candidates) != 1:
+        return (
+            None,
+            (),
+            (),
+            ("special_resource_maximum_initializer_missing_or_ambiguous",),
+        )
+    template_path, template = template_candidates[0]
+    template_name = str(template["Name"])
+    template_nodes = tuple(
+        _walk_json_objects(template.get("TaskList"), f"{template_path}.TaskList")
+    )
+    used_nodes: list[tuple[str, dict[str, Any]]] = [(template_path, template)]
+
+    stack_nodes = tuple(
+        (path, node)
+        for path, node in template_nodes
+        if _short_raw_type(node) == "StackProperty"
+        and node.get("Property") == maximum_property
+    )
+    if len(stack_nodes) != 1:
+        reasons.append("special_resource_maximum_stack_missing_or_ambiguous")
+        maximum_hash = 0
+    else:
+        stack_path, stack_node = stack_nodes[0]
+        used_nodes.append((stack_path, stack_node))
+        stack_expression = lower_numeric_expression(stack_node.get("PropertyValue"))
+        stack_hashes = _integer_dynamic_hashes(stack_expression)
+        if len(stack_hashes) != 1:
+            reasons.append("special_resource_maximum_stack_binding_invalid")
+            maximum_hash = 0
+        else:
+            maximum_hash = stack_hashes[0]
+
+    maximum_key_candidates = {
+        key
+        for _path, node in template_nodes
+        if _short_raw_type(node) == "SetDynamicValue"
+        for key in (_dynamic_key_name(node.get("DynamicKey")),)
+        if key and tbgd_dynamic_key_hash(key) == maximum_hash
+    }
+    if len(maximum_key_candidates) != 1:
+        reasons.append("special_resource_maximum_dynamic_key_missing_or_ambiguous")
+        maximum_key = ""
+    else:
+        maximum_key = next(iter(maximum_key_candidates))
+
+    world_nodes = tuple(
+        (path, node)
+        for path, node in template_nodes
+        if _short_raw_type(node) == "SetDynamicValueByWorldLevel"
+    )
+    if len(world_nodes) != 1:
+        reasons.append("special_resource_world_level_binding_missing_or_ambiguous")
+        world_key = ""
+    else:
+        world_path, world_node = world_nodes[0]
+        used_nodes.append((world_path, world_node))
+        world_key = _dynamic_key_name(world_node.get("DynamicKey"))
+        if not world_key:
+            reasons.append("special_resource_world_level_dynamic_key_missing")
+
+    direct_tasks = tuple(
+        (f"{template_path}.TaskList[{index}]", task)
+        for index, task in enumerate(template.get("TaskList") or ())
+        if isinstance(task, dict)
+    )
+    world_predicates = tuple(
+        (path, node)
+        for path, node in direct_tasks
+        if _short_raw_type(node) == "PredicateTaskList"
+        and _short_raw_type(node.get("Predicate")) == "ByCompareDynamicValue"
+        and _dynamic_key_name(node["Predicate"].get("DynamicKey")) == world_key
+    )
+    world_level_threshold = 0
+    low_expression: dict[str, JSONValue] = lower_numeric_expression(None)
+    high_expression: dict[str, JSONValue] = lower_numeric_expression(None)
+    level_key = ""
+    level_hash = 0
+    zero_floor_hash = 0
+    if len(world_predicates) != 1:
+        reasons.append("special_resource_world_level_branch_missing_or_ambiguous")
+    else:
+        predicate_path, predicate_task = world_predicates[0]
+        used_nodes.append((predicate_path, predicate_task))
+        predicate = predicate_task["Predicate"]
+        threshold = _fixed_integer(predicate.get("CompareValue"))
+        if predicate.get("CompareType") != "Less" or threshold is None or threshold < 0:
+            reasons.append("special_resource_world_level_predicate_not_admitted")
+        else:
+            world_level_threshold = threshold
+        low_assignments = _dynamic_value_assignments(
+            predicate_task.get("SuccessTaskList"), maximum_key, predicate_path + ".SuccessTaskList"
+        )
+        high_assignments = _dynamic_value_assignments(
+            predicate_task.get("FailedTaskList"), maximum_key, predicate_path + ".FailedTaskList"
+        )
+        if len(low_assignments) != 1 or len(high_assignments) != 1:
+            reasons.append("special_resource_world_level_values_missing_or_ambiguous")
+        else:
+            low_path, low_node = low_assignments[0]
+            high_path, high_node = high_assignments[0]
+            used_nodes.extend(((low_path, low_node), (high_path, high_node)))
+            low_expression = lower_numeric_expression(low_node.get("Value"))
+            high_expression = lower_numeric_expression(high_node.get("Value"))
+        level_bindings = tuple(
+            (path, node)
+            for path, node in _walk_json_objects(
+                predicate_task.get("SuccessTaskList"),
+                predicate_path + ".SuccessTaskList",
+            )
+            if _short_raw_type(node) == "SetDynamicValueByProperty"
+            and node.get("Value") == "Level"
+            and _target_alias(node.get("ReadTargetType")) == "ParamEntity"
+        )
+        if len(level_bindings) != 1:
+            reasons.append("special_resource_level_binding_missing_or_ambiguous")
+        else:
+            level_path, level_node = level_bindings[0]
+            used_nodes.append((level_path, level_node))
+            level_key = _dynamic_key_name(level_node.get("DynamicKey"))
+            level_hash = tbgd_dynamic_key_hash(level_key) if level_key else 0
+        if not _highest_alive_non_servant_retarget(predicate_task.get("SuccessTaskList")):
+            reasons.append("special_resource_level_source_not_admitted")
+        low_hashes = set(_integer_dynamic_hashes(low_expression))
+        high_hashes = set(_integer_dynamic_hashes(high_expression))
+        zero_candidates = low_hashes - {level_hash}
+        if (
+            not is_typed_numeric_expression(low_expression)
+            or not is_typed_numeric_expression(high_expression)
+            or level_hash == 0
+            or low_hashes != {level_hash, *zero_candidates}
+            or len(zero_candidates) != 1
+            or high_hashes != zero_candidates
+        ):
+            reasons.append("special_resource_maximum_expression_bindings_invalid")
+        else:
+            zero_floor_hash = next(iter(zero_candidates))
+
+    minimum_predicates = tuple(
+        (path, node)
+        for path, node in direct_tasks
+        if _short_raw_type(node) == "PredicateTaskList"
+        and _short_raw_type(node.get("Predicate")) == "ByCompareDynamicValue"
+        and _dynamic_key_name(node["Predicate"].get("DynamicKey")) == maximum_key
+        and node["Predicate"].get("CompareType") == "LessEqual"
+    )
+    minimum_expression: dict[str, JSONValue] = lower_numeric_expression(None)
+    if len(minimum_predicates) != 1:
+        reasons.append("special_resource_minimum_branch_missing_or_ambiguous")
+    else:
+        minimum_path, minimum_task = minimum_predicates[0]
+        used_nodes.append((minimum_path, minimum_task))
+        minimum_expression = lower_numeric_expression(
+            minimum_task["Predicate"].get("CompareValue")
+        )
+        assignments = _dynamic_value_assignments(
+            minimum_task.get("SuccessTaskList"), maximum_key, minimum_path + ".SuccessTaskList"
+        )
+        if (
+            len(assignments) != 1
+            or numeric_fixed_value(minimum_expression) is None
+            or numeric_fixed_value(lower_numeric_expression(assignments[0][1].get("Value")))
+            != numeric_fixed_value(minimum_expression)
+        ):
+            reasons.append("special_resource_minimum_assignment_invalid")
+        else:
+            used_nodes.append(assignments[0])
+
+    (
+        initial_expression,
+        initial_binding_hash,
+        initial_task_name,
+        initial_nodes,
+        initial_reason,
+    ) = _special_resource_initial_current_source(
+        object_nodes,
+        maximum_hash=maximum_hash,
+    )
+    used_nodes.extend(initial_nodes)
+    if initial_reason:
+        reasons.append(initial_reason)
+    binding_value, binding_sources, binding_reason = _resolve_special_resource_parameter(
+        tbgd_root=tbgd_root,
+        avatar_id=avatar_id,
+        avatar_row=avatar_row,
+        dynamic_hash=initial_binding_hash,
+        skill_rows=skill_rows,
+    )
+    if binding_reason:
+        reasons.append(binding_reason)
+
+    sources = _unique_ir_sources(
+        tuple(
+            _special_resource_node_source(
+                ability_source_path,
+                avatar_id,
+                json_path,
+                node,
+            )
+            for json_path, node in used_nodes
+        )
+        + binding_sources
+    )
+    task_names = tuple(sorted({template_name, initial_task_name} - {""}))
+    if reasons:
+        return None, task_names, sources, tuple(sorted(set(reasons)))
+    primary_source = _special_resource_node_source(
+        ability_source_path,
+        avatar_id,
+        template_path,
+        template,
+        evidence={
+            "classification": "special_resource_initializer",
+            "maximum_property": maximum_property,
+            "current_property": current_property,
+            "maximum_value_dynamic_key": maximum_key,
+            "maximum_value_dynamic_hash": maximum_hash,
+            "level_dynamic_key": level_key,
+            "level_dynamic_hash": level_hash,
+            "zero_floor_dynamic_hash": zero_floor_hash,
+            "world_level_threshold": world_level_threshold,
+            "initial_current_binding_hash": initial_binding_hash,
+            "initial_current_binding_value": binding_value,
+        },
+    )
+    return (
+        SpecialResourceInitializerIR(
+            initializer_id=f"special_resource_initializer:avatar:{avatar_id}",
+            maximum_value_dynamic_key=maximum_key,
+            maximum_value_dynamic_hash=maximum_hash,
+            level_dynamic_key=level_key,
+            level_dynamic_hash=level_hash,
+            zero_floor_dynamic_hash=zero_floor_hash,
+            world_level_threshold=world_level_threshold,
+            low_world_level_expression=low_expression,
+            high_world_level_expression=high_expression,
+            minimum_expression=minimum_expression,
+            initial_current_expression=initial_expression,
+            initial_current_binding_hash=initial_binding_hash,
+            initial_current_binding_value=binding_value,
+            level_source="highest_alive_non_servant_ally",
+            initial_current_trigger="first_wave_battle_entry_without_technique",
+            sources=sources,
+            source=primary_source,
+            coverage_status="executable",
+            blocked_reason="",
+        ),
+        task_names,
+        sources,
+        (),
+    )
+
+
+def _special_resource_initial_current_source(
+    object_nodes: tuple[tuple[str, dict[str, Any]], ...],
+    *,
+    maximum_hash: int,
+) -> tuple[
+    dict[str, JSONValue],
+    int,
+    str,
+    list[tuple[str, dict[str, Any]]],
+    str,
+]:
+    candidates: list[
+        tuple[
+            dict[str, JSONValue],
+            int,
+            str,
+            list[tuple[str, dict[str, Any]]],
+        ]
+    ] = []
+    for event_path, event_node in object_nodes:
+        if event_node.get("Event") != "OnEnterBattle":
+            continue
+        for predicate_path, task in _walk_json_objects(
+            event_node.get("CallbackConfig"), event_path + ".CallbackConfig"
+        ):
+            if _short_raw_type(task) != "PredicateTaskList":
+                continue
+            predicates = task.get("Predicate", {}).get("PredicateList") if isinstance(task.get("Predicate"), dict) else None
+            if _short_raw_type(task.get("Predicate")) != "ByAnd" or not isinstance(predicates, list):
+                continue
+            wave_predicates = tuple(
+                item
+                for item in predicates
+                if isinstance(item, dict)
+                and _short_raw_type(item) == "ByCompareWaveCount"
+                and item.get("CompareType") == "Equal"
+                and _fixed_integer(item.get("CompareValue")) == 1
+            )
+            gate_predicates = tuple(
+                item
+                for item in predicates
+                if isinstance(item, dict)
+                and _short_raw_type(item) == "ByCompareDynamicValue"
+                and item.get("CompareType") == "LessEqual"
+                and numeric_fixed_value(lower_numeric_expression(item.get("CompareValue"))) == 0.0
+            )
+            if len(wave_predicates) != 1 or len(gate_predicates) != 1 or len(predicates) != 2:
+                continue
+            for include_path, include in _walk_json_objects(
+                task.get("SuccessTaskList"), predicate_path + ".SuccessTaskList"
+            ):
+                if _short_raw_type(include) != "IncludeTaskListTemplate":
+                    continue
+                task_name = include.get("Name")
+                dynamic_values = include.get("DynamicValues")
+                if not isinstance(task_name, str) or not task_name or not isinstance(dynamic_values, dict):
+                    continue
+                expressions = tuple(
+                    lower_numeric_expression(raw_expression)
+                    for raw_expression in dynamic_values.values()
+                )
+                matching = tuple(
+                    expression
+                    for expression in expressions
+                    if maximum_hash in _integer_dynamic_hashes(expression)
+                )
+                if len(matching) != 1:
+                    continue
+                hashes = set(_integer_dynamic_hashes(matching[0]))
+                binding_hashes = hashes - {maximum_hash}
+                if (
+                    len(binding_hashes) != 1
+                    or hashes != {maximum_hash, *binding_hashes}
+                    or not _is_direct_dynamic_product(
+                        matching[0],
+                        maximum_hash,
+                        next(iter(binding_hashes)),
+                    )
+                ):
+                    continue
+                candidates.append(
+                    (
+                        matching[0],
+                        next(iter(binding_hashes)),
+                        task_name,
+                        [(event_path, event_node), (predicate_path, task), (include_path, include)],
+                    )
+                )
+    if len(candidates) != 1:
+        return (
+            lower_numeric_expression(None),
+            0,
+            "",
+            [],
+            "special_resource_initial_current_source_missing_or_ambiguous",
+        )
+    expression, binding_hash, task_name, nodes = candidates[0]
+    return expression, binding_hash, task_name, nodes, ""
+
+
+def _resolve_special_resource_parameter(
+    *,
+    tbgd_root: Path,
+    avatar_id: str,
+    avatar_row: dict[str, Any],
+    dynamic_hash: int,
+    skill_rows: dict[tuple[str, str], tuple[tuple[int, dict[str, Any]], ...]],
+) -> tuple[str, tuple[IRSource, ...], str]:
+    character_path = avatar_row.get("JsonPath")
+    if not isinstance(character_path, str) or not character_path or dynamic_hash == 0:
+        return "", (), "special_resource_initial_parameter_binding_missing"
+    try:
+        character_data = json.loads(
+            (tbgd_root / character_path).read_text(encoding="utf-8")
+        )
+    except Exception:
+        return "", (), "special_resource_character_config_unreadable"
+    binding_nodes = tuple(
+        (f"{json_path}.{dynamic_hash}", value)
+        for json_path, node in _walk_json_objects(character_data)
+        for key, value in node.items()
+        if key == str(dynamic_hash)
+        and isinstance(value, dict)
+        and isinstance(value.get("ReadInfo"), dict)
+        and value["ReadInfo"].get("Type") == "SkillParam"
+    )
+    if len(binding_nodes) != 1:
+        return "", (), "special_resource_initial_parameter_binding_missing_or_ambiguous"
+    binding_path, binding_node = binding_nodes[0]
+    read_info = binding_node["ReadInfo"]
+    trigger_key = read_info.get("TriggerKey")
+    parameter_index = read_info.get("Index")
+    if (
+        not isinstance(trigger_key, str)
+        or not trigger_key
+        or not isinstance(parameter_index, int)
+        or isinstance(parameter_index, bool)
+        or parameter_index < 0
+    ):
+        return "", (), "special_resource_initial_parameter_read_info_invalid"
+    skill_ids = {str(value) for value in avatar_row.get("SkillList") or ()}
+    matched_rows = tuple(
+        (row_index, row)
+        for skill_id in skill_ids
+        for row_index, row in skill_rows.get((skill_id, trigger_key), ())
+    )
+    values: set[str] = set()
+    value_rows: list[tuple[int, dict[str, Any]]] = []
+    for row_index, row in matched_rows:
+        parameters = row.get("ParamList")
+        if not isinstance(parameters, list) or parameter_index >= len(parameters):
+            continue
+        raw_value = parameters[parameter_index]
+        raw_value = raw_value.get("Value") if isinstance(raw_value, dict) else raw_value
+        try:
+            value = canonical_decimal(raw_value, "special_resource_initial_parameter")
+        except (TypeError, ValueError):
+            continue
+        values.add(value)
+        value_rows.append((row_index, row))
+    if len(values) != 1 or not value_rows:
+        return "", (), "special_resource_initial_parameter_value_missing_or_conflicting"
+    binding_source = IRSource(
+        source_path=character_path,
+        raw_type=Path(character_path).stem,
+        raw_id=f"{avatar_id}:dynamic:{dynamic_hash}",
+        evidence={
+            "avatar_id": avatar_id,
+            "json_path": binding_path,
+            "dynamic_hash": dynamic_hash,
+            "read_info": _json_safe(read_info),
+        },
+    )
+    row_sources = tuple(
+        IRSource(
+            source_path="ExcelOutput/AvatarSkillConfig.json",
+            raw_type="AvatarSkillConfig",
+            raw_id=f"{row.get('SkillID')}:{row.get('Level')}",
+            evidence={
+                "row_index": row_index,
+                "skill_id": _json_safe(row.get("SkillID")),
+                "skill_trigger_key": trigger_key,
+                "level": _json_safe(row.get("Level")),
+                "parameter_index": parameter_index,
+                "parameter_value": next(iter(values)),
+            },
+        )
+        for row_index, row in value_rows
+    )
+    return next(iter(values)), (binding_source, *row_sources), ""
+
+
+def _dynamic_value_assignments(
+    value: object,
+    dynamic_key: str,
+    json_path: str,
+) -> tuple[tuple[str, dict[str, Any]], ...]:
+    return tuple(
+        (path, node)
+        for path, node in _walk_json_objects(value, json_path)
+        if _short_raw_type(node) == "SetDynamicValue"
+        and _dynamic_key_name(node.get("DynamicKey")) == dynamic_key
+    )
+
+
+def _highest_alive_non_servant_retarget(value: object) -> bool:
+    candidates = tuple(
+        node
+        for _path, node in _walk_json_objects(value)
+        if _short_raw_type(node) == "Retarget"
+    )
+    if len(candidates) != 1:
+        return False
+    retarget = candidates[0]
+    if _fixed_integer(retarget.get("MaxNumber")) != 1:
+        return False
+    target = retarget.get("TargetType")
+    if not isinstance(target, dict) or _short_raw_type(target) != "TargetSequence":
+        return False
+    sequence = target.get("Sequence")
+    if not isinstance(sequence, list) or len(sequence) != 2:
+        return False
+    alias, ordering = sequence
+    return bool(
+        _target_alias(alias) == "AllLightTeam.RemoveServant"
+        and isinstance(ordering, dict)
+        and _short_raw_type(ordering) == "TargetSortByProperty"
+        and ordering.get("PropertyType") == "Level"
+        and ordering.get("HighestFirst") is True
+        and ordering.get("AliveOnly") is True
+    )
+
+
+def _integer_dynamic_hashes(expression: object) -> tuple[int, ...]:
+    values: list[int] = []
+    for value in numeric_dynamic_hashes(expression):
+        if isinstance(value, int) and not isinstance(value, bool):
+            values.append(value)
+        elif isinstance(value, float) and value.is_integer():
+            values.append(int(value))
+    return tuple(values)
+
+
+def _is_direct_dynamic_product(
+    expression: object,
+    left_hash: int,
+    right_hash: int,
+) -> bool:
+    if not isinstance(expression, dict) or expression.get("kind") != "program":
+        return False
+    instructions = expression.get("instructions")
+    if not isinstance(instructions, list) or len(instructions) != 4:
+        return False
+    return bool(
+        {
+            instruction.get("hash")
+            for instruction in instructions[:2]
+            if isinstance(instruction, dict)
+            and instruction.get("opcode") == "push_dynamic"
+        }
+        == {left_hash, right_hash}
+        and isinstance(instructions[2], dict)
+        and instructions[2].get("opcode") == "mul"
+        and isinstance(instructions[3], dict)
+        and instructions[3].get("opcode") == "end"
+    )
+
+
+def _fixed_integer(value: object) -> int | None:
+    fixed = numeric_fixed_value(lower_numeric_expression(value))
+    if fixed is None or not float(fixed).is_integer():
+        return None
+    return int(fixed)
+
+
+def _dynamic_key_name(value: object) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict) and isinstance(value.get("Value"), str):
+        return str(value["Value"])
+    return ""
+
+
+def _target_alias(value: object) -> str:
+    if not isinstance(value, dict) or _short_raw_type(value) != "TargetAlias":
+        return ""
+    alias = value.get("Alias")
+    return alias if isinstance(alias, str) else ""
+
+
+def _short_raw_type(value: object) -> str:
+    if not isinstance(value, dict):
+        return ""
+    return str(value.get("$type") or "").removeprefix("RPG.GameCore.")
+
+
+def _walk_json_objects(
+    value: object,
+    json_path: str = "$",
+):
+    if isinstance(value, dict):
+        yield json_path, value
+        for key, child in value.items():
+            yield from _walk_json_objects(child, f"{json_path}.{key}")
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            yield from _walk_json_objects(child, f"{json_path}[{index}]")
+
+
+def _special_resource_node_source(
+    source_path: str,
+    avatar_id: str,
+    json_path: str,
+    node: dict[str, Any],
+    *,
+    evidence: dict[str, JSONValue] | None = None,
+) -> IRSource:
+    return IRSource(
+        source_path=source_path,
+        raw_type=_short_raw_type(node) or "SpecialResourceNode",
+        raw_id=f"{avatar_id}:special_resource:{json_path}",
+        evidence={
+            "avatar_id": avatar_id,
+            "json_path": json_path,
+            "payload_keys": sorted(str(key) for key in node),
+            **(evidence or {}),
+        },
+    )
+
+
+def _unique_ir_sources(sources: tuple[IRSource, ...]) -> tuple[IRSource, ...]:
+    unique: dict[tuple[str, str, str], IRSource] = {}
+    for source in sources:
+        unique[(source.source_path, source.raw_type, source.raw_id)] = source
+    return tuple(unique[key] for key in sorted(unique))
+
+
+def _runtime_resource_key(property_name: str) -> str:
+    if not property_name:
+        return ""
+    return re.sub(r"(?<!^)(?=[A-Z])", "_", property_name).lower()
 
 
 def _load_text_map(tbgd_root: Path) -> dict[str, str]:

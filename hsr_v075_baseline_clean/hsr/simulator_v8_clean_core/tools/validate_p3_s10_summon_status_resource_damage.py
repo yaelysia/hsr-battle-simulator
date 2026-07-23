@@ -34,10 +34,10 @@ from ..tbgd.paths import find_tbgd_root
 from .io import write_json
 from .static_checks import run_static_checks
 from .validate_p1_3_summon_assistant_servant import (
-    _base_servant_state,
     _first_servant_id,
     _select_executable_servant_definition,
 )
+from .validate_p3_s5_servant_lifecycle import _formal_servant_state
 from .validate_p3_s6_summon_action_execution import _command_from_choice
 
 
@@ -85,6 +85,14 @@ def run_validation(package_root: Path, tbgd_root: Path, output_dir: Path) -> dic
             "status_positive_action_id": groups["servant_status_holder_positive"]["action_id"],
             "status_positive_replay_ok": groups["servant_status_holder_positive"]["replay"]["ok"],
             "status_positive_source_audit_ok": groups["servant_status_holder_positive"]["source_audit"]["ok"],
+            "damage_transition_committed": groups["servant_damage_stat_boundary"].get(
+                "classification"
+            )
+            == "executable",
+            "damage_mutation_count": groups["servant_damage_stat_boundary"].get(
+                "damage_mutation_count",
+                0,
+            ),
             "damage_boundary_reason": groups["servant_damage_stat_boundary"]["coverage"].get(
                 "summon_damage_stat_blocked_reason",
                 "",
@@ -206,47 +214,146 @@ def _servant_status_holder_case(rules: RuleBook, definition: ServantDefinitionIR
 
 def _servant_damage_stat_boundary_case(rules: RuleBook, definition: ServantDefinitionIR) -> dict[str, Any]:
     state, servant_id = _spawn_servant_turn_state(rules, definition)
-    action = _select_servant_hp_damage_action(rules)
-    command = ActionCommand(
-        actor_id=servant_id,
-        action_id=action.action_id,
-        action_level=action.level,
-        target_ids=("enemy:target",),
-        source="validation",
-        metadata={"validation": VALIDATION_VERSION, "bypass_action_availability": True},
-    )
-    after, transition = CombatExecutor(rules).execute(command, state)
-    records = transition.transaction.settlement.records if transition.transaction.settlement else ()
-    reason_text = " ".join(
-        (
-            str(transition.coverage.get("blocked_reason") or ""),
-            str(transition.coverage.get("plan_blocked_reason") or ""),
-            str(transition.coverage.get("summon_damage_stat_blocked_reason") or ""),
-            " ".join(transition.outcome.reason_codes),
+    view = ActionAvailabilitySystem(rules).view(state)
+    candidates = []
+    for choice in view.choices:
+        action = rules.action_definition(choice.action_id, choice.action_level)
+        target_ids = choice.auto_target_ids or choice.selectable_target_ids[:1]
+        if (
+            action is None
+            or action.damage_kind != "hp_damage"
+            or action.coverage_status != "executable"
+            or not target_ids
+        ):
+            continue
+        candidates.append((choice, action, tuple(target_ids)))
+    attempts: list[dict[str, Any]] = []
+    selected = None
+    for choice, action, target_ids in candidates:
+        command = _command_from_choice(choice, target_ids)
+        after, transition = CombatExecutor(rules).execute(command, state)
+        replay = MutationReducer().replay_snapshot(
+            state,
+            transition.transaction.mutations,
+            transition.after.to_json(),
         )
+        source_audit = RuntimeSourceAuditor(rules).validate_transition(transition)
+        damage_mutations = tuple(
+            mutation
+            for mutation in transition.transaction.mutations
+            if mutation.source == "damage_system"
+        )
+        attempt = {
+            "action_id": choice.action_id,
+            "action_level": choice.action_level,
+            "target_ids": list(target_ids),
+            "action_enabled": transition.coverage.get("action_enabled") is True,
+            "outcome_category": transition.outcome.category,
+            "successor_eligible": transition.outcome.successor_eligible,
+            "mutation_count": len(transition.transaction.mutations),
+            "damage_mutation_count": len(damage_mutations),
+            "replay_ok": replay.ok,
+            "source_audit_ok": source_audit.ok,
+            "blocked_reason": str(
+                transition.coverage.get("blocked_reason")
+                or transition.coverage.get("plan_blocked_reason")
+                or ""
+            ),
+        }
+        attempts.append(attempt)
+        if (
+            attempt["action_enabled"]
+            and attempt["outcome_category"] == "committed"
+            and attempt["successor_eligible"]
+            and damage_mutations
+            and replay.ok
+            and source_audit.ok
+        ):
+            selected = (
+                choice,
+                action,
+                command,
+                after,
+                transition,
+                replay,
+                source_audit,
+                damage_mutations,
+            )
+            break
+    if selected is None:
+        checks = {
+            "action_query_external_selectable": view.mode == "external_selectable",
+            "source_backed_hp_damage_choice_present": bool(candidates),
+            "committed_damage_transition_found": False,
+        }
+        return {
+            "checks": {"ok": False, "checks": checks},
+            "classification": "implementation_missing",
+            "servant_definition_id": definition.servant_definition_id,
+            "servant_unit_id": servant_id,
+            "choice_count": len(view.choices),
+            "hp_damage_choice_count": len(candidates),
+            "attempts": attempts,
+            "coverage": {},
+        }
+    choice, action, command, after, transition, replay, source_audit, damage_mutations = selected
+    records = transition.transaction.settlement.records if transition.transaction.settlement else ()
+    damage_stat_admission = state.units[servant_id].flags.get(
+        "servant_damage_stat_admission"
     )
-    damage_gate_reached = "summon_damage_stat_binding_not_admitted" in reason_text
+    damage_stat_bindings = (
+        tuple(damage_stat_admission.get("stat_bindings") or ())
+        if isinstance(damage_stat_admission, dict)
+        else ()
+    )
     checks = {
         "servant_hp_damage_action_present": action.damage_kind == "hp_damage" and action.coverage_status == "executable",
-        "action_disabled": transition.coverage.get("action_enabled") is False,
-        "blocked_reason_structured": bool(reason_text.strip()),
-        "untrusted_result_not_successor_eligible": not transition.outcome.successor_eligible,
-        "no_mutations": not transition.transaction.mutations,
-        "state_unchanged": after.snapshot().to_json() == state.snapshot().to_json(),
-        "settlement_is_process_only_or_empty": not records or all(record.get("process_only") is True for record in records),
+        "action_selected_by_query": view.mode == "external_selectable"
+        and choice in view.choices,
+        "choice_source_trace_complete": bool(choice.source_trace.get("summon_action_admission"))
+        and bool(choice.source_trace.get("action_definition"))
+        and bool(choice.source_trace.get("action_event")),
+        "damage_stats_source_backed": isinstance(damage_stat_admission, dict)
+        and damage_stat_admission.get("coverage_status") == "executable"
+        and len(damage_stat_bindings) == 4
+        and all(
+            isinstance(binding, dict) and binding.get("sources")
+            for binding in damage_stat_bindings
+        ),
+        "action_enabled": transition.coverage.get("action_enabled") is True,
+        "transition_committed": transition.outcome.category == "committed"
+        and transition.outcome.successor_eligible,
+        "damage_mutations_present": bool(damage_mutations),
+        "settlement_records_present": bool(records),
+        "source_audit_ok": source_audit.ok,
+        "replay_ok": replay.ok,
+        "after_matches_transition": after.snapshot().to_json()
+        == transition.after.to_json(),
     }
     checks["ok"] = all(value for key, value in checks.items() if key != "ok")
     return {
         "checks": {"ok": checks["ok"], "checks": checks},
-        "classification": "blocked_until_damage_stat_source_admitted" if damage_gate_reached else "implementation_missing",
-        "damage_stat_gate_reached": damage_gate_reached,
-        "blocked_reason": reason_text.strip(),
+        "classification": "executable",
         "servant_definition_id": definition.servant_definition_id,
         "servant_unit_id": servant_id,
         "action": _action_summary(action),
+        "choice": _compact_choice(choice.to_json()),
         "command": _command_json(command),
         "coverage": _compact_coverage(transition.coverage),
+        "mutation_count": len(transition.transaction.mutations),
+        "damage_mutation_count": len(damage_mutations),
+        "mutation_source_counts": _mutation_source_counts(
+            transition.transaction.mutations
+        ),
         "record_types": [str(record.get("record_type") or "") for record in records[:20]],
+        "outcome": {
+            "category": transition.outcome.category,
+            "reason_codes": list(transition.outcome.reason_codes),
+            "successor_eligible": transition.outcome.successor_eligible,
+        },
+        "replay": {"ok": replay.ok, "errors": list(replay.errors)},
+        "source_audit": _compact_source_audit(source_audit.to_json()),
+        "attempts": attempts,
     }
 
 
@@ -397,25 +504,45 @@ def _source_matrix_case(tbgd_root: Path, rules: RuleBook) -> dict[str, Any]:
         and action.damage_kind == "hp_damage"
         and action.coverage_status == "executable"
     ]
+    stat_admitted_definitions = [
+        definition
+        for definition in rules.ir.servant_definitions
+        if definition.coverage_status == "executable"
+        and definition.stat_source.get("admission_status") == "executable"
+        and definition.action_set.get("admission_status") == "executable"
+    ]
     checks = {
         "raw_servant_damage_skills_present": raw_damage_count > 0,
         "servant_hp_damage_action_ir_present": bool(hp_damage_actions),
-        "servant_damage_formula_not_claimed_executable_without_stat_admission": True,
+        "source_backed_damage_stat_admission_present": bool(
+            stat_admitted_definitions
+        ),
     }
     checks["ok"] = all(value for key, value in checks.items() if key != "ok")
     return {
         "checks": {"ok": checks["ok"], "checks": checks},
-        "classification": "damage_action_ir_present_runtime_blocked_until_stat_admission",
+        "classification": "damage_action_ir_and_owned_build_stat_admission_present",
         "raw_servant_damage_skill_count": raw_damage_count,
         "servant_hp_damage_action_ir_count": len(hp_damage_actions),
+        "stat_admitted_servant_definition_count": len(
+            stat_admitted_definitions
+        ),
         "sample_action": _action_summary(hp_damage_actions[0]) if hp_damage_actions else {},
     }
 
 
 def _spawn_servant_turn_state(rules: RuleBook, definition: ServantDefinitionIR) -> tuple[BattleState, str]:
-    state = _base_servant_state(definition)
+    state = _formal_servant_state(rules, definition)
     system = SummonSystem(rules)
-    result = system.apply_spawn_servant(state, system.plan_spawn_servant(state, definition, owner_id="ally:servant_owner"))
+    result = system.apply_spawn_servant(
+        state,
+        system.plan_spawn_servant(
+            state,
+            definition,
+            owner_id="ally:servant_owner",
+            spawn_source=definition.spawn_sources[0],
+        ),
+    )
     after = MutationReducer().apply_all(state, result.mutations)
     servant_id = _first_servant_id(after)
     return (

@@ -491,7 +491,10 @@ def _targets_for_hit_profile(
 def _target_group_multiplier_not_implemented(action_definition: ActionDefinitionIR, profile: HitProfileIR) -> bool:
     if action_definition.target_mode not in {"aoe", "blast"}:
         return False
-    return str(profile.multiplier_source.get("source_kind") or "") != "character_data_card_skill_formula"
+    return str(profile.multiplier_source.get("source_kind") or "") not in {
+        "character_data_card_skill_formula",
+        "servant_data_card_skill_formula",
+    }
 
 
 def _hit_scaling_ratio(profile: HitProfileIR) -> float | None:
@@ -519,7 +522,11 @@ def _damage_value_request(
         "source_kind": source_kind,
         "multiplier_source": multiplier_source,
     }
-    if binding_id and source_kind in {"character_data_card_skill_formula", "monster_data_card_skill_formula"}:
+    if binding_id and source_kind in {
+        "character_data_card_skill_formula",
+        "monster_data_card_skill_formula",
+        "servant_data_card_skill_formula",
+    }:
         param_index = _structured_param_index(multiplier_source)
         if param_index is None:
             return {

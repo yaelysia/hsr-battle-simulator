@@ -16,12 +16,12 @@ from ..tbgd.lowering import TBGDLowering
 from ..tbgd.paths import find_tbgd_root
 from .io import write_json
 from .validate_p1_3_summon_assistant_servant import (
-    _base_servant_state,
     _base_summon_state,
     _select_executable_servant_definition,
     _select_executable_summon_monster_intent,
 )
 from .validate_p1_8_battle_setup import _select_two_wave_definition
+from .validate_p3_s5_servant_lifecycle import _formal_servant_state
 
 
 VALIDATION_VERSION = "p6_s2_s3_unit_spawn_birth_plan"
@@ -242,10 +242,19 @@ def _summon_case(rules: RuleBook) -> dict[str, Any]:
 
 def _servant_case(rules: RuleBook) -> dict[str, Any]:
     definition = _select_executable_servant_definition(rules)
-    state = _base_servant_state(definition)
-    owner_id = next(iter(state.units))
+    state = _formal_servant_state(rules, definition)
+    owner_id = next(
+        unit_id
+        for unit_id, unit in sorted(state.units.items())
+        if definition.owner_relation_for(unit.template_id) is not None
+    )
     system = SummonSystem(rules)
-    plan = system.plan_spawn_servant(state, definition, owner_id=owner_id)
+    plan = system.plan_spawn_servant(
+        state,
+        definition,
+        owner_id=owner_id,
+        spawn_source=definition.spawn_sources[0],
+    )
     result = system.apply_spawn_servant(state, plan)
     spawn_plans = _spawn_plans(plan.metadata)
     missing_plan = replace(plan, metadata={**plan.metadata, "unit_spawn_plans": []})

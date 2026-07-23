@@ -77,6 +77,7 @@ from .validate_p1_8_battle_setup import (
     _select_enemy_entity,
     _select_executable_servant_definition,
     _select_executable_summon_monster_intent,
+    _select_servant_owner_entity_ref,
     _select_initial_status_case,
     _select_two_wave_definition,
 )
@@ -974,8 +975,9 @@ def _aggregate_target_case(state: BattleState, transition: BattleTransition) -> 
 
 def _servant_initial_summon_case(rules: RuleBook, enemy_ref: str) -> dict[str, Any]:
     definition = _select_executable_servant_definition(rules)
-    action = _select_avatar_action_for_entity(rules, definition.owner_entity_ref)
-    data = _base_scenario_data_for_avatar(rules, action, definition.owner_entity_ref, enemy_ref)
+    owner_entity_ref = _select_servant_owner_entity_ref(definition)
+    action = _select_avatar_action_for_entity(rules, owner_entity_ref)
+    data = _base_scenario_data_for_avatar(rules, action, owner_entity_ref, enemy_ref)
     data["scenario_id"] = "p1_9_servant_initial_setup"
     data["battle_setup"] = {
         "initial_summons": [

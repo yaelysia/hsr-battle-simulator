@@ -9,7 +9,7 @@ from typing import Any
 from .. import BASELINE_VERSION
 from ..core.model import BattleState, UnitState
 from ..core.reducer import MutationReducer
-from ..rules.ir import SummonMonsterIntentIR, TargetExpressionIR
+from ..rules.ir import ServantDefinitionIR, SummonMonsterIntentIR, TargetExpressionIR
 from ..rules.rulebook import RuleBook
 from ..systems.action_availability import ActionAvailabilitySystem
 from ..systems.summon import SUMMON_RUNTIME_SCHEMA_VERSION, SummonSystem
@@ -580,7 +580,7 @@ def _select_executable_servant_definition(rules: RuleBook):
             continue
         if definition.representation != "unit":
             continue
-        if not definition.owner_entity_ref:
+        if not definition.owner_entity_refs:
             continue
         if not definition.action_set.get("executable_binding_ids"):
             continue
@@ -592,6 +592,14 @@ def _select_executable_servant_definition(rules: RuleBook):
             continue
         return definition
     raise RuntimeError("no executable ServantDefinitionIR selected by structured predicate")
+
+
+def _select_servant_owner_entity_ref(definition: ServantDefinitionIR) -> str:
+    if not definition.owner_entity_refs:
+        raise RuntimeError(
+            f"servant definition {definition.servant_definition_id!r} has no executable owner relation"
+        )
+    return definition.owner_entity_refs[0]
 
 
 def _select_target_expression(rules: RuleBook, alias: str) -> TargetExpressionIR | None:
@@ -657,12 +665,13 @@ def _base_summon_state() -> BattleState:
 
 
 def _base_servant_state(definition) -> BattleState:
+    owner_entity_ref = _select_servant_owner_entity_ref(definition)
     return BattleState(
         units={
             "ally:servant_owner": UnitState(
                 "ally:servant_owner",
                 "ally",
-                definition.owner_entity_ref,
+                owner_entity_ref,
                 level=80,
                 hp=1000.0,
                 max_hp=1000.0,
@@ -689,12 +698,13 @@ def _base_servant_state(definition) -> BattleState:
 
 
 def _flag_only_servant_state(definition) -> BattleState:
+    owner_entity_ref = _select_servant_owner_entity_ref(definition)
     return BattleState(
         units={
             "ally:servant_owner": UnitState(
                 "ally:servant_owner",
                 "ally",
-                definition.owner_entity_ref,
+                owner_entity_ref,
                 hp=1000.0,
                 max_hp=1000.0,
                 speed=100.0,

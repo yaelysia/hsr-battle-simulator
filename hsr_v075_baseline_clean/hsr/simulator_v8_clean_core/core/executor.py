@@ -188,6 +188,11 @@ class CombatExecutor:
             action_event_reason,
             action_execution_plan,
         )
+        ability_task_damage_authoritative = _ability_task_damage_graph_authoritative(
+            self.rules,
+            ability_phases,
+            action_execution_plan,
+        )
         summon_damage_stat_blocked_reason = _summon_damage_stat_blocked_reason(
             state,
             command,
@@ -453,6 +458,62 @@ class CombatExecutor:
                     runtime_records.extend(listener_result.records)
                     continue
                 if step.kind == "damage":
+                    if ability_task_damage_authoritative:
+                        runtime_records.append(
+                            SettlementRecord(
+                                record_type="action_damage_plan_delegated",
+                                source="combat_executor",
+                                process_only=True,
+                                payload={
+                                    "reason": "source_bound_ability_task_graph_authoritative",
+                                    "action_id": command.action_id,
+                                    "action_level": command.action_level,
+                                    "binding_id": (
+                                        action_binding.binding_id
+                                        if action_binding is not None
+                                        else ""
+                                    ),
+                                    "damage_emission_count": len(
+                                        action_execution_plan.damage_emissions
+                                    ),
+                                },
+                                trace=action_definition_trace,
+                            ).to_json()
+                        )
+                        ability_result = self.ability_tasks.execute_callback(
+                            current_state,
+                            phases=ability_phases,
+                            callback_kind="OnHit",
+                            command=command,
+                            action_definition=action_definition,
+                            target_resolution=target_result.resolution,
+                        )
+                        current_state = ability_result.after_state
+                        ability_task_results.append(ability_result)
+                        ordered_mutations.extend(ability_result.mutations)
+                        runtime_records.extend(ability_result.records)
+                        for emitted_event in ability_result.events:
+                            if emitted_event.event_type not in {
+                                "status.lifecycle",
+                                "damage.hit",
+                                "toughness.hit",
+                                "break.triggered",
+                                "unit.defeated",
+                                "custom.event",
+                                "summon.spawned",
+                                "summon.removed",
+                                *MUTATION_BACKED_EVENT_TYPES,
+                            }:
+                                continue
+                            dispatch_result = self.event_dispatcher.dispatch_event(
+                                current_state,
+                                event=emitted_event,
+                            )
+                            current_state = dispatch_result.after_state
+                            listener_dispatch_results.append(dispatch_result)
+                            ordered_mutations.extend(dispatch_result.mutations)
+                            runtime_records.extend(dispatch_result.records)
+                        continue
                     if not action_execution_plan.damage_plan:
                         runtime_records.append(
                             SettlementRecord(
@@ -1649,6 +1710,47 @@ def _uses_action_damage_plan_fallback(binding_reason: str, event_reason: str, ac
     if not (action_execution_plan.damage_plan or action_execution_plan.toughness_plan):
         return False
     return "missing_ability_phase_in_ability_file" in {binding_reason, event_reason}
+
+
+def _ability_task_damage_graph_authoritative(rules: RuleBook, phases, action_execution_plan) -> bool:
+    if not phases or not action_execution_plan.damage_emissions:
+        return False
+    reachable_task_ids: set[str] = set()
+    for phase in phases:
+        phase_tasks = {
+            task.task_id: task
+            for task in rules.ability_tasks_for_phase(phase.phase_id)
+        }
+        pending = [
+            task.task_id
+            for task in phase_tasks.values()
+            if not task.parent_task_id
+        ]
+        while pending:
+            task_id = pending.pop()
+            if task_id in reachable_task_ids:
+                continue
+            task = phase_tasks.get(task_id)
+            if task is None:
+                continue
+            reachable_task_ids.add(task_id)
+            pending.extend(
+                child_id
+                for child_id in (
+                    *task.child_task_ids,
+                    *task.success_task_ids,
+                    *task.failed_task_ids,
+                )
+                if child_id in phase_tasks
+            )
+    return all(
+        emission.source_task_id in reachable_task_ids
+        and any(
+            candidate.damage_emission_id == emission.damage_emission_id
+            for candidate in rules.damage_emissions_for_task(emission.source_task_id)
+        )
+        for emission in action_execution_plan.damage_emissions
+    )
 
 
 def _action_blocked_reason(

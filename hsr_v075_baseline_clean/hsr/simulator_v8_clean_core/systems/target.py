@@ -2114,7 +2114,7 @@ def _resolve_adjacent_expression(
     }
     if skipped and not ordered:
         return _inline_result(path, "TargetMapAdjoinEntity", "", (), "target_adjacent_blocked", [step])
-    return _inline_result(path, "TargetMapAdjoinEntity", "", ordered, "" if ordered else "target_adjacent_empty", [step])
+    return _inline_result(path, "TargetMapAdjoinEntity", "", ordered, "", [step])
 
 
 def _select_random_targets(

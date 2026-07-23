@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Literal
 
+from ..builds.models import OwnedCombatantBuildAssemblyResult
 from ..build_types import ir_source_from_json
 from ..core.model import ActionCommand, BattleState, JSONValue, UnitState
 from ..ir_types import same_ir_source_raw_row
@@ -1131,10 +1132,45 @@ class ActionAvailabilitySystem:
         choices: list[ActionChoice] = []
         blocked: list[BlockedActionReason] = []
         actor_data_card = _actor_data_card_source_trace(self.rules, actor)
+        raw_owned_build = actor.flags.get("owned_combatant_build_result")
+        owned_build: OwnedCombatantBuildAssemblyResult | None = None
+        owned_build_reason = ""
+        if raw_owned_build is not None:
+            try:
+                owned_build = OwnedCombatantBuildAssemblyResult.from_json(
+                    raw_owned_build
+                )
+            except (TypeError, ValueError):
+                owned_build_reason = "owned_combatant_build_result_invalid"
+            else:
+                if owned_build.battle_admission_status != "admitted":
+                    owned_build_reason = "owned_combatant_build_not_admitted"
+        owned_action_ids = {
+            binding.action_id for binding in owned_build.action_bindings
+        } if owned_build is not None else set()
         for skill_index, entry in _sorted_action_set_entries(action_set.skill_index_map):
             action_id = str(entry.get("action_ref") or "")
+            if owned_build is not None and action_id not in owned_action_ids:
+                continue
             level = _default_level(entry)
-            reason = self._action_set_entry_blocked_reason(entry, action_id, level)
+            formal_level_trace: dict[str, JSONValue] = {}
+            if raw_owned_build is not None:
+                if owned_build_reason:
+                    reason = owned_build_reason
+                else:
+                    level, reason, formal_level_trace = (
+                        self._owned_combatant_action_level(
+                            actor,
+                            action_id,
+                            owned_build,
+                        )
+                    )
+            else:
+                reason = self._action_set_entry_blocked_reason(
+                    entry,
+                    action_id,
+                    level,
+                )
             if action_set.coverage_status != "executable":
                 reason = action_set.blocked_reason or f"combatant_action_set_not_executable:{action_set.coverage_status}"
             if reason:
@@ -1147,7 +1183,10 @@ class ActionAvailabilitySystem:
                         action_id=action_id,
                         action_level=level,
                         metadata={"skill_index": skill_index, "action_set_entry": entry},
-                        source_trace=action_set.source.to_json(),
+                        source_trace={
+                            "combatant_action_set": action_set.source.to_json(),
+                            **formal_level_trace,
+                        },
                     )
                 )
                 continue
@@ -1166,6 +1205,7 @@ class ActionAvailabilitySystem:
                     "summon_action_admission": dict(actor.flags.get("summon_action_admission", {}))
                     if isinstance(actor.flags.get("summon_action_admission"), dict)
                     else {},
+                    **formal_level_trace,
                 },
                 metadata={
                     "skill_index": skill_index,
@@ -1180,6 +1220,64 @@ class ActionAvailabilitySystem:
             else:
                 blocked.append(reason_record)
         return tuple(choices), tuple(blocked)
+
+    def _owned_combatant_action_level(
+        self,
+        actor: UnitState,
+        action_id: str,
+        owned_build: OwnedCombatantBuildAssemblyResult | None,
+    ) -> tuple[int, str, dict[str, JSONValue]]:
+        if owned_build is None:
+            return 0, "owned_combatant_build_result_missing", {}
+        if (
+            owned_build.servant_definition_id
+            != str(actor.flags.get("servant_definition_id") or "")
+            or owned_build.servant_ref != actor.template_id
+        ):
+            return 0, "owned_combatant_build_identity_mismatch", {}
+        action_matches = tuple(
+            item for item in owned_build.action_bindings if item.action_id == action_id
+        )
+        level_matches = tuple(
+            item
+            for item in owned_build.effective_skill_levels
+            if item.action_id == action_id
+        )
+        if len(action_matches) != 1 or len(level_matches) != 1:
+            return 0, "owned_combatant_action_binding_not_unique", {}
+        action = action_matches[0]
+        level = level_matches[0]
+        if action.effective_level != level.effective_level:
+            return 0, "owned_combatant_action_level_mismatch", {}
+        candidates = self.rules.action_definition_candidates(
+            action_id,
+            action.effective_level,
+        )
+        binding = self.rules.action_ability_binding(
+            action_id,
+            action.effective_level,
+        )
+        if (
+            len(candidates) != 1
+            or candidates[0].definition_id != action.action_definition_id
+            or candidates[0].source != action.action_source
+            or binding is None
+            or binding.binding_id != action.ability_binding_id
+            or binding.source != action.ability_binding_source
+        ):
+            return action.effective_level, "owned_combatant_action_source_mismatch", {}
+        return (
+            action.effective_level,
+            "",
+            {
+                "owned_combatant_build_action": {
+                    "owned_build_id": owned_build.owned_build_id,
+                    "result_fingerprint": owned_build.result_fingerprint,
+                    "action_binding": action.to_json(),
+                    "skill_level": level.to_json(),
+                }
+            },
+        )
 
     def _enemy_choices(
         self,
@@ -1761,7 +1859,10 @@ def _actor_data_card_source_trace(rules: RuleBook, actor: UnitState) -> dict[str
             "card_kind": "servant_definition",
             "card_id": definition.servant_definition_id,
             "entity_ref": definition.servant_ref,
-            "owner_entity_ref": definition.owner_entity_ref,
+            "owner_entity_refs": list(definition.owner_entity_refs),
+            "owner_relation": dict(actor.flags.get("owner_relation") or {})
+            if isinstance(actor.flags.get("owner_relation"), dict)
+            else {},
             "coverage_status": definition.coverage_status,
             "blocked_reason": definition.blocked_reason,
             "source": definition.source.to_json(),

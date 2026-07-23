@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from ..core.model import ActionCommand, BattleState, GameEvent, JSONValue, Mutation, RNGEvent, TargetResolution
 from ..core.reducer import MutationReducer
@@ -18,7 +18,11 @@ from .dynamic_values import (
 )
 from .effect import EffectExecutionContext, EffectRegistry
 from .summon import SummonSystem
-from .ability_task_contract import is_process_only_ability_task
+from .toughness import ToughnessPacket, ToughnessSystem
+from .ability_task_contract import (
+    ability_task_runtime_blocked_reason,
+    is_process_only_ability_task,
+)
 from .target import TargetSystem
 
 
@@ -49,6 +53,7 @@ class AbilityTaskSystem:
         self.evaluator = evaluator or RuleEvaluator()
         self.reducer = reducer or MutationReducer()
         self.damage = damage or DamageSystem(rules)
+        self.toughness = ToughnessSystem(rules)
         self.summons = SummonSystem(rules)
         self.targets = TargetSystem()
 
@@ -273,8 +278,27 @@ class AbilityTaskSystem:
         primary_target: str | None,
         target_resolution: TargetResolution,
     ) -> tuple[BattleState, list[Mutation], list[GameEvent], list[RNGEvent], list[dict[str, JSONValue]]]:
+        admission_reason = ability_task_runtime_blocked_reason(self.rules, task)
+        if admission_reason:
+            return state, [], [], [], [
+                _task_process_record(
+                    task,
+                    ok=False,
+                    blocked_reason=admission_reason,
+                )
+            ]
         if task.opcode == "PredicateTaskList":
             return self._execute_predicate_task(
+                state,
+                task,
+                tasks,
+                command=command,
+                action_definition=action_definition,
+                primary_target=primary_target,
+                target_resolution=target_resolution,
+            )
+        if task.opcode == "LoopExecuteTaskListWithInterval":
+            return self._execute_fixed_task_loop(
                 state,
                 task,
                 tasks,
@@ -318,9 +342,6 @@ class AbilityTaskSystem:
                 primary_target=primary_target,
                 target_resolution=target_resolution,
             )
-        if task.coverage_status != "executable":
-            record = _task_process_record(task, ok=False, blocked_reason=task.blocked_reason or "task_not_executable")
-            return state, [], [], [], [record]
         if not task.effect_id:
             record = _task_process_record(task, ok=False, blocked_reason="task_has_no_effect")
             return state, [], [], [], [record]
@@ -384,6 +405,86 @@ class AbilityTaskSystem:
             )
         )
         return after, list(result.mutations), list(result.events), list(result.rng_events), records
+
+    def _execute_fixed_task_loop(
+        self,
+        state: BattleState,
+        task: AbilityTaskIR,
+        tasks: dict[str, AbilityTaskIR],
+        *,
+        command: ActionCommand,
+        action_definition: ActionDefinitionIR,
+        primary_target: str | None,
+        target_resolution: TargetResolution,
+    ) -> tuple[BattleState, list[Mutation], list[GameEvent], list[RNGEvent], list[dict[str, JSONValue]]]:
+        if task.coverage_status != "executable" or task.repeat_count <= 0:
+            reason = task.blocked_reason or "fixed_positive_loop_count_required"
+            return state, [], [], [], [_task_process_record(task, ok=False, blocked_reason=reason)]
+        current = state
+        mutations: list[Mutation] = []
+        events: list[GameEvent] = []
+        rng_events: list[RNGEvent] = []
+        records: list[dict[str, JSONValue]] = []
+        failure_reason = ""
+        for iteration_index in range(task.repeat_count):
+            parent_path = str(
+                command.metadata.get("ability_task_execution_path") or ""
+            )
+            iteration_path = (
+                f"{parent_path}/{task.task_id}[{iteration_index}]"
+                if parent_path
+                else f"{task.task_id}[{iteration_index}]"
+            )
+            iteration_command = replace(
+                command,
+                metadata={
+                    **command.metadata,
+                    "ability_task_execution_path": iteration_path,
+                    "ability_loop_task_id": task.task_id,
+                    "ability_loop_iteration": iteration_index,
+                },
+            )
+            for child_id in task.child_task_ids:
+                child = tasks.get(child_id)
+                if child is None or child.parent_task_id != task.task_id:
+                    failure_reason = f"loop_child_missing_or_mismatched:{child_id}"
+                    break
+                current, child_mutations, child_events, child_rng_events, child_records = self._execute_task(
+                    current,
+                    child,
+                    tasks,
+                    command=iteration_command,
+                    action_definition=action_definition,
+                    primary_target=primary_target,
+                    target_resolution=target_resolution,
+                )
+                mutations.extend(child_mutations)
+                events.extend(child_events)
+                rng_events.extend(child_rng_events)
+                records.extend(child_records)
+                if any(
+                    isinstance(record.get("payload"), dict)
+                    and record["payload"].get("ok") is False
+                    for record in child_records
+                    if isinstance(record, dict)
+                    and record.get("record_type") == "ability_task"
+                ):
+                    failure_reason = f"loop_child_incomplete:{child_id}"
+                    break
+            if failure_reason:
+                break
+        records.insert(
+            0,
+            _task_process_record(
+                task,
+                ok=not failure_reason,
+                blocked_reason=failure_reason,
+                selected_child_ids=task.child_task_ids,
+                mutation_count=len(mutations),
+                record_count=len(records),
+            ),
+        )
+        return current, mutations, events, rng_events, records
 
     def execute_summon_monster_task(
         self,
@@ -611,9 +712,93 @@ class AbilityTaskSystem:
                 continue
             target_ids = _damage_targets_for_emission(emission.target_group, target_resolution)
             if not target_ids:
-                records.append(_task_process_record(task, ok=False, blocked_reason="damage_target_missing"))
+                optional_group = emission.target_group == "adjacent"
+                records.append(
+                    _task_process_record(
+                        task,
+                        ok=optional_group,
+                        blocked_reason=(
+                            "damage_optional_target_group_empty"
+                            if optional_group
+                            else "damage_target_missing"
+                        ),
+                    )
+                )
                 continue
             for target_id in target_ids:
+                toughness_blocked_reason = ""
+                for toughness_emission in self.rules.toughness_emissions_for_task(
+                    task.task_id
+                ):
+                    if toughness_emission.hit_profile_id != profile.hit_profile_id:
+                        continue
+                    binding_sources = (
+                        *_binding_sources(
+                            self.rules,
+                            current,
+                            command.actor_id,
+                            primary_target,
+                            action_level=command.action_level,
+                            current_action_trigger_key=_action_trigger_key(
+                                action_definition
+                            ),
+                        ),
+                        *_expression_binding_sources(
+                            toughness_emission.toughness_amount_expr
+                        ),
+                    )
+                    toughness_packet = ToughnessPacket(
+                        attacker_id=command.actor_id,
+                        target_id=target_id,
+                        toughness_emission_id=(
+                            toughness_emission.toughness_emission_id
+                        ),
+                        source_task_id=task.task_id,
+                        hit_profile_id=profile.hit_profile_id,
+                        element_type=toughness_emission.element_type,
+                        amount=None,
+                        amount_expr=toughness_emission.toughness_amount_expr,
+                        target_group=toughness_emission.target_group,
+                        coverage_status=toughness_emission.coverage_status,
+                        source_trace=toughness_emission.source.to_json(),
+                        metadata={
+                            "primary_action_target_id": primary_target,
+                            "value_binding_sources": list(binding_sources),
+                            "ability_task_execution_path": command.metadata.get(
+                                "ability_task_execution_path",
+                                "",
+                            ),
+                        },
+                    )
+                    toughness_result = self.toughness.apply_packet(
+                        current,
+                        toughness_packet,
+                    )
+                    records.extend(toughness_result.records)
+                    if not toughness_result.ok:
+                        toughness_blocked_reason = (
+                            toughness_result.errors[0]
+                            if toughness_result.errors
+                            else "ability_task_toughness_blocked"
+                        )
+                        break
+                    if toughness_result.mutations:
+                        toughness_blocked_reason = (
+                            "ability_task_toughness_pre_mutation_listener_not_admitted"
+                        )
+                        break
+                if toughness_blocked_reason:
+                    records.append(
+                        _task_process_record(
+                            task,
+                            ok=False,
+                            blocked_reason=toughness_blocked_reason,
+                        )
+                    )
+                    continue
+                execution_path = str(
+                    command.metadata.get("ability_task_execution_path") or ""
+                )
                 packet = DamagePacket(
                     attacker_id=command.actor_id,
                     target_id=target_id,
@@ -648,6 +833,12 @@ class AbilityTaskSystem:
                         "hit_index": profile.hit_index,
                         "target_group": emission.target_group,
                         "numeric_evaluation": ratio_eval.to_json(),
+                        "phase_id": task.phase_id,
+                        "derived_event_id": (
+                            f"{emission.damage_emission_id}:{execution_path}"
+                            if execution_path
+                            else emission.damage_emission_id
+                        ),
                     },
                 )
                 damage_result = self.damage.apply_packet(current, packet, window_ledger=ledger)
@@ -909,8 +1100,17 @@ def _damage_targets_for_emission(
     target_group: str,
     target_resolution: TargetResolution,
 ) -> tuple[str, ...]:
-    if target_group in {"selected", "primary", "single", "aoe"}:
-        return tuple(target_resolution.selected)
+    selected = tuple(target_resolution.selected)
+    primary = target_resolution.primary or (selected[0] if selected else None)
+    impact_group = tuple(target_resolution.impact_group) or selected
+    if target_group in {"selected", "single"}:
+        return selected
+    if target_group == "primary":
+        return (primary,) if primary else ()
+    if target_group == "adjacent":
+        return tuple(target_id for target_id in impact_group if target_id != primary)
+    if target_group in {"aoe", "all_enemy"}:
+        return impact_group
     return ()
 
 

@@ -17,6 +17,7 @@ from ..systems.status import StatusSystem
 from ..tbgd.lowering import TBGDLowering
 from ..tbgd.paths import find_tbgd_root
 from .io import write_json
+from .validate_p1_3_summon_assistant_servant import _select_servant_owner_entity_ref
 
 
 VALIDATION_VERSION = "p1_8_battle_setup"
@@ -323,8 +324,9 @@ def _summon_cases(
     timeline_after_summon = _summon_timeline_override_case(rules, action, enemy_ref, intent, spawned[0] if spawned else "")
 
     servant_definition = _select_executable_servant_definition(rules)
-    servant_action = _select_avatar_action_for_entity(rules, servant_definition.owner_entity_ref)
-    servant_data = _base_scenario_data_for_avatar(rules, servant_action, servant_definition.owner_entity_ref, enemy_ref)
+    servant_owner_entity_ref = _select_servant_owner_entity_ref(servant_definition)
+    servant_action = _select_avatar_action_for_entity(rules, servant_owner_entity_ref)
+    servant_data = _base_scenario_data_for_avatar(rules, servant_action, servant_owner_entity_ref, enemy_ref)
     servant_data["scenario_id"] = "p1_8_servant_initial_setup"
     servant_data["battle_setup"] = {
         "initial_summons": [
@@ -368,7 +370,7 @@ def _summon_cases(
         and any(choice.choice_kind == "summon_action" for choice in servant_availability.choices),
     }
     servant_checks["ok"] = all(value for key, value in servant_checks.items() if key != "ok")
-    missing_servant_ref = _base_scenario_data_for_avatar(rules, servant_action, servant_definition.owner_entity_ref, enemy_ref)
+    missing_servant_ref = _base_scenario_data_for_avatar(rules, servant_action, servant_owner_entity_ref, enemy_ref)
     missing_servant_ref["battle_setup"] = {"initial_summons": [{"kind": "servant", "owner_id": "ally:actor"}]}
     missing_servant_ref_error = _build_error(rules, missing_servant_ref)
     missing_owner = _base_scenario_data(rules, action, enemy_ref)
@@ -766,7 +768,7 @@ def _select_executable_servant_definition(rules: RuleBook):
     for definition in rules.servant_definitions():
         if definition.coverage_status != "executable" or definition.representation != "unit":
             continue
-        if not definition.owner_entity_ref:
+        if not definition.owner_entity_refs:
             continue
         if not definition.action_set.get("executable_binding_ids"):
             continue

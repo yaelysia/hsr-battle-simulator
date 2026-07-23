@@ -320,7 +320,9 @@ def _owner_cleanup_case(rules: RuleBook) -> dict[str, Any]:
     for definition in rules.servant_definitions():
         if definition.coverage_status != "executable" or definition.representation != "unit":
             continue
-        owner = _owner(definition.owner_entity_ref)
+        if not definition.owner_entity_refs:
+            continue
+        owner = _owner(definition.owner_entity_refs[0])
         state = BattleState(units={owner.unit_id: owner})
         plan = system.plan_spawn_servant(state, definition, owner_id=owner.unit_id)
         result = system.apply_spawn_servant(state, plan)

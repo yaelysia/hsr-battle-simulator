@@ -7,7 +7,10 @@ from typing import Any
 from .identity import IdentityResolver
 from .schema import InitialStatusSpec, InitialSummonSpec, PanelInput, RNGSetupSpec, ScenarioSpec, UnitSpec
 from ..builds.character_assembler import assemble_character_build, validate_character_build_admission
-from ..builds.models import CharacterBuildAssemblyResult
+from ..builds.models import (
+    CharacterBuildAssemblyResult,
+    CharacterResourceBinding,
+)
 from ..core.model import (
     ActionCommand,
     BattleState,
@@ -22,6 +25,10 @@ from ..core.reducer import MutationReducer
 from ..core.settlement import SettlementRecord
 from ..equipment.models import DynamicMechanismSelection
 from ..rules.ir import CombatantProfileIR, WaveDefinitionIR, WaveMonsterEntryIR
+from ..rules.engine_rule_registry import (
+    special_resource_initializer_numeric_binding_source,
+)
+from ..rules.evaluator import NumericEvaluationContext, RuleEvaluator
 from ..rules.expression_ir import numeric_dynamic_hashes
 from ..rules.rulebook import RuleBook
 from ..rules.value_binding import ValueBindingRequest, ValueContext, ValueResolver
@@ -56,6 +63,14 @@ class _SetupApplyResult:
     rng_events: tuple[RNGEvent, ...] = ()
     blocked: tuple[dict[str, JSONValue], ...] = ()
     source_traces: tuple[dict[str, JSONValue], ...] = ()
+
+
+@dataclass(frozen=True)
+class SpecialResourceInitialization:
+    current_value: float
+    maximum_value: float
+    record: dict[str, JSONValue]
+    source_traces: tuple[dict[str, JSONValue], ...]
 
 
 class ScenarioStateBuilder:
@@ -132,8 +147,79 @@ class ScenarioStateBuilder:
                         for item in base_panel.additional_resources
                     },
                 }
+                initial_resource_values = {
+                    item.resource_definition_id: item
+                    for item in unit.initial_condition.initial_resource_values
+                }
+                if base_panel.resource_mode == "standard_energy":
+                    if (
+                        unit.initial_condition.initial_energy != "0"
+                        or initial_resource_values
+                        or base_panel.max_energy is None
+                    ):
+                        raise ValueError(
+                            f"unit {unit.unit_id}: standard-energy initial condition mismatch"
+                        )
+                    energy = 0.0
+                    max_energy = float(base_panel.max_energy)
+                    formal_flags["standard_energy_active"] = True
+                else:
+                    binding = base_panel.special_resource_binding
+                    if (
+                        binding is None
+                        or unit.initial_condition.initial_energy is not None
+                        or set(initial_resource_values) != {binding.resource_definition_id}
+                    ):
+                        raise ValueError(
+                            f"unit {unit.unit_id}: special-resource initial condition mismatch"
+                        )
+                    initial_value = initial_resource_values[
+                        binding.resource_definition_id
+                    ]
+                    if initial_value.source_kind != binding.initial_current_mode:
+                        raise ValueError(
+                            f"unit {unit.unit_id}: special-resource initializer marker mismatch"
+                        )
+                    initialization = initialize_special_resource(
+                        self.rules,
+                        scenario,
+                        unit,
+                        binding,
+                    )
+                    resources[binding.current_resource_key] = initialization.current_value
+                    resources[binding.maximum_resource_key] = initialization.maximum_value
+                    setup_records.append(initialization.record)
+                    source_traces.extend(initialization.source_traces)
+                    energy = 0.0
+                    max_energy = 0.0
+                    formal_flags.update(
+                        {
+                            "standard_energy_active": False,
+                            "inactive_energy_schema_slots": True,
+                            "special_resource_definition_id": (
+                                binding.resource_definition_id
+                            ),
+                            "special_resource_current_key": binding.current_resource_key,
+                            "special_resource_maximum_key": binding.maximum_resource_key,
+                            "special_resource_maximum_initialization_mode": (
+                                binding.maximum_initialization_mode
+                            ),
+                            "special_resource_initial_current_mode": (
+                                binding.initial_current_mode
+                            ),
+                            "special_resource_initial_current_value": (
+                                initialization.current_value
+                            ),
+                            "special_resource_initial_maximum_value": (
+                                initialization.maximum_value
+                            ),
+                            "special_resource_initializer_id": (
+                                binding.initializer.initializer_id
+                            ),
+                            "special_resource_source": binding.source.to_json(),
+                        }
+                    )
                 max_hp = float(base_panel.max_hp)
-                max_energy = float(base_panel.max_energy)
                 units[unit.unit_id] = UnitState(
                     unit_id=unit.unit_id,
                     side=unit.side,
@@ -144,7 +230,7 @@ class ScenarioStateBuilder:
                     attack=float(base_panel.attack),
                     defense=float(base_panel.defense),
                     speed=float(base_panel.speed),
-                    energy=float(unit.initial_condition.initial_energy),
+                    energy=energy,
                     max_energy=max_energy,
                     toughness=0.0,
                     max_toughness=0.0,
@@ -156,6 +242,36 @@ class ScenarioStateBuilder:
                 )
                 source_traces.extend(
                     contribution.source.to_json() for contribution in assembly.contribution_ledger
+                )
+                source_traces.extend(
+                    binding.source.to_json()
+                    for binding in assembly.resource_bindings
+                )
+                source_traces.extend(
+                    source.to_json()
+                    for binding in assembly.resource_bindings
+                    for source in binding.supporting_sources
+                )
+                source_traces.extend(
+                    source.to_json()
+                    for owned in assembly.owned_combatant_results
+                    for source in (
+                        *owned.lifecycle_admission.spawn_sources,
+                        *owned.lifecycle_admission.lifecycle_sources,
+                        *(
+                            stat_source
+                            for stat in owned.stat_bindings
+                            for stat_source in stat.sources
+                        ),
+                        *(
+                            action_source
+                            for action in owned.action_bindings
+                            for action_source in (
+                                action.action_source,
+                                action.ability_binding_source,
+                            )
+                        ),
+                    )
                 )
                 source_traces.extend(
                     source.source.to_json()
@@ -231,6 +347,13 @@ class ScenarioStateBuilder:
                             else None
                         ),
                         "effective_skill_level_count": len(assembly.effective_skill_levels),
+                        "owned_combatant_build_count": len(
+                            assembly.owned_combatant_results
+                        ),
+                        "owned_combatant_result_fingerprints": [
+                            item.result_fingerprint
+                            for item in assembly.owned_combatant_results
+                        ],
                         "legacy_trace_eidolon_paths_bypassed": True,
                     }
                 )
@@ -512,6 +635,173 @@ class ScenarioStateBuilder:
             ),
             character_build_results=tuple(character_build_results),
         )
+
+
+def initialize_special_resource(
+    rules: RuleBook,
+    scenario: ScenarioSpec,
+    unit: UnitSpec,
+    binding: CharacterResourceBinding,
+) -> SpecialResourceInitialization:
+    initializer = binding.initializer
+    world_level = scenario.battle_setup.world_level
+    if world_level is None:
+        raise ValueError(
+            f"unit {unit.unit_id}: special-resource initializer requires battle_setup.world_level"
+        )
+    if world_level < 0:
+        raise ValueError(
+            f"unit {unit.unit_id}: special-resource world level cannot be negative"
+        )
+    if _scenario_wave_index(scenario) != 0:
+        raise ValueError(
+            f"unit {unit.unit_id}: special-resource battle-entry initializer requires first wave"
+        )
+    if initializer.level_source != "highest_alive_non_servant_ally":
+        raise ValueError(
+            f"unit {unit.unit_id}: special-resource level source is not admitted"
+        )
+    candidate_levels = tuple(
+        candidate.level
+        for candidate in scenario.units
+        if candidate.side == unit.side
+        and _unit_spec_starts_alive(candidate)
+        and rules.servant_definition(candidate.entity_ref) is None
+    )
+    if not candidate_levels or any(level <= 0 for level in candidate_levels):
+        raise ValueError(
+            f"unit {unit.unit_id}: special-resource level source has no valid ally"
+        )
+    source_level = max(candidate_levels)
+    branch_name = (
+        "low_world_level"
+        if world_level < initializer.world_level_threshold
+        else "high_world_level"
+    )
+    branch_expression = (
+        initializer.low_world_level_expression
+        if branch_name == "low_world_level"
+        else initializer.high_world_level_expression
+    )
+    engine_binding_sources: list[dict[str, object]] = []
+    for expression in (
+        initializer.low_world_level_expression,
+        initializer.high_world_level_expression,
+    ):
+        binding_source, reason = special_resource_initializer_numeric_binding_source(
+            expression,
+            initializer.zero_floor_dynamic_hash,
+        )
+        if binding_source is None:
+            raise ValueError(
+                f"unit {unit.unit_id}: special-resource maximum source blocked: {reason}"
+            )
+        engine_binding_sources.append(binding_source)
+    if engine_binding_sources[0] != engine_binding_sources[1]:
+        raise ValueError(
+            f"unit {unit.unit_id}: special-resource maximum engine source conflict"
+        )
+    evaluator = RuleEvaluator()
+    maximum_branch_result = evaluator.evaluate_numeric(
+        branch_expression,
+        NumericEvaluationContext(
+            dynamic_values={str(initializer.level_dynamic_hash): float(source_level)},
+            binding_sources=(engine_binding_sources[0],),
+            source_trace=initializer.source.to_json(),
+        ),
+    )
+    if not maximum_branch_result.ok or maximum_branch_result.value is None:
+        raise ValueError(
+            f"unit {unit.unit_id}: special-resource maximum expression blocked: "
+            f"{maximum_branch_result.blocked_reason}"
+        )
+    minimum_result = evaluator.evaluate_numeric(
+        initializer.minimum_expression,
+        NumericEvaluationContext(source_trace=initializer.source.to_json()),
+    )
+    if not minimum_result.ok or minimum_result.value is None:
+        raise ValueError(
+            f"unit {unit.unit_id}: special-resource minimum expression blocked: "
+            f"{minimum_result.blocked_reason}"
+        )
+    maximum_value = max(maximum_branch_result.value, minimum_result.value)
+    initial_result = evaluator.evaluate_numeric(
+        initializer.initial_current_expression,
+        NumericEvaluationContext(
+            dynamic_values={
+                str(initializer.maximum_value_dynamic_hash): maximum_value,
+                str(initializer.initial_current_binding_hash): float(
+                    Decimal(initializer.initial_current_binding_value)
+                ),
+            },
+            source_trace=initializer.source.to_json(),
+        ),
+    )
+    if not initial_result.ok or initial_result.value is None:
+        raise ValueError(
+            f"unit {unit.unit_id}: special-resource initial expression blocked: "
+            f"{initial_result.blocked_reason}"
+        )
+    current_value = initial_result.value
+    if (
+        not Decimal(str(maximum_value)).is_finite()
+        or not Decimal(str(current_value)).is_finite()
+        or maximum_value <= 0
+        or current_value < 0
+        or current_value > maximum_value
+    ):
+        raise ValueError(
+            f"unit {unit.unit_id}: special-resource initialized values violate bounds"
+        )
+    engine_traces = tuple(
+        dict(entry.get("source_trace") or {})
+        for entry in engine_binding_sources[0].get("entries", {}).values()
+        if isinstance(entry, dict) and isinstance(entry.get("source_trace"), dict)
+    )
+    record = SettlementRecord(
+        record_type="special_resource_initialization",
+        source=initializer.initializer_id,
+        payload={
+            "unit_id": unit.unit_id,
+            "resource_definition_id": binding.resource_definition_id,
+            "current_resource_key": binding.current_resource_key,
+            "maximum_resource_key": binding.maximum_resource_key,
+            "current_value": current_value,
+            "maximum_value": maximum_value,
+            "world_level": world_level,
+            "world_level_branch": branch_name,
+            "source_level": source_level,
+            "maximum_evaluation": maximum_branch_result.to_json(),
+            "minimum_evaluation": minimum_result.to_json(),
+            "initial_current_evaluation": initial_result.to_json(),
+        },
+        trace={
+            "source_kind": "canonical_ir_special_resource_initializer",
+            "resource_source": binding.source.to_json(),
+            "initializer_source": initializer.source.to_json(),
+            "initial_current_trigger": initializer.initial_current_trigger,
+            "engine_binding_source_count": len(engine_traces),
+        },
+    ).to_json()
+    return SpecialResourceInitialization(
+        current_value=current_value,
+        maximum_value=maximum_value,
+        record=record,
+        source_traces=(initializer.source.to_json(), *engine_traces),
+    )
+
+
+def _unit_spec_starts_alive(unit: UnitSpec) -> bool:
+    if unit.build_mode == "assembled_character_build":
+        return bool(unit.initial_condition and unit.initial_condition.hp_mode == "full")
+    panel = unit.panel
+    if panel is None:
+        return False
+    if panel.hp is not None:
+        return panel.hp > 0
+    if panel.hp_ratio is not None:
+        return panel.hp_ratio > 0 and panel.max_hp > 0
+    return panel.max_hp > 0
 
 
 def _validate_route_units_after_setup(scenario: ScenarioSpec, state: BattleState) -> tuple[str, ...]:
@@ -1658,6 +1948,7 @@ def _formal_character_activation(
     flags: dict[str, Any] = {
         "build_mode": "assembled_character_build",
         "character_data_card_id": unit.character_build.character_card_id,
+        "character_build_id": assembly.build_id,
         "character_build_input_fingerprint": assembly.input_fingerprint,
         "character_build_result_fingerprint": assembly.result_fingerprint,
         "character_build_battle_admission_status": assembly.battle_admission_status,
@@ -1682,6 +1973,18 @@ def _formal_character_activation(
                 "source": level.action_definition_source.to_json(),
             }
             for level in assembly.effective_skill_levels
+        },
+        "owned_combatant_build_results": {
+            item.servant_definition_id: item.to_json()
+            for item in assembly.owned_combatant_results
+        },
+        "owned_combatant_build_result_fingerprints": {
+            item.servant_definition_id: item.result_fingerprint
+            for item in assembly.owned_combatant_results
+        },
+        "character_resource_bindings": {
+            item.resource_definition_id: item.to_json()
+            for item in assembly.resource_bindings
         },
     }
     card = rules.character_data_card(unit.character_build.character_card_id)

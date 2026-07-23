@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
+from ..builds.models import OwnedCombatantBuildAssemblyResult
 from ..core.model import JSONValue, UnitState
 from ..core.unit_state_codec import unit_state_from_payload
 from ..rules.ir import UnitBirthTemplateIR
@@ -292,6 +294,16 @@ def _template_request_blocked_reason(
     owner_entity_ref = str(template.request_contract.get("owner_entity_ref") or "")
     if owner_entity_ref and (owner is None or owner.template_id != owner_entity_ref):
         return "unit_birth_template_owner_entity_ref_mismatch"
+    owner_entity_refs = template.request_contract.get("owner_entity_refs")
+    if owner_entity_refs is not None:
+        if (
+            not isinstance(owner_entity_refs, (list, tuple))
+            or not owner_entity_refs
+            or not all(isinstance(item, str) and item for item in owner_entity_refs)
+        ):
+            return "unit_birth_template_owner_entity_refs_invalid"
+        if owner is None or owner.template_id not in owner_entity_refs:
+            return "unit_birth_template_owner_entity_ref_mismatch"
     source_role = str(template.request_contract.get("template_source_role") or "")
     expected_source_role = "source" if request.spawn_kind == "wave_enemy" else "entry"
     if source_role != expected_source_role:
@@ -435,6 +447,87 @@ def _resolve_spec(
         if owner.side in {"ally", "enemy"}:
             return owner.side
         return "neutral"
+    if kind == "owner_relation":
+        if owner is None:
+            raise ValueError("unit_birth_binding_owner_missing")
+        relations = spec.get("relations")
+        if not isinstance(relations, list):
+            raise ValueError("unit_birth_binding_owner_relations_missing")
+        matches = tuple(
+            relation
+            for relation in relations
+            if isinstance(relation, dict)
+            and relation.get("owner_entity_ref") == owner.template_id
+            and relation.get("coverage_status") == "executable"
+        )
+        if len(matches) != 1:
+            raise ValueError("unit_birth_binding_owner_relation_not_unique")
+        return _json_copy(matches[0])
+    if kind == "owner_owned_combatant_build":
+        definition_id = str(spec.get("servant_definition_id") or "")
+        return _owned_combatant_result(owner, definition_id).to_json()
+    if kind == "owned_combatant_stat":
+        definition_id = str(spec.get("servant_definition_id") or "")
+        property_type = str(spec.get("property_type") or "")
+        result = _owned_combatant_result(owner, definition_id)
+        return _resolve_owned_combatant_stat(
+            owner,
+            result,
+            property_type,
+            inactive_value=spec.get("inactive_value"),
+        )
+    if kind == "owned_combatant_runtime_stat_values":
+        definition_id = str(spec.get("servant_definition_id") or "")
+        result = _owned_combatant_result(owner, definition_id)
+        values = {
+            binding.property_type: _resolve_owned_combatant_stat(
+                owner,
+                result,
+                binding.property_type,
+                inactive_value=(
+                    0.0 if binding.binding_kind == "inactive_schema_slot" else None
+                ),
+            )
+            for binding in result.stat_bindings
+        }
+        return {
+            "owned_build_id": result.owned_build_id,
+            "owned_build_fingerprint": result.result_fingerprint,
+            "materialized_values": values,
+            "stat_bindings": [binding.to_json() for binding in result.stat_bindings],
+        }
+    if kind == "owned_combatant_damage_stat_admission":
+        definition_id = str(spec.get("servant_definition_id") or "")
+        result = _owned_combatant_result(owner, definition_id)
+        required = ("attack", "defense", "critical_chance", "critical_damage")
+        bindings = {
+            property_type: _owned_combatant_stat_binding(result, property_type)
+            for property_type in required
+        }
+        if any(
+            binding.binding_kind == "inactive_schema_slot"
+            for binding in bindings.values()
+        ):
+            raise ValueError("unit_birth_binding_damage_stat_inactive")
+        values = {
+            property_type: _resolve_owned_combatant_stat(
+                owner,
+                result,
+                property_type,
+            )
+            for property_type in required
+        }
+        return {
+            "coverage_status": "executable",
+            "owned_build_id": result.owned_build_id,
+            "owned_build_fingerprint": result.result_fingerprint,
+            "servant_definition_id": result.servant_definition_id,
+            "required_property_types": list(required),
+            "materialized_values": values,
+            "stat_bindings": [
+                bindings[property_type].to_json() for property_type in required
+            ],
+        }
     if kind == "timeline_trace":
         speed = _strict_number(fields.get("speed"))
         action_value = _strict_number(fields.get("action_value"))
@@ -449,17 +542,120 @@ def _resolve_spec(
             "delay_ratio": multiplier,
             "initial_action_value": action_value,
         }
-    if kind == "servant_runtime_stat_values":
-        if owner is None:
-            raise ValueError("unit_birth_binding_owner_missing")
-        return {
-            "max_hp": fields.get("max_hp"),
-            "speed": fields.get("speed"),
-            "attack": fields.get("attack"),
-            "defense": fields.get("defense"),
-            **{key: _json_copy(value) for key, value in spec.items() if key != "binding_kind"},
-        }
     raise ValueError(f"unit_birth_binding_kind_unsupported:{kind}")
+
+
+def _owned_combatant_result(
+    owner: UnitState | None,
+    definition_id: str,
+) -> OwnedCombatantBuildAssemblyResult:
+    if owner is None:
+        raise ValueError("unit_birth_binding_owner_missing")
+    raw_results = owner.flags.get("owned_combatant_build_results")
+    if not definition_id or not isinstance(raw_results, dict):
+        raise ValueError("unit_birth_binding_owned_combatant_build_missing")
+    raw_result = raw_results.get(definition_id)
+    try:
+        result = OwnedCombatantBuildAssemblyResult.from_json(raw_result)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"unit_birth_binding_owned_combatant_build_invalid:{exc}"
+        ) from exc
+    if (
+        result.servant_definition_id != definition_id
+        or result.owner_entity_ref != owner.template_id
+        or result.battle_admission_status != "admitted"
+    ):
+        raise ValueError("unit_birth_binding_owned_combatant_build_not_admitted")
+    expected_fingerprints = owner.flags.get(
+        "owned_combatant_build_result_fingerprints"
+    )
+    if (
+        not isinstance(expected_fingerprints, dict)
+        or expected_fingerprints.get(definition_id) != result.result_fingerprint
+    ):
+        raise ValueError("unit_birth_binding_owned_combatant_build_fingerprint_mismatch")
+    return result
+
+
+def _owned_combatant_stat_binding(
+    result: OwnedCombatantBuildAssemblyResult,
+    property_type: str,
+):
+    if not property_type:
+        raise ValueError("unit_birth_binding_owned_combatant_property_missing")
+    matches = tuple(
+        binding
+        for binding in result.stat_bindings
+        if binding.property_type == property_type
+    )
+    if len(matches) != 1:
+        raise ValueError(
+            f"unit_birth_binding_owned_combatant_stat_not_unique:{property_type}"
+        )
+    return matches[0]
+
+
+def _resolve_owned_combatant_stat(
+    owner: UnitState | None,
+    result: OwnedCombatantBuildAssemblyResult,
+    property_type: str,
+    *,
+    inactive_value: JSONValue = None,
+) -> float:
+    if owner is None:
+        raise ValueError("unit_birth_binding_owner_missing")
+    binding = _owned_combatant_stat_binding(result, property_type)
+    if binding.binding_kind == "owner_linear":
+        owner_value = _strict_number(getattr(owner, binding.owner_field, None))
+        scale = _finite_decimal_number(binding.scale)
+        offset = _finite_decimal_number(binding.offset)
+        if owner_value is None or scale is None or offset is None:
+            raise ValueError(
+                f"unit_birth_binding_owned_combatant_owner_linear_invalid:{property_type}"
+            )
+        return owner_value * scale + offset
+    if binding.binding_kind == "owner_field":
+        value = _strict_number(getattr(owner, binding.owner_field, None))
+        if value is None:
+            raise ValueError(
+                f"unit_birth_binding_owned_combatant_owner_field_invalid:{property_type}"
+            )
+        return value
+    if binding.binding_kind == "owner_resource":
+        value = _strict_number(owner.resources.get(binding.owner_field))
+        if value is None:
+            raise ValueError(
+                f"unit_birth_binding_owned_combatant_owner_resource_missing:{property_type}"
+            )
+        return value
+    if binding.binding_kind == "fixed":
+        value = _finite_decimal_number(binding.exact_value)
+        if value is None:
+            raise ValueError(
+                f"unit_birth_binding_owned_combatant_fixed_value_invalid:{property_type}"
+            )
+        return value
+    if binding.binding_kind == "inactive_schema_slot":
+        value = _strict_number(inactive_value)
+        if value is None:
+            raise ValueError(
+                f"unit_birth_binding_owned_combatant_inactive_value_missing:{property_type}"
+            )
+        return value
+    raise ValueError(
+        f"unit_birth_binding_owned_combatant_stat_kind_unsupported:{binding.binding_kind}"
+    )
+
+
+def _finite_decimal_number(value: str | None) -> float | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        number = float(value)
+    except ValueError:
+        return None
+    return number if math.isfinite(number) else None
 
 
 def _request_field(request: UnitSpawnRequest, field_name: str) -> JSONValue:

@@ -256,7 +256,18 @@ def _servant_definition_contract(ir: CanonicalIR, rules: RuleBook, s0_matrix: di
     required_fields = {
         "servant_definition_id": lambda item: bool(item.servant_definition_id),
         "servant_ref": lambda item: bool(item.servant_ref),
-        "owner_entity_ref": lambda item: bool(item.owner_entity_ref),
+        "owner_relations": lambda item: bool(item.owner_relations)
+        and len({relation.owner_relation_id for relation in item.owner_relations})
+        == len(item.owner_relations)
+        and all(
+            relation.owner_entity_ref
+            and relation.owner_character_card_id
+            and relation.auxiliary_skill_ids
+            and relation.sources
+            and relation.coverage_status == "executable"
+            and all(_source_trace_complete(source) for source in relation.sources)
+            for relation in item.owner_relations
+        ),
         "representation": lambda item: item.representation in {"unit", "component", "blocked"},
         "action_set": lambda item: isinstance(item.action_set, dict),
         "stat_source": lambda item: isinstance(item.stat_source, dict) and _dict_has_source(item.stat_source),
@@ -267,7 +278,23 @@ def _servant_definition_contract(ir: CanonicalIR, rules: RuleBook, s0_matrix: di
     missing = _missing_required_counts(definitions, required_fields)
     by_id_visible = sum(1 for item in definitions if rules.servant_definition(item.servant_definition_id) == item)
     by_ref_visible = sum(1 for item in definitions if rules.servant_definition(item.servant_ref) == item)
-    by_owner_visible = sum(1 for item in definitions if item in rules.servant_definitions_for_owner(item.owner_entity_ref))
+    by_owner_visible = sum(
+        1
+        for item in definitions
+        if item.owner_entity_refs
+        and all(
+            item in rules.servant_definitions_for_owner(owner_entity_ref)
+            for owner_entity_ref in item.owner_entity_refs
+        )
+    )
+    owner_relation_count = sum(
+        len(item.owner_entity_refs) for item in definitions
+    )
+    owner_relation_visible_count = sum(
+        item in rules.servant_definitions_for_owner(owner_entity_ref)
+        for item in definitions
+        for owner_entity_ref in item.owner_entity_refs
+    )
     action_set_visible = sum(1 for item in definitions if rules.combatant_action_set(item.servant_ref) is not None)
     binding_ids = tuple(binding_id for definition in definitions for binding_id in definition.ability_graph_ids)
     binding_visible = sum(1 for binding_id in binding_ids if rules.action_ability_binding_by_id(binding_id) is not None)
@@ -299,6 +326,8 @@ def _servant_definition_contract(ir: CanonicalIR, rules: RuleBook, s0_matrix: di
             "ability_graph_binding_count": len(binding_ids),
             "ability_graph_binding_visible_count": binding_visible,
             "blocked_without_reason": blocked_without_reason,
+            "owner_relation_count": owner_relation_count,
+            "owner_relation_visible_count": owner_relation_visible_count,
         },
     )
 

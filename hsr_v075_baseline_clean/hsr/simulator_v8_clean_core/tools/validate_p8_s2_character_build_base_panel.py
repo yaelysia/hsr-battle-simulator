@@ -1954,7 +1954,7 @@ def run_validation(package_root: Path, tbgd_root: Path, output_dir: Path) -> dic
             "executable_avatar_profile_count": sum(
                 profile.coverage_status == "executable" for profile in ir.avatar_profiles
             ),
-            "explicit_special_resource_blocked_profile_count": sum(
+            "typed_special_resource_profile_count": sum(
                 profile.resource_mode == "special_resource"
                 for profile in ir.avatar_profiles
             ),
@@ -2114,21 +2114,32 @@ def _source_projection_checks(
                 and profile.coverage_status == "executable"
             )
             or (
-                profile.coverage_status == "blocked"
+                profile.resource_mode == "special_resource"
                 and profile.max_energy is None
                 and profile.max_energy_source is None
+                and profile.special_resource_source is not None
                 and (
                     (
-                        profile.resource_mode == "special_resource"
-                        and profile.special_resource_source is not None
-                        and "special_resource_source_present" in profile.blocked_reason
+                        profile.coverage_status == "executable"
+                        and profile.special_resource_definition is not None
+                        and profile.special_resource_definition.coverage_status
+                        == "executable"
+                        and profile.special_resource_definition.source
+                        == profile.special_resource_source
                     )
                     or (
-                        profile.resource_mode == "source_missing"
-                        and profile.special_resource_source is None
-                        and "energy_source_missing" in profile.blocked_reason
+                        profile.coverage_status == "blocked"
+                        and bool(profile.blocked_reason)
                     )
                 )
+            )
+            or (
+                profile.coverage_status == "blocked"
+                and profile.resource_mode == "source_missing"
+                and profile.max_energy is None
+                and profile.max_energy_source is None
+                and profile.special_resource_source is None
+                and "energy_source_missing" in profile.blocked_reason
             )
             for profile in ir.avatar_profiles
         ),
@@ -2232,6 +2243,8 @@ def _boundary_checks(
                 "critical_damage",
                 "base_aggro",
                 "additional_resources",
+                "resource_mode",
+                "special_resource_binding",
             }
             for result in results
         ),
@@ -2262,20 +2275,27 @@ def _model_contract_checks(
     contribution_values = list(base_result.contribution_ledger)
     skill_level_values = list(base_result.effective_skill_levels)
     mechanism_values = list(base_result.admitted_dynamic_mechanism_refs)
+    resource_binding_values = list(base_result.resource_bindings)
+    owned_combatant_values = list(base_result.owned_combatant_results)
     detached_result = CharacterBuildAssemblyResult(
         assembly_status="assembled",
         battle_admission_status="admitted",
         input_fingerprint=base_result.input_fingerprint,
+        build_id=base_result.build_id,
         base_panel=base_result.base_panel,
         contribution_ledger=contribution_values,
         effective_skill_levels=skill_level_values,
         admitted_dynamic_mechanism_refs=mechanism_values,
+        resource_bindings=resource_binding_values,
+        owned_combatant_results=owned_combatant_values,
         equipment_assembly_result=base_result.equipment_assembly_result,
     )
     detached_json = detached_result.to_json()
     contribution_values.clear()
     skill_level_values.clear()
     mechanism_values.clear()
+    resource_binding_values.clear()
+    owned_combatant_values.clear()
     damaged_build = dict(base_build.to_json())
     damaged_build["input_fingerprint"] = "0" * 64
     damaged_result = dict(base_result.to_json())

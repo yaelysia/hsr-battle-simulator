@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter, defaultdict
+from collections.abc import Mapping
 from dataclasses import replace
 from math import isclose
 from pathlib import Path
@@ -142,7 +143,11 @@ SUMMARY_SCHEMA_VERSION = (
 )
 
 
-def _focused_bundle(tbgd_root: Path) -> dict[str, Any]:
+def _focused_bundle(
+    tbgd_root: Path,
+    *,
+    include_owned_combatant_catalog: bool = False,
+) -> dict[str, Any]:
     """Build exactly one focused equipment RuleBook from current source.
 
     S7 supplies the already-lowered status/callback graph.  S8 rebuilds the
@@ -151,6 +156,11 @@ def _focused_bundle(tbgd_root: Path) -> dict[str, Any]:
     versions.  No full CanonicalIR serialization is performed.
     """
 
+    owned_combatant_catalog = (
+        _production_owned_combatant_catalog(tbgd_root)
+        if include_owned_combatant_catalog
+        else None
+    )
     base = _s7_focused_bundle(tbgd_root)
     lowering = TBGDLowering(tbgd_root)
     lowered = lowering._lower_equipment_ability_graphs(
@@ -260,6 +270,35 @@ def _focused_bundle(tbgd_root: Path) -> dict[str, Any]:
             "validation_scope": "p8_s8_focused_equipment_gameplay_closure",
         },
     )
+    if owned_combatant_catalog is not None:
+        ir = replace(
+            ir,
+            servant_definitions=owned_combatant_catalog[
+                "servant_definitions"
+            ],
+            action_definitions=tuple(
+                sorted(
+                    (
+                        *ir.action_definitions,
+                        *owned_combatant_catalog["action_definitions"],
+                    ),
+                    key=lambda item: (
+                        item.action_id,
+                        item.level,
+                        item.definition_id,
+                    ),
+                )
+            ),
+            action_ability_bindings=owned_combatant_catalog[
+                "action_ability_bindings"
+            ],
+            action_admissions=owned_combatant_catalog[
+                "action_admissions"
+            ],
+            unit_birth_templates=owned_combatant_catalog[
+                "unit_birth_templates"
+            ],
+        )
     return {
         **base,
         "definitions": definitions,
@@ -272,6 +311,70 @@ def _focused_bundle(tbgd_root: Path) -> dict[str, Any]:
         "battle_state_transitions": tuple(battle_state_transitions),
         "ir": ir,
         "rules": RuleBook(ir),
+        "owned_combatant_catalog": owned_combatant_catalog or {},
+    }
+
+
+def _production_owned_combatant_catalog(
+    tbgd_root: Path,
+) -> dict[str, Any]:
+    production_ir = TBGDLowering(tbgd_root).build()
+    servant_definitions = tuple(production_ir.servant_definitions)
+    servant_action_ids: set[str] = set()
+    for definition in servant_definitions:
+        skill_index_map = definition.action_set.get("skill_index_map")
+        if not isinstance(skill_index_map, Mapping):
+            continue
+        servant_action_ids.update(
+            str(entry.get("action_ref") or "")
+            for entry in skill_index_map.values()
+            if isinstance(entry, Mapping)
+            and str(entry.get("action_ref") or "")
+        )
+    birth_template_ids = {
+        definition.birth_template_id
+        for definition in servant_definitions
+        if definition.birth_template_id
+    }
+    servant_refs = {
+        definition.servant_ref
+        for definition in servant_definitions
+        if definition.servant_ref
+    }
+    return {
+        "servant_definitions": servant_definitions,
+        "action_definitions": tuple(
+            definition
+            for definition in production_ir.action_definitions
+            if definition.action_id in servant_action_ids
+        ),
+        "action_ability_bindings": tuple(
+            binding
+            for binding in production_ir.action_ability_bindings
+            if binding.action_id in servant_action_ids
+        ),
+        "action_admissions": tuple(
+            admission
+            for admission in production_ir.action_admissions
+            if admission.owner_entity_ref in servant_refs
+            and admission.action_id in servant_action_ids
+        ),
+        "unit_birth_templates": tuple(
+            template
+            for template in production_ir.unit_birth_templates
+            if template.birth_template_id in birth_template_ids
+        ),
+        "counts": {
+            "servant_definition_count": len(servant_definitions),
+            "servant_action_id_count": len(servant_action_ids),
+            "servant_action_admission_count": sum(
+                1
+                for admission in production_ir.action_admissions
+                if admission.owner_entity_ref in servant_refs
+                and admission.action_id in servant_action_ids
+            ),
+            "servant_birth_template_count": len(birth_template_ids),
+        },
     }
 
 
@@ -339,6 +442,20 @@ def _empty_character_build_path_inventory(bundle: dict[str, Any]) -> dict[str, A
                 "blocked_reasons": list(result.blocked_reasons),
                 "diagnostic_reasons": list(diagnostic_reasons),
                 "equipment_admitted": equipment_admitted,
+                "owned_combatant_results": [
+                    {
+                        "owned_build_id": owned.owned_build_id,
+                        "servant_definition_id": (
+                            owned.servant_definition_id
+                        ),
+                        "assembly_status": owned.assembly_status,
+                        "battle_admission_status": (
+                            owned.battle_admission_status
+                        ),
+                        "blocked_reasons": list(owned.blocked_reasons),
+                    }
+                    for owned in result.owned_combatant_results
+                ],
                 "owned_combatant_build_dependency": (
                     owned_combatant_build_dependency
                 ),
@@ -4338,7 +4455,10 @@ def run_resource_event_validation(
     """Bounded S8 resource-event slice; never runs the other S8 matrices."""
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    bundle = _focused_bundle(tbgd_root)
+    bundle = _focused_bundle(
+        tbgd_root,
+        include_owned_combatant_catalog=True,
+    )
     empty_task_fail_closed = _empty_executable_task_fail_closed_matrix(bundle)
     cards_by_path = _empty_admitted_cards_by_path(bundle)
     evidence = _authoritative_resource_event_evidence(bundle, cards_by_path)
@@ -4396,6 +4516,11 @@ def run_resource_event_validation(
         "predicates": predicates,
         "resource_scope": {
             "focused_rulebook_build_count": 1,
+            "production_owned_combatant_catalog_lowering_count": 1,
+            "lowering_execution_mode": "serial",
+            "owned_combatant_catalog_counts": bundle[
+                "owned_combatant_catalog"
+            ].get("counts", {}),
             "full_s8_matrices_executed": False,
             "full_canonical_ir_serialized": False,
             "large_artifacts_written": False,
@@ -4419,7 +4544,10 @@ def run_catalog_startup_validation(
     """Bounded catalog startup slice; skips every S8 family execution matrix."""
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    bundle = _focused_bundle(tbgd_root)
+    bundle = _focused_bundle(
+        tbgd_root,
+        include_owned_combatant_catalog=True,
+    )
     path_inventory = _empty_character_build_path_inventory(bundle)
     startups = _catalog_startup_matrix(
         bundle,
@@ -4461,6 +4589,11 @@ def run_catalog_startup_validation(
         ],
         "resource_scope": {
             "focused_rulebook_build_count": 1,
+            "production_owned_combatant_catalog_lowering_count": 1,
+            "lowering_execution_mode": "serial",
+            "owned_combatant_catalog_counts": bundle[
+                "owned_combatant_catalog"
+            ].get("counts", {}),
             "full_s8_matrices_executed": False,
             "full_canonical_ir_serialized": False,
             "large_artifacts_written": False,
@@ -4565,7 +4698,10 @@ def run_task_contract_validation(
     """Bounded task/property slice; skips catalog and unrelated S8 matrices."""
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    bundle = _focused_bundle(tbgd_root)
+    bundle = _focused_bundle(
+        tbgd_root,
+        include_owned_combatant_catalog=True,
+    )
     partition = _partition_matrix(bundle)
     path_inventory = _empty_character_build_path_inventory(bundle)
     formal = _formal_scenario_matrix(bundle)
@@ -4659,7 +4795,10 @@ def run_event_contract_validation(
     """Bounded event slice; skips catalog, task/property and coverage matrices."""
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    bundle = _focused_bundle(tbgd_root)
+    bundle = _focused_bundle(
+        tbgd_root,
+        include_owned_combatant_catalog=True,
+    )
     partition = _partition_matrix(bundle)
     path_inventory = _empty_character_build_path_inventory(bundle)
     cards_by_path = path_inventory["cards_by_path"]
@@ -8685,7 +8824,10 @@ def run_validation(tbgd_root: Path, output_dir: Path) -> dict[str, Any]:
     """Build one focused RuleBook and emit only bounded S8 evidence."""
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    bundle = _focused_bundle(tbgd_root)
+    bundle = _focused_bundle(
+        tbgd_root,
+        include_owned_combatant_catalog=True,
+    )
     empty_task_fail_closed = _empty_executable_task_fail_closed_matrix(bundle)
     partition = _partition_matrix(bundle)
     graphs = _graph_matrix(bundle)

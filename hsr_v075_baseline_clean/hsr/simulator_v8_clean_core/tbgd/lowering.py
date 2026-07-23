@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import base64
+import math
 import re
 from collections import Counter
 from dataclasses import dataclass, field, replace
@@ -9,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from ..dynamic_key_hash import tbgd_dynamic_key_hash
-from .coverage import classify_opcode
+from .coverage import ability_task_execution_mode, classify_opcode
 from .character_cards import build_character_card_ir
 from .equipment_ability_families import (
     classify_equipment_callback,
@@ -40,6 +41,7 @@ from ..rules.evaluator import NumericEvaluationContext, RuleEvaluator
 from ..rules.engine_rule_registry import build_engine_rule_registry
 from ..rules.expression_ir import (
     CONDITION_EXPRESSION_NODE_SCHEMA,
+    NUMERIC_EXPRESSION_SCHEMA,
     TARGET_EXPRESSION_NODE_SCHEMA,
     is_typed_numeric_expression,
     numeric_dynamic_hashes,
@@ -65,7 +67,9 @@ from ..rules.ir import (
     BouncePolicyIR,
     CanonicalIR,
     CharacterDataCardIR,
+    CharacterEidolonSlotIR,
     CharacterMechanismSlotIR,
+    CharacterTraceNodeIR,
     CombatantActionSetIR,
     CombatantProfileIR,
     ConditionIR,
@@ -97,6 +101,7 @@ from ..rules.ir import (
     StatusCallbackTaskIR,
     StatusDamageEmissionIR,
     ServantDefinitionIR,
+    ServantOwnerRelationIR,
     SummonMonsterEntryIR,
     SummonMonsterIntentIR,
     SummonUnitDefinitionIR,
@@ -370,6 +375,13 @@ class TBGDLowering:
             ability_tasks,
             skill_formula_bindings,
         )
+        skill_formula_bindings.extend(
+            self._lower_servant_damage_formula_bindings(
+                action_definitions,
+                ability_tasks,
+                ability_task_effects,
+            )
+        )
         effects.extend(ability_task_effects)
         conditions.extend(ability_task_conditions)
         formulas.extend(ability_task_formulas)
@@ -479,6 +491,7 @@ class TBGDLowering:
             ability_tasks,
             effects,
             standalone_ability_graphs,
+            ability_phases,
         )
         standalone_task_ids = {task.task_id for task in standalone_tasks}
         linked_standalone_tasks = [task for task in ability_tasks if task.task_id in standalone_task_ids]
@@ -509,6 +522,12 @@ class TBGDLowering:
                 standalone_effects,
                 standalone_hit_profiles,
             )
+        )
+        ability_tasks = _admit_damage_ability_tasks(
+            ability_tasks,
+            damage_emissions,
+            toughness_emissions,
+            hit_profiles,
         )
         character_mechanism_slots = _admit_trace_startup_ability_slots(
             character_mechanism_slots,
@@ -584,6 +603,15 @@ class TBGDLowering:
         servant_definitions = self._lower_servant_definitions(
             combatant_action_sets,
             action_ability_bindings,
+            character_data_cards=character_data_cards,
+            character_trace_nodes=character_trace_nodes,
+            character_eidolon_slots=character_eidolon_slots,
+            character_mechanism_slots=character_mechanism_slots,
+            action_admissions=action_admissions,
+            spawn_sources_by_servant=_discover_servant_spawn_sources(
+                self.tbgd_root,
+                selected_ability_files,
+            ),
             replacement_policies=_discover_servant_replacement_policies(
                 self.tbgd_root,
                 selected_ability_files,
@@ -596,6 +624,11 @@ class TBGDLowering:
             combatant_profiles=combatant_profiles,
             monster_data_cards=monster_data_cards,
             timeline_rules=timeline_rules,
+        )
+        ability_tasks = _admit_summon_monster_ability_tasks(
+            ability_tasks,
+            summon_monster_intents,
+            unit_birth_templates,
         )
         extra_turn_source_basis = self._extra_turn_source_basis()
         queue_windows = _lower_queue_windows(queue_intents, queue_resolutions, extra_turn_source_basis)
@@ -1548,6 +1581,7 @@ class TBGDLowering:
         definitions_by_action: dict[str, list[ActionDefinitionIR]] = {}
         for definition in definitions:
             definitions_by_action.setdefault(definition.action_id, []).append(definition)
+        servant_skill_rows = self._servant_stat_skill_rows_by_skill_id()
         rows: list[CombatantActionSetIR] = []
         for relative_path, entity_type, id_key, skill_key, config_rows in (
             ("ExcelOutput/AvatarConfig.json", "avatar", "AvatarID", "SkillList", self._avatar_config_rows_prefer_enhanced()),
@@ -1576,6 +1610,16 @@ class TBGDLowering:
                 skills = row.get(skill_key)
                 if not isinstance(skills, list):
                     skills = []
+                servant_character_path = (
+                    str(row.get("Config") or "")
+                    if entity_type == "servant"
+                    else ""
+                )
+                servant_character_config = (
+                    self._read_json_dict(servant_character_path)
+                    if servant_character_path
+                    else None
+                )
                 skill_index_map: dict[str, JSONValue] = {}
                 for index, skill_id in enumerate(skills):
                     if entity_type == "avatar":
@@ -1599,6 +1643,83 @@ class TBGDLowering:
                             if entity_type == "servant" and candidate_definitions
                             else "action_definition_missing_for_skill"
                         )
+                    role_source: dict[str, JSONValue] = {}
+                    if entity_type == "servant" and servant_character_config is not None:
+                        trigger_keys = {
+                            str(
+                                definition.source.evidence.get(
+                                    "skill_trigger_key"
+                                )
+                                or ""
+                            )
+                            for definition in compatible_definitions
+                        }
+                        trigger_keys.discard("")
+                        servant_skill_row = servant_skill_rows.get(str(skill_id))
+                        raw_trigger_key = (
+                            str(servant_skill_row.get("SkillTriggerKey") or "")
+                            if servant_skill_row is not None
+                            else ""
+                        )
+                        if raw_trigger_key:
+                            trigger_keys.add(raw_trigger_key)
+                        if len(trigger_keys) == 1:
+                            trigger_key = next(iter(trigger_keys))
+                            skill_config = _skill_config_by_name(
+                                servant_character_config,
+                                trigger_key,
+                            )
+                            if skill_config is not None:
+                                role_source = {
+                                    "skill_trigger_key": trigger_key,
+                                    "skill_type": str(
+                                        skill_config.get("SkillType") or ""
+                                    ),
+                                    "use_type": str(
+                                        skill_config.get("UseType") or ""
+                                    ),
+                                    "entry_ability": str(
+                                        skill_config.get("EntryAbility") or ""
+                                    ),
+                                    "skill_record_source_trace": (
+                                        IRSource(
+                                            source_path=str(
+                                                servant_skill_row.get("_v8_source_path")
+                                                or "ExcelOutput/AvatarServantSkillConfig.json"
+                                            ),
+                                            raw_type="AvatarServantSkillConfig",
+                                            raw_id=f"{skill_id}:{servant_skill_row.get('Level')}",
+                                            evidence={
+                                                "row_index": int(
+                                                    servant_skill_row.get("_v8_row_index", -1)
+                                                ),
+                                                "servant_ref": f"servant:{raw_id}",
+                                                "skill_trigger_key": raw_trigger_key,
+                                                "classification": "combatant_action_role_trigger_source",
+                                            },
+                                        ).to_json()
+                                        if servant_skill_row is not None
+                                        else {}
+                                    ),
+                                    "source_trace": IRSource(
+                                        source_path=servant_character_path,
+                                        raw_type="ServantSkillConfig",
+                                        raw_id=trigger_key,
+                                        evidence={
+                                            "servant_ref": f"servant:{raw_id}",
+                                            "skill_id": str(skill_id),
+                                            "action_ref": action_ref,
+                                            "classification": (
+                                                "combatant_action_role_source"
+                                            ),
+                                        },
+                                    ).to_json(),
+                                }
+                    servant_action_role = (
+                        _servant_action_slot_role(role_source)
+                        if entity_type == "servant"
+                        else ""
+                    )
                     skill_index_map[str(index)] = {
                         "skill_id": str(skill_id),
                         "action_ref": action_ref,
@@ -1606,11 +1727,54 @@ class TBGDLowering:
                         "default_level": levels[-1] if levels else None,
                         "coverage_status": "executable" if levels else "blocked",
                         "blocked_reason": blocked_reason,
+                        "role_source": role_source,
+                        "servant_action_role": servant_action_role,
                     }
-                coverage_status = "executable" if any(
-                    isinstance(item, dict) and item.get("coverage_status") == "executable"
-                    for item in skill_index_map.values()
-                ) else "blocked"
+                action_set_blocked_reason = ""
+                if entity_type == "servant":
+                    unclassified_slots = [
+                        slot
+                        for slot, item in skill_index_map.items()
+                        if not isinstance(item, dict)
+                        or item.get("servant_action_role") == "unknown"
+                    ]
+                    required_slots = [
+                        slot
+                        for slot, item in skill_index_map.items()
+                        if isinstance(item, dict)
+                        and item.get("servant_action_role") == "required_action"
+                    ]
+                    blocked_required_slots = [
+                        slot
+                        for slot in required_slots
+                        if not isinstance(skill_index_map.get(slot), dict)
+                        or skill_index_map[slot].get("coverage_status") != "executable"  # type: ignore[union-attr]
+                    ]
+                    if unclassified_slots:
+                        action_set_blocked_reason = (
+                            "servant_action_slots_unclassified:"
+                            + ",".join(unclassified_slots)
+                        )
+                    elif not required_slots:
+                        action_set_blocked_reason = "servant_required_action_slots_missing"
+                    elif blocked_required_slots:
+                        action_set_blocked_reason = (
+                            "servant_required_action_slots_blocked:"
+                            + ",".join(blocked_required_slots)
+                        )
+                    coverage_status = (
+                        "blocked" if action_set_blocked_reason else "executable"
+                    )
+                else:
+                    coverage_status = "executable" if any(
+                        isinstance(item, dict) and item.get("coverage_status") == "executable"
+                        for item in skill_index_map.values()
+                    ) else "blocked"
+                    action_set_blocked_reason = (
+                        ""
+                        if coverage_status == "executable"
+                        else "combatant_action_set_has_no_executable_actions"
+                    )
                 rows.append(
                     CombatantActionSetIR(
                         combatant_action_set_id=f"combatant_action_set:{entity_type}:{raw_id}",
@@ -1634,7 +1798,7 @@ class TBGDLowering:
                             },
                         ),
                         coverage_status=coverage_status,
-                        blocked_reason="" if coverage_status == "executable" else "combatant_action_set_has_no_executable_actions",
+                        blocked_reason=action_set_blocked_reason,
                     )
                 )
         return rows
@@ -2290,6 +2454,9 @@ class TBGDLowering:
         return result
 
     def _servant_stat_skill_rows_by_skill_id(self) -> dict[str, dict[str, Any]]:
+        cached = getattr(self, "_servant_stat_skill_rows_cache", None)
+        if isinstance(cached, dict):
+            return cached
         rows: dict[str, dict[str, Any]] = {}
         best_levels: dict[str, int] = {}
         for relative_path, _, id_key in (
@@ -2317,6 +2484,7 @@ class TBGDLowering:
                 copied["_v8_row_index"] = row_index
                 best_levels[skill_id] = level
                 rows[skill_id] = copied
+        self._servant_stat_skill_rows_cache = rows
         return rows
 
     def _monster_ability_file_index(self) -> dict[str, tuple[str, ...]]:
@@ -2693,10 +2861,46 @@ class TBGDLowering:
         if not entry_ability or not ability_names:
             return _blocked_action_binding(definition, "missing_servant_entry_ability_or_skill_ability_list", character_path)
         ability_path = _servant_ability_path_from_character_path(character_path)
-        ability_data = ability_file_cache.setdefault(ability_path, self._read_json_dict(ability_path))
+        ability_data = ability_file_cache.setdefault(
+            ability_path,
+            self._read_json_dict(ability_path),
+        )
         if ability_data is None:
-            return _blocked_action_binding(definition, "servant_ability_file_not_readable", ability_path)
-        ability_map = _ability_map(ability_data)
+            return _blocked_action_binding(
+                definition,
+                "servant_ability_file_not_readable",
+                ability_path,
+            )
+        ability_documents: list[tuple[str, dict[str, Any]]] = [
+            (ability_path, ability_data),
+        ]
+        camera_ability_path = _servant_camera_ability_path_from_character_path(
+            character_path
+        )
+        camera_ability_data = ability_file_cache.setdefault(
+            camera_ability_path,
+            self._read_json_dict(camera_ability_path),
+        )
+        if camera_ability_data is not None:
+            ability_documents.append((camera_ability_path, camera_ability_data))
+        ability_map: dict[str, dict[str, Any]] = {}
+        ability_source_paths: dict[str, str] = {}
+        ability_source_documents: dict[str, dict[str, Any]] = {}
+        ambiguous_ability_names: set[str] = set()
+        for source_path, document in ability_documents:
+            for ability_name, ability in _ability_map(document).items():
+                if ability_name in ability_map:
+                    ambiguous_ability_names.add(ability_name)
+                    continue
+                ability_map[ability_name] = ability
+                ability_source_paths[ability_name] = source_path
+                ability_source_documents[ability_name] = document
+        if ambiguous_ability_names:
+            return _blocked_action_binding(
+                definition,
+                "servant_ability_name_ambiguous_across_files",
+                character_path,
+            )
         ability_names = _expand_triggered_ability_names(ability_names, ability_map)
         source_context = _ability_graph_source_context(
             source_mode="mainline_servant",
@@ -2706,7 +2910,7 @@ class TBGDLowering:
             character_config=character_config,
             config_source=servant_config,
             config_kind="servant_config",
-            ability_paths=(ability_path,),
+            ability_paths=tuple(path for path, _document in ability_documents),
             skill_rows_by_trigger_key=_skill_rows_by_trigger_key_for_config(servant_config, servant_skill_rows, skill_row),
             allowed_dynamic_hashes=_dynamic_hashes_for_ability_names(ability_names, ability_map),
         )
@@ -2718,8 +2922,10 @@ class TBGDLowering:
             ability = ability_map.get(ability_name)
             if not isinstance(ability, dict):
                 continue
+            phase_ability_path = ability_source_paths[ability_name]
+            phase_ability_document = ability_source_documents[ability_name]
             source = IRSource(
-                source_path=ability_path,
+                source_path=phase_ability_path,
                 raw_type="AbilityList",
                 raw_id=ability_name,
                 evidence={
@@ -2739,11 +2945,14 @@ class TBGDLowering:
                 phase_id=phase_id,
                 ability_name=ability_name,
                 ability=ability,
-                ability_path=ability_path,
+                ability_path=phase_ability_path,
                 source_context=source_context,
                 target_alias_registry=(
-                    ability_data.get("GlobalTargetAlias")
-                    if isinstance(ability_data.get("GlobalTargetAlias"), dict)
+                    phase_ability_document.get("GlobalTargetAlias")
+                    if isinstance(
+                        phase_ability_document.get("GlobalTargetAlias"),
+                        dict,
+                    )
                     else {}
                 ),
             )
@@ -2778,6 +2987,9 @@ class TBGDLowering:
                 "skill_trigger_key": skill_trigger_key,
                 "entry_ability": entry_ability,
                 "ability_file_path": ability_path,
+                "ability_file_paths": [
+                    path for path, _document in ability_documents
+                ],
                 "missing_ability_names": missing_names,
                 "trigger_expanded_ability_names": ability_names,
             },
@@ -2795,6 +3007,9 @@ class TBGDLowering:
                     "servant_config": _json_safe(servant_config),
                     "character_config_path": character_path,
                     "ability_file_path": ability_path,
+                    "ability_file_paths": [
+                        path for path, _document in ability_documents
+                    ],
                 },
                 phase_ids=tuple(phase.phase_id for phase in binding_phases),
                 source_mode="mainline_servant",
@@ -2964,6 +3179,82 @@ class TBGDLowering:
             )
             return lowered
 
+        if opcode == "LoopExecuteTaskListWithInterval":
+            repeat_expression = lower_numeric_expression(task.get("MaxLoopCount"))
+            repeat_value = _fixed_expr_value(repeat_expression)
+            repeat_count = (
+                int(repeat_value)
+                if repeat_value is not None
+                and repeat_value > 0
+                and repeat_value.is_integer()
+                else 0
+            )
+            child_ids: list[str] = []
+            raw_children = task.get("TaskList")
+            if isinstance(raw_children, list):
+                for child_index, child in enumerate(raw_children):
+                    child_lowered = self._lower_ability_task_tree(
+                        child,
+                        definition=definition,
+                        phase_id=phase_id,
+                        ability_name=ability_name,
+                        ability_path=ability_path,
+                        callback_kind=callback_kind,
+                        task_index=child_index,
+                        task_path=f"{task_path}.TaskList[{child_index}]",
+                        branch="loop",
+                        parent_task_id=task_id,
+                        source_context=source_context,
+                        target_alias_registry=target_alias_registry,
+                    )
+                    lowered.merge(child_lowered)
+                    child_ids.extend(
+                        item.task_id
+                        for item in child_lowered.ability_tasks
+                        if item.parent_task_id == task_id
+                    )
+            if repeat_count <= 0:
+                blocked_reason = "fixed_positive_loop_count_required"
+            elif not child_ids:
+                blocked_reason = "loop_task_list_missing_or_empty"
+            elif not isinstance(raw_children, list) or len(child_ids) != len(raw_children):
+                blocked_reason = "loop_task_list_contains_unlowered_child"
+            else:
+                blocked_reason = ""
+            loop_source = IRSource(
+                source_path=source.source_path,
+                raw_type=source.raw_type,
+                raw_id=source.raw_id,
+                evidence={
+                    **source.evidence,
+                    "repeat_count_expression": _json_safe(repeat_expression),
+                    "repeat_count": repeat_count,
+                    "child_task_count": len(child_ids),
+                },
+            )
+            lowered.ability_tasks.insert(
+                0,
+                AbilityTaskIR(
+                    task_id=task_id,
+                    phase_id=phase_id,
+                    action_id=definition.action_id,
+                    level=definition.level,
+                    ability_name=ability_name,
+                    callback_kind=callback_kind,
+                    task_index=task_index,
+                    task_path=task_path,
+                    branch=branch,
+                    opcode=opcode,
+                    parent_task_id=parent_task_id,
+                    child_task_ids=tuple(child_ids),
+                    repeat_count=repeat_count,
+                    source=loop_source,
+                    coverage_status="executable" if not blocked_reason else "blocked",
+                    blocked_reason=blocked_reason,
+                ),
+            )
+            return lowered
+
         effect_id = f"effect:{task_id}"
         payload = _effect_payload(task, opcode, "")
         payload, task_target_expressions = _attach_target_expressions_to_effect_payload(
@@ -2973,8 +3264,40 @@ class TBGDLowering:
             source=source,
         )
         lowered.target_expressions.extend(task_target_expressions)
-        coverage_status = _effect_coverage_status(opcode, payload)
-        blocked_reason = "" if coverage_status == "executable" else _effect_blocked_reason(opcode, payload, coverage_status)
+        execution_mode = ability_task_execution_mode(opcode)
+        process_only_blocked_reason = (
+            _process_only_ability_task_source_blocked_reason(task, opcode)
+            if execution_mode == "process_only"
+            else ""
+        )
+        if execution_mode == "process_only":
+            payload["process_only_contract"] = {
+                "schema_version": "ability_process_only_source_shape_v1",
+                "opcode": opcode,
+                "source_fields": sorted(task),
+                "source_field_types": {
+                    key: type(value).__name__
+                    for key, value in sorted(task.items())
+                },
+                "source_shape_status": (
+                    "blocked" if process_only_blocked_reason else "admitted"
+                ),
+                "blocked_reason": process_only_blocked_reason,
+            }
+        coverage_status = (
+            "audit_only"
+            if execution_mode == "process_only" and not process_only_blocked_reason
+            else "blocked"
+            if execution_mode == "process_only"
+            else _effect_coverage_status(opcode, payload)
+        )
+        blocked_reason = (
+            process_only_blocked_reason
+            if execution_mode == "process_only"
+            else ""
+            if coverage_status in {"executable", "audit_only"}
+            else _effect_blocked_reason(opcode, payload, coverage_status)
+        )
         lowered.effects.append(
             EffectIR(
                 effect_id=effect_id,
@@ -3001,7 +3324,16 @@ class TBGDLowering:
                 effect_id=effect_id,
                 parent_task_id=parent_task_id,
                 source=source,
-                coverage_status="executable" if coverage_status == "executable" else "blocked",
+                execution_mode=execution_mode,  # type: ignore[arg-type]
+                coverage_status=(
+                    "audit_only"
+                    if execution_mode == "process_only" and not blocked_reason
+                    else "blocked"
+                    if execution_mode == "process_only"
+                    else "executable"
+                    if coverage_status == "executable"
+                    else "blocked"
+                ),
                 blocked_reason=blocked_reason,
             )
         )
@@ -3081,6 +3413,7 @@ class TBGDLowering:
     def _lower_action_definitions(self) -> list[ActionDefinitionIR]:
         definitions: list[ActionDefinitionIR] = []
         monster_target_sources = self._monster_skill_target_mode_sources()
+        servant_target_sources = self._servant_skill_target_sources()
         for relative_path, entity_type, id_key in ACTION_DEFINITION_TABLES:
             path = self.tbgd_root / relative_path
             if not path.exists():
@@ -3100,6 +3433,9 @@ class TBGDLowering:
                     row,
                     monster_target_source=monster_target_sources.get(raw_id)
                     if entity_type == "monster_skill"
+                    else None,
+                    servant_target_source=servant_target_sources.get(raw_id)
+                    if entity_type == "servant_skill"
                     else None,
                 )
                 definitions.append(definition)
@@ -3227,6 +3563,407 @@ class TBGDLowering:
                     result[skill_id] = source
         return result
 
+    def _servant_skill_target_sources(self) -> dict[str, dict[str, Any]]:
+        skill_rows: dict[str, dict[str, Any]] = {}
+        skill_path = self.tbgd_root / "ExcelOutput/AvatarServantSkillConfig.json"
+        if skill_path.exists():
+            try:
+                skill_data = json.loads(skill_path.read_text(encoding="utf-8"))
+            except Exception:
+                skill_data = []
+            if isinstance(skill_data, list):
+                for row_index, row in enumerate(
+                    _limit_sequence(skill_data, self.limits.max_records_per_table)
+                ):
+                    if not isinstance(row, dict) or row.get("SkillID") is None:
+                        continue
+                    skill_id = str(row["SkillID"])
+                    trigger_key = str(row.get("SkillTriggerKey") or "")
+                    existing = skill_rows.get(skill_id)
+                    if existing is None:
+                        skill_rows[skill_id] = {
+                            "skill_trigger_key": trigger_key,
+                            "row_index": row_index,
+                        }
+                    elif existing.get("skill_trigger_key") != trigger_key:
+                        existing["skill_trigger_key"] = ""
+                        existing["blocked_reason"] = "servant_skill_trigger_key_conflict"
+
+        config_path = self.tbgd_root / "ExcelOutput/AvatarServantConfig.json"
+        if not config_path.exists():
+            return {}
+        try:
+            servant_data = json.loads(config_path.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+        if not isinstance(servant_data, list):
+            return {}
+
+        result: dict[str, dict[str, Any]] = {}
+        for row_index, row in enumerate(
+            _limit_sequence(servant_data, self.limits.max_records_per_table)
+        ):
+            if not isinstance(row, dict) or row.get("ServantID") is None:
+                continue
+            servant_id = str(row["ServantID"])
+            character_config_path = str(row.get("Config") or "")
+            character_config = self._read_json_dict(character_config_path)
+            if character_config is None:
+                continue
+            skill_ids = row.get("SkillIDList")
+            if not isinstance(skill_ids, list):
+                continue
+            for raw_skill_id in skill_ids:
+                skill_id = str(raw_skill_id)
+                skill_row = skill_rows.get(skill_id, {})
+                trigger_key = str(skill_row.get("skill_trigger_key") or "")
+                skill_config = _skill_config_by_name(character_config, trigger_key)
+                if not trigger_key or not skill_config:
+                    continue
+                target_info = skill_config.get("TargetInfo")
+                target_info = target_info if isinstance(target_info, dict) else {}
+                target_type = str(target_info.get("TargetType") or "")
+                target_relation = _target_relation_from_alias(target_type)
+                source = {
+                    "target_type": target_type,
+                    "target_alias": target_info.get("TargetAlias"),
+                    "target_info": _json_safe(target_info),
+                    "skill_trigger_key": trigger_key,
+                    "servant_id": servant_id,
+                    "character_config_path": character_config_path,
+                    "source_trace": {
+                        "servant_config": {
+                            "source_path": "ExcelOutput/AvatarServantConfig.json",
+                            "raw_type": "AvatarServantConfig",
+                            "raw_id": servant_id,
+                            "row_index": row_index,
+                            "raw_path": "SkillIDList/Config",
+                        },
+                        "servant_skill_config": {
+                            "source_path": "ExcelOutput/AvatarServantSkillConfig.json",
+                            "raw_type": "AvatarServantSkillConfig",
+                            "raw_id": skill_id,
+                            "row_index": skill_row.get("row_index"),
+                            "raw_path": "SkillTriggerKey",
+                        },
+                        "character_config": {
+                            "source_path": character_config_path,
+                            "raw_type": "ServantCharacterConfig",
+                            "raw_id": trigger_key,
+                            "raw_path": "SkillList.TargetInfo",
+                        },
+                    },
+                    "coverage_status": "lowered" if target_relation != "unknown" else "blocked",
+                    "blocked_reason": ""
+                    if target_relation != "unknown"
+                    else f"unsupported_servant_target_type:{target_type}",
+                }
+                existing = result.get(skill_id)
+                if existing is None:
+                    result[skill_id] = source
+                    continue
+                same_source = (
+                    existing.get("target_type") == source.get("target_type")
+                    and existing.get("skill_trigger_key") == source.get("skill_trigger_key")
+                    and existing.get("servant_id") == source.get("servant_id")
+                )
+                if not same_source:
+                    result[skill_id] = {
+                        **existing,
+                        "coverage_status": "blocked",
+                        "blocked_reason": "servant_skill_target_source_conflict",
+                        "conflicting_target_source": source,
+                    }
+        return result
+
+    def _lower_servant_damage_formula_bindings(
+        self,
+        definitions: list[ActionDefinitionIR],
+        tasks: list[AbilityTaskIR],
+        effects: list[EffectIR],
+    ) -> list[SkillFormulaBindingIR]:
+        definitions_by_key = {
+            (definition.action_id, definition.level): definition
+            for definition in definitions
+            if definition.action_id.startswith("servant_skill:")
+        }
+        effects_by_id = {effect.effect_id: effect for effect in effects}
+        source_contexts = self._servant_skill_formula_source_contexts()
+        candidates: dict[tuple[str, int, int, str], list[dict[str, Any]]] = {}
+        for task in sorted(
+            tasks,
+            key=lambda item: (
+                item.action_id,
+                item.level,
+                item.phase_id,
+                item.callback_kind,
+                item.task_path,
+            ),
+        ):
+            if task.opcode != "DamageByAttackProperty":
+                continue
+            definition = definitions_by_key.get((task.action_id, task.level))
+            if definition is None:
+                continue
+            skill_id = task.action_id.split(":", 1)[1]
+            contexts = source_contexts.get(skill_id, ())
+            if len(contexts) != 1:
+                continue
+            context = contexts[0]
+            if definition.skill_trigger_key != context.get("skill_trigger_key"):
+                continue
+            effect = effects_by_id.get(task.effect_id)
+            dynamic_hash = _damage_percentage_dynamic_hash(effect)
+            if dynamic_hash is None:
+                continue
+            dynamic_key = (definition.skill_trigger_key, dynamic_hash)
+            parameter_sources = context.get("dynamic_parameters", {}).get(dynamic_key, ())
+            if len(parameter_sources) != 1:
+                continue
+            parameter_source = parameter_sources[0]
+            param_index = parameter_source.get("param_index")
+            if (
+                not isinstance(param_index, int)
+                or isinstance(param_index, bool)
+                or param_index < 0
+                or param_index >= len(definition.param_list)
+            ):
+                continue
+            param_value = definition.param_list[param_index]
+            if not isinstance(_value_field(param_value), (int, float)):
+                continue
+            target_alias = _target_alias(effect.payload.get("TargetType")) if effect else None
+            target_group_hint = _servant_damage_target_group_hint(target_alias)
+            if not target_group_hint:
+                continue
+            key = (task.action_id, task.level, param_index, target_group_hint)
+            candidates.setdefault(key, []).append(
+                {
+                    "task": task,
+                    "effect": effect,
+                    "definition": definition,
+                    "context": context,
+                    "parameter_source": parameter_source,
+                    "dynamic_hash": dynamic_hash,
+                    "target_alias": target_alias,
+                    "param_value": param_value,
+                }
+            )
+
+        bindings: list[SkillFormulaBindingIR] = []
+        for key, grouped in sorted(candidates.items()):
+            signatures = {
+                (
+                    str(item["context"].get("servant_id") or ""),
+                    str(item["definition"].skill_trigger_key),
+                    str(item["dynamic_hash"]),
+                    int(item["parameter_source"]["param_index"]),
+                    str(item["target_alias"] or ""),
+                )
+                for item in grouped
+            }
+            if len(signatures) != 1:
+                continue
+            item = grouped[0]
+            task = item["task"]
+            definition = item["definition"]
+            context = item["context"]
+            parameter_source = item["parameter_source"]
+            dynamic_hash = str(item["dynamic_hash"])
+            target_group_hint = key[3]
+            servant_id = str(context["servant_id"])
+            data_card_id = f"servant_definition:{servant_id}"
+            owner_entity_ref = f"servant:{servant_id}"
+            source = IRSource(
+                source_path=definition.source.source_path,
+                raw_type="ServantSkillFormulaBinding",
+                raw_id=definition.source.raw_id,
+                evidence={
+                    "builder": "servant_damage_formula_binding_v1",
+                    "action_definition_source": definition.source.to_json(),
+                    "servant_config_source": context["servant_config_source"],
+                    "character_config_path": context["character_config_path"],
+                    "dynamic_parameter_source": parameter_source,
+                    "damage_task_sources": [
+                        candidate["task"].source.to_json() for candidate in grouped
+                    ],
+                    "damage_effect_sources": [
+                        candidate["effect"].source.to_json()
+                        for candidate in grouped
+                        if candidate["effect"] is not None
+                    ],
+                    "basis_semantics": {
+                        "task_opcode": "DamageByAttackProperty",
+                        "unit_ref": "attacker",
+                        "stat": "attack",
+                    },
+                    "param_ref": f"ParamList[{key[2]}]",
+                    "target_group_hint": target_group_hint,
+                    "dynamic_hash": dynamic_hash,
+                },
+            )
+            scaling_basis_expr: dict[str, JSONValue] = {
+                "kind": "unit_stat",
+                "unit_ref": "attacker",
+                "stat": "attack",
+                "source_kind": "servant_ability_task_opcode",
+                "admission_status": "executable",
+                "data_card_id": data_card_id,
+                "data_card_kind": "servant",
+                "owner_entity_ref": owner_entity_ref,
+                "param_index": key[2],
+                "param_value": _json_safe(item["param_value"]),
+                "dynamic_hash": dynamic_hash,
+                "source_trace": source.to_json(),
+            }
+            bindings.append(
+                SkillFormulaBindingIR(
+                    binding_id=(
+                        f"skill_formula_binding:{task.action_id}:{task.level}:direct_damage:"
+                        f"param:{key[2]}:{target_group_hint}:servant_ability:{dynamic_hash}"
+                    ),
+                    character_data_card_id="",
+                    formula_slot_id=(
+                        f"formula_slot:{task.action_id}:{task.level}:direct_damage:"
+                        f"{target_group_hint}:{key[2]}"
+                    ),
+                    action_id=task.action_id,
+                    level=task.level,
+                    param_index=key[2],
+                    sequence_order=key[2],
+                    formula_role="direct_damage",
+                    target_group_hint=target_group_hint,
+                    param_value=_json_safe(item["param_value"]),
+                    scaling_basis_expr=scaling_basis_expr,
+                    text_hash="",
+                    skill_text="",
+                    matched_text="",
+                    source=source,
+                    coverage_status="executable",
+                    data_card_id=data_card_id,
+                    data_card_kind="servant",
+                    owner_entity_ref=owner_entity_ref,
+                )
+            )
+        return bindings
+
+    def _servant_skill_formula_source_contexts(
+        self,
+    ) -> dict[str, tuple[dict[str, Any], ...]]:
+        path = self.tbgd_root / "ExcelOutput/AvatarServantConfig.json"
+        if not path.exists():
+            return {}
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+        if not isinstance(data, list):
+            return {}
+        result: dict[str, list[dict[str, Any]]] = {}
+        for row_index, row in enumerate(
+            _limit_sequence(data, self.limits.max_records_per_table)
+        ):
+            if not isinstance(row, dict) or row.get("ServantID") is None:
+                continue
+            servant_id = str(row["ServantID"])
+            character_config_path = str(row.get("Config") or "")
+            character_config = self._read_json_dict(character_config_path)
+            if character_config is None:
+                continue
+            dynamic_parameters: dict[
+                tuple[str, str], list[dict[str, Any]]
+            ] = {}
+            dynamic_values = character_config.get("DynamicValues")
+            if isinstance(dynamic_values, dict):
+                for group_name, group in dynamic_values.items():
+                    if not isinstance(group, dict):
+                        continue
+                    for raw_hash, raw_binding in group.items():
+                        read_info = (
+                            raw_binding.get("ReadInfo")
+                            if isinstance(raw_binding, dict)
+                            else None
+                        )
+                        if not isinstance(read_info, dict):
+                            continue
+                        if read_info.get("Type") != "SkillParam":
+                            continue
+                        trigger_key = str(read_info.get("TriggerKey") or "")
+                        param_index = read_info.get("Index")
+                        if (
+                            not trigger_key
+                            or not isinstance(param_index, int)
+                            or isinstance(param_index, bool)
+                        ):
+                            continue
+                        dynamic_parameters.setdefault(
+                            (trigger_key, str(raw_hash)),
+                            [],
+                        ).append(
+                            {
+                                "source_path": character_config_path,
+                                "raw_path": (
+                                    f"DynamicValues.{group_name}.{raw_hash}.ReadInfo"
+                                ),
+                                "dynamic_hash": str(raw_hash),
+                                "trigger_key": trigger_key,
+                                "param_index": param_index,
+                                "read_info": _json_safe(read_info),
+                            }
+                        )
+            skill_ids = row.get("SkillIDList")
+            if not isinstance(skill_ids, list):
+                continue
+            servant_config_source = {
+                "source_path": "ExcelOutput/AvatarServantConfig.json",
+                "raw_type": "AvatarServantConfig",
+                "raw_id": servant_id,
+                "row_index": row_index,
+                "raw_path": "SkillIDList/Config",
+            }
+            for raw_skill_id in skill_ids:
+                skill_id = str(raw_skill_id)
+                result.setdefault(skill_id, []).append(
+                    {
+                        "servant_id": servant_id,
+                        "character_config_path": character_config_path,
+                        "servant_config_source": servant_config_source,
+                        "dynamic_parameters": {
+                            key: tuple(values)
+                            for key, values in dynamic_parameters.items()
+                        },
+                    }
+                )
+        skill_triggers: dict[str, set[str]] = {}
+        skill_path = self.tbgd_root / "ExcelOutput/AvatarServantSkillConfig.json"
+        if skill_path.exists():
+            try:
+                skill_data = json.loads(skill_path.read_text(encoding="utf-8"))
+            except Exception:
+                skill_data = []
+            if isinstance(skill_data, list):
+                for row in _limit_sequence(
+                    skill_data,
+                    self.limits.max_records_per_table,
+                ):
+                    if isinstance(row, dict) and row.get("SkillID") is not None:
+                        trigger_key = str(row.get("SkillTriggerKey") or "")
+                        if trigger_key:
+                            skill_triggers.setdefault(str(row["SkillID"]), set()).add(
+                                trigger_key
+                            )
+        return {
+            skill_id: tuple(
+                {
+                    **context,
+                    "skill_trigger_key": next(iter(skill_triggers[skill_id])),
+                }
+                for context in contexts
+            )
+            for skill_id, contexts in result.items()
+            if len(skill_triggers.get(skill_id, ())) == 1
+        }
+
     def _table_stats(self, relative_path: str, id_key: str) -> dict[str, Any]:
         path = self.tbgd_root / relative_path
         if not path.exists():
@@ -3322,6 +4059,12 @@ class TBGDLowering:
         combatant_action_sets: list[CombatantActionSetIR],
         action_ability_bindings: list[ActionAbilityBindingIR],
         *,
+        character_data_cards: list[CharacterDataCardIR],
+        character_trace_nodes: list[CharacterTraceNodeIR],
+        character_eidolon_slots: list[CharacterEidolonSlotIR],
+        character_mechanism_slots: list[CharacterMechanismSlotIR],
+        action_admissions: list[ActionAdmissionIR],
+        spawn_sources_by_servant: dict[str, tuple[IRSource, ...]],
         replacement_policies: dict[str, dict[str, Any]] | None = None,
     ) -> list[ServantDefinitionIR]:
         relative_path = "ExcelOutput/AvatarServantConfig.json"
@@ -3336,15 +4079,39 @@ class TBGDLowering:
             return []
         definitions: list[ServantDefinitionIR] = []
         action_set_by_entity = {item.entity_ref: item for item in combatant_action_sets}
-        bindings_by_action = {(item.action_id, item.level): item for item in action_ability_bindings}
+        bindings_by_action: dict[
+            tuple[str, int], list[ActionAbilityBindingIR]
+        ] = {}
+        for binding in action_ability_bindings:
+            bindings_by_action.setdefault(
+                (binding.action_id, binding.level),
+                [],
+            ).append(binding)
+        admissions_by_action: dict[
+            tuple[str, str, int], list[ActionAdmissionIR]
+        ] = {}
+        for admission in action_admissions:
+            admissions_by_action.setdefault(
+                (
+                    admission.owner_entity_ref,
+                    admission.action_id,
+                    admission.action_level,
+                ),
+                [],
+            ).append(admission)
         stat_skill_rows = self._servant_stat_skill_rows_by_skill_id()
-        avatar_configs = self._avatar_configs_by_skill_id()
         for row_index, row in enumerate(_limit_sequence(data, self.limits.max_records_per_table)):
             if not isinstance(row, dict) or row.get("ServantID") is None:
                 continue
+            row = dict(row)
+            row["_v8_source_path"] = relative_path
+            row["_v8_row_index"] = row_index
             servant_id = str(row.get("ServantID"))
             servant_ref = f"servant:{servant_id}"
             config_path = str(row.get("Config") or "")
+            servant_config_data = (
+                self._read_json_dict(config_path) if config_path else None
+            )
             ability_path = _servant_ability_path_from_character_path(config_path) if config_path else ""
             ability_data = self._read_json_dict(ability_path) if ability_path else None
             ability_names = tuple(sorted(_ability_map(ability_data))) if isinstance(ability_data, dict) else ()
@@ -3353,19 +4120,33 @@ class TBGDLowering:
                 servant_ref,
                 action_set_ir,
                 bindings_by_action,
+                admissions_by_action,
             )
-            stat_source = _servant_stat_source(row, stat_skill_rows)
-            owner_entity_ref, owner_source = _servant_owner_entity_ref(row, avatar_configs)
-            if owner_source:
-                stat_source["owner_source"] = owner_source
+            stat_source = _servant_stat_source(
+                row,
+                stat_skill_rows,
+                config_path=config_path,
+                servant_config_data=servant_config_data,
+            )
+            owner_relations = _servant_owner_relations(
+                row,
+                character_data_cards=character_data_cards,
+                character_trace_nodes=character_trace_nodes,
+                character_eidolon_slots=character_eidolon_slots,
+                character_mechanism_slots=character_mechanism_slots,
+            )
+            owner_entity_refs = tuple(
+                sorted(relation.owner_entity_ref for relation in owner_relations)
+            )
             timeline_source = _servant_timeline_source(row, stat_source)
             lifecycle_source = _servant_lifecycle_source(
                 row,
                 replacement_policy=(replacement_policies or {}).get(servant_id),
             )
             action_set_status = str(action_set.get("admission_status") or action_set.get("coverage_status") or "")
+            spawn_sources = spawn_sources_by_servant.get(servant_id, ())
             blocked_reason = _servant_definition_blocked_reason(
-                owner_entity_ref=owner_entity_ref,
+                owner_relations=owner_relations,
                 config_path=config_path,
                 ability_path=ability_path,
                 ability_data=ability_data,
@@ -3373,6 +4154,7 @@ class TBGDLowering:
                 stat_source=stat_source,
                 timeline_source=timeline_source,
                 lifecycle_source=lifecycle_source,
+                spawn_sources=spawn_sources,
             )
             coverage_status = "blocked" if blocked_reason else "executable"
             source = IRSource(
@@ -3383,7 +4165,10 @@ class TBGDLowering:
                     "row_index": row_index,
                     "id_key": "ServantID",
                     "servant_ref": servant_ref,
-                    "owner_entity_ref": owner_entity_ref,
+                    "owner_entity_refs": list(owner_entity_refs),
+                    "owner_relation_ids": [
+                        relation.owner_relation_id for relation in owner_relations
+                    ],
                     "config_path": config_path,
                     "ability_path": ability_path,
                     "ability_count": len(ability_names),
@@ -3399,6 +4184,11 @@ class TBGDLowering:
                         "speed_inherit": "SpeedInherit",
                         "speed_skill": "SpeedSkill",
                         "aggro": "Aggro",
+                        "sync_property_except_list": (
+                            f"{config_path}:$.SyncPropertyExceptList"
+                            if config_path
+                            else ""
+                        ),
                     },
                     "unit_admission": "executable" if coverage_status == "executable" else "blocked",
                     "blocked_reason": blocked_reason,
@@ -3408,7 +4198,6 @@ class TBGDLowering:
                 ServantDefinitionIR(
                     servant_definition_id=f"servant_definition:{servant_id}",
                     servant_ref=servant_ref,
-                    owner_entity_ref=owner_entity_ref,
                     representation="unit" if coverage_status == "executable" else "blocked",
                     ability_graph_ids=tuple(binding_ids),
                     action_set=action_set,
@@ -3419,6 +4208,11 @@ class TBGDLowering:
                     birth_template_id=_servant_birth_template_id(servant_id),
                     coverage_status=coverage_status,
                     blocked_reason=blocked_reason,
+                    skill_ids=tuple(
+                        str(skill_id) for skill_id in row.get("SkillIDList") or ()
+                    ),
+                    owner_relations=owner_relations,
+                    spawn_sources=spawn_sources,
                 )
             )
         return definitions
@@ -5869,14 +6663,20 @@ def _servant_birth_template(
     if timeline_rule is None:
         reasons.append("servant_timeline_rule_missing")
     components = definition.stat_source.get("components") if isinstance(definition.stat_source, dict) else None
-    component_values: dict[str, float] = {}
-    for key in ("hp_base", "hp_inherit", "speed_base", "speed_inherit"):
+    for key in ("hp_base", "hp_inherit", "speed_base", "speed_inherit", "base_aggro"):
         component = components.get(key) if isinstance(components, dict) else None
         value = _strict_json_number(component.get("value")) if isinstance(component, dict) else None
         if value is None:
             reasons.append(f"servant_birth_template_stat_component_missing:{key}")
-        else:
-            component_values[key] = value
+    owner_sync_fields = (
+        definition.stat_source.get("owner_sync_fields")
+        if isinstance(definition.stat_source, dict)
+        else None
+    )
+    for key in ("attack", "defense", "critical_chance", "critical_damage"):
+        source = owner_sync_fields.get(key) if isinstance(owner_sync_fields, dict) else None
+        if not isinstance(source, dict) or source.get("admission_status") != "executable":
+            reasons.append(f"servant_birth_template_owner_sync_source_missing:{key}")
     source_trace = definition.source.to_json()
     timeline_source_trace = _birth_first_source_trace(definition.timeline_source, source_trace)
     lifecycle_source_trace = _birth_first_source_trace(definition.lifecycle_source, source_trace)
@@ -5886,24 +6686,38 @@ def _servant_birth_template(
         "template_id": definition.servant_ref,
         "level": {"binding_kind": "owner_field", "field": "level"},
         "max_hp": {
-            "binding_kind": "owner_linear",
-            "owner_field": "max_hp",
-            "scale": component_values.get("hp_inherit"),
-            "offset": component_values.get("hp_base"),
-            "minimum": 0.0,
+            "binding_kind": "owned_combatant_stat",
+            "servant_definition_id": definition.servant_definition_id,
+            "property_type": "max_hp",
         },
         "hp": {"binding_kind": "copy_unit_field", "field": "max_hp"},
-        "attack": {"binding_kind": "owner_field", "field": "attack"},
-        "defense": {"binding_kind": "owner_field", "field": "defense"},
-        "speed": {
-            "binding_kind": "owner_linear",
-            "owner_field": "speed",
-            "scale": component_values.get("speed_inherit"),
-            "offset": component_values.get("speed_base"),
-            "minimum": 0.0,
+        "attack": {
+            "binding_kind": "owned_combatant_stat",
+            "servant_definition_id": definition.servant_definition_id,
+            "property_type": "attack",
         },
-        "energy": 0.0,
-        "max_energy": 0.0,
+        "defense": {
+            "binding_kind": "owned_combatant_stat",
+            "servant_definition_id": definition.servant_definition_id,
+            "property_type": "defense",
+        },
+        "speed": {
+            "binding_kind": "owned_combatant_stat",
+            "servant_definition_id": definition.servant_definition_id,
+            "property_type": "speed",
+        },
+        "energy": {
+            "binding_kind": "owned_combatant_stat",
+            "servant_definition_id": definition.servant_definition_id,
+            "property_type": "energy",
+            "inactive_value": 0.0,
+        },
+        "max_energy": {
+            "binding_kind": "owned_combatant_stat",
+            "servant_definition_id": definition.servant_definition_id,
+            "property_type": "max_energy",
+            "inactive_value": 0.0,
+        },
         "toughness": 0.0,
         "max_toughness": 0.0,
         "action_value": {
@@ -5919,24 +6733,33 @@ def _servant_birth_template(
         "summon_kind": "servant",
         "owner_id": {"binding_kind": "request_field", "field": "owner_id"},
         "summoner_id": {"binding_kind": "request_field", "field": "summoner_id"},
-        "owner_entity_ref": definition.owner_entity_ref,
+        "owner_entity_ref": {"binding_kind": "owner_field", "field": "template_id"},
+        "owner_relation": {
+            "binding_kind": "owner_relation",
+            "relations": [relation.to_json() for relation in definition.owner_relations],
+        },
         "servant_definition_id": {"binding_kind": "request_field", "field": "source_id"},
         "servant_ref": definition.servant_ref,
+        "owned_combatant_build_result": {
+            "binding_kind": "owner_owned_combatant_build",
+            "servant_definition_id": definition.servant_definition_id,
+        },
         "summon_intent_id": {"binding_kind": "request_field", "field": "source_id"},
-        "summon_source_trace": source_trace,
+        "summon_source_trace": {
+            "binding_kind": "request_field",
+            "field": "source_trace",
+        },
         "servant_definition_source_trace": source_trace,
         "stat_source": definition.stat_source,
-        "servant_owner_source": definition.stat_source.get("owner_source", {})
-        if isinstance(definition.stat_source, dict)
-        else {},
         "timeline_source": definition.timeline_source,
         "lifecycle_source": definition.lifecycle_source,
         "servant_runtime_stat_values": {
-            "binding_kind": "servant_runtime_stat_values",
-            "hp_formula": "owner.max_hp * hp_inherit + hp_base",
-            "speed_formula": "owner.speed * speed_inherit + speed_base",
-            "attack_source_status": "schema_carry_only",
-            "defense_source_status": "schema_carry_only",
+            "binding_kind": "owned_combatant_runtime_stat_values",
+            "servant_definition_id": definition.servant_definition_id,
+        },
+        "servant_damage_stat_admission": {
+            "binding_kind": "owned_combatant_damage_stat_admission",
+            "servant_definition_id": definition.servant_definition_id,
         },
         "timeline_admitted": timeline_rule is not None,
         "summon_action_admitted": definition.action_set.get("admission_status") == "executable",
@@ -5968,9 +6791,9 @@ def _servant_birth_template(
             "multiplier": 1.0,
         },
         "servant_attack_defense_source_status": {
-            "coverage_status": "schema_carry_only",
-            "source": "owner_current_unit_state",
-            "note": "servant damage stat binding is not admitted by servant spawn",
+            "coverage_status": "executable",
+            "source": "OwnedCombatantBuildAssemblyResult.stat_bindings",
+            "required_property_types": ["attack", "defense"],
         },
     }
     blocked_reason = ";".join(dict.fromkeys(reason for reason in reasons if reason))
@@ -5980,7 +6803,18 @@ def _servant_birth_template(
         entity_ref=definition.servant_ref,
         unit_field_specs=unit_field_specs,
         flag_specs=flag_specs,
-        resource_specs={},
+        resource_specs={
+            property_type: {
+                "binding_kind": "owned_combatant_stat",
+                "servant_definition_id": definition.servant_definition_id,
+                "property_type": property_type,
+            }
+            for property_type in (
+                "base_aggro",
+                "critical_chance",
+                "critical_damage",
+            )
+        },
         request_contract={
             "spawn_kind": "servant",
             "entity_ref": definition.servant_ref,
@@ -5988,7 +6822,7 @@ def _servant_birth_template(
             "entry_id": definition.servant_definition_id,
             "owner_required": True,
             "summoner_matches_owner": True,
-            "owner_entity_ref": definition.owner_entity_ref,
+            "owner_entity_refs": list(definition.owner_entity_refs),
             "template_source_role": "entry",
         },
         source=definition.source,
@@ -7182,7 +8016,7 @@ def _lower_action_admissions(
                 )
                 candidates = definitions_by_key.get((action_id, level), ())
                 definition = candidates[0] if len(candidates) == 1 else None
-                contract = _action_role_contract(definition)
+                contract = _action_role_contract(definition, action_entry=entry)
                 blocked_reason = str(contract["blocked_reason"] or "")
                 if len(candidates) > 1:
                     blocked_reason = "action_definition_reference_ambiguous"
@@ -7231,7 +8065,11 @@ def _lower_action_admissions(
     return updated_sets, admissions
 
 
-def _action_role_contract(definition: ActionDefinitionIR | None) -> dict[str, Any]:
+def _action_role_contract(
+    definition: ActionDefinitionIR | None,
+    *,
+    action_entry: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     if definition is None:
         return {
             "action_role": "unknown",
@@ -7242,6 +8080,27 @@ def _action_role_contract(definition: ActionDefinitionIR | None) -> dict[str, An
             "blocked_reason": "action_definition_reference_missing",
         }
     attack_type = definition.attack_type
+    role_source = (
+        action_entry.get("role_source")
+        if isinstance(action_entry, dict)
+        else None
+    )
+    if (
+        definition.action_id.startswith("servant_skill:")
+        and attack_type in {"", "Unknown"}
+        and isinstance(role_source, dict)
+        and role_source.get("skill_type") == "Passive"
+        and role_source.get("use_type") == "Passive"
+        and isinstance(role_source.get("source_trace"), dict)
+    ):
+        return {
+            "action_role": "passive_trigger",
+            "submission_modes": ("trigger",),
+            "allowed_windows": ("event_trigger",),
+            "control_kind": "internal_trigger",
+            "resource_gate_kind": "none",
+            "blocked_reason": "",
+        }
     if attack_type in {"Normal", "BPSkill", "Servant"}:
         return {
             "action_role": "turn_action",
@@ -7539,6 +8398,7 @@ def _action_definition_from_row(
     row: dict[str, Any],
     *,
     monster_target_source: dict[str, Any] | None = None,
+    servant_target_source: dict[str, Any] | None = None,
 ) -> ActionDefinitionIR:
     raw_id = str(row[id_key])
     action_id = f"{entity_type}:{raw_id}"
@@ -7558,8 +8418,9 @@ def _action_definition_from_row(
         else None
     )
     target_mode = monster_target_mode or _target_mode(skill_effect)
+    target_source = monster_target_source or servant_target_source or {}
     target_relation = _target_relation_from_action_source(
-        monster_target_source or {},
+        target_source,
         row.get("TargetType"),
     )
     source_mode = "mainline_monster" if entity_type == "monster_skill" else _source_mode(attack_type)
@@ -7576,6 +8437,7 @@ def _action_definition_from_row(
             "damage_type": str(row.get("DamageType") or ""),
             "sp_hit_base": _json_safe(row.get("SPHitBase")),
             "monster_target_source": _json_safe(monster_target_source or {}),
+            "servant_target_source": _json_safe(servant_target_source or {}),
             "resource_mapping": {
                 "BPNeed": "skill_point_cost_if_positive",
                 "BPAdd": "skill_point_gain_if_positive",
@@ -7648,19 +8510,53 @@ def _link_trigger_ability_graphs(
     tasks: list[AbilityTaskIR],
     effects: list[EffectIR],
     graphs: list[StandaloneAbilityGraphIR],
+    phases: list[AbilityPhaseIR],
 ) -> list[AbilityTaskIR]:
     effects_by_id = {effect.effect_id: effect for effect in effects}
     graphs_by_name: dict[str, list[StandaloneAbilityGraphIR]] = {}
     for graph in graphs:
         graphs_by_name.setdefault(graph.ability_name, []).append(graph)
+    phases_by_id = {phase.phase_id: phase for phase in phases}
     linked: list[AbilityTaskIR] = []
     for task in tasks:
         if task.opcode != "TriggerAbility":
             linked.append(task)
             continue
+        if task.coverage_status != "executable":
+            linked.append(task)
+            continue
         effect = effects_by_id.get(task.effect_id)
         standard = effect.payload.get("standard") if effect is not None else None
         ability_name = standard.get("ability_name") if isinstance(standard, dict) else None
+        current_phase = phases_by_id.get(task.phase_id)
+        bound_phase_candidates = tuple(
+            phase
+            for phase in phases
+            if current_phase is not None
+            and phase.binding_id == current_phase.binding_id
+            and phase.phase_id != current_phase.phase_id
+            and phase.ability_name == str(ability_name or "")
+        )
+        if len(bound_phase_candidates) == 1:
+            linked.append(
+                replace(
+                    task,
+                    coverage_status="executable",
+                    blocked_reason="",
+                    linked_standalone_graph_id="",
+                )
+            )
+            continue
+        if len(bound_phase_candidates) > 1:
+            linked.append(
+                replace(
+                    task,
+                    coverage_status="blocked",
+                    blocked_reason="trigger_ability_bound_phase_ambiguous",
+                    linked_standalone_graph_id="",
+                )
+            )
+            continue
         candidates = graphs_by_name.get(str(ability_name or ""), ())
         exact = tuple(graph for graph in candidates if graph.source.source_path == task.source.source_path)
         selected = exact if len(exact) == 1 else tuple(candidates) if len(candidates) == 1 else ()
@@ -7974,10 +8870,23 @@ def _servant_ability_path_from_character_path(character_path: str) -> str:
     return f"Config/ConfigAbility/Servant/{ability_name}"
 
 
+def _servant_camera_ability_path_from_character_path(character_path: str) -> str:
+    path = Path(character_path)
+    name = path.name
+    if name.endswith("_Config.json"):
+        camera_name = name.replace("_Config.json", "_Camera.json")
+    else:
+        camera_name = f"{path.stem}_Camera.json"
+    return f"Config/ConfigAbility/Servant/Camera/{camera_name}"
+
+
 def _servant_action_set_admission(
     servant_ref: str,
     action_set: CombatantActionSetIR | None,
-    bindings_by_action: dict[tuple[str, int], ActionAbilityBindingIR],
+    bindings_by_action: dict[tuple[str, int], list[ActionAbilityBindingIR]],
+    admissions_by_action: dict[
+        tuple[str, str, int], list[ActionAdmissionIR]
+    ],
 ) -> tuple[dict[str, Any], list[str]]:
     if action_set is None:
         return (
@@ -7988,6 +8897,7 @@ def _servant_action_set_admission(
                 "entity_ref": servant_ref,
                 "skill_index_map": {},
                 "executable_binding_ids": [],
+                "required_action_skill_ids": [],
                 "source_trace": [],
             },
             [],
@@ -7995,25 +8905,92 @@ def _servant_action_set_admission(
     source_trace = [action_set.source.to_json()]
     executable_binding_ids: list[str] = []
     skipped_slots: list[dict[str, Any]] = []
+    classified_non_action_slots: list[dict[str, Any]] = []
     blocking_reasons: list[str] = []
+    required_action_slots: list[str] = []
+    required_action_skill_ids: list[str] = []
+    passive_slots: list[str] = []
+    lifecycle_slots: list[str] = []
     skill_index_map = _json_safe(action_set.skill_index_map)
     for slot, entry in sorted(action_set.skill_index_map.items()):
         if not isinstance(entry, dict):
-            skipped_slots.append({"slot": slot, "blocked_reason": "servant_action_slot_not_structured"})
+            blocking_reasons.append(f"servant_action_slot_not_structured:{slot}")
             continue
+        slot_role = str(entry.get("servant_action_role") or "unknown")
+        if slot_role == "passive":
+            passive_slots.append(slot)
+            classified_non_action_slots.append(
+                {"slot": slot, "servant_action_role": slot_role}
+            )
+            continue
+        if slot_role == "lifecycle":
+            lifecycle_slots.append(slot)
+            classified_non_action_slots.append(
+                {"slot": slot, "servant_action_role": slot_role}
+            )
+            continue
+        if slot_role != "required_action":
+            blocking_reasons.append(f"servant_action_slot_role_unclassified:{slot}")
+            continue
+        required_action_slots.append(slot)
+        skill_id = str(entry.get("skill_id") or "")
+        if not skill_id:
+            blocking_reasons.append(f"servant_required_action_skill_id_missing:{slot}")
+        elif skill_id in required_action_skill_ids:
+            blocking_reasons.append(
+                f"servant_required_action_skill_id_duplicate:{skill_id}"
+            )
+        else:
+            required_action_skill_ids.append(skill_id)
         if entry.get("coverage_status") != "executable":
             reason = str(entry.get("blocked_reason") or "servant_action_slot_blocked")
             skipped_slots.append({"slot": slot, "blocked_reason": reason})
+            blocking_reasons.append(f"servant_required_action_slot_blocked:{slot}:{reason}")
             continue
         action_ref = str(entry.get("action_ref") or "")
         level = _optional_int(entry.get("default_level"))
         if not action_ref or level is None:
             skipped_slots.append({"slot": slot, "blocked_reason": "servant_action_ref_or_level_missing"})
+            blocking_reasons.append(f"servant_required_action_ref_or_level_missing:{slot}")
             continue
-        binding = bindings_by_action.get((action_ref, level))
-        if binding is None:
-            skipped_slots.append({"slot": slot, "action_ref": action_ref, "level": level, "blocked_reason": "servant_action_binding_missing"})
+        admissions = admissions_by_action.get(
+            (servant_ref, action_ref, level),
+            [],
+        )
+        if len(admissions) != 1:
+            reason = (
+                "servant_action_admission_missing"
+                if not admissions
+                else "servant_action_admission_ambiguous"
+            )
+            skipped_slots.append(
+                {"slot": slot, "action_ref": action_ref, "level": level, "blocked_reason": reason}
+            )
+            blocking_reasons.append(f"servant_required_action_admission_invalid:{slot}:{reason}")
             continue
+        admission = admissions[0]
+        source_trace.append(admission.source.to_json())
+        if admission.coverage_status != "executable" or admission.action_role != "turn_action":
+            reason = admission.blocked_reason or (
+                f"servant_action_admission_role_or_coverage_mismatch:"
+                f"{admission.action_role}:{admission.coverage_status}"
+            )
+            skipped_slots.append(
+                {"slot": slot, "action_ref": action_ref, "level": level, "blocked_reason": reason}
+            )
+            blocking_reasons.append(f"servant_required_action_admission_blocked:{slot}:{reason}")
+            continue
+        bindings = bindings_by_action.get((action_ref, level), [])
+        if len(bindings) != 1:
+            reason = (
+                "servant_action_binding_missing"
+                if not bindings
+                else "servant_action_binding_ambiguous"
+            )
+            skipped_slots.append({"slot": slot, "action_ref": action_ref, "level": level, "blocked_reason": reason})
+            blocking_reasons.append(f"servant_required_action_binding_invalid:{slot}:{reason}")
+            continue
+        binding = bindings[0]
         source_trace.append(binding.source.to_json())
         if binding.coverage_status != "executable":
             skipped_slots.append(
@@ -8025,12 +9002,18 @@ def _servant_action_set_admission(
                     "blocked_reason": binding.blocked_reason or "servant_action_binding_blocked",
                 }
             )
+            blocking_reasons.append(
+                f"servant_required_action_binding_blocked:{slot}:"
+                f"{binding.blocked_reason or binding.coverage_status}"
+            )
             continue
         executable_binding_ids.append(binding.binding_id)
     if action_set.coverage_status != "executable":
         blocking_reasons.append(action_set.blocked_reason or "servant_combatant_action_set_blocked")
-    if not executable_binding_ids:
-        blocking_reasons.append("servant_has_no_executable_action_binding")
+    if not required_action_slots:
+        blocking_reasons.append("servant_required_action_slots_missing")
+    if len(executable_binding_ids) != len(required_action_slots):
+        blocking_reasons.append("servant_required_action_bindings_incomplete")
     blocked_reason = ";".join(dict.fromkeys(reason for reason in blocking_reasons if reason))
     status = "blocked" if blocked_reason else "executable"
     return (
@@ -8042,6 +9025,11 @@ def _servant_action_set_admission(
             "entity_ref": action_set.entity_ref,
             "skill_index_map": skill_index_map,
             "executable_binding_ids": executable_binding_ids,
+            "required_action_slots": required_action_slots,
+            "required_action_skill_ids": required_action_skill_ids,
+            "passive_slots": passive_slots,
+            "lifecycle_slots": lifecycle_slots,
+            "classified_non_action_slots": _json_safe(classified_non_action_slots),
             "skipped_slots": _json_safe(skipped_slots),
             "source_trace": source_trace,
         },
@@ -8049,9 +9037,32 @@ def _servant_action_set_admission(
     )
 
 
+def _servant_action_slot_role(role_source: dict[str, JSONValue]) -> str:
+    skill_type = str(role_source.get("skill_type") or "")
+    use_type = str(role_source.get("use_type") or "")
+    entry_ability = str(role_source.get("entry_ability") or "")
+    if (
+        skill_type == "Servant"
+        and use_type in {"SelectEntity", "UIButtonClick", "UIButtonPress"}
+        and entry_ability
+    ):
+        return "required_action"
+    if use_type == "Passive" and skill_type in {"Passive", "Servant"}:
+        if skill_type == "Passive" and entry_ability.endswith(
+            ("_BattleCry", "_DeathRattle")
+        ):
+            return "lifecycle"
+        if entry_ability:
+            return "passive"
+    return "unknown"
+
+
 def _servant_stat_source(
     row: dict[str, Any],
     stat_skill_rows: dict[str, dict[str, Any]],
+    *,
+    config_path: str,
+    servant_config_data: dict[str, Any] | None,
 ) -> dict[str, Any]:
     hp_skill = str(row.get("HPSkill") or "")
     speed_skill = str(row.get("SpeedSkill") or "")
@@ -8059,26 +9070,61 @@ def _servant_stat_source(
     hp_inherit = _servant_stat_component(row.get("HPInherit"), hp_skill, stat_skill_rows, "HPInherit")
     speed_base = _servant_stat_component(row.get("SpeedBase"), speed_skill, stat_skill_rows, "SpeedBase")
     speed_inherit = _servant_stat_component(row.get("SpeedInherit"), speed_skill, stat_skill_rows, "SpeedInherit")
+    base_aggro = _servant_stat_component(
+        row.get("Aggro"),
+        "",
+        stat_skill_rows,
+        "Aggro.Value",
+    )
     components = {
         "hp_base": hp_base,
         "hp_inherit": hp_inherit,
         "speed_base": speed_base,
         "speed_inherit": speed_inherit,
+        "base_aggro": base_aggro,
     }
     for component_key, field_name in (
         ("hp_base", "HPBase"),
         ("hp_inherit", "HPInherit"),
         ("speed_base", "SpeedBase"),
         ("speed_inherit", "SpeedInherit"),
+        ("base_aggro", "Aggro.Value"),
     ):
         component = components[component_key]
         if not component.get("source_trace"):
             component["source_trace"] = [_servant_config_stat_field_source(row, field_name)]
+    owner_sync_fields = _servant_owner_sync_fields(
+        row,
+        config_path=config_path,
+        servant_config_data=servant_config_data,
+    )
     blocking_reasons = [
         str(component.get("blocked_reason") or "")
         for component in components.values()
         if component.get("admission_status") != "executable"
     ]
+    for property_type, base_key, inherit_key in (
+        ("max_hp", "hp_base", "hp_inherit"),
+        ("speed", "speed_base", "speed_inherit"),
+    ):
+        base_value = components[base_key].get("value")
+        inherit_value = components[inherit_key].get("value")
+        if (
+            isinstance(base_value, (int, float))
+            and not isinstance(base_value, bool)
+            and isinstance(inherit_value, (int, float))
+            and not isinstance(inherit_value, bool)
+            and base_value <= 0
+            and inherit_value <= 0
+        ):
+            blocking_reasons.append(
+                f"servant_stat_formula_nonpositive:{property_type}"
+            )
+    blocking_reasons.extend(
+        str(binding.get("blocked_reason") or "")
+        for binding in owner_sync_fields.values()
+        if binding.get("admission_status") != "executable"
+    )
     blocked_reason = ";".join(dict.fromkeys(reason for reason in blocking_reasons if reason))
     status = "blocked" if blocked_reason else "executable"
     return {
@@ -8091,20 +9137,123 @@ def _servant_stat_source(
         "formula": {
             "max_hp": "owner.max_hp * hp_inherit + hp_base",
             "speed": "owner.speed * speed_inherit + speed_base",
+            "attack": "owner.attack via ServantConfig.SyncPropertyExceptList",
+            "defense": "owner.defense via ServantConfig.SyncPropertyExceptList",
         },
-        "runtime_required_owner_fields": ["max_hp", "speed"],
-        "schema_carry_fields": {
-            "attack": {
-                "source_status": "schema_carry_only",
-                "note": "keeps UnitState schema usable; servant damage stat admission is not declared here",
-            },
-            "defense": {
-                "source_status": "schema_carry_only",
-                "note": "keeps UnitState schema usable; servant damage stat admission is not declared here",
-            },
-        },
-        "source_trace": _servant_component_source_trace(components),
+        "runtime_required_owner_fields": ["max_hp", "speed", "attack", "defense"],
+        "owner_sync_fields": owner_sync_fields,
+        "source_trace": [
+            *_servant_component_source_trace(components),
+            *(
+                next(iter(owner_sync_fields.values())).get("source_trace") or []
+                if owner_sync_fields
+                else []
+            ),
+        ],
     }
+
+
+_SERVANT_OWNER_SYNC_PROPERTY_FAMILIES: dict[str, tuple[str, str, tuple[str, ...]]] = {
+    "attack": (
+        "owner_field",
+        "attack",
+        (
+            "Attack",
+            "BaseAttack",
+            "AttackAddedRatio",
+            "AttackConvert",
+            "AttackDelta",
+            "AttackOverride",
+        ),
+    ),
+    "defense": (
+        "owner_field",
+        "defense",
+        (
+            "Defence",
+            "BaseDefence",
+            "DefenceAddedRatio",
+            "DefenceConvert",
+            "DefenceDelta",
+            "DefenceOverride",
+            "Defense",
+            "BaseDefense",
+            "DefenseAddedRatio",
+            "DefenseConvert",
+            "DefenseDelta",
+            "DefenseOverride",
+        ),
+    ),
+    "critical_chance": (
+        "owner_resource",
+        "critical_chance",
+        ("CriticalChance", "CriticalChanceBase"),
+    ),
+    "critical_damage": (
+        "owner_resource",
+        "critical_damage",
+        ("CriticalDamage", "CriticalDamageBase"),
+    ),
+}
+
+
+def _servant_owner_sync_fields(
+    row: dict[str, Any],
+    *,
+    config_path: str,
+    servant_config_data: dict[str, Any] | None,
+) -> dict[str, dict[str, Any]]:
+    servant_id = str(row.get("ServantID") or "")
+    raw_exclusions = (
+        servant_config_data.get("SyncPropertyExceptList")
+        if isinstance(servant_config_data, dict)
+        else None
+    )
+    source = IRSource(
+        source_path=config_path or str(row.get("_v8_source_path") or ""),
+        raw_type="ServantConfig.SyncPropertyExceptList",
+        raw_id=servant_id,
+        evidence={
+            "json_path": "$.SyncPropertyExceptList",
+            "servant_id": servant_id,
+            "config_type": (
+                str(servant_config_data.get("$type") or "")
+                if isinstance(servant_config_data, dict)
+                else ""
+            ),
+            "excluded_properties": _json_safe(raw_exclusions),
+        },
+    )
+    list_valid = (
+        isinstance(raw_exclusions, list)
+        and all(isinstance(item, str) and item for item in raw_exclusions)
+        and len(set(raw_exclusions)) == len(raw_exclusions)
+        and isinstance(servant_config_data, dict)
+        and str(servant_config_data.get("$type") or "").endswith("ServantConfig")
+        and bool(config_path)
+    )
+    exclusions = set(raw_exclusions) if list_valid else set()
+    result: dict[str, dict[str, Any]] = {}
+    for property_type, (binding_kind, owner_field, raw_family) in sorted(
+        _SERVANT_OWNER_SYNC_PROPERTY_FAMILIES.items()
+    ):
+        excluded = tuple(item for item in raw_family if item in exclusions)
+        blocked_reason = ""
+        if not list_valid:
+            blocked_reason = "servant_sync_property_except_list_missing_or_invalid"
+        elif excluded:
+            blocked_reason = f"servant_owner_property_not_synchronized:{property_type}"
+        result[property_type] = {
+            "admission_status": "blocked" if blocked_reason else "executable",
+            "coverage_status": "blocked" if blocked_reason else "executable",
+            "blocked_reason": blocked_reason,
+            "binding_kind": binding_kind,
+            "owner_field": owner_field,
+            "raw_property_family": list(raw_family),
+            "matched_exclusions": list(excluded),
+            "source_trace": [source.to_json()],
+        }
+    return result
 
 
 def _servant_stat_component(
@@ -8260,57 +9409,111 @@ def _servant_component_source_trace(components: dict[str, dict[str, Any]]) -> li
     return traces
 
 
-def _servant_owner_entity_ref(
+def _servant_owner_relations(
     row: dict[str, Any],
-    avatar_configs_by_skill_id: dict[str, list[dict[str, Any]]],
-) -> tuple[str, dict[str, Any]]:
-    skill_ids = [str(value) for value in (row.get("HPSkill"), row.get("SpeedSkill")) if value]
-    candidates: dict[str, list[dict[str, Any]]] = {}
-    for skill_id in skill_ids:
-        for config in avatar_configs_by_skill_id.get(skill_id, []):
-            avatar_id = config.get("avatar_id")
-            if avatar_id is None:
-                continue
-            candidates.setdefault(str(avatar_id), []).append(config)
-    source = {
-        "admission_status": "blocked",
-        "blocked_reason": "",
-        "skill_ids": skill_ids,
-        "candidate_owner_entity_refs": [f"avatar:{avatar_id}" for avatar_id in sorted(candidates)],
-        "source_trace": [],
+    *,
+    character_data_cards: list[CharacterDataCardIR],
+    character_trace_nodes: list[CharacterTraceNodeIR],
+    character_eidolon_slots: list[CharacterEidolonSlotIR],
+    character_mechanism_slots: list[CharacterMechanismSlotIR],
+) -> tuple[ServantOwnerRelationIR, ...]:
+    servant_id = str(row.get("ServantID") or "")
+    servant_skill_ids = {
+        str(skill_id) for skill_id in row.get("SkillIDList") or () if str(skill_id)
     }
-    for avatar_id, configs in sorted(candidates.items()):
-        for config in configs:
-            source["source_trace"].append(
-                {
-                    "source_path": str(config.get("relative_path") or ""),
-                    "raw_type": "AvatarConfig",
-                    "raw_id": avatar_id,
-                    "evidence": {
-                        "row_index": _json_safe(config.get("row_index")),
-                        "skill_list": _json_safe(config.get("skill_list") or []),
-                        "matched_stat_skill_ids": [
-                            skill_id
-                            for skill_id in skill_ids
-                            if any(str(item) == skill_id for item in (config.get("skill_list") or []))
-                        ],
-                    },
-                }
+    mechanism_by_id = {
+        slot.mechanism_slot_id: slot for slot in character_mechanism_slots
+    }
+    nodes_by_card: dict[str, list[CharacterTraceNodeIR]] = {}
+    for node in character_trace_nodes:
+        nodes_by_card.setdefault(node.character_data_card_id, []).append(node)
+    eidolons_by_card: dict[str, list[CharacterEidolonSlotIR]] = {}
+    for slot in character_eidolon_slots:
+        eidolons_by_card.setdefault(slot.character_data_card_id, []).append(slot)
+    relations: list[ServantOwnerRelationIR] = []
+    servant_source = IRSource(
+        source_path=str(
+            row.get("_v8_source_path") or "ExcelOutput/AvatarServantConfig.json"
+        ),
+        raw_type="AvatarServantConfig",
+        raw_id=servant_id,
+        evidence={
+            "row_index": _json_safe(row.get("_v8_row_index")),
+            "skill_id_list": sorted(servant_skill_ids),
+            "join_role": "owned_combatant_skill_catalog",
+        },
+    )
+    for card in sorted(character_data_cards, key=lambda item: item.card_id):
+        card_skill_ids = set(card.skill_ids)
+        card_enhanced_id = card.source.evidence.get("enhanced_id")
+
+        def current_source(source: IRSource) -> bool:
+            source_enhanced_id = source.evidence.get("enhanced_id")
+            if card_enhanced_id is None:
+                return source_enhanced_id is None
+            return str(source_enhanced_id) == str(card_enhanced_id)
+
+        relation_skill_ids: set[str] = set()
+        relation_sources: list[IRSource] = [servant_source]
+        for node in nodes_by_card.get(card.card_id, ()):
+            if not current_source(node.source):
+                continue
+            matched = servant_skill_ids.intersection(node.level_up_skill_ids).difference(
+                card_skill_ids
             )
-    if not skill_ids:
-        source["blocked_reason"] = "servant_owner_stat_skill_missing"
-        return "", source
-    if not candidates:
-        source["blocked_reason"] = "servant_owner_avatar_config_not_found"
-        return "", source
-    if len(candidates) != 1:
-        source["blocked_reason"] = "servant_owner_avatar_config_ambiguous"
-        return "", source
-    owner_id = next(iter(candidates))
-    source["admission_status"] = "executable"
-    source["blocked_reason"] = ""
-    source["owner_entity_ref"] = f"avatar:{owner_id}"
-    return f"avatar:{owner_id}", source
+            if matched:
+                relation_skill_ids.update(matched)
+                relation_sources.append(node.source)
+                relation_sources.extend(
+                    mechanism.source
+                    for slot_id in node.linked_mechanism_slot_ids
+                    if (mechanism := mechanism_by_id.get(slot_id)) is not None
+                    and mechanism.mechanism_kind == "trace_skill_level"
+                )
+        for eidolon in eidolons_by_card.get(card.card_id, ()):
+            if not current_source(eidolon.source):
+                continue
+            for slot_id in eidolon.linked_mechanism_slot_ids:
+                mechanism = mechanism_by_id.get(slot_id)
+                if mechanism is None or mechanism.mechanism_kind != "eidolon_skill_level":
+                    continue
+                bonuses = mechanism.semantics.get("skill_add_level_list")
+                if not isinstance(bonuses, dict):
+                    continue
+                matched = servant_skill_ids.intersection(
+                    str(skill_id) for skill_id in bonuses
+                ).difference(card_skill_ids)
+                if matched:
+                    relation_skill_ids.update(matched)
+                    relation_sources.extend((eidolon.source, mechanism.source))
+        if not relation_skill_ids:
+            continue
+        relations.append(
+            ServantOwnerRelationIR(
+                owner_relation_id=(
+                    f"servant_owner_relation:{servant_id}:{card.entity_ref}"
+                ),
+                owner_entity_ref=card.entity_ref,
+                owner_character_card_id=card.card_id,
+                auxiliary_skill_ids=tuple(sorted(relation_skill_ids)),
+                sources=_dedupe_ir_sources(relation_sources),
+                coverage_status="executable",
+                blocked_reason="",
+            )
+        )
+    return tuple(relations)
+
+
+def _dedupe_ir_sources(sources: list[IRSource]) -> tuple[IRSource, ...]:
+    result: list[IRSource] = []
+    seen: set[tuple[str, str, str]] = set()
+    for source in sources:
+        key = (source.source_path, source.raw_type, source.raw_id)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(source)
+    return tuple(sorted(result, key=lambda item: (item.source_path, item.raw_type, item.raw_id)))
 
 
 def _servant_timeline_source(row: dict[str, Any], stat_source: dict[str, Any]) -> dict[str, Any]:
@@ -8438,6 +9641,50 @@ def _discover_servant_replacement_policies(
     return policies
 
 
+def _discover_servant_spawn_sources(
+    tbgd_root: Path,
+    ability_files: list[Path],
+) -> dict[str, tuple[IRSource, ...]]:
+    by_servant: dict[str, list[IRSource]] = {}
+    for path in ability_files:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        relative_path = path.relative_to(tbgd_root).as_posix()
+        for node_path, node in _iter_json_dicts(data):
+            if not str(node.get("$type") or "").endswith("CreateServant"):
+                continue
+            servant_id = _fixed_raw_id(node.get("ServantID"))
+            if not servant_id:
+                continue
+            dynamic_fields = tuple(
+                sorted(
+                    child_path
+                    for child_path, child in _iter_json_dicts(node, node_path)
+                    if child.get("IsDynamic") is True
+                )
+            )
+            by_servant.setdefault(servant_id, []).append(
+                IRSource(
+                    source_path=relative_path,
+                    raw_type="RPG.GameCore.CreateServant",
+                    raw_id=f"{servant_id}:{node_path}",
+                    evidence={
+                        "servant_id": servant_id,
+                        "json_path": node_path,
+                        "payload_keys": sorted(str(key) for key in node),
+                        "dynamic_field_paths": list(dynamic_fields),
+                        "source_role": "servant_spawn_intent",
+                    },
+                )
+            )
+    return {
+        servant_id: _dedupe_ir_sources(sources)
+        for servant_id, sources in sorted(by_servant.items())
+    }
+
+
 def _iter_json_dicts(value: Any, path: str = "$"):
     if isinstance(value, dict):
         yield path, value
@@ -8478,7 +9725,7 @@ def _fixed_raw_number(value: Any) -> float | None:
 
 def _servant_definition_blocked_reason(
     *,
-    owner_entity_ref: str,
+    owner_relations: tuple[ServantOwnerRelationIR, ...],
     config_path: str,
     ability_path: str,
     ability_data: dict[str, Any] | None,
@@ -8486,14 +9733,15 @@ def _servant_definition_blocked_reason(
     stat_source: dict[str, Any],
     timeline_source: dict[str, Any],
     lifecycle_source: dict[str, Any],
+    spawn_sources: tuple[IRSource, ...],
 ) -> str:
     reasons: list[str] = []
-    if not owner_entity_ref:
-        owner_source = stat_source.get("owner_source") if isinstance(stat_source, dict) else None
-        if isinstance(owner_source, dict) and owner_source.get("blocked_reason"):
-            reasons.append(str(owner_source["blocked_reason"]))
-        else:
-            reasons.append("servant_owner_entity_ref_missing")
+    if not owner_relations:
+        reasons.append("servant_owner_relation_missing")
+    if any(relation.coverage_status != "executable" for relation in owner_relations):
+        reasons.append("servant_owner_relation_not_executable")
+    if not spawn_sources:
+        reasons.append("servant_spawn_source_missing")
     if not config_path:
         reasons.append("servant_character_config_path_missing")
     if not ability_path or not isinstance(ability_data, dict):
@@ -8792,10 +10040,26 @@ def _lower_damage_emissions(
         ))
         for task in sorted(action_tasks, key=lambda item: (item.phase_id, item.callback_kind, item.task_path, item.task_id)):
             effect = effect_by_id.get(task.effect_id)
-            target_profiles = _target_profiles_for_damage_task(action_profiles, task)
+            target_profiles = _target_profiles_for_damage_task(
+                action_profiles,
+                task,
+                effect,
+            )
             for profile in target_profiles:
                 scaling_basis_expr = _damage_scaling_basis_expr(task, effect, profile, direct_basis_bindings)
-                blocked_reason = _damage_emission_blocked_reason(task, effect, profile, scaling_basis_expr)
+                scaling_ratio_expr = _damage_task_scaling_ratio_expr(
+                    task,
+                    effect,
+                    profile,
+                    direct_basis_bindings,
+                )
+                blocked_reason = _damage_emission_blocked_reason(
+                    task,
+                    effect,
+                    profile,
+                    scaling_basis_expr,
+                    scaling_ratio_expr,
+                )
                 source = _damage_emission_source(task, effect, profile)
                 emissions.append(
                     DamageEmissionIR(
@@ -8808,7 +10072,7 @@ def _lower_damage_emissions(
                         target_group=profile.target_group if profile else "unknown",
                         damage_formula_family=profile.damage_formula_family if profile else "unknown",
                         element_type=profile.element_type if profile else None,
-                        scaling_ratio_expr=profile.multiplier_expr if profile else {"kind": "missing", "blocked_reason": "missing_hit_profile"},
+                        scaling_ratio_expr=scaling_ratio_expr,
                         scaling_basis_expr=scaling_basis_expr,
                         source=source,
                         coverage_status="blocked" if blocked_reason else "executable",
@@ -8901,7 +10165,11 @@ def _lower_toughness_emissions(
         ))
         for task in sorted(action_tasks, key=lambda item: (item.phase_id, item.callback_kind, item.task_path, item.task_id)):
             effect = effect_by_id.get(task.effect_id)
-            target_profiles = _target_profiles_for_damage_task(action_profiles, task)
+            target_profiles = _target_profiles_for_damage_task(
+                action_profiles,
+                task,
+                effect,
+            )
             for profile in target_profiles:
                 blocked_reason = _toughness_emission_blocked_reason(task, effect, profile)
                 emissions.append(
@@ -8923,9 +10191,123 @@ def _lower_toughness_emissions(
     return emissions
 
 
+def _admit_damage_ability_tasks(
+    tasks: list[AbilityTaskIR],
+    damage_emissions: list[DamageEmissionIR],
+    toughness_emissions: list[ToughnessEmissionIR],
+    hit_profiles: list[HitProfileIR],
+) -> list[AbilityTaskIR]:
+    damage_by_task: dict[str, list[DamageEmissionIR]] = {}
+    toughness_by_task: dict[str, list[ToughnessEmissionIR]] = {}
+    profiles_by_id: dict[str, list[HitProfileIR]] = {}
+    for emission in damage_emissions:
+        damage_by_task.setdefault(emission.source_task_id, []).append(emission)
+    for emission in toughness_emissions:
+        toughness_by_task.setdefault(emission.source_task_id, []).append(emission)
+    for profile in hit_profiles:
+        profiles_by_id.setdefault(profile.hit_profile_id, []).append(profile)
+
+    admitted: list[AbilityTaskIR] = []
+    for task in tasks:
+        if task.opcode not in DAMAGE_EMISSION_OPCODES:
+            admitted.append(task)
+            continue
+
+        reasons: list[str] = []
+        task_damage = damage_by_task.get(task.task_id, ())
+        task_toughness = toughness_by_task.get(task.task_id, ())
+        if task.execution_mode != "runtime_effect":
+            reasons.append(
+                f"damage_task_execution_mode_not_admitted:{task.execution_mode}"
+            )
+        if not task_damage:
+            reasons.append("damage_emission_missing")
+
+        damage_by_profile: dict[str, list[DamageEmissionIR]] = {}
+        for emission in task_damage:
+            damage_by_profile.setdefault(emission.hit_profile_id, []).append(emission)
+            if emission.action_id != task.action_id or emission.level != task.level:
+                reasons.append("damage_emission_action_binding_mismatch")
+            if emission.phase_id != task.phase_id:
+                reasons.append("damage_emission_phase_binding_mismatch")
+            if emission.coverage_status != "executable":
+                reasons.append(
+                    emission.blocked_reason
+                    or f"damage_emission_not_executable:{emission.coverage_status}"
+                )
+            profiles = profiles_by_id.get(emission.hit_profile_id, ())
+            if len(profiles) != 1:
+                reasons.append(
+                    "damage_hit_profile_missing"
+                    if not profiles
+                    else "damage_hit_profile_ambiguous"
+                )
+                continue
+            profile = profiles[0]
+            if profile.action_id != task.action_id or profile.level != task.level:
+                reasons.append("damage_hit_profile_action_binding_mismatch")
+            if profile.coverage_status != "executable":
+                reasons.append(
+                    profile.blocked_reason
+                    or f"damage_hit_profile_not_executable:{profile.coverage_status}"
+                )
+
+        for emissions in damage_by_profile.values():
+            if len(emissions) != 1:
+                reasons.append("damage_emission_hit_profile_ambiguous")
+
+        toughness_by_profile: dict[str, list[ToughnessEmissionIR]] = {}
+        for emission in task_toughness:
+            toughness_by_profile.setdefault(emission.hit_profile_id, []).append(emission)
+            if emission.action_id != task.action_id or emission.level != task.level:
+                reasons.append("toughness_emission_action_binding_mismatch")
+            if emission.phase_id != task.phase_id:
+                reasons.append("toughness_emission_phase_binding_mismatch")
+            if emission.coverage_status != "executable":
+                reasons.append(
+                    emission.blocked_reason
+                    or f"toughness_emission_not_executable:{emission.coverage_status}"
+                )
+            profiles = profiles_by_id.get(emission.hit_profile_id, ())
+            if len(profiles) != 1:
+                reasons.append(
+                    "toughness_hit_profile_missing"
+                    if not profiles
+                    else "toughness_hit_profile_ambiguous"
+                )
+            elif profiles[0].coverage_status != "executable":
+                reasons.append(
+                    profiles[0].blocked_reason
+                    or "toughness_hit_profile_not_executable"
+                )
+
+        for emissions in toughness_by_profile.values():
+            if len(emissions) != 1:
+                reasons.append("toughness_emission_hit_profile_ambiguous")
+        damage_profile_ids = set(damage_by_profile)
+        toughness_profile_ids = set(toughness_by_profile)
+        if damage_profile_ids - toughness_profile_ids:
+            reasons.append("toughness_emission_missing_for_damage_hit_profile")
+        if toughness_profile_ids - damage_profile_ids:
+            reasons.append("toughness_emission_without_damage_hit_profile")
+
+        blocked_reason = ";".join(
+            dict.fromkeys(reason for reason in reasons if reason)
+        )
+        admitted.append(
+            replace(
+                task,
+                coverage_status="blocked" if blocked_reason else "executable",
+                blocked_reason=blocked_reason,
+            )
+        )
+    return admitted
+
+
 def _target_profiles_for_damage_task(
     action_profiles: tuple[HitProfileIR, ...],
     task: AbilityTaskIR,
+    effect: EffectIR | None,
 ) -> tuple[HitProfileIR | None, ...]:
     if not action_profiles:
         return (None,)
@@ -8935,13 +10317,32 @@ def _target_profiles_for_damage_task(
         if isinstance(profile.target_selection_policy, dict)
         and bool(profile.target_selection_policy.get("task_id"))
     )
-    if not task_scoped_profiles:
-        return action_profiles
-    matching = tuple(
-        profile
-        for profile in task_scoped_profiles
-        if profile.target_selection_policy.get("task_id") == task.task_id
-    )
+    if task_scoped_profiles:
+        matching = tuple(
+            profile
+            for profile in task_scoped_profiles
+            if profile.target_selection_policy.get("task_id") == task.task_id
+        )
+        if matching:
+            return matching
+    target_alias = _target_alias(effect.payload.get("TargetType")) if effect is not None else None
+    if target_alias in {"AbilityTargetEntity", "CurrentActionTarget"}:
+        matching = tuple(
+            profile
+            for profile in action_profiles
+            if profile.target_group in {"primary", "selected"}
+            or profile.target_group.startswith("bounce:")
+        )
+    elif target_alias == "AbilityTargetAdjoinEntity":
+        matching = tuple(
+            profile for profile in action_profiles if profile.target_group == "adjacent"
+        )
+    elif target_alias == "AllEnemy":
+        matching = tuple(
+            profile for profile in action_profiles if profile.target_group == "selected"
+        )
+    else:
+        matching = ()
     return matching or (None,)
 
 
@@ -9199,7 +10600,7 @@ def _binding_param_multiplier_expr(binding: SkillFormulaBindingIR | None, effect
     if expr.get("kind") in {"dynamic_hash", "postfix_expr"} and dynamic_hash is not None and isinstance(value, (int, float)):
         expr = dict(expr)
         expr["binding_source"] = _skill_formula_binding_runtime_source(binding, dynamic_hash, float(value))
-        expr["source_kind"] = "monster_damage_percentage_expr_with_skill_param_binding"
+        expr["source_kind"] = f"{_skill_formula_source_kind(binding)}_damage_percentage_expr"
         return expr
     if isinstance(value, (int, float)):
         return {"kind": "fixed", "value": float(value)}
@@ -9293,25 +10694,26 @@ def _formula_binding_data_card_id(binding: SkillFormulaBindingIR) -> str:
 def _skill_formula_source_kind(binding: SkillFormulaBindingIR | None) -> str:
     if binding is None:
         return "action_definition_param_list"
-    if binding.data_card_kind == "monster":
-        return "monster_data_card_skill_formula"
+    if binding.data_card_kind:
+        return f"{binding.data_card_kind}_data_card_skill_formula"
     return "character_data_card_skill_formula"
 
 
-def _monster_damage_percentage_hash_mismatch(
+def _damage_percentage_hash_mismatch(
     effect: EffectIR | None,
     binding: SkillFormulaBindingIR,
 ) -> str:
-    if (binding.data_card_kind or "") != "monster":
+    data_card_kind = binding.data_card_kind or ""
+    if data_card_kind not in {"monster", "servant"}:
         return ""
     effect_hash = _damage_percentage_dynamic_hash(effect)
     if effect_hash is None:
-        return "monster_damage_percentage_dynamic_hash_missing"
+        return f"{data_card_kind}_damage_percentage_dynamic_hash_missing"
     binding_hash = binding.scaling_basis_expr.get("dynamic_hash")
     if binding_hash is None:
         binding_hash = binding.source.evidence.get("dynamic_hash")
     if str(binding_hash) != str(effect_hash):
-        return "monster_damage_percentage_dynamic_hash_mismatch"
+        return f"{data_card_kind}_damage_percentage_dynamic_hash_mismatch"
     return ""
 
 
@@ -9396,7 +10798,7 @@ def _damage_scaling_basis_expr(
                 "data_card_id": _formula_binding_data_card_id(binding),
             },
         }
-    hash_mismatch = _monster_damage_percentage_hash_mismatch(effect, binding)
+    hash_mismatch = _damage_percentage_hash_mismatch(effect, binding)
     if hash_mismatch:
         return {
             "kind": "missing",
@@ -9431,6 +10833,83 @@ def _damage_scaling_basis_expr(
     return basis_expr
 
 
+def _damage_task_scaling_ratio_expr(
+    task: AbilityTaskIR,
+    effect: EffectIR | None,
+    profile: HitProfileIR | None,
+    direct_basis_bindings: dict[tuple[str, int, int], SkillFormulaBindingIR],
+) -> dict[str, Any]:
+    if profile is None:
+        return numeric_missing("damage_emission_hit_profile_missing")
+    binding = direct_basis_bindings.get(
+        (task.action_id, task.level, _hit_profile_param_index(profile))
+    )
+    expression = (
+        _binding_param_multiplier_expr(binding, effect)
+        if binding is not None
+        else dict(profile.multiplier_expr)
+    )
+    attack_property = (
+        effect.payload.get("AttackProperty")
+        if effect is not None and isinstance(effect.payload, dict)
+        else None
+    )
+    if not isinstance(attack_property, dict) or "HitSplitRatio" not in attack_property:
+        return expression
+    split_expression = lower_numeric_expression(attack_property.get("HitSplitRatio"))
+    split_value = _fixed_expr_value(split_expression)
+    if split_value is None:
+        return numeric_missing("damage_hit_split_ratio_not_fixed")
+    return _multiply_numeric_expression_by_fixed(expression, split_value)
+
+
+def _multiply_numeric_expression_by_fixed(
+    expression: dict[str, Any],
+    factor: float,
+) -> dict[str, Any]:
+    fixed_value = _fixed_expr_value(expression)
+    if fixed_value is not None:
+        return {
+            "schema_version": NUMERIC_EXPRESSION_SCHEMA,
+            "kind": "fixed",
+            "value": fixed_value * factor,
+            "supported": True,
+        }
+    if not is_typed_numeric_expression(expression):
+        return numeric_missing("damage_scaling_ratio_not_lowered")
+    kind = str(expression.get("kind") or "")
+    if kind == "dynamic_hash":
+        instructions: list[dict[str, Any]] = [
+            {"opcode": "push_dynamic", "hash": expression.get("hash")},
+            {"opcode": "push_fixed", "value": factor},
+            {"opcode": "mul"},
+            {"opcode": "end"},
+        ]
+    elif kind == "program" and isinstance(expression.get("instructions"), list):
+        original = list(expression["instructions"])
+        if not original or original[-1] != {"opcode": "end"}:
+            return numeric_missing("damage_scaling_ratio_program_end_missing")
+        instructions = [
+            *original[:-1],
+            {"opcode": "push_fixed", "value": factor},
+            {"opcode": "mul"},
+            {"opcode": "end"},
+        ]
+    else:
+        return numeric_missing("damage_scaling_ratio_not_multipliable")
+    result: dict[str, Any] = {
+        "schema_version": NUMERIC_EXPRESSION_SCHEMA,
+        "kind": "program",
+        "instructions": instructions,
+        "supported": True,
+        "hit_split_ratio": factor,
+    }
+    binding_source = expression.get("binding_source")
+    if isinstance(binding_source, dict):
+        result["binding_source"] = binding_source
+    return result
+
+
 def _hit_profile_param_index(profile: HitProfileIR) -> int:
     source = profile.multiplier_source
     raw_path = str(source.get("raw_path") or "")
@@ -9445,6 +10924,7 @@ def _damage_emission_blocked_reason(
     effect: EffectIR | None,
     profile: HitProfileIR | None,
     scaling_basis_expr: dict[str, Any],
+    scaling_ratio_expr: dict[str, Any],
 ) -> str:
     if effect is None:
         return "damage_emission_effect_missing"
@@ -9463,7 +10943,7 @@ def _damage_emission_blocked_reason(
         return f"hit_profile_not_executable:{profile.blocked_reason or profile.coverage_status}"
     if profile.damage_formula_family != "direct":
         return f"damage_emission_family_not_executable:{profile.damage_formula_family}"
-    if not _numeric_expr_can_be_runtime_bound(profile.multiplier_expr):
+    if not _numeric_expr_can_be_runtime_bound(scaling_ratio_expr):
         return "damage_emission_scaling_ratio_not_runtime_bound"
     if scaling_basis_expr.get("kind") != "unit_stat" or scaling_basis_expr.get("admission_status") != "executable":
         reason = str(scaling_basis_expr.get("reason") or "character_data_card_skill_formula_missing")
@@ -9481,6 +10961,16 @@ def _damage_emission_target_group_blocked_reason(target_alias: str | None, targe
     if target_alias == "AllEnemy":
         return "" if target_group == "selected" else f"damage_target_group_mismatch:{target_alias}:{target_group}"
     return f"unsupported_damage_target_alias:{target_alias}"
+
+
+def _servant_damage_target_group_hint(target_alias: str | None) -> str:
+    if target_alias in {"AbilityTargetEntity", "CurrentActionTarget"}:
+        return "primary"
+    if target_alias == "AbilityTargetAdjoinEntity":
+        return "adjacent"
+    if target_alias == "AllEnemy":
+        return "all_enemy"
+    return ""
 
 
 def _toughness_emission_id(task: AbilityTaskIR, profile: HitProfileIR | None) -> str:
@@ -10431,6 +11921,231 @@ def _effect_payload(value: dict[str, Any], opcode: str, source_modifier_name: st
         payload["damage_formula_family"] = family
         payload["bypasses_normal_multipliers"] = family in {"true_damage", "hp_loss"}
     return payload
+
+
+_PROCESS_ONLY_TASK_FIELD_TYPES: dict[str, dict[str, str]] = {
+    "DamagePerformFinish": {
+        "IsFakeAvatarAttack": "bool",
+        "SkipDeathSettlement": "bool",
+    },
+    "GlobalMainIntensityEffect": {
+        "FadeDuration": "number",
+        "IsDurable": "bool",
+        "IsRevert": "bool",
+        "TargetIntensity": "number",
+    },
+    "GlobalTimeSlow": {
+        "ActiveNextFrame": "bool",
+        "FadeInCurveName": "string",
+        "FadeInTime": "numeric_expression",
+        "FadeOutCurveName": "string",
+        "FadeOutTime": "numeric_expression",
+        "Infinite": "bool",
+        "SlowKey": "string",
+        "TimeScale": "numeric_expression",
+        "UnscaledDuration": "numeric_expression",
+    },
+    "LookAt": {
+        "AngleOffset": "number",
+        "CustomTargetType": "mapping",
+        "Duration": "number",
+        "PerformerType": "mapping",
+        "SyncYawTargetType": "mapping",
+        "TargetType": "string",
+        "ToTargetRatio": "number",
+    },
+    "MoveToTargetPosition": {
+        "ApplyTargetPosY": "bool",
+        "IgnoreRadius": "bool",
+        "OffsetCoord": "string",
+        "OffsetForward": "numeric_expression",
+        "OffsetHorizontal": "numeric_expression",
+        "OffsetTargetDistance": "numeric_expression",
+        "OffsetVertical": "numeric_expression",
+        "PerformerType": "mapping",
+        "TargetAttachPointName": "string",
+        "TargetType": "mapping",
+    },
+    "SetTeamFormation": {
+        "CustomCenterTargetType": "mapping",
+        "CustomFormationIgnoreDying": "bool",
+        "CustomFormationName": "string",
+        "FormationConfigName": "string",
+        "FormationTarget": "mapping",
+        "FormationType": "string",
+        "ImmediatelyStopHeadLookAt": "bool",
+        "RefreshFormationCenter": "bool",
+        "RemoveDying": "bool",
+        "ServantState": "string",
+        "Team": "string",
+        "TeamMemberCountingOption": "integer",
+    },
+    "SkillExecutionStart": {},
+    "SkillPerformFinish": {"SkipAttackSettlement": "bool"},
+    "TriggerAnimState": {
+        "AnimLogicState": "string",
+        "AnimStateName": "string",
+        "ForceStart": "bool",
+        "NormalizedTimeEnd": "numeric_expression",
+        "NormalizedTimeStart": "numeric_expression",
+        "NormalizedTimeWait": "numeric_expression",
+        "NormalizedTransitionDuration": "numeric_expression",
+        "RandomHitAngle": "bool",
+        "TargetType": "mapping",
+        "WaitAnimState": "bool",
+    },
+    "TriggerAnimStateWithMove": {
+        "AnimLogicState": "string",
+        "AnimStateName": "string",
+        "EventList": "list",
+        "ForceStart": "bool",
+        "MovingRangeList": "list",
+        "NormalizedTimeEnd": "numeric_expression",
+        "NormalizedTimeStart": "numeric_expression",
+        "NormalizedTransitionDuration": "numeric_expression",
+        "TargetType": "mapping",
+        "WaitAnimState": "bool",
+    },
+    "VCameraConfigChange": {"CameraConfig": "mapping"},
+    "WaitAnimState": {
+        "AnimStateName": "string",
+        "IgnoreStateChangeCheck": "bool",
+        "NormalizedTimeEnd": "numeric_expression",
+        "SkipWhenStateChange": "bool",
+        "SyncVCameraTime": "bool",
+        "TargetType": "mapping",
+        "WaitForFrameEnd": "bool",
+    },
+    "WaitSecond": {
+        "IsRealtime": "bool",
+        "WaitTime": "numeric_expression",
+    },
+}
+
+
+def _process_only_source_field_reason(
+    field_name: str,
+    value: Any,
+    expected_type: str,
+) -> str:
+    valid = False
+    if expected_type == "bool":
+        valid = isinstance(value, bool)
+    elif expected_type == "integer":
+        valid = isinstance(value, int) and not isinstance(value, bool)
+    elif expected_type == "number":
+        valid = (
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and math.isfinite(float(value))
+        )
+    elif expected_type == "string":
+        valid = isinstance(value, str) and bool(value)
+    elif expected_type == "mapping":
+        valid = isinstance(value, dict) and bool(value)
+    elif expected_type == "list":
+        valid = isinstance(value, list)
+    elif expected_type == "numeric_expression":
+        expression = lower_numeric_expression(value)
+        valid = (
+            is_typed_numeric_expression(expression)
+            and expression.get("supported") is True
+        )
+    return "" if valid else f"process_only_task_field_invalid:{field_name}:{expected_type}"
+
+
+def _process_only_ability_task_source_blocked_reason(
+    task: dict[str, Any],
+    opcode: str,
+) -> str:
+    if _short_gamecore_type(task.get("$type")) != opcode:
+        return "process_only_task_source_type_mismatch"
+    field_types = _PROCESS_ONLY_TASK_FIELD_TYPES.get(opcode)
+    if field_types is None:
+        return "process_only_task_source_schema_missing"
+    unknown_fields = sorted(set(task).difference({"$type", *field_types}))
+    if unknown_fields:
+        return "process_only_task_unknown_fields:" + ",".join(unknown_fields)
+    for field_name, expected_type in field_types.items():
+        if field_name not in task:
+            continue
+        reason = _process_only_source_field_reason(
+            field_name,
+            task[field_name],
+            expected_type,
+        )
+        if reason:
+            return reason
+    if opcode == "DamagePerformFinish":
+        return "" if set(task) == {"$type"} else "damage_perform_finish_settlement_payload_not_admitted"
+    if opcode == "GlobalMainIntensityEffect":
+        return (
+            ""
+            if set(task).intersection(
+                {"IsRevert", "TargetIntensity", "FadeDuration"}
+            )
+            else "global_main_intensity_payload_not_admitted"
+        )
+    if opcode == "GlobalTimeSlow":
+        infinite = task.get("Infinite") is True
+        return (
+            ""
+            if "TimeScale" in task
+            and (infinite or "UnscaledDuration" in task)
+            else "global_time_slow_payload_not_admitted"
+        )
+    if opcode == "LookAt":
+        return (
+            ""
+            if set(task).intersection({"TargetType", "CustomTargetType"})
+            else "look_at_target_source_missing"
+        )
+    if opcode == "MoveToTargetPosition":
+        return "" if "TargetType" in task else "move_to_target_position_target_missing"
+    if opcode == "SetTeamFormation":
+        has_formation = bool(task.get("FormationType") or task.get("CustomFormationName"))
+        has_scope = bool(
+            task.get("Team")
+            or task.get("FormationTarget")
+            or task.get("CustomCenterTargetType")
+        )
+        return (
+            ""
+            if has_formation and has_scope
+            else "set_team_formation_payload_not_admitted"
+        )
+    if opcode == "SkillExecutionStart":
+        return "" if set(task) == {"$type"} else "skill_execution_start_payload_not_admitted"
+    if opcode == "SkillPerformFinish":
+        return "" if set(task) == {"$type"} else "skill_perform_finish_settlement_payload_not_admitted"
+    if opcode == "TriggerAnimState":
+        return (
+            ""
+            if task.get("AnimStateName") or task.get("AnimLogicState")
+            else "trigger_anim_state_name_missing"
+        )
+    if opcode == "TriggerAnimStateWithMove":
+        if task.get("EventList"):
+            return "trigger_anim_state_with_move_nested_events_not_admitted"
+        return (
+            ""
+            if "TargetType" in task
+            and bool(task.get("AnimStateName") or task.get("AnimLogicState"))
+            and isinstance(task.get("MovingRangeList"), list)
+            and bool(task.get("MovingRangeList"))
+            else "trigger_anim_state_with_move_payload_not_admitted"
+        )
+    if opcode == "VCameraConfigChange":
+        return "" if "CameraConfig" in task else "camera_config_missing"
+    if opcode == "WaitAnimState":
+        return (
+            ""
+            if task.get("AnimStateName") and "NormalizedTimeEnd" in task
+            else "wait_anim_state_source_incomplete"
+        )
+    if opcode == "WaitSecond":
+        return "" if "WaitTime" in task else "wait_second_duration_missing"
+    return "process_only_task_source_contract_unhandled"
 
 
 TARGET_EXPRESSION_FIELD_NAMES = {
@@ -12280,6 +13995,65 @@ def _lower_summon_monster_intents(
             )
         )
     return intents
+
+
+def _admit_summon_monster_ability_tasks(
+    tasks: list[AbilityTaskIR],
+    intents: list[SummonMonsterIntentIR],
+    birth_templates: list[UnitBirthTemplateIR],
+) -> list[AbilityTaskIR]:
+    intents_by_task: dict[str, list[SummonMonsterIntentIR]] = {}
+    for intent in intents:
+        intents_by_task.setdefault(intent.source_task_id, []).append(intent)
+    templates_by_id: dict[str, list[UnitBirthTemplateIR]] = {}
+    for template in birth_templates:
+        templates_by_id.setdefault(template.birth_template_id, []).append(template)
+    admitted: list[AbilityTaskIR] = []
+    for task in tasks:
+        if task.opcode != "SummonMonster":
+            admitted.append(task)
+            continue
+        candidates = intents_by_task.get(task.task_id, ())
+        reasons: list[str] = []
+        if len(candidates) != 1:
+            reasons.append(
+                "summon_monster_intent_missing"
+                if not candidates
+                else "summon_monster_intent_ambiguous"
+            )
+        else:
+            intent = candidates[0]
+            if intent.coverage_status != "executable":
+                reasons.append(
+                    intent.blocked_reason
+                    or f"summon_monster_intent_not_executable:{intent.coverage_status}"
+                )
+            if not intent.entries:
+                reasons.append("summon_monster_entries_missing")
+            for entry in intent.entries:
+                templates = templates_by_id.get(entry.birth_template_id, ())
+                if len(templates) != 1:
+                    reasons.append(
+                        "summon_monster_birth_template_missing"
+                        if not templates
+                        else "summon_monster_birth_template_ambiguous"
+                    )
+                elif templates[0].coverage_status != "executable":
+                    reasons.append(
+                        templates[0].blocked_reason
+                        or "summon_monster_birth_template_not_executable"
+                    )
+        blocked_reason = ";".join(
+            dict.fromkeys(reason for reason in reasons if reason)
+        )
+        admitted.append(
+            replace(
+                task,
+                coverage_status="blocked" if blocked_reason else "executable",
+                blocked_reason=blocked_reason,
+            )
+        )
+    return admitted
 
 
 def _summon_monster_delay_policy(payload: dict[str, Any], task: AbilityTaskIR) -> dict[str, Any]:

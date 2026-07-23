@@ -473,39 +473,62 @@ class EventDispatchSystem:
         )
         if not aliases:
             return ()
+        if unit_id and modifier_name:
+            matches = list(
+                self._explicit_status_matches(
+                    state,
+                    event,
+                    aliases,
+                    unit_id,
+                    modifier_name,
+                )
+            )
+        else:
+            matches = []
+            detached_detail = _detached_status_detail(event)
+            for alias in aliases:
+                if not alias.callback_event or alias.admission_status != "executable":
+                    matches.append(_alias_blocked_match(event, alias, state))
+                    continue
+                for callback in self.rules.status_callbacks_for_event_scope(
+                    alias.callback_event,
+                    alias.scope_kind,
+                ):
+                    details = _status_details_for_modifier(
+                        state,
+                        callback.modifier_name,
+                    )
+                    if (
+                        detached_detail is not None
+                        and callback.modifier_name
+                        == str(detached_detail.get("modifier_name") or "")
+                    ):
+                        details = (*details, detached_detail)
+                    for detail in details:
+                        match = _match_callback_to_event(
+                            event,
+                            callback,
+                            detail,
+                            explicit=False,
+                            alias=alias,
+                            state=state,
+                        )
+                        if match is not None:
+                            matches.append(match)
         pre_mutation_reason = _pre_mutation_listener_block_reason(event)
         if pre_mutation_reason:
-            return tuple(
-                _pre_mutation_blocked_match(
-                    event,
-                    alias,
-                    state,
+            matches = [
+                replace(
+                    match,
+                    status="blocked",
                     reason=pre_mutation_reason,
-                    unit_id=unit_id,
-                    modifier_name=modifier_name,
+                    source="mutation_backed_event_safety",
+                    blocked_category=_blocked_category(pre_mutation_reason),
                 )
-                for alias in aliases
-            )
-        if unit_id and modifier_name:
-            return self._explicit_status_matches(state, event, aliases, unit_id, modifier_name)
-        matches: list[ListenerMatch] = []
-        detached_detail = _detached_status_detail(event)
-        for alias in aliases:
-            if not alias.callback_event or alias.admission_status != "executable":
-                matches.append(_alias_blocked_match(event, alias, state))
-                continue
-            for callback in self.rules.status_callbacks_for_event_scope(alias.callback_event, alias.scope_kind):
-                details = _status_details_for_modifier(state, callback.modifier_name)
-                if (
-                    detached_detail is not None
-                    and callback.modifier_name
-                    == str(detached_detail.get("modifier_name") or "")
-                ):
-                    details = (*details, detached_detail)
-                for detail in details:
-                    match = _match_callback_to_event(event, callback, detail, explicit=False, alias=alias, state=state)
-                    if match is not None:
-                        matches.append(match)
+                if match.status == "matched"
+                else match
+                for match in matches
+            ]
         return tuple(sorted(matches, key=_match_sort_key))
 
     def _explicit_status_matches(
@@ -1466,32 +1489,6 @@ def _pre_mutation_listener_block_reason(event: GameEvent) -> str:
 def _event_mutation_depth(event: GameEvent) -> int:
     value = event.payload.get("mutation_event_depth")
     return int(value) if isinstance(value, int) and value >= 0 else 0
-
-
-def _pre_mutation_blocked_match(
-    event: GameEvent,
-    alias: EventAlias,
-    state: BattleState,
-    *,
-    reason: str,
-    unit_id: str | None = None,
-    modifier_name: str | None = None,
-) -> ListenerMatch:
-    target_unit = unit_id or str(event.target_id or _event_current_hit_target_id(event) or "")
-    return ListenerMatch(
-        listener_kind=_listener_kind_for_scope(alias.scope_kind),
-        scope_kind=alias.scope_kind,
-        callback_event=alias.callback_event,
-        unit_id=target_unit,
-        modifier_name=modifier_name or "",
-        callback=None,
-        status="blocked",
-        reason=reason,
-        source="mutation_backed_event_safety",
-        order_key=_listener_order_key(state, alias.scope_kind, target_unit, -1, None),
-        event_alias=alias.to_json(),
-        blocked_category=_blocked_category(reason),
-    )
 
 
 def _listener_order_key(

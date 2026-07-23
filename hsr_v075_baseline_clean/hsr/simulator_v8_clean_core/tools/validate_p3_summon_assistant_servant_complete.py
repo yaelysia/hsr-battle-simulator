@@ -1103,6 +1103,7 @@ def _build_positive_samples(stage_results: dict[str, dict[str, Any]]) -> dict[st
         _sample("target_positive_relations", "executable", groups["p3_s8_summon_target_relations"]["source_backed_positive_relations"]),
         _sample("explicit_remove_cleanup", "executable", groups["p3_s9_summon_lifecycle_cleanup"]["explicit_remove_cleanup"]),
         _sample("servant_status_holder", "executable", groups["p3_s10_status_resource_damage"]["servant_status_holder_positive"]),
+        _sample("servant_damage_stat", "executable", groups["p3_s10_status_resource_damage"]["servant_damage_stat_boundary"]),
         _sample("battle_setup_initial_servant", "executable", groups["p3_s11_battle_setup_scenario_route"]["initial_servant_route_execution"]),
     ]
     return _sample_set("p3_positive_samples_s12", samples)
@@ -1115,7 +1116,6 @@ def _build_blocked_samples(stage_results: dict[str, dict[str, Any]]) -> dict[str
         _sample("servant_negative_boundaries", "boundary_only", groups["p3_s5_servant_lifecycle"]["servant_negative_boundaries"]),
         _sample("executor_bypass_boundaries", "boundary_only", groups["p3_s6_summon_action_execution"]["executor_bypass_boundaries"]),
         _sample("target_relation_negative", "boundary_only", groups["p3_s8_summon_target_relations"]["target_relation_negative_cases"]),
-        _sample("damage_stat_boundary", "boundary_only", groups["p3_s10_status_resource_damage"]["servant_damage_stat_boundary"]),
         _sample("initial_battle_unit_summon_boundary", "boundary_only", groups["p3_s11_battle_setup_scenario_route"]["initial_summon_blocked_boundary"]),
         _sample("missing_target_route", "boundary_only", groups["p3_s11_battle_setup_scenario_route"]["missing_target_route_blocked"]),
     ]
@@ -1320,6 +1320,14 @@ def _s10_summary(groups: dict[str, dict[str, Any]]) -> dict[str, Any]:
         "status_positive_action_id": groups["servant_status_holder_positive"]["action_id"],
         "status_positive_replay_ok": groups["servant_status_holder_positive"]["replay"]["ok"],
         "status_positive_source_audit_ok": groups["servant_status_holder_positive"]["source_audit"]["ok"],
+        "damage_transition_committed": groups["servant_damage_stat_boundary"].get(
+            "classification"
+        )
+        == "executable",
+        "damage_mutation_count": groups["servant_damage_stat_boundary"].get(
+            "damage_mutation_count",
+            0,
+        ),
         "damage_boundary_reason": groups["servant_damage_stat_boundary"]["coverage"].get(
             "summon_damage_stat_blocked_reason",
             "",

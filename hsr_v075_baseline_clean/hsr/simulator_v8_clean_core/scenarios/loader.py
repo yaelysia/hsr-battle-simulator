@@ -214,7 +214,11 @@ def _battle_setup(data: dict[str, Any]) -> BattleSetupSpec:
     )
     objective = _objective(raw.get("objective"), "battle_setup.objective") if raw.get("objective") is not None else None
     metadata = _optional_json_dict(raw, "metadata", "battle_setup.metadata", default={})
+    world_level = _optional_int(raw, "world_level", "battle_setup.world_level")
+    if world_level is not None and world_level < 0:
+        raise ValueError("battle_setup.world_level must be non-negative")
     return BattleSetupSpec(
+        world_level=world_level,
         resources=resources,
         wave=wave,
         timeline=timeline,

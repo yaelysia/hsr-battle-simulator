@@ -608,7 +608,12 @@ def _character_resource_gate_matrix_row(
 def _character_servant_subcard_boundary_row(ir: CanonicalIR, rules: RuleBook) -> dict[str, JSONValue]:
     servants = tuple(ir.servant_definitions)
     visible = sum(1 for definition in servants if rules.servant_definition(definition.servant_definition_id) is definition)
-    owner_visible = sum(1 for definition in servants if rules.character_data_card_for_entity(definition.owner_entity_ref) is not None)
+    owner_visible = sum(
+        1
+        for definition in servants
+        if definition.owner_entity_refs
+        and all(rules.character_data_card_for_entity(owner_ref) is not None for owner_ref in definition.owner_entity_refs)
+    )
     executable = [definition for definition in servants if definition.coverage_status == "executable"]
     missing_owner = len(servants) - owner_visible
     missing_contract = sum(

@@ -12,7 +12,7 @@ from .ir import (
 )
 
 
-ENGINE_RULE_REGISTRY_VERSION = "hsr_v8_engine_rules_v3"
+ENGINE_RULE_REGISTRY_VERSION = "hsr_v8_engine_rules_v4"
 ENGINE_RULE_SOURCE_KIND = "engine_convention"
 TIMELINE_RULE_APPLICABILITY = "all timeline units with positive effective speed"
 ULTIMATE_COST_RULE_APPLICABILITY = "admitted ultimate action committed from the ultimate queue window"
@@ -42,6 +42,14 @@ RANGE_ZERO_FLOOR_DYNAMIC_RULE_KIND = (
 )
 RANGE_ZERO_FLOOR_DYNAMIC_RULE_APPLICABILITY = (
     "typed numeric range program using the undeclared dynamic hash only as a direct operand of variadic max"
+)
+SPECIAL_RESOURCE_ZERO_FLOOR_DYNAMIC_HASH = 1776456860
+SPECIAL_RESOURCE_ZERO_FLOOR_RULE_KIND = (
+    "special_resource_initializer_typed_max_zero_floor_operand"
+)
+SPECIAL_RESOURCE_ZERO_FLOOR_RULE_APPLICABILITY = (
+    "source-backed special-resource maximum initializer using the undeclared "
+    "dynamic hash only as a direct operand of variadic max"
 )
 
 
@@ -105,6 +113,29 @@ def build_engine_rule_registry() -> EngineRuleRegistry:
                 registry_version=ENGINE_RULE_REGISTRY_VERSION,
                 applicability=KILL_ENERGY_RULE_APPLICABILITY,
                 numeric_value=10.0,
+                coverage_status="executable",
+            ),
+            ResourceRuleIR(
+                resource_rule_id=(
+                    "resource_rule:engine_convention:"
+                    "special_resource_initializer_max_zero_floor_v1"
+                ),
+                rule_kind=SPECIAL_RESOURCE_ZERO_FLOOR_RULE_KIND,
+                operation=(
+                    "bind_undeclared_dynamic_hash_to_zero_only_inside_"
+                    "source_backed_special_resource_variadic_max_program"
+                ),
+                source_kind=ENGINE_RULE_SOURCE_KIND,
+                source=_source(
+                    "SpecialResourceEngineConvention",
+                    "special_resource_initializer_max_zero_floor_v1",
+                    "The source-backed maximum initializer uses this undeclared "
+                    "operand only as the direct zero floor of variadic max; the "
+                    "missing raw declaration remains explicit as an engine convention.",
+                ),
+                registry_version=ENGINE_RULE_REGISTRY_VERSION,
+                applicability=SPECIAL_RESOURCE_ZERO_FLOOR_RULE_APPLICABILITY,
+                numeric_value=0.0,
                 coverage_status="executable",
             ),
         ),
@@ -330,6 +361,63 @@ def engine_numeric_binding_source(
         "source_type": "engine_numeric_convention",
         "entries": entries,
         "by_hash": by_hash,
+        "by_name": {},
+    }, ""
+
+
+def special_resource_initializer_numeric_binding_source(
+    expression: object,
+    expected_dynamic_hash: int,
+    registry: EngineRuleRegistry | None = None,
+) -> tuple[dict[str, object] | None, str]:
+    """Bind the initializer's undeclared zero only for its exact Max shape."""
+
+    if expected_dynamic_hash != SPECIAL_RESOURCE_ZERO_FLOOR_DYNAMIC_HASH:
+        return None, "special_resource_zero_floor_dynamic_hash_not_admitted"
+    if not _contains_zero_floor_dynamic_hash(expression, expected_dynamic_hash):
+        return None, "special_resource_zero_floor_operand_missing"
+    if not _is_zero_floor_program(expression, expected_dynamic_hash):
+        return None, "special_resource_zero_floor_program_shape_not_admitted"
+    rule_registry = registry or build_engine_rule_registry()
+    candidates = tuple(
+        rule
+        for rule in rule_registry.resource_rules
+        if rule.rule_kind == SPECIAL_RESOURCE_ZERO_FLOOR_RULE_KIND
+    )
+    if len(candidates) != 1:
+        return None, (
+            "special_resource_zero_floor_rule_missing"
+            if not candidates
+            else "special_resource_zero_floor_rule_ambiguous"
+        )
+    rule = candidates[0]
+    reason = engine_rule_admission_reason(
+        rule,
+        expected_applicability=SPECIAL_RESOURCE_ZERO_FLOOR_RULE_APPLICABILITY,
+        numeric_value_required=True,
+    )
+    if reason:
+        return None, reason
+    if (
+        rule.operation
+        != "bind_undeclared_dynamic_hash_to_zero_only_inside_"
+        "source_backed_special_resource_variadic_max_program"
+        or rule.numeric_value != 0.0
+    ):
+        return None, "special_resource_zero_floor_rule_contract_mismatch"
+    return {
+        "source_type": "engine_numeric_convention",
+        "entries": {
+            rule.resource_rule_id: {
+                "value": 0.0,
+                "hash": str(expected_dynamic_hash),
+                "rule_id": rule.resource_rule_id,
+                "operation": rule.operation,
+                "registry_version": rule.registry_version,
+                "source_trace": rule.source.to_json(),
+            }
+        },
+        "by_hash": {str(expected_dynamic_hash): rule.resource_rule_id},
         "by_name": {},
     }, ""
 

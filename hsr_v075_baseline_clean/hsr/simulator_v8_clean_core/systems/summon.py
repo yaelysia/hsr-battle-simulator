@@ -4,8 +4,10 @@ import hashlib
 from dataclasses import dataclass, field
 from typing import Literal
 
+from ..builds.models import OwnedCombatantBuildAssemblyResult
 from ..core.model import BattleState, GameEvent, JSONValue, Mutation, UnitState
 from ..core.settlement import SettlementRecord
+from ..ir_types import IRSource
 from ..rules.ir import ServantDefinitionIR, SummonMonsterEntryIR, SummonMonsterIntentIR
 from ..rules.rulebook import RuleBook
 from .unit_spawn import UnitSpawnRequest, UnitSpawnSystem, spawn_plans_from_metadata
@@ -238,6 +240,7 @@ class SummonSystem:
         definition: ServantDefinitionIR,
         *,
         owner_id: str,
+        spawn_source: IRSource | None = None,
     ) -> SummonTransitionPlan:
         if definition.coverage_status != "executable" or definition.representation != "unit":
             return self._blocked(
@@ -256,7 +259,8 @@ class SummonSystem:
                 intent_id=definition.servant_definition_id,
                 source_trace=definition.source.to_json(),
             )
-        if definition.owner_entity_ref and owner.template_id != definition.owner_entity_ref:
+        relation = definition.owner_relation_for(owner.template_id)
+        if relation is None:
             return self._blocked(
                 "servant_spawn",
                 "servant_owner_entity_mismatch",
@@ -264,6 +268,35 @@ class SummonSystem:
                 intent_id=definition.servant_definition_id,
                 source_trace=definition.source.to_json(),
             )
+        owned_build, owned_build_reason = _formal_owned_combatant_build(
+            owner,
+            definition,
+        )
+        if owned_build_reason:
+            return self._blocked(
+                "servant_spawn",
+                owned_build_reason,
+                owner_id=owner_id,
+                intent_id=definition.servant_definition_id,
+                source_trace=definition.source.to_json(),
+            )
+        if spawn_source is not None and spawn_source not in definition.spawn_sources:
+            return self._blocked(
+                "servant_spawn",
+                "servant_spawn_source_not_declared_by_definition",
+                owner_id=owner_id,
+                intent_id=definition.servant_definition_id,
+                source_trace=spawn_source.to_json(),
+            )
+        if owner.flags.get("build_mode") == "assembled_character_build" and spawn_source is None:
+            return self._blocked(
+                "servant_spawn",
+                "formal_servant_spawn_source_required",
+                owner_id=owner_id,
+                intent_id=definition.servant_definition_id,
+                source_trace=definition.source.to_json(),
+            )
+        effective_spawn_source = spawn_source or definition.source
         if _active_servant_duplicate(state, owner_id, definition):
             return self._blocked(
                 "servant_spawn",
@@ -313,7 +346,7 @@ class SummonSystem:
             entry_id=definition.servant_definition_id,
             owner_id=owner_id,
             summoner_id=owner_id,
-            source_trace=definition.source.to_json(),
+            source_trace=effective_spawn_source.to_json(),
             entry_source_trace=definition.source.to_json(),
         )
         spawn_plan = self.unit_spawn.plan(template, spawn_request, owner=owner)
@@ -334,9 +367,14 @@ class SummonSystem:
             intent_id=definition.servant_definition_id,
             entry_ids=(definition.servant_definition_id,),
             spawn_requests=(spawn_request,),
-            source_trace=definition.source.to_json(),
+            source_trace=effective_spawn_source.to_json(),
             metadata={
                 "servant_definition": definition.to_json(),
+                "owner_relation": relation.to_json(),
+                "owned_combatant_build_result": (
+                    owned_build.to_json() if owned_build is not None else None
+                ),
+                "spawn_source": effective_spawn_source.to_json(),
                 "unit_spawn_plans": [spawn_plan.to_json()],
                 "unit_spawn_requests": [spawn_request.to_json()],
                 "replacement_unit_ids": list(defeated_replacements),
@@ -817,6 +855,41 @@ def _spawn_request_plan_blocked_reason(plan: SummonTransitionPlan, expected_kind
         if not request.birth_template_id or not request.entity_ref:
             return "summon_plan_spawn_request_incomplete"
     return ""
+
+
+def _formal_owned_combatant_build(
+    owner: UnitState,
+    definition: ServantDefinitionIR,
+) -> tuple[OwnedCombatantBuildAssemblyResult | None, str]:
+    if owner.flags.get("build_mode") != "assembled_character_build":
+        return None, ""
+    raw_results = owner.flags.get("owned_combatant_build_results")
+    raw_fingerprints = owner.flags.get(
+        "owned_combatant_build_result_fingerprints"
+    )
+    if not isinstance(raw_results, dict) or not isinstance(raw_fingerprints, dict):
+        return None, "formal_owned_combatant_build_results_missing"
+    raw_result = raw_results.get(definition.servant_definition_id)
+    try:
+        result = OwnedCombatantBuildAssemblyResult.from_json(raw_result)
+    except (TypeError, ValueError):
+        return None, "formal_owned_combatant_build_result_invalid"
+    if raw_fingerprints.get(definition.servant_definition_id) != result.result_fingerprint:
+        return None, "formal_owned_combatant_build_fingerprint_mismatch"
+    if (
+        result.battle_admission_status != "admitted"
+        or result.servant_definition_id != definition.servant_definition_id
+        or result.servant_ref != definition.servant_ref
+        or result.owner_entity_ref != owner.template_id
+        or result.parent_build_id != str(owner.flags.get("character_build_id") or "")
+        or result.parent_input_fingerprint
+        != str(owner.flags.get("character_build_input_fingerprint") or "")
+    ):
+        return None, "formal_owned_combatant_build_not_admitted"
+    relation = definition.owner_relation_for(owner.template_id)
+    if relation is None or relation.owner_relation_id != result.owner_relation_id:
+        return None, "formal_owned_combatant_owner_relation_mismatch"
+    return result, ""
 
 
 def _active_servant_duplicate(state: BattleState, owner_id: str, definition: ServantDefinitionIR) -> str:

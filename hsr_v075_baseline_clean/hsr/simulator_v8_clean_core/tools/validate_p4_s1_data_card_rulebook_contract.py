@@ -709,12 +709,17 @@ def _monster_passive_contract(ir: CanonicalIR, rules: RuleBook, s0_matrix: dict[
 def _servant_subcard_hook_contract(ir: CanonicalIR, rules: RuleBook, s0_matrix: dict[str, Any]) -> dict[str, JSONValue]:
     definitions = tuple(ir.servant_definitions)
     by_id = sum(1 for item in definitions if rules.servant_definition(item.servant_definition_id) is item)
-    by_owner = sum(1 for item in definitions if item in rules.servant_definitions_for_owner(item.owner_entity_ref))
+    by_owner = sum(
+        1
+        for item in definitions
+        if item.owner_entity_refs
+        and all(item in rules.servant_definitions_for_owner(owner_ref) for owner_ref in item.owner_entity_refs)
+    )
     required_missing = _missing_required_counts(
         definitions,
         {
             "servant_definition_id": lambda item: bool(item.servant_definition_id),
-            "owner_entity_ref": lambda item: bool(item.owner_entity_ref),
+            "owner_relations": lambda item: bool(item.owner_relations) and bool(item.owner_entity_refs),
             "source": lambda item: _source_trace_complete(item),
         },
         ignore_blocked_with_reason=True,

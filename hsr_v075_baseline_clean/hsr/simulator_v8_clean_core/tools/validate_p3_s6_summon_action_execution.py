@@ -19,12 +19,12 @@ from ..tbgd.paths import find_tbgd_root
 from .io import write_json
 from .static_checks import run_static_checks
 from .validate_p1_3_summon_assistant_servant import (
-    _base_servant_state,
     _base_summon_state,
     _first_servant_id,
     _select_executable_servant_definition,
     _select_executable_summon_monster_intent,
 )
+from .validate_p3_s5_servant_lifecycle import _formal_servant_state
 
 
 VALIDATION_VERSION = "p3_s6_summon_action_execution"
@@ -164,7 +164,7 @@ def _servant_action_execution_case(rules: RuleBook, definition: ServantDefinitio
         "classification": "executable",
         "servant_definition_id": definition.servant_definition_id,
         "servant_unit_id": command.actor_id,
-        "choice": selected["choice"].to_json(),
+        "choice": _compact_choice(selected["choice"]),
         "command": _command_json(command),
         "target_resolution": transition.target_resolution.to_json(),
         "transition_coverage": _compact_coverage(transition.coverage),
@@ -172,7 +172,7 @@ def _servant_action_execution_case(rules: RuleBook, definition: ServantDefinitio
         "mutation_source_counts": _mutation_source_counts(transition.transaction.mutations),
         "record_types": [str(record.get("record_type") or "") for record in records[:20]],
         "replay": {"ok": replay.ok, "errors": list(replay.errors)},
-        "source_audit": source_audit.to_json(),
+        "source_audit": _compact_source_audit(source_audit),
     }
 
 
@@ -257,7 +257,12 @@ def _executor_bypass_boundary_cases(rules: RuleBook, definition: ServantDefiniti
     command = _command_from_choice(query_choice, query_target_ids)
     servant_id = command.actor_id
     cases = {
-        "missing_target": _blocked_execution_case(rules, base_state, replace(command, target_ids=()), "no_selected_target"),
+        "missing_target": _blocked_execution_case(
+            rules,
+            base_state,
+            replace(command, target_ids=()),
+            "target_selection_too_few",
+        ),
         "runtime_missing": _blocked_execution_case(
             rules,
             replace(base_state, global_flags={key: value for key, value in base_state.global_flags.items() if key != "summon_runtime"}),
@@ -354,14 +359,16 @@ def _blocked_execution_case(
     after, transition = CombatExecutor(rules).execute(command, state)
     blocked_reason = str(transition.coverage.get("blocked_reason") or "")
     plan_reason = str(transition.coverage.get("plan_blocked_reason") or "")
+    records = transition.transaction.settlement.records if transition.transaction.settlement else ()
     checks = {
         "action_disabled": transition.coverage.get("action_enabled") is False,
         "expected_reason_present": expected_reason in blocked_reason or expected_reason in plan_reason,
         "no_mutations": not transition.transaction.mutations,
         "state_unchanged": after.snapshot().to_json() == before and transition.after.to_json() == before,
         "process_only_blocked_record": any(
-            record.get("record_type") == "action_blocked" and record.get("process_only") is True
-            for record in (transition.transaction.settlement.records if transition.transaction.settlement else ())
+            record.get("record_type") in {"action_blocked", "action_contract_blocked"}
+            and record.get("process_only") is True
+            for record in records
         ),
     }
     checks["ok"] = all(value for key, value in checks.items() if key != "ok")
@@ -370,14 +377,23 @@ def _blocked_execution_case(
         "expected_reason": expected_reason,
         "blocked_reason": blocked_reason,
         "plan_blocked_reason": plan_reason,
+        "record_types": [str(record.get("record_type") or "") for record in records],
         "coverage": _compact_coverage(transition.coverage),
     }
 
 
 def _spawn_servant_turn_state(rules: RuleBook, definition: ServantDefinitionIR) -> BattleState:
-    state = _base_servant_state(definition)
+    state = _formal_servant_state(rules, definition)
     system = SummonSystem(rules)
-    result = system.apply_spawn_servant(state, system.plan_spawn_servant(state, definition, owner_id="ally:servant_owner"))
+    result = system.apply_spawn_servant(
+        state,
+        system.plan_spawn_servant(
+            state,
+            definition,
+            owner_id="ally:servant_owner",
+            spawn_source=definition.spawn_sources[0],
+        ),
+    )
     after = MutationReducer().apply_all(state, result.mutations)
     servant_id = _first_servant_id(after)
     return replace(
@@ -440,6 +456,12 @@ def _select_executable_choice(rules: RuleBook, state: BattleState, view) -> dict
                 "action_enabled": transition.coverage.get("action_enabled") is True,
                 "blocked_reason": str(transition.coverage.get("blocked_reason") or transition.coverage.get("plan_blocked_reason") or ""),
                 "outcome_category": transition.outcome.category,
+                "outcome_reason_codes": list(transition.outcome.reason_codes),
+                "incomplete_node_results": [
+                    node.to_json()
+                    for node in transition.outcome.node_results
+                    if not node.complete
+                ],
                 "successor_eligible": transition.outcome.successor_eligible,
                 "mutation_count": len(transition.transaction.mutations),
                 "replay_ok": replay.ok,
@@ -551,6 +573,52 @@ def _mutation_source_counts(mutations: tuple[Any, ...]) -> dict[str, int]:
         source = str(mutation.source)
         counts[source] = counts.get(source, 0) + 1
     return dict(sorted(counts.items()))
+
+
+def _compact_choice(choice: Any) -> dict[str, Any]:
+    return {
+        "choice_id": choice.choice_id,
+        "choice_kind": choice.choice_kind,
+        "control": choice.control,
+        "actor_id": choice.actor_id,
+        "actor_side": choice.actor_side,
+        "action_id": choice.action_id,
+        "action_level": choice.action_level,
+        "admission_id": choice.admission_id,
+        "owner_entity_ref": choice.owner_entity_ref,
+        "action_role": choice.action_role,
+        "allowed_windows": list(choice.allowed_windows),
+        "submission_modes": list(choice.submission_modes),
+        "auto_target_ids": list(choice.auto_target_ids),
+        "selectable_target_ids": list(choice.selectable_target_ids),
+        "target_status": choice.target_status,
+        "resource_status": choice.resource_status,
+        "coverage_status": choice.coverage_status,
+        "source_trace_presence": {
+            key: bool(value)
+            for key, value in sorted(choice.source_trace.items())
+        },
+    }
+
+
+def _compact_source_audit(audit: Any) -> dict[str, Any]:
+    return {
+        "ok": audit.ok,
+        "checked_mutations": audit.checked_mutations,
+        "checked_records": audit.checked_records,
+        "trace_count": len(audit.traces),
+        "violation_count": len(audit.violations),
+        "violations": [
+            {
+                "mutation_id": violation.mutation_id,
+                "source": violation.source,
+                "path": list(violation.path),
+                "reason": violation.reason,
+                "missing_field": violation.missing_field,
+            }
+            for violation in audit.violations[:10]
+        ],
+    }
 
 
 def _command_json(command: ActionCommand) -> dict[str, Any]:

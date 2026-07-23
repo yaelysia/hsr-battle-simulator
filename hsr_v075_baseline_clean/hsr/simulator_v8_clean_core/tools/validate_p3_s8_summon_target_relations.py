@@ -22,6 +22,7 @@ from .static_checks import run_static_checks
 from .validate_p1_3_summon_assistant_servant import (
     _select_executable_servant_definition,
     _select_executable_summon_monster_intent,
+    _select_servant_owner_entity_ref,
 )
 from .validate_p3_s0_summon_source_inventory import _raw_ability_source_matrix
 from .validate_v0_287 import _counter_top
@@ -379,6 +380,7 @@ def _assistant_target_boundary_case(
 
 def _combined_summon_state(rules: RuleBook) -> dict[str, Any]:
     servant_definition = _select_executable_servant_definition(rules)
+    servant_owner_entity_ref = _select_servant_owner_entity_ref(servant_definition)
     summon_intent = _select_executable_summon_monster_intent(rules)
     owner_id = "ally:servant_owner"
     summoner_id = "enemy:summoner"
@@ -387,7 +389,7 @@ def _combined_summon_state(rules: RuleBook) -> dict[str, Any]:
             owner_id: UnitState(
                 owner_id,
                 "ally",
-                servant_definition.owner_entity_ref,
+                servant_owner_entity_ref,
                 level=80,
                 hp=1000.0,
                 max_hp=1000.0,

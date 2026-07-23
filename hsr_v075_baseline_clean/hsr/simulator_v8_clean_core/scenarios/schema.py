@@ -133,6 +133,7 @@ class ObjectiveSpec:
 
 @dataclass(frozen=True)
 class BattleSetupSpec:
+    world_level: int | None = None
     resources: SetupResourceSpec = field(default_factory=SetupResourceSpec)
     wave: WaveSetupSpec | None = None
     timeline: TimelineSetupSpec | None = None

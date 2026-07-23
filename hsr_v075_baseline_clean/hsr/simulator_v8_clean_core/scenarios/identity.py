@@ -283,10 +283,19 @@ class IdentityResolver:
                         )
                     else:
                         owner = units_by_id.get(summon.owner_id)
-                        if owner is not None and definition.owner_entity_ref and owner.entity_ref != definition.owner_entity_ref:
+                        owner_relation = (
+                            definition.owner_relation_for(owner.entity_ref)
+                            if owner is not None
+                            else None
+                        )
+                        if owner is not None and owner_relation is None:
                             errors.append(
                                 f"{prefix}: servant owner {summon.owner_id!r} entity_ref {owner.entity_ref!r} "
-                                f"does not match {definition.owner_entity_ref!r}"
+                                "has no unique executable owner relation"
+                            )
+                        elif owner_relation is not None:
+                            traces.extend(
+                                source.to_json() for source in owner_relation.sources
                             )
                         traces.append(definition.source.to_json())
 

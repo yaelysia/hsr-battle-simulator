@@ -204,7 +204,7 @@ AUDIT_RULES: tuple[AuditRule, ...] = (
         finding_id="q3_identity_initial_servant_definition_validation",
         question_id="q3_scenario_ui_rule_boundary",
         path="simulator_v8_clean_core/scenarios/identity.py",
-        tokens=("elif summon.kind == \"servant\":", "definition = self.rules.servant_definition(servant_ref)", "definition.owner_entity_ref and owner.entity_ref != definition.owner_entity_ref"),
+        tokens=("elif summon.kind == \"servant\":", "definition = self.rules.servant_definition(servant_ref)", "definition.owner_relation_for(owner.entity_ref)"),
         classification="scenario_assembly_ok",
         followup_stage="P6-S3",
         current_behavior="Scenario identity validation resolves initial servant definitions to validate refs, owner relation, executable status, and source trace.",

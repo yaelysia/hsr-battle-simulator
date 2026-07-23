@@ -326,6 +326,86 @@ class AvatarPromotionTierIR:
 
 
 @dataclass(frozen=True)
+class SpecialResourceInitializerIR:
+    initializer_id: str
+    maximum_value_dynamic_key: str
+    maximum_value_dynamic_hash: int
+    level_dynamic_key: str
+    level_dynamic_hash: int
+    zero_floor_dynamic_hash: int
+    world_level_threshold: int
+    low_world_level_expression: dict[str, JSONValue]
+    high_world_level_expression: dict[str, JSONValue]
+    minimum_expression: dict[str, JSONValue]
+    initial_current_expression: dict[str, JSONValue]
+    initial_current_binding_hash: int
+    initial_current_binding_value: str
+    level_source: Literal["highest_alive_non_servant_ally"]
+    initial_current_trigger: Literal["first_wave_battle_entry_without_technique"]
+    sources: tuple[IRSource, ...]
+    source: IRSource
+    coverage_status: CoverageStatus = "blocked"
+    blocked_reason: str = ""
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "initializer_id": self.initializer_id,
+            "maximum_value_dynamic_key": self.maximum_value_dynamic_key,
+            "maximum_value_dynamic_hash": self.maximum_value_dynamic_hash,
+            "level_dynamic_key": self.level_dynamic_key,
+            "level_dynamic_hash": self.level_dynamic_hash,
+            "zero_floor_dynamic_hash": self.zero_floor_dynamic_hash,
+            "world_level_threshold": self.world_level_threshold,
+            "low_world_level_expression": self.low_world_level_expression,
+            "high_world_level_expression": self.high_world_level_expression,
+            "minimum_expression": self.minimum_expression,
+            "initial_current_expression": self.initial_current_expression,
+            "initial_current_binding_hash": self.initial_current_binding_hash,
+            "initial_current_binding_value": self.initial_current_binding_value,
+            "level_source": self.level_source,
+            "initial_current_trigger": self.initial_current_trigger,
+            "sources": [source.to_json() for source in self.sources],
+            "source": self.source.to_json(),
+            "coverage_status": self.coverage_status,
+            "blocked_reason": self.blocked_reason,
+        }
+
+
+@dataclass(frozen=True)
+class SpecialResourceDefinitionIR:
+    resource_definition_id: str
+    current_property: str
+    maximum_property: str
+    current_resource_key: str
+    maximum_resource_key: str
+    initial_current_mode: Literal["ability_battle_entry_initializer"]
+    maximum_initialization_mode: Literal["ability_initializer"]
+    initializer_task_names: tuple[str, ...]
+    initializer: SpecialResourceInitializerIR | None
+    supporting_sources: tuple[IRSource, ...]
+    source: IRSource
+    coverage_status: CoverageStatus = "blocked"
+    blocked_reason: str = ""
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "resource_definition_id": self.resource_definition_id,
+            "current_property": self.current_property,
+            "maximum_property": self.maximum_property,
+            "current_resource_key": self.current_resource_key,
+            "maximum_resource_key": self.maximum_resource_key,
+            "initial_current_mode": self.initial_current_mode,
+            "maximum_initialization_mode": self.maximum_initialization_mode,
+            "initializer_task_names": list(self.initializer_task_names),
+            "initializer": self.initializer.to_json() if self.initializer else None,
+            "supporting_sources": [source.to_json() for source in self.supporting_sources],
+            "source": self.source.to_json(),
+            "coverage_status": self.coverage_status,
+            "blocked_reason": self.blocked_reason,
+        }
+
+
+@dataclass(frozen=True)
 class AvatarProfileIR:
     avatar_profile_id: str
     avatar_id: str
@@ -340,6 +420,7 @@ class AvatarProfileIR:
     blocked_reason: str = ""
     resource_mode: Literal["standard_energy", "special_resource", "source_missing"] = "standard_energy"
     special_resource_source: IRSource | None = None
+    special_resource_definition: SpecialResourceDefinitionIR | None = None
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -354,6 +435,11 @@ class AvatarProfileIR:
             "resource_mode": self.resource_mode,
             "special_resource_source": (
                 self.special_resource_source.to_json() if self.special_resource_source else None
+            ),
+            "special_resource_definition": (
+                self.special_resource_definition.to_json()
+                if self.special_resource_definition is not None
+                else None
             ),
             "source": self.source.to_json(),
             "coverage_status": self.coverage_status,
@@ -608,10 +694,31 @@ class AssistantAbilityResolutionIR:
 
 
 @dataclass(frozen=True)
+class ServantOwnerRelationIR:
+    owner_relation_id: str
+    owner_entity_ref: str
+    owner_character_card_id: str
+    auxiliary_skill_ids: tuple[str, ...]
+    sources: tuple[IRSource, ...]
+    coverage_status: CoverageStatus = "blocked"
+    blocked_reason: str = ""
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "owner_relation_id": self.owner_relation_id,
+            "owner_entity_ref": self.owner_entity_ref,
+            "owner_character_card_id": self.owner_character_card_id,
+            "auxiliary_skill_ids": list(self.auxiliary_skill_ids),
+            "sources": [source.to_json() for source in self.sources],
+            "coverage_status": self.coverage_status,
+            "blocked_reason": self.blocked_reason,
+        }
+
+
+@dataclass(frozen=True)
 class ServantDefinitionIR:
     servant_definition_id: str
     servant_ref: str
-    owner_entity_ref: str
     representation: Literal["unit", "component", "blocked"]
     ability_graph_ids: tuple[str, ...]
     action_set: dict[str, JSONValue]
@@ -623,13 +730,41 @@ class ServantDefinitionIR:
     coverage_status: CoverageStatus = "blocked"
     blocked_reason: str = ""
     schema_version: str = "p1_3_servant_definition_v1"
+    skill_ids: tuple[str, ...] = ()
+    owner_relations: tuple[ServantOwnerRelationIR, ...] = ()
+    spawn_sources: tuple[IRSource, ...] = ()
+
+    @property
+    def owner_entity_refs(self) -> tuple[str, ...]:
+        return tuple(
+            sorted(
+                {
+                    relation.owner_entity_ref
+                    for relation in self.owner_relations
+                    if relation.coverage_status == "executable"
+                    and relation.owner_entity_ref
+                }
+            )
+        )
+
+    def owner_relation_for(self, owner_entity_ref: str) -> ServantOwnerRelationIR | None:
+        matches = tuple(
+            relation
+            for relation in self.owner_relations
+            if relation.owner_entity_ref == owner_entity_ref
+            and relation.coverage_status == "executable"
+        )
+        return matches[0] if len(matches) == 1 else None
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
             "servant_definition_id": self.servant_definition_id,
             "schema_version": self.schema_version,
             "servant_ref": self.servant_ref,
-            "owner_entity_ref": self.owner_entity_ref,
+            "owner_entity_refs": list(self.owner_entity_refs),
+            "owner_relations": [relation.to_json() for relation in self.owner_relations],
+            "skill_ids": list(self.skill_ids),
+            "spawn_sources": [source.to_json() for source in self.spawn_sources],
             "representation": self.representation,
             "ability_graph_ids": list(self.ability_graph_ids),
             "action_set": self.action_set,
@@ -1620,6 +1755,8 @@ class AbilityTaskIR:
     child_task_ids: tuple[str, ...] = ()
     success_task_ids: tuple[str, ...] = ()
     failed_task_ids: tuple[str, ...] = ()
+    repeat_count: int = 0
+    execution_mode: Literal["runtime_effect", "process_only"] = "runtime_effect"
     coverage_status: CoverageStatus = "blocked"
     blocked_reason: str = ""
     linked_standalone_graph_id: str = ""
@@ -1642,6 +1779,8 @@ class AbilityTaskIR:
             "child_task_ids": list(self.child_task_ids),
             "success_task_ids": list(self.success_task_ids),
             "failed_task_ids": list(self.failed_task_ids),
+            "repeat_count": self.repeat_count,
+            "execution_mode": self.execution_mode,
             "source": self.source.to_json(),
             "coverage_status": self.coverage_status,
             "blocked_reason": self.blocked_reason,

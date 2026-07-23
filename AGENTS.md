@@ -34,7 +34,7 @@ turnbasedgamedata-main -> TBGD compiler/lowering -> Canonical IR -> Combat Core
 
 ```text
 P8 equipment build, light-cone and relic assembly
-最近代码检查点：P8-S8 光锥剩余 gameplay 机制闭环验收
+最近代码检查点：CHAR-M1 记忆角色与忆灵 owned-combatant 构筑闭环验收
 当前规划主线：P8 光锥、遗器与角色构筑装配；P8-S0 至 P8-S8 已通过验收，光锥轨已收口，下一阶段为 P8-S9 遗器定义卡
 ```
 
@@ -68,12 +68,13 @@ P8 equipment build, light-cone and relic assembly
 - P8-S5 光锥静态属性贡献已经独立验收：当前 810 个叠影档位完整分类，575 条静态属性以精确十进制和独立来源进入统一贡献账本；命途匹配时静态被动恰好应用一次，命途失配时仅保留基础属性。贡献身份、所选叠影、原始记录、光锥归属、来源账本和 fingerprint 的一致性均由结果模型及联合伪造负例约束。动态能力仍未 lower 或执行，同命途正式战斗继续诚实 blocked。
 - P8-S6 光锥动态能力绑定与启动生命周期已经独立验收：162 条真实能力记录形成稳定 Canonical IR 图引用，407 条装备参数读取按完整节点身份精确绑定，2,035 次叠影参数解析保留十进制与来源；provider 以单位、装备实例和机制形成语义唯一身份，并经正式场景构筑链在 UnitState 建立后原子注册。S6 验收时 162 个生产图均因嵌套 modifier / callback family 未闭合而 blocked；后续 S7 已回收其中纯 S7 图。
 - P8-S7 光锥属性、状态、条件与监听机制族已经独立验收：当前 4,472 个原始能力机制节点形成互斥且穷尽的 S7/S8/non-gameplay 分区，986 个 S7 节点无 lowering、admission、implementation 或 validation gap；18 个纯 S7 光锥图可经正式构筑进入战斗，144 个含 S8 分支的图继续整体 blocked。属性池、状态生命周期、条件真假、动态值、监听窗口、召唤单位阵营、owner/target、多 wearer、settlement、source audit 和 replay 均有结构化正负例；没有部分执行或装备专用 runtime。
-- P8-S8 光锥剩余 gameplay 机制已经独立验收：当前 162 张已发布光锥的完整机制图全部 executable，S8 的 3,464 个 gameplay 来源节点、64 个任务族、23 个属性消费族、51 个事件族、41 个条件族和 1,312 条数值表达式均无 lowering/admission/implementation/validation gap；伤害、治疗、护盾、资源、生命、时间线、目标、RNG 和共享战斗状态均复用通用系统，装备侧失败、unknown、专用 runtime handler 和 raw runtime 读取均为零。148 张光锥已通过同命途正式角色构筑启动；14 张记忆命途光锥仅因角色侧 owned-combatant/忆灵构筑尚未完成而保持结构化外部阻断，不能据此声称全目录正式入战完成。
+- P8-S8 光锥剩余 gameplay 机制已经独立验收：当前 162 张已发布光锥的完整机制图全部 executable，S8 的 3,464 个 gameplay 来源节点、64 个任务族、23 个属性消费族、51 个事件族、41 个条件族和 1,312 条数值表达式均无 lowering/admission/implementation/validation gap；伤害、治疗、护盾、资源、生命、时间线、目标、RNG 和共享战斗状态均复用通用系统，装备侧失败、unknown、专用 runtime handler 和 raw runtime 读取均为零。CHAR-M1 验收后，光锥启动目录中的角色构筑外部依赖已归零；当前 162 张中 159 张可启动，剩余 3 张是装备侧两个召唤 runtime 缺口和一个首目标解析缺口，因此仍不能声称全目录正式入战完成。
+- CHAR-M1 记忆角色与忆灵 owned-combatant 构筑闭环已经独立验收：当前 7 个受影响角色、84 个辅助行迹节点、49 个辅助技能和 6 个忆灵定义均通过类型化 owner 关系完成分类；父角色与派生战斗单位具有独立、不可变、可追溯的构筑结果，特殊资源、必需动作全集、出生来源、动作查询、来源审计和 replay 均按 fail-closed 口径验证。当前有 2 个真实空装备记忆角色构筑可正式准入；其余 5 个角色组因属性、时间线或出生来源缺口继续原子 blocked，本验收不代表全记忆角色内容完成。
 - `simulator_v8_ui/` 本地 UI 测试台，用于 scenario 编排和审计展示，不进入规则系统。
 
 当前仍未完整实现的大块：
 
-- 完整角色面板装配：全量角色行迹、记忆角色与忆灵 owned-combatant 构筑、内圈/外圈遗器及套装效果。
+- 完整角色面板装配：全量角色行迹、剩余记忆角色与忆灵的属性/时间线/出生来源、内圈/外圈遗器及套装效果。
 - P5 保留的 admission gap 逐类回收：公式参数、动态值、自定义值、召唤参数、状态数值、资源和数据卡上下文的全正例扩面。
 - 大量角色卡人工解释与验证。
 - 状态系统长线扩面：全角色、全怪物、装备、关卡带来的新状态来源和特殊事件源。
