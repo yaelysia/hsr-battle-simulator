@@ -13,7 +13,12 @@ from .transition_outcome import TransitionOutcome, unclassified_transition_outco
 
 JSONValue = None | bool | int | float | str | list["JSONValue"] | dict[str, "JSONValue"]
 UnitSide = Literal["ally", "enemy", "summon"]
+UnitLifecycleStatus = Literal["active", "defeated", "removed"]
 MutationOp = Literal["set", "delete", "spawn"]
+UNIT_LIFECYCLE_STATUSES = frozenset({"active", "defeated", "removed"})
+LEGACY_UNIT_LIFECYCLE_FLAG_KEYS = frozenset(
+    {"lifecycle_status", "lifecycle_state"}
+)
 UNIT_STAT_POOL_PANEL_FIELDS = frozenset(
     {"max_hp", "attack", "defense", "speed", "max_energy"}
 )
@@ -139,6 +144,7 @@ class UnitState:
     unit_id: str
     side: UnitSide
     template_id: str
+    lifecycle_status: UnitLifecycleStatus = "active"
     level: int = 80
     max_hp: float = 1.0
     hp: float = 1.0
@@ -157,6 +163,13 @@ class UnitState:
     stat_pools: tuple[UnitStatPool, ...] = ()
 
     def __post_init__(self) -> None:
+        if (
+            not isinstance(self.lifecycle_status, str)
+            or self.lifecycle_status not in UNIT_LIFECYCLE_STATUSES
+        ):
+            raise ValueError(
+                "unit lifecycle_status must be active, defeated, or removed"
+            )
         if not isinstance(self.statuses, (list, tuple)) or not all(
             isinstance(status, str) for status in self.statuses
         ):
@@ -184,6 +197,14 @@ class UnitState:
         flags = freeze_json(self.flags)
         if not isinstance(flags, dict):
             raise TypeError("unit flags must be a JSON object")
+        legacy_lifecycle_flags = sorted(
+            LEGACY_UNIT_LIFECYCLE_FLAG_KEYS.intersection(flags)
+        )
+        if legacy_lifecycle_flags:
+            raise ValueError(
+                "unit flags contain reserved lifecycle keys: "
+                f"{legacy_lifecycle_flags}"
+            )
 
         if type(self.resources) is _FrozenResourceDict:
             frozen_resources = self.resources
@@ -236,7 +257,7 @@ class UnitState:
             and not isinstance(instance.get("remaining"), bool)
         )
         recoverable_hp = float(self.resources.get("recoverable_hp", 0.0))
-        lifecycle_status = _unit_lifecycle_status(self)
+        lifecycle_status = self.lifecycle_status
         lifecycle = {
             "status": lifecycle_status,
             "active": lifecycle_status == "active",
@@ -412,9 +433,9 @@ class BattleState:
             "summon": [unit_id for unit_id, unit in sorted(combat_units.items()) if unit.side == "summon"],
         }
         active_teams = {
-            "ally": [unit_id for unit_id, unit in sorted(combat_units.items()) if unit.side == "ally" and _unit_lifecycle_status(unit) == "active"],
-            "enemy": [unit_id for unit_id, unit in sorted(combat_units.items()) if unit.side == "enemy" and _unit_lifecycle_status(unit) == "active"],
-            "summon": [unit_id for unit_id, unit in sorted(combat_units.items()) if unit.side == "summon" and _unit_lifecycle_status(unit) == "active"],
+            "ally": [unit_id for unit_id, unit in sorted(combat_units.items()) if unit.side == "ally" and unit.lifecycle_status == "active"],
+            "enemy": [unit_id for unit_id, unit in sorted(combat_units.items()) if unit.side == "enemy" and unit.lifecycle_status == "active"],
+            "summon": [unit_id for unit_id, unit in sorted(combat_units.items()) if unit.side == "summon" and unit.lifecycle_status == "active"],
         }
         return Snapshot(
             {
@@ -728,13 +749,6 @@ def _stable_id(prefix: str, payload: dict[str, JSONValue]) -> str:
     raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
     return f"{prefix}:{digest}"
-
-
-def _unit_lifecycle_status(unit: UnitState) -> str:
-    raw = unit.flags.get("lifecycle_status")
-    if isinstance(raw, str) and raw in {"active", "defeated", "removed"}:
-        return raw
-    return "defeated" if unit.hp <= 0 else "active"
 
 
 def _is_frozen_json_value(value: Any) -> bool:

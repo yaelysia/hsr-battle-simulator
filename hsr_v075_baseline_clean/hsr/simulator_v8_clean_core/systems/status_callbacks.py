@@ -20,6 +20,7 @@ from ..rules.ir import ActionDelayEmissionIR, ConditionIR, QueueIntentIR, Status
 from ..rules.rulebook import RuleBook
 from ..rules.value_binding import ValueBindingRequest, ValueContext, ValueResolver
 from ..unit_eligibility import (
+    runtime_unit_is_active,
     runtime_unit_is_dark_team,
     runtime_unit_is_light_team,
     runtime_unit_is_target_candidate,
@@ -4333,7 +4334,7 @@ def _context_dynamic_value(
             target_ids = tuple(
                 unit_id
                 for unit_id in target_ids
-                if float(state.units[unit_id].hp) > 0
+                if runtime_unit_is_active(state.units[unit_id])
             )
         return float(len(target_ids)), {
             "kind": "character_count",
@@ -4381,7 +4382,7 @@ def _context_dynamic_value(
             target_ids = tuple(
                 unit_id
                 for unit_id in target_ids
-                if float(state.units[unit_id].hp) > 0
+                if runtime_unit_is_active(state.units[unit_id])
             )
         return float(len(target_ids)), {
             "kind": "character_count",

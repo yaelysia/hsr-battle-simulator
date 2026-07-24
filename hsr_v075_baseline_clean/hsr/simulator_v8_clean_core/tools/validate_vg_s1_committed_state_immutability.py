@@ -274,7 +274,7 @@ def run_validation(output_dir: Path) -> dict[str, Any]:
 def _unit_matrix() -> tuple[dict[str, Any], UnitState]:
     statuses = ["status:validation"]
     flags = {
-        "lifecycle_status": "active",
+        "runtime_marker": "active",
         "position": 0,
         "nested": {
             "level_two": {
@@ -1601,7 +1601,7 @@ def _consumer_compatibility_matrix(
             unit.flags["nested"]["level_two"],
             dict,
         ),
-        "unit_flags_get_works": unit.flags.get("lifecycle_status") == "active",
+        "unit_flags_get_works": unit.flags.get("runtime_marker") == "active",
         "unit_flags_items_work": "nested" in dict(unit.flags.items()),
         "unit_flags_values_work": any(
             value == "active" for value in unit.flags.values()

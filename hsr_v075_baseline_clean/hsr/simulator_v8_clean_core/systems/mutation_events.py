@@ -358,9 +358,11 @@ def events_for_mutation(
 
 
 def _is_unit_removed_path(path: tuple[str, ...], mutation: Mutation) -> bool:
-    if len(path) != 4 or path[0] != "units" or path[2] != "flags":
-        return False
-    if path[3] not in {"lifecycle_status", "lifecycle_state"}:
+    if (
+        len(path) != 3
+        or path[0] != "units"
+        or path[2] != "lifecycle_status"
+    ):
         return False
     return str(mutation.after or "").lower() in {"removed", "escaped"}
 

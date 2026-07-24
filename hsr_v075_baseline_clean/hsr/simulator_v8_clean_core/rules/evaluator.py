@@ -1802,9 +1802,7 @@ def _unit_character_id(unit: Any | None) -> int | None:
 def _unit_is_alive(unit: Any | None) -> bool:
     if unit is None:
         return False
-    flags = getattr(unit, "flags", {})
-    lifecycle = str(flags.get("lifecycle_status") or "") if isinstance(flags, dict) else ""
-    return lifecycle not in {"defeated", "removed"} and float(getattr(unit, "hp", 0.0) or 0.0) > 0
+    return getattr(unit, "lifecycle_status", None) == "active"
 
 
 def _team_matches(unit: Any, expected: object) -> tuple[bool | None, str]:

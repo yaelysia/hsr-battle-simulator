@@ -1780,9 +1780,9 @@ class StatusSystem:
         if unit_id not in state.units:
             return _unsupported_lifecycle_plan("tick_blocked", unit_id, "", "unit_missing", {})
         unit = state.units[unit_id]
-        lifecycle_status = str(unit.flags.get("lifecycle_status") or "")
-        if lifecycle_status in {"defeated", "removed"} or unit.hp <= 0:
-            reason = f"unit_not_active_for_status_lifecycle:{lifecycle_status or 'hp_zero'}"
+        lifecycle_status = unit.lifecycle_status
+        if lifecycle_status != "active":
+            reason = f"unit_not_active_for_status_lifecycle:{lifecycle_status}"
             return _unsupported_lifecycle_plan("tick_blocked", unit_id, "", reason, {})
         status_id = str(status_detail.get("status_id") or "")
         source_trace = _status_detail_source_trace(status_detail)
@@ -4997,7 +4997,7 @@ def _halo_member_is_present(state: BattleState, target_id: str) -> bool:
     unit = state.units.get(target_id)
     return bool(
         unit is not None
-        and str(unit.flags.get("lifecycle_status") or "active") != "removed"
+        and unit.lifecycle_status != "removed"
     )
 
 
@@ -5034,12 +5034,15 @@ def _defeated_halo_member_remains_related(
     unit = state.units.get(target_id)
     if unit is None:
         return False, ""
-    flags = dict(unit.flags)
-    flags["lifecycle_status"] = "active"
     active_view = replace(
         unit,
         hp=max(1.0, min(float(unit.max_hp), 1.0)),
-        flags=flags,
+        lifecycle_status="active",
+        flags={
+            key: value
+            for key, value in unit.flags.items()
+            if key not in {"defeat_record", "removed_record"}
+        },
     )
     probe_state = replace(
         state,

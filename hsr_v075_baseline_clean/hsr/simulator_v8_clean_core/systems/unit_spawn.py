@@ -350,6 +350,7 @@ def _materialize_unit_payload(
     }
     return {
         **fields,
+        "lifecycle_status": "active",
         "statuses": [],
         "shield_instances": [],
         "flags": flags,

@@ -11,7 +11,7 @@ turnbasedgamedata-main -> compiler/lowering -> Canonical IR -> Combat Core
 最近检查点：
 
 ```text
-checkpoint(v8): accept VG-S1 committed state immutability
+checkpoint(v8): accept VG-S2 committed integrity lifecycle pilot
 ```
 
 已验收的主要底座：
@@ -67,10 +67,10 @@ deferred / not_proven
    完整性门、事件 closure 所有权冲突以及重复完整 lowering 是当前主要根因。
 2. `VG-S1` 已通过验收：UnitState、BattleState、Snapshot、codec 和 reducer
    的递归不可变、输入别名隔离、独立 JSON 输出与结构共享边界已经闭合。
-3. 当前没有已确认的代码执行卡。下一步由规划线程编写
-   `VG-S2 committed integrity 协议与生命周期试点` 执行卡；确认前不得实施。
-4. VG-S2 之后再规划 validator registry、事件 closure 和逐领域权威事实回正，
-   执行线程不得自动跨阶段。
+3. `VG-S2` 已通过验收：单位生命周期已迁移为类型化唯一权威，touched-domain
+   integrity gate、完整批次 replay、atomic failure 和场景双 full-check 边界已闭合。
+4. 下一步只规划 `VG-S3` validator registry 与共享构建入口；尚无已确认执行卡，
+   执行线程不得自行开始实施或跨入后续事件 closure。
 5. 目录验证限峰和共享构建在状态/验证基础边界稳定后推进，再用于后续 P8 遗器
    阶段试点。
 
@@ -92,12 +92,12 @@ deferred / not_proven
 
 不要默认通读所有文档。根据任务选择：
 
-- 阶段实施：经规划线程确认的当前执行卡；目前需先编写 VG-S2 卡。
+- 阶段实施：经用户确认的当前执行卡；当前没有已确认的下一阶段执行卡。
 - 架构修改：`ARCHITECTURE_BOUNDARY_CONTRACT.md`、`FORBIDDEN.md`。
 - 规划、验收、验证治理：`docs/AGENT_WORKFLOW_AND_VALIDATION.md`。
 - VG 总方案：`VALIDATION_GOVERNANCE_AND_STATE_INTEGRITY_PLAN.md`。
-- VG 已验收基线：`docs/validation_execution_cards/VG-S1_COMMITTED_STATE_IMMUTABILITY.md`。
-- VG 下一步：由规划线程编写并确认 VG-S2 执行卡。
+- VG 已验收基线：`docs/validation_execution_cards/VG-S2_COMMITTED_INTEGRITY_LIFECYCLE_PILOT.md`。
+- VG 下一步：规划 VG-S3 validator registry 与共享构建入口；不得直接实施。
 - 当前文档导航：`DOCUMENTATION_INDEX.md`。
 - P8：`P8_EQUIPMENT_BUILD_LIGHT_CONE_RELIC_TASK_PLAN.md` 和当前阶段卡。
 - 历史追溯：对应 checkpoint 或 `docs/archive/`，按关键词读取。

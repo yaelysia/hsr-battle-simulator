@@ -8,8 +8,8 @@ RuntimeCombatTeam = Literal["ally", "enemy", "neutral"]
 
 
 class RuntimeUnitView(Protocol):
-    hp: float
     side: str
+    lifecycle_status: str
     flags: Mapping[str, object]
 
 
@@ -63,10 +63,12 @@ def runtime_unit_is_dark_team(unit: RuntimeUnitView) -> bool:
 
 def runtime_unit_lifecycle_status(unit: RuntimeUnitView) -> str:
     """Return the canonical lifecycle status used by runtime target consumers."""
-    raw = unit.flags.get("lifecycle_status")
-    if isinstance(raw, str) and raw in {"active", "defeated", "removed"}:
-        return raw
-    return "defeated" if float(unit.hp) <= 0.0 else "active"
+    return unit.lifecycle_status
+
+
+def runtime_unit_is_active(unit: RuntimeUnitView) -> bool:
+    """Whether the typed lifecycle marks a unit as alive and active."""
+    return runtime_unit_lifecycle_status(unit) == "active"
 
 
 def runtime_unit_is_on_field(unit: RuntimeUnitView) -> bool:
@@ -118,7 +120,7 @@ def runtime_unit_is_target_candidate(
 ) -> bool:
     """Shared participation gate for target, condition and callback traversals."""
     return (
-        runtime_unit_lifecycle_status(unit) == "active"
+        runtime_unit_is_active(unit)
         and runtime_unit_is_on_field(unit)
         and runtime_unit_source_is_targetable(unit)
         and (

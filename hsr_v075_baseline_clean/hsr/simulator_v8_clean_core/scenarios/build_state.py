@@ -23,6 +23,7 @@ from ..core.model import (
 )
 from ..core.reducer import MutationReducer
 from ..core.settlement import SettlementRecord
+from ..core.state_integrity import CommittedStateIntegrityGate
 from ..equipment.models import DynamicMechanismSelection
 from ..rules.ir import CombatantProfileIR, WaveDefinitionIR, WaveMonsterEntryIR
 from ..rules.engine_rule_registry import (
@@ -479,7 +480,6 @@ class ScenarioStateBuilder:
                 speed=0.0,
                 flags={
                     "system_entity_kind": "level",
-                    "lifecycle_status": "active",
                     "unselectable": True,
                     "selectable": False,
                     "timeline_admitted": False,
@@ -544,6 +544,8 @@ class ScenarioStateBuilder:
             global_flags=global_flags,
             rng_state=_scenario_rng_state(scenario),
         )
+        integrity_gate = CommittedStateIntegrityGate()
+        integrity_gate.require_full(state)
         provider_result = register_dynamic_ability_providers(
             state,
             self.rules,
@@ -612,6 +614,7 @@ class ScenarioStateBuilder:
         route_unit_errors = _validate_route_units_after_setup(scenario, state)
         if route_unit_errors:
             raise ValueError("; ".join(route_unit_errors))
+        integrity_gate.require_full(state)
         commands = tuple(
             ActionCommand(
                 actor_id=step.actor_id,

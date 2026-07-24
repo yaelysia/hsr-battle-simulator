@@ -222,9 +222,13 @@ P1-P8，也禁止为了旧脚本继续保留错误生产语义。
 
 ## 8. 当前状态与下一入口
 
-`VG-S0` 状态权威与成本审计、`VG-S1` committed state 递归不可变与快照隔离均已
-由验收线程复核通过。`VG-S1` 的唯一完成清单与当前代码、聚焦验证及直接回归一致。
+`VG-S0` 状态权威与成本审计、`VG-S1` committed state 递归不可变与快照隔离、
+`VG-S2` committed integrity 协议与生命周期试点均已由验收线程复核通过。
+`VG-S2` 的唯一完成清单与当前代码、聚焦验证及直接回归一致：
 
-当前没有已确认的代码执行卡。下一步由规划线程编写并确认
-`VG-S2 committed integrity 协议与生命周期试点` 执行卡；确认前不得提前实施
-VG-S2 或以后阶段。
+```text
+docs/validation_execution_cards/VG-S2_COMMITTED_INTEGRITY_LIFECYCLE_PILOT.md
+```
+
+下一步只规划 `VG-S3` 验证选择与共享构建入口。目前没有已确认的 VG-S3 执行卡，
+不得直接实施或自动进入后续阶段。

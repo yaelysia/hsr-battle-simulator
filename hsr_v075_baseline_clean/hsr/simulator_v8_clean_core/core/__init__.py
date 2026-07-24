@@ -22,6 +22,13 @@ from .reducer import (
 )
 from .settlement import SettlementRecord, SettlementTraceabilityValidator
 from .snapshot_contract import SnapshotCompletenessValidator
+from .state_integrity import (
+    CommittedStateIntegrityError,
+    CommittedStateIntegrityGate,
+    StateIntegrityIssue,
+    StateIntegrityResult,
+    StateIntegrityScope,
+)
 from .transition_contract import TransitionContractValidator
 from .transition_outcome import (
     ExecutionNodeResult,
@@ -39,6 +46,8 @@ __all__ = [
     "BattleTransition",
     "CompactSemanticState",
     "CompactStateQuery",
+    "CommittedStateIntegrityError",
+    "CommittedStateIntegrityGate",
     "GameEvent",
     "MechanicFidelityMatrix",
     "Mutation",
@@ -52,6 +61,9 @@ __all__ = [
     "SettlementRecord",
     "SettlementTraceabilityValidator",
     "SnapshotCompletenessValidator",
+    "StateIntegrityIssue",
+    "StateIntegrityResult",
+    "StateIntegrityScope",
     "TargetResolution",
     "ExecutionNodeResult",
     "TransitionOutcome",

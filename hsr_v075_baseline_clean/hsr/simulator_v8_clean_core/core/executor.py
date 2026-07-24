@@ -3,7 +3,12 @@ from __future__ import annotations
 from dataclasses import replace
 
 from .action_plan import DamagePlan, ToughnessPlan, build_action_execution_plan
-from .atomic_commit import finalize_selected_execution_graph, records_for_atomic_result
+from .atomic_commit import (
+    events_for_atomic_result,
+    finalize_selected_execution_graph,
+    records_for_atomic_result,
+    rng_events_for_atomic_result,
+)
 from .model import (
     ActionCommand,
     ActionSettlement,
@@ -1488,14 +1493,17 @@ class CombatExecutor:
         transaction = ActionTransaction(
             command=command,
             before=before,
-            events=_dedupe_events(
-                *events,
-                *ability_task_events,
-                *trigger_events,
-                *listener_dispatch_events,
-                *(event for result in damage_results for event in result.events),
-                *(event for result in toughness_results for event in result.events),
-                *(event for result in break_results for event in result.events),
+            events=events_for_atomic_result(
+                _dedupe_events(
+                    *events,
+                    *ability_task_events,
+                    *trigger_events,
+                    *listener_dispatch_events,
+                    *(event for result in damage_results for event in result.events),
+                    *(event for result in toughness_results for event in result.events),
+                    *(event for result in break_results for event in result.events),
+                ),
+                atomic_commit,
             ),
             mutations=mutations,
             trigger_windows=trigger_windows,
@@ -1505,7 +1513,10 @@ class CombatExecutor:
             transaction=transaction,
             after=after_state.snapshot(),
             target_resolution=target_result.resolution,
-            rng_events=damage_rng_events,
+            rng_events=rng_events_for_atomic_result(
+                damage_rng_events,
+                atomic_commit,
+            ),
             outcome=atomic_commit.outcome,
             coverage={
                 "executor": "v0_221_action_ability_binding",

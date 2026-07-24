@@ -171,10 +171,7 @@ def validate_summon_runtime(
                     False,
                     "summon_runtime_entity_unit_kind_mismatch",
                 )
-            if (
-                str(unit.flags.get("lifecycle_status") or "active")
-                == "removed"
-            ):
+            if unit.lifecycle_status == "removed":
                 return SummonRuntimeValidation(
                     False,
                     "summon_runtime_active_entity_unit_removed",
@@ -218,7 +215,7 @@ def validate_summon_runtime(
             summon_kind = str(unit.flags.get("summon_kind") or "")
             if summon_kind not in {"servant", "summoned_monster"}:
                 continue
-            if str(unit.flags.get("lifecycle_status") or "active") == "removed":
+            if unit.lifecycle_status == "removed":
                 continue
             raw_entry = entities.get(unit_id)
             if not isinstance(raw_entry, dict):

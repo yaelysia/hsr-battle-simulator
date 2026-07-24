@@ -1,18 +1,20 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import Literal
 
-from ..core.model import BattleState, JSONValue, Mutation, UnitState
+from ..core.model import (
+    BattleState,
+    JSONValue,
+    Mutation,
+    UnitLifecycleStatus,
+    UnitState,
+)
 from ..unit_eligibility import (
     runtime_unit_is_on_field,
     runtime_unit_lifecycle_status,
     runtime_unit_source_is_targetable,
 )
 from ..core.unit_state_codec import unit_state_to_payload
-
-
-UnitLifecycleStatus = Literal["active", "defeated", "removed"]
 
 
 @dataclass(frozen=True)
@@ -119,8 +121,8 @@ class UnitLifecycleSystem:
             can_keep_queue_entries=not is_removed and (not summon_kind or can_act),
             blocked_reason=reason,
             metadata={
-                "explicit_lifecycle_status": unit.flags.get("lifecycle_status"),
-                "inferred_from_hp": "lifecycle_status" not in unit.flags,
+                "lifecycle_status": unit.lifecycle_status,
+                "lifecycle_authority": "unit_state.lifecycle_status",
                 "summon_kind": summon_kind,
                 "presence": presence,
                 "targetable": targetable,
@@ -158,9 +160,7 @@ class UnitLifecycleSystem:
         return view.can_receive_damage, "" if view.can_receive_damage else view.blocked_reason
 
     def with_status(self, unit: UnitState, status: UnitLifecycleStatus) -> UnitState:
-        flags = dict(unit.flags)
-        flags["lifecycle_status"] = status
-        return replace(unit, flags=flags)
+        return replace(unit, lifecycle_status=status)
 
     def spawn_mutation(
         self,
@@ -209,12 +209,12 @@ class UnitLifecycleSystem:
             return None
         return Mutation(
             op="set",
-            path=("units", unit_id, "flags", "lifecycle_status"),
-            before=unit.flags.get("lifecycle_status"),
+            path=("units", unit_id, "lifecycle_status"),
+            before=unit.lifecycle_status,
             after="defeated",
             reason=reason,
             source=source,
-            before_exists="lifecycle_status" in unit.flags,
+            before_exists=True,
             metadata={
                 **(metadata or {}),
                 "lifecycle_operation": "unit_defeat",
@@ -280,12 +280,12 @@ class UnitLifecycleSystem:
         return (
             Mutation(
                 op="set",
-                path=("units", unit_id, "flags", "lifecycle_status"),
-                before=unit.flags.get("lifecycle_status"),
+                path=("units", unit_id, "lifecycle_status"),
+                before=unit.lifecycle_status,
                 after="removed",
                 reason=reason,
                 source=source,
-                before_exists="lifecycle_status" in unit.flags,
+                before_exists=True,
                 metadata={
                     **common,
                     "lifecycle_operation": "unit_remove",

@@ -1,10 +1,17 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
-from .model import BattleState, JSONValue, Mutation
+from .model import BattleState, GameEvent, JSONValue, Mutation, RNGEvent
 from .reducer import MutationReducer
+from .state_integrity import (
+    CommittedStateIntegrityGate,
+    StateIntegrityResult,
+)
 from .transition_outcome import ExecutionNodeResult, TransitionOutcome, classify_transition_outcome
+
+
+ATOMIC_COMMIT_SCHEMA_VERSION = "vg_s2_atomic_commit_v2"
 
 
 @dataclass(frozen=True)
@@ -19,6 +26,7 @@ class AtomicCommitResult:
     after_state: BattleState
     committed_mutations: tuple[Mutation, ...]
     outcome: TransitionOutcome
+    integrity: StateIntegrityResult
     evidence: dict[str, JSONValue]
 
 
@@ -37,6 +45,7 @@ def finalize_selected_execution_graph(
     reducer = reducer or MutationReducer()
     selected_graph_complete = bool(node_results) and all(item.complete for item in node_results)
     planned_evidence = [_planned_mutation_evidence(mutation) for mutation in planned_mutations]
+    integrity = StateIntegrityResult.not_run()
 
     if preflight_blocked or not selected_graph_complete:
         outcome = classify_transition_outcome(
@@ -50,8 +59,9 @@ def finalize_selected_execution_graph(
             after_state=before_state,
             committed_mutations=(),
             outcome=outcome,
+            integrity=integrity,
             evidence={
-                "schema_version": "p7_s3_atomic_commit_v1",
+                "schema_version": ATOMIC_COMMIT_SCHEMA_VERSION,
                 "commit_status": "preflight_blocked" if preflight_blocked else "selected_graph_incomplete",
                 "selected_graph_complete": selected_graph_complete,
                 "candidate_state_published": False,
@@ -61,6 +71,7 @@ def finalize_selected_execution_graph(
                 "committed_mutation_count": 0,
                 "planned_mutations": planned_evidence,
                 "conflicts": [],
+                "state_integrity": integrity.to_json(),
             },
         )
 
@@ -96,6 +107,28 @@ def finalize_selected_execution_graph(
             ),
         )
 
+    if commit_status == "committed":
+        integrity = CommittedStateIntegrityGate().check_touched(
+            before_state,
+            reduction.after_state,
+            planned_mutations,
+        )
+        if not integrity.ok:
+            commit_status = "state_integrity_failed"
+            first_issue = integrity.issues[0]
+            commit_nodes = (
+                *node_results,
+                ExecutionNodeResult(
+                    node_kind="state_integrity",
+                    node_id=(
+                        f"{first_issue.domain}:{first_issue.entity_id}:"
+                        f"{first_issue.code}"
+                    ),
+                    status="error",
+                    reason_code=f"state_integrity_failed:{first_issue.code}",
+                ),
+            )
+
     if commit_status != "committed":
         outcome = classify_transition_outcome(
             commit_nodes,
@@ -106,8 +139,9 @@ def finalize_selected_execution_graph(
             after_state=before_state,
             committed_mutations=(),
             outcome=outcome,
+            integrity=integrity,
             evidence={
-                "schema_version": "p7_s3_atomic_commit_v1",
+                "schema_version": ATOMIC_COMMIT_SCHEMA_VERSION,
                 "commit_status": commit_status,
                 "selected_graph_complete": selected_graph_complete,
                 "candidate_state_published": False,
@@ -118,6 +152,7 @@ def finalize_selected_execution_graph(
                 "committed_mutation_count": 0,
                 "planned_mutations": planned_evidence,
                 "conflicts": [conflict.to_json() for conflict in reduction.conflicts],
+                "state_integrity": integrity.to_json(),
             },
         )
 
@@ -132,8 +167,9 @@ def finalize_selected_execution_graph(
         after_state=committed_after,
         committed_mutations=committed_mutations,
         outcome=outcome,
+        integrity=integrity,
         evidence={
-            "schema_version": "p7_s3_atomic_commit_v1",
+            "schema_version": ATOMIC_COMMIT_SCHEMA_VERSION,
             "commit_status": "committed",
             "selected_graph_complete": True,
             "candidate_state_published": True,
@@ -144,6 +180,7 @@ def finalize_selected_execution_graph(
             "committed_mutation_count": len(committed_mutations),
             "planned_mutations": planned_evidence,
             "conflicts": [],
+            "state_integrity": integrity.to_json(),
         },
     )
 
@@ -188,3 +225,39 @@ def records_for_atomic_result(
             }
         )
     return tuple(normalized)
+
+
+def events_for_atomic_result(
+    events: tuple[GameEvent, ...],
+    result: AtomicCommitResult,
+) -> tuple[GameEvent, ...]:
+    """Preserve failed-plan events only as process-only diagnostics."""
+
+    if result.outcome.successor_eligible:
+        return events
+    commit_status = str(
+        result.evidence.get("commit_status", "not_committed")
+    )
+    return tuple(
+        event
+        if event.process_only
+        else replace(
+            event,
+            process_only=True,
+            payload={
+                **event.payload,
+                "planned_only": True,
+                "atomic_commit_status": commit_status,
+            },
+        )
+        for event in events
+    )
+
+
+def rng_events_for_atomic_result(
+    rng_events: tuple[RNGEvent, ...],
+    result: AtomicCommitResult,
+) -> tuple[RNGEvent, ...]:
+    """Formal RNG events exist only for successor-eligible transitions."""
+
+    return rng_events if result.outcome.successor_eligible else ()

@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, Iterator
@@ -24,6 +23,7 @@ from ..core.reducer import MutationReducer
 from ..core.source_audit import RuntimeSourceAuditor
 from ..core.settlement import SettlementRecord
 from ..core.unit_state_codec import unit_state_from_payload, unit_state_to_payload
+from ..immutable_json import thaw_json
 from ..ir_types import IRSource
 from ..rules.evaluator import EvaluationContext, RuleEvaluator
 from ..rules.expression_ir import (
@@ -305,7 +305,6 @@ def _birth_template() -> UnitBirthTemplateIR:
                 "binding_kind": "request_field",
                 "field": "entry_source_trace",
             },
-            "lifecycle_status": "active",
             "team_side": "ally",
             "lifecycle_source": {
                 "admission_status": "executable",
@@ -433,7 +432,7 @@ def _fixture(
         attack=100.0,
         defense=100.0,
         speed=100.0,
-        flags={"lifecycle_status": "active"},
+        flags={},
     )
     other_owner = replace(owner, unit_id="ally:other-owner")
     state = BattleState(
@@ -642,7 +641,7 @@ def _wave_halo_reconciliation_case() -> dict[str, JSONValue]:
         attack=10.0,
         defense=10.0,
         speed=100.0,
-        flags={"lifecycle_status": "active"},
+        flags={},
     )
     state_with_old_enemy = replace(
         initial_state,
@@ -664,7 +663,7 @@ def _wave_halo_reconciliation_case() -> dict[str, JSONValue]:
         old_enemy,
         unit_id="enemy:new-wave",
         template_id="monster:p8-r1-new-wave",
-        flags={"lifecycle_status": "active"},
+        flags={},
     )
     lifecycle = UnitLifecycleSystem()
     remove_mutations = lifecycle.remove_mutations(
@@ -958,7 +957,7 @@ def _runtime_validation() -> dict[str, JSONValue]:
         caster_id="ally:owner",
         owner_id="ally:owner",
     )
-    malformed_runtime = deepcopy(canonical)
+    malformed_runtime = thaw_json(canonical)
     malformed_runtime["by_owner"] = []
     malformed_state = replace(
         initial_state,
@@ -1099,9 +1098,10 @@ def _runtime_validation() -> dict[str, JSONValue]:
     defeated_unit = replace(
         state.units["servant:one"],
         hp=0.0,
+        lifecycle_status="defeated",
         flags={
             **state.units["servant:one"].flags,
-            "lifecycle_status": "defeated",
+            "defeat_record": {"reason": "halo_lifecycle_fixture"},
         },
     )
     defeated_state = replace(
@@ -1116,9 +1116,11 @@ def _runtime_validation() -> dict[str, JSONValue]:
     revived_unit = replace(
         defeated_after.units["servant:one"],
         hp=100.0,
+        lifecycle_status="active",
         flags={
-            **defeated_after.units["servant:one"].flags,
-            "lifecycle_status": "active",
+            key: value
+            for key, value in defeated_after.units["servant:one"].flags.items()
+            if key != "defeat_record"
         },
     )
     revived_state = replace(
@@ -1148,9 +1150,10 @@ def _runtime_validation() -> dict[str, JSONValue]:
     servant_two_defeated = replace(
         state.units["servant:two"],
         hp=0.0,
+        lifecycle_status="defeated",
         flags={
             **state.units["servant:two"].flags,
-            "lifecycle_status": "defeated",
+            "defeat_record": {"reason": "alive_only_halo_fixture"},
         },
     )
     alive_policy_before = replace(
@@ -1174,7 +1177,7 @@ def _runtime_validation() -> dict[str, JSONValue]:
         for detail in defeated_two_children
     }
 
-    moved_runtime = deepcopy(
+    moved_runtime = thaw_json(
         alive_policy_after.global_flags.get("summon_runtime")
     )
     assert isinstance(moved_runtime, dict)
@@ -1217,9 +1220,11 @@ def _runtime_validation() -> dict[str, JSONValue]:
     servant_two_revived = replace(
         alive_policy_after.units["servant:two"],
         hp=100.0,
+        lifecycle_status="active",
         flags={
-            **alive_policy_after.units["servant:two"].flags,
-            "lifecycle_status": "active",
+            key: value
+            for key, value in alive_policy_after.units["servant:two"].flags.items()
+            if key != "defeat_record"
         },
     )
     alive_policy_revived = replace(
@@ -1290,7 +1295,7 @@ def _runtime_validation() -> dict[str, JSONValue]:
     )
     duplicate_candidate = next(
         (
-            deepcopy(detail)
+            thaw_json(detail)
             for detail in duplicate_child_details
             if _detail_halo_relation_id(detail) == parent_a_relation_id
         ),
@@ -1320,7 +1325,7 @@ def _runtime_validation() -> dict[str, JSONValue]:
         duplicate_child_state
     )
 
-    forged_evidence_details = deepcopy(
+    forged_evidence_details = thaw_json(
         _details(integrity_base_state, "ally:owner")
     )
     for detail in forged_evidence_details:
@@ -1357,9 +1362,10 @@ def _runtime_validation() -> dict[str, JSONValue]:
 
     removed_parent = replace(
         integrity_base_state.units["ally:owner"],
+        lifecycle_status="removed",
         flags={
             **integrity_base_state.units["ally:owner"].flags,
-            "lifecycle_status": "removed",
+            "removed_record": {"reason": "halo_parent_fixture"},
         },
     )
     removed_parent_state = replace(
@@ -1384,7 +1390,7 @@ def _runtime_validation() -> dict[str, JSONValue]:
         if _detail_halo_relation_id(detail)
     )
 
-    atomic_update_details = deepcopy(_details(state, "ally:owner"))
+    atomic_update_details = thaw_json(_details(state, "ally:owner"))
     for detail in atomic_update_details:
         if detail.get("modifier_name") == "ParentA":
             detail["dynamic_values"] = {
@@ -1408,7 +1414,7 @@ def _runtime_validation() -> dict[str, JSONValue]:
     atomic_update_success = status.reconcile_halo_relations(
         atomic_update_state
     )
-    atomic_failure_details = deepcopy(atomic_update_details)
+    atomic_failure_details = thaw_json(atomic_update_details)
     for detail in atomic_failure_details:
         if detail.get("modifier_name") != "ParentB":
             continue
@@ -1457,10 +1463,10 @@ def _runtime_validation() -> dict[str, JSONValue]:
     round_tripped = _round_trip_state(state)
     round_trip_reconcile = status.reconcile_halo_relations(round_tripped)
 
-    corrupt = deepcopy(round_tripped.global_flags)
+    corrupt = thaw_json(round_tripped.global_flags)
     corrupt_units = dict(round_tripped.units)
     owner_flags = dict(corrupt_units["ally:owner"].flags)
-    owner_details = _details(round_tripped, "ally:owner")
+    owner_details = thaw_json(_details(round_tripped, "ally:owner"))
     for detail in owner_details:
         relations = detail.get("halo_relations")
         if isinstance(relations, list) and relations:
@@ -1487,13 +1493,13 @@ def _runtime_validation() -> dict[str, JSONValue]:
         ("wrong_schema", lambda raw: raw.__setitem__("schema_version", "wrong")),
         ("bad_owner_index", lambda raw: raw.__setitem__("by_owner", [])),
     ):
-        raw = deepcopy(canonical)
+        raw = thaw_json(canonical)
         mutate(raw)
         validation = validate_summon_runtime(raw, units=initial_state.units)
         bad_runtime_rows.append(
             {"case": label, "ok": validation.ok, "reason": validation.reason}
         )
-    contradictory_runtime = deepcopy(runtime_after_spawn)
+    contradictory_runtime = thaw_json(runtime_after_spawn)
     assert isinstance(contradictory_runtime, dict)
     contradictory_runtime["by_owner"]["ally:owner"] = []
     contradictory_validation = validate_summon_runtime(
@@ -1509,9 +1515,10 @@ def _runtime_validation() -> dict[str, JSONValue]:
     )
     removed_runtime_unit = replace(
         state_after_spawn_one.units["servant:one"],
+        lifecycle_status="removed",
         flags={
             **state.units["servant:one"].flags,
-            "lifecycle_status": "removed",
+            "removed_record": {"reason": "summon_runtime_fixture"},
         },
     )
     removed_runtime_validation = validate_summon_runtime(
@@ -1528,7 +1535,7 @@ def _runtime_validation() -> dict[str, JSONValue]:
             "reason": removed_runtime_validation.reason,
         }
     )
-    ownerless_runtime = deepcopy(runtime_after_spawn)
+    ownerless_runtime = thaw_json(runtime_after_spawn)
     assert isinstance(ownerless_runtime, dict)
     ownerless_runtime["entities"]["servant:one"]["owner_id"] = ""
     ownerless_validation = validate_summon_runtime(
@@ -1563,7 +1570,7 @@ def _runtime_validation() -> dict[str, JSONValue]:
             "reason": wrong_kind_validation.reason,
         }
     )
-    missing_servant_index = deepcopy(runtime_after_spawn)
+    missing_servant_index = thaw_json(runtime_after_spawn)
     assert isinstance(missing_servant_index, dict)
     missing_servant_index["servants"].pop("servant:one")
     missing_servant_validation = validate_summon_runtime(
@@ -1600,7 +1607,7 @@ def _runtime_validation() -> dict[str, JSONValue]:
             "servant:rng-channel",
         ),
     )
-    inactive_registry = deepcopy(runtime_after_spawn)
+    inactive_registry = thaw_json(runtime_after_spawn)
     assert isinstance(inactive_registry, dict)
     inactive_registry["entities"]["servant:one"]["status"] = "removed"
     inactive_registry["servants"]["servant:one"]["status"] = "removed"
@@ -1631,7 +1638,7 @@ def _runtime_validation() -> dict[str, JSONValue]:
             "reason": owner_missing_validation.reason,
         }
     )
-    jointly_forged_owner_runtime = deepcopy(runtime_after_spawn)
+    jointly_forged_owner_runtime = thaw_json(runtime_after_spawn)
     jointly_forged_owner_runtime["entities"]["servant:one"][
         "owner_id"
     ] = "ally:forged-owner"
@@ -1663,7 +1670,7 @@ def _runtime_validation() -> dict[str, JSONValue]:
             "reason": jointly_forged_owner_validation.reason,
         }
     )
-    summoner_mismatch_runtime = deepcopy(runtime_after_spawn)
+    summoner_mismatch_runtime = thaw_json(runtime_after_spawn)
     summoner_mismatch_runtime["entities"]["servant:one"][
         "summoner_id"
     ] = "ally:forged-summoner"
@@ -1681,7 +1688,7 @@ def _runtime_validation() -> dict[str, JSONValue]:
             "reason": summoner_mismatch_validation.reason,
         }
     )
-    missing_summoner_runtime = deepcopy(runtime_after_spawn)
+    missing_summoner_runtime = thaw_json(runtime_after_spawn)
     missing_summoner_runtime["entities"]["servant:one"][
         "summoner_id"
     ] = "ally:missing-summoner"
@@ -1709,7 +1716,7 @@ def _runtime_validation() -> dict[str, JSONValue]:
             "reason": missing_summoner_validation.reason,
         }
     )
-    forged_team_runtime = deepcopy(runtime_after_spawn)
+    forged_team_runtime = thaw_json(runtime_after_spawn)
     forged_team_runtime["entities"]["servant:one"][
         "team_side"
     ] = "enemy"

@@ -1,11 +1,17 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from .immutable_json import thaw_json
-from .model import BattleState, JSONValue, Mutation
+from .model import (
+    LEGACY_UNIT_LIFECYCLE_FLAG_KEYS,
+    BattleState,
+    JSONValue,
+    Mutation,
+)
+from .state_integrity import CommittedStateIntegrityGate, StateIntegrityResult
 from .unit_state_codec import (
     UNIT_STATE_MUTABLE_FIELDS,
     unit_state_from_payload,
@@ -90,6 +96,9 @@ class ReplayResult:
     actual: dict[str, JSONValue]
     errors: tuple[str, ...] = ()
     conflicts: tuple[MutationConflict, ...] = ()
+    integrity: StateIntegrityResult = field(
+        default_factory=StateIntegrityResult.not_run
+    )
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -98,6 +107,7 @@ class ReplayResult:
             "actual": self.actual,
             "errors": list(self.errors),
             "conflicts": [conflict.to_json() for conflict in self.conflicts],
+            "state_integrity": self.integrity.to_json(),
         }
 
 
@@ -185,18 +195,46 @@ class MutationReducer:
                 for conflict in reduction.conflicts
             )
             return ReplayResult(
-                False,
-                expected_after,
-                before.snapshot().to_json(),
-                errors,
-                reduction.conflicts,
+                ok=False,
+                expected=expected_after,
+                actual=before.snapshot().to_json(),
+                errors=errors,
+                conflicts=reduction.conflicts,
             )
+        integrity = CommittedStateIntegrityGate().check_touched(
+            before,
+            reduction.after_state,
+            mutations,
+        )
         actual = reduction.after_state.snapshot().to_json()
+        if not integrity.ok:
+            errors = tuple(
+                f"state_integrity_failed:{issue.code}"
+                for issue in integrity.issues
+            )
+            return ReplayResult(
+                ok=False,
+                expected=expected_after,
+                actual=actual,
+                errors=errors,
+                integrity=integrity,
+            )
         if _typed_equal(actual, expected_after):
-            return ReplayResult(True, expected_after, actual)
+            return ReplayResult(
+                ok=True,
+                expected=expected_after,
+                actual=actual,
+                integrity=integrity,
+            )
         mismatch_path = _first_mismatch_path(expected_after, actual)
         suffix = ".".join(mismatch_path) if mismatch_path else "<root>"
-        return ReplayResult(False, expected_after, actual, (f"snapshot_mismatch:{suffix}",))
+        return ReplayResult(
+            ok=False,
+            expected=expected_after,
+            actual=actual,
+            errors=(f"snapshot_mismatch:{suffix}",),
+            integrity=integrity,
+        )
 
     def _apply_checked(self, state: BattleState, mutation: Mutation) -> BattleState:
         if mutation.op not in SUPPORTED_MUTATION_OPS:
@@ -270,6 +308,11 @@ class MutationReducer:
             _validate_after_value(mutation.path, current.kind, mutation.after)
             return
         if mutation.op == "delete":
+            if current.kind == "unit_root":
+                raise _ReductionIssue(
+                    "unit_deletion_not_admitted",
+                    "committed units cannot be deleted; transition them to removed",
+                )
             if current.kind not in {"mapping", "resource_mapping", "queue"}:
                 raise _ReductionIssue("invalid_op_path", "delete requires a mapping or queue entry path")
             if not current.exists:
@@ -325,6 +368,14 @@ class MutationReducer:
             return _PathValue(True, _json_value(getattr(unit, field_name)), "unit_field")
         if len(path) != 4 or field_name not in {"flags", "resources"}:
             raise _ReductionIssue("invalid_path", f"invalid nested unit path {path!r}")
+        if (
+            field_name == "flags"
+            and path[3] in LEGACY_UNIT_LIFECYCLE_FLAG_KEYS
+        ):
+            raise _ReductionIssue(
+                "legacy_lifecycle_flag_not_admitted",
+                f"reserved lifecycle flag path is not admitted: {path!r}",
+            )
         kind = "resource_mapping" if field_name == "resources" else "mapping"
         return _mapping_value(getattr(unit, field_name), path[3], kind)
 
@@ -424,8 +475,19 @@ def _validate_after_value(path: tuple[str, ...], kind: str, value: JSONValue) ->
     try:
         validate_canonical_unit_field_value(field_name, value)
     except (TypeError, ValueError) as exc:
+        code = (
+            "invalid_lifecycle_status"
+            if field_name == "lifecycle_status"
+            else "legacy_lifecycle_flag_not_admitted"
+            if field_name == "flags"
+            and isinstance(thaw_json(value), dict)
+            and LEGACY_UNIT_LIFECYCLE_FLAG_KEYS.intersection(
+                thaw_json(value)
+            )
+            else "invalid_after_type"
+        )
         raise _ReductionIssue(
-            "invalid_after_type",
+            code,
             str(exc),
             expected=value,
         ) from exc

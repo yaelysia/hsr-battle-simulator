@@ -4,7 +4,12 @@ import hashlib
 import json
 from dataclasses import dataclass, field, replace
 
-from ..core.atomic_commit import finalize_selected_execution_graph, records_for_atomic_result
+from ..core.atomic_commit import (
+    events_for_atomic_result,
+    finalize_selected_execution_graph,
+    records_for_atomic_result,
+    rng_events_for_atomic_result,
+)
 from ..core.model import (
     ActionCommand,
     ActionSettlement,
@@ -2442,14 +2447,14 @@ def _transition(
         transaction=ActionTransaction(
             command=command,
             before=before_state.snapshot(),
-            events=events,
+            events=events_for_atomic_result(events, atomic_commit),
             mutations=atomic_commit.committed_mutations,
             trigger_windows=(),
             settlement=settlement,
         ),
         after=atomic_commit.after_state.snapshot(),
         target_resolution=TargetResolution(reason="scheduler_no_target", source="timeline_scheduler"),
-        rng_events=rng_events,
+        rng_events=rng_events_for_atomic_result(rng_events, atomic_commit),
         outcome=atomic_commit.outcome,
         coverage={
             **requested_coverage,
@@ -2502,7 +2507,7 @@ def _combine_scheduler_transitions(
         transaction=ActionTransaction(
             command=command,
             before=before_state.snapshot(),
-            events=events,
+            events=events_for_atomic_result(events, atomic_commit),
             mutations=atomic_commit.committed_mutations,
             trigger_windows=(),
             settlement=settlement,

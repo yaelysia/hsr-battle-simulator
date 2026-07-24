@@ -4,7 +4,15 @@ import math
 from typing import Any
 
 from .immutable_json import thaw_json
-from .model import JSONValue, UnitState, UnitStatPool
+from .model import (
+    JSONValue,
+    LEGACY_UNIT_LIFECYCLE_FLAG_KEYS,
+    UNIT_LIFECYCLE_STATUSES,
+    BattleState,
+    UnitState,
+    UnitStatPool,
+)
+from .state_integrity import CommittedStateIntegrityGate
 
 
 UNIT_STATE_FLOAT_FIELDS = frozenset(
@@ -26,6 +34,7 @@ UNIT_STATE_PAYLOAD_FIELDS = frozenset(
         "unit_id",
         "side",
         "template_id",
+        "lifecycle_status",
         "level",
         *UNIT_STATE_FLOAT_FIELDS,
         "statuses",
@@ -36,11 +45,20 @@ UNIT_STATE_PAYLOAD_FIELDS = frozenset(
     }
 )
 UNIT_STATE_MUTABLE_FIELDS = frozenset(
-    {"level", *UNIT_STATE_FLOAT_FIELDS, "statuses", "shield_instances", "flags", "resources"}
+    {
+        "lifecycle_status",
+        "level",
+        *UNIT_STATE_FLOAT_FIELDS,
+        "statuses",
+        "shield_instances",
+        "flags",
+        "resources",
+    }
 )
 
 
 def unit_state_to_payload(unit: UnitState) -> dict[str, JSONValue]:
+    _require_lifecycle_integrity(unit)
     flags = thaw_json(unit.flags)
     if not isinstance(flags, dict):
         raise ValueError("unit state flags must be a JSON object")
@@ -55,6 +73,7 @@ def unit_state_to_payload(unit: UnitState) -> dict[str, JSONValue]:
         "unit_id": unit.unit_id,
         "side": unit.side,
         "template_id": unit.template_id,
+        "lifecycle_status": unit.lifecycle_status,
         "level": unit.level,
         **{field_name: _finite_number(getattr(unit, field_name), field_name) for field_name in UNIT_STATE_FLOAT_FIELDS},
         "statuses": list(unit.statuses),
@@ -89,10 +108,11 @@ def unit_state_from_payload(payload: Any) -> UnitState:
     assert isinstance(resources, dict)
     if not isinstance(stat_pools, list):
         raise ValueError("unit state stat_pools must be a JSON array")
-    return UnitState(
+    unit = UnitState(
         unit_id=raw["unit_id"],
         side=raw["side"],  # type: ignore[arg-type]
         template_id=raw["template_id"],
+        lifecycle_status=raw["lifecycle_status"],  # type: ignore[arg-type]
         level=raw["level"],
         **{field_name: _finite_number(raw[field_name], field_name) for field_name in UNIT_STATE_FLOAT_FIELDS},
         statuses=tuple(statuses),
@@ -101,6 +121,8 @@ def unit_state_from_payload(payload: Any) -> UnitState:
         resources={key: _finite_number(value, f"resources.{key}") for key, value in resources.items()},
         stat_pools=tuple(_unit_stat_pool_from_payload(item) for item in stat_pools),
     )
+    _require_lifecycle_integrity(unit)
+    return unit
 
 
 def _unit_stat_pool_from_payload(value: Any) -> UnitStatPool:
@@ -144,6 +166,12 @@ def _unit_stat_pool_from_payload(value: Any) -> UnitStatPool:
 def validate_canonical_unit_field_value(field_name: str, value: Any) -> None:
     if field_name not in UNIT_STATE_MUTABLE_FIELDS:
         raise ValueError(f"unsupported mutable unit field {field_name!r}")
+    if field_name == "lifecycle_status":
+        if not isinstance(value, str) or value not in UNIT_LIFECYCLE_STATUSES:
+            raise ValueError(
+                "unit lifecycle_status must be active, defeated, or removed"
+            )
+        return
     if field_name == "level":
         if type(value) is not int:
             raise ValueError("unit level must be an int")
@@ -160,8 +188,17 @@ def validate_canonical_unit_field_value(field_name: str, value: Any) -> None:
         _validate_shield_instances(value)
         return
     if field_name == "flags":
-        if not isinstance(thaw_json(value), dict):
+        flags = thaw_json(value)
+        if not isinstance(flags, dict):
             raise ValueError("unit flags must be a JSON object")
+        legacy_lifecycle_flags = sorted(
+            LEGACY_UNIT_LIFECYCLE_FLAG_KEYS.intersection(flags)
+        )
+        if legacy_lifecycle_flags:
+            raise ValueError(
+                "unit flags contain reserved lifecycle keys: "
+                f"{legacy_lifecycle_flags}"
+            )
         return
     if field_name == "resources":
         resources = thaw_json(value)
@@ -185,8 +222,6 @@ def _validate_payload_identity(payload: dict[str, Any]) -> None:
 
 def _validate_unit_values(payload: dict[str, Any]) -> None:
     values = {field_name: _finite_number(payload.get(field_name), field_name) for field_name in UNIT_STATE_FLOAT_FIELDS}
-    if values["max_hp"] <= 0 or values["hp"] < 0 or values["hp"] > values["max_hp"]:
-        raise ValueError("unit state payload hp range is invalid")
     if values["speed"] <= 0:
         raise ValueError("unit state payload speed must be positive")
     if values["energy"] < 0 or values["max_energy"] < 0:
@@ -203,8 +238,25 @@ def _validate_unit_values(payload: dict[str, Any]) -> None:
     if not isinstance(statuses, list) or not all(isinstance(item, str) for item in statuses):
         raise ValueError("unit state payload statuses must be a list of strings")
     _validate_shield_instances(payload.get("shield_instances"))
-    if not isinstance(payload.get("flags"), dict):
+    flags = payload.get("flags")
+    if not isinstance(flags, dict):
         raise ValueError("unit state payload flags must be a JSON object")
+    legacy_lifecycle_flags = sorted(
+        LEGACY_UNIT_LIFECYCLE_FLAG_KEYS.intersection(flags)
+    )
+    if legacy_lifecycle_flags:
+        raise ValueError(
+            "unit state payload flags contain reserved lifecycle keys: "
+            f"{legacy_lifecycle_flags}"
+        )
+    lifecycle_status = payload.get("lifecycle_status")
+    if (
+        not isinstance(lifecycle_status, str)
+        or lifecycle_status not in UNIT_LIFECYCLE_STATUSES
+    ):
+        raise ValueError(
+            "unit state payload lifecycle_status must be active, defeated, or removed"
+        )
     resources = payload.get("resources")
     if not isinstance(resources, dict) or not all(
         isinstance(key, str) and not isinstance(value, bool) and isinstance(value, (int, float)) and math.isfinite(value)
@@ -220,6 +272,12 @@ def _finite_number(value: Any, field_name: str) -> float:
     if not math.isfinite(number):
         raise ValueError(f"unit state payload {field_name} must be finite")
     return number
+
+
+def _require_lifecycle_integrity(unit: UnitState) -> None:
+    CommittedStateIntegrityGate().require_full(
+        BattleState(units={unit.unit_id: unit})
+    )
 
 
 def _validate_shield_instances(value: Any) -> None:
