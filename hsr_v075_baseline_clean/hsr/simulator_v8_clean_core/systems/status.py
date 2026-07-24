@@ -10,7 +10,7 @@ from ..core.reducer import MutationReducer
 from ..core.settlement import SettlementRecord
 from ..rules.evaluator import NumericEvaluationContext, RuleEvaluator
 from ..rules.expression_ir import numeric_dynamic_hashes
-from ..rules.ir import EffectIR, RuleEntity
+from ..rules.ir import EffectIR, RuleEntity, TargetExpressionIR
 from ..rules.rulebook import RuleBook
 from ..rules.value_binding import ValueBindingRequest, ValueContext, ValueResolver
 from .rng import (
@@ -81,9 +81,10 @@ class StatusInstance:
     break_template_id: str = ""
     break_element_type: str | None = None
     break_status_emission_id: str = ""
+    halo_relations: tuple[dict[str, JSONValue], ...] = ()
 
     def to_json(self) -> dict[str, JSONValue]:
-        return {
+        value: dict[str, JSONValue] = {
             "instance_id": self.instance_id,
             "status_id": self.status_id,
             "modifier_name": self.modifier_name,
@@ -122,6 +123,9 @@ class StatusInstance:
             "break_element_type": self.break_element_type,
             "break_status_emission_id": self.break_status_emission_id,
         }
+        if self.halo_relations:
+            value["halo_relations"] = [dict(item) for item in self.halo_relations]
+        return value
 
 
 @dataclass(frozen=True)
@@ -293,6 +297,8 @@ class StatusSystem:
         binding_sources: tuple[dict[str, JSONValue], ...] = (),
         retained_runtime_hashes: tuple[str, ...] = (),
         _addition_chain: tuple[str, ...] = (),
+        _resolved_target_ids: tuple[str, ...] | None = None,
+        _halo_projection: dict[str, JSONValue] | None = None,
     ) -> StatusApplicationResult:
         if effect.opcode != "AddModifier":
             return _unsupported_result(effect, "effect is not AddModifier")
@@ -306,18 +312,41 @@ class StatusSystem:
         if not isinstance(modifier_name, str) or not modifier_name:
             return _unsupported_result(effect, "AddModifier has no modifier_name")
         target_alias = standard.get("target_alias")
-        target_ids, target_blocked_reason, target_expression_trace, target_rng_events = self._resolve_add_modifier_targets(
-            state,
-            standard,
-            caster_id=caster_id,
-            owner_id=owner_id,
-            param_entity_id=param_entity_id,
-            current_action_target_id=current_action_target_id,
-            target_resolution=target_resolution,
-            event_payload=event_payload,
-            dynamic_values=dynamic_values,
-            binding_sources=binding_sources,
-        )
+        if _resolved_target_ids is None:
+            (
+                target_ids,
+                target_blocked_reason,
+                target_expression_trace,
+                target_rng_events,
+            ) = self._resolve_add_modifier_targets(
+                state,
+                standard,
+                caster_id=caster_id,
+                owner_id=owner_id,
+                param_entity_id=param_entity_id,
+                current_action_target_id=current_action_target_id,
+                target_resolution=target_resolution,
+                event_payload=event_payload,
+                dynamic_values=dynamic_values,
+                binding_sources=binding_sources,
+            )
+        else:
+            target_ids = tuple(dict.fromkeys(_resolved_target_ids))
+            missing_targets = tuple(
+                target_id for target_id in target_ids if target_id not in state.units
+            )
+            target_blocked_reason = (
+                "halo_projection_target_missing"
+                if missing_targets
+                else ""
+            )
+            target_expression_trace = {
+                "resolution_kind": "halo_relation_projection",
+                "target_ids": list(target_ids),
+                "missing_target_ids": list(missing_targets),
+                "halo_relation": dict(_halo_projection or {}),
+            }
+            target_rng_events = ()
         if target_blocked_reason:
             return _unsupported_result(
                 effect,
@@ -393,6 +422,12 @@ class StatusSystem:
             formula_bindings = _status_formula_bindings(standard)
             before_details = _status_details(unit_flags=state.units[target_id].flags)
             existing_detail = _matching_status_detail(before_details, target_id, modifier_name, effect.effect_id, source_id)
+            existing_halo_reason = _existing_halo_relation_blocked_reason(
+                existing_detail,
+                parent_owner_id=target_id,
+            )
+            if existing_halo_reason:
+                return _unsupported_result(effect, existing_halo_reason)
             status_metadata = _status_metadata(self.rules, modifier_name, definition)
             duration_admission = _runtime_duration_admission(
                 standard,
@@ -416,7 +451,7 @@ class StatusSystem:
                 duration_admission,
                 effect,
             )
-            if existing_detail is None:
+            if existing_detail is None and not isinstance(_halo_projection, dict):
                 existing_detail = _replacement_status_detail(
                     before_details,
                     status_id=f"modifier:{modifier_name}",
@@ -440,6 +475,12 @@ class StatusSystem:
                 status_id=status_id,
                 source_stack_key=_source_stack_key(target_id, modifier_name, effect.effect_id, source_id),
             )
+            if isinstance(_halo_projection, dict):
+                # Halo projections are source-isolated child instances.  Two
+                # independent parent relations may legitimately project the
+                # same modifier name onto one member; their stable source keys
+                # keep lifecycle updates and removals independent.
+                same_status_other_source = None
             application_operation, partial_reasons = _application_semantics(
                 standard,
                 existing_detail,
@@ -554,6 +595,11 @@ class StatusSystem:
                     "source_stack_key": source_stack_key,
                     "status_formula_bindings": [dict(item) for item in formula_bindings],
                     "status_formula_binding_source": _json_safe(standard.get("status_formula_binding_source", {})),
+                    **(
+                        {"halo_projection": dict(_halo_projection)}
+                        if isinstance(_halo_projection, dict)
+                        else {}
+                    ),
                 },
                 modifiers=tuple(modifiers),
                 trigger_ids_by_event=trigger_ids_by_event,
@@ -583,6 +629,7 @@ class StatusSystem:
                 if isinstance(standard.get("break_element_type"), str)
                 else None,
                 break_status_emission_id=str(standard.get("break_status_emission_id") or ""),
+                halo_relations=_existing_halo_relations(existing_detail),
             )
             plans.append(
                 StatusLifecyclePlan(
@@ -670,6 +717,53 @@ class StatusSystem:
                     effect,
                     f"modifier addition source binding mismatch:{addition_effect_id}",
                 )
+            halo_metadata_reason = _halo_addition_metadata_blocked_reason(
+                addition_effect,
+            )
+            if halo_metadata_reason:
+                return _unsupported_result(effect, halo_metadata_reason)
+            if _effect_is_halo_addition(addition_effect):
+                for parent_instance in status_instances:
+                    relation, relation_reason = _new_halo_relation(
+                        working_state,
+                        parent_instance,
+                        addition_effect,
+                        parent_modifier_name=modifier_name,
+                        binding_sources=binding_sources,
+                    )
+                    if relation_reason:
+                        return _unsupported_result(effect, relation_reason)
+                    halo_result = self._reconcile_one_halo_relation(
+                        working_state,
+                        parent_instance.owner_id,
+                        parent_instance.instance_id,
+                        relation,
+                        force_projection=True,
+                    )
+                    if not halo_result.ok:
+                        return StatusApplicationResult(
+                            ok=False,
+                            unsupported=(
+                                f"modifier halo addition failed:{addition_effect_id}",
+                                *halo_result.unsupported,
+                            ),
+                            records=halo_result.records,
+                        )
+                    halo_reduction = MutationReducer().apply_all_result(
+                        working_state,
+                        halo_result.mutations,
+                    )
+                    if not halo_reduction.ok:
+                        return _unsupported_result(
+                            effect,
+                            f"modifier halo addition mutations conflict:{addition_effect_id}",
+                        )
+                    working_state = halo_reduction.after_state
+                    combined_mutations.extend(halo_result.mutations)
+                    combined_events.extend(halo_result.events)
+                    combined_rng_events.extend(halo_result.rng_events)
+                    combined_records.extend(halo_result.records)
+                continue
             addition_result = self.apply_add_modifier(
                 working_state,
                 addition_effect,
@@ -715,6 +809,574 @@ class StatusSystem:
             records=tuple(combined_records),
             status_instance=base_result.status_instance,
             lifecycle_result=base_result.lifecycle_result,
+        )
+
+    def reconcile_halo_relations(
+        self,
+        state: BattleState,
+    ) -> StatusApplicationResult:
+        """Reconcile every source-backed halo relation as one atomic batch."""
+
+        if self.rules is None:
+            return StatusApplicationResult(
+                ok=False,
+                unsupported=("halo_reconciliation_requires_rulebook",),
+            )
+        relation_rows: list[tuple[str, str, dict[str, JSONValue]]] = []
+        active_relation_ids: set[str] = set()
+        for unit_id, unit in sorted(state.units.items()):
+            lifecycle = UnitLifecycleSystem().view(state, unit_id)
+            if lifecycle.is_removed or not lifecycle.is_present:
+                # A relation owned by an off-field source is no longer active.
+                # Its projections are removed by the orphan pass below.
+                continue
+            for detail in _status_details(unit.flags):
+                if not isinstance(detail, dict):
+                    continue
+                raw_relations = detail.get("halo_relations")
+                if raw_relations is None:
+                    continue
+                if not isinstance(raw_relations, list):
+                    return _halo_blocked_result(
+                        "halo_relation_list_malformed",
+                        {"unit_id": unit_id, "status_detail": detail},
+                    )
+                for relation in raw_relations:
+                    reason = _halo_relation_blocked_reason(
+                        relation,
+                        parent_owner_id=unit_id,
+                        parent_instance_id=str(detail.get("instance_id") or ""),
+                    )
+                    if reason:
+                        return _halo_blocked_result(
+                            reason,
+                            {"unit_id": unit_id, "status_detail": detail},
+                        )
+                    assert isinstance(relation, dict)
+                    relation_id = str(relation["relation_id"])
+                    if relation_id in active_relation_ids:
+                        return _halo_blocked_result(
+                            "halo_relation_identity_duplicate",
+                            {"relation_id": relation_id},
+                        )
+                    active_relation_ids.add(relation_id)
+                    relation_rows.append(
+                        (unit_id, str(detail.get("instance_id") or ""), relation)
+                    )
+
+        current = state
+        mutations: list[Mutation] = []
+        events: list[GameEvent] = []
+        rng_events: list[RNGEvent] = []
+        records: list[dict[str, JSONValue]] = []
+        for unit_id, parent_instance_id, relation in relation_rows:
+            result = self._reconcile_one_halo_relation(
+                current,
+                unit_id,
+                parent_instance_id,
+                relation,
+            )
+            if not result.ok:
+                return StatusApplicationResult(
+                    ok=False,
+                    records=result.records,
+                    unsupported=result.unsupported,
+                )
+            reduction = MutationReducer().apply_all_result(
+                current,
+                result.mutations,
+            )
+            if not reduction.ok:
+                return _halo_blocked_result(
+                    "halo_reconciliation_mutation_conflict",
+                    {"relation_id": relation.get("relation_id")},
+                )
+            current = reduction.after_state
+            mutations.extend(result.mutations)
+            events.extend(result.events)
+            rng_events.extend(result.rng_events)
+            records.extend(result.records)
+
+        orphan_result = self._remove_orphan_halo_projections(
+            current,
+            active_relation_ids,
+        )
+        if not orphan_result.ok:
+            return StatusApplicationResult(
+                ok=False,
+                records=orphan_result.records,
+                unsupported=orphan_result.unsupported,
+            )
+        orphan_reduction = MutationReducer().apply_all_result(
+            current,
+            orphan_result.mutations,
+        )
+        if not orphan_reduction.ok:
+            return _halo_blocked_result(
+                "halo_orphan_cleanup_mutation_conflict",
+                {},
+            )
+        mutations.extend(orphan_result.mutations)
+        events.extend(orphan_result.events)
+        rng_events.extend(orphan_result.rng_events)
+        records.extend(orphan_result.records)
+        if not mutations:
+            records.append(
+                SettlementRecord(
+                    record_type="status_halo_reconcile_idempotent",
+                    source="status_system",
+                    process_only=True,
+                    payload={
+                        "relation_count": len(relation_rows),
+                        "state_unchanged": True,
+                    },
+                    trace={},
+                ).to_json()
+            )
+        return StatusApplicationResult(
+            ok=True,
+            mutations=tuple(mutations),
+            events=tuple(events),
+            rng_events=tuple(rng_events),
+            records=tuple(records),
+        )
+
+    def _reconcile_one_halo_relation(
+        self,
+        state: BattleState,
+        parent_owner_id: str,
+        parent_instance_id: str,
+        relation: dict[str, JSONValue],
+        *,
+        force_projection: bool = False,
+    ) -> StatusApplicationResult:
+        if self.rules is None:
+            return _halo_blocked_result(
+                "halo_reconciliation_requires_rulebook",
+                relation,
+            )
+        parent = state.units.get(parent_owner_id)
+        if parent is None:
+            return _halo_blocked_result("halo_parent_unit_missing", relation)
+        parent_detail = _status_detail_by_instance(
+            _status_details(parent.flags),
+            parent_instance_id,
+        )
+        if parent_detail is None:
+            return _halo_blocked_result("halo_parent_status_missing", relation)
+        if (
+            parent_detail.get("modifier_name")
+            != relation.get("parent_modifier_name")
+            or parent_detail.get("source_id")
+            != relation.get("parent_source_id")
+            or parent_detail.get("caster_id") != relation.get("caster_id")
+        ):
+            return _halo_blocked_result(
+                "halo_parent_relation_binding_mismatch",
+                relation,
+            )
+        relation_reason = _halo_relation_blocked_reason(
+            relation,
+            parent_owner_id=parent_owner_id,
+            parent_instance_id=parent_instance_id,
+        )
+        if relation_reason:
+            return _halo_blocked_result(relation_reason, relation)
+        effect_id = str(relation["child_effect_id"])
+        effect = self.rules.effect(effect_id)
+        if effect is None or not _effect_is_halo_addition(effect):
+            return _halo_blocked_result(
+                "halo_child_effect_missing_or_not_halo",
+                relation,
+            )
+        standard = effect.payload.get("standard")
+        if not isinstance(standard, dict):
+            return _halo_blocked_result("halo_child_payload_malformed", relation)
+        if (
+            standard.get("addition_parent_modifier_name")
+            != relation.get("parent_modifier_name")
+            or effect.owner_modifier_name != relation.get("parent_modifier_name")
+            or effect.source.source_path != relation.get("source_path")
+            or effect.source.raw_type != relation.get("source_raw_type")
+            or effect.source.raw_id != relation.get("source_raw_id")
+            or effect.source.to_json() != relation.get("source")
+            or standard.get("addition_source_json_path")
+            != relation.get("source_json_path")
+            or standard.get("is_halo_status_source_json_path")
+            != relation.get("is_halo_status_source_json_path")
+            or standard.get("modifier_name")
+            != relation.get("child_modifier_name")
+            or standard.get("target_expression_id")
+            != relation.get("target_expression_id")
+            or str(standard.get("target_alias") or "")
+            != relation.get("target_alias")
+            or standard.get("alive_only") != relation.get("alive_only")
+            or standard.get("alive_only_raw")
+            != relation.get("alive_only_raw")
+        ):
+            return _halo_blocked_result("halo_child_source_binding_mismatch", relation)
+        target_expression_id = str(relation["target_expression_id"])
+        expression = self.rules.target_expression(target_expression_id)
+        if (
+            expression is None
+            or expression.coverage_status != "executable"
+            or not _target_expression_matches_effect_raw_row(
+                expression,
+                effect,
+            )
+        ):
+            return _halo_blocked_result(
+                "halo_target_expression_missing_or_blocked",
+                relation,
+            )
+        resolved_dynamic_values = _numeric_dynamic_values(
+            parent_detail.get("dynamic_values")
+        )
+        binding_sources = tuple(
+            dict(item)
+            for item in relation.get("binding_sources", [])
+            if isinstance(item, dict)
+        )
+        target_result = TargetSystem().resolve_target_expression(
+            state,
+            expression,
+            caster_id=str(relation["caster_id"]),
+            owner_id=parent_owner_id,
+            dynamic_values=resolved_dynamic_values,
+            binding_sources=binding_sources,
+        )
+        if not target_result.ok:
+            return _halo_blocked_result(
+                f"halo_target_resolution_blocked:{target_result.blocked_reason}",
+                {
+                    **relation,
+                    "target_resolution": target_result.to_json(),
+                },
+            )
+        previous_members = tuple(
+            str(item)
+            for item in relation.get("current_member_ids", [])
+            if isinstance(item, str)
+        )
+        actual_members, actual_members_reason = _actual_halo_projection_members(
+            state,
+            relation,
+        )
+        if actual_members_reason:
+            return _halo_blocked_result(
+                actual_members_reason,
+                relation,
+            )
+        resolved_members = tuple(
+            target_id
+            for target_id in target_result.target_ids
+            if _halo_member_is_admitted(
+                state,
+                target_id,
+                relation.get("alive_only"),
+            )
+        )
+        retained_non_alive_members: tuple[str, ...] = ()
+        if relation.get("alive_only") is not True:
+            retained: list[str] = []
+            for target_id in previous_members:
+                if target_id in resolved_members:
+                    continue
+                remains_related, blocked_reason = (
+                    _defeated_halo_member_remains_related(
+                        state,
+                        expression,
+                        target_id=target_id,
+                        caster_id=str(relation["caster_id"]),
+                        owner_id=parent_owner_id,
+                        dynamic_values=resolved_dynamic_values,
+                        binding_sources=binding_sources,
+                    )
+                )
+                if blocked_reason:
+                    return _halo_blocked_result(
+                        blocked_reason,
+                        {
+                            **relation,
+                            "candidate_member_id": target_id,
+                        },
+                    )
+                if remains_related:
+                    retained.append(target_id)
+            retained_non_alive_members = tuple(retained)
+        desired_members = tuple(
+            dict.fromkeys((*resolved_members, *retained_non_alive_members))
+        )
+        parent_fingerprint = _halo_parent_projection_fingerprint(parent_detail)
+        projection_changed = (
+            force_projection
+            or relation.get("parent_projection_fingerprint") != parent_fingerprint
+        )
+        apply_members = (
+            desired_members
+            if projection_changed
+            else tuple(
+                target_id
+                for target_id in desired_members
+                if target_id not in actual_members
+            )
+        )
+        remove_members = tuple(
+            target_id
+            for target_id in actual_members
+            if target_id not in desired_members
+        )
+        current = state
+        mutations: list[Mutation] = []
+        events: list[GameEvent] = []
+        rng_events: list[RNGEvent] = []
+        records: list[dict[str, JSONValue]] = []
+        for target_id in remove_members:
+            removal = self._remove_halo_projection(
+                current,
+                target_id,
+                str(relation["relation_id"]),
+            )
+            if not removal.ok:
+                return removal
+            reduction = MutationReducer().apply_all_result(
+                current,
+                removal.mutations,
+            )
+            if not reduction.ok:
+                return _halo_blocked_result(
+                    "halo_member_remove_mutation_conflict",
+                    relation,
+                )
+            current = reduction.after_state
+            mutations.extend(removal.mutations)
+            events.extend(removal.events)
+            records.extend(removal.records)
+        if apply_members:
+            projection = {
+                "schema_version": "status_halo_projection_v1",
+                "relation_id": relation["relation_id"],
+                "parent_owner_id": parent_owner_id,
+                "parent_instance_id": parent_instance_id,
+                "child_effect_id": effect_id,
+                "source_path": relation["source_path"],
+                "source_raw_type": relation["source_raw_type"],
+                "source_raw_id": relation["source_raw_id"],
+                "source_json_path": relation["source_json_path"],
+                "is_halo_status_source_json_path": relation[
+                    "is_halo_status_source_json_path"
+                ],
+                "source": relation["source"],
+            }
+            addition_result = self.apply_add_modifier(
+                current,
+                effect,
+                caster_id=str(relation["caster_id"]),
+                source_id=str(relation["projection_source_id"]),
+                owner_id=parent_owner_id,
+                dynamic_values=resolved_dynamic_values,
+                binding_sources=binding_sources,
+                _addition_chain=(str(relation["parent_modifier_name"]),),
+                _resolved_target_ids=apply_members,
+                _halo_projection=projection,
+            )
+            if not addition_result.ok:
+                return StatusApplicationResult(
+                    ok=False,
+                    records=addition_result.records,
+                    unsupported=(
+                        "halo_child_projection_blocked",
+                        *addition_result.unsupported,
+                    ),
+                )
+            reduction = MutationReducer().apply_all_result(
+                current,
+                addition_result.mutations,
+            )
+            if not reduction.ok:
+                return _halo_blocked_result(
+                    "halo_child_projection_mutation_conflict",
+                    relation,
+                )
+            current = reduction.after_state
+            mutations.extend(addition_result.mutations)
+            events.extend(addition_result.events)
+            rng_events.extend(addition_result.rng_events)
+            records.extend(addition_result.records)
+
+        updated_parent = current.units.get(parent_owner_id)
+        updated_detail = (
+            _status_detail_by_instance(
+                _status_details(updated_parent.flags),
+                parent_instance_id,
+            )
+            if updated_parent is not None
+            else None
+        )
+        if updated_parent is None or updated_detail is None:
+            return _halo_blocked_result(
+                "halo_parent_status_lost_during_reconcile",
+                relation,
+            )
+        updated_relation = {
+            **relation,
+            "current_member_ids": list(desired_members),
+            "member_source_stack_keys": {
+                target_id: _source_stack_key(
+                    target_id,
+                    str(relation["child_modifier_name"]),
+                    effect_id,
+                    str(relation["projection_source_id"]),
+                )
+                for target_id in desired_members
+            },
+            "parent_projection_fingerprint": parent_fingerprint,
+            "last_target_resolution": target_result.to_json(),
+        }
+        relation_mutation = _halo_relation_mutation(
+            current,
+            parent_owner_id,
+            parent_instance_id,
+            updated_relation,
+        )
+        if relation_mutation is not None:
+            mutations.append(relation_mutation)
+            records.append(_halo_relation_record(relation_mutation, updated_relation))
+        if not desired_members:
+            records.append(
+                SettlementRecord(
+                    record_type="status_halo_empty_group",
+                    source="status_system",
+                    process_only=True,
+                    payload={
+                        "relation_id": relation["relation_id"],
+                        "parent_instance_id": parent_instance_id,
+                        "child_effect_id": effect_id,
+                        "target_expression_id": target_expression_id,
+                        "state_unchanged": True,
+                    },
+                    trace={
+                        "source": relation["source"],
+                        "target_resolution": target_result.to_json(),
+                    },
+                ).to_json()
+            )
+        return StatusApplicationResult(
+            ok=True,
+            mutations=tuple(mutations),
+            events=tuple(events),
+            rng_events=tuple(rng_events),
+            records=tuple(records),
+        )
+
+    def _remove_halo_projection(
+        self,
+        state: BattleState,
+        target_id: str,
+        relation_id: str,
+    ) -> StatusApplicationResult:
+        unit = state.units.get(target_id)
+        if unit is None:
+            return _halo_blocked_result(
+                "halo_projection_target_missing_during_remove",
+                {"relation_id": relation_id, "target_id": target_id},
+            )
+        details = _status_details(unit.flags)
+        matching = tuple(
+            detail
+            for detail in details
+            if isinstance(detail, dict)
+            and _status_detail_halo_relation_id(detail) == relation_id
+        )
+        if len(matching) > 1:
+            return _halo_blocked_result(
+                "halo_projection_identity_duplicate",
+                {"relation_id": relation_id, "target_id": target_id},
+            )
+        if not matching:
+            return StatusApplicationResult(
+                ok=True,
+                records=(
+                    SettlementRecord(
+                        record_type="status_halo_projection_remove_idempotent",
+                        source="status_system",
+                        process_only=True,
+                        payload={
+                            "relation_id": relation_id,
+                            "target_id": target_id,
+                            "state_unchanged": True,
+                        },
+                        trace={},
+                    ).to_json(),
+                ),
+            )
+        detail = matching[0]
+        plan = StatusLifecyclePlan(
+            operation="remove",
+            target_id=target_id,
+            status_id=str(detail.get("status_id") or ""),
+            source="status_system",
+            before_details=tuple(details),
+            existing_detail=detail,
+            source_trace={
+                **_status_detail_source_trace(detail),
+                "halo_relation_id": relation_id,
+                "halo_reconciliation_operation": "remove_projection",
+            },
+        )
+        result = self._apply_lifecycle_plan(state, plan)
+        return StatusApplicationResult(
+            ok=result.ok,
+            mutations=result.mutations,
+            events=result.events,
+            records=result.records,
+            unsupported=result.unsupported,
+            lifecycle_result=result,
+        )
+
+    def _remove_orphan_halo_projections(
+        self,
+        state: BattleState,
+        active_relation_ids: set[str],
+    ) -> StatusApplicationResult:
+        current = state
+        mutations: list[Mutation] = []
+        events: list[GameEvent] = []
+        records: list[dict[str, JSONValue]] = []
+        candidates = tuple(
+            (unit_id, str(detail.get("instance_id") or ""), relation_id)
+            for unit_id, unit in sorted(state.units.items())
+            for detail in _status_details(unit.flags)
+            if isinstance(detail, dict)
+            for relation_id in (_status_detail_halo_relation_id(detail),)
+            if relation_id and relation_id not in active_relation_ids
+        )
+        for target_id, _, relation_id in candidates:
+            removal = self._remove_halo_projection(
+                current,
+                target_id,
+                relation_id,
+            )
+            if not removal.ok:
+                return removal
+            reduction = MutationReducer().apply_all_result(
+                current,
+                removal.mutations,
+            )
+            if not reduction.ok:
+                return _halo_blocked_result(
+                    "halo_orphan_remove_mutation_conflict",
+                    {"relation_id": relation_id, "target_id": target_id},
+                )
+            current = reduction.after_state
+            mutations.extend(removal.mutations)
+            events.extend(removal.events)
+            records.extend(removal.records)
+        return StatusApplicationResult(
+            ok=True,
+            mutations=tuple(mutations),
+            events=tuple(events),
+            records=tuple(records),
         )
 
     def _resolve_add_modifier_targets(
@@ -843,14 +1505,16 @@ class StatusSystem:
                 },
             )
             lifecycle_results.append(self._apply_lifecycle_plan(state, plan))
-        return StatusApplicationResult(
+        base_result = StatusApplicationResult(
             ok=bool(lifecycle_results) and all(result.ok for result in lifecycle_results),
             mutations=tuple(mutation for result in lifecycle_results for mutation in result.mutations),
+            events=tuple(event for result in lifecycle_results for event in result.events),
             rng_events=target_rng_events,
             records=tuple(record for result in lifecycle_results for record in result.records),
             unsupported=tuple(reason for result in lifecycle_results for reason in result.unsupported),
             lifecycle_result=lifecycle_results[-1] if lifecycle_results else None,
         )
+        return self._with_halo_reconciliation(state, base_result)
 
     def apply_dispel_status(
         self,
@@ -1012,7 +1676,7 @@ class StatusSystem:
         records.extend(record for result in lifecycle_results for record in result.records)
         unsupported.extend(reason for result in lifecycle_results for reason in result.unsupported)
         ok = not unsupported
-        return StatusApplicationResult(
+        base_result = StatusApplicationResult(
             ok=ok,
             mutations=mutations,
             events=events,
@@ -1020,6 +1684,41 @@ class StatusSystem:
             records=tuple(records),
             unsupported=tuple(unsupported),
             lifecycle_result=lifecycle_results[-1] if lifecycle_results else None,
+        )
+        return self._with_halo_reconciliation(state, base_result)
+
+    def _with_halo_reconciliation(
+        self,
+        state: BattleState,
+        base_result: StatusApplicationResult,
+    ) -> StatusApplicationResult:
+        if not base_result.ok:
+            return base_result
+        reduction = MutationReducer().apply_all_result(
+            state,
+            base_result.mutations,
+        )
+        if not reduction.ok:
+            return StatusApplicationResult(
+                ok=False,
+                records=base_result.records,
+                unsupported=("status_halo_parent_mutation_conflict",),
+            )
+        halo_result = self.reconcile_halo_relations(reduction.after_state)
+        if not halo_result.ok:
+            return StatusApplicationResult(
+                ok=False,
+                records=(*base_result.records, *halo_result.records),
+                unsupported=halo_result.unsupported,
+            )
+        return StatusApplicationResult(
+            ok=True,
+            mutations=(*base_result.mutations, *halo_result.mutations),
+            events=(*base_result.events, *halo_result.events),
+            rng_events=(*base_result.rng_events, *halo_result.rng_events),
+            records=(*base_result.records, *halo_result.records),
+            status_instance=base_result.status_instance,
+            lifecycle_result=base_result.lifecycle_result,
         )
 
     def _apply_lifecycle_plan(self, state: BattleState, plan: StatusLifecyclePlan) -> StatusLifecycleResult:
@@ -1143,7 +1842,36 @@ class StatusSystem:
     ) -> StatusLifecycleResult:
         plan = self.plan_lifecycle_tick(state, unit_id, status_detail, life_step_moment)
         if plan.operation in {"tick", "expire"}:
-            return self._apply_lifecycle_plan(state, plan)
+            result = self._apply_lifecycle_plan(state, plan)
+            if not result.ok:
+                return result
+            reduction = MutationReducer().apply_all_result(
+                state,
+                result.mutations,
+            )
+            if not reduction.ok:
+                return _blocked_lifecycle_result(
+                    plan,
+                    "status_halo_parent_mutation_conflict",
+                )
+            halo_result = self.reconcile_halo_relations(
+                reduction.after_state,
+            )
+            if not halo_result.ok:
+                return StatusLifecycleResult(
+                    ok=False,
+                    operation=plan.operation,
+                    records=(*result.records, *halo_result.records),
+                    unsupported=halo_result.unsupported,
+                    lifecycle_plan=plan,
+                    lifecycle_state="blocked",
+                )
+            return replace(
+                result,
+                mutations=(*result.mutations, *halo_result.mutations),
+                events=(*result.events, *halo_result.events),
+                records=(*result.records, *halo_result.records),
+            )
         if plan.operation == "tick_skipped":
             return StatusLifecycleResult(
                 ok=True,
@@ -3868,6 +4596,678 @@ def _source_stack_key(target_id: str, modifier_name: str, effect_id: str, source
         separators=(",", ":"),
     )
     return f"status_stack:{hashlib.sha1(raw.encode('utf-8')).hexdigest()[:16]}"
+
+
+def _effect_is_halo_addition(effect: EffectIR) -> bool:
+    standard = effect.payload.get("standard")
+    return bool(
+        isinstance(standard, dict)
+        and standard.get("is_halo_status") is True
+        and standard.get("halo_admission_status") == "executable"
+        and not standard.get("halo_blocked_reason")
+    )
+
+
+def _target_expression_matches_effect_raw_row(
+    expression: TargetExpressionIR,
+    effect: EffectIR,
+) -> bool:
+    """Verify that a typed target expression came from the effect's raw row."""
+
+    if expression.source.source_path != effect.source.source_path:
+        return False
+    effect_evidence = effect.source.evidence
+    expression_evidence = expression.source.evidence
+    if not isinstance(effect_evidence, dict) or not isinstance(
+        expression_evidence,
+        dict,
+    ):
+        return False
+    effect_json_path = effect_evidence.get("json_path")
+    if not isinstance(effect_json_path, str) or not effect_json_path:
+        return False
+    if expression_evidence.get("json_path") != effect_json_path:
+        return False
+    if (
+        expression.source.raw_type == effect.source.raw_type
+        and expression.source.raw_id == effect.source.raw_id
+    ):
+        return True
+    return bool(
+        expression.source.raw_type == "TargetExpression"
+        and expression_evidence.get("source_raw_type")
+        == effect.source.raw_type
+        and expression_evidence.get("source_raw_id") == effect.source.raw_id
+        and expression_evidence.get("target_expression_field")
+        == "TargetType"
+        and expression_evidence.get("target_json_path")
+        == f"{effect_json_path}.TargetType"
+    )
+
+
+def _halo_addition_metadata_blocked_reason(effect: EffectIR) -> str:
+    standard = effect.payload.get("standard")
+    if not isinstance(standard, dict):
+        return ""
+    present = standard.get("is_halo_status_present")
+    value = standard.get("is_halo_status")
+    if present is not None and not isinstance(present, bool):
+        return "halo_presence_marker_malformed"
+    if present is not True:
+        return (
+            ""
+            if value is None or value is False
+            else "halo_value_without_source_marker"
+        )
+    if not isinstance(value, bool):
+        return "halo_value_type_malformed"
+    source_json_path = standard.get("addition_source_json_path")
+    halo_source_path = standard.get("is_halo_status_source_json_path")
+    if (
+        not isinstance(source_json_path, str)
+        or not source_json_path
+        or halo_source_path != f"{source_json_path}.IsHaloStatus"
+    ):
+        return "halo_source_path_mismatch"
+    if value is True and (
+        standard.get("halo_admission_status") != "executable"
+        or standard.get("halo_blocked_reason")
+    ):
+        return str(
+            standard.get("halo_blocked_reason")
+            or "halo_source_not_admitted"
+        )
+    if value is False and standard.get("halo_admission_status") not in {
+        None,
+        "ordinary",
+    }:
+        return "non_halo_source_admission_mismatch"
+    return ""
+
+
+def _existing_halo_relations(
+    detail: dict[str, JSONValue] | None,
+) -> tuple[dict[str, JSONValue], ...]:
+    raw_relations = detail.get("halo_relations") if isinstance(detail, dict) else None
+    if not isinstance(raw_relations, list):
+        return ()
+    return tuple(
+        dict(relation)
+        for relation in raw_relations
+        if isinstance(relation, dict)
+    )
+
+
+def _existing_halo_relation_blocked_reason(
+    detail: dict[str, JSONValue] | None,
+    *,
+    parent_owner_id: str,
+) -> str:
+    if not isinstance(detail, dict) or "halo_relations" not in detail:
+        return ""
+    raw_relations = detail.get("halo_relations")
+    if not isinstance(raw_relations, list):
+        return "halo_relation_list_malformed"
+    parent_instance_id = str(detail.get("instance_id") or "")
+    seen: set[str] = set()
+    for relation in raw_relations:
+        reason = _halo_relation_blocked_reason(
+            relation,
+            parent_owner_id=parent_owner_id,
+            parent_instance_id=parent_instance_id,
+        )
+        if reason:
+            return reason
+        assert isinstance(relation, dict)
+        relation_id = str(relation["relation_id"])
+        if relation_id in seen:
+            return "halo_relation_identity_duplicate"
+        seen.add(relation_id)
+    return ""
+
+
+def _new_halo_relation(
+    state: BattleState,
+    parent_instance: StatusInstance,
+    effect: EffectIR,
+    *,
+    parent_modifier_name: str,
+    binding_sources: tuple[dict[str, JSONValue], ...],
+) -> tuple[dict[str, JSONValue], str]:
+    standard = effect.payload.get("standard")
+    if not isinstance(standard, dict):
+        return {}, "halo_child_payload_malformed"
+    if not _effect_is_halo_addition(effect):
+        return {}, "halo_child_not_admitted"
+    target_expression_id = standard.get("target_expression_id")
+    source_json_path = standard.get("addition_source_json_path")
+    halo_source_json_path = standard.get("is_halo_status_source_json_path")
+    child_modifier_name = standard.get("modifier_name")
+    if (
+        not isinstance(target_expression_id, str)
+        or not target_expression_id
+        or not isinstance(source_json_path, str)
+        or not source_json_path
+        or not isinstance(halo_source_json_path, str)
+        or halo_source_json_path != f"{source_json_path}.IsHaloStatus"
+        or not isinstance(child_modifier_name, str)
+        or not child_modifier_name
+    ):
+        return {}, "halo_relation_source_identity_incomplete"
+    parent_unit = state.units.get(parent_instance.owner_id)
+    parent_detail = (
+        _status_detail_by_instance(
+            _status_details(parent_unit.flags),
+            parent_instance.instance_id,
+        )
+        if parent_unit is not None
+        else None
+    )
+    if parent_detail is None:
+        return {}, "halo_parent_status_missing"
+    relation_id = _halo_relation_id(
+        parent_instance_id=parent_instance.instance_id,
+        child_effect_id=effect.effect_id,
+        source_path=effect.source.source_path,
+        source_raw_id=effect.source.raw_id,
+        source_json_path=source_json_path,
+    )
+    previous = next(
+        (
+            dict(relation)
+            for relation in _existing_halo_relations(parent_detail)
+            if relation.get("relation_id") == relation_id
+        ),
+        {},
+    )
+    relation: dict[str, JSONValue] = {
+        "schema_version": "status_halo_relation_v1",
+        "relation_id": relation_id,
+        "parent_owner_id": parent_instance.owner_id,
+        "parent_instance_id": parent_instance.instance_id,
+        "parent_modifier_name": parent_modifier_name,
+        "parent_source_id": parent_instance.source_id,
+        "caster_id": parent_instance.caster_id,
+        "child_effect_id": effect.effect_id,
+        "child_modifier_name": child_modifier_name,
+        "target_expression_id": target_expression_id,
+        "target_alias": str(standard.get("target_alias") or ""),
+        "alive_only": standard.get("alive_only"),
+        "alive_only_raw": standard.get("alive_only_raw"),
+        "projection_source_id": f"halo_projection:{relation_id}",
+        "source_path": effect.source.source_path,
+        "source_raw_type": effect.source.raw_type,
+        "source_raw_id": effect.source.raw_id,
+        "source_json_path": source_json_path,
+        "is_halo_status_source_json_path": halo_source_json_path,
+        "source": effect.source.to_json(),
+        "binding_sources": [dict(item) for item in binding_sources],
+        "current_member_ids": list(previous.get("current_member_ids") or []),
+        "member_source_stack_keys": dict(
+            previous.get("member_source_stack_keys") or {}
+        ),
+        "parent_projection_fingerprint": str(
+            previous.get("parent_projection_fingerprint") or ""
+        ),
+        "last_target_resolution": (
+            dict(previous.get("last_target_resolution") or {})
+            if isinstance(previous.get("last_target_resolution"), dict)
+            else {}
+        ),
+    }
+    reason = _halo_relation_blocked_reason(
+        relation,
+        parent_owner_id=parent_instance.owner_id,
+        parent_instance_id=parent_instance.instance_id,
+    )
+    return (relation, reason)
+
+
+def _halo_relation_id(
+    *,
+    parent_instance_id: str,
+    child_effect_id: str,
+    source_path: str,
+    source_raw_id: str,
+    source_json_path: str,
+) -> str:
+    seed = json.dumps(
+        {
+            "parent_instance_id": parent_instance_id,
+            "child_effect_id": child_effect_id,
+            "source_path": source_path,
+            "source_raw_id": source_raw_id,
+            "source_json_path": source_json_path,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return (
+        "halo_relation:"
+        f"{hashlib.sha1(seed.encode('utf-8')).hexdigest()[:20]}"
+    )
+
+
+def _halo_relation_blocked_reason(
+    value: object,
+    *,
+    parent_owner_id: str,
+    parent_instance_id: str,
+) -> str:
+    if not isinstance(value, dict):
+        return "halo_relation_malformed"
+    required_strings = (
+        "schema_version",
+        "relation_id",
+        "parent_owner_id",
+        "parent_instance_id",
+        "parent_modifier_name",
+        "parent_source_id",
+        "caster_id",
+        "child_effect_id",
+        "child_modifier_name",
+        "target_expression_id",
+        "projection_source_id",
+        "source_path",
+        "source_raw_type",
+        "source_raw_id",
+        "source_json_path",
+        "is_halo_status_source_json_path",
+    )
+    if any(
+        not isinstance(value.get(field_name), str) or not value.get(field_name)
+        for field_name in required_strings
+    ):
+        return "halo_relation_identity_incomplete"
+    if value.get("schema_version") != "status_halo_relation_v1":
+        return "halo_relation_schema_mismatch"
+    if value.get("relation_id") != _halo_relation_id(
+        parent_instance_id=str(value.get("parent_instance_id") or ""),
+        child_effect_id=str(value.get("child_effect_id") or ""),
+        source_path=str(value.get("source_path") or ""),
+        source_raw_id=str(value.get("source_raw_id") or ""),
+        source_json_path=str(value.get("source_json_path") or ""),
+    ):
+        return "halo_relation_identity_mismatch"
+    if (
+        value.get("parent_owner_id") != parent_owner_id
+        or value.get("parent_instance_id") != parent_instance_id
+    ):
+        return "halo_relation_parent_identity_mismatch"
+    if value.get("is_halo_status_source_json_path") != (
+        f"{value.get('source_json_path')}.IsHaloStatus"
+    ):
+        return "halo_relation_source_path_mismatch"
+    alive_only = value.get("alive_only")
+    if alive_only is not None and not isinstance(alive_only, bool):
+        return "halo_relation_alive_only_malformed"
+    current_members = value.get("current_member_ids")
+    member_keys = value.get("member_source_stack_keys")
+    if (
+        not isinstance(current_members, list)
+        or any(not isinstance(item, str) or not item for item in current_members)
+        or len(current_members) != len(set(current_members))
+        or not isinstance(member_keys, dict)
+        or set(member_keys) != set(current_members)
+        or any(
+            not isinstance(key, str)
+            or not isinstance(stack_key, str)
+            or not stack_key
+            for key, stack_key in member_keys.items()
+        )
+    ):
+        return "halo_relation_membership_malformed"
+    expected_member_keys = {
+        target_id: _source_stack_key(
+            target_id,
+            str(value.get("child_modifier_name") or ""),
+            str(value.get("child_effect_id") or ""),
+            str(value.get("projection_source_id") or ""),
+        )
+        for target_id in current_members
+    }
+    if member_keys != expected_member_keys:
+        return "halo_relation_member_source_identity_mismatch"
+    source = value.get("source")
+    if (
+        not isinstance(source, dict)
+        or source.get("source_path") != value.get("source_path")
+        or source.get("raw_type") != value.get("source_raw_type")
+        or source.get("raw_id") != value.get("source_raw_id")
+    ):
+        return "halo_relation_source_trace_mismatch"
+    binding_sources = value.get("binding_sources")
+    if (
+        not isinstance(binding_sources, list)
+        or any(not isinstance(item, dict) for item in binding_sources)
+    ):
+        return "halo_relation_binding_sources_malformed"
+    projection_source_id = str(value.get("projection_source_id") or "")
+    if projection_source_id != f"halo_projection:{value.get('relation_id')}":
+        return "halo_relation_projection_identity_mismatch"
+    return ""
+
+
+def _halo_parent_projection_fingerprint(
+    detail: dict[str, JSONValue],
+) -> str:
+    payload = {
+        "instance_id": detail.get("instance_id"),
+        "stacks": detail.get("stacks"),
+        "dynamic_values": detail.get("dynamic_values"),
+        "modifiers": detail.get("modifiers"),
+        "lifecycle_state": detail.get("lifecycle_state"),
+    }
+    raw = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _numeric_dynamic_values(value: object) -> dict[str, float]:
+    if not isinstance(value, dict):
+        return {}
+    return {
+        str(key): float(item)
+        for key, item in value.items()
+        if isinstance(key, str)
+        and isinstance(item, (int, float))
+        and not isinstance(item, bool)
+        and math.isfinite(float(item))
+    }
+
+
+def _halo_member_is_admitted(
+    state: BattleState,
+    target_id: str,
+    alive_only: object,
+) -> bool:
+    if target_id not in state.units:
+        return False
+    if alive_only is True:
+        return UnitLifecycleSystem().can_target(state, target_id)[0]
+    return _halo_member_is_present(state, target_id)
+
+
+def _halo_member_is_present(state: BattleState, target_id: str) -> bool:
+    unit = state.units.get(target_id)
+    return bool(
+        unit is not None
+        and str(unit.flags.get("lifecycle_status") or "active") != "removed"
+    )
+
+
+def _defeated_halo_member_remains_related(
+    state: BattleState,
+    expression: TargetExpressionIR,
+    *,
+    target_id: str,
+    caster_id: str,
+    owner_id: str,
+    dynamic_values: dict[str, float],
+    binding_sources: tuple[dict[str, JSONValue], ...],
+) -> tuple[bool, str]:
+    """Check relation membership without converting defeated into unrelated.
+
+    Target resolution intentionally excludes defeated units.  For an
+    ``AliveOnly=false`` halo we therefore re-evaluate the same typed target
+    expression against a read-only active view of that one defeated member.
+    This preserves the real owner/team/summon relation while still dropping
+    removed units and members whose relation changed.
+    """
+
+    lifecycle = UnitLifecycleSystem().view(state, target_id)
+    if lifecycle.is_removed or not lifecycle.is_present:
+        return False, ""
+    if not lifecycle.is_defeated:
+        return False, ""
+    if (
+        expression.expression_kind != "TargetAlias"
+        or expression.node is None
+        or expression.node.expression_kind != "TargetAlias"
+    ):
+        return False, "halo_non_alive_membership_requires_alias_expression"
+    unit = state.units.get(target_id)
+    if unit is None:
+        return False, ""
+    flags = dict(unit.flags)
+    flags["lifecycle_status"] = "active"
+    active_view = replace(
+        unit,
+        hp=max(1.0, min(float(unit.max_hp), 1.0)),
+        flags=flags,
+    )
+    probe_state = replace(
+        state,
+        units={**state.units, target_id: active_view},
+    )
+    result = TargetSystem().resolve_target_expression(
+        probe_state,
+        expression,
+        caster_id=caster_id,
+        owner_id=owner_id,
+        dynamic_values=dynamic_values,
+        binding_sources=binding_sources,
+    )
+    if not result.ok:
+        return False, (
+            "halo_non_alive_membership_resolution_blocked:"
+            f"{result.blocked_reason}"
+        )
+    return target_id in result.target_ids, ""
+
+
+def _status_detail_by_instance(
+    details: list[JSONValue],
+    instance_id: str,
+) -> dict[str, JSONValue] | None:
+    matches = tuple(
+        detail
+        for detail in details
+        if isinstance(detail, dict)
+        and detail.get("instance_id") == instance_id
+    )
+    return matches[0] if len(matches) == 1 else None
+
+
+def _halo_relation_mutation(
+    state: BattleState,
+    parent_owner_id: str,
+    parent_instance_id: str,
+    updated_relation: dict[str, JSONValue],
+) -> Mutation | None:
+    unit = state.units[parent_owner_id]
+    before_details = _status_details(unit.flags)
+    parent_detail = _status_detail_by_instance(
+        before_details,
+        parent_instance_id,
+    )
+    if parent_detail is None:
+        return None
+    raw_relations = parent_detail.get("halo_relations")
+    relations = (
+        [dict(item) for item in raw_relations if isinstance(item, dict)]
+        if isinstance(raw_relations, list)
+        else []
+    )
+    replaced = False
+    updated_relations: list[dict[str, JSONValue]] = []
+    for relation in relations:
+        if relation.get("relation_id") == updated_relation.get("relation_id"):
+            updated_relations.append(dict(updated_relation))
+            replaced = True
+        else:
+            updated_relations.append(relation)
+    if not replaced:
+        updated_relations.append(dict(updated_relation))
+    updated_relations.sort(key=lambda item: str(item.get("relation_id") or ""))
+    after_parent_detail = {
+        **parent_detail,
+        "halo_relations": updated_relations,
+    }
+    after_details = [
+        after_parent_detail
+        if isinstance(detail, dict)
+        and detail.get("instance_id") == parent_instance_id
+        else detail
+        for detail in before_details
+    ]
+    if before_details == after_details:
+        return None
+    return Mutation(
+        op="set",
+        path=("units", parent_owner_id, "flags", "status_details"),
+        before=before_details,
+        after=after_details,
+        reason="reconcile source-backed halo relation",
+        source="status_system",
+        before_exists="status_details" in unit.flags,
+        metadata={
+            "operation": "halo_relation_reconcile",
+            "relation_id": updated_relation.get("relation_id"),
+            "parent_instance_id": parent_instance_id,
+            "source": updated_relation.get("source"),
+            "lifecycle_plan": {
+                "operation": "halo_relation_reconcile",
+                "modifier_name": updated_relation.get("parent_modifier_name"),
+                "source_trace": {
+                    "effect_id": updated_relation.get("child_effect_id"),
+                    "effect_source": updated_relation.get("source"),
+                    "modifier_name": updated_relation.get(
+                        "parent_modifier_name"
+                    ),
+                    "halo_relation_id": updated_relation.get("relation_id"),
+                },
+            },
+        },
+    )
+
+
+def _halo_relation_record(
+    mutation: Mutation,
+    relation: dict[str, JSONValue],
+) -> dict[str, JSONValue]:
+    return SettlementRecord(
+        record_type="status_halo_relation",
+        source="status_system",
+        mutation_id=mutation.stable_id(),
+        process_only=False,
+        payload={
+            "relation_id": relation.get("relation_id"),
+            "parent_instance_id": relation.get("parent_instance_id"),
+            "child_effect_id": relation.get("child_effect_id"),
+            "current_member_ids": relation.get("current_member_ids"),
+            "parent_projection_fingerprint": relation.get(
+                "parent_projection_fingerprint"
+            ),
+        },
+        trace=(
+            dict(relation.get("source") or {})
+            if isinstance(relation.get("source"), dict)
+            else {}
+        ),
+    ).to_json()
+
+
+def _status_detail_halo_relation_id(
+    detail: dict[str, JSONValue],
+) -> str:
+    source_trace = detail.get("source_trace")
+    projection = (
+        source_trace.get("halo_projection")
+        if isinstance(source_trace, dict)
+        else None
+    )
+    if not isinstance(projection, dict):
+        return ""
+    relation_id = projection.get("relation_id")
+    return relation_id if isinstance(relation_id, str) else ""
+
+
+def _actual_halo_projection_members(
+    state: BattleState,
+    relation: dict[str, JSONValue],
+) -> tuple[tuple[str, ...], str]:
+    relation_id = str(relation.get("relation_id") or "")
+    child_modifier_name = str(relation.get("child_modifier_name") or "")
+    child_effect_id = str(relation.get("child_effect_id") or "")
+    projection_source_id = str(relation.get("projection_source_id") or "")
+    caster_id = str(relation.get("caster_id") or "")
+    expected_projection: dict[str, JSONValue] = {
+        "schema_version": "status_halo_projection_v1",
+        "relation_id": relation_id,
+        "parent_owner_id": str(relation.get("parent_owner_id") or ""),
+        "parent_instance_id": str(relation.get("parent_instance_id") or ""),
+        "child_effect_id": child_effect_id,
+        "source_path": str(relation.get("source_path") or ""),
+        "source_raw_type": str(relation.get("source_raw_type") or ""),
+        "source_raw_id": str(relation.get("source_raw_id") or ""),
+        "source_json_path": str(relation.get("source_json_path") or ""),
+        "is_halo_status_source_json_path": str(
+            relation.get("is_halo_status_source_json_path") or ""
+        ),
+        "source": (
+            dict(relation["source"])
+            if isinstance(relation.get("source"), dict)
+            else {}
+        ),
+    }
+    members: list[str] = []
+    for target_id, unit in sorted(state.units.items()):
+        matching = tuple(
+            detail
+            for detail in _status_details(unit.flags)
+            if isinstance(detail, dict)
+            and _status_detail_halo_relation_id(detail) == relation_id
+        )
+        if len(matching) > 1:
+            return (), "halo_projection_identity_duplicate"
+        if not matching:
+            continue
+        detail = matching[0]
+        source_trace = _status_detail_source_trace(detail)
+        expected_stack_key = _source_stack_key(
+            target_id,
+            child_modifier_name,
+            child_effect_id,
+            projection_source_id,
+        )
+        if (
+            detail.get("owner_id") != target_id
+            or detail.get("modifier_name") != child_modifier_name
+            or detail.get("source_id") != projection_source_id
+            or detail.get("caster_id") != caster_id
+            or detail.get("source_stack_key") != expected_stack_key
+            or source_trace.get("effect_id") != child_effect_id
+            or source_trace.get("effect_source") != relation.get("source")
+            or source_trace.get("halo_projection") != expected_projection
+        ):
+            return (), "halo_projection_source_binding_mismatch"
+        members.append(target_id)
+    return tuple(members), ""
+
+
+def _halo_blocked_result(
+    reason: str,
+    trace: dict[str, JSONValue],
+) -> StatusApplicationResult:
+    return StatusApplicationResult(
+        ok=False,
+        records=(
+            SettlementRecord(
+                record_type="status_halo_reconcile_blocked",
+                source="status_system",
+                process_only=True,
+                payload={"reason": reason, "state_unchanged": True},
+                trace=trace,
+            ).to_json(),
+        ),
+        unsupported=(reason,),
+    )
 
 
 def _application_semantics(

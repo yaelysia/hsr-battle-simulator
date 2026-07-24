@@ -37,6 +37,7 @@ from ..systems.event_dispatch import EventDispatchSystem
 from ..systems.ability_provider import register_dynamic_ability_providers
 from ..systems.status import StatusSystem
 from ..systems.summon import SummonSystem
+from ..systems.summon_runtime import empty_summon_runtime
 from ..systems.unit_lifecycle import UnitLifecycleSystem
 from ..systems.unit_spawn import UnitSpawnRequest, UnitSpawnSystem
 
@@ -499,6 +500,22 @@ class ScenarioStateBuilder:
             )
 
         global_flags = dict(scenario.global_flags)
+        if "summon_runtime" in global_flags:
+            raise ValueError(
+                "scenario.global_flags cannot inject summon_runtime; "
+                "formal state construction owns this runtime"
+            )
+        summon_runtime = empty_summon_runtime()
+        global_flags["summon_runtime"] = summon_runtime
+        setup_records.append(
+            {
+                "record_type": "setup_summon_runtime",
+                "source_kind": "kernel_runtime_constructor",
+                "status": "initialized",
+                "schema_version": summon_runtime["schema_version"],
+                "entity_count": 0,
+            }
+        )
         wave_runtime = _initial_wave_runtime(self.rules, scenario)
         if wave_runtime:
             global_flags["wave_runtime"] = wave_runtime

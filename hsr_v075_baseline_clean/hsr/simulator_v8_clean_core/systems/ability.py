@@ -551,7 +551,7 @@ class AbilityTaskSystem:
             reduction.after_state,
             list(result.mutations),
             list(result.events),
-            [],
+            list(result.rng_events),
             records,
         )
 

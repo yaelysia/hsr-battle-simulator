@@ -25,12 +25,10 @@ from .rng import (
     rng_choices_from_payload,
     rng_mode_from_payload,
 )
+from .summon_runtime import validate_summon_runtime
 from .unit_relation import is_dark_team, is_light_team, is_opposing_combat_team, is_same_combat_team
 from .unit_lifecycle import UnitLifecycleSystem
 from .unit_stats import effective_unit_stat
-
-
-SUPPORTED_SUMMON_RUNTIME_SCHEMA_VERSIONS = {"p1_3_summon_runtime_v1", "p3_summon_runtime_v2"}
 
 
 @dataclass(frozen=True)
@@ -1031,7 +1029,7 @@ def _resolve_target_query(
         if predicate_result.get("matched") is True:
             selected.append(candidate_id)
     if not selected:
-        return _inline_result(path, "TargetQuery", "", (), "target_query_empty", [*steps, {"predicate_results": predicate_steps}])
+        return _inline_result(path, "TargetQuery", "", (), "", [*steps, {"predicate_results": predicate_steps}])
     return _inline_result(path, "TargetQuery", "", tuple(selected), "", [*steps, {"predicate_results": predicate_steps}])
 
 
@@ -1503,7 +1501,7 @@ def _resolve_target_alias_resolution(
                 }
             )
         if not selected:
-            return _inline_result(path, "TargetAlias", alias, (), "target_alias_set_empty", steps)
+            return _inline_result(path, "TargetAlias", alias, (), "", steps)
         return _inline_result(path, "TargetAlias", alias, selected, "", steps)
 
     concat_alias = _safe_concat_alias(alias)
@@ -1779,7 +1777,7 @@ def _resolve_group_alias(
         elif alias in {"AllTeammate", "AllTeammateWithUnselectable"} and is_same_combat_team(caster, unit) and unit_id != caster_id:
             targets.append(unit_id)
     if not targets:
-        return (), f"target group empty:{alias}"
+        return (), ""
     return tuple(dict.fromkeys(targets)), ""
 
 
@@ -2023,7 +2021,7 @@ def _resolve_take_expression(
             expression_kind,
             "",
             selected,
-            "" if selected else "target_take_selected_empty",
+            "",
             [{"operation": "target_take", "count": count, "candidate_pool_before": list(candidate_targets), "selected_targets": list(selected), "numeric_evaluation": numeric_step}],
         )
     index_type = payload.index_type or "IndexStrict"
@@ -2047,6 +2045,15 @@ def _resolve_take_expression(
             )
             if reason:
                 return _inline_result(path, expression_kind, "", (), f"target_index_blocked:{reason}", [numeric_step])
+    if not candidate_targets:
+        return _inline_result(
+            path,
+            expression_kind,
+            "",
+            (),
+            "",
+            [numeric_step],
+        )
     if index < 0 or index >= len(candidate_targets):
         return _inline_result(path, expression_kind, "", (), "target_index_out_of_range", [numeric_step])
     selected = (candidate_targets[index],)
@@ -2438,7 +2445,7 @@ def _apply_alias_operation(
             "TargetAliasOperation",
             "",
             tuple(selected),
-            "" if selected else "target_alive_filter_empty",
+            "",
             [{"operation": "GetAliveOnly", "candidate_pool_before": list(candidate_targets), "selected_targets": selected, "skipped_targets": skipped}],
         )
     if kind == "TargetReverse":
@@ -2513,21 +2520,31 @@ def _apply_alias_operation(
     if kind == "TargetMapServantAndDummyCharacter":
         servants, servant_reason, servant_steps = _servants_for_targets(state, candidate_targets)
         dummy, dummy_reason, dummy_steps = _dummy_characters_for_targets(state, candidate_targets)
+        if servant_reason or dummy_reason:
+            return _inline_result(
+                path,
+                "TargetAliasOperation",
+                "",
+                (),
+                servant_reason or dummy_reason,
+                [*servant_steps, *dummy_steps],
+            )
         selected = _dedupe((*servants, *dummy))
-        reason = "" if selected else servant_reason or dummy_reason or "target_map_servant_and_dummy_character_empty"
-        return _inline_result(path, "TargetAliasOperation", "", selected, reason, [*servant_steps, *dummy_steps])
+        return _inline_result(path, "TargetAliasOperation", "", selected, "", [*servant_steps, *dummy_steps])
     if kind == "TargetMapDummyCharacter":
         selected, reason, steps = _dummy_characters_for_targets(state, candidate_targets)
         return _inline_result(path, "TargetAliasOperation", "", selected, reason, steps)
     if kind == "TargetWithServant":
-        mapped, _, map_steps = _servants_for_targets(state, candidate_targets)
+        mapped, reason, map_steps = _servants_for_targets(state, candidate_targets)
+        if reason:
+            return _inline_result(path, "TargetAliasOperation", "", (), reason, map_steps)
         selected = _dedupe((*candidate_targets, *mapped))
         return _inline_result(
             path,
             "TargetAliasOperation",
             "",
             selected,
-            "" if selected else "target_with_servant_empty",
+            "",
             [
                 *map_steps,
                 {
@@ -2538,14 +2555,16 @@ def _apply_alias_operation(
             ],
         )
     if kind == "TargetWithBEServant":
-        mapped, _, map_steps = _be_servants_for_targets(state, candidate_targets)
+        mapped, reason, map_steps = _be_servants_for_targets(state, candidate_targets)
+        if reason:
+            return _inline_result(path, "TargetAliasOperation", "", (), reason, map_steps)
         selected = _dedupe((*candidate_targets, *mapped))
         return _inline_result(
             path,
             "TargetAliasOperation",
             "",
             selected,
-            "" if selected else "target_with_be_servant_empty",
+            "",
             [
                 *map_steps,
                 {
@@ -2556,15 +2575,24 @@ def _apply_alias_operation(
             ],
         )
     if kind == "TargetWithServantAndDummyCharacter":
-        servants, _, servant_steps = _servants_for_targets(state, candidate_targets)
-        dummy, _, dummy_steps = _dummy_characters_for_targets(state, candidate_targets)
+        servants, servant_reason, servant_steps = _servants_for_targets(state, candidate_targets)
+        dummy, dummy_reason, dummy_steps = _dummy_characters_for_targets(state, candidate_targets)
+        if servant_reason or dummy_reason:
+            return _inline_result(
+                path,
+                "TargetAliasOperation",
+                "",
+                (),
+                servant_reason or dummy_reason,
+                [*servant_steps, *dummy_steps],
+            )
         selected = _dedupe((*candidate_targets, *servants, *dummy))
         return _inline_result(
             path,
             "TargetAliasOperation",
             "",
             selected,
-            "" if selected else "target_with_servant_and_dummy_character_empty",
+            "",
             [
                 *servant_steps,
                 *dummy_steps,
@@ -2582,7 +2610,7 @@ def _apply_alias_operation(
             "TargetAliasOperation",
             "",
             selected,
-            "" if selected else "target_remove_servant_empty",
+            "",
             [{"operation": "RemoveServant", "candidate_pool_before": list(candidate_targets), "selected_targets": list(selected)}],
         )
     if kind == "TargetRemoveBEServant":
@@ -2592,7 +2620,7 @@ def _apply_alias_operation(
             "TargetAliasOperation",
             "",
             selected,
-            "" if selected else "target_remove_be_servant_empty",
+            "",
             [{"operation": "RemoveBEServant", "candidate_pool_before": list(candidate_targets), "selected_targets": list(selected)}],
         )
     if kind == "TargetRemoveUnselectable":
@@ -2606,7 +2634,7 @@ def _apply_alias_operation(
             "TargetAliasOperation",
             "",
             selected,
-            "" if selected else "target_remove_unselectable_empty",
+            "",
             [{"operation": "RemoveUnselectable", "candidate_pool_before": list(candidate_targets), "selected_targets": list(selected)}],
         )
     if kind in {"TargetRemoveBattleEvent", "TargetRemoveNonSelfCreateBattleEvent"}:
@@ -2616,7 +2644,7 @@ def _apply_alias_operation(
             "TargetAliasOperation",
             "",
             selected,
-            "" if selected else "target_remove_battle_event_empty",
+            "",
             [{"operation": kind.removeprefix("Target"), "candidate_pool_before": list(candidate_targets), "selected_targets": list(selected)}],
         )
     if kind == "TargetRemoveCharacterChangeTarget":
@@ -2626,21 +2654,23 @@ def _apply_alias_operation(
             "TargetAliasOperation",
             "",
             selected,
-            "" if selected else "target_remove_character_change_target_empty",
+            "",
             [{"operation": "RemoveCharacterChangeTarget", "candidate_pool_before": list(candidate_targets), "selected_targets": list(selected)}],
         )
     if kind == "TargetMapSummoner":
         selected, reason, steps = _summoners_for_targets(state, candidate_targets)
         return _inline_result(path, "TargetAliasOperation", "", selected, reason, steps)
     if kind == "TargetWithSummoner":
-        mapped, _, map_steps = _summoners_for_targets(state, candidate_targets)
+        mapped, reason, map_steps = _summoners_for_targets(state, candidate_targets)
+        if reason:
+            return _inline_result(path, "TargetAliasOperation", "", (), reason, map_steps)
         selected = _dedupe((*candidate_targets, *mapped))
         return _inline_result(
             path,
             "TargetAliasOperation",
             "",
             selected,
-            "" if selected else "target_with_summoner_empty",
+            "",
             [
                 *map_steps,
                 {
@@ -2744,8 +2774,10 @@ def _existing_targets(state: BattleState, target_ids: tuple[str, ...]) -> tuple[
 
 def _last_summon_monsters(state: BattleState) -> tuple[tuple[str, ...], str]:
     runtime = state.global_flags.get("summon_runtime")
-    if not _summon_runtime_schema_ok(runtime):
-        return (), "summon_runtime_missing"
+    runtime_reason = _summon_runtime_blocked_reason(state)
+    if runtime_reason:
+        return (), runtime_reason
+    assert isinstance(runtime, dict)
     raw = runtime.get("last_summon_monsters")
     if not isinstance(raw, list):
         return (), "last_summon_monsters_missing"
@@ -2768,16 +2800,16 @@ def _last_summon_monsters(state: BattleState) -> tuple[tuple[str, ...], str]:
         else:
             skipped_reasons.append(reason)
     if not target_ids:
-        if skipped_reasons:
-            return (), _first_specific_reason(skipped_reasons)
-        return (), "last_summon_monsters_empty"
+        return (), ""
     return tuple(dict.fromkeys(target_ids)), ""
 
 
 def _caster_summoned_minions(state: BattleState, caster_id: str) -> tuple[tuple[str, ...], str]:
     runtime = state.global_flags.get("summon_runtime")
-    if not _summon_runtime_schema_ok(runtime):
-        return (), "summon_runtime_missing"
+    runtime_reason = _summon_runtime_blocked_reason(state)
+    if runtime_reason:
+        return (), runtime_reason
+    assert isinstance(runtime, dict)
     by_owner = runtime.get("by_owner")
     if not isinstance(by_owner, dict):
         return (), "summon_runtime_by_owner_missing"
@@ -2805,16 +2837,16 @@ def _caster_summoned_minions(state: BattleState, caster_id: str) -> tuple[tuple[
         else:
             skipped_reasons.append(reason)
     if not target_ids:
-        if skipped_reasons:
-            return (), _first_specific_reason(skipped_reasons)
-        return (), "caster_summoned_minions_empty"
+        return (), ""
     return tuple(dict.fromkeys(target_ids)), ""
 
 
 def _servant_entity_list(state: BattleState) -> tuple[tuple[str, ...], str]:
     runtime = state.global_flags.get("summon_runtime")
-    if not _summon_runtime_schema_ok(runtime):
-        return (), "summon_runtime_missing"
+    runtime_reason = _summon_runtime_blocked_reason(state)
+    if runtime_reason:
+        return (), runtime_reason
+    assert isinstance(runtime, dict)
     servants = runtime.get("servants")
     if not isinstance(servants, dict):
         return (), "summon_runtime_servants_missing"
@@ -2842,9 +2874,7 @@ def _servant_entity_list(state: BattleState) -> tuple[tuple[str, ...], str]:
         else:
             skipped_reasons.append(reason)
     if not target_ids:
-        if skipped_reasons:
-            return (), _first_specific_reason(skipped_reasons)
-        return (), "servant_entity_list_empty"
+        return (), ""
     return tuple(dict.fromkeys(target_ids)), ""
 
 
@@ -2869,7 +2899,7 @@ def _friend_servant_select(state: BattleState, caster_id: str) -> tuple[tuple[st
         if unit is not None and is_same_combat_team(caster, unit)
     )
     if not selected:
-        return (), "friend_servant_select_empty"
+        return (), ""
     return tuple(dict.fromkeys(selected)), ""
 
 
@@ -2878,8 +2908,10 @@ def _servants_for_targets(
     candidate_targets: tuple[str, ...],
 ) -> tuple[tuple[str, ...], str, list[JSONValue]]:
     runtime = state.global_flags.get("summon_runtime")
-    if not _summon_runtime_schema_ok(runtime):
-        return (), "summon_runtime_missing", [{"operation": "GetServant", "candidate_pool_before": list(candidate_targets)}]
+    runtime_reason = _summon_runtime_blocked_reason(state)
+    if runtime_reason:
+        return (), runtime_reason, [{"operation": "GetServant", "candidate_pool_before": list(candidate_targets)}]
+    assert isinstance(runtime, dict)
     by_owner = runtime.get("by_owner")
     if not isinstance(by_owner, dict):
         return (), "summon_runtime_by_owner_missing", [{"operation": "GetServant", "candidate_pool_before": list(candidate_targets)}]
@@ -2918,7 +2950,7 @@ def _servants_for_targets(
         }
     ]
     if not selected:
-        return (), "target_map_servant_empty", steps
+        return (), "", steps
     return tuple(dict.fromkeys(selected)), "", steps
 
 
@@ -2927,8 +2959,10 @@ def _be_servants_for_targets(
     candidate_targets: tuple[str, ...],
 ) -> tuple[tuple[str, ...], str, list[JSONValue]]:
     runtime = state.global_flags.get("summon_runtime")
-    if not _summon_runtime_schema_ok(runtime):
-        return (), "summon_runtime_missing", [{"operation": "GetBEServant", "candidate_pool_before": list(candidate_targets)}]
+    runtime_reason = _summon_runtime_blocked_reason(state)
+    if runtime_reason:
+        return (), runtime_reason, [{"operation": "GetBEServant", "candidate_pool_before": list(candidate_targets)}]
+    assert isinstance(runtime, dict)
     by_owner = runtime.get("by_owner")
     if not isinstance(by_owner, dict):
         return (), "summon_runtime_by_owner_missing", [{"operation": "GetBEServant", "candidate_pool_before": list(candidate_targets)}]
@@ -2967,7 +3001,7 @@ def _be_servants_for_targets(
         }
     ]
     if not selected:
-        return (), "target_map_be_servant_empty", steps
+        return (), "", steps
     return tuple(dict.fromkeys(selected)), "", steps
 
 
@@ -2976,8 +3010,10 @@ def _dummy_characters_for_targets(
     candidate_targets: tuple[str, ...],
 ) -> tuple[tuple[str, ...], str, list[JSONValue]]:
     runtime = state.global_flags.get("summon_runtime")
-    if not _summon_runtime_schema_ok(runtime):
-        return (), "summon_runtime_missing", [{"operation": "GetDummyCharacter", "candidate_pool_before": list(candidate_targets)}]
+    runtime_reason = _summon_runtime_blocked_reason(state)
+    if runtime_reason:
+        return (), runtime_reason, [{"operation": "GetDummyCharacter", "candidate_pool_before": list(candidate_targets)}]
+    assert isinstance(runtime, dict)
     by_owner = runtime.get("by_owner")
     if not isinstance(by_owner, dict):
         return (), "summon_runtime_by_owner_missing", [{"operation": "GetDummyCharacter", "candidate_pool_before": list(candidate_targets)}]
@@ -3016,7 +3052,7 @@ def _dummy_characters_for_targets(
         }
     ]
     if not selected:
-        return (), "target_map_dummy_character_empty", steps
+        return (), "", steps
     return tuple(dict.fromkeys(selected)), "", steps
 
 
@@ -3025,8 +3061,10 @@ def _summoned_minions_for_targets(
     candidate_targets: tuple[str, ...],
 ) -> tuple[tuple[str, ...], str, list[JSONValue]]:
     runtime = state.global_flags.get("summon_runtime")
-    if not _summon_runtime_schema_ok(runtime):
-        return (), "summon_runtime_missing", [{"operation": "GetSummonedMinions", "candidate_pool_before": list(candidate_targets)}]
+    runtime_reason = _summon_runtime_blocked_reason(state)
+    if runtime_reason:
+        return (), runtime_reason, [{"operation": "GetSummonedMinions", "candidate_pool_before": list(candidate_targets)}]
+    assert isinstance(runtime, dict)
     by_owner = runtime.get("by_owner")
     if not isinstance(by_owner, dict):
         return (), "summon_runtime_by_owner_missing", [{"operation": "GetSummonedMinions", "candidate_pool_before": list(candidate_targets)}]
@@ -3069,7 +3107,7 @@ def _summoned_minions_for_targets(
         }
     ]
     if not selected:
-        return (), "target_map_summoned_minions_empty", steps
+        return (), "", steps
     return tuple(dict.fromkeys(selected)), "", steps
 
 
@@ -3078,8 +3116,10 @@ def _summoners_for_targets(
     candidate_targets: tuple[str, ...],
 ) -> tuple[tuple[str, ...], str, list[JSONValue]]:
     runtime = state.global_flags.get("summon_runtime")
-    if not _summon_runtime_schema_ok(runtime):
-        return (), "summon_runtime_missing", [{"operation": "GetSummoner", "candidate_pool_before": list(candidate_targets)}]
+    runtime_reason = _summon_runtime_blocked_reason(state)
+    if runtime_reason:
+        return (), runtime_reason, [{"operation": "GetSummoner", "candidate_pool_before": list(candidate_targets)}]
+    assert isinstance(runtime, dict)
     lifecycle = UnitLifecycleSystem()
     selected: list[str] = []
     skipped: list[JSONValue] = []
@@ -3116,7 +3156,7 @@ def _summoners_for_targets(
         }
     ]
     if not selected:
-        return (), "target_map_summoner_empty", steps
+        return (), "", steps
     return tuple(dict.fromkeys(selected)), "", steps
 
 
@@ -3294,8 +3334,11 @@ def _first_specific_reason(reasons: list[str]) -> str:
     return reasons[0] if reasons else "target_candidates_empty"
 
 
-def _summon_runtime_schema_ok(runtime: JSONValue) -> bool:
-    return isinstance(runtime, dict) and runtime.get("schema_version") in SUPPORTED_SUMMON_RUNTIME_SCHEMA_VERSIONS
+def _summon_runtime_blocked_reason(state: BattleState) -> str:
+    return validate_summon_runtime(
+        state.global_flags.get("summon_runtime"),
+        units=state.units,
+    ).reason
 
 
 def _dedupe(target_ids: tuple[str, ...]) -> tuple[str, ...]:

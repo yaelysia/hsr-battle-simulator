@@ -35,7 +35,7 @@ turnbasedgamedata-main -> TBGD compiler/lowering -> Canonical IR -> Combat Core
 ```text
 P8 equipment build, light-cone and relic assembly
 最近代码检查点：CHAR-M1 记忆角色与忆灵 owned-combatant 构筑闭环验收
-当前规划主线：P8 光锥、遗器与角色构筑装配；P8-S0 至 P8-S8 已通过验收，光锥轨已收口，下一阶段为 P8-S9 遗器定义卡
+当前规划主线：P8 光锥、遗器与角色构筑装配；P8-S0 至 P8-S8 已通过验收，当前新增 P8-R1 召唤关系初始化与通用光环生命周期修复门，遗器轨可在独立 worktree 推进 P8-S9
 ```
 
 当前 v8 已建立的底层范围包括：
@@ -70,10 +70,12 @@ P8 equipment build, light-cone and relic assembly
 - P8-S7 光锥属性、状态、条件与监听机制族已经独立验收：当前 4,472 个原始能力机制节点形成互斥且穷尽的 S7/S8/non-gameplay 分区，986 个 S7 节点无 lowering、admission、implementation 或 validation gap；18 个纯 S7 光锥图可经正式构筑进入战斗，144 个含 S8 分支的图继续整体 blocked。属性池、状态生命周期、条件真假、动态值、监听窗口、召唤单位阵营、owner/target、多 wearer、settlement、source audit 和 replay 均有结构化正负例；没有部分执行或装备专用 runtime。
 - P8-S8 光锥剩余 gameplay 机制已经独立验收：当前 162 张已发布光锥的完整机制图全部 executable，S8 的 3,464 个 gameplay 来源节点、64 个任务族、23 个属性消费族、51 个事件族、41 个条件族和 1,312 条数值表达式均无 lowering/admission/implementation/validation gap；伤害、治疗、护盾、资源、生命、时间线、目标、RNG 和共享战斗状态均复用通用系统，装备侧失败、unknown、专用 runtime handler 和 raw runtime 读取均为零。CHAR-M1 验收后，光锥启动目录中的角色构筑外部依赖已归零；当前 162 张中 159 张可启动，剩余 3 张是装备侧两个召唤 runtime 缺口和一个首目标解析缺口，因此仍不能声称全目录正式入战完成。
 - CHAR-M1 记忆角色与忆灵 owned-combatant 构筑闭环已经独立验收：当前 7 个受影响角色、84 个辅助行迹节点、49 个辅助技能和 6 个忆灵定义均通过类型化 owner 关系完成分类；父角色与派生战斗单位具有独立、不可变、可追溯的构筑结果，特殊资源、必需动作全集、出生来源、动作查询、来源审计和 replay 均按 fail-closed 口径验证。当前有 2 个真实空装备记忆角色构筑可正式准入；其余 5 个角色组因属性、时间线或出生来源缺口继续原子 blocked，本验收不代表全记忆角色内容完成。
+- P8-R1 修复卡已经建立：正式战斗需要在 provider 和开局事件之前具备合法空召唤关系；目标查询必须区分合法空集合与解析失败；真实 `IsHaloStatus` 需要通用动态成员生命周期。该卡必须关闭当前 3 个装备侧启动缺口，且在 P8-S15 前验收合入。
 - `simulator_v8_ui/` 本地 UI 测试台，用于 scenario 编排和审计展示，不进入规则系统。
 
 当前仍未完整实现的大块：
 
+- P8-R1：空召唤关系初始化、空目标三态和通用光环成员生命周期。
 - 完整角色面板装配：全量角色行迹、剩余记忆角色与忆灵的属性/时间线/出生来源、内圈/外圈遗器及套装效果。
 - P5 保留的 admission gap 逐类回收：公式参数、动态值、自定义值、召唤参数、状态数值、资源和数据卡上下文的全正例扩面。
 - 大量角色卡人工解释与验证。
@@ -248,7 +250,7 @@ UI 只能消费 core/API 输出的战斗事实、合法动作、合法目标、�
 
 P4 的执行质量明显改善，后续大型计划应沿用这个正向模式：先用背景和约束建立方向，但把可执行内容压缩到唯一阶段清单；每阶段只做一个目标，先提交阶段执行卡，再产出 `ready_for_review` 证据包；最终聚合只能在所有分步验收后实现，且必须继承分步矩阵中的 gap。这个结构能显著降低执行线程偷跑、漏做、自勾和用聚合脚本掩盖分步问题的概率。
 
-P8-S5 至 S21 已采用“规划线程预写执行卡库”的新流程，入口为 `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/docs/p8_execution_cards/README.md`。执行线程不再临时重写目标，只核对事实、实施当前卡并提交 `ready_for_review`。每张卡同时给出推荐模型、推理等级和普通/Goal 模式；Goal 的目标也只能覆盖一张卡，不能自动跨阶段。
+P8-S5 至 S21 与 P8-R1 已采用“规划线程预写执行卡库”的新流程，入口为 `hsr_v075_baseline_clean/hsr/simulator_v8_clean_core/docs/p8_execution_cards/README.md`。执行线程不再临时重写目标，只核对事实、实施当前卡并提交 `ready_for_review`。每张卡同时给出推荐模型、推理等级和普通/Goal 模式；Goal 的目标也只能覆盖一张卡，不能自动跨阶段。
 
 本项目是未完成模拟器，计划和验收不能把目标写得过大过泛。每个阶段、每个 checklist 项都应先按来源和实现状态拆成三态：
 

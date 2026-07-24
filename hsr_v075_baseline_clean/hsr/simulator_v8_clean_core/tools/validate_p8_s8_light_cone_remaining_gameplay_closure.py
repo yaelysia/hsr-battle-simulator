@@ -99,7 +99,7 @@ from ..systems.status import (
     _resolve_dynamic_values,
 )
 from ..systems.status_callbacks import StatusCallbackSystem, _condition_target_nodes
-from ..systems.summon import SUMMON_RUNTIME_SCHEMA_VERSION
+from ..systems.summon_runtime import empty_summon_runtime
 from ..systems.target import TargetPolicy, TargetSystem
 from ..systems.timeline import TimelineSystem
 from ..systems.unit_lifecycle import UnitLifecycleSystem
@@ -137,6 +137,37 @@ from .validate_p8_s7_light_cone_status_condition_listener_closure import (
 
 
 VALIDATION_VERSION = "p8_s8_light_cone_remaining_gameplay_closure"
+
+
+def _fixture_summon_runtime(
+    entries: Mapping[str, dict[str, Any]],
+    *,
+    by_owner: Mapping[str, list[str]],
+    last_summon_monsters: tuple[str, ...] = (),
+    last_servants: tuple[str, ...] = (),
+    servant_ids: tuple[str, ...] = (),
+) -> dict[str, Any]:
+    """Build validator-only populated state from the production empty schema."""
+
+    runtime = empty_summon_runtime()
+    normalized_entries: dict[str, dict[str, Any]] = {}
+    for unit_id, entry in entries.items():
+        normalized = dict(entry)
+        normalized["runtime_id"] = unit_id
+        normalized["unit_id"] = unit_id
+        normalized_entries[unit_id] = normalized
+    runtime["entities"] = normalized_entries
+    runtime["by_owner"] = {
+        owner_id: list(unit_ids)
+        for owner_id, unit_ids in by_owner.items()
+    }
+    runtime["last_summon_monsters"] = list(last_summon_monsters)
+    runtime["last_servants"] = list(last_servants)
+    runtime["servants"] = {
+        unit_id: dict(normalized_entries[unit_id])
+        for unit_id in servant_ids
+    }
+    return runtime
 TASK_STATE_CACHE_LIMIT = 12
 SUMMARY_SCHEMA_VERSION = (
     "p8_s8_light_cone_remaining_gameplay_closure_summary_v2"
@@ -1559,17 +1590,12 @@ def _s8_condition_contexts(condition: ConditionIR) -> tuple[EvaluationContext, .
                 "turn_owner_id": "ally:wearer" if rich else "enemy:target",
                 "turn_based_game_mode_state": "active" if rich else "inactive",
                 "wave_count": index + 1,
-                "summon_runtime": {
-                    "schema_version": SUMMON_RUNTIME_SCHEMA_VERSION,
-                    "entities": {servant.unit_id: summon_entry},
-                    "by_owner": {"ally:wearer": [servant.unit_id]},
-                    "by_unique_group": {},
-                    "last_summon_monsters": [],
-                    "last_servants": [servant.unit_id],
-                    "servants": {servant.unit_id: summon_entry},
-                    "assistant_history": [],
-                    "blocked": [],
-                },
+                "summon_runtime": _fixture_summon_runtime(
+                    {servant.unit_id: summon_entry},
+                    by_owner={"ally:wearer": [servant.unit_id]},
+                    last_servants=(servant.unit_id,),
+                    servant_ids=(servant.unit_id,),
+                ),
             },
         )
         if condition.opcode == "ByTargetEntityType" and rich:
@@ -1839,9 +1865,13 @@ def _mechanism_only_equipment_task_probe_state(
         },
     )
     servant_entry = {
+        "runtime_id": "ally:servant",
+        "unit_id": "ally:servant",
         "status": "active",
         "summon_kind": "servant",
         "owner_id": "ally:actor",
+        "summoner_id": "ally:actor",
+        "team_side": "ally",
         "targetability": {"targetable": True},
     }
     state = BattleState(
@@ -1862,17 +1892,12 @@ def _mechanism_only_equipment_task_probe_state(
         global_flags={
             "turn_owner_id": "ally:actor",
             "phase": "action",
-            "summon_runtime": {
-                "schema_version": SUMMON_RUNTIME_SCHEMA_VERSION,
-                "entities": {"ally:servant": servant_entry},
-                "by_owner": {"ally:actor": ["ally:servant"]},
-                "by_unique_group": {},
-                "last_summon_monsters": [],
-                "last_servants": ["ally:servant"],
-                "servants": {"ally:servant": servant_entry},
-                "assistant_history": [],
-                "blocked": [],
-            },
+            "summon_runtime": _fixture_summon_runtime(
+                {"ally:servant": servant_entry},
+                by_owner={"ally:actor": ["ally:servant"]},
+                last_servants=("ally:servant",),
+                servant_ids=("ally:servant",),
+            ),
         },
     )
     eligibility = CharacterEquipmentEligibilityIR(
@@ -2118,44 +2143,48 @@ def _target_family_probe_state(*, reversed_order: bool = False) -> BattleState:
             "status": "active",
             "summon_kind": "servant",
             "owner_id": "ally:wearer",
+            "summoner_id": "ally:wearer",
+            "team_side": "ally",
             "targetability": {"targetable": True},
         },
         "ally:hidden_summon": {
             "status": "active",
             "summon_kind": "summoned_monster",
             "owner_id": "ally:wearer",
+            "summoner_id": "ally:wearer",
+            "team_side": "ally",
             "targetability": {"targetable": True},
         },
         "enemy:summon": {
             "status": "active",
             "summon_kind": "summoned_monster",
             "owner_id": "enemy:target",
+            "summoner_id": "enemy:target",
+            "team_side": "enemy",
             "targetability": {"targetable": True},
         },
         "enemy:hidden_summon": {
             "status": "active",
             "summon_kind": "servant",
             "owner_id": "enemy:target",
+            "summoner_id": "enemy:target",
+            "team_side": "enemy",
             "targetability": {"targetable": True},
         },
     }
-    summon_runtime = {
-        "schema_version": SUMMON_RUNTIME_SCHEMA_VERSION,
-        "entities": summon_entries,
-        "by_owner": {
+    summon_runtime = _fixture_summon_runtime(
+        summon_entries,
+        by_owner={
             "ally:wearer": ["ally:summon", "ally:hidden_summon"],
             "enemy:target": ["enemy:summon", "enemy:hidden_summon"],
         },
-        "by_unique_group": {},
-        "last_summon_monsters": ["ally:hidden_summon", "enemy:summon"],
-        "last_servants": ["ally:summon", "enemy:hidden_summon"],
-        "servants": {
-            "ally:summon": summon_entries["ally:summon"],
-            "enemy:hidden_summon": summon_entries["enemy:hidden_summon"],
-        },
-        "assistant_history": [],
-        "blocked": [],
-    }
+        last_summon_monsters=(
+            "ally:hidden_summon",
+            "enemy:summon",
+        ),
+        last_servants=("ally:summon", "enemy:hidden_summon"),
+        servant_ids=("ally:summon", "enemy:hidden_summon"),
+    )
     return BattleState(
         units={item.unit_id: item for item in rows},
         global_flags={

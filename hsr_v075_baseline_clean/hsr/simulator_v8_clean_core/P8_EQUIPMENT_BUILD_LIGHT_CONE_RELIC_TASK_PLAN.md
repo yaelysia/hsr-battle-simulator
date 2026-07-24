@@ -17,9 +17,9 @@ P8 完成后，“这名角色装备了什么”和“这些装备产生了什�
 
 本文档只有最后一节是唯一可打标 checklist。背景、数据观察、问题总账、阶段目标和验收说明都不是第二套清单。
 
-### S5-S21 直接执行入口
+### S5-S21 与 R1 直接执行入口
 
-`P8-S0` 至 `P8-S4` 保留本文档中的阶段目标和既有验收记录。`P8-S5` 至 `P8-S21` 已由规划线程预先拆成单阶段执行卡，统一入口为：
+`P8-S0` 至 `P8-S4` 保留本文档中的阶段目标和既有验收记录。`P8-S5` 至 `P8-S21` 以及 S8 后新增的 `P8-R1` 修复门，均已由规划线程预先拆成单阶段执行卡，统一入口为：
 
 ```text
 docs/p8_execution_cards/README.md
@@ -34,7 +34,7 @@ docs/p8_execution_cards/README.md
 
 本文档负责 P8 总目标、全局红线、阶段依赖和唯一 checklist；单阶段执行卡负责当前阶段的具体目标、验收谓词、拟改范围和验证预算。两者出现实质冲突时，执行线程不得自行选择其中一套，应停止实施并由规划线程原子修订总计划与执行卡。
 
-除第 7.1 节明确允许的双 worktree 分轨外，执行线程必须按 `P8-S0` 至 `P8-S21` 的依赖顺序工作。后续阶段只能作为依赖背景，不能提前实现、提前出报告或混入当前阶段 evidence。
+除第 7.1 节明确允许的双 worktree 分轨外，执行线程必须按 `P8-S0` 至 `P8-S21` 及 `P8-R1` 修复门组成的依赖图工作。后续阶段只能作为依赖背景，不能提前实现、提前出报告或混入当前阶段 evidence。
 
 执行线程最多只能提交 `ready_for_review`，不能自称 `done`，不能修改本文档最后的 checklist。验收线程必须阅读真实代码、复核结构化矩阵、运行本阶段最小验证，并检查通用性、来源边界、扩展性和负例，验收通过后才勾选阶段并建立代码检查点。纯文档调整不要求单独提交检查点。
 
@@ -287,6 +287,7 @@ P8 完成后，系统必须具备以下能力：
 | P8-I16 | UI / API 没有合法装备目录、校验和装配结果查询 | UI 容易自行复制规则 | S19 |
 | P8-I17 | 没有当前源码全量装备 coverage 与负例聚合 | 少量样例通过会被误报为全装备完成 | S0、S21 |
 | P8-I18 | 没有一个角色、光锥、六件遗器、套装、动作和 replay 共用正式接口的完整实例 | 分系统正例都通过仍不能证明真实构筑可用 | S20 |
+| P8-I19 | 正式战斗缺少开局空召唤关系，且 `IsHaloStatus` 只有 lowering 字段、没有动态成员生命周期 | 无 servant 的合法空集合被误判为错误，晚出生单位漏掉既有光环 | R1 |
 
 | 阶段 | 唯一核心目标 | 必须关闭的问题 |
 |---|---|---|
@@ -299,6 +300,7 @@ P8 完成后，系统必须具备以下能力：
 | P8-S6 | 接通光锥动态能力绑定和启动生命周期 | I06、I07 的能力入口 |
 | P8-S7 | 闭合光锥属性 / 状态 / 条件 / 监听机制族 | I07 的第一批 gameplay 机制 |
 | P8-S8 | 闭合光锥结算 / 资源 / 目标 / 时间线 / RNG 机制族 | I07 的剩余 gameplay 机制 |
+| P8-R1 | 修复召唤关系初始化、空目标语义与通用光环成员生命周期 | I19 |
 | P8-S9 | 完整 lower 遗器模板、部位、域和套装定义 | I08 的定义部分 |
 | P8-S10 | 建立六槽遗器实例和构筑合法性 | I08 的实例部分 |
 | P8-S11 | 接通主词条合法池和精确数值 | I09 |
@@ -313,7 +315,7 @@ P8 完成后，系统必须具备以下能力：
 | P8-S20 | 建立希儿、《于夜色中》与 4+2 遗器的完整构筑纵切 | I18，端到端复核 I03-I16 |
 | P8-S21 | 当前源码全量聚合、回归与文档收口 | I17，复核 I01-I18 |
 
-### 7.1 P8-S5 至 S21 的执行依赖
+### 7.1 P8-S5 至 S21 与 P8-R1 的执行依赖
 
 剩余阶段的详细执行卡已集中在：
 
@@ -329,6 +331,7 @@ docs/p8_execution_cards/
 | P8-S6 | [`P8-S6_LIGHT_CONE_DYNAMIC_STARTUP.md`](docs/p8_execution_cards/P8-S6_LIGHT_CONE_DYNAMIC_STARTUP.md) |
 | P8-S7 | [`P8-S7_LIGHT_CONE_STATUS_CONDITION_LISTENER_CLOSURE.md`](docs/p8_execution_cards/P8-S7_LIGHT_CONE_STATUS_CONDITION_LISTENER_CLOSURE.md) |
 | P8-S8 | [`P8-S8_LIGHT_CONE_REMAINING_GAMEPLAY_CLOSURE.md`](docs/p8_execution_cards/P8-S8_LIGHT_CONE_REMAINING_GAMEPLAY_CLOSURE.md) |
+| P8-R1 | [`P8-R1_SUMMON_RUNTIME_HALO_LIFECYCLE_REPAIR.md`](docs/p8_execution_cards/P8-R1_SUMMON_RUNTIME_HALO_LIFECYCLE_REPAIR.md) |
 | P8-S9 | [`P8-S9_RELIC_DEFINITION_CARDS.md`](docs/p8_execution_cards/P8-S9_RELIC_DEFINITION_CARDS.md) |
 | P8-S10 | [`P8-S10_RELIC_INSTANCE_LEGALITY.md`](docs/p8_execution_cards/P8-S10_RELIC_INSTANCE_LEGALITY.md) |
 | P8-S11 | [`P8-S11_RELIC_MAIN_AFFIX.md`](docs/p8_execution_cards/P8-S11_RELIC_MAIN_AFFIX.md) |
@@ -347,20 +350,21 @@ P8 的问题依赖不是一条绝对串行链。S4 验收并形成代码检查�
 
 ```text
 accepted S4
-   |-- S5 -> S6 -> S7 -> S8 --------|
-   |                                 |-> S18 -> S19 -> S20 -> S21
-   |-- S9 -> S10 -> ... -> S17 -----|
+   |-- S5 -> S6 -> S7 -> S8 -> R1 ------|
+   |                                     |-> S18 -> S19 -> S20 -> S21
+   |-- S9 -> S10 -> ... -> S17 ---------|
 ```
 
 - 光锥轨和遗器轨只有在不同 Git worktree、从同一已验收 S4 commit 出发时才允许并行；同一工作区仍禁止并行实施。
 - 两条轨内部保持严格阶段顺序，每阶段都要独立 `ready_for_review`、验收和提交检查点。
-- S18 是硬汇合点，只有 S8、S17 均验收且两个轨道的检查点已合并后才能开始。
+- R1 可与 S9-S14 在独立 worktree 并行，但必须在 S15 开始前验收并合入，避免遗器套装重复实现光环语义。
+- S18 是硬汇合点，只有 R1、S17 均验收且两个轨道的检查点已合并后才能开始。
 - S18-S21 恢复严格串行，不能让两个分支继续分别修改共享装配、出生、查询或 replay 契约。
 - 执行卡中的推荐模型、推理等级和普通/Goal 模式是资源与风险建议，不降低任何验收口径。
 
 ## 8. 阶段执行卡规格
 
-P8-S5 至 S21 的执行卡由规划线程预先维护。执行线程开始前必须读取对应卡，只读核对已验收基线、当前代码调用链和数据事实；事实偏差不影响目标时应在 `ready_for_review` 中说明，偏差会改变目标、职责或验收谓词时必须停止并交回规划线程修订，不能自行改写卡或提前实施相邻阶段。
+P8-S5 至 S21 与 P8-R1 的执行卡由规划线程预先维护。执行线程开始前必须读取对应卡，只读核对已验收基线、当前代码调用链和数据事实；事实偏差不影响目标时应在 `ready_for_review` 中说明，偏差会改变目标、职责或验收谓词时必须停止并交回规划线程修订，不能自行改写卡或提前实施相邻阶段。
 
 未来没有预写卡的阶段，仍需在改文件前由规划线程产出并确认一份只针对当前阶段的执行卡。执行卡至少包含：
 
@@ -1255,7 +1259,7 @@ ready_for_review evidence：
 
 - P8-S19 query purity、build round trip、source walkback、stale fingerprint 和 compact-state budget 验证。
 - P7-S8 查询 / 提交、P7-S15 replay、P7-S18 compact state 直接回归。
-- 不需要重新跑全部 equipment ability transition，复用当前指纹绑定的 S8 / S17 摘要。
+- 不需要重新跑全部 equipment ability transition，复用当前指纹绑定的 S8、R1 与 S17 摘要。
 
 ## 29. P8-S20 希儿完整装备构筑纵切
 
@@ -1434,7 +1438,8 @@ P8 装备相关 raw 语料本身约数 MB，正常 focused discovery 不应反�
 - [x] P8-S5 已接通光锥静态属性贡献，基础属性与被动属性分离且来源可追溯。
 - [x] P8-S6 已接通光锥动态参数、ability graph 和启动生命周期，命途失配及 partial graph 不产生效果。
 - [x] P8-S7 已闭合当前光锥属性、状态、条件、动态值和监听 gameplay 机制族。
-- [x] P8-S8 已闭合当前光锥伤害、治疗、护盾、资源、目标、时间线、RNG 及所有剩余 gameplay 机制族。
+- [x] P8-S8 已闭合其机制总账中的伤害、治疗、护盾、资源、目标、时间线、RNG 和完整图执行；CHAR-M1 后暴露的跨生命周期光环成员缺口由独立 R1 修复门承接。
+- [ ] P8-R1 已建立合法空召唤关系、空目标三态和通用光环成员生命周期，当前已发布光锥目录全部正式启动。
 - [ ] P8-S9 已完整 lower 遗器模板、六部位、内外圈域、词条分组、套装和档位定义，并分类特殊模式。
 - [ ] P8-S10 已建立零至六件遗器实例与槽位 / 等级 / 实例唯一性校验，非法件不贡献属性或套装计数。
 - [ ] P8-S11 已接通六部位主词条合法池和按强化等级计算的完整精度数值。

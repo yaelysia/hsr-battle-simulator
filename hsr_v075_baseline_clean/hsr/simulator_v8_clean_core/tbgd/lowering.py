@@ -7544,6 +7544,21 @@ def _modifier_addition_effects(
         if not isinstance(sub_modifier_name, str) or not sub_modifier_name:
             continue
         source_json_path = f"{base_path}.AdditionConfig.SubModifierList[{index}]"
+        halo_present = "IsHaloStatus" in raw
+        halo_raw = raw.get("IsHaloStatus")
+        halo_value = halo_raw if isinstance(halo_raw, bool) else False
+        halo_blocked_reason = (
+            ""
+            if not halo_present or isinstance(halo_raw, bool)
+            else "modifier_addition_is_halo_status_type_invalid"
+        )
+        alive_only_raw = raw.get("AliveOnly")
+        alive_only_value, alive_only_reason = _addition_alive_only_value(
+            alive_only_raw,
+            present="AliveOnly" in raw,
+        )
+        if halo_value and alive_only_reason:
+            halo_blocked_reason = alive_only_reason
         effect_id = (
             "effect:modifier_addition:"
             f"{_safe_id(relative_path)}:{_safe_id(map_name)}:"
@@ -7561,14 +7576,34 @@ def _modifier_addition_effects(
                 "sub_modifier_index": index,
                 "json_path": source_json_path,
                 "target_json_path": f"{source_json_path}.TargetType",
-                "is_halo_status": raw.get("IsHaloStatus"),
-                "alive_only": raw.get("AliveOnly"),
+                "is_halo_status": halo_raw,
+                "is_halo_status_json_path": (
+                    f"{source_json_path}.IsHaloStatus" if halo_present else ""
+                ),
+                "alive_only": alive_only_raw,
+                "alive_only_json_path": (
+                    f"{source_json_path}.AliveOnly"
+                    if "AliveOnly" in raw
+                    else ""
+                ),
             },
         )
         task_like = {
             "$type": "RPG.GameCore.AddModifier",
             "ModifierName": sub_modifier_name,
             "TargetType": target_type,
+            **{
+                field_name: raw[field_name]
+                for field_name in (
+                    "DynamicValues",
+                    "LifeTime",
+                    "LifeStepMoment",
+                    "LayerAddWhenStack",
+                    "MaxLayer",
+                    "Chance",
+                )
+                if field_name in raw
+            },
         }
         payload = _effect_payload(task_like, "AddModifier", modifier_name)
         payload, expressions = _attach_target_expressions_to_effect_payload(
@@ -7583,8 +7618,24 @@ def _modifier_addition_effects(
                 **standard,
                 "addition_parent_modifier_name": modifier_name,
                 "addition_source_json_path": source_json_path,
-                "is_halo_status": raw.get("IsHaloStatus"),
-                "alive_only": raw.get("AliveOnly"),
+                "is_halo_status": halo_value,
+                "is_halo_status_present": halo_present,
+                "is_halo_status_source_json_path": (
+                    f"{source_json_path}.IsHaloStatus" if halo_present else ""
+                ),
+                "alive_only": alive_only_value,
+                "alive_only_raw": _json_safe(alive_only_raw),
+                "alive_only_source_json_path": (
+                    f"{source_json_path}.AliveOnly"
+                    if "AliveOnly" in raw
+                    else ""
+                ),
+                "halo_admission_status": (
+                    "blocked"
+                    if halo_blocked_reason
+                    else ("executable" if halo_value else "ordinary")
+                ),
+                "halo_blocked_reason": halo_blocked_reason,
             }
         effects.append(
             EffectIR(
@@ -7592,12 +7643,33 @@ def _modifier_addition_effects(
                 opcode="AddModifier",
                 payload=payload,
                 source=source,
-                coverage_status=_effect_coverage_status("AddModifier", payload),
+                coverage_status=(
+                    "blocked"
+                    if halo_blocked_reason
+                    else _effect_coverage_status("AddModifier", payload)
+                ),
                 owner_modifier_name=modifier_name,
+                link_blocked_reason=halo_blocked_reason,
             )
         )
         target_expressions.extend(expressions)
     return effects, target_expressions
+
+
+def _addition_alive_only_value(
+    value: Any,
+    *,
+    present: bool,
+) -> tuple[bool | None, str]:
+    if not present:
+        return None, ""
+    if isinstance(value, bool):
+        return value, ""
+    if value == "True":
+        return True, ""
+    if value == "False":
+        return False, ""
+    return None, "modifier_addition_alive_only_value_invalid"
 
 
 def _callback_events(modifier: dict[str, Any]) -> list[str]:

@@ -43,6 +43,7 @@ from ..systems.resource import ResourcePlan, ResourceSystem
 from ..systems.rng import rng_choices_from_payload, validate_rng_choice_ledger
 from ..systems.status import StatusSystem
 from ..systems.summon import SummonSystem
+from ..systems.summon_runtime import validate_summon_runtime
 from ..systems.target import TargetSystem
 from ..systems.timeline import TimelinePlan, TimelineSystem
 from ..systems.unit_lifecycle import UnitLifecycleSystem
@@ -1151,6 +1152,7 @@ class CombatExecutor:
             )
 
         owner_cleanup_node_results: list[ExecutionNodeResult] = []
+        owner_cleanup_rng_events: list[RNGEvent] = []
         for owner_id, owner in sorted(current_state.units.items()):
             if self.lifecycle.status_of(owner) == "active":
                 continue
@@ -1171,8 +1173,11 @@ class CombatExecutor:
                 continue
             current_state = cleanup_reduction.after_state
             ordered_mutations.extend(cleanup_result.mutations)
-            events.extend(cleanup_result.events)
+            events = (*events, *cleanup_result.events)
+            owner_cleanup_rng_events.extend(cleanup_result.rng_events)
             runtime_records.extend(cleanup_result.records)
+            for cleanup_event in cleanup_result.events:
+                dispatch_listener_window(cleanup_event)
             owner_cleanup_node_results.append(
                 ExecutionNodeResult(
                     node_kind="summon_owner_cleanup",
@@ -1207,11 +1212,84 @@ class CombatExecutor:
         execution_node_results.extend(_toughness_node_results(toughness_results))
         execution_node_results.extend(_break_node_results(break_results))
         execution_node_results.extend(owner_cleanup_node_results)
+        halo_dispatch_results: list[EventDispatchResult] = []
+        halo_reconciliation = self.status.reconcile_halo_relations(
+            current_state,
+        )
+        if halo_reconciliation.ok:
+            halo_reduction = self.reducer.apply_all_result(
+                current_state,
+                halo_reconciliation.mutations,
+            )
+            if halo_reduction.ok:
+                current_state = halo_reduction.after_state
+                ordered_mutations.extend(halo_reconciliation.mutations)
+                events = (*events, *halo_reconciliation.events)
+                runtime_records.extend(halo_reconciliation.records)
+                for halo_event in halo_reconciliation.events:
+                    dispatch_result = self.event_dispatcher.dispatch_event(
+                        current_state,
+                        event=halo_event,
+                        damage_window_ledger=damage_window_ledger,
+                    )
+                    current_state = dispatch_result.after_state
+                    halo_dispatch_results.append(dispatch_result)
+                    ordered_mutations.extend(dispatch_result.mutations)
+                    runtime_records.extend(dispatch_result.records)
+                    events = (*events, *dispatch_result.events)
+                execution_node_results.extend(
+                    node
+                    for result in halo_dispatch_results
+                    for node in result.node_results
+                )
+                execution_node_results.append(
+                    ExecutionNodeResult(
+                        node_kind="status_halo_reconciliation",
+                        node_id=(
+                            f"status_halo_reconciliation:{state.event_index}"
+                        ),
+                        status="complete",
+                    )
+                )
+            else:
+                execution_node_results.append(
+                    ExecutionNodeResult(
+                        node_kind="status_halo_reconciliation",
+                        node_id=(
+                            f"status_halo_reconciliation:{state.event_index}"
+                        ),
+                        status="blocked",
+                        reason_code=(
+                            "status_halo_reconciliation_reducer_conflict:"
+                            f"{halo_reduction.conflicts[0].code}"
+                        ),
+                    )
+                )
+        else:
+            runtime_records.extend(halo_reconciliation.records)
+            execution_node_results.append(
+                ExecutionNodeResult(
+                    node_kind="status_halo_reconciliation",
+                    node_id=f"status_halo_reconciliation:{state.event_index}",
+                    status="blocked",
+                    reason_code=(
+                        ";".join(halo_reconciliation.unsupported)
+                        or "status_halo_reconciliation_blocked"
+                    ),
+                )
+            )
         damage_rng_events = (
             *tuple(target_rng_events),
             *ability_task_rng_events,
             *trigger_rng_events,
             *listener_dispatch_rng_events,
+            *tuple(owner_cleanup_rng_events),
+            *halo_reconciliation.rng_events,
+            *tuple(
+                event
+                for result in halo_dispatch_results
+                for event in result.rng_events
+            ),
             *tuple(event for result in damage_results for event in result.rng_events),
         )
         rng_ledger_validation = validate_rng_choice_ledger(command.metadata, damage_rng_events)
@@ -1658,8 +1736,10 @@ def _summon_execution_blocked_reason(state: BattleState, command: ActionCommand)
     if actor.flags.get("summon_action_admitted") is not True:
         return "summon_action_admission_missing"
     runtime = state.global_flags.get("summon_runtime")
-    if not isinstance(runtime, dict) or runtime.get("schema_version") != "p3_summon_runtime_v2":
-        return "summon_runtime_state_missing"
+    runtime_validation = validate_summon_runtime(runtime, units=state.units)
+    if not runtime_validation.ok:
+        return runtime_validation.reason or "summon_runtime_state_missing"
+    assert isinstance(runtime, dict)
     entities = runtime.get("entities")
     if not isinstance(entities, dict):
         return "summon_runtime_entities_missing"

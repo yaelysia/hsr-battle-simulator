@@ -340,9 +340,9 @@ TargetAlias=197061
 
 ## 7. 推荐下一步
 
-P8-S8 已验收。后续 P8-S9 至 S21 不再由执行线程临时编写计划，统一读取 `simulator_v8_clean_core/docs/p8_execution_cards/README.md` 及对应阶段卡。
+P8-S8 已验收。CHAR-M1 后发现的 3 个装备侧正式启动缺口已建立独立 `P8-R1` 修复卡；后续 P8-R1 与 P8-S9 至 S21 均不再由执行线程临时改写目标，统一读取 `simulator_v8_clean_core/docs/p8_execution_cards/README.md` 及对应阶段卡。
 
-后续依赖采用两轨结构：S5-S8 光锥轨已验收收口，当前从 S9 开始推进 S9-S17 遗器轨。遗器轨内部严格串行、逐阶段 `ready_for_review`、验收和提交。S18 是硬汇合点，只有 S17 验收并与当前光锥检查点合并后才能开始；S18-S21 恢复严格串行。CHAR-M1 已关闭 owned-combatant 构筑外部依赖；P8 全目录正式启动仍需关闭当前 3 个装备侧启动缺口。剩余 5 个记忆角色/忆灵组的属性、时间线或出生来源属于后续内容扩面，不能被 CHAR-M1 的底座验收吞掉。
+后续依赖采用修复门加遗器轨结构：P8-R1 关闭空召唤关系、空目标三态和通用光环生命周期；S9-S17 继续遗器轨。R1 可与 S9-S14 在不同 worktree 并行，但必须在 S15 开始前验收合入；S18 只有 R1 与 S17 均验收并合并后才能开始，S18-S21 恢复严格串行。CHAR-M1 已关闭 owned-combatant 构筑外部依赖；当前 3 个装备侧启动缺口只能由 R1 的共享 runtime 修复关闭，不能用强制开局出生 servant 或三张光锥特判绕过。剩余 5 个记忆角色/忆灵组的属性、时间线或出生来源属于后续内容扩面，不能被 CHAR-M1 的底座验收吞掉。
 
 执行 evidence 与验收裁决继续分离。执行线程不能改执行卡或 checklist，不能自称 `done`，也不能因 Goal 模式自动进入下一阶段；实际代码事实若使卡内目标或验收谓词失效，必须交回规划线程修订。
 
@@ -378,7 +378,7 @@ git diff --check
 如果要继续推进，建议开局说清：
 
 ```text
-当前接续已验收的 P8-S8 与 CHAR-M1 检查点。先读 CODEX_HANDOFF、架构边界合同、P8 计划、执行卡索引、S8 报告和 CHAR-M1 报告；下一阶段只执行遗器轨 P8-S9。执行线程只能交 ready_for_review，不得修改 P8 唯一 checklist、提交 Git 或自动进入下一阶段。
+当前接续已验收的 P8-S8 与 CHAR-M1 检查点 `137167d`。先读 CODEX_HANDOFF、架构边界合同、P8 计划、执行卡索引、S8 报告、CHAR-M1 报告和 `P8-R1_SUMMON_RUNTIME_HALO_LIFECYCLE_REPAIR.md`；本线程严格只执行 P8-R1。执行线程只能交 ready_for_review，不得修改执行卡或 P8 唯一 checklist、提交 Git 或自动进入其他阶段。
 ```
 
 不要从旧 `CODEX_HANDOFF` 的 v7 叙述接续；本文件已经替换为 v8 当前交接手册。

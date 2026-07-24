@@ -14,6 +14,7 @@ from ..core.model import (
     GameEvent,
     JSONValue,
     Mutation,
+    RNGEvent,
     TargetResolution,
 )
 from ..core.reducer import MutationReducer
@@ -1453,18 +1454,64 @@ class CombatScheduler:
         mutations: list[Mutation] = list(phase_enter.mutations)
         events: list[GameEvent] = list(phase_enter.events)
         records: list[dict[str, JSONValue]] = list(phase_enter.records)
+        rng_events: list[RNGEvent] = []
         nodes: list[ExecutionNodeResult] = [_scheduler_node("wave_phase", "wave:phase_enter")]
         candidate = self.reducer.apply_all(state, phase_enter.mutations)
         candidate = self.reducer.apply_all(candidate, result.mutations)
         mutations.extend(result.mutations)
         records.extend(result.records)
         nodes.append(_scheduler_node("wave", "wave:transition"))
+        halo_result = self.status.reconcile_halo_relations(candidate)
+        events_to_dispatch: tuple[GameEvent, ...] = ()
+        if not halo_result.ok:
+            records.extend(halo_result.records)
+            nodes.append(
+                _scheduler_node(
+                    "status_halo_reconciliation",
+                    "wave:status_halo_reconciliation",
+                    status="blocked",
+                    reason=(
+                        ";".join(halo_result.unsupported)
+                        or "status_halo_reconciliation_blocked"
+                    ),
+                )
+            )
+        else:
+            halo_reduction = self.reducer.apply_all_result(
+                candidate,
+                halo_result.mutations,
+            )
+            if not halo_reduction.ok:
+                nodes.append(
+                    _scheduler_node(
+                        "status_halo_reconciliation",
+                        "wave:status_halo_reconciliation",
+                        status="blocked",
+                        reason=(
+                            "status_halo_reconciliation_reducer_conflict:"
+                            f"{halo_reduction.conflicts[0].code}"
+                        ),
+                    )
+                )
+            else:
+                candidate = halo_reduction.after_state
+                mutations.extend(halo_result.mutations)
+                records.extend(halo_result.records)
+                rng_events.extend(halo_result.rng_events)
+                nodes.append(
+                    _scheduler_node(
+                        "status_halo_reconciliation",
+                        "wave:status_halo_reconciliation",
+                    )
+                )
+                events_to_dispatch = (*result.events, *halo_result.events)
         dispatch_error_count = 0
-        for event in result.events:
+        for event in events_to_dispatch:
             dispatch = self.event_dispatcher.dispatch_event(candidate, event=event)
             candidate = dispatch.after_state
             mutations.extend(dispatch.mutations)
             events.extend(dispatch.events)
+            rng_events.extend(dispatch.rng_events)
             records.extend(dispatch.records)
             nodes.extend(dispatch.node_results)
             dispatch_error_count += len(dispatch.errors)
@@ -1505,6 +1552,7 @@ class CombatScheduler:
             events=tuple(events),
             mutations=tuple(mutations),
             records=tuple(records),
+            rng_events=tuple(rng_events),
             node_results=tuple(nodes),
             coverage={
                 "wave_transition": plan.to_json(),
@@ -1512,7 +1560,7 @@ class CombatScheduler:
                 "wave_lifecycle": {
                     "phase_enter": phase_enter.plan.to_json(),
                     "phase_exit": phase_exit.plan.to_json(),
-                    "dispatched_event_count": len(result.events),
+                    "dispatched_event_count": len(events_to_dispatch),
                     "dispatch_error_count": dispatch_error_count,
                 },
             },
@@ -2364,6 +2412,7 @@ def _transition(
     events: tuple[GameEvent, ...] = (),
     mutations: tuple[Mutation, ...] = (),
     records: tuple[dict[str, JSONValue], ...] = (),
+    rng_events: tuple[RNGEvent, ...] = (),
     node_results: tuple[ExecutionNodeResult, ...],
     preflight_blocked: bool = False,
     preflight_reason: str = "",
@@ -2400,6 +2449,7 @@ def _transition(
         ),
         after=atomic_commit.after_state.snapshot(),
         target_resolution=TargetResolution(reason="scheduler_no_target", source="timeline_scheduler"),
+        rng_events=rng_events,
         outcome=atomic_commit.outcome,
         coverage={
             **requested_coverage,

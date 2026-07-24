@@ -5,17 +5,22 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from ..builds.models import OwnedCombatantBuildAssemblyResult
-from ..core.model import BattleState, GameEvent, JSONValue, Mutation, UnitState
+from ..core.model import BattleState, GameEvent, JSONValue, Mutation, RNGEvent, UnitState
+from ..core.reducer import MutationReducer
 from ..core.settlement import SettlementRecord
 from ..ir_types import IRSource
 from ..rules.ir import ServantDefinitionIR, SummonMonsterEntryIR, SummonMonsterIntentIR
 from ..rules.rulebook import RuleBook
+from .summon_runtime import (
+    LEGACY_SUMMON_RUNTIME_SCHEMA_VERSION,
+    SUMMON_RUNTIME_SCHEMA_VERSION,
+    SUPPORTED_SUMMON_RUNTIME_SCHEMA_VERSIONS,
+    empty_summon_runtime,
+    validate_summon_runtime,
+)
+from .status import StatusSystem
 from .unit_spawn import UnitSpawnRequest, UnitSpawnSystem, spawn_plans_from_metadata
 from .unit_lifecycle import UnitLifecycleSystem
-
-
-SUMMON_RUNTIME_SCHEMA_VERSION = "p3_summon_runtime_v2"
-SUPPORTED_SUMMON_RUNTIME_SCHEMA_VERSIONS = {SUMMON_RUNTIME_SCHEMA_VERSION, "p1_3_summon_runtime_v1"}
 
 
 @dataclass(frozen=True)
@@ -95,6 +100,7 @@ class SummonTransitionResult:
     mutations: tuple[Mutation, ...]
     events: tuple[GameEvent, ...]
     records: tuple[dict[str, JSONValue], ...]
+    rng_events: tuple[RNGEvent, ...] = ()
 
 
 class SummonSystem:
@@ -104,7 +110,21 @@ class SummonSystem:
         self.unit_spawn = UnitSpawnSystem()
 
     def view(self, state: BattleState) -> SummonRuntimeView:
-        runtime = _summon_runtime(state)
+        raw_runtime = state.global_flags.get("summon_runtime")
+        validation = validate_summon_runtime(raw_runtime, units=state.units)
+        if validation.ok:
+            runtime = dict(raw_runtime)
+            blocked: tuple[JSONValue, ...] = tuple(runtime.get("blocked") or ())
+        elif (
+            isinstance(raw_runtime, dict)
+            and raw_runtime.get("schema_version")
+            == LEGACY_SUMMON_RUNTIME_SCHEMA_VERSION
+        ):
+            runtime = _normalize_runtime(raw_runtime)
+            blocked = tuple(runtime.get("blocked") or ())
+        else:
+            runtime = empty_summon_runtime()
+            blocked = ({"reason": validation.reason, "state_unchanged": True},)
         return SummonRuntimeView(
             schema_version=SUMMON_RUNTIME_SCHEMA_VERSION,
             schema_boundary=dict(runtime.get("schema_boundary") or {}),
@@ -115,7 +135,7 @@ class SummonSystem:
             last_servants=tuple(str(item) for item in runtime.get("last_servants") or () if isinstance(item, str)),
             servants=dict(runtime.get("servants") or {}),
             assistant_history=tuple(runtime.get("assistant_history") or ()),
-            blocked=tuple(runtime.get("blocked") or ()),
+            blocked=blocked,
             runtime=runtime,
         )
 
@@ -389,6 +409,21 @@ class SummonSystem:
     ) -> SummonTransitionResult:
         if not plan.ok:
             return SummonTransitionResult(plan, (), (), (_plan_record(plan, (), process_only=True),))
+        runtime_before, runtime_reason = _current_summon_runtime(state)
+        if runtime_reason:
+            blocked = self._blocked(
+                plan.operation,
+                runtime_reason,
+                owner_id=plan.owner_id,
+                intent_id=plan.intent_id,
+                source_trace=plan.source_trace,
+            )
+            return SummonTransitionResult(
+                blocked,
+                (),
+                (),
+                (_plan_record(blocked, (), process_only=True),),
+            )
         spawn_plans = spawn_plans_from_metadata(plan.metadata)
         if not spawn_plans:
             blocked = self._blocked(
@@ -505,12 +540,17 @@ class SummonSystem:
             )
             for unit in units
         )
-        runtime_before = _summon_runtime(state)
         runtime_after = _runtime_after_spawn(runtime_before, state, plan, units)
         runtime_mutation = _runtime_mutation(state, runtime_before, runtime_after, plan, "record summoned monster spawn")
         mutations = (*spawn_mutations, runtime_mutation)
         events = tuple(_spawn_event(state, plan, unit) for unit in units)
-        return SummonTransitionResult(plan, mutations, events, _plan_records(plan, mutations, process_only=False))
+        return self._with_halo_reconciliation(
+            state,
+            plan,
+            mutations,
+            events,
+            _plan_records(plan, mutations, process_only=False),
+        )
 
     def apply_spawn_servant(
         self,
@@ -519,6 +559,21 @@ class SummonSystem:
     ) -> SummonTransitionResult:
         if not plan.ok:
             return SummonTransitionResult(plan, (), (), (_plan_record(plan, (), process_only=True),))
+        runtime_before, runtime_reason = _current_summon_runtime(state)
+        if runtime_reason:
+            blocked = self._blocked(
+                plan.operation,
+                runtime_reason,
+                owner_id=plan.owner_id,
+                intent_id=plan.intent_id,
+                source_trace=plan.source_trace,
+            )
+            return SummonTransitionResult(
+                blocked,
+                (),
+                (),
+                (_plan_record(blocked, (), process_only=True),),
+            )
         spawn_plans = spawn_plans_from_metadata(plan.metadata)
         if len(spawn_plans) != 1:
             blocked = self._blocked(
@@ -678,7 +733,6 @@ class SummonSystem:
                 else {},
             },
         )
-        runtime_before = _summon_runtime(state)
         runtime_without_replaced = _runtime_after_remove(runtime_before, state, replacement_plan)
         runtime_after = _runtime_after_spawn(runtime_without_replaced, state, plan, (unit,))
         runtime_mutation = _runtime_mutation(state, runtime_before, runtime_after, plan, "record servant spawn")
@@ -687,7 +741,13 @@ class SummonSystem:
             *tuple(_remove_event(state, replacement_plan, unit_id) for unit_id in replacement_ids),
             _spawn_event(state, plan, unit),
         )
-        return SummonTransitionResult(plan, mutations, events, _plan_records(plan, mutations, process_only=False))
+        return self._with_halo_reconciliation(
+            state,
+            plan,
+            mutations,
+            events,
+            _plan_records(plan, mutations, process_only=False),
+        )
 
     def plan_remove(
         self,
@@ -731,6 +791,21 @@ class SummonSystem:
     def apply_remove(self, state: BattleState, plan: SummonTransitionPlan) -> SummonTransitionResult:
         if not plan.ok:
             return SummonTransitionResult(plan, (), (), (_plan_record(plan, (), process_only=True),))
+        runtime_before, runtime_reason = _current_summon_runtime(state)
+        if runtime_reason:
+            blocked = self._blocked(
+                plan.operation,
+                runtime_reason,
+                owner_id=plan.owner_id,
+                intent_id=plan.intent_id,
+                source_trace=plan.source_trace,
+            )
+            return SummonTransitionResult(
+                blocked,
+                (),
+                (),
+                (_plan_record(blocked, (), process_only=True),),
+            )
         mutations: list[Mutation] = []
         for unit_id in plan.unit_ids:
             unit = state.units.get(unit_id)
@@ -755,15 +830,79 @@ class SummonSystem:
                     source_trace=plan.source_trace,
                 )
             )
-        runtime_before = _summon_runtime(state)
         runtime_after = _runtime_after_remove(runtime_before, state, plan)
         mutations.append(_runtime_mutation(state, runtime_before, runtime_after, plan, "record summon removal"))
         events = tuple(_remove_event(state, plan, unit_id) for unit_id in plan.unit_ids)
         mutation_tuple = tuple(mutations)
-        return SummonTransitionResult(plan, mutation_tuple, events, _plan_records(plan, mutation_tuple, process_only=False))
+        return self._with_halo_reconciliation(
+            state,
+            plan,
+            mutation_tuple,
+            events,
+            _plan_records(plan, mutation_tuple, process_only=False),
+        )
+
+    def _with_halo_reconciliation(
+        self,
+        state: BattleState,
+        plan: SummonTransitionPlan,
+        mutations: tuple[Mutation, ...],
+        events: tuple[GameEvent, ...],
+        records: tuple[dict[str, JSONValue], ...],
+    ) -> SummonTransitionResult:
+        reduction = MutationReducer().apply_all_result(state, mutations)
+        if not reduction.ok:
+            blocked = self._blocked(
+                plan.operation,
+                "summon_pre_halo_mutation_conflict",
+                owner_id=plan.owner_id,
+                intent_id=plan.intent_id,
+                source_trace=plan.source_trace,
+            )
+            return SummonTransitionResult(
+                blocked,
+                (),
+                (),
+                (_plan_record(blocked, (), process_only=True),),
+            )
+        halo_result = StatusSystem(self.rules).reconcile_halo_relations(
+            reduction.after_state,
+        )
+        if not halo_result.ok:
+            blocked = self._blocked(
+                plan.operation,
+                "summon_halo_reconciliation_blocked:"
+                + ";".join(halo_result.unsupported),
+                owner_id=plan.owner_id,
+                intent_id=plan.intent_id,
+                source_trace=plan.source_trace,
+            )
+            return SummonTransitionResult(
+                blocked,
+                (),
+                (),
+                (
+                    *halo_result.records,
+                    _plan_record(blocked, (), process_only=True),
+                ),
+            )
+        return SummonTransitionResult(
+            plan,
+            (*mutations, *halo_result.mutations),
+            (*halo_result.events, *events),
+            (*records, *halo_result.records),
+            halo_result.rng_events,
+        )
 
     def plan_owner_cleanup(self, state: BattleState, owner_id: str) -> SummonTransitionPlan:
-        runtime = _summon_runtime(state)
+        runtime, runtime_reason = _current_summon_runtime(state)
+        if runtime_reason:
+            return self._blocked(
+                "owner_removed_cleanup",
+                runtime_reason,
+                owner_id=owner_id,
+                source_trace={},
+            )
         by_owner = runtime.get("by_owner") if isinstance(runtime.get("by_owner"), dict) else {}
         owned = tuple(str(item) for item in by_owner.get(owner_id, ()) if isinstance(item, str))
         removable = tuple(
@@ -976,28 +1115,29 @@ def _first_source_trace(source: dict[str, JSONValue], fallback: dict[str, JSONVa
 
 def _summon_runtime(state: BattleState) -> dict[str, JSONValue]:
     runtime = state.global_flags.get("summon_runtime")
-    if isinstance(runtime, dict) and runtime.get("schema_version") in SUPPORTED_SUMMON_RUNTIME_SCHEMA_VERSIONS:
+    validation = validate_summon_runtime(runtime, units=state.units)
+    if validation.ok and isinstance(runtime, dict):
+        return dict(runtime)
+    if (
+        isinstance(runtime, dict)
+        and runtime.get("schema_version") == LEGACY_SUMMON_RUNTIME_SCHEMA_VERSION
+    ):
         return _normalize_runtime(runtime)
-    return _empty_runtime()
+    raise ValueError(validation.reason)
+
+
+def _current_summon_runtime(
+    state: BattleState,
+) -> tuple[dict[str, JSONValue], str]:
+    runtime = state.global_flags.get("summon_runtime")
+    validation = validate_summon_runtime(runtime, units=state.units)
+    if not validation.ok or not isinstance(runtime, dict):
+        return {}, validation.reason
+    return dict(runtime), ""
 
 
 def _empty_runtime() -> dict[str, JSONValue]:
-    return {
-        "schema_version": SUMMON_RUNTIME_SCHEMA_VERSION,
-        "schema_boundary": {
-            "version": SUMMON_RUNTIME_SCHEMA_VERSION,
-            "forward_boundary": "p3 runtime registry keeps removed records for audit and may add optional indexes without changing mutation semantics.",
-            "previous_schema_versions": ["p1_3_summon_runtime_v1"],
-        },
-        "entities": {},
-        "by_owner": {},
-        "by_unique_group": {},
-        "last_summon_monsters": [],
-        "last_servants": [],
-        "servants": {},
-        "assistant_history": [],
-        "blocked": [],
-    }
+    return empty_summon_runtime()
 
 
 def _normalize_runtime(runtime: dict[str, JSONValue]) -> dict[str, JSONValue]:
