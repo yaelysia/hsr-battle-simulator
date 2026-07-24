@@ -388,15 +388,26 @@ git diff --check
 
 执行线程最终状态只能是 `ready_for_review`。不得修改本卡或 P8 总 checklist，不得提交 Git，不得开始 P8-S15、P8-S18 或其他阶段。
 
+## 2026-07-24 验收裁决
+
+运行时修复已经通过代码审查、R1 runtime 聚焦验证、P7-S3 和 P7-S15 直接回归。原目录启动验证在 1.5 GiB 限制下触发 `MemoryError`；用户决定本轮不继续运行该重验证，等待验证体系治理后以低内存目录入口补证。
+
+因此必须区分：
+
+- R1 生产修复：已验收。
+- 当前已发布光锥完整正式目录启动：`deferred / not_proven`。
+
+后者不是已确认的生产失败，但在完整目录证据生成前不得标记通过，也不得宣称 `formal_catalog_startup_complete=true`。
+
 ## 唯一执行清单（仅验收线程可勾）
 
-- [ ] 正式战斗在任何 provider、启动效果和开局事件前具有统一、合法且为空的召唤运行时。
-- [ ] 召唤目标查询严格区分非空、合法空集合和解析失败，各消费方按自身语义处理。
-- [ ] 当前已发布光锥中的全部真实 halo 来源均完成严格类型化投影和通用 runtime 准入。
-- [ ] 光环关系可在无当前成员时持久存在，并对出生、更新、死亡 / 复活、离场和父状态移除正确对账。
-- [ ] spawn relation、创建事件和 halo 投影顺序一致，失败路径原子 blocked 且 state unchanged。
-- [ ] 多 wearer、多来源、同名状态和重复事件均不串线、不重复、不误删。
+- [x] 正式战斗在任何 provider、启动效果和开局事件前具有统一、合法且为空的召唤运行时。
+- [x] 召唤目标查询严格区分非空、合法空集合和解析失败，各消费方按自身语义处理。
+- [x] 当前已发布光锥中的全部真实 halo 来源均完成严格类型化投影和通用 runtime 准入。
+- [x] 光环关系可在无当前成员时持久存在，并对出生、更新、死亡 / 复活、离场和父状态移除正确对账。
+- [x] spawn relation、创建事件和 halo 投影顺序一致，失败路径原子 blocked 且 state unchanged。
+- [x] 多 wearer、多来源、同名状态和重复事件均不串线、不重复、不误删。
 - [ ] 三张已知光锥通过真实构筑与真实事件链闭合，当前已发布光锥目录全部正式启动。
-- [ ] 代表 mutation 具备 settlement、raw source 反查、snapshot 和 replay 证据。
-- [ ] 没有固定 ID、装备专用 runtime、假 servant、静态面板规则迁移或 target error fallback。
-- [ ] 主验证、直接回归、资源审计和 `ready_for_review` 报告完整。
+- [x] 代表 mutation 具备 settlement、raw source 反查、snapshot 和 replay 证据。
+- [x] 没有固定 ID、装备专用 runtime、假 servant、静态面板规则迁移或 target error fallback。
+- [ ] 主验证、直接回归、资源审计和 `ready_for_review` 报告完整；当前只缺完整目录启动的低内存补证。
