@@ -3,10 +3,11 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Any, Literal, TypeVar
 
-from .immutable_json import freeze_json, thaw_json
+from .immutable_json import FrozenJSONDict, FrozenJSONList, freeze_json, thaw_json
 from .transition_outcome import TransitionOutcome, unclassified_transition_outcome
 
 
@@ -16,6 +17,66 @@ MutationOp = Literal["set", "delete", "spawn"]
 UNIT_STAT_POOL_PANEL_FIELDS = frozenset(
     {"max_hp", "attack", "defense", "speed", "max_energy"}
 )
+
+_KeyT = TypeVar("_KeyT")
+_ValueT = TypeVar("_ValueT")
+
+
+class _FrozenStateDict(dict[_KeyT, _ValueT]):
+    """Shallow immutable mapping for already-normalized committed state values."""
+
+    def __init__(self, values: Mapping[_KeyT, _ValueT] | None = None):
+        dict.__init__(self, values or {})
+
+    def _immutable(self, *_args: object, **_kwargs: object) -> None:
+        raise TypeError("frozen state mapping cannot be mutated")
+
+    __setitem__ = _immutable
+    __delitem__ = _immutable
+    clear = _immutable
+    pop = _immutable
+    popitem = _immutable
+    setdefault = _immutable
+    update = _immutable
+    __ior__ = _immutable
+
+    def __copy__(self) -> _FrozenStateDict[_KeyT, _ValueT]:
+        return self
+
+    def __deepcopy__(
+        self,
+        _memo: dict[int, object],
+    ) -> _FrozenStateDict[_KeyT, _ValueT]:
+        return self
+
+
+class _FrozenResourceDict(_FrozenStateDict[str, float]):
+    """Validated immutable resource mapping owned by UnitState."""
+
+    def __init__(self, values: Mapping[str, float] | None = None):
+        if values is None:
+            source: Mapping[object, object] = {}
+        elif isinstance(values, Mapping):
+            source = values
+        else:
+            raise TypeError("unit resources must be a mapping")
+
+        resources: dict[str, float] = {}
+        for key, value in source.items():
+            if not isinstance(key, str):
+                raise TypeError("unit resource keys must be strings")
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise TypeError("unit resource values must be numeric")
+            try:
+                numeric = float(value)
+            except OverflowError as exc:
+                raise ValueError(
+                    "unit resource values must be finite"
+                ) from exc
+            if not math.isfinite(numeric):
+                raise ValueError("unit resource values must be finite")
+            resources[key] = numeric
+        super().__init__(resources)
 
 
 @dataclass(frozen=True)
@@ -96,6 +157,39 @@ class UnitState:
     stat_pools: tuple[UnitStatPool, ...] = ()
 
     def __post_init__(self) -> None:
+        if not isinstance(self.statuses, (list, tuple)) or not all(
+            isinstance(status, str) for status in self.statuses
+        ):
+            raise TypeError("unit statuses must contain string values")
+        statuses = tuple(self.statuses)
+
+        if not isinstance(self.shield_instances, (list, tuple)):
+            raise TypeError("unit shield_instances must be a list or tuple")
+        if type(self.shield_instances) is tuple and all(
+            type(instance) is FrozenJSONDict
+            for instance in self.shield_instances
+        ):
+            shield_instances = self.shield_instances
+        else:
+            normalized_shields: list[dict[str, JSONValue]] = []
+            for instance in self.shield_instances:
+                frozen_instance = freeze_json(instance)
+                if not isinstance(frozen_instance, dict):
+                    raise TypeError(
+                        "unit shield_instances must contain JSON objects"
+                    )
+                normalized_shields.append(frozen_instance)
+            shield_instances = tuple(normalized_shields)
+
+        flags = freeze_json(self.flags)
+        if not isinstance(flags, dict):
+            raise TypeError("unit flags must be a JSON object")
+
+        if type(self.resources) is _FrozenResourceDict:
+            frozen_resources = self.resources
+        else:
+            frozen_resources = _FrozenResourceDict(self.resources)
+
         if not isinstance(self.stat_pools, (list, tuple)) or not all(
             isinstance(pool, UnitStatPool) for pool in self.stat_pools
         ):
@@ -128,6 +222,10 @@ class UnitState:
                 raise ValueError(
                     f"unit panel field {pool.property_type} does not match its stat pool"
                 )
+        object.__setattr__(self, "statuses", statuses)
+        object.__setattr__(self, "shield_instances", shield_instances)
+        object.__setattr__(self, "flags", flags)
+        object.__setattr__(self, "resources", frozen_resources)
         object.__setattr__(self, "stat_pools", pools)
 
     def to_snapshot(self) -> dict[str, JSONValue]:
@@ -147,7 +245,7 @@ class UnitState:
             "defeat_record": self.flags.get("defeat_record", {}),
             "removed_record": self.flags.get("removed_record", {}),
         }
-        return {
+        snapshot = {
             "unit_id": self.unit_id,
             "side": self.side,
             "template_id": self.template_id,
@@ -200,6 +298,69 @@ class UnitState:
             "resources": dict(sorted(self.resources.items())),
             "stat_pools": [pool.to_json() for pool in self.stat_pools],
         }
+        detached = thaw_json(snapshot)
+        assert isinstance(detached, dict)
+        return detached
+
+
+class _FrozenUnitStateDict(_FrozenStateDict[str, UnitState]):
+    """Validated immutable UnitState mapping owned by BattleState."""
+
+    def __init__(self, values: Mapping[str, UnitState] | None = None):
+        if values is None:
+            source: Mapping[object, object] = {}
+        elif isinstance(values, Mapping):
+            source = values
+        else:
+            raise TypeError("battle units must be a mapping")
+
+        units: dict[str, UnitState] = {}
+        for unit_id, unit in source.items():
+            if not isinstance(unit_id, str):
+                raise TypeError("battle unit ids must be strings")
+            if not unit_id:
+                raise ValueError("battle unit ids must be non-empty")
+            if not isinstance(unit, UnitState):
+                raise TypeError("battle units must contain UnitState values")
+            units[unit_id] = unit
+        super().__init__(units)
+
+
+class _FrozenQueueStateDict(
+    _FrozenStateDict[str, tuple[JSONValue, ...]]
+):
+    """Validated immutable queue mapping owned by BattleState."""
+
+    def __init__(
+        self,
+        values: Mapping[str, tuple[JSONValue, ...]] | None = None,
+    ):
+        if values is None:
+            source: Mapping[object, object] = {}
+        elif isinstance(values, Mapping):
+            source = values
+        else:
+            raise TypeError("battle queues must be a mapping")
+
+        queues: dict[str, tuple[JSONValue, ...]] = {}
+        for queue_name, queue in source.items():
+            if not isinstance(queue_name, str):
+                raise TypeError("battle queue names must be strings")
+            if not queue_name:
+                raise ValueError("battle queue names must be non-empty")
+            if not isinstance(queue, (list, tuple)):
+                raise TypeError(
+                    "battle queues must contain list or tuple values"
+                )
+            if type(queue) is tuple and all(
+                _is_frozen_json_value(item) for item in queue
+            ):
+                queues[queue_name] = queue
+            else:
+                queues[queue_name] = tuple(
+                    freeze_json(item) for item in queue
+                )
+        super().__init__(queues)
 
 
 @dataclass(frozen=True)
@@ -214,6 +375,25 @@ class BattleState:
     queues: dict[str, tuple[JSONValue, ...]] = field(default_factory=dict)
     rng_state: str = "deterministic"
     event_index: int = 0
+
+    def __post_init__(self) -> None:
+        if type(self.units) is _FrozenUnitStateDict:
+            frozen_units = self.units
+        else:
+            frozen_units = _FrozenUnitStateDict(self.units)
+
+        global_flags = freeze_json(self.global_flags)
+        if not isinstance(global_flags, dict):
+            raise TypeError("battle global_flags must be a JSON object")
+
+        if type(self.queues) is _FrozenQueueStateDict:
+            frozen_queues = self.queues
+        else:
+            frozen_queues = _FrozenQueueStateDict(self.queues)
+
+        object.__setattr__(self, "units", frozen_units)
+        object.__setattr__(self, "global_flags", global_flags)
+        object.__setattr__(self, "queues", frozen_queues)
 
     def snapshot(self) -> "Snapshot":
         units = {unit_id: unit.to_snapshot() for unit_id, unit in sorted(self.units.items())}
@@ -288,8 +468,16 @@ class BattleState:
 class Snapshot:
     data: dict[str, JSONValue]
 
+    def __post_init__(self) -> None:
+        frozen = freeze_json(self.data)
+        if not isinstance(frozen, dict):
+            raise TypeError("snapshot data must be a JSON object")
+        object.__setattr__(self, "data", frozen)
+
     def to_json(self) -> dict[str, JSONValue]:
-        return self.data
+        detached = thaw_json(self.data)
+        assert isinstance(detached, dict)
+        return detached
 
 
 @dataclass(frozen=True)
@@ -547,3 +735,11 @@ def _unit_lifecycle_status(unit: UnitState) -> str:
     if isinstance(raw, str) and raw in {"active", "defeated", "removed"}:
         return raw
     return "defeated" if unit.hp <= 0 else "active"
+
+
+def _is_frozen_json_value(value: Any) -> bool:
+    if value is None or isinstance(value, (bool, int, str)):
+        return True
+    if isinstance(value, float):
+        return math.isfinite(value)
+    return type(value) in (FrozenJSONDict, FrozenJSONList)

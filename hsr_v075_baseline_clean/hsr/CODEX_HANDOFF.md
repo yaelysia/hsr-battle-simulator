@@ -8,10 +8,10 @@
 turnbasedgamedata-main -> compiler/lowering -> Canonical IR -> Combat Core
 ```
 
-最近提交：
+最近检查点：
 
 ```text
-2d1a3f9  P8-R1 summon runtime and halo lifecycle repair
+checkpoint(v8): accept VG-S1 committed state immutability
 ```
 
 已验收的主要底座：
@@ -61,13 +61,18 @@ deferred / not_proven
 
 ## 当前工作
 
-当前优先事项是验证与上下文瘦身：
+当前优先事项是 `VG` 验证治理与状态完整性回正：
 
-1. 缩减每个线程自动读取的入口文档。
-2. 区分现行契约测试、目录审计、端到端回归和历史 evidence。
-3. 建立 `fast / direct / catalog / full` 四层验证口径。
-4. 将全目录验证改为可分批、恒定峰值且可复用来源索引的入口。
-5. 完成后继续 P8-S9 遗器定义卡。
+1. `VG-S0` 已通过验收，确认 committed state 嵌套别名、原子提交缺少领域
+   完整性门、事件 closure 所有权冲突以及重复完整 lowering 是当前主要根因。
+2. `VG-S1` 已通过验收：UnitState、BattleState、Snapshot、codec 和 reducer
+   的递归不可变、输入别名隔离、独立 JSON 输出与结构共享边界已经闭合。
+3. 当前没有已确认的代码执行卡。下一步由规划线程编写
+   `VG-S2 committed integrity 协议与生命周期试点` 执行卡；确认前不得实施。
+4. VG-S2 之后再规划 validator registry、事件 closure 和逐领域权威事实回正，
+   执行线程不得自动跨阶段。
+5. 目录验证限峰和共享构建在状态/验证基础边界稳定后推进，再用于后续 P8 遗器
+   阶段试点。
 
 遗器轨 P8-S9 至 S17 仍按 `docs/p8_execution_cards/` 中的单阶段执行卡推进。S18 是光锥与遗器汇合阶段。
 
@@ -87,9 +92,12 @@ deferred / not_proven
 
 不要默认通读所有文档。根据任务选择：
 
-- 阶段实施：当前执行卡。
+- 阶段实施：经规划线程确认的当前执行卡；目前需先编写 VG-S2 卡。
 - 架构修改：`ARCHITECTURE_BOUNDARY_CONTRACT.md`、`FORBIDDEN.md`。
 - 规划、验收、验证治理：`docs/AGENT_WORKFLOW_AND_VALIDATION.md`。
+- VG 总方案：`VALIDATION_GOVERNANCE_AND_STATE_INTEGRITY_PLAN.md`。
+- VG 已验收基线：`docs/validation_execution_cards/VG-S1_COMMITTED_STATE_IMMUTABILITY.md`。
+- VG 下一步：由规划线程编写并确认 VG-S2 执行卡。
 - 当前文档导航：`DOCUMENTATION_INDEX.md`。
 - P8：`P8_EQUIPMENT_BUILD_LIGHT_CONE_RELIC_TASK_PLAN.md` 和当前阶段卡。
 - 历史追溯：对应 checkpoint 或 `docs/archive/`，按关键词读取。

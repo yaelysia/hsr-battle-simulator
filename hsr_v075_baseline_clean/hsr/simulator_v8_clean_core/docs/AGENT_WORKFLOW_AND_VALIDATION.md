@@ -217,12 +217,17 @@ Full 不是小阶段默认提交门。
 
 ## 12. 当前验证治理待办
 
-当前仓库已有大量阶段验证。后续治理按以下顺序推进：
+当前仓库已有大量阶段验证。VG-S0 审计后，治理按以下依赖顺序推进：
 
-1. 建立机器可读 validator registry，记录分类、触达域、资源等级和替代关系。
-2. 提取共享的来源 inventory、紧凑 RuleBook 和 fixture 构建入口。
-3. 为目录验证增加批处理和聚合证明。
-4. 建立统一 `fast/direct/catalog/full` 命令入口。
-5. 迁移现行谓词后，将旧聚合移出默认回归。
+1. 先关闭 UnitState、BattleState 和 Snapshot 的嵌套别名与可写 committed state。
+2. 建立 touched-domain committed integrity 协议，并只用生命周期做首个试点。
+3. 建立机器可读 validator registry 和选择入口，记录分类、触达域、资源等级和
+   替代关系。
+4. 单独回正事件 closure 所有权，消除已确认的 root event 重复。
+5. 按单领域执行卡迁移状态、召唤、光环、wave/turn/queue 的重复权威事实。
+6. 提取共享 source inventory、lowering、RuleBook 和 fixture 构建边界，为目录
+   验证增加批处理、紧凑摘要和恢复能力。
+7. 在后续 P8 遗器阶段试运行新流程，再渐进迁移历史验证。
 
-治理阶段不能改战斗语义；若迁移时发现生产缺陷，单独记录并按对应机制修复。
+每一步都只能按当前执行卡改变其明确声明的生产边界。发现相邻机制缺陷时先记录并
+交回规划线程制卡，不能借“验证治理”名义顺手扩大实现范围。

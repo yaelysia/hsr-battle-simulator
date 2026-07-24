@@ -35,6 +35,12 @@ docs/p8_execution_cards/README.md
 docs/character_execution_cards/
 ```
 
+验证治理与状态完整性执行卡：
+
+```text
+docs/validation_execution_cards/
+```
+
 ### 架构和共享内核
 
 必读：
@@ -78,6 +84,7 @@ UI 只负责编排、查询和展示，不定义规则。
 - `P6_ARCHITECTURE_BOUNDARY_REFACTOR_TASK_PLAN.md`
 - `P7_KERNEL_TRUST_AND_COMBAT_SEMANTICS_REPAIR_TASK_PLAN.md`
 - `P8_EQUIPMENT_BUILD_LIGHT_CONE_RELIC_TASK_PLAN.md`
+- `VALIDATION_GOVERNANCE_AND_STATE_INTEGRITY_PLAN.md`
 
 这些计划是按需参考资料，不是新线程必读列表。当前执行状态以 `CODEX_HANDOFF.md` 和对应 checklist 为准。
 

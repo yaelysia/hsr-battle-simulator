@@ -63,9 +63,9 @@ class FrozenJSONList(list[Any]):
 
 
 def freeze_json(value: Any) -> Any:
-    """Normalize a JSON-like value into a detached immutable tree."""
+    """Freeze JSON containers while sharing exact internally-frozen subtrees."""
 
-    if isinstance(value, (FrozenJSONDict, FrozenJSONList)):
+    if type(value) in (FrozenJSONDict, FrozenJSONList):
         return value
     if value is None or isinstance(value, (bool, int, str)):
         return value

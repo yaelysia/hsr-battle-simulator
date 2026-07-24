@@ -421,6 +421,8 @@ def _shield_instance(remaining: float) -> dict[str, Any]:
             "shield_priority_rule_id": "shield_priority_rule:engine_convention:priority_then_creation_order_v1",
             "registry_version": "hsr_v8_engine_rules_v1",
         },
+        "owner_modifier_name": "modifier:validation-shield",
+        "status_instance_id": "status:validation-shield",
     }
 
 
