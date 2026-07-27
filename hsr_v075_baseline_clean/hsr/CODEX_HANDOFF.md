@@ -8,10 +8,16 @@
 turnbasedgamedata-main -> compiler/lowering -> Canonical IR -> Combat Core
 ```
 
-最近检查点：
+最近已验收生产检查点：
 
 ```text
-checkpoint(v8): accept VG-S2 committed integrity lifecycle pilot
+d29b34b checkpoint(v8): accept VG-S2 committed integrity lifecycle pilot
+```
+
+验证治理路线回正：
+
+```text
+9c8ac45 Revert "checkpoint(v8): accept VG-S3 validator registry and selection"
 ```
 
 已验收的主要底座：
@@ -69,10 +75,12 @@ deferred / not_proven
    的递归不可变、输入别名隔离、独立 JSON 输出与结构共享边界已经闭合。
 3. `VG-S2` 已通过验收：单位生命周期已迁移为类型化唯一权威，touched-domain
    integrity gate、完整批次 replay、atomic failure 和场景双 full-check 边界已闭合。
-4. 下一步只规划 `VG-S3` validator registry 与共享构建入口；尚无已确认执行卡，
-   执行线程不得自行开始实施或跨入后续事件 closure。
-5. 目录验证限峰和共享构建在状态/验证基础边界稳定后推进，再用于后续 P8 遗器
-   阶段试点。
+4. 原 `VG-S3` validator registry 路线已撤销。它新增 5,110 行治理与元验证代码，
+   却没有同轮减少真实重构建和历史脚本，不能恢复或继续扩展。
+5. 当前唯一已确认执行卡是 `VG-R1`：只合并 P8-S8 task/event 两条真实重路径的
+   一次目录构建和公共证据，并要求同轮删重复、量化耗时/RSS/IO 和代码净减少。
+6. `VG-R1` 通过前不规划全项目 registry、持久缓存、通用调度器或第二个治理
+   阶段。事件 closure 与其他状态权威问题仍按生产机制单独制卡。
 
 遗器轨 P8-S9 至 S17 仍按 `docs/p8_execution_cards/` 中的单阶段执行卡推进。S18 是光锥与遗器汇合阶段。
 
@@ -92,12 +100,15 @@ deferred / not_proven
 
 不要默认通读所有文档。根据任务选择：
 
-- 阶段实施：经用户确认的当前执行卡；当前没有已确认的下一阶段执行卡。
+- 阶段实施：当前只允许
+  `docs/validation_execution_cards/VG-R1_P8_S8_TASK_EVENT_SHARED_EVIDENCE_PILOT.md`。
 - 架构修改：`ARCHITECTURE_BOUNDARY_CONTRACT.md`、`FORBIDDEN.md`。
 - 规划、验收、验证治理：`docs/AGENT_WORKFLOW_AND_VALIDATION.md`。
 - VG 总方案：`VALIDATION_GOVERNANCE_AND_STATE_INTEGRITY_PLAN.md`。
 - VG 已验收基线：`docs/validation_execution_cards/VG-S2_COMMITTED_INTEGRITY_LIFECYCLE_PILOT.md`。
-- VG 下一步：规划 VG-S3 validator registry 与共享构建入口；不得直接实施。
+- VG 当前执行卡：
+  `docs/validation_execution_cards/VG-R1_P8_S8_TASK_EVENT_SHARED_EVIDENCE_PILOT.md`。
+- 已撤销路线：原 VG-S3 registry/selector/meta-validator，不得恢复。
 - 当前文档导航：`DOCUMENTATION_INDEX.md`。
 - P8：`P8_EQUIPMENT_BUILD_LIGHT_CONE_RELIC_TASK_PLAN.md` 和当前阶段卡。
 - 历史追溯：对应 checkpoint 或 `docs/archive/`，按关键词读取。
