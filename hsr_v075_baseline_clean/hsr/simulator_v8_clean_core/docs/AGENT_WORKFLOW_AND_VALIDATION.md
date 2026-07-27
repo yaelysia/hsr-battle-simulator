@@ -167,6 +167,48 @@ Full 不是小阶段默认提交门。
 - 同一轮完整 lowering 最多一次。
 - 旧脚本失败时先判断契约是否仍有效，再决定修测试还是修生产。
 
+### Validator registry 与选择入口
+
+统一入口只负责读取 registry、解释选择请求并生成 dry-run 计划，不执行验证器：
+
+```bash
+python3 -B -m simulator_v8_clean_core.tools.select_validations list
+
+python3 -B -m simulator_v8_clean_core.tools.select_validations \
+  describe vg.s1.committed_state_immutability.direct --json
+
+python3 -B -m simulator_v8_clean_core.tools.select_validations select --dry-run \
+  --intent direct \
+  --id vg.s1.committed_state_immutability.direct \
+  --output-root /tmp/hsr_v8_validation_plan \
+  --manifest /tmp/hsr_v8_validation_selection.json
+```
+
+选择规则固定如下：
+
+- 普通执行卡只能引用已登记的精确 registry entry ID，或使用已登记 trigger
+  选择 `active_contract + direct`；domain 只能进一步收窄，不能单独发起选择。
+- direct 请求混入 catalog、full、historical、superseded 或 invalid 项时，整个请求
+  blocked，不产生部分计划。
+- catalog 和 lifecycle 为 `catalog_audit` 的 full 项只能用精确 ID、`--intent
+  catalog` 和 `--confirm-heavy-plan` 进入 dry-run；必要路径通过
+  `--input INPUT_ID=/ABS/PATH` 显式提供。
+- historical 项仅允许 `describe`，不进入当前 direct/catalog 选择。其旧 gap
+  不能成为 current contract predicate。
+- 未登记验证器必须先核对模式、分类、资源和输入，再加入 registry；不能直接塞入
+  默认回归或由 domain 扩张带出。
+
+selection manifest 只保存结构化 `module` 和 `argv`，不保存 shell 命令。资源登记
+分别记录是否读取 TBGD、是否执行完整 lowering、RuleBook 构建种类，以及
+`source_identity`、`builder_identity`、`artifact_identity`；读取来源与构造聚焦
+RuleBook 不是互斥关系。
+
+候选构建分组只表示未来可能共享的需求。相同粗粒度资源等级不证明构建可共享；
+只有 registry 显式声明相同 `shared_build_key`，且来源、构建器和产物身份完全一致
+时，才可进入同一候选组；未证明时必须分别成组。当前 adapter 状态为
+`not_implemented`，dry-run 不会导入 validator、读取 TBGD、构造 RuleBook、启动
+subprocess 或创建各验证器输出目录。
+
 ## 8. 资源约束
 
 - 所有重验证串行执行，使用低 IO/CPU 优先级。

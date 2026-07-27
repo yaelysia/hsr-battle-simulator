@@ -223,12 +223,14 @@ P1-P8，也禁止为了旧脚本继续保留错误生产语义。
 ## 8. 当前状态与下一入口
 
 `VG-S0` 状态权威与成本审计、`VG-S1` committed state 递归不可变与快照隔离、
-`VG-S2` committed integrity 协议与生命周期试点均已由验收线程复核通过。
-`VG-S2` 的唯一完成清单与当前代码、聚焦验证及直接回归一致：
+`VG-S2` committed integrity 协议与生命周期试点、`VG-S3` validator registry
+与纯 dry-run 选择入口均已由验收线程复核通过。`VG-S3` 的唯一完成清单与当前
+代码、聚焦验证及定向绕过探针一致：
 
 ```text
-docs/validation_execution_cards/VG-S2_COMMITTED_INTEGRITY_LIFECYCLE_PILOT.md
+docs/validation_execution_cards/VG-S3_VALIDATOR_REGISTRY_AND_SELECTION_ENTRY.md
 ```
 
-下一步只规划 `VG-S3` 验证选择与共享构建入口。目前没有已确认的 VG-S3 执行卡，
-不得直接实施或自动进入后续阶段。
+下一步只能先编写并确认 `VG-S4` 事件 closure 所有权回正执行卡，确认前不修改
+代码。`VG-S4` 只处理事件所有权；实际共享 lowering/RuleBook 仍属于 `VG-S6`，
+不得提前混入。
