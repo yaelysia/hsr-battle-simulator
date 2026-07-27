@@ -6,8 +6,9 @@ import math
 import re
 from collections import Counter
 from dataclasses import dataclass, field, replace
+from operator import attrgetter
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from ..dynamic_key_hash import tbgd_dynamic_key_hash
 from .coverage import ability_task_execution_mode, classify_opcode
@@ -281,12 +282,143 @@ class LoweringLimits:
     max_callbacks_per_file: int | None = None
 
 
+class OwnedCombatantProjectionIssue(NamedTuple):
+    code: str
+    subject: str
+
+
+class OwnedCombatantAdmissionProjection(NamedTuple):
+    """Source-backed five-set projection used by owned-combatant admission."""
+
+    servant_definitions: tuple[ServantDefinitionIR, ...]
+    action_definitions: tuple[ActionDefinitionIR, ...]
+    action_ability_bindings: tuple[ActionAbilityBindingIR, ...]
+    action_admissions: tuple[ActionAdmissionIR, ...]
+    unit_birth_templates: tuple[UnitBirthTemplateIR, ...]
+    issues: tuple[OwnedCombatantProjectionIssue, ...] = ()
+
+    @property
+    def ok(self) -> bool:
+        return not self.issues
+
+
 class TBGDLowering:
     """Converts TBGD raw files into v8 Canonical IR."""
 
     def __init__(self, tbgd_root: Path, limits: LoweringLimits | None = None):
         self.tbgd_root = tbgd_root.resolve()
         self.limits = limits or LoweringLimits()
+
+    def build_owned_combatant_admission_projection(
+        self,
+    ) -> OwnedCombatantAdmissionProjection:
+        """Build only the five source-backed sets required for servant admission."""
+
+        servant_rows = self._servant_config_rows()
+        servant_action_ids = frozenset(
+            f"servant_skill:{skill_id}"
+            for _, _, row in servant_rows
+            for skill_id in (
+                row.get("SkillIDList")
+                if isinstance(row.get("SkillIDList"), list)
+                else ()
+            )
+            if str(skill_id)
+        )
+        action_definitions = self._lower_action_definitions(
+            action_ids=servant_action_ids,
+            entity_types=frozenset({"servant_skill"}),
+        )
+        action_ability_bindings = self._lower_action_ability_bindings(
+            action_definitions,
+            retain_lowered_details=False,
+        )[0]
+        combatant_action_sets = self._lower_combatant_action_sets(
+            action_definitions,
+            entity_types=frozenset({"servant"}),
+            servant_config_rows=servant_rows,
+        )
+        combatant_action_sets, action_admissions = _lower_action_admissions(
+            combatant_action_sets,
+            action_definitions,
+        )
+        character_cards = build_character_card_ir(
+            self.tbgd_root,
+            max_records_per_table=self.limits.max_records_per_table,
+            skill_tables=CHARACTER_ACTION_DEFINITION_TABLES,
+        )
+        selected_ability_files = _limit_sequence(
+            self._ability_files(),
+            self.limits.max_ability_files,
+        )
+        spawn_sources = _discover_servant_spawn_sources(
+            self.tbgd_root,
+            selected_ability_files,
+        )
+        replacement_policies = _discover_servant_replacement_policies(
+            self.tbgd_root,
+            selected_ability_files,
+        )
+        servant_definitions = self._lower_servant_definitions(
+            combatant_action_sets,
+            action_ability_bindings,
+            character_data_cards=list(character_cards.character_data_cards),
+            character_trace_nodes=list(character_cards.character_trace_nodes),
+            character_eidolon_slots=list(character_cards.character_eidolon_slots),
+            character_mechanism_slots=list(character_cards.character_mechanism_slots),
+            action_admissions=action_admissions,
+            spawn_sources_by_servant=spawn_sources,
+            replacement_policies=replacement_policies,
+            servant_config_rows=servant_rows,
+        )
+        unit_birth_templates = _lower_unit_birth_templates(
+            summon_monster_intents=[],
+            servant_definitions=servant_definitions,
+            wave_definitions=[],
+            combatant_profiles=[],
+            monster_data_cards=(),
+            timeline_rules=self._lower_timeline_rules(),
+        )
+        issues = _owned_combatant_projection_build_issues(
+            servant_rows=servant_rows,
+            servant_definitions=servant_definitions,
+            action_definitions=action_definitions,
+            action_ability_bindings=action_ability_bindings,
+            action_admissions=action_admissions,
+            unit_birth_templates=unit_birth_templates,
+        )
+        return OwnedCombatantAdmissionProjection(
+            servant_definitions=tuple(
+                sorted(servant_definitions, key=attrgetter("servant_definition_id"))
+            ),
+            action_definitions=tuple(
+                sorted(
+                    action_definitions,
+                    key=attrgetter("action_id", "level", "definition_id"),
+                )
+            ),
+            action_ability_bindings=tuple(
+                sorted(
+                    action_ability_bindings,
+                    key=attrgetter("action_id", "level", "binding_id"),
+                )
+            ),
+            action_admissions=tuple(
+                sorted(
+                    action_admissions,
+                    key=attrgetter(
+                        "owner_entity_ref",
+                        "action_id",
+                        "action_level",
+                        "admission_id",
+                    ),
+                )
+            ),
+            unit_birth_templates=tuple(
+                sorted(unit_birth_templates, key=attrgetter("birth_template_id"))
+            ),
+            issues=issues,
+        )
 
     def build(self) -> CanonicalIR:
         light_cone_catalog = build_light_cone_catalog(self.tbgd_root)
@@ -600,6 +732,14 @@ class TBGDLowering:
             combatant_action_sets=combatant_action_sets,
         )
         assistant_ability_resolutions = _lower_assistant_ability_resolutions(queue_intents, queue_resolutions)
+        servant_spawn_sources = _discover_servant_spawn_sources(
+            self.tbgd_root,
+            selected_ability_files,
+        )
+        servant_replacement_policies = _discover_servant_replacement_policies(
+            self.tbgd_root,
+            selected_ability_files,
+        )
         servant_definitions = self._lower_servant_definitions(
             combatant_action_sets,
             action_ability_bindings,
@@ -608,14 +748,8 @@ class TBGDLowering:
             character_eidolon_slots=character_eidolon_slots,
             character_mechanism_slots=character_mechanism_slots,
             action_admissions=action_admissions,
-            spawn_sources_by_servant=_discover_servant_spawn_sources(
-                self.tbgd_root,
-                selected_ability_files,
-            ),
-            replacement_policies=_discover_servant_replacement_policies(
-                self.tbgd_root,
-                selected_ability_files,
-            ),
+            spawn_sources_by_servant=servant_spawn_sources,
+            replacement_policies=servant_replacement_policies,
         )
         unit_birth_templates = _lower_unit_birth_templates(
             summon_monster_intents=summon_monster_intents,
@@ -1577,18 +1711,47 @@ class TBGDLowering:
     def _lower_combatant_action_sets(
         self,
         definitions: list[ActionDefinitionIR],
+        *,
+        entity_types: frozenset[str] | None = None,
+        servant_config_rows: list[tuple[str, int, dict[str, Any]]] | None = None,
     ) -> list[CombatantActionSetIR]:
         definitions_by_action: dict[str, list[ActionDefinitionIR]] = {}
         for definition in definitions:
             definitions_by_action.setdefault(definition.action_id, []).append(definition)
-        servant_skill_rows = self._servant_stat_skill_rows_by_skill_id()
+        servant_skill_rows = (
+            self._servant_stat_skill_rows_by_skill_id()
+            if entity_types is None or "servant" in entity_types
+            else {}
+        )
         rows: list[CombatantActionSetIR] = []
         for relative_path, entity_type, id_key, skill_key, config_rows in (
-            ("ExcelOutput/AvatarConfig.json", "avatar", "AvatarID", "SkillList", self._avatar_config_rows_prefer_enhanced()),
+            (
+                "ExcelOutput/AvatarConfig.json",
+                "avatar",
+                "AvatarID",
+                "SkillList",
+                self._avatar_config_rows_prefer_enhanced()
+                if entity_types is None or "avatar" in entity_types
+                else [],
+            ),
             ("ExcelOutput/MonsterConfig.json", "monster", "MonsterID", "SkillList", None),
             ("ExcelOutput/MonsterUniqueConfig.json", "monster", "MonsterID", "SkillList", None),
-            ("ExcelOutput/AvatarServantConfig.json", "servant", "ServantID", "SkillIDList", None),
+            (
+                "ExcelOutput/AvatarServantConfig.json",
+                "servant",
+                "ServantID",
+                "SkillIDList",
+                (
+                    servant_config_rows
+                    if servant_config_rows is not None
+                    else self._servant_config_rows()
+                )
+                if entity_types is None or "servant" in entity_types
+                else [],
+            ),
         ):
+            if entity_types is not None and entity_type not in entity_types:
+                continue
             path = self.tbgd_root / relative_path
             if config_rows is None:
                 if not path.exists():
@@ -1803,6 +1966,29 @@ class TBGDLowering:
                 )
         return rows
 
+    def _servant_config_rows(self) -> list[tuple[str, int, dict[str, Any]]]:
+        relative_path = "ExcelOutput/AvatarServantConfig.json"
+        path = self.tbgd_root / relative_path
+        if not path.exists():
+            return []
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return []
+        if not isinstance(data, list):
+            return []
+        rows: list[tuple[str, int, dict[str, Any]]] = []
+        for row_index, row in enumerate(
+            _limit_sequence(data, self.limits.max_records_per_table)
+        ):
+            if not isinstance(row, dict) or row.get("ServantID") is None:
+                continue
+            copied = dict(row)
+            copied["_v8_source_path"] = relative_path
+            copied["_v8_row_index"] = row_index
+            rows.append((relative_path, row_index, copied))
+        return rows
+
     def _rows_by_id(self, relative_path: str, id_key: str) -> dict[str, dict[str, Any]]:
         path = self.tbgd_root / relative_path
         if not path.exists():
@@ -1892,6 +2078,8 @@ class TBGDLowering:
     def _lower_action_ability_bindings(
         self,
         definitions: list[ActionDefinitionIR],
+        *,
+        retain_lowered_details: bool = True,
     ) -> tuple[
         list[ActionAbilityBindingIR],
         list[AbilityPhaseIR],
@@ -1901,12 +2089,36 @@ class TBGDLowering:
         list[FormulaIR],
         list[TargetExpressionIR],
     ]:
-        avatar_skill_rows = self._avatar_skill_rows_by_skill_id()
-        avatar_configs = self._avatar_configs_by_skill_id()
-        monster_skill_rows = self._monster_skill_rows_by_skill_id()
-        monster_configs = self._monster_configs_by_skill_id()
-        servant_skill_rows = self._servant_skill_rows_by_skill_id()
-        servant_configs = self._servant_configs_by_skill_id()
+        has_avatar_actions = any(
+            definition.action_id.startswith("avatar_skill:")
+            for definition in definitions
+        )
+        has_monster_actions = any(
+            definition.action_id.startswith("monster_skill:")
+            for definition in definitions
+        )
+        has_servant_actions = any(
+            definition.action_id.startswith("servant_skill:")
+            for definition in definitions
+        )
+        avatar_skill_rows = (
+            self._avatar_skill_rows_by_skill_id() if has_avatar_actions else {}
+        )
+        avatar_configs = (
+            self._avatar_configs_by_skill_id() if has_avatar_actions else {}
+        )
+        monster_skill_rows = (
+            self._monster_skill_rows_by_skill_id() if has_monster_actions else {}
+        )
+        monster_configs = (
+            self._monster_configs_by_skill_id() if has_monster_actions else {}
+        )
+        servant_skill_rows = (
+            self._servant_skill_rows_by_skill_id() if has_servant_actions else {}
+        )
+        servant_configs = (
+            self._servant_configs_by_skill_id() if has_servant_actions else {}
+        )
         monster_ability_file_index: dict[str, tuple[str, ...]] | None = None
         ability_file_cache: dict[str, dict[str, Any] | None] = {}
         bindings: list[ActionAbilityBindingIR] = []
@@ -1947,12 +2159,13 @@ class TBGDLowering:
             else:
                 binding, binding_phases, lowered_tasks = _blocked_action_binding(definition, "non_avatar_ability_binding_not_executable")
             bindings.append(binding)
-            phases.extend(binding_phases)
-            tasks.extend(lowered_tasks.ability_tasks)
-            effects.extend(lowered_tasks.effects)
-            conditions.extend(lowered_tasks.conditions)
-            formulas.extend(lowered_tasks.formulas)
-            target_expressions.extend(lowered_tasks.target_expressions)
+            if retain_lowered_details:
+                phases.extend(binding_phases)
+                tasks.extend(lowered_tasks.ability_tasks)
+                effects.extend(lowered_tasks.effects)
+                conditions.extend(lowered_tasks.conditions)
+                formulas.extend(lowered_tasks.formulas)
+                target_expressions.extend(lowered_tasks.target_expressions)
         return bindings, phases, tasks, effects, conditions, formulas, target_expressions
 
     def _lower_standalone_ability_graphs(
@@ -3410,11 +3623,26 @@ class TBGDLowering:
             )
         return entities
 
-    def _lower_action_definitions(self) -> list[ActionDefinitionIR]:
+    def _lower_action_definitions(
+        self,
+        *,
+        action_ids: frozenset[str] | None = None,
+        entity_types: frozenset[str] | None = None,
+    ) -> list[ActionDefinitionIR]:
         definitions: list[ActionDefinitionIR] = []
-        monster_target_sources = self._monster_skill_target_mode_sources()
-        servant_target_sources = self._servant_skill_target_sources()
+        monster_target_sources = (
+            self._monster_skill_target_mode_sources()
+            if entity_types is None or "monster_skill" in entity_types
+            else {}
+        )
+        servant_target_sources = (
+            self._servant_skill_target_sources()
+            if entity_types is None or "servant_skill" in entity_types
+            else {}
+        )
         for relative_path, entity_type, id_key in ACTION_DEFINITION_TABLES:
+            if entity_types is not None and entity_type not in entity_types:
+                continue
             path = self.tbgd_root / relative_path
             if not path.exists():
                 continue
@@ -3425,6 +3653,11 @@ class TBGDLowering:
                 if not isinstance(row, dict) or id_key not in row:
                     continue
                 raw_id = str(row[id_key])
+                if (
+                    action_ids is not None
+                    and f"{entity_type}:{raw_id}" not in action_ids
+                ):
+                    continue
                 definition = _action_definition_from_row(
                     relative_path,
                     entity_type,
@@ -4066,17 +4299,8 @@ class TBGDLowering:
         action_admissions: list[ActionAdmissionIR],
         spawn_sources_by_servant: dict[str, tuple[IRSource, ...]],
         replacement_policies: dict[str, dict[str, Any]] | None = None,
+        servant_config_rows: list[tuple[str, int, dict[str, Any]]] | None = None,
     ) -> list[ServantDefinitionIR]:
-        relative_path = "ExcelOutput/AvatarServantConfig.json"
-        path = self.tbgd_root / relative_path
-        if not path.exists():
-            return []
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            return []
-        if not isinstance(data, list):
-            return []
         definitions: list[ServantDefinitionIR] = []
         action_set_by_entity = {item.entity_ref: item for item in combatant_action_sets}
         bindings_by_action: dict[
@@ -4100,12 +4324,12 @@ class TBGDLowering:
                 [],
             ).append(admission)
         stat_skill_rows = self._servant_stat_skill_rows_by_skill_id()
-        for row_index, row in enumerate(_limit_sequence(data, self.limits.max_records_per_table)):
-            if not isinstance(row, dict) or row.get("ServantID") is None:
-                continue
-            row = dict(row)
-            row["_v8_source_path"] = relative_path
-            row["_v8_row_index"] = row_index
+        rows = (
+            servant_config_rows
+            if servant_config_rows is not None
+            else self._servant_config_rows()
+        )
+        for relative_path, row_index, row in rows:
             servant_id = str(row.get("ServantID"))
             servant_ref = f"servant:{servant_id}"
             config_path = str(row.get("Config") or "")
@@ -9755,6 +9979,97 @@ def _discover_servant_spawn_sources(
         servant_id: _dedupe_ir_sources(sources)
         for servant_id, sources in sorted(by_servant.items())
     }
+
+
+def _owned_combatant_projection_build_issues(
+    *,
+    servant_rows: list[tuple[str, int, dict[str, Any]]],
+    servant_definitions: list[ServantDefinitionIR],
+    action_definitions: list[ActionDefinitionIR],
+    action_ability_bindings: list[ActionAbilityBindingIR],
+    action_admissions: list[ActionAdmissionIR],
+    unit_birth_templates: list[UnitBirthTemplateIR],
+) -> tuple[OwnedCombatantProjectionIssue, ...]:
+    """Fail closed on identities and relationships required to construct the projection."""
+
+    issues: list[OwnedCombatantProjectionIssue] = []
+    raw_servant_ids = [str(row.get("ServantID") or "") for _, _, row in servant_rows]
+    skill_lists = [row.get("SkillIDList") for _, _, row in servant_rows]
+    raw_action_ids = {
+        f"servant_skill:{skill_id}"
+        for skill_ids in skill_lists
+        if isinstance(skill_ids, list)
+        for skill_id in skill_ids
+    }
+    definition_keys = Counter(
+        (item.action_id, item.level) for item in action_definitions
+    )
+    checks = (
+        (
+            "servant_config_or_action_source_not_closed",
+            bool(raw_servant_ids)
+            and len(set(raw_servant_ids)) == len(raw_servant_ids)
+            and all(isinstance(items, list) and items for items in skill_lists)
+            and {item.action_id for item in action_definitions} == raw_action_ids,
+        ),
+        (
+            "servant_definition_identity_not_closed",
+            Counter(item.servant_ref for item in servant_definitions)
+            == Counter(f"servant:{item}" for item in raw_servant_ids),
+        ),
+        (
+            "action_definition_identity_not_closed",
+            all(count == 1 for count in definition_keys.values()),
+        ),
+        (
+            "action_ability_binding_identity_not_closed",
+            Counter(
+                (item.action_id, item.level) for item in action_ability_bindings
+            )
+            == definition_keys,
+        ),
+        (
+            "action_admission_identity_not_closed",
+            Counter(
+                (item.action_id, item.action_level) for item in action_admissions
+            )
+            == definition_keys,
+        ),
+        (
+            "unit_birth_template_identity_not_closed",
+            Counter(item.birth_template_id for item in unit_birth_templates)
+            == Counter(
+                item.birth_template_id
+                for item in servant_definitions
+                if item.birth_template_id
+            ),
+        ),
+    )
+    for code, ok in checks:
+        if not ok:
+            issues.append(OwnedCombatantProjectionIssue(code, code))
+
+    for servant in servant_definitions:
+        if (
+            servant.coverage_status == "executable" and not servant.owner_relations
+        ) or (
+            not servant.spawn_sources
+            and (
+                servant.coverage_status != "blocked"
+                or "servant_spawn_source_missing" not in servant.blocked_reason
+            )
+        ) or any(
+            relation.coverage_status != "executable"
+            or not relation.sources
+            or not set(relation.auxiliary_skill_ids).issubset(servant.skill_ids)
+            for relation in servant.owner_relations
+        ):
+            issues.append(
+                OwnedCombatantProjectionIssue(
+                    "servant_relationship_not_closed", servant.servant_ref
+                )
+            )
+    return tuple(sorted(issues))
 
 
 def _iter_json_dicts(value: Any, path: str = "$"):

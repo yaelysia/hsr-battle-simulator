@@ -154,9 +154,9 @@ P1-P8 的机制计划。
 
 后续不再沿原 S3-S8 阶段族自动推进。
 
-## 6. 当前唯一试点
+## 6. 已完成试点
 
-当前只实施：
+已完成：
 
 ```text
 VG-R1: P8-S8 task/event shared evidence pilot
@@ -189,14 +189,38 @@ VG-R1: P8-S8 task/event shared evidence pilot
 6. 删除旧 full-build 依赖和重复编排，用已经发生的失败基线及修改后实际 RSS、
    IO、耗时和代码量证明收益。
 
+第二次执行已证明窄投影和共享证据方向有效：完整 build 调用降为零，窄投影、
+受限组合和未过滤组合峰值分别约 341 MiB、372 MiB 和 572 MiB。未过滤组合已经
+从资源失败变成可完成的业务检查，并暴露出 CHAR-M1 / P8-R1 早已记录的三类
+记忆光锥与忆灵正式场景缺口。
+
+该结果同时暴露出当前实现偏离治理目标：
+
+- 为单一验证消费者在 production lowering 中净增约 873 行专用投影审计和深冻结
+  代码，整体并未瘦身。
+- 完整 build 次数只是局部计数器的缺省零，没有实际观察所有
+  `TBGDLowering.build()` 调用。
+- 把既有 P8-R1 业务缺口强制要求在治理卡中修复，会再次混淆功能施工和验证治理。
+
+最终差量已完成：窄投影复用现有 IR 与 lowering helper，完整 build 入口真实计数
+为 0，窄投影、focused bundle 和公共证据各构建 1 次；验证 Python 净减少 3 行，
+production 与 validation 总净增长 320 行。当前源码窄投影峰值约 340 MiB，最终
+未过滤组合峰值约 574 MiB。
+
+业务结果与治理结果必须分离：未过滤 task/event 的 `ok` 继续诚实为假，VG-R1
+另用 `governance_ok` 判断共享证据、资源和测量是否达标；CLI 退出码仍只服从业务
+`ok`。已知缺口只作为当前失败上限，允许减少至零，未知失败必须阻断。硬编码布尔
+探针、局部计数器缺省零，以及用不存在的 family 冒充真实失败隔离，均不构成治理
+证据。
+
 详细目标与唯一完成清单见：
 
 ```text
 docs/validation_execution_cards/VG-R1_P8_S8_TASK_EVENT_SHARED_EVIDENCE_PILOT.md
 ```
 
-试点通过前不规划全项目验证注册表、持久缓存、通用调度器或批量历史迁移。试点
-通过后只选择第二个真实重复点；只有两个独立消费者确实具有相同构建生命周期、
+本试点通过后仍不规划全项目验证注册表、持久缓存、通用调度器或批量历史迁移。
+下一步只能选择第二个真实重复点；只有两个独立消费者确实具有相同构建生命周期、
 失败语义和证据契约时，才允许设计跨模块抽象。
 
 ## 7. 总体红线
@@ -210,6 +234,8 @@ docs/validation_execution_cards/VG-R1_P8_S8_TASK_EVENT_SHARED_EVIDENCE_PILOT.md
 - 不先造通用框架再寻找用途；首次优化必须局限在一个真实重调用链内。
 - 不为验证工具另写同等规模的元验证。
 - 不允许纯治理改动只增加代码；公共提取必须同轮删除被替代的重复路径。
+- 不得把验证专用的深冻结器、来源审计器或完整性框架放进 production lowering
+  来规避“验证代码净减少”口径。
 - 不用硬编码的“构建次数”字段冒充测量；计数必须来自实际入口调用。
 - 不一次改造全部历史验证。
 - 不新增依赖；若后续确有必要，必须先向用户申请。
@@ -239,6 +265,6 @@ docs/validation_execution_cards/VG-R1_P8_S8_TASK_EVENT_SHARED_EVIDENCE_PILOT.md
 docs/validation_execution_cards/VG-S2_COMMITTED_INTEGRITY_LIFECYCLE_PILOT.md
 ```
 
-原 `VG-S3` 已撤销，不得恢复其注册表、选择器或元验证实现。当前下一入口只有
-`VG-R1_P8_S8_TASK_EVENT_SHARED_EVIDENCE_PILOT.md`；执行线程只实施该卡，不进入
-第二个试点，也不顺带修改 runtime、lowering 或游戏机制。
+原 `VG-S3` 已撤销，不得恢复其注册表、选择器或元验证实现。`VG-R1` 已通过验收；
+当前没有自动衔接的第二张治理执行卡。规划线程必须先选择并审查第二个真实重复点，
+不能直接扩展成全项目框架，也不能顺带修改 runtime 或游戏机制。

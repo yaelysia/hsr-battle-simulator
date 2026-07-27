@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 import argparse
+import json
+import resource
+import time
 from collections import Counter, defaultdict
 from collections.abc import Mapping
+from contextlib import ExitStack, contextmanager
 from dataclasses import replace
 from math import isclose
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import patch
 
 from .. import BASELINE_VERSION
 from ..builds.character_assembler import assemble_character_build
@@ -172,12 +177,66 @@ TASK_STATE_CACHE_LIMIT = 12
 SUMMARY_SCHEMA_VERSION = (
     "p8_s8_light_cone_remaining_gameplay_closure_summary_v2"
 )
+CONTRACT_COMPONENTS = (
+    "partition", "path_inventory", "formal_scenario", "lifecycle", "production_event_chain",
+    "common_mutation_events", "battle_state_transition_events", "heal_events",
+    "custom_events", "weakness_events",
+)
+OWNED_COMBATANT_PROJECTION_FIELDS = (
+    "servant_definitions",
+    "action_definitions",
+    "action_ability_bindings",
+    "action_admissions",
+    "unit_birth_templates",
+)
+LOWERING_ENTRY_KEYS = (
+    "full_tbgd_lowering_build",
+    "owned_combatant_admission_projection",
+)
+P8_R1_CONFIRMED_BUSINESS_GAPS = frozenset({
+    "SetDynamicValueByCopying:s8",
+    "SetModifierDynamicValue:s8",
+    "OnDeathrattle:s8",
+})
+
+
+def _business_result_within_confirmed_p8_r1_gaps(business_ok: bool, failures: list[str]) -> bool:
+    return business_ok == (not failures) and set(failures) <= P8_R1_CONFIRMED_BUSINESS_GAPS
+
+
+@contextmanager
+def _observe_lowering_entries(build_counts: Counter[str]):
+    methods = dict(zip(
+        LOWERING_ENTRY_KEYS,
+        ("build", "build_owned_combatant_admission_projection"),
+        strict=True,
+    ))
+    originals = {key: getattr(TBGDLowering, name) for key, name in methods.items()}
+    build_counts.update({key: 0 for key in methods})
+
+    def observed(key: str):
+        def call(lowering: TBGDLowering, *args: Any, **kwargs: Any):
+            build_counts[key] += 1
+            return originals[key](lowering, *args, **kwargs)
+        return call
+
+    with ExitStack() as stack:
+        for key, name in methods.items():
+            stack.enter_context(patch.object(TBGDLowering, name, observed(key)))
+        yield
+
+
+def _measured_count(build_counts: Counter[str], key: str) -> int:
+    if key not in build_counts:
+        raise RuntimeError(f"unobserved contract build entry: {key}")
+    return build_counts[key]
 
 
 def _focused_bundle(
     tbgd_root: Path,
     *,
     include_owned_combatant_catalog: bool = False,
+    build_counts: Counter[str] | None = None,
 ) -> dict[str, Any]:
     """Build exactly one focused equipment RuleBook from current source.
 
@@ -187,8 +246,10 @@ def _focused_bundle(
     versions.  No full CanonicalIR serialization is performed.
     """
 
+    if build_counts is not None:
+        build_counts["focused_bundle"] += 1
     owned_combatant_catalog = (
-        _production_owned_combatant_catalog(tbgd_root)
+        _owned_combatant_admission_catalog(tbgd_root)
         if include_owned_combatant_catalog
         else None
     )
@@ -346,65 +407,32 @@ def _focused_bundle(
     }
 
 
-def _production_owned_combatant_catalog(
-    tbgd_root: Path,
-) -> dict[str, Any]:
-    production_ir = TBGDLowering(tbgd_root).build()
-    servant_definitions = tuple(production_ir.servant_definitions)
-    servant_action_ids: set[str] = set()
-    for definition in servant_definitions:
-        skill_index_map = definition.action_set.get("skill_index_map")
-        if not isinstance(skill_index_map, Mapping):
-            continue
-        servant_action_ids.update(
-            str(entry.get("action_ref") or "")
-            for entry in skill_index_map.values()
-            if isinstance(entry, Mapping)
-            and str(entry.get("action_ref") or "")
-        )
-    birth_template_ids = {
-        definition.birth_template_id
-        for definition in servant_definitions
-        if definition.birth_template_id
-    }
-    servant_refs = {
-        definition.servant_ref
-        for definition in servant_definitions
-        if definition.servant_ref
-    }
+def _owned_combatant_admission_catalog(tbgd_root: Path) -> dict[str, Any]:
+    projection = TBGDLowering(tbgd_root).build_owned_combatant_admission_projection()
+    if not projection.ok:
+        raise ValueError("owned-combatant admission projection failed closed: " + ",".join(
+            sorted({issue.code for issue in projection.issues})
+        ))
     return {
-        "servant_definitions": servant_definitions,
-        "action_definitions": tuple(
-            definition
-            for definition in production_ir.action_definitions
-            if definition.action_id in servant_action_ids
-        ),
-        "action_ability_bindings": tuple(
-            binding
-            for binding in production_ir.action_ability_bindings
-            if binding.action_id in servant_action_ids
-        ),
-        "action_admissions": tuple(
-            admission
-            for admission in production_ir.action_admissions
-            if admission.owner_entity_ref in servant_refs
-            and admission.action_id in servant_action_ids
-        ),
-        "unit_birth_templates": tuple(
-            template
-            for template in production_ir.unit_birth_templates
-            if template.birth_template_id in birth_template_ids
-        ),
+        **{
+            name: getattr(projection, name)
+            for name in OWNED_COMBATANT_PROJECTION_FIELDS
+        },
         "counts": {
-            "servant_definition_count": len(servant_definitions),
-            "servant_action_id_count": len(servant_action_ids),
-            "servant_action_admission_count": sum(
-                1
-                for admission in production_ir.action_admissions
-                if admission.owner_entity_ref in servant_refs
-                and admission.action_id in servant_action_ids
+            "servant_definition_count": len(projection.servant_definitions),
+            "servant_action_id_count": len({item.action_id for item in projection.action_definitions}),
+            "servant_action_admission_count": len(projection.action_admissions),
+            "servant_birth_template_count": len(projection.unit_birth_templates),
+            "projection_source_blocked_count": sum(
+                item.coverage_status != "executable"
+                for name in (
+                    "servant_definitions",
+                    "action_ability_bindings",
+                    "action_admissions",
+                    "unit_birth_templates",
+                )
+                for item in getattr(projection, name)
             ),
-            "servant_birth_template_count": len(birth_template_ids),
         },
     }
 
@@ -1496,8 +1524,8 @@ def _s8_condition_contexts(condition: ConditionIR) -> tuple[EvaluationContext, .
             energy=(100.0 if rich else 0.0),
             max_energy=100.0,
             action_value=(10.0 if rich else 200.0),
+            lifecycle_status="defeated" if index in {2, 3} else "active",
             flags={
-                "lifecycle_status": "defeated" if index in {2, 3} else "active",
                 "damage_type": expected_damage_type if rich else "Other",
                 "base_type": expected_damage_type if rich else "Other",
                 "weaknesses": [expected_weakness] if rich else [],
@@ -1516,8 +1544,8 @@ def _s8_condition_contexts(condition: ConditionIR) -> tuple[EvaluationContext, .
             energy=50.0,
             max_energy=100.0,
             action_value=(5.0 if rich else 200.0),
+            lifecycle_status="active",
             flags={
-                "lifecycle_status": "active",
                 "status_details": status_details,
                 "position": 1,
             },
@@ -1531,8 +1559,8 @@ def _s8_condition_contexts(condition: ConditionIR) -> tuple[EvaluationContext, .
             energy=(100.0 if rich else 0.0),
             max_energy=100.0,
             action_value=(50.0 if rich else 1.0),
+            lifecycle_status="defeated" if index in {2, 3} else "active",
             flags={
-                "lifecycle_status": "defeated" if index in {2, 3} else "active",
                 "damage_type": expected_damage_type if rich else "Other",
                 "weaknesses": [expected_weakness] if rich else [],
                 "unselectable": not rich,
@@ -1550,8 +1578,8 @@ def _s8_condition_contexts(condition: ConditionIR) -> tuple[EvaluationContext, .
             energy=(100.0 if rich else 0.0),
             max_energy=100.0,
             action_value=(80.0 if rich else 1.0),
+            lifecycle_status="active",
             flags={
-                "lifecycle_status": "active",
                 "summon_kind": "servant",
                 "owner_id": "ally:wearer",
                 "summoner_id": "ally:wearer",
@@ -1768,7 +1796,7 @@ def _route_probe_state() -> BattleState:
                 energy=20.0,
                 max_energy=100.0,
                 action_value=100.0,
-                flags={"lifecycle_status": "active", "position": 0},
+                lifecycle_status="active", flags={"position": 0},
                 resources={"revive_charges": 1.0},
             ),
             "ally:peer": UnitState(
@@ -1781,7 +1809,7 @@ def _route_probe_state() -> BattleState:
                 defense=40.0,
                 speed=90.0,
                 action_value=120.0,
-                flags={"lifecycle_status": "active", "position": 1},
+                lifecycle_status="active", flags={"position": 1},
             ),
             "enemy:target": UnitState(
                 unit_id="enemy:target",
@@ -1795,7 +1823,7 @@ def _route_probe_state() -> BattleState:
                 action_value=140.0,
                 toughness=50.0,
                 max_toughness=50.0,
-                flags={"lifecycle_status": "active", "position": 0},
+                lifecycle_status="active", flags={"position": 0},
             ),
         },
         skill_points=2,
@@ -2074,11 +2102,7 @@ def _target_family_probe_state(*, reversed_order: bool = False) -> BattleState:
         unselectable: bool = False,
         removed: bool = False,
     ) -> UnitState:
-        flags: dict[str, Any] = {
-            "lifecycle_status": "removed" if removed else "active",
-            "position": position,
-            "team_side": team_side,
-        }
+        flags: dict[str, Any] = {"position": position, "team_side": team_side}
         if summon_kind:
             summon_owner_id = (
                 "ally:wearer" if team_side == "ally" else "enemy:target"
@@ -2105,6 +2129,7 @@ def _target_family_probe_state(*, reversed_order: bool = False) -> BattleState:
             hp=100.0,
             action_value=float(10 + position),
             resources={"break_damage_added_ratio": float(position + 1) / 10.0},
+            lifecycle_status="removed" if removed else "active",
             flags=flags,
         )
 
@@ -4477,6 +4502,23 @@ def _authoritative_resource_event_evidence(
     }
 
 
+def _focused_resource_scope(
+    focused_rulebook_build_count: int = 1,
+    **fields: Any,
+) -> dict[str, Any]:
+    return {
+        "focused_rulebook_build_count": focused_rulebook_build_count,
+        "full_canonical_ir_serialized": False,
+        "large_artifacts_written": False,
+        **fields,
+    }
+
+
+def _write_artifacts(output_dir: Path, artifacts: Mapping[str, Any]) -> None:
+    for name, payload in artifacts.items():
+        write_json(output_dir / name, payload)
+
+
 def run_resource_event_validation(
     tbgd_root: Path,
     output_dir: Path,
@@ -4535,32 +4577,24 @@ def run_resource_event_validation(
         and predicates["resource_event_cross_trigger_count"] == 0
         and predicates["dead_production_resource_event_count"] == 0
     )
-    summary = {
-        "schema_version": "p8_s8_resource_event_validation_summary_v1",
-        "validation_version": VALIDATION_VERSION,
-        "ok": ok,
-        "ready_for_review": ok,
-        "checklist_modified": False,
-        "git_commit_created": False,
-        "predicates": predicates,
-        "resource_scope": {
-            "focused_rulebook_build_count": 1,
-            "production_owned_combatant_catalog_lowering_count": 1,
-            "lowering_execution_mode": "serial",
-            "owned_combatant_catalog_counts": bundle[
-                "owned_combatant_catalog"
-            ].get("counts", {}),
-            "full_s8_matrices_executed": False,
-            "full_canonical_ir_serialized": False,
-            "large_artifacts_written": False,
-        },
-    }
-    write_json(output_dir / "resource_event_closure_matrix_p8_s8.json", closure)
-    write_json(
-        output_dir / "empty_executable_task_fail_closed_matrix_p8_s8.json",
-        empty_task_fail_closed,
+    summary = _contract_slice_summary(
+        "p8_s8_resource_event_validation_summary_v1",
+        predicates,
+        ok=ok,
+        ready_for_review=ok,
+        resource_scope=_focused_resource_scope(
+            production_owned_combatant_catalog_lowering_count=1,
+            lowering_execution_mode="serial",
+            owned_combatant_catalog_counts=
+                bundle["owned_combatant_catalog"].get("counts", {}),
+            full_s8_matrices_executed=False,
+        ),
     )
-    write_json(output_dir / "validation_summary_p8_s8_resource_events.json", summary)
+    _write_artifacts(output_dir, {
+        "resource_event_closure_matrix_p8_s8.json": closure,
+        "empty_executable_task_fail_closed_matrix_p8_s8.json": empty_task_fail_closed,
+        "validation_summary_p8_s8_resource_events.json": summary,
+    })
     return summary
 
 
@@ -4601,43 +4635,31 @@ def run_catalog_startup_validation(
         and predicates["catalog_started_or_external_dependency_covers_catalog"] is True
         and predicates["empty_executable_callback_task_fail_closed"] is True
     )
-    summary = {
-        "schema_version": "p8_s8_catalog_startup_validation_summary_v1",
-        "validation_version": VALIDATION_VERSION,
-        "ok": ok,
-        "ready_for_review": False,
-        "checklist_modified": False,
-        "git_commit_created": False,
-        "predicates": predicates,
-        "counts": startups["counts"],
-        "formal_catalog_startup_complete": startups[
+    summary = _contract_slice_summary(
+        "p8_s8_catalog_startup_validation_summary_v1",
+        predicates,
+        ok=ok,
+        counts=startups["counts"],
+        formal_catalog_startup_complete=startups[
             "formal_catalog_startup_complete"
         ],
-        "external_character_build_dependency_count": startups[
+        external_character_build_dependency_count=startups[
             "external_character_build_dependency_count"
         ],
-        "resource_scope": {
-            "focused_rulebook_build_count": 1,
-            "production_owned_combatant_catalog_lowering_count": 1,
-            "lowering_execution_mode": "serial",
-            "owned_combatant_catalog_counts": bundle[
-                "owned_combatant_catalog"
-            ].get("counts", {}),
-            "full_s8_matrices_executed": False,
-            "full_canonical_ir_serialized": False,
-            "large_artifacts_written": False,
-        },
-        "definition_identity_filter": sorted(definition_identities or ()),
-    }
-    write_json(output_dir / "catalog_startup_matrix_p8_s8.json", startups)
-    write_json(
-        output_dir / "empty_executable_task_fail_closed_matrix_p8_s8.json",
-        empty_task_fail_closed,
+        resource_scope=_focused_resource_scope(
+            production_owned_combatant_catalog_lowering_count=1,
+            lowering_execution_mode="serial",
+            owned_combatant_catalog_counts=
+                bundle["owned_combatant_catalog"].get("counts", {}),
+            full_s8_matrices_executed=False,
+        ),
+        definition_identity_filter=sorted(definition_identities or ()),
     )
-    write_json(
-        output_dir / "validation_summary_p8_s8_catalog_startup.json",
-        summary,
-    )
+    _write_artifacts(output_dir, {
+        "catalog_startup_matrix_p8_s8.json": startups,
+        "empty_executable_task_fail_closed_matrix_p8_s8.json": empty_task_fail_closed,
+        "validation_summary_p8_s8_catalog_startup.json": summary,
+    })
     return summary
 
 
@@ -4650,34 +4672,26 @@ def run_condition_contract_validation(
     output_dir.mkdir(parents=True, exist_ok=True)
     bundle = _focused_bundle(tbgd_root)
     conditions = _condition_contract_matrix(bundle)
-    summary = {
-        "schema_version": "p8_s8_condition_contract_validation_summary_v1",
-        "validation_version": VALIDATION_VERSION,
-        "ok": conditions["ok"],
-        "ready_for_review": False,
-        "checklist_modified": False,
-        "git_commit_created": False,
-        "predicates": {
+    summary = _contract_slice_summary(
+        "p8_s8_condition_contract_validation_summary_v1",
+        {
             "every_condition_source_evaluated": conditions["checks"][
                 "every_family_true_false_and_fail_closed"
             ],
         },
-        "counts": {
+        ok=conditions["ok"],
+        counts={
             "condition_families": conditions["family_count"],
             "condition_sources": conditions["condition_count"],
         },
-        "resource_scope": {
-            "focused_rulebook_build_count": 1,
-            "full_s8_matrices_executed": False,
-            "full_canonical_ir_serialized": False,
-            "large_artifacts_written": False,
-        },
-    }
-    write_json(output_dir / "condition_contract_matrix_p8_s8.json", conditions)
-    write_json(
-        output_dir / "validation_summary_p8_s8_condition_contract.json",
-        summary,
+        resource_scope=_focused_resource_scope(
+            full_s8_matrices_executed=False,
+        ),
     )
+    _write_artifacts(output_dir, {
+        "condition_contract_matrix_p8_s8.json": conditions,
+        "validation_summary_p8_s8_condition_contract.json": summary,
+    })
     return summary
 
 
@@ -4689,307 +4703,418 @@ def run_numeric_contract_validation(
 
     output_dir.mkdir(parents=True, exist_ok=True)
     numeric = _numeric_contract_matrix(_focused_bundle(tbgd_root))
-    summary = {
-        "schema_version": "p8_s8_numeric_contract_validation_summary_v1",
-        "validation_version": VALIDATION_VERSION,
-        "ok": numeric["ok"],
-        "ready_for_review": False,
-        "checklist_modified": False,
-        "git_commit_created": False,
-        "predicates": numeric["checks"],
-        "counts": {
+    summary = _contract_slice_summary(
+        "p8_s8_numeric_contract_validation_summary_v1",
+        numeric["checks"],
+        ok=numeric["ok"],
+        counts={
             "numeric_expressions": numeric["expression_count"],
             "zero_floor_expressions": numeric[
                 "zero_floor_expression_count"
             ],
         },
-        "resource_scope": {
-            "focused_rulebook_build_count": 1,
-            "runtime_matrices_executed": False,
-            "full_canonical_ir_serialized": False,
-            "large_artifacts_written": False,
-        },
-    }
-    write_json(output_dir / "numeric_contract_matrix_p8_s8.json", numeric)
-    write_json(
-        output_dir / "validation_summary_p8_s8_numeric_contract.json",
-        summary,
+        resource_scope=_focused_resource_scope(
+            runtime_matrices_executed=False,
+        ),
     )
+    _write_artifacts(output_dir, {
+        "numeric_contract_matrix_p8_s8.json": numeric,
+        "validation_summary_p8_s8_numeric_contract.json": summary,
+    })
     return summary
 
 
-def run_task_contract_validation(
+def _build_contract_evidence(
     tbgd_root: Path,
-    output_dir: Path,
-    *,
-    task_families: frozenset[str] | None = None,
+    build_counts: Counter[str],
 ) -> dict[str, Any]:
-    """Bounded task/property slice; skips catalog and unrelated S8 matrices."""
+    build_counts["common_evidence"] += 1
 
-    output_dir.mkdir(parents=True, exist_ok=True)
-    bundle = _focused_bundle(
-        tbgd_root,
-        include_owned_combatant_catalog=True,
-    )
-    partition = _partition_matrix(bundle)
-    path_inventory = _empty_character_build_path_inventory(bundle)
-    formal = _formal_scenario_matrix(bundle)
-    lifecycle = _lifecycle_matrix(bundle, formal)
-    production = _production_event_chain(bundle, formal, lifecycle)
-    _augment_common_mutation_events(production)
-    _augment_real_battle_state_transition_events(bundle, production)
-    _augment_real_heal_events(
-        bundle,
-        production,
-        path_inventory["cards_by_path"],
-    )
-    _augment_real_custom_events(bundle, production, tbgd_root)
-    _augment_real_weakness_events(production, tbgd_root)
-    task_execution = _task_family_execution_matrix(
-        bundle,
-        partition,
-        production,
-        path_inventory["cards_by_path"],
-        external_character_build_paths=frozenset(
-            path_inventory["external_character_build_paths"]
+    def keep(name: str, value: Any) -> Any:
+        build_counts[name] += 1
+        return value
+
+    bundle = _focused_bundle(tbgd_root, include_owned_combatant_catalog=True, build_counts=build_counts)
+    partition = keep("partition", _partition_matrix(bundle))
+    paths = keep("path_inventory", _empty_character_build_path_inventory(bundle))
+    formal = keep("formal_scenario", _formal_scenario_matrix(bundle))
+    lifecycle = keep("lifecycle", _lifecycle_matrix(bundle, formal))
+    production = keep("production_event_chain", _production_event_chain(bundle, formal, lifecycle))
+    common_counts = keep("common_mutation_events", _augment_common_mutation_events(production))
+    battle_seed = keep("battle_state_transition_events", _augment_real_battle_state_transition_events(bundle, production))
+    heal_seed = keep("heal_events", _augment_real_heal_events(bundle, production, paths["cards_by_path"]))
+    custom_seed = keep("custom_events", _augment_real_custom_events(bundle, production, tbgd_root))
+    weakness_seed = keep("weakness_events", _augment_real_weakness_events(production, tbgd_root))
+    return {
+        "bundle": bundle, "partition": partition, "paths": paths, "formal": formal,
+        "production": production, "common_counts": common_counts,
+        "battle_seed": battle_seed, "heal_seed": heal_seed,
+        "custom_seed": custom_seed, "weakness_seed": weakness_seed,
+    }
+
+
+def _contract_production_view(evidence: dict[str, Any]) -> dict[str, Any]:
+    return {
+        **evidence["production"],
+        "_events_by_type": defaultdict(
+            list,
+            {name: list(events) for name, events in evidence["production"]["_events_by_type"].items()},
         ),
-        state_cache={},
-        family_filter=task_families,
+    }
+
+
+def _contract_resource_scope(build_counts: Counter[str]) -> dict[str, Any]:
+    return _focused_resource_scope(
+        focused_rulebook_build_count=_measured_count(build_counts, "focused_bundle"),
+        full_tbgd_lowering_build_count=_measured_count(build_counts, "full_tbgd_lowering_build"),
+        owned_combatant_admission_projection_build_count=_measured_count(
+            build_counts, "owned_combatant_admission_projection"
+        ),
+        common_evidence_generation_count=_measured_count(build_counts, "common_evidence"),
+        full_s8_matrices_executed=False,
+    )
+
+
+def _contract_slice_summary(
+    schema: str,
+    predicates: dict[str, Any],
+    *,
+    ok: bool | None = None,
+    ready_for_review: bool = False,
+    **fields: Any,
+) -> dict[str, Any]:
+    return {
+        "schema_version": schema, "validation_version": VALIDATION_VERSION,
+        "ok": all(predicates.values()) if ok is None else ok,
+        "ready_for_review": ready_for_review,
+        "checklist_modified": False, "git_commit_created": False,
+        "predicates": predicates, **fields,
+    }
+
+
+def _run_task_contract_slice(
+    evidence: dict[str, Any], output_dir: Path, *, build_counts: Counter[str],
+    family_filter: frozenset[str] | None = None, write_outputs: bool = True,
+) -> dict[str, Any]:
+    bundle, partition, paths = evidence["bundle"], evidence["partition"], evidence["paths"]
+    production = _contract_production_view(evidence)
+    task_execution = _task_family_execution_matrix(
+        bundle, partition, production, paths["cards_by_path"],
+        external_character_build_paths=frozenset(paths["external_character_build_paths"]),
+        state_cache={}, family_filter=family_filter,
     )
     stack_properties = _stack_property_consumption_matrix(
-        partition,
-        task_execution=task_execution,
-        family_filter=task_families,
+        partition, task_execution=task_execution, family_filter=family_filter
     )
     predicates = {
-        "every_exact_gameplay_task_family_has_real_callback_execution": (
-            task_execution["ok"]
-        ),
+        "every_exact_gameplay_task_family_has_real_callback_execution": task_execution["ok"],
         "mechanism_families_do_not_use_character_build_dependency_exemption": (
-            task_execution["checks"][
-                "mechanism_families_do_not_use_character_build_dependency_exemption"
-            ]
+            task_execution["checks"]["mechanism_families_do_not_use_character_build_dependency_exemption"]
         ),
         "every_stack_property_family_changes_distinct_consumer": stack_properties["ok"],
     }
-    ok = all(predicates.values())
-    summary = {
-        "schema_version": "p8_s8_task_contract_validation_summary_v1",
-        "validation_version": VALIDATION_VERSION,
-        "ok": ok,
-        "ready_for_review": False,
-        "checklist_modified": False,
-        "git_commit_created": False,
-        "predicates": predicates,
-        "counts": {
+    summary = _contract_slice_summary(
+        "p8_s8_task_contract_validation_summary_v1", predicates,
+        counts={
             "task_families": task_execution["family_count"],
-            "executed_task_families": task_execution[
-                "executed_family_count"
-            ],
-            "external_dependency_task_families": task_execution[
-                "external_dependency_family_count"
-            ],
+            "executed_task_families": task_execution["executed_family_count"],
+            "external_dependency_task_families": task_execution["external_dependency_family_count"],
             "stack_property_families": stack_properties["family_count"],
         },
-        "resource_scope": {
-            "focused_rulebook_build_count": 1,
-            "full_s8_matrices_executed": False,
+        resource_scope={
+            **_contract_resource_scope(build_counts),
             "catalog_startup_executed": False,
-            "full_canonical_ir_serialized": False,
-            "large_artifacts_written": False,
         },
-        "task_family_filter": sorted(task_families or ()),
-    }
-    write_json(
-        output_dir / "exact_task_family_execution_matrix_p8_s8.json",
-        task_execution,
+        task_family_filter=sorted(family_filter or ()),
     )
-    write_json(
-        output_dir / "stack_property_consumption_matrix_p8_s8.json",
-        stack_properties,
-    )
-    write_json(
-        output_dir / "validation_summary_p8_s8_task_contract.json",
-        summary,
-    )
+    if write_outputs:
+        write_json(output_dir / "exact_task_family_execution_matrix_p8_s8.json", task_execution)
+        write_json(output_dir / "stack_property_consumption_matrix_p8_s8.json", stack_properties)
+        write_json(output_dir / "validation_summary_p8_s8_task_contract.json", summary)
+    summary["_probe_payload"] = (task_execution, stack_properties)
     return summary
 
 
-def run_event_contract_validation(
-    tbgd_root: Path,
-    output_dir: Path,
-    *,
-    event_families: frozenset[str] | None = None,
+def _run_event_contract_slice(
+    evidence: dict[str, Any], output_dir: Path, *, build_counts: Counter[str],
+    family_filter: frozenset[str] | None = None, write_outputs: bool = True,
 ) -> dict[str, Any]:
-    """Bounded event slice; skips catalog, task/property and coverage matrices."""
-
-    output_dir.mkdir(parents=True, exist_ok=True)
-    bundle = _focused_bundle(
-        tbgd_root,
-        include_owned_combatant_catalog=True,
-    )
-    partition = _partition_matrix(bundle)
-    path_inventory = _empty_character_build_path_inventory(bundle)
-    cards_by_path = path_inventory["cards_by_path"]
-    formal = _formal_scenario_matrix(bundle)
-    lifecycle = _lifecycle_matrix(bundle, formal)
-    production = _production_event_chain(bundle, formal, lifecycle)
-    _augment_common_mutation_events(production)
-    battle_state_transition_seed = (
-        _augment_real_battle_state_transition_events(bundle, production)
-    )
-    _augment_real_heal_events(bundle, production, cards_by_path)
-    custom_event_seed = _augment_real_custom_events(
-        bundle,
-        production,
-        tbgd_root,
-    )
-    weakness_event_seed = _augment_real_weakness_events(production, tbgd_root)
-    resource_event_evidence = _authoritative_resource_event_evidence(
-        bundle,
-        cards_by_path,
-    )
-    energy_listener = resource_event_evidence["energy"]
-    bp_listener = resource_event_evidence["bp"]
-    _merge_production_events(
-        production,
-        list(resource_event_evidence["production_events"]),
-    )
+    bundle, partition, paths = evidence["bundle"], evidence["partition"], evidence["paths"]
+    cards_by_path, formal = paths["cards_by_path"], evidence["formal"]
+    production = _contract_production_view(evidence)
+    resources = _authoritative_resource_event_evidence(bundle, cards_by_path)
+    _merge_production_events(production, list(resources["production_events"]))
     contracts = _event_contract_matrix(bundle, formal)
     status_replacement = _status_replacement_contract_matrix()
     execution = _event_family_execution_matrix(
-        bundle,
-        partition,
-        production,
-        energy_listener,
-        bp_listener,
-        cards_by_path,
-        external_character_build_paths=frozenset(
-            path_inventory["external_character_build_paths"]
-        ),
-        family_filter=event_families,
+        bundle, partition, production, resources["energy"], resources["bp"], cards_by_path,
+        external_character_build_paths=frozenset(paths["external_character_build_paths"]),
+        family_filter=family_filter,
     )
     contract_rows = {
-        f"{row.get('event')}:s8": row
-        for row in contracts.get("rows", ())
-        if row.get("event")
+        f"{row.get('event')}:s8": row for row in contracts.get("rows", ()) if row.get("event")
     }
     selected_contracts_ok = all(
         isinstance(contract_rows.get(row["family"]), dict)
         and contract_rows[row["family"]].get("ok") is True
         for row in execution["rows"]
     )
-    unreferenced_event_rows = tuple(
+    unreferenced_rows = tuple(
         row
         for row in partition["_inventory"]["_source_rows"]
         if row["stage"] == "unreferenced" and row["kind"] == "event"
     )
     unreferenced_event_names = {
-        row["family"].rsplit(":", 1)[0]
-        for row in unreferenced_event_rows
+        row["family"].rsplit(":", 1)[0] for row in unreferenced_rows
     }
-    selected_execution_families = {
-        row["family"] for row in execution["rows"]
-    }
+    executed_families = {row["family"] for row in execution["rows"]}
     selected_unreferenced_families = tuple(
-        sorted(
-            family
-            for family in (event_families or ())
-            if family.rsplit(":", 1)[0] in unreferenced_event_names
-        )
+        sorted(family for family in (family_filter or ())
+               if family.rsplit(":", 1)[0] in unreferenced_event_names)
     )
     unresolved_selected_families = tuple(
-        sorted(
-            family
-            for family in (event_families or ())
-            if family not in selected_execution_families
-            and family not in selected_unreferenced_families
-        )
+        sorted(family for family in (family_filter or ())
+               if family not in executed_families
+               and family not in selected_unreferenced_families)
     )
     exact_family_outcomes_ok = (
         execution["ok"]
-        if event_families is None
-        else (
-            all(row["ok"] for row in execution["rows"])
-            and not unresolved_selected_families
-            and bool(execution["rows"] or selected_unreferenced_families)
-        )
+        if family_filter is None
+        else all(row["ok"] for row in execution["rows"])
+        and not unresolved_selected_families
+        and bool(execution["rows"] or selected_unreferenced_families)
     )
     predicates = {
-        "every_exact_event_family_executed_or_unreferenced": (
-            exact_family_outcomes_ok
-        ),
-        "selected_event_families_have_executable_contract": (
-            selected_contracts_ok
-        ),
+        "every_exact_event_family_executed_or_unreferenced": exact_family_outcomes_ok,
+        "selected_event_families_have_executable_contract": selected_contracts_ok,
         "unreferenced_modifier_sources_retained": all(
-            bool(row["source_identity"])
-            for row in unreferenced_event_rows
+            bool(row["source_identity"]) for row in unreferenced_rows
         ),
-        "shared_battle_state_events_use_source_backed_transition": (
-            battle_state_transition_seed["ok"]
-        ),
+        "shared_battle_state_events_use_source_backed_transition": evidence["battle_seed"]["ok"],
         "status_replacement_namespace_is_fail_closed": status_replacement["ok"],
     }
-    ok = all(predicates.values())
-    summary = {
-        "schema_version": "p8_s8_event_contract_validation_summary_v1",
+    summary = _contract_slice_summary(
+        "p8_s8_event_contract_validation_summary_v1", predicates,
+        counts={
+            "event_families": execution["family_count"],
+            "unreferenced_event_sources": len(unreferenced_rows),
+        },
+        resource_scope={
+            **_contract_resource_scope(build_counts),
+            "catalog_startup_executed": False,
+            "task_property_matrices_executed": False,
+        },
+        event_family_filter=sorted(family_filter or ()),
+        selected_unreferenced_families=list(selected_unreferenced_families),
+        unresolved_selected_families=list(unresolved_selected_families),
+    )
+    if write_outputs:
+        artifacts = {
+            "exact_event_family_execution_matrix_p8_s8.json": execution,
+            "status_replacement_contract_matrix_p8_s8.json": status_replacement,
+            "real_custom_event_seed_matrix_p8_s8.json": evidence["custom_seed"],
+            "real_weakness_event_seed_matrix_p8_s8.json": evidence["weakness_seed"],
+            "battle_state_transition_seed_matrix_p8_s8.json": evidence["battle_seed"],
+            "unreferenced_event_source_matrix_p8_s8.json": {
+                "schema_version": "p8_s8_unreferenced_event_source_matrix_v1",
+                "ok": predicates["unreferenced_modifier_sources_retained"],
+                "count": len(unreferenced_rows), "rows": list(unreferenced_rows),
+            },
+            "validation_summary_p8_s8_event_contract.json": summary,
+        }
+        _write_artifacts(output_dir, artifacts)
+    summary["_probe_payload"] = (execution, status_replacement, resources, contracts)
+    return summary
+
+
+def _run_contract_validation(
+    tbgd_root: Path,
+    output_dir: Path,
+    contract_slices: tuple[str, ...],
+    *,
+    build_counts: Counter[str],
+    task_families: frozenset[str] | None = None,
+    event_families: frozenset[str] | None = None,
+) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
+    if not contract_slices or set(contract_slices) - {"task", "event"}:
+        raise ValueError(f"invalid contract slices: {contract_slices!r}")
+    if len(contract_slices) != len(set(contract_slices)):
+        raise ValueError(f"duplicate contract slices: {contract_slices!r}")
+    started_at = time.perf_counter()
+    evidence = _build_contract_evidence(tbgd_root, build_counts)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    consumer_specs = {
+        "task": (_run_task_contract_slice, task_families),
+        "event": (_run_event_contract_slice, event_families),
+    }
+
+    def consume(name: str, write_outputs: bool, family: str = "") -> dict[str, Any]:
+        runner, configured_filter = consumer_specs[name]
+        return runner(
+            evidence, output_dir,
+            build_counts=build_counts,
+            family_filter=frozenset({family}) if family else configured_filter,
+            write_outputs=write_outputs,
+        )
+
+    def digest(value: Any) -> str:
+        return json.dumps(value, sort_keys=True, separators=(",", ":"))
+
+    shared_events = evidence["production"]["_events_by_type"]
+    shared_before = {name: len(rows) for name, rows in shared_events.items()}
+    summaries = {
+        name: consume(name, True)
+        for name in contract_slices
+    }
+
+    failures_by_slice = {
+        name: sorted({
+            str(row["family"])
+            for matrix in summary["_probe_payload"]
+            for row in matrix.get("failures", ())
+            if row.get("family")
+        })
+        for name, summary in summaries.items()
+    }
+    business_failures = sorted({
+        family
+        for failures in failures_by_slice.values()
+        for family in failures
+    })
+    combined = set(contract_slices) == {"task", "event"}
+    failure_slice = next((name for name in contract_slices if failures_by_slice[name]), "")
+    peer_slice = next((name for name in contract_slices if name != failure_slice), "")
+    failure_family = failures_by_slice[failure_slice][0] if failure_slice else ""
+    probe_counts_before = dict(build_counts)
+    selected_rows = {
+        name: next((row for row in summary["_probe_payload"][0]["rows"]
+                    if row.get("ok") is True and row.get("family")), {})
+        for name, summary in summaries.items()
+    }
+    order_probe: bool | None = None
+    if combined and all(selected_rows.values()):
+        reverse = {
+            name: consume(name, False, str(selected_rows[name]["family"]))
+            for name in reversed(contract_slices)
+        }
+        order_probe = all(
+            reverse[name]["_probe_payload"][0]["rows"] == [selected_rows[name]]
+            for name in contract_slices
+        )
+    failure_probe: bool | None = None
+    if combined and failure_family and peer_slice:
+        peer_before = digest(summaries[peer_slice])
+        failed_probe = consume(failure_slice, False, failure_family)
+        failure_probe = (
+            failed_probe["ok"] is False
+            and peer_before == digest(summaries[peer_slice])
+        )
+    probe_count_deltas = {
+        key: build_counts[key] - probe_counts_before.get(key, 0)
+        for key in build_counts.keys() | probe_counts_before.keys()
+    }
+    probe_rebuilt_shared_context = any(probe_count_deltas.values())
+    shared_unchanged = shared_before == {
+        name: len(rows) for name, rows in shared_events.items()
+    }
+    business_ok = all(item["ok"] for item in summaries.values())
+    build_summary = {
+        key: _measured_count(build_counts, key)
+        for key in (*LOWERING_ENTRY_KEYS, "focused_bundle", "common_evidence")
+    }
+    build_summary["components"] = {
+        name: _measured_count(build_counts, name)
+        for name in CONTRACT_COMPONENTS
+    }
+    usage = resource.getrusage(resource.RUSAGE_SELF)
+    measurement = {
+        "elapsed_seconds": round(time.perf_counter() - started_at, 6),
+        "peak_rss_kib": int(usage.ru_maxrss),
+        "filesystem_input_operations": int(usage.ru_inblock),
+        "filesystem_output_operations": int(usage.ru_oublock),
+        "artifact_bytes_before_summary": sum(
+            path.stat().st_size for path in output_dir.iterdir() if path.is_file()
+        ),
+        "external_time_v_path": str(output_dir / "time-v.txt"),
+    }
+    governance_checks = {
+        "unfiltered_task_event_combined": (
+            combined and task_families is None and event_families is None
+        ),
+        "shared_build_counts_exact": (
+            (
+                build_summary["full_tbgd_lowering_build"],
+                build_summary["owned_combatant_admission_projection"],
+                build_summary["focused_bundle"],
+                build_summary["common_evidence"],
+            ) == (0, 1, 1, 1)
+            and all(
+                count == 1 for count in build_summary["components"].values()
+            )
+        ),
+        "representative_reverse_order_equal": order_probe is True,
+        "failure_isolation_proven_or_not_applicable":
+            not business_failures or failure_probe is True,
+        "shared_evidence_unchanged": shared_unchanged,
+        "probes_did_not_rebuild_shared_context": not probe_rebuilt_shared_context,
+        "business_result_within_confirmed_p8_r1_gaps":
+            _business_result_within_confirmed_p8_r1_gaps(business_ok, business_failures),
+        "combined_peak_rss_within_3_5_gib": (
+            measurement["peak_rss_kib"] <= int(3.5 * 1024 * 1024)
+        ),
+    }
+    for summary in summaries.values():
+        summary.pop("_probe_payload")
+    run_summary = {
+        "schema_version": "p8_s8_task_event_contract_run_summary_v1",
         "validation_version": VALIDATION_VERSION,
-        "ok": ok,
+        "ok": business_ok,
+        "governance_ok": all(governance_checks.values()),
         "ready_for_review": False,
         "checklist_modified": False,
         "git_commit_created": False,
-        "predicates": predicates,
-        "counts": {
-            "event_families": execution["family_count"],
-            "unreferenced_event_sources": len(unreferenced_event_rows),
+        "requested_slices": list(contract_slices),
+        "completed_slices": list(summaries),
+        "slice_results": {
+            name: {"ok": summary["ok"], "failed_families": failures_by_slice[name]}
+            for name, summary in summaries.items()
         },
-        "resource_scope": {
-            "focused_rulebook_build_count": 1,
-            "full_s8_matrices_executed": False,
-            "catalog_startup_executed": False,
-            "task_property_matrices_executed": False,
-            "full_canonical_ir_serialized": False,
-            "large_artifacts_written": False,
+        "business_failures": business_failures,
+        "confirmed_p8_r1_business_gaps": sorted(P8_R1_CONFIRMED_BUSINESS_GAPS),
+        "governance_checks": governance_checks,
+        "build_counts": build_summary,
+        "probes": {
+            "reverse_slice_order_equal": order_probe,
+            "order_probe_families": {
+                name: row.get("family", "") for name, row in selected_rows.items()
+            },
+            "failed_slice_keeps_peer_visible": failure_probe,
+            "failed_probe_slice": failure_slice,
+            "failed_probe_peer_slice": peer_slice,
+            "failed_probe_family": failure_family,
+            "probe_build_count_deltas": probe_count_deltas,
+            "probe_rebuilt_shared_context": probe_rebuilt_shared_context,
         },
-        "event_family_filter": sorted(event_families or ()),
-        "selected_unreferenced_families": list(selected_unreferenced_families),
-        "unresolved_selected_families": list(unresolved_selected_families),
+        "measurement": measurement,
     }
-    write_json(
-        output_dir / "exact_event_family_execution_matrix_p8_s8.json",
-        execution,
-    )
-    write_json(
-        output_dir / "status_replacement_contract_matrix_p8_s8.json",
-        status_replacement,
-    )
-    write_json(
-        output_dir / "real_custom_event_seed_matrix_p8_s8.json",
-        custom_event_seed,
-    )
-    write_json(
-        output_dir / "real_weakness_event_seed_matrix_p8_s8.json",
-        weakness_event_seed,
-    )
-    write_json(
-        output_dir / "battle_state_transition_seed_matrix_p8_s8.json",
-        battle_state_transition_seed,
-    )
-    write_json(
-        output_dir / "unreferenced_event_source_matrix_p8_s8.json",
-        {
-            "schema_version": "p8_s8_unreferenced_event_source_matrix_v1",
-            "ok": all(bool(row["source_identity"]) for row in unreferenced_event_rows),
-            "count": len(unreferenced_event_rows),
-            "rows": list(unreferenced_event_rows),
-        },
-    )
-    write_json(
-        output_dir / "validation_summary_p8_s8_event_contract.json",
-        summary,
-    )
-    return summary
+    if len(contract_slices) > 1:
+        write_json(output_dir / "validation_summary_p8_s8_task_event_contract_run.json",
+                   run_summary)
+    return run_summary, summaries
+
+
+def run_contract_validation(
+    tbgd_root: Path, output_dir: Path, *, contract_slices: tuple[str, ...],
+    task_families: frozenset[str] | None = None, event_families: frozenset[str] | None = None,
+) -> dict[str, Any]:
+    build_counts: Counter[str] = Counter()
+    with _observe_lowering_entries(build_counts):
+        run_summary, summaries = _run_contract_validation(
+            tbgd_root, output_dir, contract_slices,
+            build_counts=build_counts,
+            task_families=task_families, event_families=event_families,
+        )
+    return run_summary if len(contract_slices) > 1 else summaries[contract_slices[0]]
 
 
 def _task_family_execution_matrix(
@@ -6705,7 +6830,7 @@ def _state_after_produced_unit_creation(
         template_id=entity_id,
         statuses=(),
         shield_instances=(),
-        flags={"lifecycle_status": "active"},
+        lifecycle_status="active", flags={},
     )
     return replace(state, units={**state.units, target_id: created})
 
@@ -7073,9 +7198,10 @@ def _status_phase_callback_execution_probe(
             ],
         },
         "errors": [
-            transition.outcome.reason
+            reason_code
             for transition in transitions
             if not transition.outcome.successor_eligible
+            for reason_code in transition.outcome.reason_codes
         ],
         "reason": "" if ok else "scheduler_status_phase_task_not_executed",
         "source": task.source.to_json(),
@@ -7807,11 +7933,8 @@ def _equipment_task_probe_state(
                 actor,
                 hp=max(1.0, actor.max_hp / 2.0),
                 action_value=100.0,
-                flags={
-                    **actor.flags,
-                    "lifecycle_status": "active",
-                    "position": 0,
-                },
+                lifecycle_status="active",
+                flags={**actor.flags, "position": 0},
             )
             state = replace(
                 built.state,
@@ -8853,53 +8976,41 @@ def run_validation(tbgd_root: Path, output_dir: Path) -> dict[str, Any]:
     """Build one focused RuleBook and emit only bounded S8 evidence."""
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    bundle = _focused_bundle(
-        tbgd_root,
-        include_owned_combatant_catalog=True,
+    build_counts: Counter[str] = Counter()
+    with _observe_lowering_entries(build_counts):
+        evidence = _build_contract_evidence(tbgd_root, build_counts)
+        task_summary = _run_task_contract_slice(
+            evidence, output_dir, build_counts=build_counts, write_outputs=False
+        )
+        event_summary = _run_event_contract_slice(
+            evidence, output_dir, build_counts=build_counts, write_outputs=False
+        )
+    bundle, partition, path_inventory = (
+        evidence["bundle"], evidence["partition"], evidence["paths"]
     )
     empty_task_fail_closed = _empty_executable_task_fail_closed_matrix(bundle)
-    partition = _partition_matrix(bundle)
     graphs = _graph_matrix(bundle)
-    path_inventory = _empty_character_build_path_inventory(bundle)
     cards_by_path = path_inventory["cards_by_path"]
     startups = _catalog_startup_matrix(
         bundle,
         cards_by_path=cards_by_path,
         path_inventory=path_inventory,
     )
-    formal = _formal_scenario_matrix(bundle)
-    lifecycle = _lifecycle_matrix(bundle, formal)
-    production = _production_event_chain(bundle, formal, lifecycle)
-    common_event_counts = _augment_common_mutation_events(production)
-    battle_state_transition_seed = (
-        _augment_real_battle_state_transition_events(bundle, production)
-    )
-    real_heal_seed = _augment_real_heal_events(
-        bundle,
-        production,
-        cards_by_path,
-    )
-    real_custom_event_seed = _augment_real_custom_events(
-        bundle,
-        production,
-        tbgd_root,
-    )
-    real_weakness_event_seed = _augment_real_weakness_events(
-        production,
-        tbgd_root,
-    )
-    resource_event_evidence = _authoritative_resource_event_evidence(
-        bundle,
-        cards_by_path,
-    )
-    resource_event_contract = resource_event_evidence["contract"]
+    formal = evidence["formal"]
+    common_event_counts = evidence["common_counts"]
+    battle_state_transition_seed = evidence["battle_seed"]
+    real_heal_seed, real_custom_event_seed = evidence["heal_seed"], evidence["custom_seed"]
+    real_weakness_event_seed = evidence["weakness_seed"]
+    task_execution, stack_property_consumption = task_summary.pop("_probe_payload")
+    (
+        event_execution,
+        status_replacement,
+        resource_event_evidence,
+        events,
+    ) = event_summary.pop("_probe_payload")
     energy_listener = resource_event_evidence["energy"]
     bp_listener = resource_event_evidence["bp"]
     resource_event_closure = resource_event_evidence["closure"]
-    _merge_production_events(
-        production,
-        list(resource_event_evidence["production_events"]),
-    )
     targets = _target_attribution_matrix(
         bundle,
         partition["_inventory"],
@@ -8912,35 +9023,7 @@ def run_validation(tbgd_root: Path, output_dir: Path) -> dict[str, Any]:
     damage = _damage_route_matrix(bundle)
     timeline = _timeline_matrix(bundle)
     rng = _rng_matrix(bundle)
-    events = _event_contract_matrix(bundle, formal)
-    status_replacement = _status_replacement_contract_matrix()
     process_only = _process_only_matrix(bundle)
-    task_state_cache: dict[str, BattleState] = {}
-    task_execution = _task_family_execution_matrix(
-        bundle,
-        partition,
-        production,
-        cards_by_path,
-        external_character_build_paths=frozenset(
-            path_inventory["external_character_build_paths"]
-        ),
-        state_cache=task_state_cache,
-    )
-    stack_property_consumption = _stack_property_consumption_matrix(
-        partition,
-        task_execution=task_execution,
-    )
-    event_execution = _event_family_execution_matrix(
-        bundle,
-        partition,
-        production,
-        energy_listener,
-        bp_listener,
-        cards_by_path,
-        external_character_build_paths=frozenset(
-            path_inventory["external_character_build_paths"]
-        ),
-    )
     runtime_boundary = _runtime_boundary()
     family_evidence = _exact_family_evidence(
         conditions=conditions,
@@ -9082,16 +9165,13 @@ def run_validation(tbgd_root: Path, output_dir: Path) -> dict[str, Any]:
         and predicates["dead_production_resource_event_count"] == 0
     )
     predicates["ok"] = ok
-    summary = {
-        "schema_version": SUMMARY_SCHEMA_VERSION,
-        "validation_version": VALIDATION_VERSION,
-        "baseline_version": BASELINE_VERSION,
-        "ok": ok,
-        "ready_for_review": ok,
-        "checklist_modified": False,
-        "git_commit_created": False,
-        "predicates": predicates,
-        "counts": {
+    summary = _contract_slice_summary(
+        SUMMARY_SCHEMA_VERSION,
+        predicates,
+        ok=ok,
+        ready_for_review=ok,
+        baseline_version=BASELINE_VERSION,
+        counts={
             "published_light_cones": graphs["published_count"],
             "current_gameplay_nodes": partition["counts"].get("s7", 0)
             + partition["counts"].get("s8", 0),
@@ -9110,7 +9190,7 @@ def run_validation(tbgd_root: Path, output_dir: Path) -> dict[str, Any]:
             "common_mutation_event_types": common_event_counts,
             **startups["counts"],
         },
-        "resource_scope": {
+        resource_scope={
             "focused_rulebook_build_count": 1,
             "task_state_cache_limit": TASK_STATE_CACHE_LIMIT,
             "full_canonical_ir_serialized": False,
@@ -9135,53 +9215,36 @@ def run_validation(tbgd_root: Path, output_dir: Path) -> dict[str, Any]:
                 "battle_state_transition_seed_matrix_p8_s8.json",
             ],
         },
-    }
-    write_json(
-        output_dir / "inherited_partition_check_p8_s8.json",
-        {key: value for key, value in partition.items() if not key.startswith("_")},
     )
-    write_json(output_dir / "remaining_family_matrix_p8_s8.json", coverage)
-    write_json(output_dir / "full_graph_matrix_p8_s8.json", graphs)
-    write_json(output_dir / "catalog_startup_matrix_p8_s8.json", startups)
-    write_json(
-        output_dir / "common_route_matrix_p8_s8.json",
-        {
+    artifacts = {
+        "inherited_partition_check_p8_s8.json": {
+            key: value for key, value in partition.items() if not key.startswith("_")
+        },
+        "remaining_family_matrix_p8_s8.json": coverage,
+        "full_graph_matrix_p8_s8.json": graphs,
+        "catalog_startup_matrix_p8_s8.json": startups,
+        "common_route_matrix_p8_s8.json": {
             "schema_version": "p8_s8_common_route_aggregate_v1",
             "ok": effects["ok"] and damage["ok"] and timeline["ok"] and process_only["ok"],
-            "effects": effects,
-            "damage": damage,
-            "timeline": timeline,
+            "effects": effects, "damage": damage, "timeline": timeline,
             "process_only": process_only,
         },
-    )
-    write_json(
-        output_dir / "condition_numeric_matrix_p8_s8.json",
-        {
+        "condition_numeric_matrix_p8_s8.json": {
             "schema_version": "p8_s8_condition_numeric_aggregate_v1",
             "ok": conditions["ok"] and numeric["ok"],
-            "conditions": conditions,
-            "numeric": numeric,
+            "conditions": conditions, "numeric": numeric,
         },
-    )
-    write_json(
-        output_dir / "target_rng_matrix_p8_s8.json",
-        {
+        "target_rng_matrix_p8_s8.json": {
             "schema_version": "p8_s8_target_rng_aggregate_v1",
             "ok": targets["ok"] and target_families["ok"] and rng["ok"],
             "targets": {key: value for key, value in targets.items() if not key.startswith("_")},
-            "target_families": target_families,
-            "rng": rng,
+            "target_families": target_families, "rng": rng,
         },
-    )
-    write_json(
-        output_dir / "event_audit_replay_matrix_p8_s8.json",
-        {
+        "event_audit_replay_matrix_p8_s8.json": {
             "schema_version": "p8_s8_event_audit_replay_aggregate_v1",
-            "ok": events["ok"]
-            and energy_listener["ok"]
-            and resource_event_closure["ok"]
-            and battle_state_transition_seed["ok"]
-            and formal["ok"],
+            "ok": (events["ok"] and energy_listener["ok"]
+                   and resource_event_closure["ok"]
+                   and battle_state_transition_seed["ok"] and formal["ok"]),
             "events": events,
             "energy_listener": {
                 key: value
@@ -9193,53 +9256,20 @@ def run_validation(tbgd_root: Path, output_dir: Path) -> dict[str, Any]:
             "status_replacement": status_replacement,
             "formal": {key: value for key, value in formal.items() if not key.startswith("_")},
         },
-    )
-    write_json(
-        output_dir / "status_replacement_contract_matrix_p8_s8.json",
-        status_replacement,
-    )
-    write_json(
-        output_dir / "exact_task_family_execution_matrix_p8_s8.json",
-        task_execution,
-    )
-    write_json(
-        output_dir / "stack_property_consumption_matrix_p8_s8.json",
-        stack_property_consumption,
-    )
-    write_json(
-        output_dir / "exact_event_family_execution_matrix_p8_s8.json",
-        event_execution,
-    )
-    write_json(
-        output_dir / "resource_event_closure_matrix_p8_s8.json",
-        resource_event_closure,
-    )
-    write_json(output_dir / "runtime_boundary_p8_s8.json", runtime_boundary)
-    write_json(
-        output_dir / "empty_executable_task_fail_closed_matrix_p8_s8.json",
-        empty_task_fail_closed,
-    )
-    write_json(
-        output_dir / "real_heal_event_seed_matrix_p8_s8.json",
-        real_heal_seed,
-    )
-    write_json(
-        output_dir / "real_custom_event_seed_matrix_p8_s8.json",
-        real_custom_event_seed,
-    )
-    write_json(
-        output_dir / "real_weakness_event_seed_matrix_p8_s8.json",
-        real_weakness_event_seed,
-    )
-    write_json(
-        output_dir / "battle_state_transition_seed_matrix_p8_s8.json",
-        battle_state_transition_seed,
-    )
-    write_json(
-        output_dir
-        / "validation_summary_p8_s8_light_cone_remaining_gameplay_closure.json",
-        summary,
-    )
+        "status_replacement_contract_matrix_p8_s8.json": status_replacement,
+        "exact_task_family_execution_matrix_p8_s8.json": task_execution,
+        "stack_property_consumption_matrix_p8_s8.json": stack_property_consumption,
+        "exact_event_family_execution_matrix_p8_s8.json": event_execution,
+        "resource_event_closure_matrix_p8_s8.json": resource_event_closure,
+        "runtime_boundary_p8_s8.json": runtime_boundary,
+        "empty_executable_task_fail_closed_matrix_p8_s8.json": empty_task_fail_closed,
+        "real_heal_event_seed_matrix_p8_s8.json": real_heal_seed,
+        "real_custom_event_seed_matrix_p8_s8.json": real_custom_event_seed,
+        "real_weakness_event_seed_matrix_p8_s8.json": real_weakness_event_seed,
+        "battle_state_transition_seed_matrix_p8_s8.json": battle_state_transition_seed,
+        "validation_summary_p8_s8_light_cone_remaining_gameplay_closure.json": summary,
+    }
+    _write_artifacts(output_dir, artifacts)
     return summary
 
 
@@ -9247,6 +9277,8 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--tbgd-root", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--contract-slice", action="append", choices=("task", "event"), default=[],
+                        help="Run this contract slice; repeat once to share evidence across task and event.")
     parser.add_argument(
         "--resource-events-only",
         action="store_true",
@@ -9291,8 +9323,8 @@ def main() -> None:
         action="append",
         default=[],
         help=(
-            "With --task-contract-only, validate only this exact task family; "
-            "repeat the option to select several families."
+            "With a task contract slice, validate only this exact task family; "
+            "repeat to select several families."
         ),
     )
     parser.add_argument(
@@ -9300,84 +9332,49 @@ def main() -> None:
         action="append",
         default=[],
         help=(
-            "With --event-contract-only, validate only this exact event family; "
-            "repeat the option to select several families."
+            "With an event contract slice, validate only this exact event family; "
+            "repeat to select several families."
         ),
     )
     args = parser.parse_args()
-    focused_mode_count = sum(
-        bool(value)
-        for value in (
-            args.resource_events_only,
-            args.catalog_startup_only,
-            args.condition_contract_only,
-            args.numeric_contract_only,
-            args.task_contract_only,
-            args.event_contract_only,
-        )
-    )
+    if len(args.contract_slice) != len(set(args.contract_slice)):
+        parser.error("--contract-slice may select each slice at most once")
+    legacy_slices = ("task",) if args.task_contract_only else ("event",) if args.event_contract_only else ()
+    contract_slices = tuple(args.contract_slice) or legacy_slices
+    focused_mode_count = sum(map(bool, (
+        args.contract_slice,
+        args.resource_events_only,
+        args.catalog_startup_only,
+        args.condition_contract_only,
+        args.numeric_contract_only,
+    ))) + args.task_contract_only + args.event_contract_only
     if focused_mode_count > 1:
         parser.error("choose at most one focused validation mode")
-    if args.task_family and not args.task_contract_only:
-        parser.error("--task-family requires --task-contract-only")
-    if args.event_family and not args.event_contract_only:
-        parser.error("--event-family requires --event-contract-only")
+    if args.task_family and "task" not in contract_slices:
+        parser.error("--task-family requires a task contract slice")
+    if args.event_family and "event" not in contract_slices:
+        parser.error("--event-family requires an event contract slice")
     if args.catalog_definition and not args.catalog_startup_only:
         parser.error("--catalog-definition requires --catalog-startup-only")
-    runner = (
-        run_resource_event_validation
-        if args.resource_events_only
-        else (
-            run_catalog_startup_validation
-            if args.catalog_startup_only
-            else (
-                run_condition_contract_validation
-                if args.condition_contract_only
-                else (
-                    run_numeric_contract_validation
-                    if args.numeric_contract_only
-                    else (
-                        run_task_contract_validation
-                        if args.task_contract_only
-                        else (
-                            run_event_contract_validation
-                            if args.event_contract_only
-                            else run_validation
-                        )
-                    )
-                )
-            )
-        )
-    )
-    summary = (
-        run_task_contract_validation(
-            args.tbgd_root.resolve(),
-            args.output_dir.resolve(),
+    root, output_dir = args.tbgd_root.resolve(), args.output_dir.resolve()
+    if contract_slices:
+        summary = run_contract_validation(
+            root, output_dir, contract_slices=contract_slices,
             task_families=frozenset(args.task_family) or None,
+            event_families=frozenset(args.event_family) or None,
         )
-        if args.task_contract_only
-        else (
-            run_event_contract_validation(
-                args.tbgd_root.resolve(),
-                args.output_dir.resolve(),
-                event_families=frozenset(args.event_family) or None,
-            )
-            if args.event_contract_only
-            else (
-                run_catalog_startup_validation(
-                    args.tbgd_root.resolve(),
-                    args.output_dir.resolve(),
-                    definition_identities=(
-                        frozenset(args.catalog_definition)
-                        if args.catalog_definition
-                        else None
-                    ),
-                )
-                if args.catalog_startup_only
-                else runner(args.tbgd_root.resolve(), args.output_dir.resolve())
-            )
+    elif args.catalog_startup_only:
+        summary = run_catalog_startup_validation(
+            root, output_dir, definition_identities=frozenset(args.catalog_definition) or None,
         )
-    )
+    elif args.resource_events_only:
+        summary = run_resource_event_validation(root, output_dir)
+    elif args.condition_contract_only:
+        summary = run_condition_contract_validation(root, output_dir)
+    elif args.numeric_contract_only:
+        summary = run_numeric_contract_validation(root, output_dir)
+    else:
+        summary = run_validation(root, output_dir)
     print(summary)
     if not summary["ok"]:
         raise SystemExit(1)

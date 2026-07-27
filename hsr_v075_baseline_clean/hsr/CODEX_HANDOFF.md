@@ -30,6 +30,7 @@ d29b34b checkpoint(v8): accept VG-S2 committed integrity lifecycle pilot
 - P7-S0 至 P7-S19 内核可信执行与当前准入战斗语义。
 - P8-S0 至 P8-S8 光锥定义、实例、装配和机制闭合。
 - CHAR-M1 记忆角色与忆灵 owned-combatant 构筑底座。
+- VG-R1 P8-S8 task/event 共享证据与 owned-combatant 窄投影试点。
 
 必须保留的限定：
 
@@ -57,13 +58,18 @@ P7-S15: 14/14
 git diff --check: pass
 ```
 
-当前已发布光锥的完整正式目录启动因旧验证内存成本过高，按用户决定记为：
+VG-R1 的低内存未过滤组合已经首次在当前源码上完整进入 task/event 业务谓词。
+目录状态不再只是“未运行”：
 
 ```text
-deferred / not_proven
+P8-R1 runtime-only = accepted
+P8-R1 catalog = confirmed incomplete
 ```
 
-这不是已确认的生产代码失败，但在新的低内存目录验证完成前，不得宣称 `formal_catalog_startup_complete=true`。P8 总 checklist 中“全部正式启动”的原条目仍不能仅凭聚焦验证打勾。
+当前失败集中在两条动态值任务 family 和一条死亡回响事件 family，对应 CHAR-M1
+曾记录的记忆光锥 / 忆灵正式场景缺口。它们不是 VG-R1 窄投影制造的新回归，也
+不能再记为单纯 `not_proven`。P8-R1 中“三张真实光锥与完整目录收口”继续未完成，
+后续必须单独修复；P8 总 checklist 不得打勾。
 
 ## 当前工作
 
@@ -77,14 +83,17 @@ deferred / not_proven
    integrity gate、完整批次 replay、atomic failure 和场景双 full-check 边界已闭合。
 4. 原 `VG-S3` validator registry 路线已撤销。它新增 5,110 行治理与元验证代码，
    却没有同轮减少真实重构建和历史脚本，不能恢复或继续扩展。
-5. `VG-R1` 第一次 task 基线已在完整动作 lowering 中以 4,137,552 KiB 峰值触发
-   `MemoryError`，尚未进入 family 契约。该失败已作为正式成本基线，不得提高
-   4 GiB 上限或重跑旧路径。
-6. `VG-R1` 修订卡要求先在 lowering 层建立五类 servant 准入数据的来源真实窄
-   投影，使 P8-S8 task/event 的完整 `TBGDLowering.build()` 调用降为零，再合并
-   两条路径的单次 focused 构建和公共证据。
-7. `VG-R1` 通过前不规划全项目 registry、持久缓存、通用调度器或第二个治理
-   阶段。事件 closure 与其他状态权威问题仍按生产机制单独制卡。
+5. `VG-R1` 已通过验收：task/event 不再调用完整 `TBGDLowering.build()`，五类
+   servant 准入数据改走来源真实的窄投影。
+6. 窄投影、focused bundle 和公共证据均只构建 1 次；最终未过滤组合峰值
+   588,188 KiB，旧完整 build 的 4,137,552 KiB `MemoryError` 保留为成本基线。
+7. 验证 Python 净减少 3 行，production 与 validation 总净增长 320 行；没有
+   恢复深冻结、来源审计、registry、selector 或元验证框架。
+8. CLI 只按业务 `ok` 退出；`governance_ok` 不能把业务失败标绿。已知 P8-R1
+   缺口只作为失败上限，允许后续减少至零。
+9. 未过滤组合暴露的三类 P8-R1 业务失败只做归因，不在 VG-R1 中修改游戏语义。
+10. 当前没有自动衔接的第二张治理执行卡。若继续治理，必须先选择第二个真实重复点
+    并证明其与 VG-R1 具有相同生命周期，不能直接规划全项目框架。
 
 遗器轨 P8-S9 至 S17 仍按 `docs/p8_execution_cards/` 中的单阶段执行卡推进。S18 是光锥与遗器汇合阶段。
 
@@ -104,14 +113,14 @@ deferred / not_proven
 
 不要默认通读所有文档。根据任务选择：
 
-- 阶段实施：当前只允许
+- VG-R1 已验收执行卡：
   `docs/validation_execution_cards/VG-R1_P8_S8_TASK_EVENT_SHARED_EVIDENCE_PILOT.md`。
 - 架构修改：`ARCHITECTURE_BOUNDARY_CONTRACT.md`、`FORBIDDEN.md`。
 - 规划、验收、验证治理：`docs/AGENT_WORKFLOW_AND_VALIDATION.md`。
 - VG 总方案：`VALIDATION_GOVERNANCE_AND_STATE_INTEGRITY_PLAN.md`。
 - VG 已验收基线：`docs/validation_execution_cards/VG-S2_COMMITTED_INTEGRITY_LIFECYCLE_PILOT.md`。
-- VG 当前执行卡：
-  `docs/validation_execution_cards/VG-R1_P8_S8_TASK_EVENT_SHARED_EVIDENCE_PILOT.md`。
+- VG-R1 验收报告：
+  `live_validation_reports/v8_vg_r1_p8_s8_task_event_shared_evidence_ready_for_review.md`。
 - 已撤销路线：原 VG-S3 registry/selector/meta-validator，不得恢复。
 - 当前文档导航：`DOCUMENTATION_INDEX.md`。
 - P8：`P8_EQUIPMENT_BUILD_LIGHT_CONE_RELIC_TASK_PLAN.md` 和当前阶段卡。
