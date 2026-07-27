@@ -77,9 +77,13 @@ deferred / not_proven
    integrity gate、完整批次 replay、atomic failure 和场景双 full-check 边界已闭合。
 4. 原 `VG-S3` validator registry 路线已撤销。它新增 5,110 行治理与元验证代码，
    却没有同轮减少真实重构建和历史脚本，不能恢复或继续扩展。
-5. 当前唯一已确认执行卡是 `VG-R1`：只合并 P8-S8 task/event 两条真实重路径的
-   一次目录构建和公共证据，并要求同轮删重复、量化耗时/RSS/IO 和代码净减少。
-6. `VG-R1` 通过前不规划全项目 registry、持久缓存、通用调度器或第二个治理
+5. `VG-R1` 第一次 task 基线已在完整动作 lowering 中以 4,137,552 KiB 峰值触发
+   `MemoryError`，尚未进入 family 契约。该失败已作为正式成本基线，不得提高
+   4 GiB 上限或重跑旧路径。
+6. `VG-R1` 修订卡要求先在 lowering 层建立五类 servant 准入数据的来源真实窄
+   投影，使 P8-S8 task/event 的完整 `TBGDLowering.build()` 调用降为零，再合并
+   两条路径的单次 focused 构建和公共证据。
+7. `VG-R1` 通过前不规划全项目 registry、持久缓存、通用调度器或第二个治理
    阶段。事件 closure 与其他状态权威问题仍按生产机制单独制卡。
 
 遗器轨 P8-S9 至 S17 仍按 `docs/p8_execution_cards/` 中的单阶段执行卡推进。S18 是光锥与遗器汇合阶段。

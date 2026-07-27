@@ -169,6 +169,10 @@ VG-R1: P8-S8 task/event shared evidence pilot
   `_focused_bundle()`。
 - 每次调用都会经 `_production_owned_combatant_catalog()` 执行一次完整
   `TBGDLowering.build()`。
+- 第一次受限 task 基线已证明单次完整 build 本身不可承受：46.76 秒后在动作能力
+  lowering 中以 4,137,552 KiB 峰值触发 `MemoryError`，尚未进入 family 契约。
+- 该 helper 实际只消费 servant 定义、servant 动作定义、动作能力绑定、动作准入
+  和出生模板五类数据；为此构建整个 Canonical IR 是错误依赖。
 - 两条入口随后重复构建 partition、角色路径清单、正式场景、生命周期和公共事件
   链，并重复加入 battle-state、heal、custom 和 weakness 事件证据。
 - 现有 CLI 强制一次只选一个聚焦模式，因此连续验收 task 和 event 时上述工作
@@ -176,11 +180,14 @@ VG-R1: P8-S8 task/event shared evidence pilot
 
 试点目标不是新建公共框架，而是在这个单一模块内：
 
-1. 一次构建共享上下文和公共证据。
-2. task/event 分别只消费所需证据，结果不因组合或执行顺序变化。
-3. 保留旧单切片命令作为同一实现的薄路由，并提供一次运行两个切片的入口。
-4. 删除旧重复编排，保持现行谓词、来源真实性和输出可审计性。
-5. 用一次受限基线和一次合并运行证明构建次数、耗时、峰值内存和代码量改善。
+1. 在 lowering 层建立只生成上述五类数据的来源真实窄投影，复用现有生产语义，
+   不构建完整 Canonical IR。
+2. task/event 路径完整 `TBGDLowering.build()` 调用降为零。
+3. 一次构建共享上下文和公共证据。
+4. task/event 分别只消费所需证据，结果不因组合或执行顺序变化。
+5. 保留旧单切片命令作为同一实现的薄路由，并提供一次运行两个切片的入口。
+6. 删除旧 full-build 依赖和重复编排，用已经发生的失败基线及修改后实际 RSS、
+   IO、耗时和代码量证明收益。
 
 详细目标与唯一完成清单见：
 
