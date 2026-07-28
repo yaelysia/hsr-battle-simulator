@@ -29,6 +29,14 @@ MUTATION_BACKED_EVENT_TYPES = frozenset({
 PRE_MUTATION_BLOCK_REASON = "pre_mutation_listener_recompute_not_admitted"
 
 
+def mutation_backed_event_id(mutation_id: str, event_type: str) -> str:
+    """Return the stable business identity for one mutation-backed event."""
+
+    if not mutation_id or not event_type:
+        return ""
+    return f"event:mutation_backed:{mutation_id}:{event_type.replace('.', '_')}"
+
+
 def events_for_mutation(
     mutation: Mutation,
     *,

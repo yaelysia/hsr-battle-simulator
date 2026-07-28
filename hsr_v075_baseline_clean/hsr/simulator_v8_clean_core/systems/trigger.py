@@ -126,6 +126,22 @@ class TriggerSystem:
                     )
                     self._append_process_record(records, window_records, record)
                     continue
+                if self.rules.status_callback(trigger_id) is not None:
+                    record = _window_record(
+                        canonical_window,
+                        tbgd_event,
+                        detail,
+                        trigger_id=trigger_id,
+                        skipped_reason="delegated_to_status_callback_dispatch",
+                        metadata=_window_metadata(
+                            command=command,
+                            action_definition=action_definition,
+                            primary_target=primary_target,
+                            selected_targets=selected_targets,
+                        ),
+                    )
+                    self._append_process_record(records, window_records, record)
+                    continue
                 status_trigger_count += 1
                 trigger = self.rules.trigger(trigger_id)
                 if trigger is None:

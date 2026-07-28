@@ -75,10 +75,27 @@ def build_character_card_ir(
     *,
     max_records_per_table: int | None,
     skill_tables: tuple[SkillTableSpec, ...],
+    avatar_ids: frozenset[str] | None = None,
 ) -> CharacterCardBuildResult:
-    avatar_rows = _avatar_rows(tbgd_root, max_records_per_table=max_records_per_table)
-    rank_rows_by_id = _avatar_rank_rows_by_id(tbgd_root, max_records_per_table=max_records_per_table)
-    promotion_rows_by_avatar = _promotion_rows_by_avatar(tbgd_root)
+    avatar_rows = _avatar_rows(
+        tbgd_root,
+        max_records_per_table=max_records_per_table,
+        avatar_ids=avatar_ids,
+    )
+    rank_ids = frozenset(
+        str(rank_id)
+        for _, _, row in avatar_rows
+        for rank_id in row.get("RankIDList") or ()
+    )
+    rank_rows_by_id = _avatar_rank_rows_by_id(
+        tbgd_root,
+        max_records_per_table=max_records_per_table,
+        rank_ids=rank_ids if avatar_ids is not None else None,
+    )
+    promotion_rows_by_avatar = _promotion_rows_by_avatar(
+        tbgd_root,
+        avatar_ids=avatar_ids,
+    )
     skill_to_card = _skill_to_card_map(avatar_rows)
     avatar_id_to_card = {str(row["AvatarID"]): f"character_data_card:avatar:{row['AvatarID']}" for _, _, row in avatar_rows}
     action_set_by_card = _action_set_by_card(
@@ -147,6 +164,7 @@ def build_character_card_ir(
         dynamic_value_bindings_by_avatar_version=_character_config_dynamic_value_bindings_by_avatar_version(
             tbgd_root,
             max_records_per_table=max_records_per_table,
+            avatar_ids=avatar_ids,
         ),
         max_records_per_table=max_records_per_table,
     )
@@ -829,6 +847,7 @@ def _character_config_dynamic_value_bindings_by_avatar_version(
     tbgd_root: Path,
     *,
     max_records_per_table: int | None,
+    avatar_ids: frozenset[str] | None = None,
 ) -> dict[tuple[str, str], dict[str, JSONValue]]:
     result: dict[tuple[str, str], dict[str, JSONValue]] = {}
     for relative_path in (
@@ -849,6 +868,8 @@ def _character_config_dynamic_value_bindings_by_avatar_version(
             if not isinstance(row, dict) or row.get("AvatarID") is None:
                 continue
             avatar_id = str(row["AvatarID"])
+            if avatar_ids is not None and avatar_id not in avatar_ids:
+                continue
             enhanced_id = row.get("EnhancedID") if "Enhanced" in relative_path else None
             enhanced_key = str(enhanced_id) if enhanced_id is not None else ""
             augmented = _augment_avatar_row_with_config_dynamic_values(tbgd_root, dict(row))
@@ -1180,7 +1201,12 @@ def skill_formula_bindings_from_row(
     return bindings
 
 
-def _avatar_rows(tbgd_root: Path, *, max_records_per_table: int | None) -> list[tuple[str, int, dict[str, Any]]]:
+def _avatar_rows(
+    tbgd_root: Path,
+    *,
+    max_records_per_table: int | None,
+    avatar_ids: frozenset[str] | None = None,
+) -> list[tuple[str, int, dict[str, Any]]]:
     base_rows: list[tuple[str, int, dict[str, Any]]] = []
     for relative_path in ("ExcelOutput/AvatarConfig.json", "ExcelOutput/AvatarConfigLD.json"):
         path = tbgd_root / relative_path
@@ -1193,7 +1219,14 @@ def _avatar_rows(tbgd_root: Path, *, max_records_per_table: int | None) -> list[
         if not isinstance(data, list):
             continue
         for row_index, row in enumerate(_limit_sequence(data, max_records_per_table)):
-            if isinstance(row, dict) and row.get("AvatarID") is not None:
+            if (
+                isinstance(row, dict)
+                and row.get("AvatarID") is not None
+                and (
+                    avatar_ids is None
+                    or str(row.get("AvatarID")) in avatar_ids
+                )
+            ):
                 copied = _augment_avatar_row_with_config_dynamic_values(tbgd_root, dict(row))
                 copied["_character_card_version_kind"] = "base"
                 copied["_character_card_base_source_path"] = relative_path
@@ -1202,7 +1235,11 @@ def _avatar_rows(tbgd_root: Path, *, max_records_per_table: int | None) -> list[
                     copied["_character_card_max_energy_source_path"] = relative_path
                     copied["_character_card_max_energy_source_row_index"] = row_index
                 base_rows.append((relative_path, row_index, copied))
-    enhanced_rows = _enhanced_avatar_rows(tbgd_root, max_records_per_table=max_records_per_table)
+    enhanced_rows = _enhanced_avatar_rows(
+        tbgd_root,
+        max_records_per_table=max_records_per_table,
+        avatar_ids=avatar_ids,
+    )
     enhanced_by_avatar = {str(row["AvatarID"]): (relative_path, row_index, row) for relative_path, row_index, row in enhanced_rows}
     rows: list[tuple[str, int, dict[str, Any]]] = []
     seen: set[str] = set()
@@ -1292,6 +1329,7 @@ def _avatar_rank_rows_by_id(
     tbgd_root: Path,
     *,
     max_records_per_table: int | None,
+    rank_ids: frozenset[str] | None = None,
 ) -> dict[str, tuple[str, int, dict[str, Any]]]:
     rows: dict[str, tuple[str, int, dict[str, Any]]] = {}
     for relative_path in ("ExcelOutput/AvatarRankConfig.json", "ExcelOutput/AvatarRankConfigLD.json"):
@@ -1307,11 +1345,19 @@ def _avatar_rank_rows_by_id(
         for row_index, row in enumerate(_limit_sequence(data, max_records_per_table)):
             if not isinstance(row, dict) or row.get("RankID") is None:
                 continue
-            rows.setdefault(str(row["RankID"]), (relative_path, row_index, row))
+            rank_id = str(row["RankID"])
+            if rank_ids is not None and rank_id not in rank_ids:
+                continue
+            rows.setdefault(rank_id, (relative_path, row_index, row))
     return rows
 
 
-def _enhanced_avatar_rows(tbgd_root: Path, *, max_records_per_table: int | None) -> list[tuple[str, int, dict[str, Any]]]:
+def _enhanced_avatar_rows(
+    tbgd_root: Path,
+    *,
+    max_records_per_table: int | None,
+    avatar_ids: frozenset[str] | None = None,
+) -> list[tuple[str, int, dict[str, Any]]]:
     relative_path = "ExcelOutput/AvatarConfigEnhanced.json"
     path = tbgd_root / relative_path
     if not path.exists():
@@ -1324,13 +1370,22 @@ def _enhanced_avatar_rows(tbgd_root: Path, *, max_records_per_table: int | None)
         return []
     rows: list[tuple[str, int, dict[str, Any]]] = []
     for row_index, row in enumerate(_limit_sequence(data, max_records_per_table)):
-        if isinstance(row, dict) and row.get("AvatarID") is not None:
+        if (
+            isinstance(row, dict)
+            and row.get("AvatarID") is not None
+            and (
+                avatar_ids is None
+                or str(row.get("AvatarID")) in avatar_ids
+            )
+        ):
             rows.append((relative_path, row_index, dict(row)))
     return rows
 
 
 def _promotion_rows_by_avatar(
     tbgd_root: Path,
+    *,
+    avatar_ids: frozenset[str] | None = None,
 ) -> dict[str, list[tuple[str, int, dict[str, Any]]]]:
     rows: dict[str, list[tuple[str, int, dict[str, Any]]]] = {}
     for relative_path in ("ExcelOutput/AvatarPromotionConfig.json", "ExcelOutput/AvatarPromotionConfigLD.json"):
@@ -1344,10 +1399,12 @@ def _promotion_rows_by_avatar(
         if not isinstance(data, list):
             continue
         for row_index, row in enumerate(data):
-            if isinstance(row, dict) and row.get("AvatarID") is not None:
-                rows.setdefault(str(row["AvatarID"]), []).append(
-                    (relative_path, row_index, row)
-                )
+            if not isinstance(row, dict) or row.get("AvatarID") is None:
+                continue
+            avatar_id = str(row["AvatarID"])
+            if avatar_ids is not None and avatar_id not in avatar_ids:
+                continue
+            rows.setdefault(avatar_id, []).append((relative_path, row_index, row))
     return rows
 
 

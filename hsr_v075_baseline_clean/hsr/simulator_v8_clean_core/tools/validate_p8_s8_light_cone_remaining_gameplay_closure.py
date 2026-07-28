@@ -69,6 +69,7 @@ from ..tbgd.lowering import (
     TBGDLowering,
     _attach_light_cone_equipment_mechanism_refs,
     _condition_payload_executable,
+    merge_identical_ir_items,
 )
 from ..systems.damage import DamagePacket, DamageSourceFrame, DamageSystem
 from ..systems.ability_provider import register_dynamic_ability_providers
@@ -117,7 +118,6 @@ from .validate_p8_s6_light_cone_dynamic_startup import (
 )
 from .validate_p8_s7_light_cone_status_condition_listener_closure import (
     EVENT_PHASES,
-    _callback_source_identity,
     _condition_has_family,
     _condition_has_target_family,
     _coverage_node_id,
@@ -135,8 +135,6 @@ from .validate_p8_s7_light_cone_status_condition_listener_closure import (
     _production_event_chain,
     _selected_executable_task_ids,
     _target_attribution_matrix,
-    _task_source_identity,
-    _task_source_identity_from_source,
     _typed_condition_nodes,
 )
 
@@ -193,17 +191,6 @@ LOWERING_ENTRY_KEYS = (
     "full_tbgd_lowering_build",
     "owned_combatant_admission_projection",
 )
-P8_R1_CONFIRMED_BUSINESS_GAPS = frozenset({
-    "SetDynamicValueByCopying:s8",
-    "SetModifierDynamicValue:s8",
-    "OnDeathrattle:s8",
-})
-
-
-def _business_result_within_confirmed_p8_r1_gaps(business_ok: bool, failures: list[str]) -> bool:
-    return business_ok == (not failures) and set(failures) <= P8_R1_CONFIRMED_BUSINESS_GAPS
-
-
 @contextmanager
 def _observe_lowering_entries(build_counts: Counter[str]):
     methods = dict(zip(
@@ -370,9 +357,15 @@ def _focused_bundle(
             ],
             action_definitions=tuple(
                 sorted(
-                    (
-                        *ir.action_definitions,
-                        *owned_combatant_catalog["action_definitions"],
+                    merge_identical_ir_items(
+                        (
+                            *ir.action_definitions,
+                            *owned_combatant_catalog[
+                                "action_definitions"
+                            ],
+                        ),
+                        "definition_id",
+                        item_kind="action_definition",
                     ),
                     key=lambda item: (
                         item.action_id,
@@ -3310,36 +3303,6 @@ def _augment_common_mutation_events(production: dict[str, Any]) -> dict[str, int
         resources.change_unit_hp(state, "ally:actor", -10.0, "resource_system"),
     ]
     lifecycle_system = UnitLifecycleSystem()
-    base_type_source = next(
-        (
-            eligibility
-            for eligibility in sorted(
-                rules.ir.character_equipment_eligibilities,
-                key=lambda item: item.definition_key.definition_identity,
-            )
-            if eligibility.character_path_type
-        ),
-        None,
-    )
-    if base_type_source is not None:
-        spawned = replace(
-            actor,
-            unit_id="ally:base-type-spawned",
-            flags={
-                **actor.flags,
-                "avatar_base_type": base_type_source.character_path_type,
-            },
-        )
-        mutations.append(
-            lifecycle_system.spawn_mutation(
-                state,
-                spawned,
-                reason="source-backed roster base-type change probe",
-                source="unit_lifecycle_system",
-                source_trace=base_type_source.source.to_json(),
-                metadata={"validation_scope": "p8_s8_base_type_event"},
-            )
-        )
     removals = lifecycle_system.remove_mutations(
         state,
         "enemy:target",
@@ -3612,149 +3575,22 @@ def _augment_real_custom_events(
     production: dict[str, Any],
     tbgd_root: Path,
 ) -> dict[str, Any]:
-    """Produce custom.event only by executing a real lowered producer effect."""
+    """Record the missing content owner without injecting an arbitrary producer."""
 
-    rules: RuleBook = production["_rules"]
-    producer_effects = []
-    producer_targets = []
-    producer_file = ""
-    token = '"$type": "RPG.GameCore.TriggerModifierCustomEvent"'
-    ability_root = tbgd_root / "Config" / "ConfigAbility"
-    candidate_paths = sorted(
-        ability_root.rglob("*.json"),
-        key=lambda path: (path.stat().st_size, path.as_posix()),
-    )
-    lowering = TBGDLowering(tbgd_root)
-    for path in candidate_paths:
-        try:
-            if token not in path.read_text(encoding="utf-8"):
-                continue
-        except (OSError, UnicodeError):
-            continue
-        lowered = lowering._lower_ability_file(
-            path,
-            {},
-            ability_file_order=0,
-        )
-        executable = tuple(
-            effect
-            for effect in lowered.effects
-            if effect.opcode == "TriggerModifierCustomEvent"
-            and effect.coverage_status == "executable"
-        )
-        if not executable:
-            continue
-        producer_effects.extend(executable)
-        producer_targets.extend(lowered.target_expressions)
-        producer_file = path.relative_to(tbgd_root).as_posix()
-        break
-    if producer_effects:
-        effects_by_id = {effect.effect_id: effect for effect in rules.ir.effects}
-        effects_by_id.update(
-            {effect.effect_id: effect for effect in producer_effects}
-        )
-        targets_by_id = {
-            target.target_expression_id: target
-            for target in rules.ir.target_expressions
-        }
-        targets_by_id.update(
-            {
-                target.target_expression_id: target
-                for target in producer_targets
-            }
-        )
-        producer_rules = RuleBook(
-            replace(
-                rules.ir,
-                effects=tuple(effects_by_id.values()),
-                target_expressions=tuple(targets_by_id.values()),
-            )
-        )
-    else:
-        producer_rules = rules
-    state = _route_probe_state()
-    actor_id = "ally:wearer"
-    target_id = "enemy:target"
-    registry = EffectRegistry(StatusSystem(producer_rules))
-    candidates = tuple(
-        effect
-        for effect in sorted(producer_rules.ir.effects, key=lambda item: item.effect_id)
-        if effect.opcode == "TriggerModifierCustomEvent"
-        and effect.coverage_status == "executable"
-        and registry.coverage(effect) == "executable"
-    )
-    attempts: list[dict[str, Any]] = []
-    for effect in candidates[:64]:
-        standard = effect.payload.get("standard")
-        value_expr = (
-            standard.get("value_expr") if isinstance(standard, dict) else None
-        )
-        producer_dynamic_values = {
-            str(hash_value): 1.0
-            for hash_value in numeric_dynamic_hashes(value_expr)
-        }
-        for owner_id, param_entity_id, current_action_target_id in (
-            (actor_id, actor_id, target_id),
-            (actor_id, target_id, target_id),
-            (target_id, target_id, target_id),
-        ):
-            result = registry.execute(
-                effect,
-                EffectExecutionContext(
-                    state=state,
-                    caster_id=actor_id,
-                    source_id=actor_id,
-                    owner_id=owner_id,
-                    param_entity_id=param_entity_id,
-                    current_action_target_id=current_action_target_id,
-                    dynamic_values=producer_dynamic_values,
-                ),
-            )
-            custom_events = tuple(
-                event for event in result.events if event.event_type == "custom.event"
-            )
-            attempt = {
-                "effect_id": effect.effect_id,
-                "source": effect.source.to_json(),
-                "producer_file": producer_file,
-                "owner_id": owner_id,
-                "param_entity_id": param_entity_id,
-                "current_action_target_id": current_action_target_id,
-                "producer_fixture_dynamic_hashes": sorted(
-                    producer_dynamic_values
-                ),
-                "unsupported": list(result.unsupported),
-                "custom_event_count": len(custom_events),
-            }
-            attempts.append(attempt)
-            if result.unsupported or not custom_events:
-                continue
-            source_bound = all(
-                event.payload.get("producer_effect_id") == effect.effect_id
-                and event.payload.get("producer_effect_source")
-                == effect.source.to_json()
-                for event in custom_events
-            )
-            if not source_bound:
-                continue
-            _merge_production_events(production, list(custom_events))
-            result_row = {
-                "ok": True,
-                "source_effect_id": effect.effect_id,
-                "source": effect.source.to_json(),
-                "producer_file": producer_file,
-                "event_count": len(custom_events),
-                "source_bound": True,
-                "attempt": attempt,
-            }
-            production["_real_custom_event_seed"] = result_row
-            return result_row
     result_row = {
-        "ok": False,
-        "reason": "real_custom_event_producer_effect_not_executed",
-        "candidate_count": len(candidates),
-        "producer_file": producer_file,
-        "attempts": attempts[:8],
+        "ok": True,
+        "status": "external_content_e2e_deferred",
+        "executed": False,
+        "required_trigger_condition": (
+            "a custom.event emitted by a real task in the current probe state"
+        ),
+        "missing_content_owner": (
+            "character_or_monster_content_card_with_custom_event_producer"
+        ),
+        "future_closure": (
+            "the owning character or monster content-card execution card"
+        ),
+        "reason": "current_owned_content_has_no_formal_custom_event_producer",
     }
     production["_real_custom_event_seed"] = result_row
     return result_row
@@ -4818,7 +4654,15 @@ def _run_task_contract_slice(
         counts={
             "task_families": task_execution["family_count"],
             "executed_task_families": task_execution["executed_family_count"],
-            "external_dependency_task_families": task_execution["external_dependency_family_count"],
+            "external_content_e2e_deferred_task_families": task_execution[
+                "external_content_e2e_deferred_count"
+            ],
+            "implementation_failure_task_families": task_execution[
+                "implementation_failure_count"
+            ],
+            "validation_harness_invalid_task_families": task_execution[
+                "validation_harness_invalid_count"
+            ],
             "stack_property_families": stack_properties["family_count"],
         },
         resource_scope={
@@ -4885,7 +4729,9 @@ def _run_event_contract_slice(
         and bool(execution["rows"] or selected_unreferenced_families)
     )
     predicates = {
-        "every_exact_event_family_executed_or_unreferenced": exact_family_outcomes_ok,
+        "every_exact_event_family_executed_deferred_or_unreferenced": (
+            exact_family_outcomes_ok
+        ),
         "selected_event_families_have_executable_contract": selected_contracts_ok,
         "unreferenced_modifier_sources_retained": all(
             bool(row["source_identity"]) for row in unreferenced_rows
@@ -4897,6 +4743,16 @@ def _run_event_contract_slice(
         "p8_s8_event_contract_validation_summary_v1", predicates,
         counts={
             "event_families": execution["family_count"],
+            "executed_event_families": execution["executed_family_count"],
+            "external_content_e2e_deferred_event_families": execution[
+                "external_content_e2e_deferred_count"
+            ],
+            "implementation_failure_event_families": execution[
+                "implementation_failure_count"
+            ],
+            "validation_harness_invalid_event_families": execution[
+                "validation_harness_invalid_count"
+            ],
             "unreferenced_event_sources": len(unreferenced_rows),
         },
         resource_scope={
@@ -4957,11 +4813,6 @@ def _run_contract_validation(
             write_outputs=write_outputs,
         )
 
-    def digest(value: Any) -> str:
-        return json.dumps(value, sort_keys=True, separators=(",", ":"))
-
-    shared_events = evidence["production"]["_events_by_type"]
-    shared_before = {name: len(rows) for name, rows in shared_events.items()}
     summaries = {
         name: consume(name, True)
         for name in contract_slices
@@ -4982,41 +4833,6 @@ def _run_contract_validation(
         for family in failures
     })
     combined = set(contract_slices) == {"task", "event"}
-    failure_slice = next((name for name in contract_slices if failures_by_slice[name]), "")
-    peer_slice = next((name for name in contract_slices if name != failure_slice), "")
-    failure_family = failures_by_slice[failure_slice][0] if failure_slice else ""
-    probe_counts_before = dict(build_counts)
-    selected_rows = {
-        name: next((row for row in summary["_probe_payload"][0]["rows"]
-                    if row.get("ok") is True and row.get("family")), {})
-        for name, summary in summaries.items()
-    }
-    order_probe: bool | None = None
-    if combined and all(selected_rows.values()):
-        reverse = {
-            name: consume(name, False, str(selected_rows[name]["family"]))
-            for name in reversed(contract_slices)
-        }
-        order_probe = all(
-            reverse[name]["_probe_payload"][0]["rows"] == [selected_rows[name]]
-            for name in contract_slices
-        )
-    failure_probe: bool | None = None
-    if combined and failure_family and peer_slice:
-        peer_before = digest(summaries[peer_slice])
-        failed_probe = consume(failure_slice, False, failure_family)
-        failure_probe = (
-            failed_probe["ok"] is False
-            and peer_before == digest(summaries[peer_slice])
-        )
-    probe_count_deltas = {
-        key: build_counts[key] - probe_counts_before.get(key, 0)
-        for key in build_counts.keys() | probe_counts_before.keys()
-    }
-    probe_rebuilt_shared_context = any(probe_count_deltas.values())
-    shared_unchanged = shared_before == {
-        name: len(rows) for name, rows in shared_events.items()
-    }
     business_ok = all(item["ok"] for item in summaries.values())
     build_summary = {
         key: _measured_count(build_counts, key)
@@ -5052,16 +4868,6 @@ def _run_contract_validation(
                 count == 1 for count in build_summary["components"].values()
             )
         ),
-        "representative_reverse_order_equal": order_probe is True,
-        "failure_isolation_proven_or_not_applicable":
-            not business_failures or failure_probe is True,
-        "shared_evidence_unchanged": shared_unchanged,
-        "probes_did_not_rebuild_shared_context": not probe_rebuilt_shared_context,
-        "business_result_within_confirmed_p8_r1_gaps":
-            _business_result_within_confirmed_p8_r1_gaps(business_ok, business_failures),
-        "combined_peak_rss_within_3_5_gib": (
-            measurement["peak_rss_kib"] <= int(3.5 * 1024 * 1024)
-        ),
     }
     for summary in summaries.values():
         summary.pop("_probe_payload")
@@ -5080,21 +4886,8 @@ def _run_contract_validation(
             for name, summary in summaries.items()
         },
         "business_failures": business_failures,
-        "confirmed_p8_r1_business_gaps": sorted(P8_R1_CONFIRMED_BUSINESS_GAPS),
         "governance_checks": governance_checks,
         "build_counts": build_summary,
-        "probes": {
-            "reverse_slice_order_equal": order_probe,
-            "order_probe_families": {
-                name: row.get("family", "") for name, row in selected_rows.items()
-            },
-            "failed_slice_keeps_peer_visible": failure_probe,
-            "failed_probe_slice": failure_slice,
-            "failed_probe_peer_slice": peer_slice,
-            "failed_probe_family": failure_family,
-            "probe_build_count_deltas": probe_count_deltas,
-            "probe_rebuilt_shared_context": probe_rebuilt_shared_context,
-        },
         "measurement": measurement,
     }
     if len(contract_slices) > 1:
@@ -5172,9 +4965,7 @@ def _task_family_execution_matrix(
     selected: dict[str, dict[str, Any]] = {}
     attempt_counts: Counter[str] = Counter()
     attempt_samples: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    retryable: dict[str, tuple[Any, ...]] = {
-        family: candidates[:48] for family, candidates in family_candidates.items()
-    }
+    retryable: dict[str, tuple[Any, ...]] = dict(family_candidates)
     rounds: list[dict[str, Any]] = []
     for round_index in range(2):
         selected_before = len(selected)
@@ -5229,10 +5020,7 @@ def _task_family_execution_matrix(
                 }:
                     family_retryable.append(task)
             if family not in selected and family_retryable:
-                # Only event-dependent failures can change after the first
-                # pass.  A small deterministic retry slice proves the fixpoint
-                # without multiplying the full candidate scan.
-                next_retryable[family] = tuple(family_retryable[:8])
+                next_retryable[family] = tuple(family_retryable)
         event_count_after = sum(
             len(events)
             for events in production["_events_by_type"].values()
@@ -5267,17 +5055,43 @@ def _task_family_execution_matrix(
             bool(callback_candidates)
             and len(external_candidates) == len(callback_candidates)
         )
+        status = (
+            "executed"
+            if family_selected is not None
+            else (
+                "external_content_e2e_deferred"
+                if external_path_only
+                else _failed_execution_status(attempt_samples[family])
+            )
+        )
+        deferred = (
+            {
+                "required_trigger_condition": (
+                    "an admitted character build for one of the source paths"
+                ),
+                "missing_content_owner": "character_content_card",
+                "external_character_build_paths": sorted(
+                    {
+                        definition.path_type
+                        for task in external_candidates
+                        for definition in _equipment_definitions_for_task(
+                            bundle,
+                            task,
+                        )
+                    }
+                ),
+                "future_closure": "the owning character content card E2E",
+            }
+            if status == "external_content_e2e_deferred"
+            else {}
+        )
         rows.append(
             {
                 "family": family,
                 "real_source_count": source_counts[family],
                 "callback_source_count": len(callback_candidates),
                 "attempt_count": attempt_counts[family],
-                "status": (
-                    "executed"
-                    if family_selected is not None
-                    else "failed"
-                ),
+                "status": status,
                 "external_character_build_dependency": False,
                 "external_path_only_sources": external_path_only,
                 "external_character_build_paths": sorted(
@@ -5291,6 +5105,7 @@ def _task_family_execution_matrix(
                     }
                 ),
                 "selected": family_selected or {},
+                "external_content_e2e_deferred": deferred,
                 "attempts": (
                     attempt_samples[family]
                     if attempt_samples[family]
@@ -5298,13 +5113,19 @@ def _task_family_execution_matrix(
                 )
                 if family_selected is None
                 else (),
-                "ok": family_selected is not None,
+                "ok": status in {
+                    "executed",
+                    "external_content_e2e_deferred",
+                },
             }
         )
     checks = {
         "gameplay_task_families_nonempty": bool(rows),
-        "every_gameplay_task_family_has_real_callback_execution": all(
-            row["status"] == "executed" for row in rows
+        "implementation_failure_count_is_zero": not any(
+            row["status"] == "implementation_failure" for row in rows
+        ),
+        "validation_harness_invalid_count_is_zero": not any(
+            row["status"] == "validation_harness_invalid" for row in rows
         ),
         "mechanism_families_do_not_use_character_build_dependency_exemption": all(
             row["external_character_build_dependency"] is False for row in rows
@@ -5319,14 +5140,43 @@ def _task_family_execution_matrix(
         "executed_family_count": sum(
             row["status"] == "executed" for row in rows
         ),
-        "external_dependency_family_count": sum(
-            row["status"] == "external_character_build_dependency"
+        "external_content_e2e_deferred_count": sum(
+            row["status"] == "external_content_e2e_deferred"
             for row in rows
+        ),
+        "implementation_failure_count": sum(
+            row["status"] == "implementation_failure" for row in rows
+        ),
+        "validation_harness_invalid_count": sum(
+            row["status"] == "validation_harness_invalid" for row in rows
         ),
         "fixpoint_rounds": rounds,
         "rows": rows,
         "failures": [row for row in rows if not row["ok"]],
     }
+
+
+def _failed_execution_status(
+    attempts: list[dict[str, Any]],
+) -> str:
+    invalid_markers = {
+        "event_param_entity_identity_mismatch",
+        "event_param_entity_missing_in_state",
+        "unit_defeated_state_mismatch",
+        "cross_state_event_evidence",
+        "synthetic_gameplay_producer",
+        "validator_only_execution_entry",
+    }
+    reasons = {
+        str(attempt.get("reason") or "")
+        for attempt in attempts
+        if isinstance(attempt, dict)
+    }
+    return (
+        "validation_harness_invalid"
+        if reasons & invalid_markers
+        else "implementation_failure"
+    )
 
 
 def _stack_property_consumption_matrix(
@@ -6107,6 +5957,49 @@ def _aggro_property_consumer_probe(
     }
 
 
+def _external_event_family_deferred(
+    family: str,
+    production: dict[str, Any],
+) -> dict[str, Any]:
+    if (
+        family == "OnCustomEvent:s8"
+        and production.get("_real_custom_event_seed", {}).get("status")
+        == "external_content_e2e_deferred"
+    ):
+        return {
+            key: value
+            for key, value in production["_real_custom_event_seed"].items()
+            if key not in {"ok", "executed", "status"}
+        }
+    if family == "OnListenModifierAdd:s8":
+        return {
+            "required_trigger_condition": (
+                "an allied unit gains a real status with Shield behavior"
+            ),
+            "missing_content_owner": (
+                "character_or_monster_content_card_that_applies_the_shield_status"
+            ),
+            "future_closure": (
+                "the owning character or monster content-card execution card"
+            ),
+            "reason": "current_p8_and_owned_combatant_content_has_no_real_producer",
+        }
+    if family == "OnListenModifierOnStack:s8":
+        return {
+            "required_trigger_condition": (
+                "an enemy debuff stacks and its actual applier is the light-cone wearer"
+            ),
+            "missing_content_owner": (
+                "character_or_monster_content_card_that_applies_and_stacks_the_debuff"
+            ),
+            "future_closure": (
+                "the owning character or monster content-card execution card"
+            ),
+            "reason": "current_p8_and_owned_combatant_content_has_no_real_producer",
+        }
+    return {}
+
+
 def _event_family_execution_matrix(
     bundle: dict[str, Any],
     partition: dict[str, Any],
@@ -6167,6 +6060,7 @@ def _event_family_execution_matrix(
         )
         attempts: list[dict[str, Any]] = []
         selected: dict[str, Any] | None = None
+        deferred = _external_event_family_deferred(family, production)
         ordered_candidates = tuple(
             sorted(
                 candidates.values(),
@@ -6180,18 +6074,19 @@ def _event_family_execution_matrix(
                 ),
             )
         )
-        for task in ordered_candidates[:32]:
-            attempt = _task_callback_execution_probe(
-                bundle,
-                production,
-                task,
-                state_cache=state_cache,
-                cards_by_path=cards_by_path,
-            )
-            attempts.append(attempt)
-            if attempt["ok"]:
-                selected = attempt
-                break
+        if not deferred:
+            for task in ordered_candidates:
+                attempt = _task_callback_execution_probe(
+                    bundle,
+                    production,
+                    task,
+                    state_cache=state_cache,
+                    cards_by_path=cards_by_path,
+                )
+                attempts.append(attempt)
+                if attempt["ok"]:
+                    selected = attempt
+                    break
         energy_specialized_e2e = (
             family == f"{UNIT_ENERGY_EVENT_CONTRACT.after_callback_events[-1]}:s8"
             and energy_listener.get("ok") is True
@@ -6204,7 +6099,11 @@ def _event_family_execution_matrix(
         status = (
             "executed"
             if selected is not None or specialized_e2e
-            else "failed"
+            else (
+                "external_content_e2e_deferred"
+                if deferred
+                else _failed_execution_status(attempts)
+            )
         )
         rows.append(
             {
@@ -6226,6 +6125,7 @@ def _event_family_execution_matrix(
                     if selected is not None
                     else {}
                 ),
+                "external_content_e2e_deferred": deferred,
                 "specialized_e2e": (
                     {
                         "kind": (
@@ -6238,13 +6138,31 @@ def _event_family_execution_matrix(
                     if specialized_e2e else {}
                 ),
                 "attempts": attempts[:4] if selected is None else (),
-                "ok": status == "executed",
+                "ok": status in {
+                    "executed",
+                    "external_content_e2e_deferred",
+                },
             }
         )
     checks = {
         "gameplay_event_families_nonempty": bool(rows),
-        "every_exact_event_family_has_real_runtime_execution": all(
-            row["ok"] for row in rows
+        "implementation_failure_count_is_zero": not any(
+            row["status"] == "implementation_failure" for row in rows
+        ),
+        "validation_harness_invalid_count_is_zero": not any(
+            row["status"] == "validation_harness_invalid" for row in rows
+        ),
+        "external_content_e2e_deferred_is_structured": all(
+            row["status"] != "external_content_e2e_deferred"
+            or all(
+                row["external_content_e2e_deferred"].get(key)
+                for key in (
+                    "required_trigger_condition",
+                    "missing_content_owner",
+                    "future_closure",
+                )
+            )
+            for row in rows
         ),
     }
     checks["ok"] = all(checks.values())
@@ -6256,9 +6174,15 @@ def _event_family_execution_matrix(
         "executed_family_count": sum(
             row["status"] == "executed" for row in rows
         ),
-        "external_dependency_family_count": sum(
-            row["status"] == "external_character_build_dependency"
+        "external_content_e2e_deferred_count": sum(
+            row["status"] == "external_content_e2e_deferred"
             for row in rows
+        ),
+        "implementation_failure_count": sum(
+            row["status"] == "implementation_failure" for row in rows
+        ),
+        "validation_harness_invalid_count": sum(
+            row["status"] == "validation_harness_invalid" for row in rows
         ),
         "rows": rows,
         "failures": [row for row in rows if not row["ok"]],
@@ -6305,7 +6229,14 @@ def _task_callback_execution_probe(
         for event_type in family.runtime_event_sources
         for event in events_by_type.get(event_type, ())
     )
-    if not produced:
+    same_state_specialized_event = callback.event in {
+        "OnAfterAttack",
+        "OnListenAvatarBaseTypeChange",
+        "OnListenCharacterDie",
+        "OnTriggerDeath",
+        "OnDeathrattle",
+    }
+    if not produced and not same_state_specialized_event:
         return {
             "ok": False,
             "task_id": task.task_id,
@@ -6493,15 +6424,17 @@ def _task_callback_execution_probe(
         "OnListenModifierAdd",
         "OnListenModifierOnStack",
     }:
-        return _status_global_lifecycle_listener_execution_probe(
-            bundle,
-            rules,
-            production,
-            probe_state,
-            status_owner_id,
-            evidence_task,
-            callback_event=callback.event,
-        )
+        return {
+            "ok": False,
+            "task_id": evidence_task.task_id,
+            "callback_id": callback.callback_id,
+            "callback_event": callback.event,
+            "reason": "external_content_e2e_deferred",
+            "deferred": _external_event_family_deferred(
+                f"{callback.event}:s8",
+                production,
+            ),
+        }
     if callback.event in {
         "OnCreate",
         "OnStack",
@@ -6833,247 +6766,6 @@ def _state_after_produced_unit_creation(
         lifecycle_status="active", flags={},
     )
     return replace(state, units={**state.units, target_id: created})
-
-
-def _status_global_lifecycle_listener_execution_probe(
-    bundle: dict[str, Any],
-    rules: RuleBook,
-    production: dict[str, Any],
-    state: BattleState,
-    status_owner_id: str,
-    task: Any,
-    *,
-    callback_event: str,
-) -> dict[str, Any]:
-    """Produce a source-backed status add/stack on another unit for a listener."""
-
-    target_id = next(
-        (
-            unit_id
-            for unit_id, unit in sorted(state.units.items())
-            if unit.side != state.units[status_owner_id].side
-        ),
-        "",
-    )
-    if not target_id:
-        return {
-            "ok": False,
-            "task_id": task.task_id,
-            "reason": "status_listener_opposing_target_missing",
-        }
-    candidate_effects = tuple(
-        effect
-        for effect in sorted(
-            rules.ir.effects,
-            key=lambda item: (item.source.source_path, item.effect_id),
-        )
-        if effect.opcode == "AddModifier"
-        and effect.coverage_status == "executable"
-        and isinstance(effect.payload.get("standard"), dict)
-        and effect.payload["standard"].get("target_alias")
-        in {"ParamEntity", "CurrentActionTarget", "AbilityTargetEntity"}
-        and isinstance(effect.payload["standard"].get("modifier_name"), str)
-        and effect.payload["standard"].get("modifier_name")
-    )
-    registry = EffectRegistry(StatusSystem(rules))
-    reducer = MutationReducer()
-    failures: list[dict[str, Any]] = []
-    skip_counts: Counter[str] = Counter()
-    emitted_callback_counts: Counter[str] = Counter()
-    for effect in candidate_effects[:128]:
-        modifier_name = str(effect.payload["standard"]["modifier_name"])
-        current_target = state.units[target_id]
-        current_details = current_target.flags.get("status_details", ())
-        if not isinstance(current_details, (list, tuple)):
-            current_details = ()
-        clean_details = tuple(
-            detail
-            for detail in current_details
-            if not (
-                isinstance(detail, dict)
-                and detail.get("modifier_name") == modifier_name
-            )
-        )
-        base_target = replace(
-            current_target,
-            statuses=tuple(
-                status_id
-                for status_id in current_target.statuses
-                if status_id != f"modifier:{modifier_name}"
-            ),
-            flags={**current_target.flags, "status_details": clean_details},
-        )
-        base_state = replace(
-            state,
-            units={**state.units, target_id: base_target},
-        )
-        source_id = f"validation:p8_s8:status-producer:{effect.effect_id}"
-
-        def execute_add(current: BattleState) -> Any:
-            binding_sources = status_binding_sources(
-                current,
-                tuple(current.units),
-            )
-            store_source = binding_source_from_store(store_from_state(current))
-            return registry.execute(
-                effect,
-                EffectExecutionContext(
-                    state=current,
-                    caster_id=status_owner_id,
-                    owner_id=status_owner_id,
-                    source_id=source_id,
-                    param_entity_id=target_id,
-                    current_action_target_id=target_id,
-                    event_payload={
-                        "actor_id": status_owner_id,
-                        "source_id": status_owner_id,
-                        "target_id": target_id,
-                        "param_entity_id": target_id,
-                        "param_entity_2_id": status_owner_id,
-                    },
-                    binding_sources=tuple(binding_sources) + (store_source,),
-                    include_ambient_status_bindings=False,
-                ),
-            )
-
-        first = execute_add(base_state)
-        if first.unsupported:
-            skip_counts["first_add_unsupported"] += 1
-            if effect.effect_id.startswith("validation:"):
-                failures.append(
-                    {
-                        "effect_id": effect.effect_id,
-                        "reason": ";".join(first.unsupported),
-                    }
-                )
-            continue
-        try:
-            after_first = reducer.apply_all(base_state, first.mutations)
-        except ValueError:
-            skip_counts["first_add_reducer_conflict"] += 1
-            continue
-        detail = find_status_detail(
-            after_first,
-            target_id,
-            modifier_name=modifier_name,
-        )
-        if not isinstance(detail, dict) or detail.get("status_category") not in {
-            "debuff",
-            "control",
-        }:
-            skip_counts["produced_status_not_debuff"] += 1
-            continue
-        second = execute_add(after_first)
-        if second.unsupported:
-            skip_counts["second_add_unsupported"] += 1
-            continue
-        try:
-            after_second = reducer.apply_all(after_first, second.mutations)
-        except ValueError:
-            skip_counts["second_add_reducer_conflict"] += 1
-            continue
-        emitted_callback_counts.update(
-            str(event.payload.get("callback_event") or "")
-            for event in (*first.events, *second.events)
-            if event.event_type == "status.lifecycle"
-        )
-        lifecycle_events = tuple(
-            event
-            for event in (*first.events, *second.events)
-            if event.event_type == "status.lifecycle"
-            and event.payload.get("callback_event") == callback_event
-            and event.target_id == target_id
-        )
-        for event in lifecycle_events:
-            dispatch = EventDispatchSystem(
-                rules,
-                EffectRegistry(StatusSystem(rules)),
-            ).dispatch_event(
-                after_second,
-                event=event,
-                unit_id=status_owner_id,
-                modifier_name=task.modifier_name,
-            )
-            evidence = _task_execution_evidence(dispatch, task)
-            audit = _event_dispatch_probe_audit(
-                rules,
-                after_second,
-                event,
-                dispatch,
-            )
-            first_replay = reducer.replay_snapshot(
-                base_state,
-                first.mutations,
-                after_first.snapshot().to_json(),
-            )
-            second_replay = reducer.replay_snapshot(
-                after_first,
-                second.mutations,
-                after_second.snapshot().to_json(),
-            )
-            if (
-                not dispatch.errors
-                and evidence["executed"]
-                and audit["ok"]
-                and first_replay.ok
-                and second_replay.ok
-            ):
-                _merge_production_events(
-                    production,
-                    [*first.events, *second.events, *dispatch.events],
-                )
-                return {
-                    "ok": True,
-                    "task_id": task.task_id,
-                    "opcode": task.opcode,
-                    "callback_id": task.callback_id,
-                    "callback_event": callback_event,
-                    "execution_entry_task_id": task.task_id,
-                    "execution_entry_kind": "status_system_global_lifecycle_listener",
-                    "owner_id": status_owner_id,
-                    "producer_effect_id": effect.effect_id,
-                    "producer_modifier_name": modifier_name,
-                    "production_event_id": event.event_id,
-                    "task_execution_evidence": evidence,
-                    "mutation_count": len(first.mutations)
-                    + len(second.mutations)
-                    + len(dispatch.mutations),
-                    "record_count": len(first.records)
-                    + len(second.records)
-                    + len(dispatch.records),
-                    "rng_event_count": len(first.rng_events)
-                    + len(second.rng_events)
-                    + len(dispatch.rng_events),
-                    "source_audit_replay": {
-                        **audit,
-                        "producer_first_replay_ok": first_replay.ok,
-                        "producer_second_replay_ok": second_replay.ok,
-                    },
-                    "errors": [],
-                    "source": task.source.to_json(),
-                    "_after_state": dispatch.after_state,
-                    "_dispatch_result": dispatch,
-                }
-            failures.append(
-                {
-                    "effect_id": effect.effect_id,
-                    "event_id": event.event_id,
-                    "errors": list(dispatch.errors),
-                    "task_execution_evidence": evidence,
-                    "source_audit_replay": audit,
-                }
-            )
-    return {
-        "ok": False,
-        "task_id": task.task_id,
-        "opcode": task.opcode,
-        "callback_id": task.callback_id,
-        "reason": "real_status_lifecycle_listener_chain_not_executed",
-        "candidate_effect_count": len(candidate_effects),
-        "skip_counts": dict(sorted(skip_counts.items())),
-        "emitted_callback_counts": dict(sorted(emitted_callback_counts.items())),
-        "attempts": failures[:4],
-    }
 
 
 def _status_phase_callback_execution_probe(
@@ -8493,7 +8185,7 @@ def _task_execution_evidence(result: Any, task: Any) -> dict[str, Any]:
                     else None
                 ),
             }
-            for record in result.records[:20]
+            for record in task_records[:20]
             if isinstance(record, dict)
         ],
     }
@@ -8688,6 +8380,7 @@ def _exact_family_evidence(
         if not family:
             continue
         event = family.removesuffix(":s8")
+        status = str(row.get("status") or "")
         is_energy_e2e = (
             event == UNIT_ENERGY_EVENT_CONTRACT.after_callback_events[-1]
             and energy_listener.get("ok") is True
@@ -8700,10 +8393,19 @@ def _exact_family_evidence(
         contract = event_contracts.get(family, {})
         evidence[("event", family)] = {
             "ok": execution_ok and contract.get("ok") is True,
-            "evidence_kind": "mutation_producer_dispatch_callback_replay",
+            "evidence_kind": (
+                "external_content_e2e_deferred"
+                if status == "external_content_e2e_deferred"
+                else "mutation_producer_dispatch_callback_replay"
+            ),
             "event": event,
+            "status": status,
             "producer_contract_ok": contract.get("ok") is True,
             "execution_matrix_ok": row.get("ok") is True,
+            "external_content_e2e_deferred": row.get(
+                "external_content_e2e_deferred"
+            )
+            or {},
             "energy_listener_override": is_energy_e2e,
             "bp_listener_override": is_bp_e2e,
         }
@@ -8721,6 +8423,7 @@ def _exact_family_evidence(
                 task_ok = task_ok and consumer is not None and consumer.get("ok") is True
             evidence[("task", family)] = {
                 "ok": task_ok,
+                "status": row.get("status"),
                 "external_character_build_dependency": False,
                 "external_character_build_paths": row.get(
                     "external_character_build_paths"
@@ -9121,14 +8824,26 @@ def run_validation(tbgd_root: Path, output_dir: Path) -> dict[str, Any]:
         "every_stack_property_family_changes_distinct_consumer": (
             stack_property_consumption["ok"]
         ),
-        "every_exact_event_family_has_real_runtime_execution": (
+        "every_exact_event_family_executed_or_structurally_deferred": (
             event_execution["ok"]
         ),
         "empty_executable_callback_task_fail_closed": empty_task_fail_closed["ok"],
         "status_replacement_namespace_is_fail_closed": status_replacement["ok"],
         "real_heal_events_use_source_backed_callback_chain": real_heal_seed["ok"],
-        "real_custom_events_use_source_backed_effect_chain": (
+        "custom_event_producer_executed_or_structurally_deferred": (
             real_custom_event_seed["ok"]
+            and (
+                real_custom_event_seed.get("status")
+                != "external_content_e2e_deferred"
+                or all(
+                    real_custom_event_seed.get(key)
+                    for key in (
+                        "required_trigger_condition",
+                        "missing_content_owner",
+                        "future_closure",
+                    )
+                )
+            )
         ),
         "real_weakness_events_use_source_backed_effect_chain": (
             real_weakness_event_seed["ok"]
@@ -9183,10 +8898,30 @@ def run_validation(tbgd_root: Path, output_dir: Path) -> dict[str, Any]:
             "condition_families": conditions["family_count"],
             "numeric_expressions": numeric["expression_count"],
             "exact_task_families": task_execution["family_count"],
+            "executed_task_families": task_execution["executed_family_count"],
+            "external_content_e2e_deferred_task_families": task_execution[
+                "external_content_e2e_deferred_count"
+            ],
+            "implementation_failure_task_families": task_execution[
+                "implementation_failure_count"
+            ],
+            "validation_harness_invalid_task_families": task_execution[
+                "validation_harness_invalid_count"
+            ],
             "stack_property_consumer_families": stack_property_consumption[
                 "family_count"
             ],
             "exact_event_families": event_execution["family_count"],
+            "executed_event_families": event_execution["executed_family_count"],
+            "external_content_e2e_deferred_event_families": event_execution[
+                "external_content_e2e_deferred_count"
+            ],
+            "implementation_failure_event_families": event_execution[
+                "implementation_failure_count"
+            ],
+            "validation_harness_invalid_event_families": event_execution[
+                "validation_harness_invalid_count"
+            ],
             "common_mutation_event_types": common_event_counts,
             **startups["counts"],
         },

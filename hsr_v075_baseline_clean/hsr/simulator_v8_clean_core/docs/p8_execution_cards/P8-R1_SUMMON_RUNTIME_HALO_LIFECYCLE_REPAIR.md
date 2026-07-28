@@ -392,12 +392,24 @@ git diff --check
 
 运行时修复已经通过代码审查、R1 runtime 聚焦验证、P7-S3 和 P7-S15 直接回归。原目录启动验证在 1.5 GiB 限制下触发 `MemoryError`；用户决定本轮不继续运行该重验证，等待验证体系治理后以低内存目录入口补证。
 
-因此必须区分：
+因此当时必须区分：
 
 - R1 生产修复：已验收。
 - 当前已发布光锥完整正式目录启动：`deferred / not_proven`。
 
-后者不是已确认的生产失败，但在完整目录证据生成前不得标记通过，也不得宣称 `formal_catalog_startup_complete=true`。
+后者在 2026-07-24 尚不是已确认的生产失败，因此当时不得标记通过，也不得宣称 `formal_catalog_startup_complete=true`。
+
+## 2026-07-27 后续实证
+
+VG-R1 已使用 owned-combatant 窄投影和共享 task/event 证据，在当前源码上完整进入业务谓词。结果确认：
+
+- R1-RUNTIME 仍然通过。
+- 原三张启动簇中的光环路径已经关闭。
+- 剩余失败集中在 `Equip33.json`、`Equip36.json` 两条来源，共三个 task/event family。
+- 目录状态已经从 `deferred / not_proven` 更新为 `confirmed incomplete`。
+
+剩余修复由
+`P8-R2_MEMORY_LIGHT_CONE_FORMAL_EVENT_CHAIN_CLOSURE.md` 单独承接。后续执行线程不得重做本卡已经验收的空召唤 runtime、关系校验或通用光环。
 
 ## 唯一执行清单（仅验收线程可勾）
 
@@ -407,7 +419,7 @@ git diff --check
 - [x] 光环关系可在无当前成员时持久存在，并对出生、更新、死亡 / 复活、离场和父状态移除正确对账。
 - [x] spawn relation、创建事件和 halo 投影顺序一致，失败路径原子 blocked 且 state unchanged。
 - [x] 多 wearer、多来源、同名状态和重复事件均不串线、不重复、不误删。
-- [ ] 三张已知光锥通过真实构筑与真实事件链闭合，当前已发布光锥目录全部正式启动。
+- [x] 原三张启动簇中的剩余两条来源已由 P8-R2 通过真实构筑与真实事件链闭合，当前已发布光锥目录全部正式启动。
 - [x] 代表 mutation 具备 settlement、raw source 反查、snapshot 和 replay 证据。
 - [x] 没有固定 ID、装备专用 runtime、假 servant、静态面板规则迁移或 target error fallback。
-- [ ] 主验证、直接回归、资源审计和 `ready_for_review` 报告完整；当前只缺完整目录启动的低内存补证。
+- [x] R1 runtime 验证、直接回归和资源审计完整；后置的低内存目录证据已由 P8-R2 补齐。

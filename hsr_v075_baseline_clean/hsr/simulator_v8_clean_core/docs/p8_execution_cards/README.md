@@ -1,4 +1,4 @@
-# P8-S5 至 P8-S21 与 P8-R1 执行卡索引
+# P8-S5 至 P8-S21 与 P8-R1、P8-R2 执行卡索引
 
 ## 1. 用途
 
@@ -10,18 +10,21 @@
 
 ```text
 accepted S4
-   |-- light-cone track: S5 -> S6 -> S7 -> S8 -> R1 --|
-   |                                                   |-> S18 -> S19 -> S20 -> S21
-   |-- relic track:      S9 -> ... -> S17 -------------|
+   |-- light-cone track: S5 -> S6 -> S7 -> S8 -> R1 -> R2 --|
+   |                                                         |-> S18 -> S19 -> S20 -> S21
+   |-- relic track:      S9 -> ... -> S17 -------------------|
 ```
 
 - S5 与 S9 只有在 S4 验收并形成代码检查点后才能开始。
 - 光锥轨内部严格按 S5、S6、S7、S8 顺序执行。
 - 遗器轨内部严格按 S9 至 S17 顺序执行。
-- R1 是 CHAR-M1 后发现的共享 runtime 修复门。R1-RUNTIME 已于检查点 `2d1a3f9` 通过聚焦验收并合入，满足 S15 的生产代码前置条件；R1-CATALOG 因旧验证资源成本过高由用户明确延期，当前为 `deferred / not_proven`。
+- R1 是 CHAR-M1 后发现的共享 runtime 修复门。R1-RUNTIME 已于检查点 `2d1a3f9` 通过聚焦验收并合入，满足 S15 的生产代码前置条件。
+- VG-R1 曾用低内存入口确认三个真实 task/event family 失败；R2 已关闭这些失败，并以低内存目录入口完成当前 162 张已发布光锥的正式启动收口。
+- R2 施工期间退役了未过滤运行和九族过滤入口；最终差量与历史暂停裁决保存在
+  `P8-R2_REVIEW_DELTA_AFTER_UNFILTERED_FAILURES.md`，后续不得恢复为常规 gate。
 - 两条轨可并行，但必须从同一个已验收 S4 检查点创建不同 Git worktree；禁止在同一工作区并行修改。
 - 每个阶段验收后先形成独立检查点，下一阶段再基于该检查点继续。
-- S18 只有在 R1-RUNTIME 与 S17 均验收、两个检查点已合并且聚焦回归通过后才能开始。R1-CATALOG 必须在 P8 最终聚合前使用新的低内存目录入口补证。
+- S18 只有在 R2 与 S17 均验收、两个检查点已合并且聚焦回归通过后才能开始。
 - S19-S21 重新严格串行，不允许继续在分支上各自演进共享装配或 runtime 契约。
 
 ## 3. 执行模式定义
@@ -68,6 +71,7 @@ accepted S4
 | S7 | `P8-S7_LIGHT_CONE_STATUS_CONDITION_LISTENER_CLOSURE.md` | 5.6 Sol / max / Goal |
 | S8 | `P8-S8_LIGHT_CONE_REMAINING_GAMEPLAY_CLOSURE.md` | 5.6 Sol / max / Goal |
 | R1 | `P8-R1_SUMMON_RUNTIME_HALO_LIFECYCLE_REPAIR.md` | 5.6 Sol / max / 普通聚焦 |
+| R2 | `P8-R2_MEMORY_LIGHT_CONE_FORMAL_EVENT_CHAIN_CLOSURE.md` + `P8-R2_REVIEW_DELTA_AFTER_UNFILTERED_FAILURES.md` | 5.6 Sol / max / 普通聚焦 |
 | S9 | `P8-S9_RELIC_DEFINITION_CARDS.md` | 5.6 Terra / xhigh / Goal |
 | S10 | `P8-S10_RELIC_INSTANCE_LEGALITY.md` | 5.6 Sol / xhigh / 普通聚焦 |
 | S11 | `P8-S11_RELIC_MAIN_AFFIX.md` | 5.6 Terra / xhigh / Goal |

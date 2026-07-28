@@ -14,11 +14,23 @@ from ..rules.ir import ActionDefinitionIR, StatusCallbackIR, StatusEventFamilyIR
 from ..rules.rulebook import RuleBook
 from .damage import DamageSystem, DamageWindowLedger
 from .effect import EffectRegistry
-from .mutation_events import MUTATION_BACKED_EVENT_TYPES, PRE_MUTATION_BLOCK_REASON
+from .mutation_events import (
+    MUTATION_BACKED_EVENT_TYPES,
+    PRE_MUTATION_BLOCK_REASON,
+    mutation_backed_event_id,
+)
 from .phase_machine import CombatPhaseMachine
 from .status_callbacks import StatusCallbackSystem
 from .timeline import TimelineSystem
 from .trigger import TriggerSystem
+from .unit_lifecycle import UnitLifecycleSystem
+
+
+@dataclass(frozen=True)
+class EventNormalization:
+    before: GameEvent
+    after: GameEvent
+    kind: str
 
 
 @dataclass(frozen=True)
@@ -32,6 +44,7 @@ class EventDispatchResult:
     listener_records: tuple[dict[str, JSONValue], ...] = ()
     errors: tuple[str, ...] = ()
     node_results: tuple[ExecutionNodeResult, ...] = ()
+    event_normalizations: tuple[EventNormalization, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -163,38 +176,68 @@ class EventDispatchSystem:
         modifier_name: str | None = None,
         damage_window_ledger: DamageWindowLedger | None = None,
     ) -> EventDispatchResult:
-        lifecycle_payload_reason = _lifecycle_event_payload_block_reason(event)
+        event_before_normalization = event
+        event, param_entity_reason = _event_with_typed_param_entity(state, event)
+        if param_entity_reason:
+            return _with_controlled_event_normalization(
+                self.dispatch_blocked(
+                    state,
+                    event=event,
+                    listener_kind="event_parameter_dispatch",
+                    scope=_event_scope_kind(event),
+                    reason=param_entity_reason,
+                    metadata={"event_type": event.event_type},
+                ),
+                before=event_before_normalization,
+                after=event,
+            )
+        lifecycle_payload_reason = _lifecycle_event_payload_block_reason(
+            state,
+            event,
+        )
         if lifecycle_payload_reason:
-            return self.dispatch_blocked(
-                state,
-                event=event,
-                listener_kind="lifecycle_event_dispatch",
-                scope=_event_scope_kind(event),
-                reason=lifecycle_payload_reason,
-                metadata={"event_type": event.event_type},
+            return _with_controlled_event_normalization(
+                self.dispatch_blocked(
+                    state,
+                    event=event,
+                    listener_kind="lifecycle_event_dispatch",
+                    scope=_event_scope_kind(event),
+                    reason=lifecycle_payload_reason,
+                    metadata={"event_type": event.event_type},
+                ),
+                before=event_before_normalization,
+                after=event,
             )
         transition_payload_reason = _battle_state_transition_event_block_reason(
             event,
             self.rules,
         )
         if transition_payload_reason:
-            return self.dispatch_blocked(
-                state,
-                event=event,
-                listener_kind="battle_state_transition_event_dispatch",
-                scope=_event_scope_kind(event),
-                reason=transition_payload_reason,
-                metadata={"event_type": event.event_type},
+            return _with_controlled_event_normalization(
+                self.dispatch_blocked(
+                    state,
+                    event=event,
+                    listener_kind="battle_state_transition_event_dispatch",
+                    scope=_event_scope_kind(event),
+                    reason=transition_payload_reason,
+                    metadata={"event_type": event.event_type},
+                ),
+                before=event_before_normalization,
+                after=event,
             )
         phase_reason = self.phases.event_blocked_reason(state, event.event_type)
         if phase_reason:
-            return self.dispatch_blocked(
-                state,
-                event=event,
-                listener_kind="listener_dispatch",
-                scope=_event_scope_kind(event),
-                reason=phase_reason,
-                metadata={"combat_phase": self.phases.current_phase(state)},
+            return _with_controlled_event_normalization(
+                self.dispatch_blocked(
+                    state,
+                    event=event,
+                    listener_kind="listener_dispatch",
+                    scope=_event_scope_kind(event),
+                    reason=phase_reason,
+                    metadata={"combat_phase": self.phases.current_phase(state)},
+                ),
+                before=event_before_normalization,
+                after=event,
             )
         if command is not None and action_definition is not None and target_resolution is not None:
             result = self._dispatch_action_window_event(
@@ -214,7 +257,11 @@ class EventDispatchSystem:
                 modifier_name=modifier_name,
                 damage_window_ledger=damage_window_ledger,
             )
-        return _with_event_dispatch_node_result(result, event)
+        return _with_controlled_event_normalization(
+            _with_event_dispatch_node_result(result, event),
+            before=event_before_normalization,
+            after=event,
+        )
 
     def _dispatch_action_window_event(
         self,
@@ -376,6 +423,7 @@ class EventDispatchSystem:
         listener_records: list[dict[str, JSONValue]] = []
         errors: list[str] = []
         node_results: list[ExecutionNodeResult] = []
+        event_normalizations: list[EventNormalization] = []
         for match in matches:
             listener_record = _listener_record(
                 event,
@@ -413,10 +461,36 @@ class EventDispatchSystem:
                 for emitted_event in result.events:
                     if emitted_event.event_type not in CALLBACK_EMITTED_EVENT_TYPES:
                         continue
-                    child_event = replace(
-                        emitted_event,
-                        payload={**emitted_event.payload, "mutation_event_depth": child_depth + 1},
-                    )
+                    child_event = emitted_event
+                    if (
+                        "mutation_event_depth"
+                        not in emitted_event.payload
+                    ):
+                        child_event = replace(
+                            emitted_event,
+                            event_id=(
+                                emitted_event.event_id
+                                or str(
+                                    emitted_event.to_json().get(
+                                        "event_id"
+                                    )
+                                    or ""
+                                )
+                            ),
+                            payload={
+                                **emitted_event.payload,
+                                "mutation_event_depth": (
+                                    child_depth + 1
+                                ),
+                            },
+                        )
+                        event_normalizations.append(
+                            EventNormalization(
+                                before=emitted_event,
+                                after=child_event,
+                                kind="mutation_event_depth",
+                            )
+                        )
                     child_result = self.dispatch_event(
                         current_state,
                         event=child_event,
@@ -429,6 +503,9 @@ class EventDispatchSystem:
                     events.extend(child_result.events)
                     errors.extend(child_result.errors)
                     node_results.extend(child_result.node_results)
+                    event_normalizations.extend(
+                        child_result.event_normalizations
+                    )
             execution_record = _listener_record(
                 event,
                 listener_kind=match.listener_kind,
@@ -454,6 +531,7 @@ class EventDispatchSystem:
             listener_records=tuple(listener_records),
             errors=tuple(errors),
             node_results=tuple(node_results),
+            event_normalizations=tuple(event_normalizations),
         )
 
     def _resolve_listener_matches(
@@ -692,6 +770,27 @@ def _with_event_dispatch_node_result(
     return replace(result, node_results=tuple(nodes))
 
 
+def _with_controlled_event_normalization(
+    result: EventDispatchResult,
+    *,
+    before: GameEvent,
+    after: GameEvent,
+) -> EventDispatchResult:
+    if before == after:
+        return result
+    return replace(
+        result,
+        event_normalizations=(
+            EventNormalization(
+                before=before,
+                after=after,
+                kind="typed_param_entity",
+            ),
+            *result.event_normalizations,
+        ),
+    )
+
+
 def _trigger_window_node_results(
     event: GameEvent,
     trigger_windows: tuple[dict[str, JSONValue], ...],
@@ -870,8 +969,53 @@ def _dispatch_only_without_listener(event: GameEvent, aliases: tuple[EventAlias,
     return not any(alias.callback_event and alias.admission_status == "executable" for alias in aliases)
 
 
-def _lifecycle_event_payload_block_reason(event: GameEvent) -> str:
+def _lifecycle_event_payload_block_reason(
+    state: BattleState,
+    event: GameEvent,
+) -> str:
     payload = event.payload
+    if event.event_type == "unit.defeated":
+        if event.window != "unit.defeated":
+            return "unit_defeated_window_invalid"
+        target_id = str(event.target_id or "")
+        identities = (
+            target_id,
+            payload.get("target_id"),
+            payload.get("defeated_unit_id"),
+        )
+        if any(
+            not isinstance(identity, str) or not identity
+            for identity in identities
+        ):
+            return "unit_defeated_identity_missing"
+        if any(identity != target_id for identity in identities[1:]):
+            return "unit_defeated_identity_mismatch"
+        if not isinstance(payload.get("lifecycle_mutation_id"), str) or not payload.get(
+            "lifecycle_mutation_id"
+        ):
+            return "unit_defeated_lifecycle_mutation_missing"
+        lifecycle_mutation_id = str(payload["lifecycle_mutation_id"])
+        if not event.event_id:
+            return "unit_defeated_event_identity_missing"
+        if event.event_id != mutation_backed_event_id(
+            lifecycle_mutation_id,
+            event.event_type,
+        ):
+            return "unit_defeated_event_identity_mismatch"
+        unit = state.units.get(target_id)
+        if unit is None:
+            return "unit_defeated_target_missing"
+        if UnitLifecycleSystem().status_of(unit) != "defeated":
+            return "unit_defeated_state_mismatch"
+        defeat_record = unit.flags.get("defeat_record")
+        if (
+            not isinstance(defeat_record, dict)
+            or defeat_record.get("lifecycle_mutation_id")
+            != lifecycle_mutation_id
+            or defeat_record.get("target_id") != target_id
+            or defeat_record.get("defeated_unit_id") != target_id
+        ):
+            return "unit_defeated_lifecycle_mutation_uncommitted"
     if event.event_type == "status.lifecycle" and payload.get(
         "lifecycle_operation"
     ) in {"remove", "expire", "dispel", "stack_reduce_remove"}:
@@ -917,6 +1061,59 @@ def _lifecycle_event_payload_block_reason(event: GameEvent) -> str:
     if event.event_type == "battle.completed" and payload.get("outcome") not in {"victory", "defeat"}:
         return "battle_completed_outcome_invalid"
     return ""
+
+
+def _event_with_typed_param_entity(
+    state: BattleState,
+    event: GameEvent,
+) -> tuple[GameEvent, str]:
+    """Bind callback target resolution to one validated event entity identity."""
+
+    payload = dict(event.payload)
+    raw_param_entity_id = payload.get("param_entity_id")
+    callback_events = payload.get("callback_events")
+    creation_event = (
+        event.event_type in {"unit.created", "summon.spawned"}
+        or (
+            isinstance(callback_events, (list, tuple))
+            and "OnListenCharacterCreate" in callback_events
+        )
+    )
+    if creation_event:
+        identities = (
+            event.target_id,
+            payload.get("unit_id"),
+            raw_param_entity_id,
+        )
+        if any(not isinstance(identity, str) or not identity for identity in identities):
+            return event, "event_param_entity_missing"
+        typed_identity = str(identities[0])
+        if any(identity != typed_identity for identity in identities[1:]):
+            return event, "event_param_entity_identity_mismatch"
+        if typed_identity not in state.units:
+            return event, "event_param_entity_unit_missing"
+        return replace(
+            event,
+            payload={**payload, "param_entity_id": typed_identity},
+        ), ""
+
+    if raw_param_entity_id is not None:
+        if not isinstance(raw_param_entity_id, str) or not raw_param_entity_id:
+            return event, "event_param_entity_invalid"
+        if raw_param_entity_id not in state.units:
+            return event, "event_param_entity_unit_missing"
+        return event, ""
+
+    if isinstance(event.target_id, str) and event.target_id in state.units:
+        event_id = event.event_id or str(
+            event.to_json().get("event_id") or ""
+        )
+        return replace(
+            event,
+            event_id=event_id,
+            payload={**payload, "param_entity_id": event.target_id},
+        ), ""
+    return event, ""
 
 
 def _battle_state_transition_event_block_reason(
@@ -1200,6 +1397,7 @@ def _scope_kind_for_callback_event(event: GameEvent, callback_event: str) -> str
         "OnBeingStanceDamage",
         "OnActionDelayEffect",
         "OnActionDelayEffectAll",
+        "OnDeathrattle",
     }:
         return "being_hit_target_local"
     if callback_event in {

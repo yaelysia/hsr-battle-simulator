@@ -11,7 +11,7 @@ turnbasedgamedata-main -> compiler/lowering -> Canonical IR -> Combat Core
 最近已验收生产检查点：
 
 ```text
-d29b34b checkpoint(v8): accept VG-S2 committed integrity lifecycle pilot
+P8-R2 本检查点（父检查点：419e476）
 ```
 
 验证治理路线回正：
@@ -29,6 +29,7 @@ d29b34b checkpoint(v8): accept VG-S2 committed integrity lifecycle pilot
 - P6 架构边界回正。
 - P7-S0 至 P7-S19 内核可信执行与当前准入战斗语义。
 - P8-S0 至 P8-S8 光锥定义、实例、装配和机制闭合。
+- P8-R1-RUNTIME 与 P8-R2 召唤光环、记忆光锥事件链及当前光锥目录启动收口。
 - CHAR-M1 记忆角色与忆灵 owned-combatant 构筑底座。
 - VG-R1 P8-S8 task/event 共享证据与 owned-combatant 窄投影试点。
 
@@ -36,9 +37,9 @@ d29b34b checkpoint(v8): accept VG-S2 committed integrity lifecycle pilot
 
 - P3 历史检查点采用 P7 前口径；servant action graph 仍有真实内容缺口，不能称为完整继承。
 - P1-P7 完成的是底座和当前准入语义，不代表全角色、全怪物、全关卡和全部特殊模式完成。
-- P8-S8 已证明当前光锥机制图闭合，不等于所有正式角色构筑和完整目录启动都已得到最终证据。
+- P8-S8 与 R2 已证明当前光锥机制图和 162 张已发布光锥目录启动闭合，不等于所有正式角色构筑、遗器或完整 P8 构筑链已经完成。
 
-## P8-R1 裁决
+## P8-R1 / P8-R2 裁决
 
 P8-R1 的生产修复已完成聚焦验收：
 
@@ -58,44 +59,26 @@ P7-S15: 14/14
 git diff --check: pass
 ```
 
-VG-R1 的低内存未过滤组合已经首次在当前源码上完整进入 task/event 业务谓词。
-目录状态不再只是“未运行”：
+VG-R1 曾确认两条动态值任务和一条死亡回响事件 family 失败。P8-R2 已完成：
 
-```text
-P8-R1 runtime-only = accepted
-P8-R1 catalog = confirmed incomplete
-```
-
-当前失败集中在两条动态值任务 family 和一条死亡回响事件 family，对应 CHAR-M1
-曾记录的记忆光锥 / 忆灵正式场景缺口。它们不是 VG-R1 窄投影制造的新回归，也
-不能再记为单纯 `not_proven`。P8-R1 中“三张真实光锥与完整目录收口”继续未完成，
-后续必须单独修复；P8 总 checklist 不得打勾。
+- 两个动态值任务通过正式忆灵动作执行。
+- 死亡回响通过连续正式动作、规范死亡事件和通用事件身份链执行。
+- 同身份不同内容的事件在提交前 fail-closed，不产生 mutation、event 或 RNG。
+- VG-R1 临时允许失败集合已删除，没有留下替代豁免。
+- 当前 162 张已发布光锥全部完成正式目录启动，装备失败和外部依赖均为零。
+- R2 聚焦验证峰值约 572 MiB；目录启动峰值约 885 MiB，完整 lowering 均为零。
 
 ## 当前工作
 
-当前优先事项是 `VG` 验证治理与状态完整性回正：
+光锥轨已经推进至 R2 并验收。当前顺序上的下一阶段是 `P8-S9` 遗器定义卡；
+S9 至 S17 继续按 `docs/p8_execution_cards/` 中的单阶段执行卡严格推进。
 
-1. `VG-S0` 已通过验收，确认 committed state 嵌套别名、原子提交缺少领域
-   完整性门、事件 closure 所有权冲突以及重复完整 lowering 是当前主要根因。
-2. `VG-S1` 已通过验收：UnitState、BattleState、Snapshot、codec 和 reducer
-   的递归不可变、输入别名隔离、独立 JSON 输出与结构共享边界已经闭合。
-3. `VG-S2` 已通过验收：单位生命周期已迁移为类型化唯一权威，touched-domain
-   integrity gate、完整批次 replay、atomic failure 和场景双 full-check 边界已闭合。
-4. 原 `VG-S3` validator registry 路线已撤销。它新增 5,110 行治理与元验证代码，
-   却没有同轮减少真实重构建和历史脚本，不能恢复或继续扩展。
-5. `VG-R1` 已通过验收：task/event 不再调用完整 `TBGDLowering.build()`，五类
-   servant 准入数据改走来源真实的窄投影。
-6. 窄投影、focused bundle 和公共证据均只构建 1 次；最终未过滤组合峰值
-   588,188 KiB，旧完整 build 的 4,137,552 KiB `MemoryError` 保留为成本基线。
-7. 验证 Python 净减少 3 行，production 与 validation 总净增长 320 行；没有
-   恢复深冻结、来源审计、registry、selector 或元验证框架。
-8. CLI 只按业务 `ok` 退出；`governance_ok` 不能把业务失败标绿。已知 P8-R1
-   缺口只作为失败上限，允许后续减少至零。
-9. 未过滤组合暴露的三类 P8-R1 业务失败只做归因，不在 VG-R1 中修改游戏语义。
-10. 当前没有自动衔接的第二张治理执行卡。若继续治理，必须先选择第二个真实重复点
-    并证明其与 VG-R1 具有相同生命周期，不能直接规划全项目框架。
+必须保留：
 
-遗器轨 P8-S9 至 S17 仍按 `docs/p8_execution_cards/` 中的单阶段执行卡推进。S18 是光锥与遗器汇合阶段。
+1. 不因光锥目录已闭合而提前宣称 P8 完成；遗器与最终构筑汇合尚未实施。
+2. R2 退役的未过滤聚合、九族组合和 VG-S3 registry 路线不得恢复。
+3. S18 是光锥与遗器硬汇合点，只有 R2 与 S17 的检查点都在同一分支后才能开始。
+4. 若继续验证治理，必须先证明新的真实重复点与现有共享证据具有相同生命周期。
 
 ## 仍未完成的大块
 
@@ -113,6 +96,11 @@ P8-R1 catalog = confirmed incomplete
 
 不要默认通读所有文档。根据任务选择：
 
+- 当前 P8-S9 执行卡：
+  `docs/p8_execution_cards/P8-S9_RELIC_DEFINITION_CARDS.md`。
+- 已验收 P8-R2 执行卡与最终差量：
+  `docs/p8_execution_cards/P8-R2_MEMORY_LIGHT_CONE_FORMAL_EVENT_CHAIN_CLOSURE.md`、
+  `docs/p8_execution_cards/P8-R2_REVIEW_DELTA_AFTER_UNFILTERED_FAILURES.md`。
 - VG-R1 已验收执行卡：
   `docs/validation_execution_cards/VG-R1_P8_S8_TASK_EVENT_SHARED_EVIDENCE_PILOT.md`。
 - 架构修改：`ARCHITECTURE_BOUNDARY_CONTRACT.md`、`FORBIDDEN.md`。

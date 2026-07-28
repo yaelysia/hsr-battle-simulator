@@ -1194,12 +1194,24 @@ def _evaluate_condition_payload(
                 {"left": left_details, "right": right_details},
                 source_trace,
             )
-        if len(left_ids) != 1 or len(right_ids) != 1:
+        if len(left_ids) > 1 or len(right_ids) > 1:
             return _condition_blocked(
                 condition_id,
                 opcode,
                 "target_identity_requires_singleton",
                 {"left_target_ids": list(left_ids), "right_target_ids": list(right_ids)},
+                source_trace,
+            )
+        if not left_ids or not right_ids:
+            return _condition_result(
+                False,
+                condition_id,
+                opcode,
+                "target_identity_empty_operand",
+                {
+                    "left_target_ids": list(left_ids),
+                    "right_target_ids": list(right_ids),
+                },
                 source_trace,
             )
         left_id = left_ids[0]

@@ -15,6 +15,7 @@ from ..rules.ir import ActionDefinitionIR
 from ..rules.rulebook import RuleBook
 from .damage_formula import DamageFormulaInput, DirectDamageFormula
 from .damage_pipeline import DamagePipelineResult, DamageStagePipeline
+from .mutation_events import mutation_backed_event_id
 from .unit_lifecycle import UnitLifecycleSystem
 from .shield import HPDamageRoute, ShieldSystem
 
@@ -1454,6 +1455,10 @@ def _damage_defeat_event(
         event_type="unit.defeated",
         source_id=source_frame.owner_id,
         target_id=packet.target_id,
+        event_id=mutation_backed_event_id(
+            lifecycle_mutation_id,
+            "unit.defeated",
+        ),
         window="unit.defeated",
         process_only=True,
         payload={
@@ -1548,14 +1553,29 @@ def _defeat_lifecycle_artifacts(
         defeat_record=defeat_record,
         metadata=damage_metadata,
     )
+    persisted_defeat_record = (
+        {
+            **defeat_record,
+            "lifecycle_mutation_id": status_mutation.stable_id(),
+        }
+        if status_mutation is not None
+        else defeat_record
+    )
     record_mutation = lifecycle.defeat_record_mutation(
         state,
         packet.target_id,
         reason="record unit defeat",
         source="damage_system",
-        defeat_record=defeat_record,
+        defeat_record=persisted_defeat_record,
         source_trace=packet.source_trace,
-        metadata=damage_metadata,
+        metadata={
+            **damage_metadata,
+            "lifecycle_mutation_id": (
+                status_mutation.stable_id()
+                if status_mutation is not None
+                else ""
+            ),
+        },
     )
     mutations = tuple(mutation for mutation in (status_mutation, record_mutation) if mutation is not None)
     records = tuple(

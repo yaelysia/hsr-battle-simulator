@@ -18,6 +18,7 @@ from .model import (
     GameEvent,
     JSONValue,
     Mutation,
+    RNGEvent,
     TargetResolution,
 )
 from .reducer import MutationReducer
@@ -53,12 +54,24 @@ from ..systems.target import TargetSystem
 from ..systems.timeline import TimelinePlan, TimelineSystem
 from ..systems.unit_lifecycle import UnitLifecycleSystem
 from ..systems.toughness import ToughnessPacket, ToughnessSystem
-from ..systems.event_dispatch import EventDispatchResult, EventDispatchSystem
+from ..systems.event_dispatch import (
+    EventDispatchResult,
+    EventDispatchSystem,
+    EventNormalization,
+)
 from ..systems.mutation_events import (
     MUTATION_BACKED_EVENT_TYPES,
     before_toughness_calculation_event,
     events_for_mutation,
 )
+
+
+class _EventIdentityConflict(ValueError):
+    def __init__(self, event_id: str, conflict_field: str) -> None:
+        self.event_id = event_id
+        self.conflict_field = conflict_field
+        self.reason_code = f"event_identity_conflict:{conflict_field}"
+        super().__init__(f"{self.reason_code}:{event_id}")
 
 
 class CombatExecutor:
@@ -81,6 +94,216 @@ class CombatExecutor:
         self.event_dispatcher = EventDispatchSystem(rules, self.effects, reducer=self.reducer, damage=self.damage)
         self.value_resolver = ValueResolver(rules)
         self.action_contract = ActionContractSystem(rules)
+
+    def commit_eventful_transition(
+        self,
+        state: BattleState,
+        *,
+        mutations: tuple[Mutation, ...],
+        events: tuple[GameEvent, ...],
+        records: tuple[dict[str, JSONValue], ...] = (),
+        rng_events: tuple[RNGEvent, ...] = (),
+        producer_kind: str,
+        producer_id: str,
+        producer_ok: bool = True,
+        blocked_reason: str = "",
+    ) -> EventDispatchResult:
+        """Publish a system result only after its events complete on the candidate."""
+
+        producer_reason = (
+            ""
+            if producer_ok
+            else blocked_reason or f"{producer_kind or 'eventful_transition'}_blocked"
+        )
+        identity_conflict: _EventIdentityConflict | None = None
+        try:
+            events = _eventful_transition_events(
+                state,
+                mutations,
+                events,
+                producer_id=producer_id,
+            )
+        except _EventIdentityConflict as conflict:
+            events = ()
+            identity_conflict = conflict
+        events = tuple(
+            event
+            if event.event_id
+            else replace(
+                event,
+                event_id=(
+                    f"event:{state.event_index}:eventful:"
+                    f"{producer_kind or 'transition'}:{producer_id or 'unknown'}:"
+                    f"{index}:{event.event_type}"
+                ),
+            )
+            for index, event in enumerate(events)
+        )
+        producer_node = ExecutionNodeResult(
+            node_kind=producer_kind or "eventful_transition",
+            node_id=producer_id or producer_kind or "unknown",
+            status="complete" if producer_ok else "blocked",
+            reason_code=producer_reason,
+        )
+        reduction = self.reducer.apply_all_result(state, mutations)
+        current_state = (
+            reduction.after_state
+            if producer_ok and reduction.ok and identity_conflict is None
+            else state
+        )
+        node_results: list[ExecutionNodeResult] = [producer_node]
+        dispatch_mutations: list[Mutation] = []
+        dispatch_events: list[GameEvent] = []
+        dispatch_rng_events: list[RNGEvent] = []
+        dispatch_records: list[dict[str, JSONValue]] = []
+        listener_records: list[dict[str, JSONValue]] = []
+        event_normalizations: list[EventNormalization] = []
+        errors: list[str] = []
+        creation_targets: set[str] = set()
+
+        if identity_conflict is not None:
+            errors.append(identity_conflict.reason_code)
+            node_results.append(
+                ExecutionNodeResult(
+                    node_kind="event_identity",
+                    node_id=identity_conflict.event_id,
+                    status="blocked",
+                    reason_code=identity_conflict.reason_code,
+                )
+            )
+        elif producer_ok and not reduction.ok:
+            conflict = reduction.conflicts[0].code if reduction.conflicts else "unknown"
+            reason = f"eventful_transition_reducer_conflict:{conflict}"
+            errors.append(reason)
+            node_results.append(
+                ExecutionNodeResult(
+                    node_kind="mutation_reducer",
+                    node_id=producer_id or producer_kind or "unknown",
+                    status="blocked",
+                    reason_code=reason,
+                )
+            )
+        elif producer_ok:
+            for event in events:
+                callback_events = event.payload.get("callback_events")
+                is_creation_event = (
+                    event.event_type in {"unit.created", "summon.spawned"}
+                    or (
+                        isinstance(callback_events, (list, tuple))
+                        and "OnListenCharacterCreate" in callback_events
+                    )
+                )
+                creation_target = str(event.target_id or "") if is_creation_event else ""
+                if creation_target and creation_target in creation_targets:
+                    reason = "duplicate_unit_creation_event"
+                    errors.append(reason)
+                    node_results.append(
+                        ExecutionNodeResult(
+                            node_kind="event_dispatch",
+                            node_id=event.event_id or event.event_type,
+                            status="blocked",
+                            reason_code=reason,
+                        )
+                    )
+                    break
+                if creation_target:
+                    creation_targets.add(creation_target)
+                dispatched = self.event_dispatcher.dispatch_event(
+                    current_state,
+                    event=event,
+                )
+                current_state = dispatched.after_state
+                dispatch_mutations.extend(dispatched.mutations)
+                dispatch_events.extend(dispatched.events)
+                dispatch_rng_events.extend(dispatched.rng_events)
+                dispatch_records.extend(dispatched.records)
+                listener_records.extend(dispatched.listener_records)
+                event_normalizations.extend(
+                    dispatched.event_normalizations
+                )
+                errors.extend(dispatched.errors)
+                node_results.extend(dispatched.node_results)
+                if dispatched.errors:
+                    break
+
+        transaction_events: tuple[GameEvent, ...] = ()
+        if identity_conflict is None:
+            try:
+                transaction_events = _dedupe_events(
+                    *events,
+                    *dispatch_events,
+                    event_normalizations=tuple(
+                        event_normalizations
+                    ),
+                )
+            except _EventIdentityConflict as conflict:
+                identity_conflict = conflict
+                errors.append(conflict.reason_code)
+                node_results.append(
+                    ExecutionNodeResult(
+                        node_kind="event_identity",
+                        node_id=conflict.event_id,
+                        status="blocked",
+                        reason_code=conflict.reason_code,
+                    )
+                )
+        planned_mutations = (*mutations, *dispatch_mutations)
+        identity_blocked_reason = (
+            identity_conflict.reason_code
+            if identity_conflict is not None
+            else ""
+        )
+        atomic_commit = finalize_selected_execution_graph(
+            state,
+            current_state,
+            planned_mutations,
+            tuple(node_results),
+            reducer=self.reducer,
+            preflight_blocked=(
+                not producer_ok or identity_conflict is not None
+            ),
+            preflight_reason=(
+                producer_reason
+                if not producer_ok
+                else identity_blocked_reason
+            ),
+        )
+        atomic_record = SettlementRecord(
+            record_type="eventful_transition_atomic_commit",
+            source="combat_executor",
+            process_only=True,
+            payload={
+                "producer_kind": producer_kind,
+                "producer_id": producer_id,
+                "outcome": atomic_commit.outcome.to_json(),
+                "evidence": atomic_commit.evidence,
+            },
+        ).to_json()
+        if not atomic_commit.outcome.successor_eligible:
+            errors.extend(atomic_commit.outcome.reason_codes)
+        return EventDispatchResult(
+            after_state=atomic_commit.after_state,
+            mutations=atomic_commit.committed_mutations,
+            events=(
+                ()
+                if identity_conflict is not None
+                else events_for_atomic_result(
+                    transaction_events,
+                    atomic_commit,
+                )
+            ),
+            rng_events=rng_events_for_atomic_result(
+                (*rng_events, *dispatch_rng_events),
+                atomic_commit,
+            ),
+            records=records_for_atomic_result(
+                (*records, *dispatch_records, atomic_record),
+                atomic_commit,
+            ),
+            listener_records=tuple(listener_records),
+            errors=tuple(dict.fromkeys(error for error in errors if error)),
+            node_results=atomic_commit.outcome.node_results,
+        )
 
     def execute(
         self,
@@ -410,35 +633,17 @@ class CombatExecutor:
                             listener_dispatch_results.append(dispatch_result)
                             ordered_mutations.extend(dispatch_result.mutations)
                             runtime_records.extend(dispatch_result.records)
-                    dispatch_event = GameEvent(
-                        event_type=f"action.window.{step.canonical_window}",
-                        source_id=command.actor_id,
-                        target_id=target_result.resolution.selected[0] if target_result.resolution.selected else None,
-                        event_id=f"event:{current_state.event_index}:{step.canonical_window}:dispatch",
-                        window=step.canonical_window,
-                        process_only=True,
-                        payload={
-                            "tbgd_event": step.tbgd_event,
-                            "phase": step.phase,
-                            "action_id": command.action_id,
-                            "action_level": command.action_level,
-                            "actor_id": command.actor_id,
-                            "attacker_id": command.actor_id,
-                            "damage_attacker_id": command.actor_id,
-                            "selected_target_ids": list(target_result.resolution.selected),
-                            "target_ids": list(target_result.resolution.selected),
-                            "primary_action_target_id": action_execution_plan.primary_action_target_id,
-                            "primary_target_id": action_execution_plan.primary_action_target_id,
-                            "current_hit_target_id": action_execution_plan.primary_action_target_id,
-                            "target_id": action_execution_plan.primary_action_target_id,
-                            "attack_type": action_definition.attack_type,
-                            "AttackType": action_definition.attack_type,
-                            "skill_type": _condition_skill_type(action_definition),
-                            "SkillType": _condition_skill_type(action_definition),
-                            "skill_effect": action_definition.skill_effect,
-                            "is_current_skill_active": True,
-                            "is_insert_action": _metadata_bool(command.metadata, "is_insert_action", False),
-                        },
+                    dispatch_event = _action_window_dispatch_event(
+                        current_state,
+                        command,
+                        action_definition,
+                        action_event_id=action_event_ir.action_event_id,
+                        action_event_source=action_event_ir.source.to_json(),
+                        step=step,
+                        target_resolution=target_result.resolution,
+                        primary_target_id=(
+                            action_execution_plan.primary_action_target_id
+                        ),
                     )
                     trigger_result = self.event_dispatcher.dispatch_action_window(
                         current_state,
@@ -1306,6 +1511,41 @@ class CombatExecutor:
                 reason_code="" if rng_ledger_validation.ok else _rng_ledger_blocked_reason(rng_ledger_validation.to_json()),
             )
         )
+        raw_transaction_events = (
+            *events,
+            *ability_task_events,
+            *trigger_events,
+            *listener_dispatch_events,
+            *(event for result in damage_results for event in result.events),
+            *(event for result in toughness_results for event in result.events),
+            *(event for result in break_results for event in result.events),
+        )
+        event_normalizations = tuple(
+            normalization
+            for result in (
+                *trigger_results,
+                *listener_dispatch_results,
+                *halo_dispatch_results,
+            )
+            for normalization in result.event_normalizations
+        )
+        event_identity_conflict: _EventIdentityConflict | None = None
+        try:
+            transaction_events = _dedupe_events(
+                *raw_transaction_events,
+                event_normalizations=event_normalizations,
+            )
+        except _EventIdentityConflict as conflict:
+            transaction_events = ()
+            event_identity_conflict = conflict
+            execution_node_results.append(
+                ExecutionNodeResult(
+                    node_kind="event_identity",
+                    node_id=conflict.event_id,
+                    status="blocked",
+                    reason_code=conflict.reason_code,
+                )
+            )
         planned_mutations = tuple(ordered_mutations)
         atomic_commit = finalize_selected_execution_graph(
             state,
@@ -1313,8 +1553,19 @@ class CombatExecutor:
             planned_mutations,
             tuple(execution_node_results),
             reducer=self.reducer,
-            preflight_blocked=not action_enabled,
-            preflight_reason=blocked_reason,
+            preflight_blocked=(
+                not action_enabled
+                or event_identity_conflict is not None
+            ),
+            preflight_reason=(
+                blocked_reason
+                if not action_enabled
+                else (
+                    event_identity_conflict.reason_code
+                    if event_identity_conflict is not None
+                    else ""
+                )
+            ),
         )
         mutations = atomic_commit.committed_mutations
         after_state = atomic_commit.after_state
@@ -1493,17 +1744,13 @@ class CombatExecutor:
         transaction = ActionTransaction(
             command=command,
             before=before,
-            events=events_for_atomic_result(
-                _dedupe_events(
-                    *events,
-                    *ability_task_events,
-                    *trigger_events,
-                    *listener_dispatch_events,
-                    *(event for result in damage_results for event in result.events),
-                    *(event for result in toughness_results for event in result.events),
-                    *(event for result in break_results for event in result.events),
-                ),
-                atomic_commit,
+            events=(
+                ()
+                if event_identity_conflict is not None
+                else events_for_atomic_result(
+                    transaction_events,
+                    atomic_commit,
+                )
             ),
             mutations=mutations,
             trigger_windows=trigger_windows,
@@ -1695,17 +1942,169 @@ def _break_node_results(results: list[BreakApplicationResult]) -> tuple[Executio
     )
 
 
-def _dedupe_events(*events: GameEvent) -> tuple[GameEvent, ...]:
-    seen: set[str] = set()
+def _dedupe_events(
+    *events: GameEvent,
+    event_normalizations: tuple[EventNormalization, ...] = (),
+) -> tuple[GameEvent, ...]:
+    normalized_events = list(events)
+    for normalization in event_normalizations:
+        normalized = _validated_dispatch_normalization(
+            normalization
+        )
+        normalized_events = [
+            normalized if event == normalization.before else event
+            for event in normalized_events
+        ]
+
     deduped: list[GameEvent] = []
-    for event in events:
-        event_id = str(event.to_json().get("event_id") or "")
-        key = event_id or repr(event.to_json())
-        if key in seen:
+    index_by_key: dict[str, int] = {}
+    for event in normalized_events:
+        key = _resolved_event_id(event)
+        if key in index_by_key:
+            index = index_by_key[key]
+            deduped[index] = _strict_duplicate_event(
+                deduped[index],
+                event,
+                event_id=key,
+            )
             continue
-        seen.add(key)
+        index_by_key[key] = len(deduped)
         deduped.append(event)
     return tuple(deduped)
+
+
+def _resolved_event_id(event: GameEvent) -> str:
+    return str(event.to_json().get("event_id") or "")
+
+
+def _strict_duplicate_event(
+    existing: GameEvent,
+    candidate: GameEvent,
+    *,
+    event_id: str,
+) -> GameEvent:
+    fields = (
+        ("event_type", existing.event_type, candidate.event_type),
+        ("source_id", existing.source_id, candidate.source_id),
+        ("target_id", existing.target_id, candidate.target_id),
+        ("window", existing.window, candidate.window),
+        ("process_only", existing.process_only, candidate.process_only),
+        ("payload", existing.payload, candidate.payload),
+    )
+    for field_name, existing_value, candidate_value in fields:
+        if existing_value != candidate_value:
+            raise _EventIdentityConflict(
+                event_id,
+                field_name,
+            )
+    if candidate.event_id and not existing.event_id:
+        return candidate
+    return existing
+
+
+def _validated_dispatch_normalization(
+    normalization: EventNormalization,
+) -> GameEvent:
+    before = normalization.before
+    after = normalization.after
+    event_id = _resolved_event_id(before)
+    if (
+        event_id != _resolved_event_id(after)
+    ):
+        raise _EventIdentityConflict(
+            event_id or _resolved_event_id(after),
+            "dispatcher_normalization",
+        )
+    fields = (
+        (before.event_type, after.event_type),
+        (before.source_id, after.source_id),
+        (before.target_id, after.target_id),
+        (before.window, after.window),
+        (before.process_only, after.process_only),
+    )
+    if any(existing != candidate for existing, candidate in fields):
+        raise _EventIdentityConflict(
+            event_id,
+            "dispatcher_normalization",
+        )
+    if normalization.kind == "typed_param_entity":
+        expected_param_entity_id = before.target_id
+        payload_ok = bool(
+            isinstance(expected_param_entity_id, str)
+            and expected_param_entity_id
+            and "param_entity_id" not in before.payload
+            and after.payload
+            == {
+                **before.payload,
+                "param_entity_id": expected_param_entity_id,
+            }
+        )
+    elif normalization.kind == "mutation_event_depth":
+        payload_ok = bool(
+            "mutation_event_depth" not in before.payload
+            and after.payload
+            == {
+                **before.payload,
+                "mutation_event_depth": 1,
+            }
+        )
+    else:
+        payload_ok = False
+    if not payload_ok:
+        raise _EventIdentityConflict(
+            event_id,
+            "dispatcher_normalization",
+        )
+    return after
+
+
+def _eventful_transition_events(
+    state: BattleState,
+    mutations: tuple[Mutation, ...],
+    explicit_events: tuple[GameEvent, ...],
+    *,
+    producer_id: str,
+) -> tuple[GameEvent, ...]:
+    """Add mutation-backed events without duplicating an explicit birth event."""
+
+    explicit_creation_targets = {
+        str(event.target_id)
+        for event in explicit_events
+        if event.target_id
+        and (
+            event.event_type in {"unit.created", "summon.spawned"}
+            or (
+                isinstance(event.payload.get("callback_events"), (list, tuple))
+                and "OnListenCharacterCreate"
+                in event.payload.get("callback_events", ())
+            )
+        )
+    }
+    source_ids_by_target = {
+        str(event.target_id): str(event.source_id or producer_id)
+        for event in explicit_events
+        if event.target_id
+    }
+    supplements: list[GameEvent] = []
+    for mutation in mutations:
+        target_id = (
+            str(mutation.path[1])
+            if len(mutation.path) >= 2 and mutation.path[0] == "units"
+            else ""
+        )
+        for event in events_for_mutation(
+            mutation,
+            actor_id=source_ids_by_target.get(target_id, producer_id),
+            source_id=source_ids_by_target.get(target_id, producer_id),
+            event_index=state.event_index,
+        ):
+            if (
+                event.event_type == "unit.created"
+                and str(event.target_id or "") in explicit_creation_targets
+            ):
+                continue
+            supplements.append(event)
+    return _dedupe_events(*explicit_events, *supplements)
 
 
 def _action_event_plan_compat_payload(action_definition: ActionDefinitionIR, action_event_ir) -> dict[str, JSONValue]:
@@ -2679,6 +3078,62 @@ def _damage_listener_window_event(
             "amount": final_damage,
             "final_damage": final_damage,
             "source_trace": source_trace,
+        },
+    )
+
+
+def _action_window_dispatch_event(
+    state: BattleState,
+    command: ActionCommand,
+    action_definition: ActionDefinitionIR,
+    *,
+    action_event_id: str,
+    action_event_source: dict[str, JSONValue],
+    step,
+    target_resolution: TargetResolution,
+    primary_target_id: str | None,
+) -> GameEvent:
+    return GameEvent(
+        event_type=f"action.window.{step.canonical_window}",
+        source_id=command.actor_id,
+        target_id=(
+            target_resolution.selected[0]
+            if target_resolution.selected
+            else None
+        ),
+        event_id=(
+            f"event:{state.event_index}:{step.canonical_window}:dispatch"
+        ),
+        window=step.canonical_window,
+        process_only=True,
+        payload={
+            "tbgd_event": step.tbgd_event,
+            "phase": step.phase,
+            "action_id": command.action_id,
+            "action_level": command.action_level,
+            "action_event_id": action_event_id,
+            "action_event_source": action_event_source,
+            "actor_id": command.actor_id,
+            "attacker_id": command.actor_id,
+            "damage_attacker_id": command.actor_id,
+            "selected_target_ids": list(target_resolution.selected),
+            "target_ids": list(target_resolution.selected),
+            "primary_action_target_id": primary_target_id,
+            "primary_target_id": primary_target_id,
+            "current_hit_target_id": primary_target_id,
+            "target_id": primary_target_id,
+            "attack_type": action_definition.attack_type,
+            "AttackType": action_definition.attack_type,
+            "skill_type": _condition_skill_type(action_definition),
+            "SkillType": _condition_skill_type(action_definition),
+            "skill_effect": action_definition.skill_effect,
+            "is_current_skill_active": True,
+            "is_insert_action": _metadata_bool(
+                command.metadata,
+                "is_insert_action",
+                False,
+            ),
+            "source_trace": action_event_source,
         },
     )
 

@@ -69,6 +69,7 @@ from ..rules.ir import (
     CanonicalIR,
     CharacterDataCardIR,
     CharacterEidolonSlotIR,
+    CharacterEquipmentEligibilityIR,
     CharacterMechanismSlotIR,
     CharacterTraceNodeIR,
     CombatantActionSetIR,
@@ -287,8 +288,25 @@ class OwnedCombatantProjectionIssue(NamedTuple):
     subject: str
 
 
+class IRIdentityConflictError(ValueError):
+    def __init__(
+        self,
+        *,
+        item_kind: str,
+        identity_field: str,
+        identity: str,
+    ) -> None:
+        self.item_kind = item_kind
+        self.identity_field = identity_field
+        self.identity = identity
+        self.reason_code = "ir_identity_conflict"
+        super().__init__(
+            f"{self.reason_code}:{item_kind}:{identity_field}:{identity}"
+        )
+
+
 class OwnedCombatantAdmissionProjection(NamedTuple):
-    """Source-backed five-set projection used by owned-combatant admission."""
+    """Source-backed projection used by owned-combatant admission."""
 
     servant_definitions: tuple[ServantDefinitionIR, ...]
     action_definitions: tuple[ActionDefinitionIR, ...]
@@ -296,6 +314,37 @@ class OwnedCombatantAdmissionProjection(NamedTuple):
     action_admissions: tuple[ActionAdmissionIR, ...]
     unit_birth_templates: tuple[UnitBirthTemplateIR, ...]
     issues: tuple[OwnedCombatantProjectionIssue, ...] = ()
+    entities: tuple[RuleEntity, ...] = ()
+    combatant_action_sets: tuple[CombatantActionSetIR, ...] = ()
+    ability_phases: tuple[AbilityPhaseIR, ...] = ()
+    ability_tasks: tuple[AbilityTaskIR, ...] = ()
+    action_events: tuple[ActionEventIR, ...] = ()
+    hit_profiles: tuple[HitProfileIR, ...] = ()
+    skill_formula_bindings: tuple[SkillFormulaBindingIR, ...] = ()
+    damage_emissions: tuple[DamageEmissionIR, ...] = ()
+    toughness_emissions: tuple[ToughnessEmissionIR, ...] = ()
+    effects: tuple[EffectIR, ...] = ()
+    conditions: tuple[ConditionIR, ...] = ()
+    formulas: tuple[FormulaIR, ...] = ()
+    target_expressions: tuple[TargetExpressionIR, ...] = ()
+    status_callbacks: tuple[StatusCallbackIR, ...] = ()
+    status_callback_tasks: tuple[StatusCallbackTaskIR, ...] = ()
+    status_damage_emissions: tuple[StatusDamageEmissionIR, ...] = ()
+    damage_modifiers: tuple[DamageModifierIR, ...] = ()
+    action_delay_emissions: tuple[ActionDelayEmissionIR, ...] = ()
+    queue_intents: tuple[QueueIntentIR, ...] = ()
+    skill_continuations: tuple[SkillContinuationIR, ...] = ()
+    triggers: tuple[TriggerIR, ...] = ()
+    avatar_profiles: tuple[AvatarProfileIR, ...] = ()
+    character_data_cards: tuple[CharacterDataCardIR, ...] = ()
+    character_equipment_eligibilities: tuple[
+        CharacterEquipmentEligibilityIR,
+        ...,
+    ] = ()
+    character_mechanism_slots: tuple[CharacterMechanismSlotIR, ...] = ()
+    character_trace_nodes: tuple[CharacterTraceNodeIR, ...] = ()
+    character_eidolon_slots: tuple[CharacterEidolonSlotIR, ...] = ()
+    bounce_policies: tuple[BouncePolicyIR, ...] = ()
 
     @property
     def ok(self) -> bool:
@@ -311,10 +360,23 @@ class TBGDLowering:
 
     def build_owned_combatant_admission_projection(
         self,
+        *,
+        offensive_action_only: bool = False,
+        max_servant_count: int | None = None,
     ) -> OwnedCombatantAdmissionProjection:
-        """Build only the five source-backed sets required for servant admission."""
+        """Build only the source-backed sets required for servant admission."""
 
         servant_rows = self._servant_config_rows()
+        if offensive_action_only:
+            servant_rows = self._offensive_servant_config_rows(servant_rows)
+        if max_servant_count is not None:
+            if (
+                not isinstance(max_servant_count, int)
+                or isinstance(max_servant_count, bool)
+                or max_servant_count <= 0
+            ):
+                raise ValueError("max_servant_count must be a positive integer")
+            servant_rows = servant_rows[:max_servant_count]
         servant_action_ids = frozenset(
             f"servant_skill:{skill_id}"
             for _, _, row in servant_rows
@@ -329,10 +391,17 @@ class TBGDLowering:
             action_ids=servant_action_ids,
             entity_types=frozenset({"servant_skill"}),
         )
-        action_ability_bindings = self._lower_action_ability_bindings(
+        (
+            action_ability_bindings,
+            ability_phases,
+            ability_tasks,
+            ability_task_effects,
+            ability_task_conditions,
+            ability_task_formulas,
+            ability_task_target_expressions,
+        ) = self._lower_action_ability_bindings(
             action_definitions,
-            retain_lowered_details=False,
-        )[0]
+        )
         combatant_action_sets = self._lower_combatant_action_sets(
             action_definitions,
             entity_types=frozenset({"servant"}),
@@ -342,22 +411,79 @@ class TBGDLowering:
             combatant_action_sets,
             action_definitions,
         )
+        projected_owner_avatar_ids = (
+            self._servant_owner_avatar_ids_from_sources(servant_rows)
+        )
         character_cards = build_character_card_ir(
             self.tbgd_root,
             max_records_per_table=self.limits.max_records_per_table,
             skill_tables=CHARACTER_ACTION_DEFINITION_TABLES,
+            avatar_ids=projected_owner_avatar_ids,
+        )
+        ability_task_effects = _attach_status_formula_bindings_to_add_modifier_effects(
+            ability_task_effects,
+            ability_tasks,
+            list(character_cards.skill_formula_bindings),
+        )
+        action_modifier_definitions = self._lower_owned_action_modifier_definitions(
+            action_ability_bindings,
+            ability_task_effects,
+        )
+        ability_task_effects = _link_status_effect_runtime_fields(
+            ability_task_effects,
+            action_modifier_definitions,
+            [],
+        )
+        skill_formula_bindings = list(character_cards.skill_formula_bindings)
+        skill_formula_bindings.extend(
+            self._lower_servant_damage_formula_bindings(
+                action_definitions,
+                ability_tasks,
+                ability_task_effects,
+            )
+        )
+        action_events, hit_profiles = _lower_action_execution_ir(
+            action_definitions,
+            action_ability_bindings,
+            ability_phases,
+            skill_formula_bindings,
+            list(character_cards.bounce_policies),
+        )
+        damage_emissions = _lower_damage_emissions(
+            ability_tasks,
+            ability_task_effects,
+            hit_profiles,
+            skill_formula_bindings,
+        )
+        toughness_emissions = _lower_toughness_emissions(
+            ability_tasks,
+            ability_task_effects,
+            hit_profiles,
+        )
+        ability_tasks = _admit_damage_ability_tasks(
+            ability_tasks,
+            damage_emissions,
+            toughness_emissions,
+            hit_profiles,
         )
         selected_ability_files = _limit_sequence(
             self._ability_files(),
             self.limits.max_ability_files,
         )
+        selected_servant_ids = frozenset(
+            str(row.get("ServantID"))
+            for _, _, row in servant_rows
+            if row.get("ServantID") is not None
+        )
         spawn_sources = _discover_servant_spawn_sources(
             self.tbgd_root,
             selected_ability_files,
+            servant_ids=selected_servant_ids,
         )
         replacement_policies = _discover_servant_replacement_policies(
             self.tbgd_root,
             selected_ability_files,
+            servant_ids=selected_servant_ids,
         )
         servant_definitions = self._lower_servant_definitions(
             combatant_action_sets,
@@ -387,25 +513,288 @@ class TBGDLowering:
             action_admissions=action_admissions,
             unit_birth_templates=unit_birth_templates,
         )
+        owner_entity_refs = {
+            owner_entity_ref
+            for definition in servant_definitions
+            for owner_entity_ref in definition.owner_entity_refs
+        }
+        owner_entities = self._lower_entity_table(
+            "ExcelOutput/AvatarConfig.json",
+            ENTITY_TABLES["ExcelOutput/AvatarConfig.json"],
+            entity_ids=frozenset(owner_entity_refs),
+        )
+        owner_cards = tuple(
+            card
+            for card in character_cards.character_data_cards
+            if card.entity_ref in owner_entity_refs
+        )
+        owner_card_ids = {card.card_id for card in owner_cards}
+        owner_profile_ids = {card.profile_id for card in owner_cards}
+        skill_formula_bindings = [
+            binding
+            for binding in skill_formula_bindings
+            if binding.action_id in servant_action_ids
+            or binding.character_data_card_id in owner_card_ids
+        ]
+        owner_action_ids = frozenset(
+            f"avatar_skill:{skill_id}"
+            for card in owner_cards
+            for skill_id in card.skill_ids
+            if str(skill_id)
+        )
+        owner_action_definitions = self._lower_action_definitions(
+            action_ids=owner_action_ids,
+            entity_types=frozenset({"avatar_skill"}),
+        )
+        (
+            owner_action_ability_bindings,
+            owner_ability_phases,
+            owner_ability_tasks,
+            owner_ability_effects,
+            owner_ability_conditions,
+            owner_ability_formulas,
+            owner_ability_targets,
+        ) = self._lower_action_ability_bindings(
+            owner_action_definitions,
+        )
+        owner_ability_effects = (
+            _attach_status_formula_bindings_to_add_modifier_effects(
+                owner_ability_effects,
+                owner_ability_tasks,
+                skill_formula_bindings,
+            )
+        )
+        owner_action_modifier_definitions = (
+            self._lower_owned_action_modifier_definitions(
+                owner_action_ability_bindings,
+                owner_ability_effects,
+            )
+        )
+        owner_ability_effects = _link_status_effect_runtime_fields(
+            owner_ability_effects,
+            owner_action_modifier_definitions,
+            [],
+        )
+        owner_action_events, owner_hit_profiles = (
+            _lower_action_execution_ir(
+                owner_action_definitions,
+                owner_action_ability_bindings,
+                owner_ability_phases,
+                skill_formula_bindings,
+                [
+                    policy
+                    for policy in character_cards.bounce_policies
+                    if policy.character_data_card_id in owner_card_ids
+                ],
+            )
+        )
+        owner_damage_emissions = _lower_damage_emissions(
+            owner_ability_tasks,
+            owner_ability_effects,
+            owner_hit_profiles,
+            skill_formula_bindings,
+        )
+        owner_toughness_emissions = _lower_toughness_emissions(
+            owner_ability_tasks,
+            owner_ability_effects,
+            owner_hit_profiles,
+        )
+        owner_ability_tasks = _admit_damage_ability_tasks(
+            owner_ability_tasks,
+            owner_damage_emissions,
+            owner_toughness_emissions,
+            owner_hit_profiles,
+        )
+        owner_avatar_ids = {
+            entity_ref.split(":", 1)[1]
+            for entity_ref in owner_entity_refs
+            if entity_ref.startswith("avatar:")
+        }
+        owner_avatar_rows = [
+            item
+            for item in self._avatar_config_rows_prefer_enhanced()
+            if str(item[2].get("AvatarID")) in owner_avatar_ids
+        ]
+        owner_action_sets = self._lower_combatant_action_sets(
+            owner_action_definitions,
+            entity_types=frozenset({"avatar"}),
+            avatar_config_rows=owner_avatar_rows,
+        )
+        owner_action_sets, owner_action_admissions = (
+            _lower_action_admissions(
+                owner_action_sets,
+                owner_action_definitions,
+            )
+        )
+        action_definitions.extend(owner_action_definitions)
+        action_ability_bindings.extend(owner_action_ability_bindings)
+        action_admissions.extend(owner_action_admissions)
+        combatant_action_sets.extend(owner_action_sets)
+        ability_phases.extend(owner_ability_phases)
+        ability_tasks.extend(owner_ability_tasks)
+        ability_task_effects.extend(owner_ability_effects)
+        ability_task_conditions.extend(owner_ability_conditions)
+        ability_task_formulas.extend(owner_ability_formulas)
+        ability_task_target_expressions.extend(owner_ability_targets)
+        action_events.extend(owner_action_events)
+        hit_profiles.extend(owner_hit_profiles)
+        damage_emissions.extend(owner_damage_emissions)
+        toughness_emissions.extend(owner_toughness_emissions)
+        action_modifier_definitions = list(
+            _dedupe_entities(
+                [
+                    *action_modifier_definitions,
+                    *owner_action_modifier_definitions,
+                ]
+            ).values()
+        )
+        owned_ability_paths = sorted(
+            {
+                path
+                for binding in action_ability_bindings
+                for path in (
+                    *(
+                        tuple(binding.config_source.get("ability_file_paths"))
+                        if isinstance(
+                            binding.config_source.get(
+                                "ability_file_paths"
+                            ),
+                            (list, tuple),
+                        )
+                        else ()
+                    ),
+                    *(
+                        (
+                            binding.config_source.get(
+                                "ability_file_path"
+                            ),
+                        )
+                        if isinstance(
+                            binding.config_source.get(
+                                "ability_file_path"
+                            ),
+                            str,
+                        )
+                        else ()
+                    ),
+                )
+                if isinstance(path, str) and path
+            }
+        )
+        lowered_owned_files = [
+            self._lower_ability_file(
+                self.tbgd_root / relative_path,
+                {},
+                ability_file_order=order,
+            )
+            for order, relative_path in enumerate(owned_ability_paths)
+        ]
+        action_modifier_definitions = list(
+            _dedupe_entities(
+                [
+                    *action_modifier_definitions,
+                    *(
+                        entity
+                        for lowered in lowered_owned_files
+                        for entity in lowered.entities
+                    ),
+                ]
+            ).values()
+        )
+        ability_task_effects = list(
+            merge_identical_ir_items(
+                (
+                    *ability_task_effects,
+                    *(
+                        effect
+                        for lowered in lowered_owned_files
+                        for effect in lowered.effects
+                    ),
+                ),
+                "effect_id",
+                item_kind="effect",
+            )
+        )
+        ability_task_conditions = list(
+            merge_identical_ir_items(
+                (
+                    *ability_task_conditions,
+                    *(
+                        condition
+                        for lowered in lowered_owned_files
+                        for condition in lowered.conditions
+                    ),
+                ),
+                "condition_id",
+                item_kind="condition",
+            )
+        )
+        ability_task_formulas = list(
+            merge_identical_ir_items(
+                (
+                    *ability_task_formulas,
+                    *(
+                        formula
+                        for lowered in lowered_owned_files
+                        for formula in lowered.formulas
+                    ),
+                ),
+                "formula_id",
+                item_kind="formula",
+            )
+        )
+        ability_task_target_expressions = list(
+            merge_identical_ir_items(
+                (
+                    *ability_task_target_expressions,
+                    *(
+                        target
+                        for lowered in lowered_owned_files
+                        for target in lowered.target_expressions
+                    ),
+                ),
+                "target_expression_id",
+                item_kind="target_expression",
+            )
+        )
         return OwnedCombatantAdmissionProjection(
             servant_definitions=tuple(
-                sorted(servant_definitions, key=attrgetter("servant_definition_id"))
+                sorted(
+                    merge_identical_ir_items(
+                        servant_definitions,
+                        "servant_definition_id",
+                        item_kind="servant_definition",
+                    ),
+                    key=attrgetter("servant_definition_id"),
+                )
             ),
             action_definitions=tuple(
                 sorted(
-                    action_definitions,
+                    merge_identical_ir_items(
+                        action_definitions,
+                        "definition_id",
+                        item_kind="action_definition",
+                    ),
                     key=attrgetter("action_id", "level", "definition_id"),
                 )
             ),
             action_ability_bindings=tuple(
                 sorted(
-                    action_ability_bindings,
+                    merge_identical_ir_items(
+                        action_ability_bindings,
+                        "binding_id",
+                        item_kind="action_ability_binding",
+                    ),
                     key=attrgetter("action_id", "level", "binding_id"),
                 )
             ),
             action_admissions=tuple(
                 sorted(
-                    action_admissions,
+                    merge_identical_ir_items(
+                        action_admissions,
+                        "admission_id",
+                        item_kind="action_admission",
+                    ),
                     key=attrgetter(
                         "owner_entity_ref",
                         "action_id",
@@ -415,10 +804,378 @@ class TBGDLowering:
                 )
             ),
             unit_birth_templates=tuple(
-                sorted(unit_birth_templates, key=attrgetter("birth_template_id"))
+                sorted(
+                    merge_identical_ir_items(
+                        unit_birth_templates,
+                        "birth_template_id",
+                        item_kind="unit_birth_template",
+                    ),
+                    key=attrgetter("birth_template_id"),
+                )
             ),
             issues=issues,
+            entities=tuple(
+                sorted(
+                    _dedupe_entities(
+                        [*owner_entities, *action_modifier_definitions]
+                    ).values(),
+                    key=attrgetter("entity_id"),
+                )
+            ),
+            combatant_action_sets=tuple(
+                sorted(
+                    merge_identical_ir_items(
+                        combatant_action_sets,
+                        "combatant_action_set_id",
+                        item_kind="combatant_action_set",
+                    ),
+                    key=attrgetter("combatant_action_set_id"),
+                )
+            ),
+            ability_phases=tuple(
+                sorted(
+                    merge_identical_ir_items(
+                        ability_phases,
+                        "phase_id",
+                        item_kind="ability_phase",
+                    ),
+                    key=attrgetter("phase_id"),
+                )
+            ),
+            ability_tasks=tuple(
+                sorted(
+                    merge_identical_ir_items(
+                        ability_tasks,
+                        "task_id",
+                        item_kind="ability_task",
+                    ),
+                    key=attrgetter("task_id"),
+                )
+            ),
+            action_events=tuple(
+                sorted(
+                    merge_identical_ir_items(
+                        action_events,
+                        "action_event_id",
+                        item_kind="action_event",
+                    ),
+                    key=attrgetter("action_id", "level", "action_event_id"),
+                )
+            ),
+            hit_profiles=tuple(
+                sorted(
+                    merge_identical_ir_items(
+                        hit_profiles,
+                        "hit_profile_id",
+                        item_kind="hit_profile",
+                    ),
+                    key=attrgetter("hit_profile_id"),
+                )
+            ),
+            skill_formula_bindings=tuple(
+                sorted(
+                    merge_identical_ir_items(
+                        skill_formula_bindings,
+                        "binding_id",
+                        item_kind="skill_formula_binding",
+                    ),
+                    key=attrgetter("action_id", "level", "binding_id"),
+                )
+            ),
+            damage_emissions=tuple(
+                sorted(
+                    merge_identical_ir_items(
+                        damage_emissions,
+                        "damage_emission_id",
+                        item_kind="damage_emission",
+                    ),
+                    key=attrgetter("damage_emission_id"),
+                )
+            ),
+            toughness_emissions=tuple(
+                sorted(
+                    merge_identical_ir_items(
+                        toughness_emissions,
+                        "toughness_emission_id",
+                        item_kind="toughness_emission",
+                    ),
+                    key=attrgetter("toughness_emission_id"),
+                )
+            ),
+            effects=tuple(
+                sorted(
+                    merge_identical_ir_items(
+                        ability_task_effects,
+                        "effect_id",
+                        item_kind="effect",
+                    ),
+                    key=attrgetter("effect_id"),
+                )
+            ),
+            conditions=tuple(
+                sorted(
+                    merge_identical_ir_items(
+                        ability_task_conditions,
+                        "condition_id",
+                        item_kind="condition",
+                    ),
+                    key=attrgetter("condition_id"),
+                )
+            ),
+            formulas=tuple(
+                sorted(
+                    merge_identical_ir_items(
+                        ability_task_formulas,
+                        "formula_id",
+                        item_kind="formula",
+                    ),
+                    key=attrgetter("formula_id"),
+                )
+            ),
+            target_expressions=tuple(
+                sorted(
+                    merge_identical_ir_items(
+                        ability_task_target_expressions,
+                        "target_expression_id",
+                        item_kind="target_expression",
+                    ),
+                    key=attrgetter("target_expression_id"),
+                )
+            ),
+            status_callbacks=tuple(
+                sorted(
+                    merge_identical_ir_items(
+                        (
+                            callback
+                            for lowered in lowered_owned_files
+                            for callback in lowered.status_callbacks
+                        ),
+                        "callback_id",
+                        item_kind="status_callback",
+                    ),
+                    key=attrgetter("callback_id"),
+                )
+            ),
+            status_callback_tasks=tuple(
+                sorted(
+                    merge_identical_ir_items(
+                        (
+                            task
+                            for lowered in lowered_owned_files
+                            for task in lowered.status_callback_tasks
+                        ),
+                        "task_id",
+                        item_kind="status_callback_task",
+                    ),
+                    key=attrgetter("task_id"),
+                )
+            ),
+            status_damage_emissions=tuple(
+                sorted(
+                    merge_identical_ir_items(
+                        (
+                            emission
+                            for lowered in lowered_owned_files
+                            for emission in lowered.status_damage_emissions
+                        ),
+                        "status_damage_emission_id",
+                        item_kind="status_damage_emission",
+                    ),
+                    key=attrgetter("status_damage_emission_id"),
+                )
+            ),
+            damage_modifiers=tuple(
+                sorted(
+                    merge_identical_ir_items(
+                        (
+                            modifier
+                            for lowered in lowered_owned_files
+                            for modifier in lowered.damage_modifiers
+                        ),
+                        "damage_modifier_id",
+                        item_kind="damage_modifier",
+                    ),
+                    key=attrgetter("damage_modifier_id"),
+                )
+            ),
+            action_delay_emissions=tuple(
+                sorted(
+                    merge_identical_ir_items(
+                        (
+                            emission
+                            for lowered in lowered_owned_files
+                            for emission in lowered.action_delay_emissions
+                        ),
+                        "action_delay_emission_id",
+                        item_kind="action_delay_emission",
+                    ),
+                    key=attrgetter("action_delay_emission_id"),
+                )
+            ),
+            queue_intents=tuple(
+                sorted(
+                    merge_identical_ir_items(
+                        (
+                            intent
+                            for lowered in lowered_owned_files
+                            for intent in lowered.queue_intents
+                        ),
+                        "queue_intent_id",
+                        item_kind="queue_intent",
+                    ),
+                    key=attrgetter("queue_intent_id"),
+                )
+            ),
+            skill_continuations=tuple(
+                sorted(
+                    merge_identical_ir_items(
+                        (
+                            continuation
+                            for lowered in lowered_owned_files
+                            for continuation in lowered.skill_continuations
+                        ),
+                        "continuation_id",
+                        item_kind="skill_continuation",
+                    ),
+                    key=attrgetter("continuation_id"),
+                )
+            ),
+            triggers=tuple(
+                sorted(
+                    merge_identical_ir_items(
+                        (
+                            trigger
+                            for lowered in lowered_owned_files
+                            for trigger in lowered.triggers
+                        ),
+                        "trigger_id",
+                        item_kind="trigger",
+                    ),
+                    key=attrgetter("trigger_id"),
+                )
+            ),
+            avatar_profiles=tuple(
+                profile
+                for profile in character_cards.avatar_profiles
+                if profile.avatar_profile_id in owner_profile_ids
+            ),
+            character_data_cards=owner_cards,
+            character_equipment_eligibilities=tuple(
+                eligibility
+                for eligibility in (
+                    character_cards.character_equipment_eligibilities
+                )
+                if eligibility.character_card_id in owner_card_ids
+            ),
+            character_mechanism_slots=tuple(
+                slot
+                for slot in character_cards.character_mechanism_slots
+                if slot.character_data_card_id in owner_card_ids
+            ),
+            character_trace_nodes=tuple(
+                node
+                for node in character_cards.character_trace_nodes
+                if node.character_data_card_id in owner_card_ids
+            ),
+            character_eidolon_slots=tuple(
+                slot
+                for slot in character_cards.character_eidolon_slots
+                if slot.character_data_card_id in owner_card_ids
+            ),
+            bounce_policies=tuple(
+                policy
+                for policy in character_cards.bounce_policies
+                if policy.character_data_card_id in owner_card_ids
+            ),
         )
+
+    def _lower_owned_action_modifier_definitions(
+        self,
+        bindings: list[ActionAbilityBindingIR],
+        effects: list[EffectIR],
+    ) -> list[RuleEntity]:
+        required_modifier_names = {
+            modifier_name
+            for effect in effects
+            if effect.opcode == "AddModifier"
+            for standard in (
+                effect.payload.get("standard")
+                if isinstance(effect.payload.get("standard"), dict)
+                else {},
+            )
+            if isinstance(
+                modifier_name := standard.get("modifier_name"),
+                str,
+            )
+            and modifier_name
+        }
+        if not required_modifier_names:
+            return []
+        ability_paths = sorted(
+            {
+                path
+                for binding in bindings
+                for raw_paths in (
+                    binding.config_source.get("ability_file_paths"),
+                )
+                if isinstance(raw_paths, list)
+                for path in raw_paths
+                if isinstance(path, str) and path
+            }
+        )
+        definitions: list[RuleEntity] = []
+        for ability_file_order, relative_path in enumerate(ability_paths):
+            lowered = self._lower_ability_file(
+                self.tbgd_root / relative_path,
+                {},
+                ability_file_order=ability_file_order,
+            )
+            definitions.extend(
+                entity
+                for entity in lowered.entities
+                if entity.entity_type == "modifier_definition"
+                and (
+                    entity.fields.get("modifier_name")
+                    in required_modifier_names
+                )
+            )
+        return list(_dedupe_entities(definitions).values())
+
+    def _offensive_servant_config_rows(
+        self,
+        servant_rows: list[tuple[str, int, dict[str, Any]]],
+    ) -> list[tuple[str, int, dict[str, Any]]]:
+        relative_path = "ExcelOutput/AvatarServantSkillConfig.json"
+        path = self.tbgd_root / relative_path
+        if not path.exists():
+            return []
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return []
+        if not isinstance(data, list):
+            return []
+        offensive_skill_ids = {
+            str(row.get("SkillID"))
+            for row in data
+            if isinstance(row, dict)
+            and row.get("SkillID") is not None
+            and row.get("AttackType") == "Servant"
+            and row.get("SkillEffect")
+            in {"AoEAttack", "Blast", "Bounce", "SingleAttack"}
+        }
+        return [
+            item
+            for item in servant_rows
+            if any(
+                str(skill_id) in offensive_skill_ids
+                for skill_id in (
+                    item[2].get("SkillIDList")
+                    if isinstance(item[2].get("SkillIDList"), list)
+                    else ()
+                )
+            )
+        ]
 
     def build(self) -> CanonicalIR:
         light_cone_catalog = build_light_cone_catalog(self.tbgd_root)
@@ -1713,6 +2470,9 @@ class TBGDLowering:
         definitions: list[ActionDefinitionIR],
         *,
         entity_types: frozenset[str] | None = None,
+        avatar_config_rows: list[
+            tuple[str, int, dict[str, Any]]
+        ] | None = None,
         servant_config_rows: list[tuple[str, int, dict[str, Any]]] | None = None,
     ) -> list[CombatantActionSetIR]:
         definitions_by_action: dict[str, list[ActionDefinitionIR]] = {}
@@ -1730,7 +2490,11 @@ class TBGDLowering:
                 "avatar",
                 "AvatarID",
                 "SkillList",
-                self._avatar_config_rows_prefer_enhanced()
+                (
+                    avatar_config_rows
+                    if avatar_config_rows is not None
+                    else self._avatar_config_rows_prefer_enhanced()
+                )
                 if entity_types is None or "avatar" in entity_types
                 else [],
             ),
@@ -1988,6 +2752,116 @@ class TBGDLowering:
             copied["_v8_row_index"] = row_index
             rows.append((relative_path, row_index, copied))
         return rows
+
+    def _servant_owner_avatar_ids_from_sources(
+        self,
+        servant_rows: list[tuple[str, int, dict[str, Any]]],
+    ) -> frozenset[str]:
+        """Discover selected servant owners from raw trace/eidolon joins."""
+
+        servant_skill_ids = {
+            str(skill_id)
+            for _, _, row in servant_rows
+            for skill_id in row.get("SkillIDList") or ()
+            if str(skill_id)
+        }
+        if not servant_skill_ids:
+            return frozenset()
+        avatar_rows = self._avatar_config_rows_prefer_enhanced()
+        avatar_by_id = {
+            str(row.get("AvatarID")): row
+            for _, _, row in avatar_rows
+            if row.get("AvatarID") is not None
+        }
+        owner_avatar_ids: set[str] = set()
+        for relative_path in (
+            "ExcelOutput/AvatarSkillTreeConfig.json",
+            "ExcelOutput/AvatarSkillTreeConfigLD.json",
+        ):
+            path = self.tbgd_root / relative_path
+            if not path.exists():
+                continue
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if not isinstance(data, list):
+                continue
+            for row in _limit_sequence(
+                data,
+                self.limits.max_records_per_table,
+            ):
+                if not isinstance(row, dict) or row.get("AvatarID") is None:
+                    continue
+                avatar_id = str(row["AvatarID"])
+                avatar_row = avatar_by_id.get(avatar_id)
+                if avatar_row is None:
+                    continue
+                selected_enhanced_id = avatar_row.get("_v8_enhanced_id")
+                source_enhanced_id = row.get("EnhancedID")
+                if (
+                    selected_enhanced_id is None
+                    and source_enhanced_id is not None
+                ) or (
+                    selected_enhanced_id is not None
+                    and str(source_enhanced_id) != str(selected_enhanced_id)
+                ):
+                    continue
+                card_skill_ids = {
+                    str(skill_id)
+                    for skill_id in avatar_row.get("SkillList") or ()
+                }
+                relation_skill_ids = servant_skill_ids.intersection(
+                    str(skill_id)
+                    for skill_id in row.get("LevelUpSkillID") or ()
+                ).difference(card_skill_ids)
+                if relation_skill_ids:
+                    owner_avatar_ids.add(avatar_id)
+
+        rank_relation_skills: dict[str, set[str]] = {}
+        for relative_path in (
+            "ExcelOutput/AvatarRankConfig.json",
+            "ExcelOutput/AvatarRankConfigLD.json",
+        ):
+            path = self.tbgd_root / relative_path
+            if not path.exists():
+                continue
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if not isinstance(data, list):
+                continue
+            for row in _limit_sequence(
+                data,
+                self.limits.max_records_per_table,
+            ):
+                if not isinstance(row, dict) or row.get("RankID") is None:
+                    continue
+                bonuses = row.get("SkillAddLevelList")
+                if not isinstance(bonuses, dict):
+                    continue
+                matched = servant_skill_ids.intersection(
+                    str(skill_id) for skill_id in bonuses
+                )
+                if matched:
+                    rank_relation_skills.setdefault(
+                        str(row["RankID"]),
+                        set(),
+                    ).update(matched)
+        for avatar_id, avatar_row in avatar_by_id.items():
+            card_skill_ids = {
+                str(skill_id)
+                for skill_id in avatar_row.get("SkillList") or ()
+            }
+            relation_skill_ids = {
+                skill_id
+                for rank_id in avatar_row.get("RankIDList") or ()
+                for skill_id in rank_relation_skills.get(str(rank_id), ())
+            }.difference(card_skill_ids)
+            if relation_skill_ids:
+                owner_avatar_ids.add(avatar_id)
+        return frozenset(owner_avatar_ids)
 
     def _rows_by_id(self, relative_path: str, id_key: str) -> dict[str, dict[str, Any]]:
         path = self.tbgd_root / relative_path
@@ -3592,6 +4466,8 @@ class TBGDLowering:
         self,
         relative_path: str,
         spec: tuple[str, str, tuple[str, ...]],
+        *,
+        entity_ids: frozenset[str] | None = None,
     ) -> list[RuleEntity]:
         entity_type, id_key, field_keys = spec
         path = self.tbgd_root / relative_path
@@ -3605,6 +4481,11 @@ class TBGDLowering:
             if not isinstance(row, dict) or id_key not in row:
                 continue
             raw_id = _entity_raw_id(entity_type, id_key, row)
+            if (
+                entity_ids is not None
+                and f"{entity_type}:{raw_id}" not in entity_ids
+            ):
+                continue
             fields = {key: _json_safe(row.get(key)) for key in field_keys if key in row}
             source = IRSource(
                 source_path=relative_path,
@@ -4573,26 +5454,6 @@ class TBGDLowering:
                 }
                 trigger_effects: list[str] = []
                 trigger_conditions: list[str] = []
-                if equipment_source is None:
-                    for task_index, task in enumerate(tasks):
-                        task_lowered = self._lower_task(
-                            task,
-                            relative,
-                            map_name,
-                            modifier_name,
-                            callback_index,
-                            task_index,
-                            branch="callback",
-                            source_context=callback_source_context,
-                        )
-                        lowered.merge(task_lowered)
-                        trigger_effects.extend(
-                            effect.effect_id for effect in task_lowered.effects
-                        )
-                        trigger_conditions.extend(
-                            condition.condition_id
-                            for condition in task_lowered.conditions
-                        )
                 callback_id = f"status_callback:{relative}:{modifier_name}:{callback_index}:{event}"
                 callback_lowered = self._lower_status_callback_tasks(
                     tasks,
@@ -4607,14 +5468,14 @@ class TBGDLowering:
                     task_templates=task_templates,
                 )
                 lowered.merge(callback_lowered)
-                if equipment_source is not None:
-                    trigger_effects.extend(
-                        effect.effect_id for effect in callback_lowered.effects
-                    )
-                    trigger_conditions.extend(
-                        condition.condition_id
-                        for condition in callback_lowered.conditions
-                    )
+                trigger_effects.extend(
+                    effect.effect_id
+                    for effect in callback_lowered.effects
+                )
+                trigger_conditions.extend(
+                    condition.condition_id
+                    for condition in callback_lowered.conditions
+                )
                 source = IRSource(
                     source_path=relative,
                     raw_type=map_name,
@@ -5217,95 +6078,6 @@ class TBGDLowering:
                     queue_priority_lookup=queue_priority_lookup,
                 )
             )
-        return lowered
-
-    def _lower_task(
-        self,
-        task: Any,
-        relative: str,
-        map_name: str,
-        modifier_name: str,
-        callback_index: int,
-        task_index: int,
-        branch: str,
-        source_context: dict[str, Any] | None = None,
-    ) -> "_LoweredAbility":
-        lowered = _LoweredAbility()
-        if not isinstance(task, dict):
-            return lowered
-        opcode = _short_gamecore_type(task.get("$type"))
-        source = IRSource(
-            source_path=relative,
-            raw_type=map_name,
-            raw_id=modifier_name,
-            evidence={
-                "callback_index": callback_index,
-                "task_index": task_index,
-                "branch": branch,
-                **_json_safe(source_context or {}),
-            },
-        )
-        self_expression = _target_expression_from_raw(
-            task,
-            field_name="$self",
-            expression_id=f"target_expression:{relative}:{modifier_name}:{callback_index}:{branch}:{task_index}:{opcode}:self",
-            source=source,
-        )
-        if self_expression is not None:
-            lowered.target_expressions.append(self_expression)
-        if opcode == "PredicateTaskList":
-            predicate = task.get("Predicate")
-            condition = self._lower_condition(predicate, source, task_index)
-            if condition:
-                lowered.conditions.append(condition)
-            for child_index, child in enumerate(task.get("SuccessTaskList") or []):
-                child_lowered = self._lower_task(
-                    child,
-                    relative,
-                    map_name,
-                    modifier_name,
-                    callback_index,
-                    child_index,
-                    branch="success",
-                    source_context=source_context,
-                )
-                lowered.merge(child_lowered)
-            for child_index, child in enumerate(task.get("FailedTaskList") or []):
-                child_lowered = self._lower_task(
-                    child,
-                    relative,
-                    map_name,
-                    modifier_name,
-                    callback_index,
-                    child_index,
-                    branch="failed",
-                    source_context=source_context,
-                )
-                lowered.merge(child_lowered)
-            return lowered
-
-        effect_id = f"effect:{relative}:{modifier_name}:{callback_index}:{branch}:{task_index}:{opcode}"
-        payload = _effect_payload(task, opcode, modifier_name)
-        payload, task_target_expressions = _attach_target_expressions_to_effect_payload(
-            payload,
-            task,
-            effect_id=effect_id,
-            source=source,
-        )
-        lowered.target_expressions.extend(task_target_expressions)
-        coverage_status = _effect_coverage_status(opcode, payload)
-        lowered.effects.append(
-            EffectIR(
-                effect_id=effect_id,
-                opcode=opcode,
-                payload=payload,
-                source=source,
-                coverage_status=coverage_status,
-                owner_modifier_name=modifier_name,
-            )
-        )
-        lowered.formulas.extend(self._extract_formulas(task, source, effect_id))
-        lowered.formulas.extend(_damage_family_evidence(task, opcode, source, effect_id))
         return lowered
 
     def _lower_condition(self, predicate: Any, source: IRSource, task_index: int) -> ConditionIR | None:
@@ -7607,18 +8379,54 @@ def _ability_file_from_action_binding(binding: ActionAbilityBindingIR) -> str:
     return ""
 
 
+def merge_identical_ir_items(
+    items,
+    identity_field: str,
+    *,
+    item_kind: str = "ir_item",
+) -> tuple[Any, ...]:
+    """Merge exact duplicates while rejecting identity collisions."""
+
+    deduped: dict[str, Any] = {}
+    for item in items:
+        if not hasattr(item, identity_field):
+            raise TypeError(
+                f"{item_kind} has no identity field {identity_field!r}"
+            )
+        identity = str(getattr(item, identity_field))
+        existing = deduped.get(identity)
+        if existing is None:
+            deduped[identity] = item
+            continue
+        if existing != item:
+            raise IRIdentityConflictError(
+                item_kind=item_kind,
+                identity_field=identity_field,
+                identity=identity,
+            )
+    return tuple(deduped.values())
+
+
 def _dedupe_entities(entities: list[RuleEntity]) -> dict[str, RuleEntity]:
-    deduped: dict[str, RuleEntity] = {}
-    for entity in entities:
-        deduped[entity.entity_id] = entity
-    return deduped
+    return {
+        entity.entity_id: entity
+        for entity in merge_identical_ir_items(
+            entities,
+            "entity_id",
+            item_kind="entity",
+        )
+    }
 
 
 def _dedupe_target_expressions(expressions: list[TargetExpressionIR]) -> dict[str, TargetExpressionIR]:
-    deduped: dict[str, TargetExpressionIR] = {}
-    for expression in expressions:
-        deduped[expression.target_expression_id] = expression
-    return deduped
+    return {
+        expression.target_expression_id: expression
+        for expression in merge_identical_ir_items(
+            expressions,
+            "target_expression_id",
+            item_kind="target_expression",
+        )
+    }
 
 
 def _modifier_definition_entity(
@@ -9885,11 +10693,19 @@ def _servant_lifecycle_source(
 def _discover_servant_replacement_policies(
     tbgd_root: Path,
     ability_files: list[Path],
+    *,
+    servant_ids: frozenset[str] | None = None,
 ) -> dict[str, dict[str, Any]]:
     policies: dict[str, dict[str, Any]] = {}
     for path in ability_files:
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
+            raw = path.read_text(encoding="utf-8")
+        except Exception:
+            continue
+        if servant_ids and not any(servant_id in raw for servant_id in servant_ids):
+            continue
+        try:
+            data = json.loads(raw)
         except Exception:
             continue
         relative_path = path.relative_to(tbgd_root).as_posix()
@@ -9909,6 +10725,8 @@ def _discover_servant_replacement_policies(
                     continue
                 servant_id = _fixed_raw_id(create.get("ServantID"))
                 if not servant_id:
+                    continue
+                if servant_ids is not None and servant_id not in servant_ids:
                     continue
                 evidence = {
                     "admission_status": "executable",
@@ -9940,11 +10758,19 @@ def _discover_servant_replacement_policies(
 def _discover_servant_spawn_sources(
     tbgd_root: Path,
     ability_files: list[Path],
+    *,
+    servant_ids: frozenset[str] | None = None,
 ) -> dict[str, tuple[IRSource, ...]]:
     by_servant: dict[str, list[IRSource]] = {}
     for path in ability_files:
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
+            raw = path.read_text(encoding="utf-8")
+        except Exception:
+            continue
+        if servant_ids and not any(servant_id in raw for servant_id in servant_ids):
+            continue
+        try:
+            data = json.loads(raw)
         except Exception:
             continue
         relative_path = path.relative_to(tbgd_root).as_posix()
@@ -9953,6 +10779,8 @@ def _discover_servant_spawn_sources(
                 continue
             servant_id = _fixed_raw_id(node.get("ServantID"))
             if not servant_id:
+                continue
+            if servant_ids is not None and servant_id not in servant_ids:
                 continue
             dynamic_fields = tuple(
                 sorted(
@@ -13963,6 +14791,7 @@ def _status_callback_scope_kind(event: str) -> str:
         "OnActionDelayEffect",
         "OnActionDelayEffectAll",
         "OnDefenderPrepareAttackData",
+        "OnDeathrattle",
     }:
         return "being_hit_target_local"
     if event in {

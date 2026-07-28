@@ -21,6 +21,7 @@ from ..core.model import (
     UnitState,
     UnitStatPool,
 )
+from ..core.executor import CombatExecutor
 from ..core.reducer import MutationReducer
 from ..core.settlement import SettlementRecord
 from ..core.state_integrity import CommittedStateIntegrityGate
@@ -595,6 +596,9 @@ class ScenarioStateBuilder:
             self.rules,
             state,
             scenario,
+            already_dispatched_creation_target_ids=_creation_target_ids(
+                setup_result.events
+            ),
         )
         if battle_setup_event_result.blocked:
             raise ValueError(
@@ -989,6 +993,8 @@ def _dispatch_battle_setup_event(
     rules: RuleBook,
     state: BattleState,
     scenario: ScenarioSpec,
+    *,
+    already_dispatched_creation_target_ids: frozenset[str] = frozenset(),
 ) -> _SetupApplyResult:
     dispatcher = EventDispatchSystem(
         rules,
@@ -1004,6 +1010,16 @@ def _dispatch_battle_setup_event(
     errors: list[str] = []
     for unit_id in sorted(state.units):
         unit = state.units[unit_id]
+        if unit_id in already_dispatched_creation_target_ids:
+            source_traces.append(
+                {
+                    "kind": "scenario_unit_creation_event_already_dispatched",
+                    "scenario_id": scenario.scenario_id,
+                    "unit_id": unit_id,
+                    "status": "process_only",
+                }
+            )
+            continue
         if unit.flags.get("system_entity_kind"):
             source_traces.append(
                 {
@@ -1122,6 +1138,22 @@ def _dispatch_battle_setup_event(
                 "status": "blocked" if blocked else "applied",
             },
         ),
+    )
+
+
+def _creation_target_ids(events: tuple[GameEvent, ...]) -> frozenset[str]:
+    return frozenset(
+        str(event.target_id)
+        for event in events
+        if event.target_id
+        and (
+            event.event_type in {"unit.created", "summon.spawned"}
+            or (
+                isinstance(event.payload.get("callback_events"), (list, tuple))
+                and "OnListenCharacterCreate"
+                in event.payload.get("callback_events", ())
+            )
+        )
     )
 
 
@@ -1377,13 +1409,14 @@ def _apply_initial_statuses(rules: RuleBook, state: BattleState, scenario: Scena
 def _apply_initial_summons(rules: RuleBook, state: BattleState, scenario: ScenarioSpec) -> _SetupApplyResult:
     if not scenario.battle_setup.initial_summons:
         return _SetupApplyResult(state=state)
-    reducer = MutationReducer()
     lifecycle = UnitLifecycleSystem()
     system = SummonSystem(rules)
+    executor = CombatExecutor(rules)
     current = state
     records: list[dict[str, JSONValue]] = []
     mutations: list[Mutation] = []
     events: list[GameEvent] = []
+    rng_events: list[RNGEvent] = []
     blocked: list[dict[str, JSONValue]] = []
     traces: list[dict[str, JSONValue]] = []
     for index, spec in enumerate(scenario.battle_setup.initial_summons):
@@ -1403,17 +1436,45 @@ def _apply_initial_summons(rules: RuleBook, state: BattleState, scenario: Scenar
             result = _blocked_initial_battle_unit_summon(rules, current, spec)
         else:
             result = _apply_initial_servant(rules, current, system, spec, index)
-        current = reducer.apply_all(current, result.mutations)
-        mutations.extend(result.mutations)
-        events.extend(result.events)
-        records.extend(result.records)
-        blocked.extend(result.blocked)
         traces.extend(result.source_traces)
+        if result.blocked:
+            records.extend(result.records)
+            blocked.extend(result.blocked)
+            continue
+        committed = executor.commit_eventful_transition(
+            current,
+            mutations=result.mutations,
+            events=result.events,
+            records=result.records,
+            rng_events=result.rng_events,
+            producer_kind="scenario_initial_summon",
+            producer_id=f"{scenario.scenario_id}:{index}:{spec.kind}",
+        )
+        records.extend(committed.records)
+        events.extend(committed.events)
+        if committed.errors:
+            record = _setup_blocked_record(
+                "setup_initial_summon",
+                ";".join(committed.errors),
+                {
+                    "scenario_id": scenario.scenario_id,
+                    "summon_index": index,
+                    "kind": spec.kind,
+                    "owner_id": spec.owner_id,
+                },
+            )
+            records.append(record)
+            blocked.append(record)
+            continue
+        current = committed.after_state
+        mutations.extend(committed.mutations)
+        rng_events.extend(committed.rng_events)
     return _SetupApplyResult(
         state=current,
         records=tuple(records),
         mutations=tuple(mutations),
         events=tuple(events),
+        rng_events=tuple(rng_events),
         blocked=tuple(blocked),
         source_traces=tuple(traces),
     )

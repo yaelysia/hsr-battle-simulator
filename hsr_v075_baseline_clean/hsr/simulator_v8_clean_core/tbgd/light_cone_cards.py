@@ -206,6 +206,22 @@ class LightConeCatalogSourceBundle:
     source_integrity_ok: bool
 
 
+@dataclass(frozen=True)
+class LightConeFamilyProjection:
+    catalog: LightConeCatalogBuildResult
+    required_markers: tuple[str, ...]
+    marker_source_paths: tuple[tuple[str, tuple[str, ...]], ...]
+    selected_ability_paths: tuple[str, ...]
+    required_support_markers: tuple[str, ...]
+    support_marker_source_paths: tuple[
+        tuple[str, tuple[str, ...]],
+        ...,
+    ]
+    support_ability_paths: tuple[str, ...]
+    scanned_ability_file_count: int
+    parsed_ability_file_count: int
+
+
 def load_light_cone_catalog_sources(tbgd_root: Path) -> LightConeCatalogSourceBundle:
     """Read primary bytes once and Decimal-parse only S3 semantic sources."""
 
@@ -311,6 +327,229 @@ def build_light_cone_catalog(tbgd_root: Path) -> LightConeCatalogBuildResult:
     )
 
 
+def build_light_cone_family_projection(
+    tbgd_root: Path,
+    *,
+    required_ability_markers: Sequence[str],
+    required_support_markers: Sequence[str] = (),
+) -> LightConeFamilyProjection:
+    """Build a source-authentic catalog projection selected before JSON lowering."""
+
+    markers = tuple(dict.fromkeys(required_ability_markers))
+    support_markers = tuple(dict.fromkeys(required_support_markers))
+    if not markers or any(not isinstance(marker, str) or not marker for marker in markers):
+        raise ValueError("light-cone family projection markers must be non-empty strings")
+    if any(
+        not isinstance(marker, str) or not marker
+        for marker in support_markers
+    ):
+        raise ValueError(
+            "light-cone family support markers must be non-empty strings"
+        )
+    all_markers = tuple(dict.fromkeys((*markers, *support_markers)))
+
+    root = tbgd_root.resolve()
+    discovery = discover_primary_equipment_paths(root)
+    table_paths = cast(dict[str, Path], discovery["table_paths"])
+    ability_paths = cast(tuple[Path, ...], discovery["ability_paths"])
+    marker_bytes = {
+        marker: marker.encode("utf-8")
+        for marker in all_markers
+    }
+    paths_by_marker: dict[str, list[str]] = {
+        marker: [] for marker in all_markers
+    }
+    selected_raw_by_path: dict[str, bytes] = {}
+    support_raw_by_path: dict[str, bytes] = {}
+
+    for path in ability_paths:
+        try:
+            raw = path.read_bytes()
+        except OSError as exc:
+            raise ValueError(f"light-cone family projection source unreadable:{path}") from exc
+        matched = tuple(
+            marker
+            for marker, encoded in marker_bytes.items()
+            if encoded in raw
+        )
+        if not matched:
+            continue
+        relative = path.relative_to(root).as_posix()
+        if any(marker in markers for marker in matched):
+            selected_raw_by_path[relative] = raw
+        if any(marker in support_markers for marker in matched):
+            support_raw_by_path[relative] = raw
+        for marker in matched:
+            paths_by_marker[marker].append(relative)
+
+    ambiguous = {
+        marker: tuple(sorted(paths))
+        for marker, paths in paths_by_marker.items()
+        if marker in markers and len(paths) != 1
+    }
+    if ambiguous:
+        raise ValueError(
+            "light-cone family projection marker source is not unique:"
+            + repr(ambiguous)
+        )
+    support_candidates = (
+        set.intersection(
+            *(
+                set(paths_by_marker[marker])
+                for marker in support_markers
+            )
+        )
+        if support_markers
+        else set()
+    )
+    if support_markers and len(support_candidates) != 1:
+        raise ValueError(
+            "light-cone family support marker intersection is not unique:"
+            + repr(tuple(sorted(support_candidates)))
+        )
+    support_raw_by_path = {
+        path: raw
+        for path, raw in support_raw_by_path.items()
+        if path in support_candidates
+    }
+
+    table_raw_by_role: dict[str, tuple[str, bytes]] = {}
+    table_documents: dict[str, object] = {}
+    for role in LIGHT_CONE_TABLE_ROLES:
+        path = table_paths[role]
+        relative = path.relative_to(root).as_posix()
+        try:
+            raw = path.read_bytes()
+            document = _load_decimal_json(raw)
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+            raise ValueError(
+                f"light-cone family projection table invalid:{relative}"
+            ) from exc
+        if not isinstance(document, list):
+            raise ValueError(
+                f"light-cone family projection table root invalid:{relative}"
+            )
+        table_raw_by_role[role] = (relative, raw)
+        table_documents[role] = document
+
+    ability_documents: list[tuple[str, object]] = []
+    ability_names: set[str] = set()
+    for relative, raw in sorted(selected_raw_by_path.items()):
+        try:
+            document = _load_decimal_json(raw)
+        except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+            raise ValueError(
+                f"light-cone family projection ability invalid:{relative}"
+            ) from exc
+        if not isinstance(document, Mapping):
+            raise ValueError(
+                f"light-cone family projection ability root invalid:{relative}"
+            )
+        ability_list = document.get("AbilityList")
+        if not isinstance(ability_list, list):
+            raise ValueError(
+                f"light-cone family projection ability list missing:{relative}"
+            )
+        ability_names.update(
+            str(record["Name"])
+            for record in ability_list
+            if isinstance(record, Mapping)
+            and isinstance(record.get("Name"), str)
+            and str(record["Name"]).strip()
+        )
+        ability_documents.append((relative, document))
+
+    skill_rows = cast(list[object], table_documents["equipment_skill_config"])
+    selected_skill_rows = tuple(
+        (index, row)
+        for index, row in enumerate(skill_rows)
+        if isinstance(row, Mapping)
+        and row.get("AbilityName") in ability_names
+    )
+    selected_skill_ids = {
+        skill_id
+        for _, row in selected_skill_rows
+        if (skill_id := _strict_int(row.get("SkillID"))) is not None
+    }
+    equipment_rows = cast(list[object], table_documents["equipment_config"])
+    selected_equipment_rows = tuple(
+        (index, row)
+        for index, row in enumerate(equipment_rows)
+        if isinstance(row, Mapping)
+        and _strict_int(row.get("SkillID")) in selected_skill_ids
+    )
+    selected_equipment_ids = {
+        equipment_id
+        for _, row in selected_equipment_rows
+        if (equipment_id := _strict_int(row.get("EquipmentID"))) is not None
+    }
+    promotion_rows = cast(
+        list[object],
+        table_documents["equipment_promotion_config"],
+    )
+    selected_promotion_rows = tuple(
+        (index, row)
+        for index, row in enumerate(promotion_rows)
+        if isinstance(row, Mapping)
+        and _strict_int(row.get("EquipmentID")) in selected_equipment_ids
+    )
+    if (
+        not selected_equipment_rows
+        or not selected_skill_rows
+        or not selected_promotion_rows
+    ):
+        raise ValueError(
+            "light-cone family projection did not resolve a complete equipment source"
+        )
+
+    loaded_sources = [
+        *table_raw_by_role.values(),
+        *sorted(selected_raw_by_path.items()),
+    ]
+    fingerprint = build_primary_equipment_source_fingerprint(loaded_sources)
+    fingerprint["coverage"] = "selected_light_cone_gameplay_family_projection"
+    catalog = build_light_cone_catalog_from_documents(
+        equipment_rows=[row for _, row in selected_equipment_rows],
+        promotion_rows=[row for _, row in selected_promotion_rows],
+        skill_rows=[row for _, row in selected_skill_rows],
+        ability_documents=tuple(ability_documents),
+        source_content_fingerprint=fingerprint,
+        source_kind="tbgd",
+        source_row_indexes={
+            "equipment_config": [
+                index for index, _ in selected_equipment_rows
+            ],
+            "equipment_promotion_config": [
+                index for index, _ in selected_promotion_rows
+            ],
+            "equipment_skill_config": [
+                index for index, _ in selected_skill_rows
+            ],
+        },
+        semantic_table_parse_count=3,
+        ability_file_parse_count=len(ability_documents),
+    )
+    return LightConeFamilyProjection(
+        catalog=catalog,
+        required_markers=markers,
+        marker_source_paths=tuple(
+            (marker, tuple(sorted(paths_by_marker[marker])))
+            for marker in markers
+        ),
+        selected_ability_paths=tuple(sorted(selected_raw_by_path)),
+        required_support_markers=support_markers,
+        support_marker_source_paths=tuple(
+            (marker, tuple(sorted(paths_by_marker[marker])))
+            for marker in support_markers
+        ),
+        support_ability_paths=tuple(sorted(support_raw_by_path)),
+        scanned_ability_file_count=len(ability_paths),
+        parsed_ability_file_count=len(
+            set(selected_raw_by_path) | set(support_raw_by_path)
+        ),
+    )
+
+
 def build_light_cone_catalog_from_documents(
     *,
     equipment_rows: object,
@@ -321,6 +560,7 @@ def build_light_cone_catalog_from_documents(
     source_kind: Literal["tbgd", "validation_fixture"] = "validation_fixture",
     prerequisite_issues: Sequence[LightConeCatalogIssue] = (),
     source_integrity_ok: bool = True,
+    source_row_indexes: Mapping[str, Sequence[int]] | None = None,
     semantic_table_parse_count: int = 3,
     ability_file_parse_count: int | None = None,
 ) -> LightConeCatalogBuildResult:
@@ -348,6 +588,21 @@ def build_light_cone_catalog_from_documents(
         PRIMARY_TABLE_ROLES["equipment_skill_config"],
         "equipment_skill_root_invalid",
         issues,
+    )
+    equipment_source_indexes = _projection_source_row_indexes(
+        "equipment_config",
+        equipment,
+        source_row_indexes,
+    )
+    promotion_source_indexes = _projection_source_row_indexes(
+        "equipment_promotion_config",
+        promotions,
+        source_row_indexes,
+    )
+    skill_source_indexes = _projection_source_row_indexes(
+        "equipment_skill_config",
+        skills,
+        source_row_indexes,
     )
 
     fingerprint_paths = {
@@ -472,7 +727,11 @@ def build_light_cone_catalog_from_documents(
             ability_index[name].append((relative_path, record_index))
 
     promotion_index: dict[int, list[tuple[int, Mapping[str, object]]]] = defaultdict(list)
-    for row_index, row in enumerate(promotions):
+    for row_index, row in zip(
+        promotion_source_indexes,
+        promotions,
+        strict=True,
+    ):
         equipment_id = _strict_int(row.get("EquipmentID"))
         if equipment_id is None:
             issues.append(
@@ -489,7 +748,11 @@ def build_light_cone_catalog_from_documents(
         promotion_index[equipment_id].append((row_index, row))
 
     skill_index: dict[int, list[tuple[int, Mapping[str, object]]]] = defaultdict(list)
-    for row_index, row in enumerate(skills):
+    for row_index, row in zip(
+        skill_source_indexes,
+        skills,
+        strict=True,
+    ):
         skill_id = _strict_int(row.get("SkillID"))
         if skill_id is None:
             issues.append(
@@ -517,7 +780,11 @@ def build_light_cone_catalog_from_documents(
     referenced_promotions: set[int] = set()
     referenced_skills: set[int] = set()
 
-    for row_index, row in enumerate(equipment):
+    for row_index, row in zip(
+        equipment_source_indexes,
+        equipment,
+        strict=True,
+    ):
         publication_status, release_field_present = _publication_status(row)
         if publication_status == "published":
             published_source_count += 1
@@ -833,6 +1100,31 @@ def _load_decimal_json(raw: bytes) -> object:
         parse_int=int,
         parse_constant=reject_constant,
     )
+
+
+def _projection_source_row_indexes(
+    role: str,
+    rows: Sequence[Mapping[str, object]],
+    source_row_indexes: Mapping[str, Sequence[int]] | None,
+) -> tuple[int, ...]:
+    if source_row_indexes is None:
+        return tuple(range(len(rows)))
+    indexes = source_row_indexes.get(role)
+    if (
+        indexes is None
+        or len(indexes) != len(rows)
+        or any(
+            not isinstance(index, int)
+            or isinstance(index, bool)
+            or index < 0
+            for index in indexes
+        )
+        or len(set(indexes)) != len(indexes)
+    ):
+        raise ValueError(
+            f"light-cone projection source row indexes invalid:{role}"
+        )
+    return tuple(indexes)
 
 
 def _rows_or_issue(
