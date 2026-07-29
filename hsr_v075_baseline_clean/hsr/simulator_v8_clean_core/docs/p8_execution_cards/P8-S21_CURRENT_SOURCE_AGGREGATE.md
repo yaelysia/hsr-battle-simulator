@@ -20,9 +20,9 @@
 - 读取已验收 S0-S20 报告，验证 schema/version/source fingerprint/code hash/必需 checks 和证据文件真实存在。
 - 从当前源码共享一次 focused equipment compilation/RuleBook，重新生成全光锥、遗器模板、主副词条、套装档位和 gameplay family 矩阵。
 - 核对分阶段 gap 继承：任何行不得在聚合中被更宽谓词、手写总数或 sample 覆盖。
-- 串行运行装备全阶段结构验证和实际触达的 P2/P4/P5/P6/P7 直接回归。
+- 在同一次 final 中通过生产入口复核装备总矩阵、关键负例和 S20 manifest；不逐阶段重跑历史主验证。
 - 抽样完成六类全来源反查：光锥静态、光锥动态、主词条、副词条、套装静态、套装动态。
-- 复跑希儿正式纵切，并明确标记为 sample。
+- 由同一 final 通过生产 runner 消费希儿 manifest，并明确标记为 sample；不另起 S20 验证进程。
 - 更新 README、架构边界、DOCUMENTATION_INDEX、CODEX_HANDOFF、AGENTS 和最终 checkpoint；归档可丢弃中间报告时保留长期证据索引。
 - 记录 P8 明确不做的刷取、背包、UI 布局、自动配装和未来版本增量。
 
@@ -60,7 +60,7 @@
 
 ## 拟改文件与关键符号
 
-- 新增 `tools/validate_p8_s21_current_source_aggregate.py`：只聚合/验证，不包含生产修复逻辑。
+- 新增 `tools/validate_p8_s21_current_source_aggregate.py`：只聚合/验证，不包含生产修复逻辑；同一入口必须提供不构建 RuleBook 的 `--preflight-only`。
 - 可新增阶段 evidence manifest builder，复用 P7 已有严格 evidence 读取模式但不复制手写结论。
 - `P8_EQUIPMENT_BUILD_LIGHT_CONE_RELIC_TASK_PLAN.md`：验收线程最终勾选 S21/P8-DONE。
 - `README.md`、`ARCHITECTURE_BOUNDARY_CONTRACT.md`、`DOCUMENTATION_INDEX.md`、`CODEX_HANDOFF.md`、根 `AGENTS.md`：更新当前事实和明确剩余边界。
@@ -103,23 +103,27 @@ documentation_state_consistent=true
 
 ## 验证命令与资源
 
-所有重验证严格串行。先聚合，绿后才运行直接回归：
+S21 是 P8 唯一允许执行 `full` 级验证的阶段，但它不能修改任何生产代码。先运行不构建 RuleBook 的轻量 preflight，检查报告结构、源码/来源指纹、阶段清单和责任映射；preflight 通过后，最终聚合只运行一次：
 
 ```bash
-PYTHONDONTWRITEBYTECODE=1 ionice -c3 nice -n 15 python3 -B -m hsr.simulator_v8_clean_core.tools.validate_p8_s21_current_source_aggregate --tbgd-root ../turnbasedgamedata-main --reports-root hsr/live_validation_reports --output-dir /tmp/hsr_v8_p8_s21_current_source_aggregate
-PYTHONDONTWRITEBYTECODE=1 ionice -c3 nice -n 15 python3 -B -m hsr.simulator_v8_clean_core.tools.validate_p8_s20_seele_complete_build_slice --tbgd-root ../turnbasedgamedata-main --manifest hsr/simulator_v8_clean_core/scenarios/examples/p8_s20_seele_complete_equipment_build.json --output-dir /tmp/hsr_v8_p8_s21_s20_sample_regression
-PYTHONDONTWRITEBYTECODE=1 python3 -B -m hsr.simulator_v8_clean_core.tools.validate_p7_current_tree_shared_regressions --tbgd-root ../turnbasedgamedata-main --output-dir /tmp/hsr_v8_p8_s21_p7_shared_regressions
-PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX=/tmp/hsr_v8_p8_s21_pycache python3 -m compileall -q hsr/simulator_v8_clean_core hsr/simulator_v8_ui
+PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX=/tmp/hsr_v8_p8_s21_pycache python3 -m compileall -q simulator_v8_clean_core
+PYTHONDONTWRITEBYTECODE=1 /usr/bin/time -v -o /tmp/hsr_v8_p8_s21_preflight_time_v.txt timeout --signal=TERM 5m python3 -B -m simulator_v8_clean_core.tools.validate_p8_s21_current_source_aggregate --preflight-only --tbgd-root ../../turnbasedgamedata-main --reports-root live_validation_reports --output-dir /tmp/hsr_v8_p8_s21_current_source_aggregate_preflight
+PYTHONDONTWRITEBYTECODE=1 /usr/bin/time -v -o /tmp/hsr_v8_p8_s21_final_time_v.txt timeout --signal=TERM 30m ionice -c3 nice -n 15 python3 -B -m simulator_v8_clean_core.tools.validate_p8_s21_current_source_aggregate --tbgd-root ../../turnbasedgamedata-main --reports-root live_validation_reports --output-dir /tmp/hsr_v8_p8_s21_current_source_aggregate
 git diff --check
 ```
 
-聚合内部应共享一次 focused equipment compiler/RuleBook，并按调用链选择 P2/P4/P5/P6/P7 专项；不得再逐阶段重复 17 次 full build。`validate_v0_209` 默认不跑；只有当前阶段直接修改其独有 schema 才申请用户确认后单独运行。summary 必须记录读取文件/字节、compiler/RuleBook build 次数、case 数、最大 RSS/IO（可获得时）和所有输出大小。
+- preflight 墙钟预算 5 分钟，不得构建 RuleBook；失败时只返回陈旧报告或责任阶段清单，不运行 final。
+- final 在一个进程中共享一次 focused equipment compiler/RuleBook，并通过生产 runner 消费 S20 manifest；不得单独重跑 S20 或 P7 聚合，也不得逐阶段重跑 S0-S20。
+- final 只允许一次。失败后根据结构化责任映射退回对应阶段；修复完成后重新进入新的 S21 验收轮次，不能在 S21 内边修边反复聚合。
+- final 预算：墙钟 30 分钟、峰值 RSS 1.5 GiB；S21 累计验证预算 45 分钟；默认产物不超过 20 MiB。任何一项超限都阻断，不提高限制或省略谓词。
+- 只有 UI 文件实际被修改时才追加 UI typecheck/build。`validate_v0_209`、P1-P7 聚合、旧九族组合和完整 IR/RuleBook/transition dump均禁止。
+- summary 必须记录读取文件/字节、compiler/RuleBook build 次数、case 数、墙钟、最大 RSS/IO（不可获得时为 `not_measured`）及每个输出大小。
 
 ## Ready-for-review 产物
 
 - 当前 source/code fingerprint 的 S0-S20 evidence manifest。
 - 全定义、全 gameplay、特殊模式/non-gameplay 和关键负例 aggregate。
-- 六类来源 walkback、S20 sample、直接回归和资源报告。
+- 六类来源 walkback、同进程 S20 sample、关键负例和资源报告。
 - 文档更新 diff 与最终 checkpoint 草稿。
 - 若有 blocker：准确责任阶段和证据；不得提交“基本完成”。
 
@@ -129,7 +133,7 @@ git diff --check
 - [ ] 全光锥、遗器模板、主副词条、套装档位目录与当前 raw 一一闭合。
 - [ ] 光锥和套装 gameplay 严格零 gap、零 unknown、零 partial graph。
 - [ ] 特殊模式/non-gameplay/source gap 分类逐项诚实且不从分母静默过滤。
-- [ ] 六类来源反查、关键负例和希儿 sample 均通过当前源码复核。
+- [ ] 六类来源反查、关键负例和希儿 sample 在同一次当前源码 final 中复核通过。
 - [ ] 聚合无生产修复逻辑，资源预算和默认输出规模合规。
 - [ ] 长期文档、最终 checkpoint 与代码事实一致。
 - [ ] 验收线程确认后才允许勾 P8-S21 和 P8-DONE 并提交最终检查点。

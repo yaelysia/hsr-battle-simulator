@@ -99,17 +99,21 @@ runtime_reads_build_or_raw=false
 
 ## 验证命令与资源
 
+生产边界先保证：最终装配与出生计划在生成 `UnitState` 前校验账本可重算、provider 完整、图已准入、覆盖项为空且身份一致；任一失败都不得产生半成品单位或时间线副作用。runtime 只能读取正式装配结果。
+
+本阶段固定只运行一个业务主验证：
+
 ```bash
-PYTHONDONTWRITEBYTECODE=1 ionice -c3 nice -n 15 python3 -B -m hsr.simulator_v8_clean_core.tools.validate_p8_s18_final_panel_and_birth_order --tbgd-root ../turnbasedgamedata-main --output-dir /tmp/hsr_v8_p8_s18_final_panel_and_birth_order
-PYTHONDONTWRITEBYTECODE=1 python3 -B -m hsr.simulator_v8_clean_core.tools.validate_p8_s2_character_build_base_panel --fixture-only --output-dir /tmp/hsr_v8_p8_s18_s2_panel_regression
-PYTHONDONTWRITEBYTECODE=1 python3 -B -m hsr.simulator_v8_clean_core.tools.validate_p6_s2_s3_unit_spawn_birth_plan --tbgd-root ../turnbasedgamedata-main --output-dir /tmp/hsr_v8_p8_s18_p6_birth_regression
-PYTHONDONTWRITEBYTECODE=1 python3 -B -m hsr.simulator_v8_clean_core.tools.validate_p7_s10_timeline_control_semantics --output-dir /tmp/hsr_v8_p8_s18_p7_timeline_regression
-PYTHONDONTWRITEBYTECODE=1 python3 -B -m hsr.simulator_v8_clean_core.tools.validate_p7_s9_explicit_turn_event_phase_machine --output-dir /tmp/hsr_v8_p8_s18_p7_phase_regression
-PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX=/tmp/hsr_v8_p8_s18_pycache python3 -m compileall -q hsr/simulator_v8_clean_core
+PYTHONDONTWRITEBYTECODE=1 /usr/bin/time -v -o /tmp/hsr_v8_p8_s18_time_v.txt timeout --signal=TERM 10m ionice -c3 nice -n 15 python3 -B -m simulator_v8_clean_core.tools.validate_p8_s18_final_panel_and_birth_order --tbgd-root ../../turnbasedgamedata-main --output-dir /tmp/hsr_v8_p8_s18_final_panel_and_birth_order
+PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX=/tmp/hsr_v8_p8_s18_pycache python3 -m compileall -q simulator_v8_clean_core
 git diff --check
 ```
 
-主验证可构建一次受控完整 RuleBook并复用；不重复跑 S8/S17 全聚合，只运行各自当前 summary 的结构/指纹校验和少量集成 probes。重验证串行，输出面板 oracle、顺序和负例，不写完整 RuleBook/transition。
+- 主验证只构建一次受控装备 RuleBook并贯穿面板、provider、出生和时间线证据；S8/S17 的已验收报告只校验结构与指纹，不重跑其 aggregate。
+- 已验收的 S2、P6、P7 契约直接继承。仅在实际修改共享最终面板、出生计划、时间线或事件阶段时选择对应最小 direct，最多 2 项，不固定重跑四个旧验证。
+- 完整主验证最多一次诊断运行和一次最终运行；中间修复只跑失败的 panel/birth/phase 切片。
+- 单次主验证预算：墙钟 10 分钟、峰值 RSS 1 GiB；阶段累计验证预算 20 分钟；默认产物不超过 10 MiB。超限立即暂停。
+- 不运行 S8/S17 全聚合、S2/P6/P7 完整验证、历史阶段聚合或 `validate_v0_209`，不写完整 RuleBook/transition。
 
 ## Ready-for-review 产物
 
@@ -126,4 +130,4 @@ git diff --check
 - [ ] 静态面板、provider、入场事件和 timeline 顺序正确且幂等。
 - [ ] 正式 panel/action value/activation override 与 blocked graph 均 fail-closed。
 - [ ] summon 继承来源明确，runtime 不读取 build/raw，无内容特判。
-- [ ] `ready_for_review` evidence、直接回归和资源审计完整。
+- [ ] `ready_for_review` evidence、实际触达所需的至多两项 direct 和资源审计完整。

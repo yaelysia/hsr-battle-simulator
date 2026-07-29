@@ -53,7 +53,7 @@ S18 提供正式装配结果和出生流程；现有 RuleBook、P7 query/submit�
 | stale/tamper 拒绝 | source/IR/engine version/ledger 任一变化 replay blocked | replay negatives |
 | compact 预算 | 增大目录规模不线性扩大单节点语义状态 | size budget report |
 | 来源 walkback | 静态 term 和动态 mutation 各自完整反查 | audit samples |
-| P7 契约不退化 | action query/submit、replay、compact state 直接回归 | regressions |
+| P7 契约不退化 | 未修改调用链继承检查点；实际修改时运行对应最小 direct | direct trigger record |
 
 ## 拟改文件与关键符号
 
@@ -97,23 +97,29 @@ action_query_submit_contract_unchanged=true
 
 ## 验证命令与资源
 
+生产边界先保证：查询、提交、manifest、snapshot 和 replay API 直接拒绝派生规则输入、过期身份、篡改指纹和线性复制完整目录的状态结构；失败必须保持状态不变。验证器只调用这些公开契约，不能自行重装配或比较一套简化结果。
+
+本阶段固定只运行一个业务主验证：
+
 ```bash
-PYTHONDONTWRITEBYTECODE=1 python3 -B -m hsr.simulator_v8_clean_core.tools.validate_p8_s19_query_audit_snapshot_replay --tbgd-root ../turnbasedgamedata-main --output-dir /tmp/hsr_v8_p8_s19_query_audit_snapshot_replay
-PYTHONDONTWRITEBYTECODE=1 python3 -B -m hsr.simulator_v8_clean_core.tools.validate_p7_s8_decision_query_submit_loop --output-dir /tmp/hsr_v8_p8_s19_p7_query_regression
-PYTHONDONTWRITEBYTECODE=1 python3 -B -m hsr.simulator_v8_clean_core.tools.validate_p7_s15_rng_identity_replay --output-dir /tmp/hsr_v8_p8_s19_p7_replay_regression
-PYTHONDONTWRITEBYTECODE=1 python3 -B -m hsr.simulator_v8_clean_core.tools.validate_p7_s18_compact_semantic_state --output-dir /tmp/hsr_v8_p8_s19_p7_compact_regression
-PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX=/tmp/hsr_v8_p8_s19_pycache python3 -m compileall -q hsr/simulator_v8_clean_core hsr/simulator_v8_ui
+PYTHONDONTWRITEBYTECODE=1 /usr/bin/time -v -o /tmp/hsr_v8_p8_s19_time_v.txt timeout --signal=TERM 10m ionice -c3 nice -n 15 python3 -B -m simulator_v8_clean_core.tools.validate_p8_s19_query_audit_snapshot_replay --tbgd-root ../../turnbasedgamedata-main --output-dir /tmp/hsr_v8_p8_s19_query_audit_snapshot_replay
+PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX=/tmp/hsr_v8_p8_s19_pycache python3 -m compileall -q simulator_v8_clean_core
 git diff --check
 ```
 
-复用当前指纹下 S8/S17 摘要，不重新跑全 ability transition。主验证使用一次受控 RuleBook；compact budget 用合成目录规模倍增但不复制真实大对象，输出尺寸统计。禁止全阶段聚合、完整 snapshot dump 和 `validate_v0_209`。
+- 主验证使用一次受控 RuleBook，复用当前指纹下 S8/S17 结论，不重新跑 ability transition。compact budget 使用受控规模探针，不复制真实大对象。
+- 已验收的 P7 query、replay 和 compact 契约直接继承。只有实际修改对应共享模块时才运行其最小 direct，最多 2 项，不固定重跑三个旧验证。
+- 只有 UI 文件或 UI 契约调用者实际被修改时才追加 UI typecheck/build；纯 core 改动不得编译整个 UI。
+- 完整主验证最多一次诊断运行和一次最终运行；中间修复只跑失败 API/replay/size 切片。
+- 单次主验证预算：墙钟 10 分钟、峰值 RSS 1 GiB；阶段累计验证预算 20 分钟；默认产物不超过 10 MiB。超限立即暂停。
+- 禁止全阶段聚合、完整 snapshot/catalog dump、全 ability transition 和 `validate_v0_209`。
 
 ## Ready-for-review 产物
 
 - 查询/提交 schema、纯度矩阵和 UI 规则移除清单。
 - manifest round-trip、stale/tamper/replay 负例和 compact size budget。
 - 静态 term 与动态 mutation 来源反查。
-- consumer 迁移、P7 直接回归、资源和未运行范围报告。
+- consumer 迁移、direct 触发判定、资源和未运行范围报告。
 
 ## 唯一执行清单（仅验收线程可勾）
 
@@ -122,5 +128,5 @@ git diff --check
 - [ ] manifest/fingerprint/version 可重新装配并锁定 snapshot/replay。
 - [ ] stale、篡改和伪来源回放 state unchanged。
 - [ ] compact state 不复制完整目录/ledger/raw，尺寸预算通过。
-- [ ] 静态/动态来源 walkback 和 P7 query/replay/compact 回归通过。
+- [ ] 静态/动态来源 walkback 完整；P7 契约未被实际改动，或已通过对应最小 direct。
 - [ ] `ready_for_review` evidence 完整，阶段无查询/回放 blocker。

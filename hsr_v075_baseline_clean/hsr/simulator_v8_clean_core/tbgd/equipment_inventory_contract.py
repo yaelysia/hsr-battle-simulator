@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from collections.abc import Iterable, Mapping
 from typing import Any, cast
 
 from ..equipment.models import validate_equipment_source_fingerprint
@@ -93,3 +94,26 @@ def fingerprint_contract_matches(
     return FINGERPRINT_REQUIRED_FIELDS.issubset(current) and FINGERPRINT_REQUIRED_FIELDS.issubset(
         expected
     ) and all(current[key] == expected[key] for key in FINGERPRINT_REQUIRED_FIELDS)
+
+
+def validate_live_equipment_source_fingerprint(
+    fingerprint: Mapping[str, object],
+    *,
+    required_paths: Iterable[str],
+) -> None:
+    """Validate a production fingerprint without reading an S0 review artifact."""
+
+    validate_equipment_source_fingerprint(fingerprint)
+    if fingerprint.get("algorithm") != PRIMARY_FINGERPRINT_ALGORITHM:
+        raise ValueError("live equipment fingerprint algorithm is invalid")
+    if fingerprint.get("coverage") != PRIMARY_FINGERPRINT_COVERAGE:
+        raise ValueError("live equipment fingerprint coverage is incomplete")
+    paths = fingerprint.get("paths")
+    if not isinstance(paths, (list, tuple)):
+        raise TypeError("live equipment fingerprint paths must be an array")
+    path_set = set(paths)
+    missing = sorted(set(required_paths).difference(path_set))
+    if missing:
+        raise ValueError(
+            f"live equipment fingerprint is missing required paths: {missing}"
+        )

@@ -88,15 +88,21 @@ input_order_deterministic=true
 
 ## 验证命令与资源
 
+生产边界先保证：套装统计器只接受已完整准入的遗器实例；套装身份、区域、实例身份或来源不一致时必须在生成激活结果前 blocked。所有门槛从类型化定义读取，UI 计数和 active 标记不能进入生产输入。
+
+本阶段固定只运行一个业务主验证：
+
 ```bash
-PYTHONDONTWRITEBYTECODE=1 python3 -B -m hsr.simulator_v8_clean_core.tools.validate_p8_s13_relic_set_thresholds --tbgd-root ../turnbasedgamedata-main --output-dir /tmp/hsr_v8_p8_s13_relic_set_thresholds
-PYTHONDONTWRITEBYTECODE=1 python3 -B -m hsr.simulator_v8_clean_core.tools.validate_p8_s10_relic_instance_legality --tbgd-root ../turnbasedgamedata-main --output-dir /tmp/hsr_v8_p8_s13_s10_instance_regression
-PYTHONDONTWRITEBYTECODE=1 python3 -B -m hsr.simulator_v8_clean_core.tools.validate_p8_s12_relic_sub_affix_rolls --tbgd-root ../turnbasedgamedata-main --output-dir /tmp/hsr_v8_p8_s13_s12_affix_regression
-PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX=/tmp/hsr_v8_p8_s13_pycache python3 -m compileall -q hsr/simulator_v8_clean_core
+PYTHONDONTWRITEBYTECODE=1 /usr/bin/time -v -o /tmp/hsr_v8_p8_s13_time_v.txt timeout --signal=TERM 5m python3 -B -m simulator_v8_clean_core.tools.validate_p8_s13_relic_set_thresholds --tbgd-root ../../turnbasedgamedata-main --output-dir /tmp/hsr_v8_p8_s13_relic_set_thresholds
+PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX=/tmp/hsr_v8_p8_s13_pycache python3 -m compileall -q simulator_v8_clean_core
 git diff --check
 ```
 
-使用少量 source-backed 实例和一个非 2/4 结构 fixture；不运行全 affix property tests、静态贡献、ability 或战斗。RuleBook 最多一次，输出组合矩阵和少量来源记录。
+- 主验证只构建一次聚焦遗器目录/RuleBook，使用少量 source-backed 实例覆盖外圈、内圈、4 件、2+2、散件和一个非 2/4 门槛 fixture。
+- 已验收的 S10-S12 结论直接继承，不固定重跑其验证器。只有本阶段实际修改实例准入或身份契约时，才追加一个对应的最小 direct 切片。
+- 完整主验证最多一次诊断运行和一次最终运行；中间修复只跑失败的统计切片。
+- 单次主验证预算：墙钟 5 分钟、峰值 RSS 768 MiB；阶段累计验证预算 10 分钟；默认产物不超过 3 MiB。超限立即暂停，不提高限制。
+- 不运行全 affix property tests、静态贡献、ability、战斗、历史阶段聚合或 `validate_v0_209`，也不写完整 Canonical IR、RuleBook 或 transition。
 
 ## Ready-for-review 产物
 
@@ -112,5 +118,5 @@ git diff --check
 - [ ] 高阈值保留低阈值，所有门槛从定义读取。
 - [ ] 域隔离、重复实例和非法件 fail-closed，无 UI active 输入。
 - [ ] activation 来源、fingerprint 和输入顺序确定性完整。
-- [ ] 未应用静态属性或启动能力，S10-S12 回归通过。
+- [ ] 未应用静态属性或启动能力；S10-S12 已验收契约未被实际改动，或已通过对应最小 direct 切片。
 - [ ] `ready_for_review` evidence 完整，阶段无套装统计 blocker。

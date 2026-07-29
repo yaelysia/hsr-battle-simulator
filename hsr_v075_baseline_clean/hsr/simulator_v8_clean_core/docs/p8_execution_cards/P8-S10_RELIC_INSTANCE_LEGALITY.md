@@ -93,17 +93,27 @@ legacy_all_relics_blocker_absent=true
 - 队伍级上下文当前没有合理装配入口：属于架构 gap，必须在 build/scenario admission 建立通用占用校验，不得用全局可变 registry。
 - 发现旧调用依赖无 slot 或手填属性，直接迁移 fixture；不要默认兼容。
 
-## 验证命令与资源
+## 验证门与资源预算
+
+实例 schema、装备装配边界和队伍占用检查必须直接拒绝错槽、重复身份、冲突 payload
+和非法等级；不得依赖后续属性计算发现结构错误。
+
+必跑且只有一个业务主入口：
 
 ```bash
-PYTHONDONTWRITEBYTECODE=1 python3 -B -m hsr.simulator_v8_clean_core.tools.validate_p8_s10_relic_instance_legality --tbgd-root ../turnbasedgamedata-main --output-dir /tmp/hsr_v8_p8_s10_relic_instance_legality
-PYTHONDONTWRITEBYTECODE=1 python3 -B -m hsr.simulator_v8_clean_core.tools.validate_p8_s9_relic_definition_cards --tbgd-root ../turnbasedgamedata-main --output-dir /tmp/hsr_v8_p8_s10_s9_definition_regression
-PYTHONDONTWRITEBYTECODE=1 python3 -B -m hsr.simulator_v8_clean_core.tools.validate_p8_s2_character_build_base_panel --fixture-only --output-dir /tmp/hsr_v8_p8_s10_s2_build_regression
-PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX=/tmp/hsr_v8_p8_s10_pycache python3 -m compileall -q hsr/simulator_v8_clean_core
+PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX=/tmp/hsr_v8_p8_s10_pycache python3 -m compileall -q simulator_v8_clean_core
+PYTHONDONTWRITEBYTECODE=1 /usr/bin/time -v -o /tmp/hsr_v8_p8_s10_time_v.txt timeout --signal=TERM 5m python3 -B -m simulator_v8_clean_core.tools.validate_p8_s10_relic_instance_legality --tbgd-root ../../turnbasedgamedata-main --output-dir /tmp/hsr_v8_p8_s10_relic_instance_legality
 git diff --check
 ```
 
-主验证使用少量类型化模板等价类，RuleBook 最多一次；不得计算 affix、构建战斗状态或运行全遗器组合。队伍占用只用 2-4 个角色 fixture，避免枚举。
+主入口共享一次 S9 目录窄投影，使用 2-4 个角色和少量模板等价类。S9 检查点默认
+继承，不重跑 S9 目录验证。只有修改正式 scenario/队伍占用边界时，追加一个小型
+scenario admission direct；只有修改 S1 共用实例 codec 时，追加一个无 TBGD 的
+codec direct。direct 总数最多两个。
+
+单次主验证不超过 5 分钟、768 MiB RSS；本阶段累计验证不超过 10 分钟，默认总产物
+不超过 3 MiB。禁止计算 affix、构建战斗状态、运行全遗器组合、前序阶段完整验证器
+或任何阶段聚合。
 
 ## Ready-for-review 产物
 

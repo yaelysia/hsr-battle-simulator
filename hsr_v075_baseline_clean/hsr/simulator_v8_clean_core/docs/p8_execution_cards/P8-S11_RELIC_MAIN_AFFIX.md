@@ -87,16 +87,25 @@ blocked_main_affix_contributes_nothing=true
 - 当前特殊模板规则不能由现有 group 表达：报告真实 source/engine-rule gap，不得借普通池放行。
 - 独立 oracle 与生产值不一致时停止，先定位 Decimal 读取、公式或等级语义，不能改期望值迎合实现。
 
-## 验证命令与资源
+## 验证门与资源预算
+
+主词条计算器和装配器必须在创建计算结果前完成模板分组、部位池、稀有度、等级和
+数值有限性校验；非法输入不得留下中间值。
+
+必跑且只有一个业务主入口：
 
 ```bash
-PYTHONDONTWRITEBYTECODE=1 ionice -c3 nice -n 15 python3 -B -m hsr.simulator_v8_clean_core.tools.validate_p8_s11_relic_main_affix --tbgd-root ../turnbasedgamedata-main --output-dir /tmp/hsr_v8_p8_s11_relic_main_affix
-PYTHONDONTWRITEBYTECODE=1 python3 -B -m hsr.simulator_v8_clean_core.tools.validate_p8_s10_relic_instance_legality --tbgd-root ../turnbasedgamedata-main --output-dir /tmp/hsr_v8_p8_s11_s10_instance_regression
-PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX=/tmp/hsr_v8_p8_s11_pycache python3 -m compileall -q hsr/simulator_v8_clean_core
+PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX=/tmp/hsr_v8_p8_s11_pycache python3 -m compileall -q simulator_v8_clean_core
+PYTHONDONTWRITEBYTECODE=1 /usr/bin/time -v -o /tmp/hsr_v8_p8_s11_time_v.txt timeout --signal=TERM 5m ionice -c3 nice -n 15 python3 -B -m simulator_v8_clean_core.tools.validate_p8_s11_relic_main_affix --tbgd-root ../../turnbasedgamedata-main --output-dir /tmp/hsr_v8_p8_s11_relic_main_affix
 git diff --check
 ```
 
-主验证只加载模板、部位和主词条小表一次；合法性使用全定义矩阵，数值 oracle 按结构抽取边界，不构建完整 RuleBook。不得运行副词条、套装、战斗或跨阶段聚合。
+主入口只加载模板、部位和主词条表一次；全定义合法性和 Decimal 边界 oracle 在同一
+进程完成。S10 检查点默认继承，不重跑 S10 完整验证。只有修改实例 admission 或共用
+Decimal/属性类型时，追加一个对应的小型 direct。
+
+单次主验证不超过 5 分钟、768 MiB RSS；本阶段累计验证不超过 10 分钟，默认总产物
+不超过 3 MiB。禁止完整 RuleBook、副词条、套装、战斗、跨阶段聚合和重复 raw 解析。
 
 ## Ready-for-review 产物
 
@@ -112,5 +121,5 @@ git diff --check
 - [ ] +0、中间和最大强化值与独立 Decimal oracle 一致。
 - [ ] UI/用户最终值、float、显示舍入和模糊定义不能进入规则。
 - [ ] 每个结果来源完整，blocked 不产生值或贡献。
-- [ ] S10 直接回归、代码通用性和资源预算通过。
+- [ ] S10 已验收契约未被实际改动，或已通过对应最小 direct；代码通用性和资源预算通过。
 - [ ] `ready_for_review` evidence 完整，阶段无主词条 blocker。

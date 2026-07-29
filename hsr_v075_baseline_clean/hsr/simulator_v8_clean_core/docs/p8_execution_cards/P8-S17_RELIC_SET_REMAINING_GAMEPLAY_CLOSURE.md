@@ -97,18 +97,21 @@ set_specific_runtime_handlers=0
 
 ## 验证命令与资源
 
+生产边界先保证：通用结算计划和原子提交入口校验来源、目标、参数、计划版本与事件身份；过期计划、缺目标、缺来源或结算冲突必须 state unchanged。验证器必须通过正式动作/事件入口产生证据，不能手工拼接伤害、生命、行动或 RNG mutation。
+
+本阶段固定只运行一个业务主验证：
+
 ```bash
-PYTHONDONTWRITEBYTECODE=1 ionice -c3 nice -n 15 python3 -B -m hsr.simulator_v8_clean_core.tools.validate_p8_s17_relic_set_remaining_gameplay_closure --tbgd-root ../turnbasedgamedata-main --output-dir /tmp/hsr_v8_p8_s17_relic_set_remaining_gameplay_closure
-PYTHONDONTWRITEBYTECODE=1 python3 -B -m hsr.simulator_v8_clean_core.tools.validate_p7_s12_damage_toughness_pipeline --output-dir /tmp/hsr_v8_p8_s17_p7_damage_regression
-PYTHONDONTWRITEBYTECODE=1 python3 -B -m hsr.simulator_v8_clean_core.tools.validate_p7_s13_shield_hp_routing --output-dir /tmp/hsr_v8_p8_s17_p7_hp_regression
-PYTHONDONTWRITEBYTECODE=1 python3 -B -m hsr.simulator_v8_clean_core.tools.validate_p7_s10_timeline_control_semantics --output-dir /tmp/hsr_v8_p8_s17_p7_timeline_regression
-PYTHONDONTWRITEBYTECODE=1 python3 -B -m hsr.simulator_v8_clean_core.tools.validate_p7_s17_wave_lifecycle_events --output-dir /tmp/hsr_v8_p8_s17_p7_wave_regression
-PYTHONDONTWRITEBYTECODE=1 python3 -B -m hsr.simulator_v8_clean_core.tools.validate_p7_s15_rng_identity_replay --output-dir /tmp/hsr_v8_p8_s17_p7_rng_regression
-PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX=/tmp/hsr_v8_p8_s17_pycache python3 -m compileall -q hsr/simulator_v8_clean_core
+PYTHONDONTWRITEBYTECODE=1 /usr/bin/time -v -o /tmp/hsr_v8_p8_s17_time_v.txt timeout --signal=TERM 12m ionice -c3 nice -n 15 python3 -B -m simulator_v8_clean_core.tools.validate_p8_s17_relic_set_remaining_gameplay_closure --tbgd-root ../../turnbasedgamedata-main --output-dir /tmp/hsr_v8_p8_s17_relic_set_remaining_gameplay_closure
+PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX=/tmp/hsr_v8_p8_s17_pycache python3 -m compileall -q simulator_v8_clean_core
 git diff --check
 ```
 
-S17 主验证必须从当前源码重新生成并核对 S16/S17 分区，已验收 S16 报告只作为证据索引，不能依赖历史 `/tmp` summary。主聚合只允许一次 focused full set ability build，所有重验证串行。只跑实际触达专项；未修改的共享模块可由主验证等价矩阵替代并说明。禁止 P1-P7 聚合和 `validate_v0_209`，除非直接修改其独有 schema 并获确认。
+- 主验证从当前源码重新生成一次 S16/S17 分区并建立一次聚焦套装 RuleBook，只执行 S17 所属 family；S16 报告仅作为已验收索引，不重跑 S16。
+- 已验收的 P7 伤害、生命、时间线、波次和 RNG 契约直接继承。仅按实际修改的共享领域选择最小 direct，最多 2 项；禁止固定重跑五个旧验证。
+- 完整主验证最多一次诊断运行和一次最终运行；中间修复只跑失败 family，不重建全目录。最终运行才重新确认联合零 gap。
+- 单次主验证预算：墙钟 12 分钟、峰值 RSS 1 GiB；阶段累计验证预算 25 分钟；默认产物不超过 10 MiB。超限立即暂停。
+- 禁止 P1-P7 聚合、旧未过滤组合、完整 transition dump 和 `validate_v0_209`。summary 必须记录分区、build 次数、case 数、墙钟、峰值 RSS 和输出大小。
 
 ## Ready-for-review 产物
 
@@ -125,4 +128,4 @@ S17 主验证必须从当前源码重新生成并核对 S16/S17 分区，已验�
 - [ ] 面板/条件/计划/mutation 顺序与 stale plan 失败语义正确。
 - [ ] 多 wearer、跨波次、队伍目标和 replay 不串线，来源反查完整。
 - [ ] 无套装专用 runtime、固定 ID、文本解释或部分执行。
-- [ ] `ready_for_review` evidence、回归和资源审计完整。
+- [ ] `ready_for_review` evidence、实际触达所需的至多两项 direct 和资源审计完整。

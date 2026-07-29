@@ -11,7 +11,7 @@ turnbasedgamedata-main -> compiler/lowering -> Canonical IR -> Combat Core
 最近已验收生产检查点：
 
 ```text
-P8-R2 本检查点（父检查点：419e476）
+P8-S9 本检查点（父检查点：61c946f）
 ```
 
 验证治理路线回正：
@@ -70,8 +70,25 @@ VG-R1 曾确认两条动态值任务和一条死亡回响事件 family 失败。
 
 ## 当前工作
 
-光锥轨已经推进至 R2 并验收。当前顺序上的下一阶段是 `P8-S9` 遗器定义卡；
-S9 至 S17 继续按 `docs/p8_execution_cards/` 中的单阶段执行卡严格推进。
+光锥轨已经推进至 R2 并验收，`P8-S9` 遗器定义卡也已验收。当前顺序上的下一阶段是
+`P8-S10` 遗器实例合法性；S10 至 S17 继续按 `docs/p8_execution_cards/` 中的单阶段执行卡严格推进。
+
+P8-S9 当前事实：
+
+- 已从当前来源完整建立 726 个遗器模板、6 个真实槽位、58 个套装和 90 个套装档位。
+- 模板、主副词条组、内外圈域和套装档位均进入类型化 Canonical IR 与 RuleBook，目录引用问题和已发布模板 blocked 均为零。
+- 内外圈由套装成员的真实槽位关系推导；特殊模板模式已分类，未知模式 fail-closed。
+- 套装档位的静态成员与动态 ability 来源均保留，但 S9 不创建机制图、不执行套装效果。
+- 光锥与遗器共用严格能力来源边界，只接受真实 TBGD 来源或显式验证 fixture，派生伪来源会被拒绝。
+- 独立验收为 21/21 契约检查、12/12 负例通过；单次聚焦验证约 1.75 秒、峰值约 79 MiB。
+
+2026-07-28 已重新审查并统一改写 S9-S21 的执行与验证口径：
+
+- 每阶段只有一个业务主验证；完整入口最多一次诊断运行和一次最终运行。
+- 前序检查点默认继承，direct 只由实际修改的共享调用链触发且最多两项。
+- S9-S20 禁止把历史阶段验证当固定套餐；S21 只做一次 preflight 和一次共享 final。
+- 每张执行卡均写明墙钟、峰值 RSS、累计验证时间和默认产物硬上限，超限必须暂停重新拆分。
+- 详细规则以 `docs/p8_execution_cards/README.md` 第 6 节和当前阶段卡为准，不得恢复旧未过滤、九族或逐阶段重跑路径。
 
 必须保留：
 
@@ -82,7 +99,7 @@ S9 至 S17 继续按 `docs/p8_execution_cards/` 中的单阶段执行卡严格�
 
 ## 仍未完成的大块
 
-- P8-S9 至 S17：遗器定义、实例、主副词条、升级、套装和动态机制。
+- P8-S10 至 S17：遗器实例、主副词条、升级、套装和动态机制。
 - P8-S18 至 S21：构筑汇合、正式 scenario、希儿完整示例和当前来源聚合。
 - 剩余记忆角色 / 忆灵的属性、时间线和出生来源扩面。
 - 全角色、全怪物、全关卡和环境内容卡。
@@ -96,8 +113,10 @@ S9 至 S17 继续按 `docs/p8_execution_cards/` 中的单阶段执行卡严格�
 
 不要默认通读所有文档。根据任务选择：
 
-- 当前 P8-S9 执行卡：
-  `docs/p8_execution_cards/P8-S9_RELIC_DEFINITION_CARDS.md`。
+- 当前 P8-S10 执行卡：
+  `docs/p8_execution_cards/P8-S10_RELIC_INSTANCE_LEGALITY.md`。
+- P8-S9 至 S21 的统一验证预算和执行索引：
+  `docs/p8_execution_cards/README.md`。
 - 已验收 P8-R2 执行卡与最终差量：
   `docs/p8_execution_cards/P8-R2_MEMORY_LIGHT_CONE_FORMAL_EVENT_CHAIN_CLOSURE.md`、
   `docs/p8_execution_cards/P8-R2_REVIEW_DELTA_AFTER_UNFILTERED_FAILURES.md`。

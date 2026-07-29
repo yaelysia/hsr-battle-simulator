@@ -5,6 +5,7 @@ import base64
 import math
 import re
 from collections import Counter
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from operator import attrgetter
 from pathlib import Path
@@ -23,6 +24,7 @@ from .light_cone_cards import (
     build_light_cone_catalog,
     require_complete_light_cone_catalog,
 )
+from .relic_cards import build_relic_catalog, require_complete_relic_catalog
 from .monster_cards import build_monster_card_ir
 from .paths import relative_source_path
 from .. import BASELINE_VERSION
@@ -117,6 +119,31 @@ from ..rules.ir import (
     WaveDefinitionIR,
     WaveMonsterEntryIR,
 )
+
+
+def _equipment_catalog_fingerprint_metadata(
+    *,
+    light_cone_source_content_fingerprint: Mapping[str, JSONValue],
+    relic_source_content_fingerprint: Mapping[str, JSONValue],
+    light_cone_catalog_definition_fingerprint: Mapping[str, JSONValue],
+    relic_catalog_definition_fingerprint: Mapping[str, JSONValue],
+) -> dict[str, JSONValue]:
+    """Keep source and definition fingerprints explicit per equipment family."""
+
+    return {
+        "light_cone_source_content_fingerprint": thaw_json(
+            light_cone_source_content_fingerprint
+        ),
+        "relic_source_content_fingerprint": thaw_json(
+            relic_source_content_fingerprint
+        ),
+        "light_cone_catalog_definition_fingerprint": thaw_json(
+            light_cone_catalog_definition_fingerprint
+        ),
+        "relic_catalog_definition_fingerprint": thaw_json(
+            relic_catalog_definition_fingerprint
+        ),
+    }
 
 
 ENTITY_TABLES: dict[str, tuple[str, str, tuple[str, ...]]] = {
@@ -1180,6 +1207,8 @@ class TBGDLowering:
     def build(self) -> CanonicalIR:
         light_cone_catalog = build_light_cone_catalog(self.tbgd_root)
         light_cone_definitions = require_complete_light_cone_catalog(light_cone_catalog)
+        relic_catalog_result = build_relic_catalog(self.tbgd_root)
+        relic_catalog = require_complete_relic_catalog(relic_catalog_result)
         equipment_ability_sources: dict[str, dict[int, IRSource]] = {}
         for definition in light_cone_definitions:
             ability_source = definition.ability_source
@@ -1558,6 +1587,19 @@ class TBGDLowering:
             ),
             monster_data_cards=tuple(monster_data_cards),
             light_cone_definitions=tuple(light_cone_definitions),
+            relic_domain_definitions=relic_catalog.domain_definitions,
+            relic_slot_definitions=relic_catalog.slot_definitions,
+            relic_main_affix_group_definitions=(
+                relic_catalog.main_affix_group_definitions
+            ),
+            relic_main_affix_definitions=relic_catalog.main_affix_definitions,
+            relic_sub_affix_group_definitions=(
+                relic_catalog.sub_affix_group_definitions
+            ),
+            relic_sub_affix_definitions=relic_catalog.sub_affix_definitions,
+            relic_template_definitions=relic_catalog.template_definitions,
+            relic_set_definitions=relic_catalog.set_definitions,
+            relic_set_thresholds=relic_catalog.set_thresholds,
             equipment_ability_parameter_reads=tuple(equipment_parameter_reads),
             equipment_mechanism_refs=tuple(equipment_mechanism_refs),
             summon_unit_definitions=tuple(summon_unit_definitions),
@@ -1627,11 +1669,19 @@ class TBGDLowering:
                     and len(selected_ability_files) < len(ability_files),
                     "callbacks": self.limits.max_callbacks_per_file is not None,
                 },
-                "equipment_source_content_fingerprint": thaw_json(
-                    light_cone_catalog.source_content_fingerprint
-                ),
-                "light_cone_catalog_definition_fingerprint": thaw_json(
-                    light_cone_catalog.catalog_definition_fingerprint
+                **_equipment_catalog_fingerprint_metadata(
+                    light_cone_source_content_fingerprint=(
+                        light_cone_catalog.source_content_fingerprint
+                    ),
+                    relic_source_content_fingerprint=(
+                        relic_catalog_result.source_content_fingerprint
+                    ),
+                    light_cone_catalog_definition_fingerprint=(
+                        light_cone_catalog.catalog_definition_fingerprint
+                    ),
+                    relic_catalog_definition_fingerprint=(
+                        relic_catalog_result.catalog_definition_fingerprint
+                    ),
                 ),
                 "light_cone_catalog_limited": False,
                 "equipment_ability_graph_status": {

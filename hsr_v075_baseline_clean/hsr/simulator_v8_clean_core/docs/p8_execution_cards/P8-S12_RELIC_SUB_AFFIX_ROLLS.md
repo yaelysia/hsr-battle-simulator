@@ -102,17 +102,26 @@ invalid_sub_affix_blocks_whole_relic=true
 - 外部资料冲突或规则版本不确定：必须停止询问用户，不能自行选一个实现。
 - property test 发现生产算法接受 oracle 判定不可能的实例：`implementation_missing`，不得缩窄测试分布掩盖。
 
-## 验证命令与资源
+## 验证门与资源预算
+
+副词条计算与整件 admission 必须直接拒绝重复 property、主副冲突、非法 count/step、
+超预算和不存在合法生成历史的输入；验证器不得先丢弃非法项再检查剩余结果。
+
+必跑且只有一个业务主入口：
 
 ```bash
-PYTHONDONTWRITEBYTECODE=1 ionice -c3 nice -n 15 python3 -B -m hsr.simulator_v8_clean_core.tools.validate_p8_s12_relic_sub_affix_rolls --tbgd-root ../turnbasedgamedata-main --output-dir /tmp/hsr_v8_p8_s12_relic_sub_affix_rolls
-PYTHONDONTWRITEBYTECODE=1 python3 -B -m hsr.simulator_v8_clean_core.tools.validate_p8_s11_relic_main_affix --tbgd-root ../turnbasedgamedata-main --output-dir /tmp/hsr_v8_p8_s12_s11_main_affix_regression
-PYTHONDONTWRITEBYTECODE=1 python3 -B -m hsr.simulator_v8_clean_core.tools.validate_p8_s10_relic_instance_legality --tbgd-root ../turnbasedgamedata-main --output-dir /tmp/hsr_v8_p8_s12_s10_instance_regression
-PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX=/tmp/hsr_v8_p8_s12_pycache python3 -m compileall -q hsr/simulator_v8_clean_core
+PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX=/tmp/hsr_v8_p8_s12_pycache python3 -m compileall -q simulator_v8_clean_core
+PYTHONDONTWRITEBYTECODE=1 /usr/bin/time -v -o /tmp/hsr_v8_p8_s12_time_v.txt timeout --signal=TERM 5m ionice -c3 nice -n 15 python3 -B -m simulator_v8_clean_core.tools.validate_p8_s12_relic_sub_affix_rolls --tbgd-root ../../turnbasedgamedata-main --output-dir /tmp/hsr_v8_p8_s12_relic_sub_affix_rolls
 git diff --check
 ```
 
-主验证只加载副词条小表一次；property tests 使用固定 seed 并在 summary 记录 seed/case 数，不能枚举全组合。默认输出少量失败最小化样本，不写所有生成 case。不运行 RuleBook、套装、runtime 或阶段聚合。
+副词条表只读取一次。独立 oracle 使用固定 seed、边界等价类和受限 property case；
+默认不得枚举全组合或保存全部生成样本。S10/S11 检查点默认继承；只有修改共用实例、
+主词条排斥或 engine convention 接口时，追加对应小型 direct，不重跑前序主验证。
+
+单次主验证不超过 5 分钟、768 MiB RSS；本阶段累计验证不超过 10 分钟，默认总产物
+不超过 3 MiB。summary 必须记录 seed、case 数和最小失败样本。禁止 RuleBook、
+套装、runtime、阶段聚合和重复 TBGD 扫描。
 
 ## Ready-for-review 产物
 

@@ -93,16 +93,21 @@ all_provider_sources_walk_back=true
 
 ## 验证命令与资源
 
+生产边界先保证：正式装配器/provider 只接纳已激活、完整且来源唯一的套装档位；部分图、参数错绑、重复注册或身份不一致必须在启动事件前 blocked。幂等性由生产注册表和事件阶段契约保证，不能靠验证器去重。
+
+本阶段固定只运行一个业务主验证：
+
 ```bash
-PYTHONDONTWRITEBYTECODE=1 python3 -B -m hsr.simulator_v8_clean_core.tools.validate_p8_s15_relic_set_dynamic_startup --tbgd-root ../turnbasedgamedata-main --output-dir /tmp/hsr_v8_p8_s15_relic_set_dynamic_startup
-PYTHONDONTWRITEBYTECODE=1 python3 -B -m hsr.simulator_v8_clean_core.tools.validate_p8_s6_light_cone_dynamic_startup --tbgd-root ../turnbasedgamedata-main --output-dir /tmp/hsr_v8_p8_s15_s6_provider_regression
-PYTHONDONTWRITEBYTECODE=1 python3 -B -m hsr.simulator_v8_clean_core.tools.validate_p8_s13_relic_set_thresholds --tbgd-root ../turnbasedgamedata-main --output-dir /tmp/hsr_v8_p8_s15_s13_threshold_regression
-PYTHONDONTWRITEBYTECODE=1 python3 -B -m hsr.simulator_v8_clean_core.tools.validate_p7_s9_explicit_turn_event_phase_machine --output-dir /tmp/hsr_v8_p8_s15_p7_phase_regression
-PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX=/tmp/hsr_v8_p8_s15_pycache python3 -m compileall -q hsr/simulator_v8_clean_core
+PYTHONDONTWRITEBYTECODE=1 /usr/bin/time -v -o /tmp/hsr_v8_p8_s15_time_v.txt timeout --signal=TERM 8m ionice -c3 nice -n 15 python3 -B -m simulator_v8_clean_core.tools.validate_p8_s15_relic_set_dynamic_startup --tbgd-root ../../turnbasedgamedata-main --output-dir /tmp/hsr_v8_p8_s15_relic_set_dynamic_startup
+PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX=/tmp/hsr_v8_p8_s15_pycache python3 -m compileall -q simulator_v8_clean_core
 git diff --check
 ```
 
-只建立一次 focused ability index；不执行全套装 transition、不跑 P7 聚合。若未修改共享 event phase，可由主验证时序矩阵替代 P7 重回归并说明。输出三类档位、参数、注册和负例摘要。
+- 主验证只建立一次聚焦套装 ability index/RuleBook，证明来源绑定、provider 注册、阶段顺序和幂等性；不执行全套装 transition。
+- 已验收的 S6、S13 和 P7 阶段机结论直接继承。只有实际修改共享 equipment provider/graph lowering 时追加一个 S6 provider direct；只有修改通用事件阶段机时追加一个 P7 phase direct。direct 总数最多 2。
+- 完整主验证最多一次诊断运行和一次最终运行；中间修复只跑失败的 provider/phase 切片。
+- 单次主验证预算：墙钟 8 分钟、峰值 RSS 1 GiB；阶段累计验证预算 15 分钟；默认产物不超过 5 MiB。超限立即暂停。
+- 不运行 S13 整体验证、全套装 transition、P7 聚合、旧九族聚合或 `validate_v0_209`，不写完整能力图/RuleBook dump。
 
 ## Ready-for-review 产物
 
@@ -118,6 +123,6 @@ git diff --check
 - [ ] active/inactive、低/高档、2+2 和多 wearer 注册身份正确且幂等。
 - [ ] 静态面板后注册，runtime 不重算 set count。
 - [ ] partial/伪来源/缺参数完整阻断，零部分状态和 mutation。
-- [ ] 复用 S6/P7 通用机制，无套装专用事件循环或 ID 特判。
+- [ ] 复用 S6/P7 通用机制；其契约未被实际改动，或已通过对应最小 direct；无套装专用事件循环或 ID 特判。
 - [ ] S16/S17 family gap 诚实保留，来源反查完整。
 - [ ] `ready_for_review` evidence 完整，阶段无能力入口 blocker。

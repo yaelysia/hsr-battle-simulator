@@ -126,15 +126,21 @@ deleting_example_changes_core_behavior=false
 
 ## 验证命令与资源
 
+生产边界先保证：manifest loader、正式装配、查询提交和 replay API 各自在自身边界拒绝非法构筑、派生结果、过期选择和篡改证据。S20 验证器只消费这些正式入口，不复制 S18 面板算法或 S19 replay 逻辑。
+
+本阶段固定只运行一个业务主验证：
+
 ```bash
-PYTHONDONTWRITEBYTECODE=1 ionice -c3 nice -n 15 python3 -B -m hsr.simulator_v8_clean_core.tools.validate_p8_s20_seele_complete_build_slice --tbgd-root ../turnbasedgamedata-main --manifest hsr/simulator_v8_clean_core/scenarios/examples/p8_s20_seele_complete_equipment_build.json --output-dir /tmp/hsr_v8_p8_s20_seele_complete_build_slice
-PYTHONDONTWRITEBYTECODE=1 python3 -B -m hsr.simulator_v8_clean_core.tools.validate_p8_s18_final_panel_and_birth_order --tbgd-root ../turnbasedgamedata-main --output-dir /tmp/hsr_v8_p8_s20_s18_panel_regression
-PYTHONDONTWRITEBYTECODE=1 python3 -B -m hsr.simulator_v8_clean_core.tools.validate_p8_s19_query_audit_snapshot_replay --tbgd-root ../turnbasedgamedata-main --output-dir /tmp/hsr_v8_p8_s20_s19_replay_regression
-PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX=/tmp/hsr_v8_p8_s20_pycache python3 -m compileall -q hsr/simulator_v8_clean_core
+PYTHONDONTWRITEBYTECODE=1 /usr/bin/time -v -o /tmp/hsr_v8_p8_s20_time_v.txt timeout --signal=TERM 10m ionice -c3 nice -n 15 python3 -B -m simulator_v8_clean_core.tools.validate_p8_s20_seele_complete_build_slice --tbgd-root ../../turnbasedgamedata-main --manifest simulator_v8_clean_core/scenarios/examples/p8_s20_seele_complete_equipment_build.json --output-dir /tmp/hsr_v8_p8_s20_seele_complete_build_slice
+PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX=/tmp/hsr_v8_p8_s20_pycache python3 -m compileall -q simulator_v8_clean_core
 git diff --check
 ```
 
-复用一次当前 RuleBook，主验证只执行一条短路线和四个受控反例；默认输出 manifest、ledger summary、关键 calculation/settlement、condition matrix 和 replay 摘要，不写完整 RuleBook/全 transition。不得运行 S21 全装备聚合。
+- 主验证复用一次当前 RuleBook，只执行一条短路线和四个受控反例；S18/S19 已验收结论作为前置继承，禁止再次运行其整体验证器。
+- 若示例暴露 core 缺陷，立即停止并退回最早责任阶段修复和验收；S20 不顺手修改通用内核，因此默认没有额外 direct 套餐。
+- 完整主验证最多一次诊断运行和一次最终运行；中间只运行失败的 manifest/route/negative 切片。
+- 单次主验证预算：墙钟 10 分钟、峰值 RSS 1 GiB；阶段累计验证预算 20 分钟；默认产物不超过 10 MiB。超限立即暂停。
+- 默认只输出 manifest、ledger summary、关键 settlement、condition matrix 和 replay 摘要，不写完整 RuleBook/全 transition；不运行 S18、S19、S21、阶段聚合或 `validate_v0_209`。
 
 ## Ready-for-review 产物
 
@@ -152,4 +158,4 @@ git diff --check
 - [ ] 普攻、战技、终结技通过正式 query/submit，顺序与 settlement 正确。
 - [ ] 四个受控反例只影响对应机制，来源 walkback 和 replay 完整。
 - [ ] 固定 ID 仅在 example/validator/report，无 sample-only core 路径。
-- [ ] `ready_for_review` evidence、回归和资源审计完整。
+- [ ] `ready_for_review` evidence 和资源审计完整；未用重跑 S18/S19 代替本阶段正式入口证明。

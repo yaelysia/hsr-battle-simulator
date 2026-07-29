@@ -35,10 +35,18 @@ from ..equipment.models import (
     LightConePromotionValueIR,
     LightConeStaticPropertyIR,
     LightConeSuperimpositionLevelIR,
-    RelicAffixDefinitionIR,
+    RelicAbilitySourceIR,
+    RelicDomainDefinitionIR,
     RelicInstanceInput,
+    RelicMainAffixDefinitionIR,
+    RelicMainAffixGroupDefinitionIR,
     RelicSetDefinitionIR,
+    RelicSetParameterIR,
+    RelicSetStaticPropertyIR,
     RelicSetThresholdIR,
+    RelicSlotDefinitionIR,
+    RelicSubAffixDefinitionIR,
+    RelicSubAffixGroupDefinitionIR,
     RelicSubAffixRollInput,
     RelicTemplateDefinitionIR,
     StaticStatContribution,
@@ -77,8 +85,13 @@ CANONICAL_EQUIPMENT_DEFINITION_FIELDS = frozenset(
     {
         "character_equipment_eligibilities",
         "light_cone_definitions",
+        "relic_domain_definitions",
+        "relic_slot_definitions",
+        "relic_main_affix_group_definitions",
+        "relic_main_affix_definitions",
+        "relic_sub_affix_group_definitions",
+        "relic_sub_affix_definitions",
         "relic_template_definitions",
-        "relic_affix_definitions",
         "relic_set_definitions",
         "relic_set_thresholds",
         "equipment_mechanism_refs",
@@ -256,9 +269,26 @@ def _build_definition_fixture(
         card_id,
     )
     mechanism_key = EquipmentDefinitionKey("equipment_mechanism", "fixture:mechanism")
+    domain_key = EquipmentDefinitionKey("relic_domain", "outer")
+    slot_key = EquipmentDefinitionKey("relic_slot", "fixture_slot")
     set_key = EquipmentDefinitionKey("relic_set", "fixture:set")
     threshold_key = EquipmentDefinitionKey("relic_set_threshold", "fixture:set:2")
-    affix_key = EquipmentDefinitionKey("relic_affix", "fixture:affix:main")
+    main_group_key = EquipmentDefinitionKey(
+        "relic_main_affix_group",
+        "fixture:main-group",
+    )
+    main_affix_key = EquipmentDefinitionKey(
+        "relic_main_affix",
+        "fixture:main-group:fixture-main",
+    )
+    sub_group_key = EquipmentDefinitionKey(
+        "relic_sub_affix_group",
+        "fixture:sub-group",
+    )
+    sub_affix_key = EquipmentDefinitionKey(
+        "relic_sub_affix",
+        "fixture:sub-group:fixture-sub",
+    )
     light_cone_key = EquipmentDefinitionKey("light_cone", shared_identity)
     relic_key = EquipmentDefinitionKey("relic_template", shared_identity)
     relic_only_key = EquipmentDefinitionKey("relic_template", "fixture:relic-only")
@@ -381,13 +411,16 @@ def _build_definition_fixture(
     relic = RelicTemplateDefinitionIR(
         definition_key=relic_key,
         raw_relic_id=shared_identity,
-        slot_type="fixture_slot",
+        publication_status="published",
+        slot_key=slot_key,
+        domain_key=domain_key,
         set_key=set_key,
         rarity="fixture",
         max_level=0,
-        main_affix_group_id="fixture:main-group",
-        sub_affix_group_id="fixture:sub-group",
-        mode="fixture",
+        main_affix_group_key=main_group_key,
+        sub_affix_group_key=sub_group_key,
+        mode="BASIC",
+        raw_mode="BASIC",
         source=source,
         coverage_status="lowered",
         blocked_reason="",
@@ -397,13 +430,61 @@ def _build_definition_fixture(
         definition_key=relic_only_key,
         raw_relic_id="fixture:relic-only",
     )
-    affix = RelicAffixDefinitionIR(
-        definition_key=affix_key,
-        affix_kind="main",
-        group_id="fixture:main-group",
-        affix_id="fixture:affix-id",
+    domain = RelicDomainDefinitionIR(
+        definition_key=domain_key,
+        domain="outer",
+        slot_keys=(slot_key,),
+        set_keys=(set_key,),
+        source=source,
+        coverage_status="lowered",
+        blocked_reason="",
+    )
+    slot = RelicSlotDefinitionIR(
+        definition_key=slot_key,
+        raw_slot_type="fixture_slot",
+        domain_key=domain_key,
+        allowed_main_property_types=("AttackFlat",),
+        source=source,
+        coverage_status="lowered",
+        blocked_reason="",
+    )
+    main_affix = RelicMainAffixDefinitionIR(
+        definition_key=main_affix_key,
+        group_key=main_group_key,
+        raw_affix_id="fixture-main",
         property_type="AttackFlat",
-        exact_value_parameters=("fixture:value-param",),
+        base_value="1",
+        level_add="0.5",
+        source=source,
+        coverage_status="lowered",
+        blocked_reason="",
+    )
+    main_group = RelicMainAffixGroupDefinitionIR(
+        definition_key=main_group_key,
+        raw_group_id="fixture:main-group",
+        affix_keys=(main_affix_key,),
+        property_types=("AttackFlat",),
+        source=source,
+        coverage_status="lowered",
+        blocked_reason="",
+    )
+    sub_affix = RelicSubAffixDefinitionIR(
+        definition_key=sub_affix_key,
+        group_key=sub_group_key,
+        raw_affix_id="fixture-sub",
+        property_type="CriticalChanceBase",
+        base_value="0.01",
+        step_value="0.001",
+        step_count=2,
+        source=source,
+        coverage_status="lowered",
+        blocked_reason="",
+    )
+    sub_group = RelicSubAffixGroupDefinitionIR(
+        definition_key=sub_group_key,
+        raw_group_id="fixture:sub-group",
+        affix_keys=(sub_affix_key,),
+        property_types=("CriticalChanceBase",),
         source=source,
         coverage_status="lowered",
         blocked_reason="",
@@ -411,17 +492,44 @@ def _build_definition_fixture(
     relic_set = RelicSetDefinitionIR(
         definition_key=set_key,
         raw_set_id="fixture:set",
+        publication_status="published",
+        release_field_present=True,
+        domain_key=domain_key,
+        slot_keys=(slot_key,),
+        template_keys=tuple(
+            sorted(
+                (relic_key, relic_only_key),
+                key=lambda key: key.stable_id,
+            )
+        ),
         threshold_keys=(threshold_key,),
         source=source,
         coverage_status="lowered",
         blocked_reason="",
     )
+    relic_static_property = RelicSetStaticPropertyIR(
+        property_index=0,
+        property_type="AttackAddedRatio",
+        exact_value="0.1",
+        source=source,
+    )
+    relic_parameter = RelicSetParameterIR(
+        parameter_index=0,
+        exact_value="0.1",
+        source=source,
+    )
+    relic_ability_source = RelicAbilitySourceIR(
+        ability_name="FixtureLightConeAbility",
+        record_index=0,
+        source=ability_record_source,
+    )
     threshold = RelicSetThresholdIR(
         definition_key=threshold_key,
         set_key=set_key,
         require_count=2,
-        static_contribution_ref_ids=("fixture:static-ref",),
-        mechanism_ref_ids=(mechanism_key,),
+        static_properties=(relic_static_property,),
+        parameters=(relic_parameter,),
+        ability_source=relic_ability_source,
         source=source,
         coverage_status="lowered",
         blocked_reason="",
@@ -458,8 +566,13 @@ def _build_definition_fixture(
         character_data_cards=(card,),
         character_equipment_eligibilities=(eligibility,),
         light_cone_definitions=(light_cone,),
+        relic_domain_definitions=(domain,),
+        relic_slot_definitions=(slot,),
+        relic_main_affix_group_definitions=(main_group,),
+        relic_main_affix_definitions=(main_affix,),
+        relic_sub_affix_group_definitions=(sub_group,),
+        relic_sub_affix_definitions=(sub_affix,),
         relic_template_definitions=(relic, relic_only),
-        relic_affix_definitions=(affix,),
         relic_set_definitions=(relic_set,),
         relic_set_thresholds=(threshold,),
         equipment_ability_parameter_reads=(parameter_read,),
@@ -473,9 +586,14 @@ def _build_definition_fixture(
         "profile": profile,
         "eligibility": eligibility,
         "light_cone": light_cone,
+        "domain": domain,
+        "slot": slot,
         "relic": relic,
         "relic_only": relic_only,
-        "affix": affix,
+        "main_group": main_group,
+        "main_affix": main_affix,
+        "sub_group": sub_group,
+        "sub_affix": sub_affix,
         "relic_set": relic_set,
         "threshold": threshold,
         "mechanism": mechanism,
@@ -496,8 +614,25 @@ def _definition_and_query_checks(
             fixture["card"].card_id
         ),
         "light_cone": rules.light_cone_definition(fixture["shared_identity"]),
+        "relic_domain": rules.relic_domain_definition(
+            fixture["domain"].definition_key.definition_identity
+        ),
+        "relic_slot": rules.relic_slot_definition(
+            fixture["slot"].definition_key.definition_identity
+        ),
+        "relic_main_affix_group": rules.relic_main_affix_group_definition(
+            fixture["main_group"].definition_key.definition_identity
+        ),
+        "relic_main_affix": rules.relic_main_affix_definition(
+            fixture["main_affix"].definition_key.definition_identity
+        ),
+        "relic_sub_affix_group": rules.relic_sub_affix_group_definition(
+            fixture["sub_group"].definition_key.definition_identity
+        ),
+        "relic_sub_affix": rules.relic_sub_affix_definition(
+            fixture["sub_affix"].definition_key.definition_identity
+        ),
         "relic_template": rules.relic_template_definition(fixture["shared_identity"]),
-        "relic_affix": rules.relic_affix_definition(fixture["affix"].definition_key.definition_identity),
         "relic_set": rules.relic_set_definition(fixture["relic_set"].definition_key.definition_identity),
         "relic_set_threshold": rules.relic_set_threshold(
             fixture["threshold"].definition_key.definition_identity
@@ -973,8 +1108,14 @@ def _build_and_assembly_checks(
         template_key=fixture["relic"].definition_key,
         selected_slot_type="fixture_slot",
         level=0,
-        main_affix_key=fixture["affix"].definition_key,
-        sub_affix_rolls=(RelicSubAffixRollInput(fixture["affix"].definition_key, 0, 0),),
+        main_affix_key=fixture["main_affix"].definition_key,
+        sub_affix_rolls=(
+            RelicSubAffixRollInput(
+                fixture["sub_affix"].definition_key,
+                0,
+                0,
+            ),
+        ),
     )
     relic_inputs = [relic_instance]
     build_input = EquipmentBuildInput(
@@ -1246,7 +1387,15 @@ def _public_model_immutability_negative_checks(
         LightConeAbilitySourceIR,
         LightConeDefinitionIR,
         RelicTemplateDefinitionIR,
-        RelicAffixDefinitionIR,
+        RelicDomainDefinitionIR,
+        RelicSlotDefinitionIR,
+        RelicMainAffixGroupDefinitionIR,
+        RelicMainAffixDefinitionIR,
+        RelicSubAffixGroupDefinitionIR,
+        RelicSubAffixDefinitionIR,
+        RelicAbilitySourceIR,
+        RelicSetParameterIR,
+        RelicSetStaticPropertyIR,
         RelicSetDefinitionIR,
         RelicSetThresholdIR,
         EquipmentMechanismRefIR,
@@ -1306,13 +1455,13 @@ def _public_model_immutability_negative_checks(
     promotion_values.append(fixture["light_cone"].promotion_tiers[0])
     mechanism_values.append(fixture["mechanism"].definition_key)
 
-    affix_parameters = ["fixture:value-param"]
-    affix = replace(
-        fixture["affix"],
-        exact_value_parameters=cast(Any, affix_parameters),
+    affix_keys = [fixture["main_affix"].definition_key]
+    affix_group = replace(
+        fixture["main_group"],
+        affix_keys=cast(Any, affix_keys),
     )
-    affix_before = affix.to_json()
-    affix_parameters.append("late")
+    affix_group_before = affix_group.to_json()
+    affix_keys.append(fixture["main_affix"].definition_key)
 
     threshold_keys = [fixture["threshold"].definition_key]
     relic_set = replace(
@@ -1322,16 +1471,16 @@ def _public_model_immutability_negative_checks(
     relic_set_before = relic_set.to_json()
     threshold_keys.append(fixture["threshold"].definition_key)
 
-    static_refs = ["fixture:static-ref"]
-    threshold_mechanisms = [fixture["mechanism"].definition_key]
+    static_properties = list(fixture["threshold"].static_properties)
+    threshold_parameters = list(fixture["threshold"].parameters)
     threshold = replace(
         fixture["threshold"],
-        static_contribution_ref_ids=cast(Any, static_refs),
-        mechanism_ref_ids=cast(Any, threshold_mechanisms),
+        static_properties=cast(Any, static_properties),
+        parameters=cast(Any, threshold_parameters),
     )
     threshold_before = threshold.to_json()
-    static_refs.append("late")
-    threshold_mechanisms.append(fixture["mechanism"].definition_key)
+    static_properties.append(fixture["threshold"].static_properties[0])
+    threshold_parameters.append(fixture["threshold"].parameters[0])
 
     parameter_bindings = list(fixture["mechanism"].parameter_binding_ids)
     mechanism = replace(
@@ -1352,14 +1501,18 @@ def _public_model_immutability_negative_checks(
     resolution_before = resolution.to_json()
     resolution_candidates.append(candidate)
 
-    roll = RelicSubAffixRollInput(fixture["affix"].definition_key, 0, 0)
+    roll = RelicSubAffixRollInput(
+        fixture["sub_affix"].definition_key,
+        0,
+        0,
+    )
     roll_values = [roll]
     relic = RelicInstanceInput(
         instance_id="fixture:public-model-relic",
         template_key=fixture["relic"].definition_key,
         selected_slot_type="fixture_slot",
         level=0,
-        main_affix_key=fixture["affix"].definition_key,
+        main_affix_key=fixture["main_affix"].definition_key,
         sub_affix_rolls=cast(Any, roll_values),
     )
     relic_before = relic.to_json()
@@ -1387,7 +1540,7 @@ def _public_model_immutability_negative_checks(
         ),
         "relic_roll_count_mutable_list": _raises(
             lambda: RelicSubAffixRollInput(
-                fixture["affix"].definition_key,
+                fixture["sub_affix"].definition_key,
                 cast(Any, []),
                 0,
             ),
@@ -1452,7 +1605,7 @@ def _public_model_immutability_negative_checks(
     detached_checks = {
         "eligibility_path_list_detached": eligibility.to_json() == eligibility_before,
         "light_cone_reference_lists_detached": light_cone.to_json() == light_cone_before,
-        "affix_parameter_list_detached": affix.to_json() == affix_before,
+        "affix_key_list_detached": affix_group.to_json() == affix_group_before,
         "set_threshold_key_list_detached": relic_set.to_json() == relic_set_before,
         "threshold_reference_lists_detached": threshold.to_json() == threshold_before,
         "mechanism_parameter_list_detached": mechanism.to_json() == mechanism_before,

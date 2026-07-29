@@ -94,17 +94,21 @@ set_specific_runtime_handlers=0
 
 ## 验证命令与资源
 
+生产边界先保证：通用 condition、status 和 listener 在接纳执行计划时校验来源、目标、参数、事件身份与生命周期；结构非法必须在 mutation 前 fail-closed，条件为假则是合法零效果。验证器只证明这些生产契约，不补状态重评、目标选择或事件派发逻辑。
+
+本阶段固定只运行一个业务主验证：
+
 ```bash
-PYTHONDONTWRITEBYTECODE=1 ionice -c3 nice -n 15 python3 -B -m hsr.simulator_v8_clean_core.tools.validate_p8_s16_relic_set_status_condition_listener_closure --tbgd-root ../turnbasedgamedata-main --output-dir /tmp/hsr_v8_p8_s16_relic_set_status_condition_listener_closure
-PYTHONDONTWRITEBYTECODE=1 python3 -B -m hsr.simulator_v8_clean_core.tools.validate_p2_s4_status_lifecycle --tbgd-root ../turnbasedgamedata-main --output-dir /tmp/hsr_v8_p8_s16_p2_status_regression
-PYTHONDONTWRITEBYTECODE=1 python3 -B -m hsr.simulator_v8_clean_core.tools.validate_p5_s4_value_resolver_admission --tbgd-root ../turnbasedgamedata-main --output-dir /tmp/hsr_v8_p8_s16_p5_value_regression
-PYTHONDONTWRITEBYTECODE=1 python3 -B -m hsr.simulator_v8_clean_core.tools.validate_p7_s9_explicit_turn_event_phase_machine --output-dir /tmp/hsr_v8_p8_s16_p7_phase_regression
-PYTHONDONTWRITEBYTECODE=1 python3 -B -m hsr.simulator_v8_clean_core.tools.validate_p7_s17_wave_lifecycle_events --output-dir /tmp/hsr_v8_p8_s16_p7_wave_regression
-PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX=/tmp/hsr_v8_p8_s16_pycache python3 -m compileall -q hsr/simulator_v8_clean_core
+PYTHONDONTWRITEBYTECODE=1 /usr/bin/time -v -o /tmp/hsr_v8_p8_s16_time_v.txt timeout --signal=TERM 12m ionice -c3 nice -n 15 python3 -B -m simulator_v8_clean_core.tools.validate_p8_s16_relic_set_status_condition_listener_closure --tbgd-root ../../turnbasedgamedata-main --output-dir /tmp/hsr_v8_p8_s16_relic_set_status_condition_listener_closure
+PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX=/tmp/hsr_v8_p8_s16_pycache python3 -m compileall -q simulator_v8_clean_core
 git diff --check
 ```
 
-主验证允许一次 focused 全套装 ability inventory，但 transition 只做结构抽样。按实际触达选择状态概率、target 或原子提交专项；不得跑阶段聚合、S17 结算或 `validate_v0_209`。summary 记录文件、图、family、case、RuleBook build 和输出大小。
+- 主验证只建立一次当前套装 family inventory/聚焦 RuleBook；只执行 S16 所属 family 的代表性真实链和边界负例，不遍历所有图的所有排列。
+- 已验收的 P2/P5/P7 结论直接继承。仅当实际修改共享状态、值解析、事件、波次或目标模块时，从对应领域选择一个最小 direct；direct 总数最多 2，不把四个历史验证当固定套餐。
+- 完整主验证最多一次诊断运行和一次最终运行；中间修复只跑失败 family。反向顺序、缓存一致性等治理探针不附着在业务回归中。
+- 单次主验证预算：墙钟 12 分钟、峰值 RSS 1 GiB；阶段累计验证预算 25 分钟；默认产物不超过 10 MiB。超限立即暂停，不提高限制或删除谓词。
+- 不运行 S17、P1-P7 聚合、旧九族/未过滤组合、`validate_v0_209` 或完整 transition dump。summary 记录输入文件/字节、图/family/case、RuleBook build 次数、墙钟、峰值 RSS 和输出大小。
 
 ## Ready-for-review 产物
 
@@ -121,4 +125,4 @@ git diff --check
 - [ ] 多 wearer、队伍目标和 owner attribution 按来源执行。
 - [ ] 代表 mutation 来源与 replay 闭合，无套装专用 runtime/文本特判。
 - [ ] S17 未支持节点仍阻断完整图，没有部分执行。
-- [ ] `ready_for_review` evidence、回归和资源审计完整。
+- [ ] `ready_for_review` evidence、实际触达所需的至多两项 direct 和资源审计完整。

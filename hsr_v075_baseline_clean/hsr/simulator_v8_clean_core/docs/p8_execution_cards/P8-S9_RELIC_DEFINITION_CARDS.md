@@ -97,17 +97,28 @@ numeric_values_never_pass_through_float=true
 - ability record 无唯一候选：来源关联 blocker，禁止伪造图引用。
 - 若同一套装真实跨域或出现新 slot/mode，不能硬套当前六槽假设；停止并提交数据事实和设计影响。
 
-## 验证命令与资源
+## 验证门与资源预算
+
+生产目录构建器必须直接拒绝重复身份、缺引用、跨域矛盾、未知模式和能力来源歧义；
+验证器只证明这些不变量，不能在矩阵生成后自行补分类。
+
+必跑且只有一个业务主入口：
 
 ```bash
-PYTHONDONTWRITEBYTECODE=1 ionice -c3 nice -n 15 python3 -B -m hsr.simulator_v8_clean_core.tools.validate_p8_s9_relic_definition_cards --tbgd-root ../turnbasedgamedata-main --output-dir /tmp/hsr_v8_p8_s9_relic_definition_cards
-PYTHONDONTWRITEBYTECODE=1 ionice -c3 nice -n 15 python3 -B -m hsr.simulator_v8_clean_core.tools.validate_p8_s0_equipment_source_inventory --tbgd-root ../turnbasedgamedata-main --output-dir /tmp/hsr_v8_p8_s9_fresh_s0_inventory
-PYTHONDONTWRITEBYTECODE=1 python3 -B -m hsr.simulator_v8_clean_core.tools.validate_p8_s1_equipment_type_contract --s0-summary /tmp/hsr_v8_p8_s9_fresh_s0_inventory/validation_summary_p8_s0_equipment_source_inventory.json --output-dir /tmp/hsr_v8_p8_s9_s1_contract_regression
-PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX=/tmp/hsr_v8_p8_s9_pycache python3 -m compileall -q hsr/simulator_v8_clean_core
+PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX=/tmp/hsr_v8_p8_s9_pycache python3 -m compileall -q simulator_v8_clean_core
+PYTHONDONTWRITEBYTECODE=1 /usr/bin/time -v -o /tmp/hsr_v8_p8_s9_time_v.txt timeout --signal=TERM 8m ionice -c3 nice -n 15 python3 -B -m simulator_v8_clean_core.tools.validate_p8_s9_relic_definition_cards --tbgd-root ../../turnbasedgamedata-main --output-dir /tmp/hsr_v8_p8_s9_relic_definition_cards
 git diff --check
 ```
 
-S1 回归只允许消费本轮刚生成的 S0 summary；生产 S9 lowering 不得读取该 artifact。若 S1 仍把验证 artifact 混入生产边界，应在本阶段迁移为当前生产指纹与验证 artifact 分离契约，不能固定 hash。六张表只做一次 Decimal 解析，能力文件只建立一次身份索引；负例复用内存快照。不得构建完整战斗 RuleBook、执行 ability 或写完整 Canonical IR。
+主入口自身必须完成当前来源指纹、完整遗器定义目录、RuleBook 窄查询和负例，不再
+额外运行 S0、S1 完整验证器。只有实际修改 S1 共用类型/codec/查询接口时，才追加
+一个不读取 TBGD 的 S1 小型类型契约切片；不得重新生成 S0 summary 作为生产前置。
+
+六张表只做一次 Decimal 解析，能力文件只建立一次身份索引；负例复用同一内存快照。
+完整主入口最多一次诊断和一次最终运行，中间只跑失败矩阵切片。单次不超过 8 分钟、
+1 GiB RSS；本阶段累计验证不超过 15 分钟，默认总产物不超过 5 MiB。禁止完整战斗
+RuleBook、ability 执行、完整 Canonical IR 序列化、P1-P8 聚合和
+`validate_v0_209`。
 
 ## Ready-for-review 产物
 
@@ -118,10 +129,10 @@ S1 回归只允许消费本轮刚生成的 S0 summary；生产 S9 lowering 不�
 
 ## 唯一执行清单（仅验收线程可勾）
 
-- [ ] 当前遗器相关来源完整发现并绑定实时指纹。
-- [ ] 模板、六槽、词条组、套装与档位已完整类型化，已发布普通目录零 blocked。
-- [ ] 内外圈由结构关系推导，无编号/名称硬编码。
-- [ ] BASIC/CUSTOM/unknown 分类及失败边界诚实。
-- [ ] 静态与动态档位成员均保留，未伪造 graph 或提前执行。
-- [ ] Canonical IR、RuleBook、codec、不可变性和负例经审查通过。
-- [ ] `ready_for_review` evidence 完整，阶段无未关闭定义 blocker。
+- [x] 当前遗器相关来源完整发现并绑定实时指纹。
+- [x] 模板、六槽、词条组、套装与档位已完整类型化，已发布普通目录零 blocked。
+- [x] 内外圈由结构关系推导，无编号/名称硬编码。
+- [x] BASIC/CUSTOM/unknown 分类及失败边界诚实。
+- [x] 静态与动态档位成员均保留，未伪造 graph 或提前执行。
+- [x] Canonical IR、RuleBook、codec、不可变性和负例经审查通过。
+- [x] `ready_for_review` evidence 完整，阶段无未关闭定义 blocker。

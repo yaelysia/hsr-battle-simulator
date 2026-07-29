@@ -8,9 +8,14 @@ from ..equipment.models import (
     EquipmentAbilityParameterReadIR,
     EquipmentMechanismRefIR,
     LightConeDefinitionIR,
-    RelicAffixDefinitionIR,
+    RelicDomainDefinitionIR,
+    RelicMainAffixDefinitionIR,
+    RelicMainAffixGroupDefinitionIR,
     RelicSetDefinitionIR,
     RelicSetThresholdIR,
+    RelicSlotDefinitionIR,
+    RelicSubAffixDefinitionIR,
+    RelicSubAffixGroupDefinitionIR,
     RelicTemplateDefinitionIR,
 )
 from ..ir_types import CoverageStatus, IRSource, JSONValue
@@ -2187,8 +2192,13 @@ class CanonicalIR:
     monster_data_cards: tuple[MonsterDataCardIR, ...] = ()
     character_equipment_eligibilities: tuple[CharacterEquipmentEligibilityIR, ...] = ()
     light_cone_definitions: tuple[LightConeDefinitionIR, ...] = ()
+    relic_domain_definitions: tuple[RelicDomainDefinitionIR, ...] = ()
+    relic_slot_definitions: tuple[RelicSlotDefinitionIR, ...] = ()
+    relic_main_affix_group_definitions: tuple[RelicMainAffixGroupDefinitionIR, ...] = ()
+    relic_main_affix_definitions: tuple[RelicMainAffixDefinitionIR, ...] = ()
+    relic_sub_affix_group_definitions: tuple[RelicSubAffixGroupDefinitionIR, ...] = ()
+    relic_sub_affix_definitions: tuple[RelicSubAffixDefinitionIR, ...] = ()
     relic_template_definitions: tuple[RelicTemplateDefinitionIR, ...] = ()
-    relic_affix_definitions: tuple[RelicAffixDefinitionIR, ...] = ()
     relic_set_definitions: tuple[RelicSetDefinitionIR, ...] = ()
     relic_set_thresholds: tuple[RelicSetThresholdIR, ...] = ()
     equipment_ability_parameter_reads: tuple[EquipmentAbilityParameterReadIR, ...] = ()
@@ -2260,8 +2270,23 @@ class CanonicalIR:
                 eligibility.to_json() for eligibility in self.character_equipment_eligibilities
             ],
             "light_cone_definitions": [definition.to_json() for definition in self.light_cone_definitions],
+            "relic_domain_definitions": [definition.to_json() for definition in self.relic_domain_definitions],
+            "relic_slot_definitions": [definition.to_json() for definition in self.relic_slot_definitions],
+            "relic_main_affix_group_definitions": [
+                definition.to_json()
+                for definition in self.relic_main_affix_group_definitions
+            ],
+            "relic_main_affix_definitions": [
+                definition.to_json() for definition in self.relic_main_affix_definitions
+            ],
+            "relic_sub_affix_group_definitions": [
+                definition.to_json()
+                for definition in self.relic_sub_affix_group_definitions
+            ],
+            "relic_sub_affix_definitions": [
+                definition.to_json() for definition in self.relic_sub_affix_definitions
+            ],
             "relic_template_definitions": [definition.to_json() for definition in self.relic_template_definitions],
-            "relic_affix_definitions": [definition.to_json() for definition in self.relic_affix_definitions],
             "relic_set_definitions": [definition.to_json() for definition in self.relic_set_definitions],
             "relic_set_thresholds": [threshold.to_json() for threshold in self.relic_set_thresholds],
             "equipment_ability_parameter_reads": [

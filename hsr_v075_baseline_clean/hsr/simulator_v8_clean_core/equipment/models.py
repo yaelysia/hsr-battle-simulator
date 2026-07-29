@@ -6,7 +6,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from pathlib import PurePosixPath
-from typing import Generic, Literal, TypeVar, cast
+from typing import Callable, Generic, Literal, TypeVar, cast
 
 from ..build_types import (
     CalculationKind,
@@ -23,8 +23,13 @@ from ..ir_types import CoverageStatus, IRSource, JSONValue
 EquipmentDefinitionKind = Literal[
     "character_equipment_eligibility",
     "light_cone",
+    "relic_domain",
+    "relic_slot",
+    "relic_main_affix_group",
+    "relic_main_affix",
+    "relic_sub_affix_group",
+    "relic_sub_affix",
     "relic_template",
-    "relic_affix",
     "relic_set",
     "relic_set_threshold",
     "equipment_mechanism",
@@ -35,6 +40,9 @@ BattleAdmissionStatus = Literal["admitted", "blocked"]
 ActivationStatus = Literal["active", "inactive", "blocked"]
 LedgerChannel = Literal["static", "dynamic", "activation"]
 LightConePublicationStatus = Literal["published", "unpublished", "status_unknown"]
+RelicPublicationStatus = Literal["published", "unpublished", "status_unknown"]
+RelicDomain = Literal["outer", "planar"]
+RelicTemplateMode = Literal["BASIC", "CUSTOM", "UNKNOWN"]
 EquipmentGapClassification = Literal[
     "lowering_gap",
     "admission_gap",
@@ -61,14 +69,27 @@ EQUIPMENT_DEFINITION_KINDS: frozenset[str] = frozenset(
     {
         "character_equipment_eligibility",
         "light_cone",
+        "relic_domain",
+        "relic_slot",
+        "relic_main_affix_group",
+        "relic_main_affix",
+        "relic_sub_affix_group",
+        "relic_sub_affix",
         "relic_template",
-        "relic_affix",
         "relic_set",
         "relic_set_threshold",
         "equipment_mechanism",
     }
 )
 EQUIPMENT_SOURCE_KINDS = frozenset({"tbgd", "derived", "validation_fixture"})
+RELIC_SOURCE_TABLE_PATHS = {
+    "relic_config": "ExcelOutput/RelicConfig.json",
+    "relic_base_type": "ExcelOutput/RelicBaseType.json",
+    "relic_main_affix_config": "ExcelOutput/RelicMainAffixConfig.json",
+    "relic_sub_affix_config": "ExcelOutput/RelicSubAffixConfig.json",
+    "relic_set_config": "ExcelOutput/RelicSetConfig.json",
+    "relic_set_skill_config": "ExcelOutput/RelicSetSkillConfig.json",
+}
 EQUIPMENT_COVERAGE_STATES = frozenset(
     {
         "discovered_only",
@@ -333,6 +354,133 @@ def _require_equipment_source(source: IRSource) -> None:
     validate_equipment_source_fingerprint(_mapping(fingerprint, "source.evidence.source_fingerprint"))
 
 
+def _source_kind(source: IRSource) -> str:
+    return cast(str, source.evidence.get("source_kind"))
+
+
+def _require_source_fingerprint_path(source: IRSource) -> None:
+    fingerprint = _mapping(
+        source.evidence.get("source_fingerprint"),
+        "source.evidence.source_fingerprint",
+    )
+    paths = fingerprint.get("paths")
+    if (
+        not isinstance(paths, (list, tuple))
+        or source.source_path not in paths
+    ):
+        raise ValueError(
+            "TBGD equipment source path must belong to its source fingerprint"
+        )
+
+
+def _require_equipment_ability_record_source(
+    source: IRSource,
+    *,
+    ability_name: str,
+    record_index: int,
+) -> None:
+    """Require a real TBGD AbilityList record or an explicit test fixture."""
+
+    _require_equipment_source(source)
+    source_kind = _source_kind(source)
+    if source_kind not in {"tbgd", "validation_fixture"}:
+        raise ValueError(
+            "equipment ability records cannot use derived provenance"
+        )
+    if source.raw_type != "AbilityList" or source.raw_id != ability_name:
+        raise ValueError(
+            "ability source must identify the matching AbilityList record"
+        )
+    if source.evidence.get("json_path") != f"$.AbilityList[{record_index}]":
+        raise ValueError("ability source json_path must match record_index")
+    if source_kind == "validation_fixture":
+        return
+    source_path = PurePosixPath(source.source_path)
+    if (
+        source_path.is_absolute()
+        or ".." in source_path.parts
+        or source.source_path != source_path.as_posix()
+        or not source.source_path.startswith("Config/ConfigAbility/Equip/")
+        or source_path.suffix != ".json"
+        or source_path.name.endswith(".layout.json")
+    ):
+        raise ValueError(
+            "TBGD ability source is outside the equipment ability namespace"
+        )
+    _require_source_fingerprint_path(source)
+
+
+def _indexed_json_path_matches(value: object, suffix: str) -> bool:
+    if not isinstance(value, str) or not value.startswith("$["):
+        return False
+    index_text, separator, remainder = value[2:].partition("]")
+    return bool(separator) and index_text.isdigit() and remainder == suffix
+
+
+def _require_relic_record_source(
+    source: IRSource,
+    *,
+    source_role: str,
+    raw_type: str,
+    raw_id: str | None = None,
+    raw_id_suffix: str = "",
+    json_path_suffix: str = "",
+) -> None:
+    """Bind a real relic definition to the exact TBGD record identity."""
+
+    if _source_kind(source) == "validation_fixture":
+        return
+    if _source_kind(source) != "tbgd":
+        raise ValueError("raw relic definitions require a TBGD record source")
+    expected_path = RELIC_SOURCE_TABLE_PATHS[source_role]
+    if source.source_path != expected_path or source.raw_type != raw_type:
+        raise ValueError("relic source table or raw_type does not match definition")
+    if raw_id is not None:
+        if source.raw_id != raw_id:
+            raise ValueError("relic source raw_id does not match definition identity")
+    elif raw_id_suffix and not source.raw_id.endswith(raw_id_suffix):
+        raise ValueError("relic source raw_id suffix does not match nested identity")
+    if not _indexed_json_path_matches(
+        source.evidence.get("json_path"),
+        json_path_suffix,
+    ):
+        raise ValueError("relic source json_path does not match record position")
+    _require_source_fingerprint_path(source)
+
+
+def _require_relic_derived_source(
+    source: IRSource,
+    *,
+    source_role: str,
+    raw_type: str,
+    raw_id: str,
+) -> None:
+    """Require aggregate directory objects to declare derived provenance."""
+
+    if _source_kind(source) == "validation_fixture":
+        return
+    if _source_kind(source) != "derived":
+        raise ValueError("aggregate relic definitions require derived provenance")
+    if (
+        source.source_path != RELIC_SOURCE_TABLE_PATHS[source_role]
+        or source.raw_type != raw_type
+        or source.raw_id != raw_id
+        or source.evidence.get("json_path") != "$"
+    ):
+        raise ValueError("derived relic source identity does not match projection")
+    _require_source_fingerprint_path(source)
+
+
+def _source_row_json_path(source: IRSource) -> str:
+    json_path = source.evidence.get("json_path")
+    if not isinstance(json_path, str) or not _indexed_json_path_matches(
+        json_path,
+        "",
+    ):
+        raise ValueError("relic source must identify one table row")
+    return json_path
+
+
 def _source_from_json(value: object) -> IRSource:
     source = _mapping(value, "source")
     _require_exact_fields(
@@ -367,6 +515,47 @@ def _validate_coverage(status: CoverageStatus, blocked_reason: str) -> None:
     _require_string(blocked_reason, "blocked_reason")
     if status == "blocked" and not blocked_reason:
         raise ValueError("blocked equipment objects require blocked_reason")
+
+
+def _equipment_key_tuple(
+    value: object,
+    expected_kind: EquipmentDefinitionKind,
+    field_name: str,
+    *,
+    require_non_empty: bool = False,
+) -> tuple[EquipmentDefinitionKey, ...]:
+    keys = cast(
+        tuple[EquipmentDefinitionKey, ...],
+        _typed_tuple(value, EquipmentDefinitionKey, field_name),
+    )
+    for key in keys:
+        _require_kind(key, expected_kind)
+    if require_non_empty and not keys:
+        raise ValueError(f"{field_name} must be non-empty")
+    if len(keys) != len(set(keys)):
+        raise ValueError(f"{field_name} must contain unique keys")
+    if keys != tuple(sorted(keys, key=lambda item: item.stable_id)):
+        raise ValueError(f"{field_name} must use canonical key order")
+    return keys
+
+
+def _validate_relic_definition_coverage(
+    status: CoverageStatus,
+    blocked_reason: str,
+) -> None:
+    _validate_coverage(status, blocked_reason)
+    if status not in {"lowered", "blocked"}:
+        raise ValueError("relic definition coverage must be lowered or blocked")
+    if status == "lowered" and blocked_reason:
+        raise ValueError("lowered relic definitions cannot carry blocked_reason")
+
+
+def _require_matching_source_fingerprints(sources: Sequence[IRSource], field_name: str) -> None:
+    if not sources:
+        return
+    fingerprints = [source.evidence.get("source_fingerprint") for source in sources]
+    if any(value != fingerprints[0] for value in fingerprints[1:]):
+        raise ValueError(f"{field_name} sources must share one source fingerprint")
 
 
 @dataclass(frozen=True, order=True)
@@ -844,29 +1033,11 @@ class LightConeAbilitySourceIR:
         _require_integer(self.record_index, "ability record_index")
         if self.record_index < 0:
             raise ValueError("ability record_index must be non-negative")
-        _require_equipment_source(self.source)
-        if self.source.raw_type != "AbilityList" or self.source.raw_id != self.ability_name:
-            raise ValueError("ability source must identify the matching AbilityList record")
-        if self.source.evidence.get("json_path") != f"$.AbilityList[{self.record_index}]":
-            raise ValueError("ability source json_path must match record_index")
-        if self.source.evidence.get("source_kind") == "tbgd":
-            source_path = PurePosixPath(self.source.source_path)
-            if (
-                source_path.is_absolute()
-                or ".." in source_path.parts
-                or self.source.source_path != source_path.as_posix()
-                or not self.source.source_path.startswith("Config/ConfigAbility/Equip/")
-                or source_path.suffix != ".json"
-                or source_path.name.endswith(".layout.json")
-            ):
-                raise ValueError("TBGD ability source is outside the equipment ability namespace")
-            fingerprint = _mapping(
-                self.source.evidence.get("source_fingerprint"),
-                "ability source fingerprint",
-            )
-            paths = fingerprint.get("paths")
-            if not isinstance(paths, (list, tuple)) or self.source.source_path not in paths:
-                raise ValueError("TBGD ability source is not present in the source fingerprint")
+        _require_equipment_ability_record_source(
+            self.source,
+            ability_name=self.ability_name,
+            record_index=self.record_index,
+        )
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -1088,16 +1259,753 @@ class LightConeDefinitionIR:
 
 
 @dataclass(frozen=True)
+class RelicSlotFilterIR:
+    filter_identity: str
+    allowed_property_types: tuple[str, ...]
+    source: IRSource
+
+    def __post_init__(self) -> None:
+        _require_text(self.filter_identity, "relic slot filter identity")
+        properties = _string_tuple(
+            self.allowed_property_types,
+            "relic slot filter allowed_property_types",
+        )
+        if not properties or len(properties) != len(set(properties)):
+            raise ValueError("relic slot filter properties must be non-empty and unique")
+        object.__setattr__(self, "allowed_property_types", properties)
+        _require_equipment_source(self.source)
+        _require_relic_record_source(
+            self.source,
+            source_role="relic_base_type",
+            raw_type="RelicBaseType",
+            raw_id=self.filter_identity,
+        )
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "filter_identity": self.filter_identity,
+            "allowed_property_types": list(self.allowed_property_types),
+            "source": self.source.to_json(),
+        }
+
+    @classmethod
+    def from_json(cls, value: object) -> RelicSlotFilterIR:
+        row = _mapping(value, "relic_slot_filter")
+        _require_exact_fields(
+            row,
+            frozenset({"filter_identity", "allowed_property_types", "source"}),
+            "relic_slot_filter",
+        )
+        return cls(
+            filter_identity=_text(row.get("filter_identity"), "filter_identity"),
+            allowed_property_types=tuple(
+                _text(item, "allowed_property_types[]")
+                for item in _sequence(
+                    row.get("allowed_property_types"),
+                    "allowed_property_types",
+                )
+            ),
+            source=_source_from_json(row.get("source")),
+        )
+
+
+@dataclass(frozen=True)
+class RelicDomainDefinitionIR:
+    definition_key: EquipmentDefinitionKey
+    domain: RelicDomain
+    slot_keys: tuple[EquipmentDefinitionKey, ...]
+    set_keys: tuple[EquipmentDefinitionKey, ...]
+    source: IRSource
+    coverage_status: CoverageStatus = "blocked"
+    blocked_reason: str = "relic_domain_definition_not_lowered"
+
+    def __post_init__(self) -> None:
+        _require_kind(self.definition_key, "relic_domain")
+        if self.domain not in {"outer", "planar"}:
+            raise ValueError("relic domain must be outer or planar")
+        if self.definition_key.definition_identity != self.domain:
+            raise ValueError("relic domain identity must match domain")
+        slots = _equipment_key_tuple(
+            self.slot_keys,
+            "relic_slot",
+            "relic domain slot_keys",
+            require_non_empty=True,
+        )
+        sets = _equipment_key_tuple(
+            self.set_keys,
+            "relic_set",
+            "relic domain set_keys",
+            require_non_empty=True,
+        )
+        object.__setattr__(self, "slot_keys", slots)
+        object.__setattr__(self, "set_keys", sets)
+        _require_equipment_source(self.source)
+        _require_relic_derived_source(
+            self.source,
+            source_role="relic_config",
+            raw_type="RelicDomainMembershipProjection",
+            raw_id=self.domain,
+        )
+        _validate_relic_definition_coverage(
+            self.coverage_status,
+            self.blocked_reason,
+        )
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return _definition_json(
+            self.definition_key,
+            self.source,
+            self.coverage_status,
+            self.blocked_reason,
+            {
+                "domain": self.domain,
+                "slot_keys": [key.to_json() for key in self.slot_keys],
+                "set_keys": [key.to_json() for key in self.set_keys],
+            },
+        )
+
+    @classmethod
+    def from_json(cls, value: object) -> RelicDomainDefinitionIR:
+        row = _mapping(value, "relic_domain_definition")
+        _require_exact_fields(
+            row,
+            frozenset(
+                {
+                    "definition_key",
+                    "domain",
+                    "slot_keys",
+                    "set_keys",
+                    "source",
+                    "coverage_status",
+                    "blocked_reason",
+                }
+            ),
+            "relic_domain_definition",
+        )
+        return cls(
+            definition_key=EquipmentDefinitionKey.from_json(row.get("definition_key")),
+            domain=cast(RelicDomain, _text(row.get("domain"), "domain")),
+            slot_keys=tuple(
+                EquipmentDefinitionKey.from_json(item)
+                for item in _sequence(row.get("slot_keys"), "slot_keys")
+            ),
+            set_keys=tuple(
+                EquipmentDefinitionKey.from_json(item)
+                for item in _sequence(row.get("set_keys"), "set_keys")
+            ),
+            source=_source_from_json(row.get("source")),
+            coverage_status=_coverage_from_json(row),
+            blocked_reason=_text(row.get("blocked_reason", ""), "blocked_reason"),
+        )
+
+
+@dataclass(frozen=True)
+class RelicSlotDefinitionIR:
+    definition_key: EquipmentDefinitionKey
+    raw_slot_type: str
+    domain_key: EquipmentDefinitionKey
+    allowed_main_property_types: tuple[str, ...]
+    source: IRSource
+    coverage_status: CoverageStatus = "blocked"
+    blocked_reason: str = "relic_slot_definition_not_lowered"
+
+    def __post_init__(self) -> None:
+        _require_kind(self.definition_key, "relic_slot")
+        _require_text(self.raw_slot_type, "raw_slot_type")
+        if self.definition_key.definition_identity != self.raw_slot_type:
+            raise ValueError("relic slot identity must match raw_slot_type")
+        _require_kind(self.domain_key, "relic_domain")
+        properties = _string_tuple(
+            self.allowed_main_property_types,
+            "relic slot allowed_main_property_types",
+        )
+        if not properties or len(properties) != len(set(properties)):
+            raise ValueError("relic slot main properties must be non-empty and unique")
+        object.__setattr__(self, "allowed_main_property_types", properties)
+        _require_equipment_source(self.source)
+        _require_relic_record_source(
+            self.source,
+            source_role="relic_base_type",
+            raw_type="RelicBaseType",
+            raw_id=self.raw_slot_type,
+        )
+        _validate_relic_definition_coverage(
+            self.coverage_status,
+            self.blocked_reason,
+        )
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return _definition_json(
+            self.definition_key,
+            self.source,
+            self.coverage_status,
+            self.blocked_reason,
+            {
+                "raw_slot_type": self.raw_slot_type,
+                "domain_key": self.domain_key.to_json(),
+                "allowed_main_property_types": list(
+                    self.allowed_main_property_types
+                ),
+            },
+        )
+
+    @classmethod
+    def from_json(cls, value: object) -> RelicSlotDefinitionIR:
+        row = _mapping(value, "relic_slot_definition")
+        _require_exact_fields(
+            row,
+            frozenset(
+                {
+                    "definition_key",
+                    "raw_slot_type",
+                    "domain_key",
+                    "allowed_main_property_types",
+                    "source",
+                    "coverage_status",
+                    "blocked_reason",
+                }
+            ),
+            "relic_slot_definition",
+        )
+        return cls(
+            definition_key=EquipmentDefinitionKey.from_json(row.get("definition_key")),
+            raw_slot_type=_text(row.get("raw_slot_type"), "raw_slot_type"),
+            domain_key=EquipmentDefinitionKey.from_json(row.get("domain_key")),
+            allowed_main_property_types=tuple(
+                _text(item, "allowed_main_property_types[]")
+                for item in _sequence(
+                    row.get("allowed_main_property_types"),
+                    "allowed_main_property_types",
+                )
+            ),
+            source=_source_from_json(row.get("source")),
+            coverage_status=_coverage_from_json(row),
+            blocked_reason=_text(row.get("blocked_reason", ""), "blocked_reason"),
+        )
+
+
+@dataclass(frozen=True)
+class RelicMainAffixGroupDefinitionIR:
+    definition_key: EquipmentDefinitionKey
+    raw_group_id: str
+    affix_keys: tuple[EquipmentDefinitionKey, ...]
+    property_types: tuple[str, ...]
+    source: IRSource
+    coverage_status: CoverageStatus = "blocked"
+    blocked_reason: str = "relic_main_affix_group_not_lowered"
+
+    def __post_init__(self) -> None:
+        _require_kind(self.definition_key, "relic_main_affix_group")
+        _require_text(self.raw_group_id, "raw_group_id")
+        if self.definition_key.definition_identity != self.raw_group_id:
+            raise ValueError("main affix group identity must match raw_group_id")
+        affix_keys = _equipment_key_tuple(
+            self.affix_keys,
+            "relic_main_affix",
+            "main affix group affix_keys",
+            require_non_empty=True,
+        )
+        properties = _string_tuple(
+            self.property_types,
+            "main affix group property_types",
+        )
+        if not properties or len(properties) != len(set(properties)):
+            raise ValueError("main affix group properties must be non-empty and unique")
+        object.__setattr__(self, "affix_keys", affix_keys)
+        object.__setattr__(self, "property_types", properties)
+        _require_equipment_source(self.source)
+        _require_relic_derived_source(
+            self.source,
+            source_role="relic_main_affix_config",
+            raw_type="RelicMainAffixGroupProjection",
+            raw_id=self.raw_group_id,
+        )
+        _validate_relic_definition_coverage(
+            self.coverage_status,
+            self.blocked_reason,
+        )
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return _definition_json(
+            self.definition_key,
+            self.source,
+            self.coverage_status,
+            self.blocked_reason,
+            {
+                "raw_group_id": self.raw_group_id,
+                "affix_keys": [key.to_json() for key in self.affix_keys],
+                "property_types": list(self.property_types),
+            },
+        )
+
+    @classmethod
+    def from_json(cls, value: object) -> RelicMainAffixGroupDefinitionIR:
+        row = _mapping(value, "relic_main_affix_group_definition")
+        _require_exact_fields(
+            row,
+            frozenset(
+                {
+                    "definition_key",
+                    "raw_group_id",
+                    "affix_keys",
+                    "property_types",
+                    "source",
+                    "coverage_status",
+                    "blocked_reason",
+                }
+            ),
+            "relic_main_affix_group_definition",
+        )
+        return cls(
+            definition_key=EquipmentDefinitionKey.from_json(row.get("definition_key")),
+            raw_group_id=_text(row.get("raw_group_id"), "raw_group_id"),
+            affix_keys=tuple(
+                EquipmentDefinitionKey.from_json(item)
+                for item in _sequence(row.get("affix_keys"), "affix_keys")
+            ),
+            property_types=tuple(
+                _text(item, "property_types[]")
+                for item in _sequence(row.get("property_types"), "property_types")
+            ),
+            source=_source_from_json(row.get("source")),
+            coverage_status=_coverage_from_json(row),
+            blocked_reason=_text(row.get("blocked_reason", ""), "blocked_reason"),
+        )
+
+
+@dataclass(frozen=True)
+class RelicMainAffixDefinitionIR:
+    definition_key: EquipmentDefinitionKey
+    group_key: EquipmentDefinitionKey
+    raw_affix_id: str
+    property_type: str
+    base_value: str
+    level_add: str
+    source: IRSource
+    coverage_status: CoverageStatus = "blocked"
+    blocked_reason: str = "relic_main_affix_not_lowered"
+
+    def __post_init__(self) -> None:
+        _require_kind(self.definition_key, "relic_main_affix")
+        _require_kind(self.group_key, "relic_main_affix_group")
+        _require_text(self.raw_affix_id, "raw_affix_id")
+        expected_identity = (
+            f"{self.group_key.definition_identity}:{self.raw_affix_id}"
+        )
+        if self.definition_key.definition_identity != expected_identity:
+            raise ValueError("main affix identity must match group and affix ids")
+        _require_text(self.property_type, "property_type")
+        object.__setattr__(
+            self,
+            "base_value",
+            exact_decimal_text(self.base_value, "main affix base_value"),
+        )
+        object.__setattr__(
+            self,
+            "level_add",
+            exact_decimal_text(self.level_add, "main affix level_add"),
+        )
+        _require_equipment_source(self.source)
+        _require_relic_record_source(
+            self.source,
+            source_role="relic_main_affix_config",
+            raw_type="RelicMainAffixConfig",
+            raw_id=self.definition_key.definition_identity,
+        )
+        _validate_relic_definition_coverage(
+            self.coverage_status,
+            self.blocked_reason,
+        )
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return _definition_json(
+            self.definition_key,
+            self.source,
+            self.coverage_status,
+            self.blocked_reason,
+            {
+                "group_key": self.group_key.to_json(),
+                "raw_affix_id": self.raw_affix_id,
+                "property_type": self.property_type,
+                "base_value": self.base_value,
+                "level_add": self.level_add,
+            },
+        )
+
+    @classmethod
+    def from_json(cls, value: object) -> RelicMainAffixDefinitionIR:
+        row = _mapping(value, "relic_main_affix_definition")
+        _require_exact_fields(
+            row,
+            frozenset(
+                {
+                    "definition_key",
+                    "group_key",
+                    "raw_affix_id",
+                    "property_type",
+                    "base_value",
+                    "level_add",
+                    "source",
+                    "coverage_status",
+                    "blocked_reason",
+                }
+            ),
+            "relic_main_affix_definition",
+        )
+        return cls(
+            definition_key=EquipmentDefinitionKey.from_json(row.get("definition_key")),
+            group_key=EquipmentDefinitionKey.from_json(row.get("group_key")),
+            raw_affix_id=_text(row.get("raw_affix_id"), "raw_affix_id"),
+            property_type=_text(row.get("property_type"), "property_type"),
+            base_value=_text(row.get("base_value"), "base_value"),
+            level_add=_text(row.get("level_add"), "level_add"),
+            source=_source_from_json(row.get("source")),
+            coverage_status=_coverage_from_json(row),
+            blocked_reason=_text(row.get("blocked_reason", ""), "blocked_reason"),
+        )
+
+
+@dataclass(frozen=True)
+class RelicSubAffixGroupDefinitionIR:
+    definition_key: EquipmentDefinitionKey
+    raw_group_id: str
+    affix_keys: tuple[EquipmentDefinitionKey, ...]
+    property_types: tuple[str, ...]
+    source: IRSource
+    coverage_status: CoverageStatus = "blocked"
+    blocked_reason: str = "relic_sub_affix_group_not_lowered"
+
+    def __post_init__(self) -> None:
+        _require_kind(self.definition_key, "relic_sub_affix_group")
+        _require_text(self.raw_group_id, "raw_group_id")
+        if self.definition_key.definition_identity != self.raw_group_id:
+            raise ValueError("sub affix group identity must match raw_group_id")
+        affix_keys = _equipment_key_tuple(
+            self.affix_keys,
+            "relic_sub_affix",
+            "sub affix group affix_keys",
+            require_non_empty=True,
+        )
+        properties = _string_tuple(
+            self.property_types,
+            "sub affix group property_types",
+        )
+        if not properties or len(properties) != len(set(properties)):
+            raise ValueError("sub affix group properties must be non-empty and unique")
+        object.__setattr__(self, "affix_keys", affix_keys)
+        object.__setattr__(self, "property_types", properties)
+        _require_equipment_source(self.source)
+        _require_relic_derived_source(
+            self.source,
+            source_role="relic_sub_affix_config",
+            raw_type="RelicSubAffixGroupProjection",
+            raw_id=self.raw_group_id,
+        )
+        _validate_relic_definition_coverage(
+            self.coverage_status,
+            self.blocked_reason,
+        )
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return _definition_json(
+            self.definition_key,
+            self.source,
+            self.coverage_status,
+            self.blocked_reason,
+            {
+                "raw_group_id": self.raw_group_id,
+                "affix_keys": [key.to_json() for key in self.affix_keys],
+                "property_types": list(self.property_types),
+            },
+        )
+
+    @classmethod
+    def from_json(cls, value: object) -> RelicSubAffixGroupDefinitionIR:
+        row = _mapping(value, "relic_sub_affix_group_definition")
+        _require_exact_fields(
+            row,
+            frozenset(
+                {
+                    "definition_key",
+                    "raw_group_id",
+                    "affix_keys",
+                    "property_types",
+                    "source",
+                    "coverage_status",
+                    "blocked_reason",
+                }
+            ),
+            "relic_sub_affix_group_definition",
+        )
+        return cls(
+            definition_key=EquipmentDefinitionKey.from_json(row.get("definition_key")),
+            raw_group_id=_text(row.get("raw_group_id"), "raw_group_id"),
+            affix_keys=tuple(
+                EquipmentDefinitionKey.from_json(item)
+                for item in _sequence(row.get("affix_keys"), "affix_keys")
+            ),
+            property_types=tuple(
+                _text(item, "property_types[]")
+                for item in _sequence(row.get("property_types"), "property_types")
+            ),
+            source=_source_from_json(row.get("source")),
+            coverage_status=_coverage_from_json(row),
+            blocked_reason=_text(row.get("blocked_reason", ""), "blocked_reason"),
+        )
+
+
+@dataclass(frozen=True)
+class RelicSubAffixDefinitionIR:
+    definition_key: EquipmentDefinitionKey
+    group_key: EquipmentDefinitionKey
+    raw_affix_id: str
+    property_type: str
+    base_value: str
+    step_value: str
+    step_count: int
+    source: IRSource
+    coverage_status: CoverageStatus = "blocked"
+    blocked_reason: str = "relic_sub_affix_not_lowered"
+
+    def __post_init__(self) -> None:
+        _require_kind(self.definition_key, "relic_sub_affix")
+        _require_kind(self.group_key, "relic_sub_affix_group")
+        _require_text(self.raw_affix_id, "raw_affix_id")
+        expected_identity = (
+            f"{self.group_key.definition_identity}:{self.raw_affix_id}"
+        )
+        if self.definition_key.definition_identity != expected_identity:
+            raise ValueError("sub affix identity must match group and affix ids")
+        _require_text(self.property_type, "property_type")
+        object.__setattr__(
+            self,
+            "base_value",
+            exact_decimal_text(self.base_value, "sub affix base_value"),
+        )
+        object.__setattr__(
+            self,
+            "step_value",
+            exact_decimal_text(self.step_value, "sub affix step_value"),
+        )
+        _require_integer(self.step_count, "sub affix step_count")
+        if self.step_count <= 0:
+            raise ValueError("sub affix step_count must be positive")
+        _require_equipment_source(self.source)
+        _require_relic_record_source(
+            self.source,
+            source_role="relic_sub_affix_config",
+            raw_type="RelicSubAffixConfig",
+            raw_id=self.definition_key.definition_identity,
+        )
+        _validate_relic_definition_coverage(
+            self.coverage_status,
+            self.blocked_reason,
+        )
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return _definition_json(
+            self.definition_key,
+            self.source,
+            self.coverage_status,
+            self.blocked_reason,
+            {
+                "group_key": self.group_key.to_json(),
+                "raw_affix_id": self.raw_affix_id,
+                "property_type": self.property_type,
+                "base_value": self.base_value,
+                "step_value": self.step_value,
+                "step_count": self.step_count,
+            },
+        )
+
+    @classmethod
+    def from_json(cls, value: object) -> RelicSubAffixDefinitionIR:
+        row = _mapping(value, "relic_sub_affix_definition")
+        _require_exact_fields(
+            row,
+            frozenset(
+                {
+                    "definition_key",
+                    "group_key",
+                    "raw_affix_id",
+                    "property_type",
+                    "base_value",
+                    "step_value",
+                    "step_count",
+                    "source",
+                    "coverage_status",
+                    "blocked_reason",
+                }
+            ),
+            "relic_sub_affix_definition",
+        )
+        return cls(
+            definition_key=EquipmentDefinitionKey.from_json(row.get("definition_key")),
+            group_key=EquipmentDefinitionKey.from_json(row.get("group_key")),
+            raw_affix_id=_text(row.get("raw_affix_id"), "raw_affix_id"),
+            property_type=_text(row.get("property_type"), "property_type"),
+            base_value=_text(row.get("base_value"), "base_value"),
+            step_value=_text(row.get("step_value"), "step_value"),
+            step_count=_integer(row.get("step_count"), "step_count"),
+            source=_source_from_json(row.get("source")),
+            coverage_status=_coverage_from_json(row),
+            blocked_reason=_text(row.get("blocked_reason", ""), "blocked_reason"),
+        )
+
+
+@dataclass(frozen=True)
+class RelicAbilitySourceIR:
+    ability_name: str
+    record_index: int
+    source: IRSource
+
+    def __post_init__(self) -> None:
+        _require_text(self.ability_name, "relic ability_name")
+        _require_integer(self.record_index, "relic ability record_index")
+        if self.record_index < 0:
+            raise ValueError("relic ability record_index must be non-negative")
+        _require_equipment_ability_record_source(
+            self.source,
+            ability_name=self.ability_name,
+            record_index=self.record_index,
+        )
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "ability_name": self.ability_name,
+            "record_index": self.record_index,
+            "source": self.source.to_json(),
+        }
+
+    @classmethod
+    def from_json(cls, value: object) -> RelicAbilitySourceIR:
+        row = _mapping(value, "relic_ability_source")
+        _require_exact_fields(
+            row,
+            frozenset({"ability_name", "record_index", "source"}),
+            "relic_ability_source",
+        )
+        return cls(
+            ability_name=_text(row.get("ability_name"), "ability_name"),
+            record_index=_integer(row.get("record_index"), "record_index"),
+            source=_source_from_json(row.get("source")),
+        )
+
+
+@dataclass(frozen=True)
+class RelicSetParameterIR:
+    parameter_index: int
+    exact_value: str
+    source: IRSource
+
+    def __post_init__(self) -> None:
+        _require_integer(self.parameter_index, "relic set parameter_index")
+        if self.parameter_index < 0:
+            raise ValueError("relic set parameter_index must be non-negative")
+        object.__setattr__(
+            self,
+            "exact_value",
+            exact_decimal_text(self.exact_value, "relic set parameter exact_value"),
+        )
+        _require_equipment_source(self.source)
+        _require_relic_record_source(
+            self.source,
+            source_role="relic_set_skill_config",
+            raw_type="RelicSetSkillParameter",
+            raw_id_suffix=f":{self.parameter_index}",
+            json_path_suffix=(
+                f".AbilityParamList[{self.parameter_index}].Value"
+            ),
+        )
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "parameter_index": self.parameter_index,
+            "exact_value": self.exact_value,
+            "source": self.source.to_json(),
+        }
+
+    @classmethod
+    def from_json(cls, value: object) -> RelicSetParameterIR:
+        row = _mapping(value, "relic_set_parameter")
+        _require_exact_fields(
+            row,
+            frozenset({"parameter_index", "exact_value", "source"}),
+            "relic_set_parameter",
+        )
+        return cls(
+            parameter_index=_integer(row.get("parameter_index"), "parameter_index"),
+            exact_value=_text(row.get("exact_value"), "exact_value"),
+            source=_source_from_json(row.get("source")),
+        )
+
+
+@dataclass(frozen=True)
+class RelicSetStaticPropertyIR:
+    property_index: int
+    property_type: str
+    exact_value: str
+    source: IRSource
+
+    def __post_init__(self) -> None:
+        _require_integer(self.property_index, "relic set property_index")
+        if self.property_index < 0:
+            raise ValueError("relic set property_index must be non-negative")
+        _require_text(self.property_type, "relic set property_type")
+        object.__setattr__(
+            self,
+            "exact_value",
+            exact_decimal_text(self.exact_value, "relic set property exact_value"),
+        )
+        _require_equipment_source(self.source)
+        _require_relic_record_source(
+            self.source,
+            source_role="relic_set_skill_config",
+            raw_type="RelicSetSkillStaticProperty",
+            raw_id_suffix=f":{self.property_index}",
+            json_path_suffix=(
+                f".PropertyList[{self.property_index}].MNDFOPKBHKP.Value"
+            ),
+        )
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "property_index": self.property_index,
+            "property_type": self.property_type,
+            "exact_value": self.exact_value,
+            "source": self.source.to_json(),
+        }
+
+    @classmethod
+    def from_json(cls, value: object) -> RelicSetStaticPropertyIR:
+        row = _mapping(value, "relic_set_static_property")
+        _require_exact_fields(
+            row,
+            frozenset({"property_index", "property_type", "exact_value", "source"}),
+            "relic_set_static_property",
+        )
+        return cls(
+            property_index=_integer(row.get("property_index"), "property_index"),
+            property_type=_text(row.get("property_type"), "property_type"),
+            exact_value=_text(row.get("exact_value"), "exact_value"),
+            source=_source_from_json(row.get("source")),
+        )
+
+
+@dataclass(frozen=True)
 class RelicTemplateDefinitionIR:
     definition_key: EquipmentDefinitionKey
     raw_relic_id: str
-    slot_type: str
-    set_key: EquipmentDefinitionKey | None
+    publication_status: RelicPublicationStatus
+    slot_key: EquipmentDefinitionKey
+    domain_key: EquipmentDefinitionKey
+    set_key: EquipmentDefinitionKey
     rarity: str
     max_level: int
-    main_affix_group_id: str
-    sub_affix_group_id: str
-    mode: str
+    main_affix_group_key: EquipmentDefinitionKey
+    sub_affix_group_key: EquipmentDefinitionKey
+    mode: RelicTemplateMode
+    raw_mode: str
     source: IRSource
     coverage_status: CoverageStatus = "blocked"
     blocked_reason: str = "relic_template_definition_not_lowered"
@@ -1105,16 +2013,37 @@ class RelicTemplateDefinitionIR:
     def __post_init__(self) -> None:
         _require_kind(self.definition_key, "relic_template")
         _require_text(self.raw_relic_id, "raw_relic_id")
-        _require_text(self.slot_type, "slot_type")
-        if self.set_key is not None:
-            _require_kind(self.set_key, "relic_set")
-        _require_string(self.rarity, "rarity")
+        if self.definition_key.definition_identity != self.raw_relic_id:
+            raise ValueError("relic template identity must match raw_relic_id")
+        if self.publication_status not in LIGHT_CONE_PUBLICATION_STATES:
+            raise ValueError("invalid relic publication_status")
+        _require_kind(self.slot_key, "relic_slot")
+        _require_kind(self.domain_key, "relic_domain")
+        _require_kind(self.set_key, "relic_set")
+        _require_text(self.rarity, "rarity")
         _require_integer(self.max_level, "max_level")
-        _require_string(self.main_affix_group_id, "main_affix_group_id")
-        _require_string(self.sub_affix_group_id, "sub_affix_group_id")
-        _require_string(self.mode, "mode")
+        if self.max_level < 0:
+            raise ValueError("relic max_level must be non-negative")
+        _require_kind(self.main_affix_group_key, "relic_main_affix_group")
+        _require_kind(self.sub_affix_group_key, "relic_sub_affix_group")
+        if self.mode not in {"BASIC", "CUSTOM", "UNKNOWN"}:
+            raise ValueError("invalid relic template mode")
+        _require_text(self.raw_mode, "raw_mode")
+        if self.mode != "UNKNOWN" and self.raw_mode != self.mode:
+            raise ValueError("known relic template mode must match raw_mode")
         _require_equipment_source(self.source)
-        _validate_coverage(self.coverage_status, self.blocked_reason)
+        _require_relic_record_source(
+            self.source,
+            source_role="relic_config",
+            raw_type="RelicConfig",
+            raw_id=self.raw_relic_id,
+        )
+        _validate_relic_definition_coverage(
+            self.coverage_status,
+            self.blocked_reason,
+        )
+        if self.mode == "UNKNOWN" and self.coverage_status != "blocked":
+            raise ValueError("unknown relic template modes must remain blocked")
 
     def to_json(self) -> dict[str, JSONValue]:
         return _definition_json(
@@ -1124,92 +2053,65 @@ class RelicTemplateDefinitionIR:
             self.blocked_reason,
             {
                 "raw_relic_id": self.raw_relic_id,
-                "slot_type": self.slot_type,
-                "set_key": self.set_key.to_json() if self.set_key is not None else None,
+                "publication_status": self.publication_status,
+                "slot_key": self.slot_key.to_json(),
+                "domain_key": self.domain_key.to_json(),
+                "set_key": self.set_key.to_json(),
                 "rarity": self.rarity,
                 "max_level": self.max_level,
-                "main_affix_group_id": self.main_affix_group_id,
-                "sub_affix_group_id": self.sub_affix_group_id,
+                "main_affix_group_key": self.main_affix_group_key.to_json(),
+                "sub_affix_group_key": self.sub_affix_group_key.to_json(),
                 "mode": self.mode,
+                "raw_mode": self.raw_mode,
             },
         )
 
     @classmethod
     def from_json(cls, value: object) -> RelicTemplateDefinitionIR:
         row = _mapping(value, "relic_template_definition")
-        set_key = _optional_mapping(row.get("set_key"), "set_key")
+        _require_exact_fields(
+            row,
+            frozenset(
+                {
+                    "definition_key",
+                    "raw_relic_id",
+                    "publication_status",
+                    "slot_key",
+                    "domain_key",
+                    "set_key",
+                    "rarity",
+                    "max_level",
+                    "main_affix_group_key",
+                    "sub_affix_group_key",
+                    "mode",
+                    "raw_mode",
+                    "source",
+                    "coverage_status",
+                    "blocked_reason",
+                }
+            ),
+            "relic_template_definition",
+        )
         return cls(
             definition_key=EquipmentDefinitionKey.from_json(row.get("definition_key")),
             raw_relic_id=_text(row.get("raw_relic_id"), "raw_relic_id"),
-            slot_type=_text(row.get("slot_type"), "slot_type"),
-            set_key=EquipmentDefinitionKey.from_json(set_key) if set_key is not None else None,
-            rarity=_text(row.get("rarity", ""), "rarity"),
-            max_level=_integer(row.get("max_level"), "max_level"),
-            main_affix_group_id=_text(row.get("main_affix_group_id", ""), "main_affix_group_id"),
-            sub_affix_group_id=_text(row.get("sub_affix_group_id", ""), "sub_affix_group_id"),
-            mode=_text(row.get("mode", ""), "mode"),
-            source=_source_from_json(row.get("source")),
-            coverage_status=_coverage_from_json(row),
-            blocked_reason=_text(row.get("blocked_reason", ""), "blocked_reason"),
-        )
-
-
-@dataclass(frozen=True)
-class RelicAffixDefinitionIR:
-    definition_key: EquipmentDefinitionKey
-    affix_kind: Literal["main", "sub"]
-    group_id: str
-    affix_id: str
-    property_type: str
-    exact_value_parameters: tuple[str, ...]
-    source: IRSource
-    coverage_status: CoverageStatus = "blocked"
-    blocked_reason: str = "relic_affix_definition_not_lowered"
-
-    def __post_init__(self) -> None:
-        _require_kind(self.definition_key, "relic_affix")
-        _require_string(self.affix_kind, "affix_kind")
-        if self.affix_kind not in {"main", "sub"}:
-            raise ValueError("affix_kind must be main or sub")
-        _require_text(self.group_id, "group_id")
-        _require_text(self.affix_id, "affix_id")
-        _require_text(self.property_type, "property_type")
-        object.__setattr__(
-            self,
-            "exact_value_parameters",
-            _string_tuple(self.exact_value_parameters, "exact_value_parameters"),
-        )
-        _require_equipment_source(self.source)
-        _validate_coverage(self.coverage_status, self.blocked_reason)
-
-    def to_json(self) -> dict[str, JSONValue]:
-        return _definition_json(
-            self.definition_key,
-            self.source,
-            self.coverage_status,
-            self.blocked_reason,
-            {
-                "affix_kind": self.affix_kind,
-                "group_id": self.group_id,
-                "affix_id": self.affix_id,
-                "property_type": self.property_type,
-                "exact_value_parameters": list(self.exact_value_parameters),
-            },
-        )
-
-    @classmethod
-    def from_json(cls, value: object) -> RelicAffixDefinitionIR:
-        row = _mapping(value, "relic_affix_definition")
-        return cls(
-            definition_key=EquipmentDefinitionKey.from_json(row.get("definition_key")),
-            affix_kind=cast(Literal["main", "sub"], _text(row.get("affix_kind"), "affix_kind")),
-            group_id=_text(row.get("group_id"), "group_id"),
-            affix_id=_text(row.get("affix_id"), "affix_id"),
-            property_type=_text(row.get("property_type"), "property_type"),
-            exact_value_parameters=tuple(
-                _text(item, "exact_value_parameters[]")
-                for item in _sequence(row.get("exact_value_parameters"), "exact_value_parameters")
+            publication_status=cast(
+                RelicPublicationStatus,
+                _text(row.get("publication_status"), "publication_status"),
             ),
+            slot_key=EquipmentDefinitionKey.from_json(row.get("slot_key")),
+            domain_key=EquipmentDefinitionKey.from_json(row.get("domain_key")),
+            set_key=EquipmentDefinitionKey.from_json(row.get("set_key")),
+            rarity=_text(row.get("rarity"), "rarity"),
+            max_level=_integer(row.get("max_level"), "max_level"),
+            main_affix_group_key=EquipmentDefinitionKey.from_json(
+                row.get("main_affix_group_key")
+            ),
+            sub_affix_group_key=EquipmentDefinitionKey.from_json(
+                row.get("sub_affix_group_key")
+            ),
+            mode=cast(RelicTemplateMode, _text(row.get("mode"), "mode")),
+            raw_mode=_text(row.get("raw_mode"), "raw_mode"),
             source=_source_from_json(row.get("source")),
             coverage_status=_coverage_from_json(row),
             blocked_reason=_text(row.get("blocked_reason", ""), "blocked_reason"),
@@ -1220,6 +2122,11 @@ class RelicAffixDefinitionIR:
 class RelicSetDefinitionIR:
     definition_key: EquipmentDefinitionKey
     raw_set_id: str
+    publication_status: RelicPublicationStatus
+    release_field_present: bool
+    domain_key: EquipmentDefinitionKey
+    slot_keys: tuple[EquipmentDefinitionKey, ...]
+    template_keys: tuple[EquipmentDefinitionKey, ...]
     threshold_keys: tuple[EquipmentDefinitionKey, ...]
     source: IRSource
     coverage_status: CoverageStatus = "blocked"
@@ -1228,22 +2135,54 @@ class RelicSetDefinitionIR:
     def __post_init__(self) -> None:
         _require_kind(self.definition_key, "relic_set")
         _require_text(self.raw_set_id, "raw_set_id")
-        object.__setattr__(
-            self,
-            "threshold_keys",
-            cast(
-                tuple[EquipmentDefinitionKey, ...],
-                _typed_tuple(
-                    self.threshold_keys,
-                    EquipmentDefinitionKey,
-                    "threshold_keys",
-                ),
-            ),
+        if self.definition_key.definition_identity != self.raw_set_id:
+            raise ValueError("relic set identity must match raw_set_id")
+        if self.publication_status not in LIGHT_CONE_PUBLICATION_STATES:
+            raise ValueError("invalid relic set publication_status")
+        _boolean(self.release_field_present, "release_field_present")
+        if (
+            self.publication_status in {"published", "unpublished"}
+            and not self.release_field_present
+        ):
+            raise ValueError("known relic set publication requires Release field")
+        if (
+            not self.release_field_present
+            and self.publication_status != "status_unknown"
+        ):
+            raise ValueError("missing relic set Release must remain status_unknown")
+        _require_kind(self.domain_key, "relic_domain")
+        slots = _equipment_key_tuple(
+            self.slot_keys,
+            "relic_slot",
+            "relic set slot_keys",
+            require_non_empty=True,
         )
-        for key in self.threshold_keys:
-            _require_kind(key, "relic_set_threshold")
+        templates = _equipment_key_tuple(
+            self.template_keys,
+            "relic_template",
+            "relic set template_keys",
+            require_non_empty=True,
+        )
+        thresholds = _equipment_key_tuple(
+            self.threshold_keys,
+            "relic_set_threshold",
+            "relic set threshold_keys",
+            require_non_empty=True,
+        )
+        object.__setattr__(self, "slot_keys", slots)
+        object.__setattr__(self, "template_keys", templates)
+        object.__setattr__(self, "threshold_keys", thresholds)
         _require_equipment_source(self.source)
-        _validate_coverage(self.coverage_status, self.blocked_reason)
+        _require_relic_record_source(
+            self.source,
+            source_role="relic_set_config",
+            raw_type="RelicSetConfig",
+            raw_id=self.raw_set_id,
+        )
+        _validate_relic_definition_coverage(
+            self.coverage_status,
+            self.blocked_reason,
+        )
 
     def to_json(self) -> dict[str, JSONValue]:
         return _definition_json(
@@ -1253,6 +2192,11 @@ class RelicSetDefinitionIR:
             self.blocked_reason,
             {
                 "raw_set_id": self.raw_set_id,
+                "publication_status": self.publication_status,
+                "release_field_present": self.release_field_present,
+                "domain_key": self.domain_key.to_json(),
+                "slot_keys": [key.to_json() for key in self.slot_keys],
+                "template_keys": [key.to_json() for key in self.template_keys],
                 "threshold_keys": [key.to_json() for key in self.threshold_keys],
             },
         )
@@ -1260,9 +2204,45 @@ class RelicSetDefinitionIR:
     @classmethod
     def from_json(cls, value: object) -> RelicSetDefinitionIR:
         row = _mapping(value, "relic_set_definition")
+        _require_exact_fields(
+            row,
+            frozenset(
+                {
+                    "definition_key",
+                    "raw_set_id",
+                    "publication_status",
+                    "release_field_present",
+                    "domain_key",
+                    "slot_keys",
+                    "template_keys",
+                    "threshold_keys",
+                    "source",
+                    "coverage_status",
+                    "blocked_reason",
+                }
+            ),
+            "relic_set_definition",
+        )
         return cls(
             definition_key=EquipmentDefinitionKey.from_json(row.get("definition_key")),
             raw_set_id=_text(row.get("raw_set_id"), "raw_set_id"),
+            publication_status=cast(
+                RelicPublicationStatus,
+                _text(row.get("publication_status"), "publication_status"),
+            ),
+            release_field_present=_boolean(
+                row.get("release_field_present"),
+                "release_field_present",
+            ),
+            domain_key=EquipmentDefinitionKey.from_json(row.get("domain_key")),
+            slot_keys=tuple(
+                EquipmentDefinitionKey.from_json(item)
+                for item in _sequence(row.get("slot_keys"), "slot_keys")
+            ),
+            template_keys=tuple(
+                EquipmentDefinitionKey.from_json(item)
+                for item in _sequence(row.get("template_keys"), "template_keys")
+            ),
             threshold_keys=tuple(
                 EquipmentDefinitionKey.from_json(item)
                 for item in _sequence(row.get("threshold_keys"), "threshold_keys")
@@ -1278,8 +2258,9 @@ class RelicSetThresholdIR:
     definition_key: EquipmentDefinitionKey
     set_key: EquipmentDefinitionKey
     require_count: int
-    static_contribution_ref_ids: tuple[str, ...]
-    mechanism_ref_ids: tuple[EquipmentDefinitionKey, ...]
+    static_properties: tuple[RelicSetStaticPropertyIR, ...]
+    parameters: tuple[RelicSetParameterIR, ...]
+    ability_source: RelicAbilitySourceIR | None
     source: IRSource
     coverage_status: CoverageStatus = "blocked"
     blocked_reason: str = "relic_set_threshold_not_lowered"
@@ -1288,30 +2269,96 @@ class RelicSetThresholdIR:
         _require_kind(self.definition_key, "relic_set_threshold")
         _require_kind(self.set_key, "relic_set")
         _require_integer(self.require_count, "require_count")
-        object.__setattr__(
-            self,
-            "static_contribution_ref_ids",
-            _string_tuple(
-                self.static_contribution_ref_ids,
-                "static_contribution_ref_ids",
+        if self.require_count <= 0:
+            raise ValueError("relic set require_count must be positive")
+        expected_identity = (
+            f"{self.set_key.definition_identity}:{self.require_count}"
+        )
+        if self.definition_key.definition_identity != expected_identity:
+            raise ValueError("relic set threshold identity must match set and count")
+        static_properties = cast(
+            tuple[RelicSetStaticPropertyIR, ...],
+            _typed_tuple(
+                self.static_properties,
+                RelicSetStaticPropertyIR,
+                "relic set static_properties",
             ),
         )
-        object.__setattr__(
-            self,
-            "mechanism_ref_ids",
-            cast(
-                tuple[EquipmentDefinitionKey, ...],
-                _typed_tuple(
-                    self.mechanism_ref_ids,
-                    EquipmentDefinitionKey,
-                    "mechanism_ref_ids",
-                ),
+        parameters = cast(
+            tuple[RelicSetParameterIR, ...],
+            _typed_tuple(
+                self.parameters,
+                RelicSetParameterIR,
+                "relic set parameters",
             ),
         )
-        for key in self.mechanism_ref_ids:
-            _require_kind(key, "equipment_mechanism")
+        if tuple(item.property_index for item in static_properties) != tuple(
+            range(len(static_properties))
+        ):
+            raise ValueError("relic set static properties must be ordered and contiguous")
+        if tuple(item.parameter_index for item in parameters) != tuple(
+            range(len(parameters))
+        ):
+            raise ValueError("relic set parameters must be ordered and contiguous")
+        if self.ability_source is not None and not isinstance(
+            self.ability_source,
+            RelicAbilitySourceIR,
+        ):
+            raise TypeError("relic ability_source must be RelicAbilitySourceIR or None")
+        if not static_properties and self.ability_source is None:
+            raise ValueError(
+                "relic set thresholds require a static property or ability source"
+            )
+        object.__setattr__(self, "static_properties", static_properties)
+        object.__setattr__(self, "parameters", parameters)
         _require_equipment_source(self.source)
-        _validate_coverage(self.coverage_status, self.blocked_reason)
+        _require_relic_record_source(
+            self.source,
+            source_role="relic_set_skill_config",
+            raw_type="RelicSetSkillConfig",
+            raw_id=self.definition_key.definition_identity,
+        )
+        if _source_kind(self.source) == "tbgd":
+            row_json_path = _source_row_json_path(self.source)
+            nested_identity_prefix = (
+                f"{self.set_key.definition_identity}:{self.require_count}"
+            )
+            for item in static_properties:
+                if (
+                    item.source.raw_id
+                    != f"{nested_identity_prefix}:{item.property_index}"
+                    or item.source.evidence.get("json_path")
+                    != (
+                        f"{row_json_path}.PropertyList[{item.property_index}]"
+                        ".MNDFOPKBHKP.Value"
+                    )
+                ):
+                    raise ValueError(
+                        "relic static property source must belong to its threshold row"
+                    )
+            for item in parameters:
+                if (
+                    item.source.raw_id
+                    != f"{nested_identity_prefix}:{item.parameter_index}"
+                    or item.source.evidence.get("json_path")
+                    != (
+                        f"{row_json_path}.AbilityParamList[{item.parameter_index}]"
+                        ".Value"
+                    )
+                ):
+                    raise ValueError(
+                        "relic parameter source must belong to its threshold row"
+                    )
+        sources: list[IRSource] = [self.source]
+        sources.extend(item.source for item in static_properties)
+        sources.extend(item.source for item in parameters)
+        if self.ability_source is not None:
+            sources.append(self.ability_source.source)
+        _require_matching_source_fingerprints(sources, "relic set threshold")
+        _validate_relic_definition_coverage(
+            self.coverage_status,
+            self.blocked_reason,
+        )
 
     def to_json(self) -> dict[str, JSONValue]:
         return _definition_json(
@@ -1322,25 +2369,58 @@ class RelicSetThresholdIR:
             {
                 "set_key": self.set_key.to_json(),
                 "require_count": self.require_count,
-                "static_contribution_ref_ids": list(self.static_contribution_ref_ids),
-                "mechanism_ref_ids": [key.to_json() for key in self.mechanism_ref_ids],
+                "static_properties": [
+                    item.to_json() for item in self.static_properties
+                ],
+                "parameters": [item.to_json() for item in self.parameters],
+                "ability_source": (
+                    self.ability_source.to_json()
+                    if self.ability_source is not None
+                    else None
+                ),
             },
         )
 
     @classmethod
     def from_json(cls, value: object) -> RelicSetThresholdIR:
         row = _mapping(value, "relic_set_threshold")
+        _require_exact_fields(
+            row,
+            frozenset(
+                {
+                    "definition_key",
+                    "set_key",
+                    "require_count",
+                    "static_properties",
+                    "parameters",
+                    "ability_source",
+                    "source",
+                    "coverage_status",
+                    "blocked_reason",
+                }
+            ),
+            "relic_set_threshold",
+        )
+        ability_source = row.get("ability_source")
         return cls(
             definition_key=EquipmentDefinitionKey.from_json(row.get("definition_key")),
             set_key=EquipmentDefinitionKey.from_json(row.get("set_key")),
             require_count=_integer(row.get("require_count"), "require_count"),
-            static_contribution_ref_ids=tuple(
-                _text(item, "static_contribution_ref_ids[]")
-                for item in _sequence(row.get("static_contribution_ref_ids"), "static_contribution_ref_ids")
+            static_properties=tuple(
+                RelicSetStaticPropertyIR.from_json(item)
+                for item in _sequence(
+                    row.get("static_properties"),
+                    "static_properties",
+                )
             ),
-            mechanism_ref_ids=tuple(
-                EquipmentDefinitionKey.from_json(item)
-                for item in _sequence(row.get("mechanism_ref_ids"), "mechanism_ref_ids")
+            parameters=tuple(
+                RelicSetParameterIR.from_json(item)
+                for item in _sequence(row.get("parameters"), "parameters")
+            ),
+            ability_source=(
+                RelicAbilitySourceIR.from_json(ability_source)
+                if ability_source is not None
+                else None
             ),
             source=_source_from_json(row.get("source")),
             coverage_status=_coverage_from_json(row),
@@ -1464,12 +2544,570 @@ class EquipmentMechanismRefIR:
 EquipmentDefinition = (
     CharacterEquipmentEligibilityIR
     | LightConeDefinitionIR
+    | RelicDomainDefinitionIR
+    | RelicSlotDefinitionIR
+    | RelicMainAffixGroupDefinitionIR
+    | RelicMainAffixDefinitionIR
+    | RelicSubAffixGroupDefinitionIR
+    | RelicSubAffixDefinitionIR
     | RelicTemplateDefinitionIR
-    | RelicAffixDefinitionIR
     | RelicSetDefinitionIR
     | RelicSetThresholdIR
     | EquipmentMechanismRefIR
 )
+
+
+@dataclass(frozen=True)
+class RelicDefinitionReferenceIssue:
+    definition_key: EquipmentDefinitionKey
+    issue_code: str
+    related_key: EquipmentDefinitionKey | None = None
+    detail: str = ""
+
+    def __post_init__(self) -> None:
+        if self.definition_key.definition_kind not in {
+            "relic_domain",
+            "relic_slot",
+            "relic_main_affix_group",
+            "relic_main_affix",
+            "relic_sub_affix_group",
+            "relic_sub_affix",
+            "relic_template",
+            "relic_set",
+            "relic_set_threshold",
+        }:
+            raise ValueError("relic reference issue requires a relic definition key")
+        _require_text(self.issue_code, "relic reference issue_code")
+        _require_string(self.detail, "relic reference issue detail")
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "definition_key": self.definition_key.to_json(),
+            "issue_code": self.issue_code,
+            "related_key": (
+                self.related_key.to_json()
+                if self.related_key is not None
+                else None
+            ),
+            "detail": self.detail,
+        }
+
+
+def relic_definition_reference_issues(
+    definitions: Sequence[EquipmentDefinition],
+) -> tuple[RelicDefinitionReferenceIssue, ...]:
+    """Validate every relic reference and its reverse directory relation."""
+
+    relic_types = (
+        RelicDomainDefinitionIR,
+        RelicSlotDefinitionIR,
+        RelicMainAffixGroupDefinitionIR,
+        RelicMainAffixDefinitionIR,
+        RelicSubAffixGroupDefinitionIR,
+        RelicSubAffixDefinitionIR,
+        RelicTemplateDefinitionIR,
+        RelicSetDefinitionIR,
+        RelicSetThresholdIR,
+    )
+    relic_definitions = tuple(
+        definition
+        for definition in definitions
+        if isinstance(definition, relic_types)
+    )
+    candidates_by_key: dict[
+        EquipmentDefinitionKey,
+        list[EquipmentDefinition],
+    ] = {}
+    for definition in relic_definitions:
+        candidates_by_key.setdefault(definition.definition_key, []).append(
+            definition
+        )
+    issue_rows: set[
+        tuple[
+            EquipmentDefinitionKey,
+            str,
+            EquipmentDefinitionKey | None,
+            str,
+        ]
+    ] = set()
+
+    def add(
+        owner: EquipmentDefinition,
+        issue_code: str,
+        related_key: EquipmentDefinitionKey | None = None,
+        detail: str = "",
+    ) -> None:
+        issue_rows.add(
+            (
+                owner.definition_key,
+                issue_code,
+                related_key,
+                detail,
+            )
+        )
+
+    def resolve(
+        owner: EquipmentDefinition,
+        key: EquipmentDefinitionKey,
+        expected_type: type[EquipmentDefinition],
+        relation: str,
+    ) -> EquipmentDefinition | None:
+        candidates = candidates_by_key.get(key, ())
+        if not candidates:
+            add(owner, f"{relation}_missing", key)
+            return None
+        if len(candidates) != 1:
+            add(owner, f"{relation}_ambiguous", key)
+            return None
+        selected = candidates[0]
+        if not isinstance(selected, expected_type):
+            add(owner, f"{relation}_type_mismatch", key)
+            return None
+        return selected
+
+    def canonical_keys(
+        values: Sequence[EquipmentDefinitionKey],
+    ) -> tuple[EquipmentDefinitionKey, ...]:
+        return tuple(sorted(set(values), key=lambda key: key.stable_id))
+
+    def reverse_keys(
+        expected_type: type[EquipmentDefinition],
+        predicate: Callable[[EquipmentDefinition], bool],
+    ) -> tuple[EquipmentDefinitionKey, ...]:
+        return canonical_keys(
+            tuple(
+                definition.definition_key
+                for definition in relic_definitions
+                if isinstance(definition, expected_type)
+                and predicate(definition)
+            )
+        )
+
+    for key, candidates in candidates_by_key.items():
+        if len(candidates) != 1:
+            add(
+                candidates[0],
+                "relic_definition_reference_identity_ambiguous",
+                key,
+            )
+
+    domains = tuple(
+        definition
+        for definition in relic_definitions
+        if isinstance(definition, RelicDomainDefinitionIR)
+    )
+    slots = tuple(
+        definition
+        for definition in relic_definitions
+        if isinstance(definition, RelicSlotDefinitionIR)
+    )
+    main_groups = tuple(
+        definition
+        for definition in relic_definitions
+        if isinstance(definition, RelicMainAffixGroupDefinitionIR)
+    )
+    main_affixes = tuple(
+        definition
+        for definition in relic_definitions
+        if isinstance(definition, RelicMainAffixDefinitionIR)
+    )
+    sub_groups = tuple(
+        definition
+        for definition in relic_definitions
+        if isinstance(definition, RelicSubAffixGroupDefinitionIR)
+    )
+    sub_affixes = tuple(
+        definition
+        for definition in relic_definitions
+        if isinstance(definition, RelicSubAffixDefinitionIR)
+    )
+    templates = tuple(
+        definition
+        for definition in relic_definitions
+        if isinstance(definition, RelicTemplateDefinitionIR)
+    )
+    sets = tuple(
+        definition
+        for definition in relic_definitions
+        if isinstance(definition, RelicSetDefinitionIR)
+    )
+    thresholds = tuple(
+        definition
+        for definition in relic_definitions
+        if isinstance(definition, RelicSetThresholdIR)
+    )
+
+    for domain in domains:
+        for slot_key in domain.slot_keys:
+            slot = resolve(
+                domain,
+                slot_key,
+                RelicSlotDefinitionIR,
+                "relic_domain_slot_reference",
+            )
+            if (
+                isinstance(slot, RelicSlotDefinitionIR)
+                and slot.domain_key != domain.definition_key
+            ):
+                add(
+                    domain,
+                    "relic_domain_slot_relation_mismatch",
+                    slot.definition_key,
+                )
+        for set_key in domain.set_keys:
+            relic_set = resolve(
+                domain,
+                set_key,
+                RelicSetDefinitionIR,
+                "relic_domain_set_reference",
+            )
+            if (
+                isinstance(relic_set, RelicSetDefinitionIR)
+                and relic_set.domain_key != domain.definition_key
+            ):
+                add(
+                    domain,
+                    "relic_domain_set_relation_mismatch",
+                    relic_set.definition_key,
+                )
+        if domain.slot_keys != reverse_keys(
+            RelicSlotDefinitionIR,
+            lambda item: cast(
+                RelicSlotDefinitionIR,
+                item,
+            ).domain_key
+            == domain.definition_key,
+        ):
+            add(domain, "relic_domain_slot_reverse_mismatch")
+        if domain.set_keys != reverse_keys(
+            RelicSetDefinitionIR,
+            lambda item: cast(
+                RelicSetDefinitionIR,
+                item,
+            ).domain_key
+            == domain.definition_key,
+        ):
+            add(domain, "relic_domain_set_reverse_mismatch")
+
+    for slot in slots:
+        domain = resolve(
+            slot,
+            slot.domain_key,
+            RelicDomainDefinitionIR,
+            "relic_slot_domain_reference",
+        )
+        if (
+            isinstance(domain, RelicDomainDefinitionIR)
+            and slot.definition_key not in domain.slot_keys
+        ):
+            add(
+                slot,
+                "relic_slot_domain_reverse_mismatch",
+                domain.definition_key,
+            )
+
+    for group in main_groups:
+        for affix_key in group.affix_keys:
+            affix = resolve(
+                group,
+                affix_key,
+                RelicMainAffixDefinitionIR,
+                "relic_main_group_affix_reference",
+            )
+            if (
+                isinstance(affix, RelicMainAffixDefinitionIR)
+                and affix.group_key != group.definition_key
+            ):
+                add(
+                    group,
+                    "relic_main_group_affix_relation_mismatch",
+                    affix.definition_key,
+                )
+        members = tuple(
+            affix
+            for affix in main_affixes
+            if affix.group_key == group.definition_key
+        )
+        if group.affix_keys != canonical_keys(
+            tuple(item.definition_key for item in members)
+        ):
+            add(group, "relic_main_group_affix_reverse_mismatch")
+        if group.property_types != tuple(
+            sorted({item.property_type for item in members})
+        ):
+            add(group, "relic_main_group_property_projection_mismatch")
+
+    for affix in main_affixes:
+        group = resolve(
+            affix,
+            affix.group_key,
+            RelicMainAffixGroupDefinitionIR,
+            "relic_main_affix_group_reference",
+        )
+        if (
+            isinstance(group, RelicMainAffixGroupDefinitionIR)
+            and affix.definition_key not in group.affix_keys
+        ):
+            add(
+                affix,
+                "relic_main_affix_group_reverse_mismatch",
+                group.definition_key,
+            )
+
+    for group in sub_groups:
+        for affix_key in group.affix_keys:
+            affix = resolve(
+                group,
+                affix_key,
+                RelicSubAffixDefinitionIR,
+                "relic_sub_group_affix_reference",
+            )
+            if (
+                isinstance(affix, RelicSubAffixDefinitionIR)
+                and affix.group_key != group.definition_key
+            ):
+                add(
+                    group,
+                    "relic_sub_group_affix_relation_mismatch",
+                    affix.definition_key,
+                )
+        members = tuple(
+            affix
+            for affix in sub_affixes
+            if affix.group_key == group.definition_key
+        )
+        if group.affix_keys != canonical_keys(
+            tuple(item.definition_key for item in members)
+        ):
+            add(group, "relic_sub_group_affix_reverse_mismatch")
+        if group.property_types != tuple(
+            sorted({item.property_type for item in members})
+        ):
+            add(group, "relic_sub_group_property_projection_mismatch")
+
+    for affix in sub_affixes:
+        group = resolve(
+            affix,
+            affix.group_key,
+            RelicSubAffixGroupDefinitionIR,
+            "relic_sub_affix_group_reference",
+        )
+        if (
+            isinstance(group, RelicSubAffixGroupDefinitionIR)
+            and affix.definition_key not in group.affix_keys
+        ):
+            add(
+                affix,
+                "relic_sub_affix_group_reverse_mismatch",
+                group.definition_key,
+            )
+
+    for template in templates:
+        slot = resolve(
+            template,
+            template.slot_key,
+            RelicSlotDefinitionIR,
+            "relic_template_slot_reference",
+        )
+        domain = resolve(
+            template,
+            template.domain_key,
+            RelicDomainDefinitionIR,
+            "relic_template_domain_reference",
+        )
+        relic_set = resolve(
+            template,
+            template.set_key,
+            RelicSetDefinitionIR,
+            "relic_template_set_reference",
+        )
+        main_group = resolve(
+            template,
+            template.main_affix_group_key,
+            RelicMainAffixGroupDefinitionIR,
+            "relic_template_main_group_reference",
+        )
+        resolve(
+            template,
+            template.sub_affix_group_key,
+            RelicSubAffixGroupDefinitionIR,
+            "relic_template_sub_group_reference",
+        )
+        if (
+            isinstance(slot, RelicSlotDefinitionIR)
+            and slot.domain_key != template.domain_key
+        ):
+            add(
+                template,
+                "relic_template_slot_domain_mismatch",
+                slot.definition_key,
+            )
+        if (
+            isinstance(domain, RelicDomainDefinitionIR)
+            and isinstance(slot, RelicSlotDefinitionIR)
+            and slot.definition_key not in domain.slot_keys
+        ):
+            add(
+                template,
+                "relic_template_domain_slot_mismatch",
+                domain.definition_key,
+            )
+        if isinstance(relic_set, RelicSetDefinitionIR):
+            if relic_set.domain_key != template.domain_key:
+                add(
+                    template,
+                    "relic_template_set_domain_mismatch",
+                    relic_set.definition_key,
+                )
+            if template.slot_key not in relic_set.slot_keys:
+                add(
+                    template,
+                    "relic_template_set_slot_mismatch",
+                    relic_set.definition_key,
+                )
+            if template.definition_key not in relic_set.template_keys:
+                add(
+                    template,
+                    "relic_template_set_reverse_mismatch",
+                    relic_set.definition_key,
+                )
+        if (
+            isinstance(slot, RelicSlotDefinitionIR)
+            and isinstance(main_group, RelicMainAffixGroupDefinitionIR)
+            and not set(main_group.property_types).issubset(
+                slot.allowed_main_property_types
+            )
+        ):
+            add(
+                template,
+                "relic_template_main_group_slot_mismatch",
+                main_group.definition_key,
+            )
+
+    for relic_set in sets:
+        domain = resolve(
+            relic_set,
+            relic_set.domain_key,
+            RelicDomainDefinitionIR,
+            "relic_set_domain_reference",
+        )
+        if (
+            isinstance(domain, RelicDomainDefinitionIR)
+            and relic_set.definition_key not in domain.set_keys
+        ):
+            add(
+                relic_set,
+                "relic_set_domain_reverse_mismatch",
+                domain.definition_key,
+            )
+        for slot_key in relic_set.slot_keys:
+            slot = resolve(
+                relic_set,
+                slot_key,
+                RelicSlotDefinitionIR,
+                "relic_set_slot_reference",
+            )
+            if (
+                isinstance(slot, RelicSlotDefinitionIR)
+                and slot.domain_key != relic_set.domain_key
+            ):
+                add(
+                    relic_set,
+                    "relic_set_slot_domain_mismatch",
+                    slot.definition_key,
+                )
+        for template_key in relic_set.template_keys:
+            template = resolve(
+                relic_set,
+                template_key,
+                RelicTemplateDefinitionIR,
+                "relic_set_template_reference",
+            )
+            if isinstance(template, RelicTemplateDefinitionIR) and (
+                template.set_key != relic_set.definition_key
+                or template.domain_key != relic_set.domain_key
+                or template.slot_key not in relic_set.slot_keys
+            ):
+                add(
+                    relic_set,
+                    "relic_set_template_relation_mismatch",
+                    template.definition_key,
+                )
+        for threshold_key in relic_set.threshold_keys:
+            threshold = resolve(
+                relic_set,
+                threshold_key,
+                RelicSetThresholdIR,
+                "relic_set_threshold_reference",
+            )
+            if (
+                isinstance(threshold, RelicSetThresholdIR)
+                and threshold.set_key != relic_set.definition_key
+            ):
+                add(
+                    relic_set,
+                    "relic_set_threshold_relation_mismatch",
+                    threshold.definition_key,
+                )
+        set_templates = tuple(
+            template
+            for template in templates
+            if template.set_key == relic_set.definition_key
+        )
+        if relic_set.template_keys != canonical_keys(
+            tuple(item.definition_key for item in set_templates)
+        ):
+            add(relic_set, "relic_set_template_reverse_mismatch")
+        if relic_set.slot_keys != canonical_keys(
+            tuple(item.slot_key for item in set_templates)
+        ):
+            add(relic_set, "relic_set_slot_reverse_mismatch")
+        if relic_set.threshold_keys != reverse_keys(
+            RelicSetThresholdIR,
+            lambda item: cast(
+                RelicSetThresholdIR,
+                item,
+            ).set_key
+            == relic_set.definition_key,
+        ):
+            add(relic_set, "relic_set_threshold_reverse_mismatch")
+
+    for threshold in thresholds:
+        relic_set = resolve(
+            threshold,
+            threshold.set_key,
+            RelicSetDefinitionIR,
+            "relic_threshold_set_reference",
+        )
+        if (
+            isinstance(relic_set, RelicSetDefinitionIR)
+            and threshold.definition_key not in relic_set.threshold_keys
+        ):
+            add(
+                threshold,
+                "relic_threshold_set_reverse_mismatch",
+                relic_set.definition_key,
+            )
+
+    return tuple(
+        RelicDefinitionReferenceIssue(
+            definition_key=definition_key,
+            issue_code=issue_code,
+            related_key=related_key,
+            detail=detail,
+        )
+        for definition_key, issue_code, related_key, detail in sorted(
+            issue_rows,
+            key=lambda item: (
+                item[0].stable_id,
+                item[1],
+                item[2].stable_id if item[2] is not None else "",
+                item[3],
+            ),
+        )
+    )
+
+
 EquipmentDefinitionT = TypeVar(
     "EquipmentDefinitionT",
     bound=EquipmentDefinition,
@@ -1479,8 +3117,13 @@ EquipmentDefinitionT = TypeVar(
 DEFINITION_TYPES: dict[EquipmentDefinitionKind, type[EquipmentDefinition]] = {
     "character_equipment_eligibility": CharacterEquipmentEligibilityIR,
     "light_cone": LightConeDefinitionIR,
+    "relic_domain": RelicDomainDefinitionIR,
+    "relic_slot": RelicSlotDefinitionIR,
+    "relic_main_affix_group": RelicMainAffixGroupDefinitionIR,
+    "relic_main_affix": RelicMainAffixDefinitionIR,
+    "relic_sub_affix_group": RelicSubAffixGroupDefinitionIR,
+    "relic_sub_affix": RelicSubAffixDefinitionIR,
     "relic_template": RelicTemplateDefinitionIR,
-    "relic_affix": RelicAffixDefinitionIR,
     "relic_set": RelicSetDefinitionIR,
     "relic_set_threshold": RelicSetThresholdIR,
     "equipment_mechanism": EquipmentMechanismRefIR,
@@ -1716,7 +3359,7 @@ class RelicSubAffixRollInput:
     step: int
 
     def __post_init__(self) -> None:
-        _require_kind(self.affix_key, "relic_affix")
+        _require_kind(self.affix_key, "relic_sub_affix")
         _require_integer(self.count, "relic_sub_affix.count")
         _require_integer(self.step, "relic_sub_affix.step")
 
@@ -1747,7 +3390,7 @@ class RelicInstanceInput:
         _require_kind(self.template_key, "relic_template")
         _require_text(self.selected_slot_type, "selected_slot_type")
         _require_integer(self.level, "relic.level")
-        _require_kind(self.main_affix_key, "relic_affix")
+        _require_kind(self.main_affix_key, "relic_main_affix")
         object.__setattr__(
             self,
             "sub_affix_rolls",

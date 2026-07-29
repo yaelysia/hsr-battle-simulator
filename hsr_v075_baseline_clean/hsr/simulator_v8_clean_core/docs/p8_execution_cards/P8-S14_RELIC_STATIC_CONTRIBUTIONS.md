@@ -90,15 +90,21 @@ input_order_deterministic=true
 
 ## 验证命令与资源
 
+生产边界先保证：贡献账本创建时逐项校验来源身份、属性类型和激活依据；重复来源、未知属性或未激活档位必须在装配结果形成前 blocked。账本是唯一计算输入，验证器不得另写一套属性归并公式。
+
+本阶段固定只运行一个业务主验证：
+
 ```bash
-PYTHONDONTWRITEBYTECODE=1 python3 -B -m hsr.simulator_v8_clean_core.tools.validate_p8_s14_relic_static_contributions --tbgd-root ../turnbasedgamedata-main --output-dir /tmp/hsr_v8_p8_s14_relic_static_contributions
-PYTHONDONTWRITEBYTECODE=1 python3 -B -m hsr.simulator_v8_clean_core.tools.validate_p8_s5_light_cone_static_contributions --tbgd-root ../turnbasedgamedata-main --output-dir /tmp/hsr_v8_p8_s14_s5_ledger_regression
-PYTHONDONTWRITEBYTECODE=1 python3 -B -m hsr.simulator_v8_clean_core.tools.validate_p8_s13_relic_set_thresholds --tbgd-root ../turnbasedgamedata-main --output-dir /tmp/hsr_v8_p8_s14_s13_threshold_regression
-PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX=/tmp/hsr_v8_p8_s14_pycache python3 -m compileall -q hsr/simulator_v8_clean_core
+PYTHONDONTWRITEBYTECODE=1 /usr/bin/time -v -o /tmp/hsr_v8_p8_s14_time_v.txt timeout --signal=TERM 5m python3 -B -m simulator_v8_clean_core.tools.validate_p8_s14_relic_static_contributions --tbgd-root ../../turnbasedgamedata-main --output-dir /tmp/hsr_v8_p8_s14_relic_static_contributions
+PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX=/tmp/hsr_v8_p8_s14_pycache python3 -m compileall -q simulator_v8_clean_core
 git diff --check
 ```
 
-只有修改通用贡献求值时才追加 S2 fixture 回归。focused RuleBook 最多一次；不执行套装 ability、不构建战斗状态、不跑全 affix property tests。输出 ledger matrix、重算摘要和少量来源样本。
+- 主验证复用一份 source-backed 构筑输入，最多建立一次聚焦 RuleBook；独立 oracle 只从账本公开项重算，不复制生产映射逻辑。
+- 已验收的 S5、S13 结论直接继承，不固定重跑。只有实际修改共享贡献类型或聚合器时，追加一个 S5 小型账本 direct；只有修改角色面板求值器时，追加一个 S2 fixture direct。direct 总数最多 2。
+- 完整主验证最多一次诊断运行和一次最终运行；中间修复只跑失败的 term/ledger 切片。
+- 单次主验证预算：墙钟 5 分钟、峰值 RSS 768 MiB；阶段累计验证预算 10 分钟；默认产物不超过 3 MiB。超限立即暂停。
+- 不执行套装 ability、不构建战斗状态、不跑全 affix property tests、历史阶段聚合或 `validate_v0_209`，不写完整 RuleBook。
 
 ## Ready-for-review 产物
 
@@ -114,5 +120,5 @@ git diff --check
 - [ ] 相同 property 不预合并，Decimal 账本可独立重算。
 - [ ] 旧路径/重复来源不双计，unknown property fail-closed。
 - [ ] 每类 term 来源反查完整，结果不可变且确定性。
-- [ ] S5/S13 直接回归及人工代码审查通过。
+- [ ] S5/S13 已验收契约未被实际改动，或已通过实际触达所需的最小 direct；人工代码审查通过。
 - [ ] `ready_for_review` evidence 完整，阶段无静态贡献 blocker。

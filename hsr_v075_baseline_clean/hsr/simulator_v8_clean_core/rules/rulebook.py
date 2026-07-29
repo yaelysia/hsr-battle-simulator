@@ -14,10 +14,16 @@ from ..equipment.models import (
     EquipmentMechanismRefIR,
     EquipmentResolutionCandidate,
     LightConeDefinitionIR,
-    RelicAffixDefinitionIR,
+    RelicDomainDefinitionIR,
+    RelicMainAffixDefinitionIR,
+    RelicMainAffixGroupDefinitionIR,
     RelicSetDefinitionIR,
     RelicSetThresholdIR,
+    RelicSlotDefinitionIR,
+    RelicSubAffixDefinitionIR,
+    RelicSubAffixGroupDefinitionIR,
     RelicTemplateDefinitionIR,
+    relic_definition_reference_issues,
 )
 from .engine_rule_registry import (
     EngineRuleRegistry,
@@ -168,8 +174,29 @@ class RuleBook:
                 self.ir.character_equipment_eligibilities,
             ),
             ("light_cone", LightConeDefinitionIR, self.ir.light_cone_definitions),
+            ("relic_domain", RelicDomainDefinitionIR, self.ir.relic_domain_definitions),
+            ("relic_slot", RelicSlotDefinitionIR, self.ir.relic_slot_definitions),
+            (
+                "relic_main_affix_group",
+                RelicMainAffixGroupDefinitionIR,
+                self.ir.relic_main_affix_group_definitions,
+            ),
+            (
+                "relic_main_affix",
+                RelicMainAffixDefinitionIR,
+                self.ir.relic_main_affix_definitions,
+            ),
+            (
+                "relic_sub_affix_group",
+                RelicSubAffixGroupDefinitionIR,
+                self.ir.relic_sub_affix_group_definitions,
+            ),
+            (
+                "relic_sub_affix",
+                RelicSubAffixDefinitionIR,
+                self.ir.relic_sub_affix_definitions,
+            ),
             ("relic_template", RelicTemplateDefinitionIR, self.ir.relic_template_definitions),
-            ("relic_affix", RelicAffixDefinitionIR, self.ir.relic_affix_definitions),
             ("relic_set", RelicSetDefinitionIR, self.ir.relic_set_definitions),
             ("relic_set_threshold", RelicSetThresholdIR, self.ir.relic_set_thresholds),
             ("equipment_mechanism", EquipmentMechanismRefIR, self.ir.equipment_mechanism_refs),
@@ -185,8 +212,13 @@ class RuleBook:
                     (
                         CharacterEquipmentEligibilityIR,
                         LightConeDefinitionIR,
+                        RelicDomainDefinitionIR,
+                        RelicSlotDefinitionIR,
+                        RelicMainAffixGroupDefinitionIR,
+                        RelicMainAffixDefinitionIR,
+                        RelicSubAffixGroupDefinitionIR,
+                        RelicSubAffixDefinitionIR,
                         RelicTemplateDefinitionIR,
-                        RelicAffixDefinitionIR,
                         RelicSetDefinitionIR,
                         RelicSetThresholdIR,
                         EquipmentMechanismRefIR,
@@ -228,6 +260,23 @@ class RuleBook:
             {
                 identity: tuple(sorted(definitions, key=_equipment_definition_sort_key))
                 for identity, definitions in equipment_definitions_by_identity.items()
+            },
+        )
+        relic_reference_issues_by_key: dict[
+            EquipmentDefinitionKey,
+            list[str],
+        ] = {}
+        for issue in relic_definition_reference_issues(equipment_definitions):
+            relic_reference_issues_by_key.setdefault(
+                issue.definition_key,
+                [],
+            ).append(issue.issue_code)
+        object.__setattr__(
+            self,
+            "_relic_reference_issues_by_key",
+            {
+                key: tuple(sorted(set(issue_codes)))
+                for key, issue_codes in relic_reference_issues_by_key.items()
             },
         )
         equipment_parameter_reads, equipment_parameter_read_conflicts = _unique_index(
@@ -1338,19 +1387,66 @@ class RuleBook:
         key = EquipmentDefinitionKey("light_cone", definition_identity)
         return self._equipment_definition_resolution(key, LightConeDefinitionIR)
 
+    def relic_domain_definition(
+        self,
+        definition_identity: str,
+    ) -> EquipmentDefinitionResolution[RelicDomainDefinitionIR]:
+        key = EquipmentDefinitionKey("relic_domain", definition_identity)
+        return self._equipment_definition_resolution(key, RelicDomainDefinitionIR)
+
+    def relic_slot_definition(
+        self,
+        definition_identity: str,
+    ) -> EquipmentDefinitionResolution[RelicSlotDefinitionIR]:
+        key = EquipmentDefinitionKey("relic_slot", definition_identity)
+        return self._equipment_definition_resolution(key, RelicSlotDefinitionIR)
+
+    def relic_main_affix_group_definition(
+        self,
+        definition_identity: str,
+    ) -> EquipmentDefinitionResolution[RelicMainAffixGroupDefinitionIR]:
+        key = EquipmentDefinitionKey("relic_main_affix_group", definition_identity)
+        return self._equipment_definition_resolution(
+            key,
+            RelicMainAffixGroupDefinitionIR,
+        )
+
+    def relic_main_affix_definition(
+        self,
+        definition_identity: str,
+    ) -> EquipmentDefinitionResolution[RelicMainAffixDefinitionIR]:
+        key = EquipmentDefinitionKey("relic_main_affix", definition_identity)
+        return self._equipment_definition_resolution(
+            key,
+            RelicMainAffixDefinitionIR,
+        )
+
+    def relic_sub_affix_group_definition(
+        self,
+        definition_identity: str,
+    ) -> EquipmentDefinitionResolution[RelicSubAffixGroupDefinitionIR]:
+        key = EquipmentDefinitionKey("relic_sub_affix_group", definition_identity)
+        return self._equipment_definition_resolution(
+            key,
+            RelicSubAffixGroupDefinitionIR,
+        )
+
+    def relic_sub_affix_definition(
+        self,
+        definition_identity: str,
+    ) -> EquipmentDefinitionResolution[RelicSubAffixDefinitionIR]:
+        key = EquipmentDefinitionKey("relic_sub_affix", definition_identity)
+        return self._equipment_definition_resolution(
+            key,
+            RelicSubAffixDefinitionIR,
+        )
+
     def relic_template_definition(
         self,
         definition_identity: str,
     ) -> EquipmentDefinitionResolution[RelicTemplateDefinitionIR]:
         key = EquipmentDefinitionKey("relic_template", definition_identity)
         return self._equipment_definition_resolution(key, RelicTemplateDefinitionIR)
-
-    def relic_affix_definition(
-        self,
-        definition_identity: str,
-    ) -> EquipmentDefinitionResolution[RelicAffixDefinitionIR]:
-        key = EquipmentDefinitionKey("relic_affix", definition_identity)
-        return self._equipment_definition_resolution(key, RelicAffixDefinitionIR)
 
     def relic_set_definition(
         self,
@@ -1445,6 +1541,17 @@ class RuleBook:
                 value=None,
                 candidates=candidates,
                 blocked_reason="equipment_definition_not_lowered",
+            )
+        if key in self._relic_reference_issues_by_key:
+            return EquipmentDefinitionResolution(
+                resolution_status="blocked",
+                requested_key=key,
+                expected_kind=key.definition_kind,
+                value=None,
+                candidates=candidates,
+                blocked_reason=(
+                    "equipment_definition_reference_closure_invalid"
+                ),
             )
         if isinstance(selected, EquipmentMechanismRefIR):
             graph = self.standalone_ability_graph(selected.graph_ref_id)

@@ -407,10 +407,11 @@ gap / blocked / non-gameplay 口径：
   - client-only 必须有结构化证据。
 
 验证命令：
-  - 本阶段必跑最小集及每条命令证明的目标。
-  - 直接回归集及触发原因。
+  - 本阶段唯一主验证及它直接证明的目标。
+  - 直接回归的触发条件；不得预列与实际 diff 无关的固定套餐。
   - 明确不跑的重聚合及理由。
-  - 输出规模、RuleBook 构建次数和限峰值措施。
+  - 完整入口运行次数、累计墙钟、输出规模、RuleBook 构建次数和限峰值措施。
+  - 失败后允许运行的切片，以及达到预算后必须暂停的条件。
 
 ready_for_review evidence：
   - 代码 diff 摘要。
@@ -887,7 +888,7 @@ ready_for_review evidence：
 ### 最小证据与验证
 
 - P8-S10 slot / identity / level / mode 正负例。
-- P8-S2 构筑 schema 和 S9 query 直接回归。
+- S9 检查点默认继承；只有实际修改正式构筑 schema、队伍占用或共用实例查询时，才运行对应最小 direct，最多两项。
 - 不计算属性，不运行战斗。
 
 ## 20. P8-S11 主词条合法池与精确数值
@@ -929,6 +930,7 @@ ready_for_review evidence：
 
 - P8-S11 六槽主词条矩阵、等级边界数值和特殊 group 负例。
 - focused pure calculation，无完整 RuleBook。
+- S10 检查点默认继承；只有实际修改实例准入或共用 Decimal / 属性类型时，才运行一个对应最小 direct。
 - `compileall`、`git diff --check`。
 
 ## 21. P8-S12 副词条 roll、精度与可实现性
@@ -1014,7 +1016,7 @@ ready_for_review evidence：
 ### 最小证据与验证
 
 - P8-S13 set activation matrix，覆盖所有组合类别和非法槽位 no-contribution。
-- S9 套装定义与 S10 槽位直接回归。
+- S9-S12 检查点默认继承；只有实际修改实例准入、身份或套装定义查询时，才运行一个对应最小 direct。
 - pure assembly 测试，不运行动态能力。
 
 ## 23. P8-S14 遗器与套装静态属性装配
@@ -1055,7 +1057,7 @@ ready_for_review evidence：
 ### 最小证据与验证
 
 - P8-S14 static contribution ledger、threshold inactive、duplicate-consumption 和 source walkback 验证。
-- S5 光锥静态账本复用性回归、S11-S13 直接回归。
+- S5、S11-S13 检查点默认继承；只有实际修改共用贡献类型、聚合器或角色面板求值器时，才运行对应最小 direct，最多两项。
 - focused RuleBook 至多一次，不运行动态套装 transition。
 
 ## 24. P8-S15 套装动态能力绑定与启动生命周期
@@ -1096,7 +1098,7 @@ ready_for_review evidence：
 ### 最小证据与验证
 
 - P8-S15 set ability binding、threshold、startup once 和 partial blocked 验证。
-- P7 事件阶段 / 原子提交、P5 dynamic binding、S13 activation 直接回归。
+- S6、S13 和 P7 阶段机检查点默认继承；只有实际修改共享 provider / graph lowering 或事件阶段机时，才运行对应最小 direct，最多两项。
 - 使用结构谓词抽样，不运行全量套装 transition。
 
 ## 25. P8-S16 套装属性、状态、条件与监听机制闭合
@@ -1136,7 +1138,7 @@ ready_for_review evidence：
 ### 最小证据与验证
 
 - P8-S16 family matrix、condition lifecycle、multi-owner 和 source audit 验证。
-- 状态、事件、波次、target relation 的直接回归按触达串行运行。
+- P2/P5/P7 检查点默认继承；按实际修改的状态、值、事件、波次或目标领域选择最小 direct，最多两项。
 - focused 批次默认只输出 summary 和代表 transition。
 
 ## 26. P8-S17 套装资源、生命、行动、队伍及剩余机制闭合
@@ -1176,8 +1178,8 @@ ready_for_review evidence：
 ### 最小证据与验证
 
 - P8-S17 remaining-family closure、全套装 gameplay aggregate、replay 和 mutation walkback。
-- P7 资源、HP / 护盾、伤害、时间线、波次、RNG 直接回归按实际触达串行运行。
-- 可运行一次 focused 全套装 ability build，不与其他重验证并行。
+- P7 各领域检查点默认继承；按实际修改的资源、生命、伤害、时间线、波次或 RNG 领域选择最小 direct，最多两项。
+- 只构建一次当前套装聚焦 RuleBook；中间修复只运行失败 family，不反复运行完整入口。
 
 ## 27. P8-S18 统一最终面板与战斗出生顺序
 
@@ -1220,8 +1222,8 @@ ready_for_review evidence：
 ### 最小证据与验证
 
 - P8-S18 final panel formula、input permutation、startup order 和 blocked birth 验证。
-- P4 行迹、P6 出生、P7 时间线 / 事件、S2 / S5 / S14 静态装配直接回归。
-- 本阶段可构建一次完整但受控 RuleBook；所有重验证串行并输出 `/tmp`。
+- S2、S5、S14、P4、P6、P7 检查点默认继承；只按实际修改的共享最终面板、出生、时间线或事件边界选择最小 direct，最多两项。
+- 本阶段只构建一次受控装备 RuleBook；不重跑光锥轨或遗器轨聚合，所有重验证串行并输出 `/tmp`。
 
 ## 28. P8-S19 查询、审计、snapshot、replay 与紧凑状态
 
@@ -1263,7 +1265,7 @@ ready_for_review evidence：
 ### 最小证据与验证
 
 - P8-S19 query purity、build round trip、source walkback、stale fingerprint 和 compact-state budget 验证。
-- P7-S8 查询 / 提交、P7-S15 replay、P7-S18 compact state 直接回归。
+- P7 查询、replay 和 compact-state 检查点默认继承；只有实际修改对应共享模块时才运行最小 direct，最多两项。
 - 不需要重新跑全部 equipment ability transition，复用当前指纹绑定的 S8、R1 与 S17 摘要。
 
 ## 29. P8-S20 希儿完整装备构筑纵切
@@ -1339,7 +1341,7 @@ ready_for_review evidence：
 ### 最小证据与验证
 
 - P8-S20 source-backed build manifest、relic-roll legality、assembly ledger、action round trip、condition branches、source walkback 和 replay 验证。
-- 复用一次当前指纹下的 focused RuleBook；运行希儿角色卡、S18 最终面板和 S19 replay / query 的直接回归，不运行 S21 全装备聚合。
+- 复用一次当前指纹下的 focused RuleBook；S18/S19 检查点作为硬前置继承，不重跑其主验证。若纵切暴露 core 缺陷，退回最早责任阶段，不在 S20 顺手修复。
 - 默认只写示例 manifest、最终摘要、必要 settlement 抽样和反例矩阵，不写完整 RuleBook 或全量 transition dump。
 
 ## 30. P8-S21 全量聚合、回归与文档收口
@@ -1353,7 +1355,7 @@ ready_for_review evidence：
 - 继承 S0-S20 的当前源码 evidence，验证 source fingerprint、schema version、代码哈希和必需检查非空。
 - 生成全光锥、全遗器模板、全主副词条、全套装档位和全 gameplay family 的最终矩阵。
 - 要求 lowering / admission / implementation / validation gap 为零，并核对 non-gameplay 证据。
-- 串行运行装备 focused 全量验证及直接触达的 P2 / P4 / P5 / P6 / P7 回归。
+- 在单次 final 中共享一次装备 compilation / RuleBook，并通过生产 runner 集成复核关键负例与 S20 manifest。
 - 验证旧字符串式 equipment boundary 不再是接口或完成证据。
 - 更新 README、架构文档、DOCUMENTATION_INDEX、CODEX_HANDOFF、AGENTS 和最终 checkpoint。
 - 记录 P8 明确不做的 farming、背包、UI 布局和未来版本增量，不将其混入 P8 完成度。
@@ -1379,50 +1381,65 @@ ready_for_review evidence：
 - 用手写总表 `gap=0` 覆盖分阶段内部 gap。
 - 只统计装备定义数量，不统计 gameplay ability 和真实 transition。
 - 将当前无法执行的已发布装备标记为“后续内容扩面”后勾 P8-DONE。
-- 因全量验证耗时而跳过直接触达回归，或并行运行多个重聚合压满 IO / 内存。
+- 把 final 拆成逐阶段主验证重跑，或并行运行多个重聚合压满 IO / 内存。
 
 ### 最小证据与验证
 
 - P8-S21 current-source aggregate，默认共享一次 focused equipment compilation / RuleBook build。
-- `compileall`、P8 全阶段结构验证、按触达选择的跨阶段直接回归、`git diff --check`。
+- 无 RuleBook 的轻量 preflight 先检查报告、指纹和阶段清单；通过后 final 只运行一次。
+- `compileall`、单次 final、`git diff --check`；不单独重跑 S20、P7 聚合或各阶段主验证。
 - 重验证使用 `PYTHONDONTWRITEBYTECODE=1 ionice -c3 nice -n 15` 串行运行，输出 `/tmp`，默认只写 summary / matrix / sampled evidence。
 
 ## 31. 分层验证与资源预算
 
-P8 装备相关 raw 语料本身约数 MB，正常 focused discovery 不应反复构建整个 TBGD RuleBook。每阶段执行卡必须按以下层级选择验证：
+P8-S9 至 S21 的详细预算以
+`docs/p8_execution_cards/README.md` 第 6 节和当前阶段卡为准。本节只保留总计划级
+验收原则，不能被执行线程扩写成第二套命令清单。
 
-### 必跑最小集
+### 31.1 唯一默认流程
 
-- `compileall`：证明修改模块可导入。
-- 本阶段唯一主验证：证明本阶段目标和负例。
-- `git diff --check`：检查补丁格式。
+```text
+生产边界拒绝非法状态
+  -> 开发期秒级失败切片
+  -> 一次阶段主验证
+  -> 只对实际修改调用链运行 direct
+  -> 阶段职责要求时才运行 catalog/full
+```
 
-### 直接回归集
+- 每阶段只有一个主验证入口；`compileall` 和 `git diff --check` 属于 fast，不是第二个业务验证。
+- 历史阶段检查点默认继承。未修改调用链时，不因“保险”重跑前序验证器。
+- 主验证最多一次诊断和一次最终运行；两次之间只运行失败切片。
+- direct 默认最多两个，并必须在报告中写明本次修改如何触达该契约。
+- catalog 只在目录、来源、lowering、索引或正式目录准入变化时运行；full 只在 S21 运行。
+- 主验证必须由 `/usr/bin/time -v` 计量并由 `timeout` 按单次预算强制终止；超时残留产物不得作为 evidence。
 
-- 修改属性装配时：角色 profile、行迹、ValueResolver、出生和时间线初始化。
-- 修改 ability / callback 时：状态、事件阶段、原子提交、source audit 和 replay。
-- 修改伤害 / 资源 / 行动时：只运行对应 P7 专项回归。
-- 修改 snapshot / compact state 时：P7-S15 / S18 相关回归。
+### 31.2 阶段预算
 
-### 条件触发重验证
+| 阶段 | 累计验证墙钟上限 | 主验证峰值 RSS | 默认总产物 |
+|---|---:|---:|---:|
+| S9 | 15 分钟 | 1 GiB | 5 MiB |
+| S10-S14 | 每阶段 10 分钟 | 768 MiB | 3 MiB |
+| S15 | 15 分钟 | 1 GiB | 5 MiB |
+| S16-S17 | 每阶段 25 分钟 | 1 GiB | 10 MiB |
+| S18-S20 | 每阶段 20 分钟 | 1 GiB | 10 MiB |
+| S21 | 45 分钟 | 1.5 GiB | 20 MiB |
 
-- 修改 shared lowering、CanonicalIR 或 RuleBook 构造时，才运行一次受控完整 RuleBook build。
-- 修改 shared reducer、transition、damage、status、target、RNG、timeline 时，才扩大对应跨阶段验证。
-- S8、S17 和 S21 允许 focused 全装备 ability 聚合，但必须串行。S20 只运行一个完整构筑纵切及其受控反例。
+达到墙钟、内存或产物任一上限必须停止并重新拆分验证，不能提高限制、并行补跑、
+删谓词或把失败改名为 deferred。预算从首次阶段主验证开始累计，必须进入
+`ready_for_review` 资源摘要。
 
-### 默认不跑
+预算是止损上限，不是目标。主验证正常设计目标应低于单次上限的一半；诊断运行达到
+单次上限的 80% 时，即使业务通过，也必须先缩窄投影、case 或 evidence，再进行最终运行。
 
-- 不因普通装备 schema 小改运行 P1-P7 全量聚合。
-- 不运行已知高负荷 `validate_v0_209`，除非直接修改其覆盖的 direct damage / crit / RNGEvent schema 且本阶段验证不足。
-- 不默认写完整 `CanonicalIR.to_json()`、完整 RuleBook、全量 ability raw、完整 transition dump 或全构筑组合枚举。
+### 31.3 构建与证据边界
 
-### 新验证资源红线
-
-- 当前数量、路径和集合从 source fingerprint 动态获得，不能以固定总数做通过条件。
-- focused compiler 应复用一次解析结果，不在每个 case 重读所有文件。
-- 全组合合法性使用等价类、property test 和边界样例，不枚举所有遗器 roll 组合。
-- 大产物必须有显式 `--write-large-artifacts` 开关，默认关闭。
-- 聚合 summary 必须包含读取文件数、字节数、compiler / RuleBook build 次数、case 数和输出文件大小。
+- 来源、IR/RuleBook、场景和 evidence 过滤必须在各自构建前生效；先完整构建再过滤不算 focused。
+- 同一主验证中的来源解析、compiler、RuleBook 和正式场景各最多构建一次并复用。
+- validator 只能编排生产入口与独立 oracle，不能复制装配、动作、伤害、事件或 replay。
+- 默认不运行 P1-P7 聚合、`validate_v0_209`、旧未过滤/九族聚合，也不写完整 Canonical IR、RuleBook 或 transition。
+- S16/S17 各自只验证本阶段 family；S18 不重跑两轨聚合；S20 不重跑 S18/S19；S21 在一个进程内共享一次装备 compilation/RuleBook。
+- S9-S15 新验证代码目标不超过 800 行非空 Python，S16-S21 目标不超过 1000 行；超过目标或超过生产改动量时先暂停规划审查。
+- 1200 行是未经新执行卡批准不得越过的硬上限，不得通过压缩代码、生成代码或搬入 helper 规避。
 
 ## 32. 兼容与迁移口径
 
@@ -1446,7 +1463,7 @@ P8 装备相关 raw 语料本身约数 MB，正常 focused discovery 不应反�
 - [x] P8-S8 已闭合其机制总账中的伤害、治疗、护盾、资源、目标、时间线、RNG 和完整图执行；CHAR-M1 后暴露的跨生命周期光环成员缺口由独立 R1 修复门承接。
 - [x] P8-R1-RUNTIME 已建立合法空召唤关系、空目标三态和通用光环成员生命周期，并通过聚焦代码验收。
 - [x] P8-R2 已关闭 VG-R1 实证的两条记忆光锥来源、三个 task/event family 失败，当前已发布光锥目录完成低内存正式启动收口。
-- [ ] P8-S9 已完整 lower 遗器模板、六部位、内外圈域、词条分组、套装和档位定义，并分类特殊模式。
+- [x] P8-S9 已完整 lower 遗器模板、六部位、内外圈域、词条分组、套装和档位定义，并分类特殊模式。
 - [ ] P8-S10 已建立零至六件遗器实例与槽位 / 等级 / 实例唯一性校验，非法件不贡献属性或套装计数。
 - [ ] P8-S11 已接通六部位主词条合法池和按强化等级计算的完整精度数值。
 - [ ] P8-S12 已接通副词条 affix / count / step、完整精度、去重、主副排斥和 roll 可实现性校验。
