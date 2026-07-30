@@ -30,6 +30,7 @@ from .relic_affix_calculator import (
     admit_relic_main_affix,
     admit_relic_sub_affixes,
 )
+from .relic_set_assembler import assemble_relic_set_activations
 
 
 def assemble_equipment_build(
@@ -49,6 +50,11 @@ def assemble_equipment_build(
     relic_selections, relic_diagnostics = _admit_relic_instances(rules, build)
     if relic_diagnostics:
         return _blocked(build, *relic_diagnostics)
+    relic_set_activation_decisions, relic_set_diagnostics = (
+        assemble_relic_set_activations(rules, relic_selections)
+    )
+    if relic_set_diagnostics:
+        return _blocked(build, *relic_set_diagnostics)
     relic_blockers = _relic_assembly_blockers(build, relic_selections)
     if build.light_cone is None:
         return EquipmentAssemblyResult(
@@ -59,6 +65,7 @@ def assemble_equipment_build(
                 "blocked" if relic_blockers else "admitted"
             ),
             relic_selections=relic_selections,
+            relic_set_activation_decisions=relic_set_activation_decisions,
             battle_admission_blockers=relic_blockers,
         )
 
@@ -233,6 +240,7 @@ def assemble_equipment_build(
         battle_admission_status="blocked" if blockers else "admitted",
         light_cone_selection=selection,
         relic_selections=relic_selections,
+        relic_set_activation_decisions=relic_set_activation_decisions,
         static_contributions=contributions,
         dynamic_mechanisms=dynamic_mechanisms,
         activation_decisions=(activation,),

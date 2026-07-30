@@ -113,10 +113,10 @@ git diff --check
 
 ## 唯一执行清单（仅验收线程可勾）
 
-- [ ] 只对完整 admitted 实例按真实 set/domain 计数。
-- [ ] 外圈 4、2+2、2+1+1、散件和内圈 2/1+1/部分组合均正确。
-- [ ] 高阈值保留低阈值，所有门槛从定义读取。
-- [ ] 域隔离、重复实例和非法件 fail-closed，无 UI active 输入。
-- [ ] activation 来源、fingerprint 和输入顺序确定性完整。
-- [ ] 未应用静态属性或启动能力；S10-S12 已验收契约未被实际改动，或已通过对应最小 direct 切片。
-- [ ] `ready_for_review` evidence 完整，阶段无套装统计 blocker。
+- [x] 只对完整 admitted 实例按真实 set/domain 计数。
+- [x] 外圈 4、2+2、2+1+1、散件和内圈 2/1+1/部分组合均正确。
+- [x] 高阈值保留低阈值，所有门槛从定义读取。
+- [x] 域隔离、重复实例和非法件 fail-closed，无 UI active 输入。
+- [x] activation 来源、fingerprint 和输入顺序确定性完整。
+- [x] 未应用静态属性或启动能力；S10-S12 已验收契约未被实际改动，或已通过对应最小 direct 切片。
+- [x] `ready_for_review` evidence 完整，阶段无套装统计 blocker。

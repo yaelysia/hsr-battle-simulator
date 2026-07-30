@@ -59,7 +59,7 @@ RelicAffixValidationStatus = Literal[
 ]
 
 RELIC_ASSEMBLY_NOT_ASSEMBLED_REASON = (
-    "relic_set_activation_and_static_contributions_not_assembled"
+    "relic_static_contributions_not_assembled"
 )
 
 LIGHT_CONE_PUBLICATION_STATES = frozenset(
@@ -4609,6 +4609,227 @@ class RelicAssemblySelection:
 
 
 @dataclass(frozen=True)
+class RelicSetActivationContributor:
+    """One admitted relic instance counted toward a set threshold."""
+
+    instance_id: str
+    instance_fingerprint: str
+    selection_fingerprint: str
+    template_key: EquipmentDefinitionKey
+    slot_key: EquipmentDefinitionKey
+    template_source: IRSource
+
+    def __post_init__(self) -> None:
+        _require_text(self.instance_id, "relic set contributor instance_id")
+        _require_sha256(self.instance_fingerprint, "relic set contributor instance_fingerprint")
+        _require_sha256(self.selection_fingerprint, "relic set contributor selection_fingerprint")
+        _require_kind(self.template_key, "relic_template")
+        _require_kind(self.slot_key, "relic_slot")
+        _require_equipment_source(self.template_source)
+        _require_relic_record_source(
+            self.template_source,
+            source_role="relic_config",
+            raw_type="RelicConfig",
+            raw_id=self.template_key.definition_identity,
+        )
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "instance_id": self.instance_id,
+            "instance_fingerprint": self.instance_fingerprint,
+            "selection_fingerprint": self.selection_fingerprint,
+            "template_key": self.template_key.to_json(),
+            "slot_key": self.slot_key.to_json(),
+            "template_source": self.template_source.to_json(),
+        }
+
+    @classmethod
+    def from_json(cls, value: object) -> RelicSetActivationContributor:
+        row = _mapping(value, "relic_set_activation_contributor")
+        _require_exact_fields(
+            row,
+            frozenset(
+                {
+                    "instance_id",
+                    "instance_fingerprint",
+                    "selection_fingerprint",
+                    "template_key",
+                    "slot_key",
+                    "template_source",
+                }
+            ),
+            "relic_set_activation_contributor",
+        )
+        return cls(
+            instance_id=_text(row.get("instance_id"), "instance_id"),
+            instance_fingerprint=_text(row.get("instance_fingerprint"), "instance_fingerprint"),
+            selection_fingerprint=_text(row.get("selection_fingerprint"), "selection_fingerprint"),
+            template_key=EquipmentDefinitionKey.from_json(row.get("template_key")),
+            slot_key=EquipmentDefinitionKey.from_json(row.get("slot_key")),
+            template_source=_source_from_json(row.get("template_source")),
+        )
+
+
+@dataclass(frozen=True)
+class RelicSetActivationDecision:
+    """Source-backed activation state for one set threshold, without effects."""
+
+    decision_id: str
+    threshold_key: EquipmentDefinitionKey
+    set_key: EquipmentDefinitionKey
+    domain_key: EquipmentDefinitionKey
+    activation_status: Literal["active", "inactive"]
+    matched_count: int
+    required_count: int
+    missing_count: int
+    contributors: tuple[RelicSetActivationContributor, ...]
+    domain_source: IRSource
+    set_source: IRSource
+    threshold_source: IRSource
+
+    def __post_init__(self) -> None:
+        _require_text(self.decision_id, "relic set activation decision_id")
+        _require_kind(self.threshold_key, "relic_set_threshold")
+        _require_kind(self.set_key, "relic_set")
+        _require_kind(self.domain_key, "relic_domain")
+        _require_integer(self.matched_count, "relic set matched_count")
+        _require_integer(self.required_count, "relic set required_count")
+        _require_integer(self.missing_count, "relic set missing_count")
+        if self.threshold_key.definition_identity != f"{self.set_key.definition_identity}:{self.required_count}":
+            raise ValueError("relic set activation threshold identity mismatch")
+        expected_decision_id = (
+            "relic_set_activation:"
+            f"{self.domain_key.definition_identity}:"
+            f"{self.set_key.definition_identity}:"
+            f"{self.threshold_key.definition_identity}"
+        )
+        if self.decision_id != expected_decision_id:
+            raise ValueError("relic set activation decision identity mismatch")
+        if self.activation_status not in {"active", "inactive"}:
+            raise ValueError("invalid relic set activation status")
+        if self.matched_count < 0 or self.required_count <= 0:
+            raise ValueError("relic set activation counts are invalid")
+        if self.missing_count != max(0, self.required_count - self.matched_count):
+            raise ValueError("relic set activation missing_count mismatch")
+        expected_status = "active" if self.matched_count >= self.required_count else "inactive"
+        if self.activation_status != expected_status:
+            raise ValueError("relic set activation status does not match count")
+        contributors = cast(
+            tuple[RelicSetActivationContributor, ...],
+            _typed_tuple(
+                self.contributors,
+                RelicSetActivationContributor,
+                "relic set activation contributors",
+            ),
+        )
+        contributors = tuple(
+            sorted(
+                contributors,
+                key=lambda item: (
+                    item.slot_key.stable_id,
+                    item.instance_id,
+                    item.instance_fingerprint,
+                ),
+            )
+        )
+        if len(contributors) != self.matched_count:
+            raise ValueError("relic set activation contributors must equal matched_count")
+        contributor_ids = tuple(item.instance_id for item in contributors)
+        if len(contributor_ids) != len(set(contributor_ids)):
+            raise ValueError("relic set activation contributor identities must be unique")
+        for source in (self.domain_source, self.set_source, self.threshold_source):
+            _require_equipment_source(source)
+        _require_relic_derived_source(
+            self.domain_source,
+            source_role="relic_config",
+            raw_type="RelicDomainMembershipProjection",
+            raw_id=self.domain_key.definition_identity,
+        )
+        _require_relic_record_source(
+            self.set_source,
+            source_role="relic_set_config",
+            raw_type="RelicSetConfig",
+            raw_id=self.set_key.definition_identity,
+        )
+        _require_relic_record_source(
+            self.threshold_source,
+            source_role="relic_set_skill_config",
+            raw_type="RelicSetSkillConfig",
+            raw_id=self.threshold_key.definition_identity,
+        )
+        _require_matching_source_fingerprints(
+            (
+                self.domain_source,
+                self.set_source,
+                self.threshold_source,
+                *(item.template_source for item in contributors),
+            ),
+            "relic set activation",
+        )
+        object.__setattr__(self, "contributors", contributors)
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "decision_id": self.decision_id,
+            "threshold_key": self.threshold_key.to_json(),
+            "set_key": self.set_key.to_json(),
+            "domain_key": self.domain_key.to_json(),
+            "activation_status": self.activation_status,
+            "matched_count": self.matched_count,
+            "required_count": self.required_count,
+            "missing_count": self.missing_count,
+            "contributors": [item.to_json() for item in self.contributors],
+            "domain_source": self.domain_source.to_json(),
+            "set_source": self.set_source.to_json(),
+            "threshold_source": self.threshold_source.to_json(),
+        }
+
+    @classmethod
+    def from_json(cls, value: object) -> RelicSetActivationDecision:
+        row = _mapping(value, "relic_set_activation_decision")
+        _require_exact_fields(
+            row,
+            frozenset(
+                {
+                    "decision_id",
+                    "threshold_key",
+                    "set_key",
+                    "domain_key",
+                    "activation_status",
+                    "matched_count",
+                    "required_count",
+                    "missing_count",
+                    "contributors",
+                    "domain_source",
+                    "set_source",
+                    "threshold_source",
+                }
+            ),
+            "relic_set_activation_decision",
+        )
+        return cls(
+            decision_id=_text(row.get("decision_id"), "decision_id"),
+            threshold_key=EquipmentDefinitionKey.from_json(row.get("threshold_key")),
+            set_key=EquipmentDefinitionKey.from_json(row.get("set_key")),
+            domain_key=EquipmentDefinitionKey.from_json(row.get("domain_key")),
+            activation_status=cast(
+                Literal["active", "inactive"],
+                _text(row.get("activation_status"), "activation_status"),
+            ),
+            matched_count=_integer(row.get("matched_count"), "matched_count"),
+            required_count=_integer(row.get("required_count"), "required_count"),
+            missing_count=_integer(row.get("missing_count"), "missing_count"),
+            contributors=tuple(
+                RelicSetActivationContributor.from_json(item)
+                for item in _sequence(row.get("contributors"), "contributors")
+            ),
+            domain_source=_source_from_json(row.get("domain_source")),
+            set_source=_source_from_json(row.get("set_source")),
+            threshold_source=_source_from_json(row.get("threshold_source")),
+        )
+
+
+@dataclass(frozen=True)
 class EquipmentActivationBasis:
     basis_kind: Literal["light_cone_path_equality"]
     comparison_policy: Literal["exact_internal_path_identity_equality"]
@@ -5014,6 +5235,7 @@ class EquipmentAssemblyResult:
     battle_admission_status: BattleAdmissionStatus
     light_cone_selection: LightConeAssemblySelection | None = None
     relic_selections: tuple[RelicAssemblySelection, ...] = ()
+    relic_set_activation_decisions: tuple[RelicSetActivationDecision, ...] = ()
     static_contributions: tuple[StaticStatContribution, ...] = ()
     dynamic_mechanisms: tuple[DynamicMechanismSelection, ...] = ()
     activation_decisions: tuple[EquipmentActivationDecision, ...] = ()
@@ -5070,6 +5292,67 @@ class EquipmentAssemblyResult:
         if len(relic_slot_keys) != len(set(relic_slot_keys)):
             raise ValueError("relic selection slots must be unique")
         object.__setattr__(self, "relic_selections", relic_selections)
+        relic_set_activation_decisions = cast(
+            tuple[RelicSetActivationDecision, ...],
+            _typed_tuple(
+                self.relic_set_activation_decisions,
+                RelicSetActivationDecision,
+                "relic_set_activation_decisions",
+            ),
+        )
+        relic_set_activation_decisions = tuple(
+            sorted(
+                relic_set_activation_decisions,
+                key=lambda item: (
+                    item.domain_key.stable_id,
+                    item.set_key.stable_id,
+                    item.required_count,
+                    item.threshold_key.stable_id,
+                ),
+            )
+        )
+        threshold_keys = tuple(
+            item.threshold_key for item in relic_set_activation_decisions
+        )
+        if len(threshold_keys) != len(set(threshold_keys)):
+            raise ValueError("relic set activation thresholds must be unique")
+        decision_ids = tuple(
+            item.decision_id for item in relic_set_activation_decisions
+        )
+        if len(decision_ids) != len(set(decision_ids)):
+            raise ValueError("relic set activation identities must be unique")
+        selections_by_instance_id = {
+            item.instance_id: item for item in relic_selections
+        }
+        covered_relic_instance_ids: set[str] = set()
+        for decision in relic_set_activation_decisions:
+            for contributor in decision.contributors:
+                selection = selections_by_instance_id.get(contributor.instance_id)
+                if (
+                    selection is None
+                    or contributor.instance_fingerprint != selection.instance_fingerprint
+                    or contributor.selection_fingerprint != selection.selection_fingerprint
+                    or contributor.template_key != selection.template_key
+                    or contributor.slot_key != selection.slot_key
+                    or contributor.template_source != selection.template_source
+                ):
+                    raise ValueError(
+                        "relic set activation contributor does not match a relic selection"
+                    )
+                covered_relic_instance_ids.add(contributor.instance_id)
+        if relic_selections and not relic_set_activation_decisions:
+            raise ValueError("relic selections require set activation decisions")
+        if not relic_selections and relic_set_activation_decisions:
+            raise ValueError("relic set activation decisions require relic selections")
+        if covered_relic_instance_ids != set(selections_by_instance_id):
+            raise ValueError(
+                "relic set activation contributors must cover every relic selection"
+            )
+        object.__setattr__(
+            self,
+            "relic_set_activation_decisions",
+            relic_set_activation_decisions,
+        )
         object.__setattr__(
             self,
             "static_contributions",
@@ -5200,6 +5483,7 @@ class EquipmentAssemblyResult:
             if (
                 self.light_cone_selection is not None
                 or self.relic_selections
+                or self.relic_set_activation_decisions
                 or self.static_contributions
                 or self.dynamic_mechanisms
                 or self.activation_decisions
@@ -5516,6 +5800,9 @@ class EquipmentAssemblyResult:
             "relic_selections": [
                 item.to_json() for item in self.relic_selections
             ],
+            "relic_set_activation_decisions": [
+                item.to_json() for item in self.relic_set_activation_decisions
+            ],
             "static_contributions": [item.to_json() for item in self.static_contributions],
             "dynamic_mechanisms": [item.to_json() for item in self.dynamic_mechanisms],
             "activation_decisions": [item.to_json() for item in self.activation_decisions],
@@ -5542,6 +5829,7 @@ class EquipmentAssemblyResult:
                     "battle_admission_status",
                     "light_cone_selection",
                     "relic_selections",
+                    "relic_set_activation_decisions",
                     "static_contributions",
                     "dynamic_mechanisms",
                     "activation_decisions",
@@ -5572,6 +5860,13 @@ class EquipmentAssemblyResult:
                 for item in _sequence(
                     row.get("relic_selections"),
                     "relic_selections",
+                )
+            ),
+            relic_set_activation_decisions=tuple(
+                RelicSetActivationDecision.from_json(item)
+                for item in _sequence(
+                    row.get("relic_set_activation_decisions"),
+                    "relic_set_activation_decisions",
                 )
             ),
             static_contributions=tuple(
