@@ -464,6 +464,7 @@ def _build_definition_fixture(
         raw_group_id="fixture:main-group",
         affix_keys=(main_affix_key,),
         property_types=("AttackFlat",),
+        rarity_types=("fixture",),
         source=source,
         coverage_status="lowered",
         blocked_reason="",

@@ -11,6 +11,7 @@ from typing import Callable, Generic, Literal, TypeVar, cast
 from ..build_types import (
     CalculationKind,
     ContributionPool,
+    StatCalculation,
     StaticStatContribution,
     immutable_ir_source,
     ir_source_from_json,
@@ -53,7 +54,9 @@ EquipmentBattleBlockerChannel = Literal[
     "dynamic_ability",
     "relic_affix_validation",
 ]
-RelicAffixValidationStatus = Literal["deferred_to_s11_s12"]
+RelicAffixValidationStatus = Literal[
+    "main_affix_validated_sub_affix_deferred_to_s12"
+]
 
 LIGHT_CONE_PUBLICATION_STATES = frozenset(
     {"published", "unpublished", "status_unknown"}
@@ -1495,6 +1498,7 @@ class RelicMainAffixGroupDefinitionIR:
     raw_group_id: str
     affix_keys: tuple[EquipmentDefinitionKey, ...]
     property_types: tuple[str, ...]
+    rarity_types: tuple[str, ...]
     source: IRSource
     coverage_status: CoverageStatus = "blocked"
     blocked_reason: str = "relic_main_affix_group_not_lowered"
@@ -1516,8 +1520,15 @@ class RelicMainAffixGroupDefinitionIR:
         )
         if not properties or len(properties) != len(set(properties)):
             raise ValueError("main affix group properties must be non-empty and unique")
+        rarities = _string_tuple(
+            self.rarity_types,
+            "main affix group rarity_types",
+        )
+        if len(rarities) != len(set(rarities)):
+            raise ValueError("main affix group rarity_types must be unique")
         object.__setattr__(self, "affix_keys", affix_keys)
         object.__setattr__(self, "property_types", properties)
+        object.__setattr__(self, "rarity_types", rarities)
         _require_equipment_source(self.source)
         _require_relic_derived_source(
             self.source,
@@ -1540,6 +1551,7 @@ class RelicMainAffixGroupDefinitionIR:
                 "raw_group_id": self.raw_group_id,
                 "affix_keys": [key.to_json() for key in self.affix_keys],
                 "property_types": list(self.property_types),
+                "rarity_types": list(self.rarity_types),
             },
         )
 
@@ -1554,6 +1566,7 @@ class RelicMainAffixGroupDefinitionIR:
                     "raw_group_id",
                     "affix_keys",
                     "property_types",
+                    "rarity_types",
                     "source",
                     "coverage_status",
                     "blocked_reason",
@@ -1571,6 +1584,10 @@ class RelicMainAffixGroupDefinitionIR:
             property_types=tuple(
                 _text(item, "property_types[]")
                 for item in _sequence(row.get("property_types"), "property_types")
+            ),
+            rarity_types=tuple(
+                _text(item, "rarity_types[]")
+                for item in _sequence(row.get("rarity_types"), "rarity_types")
             ),
             source=_source_from_json(row.get("source")),
             coverage_status=_coverage_from_json(row),
@@ -2988,6 +3005,19 @@ def relic_definition_reference_issues(
                 "relic_template_main_group_slot_mismatch",
                 main_group.definition_key,
             )
+        if isinstance(main_group, RelicMainAffixGroupDefinitionIR):
+            if len(main_group.rarity_types) != 1:
+                add(
+                    template,
+                    "relic_template_main_group_rarity_ambiguous",
+                    main_group.definition_key,
+                )
+            elif template.rarity != main_group.rarity_types[0]:
+                add(
+                    template,
+                    "relic_template_main_group_rarity_mismatch",
+                    main_group.definition_key,
+                )
 
     for relic_set in sets:
         domain = resolve(
@@ -3995,6 +4025,165 @@ class LightConeAssemblySelection:
 
 
 @dataclass(frozen=True)
+class RelicMainAffixComputation:
+    """Typed main-affix admission result and exact value basis.
+
+    The value is computed as ``base_value + level_add * level`` entirely in
+    Decimal semantics from the lowered affix definition; callers never submit
+    the final value. The fingerprint covers every admission key, the level,
+    the calculation basis and the exact value.
+    """
+
+    template_key: EquipmentDefinitionKey
+    slot_key: EquipmentDefinitionKey
+    group_key: EquipmentDefinitionKey
+    affix_key: EquipmentDefinitionKey
+    property_type: str
+    level: int
+    exact_value: str
+    calculation: StatCalculation
+    template_source: IRSource
+    slot_source: IRSource
+    group_source: IRSource
+    affix_source: IRSource
+    computation_fingerprint: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        _require_kind(self.template_key, "relic_template")
+        _require_kind(self.slot_key, "relic_slot")
+        _require_kind(self.group_key, "relic_main_affix_group")
+        _require_kind(self.affix_key, "relic_main_affix")
+        group_identity = self.group_key.definition_identity
+        if not self.affix_key.definition_identity.startswith(f"{group_identity}:"):
+            raise ValueError("main affix identity must belong to its group")
+        _require_text(self.property_type, "main affix property_type")
+        _require_integer(self.level, "main affix level")
+        if self.level < 0:
+            raise ValueError("main affix level must be non-negative")
+        object.__setattr__(
+            self,
+            "exact_value",
+            exact_decimal_text(self.exact_value, "main affix exact_value"),
+        )
+        if not isinstance(self.calculation, StatCalculation):
+            raise TypeError("main affix calculation must be a StatCalculation")
+        if self.calculation.calculation_kind != "linear_growth":
+            raise ValueError("main affix calculation must be linear_growth")
+        if self.calculation.level_offset != self.level:
+            raise ValueError("main affix calculation level must match level")
+        if self.exact_value != self.calculation.exact_value:
+            raise ValueError("main affix exact_value must match calculation")
+        _require_equipment_source(self.template_source)
+        _require_equipment_source(self.slot_source)
+        _require_equipment_source(self.group_source)
+        _require_equipment_source(self.affix_source)
+        _require_relic_record_source(
+            self.template_source,
+            source_role="relic_config",
+            raw_type="RelicConfig",
+            raw_id=self.template_key.definition_identity,
+        )
+        _require_relic_record_source(
+            self.slot_source,
+            source_role="relic_base_type",
+            raw_type="RelicBaseType",
+            raw_id=self.slot_key.definition_identity,
+        )
+        _require_relic_record_source(
+            self.affix_source,
+            source_role="relic_main_affix_config",
+            raw_type="RelicMainAffixConfig",
+            raw_id=self.affix_key.definition_identity,
+        )
+        _require_relic_derived_source(
+            self.group_source,
+            source_role="relic_main_affix_config",
+            raw_type="RelicMainAffixGroupProjection",
+            raw_id=group_identity,
+        )
+        _require_matching_source_fingerprints(
+            (
+                self.template_source,
+                self.slot_source,
+                self.group_source,
+                self.affix_source,
+            ),
+            "relic main affix computation",
+        )
+        object.__setattr__(
+            self,
+            "computation_fingerprint",
+            _canonical_fingerprint(self._fingerprint_payload()),
+        )
+
+    def _fingerprint_payload(self) -> dict[str, JSONValue]:
+        return {
+            "template_key": self.template_key.to_json(),
+            "slot_key": self.slot_key.to_json(),
+            "group_key": self.group_key.to_json(),
+            "affix_key": self.affix_key.to_json(),
+            "property_type": self.property_type,
+            "level": self.level,
+            "exact_value": self.exact_value,
+            "calculation": self.calculation.to_json(),
+            "template_source": self.template_source.to_json(),
+            "slot_source": self.slot_source.to_json(),
+            "group_source": self.group_source.to_json(),
+            "affix_source": self.affix_source.to_json(),
+        }
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            **self._fingerprint_payload(),
+            "computation_fingerprint": self.computation_fingerprint,
+        }
+
+    @classmethod
+    def from_json(cls, value: object) -> RelicMainAffixComputation:
+        row = _mapping(value, "relic_main_affix_computation")
+        fields = frozenset(
+            {
+                "template_key",
+                "slot_key",
+                "group_key",
+                "affix_key",
+                "property_type",
+                "level",
+                "exact_value",
+                "calculation",
+                "template_source",
+                "slot_source",
+                "group_source",
+                "affix_source",
+                "computation_fingerprint",
+            }
+        )
+        _require_exact_fields(row, fields, "relic_main_affix_computation")
+        result = cls(
+            template_key=EquipmentDefinitionKey.from_json(row.get("template_key")),
+            slot_key=EquipmentDefinitionKey.from_json(row.get("slot_key")),
+            group_key=EquipmentDefinitionKey.from_json(row.get("group_key")),
+            affix_key=EquipmentDefinitionKey.from_json(row.get("affix_key")),
+            property_type=_text(row.get("property_type"), "property_type"),
+            level=_integer(row.get("level"), "level"),
+            exact_value=_text(row.get("exact_value"), "exact_value"),
+            calculation=StatCalculation.from_json(row.get("calculation")),
+            template_source=_source_from_json(row.get("template_source")),
+            slot_source=_source_from_json(row.get("slot_source")),
+            group_source=_source_from_json(row.get("group_source")),
+            affix_source=_source_from_json(row.get("affix_source")),
+        )
+        encoded = _text(
+            row.get("computation_fingerprint"),
+            "computation_fingerprint",
+        )
+        _require_sha256(encoded, "computation_fingerprint")
+        if encoded != result.computation_fingerprint:
+            raise ValueError("relic main affix computation fingerprint mismatch")
+        return result
+
+
+@dataclass(frozen=True)
 class RelicAssemblySelection:
     instance_id: str
     instance_fingerprint: str
@@ -4006,6 +4195,7 @@ class RelicAssemblySelection:
     affix_validation_status: RelicAffixValidationStatus
     template_source: IRSource
     slot_source: IRSource
+    main_affix: RelicMainAffixComputation
     selection_fingerprint: str = field(init=False)
 
     def __post_init__(self) -> None:
@@ -4020,7 +4210,9 @@ class RelicAssemblySelection:
             raise ValueError("relic selections require a published template")
         if self.template_mode != "BASIC":
             raise ValueError("formal relic selections require BASIC template mode")
-        if self.affix_validation_status != "deferred_to_s11_s12":
+        if self.affix_validation_status != (
+            "main_affix_validated_sub_affix_deferred_to_s12"
+        ):
             raise ValueError("invalid relic affix validation status")
         _require_equipment_source(self.template_source)
         _require_relic_record_source(
@@ -4041,6 +4233,20 @@ class RelicAssemblySelection:
             != self.slot_source.evidence.get("source_fingerprint")
         ):
             raise ValueError("relic selection sources must share one source fingerprint")
+        if not isinstance(self.main_affix, RelicMainAffixComputation):
+            raise TypeError("relic selection main_affix must be a computation")
+        if (
+            self.main_affix.template_key != self.template_key
+            or self.main_affix.slot_key != self.slot_key
+        ):
+            raise ValueError("relic selection main affix keys must match selection")
+        if self.main_affix.level != self.level:
+            raise ValueError("relic selection main affix level must match selection")
+        if (
+            self.main_affix.template_source != self.template_source
+            or self.main_affix.slot_source != self.slot_source
+        ):
+            raise ValueError("relic selection main affix sources must match selection")
         object.__setattr__(
             self,
             "selection_fingerprint",
@@ -4059,6 +4265,7 @@ class RelicAssemblySelection:
             "affix_validation_status": self.affix_validation_status,
             "template_source": self.template_source.to_json(),
             "slot_source": self.slot_source.to_json(),
+            "main_affix": self.main_affix.to_json(),
         }
 
     def to_json(self) -> dict[str, JSONValue]:
@@ -4084,6 +4291,7 @@ class RelicAssemblySelection:
                     "affix_validation_status",
                     "template_source",
                     "slot_source",
+                    "main_affix",
                     "selection_fingerprint",
                 }
             ),
@@ -4115,6 +4323,7 @@ class RelicAssemblySelection:
             ),
             template_source=_source_from_json(row.get("template_source")),
             slot_source=_source_from_json(row.get("slot_source")),
+            main_affix=RelicMainAffixComputation.from_json(row.get("main_affix")),
         )
         encoded = _text(row.get("selection_fingerprint"), "selection_fingerprint")
         _require_sha256(encoded, "selection_fingerprint")
@@ -4748,7 +4957,7 @@ class EquipmentAssemblyResult:
                         blocker.channel != "relic_affix_validation"
                         or blocker.gap_classification != "admission_gap"
                         or blocker.reason_code
-                        != "relic_affix_validation_deferred_to_s11_s12"
+                        != "relic_sub_affix_validation_deferred_to_s12"
                         or blocker.source_refs
                         != tuple(
                             sorted(

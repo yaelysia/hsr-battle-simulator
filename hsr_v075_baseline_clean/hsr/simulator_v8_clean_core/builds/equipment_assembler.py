@@ -25,6 +25,7 @@ from ..equipment.models import (
 )
 from ..rules.value_binding import ExactEquipmentValueBindingRequest, ValueResolver
 from ..rules.rulebook import RuleBook
+from .relic_affix_calculator import admit_relic_main_affix
 
 
 def assemble_equipment_build(
@@ -360,6 +361,38 @@ def _admit_relic_instances(
             )
         if len(diagnostics) != diagnostic_count or slot_definition is None:
             continue
+        main_affix, main_affix_issues = admit_relic_main_affix(
+            rules,
+            template,
+            slot_definition,
+            instance,
+        )
+        if main_affix_issues:
+            diagnostics.extend(
+                EquipmentAssemblyDiagnostic(
+                    diagnostic_id=(
+                        f"equipment_assembly:{build.build_id}:"
+                        f"{instance.instance_id}:{issue.reason}"
+                    ),
+                    reason=issue.reason,
+                    requested_key=issue.requested_key,
+                    candidates=issue.candidates,
+                )
+                for issue in main_affix_issues
+            )
+            continue
+        if main_affix is None:
+            diagnostics.append(
+                EquipmentAssemblyDiagnostic(
+                    diagnostic_id=(
+                        f"equipment_assembly:{build.build_id}:"
+                        f"{instance.instance_id}:relic_main_affix_not_admitted"
+                    ),
+                    reason="relic_main_affix_not_admitted",
+                    requested_key=instance.main_affix_key,
+                )
+            )
+            continue
         selection = RelicAssemblySelection(
             instance_id=instance.instance_id,
             instance_fingerprint=instance.instance_fingerprint,
@@ -368,9 +401,12 @@ def _admit_relic_instances(
             level=instance.level,
             publication_status=template.publication_status,
             template_mode=template.mode,
-            affix_validation_status="deferred_to_s11_s12",
+            affix_validation_status=(
+                "main_affix_validated_sub_affix_deferred_to_s12"
+            ),
             template_source=template.source,
             slot_source=slot_definition.source,
+            main_affix=main_affix,
         )
         selections.append(selection)
         blockers.append(
@@ -382,7 +418,7 @@ def _admit_relic_instances(
                 channel="relic_affix_validation",
                 target_definition_key=template.definition_key,
                 gap_classification="admission_gap",
-                reason_code="relic_affix_validation_deferred_to_s11_s12",
+                reason_code="relic_sub_affix_validation_deferred_to_s12",
                 source_refs=(template.source, slot_definition.source),
             )
         )

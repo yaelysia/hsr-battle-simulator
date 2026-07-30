@@ -4,7 +4,7 @@ import hashlib
 import json
 from collections import Counter, defaultdict
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -854,6 +854,14 @@ def build_relic_catalog_from_documents(
         "relic_config",
         issues,
     )
+    main_group_rarities = _project_main_group_rarities(template_records)
+    main_groups = {
+        group_id: replace(
+            group,
+            rarity_types=main_group_rarities.get(group_id, ()),
+        )
+        for group_id, group in main_groups.items()
+    }
     threshold_records = _unique_rows(
         rows_by_role["relic_set_skill_config"],
         indexes_by_role["relic_set_skill_config"],
@@ -1418,6 +1426,27 @@ def _build_slot_records(
     return unique, tuple(sorted(filters, key=lambda item: item.filter_identity))
 
 
+def _project_main_group_rarities(
+    template_records: Mapping[str, tuple[Mapping[str, object], int]],
+) -> dict[str, tuple[str, ...]]:
+    """Project each main affix group's usable rarities from real template rows."""
+
+    rarities: dict[str, set[str]] = defaultdict(set)
+    for row, _source_index in template_records.values():
+        group_id = row.get("MainAffixGroup")
+        rarity = row.get("Rarity")
+        if (
+            isinstance(group_id, int)
+            and not isinstance(group_id, bool)
+            and isinstance(rarity, str)
+            and rarity
+        ):
+            rarities[str(group_id)].add(rarity)
+    return {
+        group_id: tuple(sorted(values)) for group_id, values in rarities.items()
+    }
+
+
 def _build_main_affixes(
     rows: Sequence[Mapping[str, object]],
     source_indexes: Sequence[int],
@@ -1500,6 +1529,7 @@ def _build_main_affixes(
             property_types=tuple(
                 sorted({item.property_type for item in members})
             ),
+            rarity_types=(),
             source=_derived_source(
                 "relic_main_affix_config",
                 "RelicMainAffixGroupProjection",

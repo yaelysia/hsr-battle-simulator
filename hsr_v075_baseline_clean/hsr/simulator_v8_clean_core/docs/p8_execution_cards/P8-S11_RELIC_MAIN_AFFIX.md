@@ -19,7 +19,8 @@ S9 应保存模板的 `MainAffixGroup`、六部位全局允许属性和主词条
 
 - 建立 template -> main group -> affix definition 与 slot -> allowed property 的交叉 admission。
 - 计算 `base_value + level_add * level` 或 raw 明确公式；公式必须由独立 raw oracle 逐字段核对，不从显示答案反推。
-- 支持 BASIC 与已明确准入的特殊模板各自分组，不让全局部位池扩大模板自身选择。
+- 只处理 S10 已准入的 BASIC 模板。CUSTOM 继续仅保留在定义目录，UNKNOWN 继续
+  fail-closed；S11 不为二者建立主词条执行支线。
 - 为六个部位动态生成合法/跨槽非法矩阵；固定头/手和可选躯干/脚/球/绳都覆盖。
 - 保留 template、slot、group、affix ID、property、level、精确值和 raw JSON path。
 - 将验证通过的主词条计算结果放入装配中间结果，但暂不进入最终静态贡献账本。
@@ -46,7 +47,7 @@ S9 应保存模板的 `MainAffixGroup`、六部位全局允许属性和主词条
 | 目标 | 通过条件 | 证据 |
 |---|---|---|
 | 六槽合法池真实 | 从三层关系动态交叉，六槽集合非空 | slot/property matrix |
-| 模板约束生效 | 全局槽位合法但不属于模板 group 的组合被拒绝 | special/group negatives |
+| 模板约束生效 | 全局槽位合法但不属于 BASIC 模板 group 的组合被拒绝 | group negatives |
 | 精确等级数值 | +0/中间/最大与独立 Decimal raw oracle 相同 | numeric oracle matrix |
 | 跨槽拒绝 | 头非固定生命、手非固定攻击及各可选槽错误组合均失败 | cross-slot matrix |
 | 来源完整 | 结果可回到模板、部位记录、group 和 affix 数值字段 | source walkback |
@@ -59,7 +60,8 @@ S9 应保存模板的 `MainAffixGroup`、六部位全局允许属性和主词条
 - `builds/equipment_assembler.py` 或独立纯函数模块 `builds/relic_affix_calculator.py`：主词条 admission 和 Decimal 计算。
 - `rules/rulebook.py`：只补按 group/identity 的窄查询，不提供模糊首项 fallback。
 - `tools/validate_p8_s11_relic_main_affix.py` 和阶段报告。
-- S10 fixture 原子迁移；不修改 runtime/ScenarioStateBuilder。
+- 使用 S11 自己的最小 BASIC 构筑样本；不扩写或复制 S10 验证器，不修改
+  runtime/ScenarioStateBuilder。只有共享生产 schema 确实变化时才运行对应小型 direct。
 
 是否新建 calculator 由当前代码复杂度决定；同一公式不得在验证、assembler 和 UI 复制。验证 oracle 必须独立重读 raw，不调用生产计算函数。
 
@@ -84,7 +86,8 @@ blocked_main_affix_contributes_nothing=true
 
 - raw 有合法关系但 S9 没投影：`lowering_gap`，回修 S9 类型化定义。
 - S9 定义完整但装配未校验/计算：`implementation_missing`，本阶段修。
-- 当前特殊模板规则不能由现有 group 表达：报告真实 source/engine-rule gap，不得借普通池放行。
+- CUSTOM 或 UNKNOWN 出现在正式主词条装配路径：属于 S10 admission 回退，必须阻断，
+  不得借 BASIC 池放行。
 - 独立 oracle 与生产值不一致时停止，先定位 Decimal 读取、公式或等级语义，不能改期望值迎合实现。
 
 ## 验证门与资源预算
@@ -105,7 +108,9 @@ git diff --check
 Decimal/属性类型时，追加一个对应的小型 direct。
 
 单次主验证不超过 5 分钟、768 MiB RSS；本阶段累计验证不超过 10 分钟，默认总产物
-不超过 3 MiB。禁止完整 RuleBook、副词条、套装、战斗、跨阶段聚合和重复 raw 解析。
+不超过 3 MiB。业务验证只允许一个公开 CLI mode，不增设重复的 slice/direct/probe
+完成门；新增验证代码不超过 900 行非空 Python，预计超限时暂停并修订证据设计，不得
+通过拆文件规避。禁止完整 RuleBook、副词条、套装、战斗、跨阶段聚合和重复 raw 解析。
 
 ## Ready-for-review 产物
 
@@ -116,10 +121,10 @@ Decimal/属性类型时，追加一个对应的小型 direct。
 
 ## 唯一执行清单（仅验收线程可勾）
 
-- [ ] 六部位主词条合法池由真实三层关系动态生成。
-- [ ] 模板 group 与部位池均强制校验，跨槽和特殊模板错误 fail-closed。
-- [ ] +0、中间和最大强化值与独立 Decimal oracle 一致。
-- [ ] UI/用户最终值、float、显示舍入和模糊定义不能进入规则。
-- [ ] 每个结果来源完整，blocked 不产生值或贡献。
-- [ ] S10 已验收契约未被实际改动，或已通过对应最小 direct；代码通用性和资源预算通过。
-- [ ] `ready_for_review` evidence 完整，阶段无主词条 blocker。
+- [x] 六部位主词条合法池由真实三层关系动态生成。
+- [x] 模板 group 与部位池均强制校验，跨槽和特殊模板错误 fail-closed。
+- [x] +0、中间和最大强化值与独立 Decimal oracle 一致。
+- [x] UI/用户最终值、float、显示舍入和模糊定义不能进入规则。
+- [x] 每个结果来源完整，blocked 不产生值或贡献。
+- [x] S10 已验收契约未被实际改动，或已通过对应最小 direct；代码通用性和资源预算通过。
+- [x] `ready_for_review` evidence 完整，阶段无主词条 blocker。
