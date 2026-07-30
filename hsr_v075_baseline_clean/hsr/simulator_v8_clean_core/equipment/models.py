@@ -61,6 +61,9 @@ RelicAffixValidationStatus = Literal[
 RELIC_ASSEMBLY_NOT_ASSEMBLED_REASON = (
     "relic_static_contributions_not_assembled"
 )
+RELIC_SET_DYNAMIC_ABILITY_NOT_ASSEMBLED_REASON = (
+    "relic_set_dynamic_ability_not_assembled"
+)
 
 LIGHT_CONE_PUBLICATION_STATES = frozenset(
     {"published", "unpublished", "status_unknown"}
@@ -4682,6 +4685,8 @@ class RelicSetActivationDecision:
     matched_count: int
     required_count: int
     missing_count: int
+    static_property_indices: tuple[int, ...]
+    ability_source: RelicAbilitySourceIR | None
     contributors: tuple[RelicSetActivationContributor, ...]
     domain_source: IRSource
     set_source: IRSource
@@ -4714,6 +4719,30 @@ class RelicSetActivationDecision:
         expected_status = "active" if self.matched_count >= self.required_count else "inactive"
         if self.activation_status != expected_status:
             raise ValueError("relic set activation status does not match count")
+        if not isinstance(self.static_property_indices, (list, tuple)) or not all(
+            isinstance(item, int) and not isinstance(item, bool) and item >= 0
+            for item in self.static_property_indices
+        ):
+            raise TypeError(
+                "relic set static_property_indices must contain non-negative integers"
+            )
+        static_property_indices = tuple(self.static_property_indices)
+        if static_property_indices != tuple(range(len(static_property_indices))):
+            raise ValueError(
+                "relic set static_property_indices must be ordered and contiguous"
+            )
+        object.__setattr__(
+            self,
+            "static_property_indices",
+            static_property_indices,
+        )
+        if self.ability_source is not None and not isinstance(
+            self.ability_source,
+            RelicAbilitySourceIR,
+        ):
+            raise TypeError(
+                "relic set activation ability_source must be RelicAbilitySourceIR or None"
+            )
         contributors = cast(
             tuple[RelicSetActivationContributor, ...],
             _typed_tuple(
@@ -4757,6 +4786,11 @@ class RelicSetActivationDecision:
             raw_type="RelicSetSkillConfig",
             raw_id=self.threshold_key.definition_identity,
         )
+        if self.ability_source is not None:
+            _require_matching_source_fingerprints(
+                (self.threshold_source, self.ability_source.source),
+                "relic set activation ability source",
+            )
         _require_matching_source_fingerprints(
             (
                 self.domain_source,
@@ -4778,6 +4812,12 @@ class RelicSetActivationDecision:
             "matched_count": self.matched_count,
             "required_count": self.required_count,
             "missing_count": self.missing_count,
+            "static_property_indices": list(self.static_property_indices),
+            "ability_source": (
+                self.ability_source.to_json()
+                if self.ability_source is not None
+                else None
+            ),
             "contributors": [item.to_json() for item in self.contributors],
             "domain_source": self.domain_source.to_json(),
             "set_source": self.set_source.to_json(),
@@ -4799,6 +4839,8 @@ class RelicSetActivationDecision:
                     "matched_count",
                     "required_count",
                     "missing_count",
+                    "static_property_indices",
+                    "ability_source",
                     "contributors",
                     "domain_source",
                     "set_source",
@@ -4819,6 +4861,18 @@ class RelicSetActivationDecision:
             matched_count=_integer(row.get("matched_count"), "matched_count"),
             required_count=_integer(row.get("required_count"), "required_count"),
             missing_count=_integer(row.get("missing_count"), "missing_count"),
+            static_property_indices=tuple(
+                _integer(item, "static_property_indices[]")
+                for item in _sequence(
+                    row.get("static_property_indices"),
+                    "static_property_indices",
+                )
+            ),
+            ability_source=(
+                RelicAbilitySourceIR.from_json(row.get("ability_source"))
+                if row.get("ability_source") is not None
+                else None
+            ),
             contributors=tuple(
                 RelicSetActivationContributor.from_json(item)
                 for item in _sequence(row.get("contributors"), "contributors")
@@ -5033,12 +5087,18 @@ class EquipmentBattleAdmissionBlocker:
             raise ValueError(
                 "relic assembly blockers must target a relic template"
             )
-        if (
-            self.channel != "relic_assembly"
-            and self.target_definition_key.definition_kind != "light_cone"
+        if self.channel == "static_passive" and (
+            self.target_definition_key.definition_kind != "light_cone"
         ):
             raise ValueError(
-                "light-cone battle blockers must target a light cone"
+                "static passive blockers must target a light cone"
+            )
+        if self.channel == "dynamic_ability" and (
+            self.target_definition_key.definition_kind
+            not in {"light_cone", "relic_set_threshold"}
+        ):
+            raise ValueError(
+                "dynamic ability blockers must target a light cone or relic set threshold"
             )
         if self.gap_classification not in {
             "lowering_gap",
@@ -5353,16 +5413,22 @@ class EquipmentAssemblyResult:
             "relic_set_activation_decisions",
             relic_set_activation_decisions,
         )
+        static_contributions = cast(
+            tuple[StaticStatContribution, ...],
+            _typed_tuple(
+                self.static_contributions,
+                StaticStatContribution,
+                "static_contributions",
+            ),
+        )
         object.__setattr__(
             self,
             "static_contributions",
-            cast(
-                tuple[StaticStatContribution, ...],
-                _typed_tuple(
-                    self.static_contributions,
-                    StaticStatContribution,
-                    "static_contributions",
-                ),
+            tuple(
+                sorted(
+                    static_contributions,
+                    key=lambda item: item.sort_key,
+                )
             ),
         )
         contribution_id_values = tuple(
@@ -5398,16 +5464,22 @@ class EquipmentAssemblyResult:
                 ),
             ),
         )
+        battle_admission_blockers = cast(
+            tuple[EquipmentBattleAdmissionBlocker, ...],
+            _typed_tuple(
+                self.battle_admission_blockers,
+                EquipmentBattleAdmissionBlocker,
+                "battle_admission_blockers",
+            ),
+        )
         object.__setattr__(
             self,
             "battle_admission_blockers",
-            cast(
-                tuple[EquipmentBattleAdmissionBlocker, ...],
-                _typed_tuple(
-                    self.battle_admission_blockers,
-                    EquipmentBattleAdmissionBlocker,
-                    "battle_admission_blockers",
-                ),
+            tuple(
+                sorted(
+                    battle_admission_blockers,
+                    key=lambda item: item.blocker_id,
+                )
             ),
         )
         blocker_ids = tuple(
@@ -5420,21 +5492,37 @@ class EquipmentAssemblyResult:
             for blocker in self.battle_admission_blockers
             if blocker.target_definition_key.definition_kind == "light_cone"
         )
-        relic_blockers = tuple(
+        relic_assembly_blockers = tuple(
             blocker
             for blocker in self.battle_admission_blockers
             if blocker.target_definition_key.definition_kind == "relic_template"
         )
+        relic_dynamic_blockers = tuple(
+            blocker
+            for blocker in self.battle_admission_blockers
+            if blocker.target_definition_key.definition_kind
+            == "relic_set_threshold"
+        )
+        source_ledger = cast(
+            tuple[EquipmentSourceLedgerEntry, ...],
+            _typed_tuple(
+                self.source_ledger,
+                EquipmentSourceLedgerEntry,
+                "source_ledger",
+            ),
+        )
         object.__setattr__(
             self,
             "source_ledger",
-            cast(
-                tuple[EquipmentSourceLedgerEntry, ...],
-                _typed_tuple(
-                    self.source_ledger,
-                    EquipmentSourceLedgerEntry,
-                    "source_ledger",
-                ),
+            tuple(
+                sorted(
+                    source_ledger,
+                    key=lambda item: (
+                        item.channel,
+                        item.definition_key.stable_id,
+                        item.ledger_entry_id,
+                    ),
+                )
             ),
         )
         ledger_entry_ids = tuple(item.ledger_entry_id for item in self.source_ledger)
@@ -5501,46 +5589,47 @@ class EquipmentAssemblyResult:
                     raise ValueError("admitted equipment results cannot carry battle blockers")
             elif not self.battle_admission_blockers:
                 raise ValueError("assembled but battle-blocked equipment requires blockers")
-            expected_relic_blocker_ids = {
-                (
-                    f"{self.assembly_id}:{selection.instance_id}:"
-                    "relic_assembly"
-                ): selection
-                for selection in self.relic_selections
-            }
-            relic_blockers_by_id = {
-                blocker.blocker_id: blocker for blocker in relic_blockers
-            }
-            if set(relic_blockers_by_id) != set(expected_relic_blocker_ids):
+            if relic_assembly_blockers:
                 raise ValueError(
-                    "relic selections and assembly blockers must close one-to-one"
+                    "assembled relic selections cannot retain static assembly blockers"
                 )
-            for blocker_id, selection in expected_relic_blocker_ids.items():
-                blocker = relic_blockers_by_id[blocker_id]
-                if (
-                    blocker.channel != "relic_assembly"
-                    or blocker.target_definition_key != selection.template_key
-                    or blocker.gap_classification != "implementation_missing"
-                    or blocker.reason_code != RELIC_ASSEMBLY_NOT_ASSEMBLED_REASON
-                    or blocker.source_refs != selection.assembly_source_refs
-                ):
-                    raise ValueError(
-                        "relic assembly blocker does not match its selection"
-                    )
+            _validate_relic_static_result_channels(
+                self.assembly_id,
+                self.relic_selections,
+                self.relic_set_activation_decisions,
+                self.static_contributions,
+                static_ledger,
+                self.source_ledger,
+                relic_dynamic_blockers,
+            )
             if self.light_cone_selection is None:
+                light_cone_ledger = tuple(
+                    entry
+                    for entry in self.source_ledger
+                    if entry.definition_key.definition_kind == "light_cone"
+                )
                 if (
-                    self.static_contributions
+                    any(
+                        contribution.source_ref.definition_kind == "light_cone"
+                        for contribution in self.static_contributions
+                    )
                     or self.dynamic_mechanisms
                     or self.activation_decisions
                     or light_cone_blockers
-                    or self.source_ledger
+                    or light_cone_ledger
                 ):
                     raise ValueError(
                         "equipment without a light cone cannot expose light-cone result channels"
                     )
             else:
+                light_cone_contributions = tuple(
+                    contribution
+                    for contribution in self.static_contributions
+                    if contribution.source_ref.definition_kind == "light_cone"
+                )
                 contributions_by_id = {
-                    item.contribution_id: item for item in self.static_contributions
+                    item.contribution_id: item
+                    for item in light_cone_contributions
                 }
                 contribution_ids = set(contributions_by_id)
                 if not set(self.light_cone_selection.base_contribution_ids).issubset(
@@ -5561,7 +5650,7 @@ class EquipmentAssemblyResult:
                     )
                 selected_base_contributions = tuple(
                     contribution
-                    for contribution in self.static_contributions
+                    for contribution in light_cone_contributions
                     if contribution.contribution_id
                     in self.light_cone_selection.base_contribution_ids
                 )
@@ -5582,7 +5671,7 @@ class EquipmentAssemblyResult:
                         f"equipment_source:{contribution.contribution_id}"
                     ].definition_key
                     != self.light_cone_selection.definition_key
-                    for contribution in self.static_contributions
+                    for contribution in light_cone_contributions
                 ):
                     raise ValueError(
                         "all light-cone static contributions and ledger entries must belong to the selected definition"
@@ -5902,6 +5991,233 @@ class EquipmentAssemblyResult:
         if encoded_fingerprint != result.result_fingerprint:
             raise ValueError("equipment assembly result fingerprint does not match the encoded payload")
         return result
+
+
+def _validate_relic_static_result_channels(
+    assembly_id: str,
+    selections: tuple[RelicAssemblySelection, ...],
+    decisions: tuple[RelicSetActivationDecision, ...],
+    contributions: tuple[StaticStatContribution, ...],
+    static_ledger: Mapping[str, EquipmentSourceLedgerEntry],
+    source_ledger: tuple[EquipmentSourceLedgerEntry, ...],
+    dynamic_blockers: tuple[EquipmentBattleAdmissionBlocker, ...],
+) -> None:
+    if any(
+        entry.channel != "static"
+        and entry.definition_key.definition_kind != "light_cone"
+        for entry in source_ledger
+    ):
+        raise ValueError(
+            "relic source ledger entries may only use the static channel"
+        )
+    relic_contributions = {
+        contribution.contribution_id: contribution
+        for contribution in contributions
+        if contribution.source_ref.definition_kind != "light_cone"
+    }
+    expected_affix_terms: dict[
+        str,
+        tuple[
+            EquipmentDefinitionKey,
+            str,
+            str,
+            StatCalculation,
+            IRSource,
+        ],
+    ] = {}
+    for selection in selections:
+        main = selection.main_affix
+        main_id = (
+            f"relic_main_affix:{selection.instance_id}:"
+            f"affix:{main.affix_key.definition_identity}"
+        )
+        main_binding = static_property_binding(main.property_type)
+        if main_binding is None:
+            raise ValueError(
+                "relic main affix property type has no static binding"
+            )
+        expected_affix_terms[main_id] = (
+            main.affix_key,
+            main_binding.contribution_pool,
+            main_binding.canonical_property_type,
+            StatCalculation(main_binding.calculation_kind, main.exact_value),
+            main.affix_source,
+        )
+        for sub_affix in selection.sub_affixes:
+            sub_id = (
+                f"relic_sub_affix:{selection.instance_id}:"
+                f"affix:{sub_affix.affix_key.definition_identity}"
+            )
+            if sub_id in expected_affix_terms:
+                raise ValueError(
+                    "relic affix contribution identity is consumed more than once"
+                )
+            sub_binding = static_property_binding(sub_affix.property_type)
+            if sub_binding is None:
+                raise ValueError(
+                    "relic sub affix property type has no static binding"
+                )
+            expected_affix_terms[sub_id] = (
+                sub_affix.affix_key,
+                sub_binding.contribution_pool,
+                sub_binding.canonical_property_type,
+                StatCalculation(
+                    sub_binding.calculation_kind,
+                    sub_affix.exact_value,
+                ),
+                sub_affix.affix_source,
+            )
+
+    expected_set_terms: dict[
+        str,
+        tuple[RelicSetActivationDecision, int],
+    ] = {}
+    for decision in decisions:
+        if decision.activation_status != "active":
+            continue
+        for property_index in decision.static_property_indices:
+            contribution_id = (
+                f"relic_set_static:{decision.decision_id}:"
+                f"property:{property_index}"
+            )
+            if contribution_id in expected_set_terms:
+                raise ValueError(
+                    "relic set static property identity is consumed more than once"
+                )
+            expected_set_terms[contribution_id] = (
+                decision,
+                property_index,
+            )
+
+    expected_ids = set(expected_affix_terms).union(expected_set_terms)
+    if set(relic_contributions) != expected_ids:
+        raise ValueError(
+            "relic selections and active thresholds require exact static contributions"
+        )
+
+    for contribution_id, expected in expected_affix_terms.items():
+        (
+            definition_key,
+            contribution_pool,
+            property_type,
+            calculation,
+            source,
+        ) = expected
+        contribution = relic_contributions[contribution_id]
+        if (
+            contribution.contribution_pool != contribution_pool
+            or contribution.property_type != property_type
+            or contribution.exact_value != calculation.exact_value
+            or contribution.calculation != calculation
+            or contribution.source_ref.definition_kind
+            != definition_key.definition_kind
+            or contribution.source_ref.definition_identity
+            != definition_key.definition_identity
+            or contribution.source != source
+            or static_ledger[
+                f"equipment_source:{contribution_id}"
+            ].definition_key
+            != definition_key
+        ):
+            raise ValueError(
+                "relic affix contribution does not match its selected computation"
+            )
+
+    calculation_kinds = {
+        "percentage": "ratio",
+        "flat": "flat",
+        "resource": "resource",
+    }
+    for contribution_id, (decision, property_index) in expected_set_terms.items():
+        contribution = relic_contributions[contribution_id]
+        expected_kind = calculation_kinds.get(
+            contribution.contribution_pool
+        )
+        source = contribution.source
+        threshold_json_path = decision.threshold_source.evidence.get(
+            "json_path"
+        )
+        if (
+            expected_kind is None
+            or contribution.calculation
+            != StatCalculation(expected_kind, contribution.exact_value)
+            or contribution.source_ref.definition_kind
+            != "relic_set_threshold"
+            or contribution.source_ref.definition_identity
+            != decision.threshold_key.definition_identity
+            or static_ledger[
+                f"equipment_source:{contribution_id}"
+            ].definition_key
+            != decision.threshold_key
+            or source.raw_type != "RelicSetSkillStaticProperty"
+            or source.raw_id
+            != f"{decision.threshold_key.definition_identity}:{property_index}"
+            or source.evidence.get("source_fingerprint")
+            != decision.threshold_source.evidence.get("source_fingerprint")
+        ):
+            raise ValueError(
+                "relic set static contribution does not match its active threshold"
+            )
+        if (
+            decision.threshold_source.evidence.get("source_kind") == "tbgd"
+            and (
+                not isinstance(threshold_json_path, str)
+                or source.source_path
+                != decision.threshold_source.source_path
+                or source.evidence.get("json_path")
+                != (
+                    f"{threshold_json_path}.PropertyList[{property_index}]"
+                    ".MNDFOPKBHKP.Value"
+                )
+            )
+        ):
+            raise ValueError(
+                "relic set static contribution raw source is detached from its threshold"
+            )
+
+    expected_blockers = {
+        (
+            f"{assembly_id}:{decision.decision_id}:"
+            "dynamic_ability"
+        ): decision
+        for decision in decisions
+        if decision.activation_status == "active"
+        and decision.ability_source is not None
+    }
+    blockers_by_id = {
+        blocker.blocker_id: blocker for blocker in dynamic_blockers
+    }
+    if set(blockers_by_id) != set(expected_blockers):
+        raise ValueError(
+            "active relic set abilities require exact battle blockers"
+        )
+    for blocker_id, decision in expected_blockers.items():
+        blocker = blockers_by_id[blocker_id]
+        expected_sources = tuple(
+            sorted(
+                (
+                    decision.threshold_source,
+                    decision.ability_source.source,
+                ),
+                key=lambda item: (
+                    item.source_path,
+                    item.raw_type,
+                    item.raw_id,
+                    str(item.evidence.get("json_path") or ""),
+                ),
+            )
+        )
+        if (
+            blocker.channel != "dynamic_ability"
+            or blocker.target_definition_key != decision.threshold_key
+            or blocker.gap_classification != "implementation_missing"
+            or blocker.reason_code
+            != RELIC_SET_DYNAMIC_ABILITY_NOT_ASSEMBLED_REASON
+            or blocker.source_refs != expected_sources
+        ):
+            raise ValueError(
+                "relic set dynamic blocker does not match its active ability source"
+            )
 
 
 def _require_kind(key: EquipmentDefinitionKey, expected: EquipmentDefinitionKind) -> None:

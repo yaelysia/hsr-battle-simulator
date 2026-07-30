@@ -2,7 +2,12 @@ from __future__ import annotations
 
 from collections import Counter
 
-from ..build_types import BuildSourceRef, StatCalculation, StaticStatContribution
+from ..build_types import (
+    BuildSourceRef,
+    StatCalculation,
+    StaticStatContribution,
+    static_property_binding,
+)
 from ..ir_types import IRSource
 from ..equipment.models import (
     CharacterEquipmentEligibilityIR,
@@ -12,6 +17,7 @@ from ..equipment.models import (
     EquipmentAssemblyResult,
     EquipmentBattleAdmissionBlocker,
     EquipmentBuildInput,
+    EquipmentDefinitionKey,
     EquipmentDefinitionResolution,
     EquipmentDynamicParameterBinding,
     EquipmentSourceLedgerEntry,
@@ -21,8 +27,9 @@ from ..equipment.models import (
     LightConeInstanceInput,
     LightConePromotionTierIR,
     LightConeSuperimpositionLevelIR,
-    RELIC_ASSEMBLY_NOT_ASSEMBLED_REASON,
+    RELIC_SET_DYNAMIC_ABILITY_NOT_ASSEMBLED_REASON,
     RelicAssemblySelection,
+    RelicSetActivationDecision,
 )
 from ..rules.value_binding import ExactEquipmentValueBindingRequest, ValueResolver
 from ..rules.rulebook import RuleBook
@@ -55,7 +62,22 @@ def assemble_equipment_build(
     )
     if relic_set_diagnostics:
         return _blocked(build, *relic_set_diagnostics)
-    relic_blockers = _relic_assembly_blockers(build, relic_selections)
+    (
+        relic_contributions,
+        relic_source_ledger,
+        relic_static_diagnostics,
+    ) = _relic_static_channels(
+        rules,
+        build,
+        relic_selections,
+        relic_set_activation_decisions,
+    )
+    if relic_static_diagnostics:
+        return _blocked(build, *relic_static_diagnostics)
+    relic_blockers = _relic_dynamic_ability_blockers(
+        build,
+        relic_set_activation_decisions,
+    )
     if build.light_cone is None:
         return EquipmentAssemblyResult(
             assembly_id=f"equipment_assembly:{build.build_id}",
@@ -66,7 +88,9 @@ def assemble_equipment_build(
             ),
             relic_selections=relic_selections,
             relic_set_activation_decisions=relic_set_activation_decisions,
+            static_contributions=relic_contributions,
             battle_admission_blockers=relic_blockers,
+            source_ledger=relic_source_ledger,
         )
 
     instance = build.light_cone
@@ -172,7 +196,8 @@ def assemble_equipment_build(
     passive_contributions = (
         _light_cone_passive_contributions(instance, rank) if active else ()
     )
-    contributions = (*base_contributions, *passive_contributions)
+    light_cone_contributions = (*base_contributions, *passive_contributions)
+    contributions = (*light_cone_contributions, *relic_contributions)
     dynamic_mechanisms, light_cone_blockers = (
         _active_dynamic_mechanisms(
             rules,
@@ -218,7 +243,7 @@ def assemble_equipment_build(
             definition_key=definition.definition_key,
             source=item.source,
         )
-        for item in contributions
+        for item in light_cone_contributions
     ) + (
         EquipmentSourceLedgerEntry(
             ledger_entry_id=f"equipment_source:{activation.decision_id}",
@@ -232,7 +257,7 @@ def assemble_equipment_build(
             definition_key=definition.definition_key,
             source=definition.ability_source.source,
         ),
-    )
+    ) + relic_source_ledger
     return EquipmentAssemblyResult(
         assembly_id=f"equipment_assembly:{build.build_id}",
         build_fingerprint=build.build_fingerprint,
@@ -471,23 +496,184 @@ def _admit_relic_instances(
     return tuple(selections), ()
 
 
-def _relic_assembly_blockers(
+def _relic_static_channels(
+    rules: RuleBook,
     build: EquipmentBuildInput,
     selections: tuple[RelicAssemblySelection, ...],
+    decisions: tuple[RelicSetActivationDecision, ...],
+) -> tuple[
+    tuple[StaticStatContribution, ...],
+    tuple[EquipmentSourceLedgerEntry, ...],
+    tuple[EquipmentAssemblyDiagnostic, ...],
+]:
+    contributions: list[StaticStatContribution] = []
+    ledger: list[EquipmentSourceLedgerEntry] = []
+    diagnostics: list[EquipmentAssemblyDiagnostic] = []
+
+    def append_term(
+        *,
+        contribution_id: str,
+        raw_property_type: str,
+        exact_value: str,
+        definition_key: EquipmentDefinitionKey,
+        source: IRSource,
+    ) -> None:
+        binding = static_property_binding(raw_property_type)
+        if binding is None:
+            diagnostics.append(
+                EquipmentAssemblyDiagnostic(
+                    diagnostic_id=(
+                        f"equipment_assembly:{build.build_id}:"
+                        f"{contribution_id}:property_type_not_admitted"
+                    ),
+                    reason=(
+                        "relic_static_property_type_not_admitted:"
+                        f"{raw_property_type}"
+                    ),
+                    requested_key=definition_key,
+                )
+            )
+            return
+        contribution = StaticStatContribution(
+            contribution_id=contribution_id,
+            contribution_pool=binding.contribution_pool,
+            property_type=binding.canonical_property_type,
+            exact_value=exact_value,
+            source_ref=BuildSourceRef(
+                definition_key.definition_kind,
+                definition_key.definition_identity,
+            ),
+            calculation=StatCalculation(
+                binding.calculation_kind,
+                exact_value,
+            ),
+            source=source,
+        )
+        contributions.append(contribution)
+        ledger.append(
+            EquipmentSourceLedgerEntry(
+                ledger_entry_id=f"equipment_source:{contribution_id}",
+                channel="static",
+                definition_key=definition_key,
+                source=source,
+            )
+        )
+
+    for selection in selections:
+        main = selection.main_affix
+        append_term(
+            contribution_id=(
+                f"relic_main_affix:{selection.instance_id}:"
+                f"affix:{main.affix_key.definition_identity}"
+            ),
+            raw_property_type=main.property_type,
+            exact_value=main.exact_value,
+            definition_key=main.affix_key,
+            source=main.affix_source,
+        )
+        for sub_affix in selection.sub_affixes:
+            append_term(
+                contribution_id=(
+                    f"relic_sub_affix:{selection.instance_id}:"
+                    f"affix:{sub_affix.affix_key.definition_identity}"
+                ),
+                raw_property_type=sub_affix.property_type,
+                exact_value=sub_affix.exact_value,
+                definition_key=sub_affix.affix_key,
+                source=sub_affix.affix_source,
+            )
+
+    for decision in decisions:
+        resolution = rules.relic_set_threshold(
+            decision.threshold_key.definition_identity
+        )
+        threshold = resolution.value
+        if resolution.resolution_status != "resolved" or threshold is None:
+            diagnostics.append(
+                EquipmentAssemblyDiagnostic(
+                    diagnostic_id=(
+                        f"equipment_assembly:{build.build_id}:"
+                        f"{decision.decision_id}:threshold_not_resolved"
+                    ),
+                    reason=(
+                        resolution.blocked_reason
+                        or "relic_set_threshold_not_resolved"
+                    ),
+                    requested_key=decision.threshold_key,
+                    candidates=resolution.candidates,
+                )
+            )
+            continue
+        if (
+            threshold.definition_key != decision.threshold_key
+            or threshold.set_key != decision.set_key
+            or threshold.require_count != decision.required_count
+            or threshold.source != decision.threshold_source
+            or tuple(
+                item.property_index
+                for item in threshold.static_properties
+            )
+            != decision.static_property_indices
+            or threshold.ability_source != decision.ability_source
+        ):
+            diagnostics.append(
+                EquipmentAssemblyDiagnostic(
+                    diagnostic_id=(
+                        f"equipment_assembly:{build.build_id}:"
+                        f"{decision.decision_id}:threshold_identity_mismatch"
+                    ),
+                    reason="relic_set_threshold_activation_identity_mismatch",
+                    requested_key=decision.threshold_key,
+                )
+            )
+            continue
+        if decision.activation_status != "active":
+            continue
+        for item in threshold.static_properties:
+            append_term(
+                contribution_id=(
+                    f"relic_set_static:{decision.decision_id}:"
+                    f"property:{item.property_index}"
+                ),
+                raw_property_type=item.property_type,
+                exact_value=item.exact_value,
+                definition_key=threshold.definition_key,
+                source=item.source,
+            )
+
+    if diagnostics:
+        return (), (), tuple(
+            sorted(diagnostics, key=lambda item: item.diagnostic_id)
+        )
+    return (
+        tuple(sorted(contributions, key=lambda item: item.sort_key)),
+        tuple(sorted(ledger, key=lambda item: item.ledger_entry_id)),
+        (),
+    )
+
+
+def _relic_dynamic_ability_blockers(
+    build: EquipmentBuildInput,
+    decisions: tuple[RelicSetActivationDecision, ...],
 ) -> tuple[EquipmentBattleAdmissionBlocker, ...]:
     return tuple(
         EquipmentBattleAdmissionBlocker(
             blocker_id=(
                 f"equipment_assembly:{build.build_id}:"
-                f"{selection.instance_id}:relic_assembly"
+                f"{decision.decision_id}:dynamic_ability"
             ),
-            channel="relic_assembly",
-            target_definition_key=selection.template_key,
+            channel="dynamic_ability",
+            target_definition_key=decision.threshold_key,
             gap_classification="implementation_missing",
-            reason_code=RELIC_ASSEMBLY_NOT_ASSEMBLED_REASON,
-            source_refs=selection.assembly_source_refs,
+            reason_code=RELIC_SET_DYNAMIC_ABILITY_NOT_ASSEMBLED_REASON,
+            source_refs=(
+                decision.threshold_source,
+                decision.ability_source.source,
+            ),
         )
-        for selection in selections
+        for decision in decisions
+        if decision.activation_status == "active"
+        and decision.ability_source is not None
     )
 
 

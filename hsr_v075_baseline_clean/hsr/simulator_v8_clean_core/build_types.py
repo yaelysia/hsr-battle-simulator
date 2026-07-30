@@ -80,6 +80,15 @@ _STATIC_PROPERTY_BINDINGS: Mapping[str, StaticPropertyBinding] = MappingProxyTyp
         "SpeedDelta": StaticPropertyBinding(
             "flat", "speed", "flat", "base_stat_delta"
         ),
+        "HPDelta": StaticPropertyBinding(
+            "flat", "max_hp", "flat", "base_stat_delta"
+        ),
+        "AttackDelta": StaticPropertyBinding(
+            "flat", "attack", "flat", "base_stat_delta"
+        ),
+        "DefenceDelta": StaticPropertyBinding(
+            "flat", "defense", "flat", "base_stat_delta"
+        ),
         "BaseSpeed": StaticPropertyBinding(
             "flat", "speed", "flat", "base_stat_delta"
         ),

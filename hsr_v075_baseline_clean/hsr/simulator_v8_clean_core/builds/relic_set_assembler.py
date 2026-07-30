@@ -269,6 +269,11 @@ def assemble_relic_set_activations(
                     matched_count=matched_count,
                     required_count=threshold.require_count,
                     missing_count=max(0, threshold.require_count - matched_count),
+                    static_property_indices=tuple(
+                        item.property_index
+                        for item in threshold.static_properties
+                    ),
+                    ability_source=threshold.ability_source,
                     contributors=contributors,
                     domain_source=domain.source,
                     set_source=relic_set.source,

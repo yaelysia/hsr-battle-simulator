@@ -115,10 +115,10 @@ git diff --check
 
 ## 唯一执行清单（仅验收线程可勾）
 
-- [ ] 主词条、副词条和已激活套装静态项逐项进入统一账本。
-- [ ] 未达门槛零贡献，高档保留低档，静态/动态并存不漏不提前执行。
-- [ ] 相同 property 不预合并，Decimal 账本可独立重算。
-- [ ] 旧路径/重复来源不双计，unknown property fail-closed。
-- [ ] 每类 term 来源反查完整，结果不可变且确定性。
-- [ ] S5/S13 已验收契约未被实际改动，或已通过实际触达所需的最小 direct；人工代码审查通过。
-- [ ] `ready_for_review` evidence 完整，阶段无静态贡献 blocker。
+- [x] 主词条、副词条和已激活套装静态项逐项进入统一账本。
+- [x] 未达门槛零贡献，高档保留低档，静态/动态并存不漏不提前执行。
+- [x] 相同 property 不预合并，Decimal 账本可独立重算。
+- [x] 旧路径/重复来源不双计，unknown property fail-closed。
+- [x] 每类 term 来源反查完整，结果不可变且确定性。
+- [x] S5/S13 已验收契约未被实际改动，或已通过实际触达所需的最小 direct；人工代码审查通过。
+- [x] `ready_for_review` evidence 完整，阶段无静态贡献 blocker。
