@@ -48,7 +48,12 @@ EquipmentGapClassification = Literal[
     "admission_gap",
     "implementation_missing",
 ]
-EquipmentBattleBlockerChannel = Literal["static_passive", "dynamic_ability"]
+EquipmentBattleBlockerChannel = Literal[
+    "static_passive",
+    "dynamic_ability",
+    "relic_affix_validation",
+]
+RelicAffixValidationStatus = Literal["deferred_to_s11_s12"]
 
 LIGHT_CONE_PUBLICATION_STATES = frozenset(
     {"published", "unpublished", "status_unknown"}
@@ -3369,6 +3374,11 @@ class RelicSubAffixRollInput:
     @classmethod
     def from_json(cls, value: object) -> RelicSubAffixRollInput:
         row = _mapping(value, "relic_sub_affix_roll")
+        _require_exact_fields(
+            row,
+            frozenset({"affix_key", "count", "step"}),
+            "relic_sub_affix_roll",
+        )
         return cls(
             affix_key=EquipmentDefinitionKey.from_json(row.get("affix_key")),
             count=_integer(row.get("count"), "count"),
@@ -3380,47 +3390,84 @@ class RelicSubAffixRollInput:
 class RelicInstanceInput:
     instance_id: str
     template_key: EquipmentDefinitionKey
-    selected_slot_type: str
+    slot_key: EquipmentDefinitionKey
     level: int
     main_affix_key: EquipmentDefinitionKey
     sub_affix_rolls: tuple[RelicSubAffixRollInput, ...] = ()
+    instance_fingerprint: str = field(init=False)
 
     def __post_init__(self) -> None:
         _require_text(self.instance_id, "relic.instance_id")
         _require_kind(self.template_key, "relic_template")
-        _require_text(self.selected_slot_type, "selected_slot_type")
+        _require_kind(self.slot_key, "relic_slot")
         _require_integer(self.level, "relic.level")
         _require_kind(self.main_affix_key, "relic_main_affix")
+        rolls = cast(
+            tuple[RelicSubAffixRollInput, ...],
+            _typed_tuple(
+                self.sub_affix_rolls,
+                RelicSubAffixRollInput,
+                "sub_affix_rolls",
+            ),
+        )
         object.__setattr__(
             self,
             "sub_affix_rolls",
-            cast(
-                tuple[RelicSubAffixRollInput, ...],
-                _typed_tuple(
-                    self.sub_affix_rolls,
-                    RelicSubAffixRollInput,
-                    "sub_affix_rolls",
-                ),
+            tuple(
+                sorted(
+                    rolls,
+                    key=lambda item: (
+                        item.affix_key.stable_id,
+                        item.count,
+                        item.step,
+                    ),
+                )
             ),
         )
+        object.__setattr__(
+            self,
+            "instance_fingerprint",
+            _canonical_fingerprint(self._fingerprint_payload()),
+        )
 
-    def to_json(self) -> dict[str, JSONValue]:
+    def _fingerprint_payload(self) -> dict[str, JSONValue]:
         return {
             "instance_id": self.instance_id,
             "template_key": self.template_key.to_json(),
-            "selected_slot_type": self.selected_slot_type,
+            "slot_key": self.slot_key.to_json(),
             "level": self.level,
             "main_affix_key": self.main_affix_key.to_json(),
             "sub_affix_rolls": [roll.to_json() for roll in self.sub_affix_rolls],
         }
 
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            **self._fingerprint_payload(),
+            "instance_fingerprint": self.instance_fingerprint,
+        }
+
     @classmethod
     def from_json(cls, value: object) -> RelicInstanceInput:
         row = _mapping(value, "relic_instance")
-        return cls(
+        _require_exact_fields(
+            row,
+            frozenset(
+                {
+                    "instance_id",
+                    "template_key",
+                    "slot_key",
+                    "level",
+                    "main_affix_key",
+                    "sub_affix_rolls",
+                    "instance_fingerprint",
+                }
+            ),
+            "relic_instance",
+        )
+        result = cls(
             instance_id=_text(row.get("instance_id"), "instance_id"),
             template_key=EquipmentDefinitionKey.from_json(row.get("template_key")),
-            selected_slot_type=_text(row.get("selected_slot_type"), "selected_slot_type"),
+            slot_key=EquipmentDefinitionKey.from_json(row.get("slot_key")),
             level=_integer(row.get("level"), "level"),
             main_affix_key=EquipmentDefinitionKey.from_json(row.get("main_affix_key")),
             sub_affix_rolls=tuple(
@@ -3428,6 +3475,11 @@ class RelicInstanceInput:
                 for item in _sequence(row.get("sub_affix_rolls"), "sub_affix_rolls")
             ),
         )
+        encoded = _text(row.get("instance_fingerprint"), "instance_fingerprint")
+        _require_sha256(encoded, "instance_fingerprint")
+        if encoded != result.instance_fingerprint:
+            raise ValueError("relic instance fingerprint mismatch")
+        return result
 
 
 @dataclass(frozen=True)
@@ -3447,12 +3499,22 @@ class EquipmentBuildInput:
             LightConeInstanceInput,
         ):
             raise TypeError("equipment build light_cone must be LightConeInstanceInput or None")
+        relics = cast(
+            tuple[RelicInstanceInput, ...],
+            _typed_tuple(self.relics, RelicInstanceInput, "relics"),
+        )
         object.__setattr__(
             self,
             "relics",
-            cast(
-                tuple[RelicInstanceInput, ...],
-                _typed_tuple(self.relics, RelicInstanceInput, "relics"),
+            tuple(
+                sorted(
+                    relics,
+                    key=lambda item: (
+                        item.slot_key.stable_id,
+                        item.instance_id,
+                        item.instance_fingerprint,
+                    ),
+                )
             ),
         )
         if not isinstance(self.identity_labels, Mapping):
@@ -3473,11 +3535,17 @@ class EquipmentBuildInput:
             "character_card_id": self.character_card_id,
             "light_cone": self.light_cone.to_json() if self.light_cone is not None else None,
             "relics": [relic.to_json() for relic in self.relics],
-            "identity_labels": cast(dict[str, JSONValue], thaw_json(self.identity_labels)),
         }
 
     def to_json(self) -> dict[str, JSONValue]:
-        return {**self._fingerprint_payload(), "build_fingerprint": self.build_fingerprint}
+        return {
+            **self._fingerprint_payload(),
+            "identity_labels": cast(
+                dict[str, JSONValue],
+                thaw_json(self.identity_labels),
+            ),
+            "build_fingerprint": self.build_fingerprint,
+        }
 
     @classmethod
     def from_json(cls, value: object) -> EquipmentBuildInput:
@@ -3927,6 +3995,135 @@ class LightConeAssemblySelection:
 
 
 @dataclass(frozen=True)
+class RelicAssemblySelection:
+    instance_id: str
+    instance_fingerprint: str
+    template_key: EquipmentDefinitionKey
+    slot_key: EquipmentDefinitionKey
+    level: int
+    publication_status: RelicPublicationStatus
+    template_mode: RelicTemplateMode
+    affix_validation_status: RelicAffixValidationStatus
+    template_source: IRSource
+    slot_source: IRSource
+    selection_fingerprint: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        _require_text(self.instance_id, "relic selection instance_id")
+        _require_sha256(self.instance_fingerprint, "instance_fingerprint")
+        _require_kind(self.template_key, "relic_template")
+        _require_kind(self.slot_key, "relic_slot")
+        _require_integer(self.level, "relic selection level")
+        if self.level < 0:
+            raise ValueError("relic selection level must be non-negative")
+        if self.publication_status != "published":
+            raise ValueError("relic selections require a published template")
+        if self.template_mode != "BASIC":
+            raise ValueError("formal relic selections require BASIC template mode")
+        if self.affix_validation_status != "deferred_to_s11_s12":
+            raise ValueError("invalid relic affix validation status")
+        _require_equipment_source(self.template_source)
+        _require_relic_record_source(
+            self.template_source,
+            source_role="relic_config",
+            raw_type="RelicConfig",
+            raw_id=self.template_key.definition_identity,
+        )
+        _require_equipment_source(self.slot_source)
+        _require_relic_record_source(
+            self.slot_source,
+            source_role="relic_base_type",
+            raw_type="RelicBaseType",
+            raw_id=self.slot_key.definition_identity,
+        )
+        if (
+            self.template_source.evidence.get("source_fingerprint")
+            != self.slot_source.evidence.get("source_fingerprint")
+        ):
+            raise ValueError("relic selection sources must share one source fingerprint")
+        object.__setattr__(
+            self,
+            "selection_fingerprint",
+            _canonical_fingerprint(self._fingerprint_payload()),
+        )
+
+    def _fingerprint_payload(self) -> dict[str, JSONValue]:
+        return {
+            "instance_id": self.instance_id,
+            "instance_fingerprint": self.instance_fingerprint,
+            "template_key": self.template_key.to_json(),
+            "slot_key": self.slot_key.to_json(),
+            "level": self.level,
+            "publication_status": self.publication_status,
+            "template_mode": self.template_mode,
+            "affix_validation_status": self.affix_validation_status,
+            "template_source": self.template_source.to_json(),
+            "slot_source": self.slot_source.to_json(),
+        }
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            **self._fingerprint_payload(),
+            "selection_fingerprint": self.selection_fingerprint,
+        }
+
+    @classmethod
+    def from_json(cls, value: object) -> RelicAssemblySelection:
+        row = _mapping(value, "relic_assembly_selection")
+        _require_exact_fields(
+            row,
+            frozenset(
+                {
+                    "instance_id",
+                    "instance_fingerprint",
+                    "template_key",
+                    "slot_key",
+                    "level",
+                    "publication_status",
+                    "template_mode",
+                    "affix_validation_status",
+                    "template_source",
+                    "slot_source",
+                    "selection_fingerprint",
+                }
+            ),
+            "relic_assembly_selection",
+        )
+        result = cls(
+            instance_id=_text(row.get("instance_id"), "instance_id"),
+            instance_fingerprint=_text(
+                row.get("instance_fingerprint"),
+                "instance_fingerprint",
+            ),
+            template_key=EquipmentDefinitionKey.from_json(row.get("template_key")),
+            slot_key=EquipmentDefinitionKey.from_json(row.get("slot_key")),
+            level=_integer(row.get("level"), "level"),
+            publication_status=cast(
+                RelicPublicationStatus,
+                _text(row.get("publication_status"), "publication_status"),
+            ),
+            template_mode=cast(
+                RelicTemplateMode,
+                _text(row.get("template_mode"), "template_mode"),
+            ),
+            affix_validation_status=cast(
+                RelicAffixValidationStatus,
+                _text(
+                    row.get("affix_validation_status"),
+                    "affix_validation_status",
+                ),
+            ),
+            template_source=_source_from_json(row.get("template_source")),
+            slot_source=_source_from_json(row.get("slot_source")),
+        )
+        encoded = _text(row.get("selection_fingerprint"), "selection_fingerprint")
+        _require_sha256(encoded, "selection_fingerprint")
+        if encoded != result.selection_fingerprint:
+            raise ValueError("relic selection fingerprint mismatch")
+        return result
+
+
+@dataclass(frozen=True)
 class EquipmentActivationBasis:
     basis_kind: Literal["light_cone_path_equality"]
     comparison_policy: Literal["exact_internal_path_identity_equality"]
@@ -4113,9 +4310,30 @@ class EquipmentBattleAdmissionBlocker:
 
     def __post_init__(self) -> None:
         _require_text(self.blocker_id, "blocker_id")
-        if self.channel not in {"static_passive", "dynamic_ability"}:
+        if self.channel not in {
+            "static_passive",
+            "dynamic_ability",
+            "relic_affix_validation",
+        }:
             raise ValueError("invalid equipment battle blocker channel")
-        _require_kind(self.target_definition_key, "light_cone")
+        if not isinstance(self.target_definition_key, EquipmentDefinitionKey):
+            raise TypeError(
+                "equipment battle blocker target must be EquipmentDefinitionKey"
+            )
+        if (
+            self.channel == "relic_affix_validation"
+            and self.target_definition_key.definition_kind != "relic_template"
+        ):
+            raise ValueError(
+                "relic affix blockers must target a relic template"
+            )
+        if (
+            self.channel != "relic_affix_validation"
+            and self.target_definition_key.definition_kind != "light_cone"
+        ):
+            raise ValueError(
+                "light-cone battle blockers must target a light cone"
+            )
         if self.gap_classification not in {
             "lowering_gap",
             "admission_gap",
@@ -4310,6 +4528,7 @@ class EquipmentAssemblyResult:
     assembly_status: AssemblyStatus
     battle_admission_status: BattleAdmissionStatus
     light_cone_selection: LightConeAssemblySelection | None = None
+    relic_selections: tuple[RelicAssemblySelection, ...] = ()
     static_contributions: tuple[StaticStatContribution, ...] = ()
     dynamic_mechanisms: tuple[DynamicMechanismSelection, ...] = ()
     activation_decisions: tuple[EquipmentActivationDecision, ...] = ()
@@ -4332,6 +4551,40 @@ class EquipmentAssemblyResult:
             raise TypeError(
                 "light_cone_selection must be LightConeAssemblySelection or None"
             )
+        relic_selections = cast(
+            tuple[RelicAssemblySelection, ...],
+            _typed_tuple(
+                self.relic_selections,
+                RelicAssemblySelection,
+                "relic_selections",
+            ),
+        )
+        relic_selections = tuple(
+            sorted(
+                relic_selections,
+                key=lambda item: (
+                    item.slot_key.stable_id,
+                    item.instance_id,
+                    item.instance_fingerprint,
+                ),
+            )
+        )
+        relic_instance_ids = tuple(
+            item.instance_id for item in relic_selections
+        )
+        if len(relic_instance_ids) != len(set(relic_instance_ids)):
+            raise ValueError("relic selection instance identities must be unique")
+        if (
+            self.light_cone_selection is not None
+            and self.light_cone_selection.instance_id in relic_instance_ids
+        ):
+            raise ValueError(
+                "light-cone and relic selections cannot share an instance identity"
+            )
+        relic_slot_keys = tuple(item.slot_key for item in relic_selections)
+        if len(relic_slot_keys) != len(set(relic_slot_keys)):
+            raise ValueError("relic selection slots must be unique")
+        object.__setattr__(self, "relic_selections", relic_selections)
         object.__setattr__(
             self,
             "static_contributions",
@@ -4388,6 +4641,16 @@ class EquipmentAssemblyResult:
                     "battle_admission_blockers",
                 ),
             ),
+        )
+        light_cone_blockers = tuple(
+            blocker
+            for blocker in self.battle_admission_blockers
+            if blocker.target_definition_key.definition_kind == "light_cone"
+        )
+        relic_blockers = tuple(
+            blocker
+            for blocker in self.battle_admission_blockers
+            if blocker.target_definition_key.definition_kind == "relic_template"
         )
         object.__setattr__(
             self,
@@ -4446,6 +4709,7 @@ class EquipmentAssemblyResult:
         if self.assembly_status == "blocked":
             if (
                 self.light_cone_selection is not None
+                or self.relic_selections
                 or self.static_contributions
                 or self.dynamic_mechanisms
                 or self.activation_decisions
@@ -4463,16 +4727,64 @@ class EquipmentAssemblyResult:
                     raise ValueError("admitted equipment results cannot carry battle blockers")
             elif not self.battle_admission_blockers:
                 raise ValueError("assembled but battle-blocked equipment requires blockers")
+            if self.relic_selections:
+                if len(relic_blockers) != len(self.relic_selections):
+                    raise ValueError(
+                        "each relic selection requires one affix validation blocker"
+                    )
+                for selection in self.relic_selections:
+                    matching_blockers = tuple(
+                        blocker
+                        for blocker in relic_blockers
+                        if blocker.target_definition_key
+                        == selection.template_key
+                    )
+                    if len(matching_blockers) != 1:
+                        raise ValueError(
+                            "relic selections require one matching template blocker"
+                        )
+                    blocker = matching_blockers[0]
+                    if (
+                        blocker.channel != "relic_affix_validation"
+                        or blocker.gap_classification != "admission_gap"
+                        or blocker.reason_code
+                        != "relic_affix_validation_deferred_to_s11_s12"
+                        or blocker.source_refs
+                        != tuple(
+                            sorted(
+                                (
+                                    selection.template_source,
+                                    selection.slot_source,
+                                ),
+                                key=lambda item: (
+                                    item.source_path,
+                                    item.raw_type,
+                                    item.raw_id,
+                                    str(
+                                        item.evidence.get("json_path")
+                                        or ""
+                                    ),
+                                ),
+                            )
+                        )
+                    ):
+                        raise ValueError(
+                            "relic selection affix blocker does not match its admitted skeleton"
+                        )
+            elif relic_blockers:
+                raise ValueError(
+                    "relic affix blockers require matching relic selections"
+                )
             if self.light_cone_selection is None:
                 if (
                     self.static_contributions
                     or self.dynamic_mechanisms
                     or self.activation_decisions
-                    or self.battle_admission_blockers
+                    or light_cone_blockers
                     or self.source_ledger
                 ):
                     raise ValueError(
-                        "empty S4 equipment results cannot expose light-cone result channels"
+                        "equipment without a light cone cannot expose light-cone result channels"
                     )
             else:
                 contributions_by_id = {
@@ -4691,14 +5003,14 @@ class EquipmentAssemblyResult:
                     and (
                         self.light_cone_selection.passive_contribution_ids
                         or self.dynamic_mechanisms
-                        or self.battle_admission_blockers
+                        or light_cone_blockers
                     )
                 ):
                     raise ValueError(
                         "inactive light-cone passives cannot expose passive result channels"
                     )
                 if activation.activation_status == "active":
-                    if self.battle_admission_status == "admitted" and (
+                    if not light_cone_blockers and (
                         len(self.dynamic_mechanisms) != 1
                         or self.dynamic_mechanisms[0].coverage_status != "executable"
                     ):
@@ -4708,14 +5020,14 @@ class EquipmentAssemblyResult:
                     if any(
                         mechanism.coverage_status == "blocked"
                         for mechanism in self.dynamic_mechanisms
-                    ) and not self.battle_admission_blockers:
+                    ) and not light_cone_blockers:
                         raise ValueError(
                             "blocked dynamic selections require a battle admission blocker"
                         )
                 if any(
                     blocker.target_definition_key
                     != self.light_cone_selection.definition_key
-                    for blocker in self.battle_admission_blockers
+                    for blocker in light_cone_blockers
                 ):
                     raise ValueError(
                         "light-cone battle blockers must target the selected definition"
@@ -4733,6 +5045,9 @@ class EquipmentAssemblyResult:
                 if self.light_cone_selection is not None
                 else None
             ),
+            "relic_selections": [
+                item.to_json() for item in self.relic_selections
+            ],
             "static_contributions": [item.to_json() for item in self.static_contributions],
             "dynamic_mechanisms": [item.to_json() for item in self.dynamic_mechanisms],
             "activation_decisions": [item.to_json() for item in self.activation_decisions],
@@ -4758,6 +5073,7 @@ class EquipmentAssemblyResult:
                     "assembly_status",
                     "battle_admission_status",
                     "light_cone_selection",
+                    "relic_selections",
                     "static_contributions",
                     "dynamic_mechanisms",
                     "activation_decisions",
@@ -4782,6 +5098,13 @@ class EquipmentAssemblyResult:
                 LightConeAssemblySelection.from_json(selection)
                 if selection is not None
                 else None
+            ),
+            relic_selections=tuple(
+                RelicAssemblySelection.from_json(item)
+                for item in _sequence(
+                    row.get("relic_selections"),
+                    "relic_selections",
+                )
             ),
             static_contributions=tuple(
                 StaticStatContribution.from_json(item)

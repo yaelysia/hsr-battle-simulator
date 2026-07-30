@@ -1106,7 +1106,7 @@ def _build_and_assembly_checks(
     relic_instance = RelicInstanceInput(
         instance_id="fixture:relic-instance",
         template_key=fixture["relic"].definition_key,
-        selected_slot_type="fixture_slot",
+        slot_key=fixture["slot"].definition_key,
         level=0,
         main_affix_key=fixture["main_affix"].definition_key,
         sub_affix_rolls=(
@@ -1349,7 +1349,8 @@ def _build_and_assembly_checks(
         "blocked_result_round_trip_preserves_diagnostics": blocked_round_trip.to_json()
         == blocked.to_json(),
         "blocked_result_formal_channels_empty": blocked_json["static_contributions"] == []
-        and blocked_json["dynamic_mechanisms"] == [],
+        and blocked_json["dynamic_mechanisms"] == []
+        and blocked_json["relic_selections"] == [],
         "blocked_result_carries_candidates_only_in_diagnostics": "candidates" not in blocked_json
         and bool(cast(list[JSONValue], blocked_json["diagnostics"])[0]["candidates"]),
         "blocked_nonempty_formal_channel_rejected": blocked_nonempty_rejected,
@@ -1510,7 +1511,7 @@ def _public_model_immutability_negative_checks(
     relic = RelicInstanceInput(
         instance_id="fixture:public-model-relic",
         template_key=fixture["relic"].definition_key,
-        selected_slot_type="fixture_slot",
+        slot_key=fixture["slot"].definition_key,
         level=0,
         main_affix_key=fixture["main_affix"].definition_key,
         sub_affix_rolls=cast(Any, roll_values),

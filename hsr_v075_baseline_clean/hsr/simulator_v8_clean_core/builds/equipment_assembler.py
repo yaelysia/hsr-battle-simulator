@@ -21,6 +21,7 @@ from ..equipment.models import (
     LightConeInstanceInput,
     LightConePromotionTierIR,
     LightConeSuperimpositionLevelIR,
+    RelicAssemblySelection,
 )
 from ..rules.value_binding import ExactEquipmentValueBindingRequest, ValueResolver
 from ..rules.rulebook import RuleBook
@@ -34,20 +35,27 @@ def assemble_equipment_build(
         raise TypeError("rules must be a RuleBook")
     if not isinstance(build, EquipmentBuildInput):
         raise TypeError("build must be EquipmentBuildInput")
-    if build.relics:
+    identity_diagnostics = _equipment_instance_identity_diagnostics(build)
+    if identity_diagnostics:
         return _blocked(
             build,
-            EquipmentAssemblyDiagnostic(
-                diagnostic_id=f"equipment_assembly:{build.build_id}:relics_not_admitted",
-                reason="p8_s4_relic_instances_not_admitted",
-            ),
+            *identity_diagnostics,
         )
+    relic_selections, relic_blockers, relic_diagnostics = (
+        _admit_relic_instances(rules, build)
+    )
+    if relic_diagnostics:
+        return _blocked(build, *relic_diagnostics)
     if build.light_cone is None:
         return EquipmentAssemblyResult(
             assembly_id=f"equipment_assembly:{build.build_id}",
             build_fingerprint=build.build_fingerprint,
             assembly_status="assembled",
-            battle_admission_status="admitted",
+            battle_admission_status=(
+                "blocked" if relic_blockers else "admitted"
+            ),
+            relic_selections=relic_selections,
+            battle_admission_blockers=relic_blockers,
         )
 
     instance = build.light_cone
@@ -154,7 +162,7 @@ def assemble_equipment_build(
         _light_cone_passive_contributions(instance, rank) if active else ()
     )
     contributions = (*base_contributions, *passive_contributions)
-    dynamic_mechanisms, blockers = (
+    dynamic_mechanisms, light_cone_blockers = (
         _active_dynamic_mechanisms(
             rules,
             build,
@@ -165,6 +173,7 @@ def assemble_equipment_build(
         if active
         else ((), ())
     )
+    blockers = (*light_cone_blockers, *relic_blockers)
     base_contribution_ids = tuple(
         item.contribution_id for item in base_contributions
     )
@@ -219,6 +228,7 @@ def assemble_equipment_build(
         assembly_status="assembled",
         battle_admission_status="blocked" if blockers else "admitted",
         light_cone_selection=selection,
+        relic_selections=relic_selections,
         static_contributions=contributions,
         dynamic_mechanisms=dynamic_mechanisms,
         activation_decisions=(activation,),
@@ -245,6 +255,173 @@ def validate_equipment_assembly_admission(
     return tuple(sorted(set(errors)))
 
 
+def _admit_relic_instances(
+    rules: RuleBook,
+    build: EquipmentBuildInput,
+) -> tuple[
+    tuple[RelicAssemblySelection, ...],
+    tuple[EquipmentBattleAdmissionBlocker, ...],
+    tuple[EquipmentAssemblyDiagnostic, ...],
+]:
+    selections: list[RelicAssemblySelection] = []
+    blockers: list[EquipmentBattleAdmissionBlocker] = []
+    diagnostics: list[EquipmentAssemblyDiagnostic] = []
+    for instance in build.relics:
+        diagnostic_count = len(diagnostics)
+        template_resolution = rules.relic_template_definition(
+            instance.template_key.definition_identity
+        )
+        if (
+            template_resolution.resolution_status != "resolved"
+            or template_resolution.value is None
+        ):
+            diagnostics.append(
+                EquipmentAssemblyDiagnostic(
+                    diagnostic_id=(
+                        f"equipment_assembly:{build.build_id}:"
+                        f"{instance.instance_id}:{template_resolution.blocked_reason}"
+                    ),
+                    reason=template_resolution.blocked_reason,
+                    requested_key=template_resolution.requested_key,
+                    candidates=template_resolution.candidates,
+                )
+            )
+            continue
+        template = template_resolution.value
+        if template.publication_status != "published":
+            diagnostics.append(
+                EquipmentAssemblyDiagnostic(
+                    diagnostic_id=(
+                        f"equipment_assembly:{build.build_id}:"
+                        f"{instance.instance_id}:relic_template_not_published"
+                    ),
+                    reason=(
+                        "relic_template_publication_status_not_admitted:"
+                        f"{template.publication_status}"
+                    ),
+                    requested_key=instance.template_key,
+                    candidates=template_resolution.candidates,
+                )
+            )
+        if template.mode != "BASIC":
+            diagnostics.append(
+                EquipmentAssemblyDiagnostic(
+                    diagnostic_id=(
+                        f"equipment_assembly:{build.build_id}:"
+                        f"{instance.instance_id}:relic_template_mode_not_admitted"
+                    ),
+                    reason=f"relic_template_mode_not_admitted:{template.mode}",
+                    requested_key=instance.template_key,
+                    candidates=template_resolution.candidates,
+                )
+            )
+        slot_resolution = rules.relic_slot_definition(
+            template.slot_key.definition_identity
+        )
+        slot_definition = slot_resolution.value
+        if (
+            slot_resolution.resolution_status != "resolved"
+            or slot_definition is None
+        ):
+            diagnostics.append(
+                EquipmentAssemblyDiagnostic(
+                    diagnostic_id=(
+                        f"equipment_assembly:{build.build_id}:"
+                        f"{instance.instance_id}:{slot_resolution.blocked_reason}"
+                    ),
+                    reason=slot_resolution.blocked_reason,
+                    requested_key=slot_resolution.requested_key,
+                    candidates=slot_resolution.candidates,
+                )
+            )
+        if instance.slot_key != template.slot_key:
+            diagnostics.append(
+                EquipmentAssemblyDiagnostic(
+                    diagnostic_id=(
+                        f"equipment_assembly:{build.build_id}:"
+                        f"{instance.instance_id}:relic_template_slot_mismatch"
+                    ),
+                    reason="relic_template_slot_mismatch",
+                    requested_key=instance.slot_key,
+                    candidates=slot_resolution.candidates,
+                )
+            )
+        if instance.level < 0 or instance.level > template.max_level:
+            diagnostics.append(
+                EquipmentAssemblyDiagnostic(
+                    diagnostic_id=(
+                        f"equipment_assembly:{build.build_id}:"
+                        f"{instance.instance_id}:relic_level_outside_template_bounds"
+                    ),
+                    reason="relic_level_outside_template_bounds",
+                    requested_key=instance.template_key,
+                    candidates=template_resolution.candidates,
+                )
+            )
+        if len(diagnostics) != diagnostic_count or slot_definition is None:
+            continue
+        selection = RelicAssemblySelection(
+            instance_id=instance.instance_id,
+            instance_fingerprint=instance.instance_fingerprint,
+            template_key=template.definition_key,
+            slot_key=slot_definition.definition_key,
+            level=instance.level,
+            publication_status=template.publication_status,
+            template_mode=template.mode,
+            affix_validation_status="deferred_to_s11_s12",
+            template_source=template.source,
+            slot_source=slot_definition.source,
+        )
+        selections.append(selection)
+        blockers.append(
+            EquipmentBattleAdmissionBlocker(
+                blocker_id=(
+                    f"equipment_battle_blocker:{build.build_id}:"
+                    f"{instance.instance_id}:relic_affix_validation"
+                ),
+                channel="relic_affix_validation",
+                target_definition_key=template.definition_key,
+                gap_classification="admission_gap",
+                reason_code="relic_affix_validation_deferred_to_s11_s12",
+                source_refs=(template.source, slot_definition.source),
+            )
+        )
+
+    slot_counts = Counter(selection.slot_key for selection in selections)
+    for slot_key, count in sorted(
+        slot_counts.items(),
+        key=lambda item: item[0].stable_id,
+    ):
+        if count > 1:
+            diagnostics.append(
+                EquipmentAssemblyDiagnostic(
+                    diagnostic_id=(
+                        f"equipment_assembly:{build.build_id}:"
+                        f"relic_slot_reused:{slot_key.stable_id}"
+                    ),
+                    reason="relic_slot_reused",
+                    requested_key=slot_key,
+                )
+            )
+    if diagnostics:
+        return (), (), tuple(diagnostics)
+    return tuple(selections), tuple(blockers), ()
+
+
+def _equipment_instance_identity_diagnostics(
+    build: EquipmentBuildInput,
+) -> tuple[EquipmentAssemblyDiagnostic, ...]:
+    return tuple(
+        EquipmentAssemblyDiagnostic(
+            diagnostic_id=(
+                f"equipment_assembly:{build.build_id}:{reason}"
+            ),
+            reason=reason,
+        )
+        for reason in _equipment_instance_uniqueness_errors((build,))
+    )
+
+
 def validate_equipment_instance_uniqueness(
     builds: tuple[EquipmentBuildInput, ...] | list[EquipmentBuildInput],
 ) -> tuple[str, ...]:
@@ -252,21 +429,36 @@ def validate_equipment_instance_uniqueness(
         isinstance(build, EquipmentBuildInput) for build in builds
     ):
         raise TypeError("equipment instance uniqueness requires equipment build inputs")
-    instance_ids = tuple(
-        build.light_cone.instance_id
-        for build in builds
-        if build.light_cone is not None
-    )
-    duplicates = tuple(
-        sorted(
-            instance_id
-            for instance_id, count in Counter(instance_ids).items()
-            if count > 1
+    return _equipment_instance_uniqueness_errors(tuple(builds))
+
+
+def _equipment_instance_uniqueness_errors(
+    builds: tuple[EquipmentBuildInput, ...],
+) -> tuple[str, ...]:
+    fingerprints_by_instance_id: dict[str, list[str]] = {}
+    for build in builds:
+        instances = (
+            *((build.light_cone,) if build.light_cone is not None else ()),
+            *build.relics,
         )
-    )
-    return tuple(
-        f"equipment_instance_id_reused:{instance_id}" for instance_id in duplicates
-    )
+        for instance in instances:
+            fingerprints_by_instance_id.setdefault(
+                instance.instance_id,
+                [],
+            ).append(instance.instance_fingerprint)
+    errors = []
+    for instance_id, fingerprints in sorted(
+        fingerprints_by_instance_id.items()
+    ):
+        if len(fingerprints) <= 1:
+            continue
+        reason = (
+            "equipment_instance_identity_conflict"
+            if len(set(fingerprints)) > 1
+            else "equipment_instance_id_reused"
+        )
+        errors.append(f"{reason}:{instance_id}")
+    return tuple(errors)
 
 
 def _blocked_resolution(

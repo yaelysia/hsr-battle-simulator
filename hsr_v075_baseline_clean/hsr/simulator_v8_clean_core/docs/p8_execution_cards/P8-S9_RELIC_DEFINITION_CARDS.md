@@ -93,7 +93,7 @@ numeric_values_never_pass_through_float=true
 
 - raw 引用存在但类型模型或 lowering 缺失：`lowering_gap`，本阶段必须修。
 - 当前已发布普通模板、套装或档位 blocked：阻断 S9，不得推迟到实例阶段。
-- CUSTOM 是否可进入普通玩家构筑由后续阶段 admission 判断；S9 必须完整分类其结构，不能过滤。
+- CUSTOM 在 S9 中必须完整分类并保留来源结构，不能从目录过滤；项目已决定从 S10 起将其排除于正式玩家构筑，不实现定向生成流程。
 - ability record 无唯一候选：来源关联 blocker，禁止伪造图引用。
 - 若同一套装真实跨域或出现新 slot/mode，不能硬套当前六槽假设；停止并提交数据事实和设计影响。
 

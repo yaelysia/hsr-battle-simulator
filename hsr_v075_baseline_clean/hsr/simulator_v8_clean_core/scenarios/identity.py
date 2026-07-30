@@ -82,10 +82,6 @@ class IdentityResolver:
                         errors.append(
                             f"unit {unit.unit_id}: embedded equipment build character identity mismatch"
                         )
-                    if build.equipment_build.relics:
-                        errors.append(
-                            f"unit {unit.unit_id}: P8-S4 formal relic instances are not admitted"
-                        )
             elif unit.build_mode == "kernel_fixture":
                 if unit.panel is None:
                     errors.append(f"unit {unit.unit_id}: kernel_fixture requires panel input")

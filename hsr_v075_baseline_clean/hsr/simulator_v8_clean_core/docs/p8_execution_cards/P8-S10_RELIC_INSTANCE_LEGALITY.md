@@ -37,7 +37,7 @@ S1 已有弱 `RelicInstanceInput` 形状，S9 建立真实模板和六槽定义�
 
 1. 空构筑和缺槽合法；错误槽位、重复槽位或未知模板非法，语义不可混淆。
 2. 模板的 slot 是唯一事实来源，调用者提交的 slot 只能用于一致性校验。
-3. `CUSTOM` 只按 S9 结构化 admission policy 处理；未知模式不 fallback BASIC。
+3. `CUSTOM` 只保留在 S9 来源目录中，正式玩家构筑一律拒绝；不实现定向生成、映射或 BASIC fallback。未知模式同样 fail-closed。
 4. 非法实例不得进入任何 downstream ledger、set counter 或 dynamic selection。
 5. 队伍实例唯一性在正式 scenario/build admission 前执行，不能只检查单角色。
 6. instance/build fingerprint 覆盖所有结构选择，不包含名称、评分或 UI 展示字段。
@@ -49,7 +49,7 @@ S1 已有弱 `RelicInstanceInput` 形状，S9 建立真实模板和六槽定义�
 |---|---|---|
 | 0-6 槽合法 | 空、单件、部分、完整六槽均 assembly-valid | positive slot matrix |
 | 错槽/重复拒绝 | template-slot mismatch、同槽两件均 blocked | negative slot matrix |
-| 等级与模式正确 | +0/最大合法，越界、unknown/CUSTOM 非准入分支明确 | level/mode matrix |
+| 等级与模式正确 | +0/最大合法，越界、unknown 和全部 CUSTOM 均明确拒绝 | level/mode matrix |
 | 队伍实例唯一 | 两角色复用同实例或冲突 payload 被拒绝 | team occupancy matrix |
 | 失败无贡献 | blocked 结果无 relic contributions/set thresholds/mechanisms | assembly invariant |
 | fingerprint 稳定 | 顺序规范化、payload 变化可检测、外部修改无影响 | codec/fingerprint matrix |
@@ -77,7 +77,7 @@ duplicate_slot_rejected=true
 unknown_template_rejected=true
 level_bounds_enforced=true
 unknown_mode_rejected=true
-custom_mode_policy_explicit=true
+custom_mode_excluded=true
 team_duplicate_instance_rejected=true
 same_identity_conflicting_payload_rejected=true
 invalid_relic_contributes_nothing=true
@@ -124,10 +124,10 @@ codec direct。direct 总数最多两个。
 
 ## 唯一执行清单（仅验收线程可勾）
 
-- [ ] 空、部分、完整六槽实例结构均可合法装配。
-- [ ] 错槽、重复槽、未知模板、等级、模式和队伍重复实例均 fail-closed。
-- [ ] 非法实例不贡献属性、不计套装、不生成动态机制。
-- [ ] S4 临时全拒绝逻辑已原子退役，S11/S12 未验证项仍阻断正式战斗。
-- [ ] schema、不可变性、fingerprint 和调用者迁移完整。
-- [ ] 无 UI 顺序、名称、SetID 或全局可变 registry 硬编码。
-- [ ] `ready_for_review` evidence 完整，阶段无实例骨架 blocker。
+- [x] 空、部分、完整六槽实例结构均可合法装配。
+- [x] 错槽、重复槽、未知模板、等级、模式和队伍重复实例均 fail-closed。
+- [x] 非法实例不贡献属性、不计套装、不生成动态机制。
+- [x] S4 临时全拒绝逻辑已原子退役，S11/S12 未验证项仍阻断正式战斗。
+- [x] schema、不可变性、fingerprint 和调用者迁移完整。
+- [x] 无 UI 顺序、名称、SetID 或全局可变 registry 硬编码。
+- [x] `ready_for_review` evidence 完整，阶段无实例骨架 blocker。
