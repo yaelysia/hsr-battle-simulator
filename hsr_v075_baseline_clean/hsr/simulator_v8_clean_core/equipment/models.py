@@ -40,6 +40,10 @@ AssemblyStatus = Literal["assembled", "blocked"]
 BattleAdmissionStatus = Literal["admitted", "blocked"]
 ActivationStatus = Literal["active", "inactive", "blocked"]
 LedgerChannel = Literal["static", "dynamic", "activation"]
+EquipmentParameterBasisKind = Literal[
+    "light_cone_rank",
+    "relic_set_threshold",
+]
 LightConePublicationStatus = Literal["published", "unpublished", "status_unknown"]
 RelicPublicationStatus = Literal["published", "unpublished", "status_unknown"]
 RelicDomain = Literal["outer", "planar"]
@@ -61,10 +65,6 @@ RelicAffixValidationStatus = Literal[
 RELIC_ASSEMBLY_NOT_ASSEMBLED_REASON = (
     "relic_static_contributions_not_assembled"
 )
-RELIC_SET_DYNAMIC_ABILITY_NOT_ASSEMBLED_REASON = (
-    "relic_set_dynamic_ability_not_assembled"
-)
-
 LIGHT_CONE_PUBLICATION_STATES = frozenset(
     {"published", "unpublished", "status_unknown"}
 )
@@ -2332,6 +2332,7 @@ class RelicSetThresholdIR:
     parameters: tuple[RelicSetParameterIR, ...]
     ability_source: RelicAbilitySourceIR | None
     source: IRSource
+    mechanism_ref_ids: tuple[EquipmentDefinitionKey, ...] = ()
     coverage_status: CoverageStatus = "blocked"
     blocked_reason: str = "relic_set_threshold_not_lowered"
 
@@ -2375,12 +2376,25 @@ class RelicSetThresholdIR:
             RelicAbilitySourceIR,
         ):
             raise TypeError("relic ability_source must be RelicAbilitySourceIR or None")
+        mechanisms = cast(
+            tuple[EquipmentDefinitionKey, ...],
+            _typed_tuple(
+                self.mechanism_ref_ids,
+                EquipmentDefinitionKey,
+                "mechanism_ref_ids",
+            ),
+        )
+        for key in mechanisms:
+            _require_kind(key, "equipment_mechanism")
+        if len(mechanisms) != len(set(mechanisms)):
+            raise ValueError("relic set threshold mechanism references must be unique")
         if not static_properties and self.ability_source is None:
             raise ValueError(
                 "relic set thresholds require a static property or ability source"
             )
         object.__setattr__(self, "static_properties", static_properties)
         object.__setattr__(self, "parameters", parameters)
+        object.__setattr__(self, "mechanism_ref_ids", mechanisms)
         _require_equipment_source(self.source)
         _require_relic_record_source(
             self.source,
@@ -2448,6 +2462,9 @@ class RelicSetThresholdIR:
                     if self.ability_source is not None
                     else None
                 ),
+                "mechanism_ref_ids": [
+                    key.to_json() for key in self.mechanism_ref_ids
+                ],
             },
         )
 
@@ -2464,6 +2481,7 @@ class RelicSetThresholdIR:
                     "static_properties",
                     "parameters",
                     "ability_source",
+                    "mechanism_ref_ids",
                     "source",
                     "coverage_status",
                     "blocked_reason",
@@ -2493,6 +2511,13 @@ class RelicSetThresholdIR:
                 else None
             ),
             source=_source_from_json(row.get("source")),
+            mechanism_ref_ids=tuple(
+                EquipmentDefinitionKey.from_json(item)
+                for item in _sequence(
+                    row.get("mechanism_ref_ids"),
+                    "mechanism_ref_ids",
+                )
+            ),
             coverage_status=_coverage_from_json(row),
             blocked_reason=_text(row.get("blocked_reason", ""), "blocked_reason"),
         )
@@ -2505,6 +2530,8 @@ class EquipmentAbilityParameterReadIR:
     dynamic_hash: str
     parameter_index: int
     value_type: str
+    parameter_basis_kind: EquipmentParameterBasisKind
+    parameter_basis_identity: str
     source: IRSource
     coverage_status: CoverageStatus = "lowered"
     blocked_reason: str = ""
@@ -2517,6 +2544,21 @@ class EquipmentAbilityParameterReadIR:
         if self.parameter_index < 0:
             raise ValueError("equipment ability parameter_index must be non-negative")
         _require_text(self.value_type, "value_type")
+        if self.parameter_basis_kind not in {
+            "light_cone_rank",
+            "relic_set_threshold",
+        }:
+            raise ValueError("invalid equipment parameter basis kind")
+        if self.parameter_basis_kind == "light_cone_rank":
+            if self.parameter_basis_identity:
+                raise ValueError(
+                    "light-cone parameter reads cannot carry a target identity"
+                )
+        else:
+            _require_text(
+                self.parameter_basis_identity,
+                "parameter_basis_identity",
+            )
         _require_equipment_source(self.source)
         _validate_coverage(self.coverage_status, self.blocked_reason)
 
@@ -2527,6 +2569,8 @@ class EquipmentAbilityParameterReadIR:
             "dynamic_hash": self.dynamic_hash,
             "parameter_index": self.parameter_index,
             "value_type": self.value_type,
+            "parameter_basis_kind": self.parameter_basis_kind,
+            "parameter_basis_identity": self.parameter_basis_identity,
             "source": self.source.to_json(),
             "coverage_status": self.coverage_status,
             "blocked_reason": self.blocked_reason,
@@ -2544,6 +2588,8 @@ class EquipmentAbilityParameterReadIR:
                     "dynamic_hash",
                     "parameter_index",
                     "value_type",
+                    "parameter_basis_kind",
+                    "parameter_basis_identity",
                     "source",
                     "coverage_status",
                     "blocked_reason",
@@ -2557,6 +2603,14 @@ class EquipmentAbilityParameterReadIR:
             dynamic_hash=_text(row.get("dynamic_hash"), "dynamic_hash"),
             parameter_index=_integer(row.get("parameter_index"), "parameter_index"),
             value_type=_text(row.get("value_type"), "value_type"),
+            parameter_basis_kind=cast(
+                EquipmentParameterBasisKind,
+                _text(row.get("parameter_basis_kind"), "parameter_basis_kind"),
+            ),
+            parameter_basis_identity=_text(
+                row.get("parameter_basis_identity"),
+                "parameter_basis_identity",
+            ),
             source=_source_from_json(row.get("source")),
             coverage_status=_coverage_from_json(row),
             blocked_reason=_text(row.get("blocked_reason", ""), "blocked_reason"),
@@ -3739,15 +3793,156 @@ class EquipmentDynamicParameterBinding:
 
 
 @dataclass(frozen=True)
+class LightConeRankParameterBasis:
+    definition_key: EquipmentDefinitionKey
+    skill_id: str
+    superimposition_level: int
+    source: IRSource
+    basis_kind: Literal["light_cone_rank"] = "light_cone_rank"
+
+    def __post_init__(self) -> None:
+        _require_kind(self.definition_key, "light_cone")
+        _require_text(self.skill_id, "skill_id")
+        _require_integer(self.superimposition_level, "superimposition_level")
+        if self.superimposition_level <= 0:
+            raise ValueError("light-cone parameter rank must be positive")
+        _require_equipment_source(self.source)
+        if self.basis_kind != "light_cone_rank":
+            raise ValueError("invalid light-cone parameter basis kind")
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "basis_kind": self.basis_kind,
+            "definition_key": self.definition_key.to_json(),
+            "skill_id": self.skill_id,
+            "superimposition_level": self.superimposition_level,
+            "source": self.source.to_json(),
+        }
+
+    @classmethod
+    def from_json(cls, value: object) -> LightConeRankParameterBasis:
+        row = _mapping(value, "light_cone_rank_parameter_basis")
+        _require_exact_fields(
+            row,
+            frozenset(
+                {
+                    "basis_kind",
+                    "definition_key",
+                    "skill_id",
+                    "superimposition_level",
+                    "source",
+                }
+            ),
+            "light_cone_rank_parameter_basis",
+        )
+        return cls(
+            definition_key=EquipmentDefinitionKey.from_json(
+                row.get("definition_key")
+            ),
+            skill_id=_text(row.get("skill_id"), "skill_id"),
+            superimposition_level=_integer(
+                row.get("superimposition_level"),
+                "superimposition_level",
+            ),
+            source=_source_from_json(row.get("source")),
+            basis_kind=cast(
+                Literal["light_cone_rank"],
+                _text(row.get("basis_kind"), "basis_kind"),
+            ),
+        )
+
+
+@dataclass(frozen=True)
+class RelicSetThresholdParameterBasis:
+    threshold_key: EquipmentDefinitionKey
+    set_key: EquipmentDefinitionKey
+    required_count: int
+    source: IRSource
+    basis_kind: Literal["relic_set_threshold"] = "relic_set_threshold"
+
+    def __post_init__(self) -> None:
+        _require_kind(self.threshold_key, "relic_set_threshold")
+        _require_kind(self.set_key, "relic_set")
+        _require_integer(self.required_count, "required_count")
+        if self.required_count <= 0:
+            raise ValueError("relic threshold parameter count must be positive")
+        if (
+            self.threshold_key.definition_identity
+            != f"{self.set_key.definition_identity}:{self.required_count}"
+        ):
+            raise ValueError("relic threshold parameter basis identity mismatch")
+        _require_equipment_source(self.source)
+        if self.basis_kind != "relic_set_threshold":
+            raise ValueError("invalid relic threshold parameter basis kind")
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "basis_kind": self.basis_kind,
+            "threshold_key": self.threshold_key.to_json(),
+            "set_key": self.set_key.to_json(),
+            "required_count": self.required_count,
+            "source": self.source.to_json(),
+        }
+
+    @classmethod
+    def from_json(cls, value: object) -> RelicSetThresholdParameterBasis:
+        row = _mapping(value, "relic_set_threshold_parameter_basis")
+        _require_exact_fields(
+            row,
+            frozenset(
+                {
+                    "basis_kind",
+                    "threshold_key",
+                    "set_key",
+                    "required_count",
+                    "source",
+                }
+            ),
+            "relic_set_threshold_parameter_basis",
+        )
+        return cls(
+            threshold_key=EquipmentDefinitionKey.from_json(
+                row.get("threshold_key")
+            ),
+            set_key=EquipmentDefinitionKey.from_json(row.get("set_key")),
+            required_count=_integer(
+                row.get("required_count"),
+                "required_count",
+            ),
+            source=_source_from_json(row.get("source")),
+            basis_kind=cast(
+                Literal["relic_set_threshold"],
+                _text(row.get("basis_kind"), "basis_kind"),
+            ),
+        )
+
+
+EquipmentParameterBasis = (
+    LightConeRankParameterBasis | RelicSetThresholdParameterBasis
+)
+
+
+def equipment_parameter_basis_from_json(
+    value: object,
+) -> EquipmentParameterBasis:
+    row = _mapping(value, "equipment_parameter_basis")
+    basis_kind = _text(row.get("basis_kind"), "basis_kind")
+    if basis_kind == "light_cone_rank":
+        return LightConeRankParameterBasis.from_json(row)
+    if basis_kind == "relic_set_threshold":
+        return RelicSetThresholdParameterBasis.from_json(row)
+    raise ValueError(f"unsupported equipment parameter basis {basis_kind!r}")
+
+
+@dataclass(frozen=True)
 class DynamicMechanismSelection:
     selection_id: str
     mechanism_key: EquipmentDefinitionKey
     target_definition_key: EquipmentDefinitionKey
     graph_ref_id: str
-    equipment_instance_id: str
+    provider_source_id: str
     wearer_character_card_id: str
-    skill_id: str
-    superimposition_level: int
+    parameter_basis: EquipmentParameterBasis
     parameter_bindings: tuple[EquipmentDynamicParameterBinding, ...]
     source: IRSource
     coverage_status: CoverageStatus
@@ -3756,14 +3951,40 @@ class DynamicMechanismSelection:
     def __post_init__(self) -> None:
         _require_text(self.selection_id, "selection_id")
         _require_kind(self.mechanism_key, "equipment_mechanism")
-        _require_kind(self.target_definition_key, "light_cone")
+        if self.target_definition_key.definition_kind not in {
+            "light_cone",
+            "relic_set_threshold",
+        }:
+            raise TypeError(
+                "dynamic mechanism target must be a light cone or relic threshold"
+            )
         _require_text(self.graph_ref_id, "graph_ref_id")
-        _require_text(self.equipment_instance_id, "equipment_instance_id")
+        _require_text(self.provider_source_id, "provider_source_id")
         _require_text(self.wearer_character_card_id, "wearer_character_card_id")
-        _require_text(self.skill_id, "skill_id")
-        _require_integer(self.superimposition_level, "superimposition_level")
-        if self.superimposition_level <= 0:
-            raise ValueError("dynamic mechanism superimposition_level must be positive")
+        if isinstance(self.parameter_basis, LightConeRankParameterBasis):
+            if (
+                self.target_definition_key.definition_kind != "light_cone"
+                or self.parameter_basis.definition_key
+                != self.target_definition_key
+            ):
+                raise ValueError(
+                    "light-cone parameter basis must match the selected target"
+                )
+        elif isinstance(
+            self.parameter_basis,
+            RelicSetThresholdParameterBasis,
+        ):
+            if (
+                self.target_definition_key.definition_kind
+                != "relic_set_threshold"
+                or self.parameter_basis.threshold_key
+                != self.target_definition_key
+            ):
+                raise ValueError(
+                    "relic threshold parameter basis must match the selected target"
+                )
+        else:
+            raise TypeError("unsupported dynamic equipment parameter basis")
         bindings = cast(
             tuple[EquipmentDynamicParameterBinding, ...],
             _typed_tuple(
@@ -3788,10 +4009,9 @@ class DynamicMechanismSelection:
             "mechanism_key": self.mechanism_key.to_json(),
             "target_definition_key": self.target_definition_key.to_json(),
             "graph_ref_id": self.graph_ref_id,
-            "equipment_instance_id": self.equipment_instance_id,
+            "provider_source_id": self.provider_source_id,
             "wearer_character_card_id": self.wearer_character_card_id,
-            "skill_id": self.skill_id,
-            "superimposition_level": self.superimposition_level,
+            "parameter_basis": self.parameter_basis.to_json(),
             "parameter_bindings": [item.to_json() for item in self.parameter_bindings],
             "source": self.source.to_json(),
             "coverage_status": self.coverage_status,
@@ -3809,10 +4029,9 @@ class DynamicMechanismSelection:
                     "mechanism_key",
                     "target_definition_key",
                     "graph_ref_id",
-                    "equipment_instance_id",
+                    "provider_source_id",
                     "wearer_character_card_id",
-                    "skill_id",
-                    "superimposition_level",
+                    "parameter_basis",
                     "parameter_bindings",
                     "source",
                     "coverage_status",
@@ -3828,18 +4047,16 @@ class DynamicMechanismSelection:
                 row.get("target_definition_key")
             ),
             graph_ref_id=_text(row.get("graph_ref_id"), "graph_ref_id"),
-            equipment_instance_id=_text(
-                row.get("equipment_instance_id"),
-                "equipment_instance_id",
+            provider_source_id=_text(
+                row.get("provider_source_id"),
+                "provider_source_id",
             ),
             wearer_character_card_id=_text(
                 row.get("wearer_character_card_id"),
                 "wearer_character_card_id",
             ),
-            skill_id=_text(row.get("skill_id"), "skill_id"),
-            superimposition_level=_integer(
-                row.get("superimposition_level"),
-                "superimposition_level",
+            parameter_basis=equipment_parameter_basis_from_json(
+                row.get("parameter_basis")
             ),
             parameter_bindings=tuple(
                 EquipmentDynamicParameterBinding.from_json(item)
@@ -5440,17 +5657,61 @@ class EquipmentAssemblyResult:
             if contribution.source_ref.definition_kind not in EQUIPMENT_DEFINITION_KINDS:
                 raise ValueError("equipment static contribution has a non-equipment source_ref")
             _require_equipment_source(contribution.source)
+        dynamic_mechanisms = cast(
+            tuple[DynamicMechanismSelection, ...],
+            _typed_tuple(
+                self.dynamic_mechanisms,
+                DynamicMechanismSelection,
+                "dynamic_mechanisms",
+            ),
+        )
+        selection_ids = tuple(
+            mechanism.selection_id for mechanism in dynamic_mechanisms
+        )
+        if len(selection_ids) != len(set(selection_ids)):
+            raise ValueError(
+                "dynamic mechanism selection identities must be unique"
+            )
+        provider_semantics = tuple(
+            (
+                mechanism.provider_source_id,
+                mechanism.mechanism_key,
+            )
+            for mechanism in dynamic_mechanisms
+        )
+        if len(provider_semantics) != len(set(provider_semantics)):
+            raise ValueError(
+                "dynamic mechanism provider semantics must be unique"
+            )
+        dynamic_mechanisms = tuple(
+            sorted(
+                dynamic_mechanisms,
+                key=lambda mechanism: (
+                    mechanism.wearer_character_card_id,
+                    mechanism.provider_source_id,
+                    mechanism.mechanism_key.stable_id,
+                    mechanism.target_definition_key.stable_id,
+                    mechanism.graph_ref_id,
+                    mechanism.selection_id,
+                ),
+            )
+        )
         object.__setattr__(
             self,
             "dynamic_mechanisms",
-            cast(
-                tuple[DynamicMechanismSelection, ...],
-                _typed_tuple(
-                    self.dynamic_mechanisms,
-                    DynamicMechanismSelection,
-                    "dynamic_mechanisms",
-                ),
-            ),
+            dynamic_mechanisms,
+        )
+        light_cone_dynamic_mechanisms = tuple(
+            mechanism
+            for mechanism in dynamic_mechanisms
+            if mechanism.target_definition_key.definition_kind
+            == "light_cone"
+        )
+        relic_dynamic_mechanisms = tuple(
+            mechanism
+            for mechanism in dynamic_mechanisms
+            if mechanism.target_definition_key.definition_kind
+            == "relic_set_threshold"
         )
         object.__setattr__(
             self,
@@ -5593,13 +5854,14 @@ class EquipmentAssemblyResult:
                 raise ValueError(
                     "assembled relic selections cannot retain static assembly blockers"
                 )
-            _validate_relic_static_result_channels(
+            _validate_relic_result_channels(
                 self.assembly_id,
                 self.relic_selections,
                 self.relic_set_activation_decisions,
                 self.static_contributions,
                 static_ledger,
                 self.source_ledger,
+                relic_dynamic_mechanisms,
                 relic_dynamic_blockers,
             )
             if self.light_cone_selection is None:
@@ -5613,7 +5875,7 @@ class EquipmentAssemblyResult:
                         contribution.source_ref.definition_kind == "light_cone"
                         for contribution in self.static_contributions
                     )
-                    or self.dynamic_mechanisms
+                    or light_cone_dynamic_mechanisms
                     or self.activation_decisions
                     or light_cone_blockers
                     or light_cone_ledger
@@ -5683,15 +5945,22 @@ class EquipmentAssemblyResult:
                         "light-cone results cannot carry unselected static contributions"
                     )
                 activation = matching_decisions[0]
-                for mechanism in self.dynamic_mechanisms:
+                for mechanism in light_cone_dynamic_mechanisms:
                     if (
                         mechanism.target_definition_key
                         != self.light_cone_selection.definition_key
-                        or mechanism.equipment_instance_id
+                        or mechanism.provider_source_id
                         != self.light_cone_selection.instance_id
-                        or mechanism.skill_id != self.light_cone_selection.skill_id
-                        or mechanism.superimposition_level
+                        or not isinstance(
+                            mechanism.parameter_basis,
+                            LightConeRankParameterBasis,
+                        )
+                        or mechanism.parameter_basis.skill_id
+                        != self.light_cone_selection.skill_id
+                        or mechanism.parameter_basis.superimposition_level
                         != self.light_cone_selection.superimposition_level
+                        or mechanism.parameter_basis.source
+                        != self.light_cone_selection.superimposition_source
                         or mechanism.source
                         != self.light_cone_selection.ability_source
                     ):
@@ -5843,7 +6112,7 @@ class EquipmentAssemblyResult:
                     activation.activation_status == "inactive"
                     and (
                         self.light_cone_selection.passive_contribution_ids
-                        or self.dynamic_mechanisms
+                        or light_cone_dynamic_mechanisms
                         or light_cone_blockers
                     )
                 ):
@@ -5852,15 +6121,16 @@ class EquipmentAssemblyResult:
                     )
                 if activation.activation_status == "active":
                     if not light_cone_blockers and (
-                        len(self.dynamic_mechanisms) != 1
-                        or self.dynamic_mechanisms[0].coverage_status != "executable"
+                        len(light_cone_dynamic_mechanisms) != 1
+                        or light_cone_dynamic_mechanisms[0].coverage_status
+                        != "executable"
                     ):
                         raise ValueError(
                             "battle-admitted active light-cone abilities require one executable dynamic selection"
                         )
                     if any(
                         mechanism.coverage_status == "blocked"
-                        for mechanism in self.dynamic_mechanisms
+                        for mechanism in light_cone_dynamic_mechanisms
                     ) and not light_cone_blockers:
                         raise ValueError(
                             "blocked dynamic selections require a battle admission blocker"
@@ -5993,22 +6263,30 @@ class EquipmentAssemblyResult:
         return result
 
 
-def _validate_relic_static_result_channels(
+def _validate_relic_result_channels(
     assembly_id: str,
     selections: tuple[RelicAssemblySelection, ...],
     decisions: tuple[RelicSetActivationDecision, ...],
     contributions: tuple[StaticStatContribution, ...],
     static_ledger: Mapping[str, EquipmentSourceLedgerEntry],
     source_ledger: tuple[EquipmentSourceLedgerEntry, ...],
+    dynamic_mechanisms: tuple[DynamicMechanismSelection, ...],
     dynamic_blockers: tuple[EquipmentBattleAdmissionBlocker, ...],
 ) -> None:
     if any(
-        entry.channel != "static"
-        and entry.definition_key.definition_kind != "light_cone"
+        entry.definition_key.definition_kind != "light_cone"
+        and not (
+            entry.channel == "static"
+            or (
+                entry.channel == "dynamic"
+                and entry.definition_key.definition_kind
+                == "relic_set_threshold"
+            )
+        )
         for entry in source_ledger
     ):
         raise ValueError(
-            "relic source ledger entries may only use the static channel"
+            "relic source ledger entries use an invalid channel"
         )
     relic_contributions = {
         contribution.contribution_id: contribution
@@ -6175,24 +6453,173 @@ def _validate_relic_static_result_channels(
                 "relic set static contribution raw source is detached from its threshold"
             )
 
-    expected_blockers = {
-        (
-            f"{assembly_id}:{decision.decision_id}:"
-            "dynamic_ability"
-        ): decision
+    active_dynamic_decisions = {
+        decision.threshold_key: decision
         for decision in decisions
         if decision.activation_status == "active"
         and decision.ability_source is not None
     }
+    mechanisms_by_threshold: dict[
+        EquipmentDefinitionKey,
+        list[DynamicMechanismSelection],
+    ] = {}
+    for mechanism in dynamic_mechanisms:
+        mechanisms_by_threshold.setdefault(
+            mechanism.target_definition_key,
+            [],
+        ).append(mechanism)
+    if set(mechanisms_by_threshold).difference(active_dynamic_decisions):
+        raise ValueError(
+            "relic dynamic selections must belong to active ability thresholds"
+        )
+
+    expected_dynamic_ledger = {
+        (
+            f"equipment_source:{decision.decision_id}:"
+            "ability_selection"
+        ): decision
+        for decision in active_dynamic_decisions.values()
+    }
+    dynamic_ledger = {
+        entry.ledger_entry_id: entry
+        for entry in source_ledger
+        if entry.channel == "dynamic"
+        and entry.definition_key.definition_kind == "relic_set_threshold"
+    }
+    if set(dynamic_ledger) != set(expected_dynamic_ledger):
+        raise ValueError(
+            "active relic set abilities require exact dynamic source ledger entries"
+        )
+    for ledger_id, decision in expected_dynamic_ledger.items():
+        entry = dynamic_ledger[ledger_id]
+        if (
+            entry.definition_key != decision.threshold_key
+            or decision.ability_source is None
+            or entry.source != decision.ability_source.source
+        ):
+            raise ValueError(
+                "relic dynamic source ledger does not match its active threshold"
+            )
+
     blockers_by_id = {
         blocker.blocker_id: blocker for blocker in dynamic_blockers
     }
-    if set(blockers_by_id) != set(expected_blockers):
+    if len(blockers_by_id) != len(dynamic_blockers):
         raise ValueError(
-            "active relic set abilities require exact battle blockers"
+            "relic dynamic blocker identities must be unique"
         )
-    for blocker_id, decision in expected_blockers.items():
-        blocker = blockers_by_id[blocker_id]
+    expected_blocker_ids = {
+        f"{assembly_id}:{decision.decision_id}:dynamic_ability": decision
+        for decision in active_dynamic_decisions.values()
+    }
+    if set(blockers_by_id).difference(expected_blocker_ids):
+        raise ValueError(
+            "relic dynamic blockers must belong to active ability thresholds"
+        )
+
+    for decision in active_dynamic_decisions.values():
+        blocker_id = (
+            f"{assembly_id}:{decision.decision_id}:dynamic_ability"
+        )
+        blocker = blockers_by_id.get(blocker_id)
+        matching_mechanisms = tuple(
+            mechanisms_by_threshold.get(decision.threshold_key, ())
+        )
+        executable_mechanisms = tuple(
+            mechanism
+            for mechanism in matching_mechanisms
+            if mechanism.coverage_status == "executable"
+            and not mechanism.blocked_reason
+        )
+        if blocker is None:
+            if (
+                len(matching_mechanisms) != 1
+                or len(executable_mechanisms) != 1
+            ):
+                raise ValueError(
+                    "active executable relic abilities require one dynamic selection"
+                )
+        elif matching_mechanisms:
+            raise ValueError(
+                "blocked relic abilities cannot expose a partial dynamic selection"
+            )
+
+        for mechanism in executable_mechanisms:
+            basis = mechanism.parameter_basis
+            if (
+                not isinstance(
+                    basis,
+                    RelicSetThresholdParameterBasis,
+                )
+                or mechanism.provider_source_id != decision.decision_id
+                or mechanism.target_definition_key != decision.threshold_key
+                or basis.threshold_key != decision.threshold_key
+                or basis.set_key != decision.set_key
+                or basis.required_count != decision.required_count
+                or basis.source != decision.threshold_source
+                or decision.ability_source is None
+                or mechanism.source != decision.ability_source.source
+            ):
+                raise ValueError(
+                    "relic dynamic selection does not match its active threshold"
+                )
+            threshold_json_path = decision.threshold_source.evidence.get(
+                "json_path"
+            )
+            ability_json_path = decision.ability_source.source.evidence.get(
+                "json_path"
+            )
+            for binding in mechanism.parameter_bindings:
+                if (
+                    not isinstance(threshold_json_path, str)
+                    or not isinstance(ability_json_path, str)
+                    or binding.value_source.raw_type
+                    != "RelicSetSkillParameter"
+                    or binding.value_source.raw_id
+                    != (
+                        f"{decision.threshold_key.definition_identity}:"
+                        f"{binding.parameter_index}"
+                    )
+                    or binding.value_source.source_path
+                    != decision.threshold_source.source_path
+                    or binding.value_source.evidence.get("json_path")
+                    != (
+                        f"{threshold_json_path}.AbilityParamList["
+                        f"{binding.parameter_index}].Value"
+                    )
+                    or binding.value_source.evidence.get(
+                        "source_fingerprint"
+                    )
+                    != decision.threshold_source.evidence.get(
+                        "source_fingerprint"
+                    )
+                    or binding.read_source.raw_type
+                    != "EquipmentAbilityParameterRead"
+                    or binding.read_source.raw_id
+                    != (
+                        f"{decision.ability_source.ability_name}:"
+                        f"{binding.dynamic_hash}:{binding.parameter_index}"
+                    )
+                    or binding.read_source.source_path
+                    != decision.ability_source.source.source_path
+                    or binding.read_source.evidence.get("json_path")
+                    != (
+                        f"{ability_json_path}.DynamicValues."
+                        f"{binding.value_type}.{binding.dynamic_hash}.ReadInfo"
+                    )
+                    or binding.read_source.evidence.get(
+                        "source_fingerprint"
+                    )
+                    != decision.ability_source.source.evidence.get(
+                        "source_fingerprint"
+                    )
+                ):
+                    raise ValueError(
+                        "relic dynamic parameter source is detached from its threshold"
+                    )
+
+        if blocker is None:
+            continue
         expected_sources = tuple(
             sorted(
                 (
@@ -6210,9 +6637,6 @@ def _validate_relic_static_result_channels(
         if (
             blocker.channel != "dynamic_ability"
             or blocker.target_definition_key != decision.threshold_key
-            or blocker.gap_classification != "implementation_missing"
-            or blocker.reason_code
-            != RELIC_SET_DYNAMIC_ABILITY_NOT_ASSEMBLED_REASON
             or blocker.source_refs != expected_sources
         ):
             raise ValueError(

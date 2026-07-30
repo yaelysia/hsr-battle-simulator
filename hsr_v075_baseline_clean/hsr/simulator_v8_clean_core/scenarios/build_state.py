@@ -2149,25 +2149,28 @@ def _equipment_startup_spec(
     graph = rules.standalone_ability_graph(selection.graph_ref_id)
     if graph is None or graph.coverage_status != "executable":
         raise ValueError("admitted equipment startup graph disappeared")
-    definition_resolution = rules.light_cone_definition(
-        selection.target_definition_key.definition_identity
+    parameter_context, context_reason = (
+        rules.equipment_dynamic_parameter_context(
+            selection.target_definition_key,
+            selection.parameter_basis,
+        )
     )
-    definition = definition_resolution.value
-    if definition_resolution.resolution_status != "resolved" or definition is None:
-        raise ValueError("admitted equipment startup definition disappeared")
-    ranks = tuple(
-        rank
-        for rank in definition.superimposition_levels
-        if rank.level == selection.superimposition_level
-    )
-    if len(ranks) != 1 or ranks[0].skill_id != selection.skill_id:
-        raise ValueError("admitted equipment startup rank disappeared")
-    rank = ranks[0]
+    if (
+        parameter_context is None
+        or parameter_context.graph.standalone_ability_graph_id
+        != selection.graph_ref_id
+        or parameter_context.mechanism_ref.definition_key
+        != selection.mechanism_key
+    ):
+        raise ValueError(
+            "admitted equipment startup parameter context disappeared:"
+            f"{context_reason or 'selection_mismatch'}"
+        )
     bindings_by_hash: dict[str, dict[str, Any]] = {}
     for binding in selection.parameter_bindings:
-        if binding.parameter_index >= len(rank.parameters):
+        if binding.parameter_index >= len(parameter_context.parameters):
             raise ValueError("admitted equipment startup parameter index is invalid")
-        parameter = rank.parameters[binding.parameter_index]
+        parameter = parameter_context.parameters[binding.parameter_index]
         if (
             parameter.exact_value != binding.exact_value
             or parameter.source != binding.value_source
@@ -2192,7 +2195,7 @@ def _equipment_startup_spec(
         "ability_name": graph.ability_name,
         "param_values": tuple(
             float(parameter.exact_value)
-            for parameter in rank.parameters
+            for parameter in parameter_context.parameters
         ),
         "dynamic_value_bindings": {"by_hash": bindings_by_hash},
         "dynamic_value_binding_mode": "configured_by_hash_required",

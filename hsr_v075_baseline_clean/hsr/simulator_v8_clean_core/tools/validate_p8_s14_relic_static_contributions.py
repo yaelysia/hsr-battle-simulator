@@ -16,7 +16,6 @@ from ..equipment.models import EquipmentAssemblyResult, EquipmentBuildInput
 from ..equipment.models import EquipmentDefinitionKey
 from ..equipment.models import LightConeInstanceInput, RelicInstanceInput
 from ..equipment.models import RelicSubAffixRollInput, make_equipment_source
-from ..equipment.models import RELIC_SET_DYNAMIC_ABILITY_NOT_ASSEMBLED_REASON
 from ..immutable_json import thaw_json
 from ..rules.ir import CanonicalIR
 from ..rules.rulebook import RuleBook
@@ -453,7 +452,9 @@ def _static_matrix(
             and not both_result.dynamic_mechanisms
         ),
         "light_cone_and_relic_blockers_independent": all(
-            blocker.reason_code == RELIC_SET_DYNAMIC_ABILITY_NOT_ASSEMBLED_REASON
+            blocker.gap_classification == "lowering_gap"
+            and blocker.reason_code
+            == "relic_set_dynamic_ability_graph_not_lowered"
             and blocker.target_definition_key.definition_kind == "relic_set_threshold"
             for blocker in blockers
         ),

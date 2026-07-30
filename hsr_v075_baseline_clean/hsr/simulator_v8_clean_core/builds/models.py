@@ -1540,6 +1540,9 @@ class CharacterBuildAssemblyResult:
                     "avatar_profile",
                     "character_mechanism_slot",
                     "light_cone",
+                    "relic_main_affix",
+                    "relic_sub_affix",
+                    "relic_set_threshold",
                 }
             }
         )

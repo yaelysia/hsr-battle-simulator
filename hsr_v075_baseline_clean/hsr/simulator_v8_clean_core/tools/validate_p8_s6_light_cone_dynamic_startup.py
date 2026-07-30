@@ -21,6 +21,7 @@ from ..equipment.models import (
     EquipmentDynamicParameterBinding,
     LightConeDefinitionIR,
     LightConeInstanceInput,
+    LightConeRankParameterBasis,
 )
 from ..rules.ir import CanonicalIR, RuleEntity
 from ..rules.rulebook import RuleBook
@@ -39,7 +40,7 @@ from ..tbgd.light_cone_cards import build_light_cone_catalog
 from ..tbgd.lowering import (
     CHARACTER_ACTION_DEFINITION_TABLES,
     TBGDLowering,
-    _attach_light_cone_equipment_mechanism_refs,
+    _attach_equipment_mechanism_refs,
     build_character_action_definition_ir,
 )
 from ..tbgd.paths import find_tbgd_root
@@ -187,8 +188,9 @@ def _focused_bundle(tbgd_root: Path) -> dict[str, Any]:
     lowering = TBGDLowering(tbgd_root)
     lowered = lowering._lower_equipment_ability_graphs(catalog.canonical_definitions)
     graphs, phases, tasks, effects, conditions, formulas, targets, parameter_reads = lowered
-    definitions, mechanism_refs = _attach_light_cone_equipment_mechanism_refs(
+    definitions, _, mechanism_refs = _attach_equipment_mechanism_refs(
         catalog.canonical_definitions,
+        (),
         graphs,
         parameter_reads,
     )
@@ -485,23 +487,26 @@ def _parameter_binding_matrix(bundle: dict[str, Any]) -> dict[str, Any]:
                     ok = False
                     continue
                 parameter = rank.parameters[parameter_read.parameter_index]
-                result = resolver.resolve_equipment_rank_parameter(
+                parameter_basis = LightConeRankParameterBasis(
+                    definition_key=definition.definition_key,
+                    skill_id=rank.skill_id,
+                    superimposition_level=rank.level,
+                    source=rank.source,
+                )
+                result = resolver.resolve_equipment_parameter(
                     ExactEquipmentValueBindingRequest(
-                        binding_kind="equipment_rank_parameter",
+                        binding_kind="equipment_parameter",
                         binding_id=(
                             f"validation:{definition.raw_equipment_id}:"
                             f"rank:{rank.level}:{parameter_read.parameter_read_id}"
                         ),
-                        target_definition_identity=(
-                            definition.definition_key.definition_identity
-                        ),
+                        target_definition_key=definition.definition_key,
+                        parameter_basis=parameter_basis,
                         graph_ref_id=mechanism.graph_ref_id,
                         parameter_read_id=parameter_read.parameter_read_id,
                         value_type=parameter_read.value_type,
                         dynamic_hash=parameter_read.dynamic_hash,
                         parameter_index=parameter_read.parameter_index,
-                        skill_id=rank.skill_id,
-                        superimposition_level=rank.level,
                         exact_value=parameter.exact_value,
                         value_source=parameter.source,
                     )
@@ -769,13 +774,15 @@ def _startup_matrix(bundle: dict[str, Any], sample: dict[str, Any]) -> dict[str,
             )
         }
     )
-    partial_registration = register_dynamic_ability_providers(
-        partial_state,
-        rules,
-        (("ally:partial", partial.dynamic_mechanisms[0]),),
+    mechanism_resolution = rules.equipment_mechanism_ref(
+        definition.mechanism_ref_ids[0].definition_identity
     )
-
-    graph_id = partial.dynamic_mechanisms[0].graph_ref_id
+    if (
+        mechanism_resolution.resolution_status != "resolved"
+        or mechanism_resolution.value is None
+    ):
+        raise ValueError("partial light-cone mechanism reference disappeared")
+    graph_id = mechanism_resolution.value.graph_ref_id
     admitted_ir = replace(
         bundle["ir"],
         standalone_ability_graphs=tuple(
@@ -788,6 +795,11 @@ def _startup_matrix(bundle: dict[str, Any], sample: dict[str, Any]) -> dict[str,
     admitted_rules = RuleBook(admitted_ir)
     _, rank_one = _assembly(admitted_rules, card.card_id, definition, instance_id="validation:p8_s6:owner-a", rank=1)
     _, rank_two = _assembly(admitted_rules, card.card_id, definition, instance_id="validation:p8_s6:owner-b", rank=2)
+    partial_registration = register_dynamic_ability_providers(
+        partial_state,
+        rules,
+        (("ally:partial", rank_one.dynamic_mechanisms[0]),),
+    )
     initial = BattleState(
         units={
             unit_id: UnitState(
@@ -891,8 +903,8 @@ def _startup_matrix(bundle: dict[str, Any], sample: dict[str, Any]) -> dict[str,
     checks = {
         "selected_partial_graph_blocks_battle": partial.assembly_status == "assembled"
         and partial.battle_admission_status == "blocked"
-        and len(partial.dynamic_mechanisms) == 1
-        and partial.dynamic_mechanisms[0].coverage_status == "blocked",
+        and not partial.dynamic_mechanisms
+        and bool(partial.battle_admission_blockers),
         "blocked_startup_state_unchanged": not partial_registration.ok
         and partial_registration.state_unchanged
         and not partial_registration.mutations,
@@ -940,7 +952,7 @@ def _startup_matrix(bundle: dict[str, Any], sample: dict[str, Any]) -> dict[str,
     }
     checks["ok"] = all(checks.values())
     return {
-        "schema_version": "p8_s6_startup_matrix_v1",
+        "schema_version": "p8_s6_startup_matrix_v2",
         "ok": checks["ok"],
         "checks": checks,
         "production_partial": {
@@ -1154,24 +1166,28 @@ def _negative_matrix(bundle: dict[str, Any], sample: dict[str, Any]) -> dict[str
     admitted_rules = RuleBook(admitted_ir)
     parameter = rank.parameters[read.parameter_index]
     exact_request = ExactEquipmentValueBindingRequest(
-        binding_kind="equipment_rank_parameter",
+        binding_kind="equipment_parameter",
         binding_id="validation:p8_s6:negative:exact-binding",
-        target_definition_identity=definition.definition_key.definition_identity,
+        target_definition_key=definition.definition_key,
+        parameter_basis=LightConeRankParameterBasis(
+            definition_key=definition.definition_key,
+            skill_id=rank.skill_id,
+            superimposition_level=rank.level,
+            source=rank.source,
+        ),
         graph_ref_id=graph.standalone_ability_graph_id,
         parameter_read_id=read.parameter_read_id,
         value_type=read.value_type,
         dynamic_hash=read.dynamic_hash,
         parameter_index=read.parameter_index,
-        skill_id=rank.skill_id,
-        superimposition_level=rank.level,
         exact_value=parameter.exact_value,
         value_source=parameter.source,
     )
     exact_resolver = ValueResolver(admitted_rules)
-    forged_value_resolution = exact_resolver.resolve_equipment_rank_parameter(
+    forged_value_resolution = exact_resolver.resolve_equipment_parameter(
         replace(exact_request, exact_value="999")
     )
-    forged_source_resolution = exact_resolver.resolve_equipment_rank_parameter(
+    forged_source_resolution = exact_resolver.resolve_equipment_parameter(
         replace(
             exact_request,
             value_source=replace(parameter.source, raw_id="forged:rank-parameter"),

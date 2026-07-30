@@ -8,7 +8,7 @@ EquipmentFamilyStage = Literal["s7", "s8", "non_gameplay", "unknown"]
 S7_VALUE_FAMILIES = frozenset(
     {
         "fixed_numeric",
-        "equipment_rank_parameter_read",
+        "equipment_parameter_read",
         "postfix_numeric",
     }
 )
@@ -425,8 +425,8 @@ def classify_equipment_target(raw_target: Any) -> EquipmentFamilyStage:
 def equipment_value_family(raw_value: Any) -> str:
     if not isinstance(raw_value, dict):
         return "unknown"
-    if raw_value.get("Type") == "SkillEquip":
-        return "equipment_rank_parameter_read"
+    if raw_value.get("Type") in {"SkillEquip", "SkillRelic"}:
+        return "equipment_parameter_read"
     if raw_value.get("IsDynamic") is False and "FixedValue" in raw_value:
         return "fixed_numeric"
     if raw_value.get("IsDynamic") is True and isinstance(

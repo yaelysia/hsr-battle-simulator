@@ -12,13 +12,18 @@ from ..equipment.models import (
     EquipmentDefinitionResolution,
     EquipmentDefinitionT,
     EquipmentMechanismRefIR,
+    EquipmentParameterBasis,
     EquipmentResolutionCandidate,
     LightConeDefinitionIR,
+    LightConeParameterIR,
+    LightConeRankParameterBasis,
     RelicDomainDefinitionIR,
     RelicMainAffixDefinitionIR,
     RelicMainAffixGroupDefinitionIR,
     RelicSetDefinitionIR,
+    RelicSetParameterIR,
     RelicSetThresholdIR,
+    RelicSetThresholdParameterBasis,
     RelicSlotDefinitionIR,
     RelicSubAffixDefinitionIR,
     RelicSubAffixGroupDefinitionIR,
@@ -96,6 +101,15 @@ from .ir import (
     WaveDefinitionIR,
     WaveMonsterEntryIR,
 )
+
+
+@dataclass(frozen=True)
+class EquipmentDynamicParameterContext:
+    target_definition_key: EquipmentDefinitionKey
+    parameter_basis: EquipmentParameterBasis
+    parameters: tuple[LightConeParameterIR | RelicSetParameterIR, ...]
+    mechanism_ref: EquipmentMechanismRefIR
+    graph: StandaloneAbilityGraphIR
 
 
 @dataclass(frozen=True)
@@ -1475,6 +1489,135 @@ class RuleBook:
     ) -> EquipmentAbilityParameterReadIR | None:
         return self._equipment_parameter_reads.get(parameter_read_id)
 
+    def equipment_dynamic_parameter_context(
+        self,
+        target_definition_key: EquipmentDefinitionKey,
+        parameter_basis: EquipmentParameterBasis,
+    ) -> tuple[EquipmentDynamicParameterContext | None, str]:
+        if not isinstance(target_definition_key, EquipmentDefinitionKey):
+            return None, "equipment_parameter_target_key_invalid"
+        if isinstance(parameter_basis, LightConeRankParameterBasis):
+            if (
+                target_definition_key.definition_kind != "light_cone"
+                or parameter_basis.definition_key != target_definition_key
+            ):
+                return None, "equipment_parameter_basis_target_mismatch"
+            resolution = self.light_cone_definition(
+                target_definition_key.definition_identity
+            )
+            definition = resolution.value
+            if resolution.resolution_status != "resolved" or definition is None:
+                return (
+                    None,
+                    resolution.blocked_reason
+                    or "equipment_parameter_definition_unresolved",
+                )
+            if definition.skill_id != parameter_basis.skill_id:
+                return None, "equipment_parameter_skill_identity_mismatch"
+            ranks = tuple(
+                rank
+                for rank in definition.superimposition_levels
+                if rank.level == parameter_basis.superimposition_level
+                and rank.skill_id == parameter_basis.skill_id
+            )
+            if len(ranks) != 1:
+                return None, "equipment_parameter_rank_unresolved"
+            if ranks[0].source != parameter_basis.source:
+                return None, "equipment_parameter_basis_source_mismatch"
+            parameters: tuple[
+                LightConeParameterIR | RelicSetParameterIR,
+                ...,
+            ] = ranks[0].parameters
+            mechanism_ref_ids = definition.mechanism_ref_ids
+            ability_source = definition.ability_source
+        elif isinstance(
+            parameter_basis,
+            RelicSetThresholdParameterBasis,
+        ):
+            if (
+                target_definition_key.definition_kind
+                != "relic_set_threshold"
+                or parameter_basis.threshold_key != target_definition_key
+            ):
+                return None, "equipment_parameter_basis_target_mismatch"
+            resolution = self.relic_set_threshold(
+                target_definition_key.definition_identity
+            )
+            threshold = resolution.value
+            if resolution.resolution_status != "resolved" or threshold is None:
+                return (
+                    None,
+                    resolution.blocked_reason
+                    or "equipment_parameter_definition_unresolved",
+                )
+            if (
+                threshold.set_key != parameter_basis.set_key
+                or threshold.require_count != parameter_basis.required_count
+                or threshold.source != parameter_basis.source
+            ):
+                return None, "equipment_parameter_basis_source_mismatch"
+            parameters = threshold.parameters
+            mechanism_ref_ids = threshold.mechanism_ref_ids
+            ability_source = threshold.ability_source
+        else:
+            return None, "equipment_parameter_basis_type_invalid"
+        if ability_source is None:
+            return None, "equipment_parameter_ability_source_missing"
+        if len(mechanism_ref_ids) != 1:
+            return None, "equipment_parameter_mechanism_not_unique"
+        mechanism_resolution = self.equipment_mechanism_ref(
+            mechanism_ref_ids[0].definition_identity
+        )
+        mechanism = mechanism_resolution.value
+        if (
+            mechanism_resolution.resolution_status != "resolved"
+            or mechanism is None
+        ):
+            return (
+                None,
+                mechanism_resolution.blocked_reason
+                or "equipment_parameter_mechanism_unresolved",
+            )
+        graph = self.standalone_ability_graph(mechanism.graph_ref_id)
+        if (
+            graph is None
+            or graph.source != ability_source.source
+            or mechanism.source != ability_source.source
+        ):
+            return None, "equipment_parameter_graph_source_mismatch"
+        return (
+            EquipmentDynamicParameterContext(
+                target_definition_key=target_definition_key,
+                parameter_basis=parameter_basis,
+                parameters=parameters,
+                mechanism_ref=mechanism,
+                graph=graph,
+            ),
+            "",
+        )
+
+    def equipment_parameter_read_matches_basis(
+        self,
+        parameter_read: EquipmentAbilityParameterReadIR,
+        parameter_basis: EquipmentParameterBasis,
+    ) -> bool:
+        if isinstance(parameter_basis, LightConeRankParameterBasis):
+            return bool(
+                parameter_read.parameter_basis_kind == "light_cone_rank"
+                and not parameter_read.parameter_basis_identity
+            )
+        if isinstance(
+            parameter_basis,
+            RelicSetThresholdParameterBasis,
+        ):
+            return bool(
+                parameter_read.parameter_basis_kind
+                == "relic_set_threshold"
+                and parameter_read.parameter_basis_identity
+                == parameter_basis.threshold_key.definition_identity
+            )
+        return False
+
     def _equipment_definition_resolution(
         self,
         key: EquipmentDefinitionKey,
@@ -1626,7 +1769,10 @@ class RuleBook:
                     candidates=candidates,
                     blocked_reason="equipment_mechanism_reference_unresolved",
                 )
-            if isinstance(selected, LightConeDefinitionIR) and (
+            if isinstance(
+                selected,
+                (LightConeDefinitionIR, RelicSetThresholdIR),
+            ) and (
                 selected.ability_source is None
                 or mechanism_resolution.value is None
                 or mechanism_resolution.value.source

@@ -57,7 +57,7 @@ from ..tbgd.light_cone_cards import (
 from ..tbgd.lowering import (
     IRIdentityConflictError,
     TBGDLowering,
-    _attach_light_cone_equipment_mechanism_refs,
+    _attach_equipment_mechanism_refs,
     _block_status_callback_tasks_by_callback,
     _block_status_callbacks_by_event_family,
     _link_status_effect_runtime_fields,
@@ -197,9 +197,10 @@ def _build_rulebook(tbgd_root: Path) -> tuple[RuleBook, dict[str, Any]]:
         definitions,
         status_callbacks=callbacks,
     )
-    definitions, mechanism_refs = (
-        _attach_light_cone_equipment_mechanism_refs(
+    definitions, _, mechanism_refs = (
+        _attach_equipment_mechanism_refs(
             definitions,
+            (),
             graphs,
             parameter_reads,
         )

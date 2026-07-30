@@ -67,7 +67,7 @@ from ..scenarios.schema import (
 )
 from ..tbgd.lowering import (
     TBGDLowering,
-    _attach_light_cone_equipment_mechanism_refs,
+    _attach_equipment_mechanism_refs,
     _condition_payload_executable,
     merge_identical_ir_items,
 )
@@ -256,8 +256,9 @@ def _focused_bundle(
         top_level_targets,
         parameter_reads,
     ) = lowered
-    definitions, mechanism_refs = _attach_light_cone_equipment_mechanism_refs(
+    definitions, _, mechanism_refs = _attach_equipment_mechanism_refs(
         base["catalog"].canonical_definitions,
+        (),
         graphs,
         parameter_reads,
     )

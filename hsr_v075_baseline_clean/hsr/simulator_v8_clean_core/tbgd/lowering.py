@@ -33,6 +33,7 @@ from ..equipment.models import (
     EquipmentDefinitionKey,
     EquipmentMechanismRefIR,
     LightConeDefinitionIR,
+    RelicSetThresholdIR,
     make_equipment_source,
 )
 from ..immutable_json import thaw_json
@@ -1209,15 +1210,10 @@ class TBGDLowering:
         light_cone_definitions = require_complete_light_cone_catalog(light_cone_catalog)
         relic_catalog_result = build_relic_catalog(self.tbgd_root)
         relic_catalog = require_complete_relic_catalog(relic_catalog_result)
-        equipment_ability_sources: dict[str, dict[int, IRSource]] = {}
-        for definition in light_cone_definitions:
-            ability_source = definition.ability_source
-            if ability_source is None:
-                continue
-            equipment_ability_sources.setdefault(
-                ability_source.source.source_path,
-                {},
-            )[ability_source.record_index] = ability_source.source
+        relic_set_thresholds = relic_catalog.set_thresholds
+        equipment_ability_sources = _equipment_ability_source_projection(
+            (*light_cone_definitions, *relic_set_thresholds)
+        )
         entities: list[RuleEntity] = []
         action_definitions: list[ActionDefinitionIR] = []
         triggers: list[TriggerIR] = []
@@ -1382,7 +1378,7 @@ class TBGDLowering:
             equipment_target_expressions,
             equipment_parameter_reads,
         ) = self._lower_equipment_ability_graphs(
-            light_cone_definitions,
+            (*light_cone_definitions, *relic_set_thresholds),
             status_callbacks=status_callbacks,
         )
         standalone_ability_graphs.extend(equipment_ability_graphs)
@@ -1392,9 +1388,14 @@ class TBGDLowering:
         standalone_conditions.extend(equipment_conditions)
         standalone_formulas.extend(equipment_formulas)
         standalone_target_expressions.extend(equipment_target_expressions)
-        light_cone_definitions, equipment_mechanism_refs = (
-            _attach_light_cone_equipment_mechanism_refs(
+        (
+            light_cone_definitions,
+            relic_set_thresholds,
+            equipment_mechanism_refs,
+        ) = (
+            _attach_equipment_mechanism_refs(
                 light_cone_definitions,
+                relic_set_thresholds,
                 equipment_ability_graphs,
                 equipment_parameter_reads,
             )
@@ -1599,7 +1600,7 @@ class TBGDLowering:
             relic_sub_affix_definitions=relic_catalog.sub_affix_definitions,
             relic_template_definitions=relic_catalog.template_definitions,
             relic_set_definitions=relic_catalog.set_definitions,
-            relic_set_thresholds=relic_catalog.set_thresholds,
+            relic_set_thresholds=relic_set_thresholds,
             equipment_ability_parameter_reads=tuple(equipment_parameter_reads),
             equipment_mechanism_refs=tuple(equipment_mechanism_refs),
             summon_unit_definitions=tuple(summon_unit_definitions),
@@ -3194,7 +3195,10 @@ class TBGDLowering:
 
     def _lower_equipment_ability_graphs(
         self,
-        light_cone_definitions: tuple[LightConeDefinitionIR, ...],
+        definitions: tuple[
+            LightConeDefinitionIR | RelicSetThresholdIR,
+            ...,
+        ],
         *,
         status_callbacks: list[StatusCallbackIR] | None = None,
     ) -> tuple[
@@ -3222,17 +3226,12 @@ class TBGDLowering:
         target_expressions: list[TargetExpressionIR] = []
         parameter_reads: list[EquipmentAbilityParameterReadIR] = []
         documents: dict[str, dict[str, Any]] = {}
-        seen_rows: set[tuple[str, int]] = set()
 
-        for definition in light_cone_definitions:
+        for definition in _admitted_equipment_ability_definitions(definitions):
             ability_source = definition.ability_source
             if ability_source is None:
                 continue
             relative = ability_source.source.source_path
-            row_key = (relative, ability_source.record_index)
-            if row_key in seen_rows:
-                continue
-            seen_rows.add(row_key)
             document = documents.get(relative)
             if document is None:
                 path = self.tbgd_root / relative
@@ -3301,6 +3300,7 @@ class TBGDLowering:
                 ability_source=ability_source.source,
                 ability_name=ability_name,
                 record_index=ability_source.record_index,
+                target_definition_key=definition.definition_key,
             )
             parameter_reads.extend(reads)
             row_callbacks = tuple(
@@ -11044,6 +11044,7 @@ def _lower_equipment_parameter_reads(
     ability_source: IRSource,
     ability_name: str,
     record_index: int,
+    target_definition_key: EquipmentDefinitionKey,
 ) -> tuple[list[EquipmentAbilityParameterReadIR], bool]:
     dynamic_values = ability.get("DynamicValues")
     if not isinstance(dynamic_values, dict):
@@ -11063,8 +11064,34 @@ def _lower_equipment_parameter_reads(
             if not isinstance(value_definition, dict):
                 continue
             read_info = value_definition.get("ReadInfo")
-            if not isinstance(read_info, dict) or read_info.get("Type") != "SkillEquip":
+            if not isinstance(read_info, dict):
                 continue
+            read_type = read_info.get("Type")
+            if read_type not in {"SkillEquip", "SkillRelic"}:
+                continue
+            if read_type == "SkillEquip":
+                parameter_basis_kind = "light_cone_rank"
+                parameter_basis_identity = ""
+                trigger_key = read_info.get("TriggerKey")
+                if (
+                    target_definition_key.definition_kind != "light_cone"
+                    or trigger_key not in {None, ""}
+                ):
+                    invalid = True
+                    continue
+            else:
+                parameter_basis_kind = "relic_set_threshold"
+                parameter_basis_identity = (
+                    target_definition_key.definition_identity
+                )
+                expected_trigger = parameter_basis_identity.replace(":", "_")
+                if (
+                    target_definition_key.definition_kind
+                    != "relic_set_threshold"
+                    or read_info.get("TriggerKey") != expected_trigger
+                ):
+                    invalid = True
+                    continue
             parameter_index = read_info.get("Index")
             dynamic_hash_text = str(dynamic_hash)
             if (
@@ -11088,6 +11115,8 @@ def _lower_equipment_parameter_reads(
                     dynamic_hash=dynamic_hash_text,
                     parameter_index=parameter_index,
                     value_type=value_type,
+                    parameter_basis_kind=parameter_basis_kind,
+                    parameter_basis_identity=parameter_basis_identity,
                     source=make_equipment_source(
                         source_path=ability_source.source_path,
                         raw_type="EquipmentAbilityParameterRead",
@@ -11111,11 +11140,16 @@ def _lower_equipment_parameter_reads(
     return sorted(reads, key=lambda item: (item.parameter_index, item.dynamic_hash)), invalid
 
 
-def _attach_light_cone_equipment_mechanism_refs(
-    definitions: tuple[LightConeDefinitionIR, ...],
+def _attach_equipment_mechanism_refs(
+    light_cone_definitions: tuple[LightConeDefinitionIR, ...],
+    relic_set_thresholds: tuple[RelicSetThresholdIR, ...],
     graphs: list[StandaloneAbilityGraphIR],
     parameter_reads: list[EquipmentAbilityParameterReadIR],
-) -> tuple[tuple[LightConeDefinitionIR, ...], tuple[EquipmentMechanismRefIR, ...]]:
+) -> tuple[
+    tuple[LightConeDefinitionIR, ...],
+    tuple[RelicSetThresholdIR, ...],
+    tuple[EquipmentMechanismRefIR, ...],
+]:
     graphs_by_source: dict[tuple[str, str, str, str, str], list[StandaloneAbilityGraphIR]] = {}
     for graph in graphs:
         graphs_by_source.setdefault(_equipment_source_identity(graph.source), []).append(graph)
@@ -11123,25 +11157,27 @@ def _attach_light_cone_equipment_mechanism_refs(
     for parameter_read in parameter_reads:
         reads_by_graph.setdefault(parameter_read.graph_ref_id, []).append(parameter_read)
 
-    linked_definitions: list[LightConeDefinitionIR] = []
     mechanism_refs: list[EquipmentMechanismRefIR] = []
-    for definition in definitions:
+
+    def link_definition(
+        definition: LightConeDefinitionIR | RelicSetThresholdIR,
+    ) -> LightConeDefinitionIR | RelicSetThresholdIR:
         ability_source = definition.ability_source
         if ability_source is None:
-            linked_definitions.append(definition)
-            continue
+            return definition
         matching_graphs = graphs_by_source.get(
             _equipment_source_identity(ability_source.source),
             (),
         )
         if len(matching_graphs) != 1:
-            linked_definitions.append(definition)
-            continue
+            return definition
         graph = matching_graphs[0]
+        definition_kind = definition.definition_key.definition_kind
         mechanism_key = EquipmentDefinitionKey(
             "equipment_mechanism",
             (
-                f"light_cone:{definition.definition_key.definition_identity}:"
+                f"{definition_kind}:"
+                f"{definition.definition_key.definition_identity}:"
                 f"ability_record:{ability_source.record_index}"
             ),
         )
@@ -11171,10 +11207,88 @@ def _attach_light_cone_equipment_mechanism_refs(
                 blocked_reason="",
             )
         )
-        linked_definitions.append(
-            replace(definition, mechanism_ref_ids=(mechanism_key,))
+        return replace(
+            definition,
+            mechanism_ref_ids=(mechanism_key,),
         )
-    return tuple(linked_definitions), tuple(mechanism_refs)
+
+    return (
+        tuple(
+            link_definition(definition)
+            for definition in light_cone_definitions
+        ),
+        tuple(
+            link_definition(definition)
+            for definition in relic_set_thresholds
+        ),
+        tuple(mechanism_refs),
+    )
+
+
+def _admitted_equipment_ability_definitions(
+    definitions: tuple[
+        LightConeDefinitionIR | RelicSetThresholdIR,
+        ...,
+    ],
+) -> tuple[LightConeDefinitionIR | RelicSetThresholdIR, ...]:
+    """Admit one unambiguous definition declaration per physical ability row."""
+
+    definitions_by_row: dict[
+        tuple[str, int],
+        list[LightConeDefinitionIR | RelicSetThresholdIR],
+    ] = {}
+    for definition in definitions:
+        ability_source = definition.ability_source
+        if ability_source is None:
+            continue
+        definitions_by_row.setdefault(
+            (
+                ability_source.source.source_path,
+                ability_source.record_index,
+            ),
+            [],
+        ).append(definition)
+
+    admitted: list[LightConeDefinitionIR | RelicSetThresholdIR] = []
+    for row_key in sorted(definitions_by_row):
+        candidates = definitions_by_row[row_key]
+        first = candidates[0]
+        first_source = first.ability_source
+        declaration = (
+            type(first),
+            first.definition_key,
+            first_source,
+        )
+        if any(
+            (
+                type(candidate),
+                candidate.definition_key,
+                candidate.ability_source,
+            )
+            != declaration
+            for candidate in candidates[1:]
+        ):
+            continue
+        admitted.append(first)
+    return tuple(admitted)
+
+
+def _equipment_ability_source_projection(
+    definitions: tuple[
+        LightConeDefinitionIR | RelicSetThresholdIR,
+        ...,
+    ],
+) -> dict[str, dict[int, IRSource]]:
+    sources: dict[str, dict[int, IRSource]] = {}
+    for definition in _admitted_equipment_ability_definitions(definitions):
+        ability_source = definition.ability_source
+        if ability_source is None:
+            continue
+        sources.setdefault(
+            ability_source.source.source_path,
+            {},
+        )[ability_source.record_index] = ability_source.source
+    return sources
 
 
 def _equipment_source_identity(source: IRSource) -> tuple[str, str, str, str, str]:

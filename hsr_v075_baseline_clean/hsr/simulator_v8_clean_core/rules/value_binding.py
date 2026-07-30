@@ -6,6 +6,12 @@ from typing import Any
 
 from ..build_types import immutable_ir_source
 from ..core.model import JSONValue
+from ..equipment.models import (
+    EquipmentDefinitionKey,
+    EquipmentParameterBasis,
+    LightConeRankParameterBasis,
+    RelicSetThresholdParameterBasis,
+)
 from ..ir_types import IRSource
 from .evaluator import NumericEvaluationContext, RuleEvaluator
 from .expression_ir import numeric_dynamic_hash, numeric_fixed_value
@@ -211,14 +217,13 @@ def _canonical_exact_decimal(value: object, field_name: str) -> str:
 class ExactEquipmentValueBindingRequest:
     binding_kind: str
     binding_id: str
-    target_definition_identity: str
+    target_definition_key: EquipmentDefinitionKey
+    parameter_basis: EquipmentParameterBasis
     graph_ref_id: str
     parameter_read_id: str
     value_type: str
     dynamic_hash: str
     parameter_index: int
-    skill_id: str
-    superimposition_level: int
     exact_value: str
     value_source: IRSource
 
@@ -226,12 +231,10 @@ class ExactEquipmentValueBindingRequest:
         for field_name in (
             "binding_kind",
             "binding_id",
-            "target_definition_identity",
             "graph_ref_id",
             "parameter_read_id",
             "value_type",
             "dynamic_hash",
-            "skill_id",
         ):
             value = getattr(self, field_name)
             if not isinstance(value, str) or not value:
@@ -240,13 +243,15 @@ class ExactEquipmentValueBindingRequest:
             raise TypeError("parameter_index must be an integer")
         if self.parameter_index < 0:
             raise ValueError("parameter_index must be non-negative")
-        if (
-            not isinstance(self.superimposition_level, int)
-            or isinstance(self.superimposition_level, bool)
+        if not isinstance(self.target_definition_key, EquipmentDefinitionKey):
+            raise TypeError(
+                "target_definition_key must be EquipmentDefinitionKey"
+            )
+        if not isinstance(
+            self.parameter_basis,
+            (LightConeRankParameterBasis, RelicSetThresholdParameterBasis),
         ):
-            raise TypeError("superimposition_level must be an integer")
-        if self.superimposition_level <= 0:
-            raise ValueError("superimposition_level must be positive")
+            raise TypeError("parameter_basis must be an equipment parameter basis")
         object.__setattr__(
             self,
             "exact_value",
@@ -726,7 +731,7 @@ class ValueResolver:
             return self._resolve_dynamic_hash(request, context)
         return self._resolve_runtime_numeric_expression(request, context)
 
-    def resolve_equipment_rank_parameter(
+    def resolve_equipment_parameter(
         self,
         request: ExactEquipmentValueBindingRequest,
     ) -> ExactEquipmentValueResolution:
@@ -746,29 +751,16 @@ class ValueResolver:
                 blocked_reason=reason,
             )
 
-        if request.binding_kind != "equipment_rank_parameter":
+        if request.binding_kind != "equipment_parameter":
             return blocked(f"unknown_exact_binding_kind:{request.binding_kind}")
-        definition_resolution = self.rules.light_cone_definition(
-            request.target_definition_identity
+        context, context_reason = self.rules.equipment_dynamic_parameter_context(
+            request.target_definition_key,
+            request.parameter_basis,
         )
-        if (
-            definition_resolution.resolution_status != "resolved"
-            or definition_resolution.value is None
-        ):
+        if context is None:
             return blocked(
-                definition_resolution.blocked_reason
-                or "equipment_parameter_definition_unresolved"
+                context_reason or "equipment_parameter_context_unresolved"
             )
-        definition = definition_resolution.value
-        if definition.skill_id != request.skill_id:
-            return blocked("equipment_parameter_skill_identity_mismatch")
-        ranks = tuple(
-            rank
-            for rank in definition.superimposition_levels
-            if rank.level == request.superimposition_level
-        )
-        if len(ranks) != 1 or ranks[0].skill_id != request.skill_id:
-            return blocked("equipment_parameter_rank_unresolved")
         parameter_read = self.rules.equipment_ability_parameter_read(
             request.parameter_read_id
         )
@@ -783,24 +775,21 @@ class ValueResolver:
             or parameter_read.value_type != request.value_type
             or parameter_read.dynamic_hash != request.dynamic_hash
             or parameter_read.parameter_index != request.parameter_index
+            or not self.rules.equipment_parameter_read_matches_basis(
+                parameter_read,
+                request.parameter_basis,
+            )
         ):
             return blocked("equipment_parameter_read_identity_mismatch")
-        mechanisms = tuple(
-            self.rules.equipment_mechanism_ref(key.definition_identity)
-            for key in definition.mechanism_ref_ids
-        )
-        if len(mechanisms) != 1 or mechanisms[0].value is None:
-            return blocked("equipment_parameter_mechanism_unresolved")
-        mechanism = mechanisms[0].value
         if (
-            mechanism.graph_ref_id != request.graph_ref_id
-            or request.parameter_read_id not in mechanism.parameter_binding_ids
+            context.mechanism_ref.graph_ref_id != request.graph_ref_id
+            or request.parameter_read_id
+            not in context.mechanism_ref.parameter_binding_ids
         ):
             return blocked("equipment_parameter_read_not_bound_to_definition")
-        rank = ranks[0]
-        if request.parameter_index >= len(rank.parameters):
+        if request.parameter_index >= len(context.parameters):
             return blocked("equipment_parameter_index_out_of_range")
-        parameter = rank.parameters[request.parameter_index]
+        parameter = context.parameters[request.parameter_index]
         if (
             parameter.exact_value != request.exact_value
             or parameter.source != request.value_source

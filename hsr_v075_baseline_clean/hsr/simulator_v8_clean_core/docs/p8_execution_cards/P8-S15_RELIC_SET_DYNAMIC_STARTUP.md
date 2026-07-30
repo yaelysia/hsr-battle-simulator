@@ -119,10 +119,10 @@ git diff --check
 
 ## 唯一执行清单（仅验收线程可勾）
 
-- [ ] 套装档位只引用真实 Canonical graph，参数来自真实 threshold 行。
-- [ ] active/inactive、低/高档、2+2 和多 wearer 注册身份正确且幂等。
-- [ ] 静态面板后注册，runtime 不重算 set count。
-- [ ] partial/伪来源/缺参数完整阻断，零部分状态和 mutation。
-- [ ] 复用 S6/P7 通用机制；其契约未被实际改动，或已通过对应最小 direct；无套装专用事件循环或 ID 特判。
-- [ ] S16/S17 family gap 诚实保留，来源反查完整。
-- [ ] `ready_for_review` evidence 完整，阶段无能力入口 blocker。
+- [x] 套装档位只引用真实 Canonical graph，参数来自真实 threshold 行。
+- [x] active/inactive、低/高档、2+2 和多 wearer 注册身份正确且幂等。
+- [x] 静态面板后注册，runtime 不重算 set count。
+- [x] partial/伪来源/缺参数完整阻断，零部分状态和 mutation。
+- [x] 复用 S6/P7 通用机制；其契约未被实际改动，或已通过对应最小 direct；无套装专用事件循环或 ID 特判。
+- [x] S16/S17 family gap 诚实保留，来源反查完整。
+- [x] `ready_for_review` evidence 完整，阶段无能力入口 blocker。

@@ -71,37 +71,26 @@ def register_dynamic_ability_providers(
             or graph.source != selection.source
         ):
             return _blocked(state, "ability_provider_graph_missing_partial_or_wrong_source")
-        definition_resolution = rules.light_cone_definition(
-            selection.target_definition_key.definition_identity
+        parameter_context, context_reason = (
+            rules.equipment_dynamic_parameter_context(
+                selection.target_definition_key,
+                selection.parameter_basis,
+            )
         )
         if (
-            definition_resolution.resolution_status != "resolved"
-            or definition_resolution.value is None
-            or selection.mechanism_key
-            not in definition_resolution.value.mechanism_ref_ids
-            or definition_resolution.value.ability_source is None
-            or definition_resolution.value.ability_source.source != selection.source
-            or definition_resolution.value.skill_id != selection.skill_id
+            parameter_context is None
+            or parameter_context.mechanism_ref.definition_key
+            != selection.mechanism_key
+            or parameter_context.graph.standalone_ability_graph_id
+            != selection.graph_ref_id
+            or parameter_context.graph.source != selection.source
         ):
-            return _blocked(state, "ability_provider_target_definition_mismatch")
-        ranks = tuple(
-            rank
-            for rank in definition_resolution.value.superimposition_levels
-            if rank.level == selection.superimposition_level
-        )
-        if len(ranks) != 1 or ranks[0].skill_id != selection.skill_id:
-            return _blocked(state, "ability_provider_rank_reference_unresolved")
-        rank = ranks[0]
-        mechanism_resolution = rules.equipment_mechanism_ref(
-            selection.mechanism_key.definition_identity
-        )
-        if (
-            mechanism_resolution.resolution_status != "resolved"
-            or mechanism_resolution.value is None
-            or mechanism_resolution.value.graph_ref_id != selection.graph_ref_id
-        ):
-            return _blocked(state, "ability_provider_mechanism_reference_unresolved")
-        mechanism = mechanism_resolution.value
+            return _blocked(
+                state,
+                context_reason
+                or "ability_provider_target_definition_mismatch",
+            )
+        mechanism = parameter_context.mechanism_ref
         selected_read_ids = tuple(
             binding.parameter_read_id for binding in selection.parameter_bindings
         )
@@ -118,11 +107,19 @@ def register_dynamic_ability_providers(
                 or parameter_read.dynamic_hash != binding.dynamic_hash
                 or parameter_read.parameter_index != binding.parameter_index
                 or parameter_read.source != binding.read_source
+                or not rules.equipment_parameter_read_matches_basis(
+                    parameter_read,
+                    selection.parameter_basis,
+                )
             ):
                 return _blocked(state, "ability_provider_parameter_binding_mismatch")
-            if parameter_read.parameter_index >= len(rank.parameters):
+            if parameter_read.parameter_index >= len(
+                parameter_context.parameters
+            ):
                 return _blocked(state, "ability_provider_parameter_index_out_of_range")
-            parameter = rank.parameters[parameter_read.parameter_index]
+            parameter = parameter_context.parameters[
+                parameter_read.parameter_index
+            ]
             if (
                 binding.exact_value != parameter.exact_value
                 or binding.value_source != parameter.source
@@ -131,7 +128,7 @@ def register_dynamic_ability_providers(
 
         semantic_key = _provider_semantic_key(
             unit_id,
-            selection.equipment_instance_id,
+            selection.provider_source_id,
             selection.mechanism_key,
         )
         provider_id = _provider_id(semantic_key)
@@ -141,10 +138,9 @@ def register_dynamic_ability_providers(
             "semantic_key": semantic_key,
             "selection_id": selection.selection_id,
             "owner_unit_id": unit_id,
-            "equipment_instance_id": selection.equipment_instance_id,
-            "skill_id": selection.skill_id,
-            "superimposition_level": selection.superimposition_level,
+            "provider_source_id": selection.provider_source_id,
             "target_definition_key": selection.target_definition_key.to_json(),
+            "parameter_basis": selection.parameter_basis.to_json(),
             "mechanism_key": selection.mechanism_key.to_json(),
             "graph_ref_id": selection.graph_ref_id,
             "parameter_bindings": [
@@ -278,12 +274,12 @@ def _provider_registration_record(
 
 def _provider_semantic_key(
     unit_id: str,
-    equipment_instance_id: str,
+    provider_source_id: str,
     mechanism_key: EquipmentDefinitionKey,
 ) -> dict[str, JSONValue]:
     return {
         "owner_unit_id": unit_id,
-        "equipment_instance_id": equipment_instance_id,
+        "provider_source_id": provider_source_id,
         "mechanism_key": mechanism_key.to_json(),
     }
 
@@ -305,8 +301,8 @@ def _existing_provider_id(
     if (
         provider.get("provider_kind") != "canonical_ability_graph"
         or provider.get("owner_unit_id") != unit_id
-        or not isinstance(provider.get("equipment_instance_id"), str)
-        or not provider.get("equipment_instance_id")
+        or not isinstance(provider.get("provider_source_id"), str)
+        or not provider.get("provider_source_id")
         or not isinstance(provider.get("selection_id"), str)
         or not provider.get("selection_id")
     ):
@@ -319,7 +315,7 @@ def _existing_provider_id(
         return None
     semantic_key = _provider_semantic_key(
         unit_id,
-        provider["equipment_instance_id"],
+        provider["provider_source_id"],
         mechanism_key,
     )
     if provider.get("semantic_key") != semantic_key:

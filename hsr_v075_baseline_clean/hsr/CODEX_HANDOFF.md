@@ -11,7 +11,7 @@ turnbasedgamedata-main -> compiler/lowering -> Canonical IR -> Combat Core
 最近已验收生产检查点：
 
 ```text
-P8-S14 本检查点（父检查点：4bc8dd2）
+P8-S15 本检查点（父检查点：729fc90）
 ```
 
 验证治理路线回正：
@@ -30,7 +30,7 @@ P8-S14 本检查点（父检查点：4bc8dd2）
 - P7-S0 至 P7-S19 内核可信执行与当前准入战斗语义。
 - P8-S0 至 P8-S8 光锥定义、实例、装配和机制闭合。
 - P8-R1-RUNTIME 与 P8-R2 召唤光环、记忆光锥事件链及当前光锥目录启动收口。
-- P8-S9 至 P8-S14 遗器定义、正式实例、主副词条、套装档位统计和统一静态贡献账本。
+- P8-S9 至 P8-S15 遗器定义、正式实例、主副词条、套装档位统计、统一静态贡献账本和动态能力启动入口。
 - CHAR-M1 记忆角色与忆灵 owned-combatant 构筑底座。
 - VG-R1 P8-S8 task/event 共享证据与 owned-combatant 窄投影试点。
 
@@ -71,8 +71,8 @@ VG-R1 曾确认两条动态值任务和一条死亡回响事件 family 失败。
 
 ## 当前工作
 
-光锥轨已经推进至 R2 并验收，`P8-S9` 至 `P8-S14` 的遗器定义、实例、词条、套装统计和静态贡献阶段也已验收。
-当前顺序上的下一阶段是 `P8-S15` 套装动态能力绑定与启动生命周期；S15 至 S17 继续按
+光锥轨已经推进至 R2 并验收，`P8-S9` 至 `P8-S15` 的遗器定义、实例、词条、套装统计、静态贡献和动态能力启动入口也已验收。
+当前顺序上的下一阶段是 `P8-S16` 套装状态、条件和监听机制闭合；S16 至 S17 继续按
 `docs/p8_execution_cards/` 中的单阶段执行卡严格推进。
 
 P8-S9 当前事实：
@@ -122,6 +122,14 @@ P8-S14 当前事实：
 - 光锥与遗器贡献、来源和 blocker 通道保持分离；动态套装能力不会在 S14 提前注册或执行。
 - 最终聚焦验证全部谓词满足，main 6、sub 6、set 1 的 RuleBook 和 raw 来源逐项反查闭合；约 0.76 秒、峰值约 71 MiB。
 
+P8-S15 当前事实：
+
+- 激活套装档位的真实能力来源和参数已接入与光锥共用的 Canonical graph、参数解析和 provider 注册链，没有遗器专用事件循环或套装 ID 特判。
+- active / inactive、二件 / 四件、2+2、多装备者、替换失活和重复启动的身份与幂等边界已闭合；runtime 不重新统计套装件数。
+- 冲突定义、重复 provider 身份、伪来源、缺参数和 partial graph 均 fail-closed，不暴露部分动态选择或部分 mutation。
+- 当前 62 条动态图中 37 条可执行；其余 25 条按真实 family 和 102 条依赖保留给 S16/S17，属于后续机制实现范围，不是 S15 能力入口缺失。
+- 收缩后的唯一聚焦验证保留 15 项业务谓词，798 行非空；单次约 2.7 秒、峰值约 343 MiB、产物约 42 KiB，完整 lowering 为零。
+
 2026-07-30 已重新审查并统一改写 S9-S21 的执行与验证口径：
 
 - 每阶段只有一个业务主验证；完整入口最多一次诊断运行和一次最终运行。
@@ -139,7 +147,7 @@ P8-S14 当前事实：
 
 ## 仍未完成的大块
 
-- P8-S15 至 S17：遗器套装动态机制。
+- P8-S16 至 S17：遗器套装剩余 gameplay 机制族。
 - P8-S18 至 S21：构筑汇合、正式 scenario、希儿完整示例和当前来源聚合。
 - 剩余记忆角色 / 忆灵的属性、时间线和出生来源扩面。
 - 全角色、全怪物、全关卡和环境内容卡。
@@ -153,10 +161,10 @@ P8-S14 当前事实：
 
 不要默认通读所有文档。根据任务选择：
 
-- 当前 P8-S15 执行卡：
-  `docs/p8_execution_cards/P8-S15_RELIC_SET_DYNAMIC_STARTUP.md`。
-- 已验收 P8-S14 报告：
-  `live_validation_reports/P8-S14_RELIC_STATIC_CONTRIBUTIONS_ready_for_review.md`。
+- 当前 P8-S16 执行卡：
+  `docs/p8_execution_cards/P8-S16_RELIC_SET_STATUS_CONDITION_LISTENER_CLOSURE.md`。
+- 已验收 P8-S15 报告：
+  `live_validation_reports/P8-S15_RELIC_SET_DYNAMIC_STARTUP_ready_for_review.md`。
 - P8-S9 至 S21 的统一验证预算和执行索引：
   `docs/p8_execution_cards/README.md`。
 - 已验收 P8-R2 执行卡与最终差量：

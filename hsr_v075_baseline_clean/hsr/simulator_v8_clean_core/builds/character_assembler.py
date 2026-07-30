@@ -302,6 +302,46 @@ def validate_character_build_admission(
                 errors.append(
                     f"contribution_source_not_resolvable:{contribution.contribution_id}"
                 )
+        elif contribution.source_ref.definition_kind == "relic_main_affix":
+            resolution = rules.relic_main_affix_definition(
+                contribution.source_ref.definition_identity
+            )
+            if (
+                resolution.resolution_status != "resolved"
+                or resolution.value is None
+                or resolution.value.source != contribution.source
+            ):
+                errors.append(
+                    f"contribution_source_not_resolvable:{contribution.contribution_id}"
+                )
+        elif contribution.source_ref.definition_kind == "relic_sub_affix":
+            resolution = rules.relic_sub_affix_definition(
+                contribution.source_ref.definition_identity
+            )
+            if (
+                resolution.resolution_status != "resolved"
+                or resolution.value is None
+                or resolution.value.source != contribution.source
+            ):
+                errors.append(
+                    f"contribution_source_not_resolvable:{contribution.contribution_id}"
+                )
+        elif contribution.source_ref.definition_kind == "relic_set_threshold":
+            resolution = rules.relic_set_threshold(
+                contribution.source_ref.definition_identity
+            )
+            if (
+                resolution.resolution_status != "resolved"
+                or resolution.value is None
+                or contribution.source
+                not in tuple(
+                    item.source
+                    for item in resolution.value.static_properties
+                )
+            ):
+                errors.append(
+                    f"contribution_source_not_resolvable:{contribution.contribution_id}"
+                )
         else:
             errors.append(f"contribution_source_kind_not_admitted:{contribution.contribution_id}")
     card_actions = card.action_set.get("actions") if card is not None else None

@@ -30,6 +30,7 @@ from ..equipment.models import (
     EquipmentDefinitionKey,
     LightConeDefinitionIR,
     LightConeInstanceInput,
+    LightConeRankParameterBasis,
 )
 from ..immutable_json import thaw_json
 from ..rules.ir import CanonicalIR, IRSource, RuleEntity, StandaloneAbilityGraphIR
@@ -1337,11 +1338,15 @@ def _negative_matrix(
         ),
         target_definition_key=cross_result.light_cone_selection.definition_key,
         graph_ref_id="validation:p8_s4:cross-path-graph",
-        equipment_instance_id=cross_result.light_cone_selection.instance_id,
+        provider_source_id=cross_result.light_cone_selection.instance_id,
         wearer_character_card_id=cases["cross_build"].character_card_id,
-        skill_id=cross_result.light_cone_selection.skill_id,
-        superimposition_level=(
-            cross_result.light_cone_selection.superimposition_level
+        parameter_basis=LightConeRankParameterBasis(
+            definition_key=cross_result.light_cone_selection.definition_key,
+            skill_id=cross_result.light_cone_selection.skill_id,
+            superimposition_level=(
+                cross_result.light_cone_selection.superimposition_level
+            ),
+            source=cross_result.light_cone_selection.superimposition_source,
         ),
         parameter_bindings=(),
         source=cases["cross_definition"].ability_source.source,
