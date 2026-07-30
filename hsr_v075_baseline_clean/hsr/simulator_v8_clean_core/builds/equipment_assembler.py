@@ -21,11 +21,15 @@ from ..equipment.models import (
     LightConeInstanceInput,
     LightConePromotionTierIR,
     LightConeSuperimpositionLevelIR,
+    RELIC_ASSEMBLY_NOT_ASSEMBLED_REASON,
     RelicAssemblySelection,
 )
 from ..rules.value_binding import ExactEquipmentValueBindingRequest, ValueResolver
 from ..rules.rulebook import RuleBook
-from .relic_affix_calculator import admit_relic_main_affix
+from .relic_affix_calculator import (
+    admit_relic_main_affix,
+    admit_relic_sub_affixes,
+)
 
 
 def assemble_equipment_build(
@@ -42,11 +46,10 @@ def assemble_equipment_build(
             build,
             *identity_diagnostics,
         )
-    relic_selections, relic_blockers, relic_diagnostics = (
-        _admit_relic_instances(rules, build)
-    )
+    relic_selections, relic_diagnostics = _admit_relic_instances(rules, build)
     if relic_diagnostics:
         return _blocked(build, *relic_diagnostics)
+    relic_blockers = _relic_assembly_blockers(build, relic_selections)
     if build.light_cone is None:
         return EquipmentAssemblyResult(
             assembly_id=f"equipment_assembly:{build.build_id}",
@@ -261,11 +264,9 @@ def _admit_relic_instances(
     build: EquipmentBuildInput,
 ) -> tuple[
     tuple[RelicAssemblySelection, ...],
-    tuple[EquipmentBattleAdmissionBlocker, ...],
     tuple[EquipmentAssemblyDiagnostic, ...],
 ]:
     selections: list[RelicAssemblySelection] = []
-    blockers: list[EquipmentBattleAdmissionBlocker] = []
     diagnostics: list[EquipmentAssemblyDiagnostic] = []
     for instance in build.relics:
         diagnostic_count = len(diagnostics)
@@ -393,6 +394,38 @@ def _admit_relic_instances(
                 )
             )
             continue
+        sub_affixes, sub_affix_issues = admit_relic_sub_affixes(
+            rules,
+            template,
+            instance,
+            main_affix,
+        )
+        if sub_affix_issues:
+            diagnostics.extend(
+                EquipmentAssemblyDiagnostic(
+                    diagnostic_id=(
+                        f"equipment_assembly:{build.build_id}:"
+                        f"{instance.instance_id}:{issue.reason}"
+                    ),
+                    reason=issue.reason,
+                    requested_key=issue.requested_key,
+                    candidates=issue.candidates,
+                )
+                for issue in sub_affix_issues
+            )
+            continue
+        if sub_affixes is None:
+            diagnostics.append(
+                EquipmentAssemblyDiagnostic(
+                    diagnostic_id=(
+                        f"equipment_assembly:{build.build_id}:"
+                        f"{instance.instance_id}:relic_sub_affixes_not_admitted"
+                    ),
+                    reason="relic_sub_affixes_not_admitted",
+                    requested_key=template.sub_affix_group_key,
+                )
+            )
+            continue
         selection = RelicAssemblySelection(
             instance_id=instance.instance_id,
             instance_fingerprint=instance.instance_fingerprint,
@@ -401,27 +434,13 @@ def _admit_relic_instances(
             level=instance.level,
             publication_status=template.publication_status,
             template_mode=template.mode,
-            affix_validation_status=(
-                "main_affix_validated_sub_affix_deferred_to_s12"
-            ),
+            affix_validation_status="main_and_sub_affixes_validated",
             template_source=template.source,
             slot_source=slot_definition.source,
             main_affix=main_affix,
+            sub_affixes=sub_affixes,
         )
         selections.append(selection)
-        blockers.append(
-            EquipmentBattleAdmissionBlocker(
-                blocker_id=(
-                    f"equipment_battle_blocker:{build.build_id}:"
-                    f"{instance.instance_id}:relic_affix_validation"
-                ),
-                channel="relic_affix_validation",
-                target_definition_key=template.definition_key,
-                gap_classification="admission_gap",
-                reason_code="relic_sub_affix_validation_deferred_to_s12",
-                source_refs=(template.source, slot_definition.source),
-            )
-        )
 
     slot_counts = Counter(selection.slot_key for selection in selections)
     for slot_key, count in sorted(
@@ -440,8 +459,28 @@ def _admit_relic_instances(
                 )
             )
     if diagnostics:
-        return (), (), tuple(diagnostics)
-    return tuple(selections), tuple(blockers), ()
+        return (), tuple(diagnostics)
+    return tuple(selections), ()
+
+
+def _relic_assembly_blockers(
+    build: EquipmentBuildInput,
+    selections: tuple[RelicAssemblySelection, ...],
+) -> tuple[EquipmentBattleAdmissionBlocker, ...]:
+    return tuple(
+        EquipmentBattleAdmissionBlocker(
+            blocker_id=(
+                f"equipment_assembly:{build.build_id}:"
+                f"{selection.instance_id}:relic_assembly"
+            ),
+            channel="relic_assembly",
+            target_definition_key=selection.template_key,
+            gap_classification="implementation_missing",
+            reason_code=RELIC_ASSEMBLY_NOT_ASSEMBLED_REASON,
+            source_refs=selection.assembly_source_refs,
+        )
+        for selection in selections
+    )
 
 
 def _equipment_instance_identity_diagnostics(

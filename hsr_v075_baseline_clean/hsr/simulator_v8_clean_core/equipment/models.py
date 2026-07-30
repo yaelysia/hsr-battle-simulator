@@ -52,11 +52,15 @@ EquipmentGapClassification = Literal[
 EquipmentBattleBlockerChannel = Literal[
     "static_passive",
     "dynamic_ability",
-    "relic_affix_validation",
+    "relic_assembly",
 ]
 RelicAffixValidationStatus = Literal[
-    "main_affix_validated_sub_affix_deferred_to_s12"
+    "main_and_sub_affixes_validated"
 ]
+
+RELIC_ASSEMBLY_NOT_ASSEMBLED_REASON = (
+    "relic_set_activation_and_static_contributions_not_assembled"
+)
 
 LIGHT_CONE_PUBLICATION_STATES = frozenset(
     {"published", "unpublished", "status_unknown"}
@@ -239,6 +243,47 @@ def exact_decimal_text(value: object, field_name: str = "exact_value") -> str:
     if value != canonical:
         raise ValueError(f"{field_name} must use canonical decimal text")
     return canonical
+
+
+def relic_sub_affix_exact_value(
+    base_value: object,
+    count: int,
+    step_value: object,
+    step: int,
+) -> str:
+    """Compute a finite-decimal linear value without context rounding."""
+
+    base = Decimal(exact_decimal_text(base_value, "sub affix base_value"))
+    increment = Decimal(exact_decimal_text(step_value, "sub affix step_value"))
+    _require_integer(count, "sub affix count")
+    _require_integer(step, "sub affix step")
+    if count <= 0:
+        raise ValueError("sub affix count must be positive")
+    if step < 0:
+        raise ValueError("sub affix step must be non-negative")
+
+    def coefficient_and_exponent(value: Decimal) -> tuple[int, int]:
+        parts = value.as_tuple()
+        coefficient = 0
+        for digit in parts.digits:
+            coefficient = coefficient * 10 + digit
+        if parts.sign:
+            coefficient = -coefficient
+        return coefficient, cast(int, parts.exponent)
+
+    base_coefficient, base_exponent = coefficient_and_exponent(base)
+    step_coefficient, step_exponent = coefficient_and_exponent(increment)
+    exponent = min(base_exponent, step_exponent)
+    coefficient = (
+        base_coefficient * count * 10 ** (base_exponent - exponent)
+        + step_coefficient * step * 10 ** (step_exponent - exponent)
+    )
+    if coefficient == 0:
+        return "0"
+    digits = tuple(int(digit) for digit in str(abs(coefficient)))
+    return _canonical_decimal_text(
+        Decimal((1 if coefficient < 0 else 0, digits, exponent))
+    )
 
 
 def raw_exact_decimal_text(value: object, field_name: str = "raw_value") -> str:
@@ -4184,6 +4229,169 @@ class RelicMainAffixComputation:
 
 
 @dataclass(frozen=True)
+class RelicSubAffixComputation:
+    """One source-backed sub-affix value derived from count and cumulative step."""
+
+    template_key: EquipmentDefinitionKey
+    group_key: EquipmentDefinitionKey
+    affix_key: EquipmentDefinitionKey
+    property_type: str
+    count: int
+    step: int
+    base_value: str
+    step_value: str
+    step_count: int
+    exact_value: str
+    template_source: IRSource
+    group_source: IRSource
+    affix_source: IRSource
+    computation_fingerprint: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        _require_kind(self.template_key, "relic_template")
+        _require_kind(self.group_key, "relic_sub_affix_group")
+        _require_kind(self.affix_key, "relic_sub_affix")
+        group_identity = self.group_key.definition_identity
+        if not self.affix_key.definition_identity.startswith(f"{group_identity}:"):
+            raise ValueError("sub affix identity must belong to its group")
+        _require_text(self.property_type, "sub affix property_type")
+        _require_integer(self.count, "sub affix count")
+        _require_integer(self.step, "sub affix step")
+        _require_integer(self.step_count, "sub affix step_count")
+        if self.count <= 0:
+            raise ValueError("sub affix count must be positive")
+        if self.step_count <= 0:
+            raise ValueError("sub affix step_count must be positive")
+        if self.step < 0 or self.step > self.count * self.step_count:
+            raise ValueError("sub affix cumulative step is outside its per-affix bound")
+        object.__setattr__(
+            self,
+            "base_value",
+            exact_decimal_text(self.base_value, "sub affix base_value"),
+        )
+        object.__setattr__(
+            self,
+            "step_value",
+            exact_decimal_text(self.step_value, "sub affix step_value"),
+        )
+        object.__setattr__(
+            self,
+            "exact_value",
+            exact_decimal_text(self.exact_value, "sub affix exact_value"),
+        )
+        expected_value = relic_sub_affix_exact_value(
+            self.base_value,
+            self.count,
+            self.step_value,
+            self.step,
+        )
+        if self.exact_value != expected_value:
+            raise ValueError("sub affix exact_value must match count and cumulative step")
+        _require_equipment_source(self.template_source)
+        _require_equipment_source(self.group_source)
+        _require_equipment_source(self.affix_source)
+        _require_relic_record_source(
+            self.template_source,
+            source_role="relic_config",
+            raw_type="RelicConfig",
+            raw_id=self.template_key.definition_identity,
+        )
+        _require_relic_derived_source(
+            self.group_source,
+            source_role="relic_sub_affix_config",
+            raw_type="RelicSubAffixGroupProjection",
+            raw_id=group_identity,
+        )
+        _require_relic_record_source(
+            self.affix_source,
+            source_role="relic_sub_affix_config",
+            raw_type="RelicSubAffixConfig",
+            raw_id=self.affix_key.definition_identity,
+        )
+        _require_matching_source_fingerprints(
+            (self.template_source, self.group_source, self.affix_source),
+            "relic sub affix computation",
+        )
+        object.__setattr__(
+            self,
+            "computation_fingerprint",
+            _canonical_fingerprint(self._fingerprint_payload()),
+        )
+
+    def _fingerprint_payload(self) -> dict[str, JSONValue]:
+        return {
+            "template_key": self.template_key.to_json(),
+            "group_key": self.group_key.to_json(),
+            "affix_key": self.affix_key.to_json(),
+            "property_type": self.property_type,
+            "count": self.count,
+            "step": self.step,
+            "base_value": self.base_value,
+            "step_value": self.step_value,
+            "step_count": self.step_count,
+            "exact_value": self.exact_value,
+            "template_source": self.template_source.to_json(),
+            "group_source": self.group_source.to_json(),
+            "affix_source": self.affix_source.to_json(),
+        }
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            **self._fingerprint_payload(),
+            "computation_fingerprint": self.computation_fingerprint,
+        }
+
+    @classmethod
+    def from_json(cls, value: object) -> RelicSubAffixComputation:
+        row = _mapping(value, "relic_sub_affix_computation")
+        _require_exact_fields(
+            row,
+            frozenset(
+                {
+                    "template_key",
+                    "group_key",
+                    "affix_key",
+                    "property_type",
+                    "count",
+                    "step",
+                    "base_value",
+                    "step_value",
+                    "step_count",
+                    "exact_value",
+                    "template_source",
+                    "group_source",
+                    "affix_source",
+                    "computation_fingerprint",
+                }
+            ),
+            "relic_sub_affix_computation",
+        )
+        result = cls(
+            template_key=EquipmentDefinitionKey.from_json(row.get("template_key")),
+            group_key=EquipmentDefinitionKey.from_json(row.get("group_key")),
+            affix_key=EquipmentDefinitionKey.from_json(row.get("affix_key")),
+            property_type=_text(row.get("property_type"), "property_type"),
+            count=_integer(row.get("count"), "count"),
+            step=_integer(row.get("step"), "step"),
+            base_value=_text(row.get("base_value"), "base_value"),
+            step_value=_text(row.get("step_value"), "step_value"),
+            step_count=_integer(row.get("step_count"), "step_count"),
+            exact_value=_text(row.get("exact_value"), "exact_value"),
+            template_source=_source_from_json(row.get("template_source")),
+            group_source=_source_from_json(row.get("group_source")),
+            affix_source=_source_from_json(row.get("affix_source")),
+        )
+        encoded = _text(
+            row.get("computation_fingerprint"),
+            "computation_fingerprint",
+        )
+        _require_sha256(encoded, "computation_fingerprint")
+        if encoded != result.computation_fingerprint:
+            raise ValueError("relic sub affix computation fingerprint mismatch")
+        return result
+
+
+@dataclass(frozen=True)
 class RelicAssemblySelection:
     instance_id: str
     instance_fingerprint: str
@@ -4196,6 +4404,7 @@ class RelicAssemblySelection:
     template_source: IRSource
     slot_source: IRSource
     main_affix: RelicMainAffixComputation
+    sub_affixes: tuple[RelicSubAffixComputation, ...] = ()
     selection_fingerprint: str = field(init=False)
 
     def __post_init__(self) -> None:
@@ -4210,9 +4419,7 @@ class RelicAssemblySelection:
             raise ValueError("relic selections require a published template")
         if self.template_mode != "BASIC":
             raise ValueError("formal relic selections require BASIC template mode")
-        if self.affix_validation_status != (
-            "main_affix_validated_sub_affix_deferred_to_s12"
-        ):
+        if self.affix_validation_status != "main_and_sub_affixes_validated":
             raise ValueError("invalid relic affix validation status")
         _require_equipment_source(self.template_source)
         _require_relic_record_source(
@@ -4247,6 +4454,41 @@ class RelicAssemblySelection:
             or self.main_affix.slot_source != self.slot_source
         ):
             raise ValueError("relic selection main affix sources must match selection")
+        sub_affixes = cast(
+            tuple[RelicSubAffixComputation, ...],
+            _typed_tuple(
+                self.sub_affixes,
+                RelicSubAffixComputation,
+                "relic selection sub_affixes",
+            ),
+        )
+        sub_affixes = tuple(
+            sorted(
+                sub_affixes,
+                key=lambda item: (
+                    item.affix_key.stable_id,
+                    item.count,
+                    item.step,
+                ),
+            )
+        )
+        if len(sub_affixes) > 4:
+            raise ValueError("relic selections support at most four sub affixes")
+        affix_keys = tuple(item.affix_key for item in sub_affixes)
+        property_types = tuple(item.property_type for item in sub_affixes)
+        if len(affix_keys) != len(set(affix_keys)):
+            raise ValueError("relic selection sub affix identities must be unique")
+        if len(property_types) != len(set(property_types)):
+            raise ValueError("relic selection sub affix properties must be unique")
+        if self.main_affix.property_type in property_types:
+            raise ValueError("relic selection main and sub affix properties must differ")
+        if any(
+            item.template_key != self.template_key
+            or item.template_source != self.template_source
+            for item in sub_affixes
+        ):
+            raise ValueError("relic selection sub affixes must match the selected template")
+        object.__setattr__(self, "sub_affixes", sub_affixes)
         object.__setattr__(
             self,
             "selection_fingerprint",
@@ -4266,7 +4508,36 @@ class RelicAssemblySelection:
             "template_source": self.template_source.to_json(),
             "slot_source": self.slot_source.to_json(),
             "main_affix": self.main_affix.to_json(),
+            "sub_affixes": [item.to_json() for item in self.sub_affixes],
         }
+
+    @property
+    def assembly_source_refs(self) -> tuple[IRSource, ...]:
+        """All source records needed by later relic assembly stages."""
+
+        sources = [
+            self.template_source,
+            self.slot_source,
+            self.main_affix.group_source,
+            self.main_affix.affix_source,
+        ]
+        for sub_affix in self.sub_affixes:
+            sources.extend((sub_affix.group_source, sub_affix.affix_source))
+        unique_sources: list[IRSource] = []
+        for source in sources:
+            if source not in unique_sources:
+                unique_sources.append(source)
+        return tuple(
+            sorted(
+                unique_sources,
+                key=lambda item: (
+                    item.source_path,
+                    item.raw_type,
+                    item.raw_id,
+                    str(item.evidence.get("json_path") or ""),
+                ),
+            )
+        )
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -4292,6 +4563,7 @@ class RelicAssemblySelection:
                     "template_source",
                     "slot_source",
                     "main_affix",
+                    "sub_affixes",
                     "selection_fingerprint",
                 }
             ),
@@ -4324,6 +4596,10 @@ class RelicAssemblySelection:
             template_source=_source_from_json(row.get("template_source")),
             slot_source=_source_from_json(row.get("slot_source")),
             main_affix=RelicMainAffixComputation.from_json(row.get("main_affix")),
+            sub_affixes=tuple(
+                RelicSubAffixComputation.from_json(item)
+                for item in _sequence(row.get("sub_affixes"), "sub_affixes")
+            ),
         )
         encoded = _text(row.get("selection_fingerprint"), "selection_fingerprint")
         _require_sha256(encoded, "selection_fingerprint")
@@ -4522,7 +4798,7 @@ class EquipmentBattleAdmissionBlocker:
         if self.channel not in {
             "static_passive",
             "dynamic_ability",
-            "relic_affix_validation",
+            "relic_assembly",
         }:
             raise ValueError("invalid equipment battle blocker channel")
         if not isinstance(self.target_definition_key, EquipmentDefinitionKey):
@@ -4530,14 +4806,14 @@ class EquipmentBattleAdmissionBlocker:
                 "equipment battle blocker target must be EquipmentDefinitionKey"
             )
         if (
-            self.channel == "relic_affix_validation"
+            self.channel == "relic_assembly"
             and self.target_definition_key.definition_kind != "relic_template"
         ):
             raise ValueError(
-                "relic affix blockers must target a relic template"
+                "relic assembly blockers must target a relic template"
             )
         if (
-            self.channel != "relic_affix_validation"
+            self.channel != "relic_assembly"
             and self.target_definition_key.definition_kind != "light_cone"
         ):
             raise ValueError(
@@ -4851,6 +5127,11 @@ class EquipmentAssemblyResult:
                 ),
             ),
         )
+        blocker_ids = tuple(
+            blocker.blocker_id for blocker in self.battle_admission_blockers
+        )
+        if len(blocker_ids) != len(set(blocker_ids)):
+            raise ValueError("equipment battle blocker identities must be unique")
         light_cone_blockers = tuple(
             blocker
             for blocker in self.battle_admission_blockers
@@ -4936,54 +5217,32 @@ class EquipmentAssemblyResult:
                     raise ValueError("admitted equipment results cannot carry battle blockers")
             elif not self.battle_admission_blockers:
                 raise ValueError("assembled but battle-blocked equipment requires blockers")
-            if self.relic_selections:
-                if len(relic_blockers) != len(self.relic_selections):
-                    raise ValueError(
-                        "each relic selection requires one affix validation blocker"
-                    )
-                for selection in self.relic_selections:
-                    matching_blockers = tuple(
-                        blocker
-                        for blocker in relic_blockers
-                        if blocker.target_definition_key
-                        == selection.template_key
-                    )
-                    if len(matching_blockers) != 1:
-                        raise ValueError(
-                            "relic selections require one matching template blocker"
-                        )
-                    blocker = matching_blockers[0]
-                    if (
-                        blocker.channel != "relic_affix_validation"
-                        or blocker.gap_classification != "admission_gap"
-                        or blocker.reason_code
-                        != "relic_sub_affix_validation_deferred_to_s12"
-                        or blocker.source_refs
-                        != tuple(
-                            sorted(
-                                (
-                                    selection.template_source,
-                                    selection.slot_source,
-                                ),
-                                key=lambda item: (
-                                    item.source_path,
-                                    item.raw_type,
-                                    item.raw_id,
-                                    str(
-                                        item.evidence.get("json_path")
-                                        or ""
-                                    ),
-                                ),
-                            )
-                        )
-                    ):
-                        raise ValueError(
-                            "relic selection affix blocker does not match its admitted skeleton"
-                        )
-            elif relic_blockers:
+            expected_relic_blocker_ids = {
+                (
+                    f"{self.assembly_id}:{selection.instance_id}:"
+                    "relic_assembly"
+                ): selection
+                for selection in self.relic_selections
+            }
+            relic_blockers_by_id = {
+                blocker.blocker_id: blocker for blocker in relic_blockers
+            }
+            if set(relic_blockers_by_id) != set(expected_relic_blocker_ids):
                 raise ValueError(
-                    "relic affix blockers require matching relic selections"
+                    "relic selections and assembly blockers must close one-to-one"
                 )
+            for blocker_id, selection in expected_relic_blocker_ids.items():
+                blocker = relic_blockers_by_id[blocker_id]
+                if (
+                    blocker.channel != "relic_assembly"
+                    or blocker.target_definition_key != selection.template_key
+                    or blocker.gap_classification != "implementation_missing"
+                    or blocker.reason_code != RELIC_ASSEMBLY_NOT_ASSEMBLED_REASON
+                    or blocker.source_refs != selection.assembly_source_refs
+                ):
+                    raise ValueError(
+                        "relic assembly blocker does not match its selection"
+                    )
             if self.light_cone_selection is None:
                 if (
                     self.static_contributions

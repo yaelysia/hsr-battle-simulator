@@ -18,6 +18,7 @@ from ..equipment.models import (
     EquipmentAssemblyResult,
     EquipmentBuildInput,
     EquipmentDefinitionKey,
+    RELIC_ASSEMBLY_NOT_ASSEMBLED_REASON,
     RelicInstanceInput,
     RelicSubAffixRollInput,
     RelicTemplateDefinitionIR,
@@ -122,7 +123,7 @@ def run_validation(tbgd_root: Path, output_dir: Path) -> dict[str, Any]:
     )
     team_rows = _team_occupancy_matrix(catalog, slot_templates[0])
     codec_rows = _codec_fingerprint_matrix(catalog, slot_templates)
-    deferred_row = _deferred_affix_matrix(
+    future_effects_row = _future_effects_matrix(
         rules,
         catalog,
         slot_templates[0],
@@ -175,8 +176,8 @@ def run_validation(tbgd_root: Path, output_dir: Path) -> dict[str, Any]:
             bool(invalid_results)
             and all(row["blocked"] for row in negative_rows.values())
             and all(_invalid_result_is_empty(item) for item in invalid_results),
-        "affix_validation_not_masquerading_as_complete":
-            deferred_row["passed"],
+        "relic_effects_deferred_after_affix_validation":
+            future_effects_row["passed"],
         "instance_fingerprint_stable": all(
             codec_rows["checks"].values()
         ),
@@ -210,7 +211,10 @@ def run_validation(tbgd_root: Path, output_dir: Path) -> dict[str, Any]:
     )
     write_json(output_dir / "team_occupancy_matrix.json", team_rows)
     write_json(output_dir / "codec_fingerprint_matrix.json", codec_rows)
-    write_json(output_dir / "deferred_affix_matrix.json", deferred_row)
+    write_json(
+        output_dir / "future_relic_effects_matrix.json",
+        future_effects_row,
+    )
 
     summary = {
         "schema_version": VALIDATION_VERSION,
@@ -231,7 +235,7 @@ def run_validation(tbgd_root: Path, output_dir: Path) -> dict[str, Any]:
             ),
         },
         "scope": {
-            "affix_values_calculated": False,
+            "affix_values_calculated": True,
             "set_counts_calculated": False,
             "static_relic_contributions_created": False,
             "dynamic_relic_mechanisms_created": False,
@@ -240,9 +244,9 @@ def run_validation(tbgd_root: Path, output_dir: Path) -> dict[str, Any]:
             "full_ir_written": False,
         },
         "deferred": {
-            "status": "deferred_to_s11_s12",
+            "status": "relic_assembly_not_assembled",
             "battle_admission": "blocked",
-            "reason_code": "relic_affix_validation_deferred_to_s11_s12",
+            "reason_code": RELIC_ASSEMBLY_NOT_ASSEMBLED_REASON,
         },
         "scenario_direct_catalog": projection_path.as_posix(),
     }
@@ -666,7 +670,7 @@ def run_scenario_direct(
             "P8-S4 formal relic instances are not admitted" not in error
             for error in single_identity.errors
         ),
-        "pending_affix_blocks_formal_battle_admission":
+        "deferred_relic_effects_block_formal_battle_admission":
             character_result.assembly_status == "assembled"
             and character_result.battle_admission_status == "blocked"
             and equipment_result is not None
@@ -725,6 +729,13 @@ def _positive_slot_matrix(
                     else result.battle_admission_status == "blocked"
                 )
                 and len(result.relic_selections) == count
+                and len(result.battle_admission_blockers) == count
+                and all(
+                    blocker.channel == "relic_assembly"
+                    and blocker.gap_classification == "implementation_missing"
+                    and blocker.reason_code == RELIC_ASSEMBLY_NOT_ASSEMBLED_REASON
+                    for blocker in result.battle_admission_blockers
+                )
                 and not result.static_contributions
                 and not result.dynamic_mechanisms,
             "slot_identity_source_driven": all(
@@ -1333,36 +1344,20 @@ def _codec_fingerprint_matrix(
     }
 
 
-def _deferred_affix_matrix(
+def _future_effects_matrix(
     rules: RuleBook,
     catalog: RelicCanonicalCatalog,
     template: RelicTemplateDefinitionIR,
 ) -> dict[str, Any]:
-    instance = replace(
-        _instance(
-            catalog,
-            template,
-            "validation:p8_s10:deferred-affix",
-            0,
-        ),
-        main_affix_key=EquipmentDefinitionKey(
-            "relic_main_affix",
-            "validation:p8_s10:deferred-main-affix",
-        ),
-        sub_affix_rolls=(
-            RelicSubAffixRollInput(
-                EquipmentDefinitionKey(
-                    "relic_sub_affix",
-                    "validation:p8_s10:deferred-sub-affix",
-                ),
-                -10,
-                -20,
-            ),
-        ),
+    instance = _instance(
+        catalog,
+        template,
+        "validation:p8_s10:future-effects",
+        0,
     )
     result = assemble_equipment_build(
         rules,
-        _equipment_build("deferred-affix", (instance,)),
+        _equipment_build("future-effects", (instance,)),
     )
     encoded = result.to_json()
     passed = (
@@ -1370,12 +1365,22 @@ def _deferred_affix_matrix(
         and result.battle_admission_status == "blocked"
         and len(result.relic_selections) == 1
         and result.relic_selections[0].affix_validation_status
-        == "deferred_to_s11_s12"
+        == "main_and_sub_affixes_validated"
         and tuple(
-            blocker.reason_code
+            (
+                blocker.channel,
+                blocker.gap_classification,
+                blocker.reason_code,
+            )
             for blocker in result.battle_admission_blockers
         )
-        == ("relic_affix_validation_deferred_to_s11_s12",)
+        == (
+            (
+                "relic_assembly",
+                "implementation_missing",
+                RELIC_ASSEMBLY_NOT_ASSEMBLED_REASON,
+            ),
+        )
         and not result.static_contributions
         and not result.dynamic_mechanisms
         and not result.activation_decisions

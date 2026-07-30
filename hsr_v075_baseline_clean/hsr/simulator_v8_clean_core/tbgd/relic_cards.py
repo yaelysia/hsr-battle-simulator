@@ -644,6 +644,16 @@ def load_relic_catalog_sources(tbgd_root: Path) -> RelicCatalogSourceBundle:
 
 def build_relic_catalog(tbgd_root: Path) -> RelicCatalogBuildResult:
     sources = load_relic_catalog_sources(tbgd_root)
+    return build_relic_catalog_from_source_bundle(sources)
+
+
+def build_relic_catalog_from_source_bundle(
+    sources: RelicCatalogSourceBundle,
+) -> RelicCatalogBuildResult:
+    """Build from one already-loaded typed source bundle."""
+
+    if not isinstance(sources, RelicCatalogSourceBundle):
+        raise TypeError("sources must be a RelicCatalogSourceBundle")
     return build_relic_catalog_from_documents(
         relic_rows=sources.relic_rows,
         base_type_rows=sources.base_type_rows,

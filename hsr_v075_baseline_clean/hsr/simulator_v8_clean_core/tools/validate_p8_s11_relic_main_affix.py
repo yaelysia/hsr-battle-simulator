@@ -19,6 +19,7 @@ from ..builds.relic_affix_calculator import admit_relic_main_affix
 from ..equipment.models import (
     EquipmentBuildInput,
     EquipmentDefinitionKey,
+    RELIC_ASSEMBLY_NOT_ASSEMBLED_REASON,
     RelicInstanceInput,
     RelicMainAffixComputation,
     RelicTemplateDefinitionIR,
@@ -76,7 +77,8 @@ def run_validation(tbgd_root: Path, output_dir: Path) -> dict[str, Any]:
     checks = {
         "six_real_slot_pools_non_empty": slot_matrix["six_pools_non_empty"],
         "main_affix_requires_slot_and_template_group": (
-            legality["all_end_to_end_admitted"] and legality["full_definition_coverage_complete"]
+            legality["all_end_to_end_assembled_and_future_blocked"]
+            and legality["full_definition_coverage_complete"]
         ),
         "fixed_head_hand_are_source_derived": slot_matrix["fixed_slots_source_derived"],
         "cross_slot_main_affixes_rejected": cross_slot["all_rejected"] and slot_defense["all_rejected"],
@@ -372,10 +374,17 @@ def _legality_matrix(
                     "affix": affix_key.definition_identity,
                     "assembled": (
                         result.assembly_status == "assembled"
+                        and result.battle_admission_status == "blocked"
                         and len(result.relic_selections) == 1
                         and result.relic_selections[0].main_affix.affix_key == affix_key
                         and result.relic_selections[0].affix_validation_status
-                        == "main_affix_validated_sub_affix_deferred_to_s12"
+                        == "main_and_sub_affixes_validated"
+                        and len(result.battle_admission_blockers) == 1
+                        and result.battle_admission_blockers[0].channel
+                        == "relic_assembly"
+                        and result.battle_admission_blockers[0].reason_code
+                        == RELIC_ASSEMBLY_NOT_ASSEMBLED_REASON
+                        and not result.static_contributions
                     ),
                 }
             )
@@ -390,7 +399,9 @@ def _legality_matrix(
             if computation is None or issues:
                 full_failures += 1
     return {
-        "all_end_to_end_admitted": all(row["assembled"] for row in rows),
+        "all_end_to_end_assembled_and_future_blocked": all(
+            row["assembled"] for row in rows
+        ),
         "full_definition_coverage_complete": full_rows > 0 and full_failures == 0,
         "end_to_end_cases": len(rows),
         "evidence": {
