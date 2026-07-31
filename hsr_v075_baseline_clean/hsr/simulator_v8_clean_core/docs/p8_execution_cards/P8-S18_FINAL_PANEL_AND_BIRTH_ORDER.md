@@ -124,10 +124,10 @@ git diff --check
 
 ## 唯一执行清单（仅验收线程可勾）
 
-- [ ] S8/S17 已合并为唯一装配与 provider 路径，无重复生产者。
-- [ ] HP/ATK/DEF/speed 和其他属性按类型化顺序精确聚合。
-- [ ] ledger 可重算面板，输入顺序和局部构筑变化行为确定。
-- [ ] 静态面板、provider、入场事件和 timeline 顺序正确且幂等。
-- [ ] 正式 panel/action value/activation override 与 blocked graph 均 fail-closed。
-- [ ] summon 继承来源明确，runtime 不读取 build/raw，无内容特判。
-- [ ] `ready_for_review` evidence、实际触达所需的至多两项 direct 和资源审计完整。
+- [x] S8/S17 已合并为唯一装配与 provider 路径，无重复生产者。
+- [x] HP/ATK/DEF/speed 和其他属性按类型化顺序精确聚合。
+- [x] ledger 可重算面板，输入顺序和局部构筑变化行为确定。
+- [x] 静态面板、provider、入场事件和 timeline 顺序正确且幂等。
+- [x] 正式 panel/action value/activation override 与 blocked graph 均 fail-closed。
+- [x] summon 继承来源明确，runtime 不读取 build/raw，无内容特判。
+- [x] `ready_for_review` evidence、实际触达所需的至多两项 direct 和资源审计完整。

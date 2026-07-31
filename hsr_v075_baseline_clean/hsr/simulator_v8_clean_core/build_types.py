@@ -14,7 +14,33 @@ from .ir_types import IRSource, JSONValue
 
 ContributionPool = Literal["base", "percentage", "flat", "resource"]
 CalculationKind = Literal["constant", "linear_growth", "ratio", "flat", "resource"]
+ApplicationKind = Literal["base_stat_ratio", "base_stat_delta", "resource_delta"]
+AggregationBasis = Literal["base", "ratio", "flat", "resource"]
 CONTRIBUTION_POOL_ORDER = {"base": 0, "percentage": 1, "flat": 2, "resource": 3}
+BASE_STAT_PROPERTY_TYPES = frozenset(
+    {"max_hp", "attack", "defense", "speed", "max_energy"}
+)
+_APPLICATION_KIND_CHANNELS: Mapping[
+    ApplicationKind,
+    tuple[ContributionPool, CalculationKind],
+] = MappingProxyType(
+    {
+        "base_stat_ratio": ("percentage", "ratio"),
+        "base_stat_delta": ("flat", "flat"),
+        "resource_delta": ("resource", "resource"),
+    }
+)
+_CONTRIBUTION_CALCULATION_KINDS: Mapping[
+    ContributionPool,
+    frozenset[CalculationKind],
+] = MappingProxyType(
+    {
+        "base": frozenset({"constant", "linear_growth"}),
+        "percentage": frozenset({"ratio"}),
+        "flat": frozenset({"flat"}),
+        "resource": frozenset({"resource"}),
+    }
+)
 
 
 def require_text(value: object, field_name: str) -> str:
@@ -43,23 +69,36 @@ def canonical_decimal(value: object, field_name: str) -> str:
     return format(number.normalize(), "f")
 
 
+def contribution_channel_for_application_kind(
+    application_kind: object,
+) -> tuple[ContributionPool, CalculationKind] | None:
+    if not isinstance(application_kind, str):
+        return None
+    return _APPLICATION_KIND_CHANNELS.get(cast(ApplicationKind, application_kind))
+
+
+def admitted_calculation_kinds(
+    contribution_pool: ContributionPool,
+) -> frozenset[CalculationKind]:
+    try:
+        return _CONTRIBUTION_CALCULATION_KINDS[contribution_pool]
+    except KeyError as exc:
+        raise ValueError("invalid contribution_pool") from exc
+
+
 @dataclass(frozen=True)
 class StaticPropertyBinding:
     contribution_pool: ContributionPool
     canonical_property_type: str
     calculation_kind: CalculationKind
-    application_kind: Literal["base_stat_ratio", "base_stat_delta", "resource_delta"]
+    application_kind: ApplicationKind
 
     def __post_init__(self) -> None:
         if self.contribution_pool not in {"percentage", "flat", "resource"}:
             raise ValueError("static property bindings must use percentage, flat, or resource pools")
         require_text(self.canonical_property_type, "canonical_property_type")
-        expected = {
-            "percentage": ("ratio", "base_stat_ratio"),
-            "flat": ("flat", "base_stat_delta"),
-            "resource": ("resource", "resource_delta"),
-        }[self.contribution_pool]
-        if (self.calculation_kind, self.application_kind) != expected:
+        expected = contribution_channel_for_application_kind(self.application_kind)
+        if expected != (self.contribution_pool, self.calculation_kind):
             raise ValueError("static property binding channels are inconsistent")
 
 
@@ -335,6 +374,18 @@ class StaticStatContribution:
             raise TypeError("calculation must be StatCalculation")
         if self.exact_value != self.calculation.exact_value:
             raise ValueError("contribution exact_value must match calculation")
+        if (
+            self.calculation.calculation_kind
+            not in admitted_calculation_kinds(self.contribution_pool)
+        ):
+            raise ValueError(
+                "contribution pool and calculation kind use different aggregation bases"
+            )
+        is_base_stat = self.property_type in BASE_STAT_PROPERTY_TYPES
+        if is_base_stat and self.contribution_pool == "resource":
+            raise ValueError("base stat contribution cannot use the resource pool")
+        if not is_base_stat and self.contribution_pool != "resource":
+            raise ValueError("resource contribution cannot use a base stat pool")
         object.__setattr__(self, "source", immutable_ir_source(self.source))
 
     @property
@@ -382,3 +433,164 @@ class StaticStatContribution:
             calculation=StatCalculation.from_json(value.get("calculation")),
             source=ir_source_from_json(value.get("source")),
         )
+
+
+@dataclass(frozen=True)
+class StaticStatAggregate:
+    """Deterministic Decimal aggregate derived from source-granular ledger terms."""
+
+    property_type: str
+    aggregation_kind: Literal["base_stat", "resource"]
+    base_total: str
+    ratio_total: str
+    flat_total: str
+    resource_total: str
+    final_value: str
+    base_contribution_ids: tuple[str, ...] = ()
+    ratio_contribution_ids: tuple[str, ...] = ()
+    flat_contribution_ids: tuple[str, ...] = ()
+    resource_contribution_ids: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        require_text(self.property_type, "property_type")
+        if self.aggregation_kind not in {"base_stat", "resource"}:
+            raise ValueError("invalid aggregation_kind")
+        for field_name in (
+            "base_total",
+            "ratio_total",
+            "flat_total",
+            "resource_total",
+            "final_value",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                canonical_decimal(getattr(self, field_name), field_name),
+            )
+        for field_name in (
+            "base_contribution_ids",
+            "ratio_contribution_ids",
+            "flat_contribution_ids",
+            "resource_contribution_ids",
+        ):
+            raw_ids = getattr(self, field_name)
+            if not isinstance(raw_ids, (list, tuple)) or not all(
+                isinstance(item, str) and item for item in raw_ids
+            ):
+                raise TypeError(f"{field_name} must contain non-empty strings")
+            if len(set(raw_ids)) != len(raw_ids):
+                raise ValueError(f"{field_name} contains duplicate identities")
+            object.__setattr__(self, field_name, tuple(sorted(raw_ids)))
+        expected_kind = (
+            "base_stat"
+            if self.property_type in BASE_STAT_PROPERTY_TYPES
+            else "resource"
+        )
+        if self.aggregation_kind != expected_kind:
+            raise ValueError("property type and aggregation kind are inconsistent")
+        if self.aggregation_kind == "base_stat":
+            if Decimal(self.resource_total) != 0 or self.resource_contribution_ids:
+                raise ValueError("base stat aggregate cannot carry resource terms")
+            expected = Decimal(self.base_total) * (
+                Decimal(1) + Decimal(self.ratio_total)
+            ) + Decimal(self.flat_total)
+        else:
+            if (
+                Decimal(self.base_total) != 0
+                or Decimal(self.ratio_total) != 0
+                or Decimal(self.flat_total) != 0
+                or self.base_contribution_ids
+                or self.ratio_contribution_ids
+                or self.flat_contribution_ids
+            ):
+                raise ValueError("resource aggregate cannot carry base stat terms")
+            expected = Decimal(self.resource_total)
+        if self.final_value != canonical_decimal(str(expected), "final_value"):
+            raise ValueError("aggregate final_value does not match its typed basis")
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "property_type": self.property_type,
+            "aggregation_kind": self.aggregation_kind,
+            "base_total": self.base_total,
+            "ratio_total": self.ratio_total,
+            "flat_total": self.flat_total,
+            "resource_total": self.resource_total,
+            "final_value": self.final_value,
+            "base_contribution_ids": list(self.base_contribution_ids),
+            "ratio_contribution_ids": list(self.ratio_contribution_ids),
+            "flat_contribution_ids": list(self.flat_contribution_ids),
+            "resource_contribution_ids": list(self.resource_contribution_ids),
+        }
+
+
+def aggregate_static_stat_contributions(
+    contributions: tuple[StaticStatContribution, ...]
+    | list[StaticStatContribution],
+) -> tuple[StaticStatAggregate, ...]:
+    if not isinstance(contributions, (list, tuple)) or not all(
+        isinstance(item, StaticStatContribution) for item in contributions
+    ):
+        raise TypeError(
+            "contributions must contain StaticStatContribution values"
+        )
+    contribution_ids = [item.contribution_id for item in contributions]
+    if len(set(contribution_ids)) != len(contribution_ids):
+        raise ValueError("contributions contain duplicate identities")
+    totals: dict[str, dict[AggregationBasis, Decimal]] = {}
+    source_ids: dict[str, dict[AggregationBasis, list[str]]] = {}
+    basis_by_pool: dict[ContributionPool, AggregationBasis] = {
+        "base": "base",
+        "percentage": "ratio",
+        "flat": "flat",
+        "resource": "resource",
+    }
+    for contribution in sorted(contributions, key=lambda item: item.sort_key):
+        basis = basis_by_pool[contribution.contribution_pool]
+        property_totals = totals.setdefault(
+            contribution.property_type,
+            {
+                "base": Decimal(0),
+                "ratio": Decimal(0),
+                "flat": Decimal(0),
+                "resource": Decimal(0),
+            },
+        )
+        property_totals[basis] += Decimal(contribution.exact_value)
+        property_sources = source_ids.setdefault(
+            contribution.property_type,
+            {"base": [], "ratio": [], "flat": [], "resource": []},
+        )
+        property_sources[basis].append(contribution.contribution_id)
+    aggregates: list[StaticStatAggregate] = []
+    for property_type in sorted(totals):
+        property_totals = totals[property_type]
+        property_sources = source_ids[property_type]
+        aggregation_kind: Literal["base_stat", "resource"] = (
+            "base_stat"
+            if property_type in BASE_STAT_PROPERTY_TYPES
+            else "resource"
+        )
+        final = (
+            property_totals["base"]
+            * (Decimal(1) + property_totals["ratio"])
+            + property_totals["flat"]
+            if aggregation_kind == "base_stat"
+            else property_totals["resource"]
+        )
+        aggregates.append(
+            StaticStatAggregate(
+                property_type=property_type,
+                aggregation_kind=aggregation_kind,
+                base_total=str(property_totals["base"]),
+                ratio_total=str(property_totals["ratio"]),
+                flat_total=str(property_totals["flat"]),
+                resource_total=str(property_totals["resource"]),
+                final_value=str(final),
+                base_contribution_ids=tuple(property_sources["base"]),
+                ratio_contribution_ids=tuple(property_sources["ratio"]),
+                flat_contribution_ids=tuple(property_sources["flat"]),
+                resource_contribution_ids=tuple(property_sources["resource"]),
+            )
+        )
+    return tuple(aggregates)

@@ -6,7 +6,8 @@ from typing import Any
 
 from .identity import IdentityResolver
 from .schema import InitialStatusSpec, InitialSummonSpec, PanelInput, RNGSetupSpec, ScenarioSpec, UnitSpec
-from ..builds.character_assembler import assemble_character_build, validate_character_build_admission
+from ..build_types import aggregate_static_stat_contributions
+from ..builds.character_assembler import assemble_character_build
 from ..builds.models import (
     CharacterBuildAssemblyResult,
     CharacterResourceBinding,
@@ -42,6 +43,7 @@ from ..systems.ability_provider import register_dynamic_ability_providers
 from ..systems.status import StatusSystem
 from ..systems.summon import SummonSystem
 from ..systems.summon_runtime import empty_summon_runtime
+from ..systems.timeline import TIMELINE_INITIALIZATION_FLAG, TimelineSystem
 from ..systems.unit_lifecycle import UnitLifecycleSystem
 from ..systems.unit_spawn import UnitSpawnRequest, UnitSpawnSystem
 
@@ -78,6 +80,25 @@ class SpecialResourceInitialization:
     source_traces: tuple[dict[str, JSONValue], ...]
 
 
+@dataclass(frozen=True)
+class _FormalCharacterBirthPlan:
+    assembly: CharacterBuildAssemblyResult
+    flags: dict[str, Any]
+    resources: dict[str, float]
+    max_hp: float
+    attack: float
+    defense: float
+    speed: float
+    energy: float
+    max_energy: float
+    stat_pools: tuple[UnitStatPool, ...]
+    startup_specs: tuple[dict[str, Any], ...]
+    equipment_providers: tuple[DynamicMechanismSelection, ...]
+    equipment_startup_specs: tuple[dict[str, Any], ...]
+    setup_records: tuple[dict[str, JSONValue], ...] = ()
+    source_traces: tuple[dict[str, JSONValue], ...] = ()
+
+
 class ScenarioStateBuilder:
     def __init__(self, rules: RuleBook):
         self.rules = rules
@@ -86,10 +107,32 @@ class ScenarioStateBuilder:
 
     def build(self, scenario: ScenarioSpec) -> ScenarioBuildResult:
         scenario = _with_initial_wave_units(self.rules, scenario)
-        validation = self.identity.validate(scenario)
+        formal_assemblies = {
+            unit.unit_id: assemble_character_build(
+                self.rules,
+                unit.character_build,
+            )
+            for unit in scenario.units
+            if unit.build_mode == "assembled_character_build"
+            and unit.character_build is not None
+        }
+        validation = self.identity.validate(
+            scenario,
+            character_build_results=formal_assemblies,
+        )
         if not validation.ok:
             raise ValueError("; ".join(validation.errors))
 
+        formal_birth_plans = {
+            unit.unit_id: _plan_formal_character_birth(
+                self.rules,
+                scenario,
+                unit,
+                formal_assemblies[unit.unit_id],
+            )
+            for unit in scenario.units
+            if unit.build_mode == "assembled_character_build"
+        }
         units = {}
         source_traces = list(validation.source_traces)
         setup_records: list[dict[str, JSONValue]] = []
@@ -102,148 +145,43 @@ class ScenarioStateBuilder:
         for unit in scenario.units:
             panel = unit.panel
             if unit.build_mode == "assembled_character_build":
-                if unit.character_build is None or unit.initial_condition is None or panel is not None:
-                    raise ValueError(
-                        f"unit {unit.unit_id}: incomplete formal character build boundary"
-                    )
-                assembly = assemble_character_build(self.rules, unit.character_build)
-                admission_errors = validate_character_build_admission(
-                    self.rules,
-                    unit.character_build,
-                    assembly,
-                )
-                if admission_errors:
-                    reasons = (*assembly.blocked_reasons, *admission_errors)
-                    raise ValueError(f"unit {unit.unit_id}: {'; '.join(sorted(set(reasons)))}")
-                if assembly.base_panel is None:
-                    raise ValueError(f"unit {unit.unit_id}: admitted build has no base panel")
+                birth_plan = formal_birth_plans[unit.unit_id]
+                assembly = birth_plan.assembly
                 character_build_results.append(assembly)
-                (
-                    formal_flags,
-                    formal_startup_specs,
-                    formal_equipment_providers,
-                ) = _formal_character_activation(
-                    self.rules,
-                    unit,
-                    assembly,
-                )
-                if unit.position is not None:
-                    formal_flags["position"] = unit.position
-                for startup_spec in formal_startup_specs:
+                for startup_spec in birth_plan.startup_specs:
                     trace_startup_specs.append({"unit_id": unit.unit_id, **startup_spec})
                 equipment_provider_specs.extend(
                     (unit.unit_id, selection)
-                    for selection in formal_equipment_providers
+                    for selection in birth_plan.equipment_providers
                 )
                 equipment_startup_specs.extend(
                     {
                         "unit_id": unit.unit_id,
-                        **_equipment_startup_spec(self.rules, selection),
+                        **startup_spec,
                     }
-                    for selection in formal_equipment_providers
+                    for startup_spec in birth_plan.equipment_startup_specs
                 )
-                base_panel = assembly.base_panel
-                resources = {
-                    "critical_chance": float(base_panel.critical_chance),
-                    "critical_damage": float(base_panel.critical_damage),
-                    "base_aggro": float(base_panel.base_aggro),
-                    **{
-                        item.property_type: float(item.exact_value)
-                        for item in base_panel.additional_resources
-                    },
-                }
-                initial_resource_values = {
-                    item.resource_definition_id: item
-                    for item in unit.initial_condition.initial_resource_values
-                }
-                if base_panel.resource_mode == "standard_energy":
-                    if (
-                        unit.initial_condition.initial_energy != "0"
-                        or initial_resource_values
-                        or base_panel.max_energy is None
-                    ):
-                        raise ValueError(
-                            f"unit {unit.unit_id}: standard-energy initial condition mismatch"
-                        )
-                    energy = 0.0
-                    max_energy = float(base_panel.max_energy)
-                    formal_flags["standard_energy_active"] = True
-                else:
-                    binding = base_panel.special_resource_binding
-                    if (
-                        binding is None
-                        or unit.initial_condition.initial_energy is not None
-                        or set(initial_resource_values) != {binding.resource_definition_id}
-                    ):
-                        raise ValueError(
-                            f"unit {unit.unit_id}: special-resource initial condition mismatch"
-                        )
-                    initial_value = initial_resource_values[
-                        binding.resource_definition_id
-                    ]
-                    if initial_value.source_kind != binding.initial_current_mode:
-                        raise ValueError(
-                            f"unit {unit.unit_id}: special-resource initializer marker mismatch"
-                        )
-                    initialization = initialize_special_resource(
-                        self.rules,
-                        scenario,
-                        unit,
-                        binding,
-                    )
-                    resources[binding.current_resource_key] = initialization.current_value
-                    resources[binding.maximum_resource_key] = initialization.maximum_value
-                    setup_records.append(initialization.record)
-                    source_traces.extend(initialization.source_traces)
-                    energy = 0.0
-                    max_energy = 0.0
-                    formal_flags.update(
-                        {
-                            "standard_energy_active": False,
-                            "inactive_energy_schema_slots": True,
-                            "special_resource_definition_id": (
-                                binding.resource_definition_id
-                            ),
-                            "special_resource_current_key": binding.current_resource_key,
-                            "special_resource_maximum_key": binding.maximum_resource_key,
-                            "special_resource_maximum_initialization_mode": (
-                                binding.maximum_initialization_mode
-                            ),
-                            "special_resource_initial_current_mode": (
-                                binding.initial_current_mode
-                            ),
-                            "special_resource_initial_current_value": (
-                                initialization.current_value
-                            ),
-                            "special_resource_initial_maximum_value": (
-                                initialization.maximum_value
-                            ),
-                            "special_resource_initializer_id": (
-                                binding.initializer.initializer_id
-                            ),
-                            "special_resource_source": binding.source.to_json(),
-                        }
-                    )
-                max_hp = float(base_panel.max_hp)
+                setup_records.extend(birth_plan.setup_records)
+                source_traces.extend(birth_plan.source_traces)
                 units[unit.unit_id] = UnitState(
                     unit_id=unit.unit_id,
                     side=unit.side,
                     template_id=unit.entity_ref,
                     level=unit.level,
-                    max_hp=max_hp,
-                    hp=max_hp,
-                    attack=float(base_panel.attack),
-                    defense=float(base_panel.defense),
-                    speed=float(base_panel.speed),
-                    energy=energy,
-                    max_energy=max_energy,
+                    max_hp=birth_plan.max_hp,
+                    hp=birth_plan.max_hp,
+                    attack=birth_plan.attack,
+                    defense=birth_plan.defense,
+                    speed=birth_plan.speed,
+                    energy=birth_plan.energy,
+                    max_energy=birth_plan.max_energy,
                     toughness=0.0,
                     max_toughness=0.0,
                     action_value=0.0,
                     statuses=(),
-                    flags=formal_flags,
-                    resources=resources,
-                    stat_pools=_runtime_stat_pools(assembly),
+                    flags=birth_plan.flags,
+                    resources=birth_plan.resources,
+                    stat_pools=birth_plan.stat_pools,
                 )
                 source_traces.extend(
                     contribution.source.to_json() for contribution in assembly.contribution_ledger
@@ -503,6 +441,10 @@ class ScenarioStateBuilder:
             )
 
         global_flags = dict(scenario.global_flags)
+        if TIMELINE_INITIALIZATION_FLAG in global_flags:
+            raise ValueError(
+                "scenario.global_flags cannot inject timeline initialization state"
+            )
         if "summon_runtime" in global_flags:
             raise ValueError(
                 "scenario.global_flags cannot inject summon_runtime; "
@@ -621,6 +563,27 @@ class ScenarioStateBuilder:
         if route_unit_errors:
             raise ValueError("; ".join(route_unit_errors))
         integrity_gate.require_full(state)
+        timeline_result = _apply_timeline_setup(
+            self.rules,
+            state,
+            scenario,
+        )
+        if timeline_result.blocked:
+            raise ValueError(
+                "timeline birth initialization blocked: "
+                + "; ".join(
+                    sorted(
+                        {
+                            str(item.get("blocked_reason") or "timeline_blocked")
+                            for item in timeline_result.blocked
+                        }
+                    )
+                )
+            )
+        state = timeline_result.state
+        setup_records.extend(timeline_result.records)
+        source_traces.extend(timeline_result.source_traces)
+        integrity_gate.require_full(state)
         commands = tuple(
             ActionCommand(
                 actor_id=step.actor_id,
@@ -643,24 +606,188 @@ class ScenarioStateBuilder:
                 *startup_result.mutations,
                 *setup_result.mutations,
                 *battle_setup_event_result.mutations,
+                *timeline_result.mutations,
             ),
             setup_events=(
                 *startup_result.events,
                 *setup_result.events,
                 *battle_setup_event_result.events,
+                *timeline_result.events,
             ),
             setup_rng_events=(
                 *startup_result.rng_events,
                 *setup_result.rng_events,
                 *battle_setup_event_result.rng_events,
+                *timeline_result.rng_events,
             ),
             blocked_setup=(
                 *startup_result.blocked,
                 *setup_result.blocked,
                 *battle_setup_event_result.blocked,
+                *timeline_result.blocked,
             ),
             character_build_results=tuple(character_build_results),
         )
+
+
+def _plan_formal_character_birth(
+    rules: RuleBook,
+    scenario: ScenarioSpec,
+    unit: UnitSpec,
+    assembly: CharacterBuildAssemblyResult,
+) -> _FormalCharacterBirthPlan:
+    if (
+        unit.character_build is None
+        or unit.initial_condition is None
+        or unit.panel is not None
+    ):
+        raise ValueError(
+            f"unit {unit.unit_id}: incomplete formal character build boundary"
+        )
+    equipment_result = assembly.equipment_assembly_result
+    admission_errors = []
+    if assembly.build_id != unit.character_build.build_id:
+        admission_errors.append("assembly_build_identity_mismatch")
+    if assembly.input_fingerprint != unit.character_build.input_fingerprint:
+        admission_errors.append("assembly_input_fingerprint_mismatch")
+    if assembly.assembly_status != "assembled":
+        admission_errors.append("character_build_not_assembled")
+    if assembly.battle_admission_status != "admitted":
+        admission_errors.append("character_build_not_admitted_for_battle")
+    if assembly.unadmitted_mechanism_diagnostics:
+        admission_errors.append("character_build_has_unadmitted_mechanisms")
+    if equipment_result is None:
+        admission_errors.append("equipment_assembly_result_missing")
+    else:
+        if (
+            equipment_result.build_fingerprint
+            != unit.character_build.equipment_build.build_fingerprint
+        ):
+            admission_errors.append("equipment_assembly_build_fingerprint_mismatch")
+        if (
+            equipment_result.assembly_status != "assembled"
+            or equipment_result.battle_admission_status != "admitted"
+        ):
+            admission_errors.append("equipment_build_not_admitted_for_battle")
+    if admission_errors:
+        reasons = (*assembly.blocked_reasons, *admission_errors)
+        raise ValueError(
+            f"unit {unit.unit_id}: {'; '.join(sorted(set(reasons)))}"
+        )
+    base_panel = assembly.base_panel
+    if base_panel is None:
+        raise ValueError(f"unit {unit.unit_id}: admitted build has no base panel")
+    (
+        formal_flags,
+        formal_startup_specs,
+        formal_equipment_providers,
+    ) = _formal_character_activation(
+        rules,
+        unit,
+        assembly,
+    )
+    equipment_startup_specs = tuple(
+        _equipment_startup_spec(rules, selection)
+        for selection in formal_equipment_providers
+    )
+    if unit.position is not None:
+        formal_flags["position"] = unit.position
+    resources = {
+        "critical_chance": float(base_panel.critical_chance),
+        "critical_damage": float(base_panel.critical_damage),
+        "base_aggro": float(base_panel.base_aggro),
+        **{
+            item.property_type: float(item.exact_value)
+            for item in base_panel.additional_resources
+        },
+    }
+    initial_resource_values = {
+        item.resource_definition_id: item
+        for item in unit.initial_condition.initial_resource_values
+    }
+    setup_records: tuple[dict[str, JSONValue], ...] = ()
+    source_traces: tuple[dict[str, JSONValue], ...] = ()
+    if base_panel.resource_mode == "standard_energy":
+        if (
+            unit.initial_condition.initial_energy != "0"
+            or initial_resource_values
+            or base_panel.max_energy is None
+        ):
+            raise ValueError(
+                f"unit {unit.unit_id}: standard-energy initial condition mismatch"
+            )
+        energy = 0.0
+        max_energy = float(base_panel.max_energy)
+        formal_flags["standard_energy_active"] = True
+    else:
+        binding = base_panel.special_resource_binding
+        if (
+            binding is None
+            or unit.initial_condition.initial_energy is not None
+            or set(initial_resource_values) != {binding.resource_definition_id}
+        ):
+            raise ValueError(
+                f"unit {unit.unit_id}: special-resource initial condition mismatch"
+            )
+        initial_value = initial_resource_values[binding.resource_definition_id]
+        if initial_value.source_kind != binding.initial_current_mode:
+            raise ValueError(
+                f"unit {unit.unit_id}: special-resource initializer marker mismatch"
+            )
+        initialization = initialize_special_resource(
+            rules,
+            scenario,
+            unit,
+            binding,
+        )
+        resources[binding.current_resource_key] = initialization.current_value
+        resources[binding.maximum_resource_key] = initialization.maximum_value
+        setup_records = (initialization.record,)
+        source_traces = initialization.source_traces
+        energy = 0.0
+        max_energy = 0.0
+        formal_flags.update(
+            {
+                "standard_energy_active": False,
+                "inactive_energy_schema_slots": True,
+                "special_resource_definition_id": binding.resource_definition_id,
+                "special_resource_current_key": binding.current_resource_key,
+                "special_resource_maximum_key": binding.maximum_resource_key,
+                "special_resource_maximum_initialization_mode": (
+                    binding.maximum_initialization_mode
+                ),
+                "special_resource_initial_current_mode": (
+                    binding.initial_current_mode
+                ),
+                "special_resource_initial_current_value": (
+                    initialization.current_value
+                ),
+                "special_resource_initial_maximum_value": (
+                    initialization.maximum_value
+                ),
+                "special_resource_initializer_id": (
+                    binding.initializer.initializer_id
+                ),
+                "special_resource_source": binding.source.to_json(),
+            }
+        )
+    return _FormalCharacterBirthPlan(
+        assembly=assembly,
+        flags=formal_flags,
+        resources=resources,
+        max_hp=float(base_panel.max_hp),
+        attack=float(base_panel.attack),
+        defense=float(base_panel.defense),
+        speed=float(base_panel.speed),
+        energy=energy,
+        max_energy=max_energy,
+        stat_pools=_runtime_stat_pools(assembly),
+        startup_specs=formal_startup_specs,
+        equipment_providers=formal_equipment_providers,
+        equipment_startup_specs=equipment_startup_specs,
+        setup_records=setup_records,
+        source_traces=source_traces,
+    )
 
 
 def initialize_special_resource(
@@ -845,38 +972,20 @@ def _validate_route_units_after_setup(scenario: ScenarioSpec, state: BattleState
 def _runtime_stat_pools(
     assembly: CharacterBuildAssemblyResult,
 ) -> tuple[UnitStatPool, ...]:
-    values: dict[str, dict[str, Decimal]] = {}
-    source_ids: dict[str, dict[str, list[str]]] = {}
-    for contribution in assembly.contribution_ledger:
-        if contribution.contribution_pool not in {"base", "percentage", "flat"}:
-            continue
-        property_values = values.setdefault(
-            contribution.property_type,
-            {"base": Decimal(0), "percentage": Decimal(0), "flat": Decimal(0)},
-        )
-        property_values[contribution.contribution_pool] += Decimal(
-            contribution.exact_value
-        )
-        property_sources = source_ids.setdefault(
-            contribution.property_type,
-            {"base": [], "percentage": [], "flat": []},
-        )
-        property_sources[contribution.contribution_pool].append(
-            contribution.contribution_id
-        )
     return tuple(
         UnitStatPool(
-            property_type=property_type,
-            base_value=float(pool_values["base"]),
-            static_percentage=float(pool_values["percentage"]),
-            static_flat=float(pool_values["flat"]),
-            base_contribution_ids=tuple(source_ids[property_type]["base"]),
-            percentage_contribution_ids=tuple(
-                source_ids[property_type]["percentage"]
-            ),
-            flat_contribution_ids=tuple(source_ids[property_type]["flat"]),
+            property_type=aggregate.property_type,
+            base_value=float(aggregate.base_total),
+            static_percentage=float(aggregate.ratio_total),
+            static_flat=float(aggregate.flat_total),
+            base_contribution_ids=aggregate.base_contribution_ids,
+            percentage_contribution_ids=aggregate.ratio_contribution_ids,
+            flat_contribution_ids=aggregate.flat_contribution_ids,
         )
-        for property_type, pool_values in sorted(values.items())
+        for aggregate in aggregate_static_stat_contributions(
+            assembly.contribution_ledger
+        )
+        if aggregate.aggregation_kind == "base_stat"
     )
 
 
@@ -978,16 +1087,14 @@ def _apply_battle_setup(rules: RuleBook, state: BattleState, scenario: ScenarioS
     status = _apply_initial_statuses(rules, state, scenario)
     current = status.state
     summon = _apply_initial_summons(rules, current, scenario)
-    current = summon.state
-    timeline = _apply_timeline_setup(current, scenario)
     return _SetupApplyResult(
-        state=timeline.state,
-        records=(*status.records, *summon.records, *timeline.records),
-        mutations=(*status.mutations, *summon.mutations, *timeline.mutations),
-        events=(*status.events, *summon.events, *timeline.events),
-        rng_events=(*status.rng_events, *summon.rng_events, *timeline.rng_events),
-        blocked=(*status.blocked, *summon.blocked, *timeline.blocked),
-        source_traces=(*status.source_traces, *summon.source_traces, *timeline.source_traces),
+        state=summon.state,
+        records=(*status.records, *summon.records),
+        mutations=(*status.mutations, *summon.mutations),
+        events=(*status.events, *summon.events),
+        rng_events=(*status.rng_events, *summon.rng_events),
+        blocked=(*status.blocked, *summon.blocked),
+        source_traces=(*status.source_traces, *summon.source_traces),
     )
 
 
@@ -1060,7 +1167,7 @@ def _dispatch_battle_setup_event(
             },
         )
         result = dispatcher.dispatch_event(current, event=creation_event)
-        events.extend((creation_event, *result.events))
+        events.extend(result.events)
         if result.errors:
             errors.extend(result.errors)
             break
@@ -1080,27 +1187,45 @@ def _dispatch_battle_setup_event(
             }
         )
 
-    event = GameEvent(
-        event_type="battle.setup",
-        source_id="scenario:setup",
-        event_id=f"event:scenario_setup:{scenario.scenario_id}",
-        window="battle_setup",
-        process_only=True,
-        payload={
-            "scenario_id": scenario.scenario_id,
-            "source_kind": "scenario_initial_condition",
-            "unit_ids": list(sorted(state.units)),
-        },
-    )
-    result = dispatcher.dispatch_event(current, event=event) if not errors else None
-    if result is not None:
-        events.extend((event, *result.events))
-        errors.extend(result.errors)
-        if not result.errors:
+    battle_events: list[GameEvent] = []
+    battle_listener_record_count = 0
+    battle_mutation_count = 0
+    if not errors:
+        for unit_id in sorted(current.units):
+            unit = current.units[unit_id]
+            if unit.flags.get("system_entity_kind"):
+                continue
+            event = GameEvent(
+                event_type="battle.setup",
+                source_id="scenario:setup",
+                target_id=unit_id,
+                event_id=(
+                    f"event:scenario_setup:{scenario.scenario_id}:"
+                    f"on_enter_battle:{unit_id}"
+                ),
+                window="OnEnterBattle",
+                process_only=True,
+                payload={
+                    "scenario_id": scenario.scenario_id,
+                    "source_kind": "scenario_initial_condition",
+                    "unit_id": unit_id,
+                    "actor_id": unit_id,
+                    "target_id": unit_id,
+                    "param_entity_id": unit_id,
+                },
+            )
+            result = dispatcher.dispatch_event(current, event=event)
+            battle_events.append(event)
+            events.extend(result.events)
+            errors.extend(result.errors)
+            if result.errors:
+                break
             current = result.after_state
             records.extend(result.records)
             mutations.extend(result.mutations)
             rng_events.extend(result.rng_events)
+            battle_listener_record_count += len(result.listener_records)
+            battle_mutation_count += len(result.mutations)
     blocked = (
         (
             {
@@ -1122,6 +1247,23 @@ def _dispatch_battle_setup_event(
         mutations = []
         rng_events = []
         source_traces = []
+    else:
+        records.append(
+            {
+                "record_type": "setup_battle_event",
+                "source_kind": "scenario_initial_condition",
+                "status": "applied",
+                "event_type": "battle.setup",
+                "phase": "OnEnterBattle",
+                "event_ids": [item.event_id for item in battle_events],
+                "unit_ids": [
+                    str(item.target_id or "") for item in battle_events
+                ],
+                "listener_record_count": battle_listener_record_count,
+                "mutation_count": battle_mutation_count,
+                "scenario_id": scenario.scenario_id,
+            }
+        )
     return _SetupApplyResult(
         state=current if not blocked else state,
         records=tuple(records),
@@ -1134,9 +1276,9 @@ def _dispatch_battle_setup_event(
             {
                 "kind": "scenario_battle_setup_event",
                 "scenario_id": scenario.scenario_id,
-                "event_id": event.event_id,
-                "listener_record_count": len(result.listener_records) if result is not None else 0,
-                "mutation_count": len(result.mutations) if result is not None else 0,
+                "event_ids": [item.event_id for item in battle_events],
+                "listener_record_count": battle_listener_record_count,
+                "mutation_count": battle_mutation_count,
                 "status": "blocked" if blocked else "applied",
             },
         ),
@@ -1163,7 +1305,11 @@ def _rng_setup_is_explicit(rng: RNGSetupSpec) -> bool:
     return bool(rng.rng_mode or rng.rng_choices or (rng.rng_state is not None and rng.rng_state != "deterministic"))
 
 
-def _apply_timeline_setup(state: BattleState, scenario: ScenarioSpec) -> _SetupApplyResult:
+def _apply_timeline_setup(
+    rules: RuleBook,
+    state: BattleState,
+    scenario: ScenarioSpec,
+) -> _SetupApplyResult:
     timeline = scenario.battle_setup.timeline
     if timeline is None:
         return _SetupApplyResult(state=state)
@@ -1233,6 +1379,18 @@ def _apply_timeline_setup(state: BattleState, scenario: ScenarioSpec) -> _SetupA
             )
         )
     if timeline.mode == "runtime_initialize":
+        rule, rule_blocked_reason = rules.select_timeline_rule()
+        if rule is None:
+            blocked_record = _setup_blocked_record(
+                "setup_timeline",
+                rule_blocked_reason,
+                {"engine_rule_kind": "timeline"},
+            )
+            return _SetupApplyResult(
+                state=state,
+                records=(*records, blocked_record),
+                blocked=(blocked_record,),
+            )
         mutations[0] = replace(
             mutations[0],
             metadata={
@@ -1241,9 +1399,65 @@ def _apply_timeline_setup(state: BattleState, scenario: ScenarioSpec) -> _SetupA
             },
             mutation_id="",
         )
-        records.extend(_timeline_mutation_records(mutations, scenario.scenario_id))
-        after = MutationReducer().apply_all(state, tuple(mutations))
-        return _SetupApplyResult(state=after, records=tuple(records), mutations=tuple(mutations))
+        configured = MutationReducer().apply_all(state, tuple(mutations))
+        initialization = TimelineSystem().initialize_action_values(
+            configured,
+            rule,
+            explicit_overrides=tuple(timeline.explicit_overrides),
+            initialization_phase="birth_after_enter_battle",
+        )
+        if not initialization.plan.ok:
+            blocked_record = _setup_blocked_record(
+                "setup_timeline",
+                initialization.plan.blocked_reason
+                or "timeline_birth_initialization_blocked",
+                {
+                    "engine_rule_kind": "timeline",
+                    "timeline_rule_id": rule.timeline_rule_id,
+                    "timeline_plan": initialization.plan.to_json(),
+                },
+            )
+            return _SetupApplyResult(
+                state=state,
+                records=(*records, blocked_record),
+                blocked=(blocked_record,),
+            )
+        all_mutations = (*mutations, *initialization.mutations)
+        records.extend(
+            _timeline_mutation_records(
+                list(all_mutations),
+                scenario.scenario_id,
+            )
+        )
+        records.append(
+            {
+                "record_type": "setup_timeline_initialization",
+                "source_kind": "canonical_timeline_rule",
+                "status": "applied",
+                "phase": "birth_after_enter_battle",
+                "timeline_rule_id": rule.timeline_rule_id,
+                "timeline_plan_id": initialization.plan.plan_id,
+                "mutation_count": len(initialization.mutations),
+                "source_trace": rule.source.to_json(),
+            }
+        )
+        after = MutationReducer().apply_all(state, all_mutations)
+        return _SetupApplyResult(
+            state=after,
+            records=tuple(records),
+            mutations=all_mutations,
+            events=initialization.events,
+            source_traces=(
+                {
+                    "kind": "scenario_birth_timeline_initialization",
+                    "scenario_id": scenario.scenario_id,
+                    "timeline_rule_id": rule.timeline_rule_id,
+                    "phase": "birth_after_enter_battle",
+                    "source_trace": rule.source.to_json(),
+                    "status": "applied",
+                },
+            ),
+        )
     for unit_id, action_value in sorted(timeline.action_values.items()):
         unit = state.units[unit_id]
         mutation = Mutation(
@@ -1559,8 +1773,25 @@ def _apply_initial_servant(
     definition = rules.servant_definition(servant_ref)
     if definition is None:
         raise ValueError(f"battle_setup.initial_summons[{index}]: unknown servant definition/ref {servant_ref!r}")
-    plan = system.plan_spawn_servant(state, definition, owner_id=spec.owner_id)
-    result = system.apply_spawn_servant(state, plan)
+    spawn_sources = tuple(
+        source
+        for source in definition.spawn_sources
+        if source.raw_id == spec.servant_spawn_source_id
+    )
+    if spec.servant_spawn_source_id is not None and len(spawn_sources) != 1:
+        result = system.blocked(
+            "servant_spawn_source_identity_not_declared_or_ambiguous",
+            owner_id=spec.owner_id,
+            source_trace=definition.source.to_json(),
+        )
+    else:
+        plan = system.plan_spawn_servant(
+            state,
+            definition,
+            owner_id=spec.owner_id,
+            spawn_source=spawn_sources[0] if spawn_sources else None,
+        )
+        result = system.apply_spawn_servant(state, plan)
     override_reason = _servant_override_blocked_reason(spec, definition.servant_ref, definition.servant_definition_id, result.mutations)
     if override_reason:
         result = system.blocked(override_reason, owner_id=spec.owner_id, source_trace=definition.source.to_json())
@@ -1574,6 +1805,7 @@ def _apply_initial_servant(
         "owner_id": spec.owner_id,
         "servant_ref": definition.servant_ref,
         "servant_definition_id": definition.servant_definition_id,
+        "servant_spawn_source_id": spec.servant_spawn_source_id or "",
         "unit_ids": list(result.plan.unit_ids),
         "mutation_count": len(result.mutations),
         "blocked_reason": result.plan.blocked_reason,

@@ -327,6 +327,11 @@ def _initial_summon(raw: Any, index: int) -> InitialSummonSpec:
         kind=kind,  # type: ignore[arg-type]
         owner_id=_required_str(raw, "owner_id", f"{path}.owner_id"),
         summon_intent_ref=_optional_str(raw, "summon_intent_ref", f"{path}.summon_intent_ref"),
+        servant_spawn_source_id=_optional_str(
+            raw,
+            "servant_spawn_source_id",
+            f"{path}.servant_spawn_source_id",
+        ),
         unit_id=_optional_str(raw, "unit_id", f"{path}.unit_id"),
         entity_ref=_optional_str(raw, "entity_ref", f"{path}.entity_ref"),
         position=_optional_int(raw, "position", f"{path}.position") if "position" in raw else None,

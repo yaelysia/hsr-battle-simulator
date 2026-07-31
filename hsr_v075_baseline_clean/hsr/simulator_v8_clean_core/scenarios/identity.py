@@ -4,6 +4,7 @@ from collections.abc import Mapping
 
 from .schema import ScenarioSpec, ScenarioValidationResult
 from ..builds.character_assembler import assemble_character_build
+from ..builds.models import CharacterBuildAssemblyResult
 from ..builds.equipment_assembler import validate_equipment_instance_uniqueness
 from ..rules.rulebook import RuleBook
 
@@ -18,7 +19,12 @@ class IdentityResolver:
     def __init__(self, rules: RuleBook):
         self.rules = rules
 
-    def validate(self, scenario: ScenarioSpec) -> ScenarioValidationResult:
+    def validate(
+        self,
+        scenario: ScenarioSpec,
+        *,
+        character_build_results: Mapping[str, CharacterBuildAssemblyResult] | None = None,
+    ) -> ScenarioValidationResult:
         errors: list[str] = []
         traces: list[dict[str, object]] = []
         formal_action_ids_by_unit: dict[str, set[str]] = {}
@@ -27,6 +33,17 @@ class IdentityResolver:
         units_by_id = {unit.unit_id: unit for unit in scenario.units}
         if len(unit_ids) != len(scenario.units):
             errors.append("unit_id values must be unique")
+        expected_result_ids = {
+            unit.unit_id
+            for unit in scenario.units
+            if unit.build_mode == "assembled_character_build"
+            and unit.character_build is not None
+        }
+        if (
+            character_build_results is not None
+            and set(character_build_results) != expected_result_ids
+        ):
+            errors.append("formal character build result identity set mismatch")
         formal_equipment_builds = tuple(
             unit.character_build.equipment_build
             for unit in scenario.units
@@ -66,8 +83,23 @@ class IdentityResolver:
                             for action in raw_actions
                             if isinstance(action, Mapping) and action.get("action_id")
                         } if isinstance(raw_actions, (list, tuple)) else set()
-                        assembly = assemble_character_build(self.rules, build)
-                        if assembly.assembly_status == "assembled":
+                        assembly = (
+                            character_build_results.get(unit.unit_id)
+                            if character_build_results is not None
+                            else assemble_character_build(self.rules, build)
+                        )
+                        if not isinstance(assembly, CharacterBuildAssemblyResult):
+                            errors.append(
+                                f"unit {unit.unit_id}: formal character build result is missing or invalid"
+                            )
+                        elif (
+                            assembly.build_id != build.build_id
+                            or assembly.input_fingerprint != build.input_fingerprint
+                        ):
+                            errors.append(
+                                f"unit {unit.unit_id}: formal character build result identity mismatch"
+                            )
+                        elif assembly.assembly_status == "assembled":
                             formal_skill_levels_by_unit[unit.unit_id] = {
                                 item.action_id: item.effective_level
                                 for item in assembly.effective_skill_levels

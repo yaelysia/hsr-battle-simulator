@@ -6,8 +6,11 @@ from decimal import Decimal
 from ..build_types import (
     BuildSourceRef,
     StatCalculation,
+    StaticStatAggregate,
     StaticStatContribution,
+    aggregate_static_stat_contributions,
     canonical_decimal,
+    contribution_channel_for_application_kind,
     ir_source_from_json,
 )
 from ..equipment.models import EquipmentAssemblyResult
@@ -56,10 +59,6 @@ _PANEL_PRIMARY_PROPERTIES = {
     "critical_damage",
     "base_aggro",
 }
-_BASE_POOL_PROPERTIES = {"max_hp", "attack", "defense", "speed", "max_energy"}
-_RESOURCE_POOL_PROPERTIES = {"critical_chance", "critical_damage", "base_aggro"}
-
-
 def assemble_character_build(
     rules: RuleBook,
     build: CharacterBuildInput,
@@ -184,8 +183,9 @@ def assemble_character_build(
     )
     diagnostics.extend(owned_diagnostics)
     try:
-        panel = _panel_from_ledger(
-            contributions,
+        aggregates = aggregate_static_stat_contributions(contributions)
+        panel = _panel_from_aggregates(
+            aggregates,
             resource_mode=profile.resource_mode,
             resource_bindings=resource_bindings,
         )
@@ -1836,19 +1836,15 @@ def _trace_static_contributions(
             return [], f"trace_static_property_missing:{slot.mechanism_slot_id}:{position}"
         if not isinstance(exact_value, str):
             return [], f"trace_static_value_not_exact_decimal:{slot.mechanism_slot_id}:{position}"
-        if application_kind == "base_stat_ratio":
-            pool, calculation_kind = "percentage", "ratio"
-        elif application_kind == "base_stat_delta":
-            pool, calculation_kind = "flat", "flat"
-        elif application_kind == "resource_delta":
-            pool, calculation_kind = "resource", "resource"
-        else:
+        channel = contribution_channel_for_application_kind(application_kind)
+        if channel is None:
             return [], f"trace_static_application_kind_not_admitted:{slot.mechanism_slot_id}:{position}"
-        calculation = StatCalculation(calculation_kind, exact_value)  # type: ignore[arg-type]
+        pool, calculation_kind = channel
+        calculation = StatCalculation(calculation_kind, exact_value)
         result.append(
             StaticStatContribution(
                 contribution_id=f"character_trace:{node.trace_node_id}:{slot.mechanism_slot_id}:{position}",
-                contribution_pool=pool,  # type: ignore[arg-type]
+                contribution_pool=pool,
                 property_type=property_type,
                 exact_value=calculation.exact_value,
                 source_ref=BuildSourceRef("character_mechanism_slot", slot.mechanism_slot_id),
@@ -2002,38 +1998,16 @@ def _eidolon_mechanisms(
     return refs, diagnostics
 
 
-def _panel_from_ledger(
-    contributions: list[StaticStatContribution],
+def _panel_from_aggregates(
+    aggregates: tuple[StaticStatAggregate, ...],
     *,
     resource_mode: str,
     resource_bindings: tuple[CharacterResourceBinding, ...],
 ) -> CharacterBasePanel:
-    by_pool: dict[str, dict[str, Decimal]] = {
-        "base": {},
-        "percentage": {},
-        "flat": {},
-        "resource": {},
+    final = {
+        aggregate.property_type: Decimal(aggregate.final_value)
+        for aggregate in aggregates
     }
-    for contribution in sorted(contributions, key=lambda item: item.sort_key):
-        pool = by_pool[contribution.contribution_pool]
-        pool[contribution.property_type] = pool.get(contribution.property_type, Decimal(0)) + Decimal(
-            contribution.exact_value
-        )
-    final: dict[str, Decimal] = {}
-    properties = set().union(*(pool.keys() for pool in by_pool.values()))
-    for property_type in sorted(properties):
-        base_value = by_pool["base"].get(property_type, Decimal(0))
-        percentage = by_pool["percentage"].get(property_type, Decimal(0))
-        flat = by_pool["flat"].get(property_type, Decimal(0))
-        resource = by_pool["resource"].get(property_type, Decimal(0))
-        if property_type in _BASE_POOL_PROPERTIES:
-            if resource:
-                raise ValueError(f"base panel property {property_type} cannot use resource pool")
-            final[property_type] = base_value * (Decimal(1) + percentage) + flat
-        else:
-            if base_value or percentage or flat:
-                raise ValueError(f"resource property {property_type} cannot use base stat pools")
-            final[property_type] = resource
     required = set(_PANEL_PRIMARY_PROPERTIES)
     if resource_mode == "special_resource":
         required.remove("max_energy")

@@ -10,6 +10,9 @@ from .unit_lifecycle import UnitLifecycleSystem
 from .unit_stats import effective_unit_stat
 
 
+TIMELINE_INITIALIZATION_FLAG = "timeline_initialization"
+
+
 @dataclass(frozen=True)
 class TimelinePlan:
     open_window: str = "action"
@@ -106,14 +109,63 @@ class TimelineSystem:
         rule: TimelineRuleIR,
         *,
         explicit_overrides: tuple[str, ...] = (),
+        initialization_phase: str = "scheduler",
     ) -> TurnAdvanceResult:
+        if not isinstance(initialization_phase, str) or not initialization_phase:
+            return TurnAdvanceResult(
+                TurnAdvancePlan(
+                    ok=False,
+                    timeline_rule_id=rule.timeline_rule_id,
+                    blocked_reason="timeline_initialization_phase_missing",
+                    plan_id="turn_advance_plan:initialize_action_values:blocked",
+                    source_trace=rule.source.to_json(),
+                ),
+                (),
+                (),
+            )
+        existing = state.global_flags.get(TIMELINE_INITIALIZATION_FLAG)
+        if existing is not None:
+            if (
+                not isinstance(existing, dict)
+                or existing.get("status") != "initialized"
+                or existing.get("timeline_rule_id") != rule.timeline_rule_id
+            ):
+                return TurnAdvanceResult(
+                    TurnAdvancePlan(
+                        ok=False,
+                        timeline_rule_id=rule.timeline_rule_id,
+                        blocked_reason="timeline_initialization_marker_invalid",
+                        plan_id="turn_advance_plan:initialize_action_values:blocked",
+                        source_trace=rule.source.to_json(),
+                    ),
+                    (),
+                    (),
+                )
+            return TurnAdvanceResult(
+                TurnAdvancePlan(
+                    ok=True,
+                    timeline_rule_id=rule.timeline_rule_id,
+                    plan_id=(
+                        "turn_advance_plan:"
+                        "initialize_action_values:already_initialized"
+                    ),
+                    source_trace=rule.source.to_json(),
+                ),
+                (),
+                (),
+            )
         metadata = _timeline_metadata(rule, "timeline_initialize", "initialize_action_values")
         explicit = set(explicit_overrides)
         mutations: list[Mutation] = []
+        effective_speeds: dict[str, JSONValue] = {}
         for unit_id, unit in sorted(state.units.items()):
-            if unit_id in explicit:
+            if (
+                unit_id in explicit
+                or unit.flags.get("timeline_admitted") is False
+            ):
                 continue
             speed = effective_unit_stat(unit, "speed")
+            effective_speeds[unit_id] = speed.to_json()
             action_value = self.full_action_value(speed.value, rule)
             mutations.append(
                 Mutation(
@@ -127,6 +179,35 @@ class TimelineSystem:
                     mutation_id=f"mutation:timeline:init_av:{unit_id}:{action_value}",
                 )
             )
+        marker = {
+            "status": "initialized",
+            "phase": initialization_phase,
+            "timeline_rule_id": rule.timeline_rule_id,
+            "initialized_unit_ids": sorted(effective_speeds),
+            "explicit_override_unit_ids": sorted(explicit),
+            "effective_speeds": effective_speeds,
+            "source_trace": rule.source.to_json(),
+        }
+        mutations.append(
+            Mutation(
+                op="set",
+                path=("global_flags", TIMELINE_INITIALIZATION_FLAG),
+                before=None,
+                after=marker,
+                reason="mark one-time timeline initialization",
+                source="timeline_system",
+                before_exists=False,
+                metadata={
+                    **metadata,
+                    "initialization_phase": initialization_phase,
+                    "initialized_unit_ids": sorted(effective_speeds),
+                },
+                mutation_id=(
+                    "mutation:timeline:initialization_marker:"
+                    f"{rule.timeline_rule_id}:{initialization_phase}"
+                ),
+            )
+        )
         plan = TurnAdvancePlan(
             ok=True,
             timeline_rule_id=rule.timeline_rule_id,

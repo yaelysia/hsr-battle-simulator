@@ -13,6 +13,7 @@ from ..build_types import (
     ContributionPool,
     StatCalculation,
     StaticStatContribution,
+    admitted_calculation_kinds,
     immutable_ir_source,
     ir_source_from_json,
     static_property_binding,
@@ -6401,15 +6402,15 @@ def _validate_relic_result_channels(
                 "relic affix contribution does not match its selected computation"
             )
 
-    calculation_kinds = {
-        "percentage": "ratio",
-        "flat": "flat",
-        "resource": "resource",
-    }
     for contribution_id, (decision, property_index) in expected_set_terms.items():
         contribution = relic_contributions[contribution_id]
-        expected_kind = calculation_kinds.get(
+        admitted_kinds = admitted_calculation_kinds(
             contribution.contribution_pool
+        )
+        expected_kind = (
+            next(iter(admitted_kinds))
+            if len(admitted_kinds) == 1
+            else None
         )
         source = contribution.source
         threshold_json_path = decision.threshold_source.evidence.get(

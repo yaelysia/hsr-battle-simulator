@@ -102,6 +102,7 @@ class InitialSummonSpec:
     kind: Literal["summoned_monster", "battle_unit_summon", "servant"] = "summoned_monster"
     owner_id: str = ""
     summon_intent_ref: str | None = None
+    servant_spawn_source_id: str | None = None
     unit_id: str | None = None
     entity_ref: str | None = None
     position: int | None = None

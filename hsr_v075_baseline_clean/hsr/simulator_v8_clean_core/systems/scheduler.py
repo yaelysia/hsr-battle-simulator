@@ -222,7 +222,20 @@ class CombatScheduler:
                 rule_blocked_reason,
                 {"engine_rule_kind": "timeline"},
             )
-        result = self.timeline.initialize_action_values(state, rule, explicit_overrides=explicit_overrides)
+        result = self.timeline.initialize_action_values(
+            state,
+            rule,
+            explicit_overrides=explicit_overrides,
+            initialization_phase="scheduler",
+        )
+        if not result.plan.ok:
+            return self._blocked(
+                state,
+                "timeline:initialize",
+                result.plan.blocked_reason
+                or "timeline_initialization_blocked",
+                {"timeline_plan": result.plan.to_json()},
+            )
         after = self.reducer.apply_all(state, result.mutations)
         return SchedulerStepResult(
             after,

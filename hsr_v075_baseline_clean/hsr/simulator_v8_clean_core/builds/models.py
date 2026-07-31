@@ -7,7 +7,9 @@ from typing import Callable, Literal, TypeVar, cast
 
 from ..build_types import (
     BuildSourceRef,
+    StaticStatAggregate,
     StaticStatContribution,
+    aggregate_static_stat_contributions,
     canonical_decimal,
     canonical_json_fingerprint,
     immutable_ir_source,
@@ -1606,8 +1608,8 @@ class CharacterBuildAssemblyResult:
                 raise ValueError(
                     "character contribution ledger is missing equipment contributions"
                 )
-            expected_panel = _panel_values_from_contributions(
-                contributions,
+            expected_panel = _panel_values_from_aggregates(
+                aggregate_static_stat_contributions(contributions),
                 resource_mode=self.base_panel.resource_mode,
             )
             encoded_panel = {
@@ -1800,38 +1802,15 @@ class CharacterBuildAssemblyResult:
         return result
 
 
-def _panel_values_from_contributions(
-    contributions: tuple[StaticStatContribution, ...],
+def _panel_values_from_aggregates(
+    aggregates: tuple[StaticStatAggregate, ...],
     *,
     resource_mode: Literal["standard_energy", "special_resource"],
 ) -> dict[str, str]:
-    by_pool: dict[str, dict[str, Decimal]] = {
-        "base": {},
-        "percentage": {},
-        "flat": {},
-        "resource": {},
+    result = {
+        aggregate.property_type: aggregate.final_value
+        for aggregate in aggregates
     }
-    for contribution in contributions:
-        pool = by_pool[contribution.contribution_pool]
-        pool[contribution.property_type] = pool.get(contribution.property_type, Decimal(0)) + Decimal(
-            contribution.exact_value
-        )
-    result: dict[str, str] = {}
-    properties = set().union(*(pool.keys() for pool in by_pool.values()))
-    for property_type in sorted(properties):
-        base = by_pool["base"].get(property_type, Decimal(0))
-        percentage = by_pool["percentage"].get(property_type, Decimal(0))
-        flat = by_pool["flat"].get(property_type, Decimal(0))
-        resource = by_pool["resource"].get(property_type, Decimal(0))
-        if property_type in {"max_hp", "attack", "defense", "speed", "max_energy"}:
-            if resource:
-                raise ValueError(f"base panel property {property_type} cannot use resource pool")
-            value = base * (Decimal(1) + percentage) + flat
-        else:
-            if base or percentage or flat:
-                raise ValueError(f"resource property {property_type} cannot use base stat pools")
-            value = resource
-        result[property_type] = canonical_decimal(str(value), property_type)
     required = {
         "max_hp",
         "attack",
