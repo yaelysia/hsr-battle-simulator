@@ -61,6 +61,7 @@ class StatusInstance:
     source_trace: dict[str, JSONValue] = field(default_factory=dict)
     modifiers: tuple[dict[str, JSONValue], ...] = ()
     trigger_ids_by_event: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    ability_property_watcher_ids: tuple[str, ...] = ()
     unsupported: tuple[str, ...] = ()
     application_operation: str = "add"
     partial: bool = False
@@ -102,6 +103,9 @@ class StatusInstance:
                 event: list(trigger_ids)
                 for event, trigger_ids in sorted(self.trigger_ids_by_event.items())
             },
+            "ability_property_watcher_ids": list(
+                self.ability_property_watcher_ids
+            ),
             "unsupported": list(self.unsupported),
             "application_operation": self.application_operation,
             "partial": self.partial,
@@ -311,6 +315,14 @@ class StatusSystem:
         modifier_name = standard.get("modifier_name")
         if not isinstance(modifier_name, str) or not modifier_name:
             return _unsupported_result(effect, "AddModifier has no modifier_name")
+        watcher_attachment_reason = (
+            _ability_property_watcher_attachment_blocked_reason(
+                self.rules,
+                effect,
+            )
+        )
+        if watcher_attachment_reason:
+            return _unsupported_result(effect, watcher_attachment_reason)
         target_alias = standard.get("target_alias")
         if _resolved_target_ids is None:
             (
@@ -603,6 +615,7 @@ class StatusSystem:
                 },
                 modifiers=tuple(modifiers),
                 trigger_ids_by_event=trigger_ids_by_event,
+                ability_property_watcher_ids=effect.ability_property_watcher_ids,
                 unsupported=tuple(unsupported),
                 application_operation=application_operation,
                 partial=bool(partial_reasons),
@@ -4080,6 +4093,8 @@ def _status_immunity_source(
 
 def _map_stack_property(property_name: str) -> tuple[str, str, str] | None:
     common_properties = {
+        "HPAddedRatio": ("attribute", "hp_added_ratio", "actor"),
+        "HPDelta": ("attribute", "hp_delta", "actor"),
         "AttackAddedRatio": ("attribute", "attack_added_ratio", "actor"),
         "AttackDelta": ("attribute", "attack_delta", "actor"),
         "DefenceAddedRatio": ("attribute", "defense_added_ratio", "target"),
@@ -5527,6 +5542,25 @@ def _definition_callback_dynamic_hashes(callback_bindings: object) -> dict[str, 
             continue
         result[str(hash_key)] = _json_safe(binding)
     return result
+
+
+def _ability_property_watcher_attachment_blocked_reason(
+    rules: RuleBook,
+    effect: EffectIR,
+) -> str:
+    canonical = rules.effect(effect.effect_id)
+    if canonical is None:
+        return (
+            "ability_property_watcher_effect_identity_missing"
+            if effect.ability_property_watcher_ids
+            else ""
+        )
+    if (
+        effect.ability_property_watcher_ids
+        != canonical.ability_property_watcher_ids
+    ):
+        return "ability_property_watcher_effect_identity_mismatch"
+    return ""
 
 
 def _select_modifier_definition(rules: RuleBook, modifier_name: str, effect: EffectIR) -> RuleEntity | None:

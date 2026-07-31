@@ -42,6 +42,7 @@ from ..resource_event_contract import (
     resource_scope_for_callback,
 )
 from ..rules.evaluator import NumericEvaluationContext, RuleEvaluator
+from ..rules.ability_properties import ability_property_is_runtime_readable
 from ..rules.engine_rule_registry import build_engine_rule_registry
 from ..rules.expression_ir import (
     CONDITION_EXPRESSION_NODE_SCHEMA,
@@ -53,6 +54,8 @@ from ..rules.expression_ir import (
 )
 from .expression_lowering import lower_numeric_expression
 from ..rules.ir import (
+    AbilityPropertyRangeIR,
+    AbilityPropertyWatcherIR,
     AbilityPhaseIR,
     AbilityTaskIR,
     ActionAbilityBindingIR,
@@ -1222,6 +1225,8 @@ class TBGDLowering:
         formulas: list[FormulaIR] = []
         status_callbacks: list[StatusCallbackIR] = []
         status_callback_tasks: list[StatusCallbackTaskIR] = []
+        ability_property_watchers: list[AbilityPropertyWatcherIR] = []
+        ability_property_ranges: list[AbilityPropertyRangeIR] = []
         status_damage_emissions: list[StatusDamageEmissionIR] = []
         damage_modifiers: list[DamageModifierIR] = []
         action_delay_emissions: list[ActionDelayEmissionIR] = []
@@ -1354,6 +1359,8 @@ class TBGDLowering:
             target_expressions.extend(lowered.target_expressions)
             status_callbacks.extend(lowered.status_callbacks)
             status_callback_tasks.extend(lowered.status_callback_tasks)
+            ability_property_watchers.extend(lowered.ability_property_watchers)
+            ability_property_ranges.extend(lowered.ability_property_ranges)
             status_damage_emissions.extend(lowered.status_damage_emissions)
             damage_modifiers.extend(lowered.damage_modifiers)
             action_delay_emissions.extend(lowered.action_delay_emissions)
@@ -1476,7 +1483,12 @@ class TBGDLowering:
         status_event_families = _lower_status_event_families(status_callbacks, status_callback_tasks)
         status_event_blocked_reasons = _status_event_blocked_reasons(status_event_families)
         status_callbacks = _block_status_callbacks_by_event_family(status_callbacks, status_event_blocked_reasons)
-        effects = _link_status_effect_runtime_fields(effects, entities, status_callbacks)
+        effects = _link_status_effect_runtime_fields(
+            effects,
+            entities,
+            status_callbacks,
+            ability_property_watchers,
+        )
         status_callback_blocked_reasons = {
             callback.callback_id: (
                 status_event_blocked_reasons.get(callback.event)
@@ -1630,6 +1642,8 @@ class TBGDLowering:
             status_event_families=tuple(status_event_families),
             status_callbacks=tuple(status_callbacks),
             status_callback_tasks=tuple(status_callback_tasks),
+            ability_property_watchers=tuple(ability_property_watchers),
+            ability_property_ranges=tuple(ability_property_ranges),
             status_damage_emissions=tuple(status_damage_emissions),
             damage_modifiers=tuple(damage_modifiers),
             action_delay_emissions=tuple(action_delay_emissions),
@@ -5479,7 +5493,7 @@ class TBGDLowering:
             )
             callbacks = modifier.get("_CallbackList") if isinstance(modifier, dict) else None
             if not isinstance(callbacks, list):
-                continue
+                callbacks = []
             for modifier_callback_index, callback in enumerate(callbacks):
                 if (
                     self.limits.max_callbacks_per_file is not None
@@ -5679,7 +5693,322 @@ class TBGDLowering:
                         modifier_name=modifier_name,
                     )
                 )
+            watcher_lowered, callback_index = self._lower_ability_property_watchers(
+                modifier.get("OnAbilityPropertyChange"),
+                relative=relative,
+                map_name=map_name,
+                modifier_name=modifier_name,
+                ability_file_order=ability_file_order,
+                callback_index=callback_index,
+                queue_priority_lookup=queue_priority_lookup,
+                source_context=source_context,
+                task_templates=task_templates,
+            )
+            lowered.merge(watcher_lowered)
         return lowered
+
+    def _lower_ability_property_watchers(
+        self,
+        raw_watchers: Any,
+        *,
+        relative: str,
+        map_name: str,
+        modifier_name: str,
+        ability_file_order: int,
+        callback_index: int,
+        queue_priority_lookup: dict[tuple[str, str], QueuePriorityIR],
+        source_context: dict[str, Any],
+        task_templates: dict[str, tuple["_TaskListTemplateBinding", ...]],
+    ) -> tuple["_LoweredAbility", int]:
+        lowered = _LoweredAbility()
+        if raw_watchers is None:
+            return lowered, callback_index
+        if not isinstance(raw_watchers, list):
+            source = IRSource(
+                source_path=relative,
+                raw_type=map_name,
+                raw_id=modifier_name,
+                evidence={
+                    **_json_safe(source_context),
+                    "json_path": f"{source_context.get('json_path')}.OnAbilityPropertyChange",
+                },
+            )
+            lowered.ability_property_watchers.append(
+                AbilityPropertyWatcherIR(
+                    watcher_id=f"ability_property_watcher:{relative}:{modifier_name}:invalid",
+                    modifier_name=modifier_name,
+                    property_name="",
+                    range_ids=(),
+                    source=source,
+                    blocked_reason="ability_property_watcher_list_invalid",
+                )
+            )
+            return lowered, callback_index
+
+        for watcher_index, raw_watcher in enumerate(raw_watchers):
+            watcher_path = (
+                f"{source_context.get('json_path')}"
+                f".OnAbilityPropertyChange[{watcher_index}]"
+            )
+            watcher_id = (
+                f"ability_property_watcher:{relative}:{modifier_name}:"
+                f"{watcher_index}"
+            )
+            property_name = (
+                str(raw_watcher.get("Property") or "")
+                if isinstance(raw_watcher, dict)
+                else ""
+            )
+            raw_ranges = (
+                raw_watcher.get("Ranges")
+                if isinstance(raw_watcher, dict)
+                else None
+            )
+            watcher_source = IRSource(
+                source_path=relative,
+                raw_type=map_name,
+                raw_id=modifier_name,
+                evidence={
+                    **_json_safe(source_context),
+                    "ability_property_watcher_index": watcher_index,
+                    "ability_property_watcher_json_path": watcher_path,
+                    "property_name": property_name,
+                },
+            )
+            range_ids: list[str] = []
+            watcher_blocked_reason = ""
+            if not ability_property_is_runtime_readable(property_name):
+                watcher_blocked_reason = (
+                    f"ability_property_not_runtime_readable:{property_name or 'missing'}"
+                )
+            elif not isinstance(raw_ranges, list) or not raw_ranges:
+                watcher_blocked_reason = "ability_property_ranges_missing"
+            else:
+                for range_index, raw_range in enumerate(raw_ranges):
+                    range_id = f"{watcher_id}:range:{range_index}"
+                    range_ids.append(range_id)
+                    range_path = f"{watcher_path}.Ranges[{range_index}]"
+                    property_range, branch_lowered, callback_index = (
+                        self._lower_ability_property_range(
+                            raw_range,
+                            relative=relative,
+                            map_name=map_name,
+                            modifier_name=modifier_name,
+                            watcher_id=watcher_id,
+                            range_id=range_id,
+                            range_index=range_index,
+                            range_path=range_path,
+                            ability_file_order=ability_file_order,
+                            callback_index=callback_index,
+                            queue_priority_lookup=queue_priority_lookup,
+                            source_context=source_context,
+                            task_templates=task_templates,
+                        )
+                    )
+                    lowered.merge(branch_lowered)
+                    lowered.ability_property_ranges.append(property_range)
+                    if (
+                        property_range.coverage_status != "executable"
+                        and not watcher_blocked_reason
+                    ):
+                        watcher_blocked_reason = (
+                            property_range.blocked_reason
+                            or "ability_property_range_not_executable"
+                        )
+            lowered.ability_property_watchers.append(
+                AbilityPropertyWatcherIR(
+                    watcher_id=watcher_id,
+                    modifier_name=modifier_name,
+                    property_name=property_name,
+                    range_ids=tuple(range_ids),
+                    source=watcher_source,
+                    coverage_status=(
+                        "executable" if not watcher_blocked_reason else "blocked"
+                    ),
+                    blocked_reason=watcher_blocked_reason,
+                )
+            )
+        return lowered, callback_index
+
+    def _lower_ability_property_range(
+        self,
+        raw_range: Any,
+        *,
+        relative: str,
+        map_name: str,
+        modifier_name: str,
+        watcher_id: str,
+        range_id: str,
+        range_index: int,
+        range_path: str,
+        ability_file_order: int,
+        callback_index: int,
+        queue_priority_lookup: dict[tuple[str, str], QueuePriorityIR],
+        source_context: dict[str, Any],
+        task_templates: dict[str, tuple["_TaskListTemplateBinding", ...]],
+    ) -> tuple[AbilityPropertyRangeIR, "_LoweredAbility", int]:
+        lowered = _LoweredAbility()
+        source = IRSource(
+            source_path=relative,
+            raw_type=map_name,
+            raw_id=modifier_name,
+            evidence={
+                **_json_safe(source_context),
+                "ability_property_watcher_id": watcher_id,
+                "ability_property_range_index": range_index,
+                "ability_property_range_json_path": range_path,
+            },
+        )
+        if not isinstance(raw_range, dict):
+            return (
+                AbilityPropertyRangeIR(
+                    range_id=range_id,
+                    watcher_id=watcher_id,
+                    range_index=range_index,
+                    minimum=None,
+                    maximum=None,
+                    minimum_inclusive=True,
+                    maximum_inclusive=False,
+                    enter_callback_id="",
+                    exit_callback_id="",
+                    source=source,
+                    blocked_reason="ability_property_range_invalid",
+                ),
+                lowered,
+                callback_index,
+            )
+
+        minimum = (
+            _numeric_expr_summary(raw_range.get("Min"))
+            if raw_range.get("Min") is not None
+            else None
+        )
+        maximum = (
+            _numeric_expr_summary(raw_range.get("Max"))
+            if raw_range.get("Max") is not None
+            else None
+        )
+        blocked_reason = ""
+        if minimum is not None and not _numeric_expr_can_be_runtime_bound(minimum):
+            blocked_reason = "ability_property_range_minimum_not_executable"
+        elif maximum is not None and not _numeric_expr_can_be_runtime_bound(maximum):
+            blocked_reason = "ability_property_range_maximum_not_executable"
+
+        branch_callback_ids: dict[str, str] = {}
+        for raw_key, event in (
+            ("OnEnterRange", "OnAbilityPropertyRangeEnter"),
+            ("OnExitRange", "OnAbilityPropertyRangeExit"),
+        ):
+            raw_tasks = raw_range.get(raw_key)
+            if raw_tasks is None:
+                continue
+            if not isinstance(raw_tasks, list) or not raw_tasks:
+                blocked_reason = blocked_reason or (
+                    f"ability_property_range_branch_invalid:{raw_key}"
+                )
+                continue
+            callback_index += 1
+            callback_id = (
+                f"status_callback:{relative}:{modifier_name}:"
+                f"{callback_index}:{event}"
+            )
+            branch_path = f"{range_path}.{raw_key}"
+            callback_source_context = {
+                **source_context,
+                "callback_index": callback_index,
+                "callback_json_path": branch_path,
+                "ability_property_watcher_id": watcher_id,
+                "ability_property_range_id": range_id,
+                "ability_property_range_branch": raw_key,
+            }
+            branch_lowered = self._lower_status_callback_tasks(
+                raw_tasks,
+                relative=relative,
+                map_name=map_name,
+                modifier_name=modifier_name,
+                callback_id=callback_id,
+                event=event,
+                callback_index=callback_index,
+                queue_priority_lookup=queue_priority_lookup,
+                source_context=callback_source_context,
+                task_templates=task_templates,
+            )
+            lowered.merge(branch_lowered)
+            callback_task_ids = tuple(
+                task.task_id
+                for task in branch_lowered.status_callback_tasks
+                if not task.parent_task_id
+            )
+            callback_status = (
+                "executable"
+                if callback_task_ids
+                and all(
+                    task.coverage_status == "executable"
+                    for task in branch_lowered.status_callback_tasks
+                )
+                else "blocked"
+            )
+            callback_reason = (
+                ""
+                if callback_status == "executable"
+                else "ability_property_range_branch_task_not_executable"
+            )
+            callback_source = IRSource(
+                source_path=relative,
+                raw_type=map_name,
+                raw_id=modifier_name,
+                evidence={
+                    "callback_index": callback_index,
+                    "event": event,
+                    **_json_safe(callback_source_context),
+                },
+            )
+            lowered.status_callbacks.append(
+                StatusCallbackIR(
+                    callback_id=callback_id,
+                    modifier_name=modifier_name,
+                    event=event,
+                    task_ids=callback_task_ids,
+                    source=callback_source,
+                    execution_order=(ability_file_order, callback_index),
+                    coverage_status=callback_status,
+                    blocked_reason=callback_reason,
+                    scope_kind="ability_property_range",
+                    source_mode="mainline_equipment",
+                    admission_status=callback_status,
+                    blocking_dependency=callback_reason,
+                )
+            )
+            branch_callback_ids[raw_key] = callback_id
+            if callback_status != "executable" and not blocked_reason:
+                blocked_reason = callback_reason
+
+        if not branch_callback_ids:
+            blocked_reason = blocked_reason or "ability_property_range_branch_missing"
+        return (
+            AbilityPropertyRangeIR(
+                range_id=range_id,
+                watcher_id=watcher_id,
+                range_index=range_index,
+                minimum=minimum,
+                maximum=maximum,
+                minimum_inclusive=bool(
+                    raw_range.get("MinInclusive", True)
+                ),
+                maximum_inclusive=bool(
+                    raw_range.get("MaxInclusive", False)
+                ),
+                enter_callback_id=branch_callback_ids.get("OnEnterRange", ""),
+                exit_callback_id=branch_callback_ids.get("OnExitRange", ""),
+                source=source,
+                coverage_status=(
+                    "executable" if not blocked_reason else "blocked"
+                ),
+                blocked_reason=blocked_reason,
+            ),
+            lowered,
+            callback_index,
+        )
 
     def _lower_status_callback_tasks(
         self,
@@ -6642,6 +6971,8 @@ class _LoweredAbility:
     ability_tasks: list[AbilityTaskIR] = field(default_factory=list)
     status_callbacks: list[StatusCallbackIR] = field(default_factory=list)
     status_callback_tasks: list[StatusCallbackTaskIR] = field(default_factory=list)
+    ability_property_watchers: list[AbilityPropertyWatcherIR] = field(default_factory=list)
+    ability_property_ranges: list[AbilityPropertyRangeIR] = field(default_factory=list)
     status_damage_emissions: list[StatusDamageEmissionIR] = field(default_factory=list)
     damage_modifiers: list[DamageModifierIR] = field(default_factory=list)
     action_delay_emissions: list[ActionDelayEmissionIR] = field(default_factory=list)
@@ -6658,6 +6989,8 @@ class _LoweredAbility:
         self.ability_tasks.extend(other.ability_tasks)
         self.status_callbacks.extend(other.status_callbacks)
         self.status_callback_tasks.extend(other.status_callback_tasks)
+        self.ability_property_watchers.extend(other.ability_property_watchers)
+        self.ability_property_ranges.extend(other.ability_property_ranges)
         self.status_damage_emissions.extend(other.status_damage_emissions)
         self.damage_modifiers.extend(other.damage_modifiers)
         self.action_delay_emissions.extend(other.action_delay_emissions)
@@ -6805,6 +7138,7 @@ STATUS_EVENT_RUNTIME_SOURCES: dict[str, tuple[str, ...]] = {
     "OnAfterAttack": ("action.window.after_attack", "action.after_attack"),
     "OnListenAfterAttack": ("action.after_attack",),
     "OnAfterSkillUse": ("action.window.after_skill_use",),
+    "OnListenAfterSkillUse": ("action.window.after_skill_use",),
     "OnActionEnd": ("action.end",),
     "OnBeforeInsertActionPrepare": ("queue.action.before",),
     "OnInsertActionStart": ("queue.action.before",),
@@ -6881,6 +7215,8 @@ def _lower_status_event_families(
 ) -> list[StatusEventFamilyIR]:
     callbacks_by_event: dict[str, list[StatusCallbackIR]] = {}
     for callback in status_callbacks:
+        if callback.scope_kind == "ability_property_range":
+            continue
         callbacks_by_event.setdefault(callback.event, []).append(callback)
     tasks_by_callback: dict[str, list[StatusCallbackTaskIR]] = {}
     for task in status_callback_tasks:
@@ -9733,6 +10069,7 @@ def _link_status_effect_runtime_fields(
     effects: list[EffectIR],
     entities: list[RuleEntity],
     callbacks: list[StatusCallbackIR],
+    ability_property_watchers: Iterable[AbilityPropertyWatcherIR] = (),
 ) -> list[EffectIR]:
     definitions_by_modifier: dict[str, list[RuleEntity]] = {}
     for entity in entities:
@@ -9744,6 +10081,9 @@ def _link_status_effect_runtime_fields(
     callbacks_by_modifier: dict[str, list[StatusCallbackIR]] = {}
     for callback in callbacks:
         callbacks_by_modifier.setdefault(callback.modifier_name, []).append(callback)
+    watchers_by_modifier: dict[str, list[AbilityPropertyWatcherIR]] = {}
+    for watcher in ability_property_watchers:
+        watchers_by_modifier.setdefault(watcher.modifier_name, []).append(watcher)
 
     linked: list[EffectIR] = []
     for effect in effects:
@@ -9789,11 +10129,23 @@ def _link_status_effect_runtime_fields(
                 key=lambda item: item.callback_id,
             )
         )
+        watcher_ids = tuple(
+            watcher.watcher_id
+            for watcher in sorted(
+                (
+                    watcher
+                    for watcher in watchers_by_modifier.get(modifier_name, ())
+                    if watcher.source.source_path == selected[0].source.source_path
+                ),
+                key=lambda item: item.watcher_id,
+            )
+        )
         linked.append(
             replace(
                 effect,
                 modifier_definition_id=selected[0].entity_id,
                 status_callback_ids=callback_ids,
+                ability_property_watcher_ids=watcher_ids,
                 source_mode=source_mode,
                 link_blocked_reason="",
             )
@@ -13100,6 +13452,7 @@ ADD_MODIFIER_TARGET_ALIASES = EXECUTABLE_TARGET_ALIASES | {
 STATUS_CALLBACK_LIST_TARGET_ALIASES = {
     "AllEnemyWithUnSelectable",
     "ParamEntityAttackTargetList",
+    "ParamEntitySkillSubTargetEntityList",
     "ParamEntitySkillTargetEntityList",
 }
 TARGET_EXPRESSION_CONTEXT_ALIASES = {
@@ -17051,7 +17404,7 @@ def _condition_payload_executable(opcode: str, payload: dict[str, Any]) -> bool:
     if opcode == "ByCompareAbilityProperty":
         return (
             _condition_target_value_executable(payload.get("TargetType"))
-            and payload.get("Property") in {"Shield", "BreakDamageAddedRatio"}
+            and ability_property_is_runtime_readable(payload.get("Property"))
             and _numeric_expr_can_be_runtime_bound(payload.get("CompareValue"))
         )
     if opcode == "ByCompareCharacterID":
@@ -17083,7 +17436,23 @@ def _condition_payload_executable(opcode: str, payload: dict[str, Any]) -> bool:
             and _numeric_expr_can_be_runtime_bound(_numeric_expr_summary(payload.get("TargetMonsterID")))
         )
     if opcode == "ByContainBehaviorFlag":
-        return _condition_target_value_executable(payload.get("TargetType")) and isinstance(payload.get("Flag"), str)
+        singular = payload.get("Flag")
+        plural = payload.get("Flags")
+        flags_executable = (
+            isinstance(singular, str)
+            and bool(singular)
+            and plural is None
+        ) or (
+            singular is None
+            and isinstance(plural, list)
+            and bool(plural)
+            and all(isinstance(flag, str) and bool(flag) for flag in plural)
+            and len(plural) == len(set(plural))
+        )
+        return (
+            _condition_target_value_executable(payload.get("TargetType"))
+            and flags_executable
+        )
     if opcode == "ByContainsParamFlag":
         return isinstance(payload.get("Flag"), str)
     if opcode == "ByTargetListIntersects":

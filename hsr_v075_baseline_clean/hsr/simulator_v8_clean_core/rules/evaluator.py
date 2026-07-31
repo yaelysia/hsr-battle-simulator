@@ -826,10 +826,13 @@ def _evaluate_condition_payload(
         target_id, target_details = _resolve_condition_target(payload.get("TargetType"), context)
         if target_id is None:
             return _condition_blocked(condition_id, opcode, "target_alias_unresolved", target_details, source_trace)
-        flag = payload.get("Flag")
-        if not isinstance(flag, str) or not flag:
+        flags = _condition_behavior_flags(payload)
+        if not flags:
             return _condition_blocked(condition_id, opcode, "behavior_flag_missing", {"payload": payload}, source_trace)
-        matched = _unit_has_behavior_flag(context, target_id, flag)
+        matched = any(
+            _unit_has_behavior_flag(context, target_id, flag)
+            for flag in flags
+        )
         if payload.get("Inverse") is True:
             matched = not matched
         return _condition_result(
@@ -837,7 +840,12 @@ def _evaluate_condition_payload(
             condition_id,
             opcode,
             "behavior_flag_checked",
-            {"target_id": target_id, "flag": flag, "inverse": payload.get("Inverse") is True},
+            {
+                "target_id": target_id,
+                "flags": list(flags),
+                "match_policy": "any",
+                "inverse": payload.get("Inverse") is True,
+            },
             source_trace,
         )
     if opcode == "ByContainsParamFlag":
@@ -1564,6 +1572,11 @@ def _condition_target_ids(
             "skill_target_ids",
             "selected_target_ids",
         ),
+        "ParamEntitySkillSubTargetEntityList": (
+            "param_entity_skill_sub_target_ids",
+            "skill_sub_target_ids",
+            "sub_target_ids",
+        ),
         "SkillSubTargetEntityList": (
             "skill_sub_target_ids",
             "sub_target_ids",
@@ -1769,27 +1782,9 @@ def _unit_property_ratios(
 def _unit_ability_property(unit: Any | None, property_name: object) -> float | None:
     if unit is None or not isinstance(property_name, str):
         return None
-    if property_name == "Shield":
-        shields = getattr(unit, "shield_instances", ())
-        if not isinstance(shields, (list, tuple)):
-            return None
-        return sum(
-            float(item.get("remaining", 0.0))
-            for item in shields
-            if isinstance(item, dict)
-            and isinstance(item.get("remaining"), (int, float))
-            and not isinstance(item.get("remaining"), bool)
-        )
-    if property_name == "BreakDamageAddedRatio":
-        resources = getattr(unit, "resources", {})
-        if not isinstance(resources, dict):
-            return None
-        for key in ("BreakDamageAddedRatio", "break_damage_added_ratio"):
-            value = resources.get(key)
-            if isinstance(value, (int, float)) and not isinstance(value, bool):
-                return float(value)
-        return None
-    return None
+    from ..systems.unit_stats import ability_property_value
+
+    return ability_property_value(unit, property_name)
 
 
 def _unit_character_id(unit: Any | None) -> int | None:
@@ -1871,6 +1866,23 @@ def _unit_has_behavior_flag(context: EvaluationContext, unit_id: str, flag: str)
             if isinstance(detail_flags, (list, tuple, set)) and flag in {str(item) for item in detail_flags}:
                 return True
     return False
+
+
+def _condition_behavior_flags(payload: dict[str, Any]) -> tuple[str, ...]:
+    singular = payload.get("Flag")
+    plural = payload.get("Flags")
+    if singular is not None and plural is not None:
+        return ()
+    if isinstance(singular, str) and singular:
+        return (singular,)
+    if (
+        isinstance(plural, list)
+        and plural
+        and all(isinstance(flag, str) and flag for flag in plural)
+        and len(plural) == len(set(plural))
+    ):
+        return tuple(plural)
+    return ()
 
 
 def _payload_flags(payload: dict[str, Any]) -> set[str]:

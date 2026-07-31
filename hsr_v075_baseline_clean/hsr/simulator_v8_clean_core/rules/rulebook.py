@@ -39,6 +39,8 @@ from .engine_rule_registry import (
     engine_rule_admission_reason,
 )
 from .ir import (
+    AbilityPropertyRangeIR,
+    AbilityPropertyWatcherIR,
     AbilityPhaseIR,
     AbilityTaskIR,
     ActionAbilityBindingIR,
@@ -793,11 +795,16 @@ class RuleBook:
                 for key, value in break_status_emissions_by_template.items()
             },
         )
-        object.__setattr__(
-            self,
-            "_status_callbacks",
-            {callback.callback_id: callback for callback in self.ir.status_callbacks},
+        status_callbacks, status_callback_id_conflicts = _unique_index(
+            self.ir.status_callbacks,
+            lambda callback: callback.callback_id,
         )
+        if status_callback_id_conflicts:
+            raise ValueError(
+                "status_callback_identity_duplicate:"
+                + ",".join(sorted(status_callback_id_conflicts))
+            )
+        object.__setattr__(self, "_status_callbacks", status_callbacks)
         object.__setattr__(
             self,
             "_status_event_families",
@@ -875,6 +882,87 @@ class RuleBook:
                 for key, value in status_callback_tasks_by_callback.items()
             },
         )
+        ability_property_watchers: dict[str, AbilityPropertyWatcherIR] = {}
+        for watcher in self.ir.ability_property_watchers:
+            if watcher.watcher_id in ability_property_watchers:
+                raise ValueError(
+                    "ability_property_watcher_identity_duplicate:"
+                    f"{watcher.watcher_id}"
+                )
+            ability_property_watchers[watcher.watcher_id] = watcher
+        object.__setattr__(
+            self,
+            "_ability_property_watchers",
+            ability_property_watchers,
+        )
+        ability_property_watchers_by_modifier: dict[
+            str,
+            list[AbilityPropertyWatcherIR],
+        ] = {}
+        for watcher in self.ir.ability_property_watchers:
+            ability_property_watchers_by_modifier.setdefault(
+                watcher.modifier_name,
+                [],
+            ).append(watcher)
+        object.__setattr__(
+            self,
+            "_ability_property_watchers_by_modifier",
+            {
+                key: tuple(sorted(value, key=lambda item: item.watcher_id))
+                for key, value in ability_property_watchers_by_modifier.items()
+            },
+        )
+        ability_property_ranges: dict[str, AbilityPropertyRangeIR] = {}
+        for property_range in self.ir.ability_property_ranges:
+            if property_range.range_id in ability_property_ranges:
+                raise ValueError(
+                    "ability_property_range_identity_duplicate:"
+                    f"{property_range.range_id}"
+                )
+            ability_property_ranges[property_range.range_id] = property_range
+        object.__setattr__(
+            self,
+            "_ability_property_ranges",
+            ability_property_ranges,
+        )
+        ability_property_ranges_by_watcher: dict[
+            str,
+            list[AbilityPropertyRangeIR],
+        ] = {}
+        for property_range in self.ir.ability_property_ranges:
+            ability_property_ranges_by_watcher.setdefault(
+                property_range.watcher_id,
+                [],
+            ).append(property_range)
+        object.__setattr__(
+            self,
+            "_ability_property_ranges_by_watcher",
+            {
+                key: tuple(
+                    sorted(
+                        value,
+                        key=lambda item: (item.range_index, item.range_id),
+                    )
+                )
+                for key, value in ability_property_ranges_by_watcher.items()
+            },
+        )
+        watcher_contract_error = _ability_property_watcher_contract_error(
+            ability_property_watchers,
+            ability_property_ranges,
+            self._status_callbacks,
+        )
+        if watcher_contract_error:
+            raise ValueError(watcher_contract_error)
+        watcher_effect_contract_error = (
+            _ability_property_watcher_effect_contract_error(
+                self.ir.effects,
+                self._entities,
+                ability_property_watchers,
+            )
+        )
+        if watcher_effect_contract_error:
+            raise ValueError(watcher_effect_contract_error)
         object.__setattr__(
             self,
             "_status_damage_emissions",
@@ -2173,6 +2261,30 @@ class RuleBook:
     def status_callback_tasks_for_callback(self, callback_id: str) -> tuple[StatusCallbackTaskIR, ...]:
         return self._status_callback_tasks_by_callback.get(callback_id, ())
 
+    def ability_property_watcher(
+        self,
+        watcher_id: str,
+    ) -> AbilityPropertyWatcherIR | None:
+        return self._ability_property_watchers.get(watcher_id)
+
+    def ability_property_watchers_for_modifier(
+        self,
+        modifier_name: str,
+    ) -> tuple[AbilityPropertyWatcherIR, ...]:
+        return self._ability_property_watchers_by_modifier.get(modifier_name, ())
+
+    def ability_property_range(
+        self,
+        range_id: str,
+    ) -> AbilityPropertyRangeIR | None:
+        return self._ability_property_ranges.get(range_id)
+
+    def ability_property_ranges_for_watcher(
+        self,
+        watcher_id: str,
+    ) -> tuple[AbilityPropertyRangeIR, ...]:
+        return self._ability_property_ranges_by_watcher.get(watcher_id, ())
+
     def status_damage_emission(self, emission_id: str) -> StatusDamageEmissionIR | None:
         return self._status_damage_emissions.get(emission_id)
 
@@ -2501,6 +2613,169 @@ class RuleBook:
         if entities:
             return entities[0]
         return None
+
+
+def _ability_property_watcher_contract_error(
+    watchers: dict[str, AbilityPropertyWatcherIR],
+    ranges: dict[str, AbilityPropertyRangeIR],
+    callbacks: dict[str, StatusCallbackIR],
+) -> str:
+    for watcher_id in sorted(watchers):
+        watcher = watchers[watcher_id]
+        if watcher.coverage_status != "executable":
+            continue
+        attached_ranges = tuple(
+            ranges.get(range_id) for range_id in watcher.range_ids
+        )
+        indexed_range_ids = tuple(
+            property_range.range_id
+            for property_range in sorted(
+                (
+                    property_range
+                    for property_range in ranges.values()
+                    if property_range.watcher_id == watcher_id
+                ),
+                key=lambda item: (item.range_index, item.range_id),
+            )
+        )
+        if (
+            not watcher.range_ids
+            or len(set(watcher.range_ids)) != len(watcher.range_ids)
+            or any(property_range is None for property_range in attached_ranges)
+            or indexed_range_ids != watcher.range_ids
+            or tuple(
+                property_range.range_index
+                for property_range in attached_ranges
+                if property_range is not None
+            )
+            != tuple(range(len(attached_ranges)))
+        ):
+            return (
+                "ability_property_watcher_range_contract_invalid:"
+                f"{watcher_id}"
+            )
+        for property_range in attached_ranges:
+            assert property_range is not None
+            if (
+                property_range.coverage_status != "executable"
+                or property_range.source.source_path
+                != watcher.source.source_path
+                or property_range.source.raw_id != watcher.source.raw_id
+            ):
+                return (
+                    "ability_property_range_source_contract_invalid:"
+                    f"{property_range.range_id}"
+                )
+            for branch, callback_id, expected_event in (
+                (
+                    "OnEnterRange",
+                    property_range.enter_callback_id,
+                    "OnAbilityPropertyRangeEnter",
+                ),
+                (
+                    "OnExitRange",
+                    property_range.exit_callback_id,
+                    "OnAbilityPropertyRangeExit",
+                ),
+            ):
+                if not callback_id:
+                    continue
+                callback = callbacks.get(callback_id)
+                evidence = (
+                    callback.source.evidence
+                    if callback is not None
+                    else {}
+                )
+                if (
+                    callback is None
+                    or callback.coverage_status != "executable"
+                    or callback.admission_status != "executable"
+                    or callback.scope_kind != "ability_property_range"
+                    or callback.event != expected_event
+                    or callback.modifier_name != watcher.modifier_name
+                    or callback.source.source_path
+                    != property_range.source.source_path
+                    or callback.source.raw_id != property_range.source.raw_id
+                    or evidence.get("ability_property_watcher_id")
+                    != watcher_id
+                    or evidence.get("ability_property_range_id")
+                    != property_range.range_id
+                    or evidence.get("ability_property_range_branch")
+                    != branch
+                ):
+                    return (
+                        "ability_property_range_callback_contract_invalid:"
+                        f"{property_range.range_id}:{branch}"
+                    )
+    return ""
+
+
+def _ability_property_watcher_effect_contract_error(
+    effects: tuple[EffectIR, ...],
+    entities: dict[str, RuleEntity],
+    watchers: dict[str, AbilityPropertyWatcherIR],
+) -> str:
+    for effect in effects:
+        watcher_ids = effect.ability_property_watcher_ids
+        if not watcher_ids:
+            continue
+        standard = effect.payload.get("standard")
+        modifier_name = (
+            standard.get("modifier_name")
+            if isinstance(standard, dict)
+            else None
+        )
+        definition = entities.get(effect.modifier_definition_id)
+        attached = tuple(watchers.get(watcher_id) for watcher_id in watcher_ids)
+        if (
+            effect.opcode != "AddModifier"
+            or watcher_ids != tuple(sorted(set(watcher_ids)))
+            or not isinstance(modifier_name, str)
+            or not modifier_name
+            or definition is None
+            or definition.entity_type != "modifier_definition"
+            or definition.source.raw_id != modifier_name
+            or any(watcher is None for watcher in attached)
+            or any(
+                watcher is not None
+                and (
+                    watcher.modifier_name != modifier_name
+                    or not _ability_property_watcher_matches_definition(
+                        watcher,
+                        definition,
+                    )
+                )
+                for watcher in attached
+            )
+        ):
+            return (
+                "ability_property_watcher_effect_contract_invalid:"
+                f"{effect.effect_id}"
+            )
+    return ""
+
+
+def _ability_property_watcher_matches_definition(
+    watcher: AbilityPropertyWatcherIR,
+    definition: RuleEntity,
+) -> bool:
+    watcher_evidence = watcher.source.evidence
+    definition_evidence = definition.source.evidence
+    source_identity_fields = (
+        "json_path",
+        "ability_index",
+        "equipment_ability_source_admitted",
+        "equipment_ability_source",
+    )
+    return bool(
+        watcher.source.source_path == definition.source.source_path
+        and watcher.source.raw_type == definition.source.raw_type
+        and watcher.source.raw_id == definition.source.raw_id
+        and all(
+            watcher_evidence.get(field) == definition_evidence.get(field)
+            for field in source_identity_fields
+        )
+    )
 
 
 def _equipment_callback_matches_graph(

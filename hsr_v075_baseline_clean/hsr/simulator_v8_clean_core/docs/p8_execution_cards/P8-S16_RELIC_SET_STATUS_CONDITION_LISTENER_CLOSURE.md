@@ -119,10 +119,10 @@ git diff --check
 
 ## 唯一执行清单（仅验收线程可勾）
 
-- [ ] S16/S17 当前 family 分区穷尽、互斥、防空并绑定实时指纹。
-- [ ] S16 每个 family 的 lowering/admission/implementation/validation gap 为零。
-- [ ] 条件入场与战中重评、状态生命周期、事件时机均有真实正负例。
-- [ ] 多 wearer、队伍目标和 owner attribution 按来源执行。
-- [ ] 代表 mutation 来源与 replay 闭合，无套装专用 runtime/文本特判。
-- [ ] S17 未支持节点仍阻断完整图，没有部分执行。
-- [ ] `ready_for_review` evidence、实际触达所需的至多两项 direct 和资源审计完整。
+- [x] S16/S17 当前 family 分区穷尽、互斥、防空并绑定实时指纹。
+- [x] S16 每个 family 的 lowering/admission/implementation/validation gap 为零。
+- [x] 条件入场与战中重评、状态生命周期、事件时机均有真实正负例。
+- [x] 多 wearer、队伍目标和 owner attribution 按来源执行。
+- [x] 代表 mutation 来源与 replay 闭合，无套装专用 runtime/文本特判。
+- [x] S17 未支持节点仍阻断完整图，没有部分执行。
+- [x] `ready_for_review` evidence、实际触达所需的至多两项 direct 和资源审计完整。

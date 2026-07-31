@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from ..core.model import JSONValue, UnitState
+from ..rules.ability_properties import ability_property_stat_name
 from ..rules.evaluator import NumericEvaluationContext, RuleEvaluator
 
 
@@ -31,6 +32,7 @@ class EffectiveUnitStat:
 
 
 _BASE_STAT_MODIFIERS: dict[str, tuple[str, str, str]] = {
+    "max_hp": ("attribute", "hp_added_ratio", "hp_delta"),
     "attack": ("attribute", "attack_added_ratio", "attack_delta"),
     "defense": ("attribute", "defense_added_ratio", "defense_delta"),
     "speed": ("attribute", "speed_added_ratio", "speed_delta"),
@@ -45,6 +47,8 @@ _RESOURCE_STAT_MODIFIERS: dict[str, tuple[str, str]] = {
     "incoming_healing_ratio": ("healing", "incoming_healing_ratio"),
     "shield_added_ratio": ("shield", "shield_added_ratio"),
     "energy_regeneration_rate": ("resource", "energy_regeneration_rate"),
+    "break_damage_added_ratio": ("break_bonus", "break_damage_added_ratio"),
+    "elation_damage_added_ratio": ("damage_bonus", "elation_damage_added_ratio"),
 }
 
 
@@ -136,6 +140,19 @@ def effective_unit_stat(unit: UnitState, stat: str) -> EffectiveUnitStat:
         flat_delta=0.0,
         value=_direct_or_resource_value(unit, stat),
     )
+
+
+def ability_property_value(unit: UnitState, property_name: object) -> float | None:
+    if property_name == "Shield":
+        return sum(
+            float(item.get("remaining", 0.0))
+            for item in unit.shield_instances
+            if isinstance(item, dict)
+            and isinstance(item.get("remaining"), (int, float))
+            and not isinstance(item.get("remaining"), bool)
+        )
+    stat = ability_property_stat_name(property_name)
+    return effective_unit_stat(unit, stat).value if stat is not None else None
 
 
 def _direct_base_stat(unit: UnitState, stat: str) -> float:

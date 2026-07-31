@@ -13,6 +13,7 @@ from ..resource_event_contract import (
 from ..rules.ir import ActionDefinitionIR, StatusCallbackIR, StatusEventFamilyIR
 from ..rules.rulebook import RuleBook
 from .damage import DamageSystem, DamageWindowLedger
+from .ability_property_watchers import AbilityPropertyWatcherSystem
 from .effect import EffectRegistry
 from .mutation_events import (
     MUTATION_BACKED_EVENT_TYPES,
@@ -139,6 +140,11 @@ class EventDispatchSystem:
             timeline=self.timeline,
             effect_registry=effect_registry,
         )
+        self.ability_property_watchers = AbilityPropertyWatcherSystem(
+            rules,
+            status_callbacks=self.status_callbacks,
+            reducer=self.reducer,
+        )
         self.phases = CombatPhaseMachine()
 
     def dispatch_action_window(
@@ -257,10 +263,123 @@ class EventDispatchSystem:
                 modifier_name=modifier_name,
                 damage_window_ledger=damage_window_ledger,
             )
+        result = self._reconcile_ability_property_watchers(
+            result,
+            before_state=state,
+            event=event,
+            damage_window_ledger=damage_window_ledger,
+        )
         return _with_controlled_event_normalization(
             _with_event_dispatch_node_result(result, event),
             before=event_before_normalization,
             after=event,
+        )
+
+    def _reconcile_ability_property_watchers(
+        self,
+        result: EventDispatchResult,
+        *,
+        before_state: BattleState,
+        event: GameEvent,
+        damage_window_ledger: DamageWindowLedger | None,
+    ) -> EventDispatchResult:
+        if result.errors:
+            return _atomic_dispatch_failure(before_state, result)
+        unit_ids = _ability_property_recheck_unit_ids(
+            result.after_state,
+            event,
+            result.mutations,
+        )
+        if not unit_ids:
+            return result
+        watcher_result = self.ability_property_watchers.reconcile(
+            result.after_state,
+            unit_ids=unit_ids,
+            trigger_event=event,
+        )
+        if not watcher_result.ok:
+            return _atomic_dispatch_failure(
+                before_state,
+                replace(
+                result,
+                records=(*result.records, *watcher_result.records),
+                errors=(*result.errors, *watcher_result.errors),
+                node_results=(
+                    *result.node_results,
+                    *watcher_result.node_results,
+                ),
+                ),
+            )
+
+        current_state = watcher_result.after_state
+        mutations = [*result.mutations, *watcher_result.mutations]
+        events = [*result.events, *watcher_result.events]
+        rng_events = [*result.rng_events, *watcher_result.rng_events]
+        records = [*result.records, *watcher_result.records]
+        errors = [*result.errors]
+        nodes = [*result.node_results, *watcher_result.node_results]
+        normalizations = [*result.event_normalizations]
+        child_depth = _event_mutation_depth(event)
+        dispatchable_events = tuple(
+            emitted_event
+            for emitted_event in watcher_result.events
+            if emitted_event.event_type in CALLBACK_EMITTED_EVENT_TYPES
+        )
+        if (
+            dispatchable_events
+            and child_depth >= MAX_CALLBACK_EMITTED_EVENT_DEPTH
+        ):
+            errors.append("callback_emitted_event_depth_exceeded")
+        else:
+            for emitted_event in dispatchable_events:
+                child_event = emitted_event
+                if "mutation_event_depth" not in emitted_event.payload:
+                    child_event = replace(
+                        emitted_event,
+                        event_id=(
+                            emitted_event.event_id
+                            or str(emitted_event.to_json().get("event_id") or "")
+                        ),
+                        payload={
+                            **emitted_event.payload,
+                            "mutation_event_depth": child_depth + 1,
+                        },
+                    )
+                    normalizations.append(
+                        EventNormalization(
+                            before=emitted_event,
+                            after=child_event,
+                            kind="mutation_event_depth",
+                        )
+                    )
+                child_result = self.dispatch_event(
+                    current_state,
+                    event=child_event,
+                    damage_window_ledger=damage_window_ledger,
+                )
+                current_state = child_result.after_state
+                mutations.extend(child_result.mutations)
+                events.extend(child_result.events)
+                rng_events.extend(child_result.rng_events)
+                records.extend(child_result.records)
+                errors.extend(child_result.errors)
+                nodes.extend(child_result.node_results)
+                normalizations.extend(child_result.event_normalizations)
+        merged = replace(
+            result,
+            after_state=current_state,
+            mutations=tuple(mutations),
+            events=tuple(events),
+            rng_events=tuple(rng_events),
+            records=tuple(records),
+            errors=tuple(errors),
+            node_results=tuple(nodes),
+            event_normalizations=tuple(normalizations),
+        )
+        return (
+            _atomic_dispatch_failure(before_state, merged)
+            if errors
+            else merged
         )
 
     def _dispatch_action_window_event(
@@ -457,10 +576,18 @@ class EventDispatchSystem:
             errors.extend(result.errors)
             node_results.extend(result.node_results)
             child_depth = _event_mutation_depth(event)
-            if child_depth < 1:
-                for emitted_event in result.events:
-                    if emitted_event.event_type not in CALLBACK_EMITTED_EVENT_TYPES:
-                        continue
+            dispatchable_events = tuple(
+                emitted_event
+                for emitted_event in result.events
+                if emitted_event.event_type in CALLBACK_EMITTED_EVENT_TYPES
+            )
+            if (
+                dispatchable_events
+                and child_depth >= MAX_CALLBACK_EMITTED_EVENT_DEPTH
+            ):
+                errors.append("callback_emitted_event_depth_exceeded")
+            else:
+                for emitted_event in dispatchable_events:
                     child_event = emitted_event
                     if (
                         "mutation_event_depth"
@@ -791,6 +918,25 @@ def _with_controlled_event_normalization(
     )
 
 
+def _atomic_dispatch_failure(
+    before_state: BattleState,
+    result: EventDispatchResult,
+) -> EventDispatchResult:
+    return replace(
+        result,
+        after_state=before_state,
+        mutations=(),
+        events=(),
+        rng_events=(),
+        records=tuple(
+            record
+            for record in result.records
+            if record.get("process_only") is True
+        ),
+        trigger_windows=(),
+    )
+
+
 def _trigger_window_node_results(
     event: GameEvent,
     trigger_windows: tuple[dict[str, JSONValue], ...],
@@ -874,6 +1020,7 @@ CANONICAL_EVENT_ALIASES: dict[str, tuple[tuple[str, str, str], ...]] = {
     ),
     "action.window.after_skill_use": (
         ("OnAfterSkillUse", "actor_local", ""),
+        ("OnListenAfterSkillUse", "global_listener", ""),
     ),
     "action.after_attack": (
         ("OnListenAfterAttack", "global_listener", ""),
@@ -950,6 +1097,7 @@ CALLBACK_EMITTED_EVENT_TYPES = MUTATION_BACKED_EVENT_TYPES | {
     "summon.spawned",
     "summon.removed",
 }
+MAX_CALLBACK_EMITTED_EVENT_DEPTH = 16
 
 LIFECYCLE_DISPATCH_ONLY_EVENT_TYPES = {
     "wave.started",
@@ -1374,6 +1522,39 @@ def _event_scope_kind(event: GameEvent) -> str:
     if "Hit" in event.window:
         return "per_hit_target_local"
     return "status_local"
+
+
+def _ability_property_recheck_unit_ids(
+    state: BattleState,
+    event: GameEvent,
+    mutations: tuple[Mutation, ...],
+) -> tuple[str, ...]:
+    unit_ids: list[str] = []
+    if event.event_type == "status.lifecycle" and event.target_id:
+        unit_ids.append(event.target_id)
+    mutation_path = event.payload.get("mutation_path")
+    if (
+        event.event_type in MUTATION_BACKED_EVENT_TYPES
+        and event.payload.get("mutation_backed_event") is True
+        and isinstance(event.payload.get("mutation_id"), str)
+        and event.payload.get("mutation_id")
+        and isinstance(mutation_path, (list, tuple))
+        and len(mutation_path) >= 2
+        and mutation_path[0] == "units"
+        and mutation_path[1] == event.target_id
+        and event.target_id in state.units
+    ):
+        unit_ids.append(event.target_id)
+    if event.event_type in {"battle.start", "battle.setup"}:
+        unit_ids.extend(state.units)
+    for mutation in mutations:
+        if (
+            len(mutation.path) >= 2
+            and mutation.path[0] == "units"
+            and mutation.path[1] in state.units
+        ):
+            unit_ids.append(mutation.path[1])
+    return tuple(dict.fromkeys(unit_ids))
 
 
 def _scope_kind_for_callback_event(event: GameEvent, callback_event: str) -> str:

@@ -1613,6 +1613,7 @@ def _resolve_target_alias_ids(
     if alias in {
         "AttackTargetList",
         "ParamEntityAttackTargetList",
+        "ParamEntitySkillSubTargetEntityList",
         "ParamEntitySkillTargetEntityList",
         "ModifierOwnerSkillTargetEntityList",
         "SkillSubTargetEntityList",
@@ -1629,6 +1630,11 @@ def _resolve_target_alias_ids(
         keys = {
             "AttackTargetList": ("attack_target_ids", "selected_target_ids", "target_ids"),
             "ParamEntityAttackTargetList": ("param_entity_attack_target_ids", "attack_target_ids", "selected_target_ids"),
+            "ParamEntitySkillSubTargetEntityList": (
+                "param_entity_skill_sub_target_ids",
+                "skill_sub_target_ids",
+                "sub_target_ids",
+            ),
             "SkillSubTargetEntityList": ("skill_sub_target_ids", "sub_target_ids"),
         }[alias]
         return _target_ids_from_payload(

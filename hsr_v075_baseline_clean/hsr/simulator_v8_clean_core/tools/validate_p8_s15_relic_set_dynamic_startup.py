@@ -184,6 +184,7 @@ def _build_bundle(tbgd_root: Path) -> dict[str, Any]:
             list(_unique((*flat("effects"), *graph_effects), "effect_id")),
             list(entities),
             callbacks,
+            flat("ability_property_watchers"),
         )
     )
     engine = build_engine_rule_registry()
@@ -219,6 +220,8 @@ def _build_bundle(tbgd_root: Path) -> dict[str, Any]:
         ),
         status_callbacks=tuple(callbacks),
         status_callback_tasks=tuple(callback_tasks),
+        ability_property_watchers=flat("ability_property_watchers"),
+        ability_property_ranges=flat("ability_property_ranges"),
         status_event_families=tuple(families),
         status_damage_emissions=flat("status_damage_emissions"),
         damage_modifiers=flat("damage_modifiers"),
@@ -239,6 +242,8 @@ def _build_bundle(tbgd_root: Path) -> dict[str, Any]:
         "graphs": tuple(graphs),
         "callbacks": tuple(callbacks),
         "callback_tasks": tuple(callback_tasks),
+        "ability_property_watchers": flat("ability_property_watchers"),
+        "ability_property_ranges": flat("ability_property_ranges"),
         "dynamic_thresholds": tuple(t for t in clean_thresholds if t.ability_source is not None),
         "clean_refs": clean_refs,
         "duplicate_thresholds": duplicate_thresholds,
@@ -820,7 +825,11 @@ def _family_row(kind: str, family: str, reason: str) -> dict[str, Any]:
     ) if kind == "graph" else classify_equipment_family(kind, family)
     if "deferred_to_p8_s8" in reason:
         stage = "s8"
-    elif "unclassified" in reason or "missing:" in reason or reason == "callback_not_admitted":
+    elif (
+        "unclassified" in reason
+        or reason == "callback_not_admitted"
+        or ("missing:" in reason and raw_stage == "unknown")
+    ):
         stage = "unknown"
     else:
         stage = raw_stage

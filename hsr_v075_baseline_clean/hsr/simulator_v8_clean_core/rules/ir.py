@@ -165,6 +165,7 @@ class EffectIR:
     coverage_status: CoverageStatus = "unsupported"
     modifier_definition_id: str = ""
     status_callback_ids: tuple[str, ...] = ()
+    ability_property_watcher_ids: tuple[str, ...] = ()
     source_mode: str = "unclassified"
     link_blocked_reason: str = ""
     owner_modifier_name: str = ""
@@ -178,6 +179,9 @@ class EffectIR:
             "coverage_status": self.coverage_status,
             "modifier_definition_id": self.modifier_definition_id,
             "status_callback_ids": list(self.status_callback_ids),
+            "ability_property_watcher_ids": list(
+                self.ability_property_watcher_ids
+            ),
             "source_mode": self.source_mode,
             "link_blocked_reason": self.link_blocked_reason,
             "owner_modifier_name": self.owner_modifier_name,
@@ -1318,6 +1322,60 @@ class StatusCallbackTaskIR:
 
 
 @dataclass(frozen=True)
+class AbilityPropertyRangeIR:
+    range_id: str
+    watcher_id: str
+    range_index: int
+    minimum: dict[str, JSONValue] | None
+    maximum: dict[str, JSONValue] | None
+    minimum_inclusive: bool
+    maximum_inclusive: bool
+    enter_callback_id: str
+    exit_callback_id: str
+    source: IRSource
+    coverage_status: CoverageStatus = "blocked"
+    blocked_reason: str = ""
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "range_id": self.range_id,
+            "watcher_id": self.watcher_id,
+            "range_index": self.range_index,
+            "minimum": self.minimum,
+            "maximum": self.maximum,
+            "minimum_inclusive": self.minimum_inclusive,
+            "maximum_inclusive": self.maximum_inclusive,
+            "enter_callback_id": self.enter_callback_id,
+            "exit_callback_id": self.exit_callback_id,
+            "source": self.source.to_json(),
+            "coverage_status": self.coverage_status,
+            "blocked_reason": self.blocked_reason,
+        }
+
+
+@dataclass(frozen=True)
+class AbilityPropertyWatcherIR:
+    watcher_id: str
+    modifier_name: str
+    property_name: str
+    range_ids: tuple[str, ...]
+    source: IRSource
+    coverage_status: CoverageStatus = "blocked"
+    blocked_reason: str = ""
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "watcher_id": self.watcher_id,
+            "modifier_name": self.modifier_name,
+            "property_name": self.property_name,
+            "range_ids": list(self.range_ids),
+            "source": self.source.to_json(),
+            "coverage_status": self.coverage_status,
+            "blocked_reason": self.blocked_reason,
+        }
+
+
+@dataclass(frozen=True)
 class StatusEventFamilyIR:
     status_event_family_id: str
     callback_event: str
@@ -2231,6 +2289,8 @@ class CanonicalIR:
     status_event_families: tuple[StatusEventFamilyIR, ...] = ()
     status_callbacks: tuple[StatusCallbackIR, ...] = ()
     status_callback_tasks: tuple[StatusCallbackTaskIR, ...] = ()
+    ability_property_watchers: tuple[AbilityPropertyWatcherIR, ...] = ()
+    ability_property_ranges: tuple[AbilityPropertyRangeIR, ...] = ()
     status_damage_emissions: tuple[StatusDamageEmissionIR, ...] = ()
     action_delay_emissions: tuple[ActionDelayEmissionIR, ...] = ()
     queue_intents: tuple[QueueIntentIR, ...] = ()
@@ -2322,6 +2382,13 @@ class CanonicalIR:
             "status_event_families": [family.to_json() for family in self.status_event_families],
             "status_callbacks": [callback.to_json() for callback in self.status_callbacks],
             "status_callback_tasks": [task.to_json() for task in self.status_callback_tasks],
+            "ability_property_watchers": [
+                watcher.to_json() for watcher in self.ability_property_watchers
+            ],
+            "ability_property_ranges": [
+                property_range.to_json()
+                for property_range in self.ability_property_ranges
+            ],
             "status_damage_emissions": [emission.to_json() for emission in self.status_damage_emissions],
             "action_delay_emissions": [emission.to_json() for emission in self.action_delay_emissions],
             "queue_intents": [intent.to_json() for intent in self.queue_intents],

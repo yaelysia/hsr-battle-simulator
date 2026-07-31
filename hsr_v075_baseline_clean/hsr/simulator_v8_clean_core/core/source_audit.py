@@ -79,6 +79,18 @@ MUTATION_SOURCE_POLICIES: dict[str, dict[str, JSONValue]] = {
         "required_metadata": ["callback_id", "task_id", "source_trace"],
         "coverage_required": "executable for mutating paths; blocked paths process-only",
     },
+    "ability_property_watcher_system": {
+        "required_ir": ["AbilityPropertyWatcherIR + AbilityPropertyRangeIR"],
+        "required_metadata": [
+            "unit_id",
+            "status_instance_id",
+            "trigger_event_id",
+            "watcher_ids",
+            "watcher_state",
+            "source_trace",
+        ],
+        "coverage_required": "source-backed executable watcher and canonical range state",
+    },
     "event_dispatch_system": {
         "required_ir": ["TriggerIR or StatusCallbackIR"],
         "required_metadata": ["event", "listener_kind", "scope"],
@@ -210,6 +222,12 @@ class RuntimeSourceAuditor:
             return self._audit_break_mutation(mutation, records, violations)
         if mutation.source == "status_callback_system":
             return self._audit_status_callback_mutation(mutation, records, violations)
+        if mutation.source == "ability_property_watcher_system":
+            return self._audit_ability_property_watcher_mutation(
+                mutation,
+                records,
+                violations,
+            )
         if mutation.source == "status_system":
             return self._audit_status_mutation(mutation, records, violations)
         if mutation.source == "effect_system":
@@ -1593,6 +1611,182 @@ class RuntimeSourceAuditor:
                 "task_id": task_id or "",
                 "dynamic_key": str(metadata.get("dynamic_key") or ""),
                 "property": str(metadata.get("property") or ""),
+            },
+        )
+
+    def _audit_ability_property_watcher_mutation(
+        self,
+        mutation: Mutation,
+        records: tuple[dict[str, JSONValue], ...],
+        violations: list[SourceAuditViolation],
+    ) -> dict[str, JSONValue]:
+        metadata = mutation.metadata
+        unit_id = _required_str(mutation, metadata, "unit_id", violations)
+        instance_id = _required_str(
+            mutation,
+            metadata,
+            "status_instance_id",
+            violations,
+        )
+        trigger_event_id = _required_str(
+            mutation,
+            metadata,
+            "trigger_event_id",
+            violations,
+        )
+        watcher_ids = metadata.get("watcher_ids")
+        watcher_state = metadata.get("watcher_state")
+        source_trace = metadata.get("source_trace")
+        _require_dict(mutation, metadata, "source_trace", violations)
+        expected_path = (
+            "units",
+            unit_id,
+            "flags",
+            "status_details",
+        ) if unit_id else ()
+        if expected_path and mutation.path != expected_path:
+            violations.append(
+                _violation(
+                    mutation,
+                    "ability_property_watcher_path_invalid",
+                    details={
+                        "expected": list(expected_path),
+                        "actual": list(mutation.path),
+                    },
+                )
+            )
+        if (
+            not isinstance(watcher_ids, (list, tuple))
+            or not watcher_ids
+            or any(
+                not isinstance(watcher_id, str) or not watcher_id
+                for watcher_id in watcher_ids
+            )
+            or tuple(watcher_ids) != tuple(sorted(set(watcher_ids)))
+        ):
+            violations.append(
+                _violation(
+                    mutation,
+                    "ability_property_watcher_ids_invalid",
+                    missing_field="watcher_ids",
+                )
+            )
+            watcher_ids = ()
+        if (
+            not isinstance(watcher_state, dict)
+            or set(watcher_state) != set(watcher_ids)
+        ):
+            violations.append(
+                _violation(
+                    mutation,
+                    "ability_property_watcher_state_invalid",
+                    missing_field="watcher_state",
+                )
+            )
+            watcher_state = {}
+
+        watcher_sources: list[dict[str, JSONValue]] = []
+        for watcher_id in watcher_ids:
+            watcher = self.rules.ability_property_watcher(watcher_id)
+            active_range_ids = watcher_state.get(watcher_id)
+            if watcher is None:
+                violations.append(
+                    _violation(
+                        mutation,
+                        "ability_property_watcher_missing",
+                        details={"watcher_id": watcher_id},
+                    )
+                )
+                continue
+            _audit_source(
+                watcher.source,
+                watcher.coverage_status,
+                mutation,
+                violations,
+                executable_required=True,
+            )
+            watcher_sources.append(watcher.source.to_json())
+            if (
+                not isinstance(active_range_ids, (list, tuple))
+                or any(
+                    not isinstance(range_id, str) or not range_id
+                    for range_id in active_range_ids
+                )
+            ):
+                violations.append(
+                    _violation(
+                        mutation,
+                        "ability_property_watcher_active_ranges_invalid",
+                        details={"watcher_id": watcher_id},
+                    )
+                )
+                continue
+            active_range_id_set = set(active_range_ids)
+            if (
+                len(active_range_ids) != len(active_range_id_set)
+                or tuple(active_range_ids)
+                != tuple(
+                    range_id
+                    for range_id in watcher.range_ids
+                    if range_id in active_range_id_set
+                )
+            ):
+                violations.append(
+                    _violation(
+                        mutation,
+                        "ability_property_watcher_active_ranges_invalid",
+                        details={"watcher_id": watcher_id},
+                    )
+                )
+
+        expected_source_trace = {
+            "watcher_sources": watcher_sources,
+        }
+        if source_trace != expected_source_trace:
+            violations.append(
+                _violation(
+                    mutation,
+                    "ability_property_watcher_source_trace_mismatch",
+                    details={
+                        "expected": expected_source_trace,
+                        "actual": (
+                            source_trace
+                            if isinstance(source_trace, dict)
+                            else {}
+                        ),
+                    },
+                )
+            )
+
+        matching_records = tuple(
+            record
+            for record in records
+            if record.get("record_type") == "ability_property_watcher_state"
+            and record.get("source") == "ability_property_watcher_system"
+            and isinstance(record.get("payload"), dict)
+            and record["payload"].get("unit_id") == unit_id
+            and record["payload"].get("status_instance_id") == instance_id
+            and record["payload"].get("watcher_ids") == list(watcher_ids)
+            and record["payload"].get("watcher_state") == watcher_state
+            and isinstance(record.get("trace"), dict)
+            and record["trace"].get("trigger_event_id") == trigger_event_id
+            and record["trace"].get("watcher_sources") == watcher_sources
+        )
+        if not matching_records:
+            violations.append(
+                _violation(
+                    mutation,
+                    "ability_property_watcher_settlement_mismatch",
+                )
+            )
+        return _trace(
+            mutation,
+            records,
+            {
+                "unit_id": unit_id or "",
+                "status_instance_id": instance_id or "",
+                "trigger_event_id": trigger_event_id or "",
+                "watcher_ids": list(watcher_ids),
             },
         )
 

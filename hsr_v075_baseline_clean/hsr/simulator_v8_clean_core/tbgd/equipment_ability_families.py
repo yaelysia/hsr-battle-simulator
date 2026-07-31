@@ -59,6 +59,7 @@ S7_TASK_FAMILIES = frozenset(
 
 S8_TASK_FAMILIES = frozenset(
     {
+        "DIHCJLDIMNA",
         "DamageByAttackProperty",
         "HealHP",
         "IncludeTaskListTemplate",
@@ -78,6 +79,7 @@ S8_TASK_FAMILIES = frozenset(
         "RemoveShield",
         "Retarget",
         "SetDynamicValueByAttackTargetCount",
+        "SetDynamicValueByBehaviorFlagCount",
         "SetDynamicValueByBPChange",
         "SetDynamicValueByDamageDataProperty",
         "SetDynamicValueByHealDataProperty",
@@ -136,6 +138,7 @@ S8_CONDITION_FAMILIES = frozenset(
     {
         "ByCharacterDamageType",
         "ByCompareChangeValue",
+        "ByCompareDamageTag",
         "ByCompareParamValue",
         "ByCompareSPRatio",
         "ByCompareWaveCount",
@@ -153,6 +156,8 @@ S8_CONDITION_FAMILIES = frozenset(
 S7_EVENT_FAMILIES = frozenset(
     {
         "OnAddModifierSuc",
+        "OnAbilityPropertyRangeEnter",
+        "OnAbilityPropertyRangeExit",
         "OnAfterAttack",
         "OnAfterBeingAttacked",
         "OnAfterBeingHitAll",
@@ -173,6 +178,7 @@ S7_EVENT_FAMILIES = frozenset(
         "OnEnterBattle",
         "OnHPChange",
         "OnListenAfterAttack",
+        "OnListenAfterSkillUse",
         "OnListenBeforeAttack",
         "OnListenBeforeSkillUse",
         "OnListenBreak",
@@ -184,6 +190,7 @@ S7_EVENT_FAMILIES = frozenset(
         "OnListenTurnEnd",
         "OnListenTurnPhase1Begin",
         "OnModifierAdd",
+        "OnModifierOnStack",
         "OnModifierRemove",
         "OnPhase1",
         "OnStack",
@@ -194,16 +201,20 @@ S7_EVENT_FAMILIES = frozenset(
 
 S8_EVENT_FAMILIES = frozenset(
     {
+        "OnAfterAttackEnd",
         "OnAfterDealHeal",
         "OnBeforeDealHeal",
         "OnDefenderPrepareAttackData",
         "OnCustomEvent",
         "OnListenAvatarBaseTypeChange",
+        "OnListenBattleEventCreate",
         "OnListenBpChange",
         "OnListenElationTimeEnd",
         "OnListenElationTimeStart",
         "OnListenCharacterCreate",
         "OnListenCharacterEscape",
+        "OnListenDepartedEnd",
+        "OnListenDepartedStart",
         "OnPhase2",
         "OnSPChange",
         "OnSnapshotCreate",
@@ -215,7 +226,9 @@ S8_EVENT_FAMILIES = frozenset(
 NON_GAMEPLAY_EVENT_FAMILIES = frozenset({"OnAimAtTargetsRefresh_CL"})
 
 S7_TARGET_FAMILIES = frozenset({"TargetAlias", "TargetFetchActualOwner"})
-S8_TARGET_FAMILIES = frozenset({"TargetConcat", "TargetFilter", "TargetSequence"})
+S8_TARGET_FAMILIES = frozenset(
+    {"Retarget", "TargetConcat", "TargetFilter", "TargetSequence"}
+)
 
 
 def classify_equipment_family(kind: str, raw_family: str) -> EquipmentFamilyStage:
@@ -412,6 +425,7 @@ S7_SIMPLE_TARGET_ALIASES = frozenset(
         "ParamEntity2",
         "ParamEntityAttackTargetList",
         "ParamEntitySkillTargetEntityList",
+        "ParamEntitySkillSubTargetEntityList",
         "SkillSubTargetEntityList",
         "SkillTargetEntityList",
     }

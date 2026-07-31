@@ -132,6 +132,102 @@ class StatusCallbackSystem:
             ),
         )
 
+    def execute_callback_id(
+        self,
+        state: BattleState,
+        *,
+        callback_id: str,
+        watcher_id: str,
+        range_id: str,
+        branch: str,
+        unit_id: str,
+        modifier_name: str,
+        trigger_event: GameEvent | None = None,
+        detail_override: dict[str, JSONValue] | None = None,
+    ) -> StatusCallbackExecutionResult:
+        callback = self.rules.status_callback(callback_id)
+        if callback is None:
+            return _selected_callback_blocked(
+                state,
+                callback_id,
+                "status_callback_identity_missing",
+            )
+        if callback.modifier_name != modifier_name:
+            return _selected_callback_blocked(
+                state,
+                callback_id,
+                "status_callback_modifier_identity_mismatch",
+            )
+        expected_event = {
+            "enter": "OnAbilityPropertyRangeEnter",
+            "exit": "OnAbilityPropertyRangeExit",
+        }.get(branch)
+        evidence = callback.source.evidence
+        if (
+            expected_event is None
+            or callback.scope_kind != "ability_property_range"
+            or callback.event != expected_event
+            or evidence.get("ability_property_watcher_id") != watcher_id
+            or evidence.get("ability_property_range_id") != range_id
+            or evidence.get("ability_property_range_branch")
+            != (
+                "OnEnterRange" if branch == "enter" else "OnExitRange"
+            )
+        ):
+            return _selected_callback_blocked(
+                state,
+                callback_id,
+                "ability_property_range_callback_identity_mismatch",
+            )
+        detail = detail_override or find_status_detail(
+            state,
+            unit_id,
+            modifier_name=modifier_name,
+        )
+        if detail is None:
+            return _selected_callback_blocked(
+                state,
+                callback_id,
+                "status_detail_missing",
+            )
+        if (
+            str(detail.get("owner_id") or "") != unit_id
+            or str(detail.get("modifier_name") or "") != modifier_name
+            or not str(detail.get("instance_id") or "")
+        ):
+            return _selected_callback_blocked(
+                state,
+                callback_id,
+                "status_detail_override_identity_mismatch",
+            )
+        admitted_ids = _trigger_ids_for_event(detail, callback.event)
+        if admitted_ids is not None and callback_id not in admitted_ids:
+            return _selected_callback_blocked(
+                state,
+                callback_id,
+                "status_callback_not_attached_to_instance",
+            )
+        result = self._execute_callback(
+            state,
+            callback,
+            detail,
+            trigger_event,
+            None,
+        )
+        if result.node_results:
+            return result
+        return replace(
+            result,
+            node_results=(
+                ExecutionNodeResult(
+                    node_kind="status_callback",
+                    node_id=callback_id,
+                    status="complete" if result.ok else "blocked",
+                    reason_code=",".join(result.errors),
+                ),
+            ),
+        )
+
     def _execute(
         self,
         state: BattleState,
@@ -5533,6 +5629,38 @@ def _trigger_ids_for_event(detail: dict[str, JSONValue], event: str) -> tuple[st
     if not isinstance(value, list):
         return ()
     return tuple(str(item) for item in value if isinstance(item, str) and item)
+
+
+def _selected_callback_blocked(
+    state: BattleState,
+    callback_id: str,
+    reason: str,
+) -> StatusCallbackExecutionResult:
+    return StatusCallbackExecutionResult(
+        ok=False,
+        after_state=state,
+        records=(
+            SettlementRecord(
+                record_type="status_callback_blocked",
+                source="status_callback_system",
+                process_only=True,
+                payload={
+                    "callback_id": callback_id,
+                    "reason": reason,
+                },
+                trace={},
+            ).to_json(),
+        ),
+        errors=(reason,),
+        node_results=(
+            ExecutionNodeResult(
+                node_kind="status_callback",
+                node_id=callback_id,
+                status="blocked",
+                reason_code=reason,
+            ),
+        ),
+    )
 
 
 def _json_dict(value: object) -> dict[str, JSONValue]:

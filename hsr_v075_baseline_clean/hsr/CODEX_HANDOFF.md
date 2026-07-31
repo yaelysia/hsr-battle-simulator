@@ -11,7 +11,7 @@ turnbasedgamedata-main -> compiler/lowering -> Canonical IR -> Combat Core
 最近已验收生产检查点：
 
 ```text
-P8-S15 本检查点（父检查点：729fc90）
+P8-S16 本检查点（父检查点：746637c）
 ```
 
 验证治理路线回正：
@@ -30,7 +30,7 @@ P8-S15 本检查点（父检查点：729fc90）
 - P7-S0 至 P7-S19 内核可信执行与当前准入战斗语义。
 - P8-S0 至 P8-S8 光锥定义、实例、装配和机制闭合。
 - P8-R1-RUNTIME 与 P8-R2 召唤光环、记忆光锥事件链及当前光锥目录启动收口。
-- P8-S9 至 P8-S15 遗器定义、正式实例、主副词条、套装档位统计、统一静态贡献账本和动态能力启动入口。
+- P8-S9 至 P8-S16 遗器定义、正式实例、主副词条、套装档位统计、统一静态贡献账本、动态能力启动以及第一批套装 gameplay 机制。
 - CHAR-M1 记忆角色与忆灵 owned-combatant 构筑底座。
 - VG-R1 P8-S8 task/event 共享证据与 owned-combatant 窄投影试点。
 
@@ -71,8 +71,8 @@ VG-R1 曾确认两条动态值任务和一条死亡回响事件 family 失败。
 
 ## 当前工作
 
-光锥轨已经推进至 R2 并验收，`P8-S9` 至 `P8-S15` 的遗器定义、实例、词条、套装统计、静态贡献和动态能力启动入口也已验收。
-当前顺序上的下一阶段是 `P8-S16` 套装状态、条件和监听机制闭合；S16 至 S17 继续按
+光锥轨已经推进至 R2 并验收，`P8-S9` 至 `P8-S16` 的遗器定义、实例、词条、套装统计、静态贡献、动态能力启动以及状态 / 条件 / 监听机制也已验收。
+当前顺序上的下一阶段是 `P8-S17` 套装剩余 gameplay 机制闭合；继续按
 `docs/p8_execution_cards/` 中的单阶段执行卡严格推进。
 
 P8-S9 当前事实：
@@ -130,6 +130,16 @@ P8-S15 当前事实：
 - 当前 62 条动态图中 37 条可执行；其余 25 条按真实 family 和 102 条依赖保留给 S16/S17，属于后续机制实现范围，不是 S15 能力入口缺失。
 - 收缩后的唯一聚焦验证保留 15 项业务谓词，798 行非空；单次约 2.7 秒、峰值约 343 MiB、产物约 42 KiB，完整 lowering 为零。
 
+P8-S16 当前事实：
+
+- 当前 62 条套装动态图中 56 条已可执行，剩余 6 条完整图只包含 S17 机制，没有 S16 gap 或 unknown gameplay。
+- 764 条 S16 family 与 628 条 S17 family 已按当前来源指纹穷尽、互斥分区；13 个属性 watcher 和 22 个区间进入类型化 Canonical IR。
+- 真实 4+2 正例完成速度 `129.292 -> 135.352 -> 129.292`、条件 `false -> true -> false`，覆盖正式状态添加、移除和战中重评。
+- 多装备者、队伍目标、owner/caster/source attribution、callback 幂等、原子失败、source audit 和 replay 已闭合。
+- mutation-backed 属性变化会重新检查目标单位；watcher mutation 来源篡改和重复 callback 身份在生产边界 fail-closed。
+- TBGD `MaxSP` 是角色能量上限，队伍战技点使用 BP；不得将二者混同。
+- 替代最终聚焦验证 19 项谓词全绿，约 12.3 秒、峰值约 342 MiB、产物约 50 KiB；验证器 997 非空行，完整 lowering 为零。
+
 2026-07-30 已重新审查并统一改写 S9-S21 的执行与验证口径：
 
 - 每阶段只有一个业务主验证；完整入口最多一次诊断运行和一次最终运行。
@@ -147,7 +157,7 @@ P8-S15 当前事实：
 
 ## 仍未完成的大块
 
-- P8-S16 至 S17：遗器套装剩余 gameplay 机制族。
+- P8-S17：遗器套装资源、生命、伤害、行动、队伍、波次、RNG 及其余 gameplay 机制族。
 - P8-S18 至 S21：构筑汇合、正式 scenario、希儿完整示例和当前来源聚合。
 - 剩余记忆角色 / 忆灵的属性、时间线和出生来源扩面。
 - 全角色、全怪物、全关卡和环境内容卡。
@@ -161,10 +171,10 @@ P8-S15 当前事实：
 
 不要默认通读所有文档。根据任务选择：
 
-- 当前 P8-S16 执行卡：
-  `docs/p8_execution_cards/P8-S16_RELIC_SET_STATUS_CONDITION_LISTENER_CLOSURE.md`。
-- 已验收 P8-S15 报告：
-  `live_validation_reports/P8-S15_RELIC_SET_DYNAMIC_STARTUP_ready_for_review.md`。
+- 当前 P8-S17 执行卡：
+  `docs/p8_execution_cards/P8-S17_RELIC_SET_REMAINING_GAMEPLAY_CLOSURE.md`。
+- 已验收 P8-S16 报告：
+  `live_validation_reports/P8-S16_RELIC_SET_STATUS_CONDITION_LISTENER_CLOSURE_ready_for_review.md`。
 - P8-S9 至 S21 的统一验证预算和执行索引：
   `docs/p8_execution_cards/README.md`。
 - 已验收 P8-R2 执行卡与最终差量：
