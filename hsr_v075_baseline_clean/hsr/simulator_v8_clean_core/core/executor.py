@@ -34,6 +34,10 @@ from ..systems.action_contract import (
     ActionContractSystem,
     ActionSubmissionAuthorization,
 )
+from ..systems.action_event_contract import (
+    condition_skill_type as _condition_skill_type,
+    damage_listener_window_event as _damage_listener_window_event,
+)
 from ..systems.action_preflight import (
     action_binding_blocked_reason,
     action_event_blocked_reason,
@@ -90,8 +94,14 @@ class CombatExecutor:
         self.summons = SummonSystem(rules)
         self.effects = EffectRegistry(self.status)
         self.breaks = BreakSystem(rules, self.effects, reducer=self.reducer, damage=self.damage)
-        self.ability_tasks = AbilityTaskSystem(rules, self.effects, reducer=self.reducer, damage=self.damage)
         self.event_dispatcher = EventDispatchSystem(rules, self.effects, reducer=self.reducer, damage=self.damage)
+        self.ability_tasks = AbilityTaskSystem(
+            rules,
+            self.effects,
+            reducer=self.reducer,
+            damage=self.damage,
+            event_dispatcher=self.event_dispatcher,
+        )
         self.value_resolver = ValueResolver(rules)
         self.action_contract = ActionContractSystem(rules)
 
@@ -575,10 +585,14 @@ class CombatExecutor:
         ability_task_results: list[AbilityTaskExecutionResult] = []
         damage_window_ledger = DamageWindowLedger()
         action_hit_targets: list[str] = []
-        hit_sequence_started = False
-        hit_sequence_is_critical = False
+        hit_sequence_order: list[tuple[str, str]] = []
+        hit_sequence_context: dict[
+            tuple[str, str],
+            dict[str, JSONValue],
+        ] = {}
+        hit_sequence_is_critical: dict[tuple[str, str], bool] = {}
+        hit_sequence_final_damage: dict[tuple[str, str], float] = {}
         target_hit_sequence_is_critical: dict[str, bool] = {}
-        hit_sequence_final_damage = 0.0
         target_hit_sequence_final_damage: dict[str, float] = {}
         target_hit_sequences_started: set[str] = set()
 
@@ -593,6 +607,46 @@ class CombatExecutor:
             listener_dispatch_results.append(result)
             ordered_mutations.extend(result.mutations)
             runtime_records.extend(result.records)
+
+        def dispatch_ability_events(
+            ability_result: AbilityTaskExecutionResult,
+        ) -> None:
+            nonlocal current_state
+            dispatched_event_ids = _dispatched_event_ids(
+                ability_result.records
+            )
+            for emitted_event in ability_result.events:
+                if emitted_event.event_type == "damage.hit":
+                    hit_target_id = str(
+                        emitted_event.target_id
+                        or emitted_event.payload.get("target_id")
+                        or ""
+                    )
+                    if hit_target_id:
+                        action_hit_targets.append(hit_target_id)
+                if emitted_event.event_id in dispatched_event_ids:
+                    continue
+                if emitted_event.event_type not in {
+                    "status.lifecycle",
+                    "damage.hit",
+                    "toughness.hit",
+                    "break.triggered",
+                    "unit.defeated",
+                    "custom.event",
+                    "summon.spawned",
+                    "summon.removed",
+                    *MUTATION_BACKED_EVENT_TYPES,
+                }:
+                    continue
+                dispatch_result = self.event_dispatcher.dispatch_event(
+                    current_state,
+                    event=emitted_event,
+                    damage_window_ledger=damage_window_ledger,
+                )
+                current_state = dispatch_result.after_state
+                listener_dispatch_results.append(dispatch_result)
+                ordered_mutations.extend(dispatch_result.mutations)
+                runtime_records.extend(dispatch_result.records)
 
         if action_enabled:
             for step in action_execution_plan.event_steps:
@@ -611,28 +665,7 @@ class CombatExecutor:
                         ability_task_results.append(ability_result)
                         ordered_mutations.extend(ability_result.mutations)
                         runtime_records.extend(ability_result.records)
-                        for emitted_event in ability_result.events:
-                            if emitted_event.event_type not in {
-                                "status.lifecycle",
-                                "damage.hit",
-                                "toughness.hit",
-                                "break.triggered",
-                                "unit.defeated",
-                                "custom.event",
-                                "summon.spawned",
-                                "summon.removed",
-                                *MUTATION_BACKED_EVENT_TYPES,
-                            }:
-                                continue
-                            dispatch_result = self.event_dispatcher.dispatch_event(
-                                current_state,
-                                event=emitted_event,
-                                damage_window_ledger=damage_window_ledger,
-                            )
-                            current_state = dispatch_result.after_state
-                            listener_dispatch_results.append(dispatch_result)
-                            ordered_mutations.extend(dispatch_result.mutations)
-                            runtime_records.extend(dispatch_result.records)
+                        dispatch_ability_events(ability_result)
                     dispatch_event = _action_window_dispatch_event(
                         current_state,
                         command,
@@ -703,27 +736,7 @@ class CombatExecutor:
                         ability_task_results.append(ability_result)
                         ordered_mutations.extend(ability_result.mutations)
                         runtime_records.extend(ability_result.records)
-                        for emitted_event in ability_result.events:
-                            if emitted_event.event_type not in {
-                                "status.lifecycle",
-                                "damage.hit",
-                                "toughness.hit",
-                                "break.triggered",
-                                "unit.defeated",
-                                "custom.event",
-                                "summon.spawned",
-                                "summon.removed",
-                                *MUTATION_BACKED_EVENT_TYPES,
-                            }:
-                                continue
-                            dispatch_result = self.event_dispatcher.dispatch_event(
-                                current_state,
-                                event=emitted_event,
-                            )
-                            current_state = dispatch_result.after_state
-                            listener_dispatch_results.append(dispatch_result)
-                            ordered_mutations.extend(dispatch_result.mutations)
-                            runtime_records.extend(dispatch_result.records)
+                        dispatch_ability_events(ability_result)
                         continue
                     if not action_execution_plan.damage_plan:
                         runtime_records.append(
@@ -874,7 +887,12 @@ class CombatExecutor:
                                 )
                             )
                             continue
-                        if not hit_sequence_started:
+                        hit_sequence_key = (
+                            damage_plan.source_task_id
+                            or damage_plan.damage_emission_id,
+                            damage_packet.target_id,
+                        )
+                        if hit_sequence_key not in hit_sequence_context:
                             dispatch_listener_window(
                                 _damage_listener_window_event(
                                     current_state,
@@ -888,9 +906,30 @@ class CombatExecutor:
                                     selected_target_ids=target_result.resolution.selected,
                                     primary_target_id=action_execution_plan.primary_action_target_id,
                                     source_trace=damage_packet.source_trace,
+                                    damage_custom_name=str(
+                                        damage_packet.metadata.get(
+                                            "damage_custom_name"
+                                        )
+                                        or ""
+                                    ),
+                                    damage_tags=damage_plan.damage_tags,
+                                    sequence_id=hit_sequence_key[0],
                                 )
                             )
-                            hit_sequence_started = True
+                            hit_sequence_order.append(hit_sequence_key)
+                            hit_sequence_context[hit_sequence_key] = {
+                                "target_id": damage_packet.target_id,
+                                "source_trace": damage_packet.source_trace,
+                                "damage_custom_name": str(
+                                    damage_packet.metadata.get(
+                                        "damage_custom_name"
+                                    )
+                                    or ""
+                                ),
+                                "damage_tags": list(
+                                    damage_plan.damage_tags
+                                ),
+                            }
                         if damage_packet.target_id not in target_hit_sequences_started:
                             for event_type in (
                                 "damage.target_attack.before",
@@ -986,7 +1025,13 @@ class CombatExecutor:
                             )
                             and not isinstance(amount, bool)
                         )
-                        hit_sequence_final_damage += hit_final_damage
+                        hit_sequence_final_damage[hit_sequence_key] = (
+                            hit_sequence_final_damage.get(
+                                hit_sequence_key,
+                                0.0,
+                            )
+                            + hit_final_damage
+                        )
                         target_hit_sequence_final_damage[damage_packet.target_id] = (
                             target_hit_sequence_final_damage.get(
                                 damage_packet.target_id,
@@ -994,8 +1039,12 @@ class CombatExecutor:
                             )
                             + hit_final_damage
                         )
-                        hit_sequence_is_critical = (
-                            hit_sequence_is_critical or hit_is_critical
+                        hit_sequence_is_critical[hit_sequence_key] = (
+                            hit_sequence_is_critical.get(
+                                hit_sequence_key,
+                                False,
+                            )
+                            or hit_is_critical
                         )
                         target_hit_sequence_is_critical[damage_packet.target_id] = (
                             target_hit_sequence_is_critical.get(
@@ -1295,22 +1344,58 @@ class CombatExecutor:
                             ),
                         )
                     )
-            if hit_sequence_started:
+            for hit_sequence_key in hit_sequence_order:
+                sequence_context = hit_sequence_context[
+                    hit_sequence_key
+                ]
+                sequence_target_id = str(
+                    sequence_context["target_id"]
+                )
+                sequence_tags = sequence_context.get("damage_tags")
                 dispatch_listener_window(
                     _damage_listener_window_event(
                         current_state,
                         command,
                         action_definition,
                         event_type="damage.hit_sequence.after",
-                        target_id=(
-                            action_execution_plan.primary_action_target_id
-                            or action_hit_targets[0]
-                        ),
+                        target_id=sequence_target_id,
                         selected_target_ids=target_result.resolution.selected,
                         primary_target_id=action_execution_plan.primary_action_target_id,
-                        source_trace=action_source_metadata.get("source_trace", {}),
-                        is_critical=hit_sequence_is_critical,
-                        final_damage=hit_sequence_final_damage,
+                        source_trace=(
+                            sequence_context["source_trace"]
+                            if isinstance(
+                                sequence_context.get("source_trace"),
+                                dict,
+                            )
+                            else {}
+                        ),
+                        is_critical=hit_sequence_is_critical.get(
+                            hit_sequence_key,
+                            False,
+                        ),
+                        final_damage=hit_sequence_final_damage.get(
+                            hit_sequence_key,
+                            0.0,
+                        ),
+                        damage_custom_name=str(
+                            sequence_context.get(
+                                "damage_custom_name"
+                            )
+                            or ""
+                        ),
+                        damage_tags=tuple(
+                            tag
+                            for tag in (
+                                sequence_tags
+                                if isinstance(
+                                    sequence_tags,
+                                    (list, tuple),
+                                )
+                                else ()
+                            )
+                            if isinstance(tag, str) and tag
+                        ),
+                        sequence_id=hit_sequence_key[0],
                     )
                 )
             for hit_target_id in dict.fromkeys(action_hit_targets):
@@ -1343,6 +1428,52 @@ class CombatExecutor:
                     },
                 )
                 dispatch_result = self.event_dispatcher.dispatch_event(current_state, event=after_attack_event)
+                current_state = dispatch_result.after_state
+                listener_dispatch_results.append(dispatch_result)
+                ordered_mutations.extend(dispatch_result.mutations)
+                runtime_records.extend(dispatch_result.records)
+            if action_hit_targets:
+                attack_end_event = GameEvent(
+                    "action.attack_end",
+                    source_id=command.actor_id,
+                    target_id=command.actor_id,
+                    event_id=(
+                        f"event:{current_state.event_index}:"
+                        f"action_attack_end:{command.actor_id}:"
+                        f"{command.action_id}"
+                    ),
+                    window="OnAfterAttackEnd",
+                    process_only=True,
+                    payload={
+                        "action_id": command.action_id,
+                        "action_level": command.action_level,
+                        "actor_id": command.actor_id,
+                        "attacker_id": command.actor_id,
+                        "param_entity_id": command.actor_id,
+                        "primary_target_id": (
+                            action_execution_plan.primary_action_target_id
+                        ),
+                        "selected_target_ids": list(
+                            target_result.resolution.selected
+                        ),
+                        "target_ids": list(
+                            dict.fromkeys(action_hit_targets)
+                        ),
+                        "attack_type": action_definition.attack_type,
+                        "skill_type": _condition_skill_type(
+                            action_definition
+                        ),
+                        "skill_effect": action_definition.skill_effect,
+                        "source_trace": action_source_metadata.get(
+                            "source_trace",
+                            {},
+                        ),
+                    },
+                )
+                dispatch_result = self.event_dispatcher.dispatch_event(
+                    current_state,
+                    event=attack_end_event,
+                )
                 current_state = dispatch_result.after_state
                 listener_dispatch_results.append(dispatch_result)
                 ordered_mutations.extend(dispatch_result.mutations)
@@ -2382,15 +2513,6 @@ def _queue_action_resource_policy(command: ActionCommand) -> dict[str, JSONValue
     return policy if isinstance(policy, dict) else {}
 
 
-def _condition_skill_type(action_definition: ActionDefinitionIR) -> str:
-    text = f"{action_definition.attack_type} {action_definition.skill_effect}".lower()
-    if any(token in text for token in ("ultra", "ultimate")):
-        return "Ultra"
-    if any(token in text for token in ("bpskill", "skill")):
-        return "Skill"
-    return "Normal"
-
-
 def _callback_kind_for_step(phase: str) -> str:
     if phase == "before_skill_use":
         return "OnStart"
@@ -2474,6 +2596,7 @@ def _damage_packet(
             "damage_sequence_id": f"action:{command.actor_id}:{command.action_id}:level:{command.action_level}",
             "can_continue_after_lethal": True,
             "damage_custom_name": damage_plan.damage_custom_name,
+            "damage_tags": list(damage_plan.damage_tags),
             "hit_index": damage_plan.hit_index,
             "damage_emission_id": damage_plan.damage_emission_id,
             "source_task_id": damage_plan.source_task_id,
@@ -3031,57 +3154,6 @@ def _damage_metadata(command: ActionCommand) -> dict[str, JSONValue]:
     return metadata
 
 
-def _damage_listener_window_event(
-    state: BattleState,
-    command: ActionCommand,
-    action_definition: ActionDefinitionIR,
-    *,
-    event_type: str,
-    target_id: str,
-    selected_target_ids: tuple[str, ...],
-    primary_target_id: str | None,
-    source_trace: dict[str, JSONValue],
-    is_critical: bool | None = None,
-    final_damage: float | None = None,
-) -> GameEvent:
-    event_token = event_type.replace(".", "_")
-    return GameEvent(
-        event_type=event_type,
-        source_id=command.actor_id,
-        target_id=target_id,
-        event_id=(
-            f"event:{state.event_index}:{event_token}:"
-            f"{command.actor_id}:{target_id}"
-        ),
-        window=event_type,
-        process_only=True,
-        payload={
-            "action_id": command.action_id,
-            "action_level": command.action_level,
-            "actor_id": command.actor_id,
-            "attacker_id": command.actor_id,
-            "damage_attacker_id": command.actor_id,
-            "param_entity_id": command.actor_id,
-            "primary_target_id": primary_target_id or target_id,
-            "primary_action_target_id": primary_target_id or target_id,
-            "current_hit_target_id": target_id,
-            "target_id": target_id,
-            "selected_target_ids": list(selected_target_ids),
-            "target_ids": list(selected_target_ids),
-            "attack_type": action_definition.attack_type,
-            "skill_type": _condition_skill_type(action_definition),
-            "SkillType": _condition_skill_type(action_definition),
-            "skill_effect": action_definition.skill_effect,
-            "is_current_skill_active": True,
-            "is_insert_action": command.source == "queue",
-            "is_critical": is_critical,
-            "amount": final_damage,
-            "final_damage": final_damage,
-            "source_trace": source_trace,
-        },
-    )
-
-
 def _action_window_dispatch_event(
     state: BattleState,
     command: ActionCommand,
@@ -3136,6 +3208,21 @@ def _action_window_dispatch_event(
             "source_trace": action_event_source,
         },
     )
+
+
+def _dispatched_event_ids(
+    records: tuple[dict[str, JSONValue], ...],
+) -> frozenset[str]:
+    event_ids: set[str] = set()
+    for record in records:
+        if record.get("record_type") != "event_dispatch":
+            continue
+        payload = record.get("payload")
+        event = payload.get("event") if isinstance(payload, dict) else None
+        event_id = event.get("event_id") if isinstance(event, dict) else None
+        if isinstance(event_id, str) and event_id:
+            event_ids.add(event_id)
+    return frozenset(event_ids)
 
 
 def _rng_ledger_blocked_reason(validation: dict[str, JSONValue]) -> str:

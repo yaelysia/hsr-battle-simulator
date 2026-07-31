@@ -13,6 +13,8 @@ from ..rules.expression_ir import numeric_dynamic_hashes
 from ..rules.ir import EffectIR, RuleEntity, TargetExpressionIR
 from ..rules.rulebook import RuleBook
 from ..rules.value_binding import ValueBindingRequest, ValueContext, ValueResolver
+from ..unit_presence import plan_unit_departure_end
+from .mutation_events import events_for_mutation
 from .rng import (
     RNGOutcome,
     RNGRequest,
@@ -2112,6 +2114,11 @@ def _apply_remove_lifecycle_plan(state: BattleState, plan: StatusLifecyclePlan) 
             lifecycle_plan=plan,
             lifecycle_state="missing",
         )
+    departure_mutation, departure_record, departure_events, departure_error = (
+        _status_departure_cleanup(state, plan)
+    )
+    if departure_error:
+        return _blocked_lifecycle_result(plan, departure_error)
     after_details = _remove_status_detail(before_details, plan.status_id, plan.existing_detail)
     after_statuses = (
         before_statuses
@@ -2176,14 +2183,21 @@ def _apply_remove_lifecycle_plan(state: BattleState, plan: StatusLifecyclePlan) 
         mutations = (*mutations, speed_mutation)
         mutation_ids.append(speed_mutation.stable_id())
         records.append(_status_speed_progress_record(plan, speed_mutation))
+    if departure_mutation is not None and departure_record is not None:
+        mutations = (*mutations, departure_mutation)
+        mutation_ids.append(departure_mutation.stable_id())
+        records.append(departure_record)
     return StatusLifecycleResult(
         ok=True,
         operation=plan.operation,
         mutations=mutations,
-        events=_status_lifecycle_events(
-            plan,
-            state,
-            mutation_ids=tuple(mutation_ids),
+        events=(
+            *_status_lifecycle_events(
+                plan,
+                state,
+                mutation_ids=tuple(mutation_ids),
+            ),
+            *departure_events,
         ),
         records=tuple(records),
         lifecycle_plan=plan,
@@ -2259,6 +2273,11 @@ def _apply_expire_lifecycle_plan(state: BattleState, plan: StatusLifecyclePlan) 
     existing = plan.existing_detail if isinstance(plan.existing_detail, dict) else None
     if existing is None:
         return _blocked_lifecycle_result(plan, "status_detail_missing_for_expire")
+    departure_mutation, departure_record, departure_events, departure_error = (
+        _status_departure_cleanup(state, plan)
+    )
+    if departure_error:
+        return _blocked_lifecycle_result(plan, departure_error)
     after_details = _remove_status_detail(before_details, plan.status_id, existing)
     after_statuses = (
         before_statuses
@@ -2323,19 +2342,83 @@ def _apply_expire_lifecycle_plan(state: BattleState, plan: StatusLifecyclePlan) 
         mutations = (*mutations, speed_mutation)
         mutation_ids.append(speed_mutation.stable_id())
         records.append(_status_speed_progress_record(plan, speed_mutation))
+    if departure_mutation is not None and departure_record is not None:
+        mutations = (*mutations, departure_mutation)
+        mutation_ids.append(departure_mutation.stable_id())
+        records.append(departure_record)
     return StatusLifecycleResult(
         ok=True,
         operation=plan.operation,
         mutations=mutations,
-        events=_status_lifecycle_events(
-            plan,
-            state,
-            mutation_ids=tuple(mutation_ids),
+        events=(
+            *_status_lifecycle_events(
+                plan,
+                state,
+                mutation_ids=tuple(mutation_ids),
+            ),
+            *departure_events,
         ),
         records=tuple(records),
         lifecycle_plan=plan,
         lifecycle_state="expired",
     )
+
+
+def _status_departure_cleanup(
+    state: BattleState,
+    plan: StatusLifecyclePlan,
+) -> tuple[
+    Mutation | None,
+    dict[str, JSONValue] | None,
+    tuple[GameEvent, ...],
+    str,
+]:
+    detail = plan.existing_detail
+    if not isinstance(detail, dict):
+        return None, None, (), ""
+    status_instance_id = detail.get("instance_id")
+    if not isinstance(status_instance_id, str) or not status_instance_id:
+        return None, None, (), "status_instance_id_missing_for_departure_cleanup"
+    mutation, blocked_reason = plan_unit_departure_end(
+        state,
+        unit_id=plan.target_id,
+        source_status_instance_id=status_instance_id,
+        source_trace=plan.source_trace,
+        mutation_source="status_system",
+        mutation_metadata={
+            "status_id": plan.status_id,
+            "operation": plan.operation,
+            "lifecycle_plan": plan.to_json(),
+        },
+    )
+    if blocked_reason:
+        return None, None, (), blocked_reason
+    if mutation is None:
+        return None, None, (), ""
+    record = SettlementRecord(
+        record_type="unit_departure_detachment",
+        source="status_system",
+        mutation_id=mutation.stable_id(),
+        process_only=False,
+        payload={
+            "operation": plan.operation,
+            "status_id": plan.status_id,
+            "status_instance_id": status_instance_id,
+            "path": list(mutation.path),
+            "before": mutation.before,
+            "after": mutation.after,
+            "lifecycle_plan": plan.to_json(),
+        },
+        trace=plan.source_trace,
+    ).to_json()
+    caster_id = str(detail.get("caster_id") or plan.source)
+    events = events_for_mutation(
+        mutation,
+        actor_id=caster_id,
+        source_id=caster_id,
+        event_index=state.event_index,
+    )
+    return mutation, record, events, ""
 
 
 def _blocked_lifecycle_result(plan: StatusLifecyclePlan, reason: str) -> StatusLifecycleResult:
@@ -2423,6 +2506,7 @@ def _status_lifecycle_events(
     callback_events = _status_lifecycle_callback_events(plan)
     if not callback_events:
         return ()
+    stack_change = _status_lifecycle_stack_change(plan)
     modifier_name = ""
     status_instance_id = ""
     caster_id = ""
@@ -2489,6 +2573,7 @@ def _status_lifecycle_events(
                     "status_type": status_type,
                     "status_category": status_category,
                     "behavior_flags": list(behavior_flags),
+                    **stack_change,
                     "mutation_ids": list(mutation_ids),
                     "source_trace": plan.source_trace,
                     "status_detail": (
@@ -2500,6 +2585,30 @@ def _status_lifecycle_events(
             )
         )
     return tuple(events)
+
+
+def _status_lifecycle_stack_change(
+    plan: StatusLifecyclePlan,
+) -> dict[str, JSONValue]:
+    if "OnStack" not in _status_lifecycle_callback_events(plan):
+        return {}
+    raw_plan = plan.source_trace.get("stack_plan")
+    if not isinstance(raw_plan, dict):
+        return {}
+    before = raw_plan.get("stacks_before")
+    after = raw_plan.get("stacks_after")
+    if (
+        not isinstance(before, int)
+        or isinstance(before, bool)
+        or not isinstance(after, int)
+        or isinstance(after, bool)
+    ):
+        return {}
+    return {
+        "stack_before": before,
+        "stack_after": after,
+        "change_value": after - before,
+    }
 
 
 def _status_lifecycle_callback_events(plan: StatusLifecyclePlan) -> tuple[str, ...]:

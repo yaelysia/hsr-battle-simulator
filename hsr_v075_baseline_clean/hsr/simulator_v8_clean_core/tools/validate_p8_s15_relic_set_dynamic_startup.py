@@ -6,7 +6,7 @@ import sys
 from collections import Counter
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 from .. import BASELINE_VERSION
 from ..builds.equipment_assembler import assemble_equipment_build
@@ -78,7 +78,13 @@ def validate(tbgd_root: Path, output_dir: Path) -> dict[str, Any]:
     return summary
 
 
-def _build_bundle(tbgd_root: Path) -> dict[str, Any]:
+def _build_bundle(
+    tbgd_root: Path,
+    *,
+    require_blocked_sample: bool = True,
+    required_card_id: str | None = None,
+    ir_transform: Callable[[CanonicalIR, TBGDLowering], CanonicalIR] | None = None,
+) -> dict[str, Any]:
     root = tbgd_root.resolve()
     catalog = require_complete_relic_catalog(build_relic_catalog(root))
     lowering = TBGDLowering(root)
@@ -134,7 +140,13 @@ def _build_bundle(tbgd_root: Path) -> dict[str, Any]:
     _, clean_thresholds, clean_refs = _attach_equipment_mechanism_refs(
         (), catalog.set_thresholds, graphs, parameter_reads
     )
-    cases = _choose_cases(catalog, clean_thresholds, clean_refs, graphs)
+    cases = _choose_cases(
+        catalog,
+        clean_thresholds,
+        clean_refs,
+        graphs,
+        require_blocked_sample=require_blocked_sample,
+    )
     reserved = cases["duplicate"]
     duplicate_variant = replace(
         reserved,
@@ -163,7 +175,8 @@ def _build_bundle(tbgd_root: Path) -> dict[str, Any]:
     card = next(
         card
         for card in sorted(characters.character_data_cards, key=lambda item: item.card_id)
-        if card.coverage_status == "executable"
+        if (required_card_id is None or card.card_id == required_card_id)
+        and card.coverage_status == "executable"
         and (profile := profiles.get(card.profile_id)) is not None
         and profile.coverage_status == "executable"
         and profile.resource_mode == "standard_energy"
@@ -232,6 +245,10 @@ def _build_bundle(tbgd_root: Path) -> dict[str, Any]:
         timeline_rules=engine.timeline_rules,
         resource_rules=engine.resource_rules,
     )
+    if ir_transform is not None:
+        ir = ir_transform(ir, lowering)
+        if not isinstance(ir, CanonicalIR):
+            raise TypeError("focused IR transform must return CanonicalIR")
     rules = RuleBook(ir)
     return {
         "catalog": catalog,
@@ -296,6 +313,8 @@ def _choose_cases(
     thresholds: tuple[Any, ...],
     refs: tuple[Any, ...],
     graphs: list[Any],
+    *,
+    require_blocked_sample: bool = True,
 ) -> dict[str, Any]:
     ref_by_key = {ref.definition_key: ref for ref in refs}
     graph_by_id = {graph.standalone_ability_graph_id: graph for graph in graphs}
@@ -347,13 +366,13 @@ def _choose_cases(
         ),
         None,
     )
-    if low_high is None or two_pair is None or not blocked:
+    if low_high is None or two_pair is None:
         raise ValueError("S15 compact validation samples unavailable")
     single = low_high[0]
     used_sets = {single.set_key, low_high[0].set_key, two_pair[0].set_key, two_pair[1].set_key}
     duplicate = next((t for t in executable if t.set_key not in used_sets), None)
     partial = next((t for t in blocked if t.set_key != getattr(duplicate, "set_key", None)), None)
-    if duplicate is None or partial is None:
+    if duplicate is None or (require_blocked_sample and partial is None):
         raise ValueError("S15 duplicate or partial sample unavailable")
     return {
         "single": single,
@@ -364,7 +383,11 @@ def _choose_cases(
         "two_plus_two": two_pair[:2],
         "two_plus_two_templates": two_pair[2],
         "partial": partial,
-        "partial_templates": _templates(catalog, partial.set_key)[: partial.require_count],
+        "partial_templates": (
+            _templates(catalog, partial.set_key)[: partial.require_count]
+            if partial is not None
+            else ()
+        ),
         "duplicate": duplicate,
         "duplicate_templates": _templates(catalog, duplicate.set_key)[: duplicate.require_count],
     }

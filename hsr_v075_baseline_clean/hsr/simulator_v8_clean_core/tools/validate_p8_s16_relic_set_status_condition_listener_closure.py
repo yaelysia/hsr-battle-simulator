@@ -187,9 +187,18 @@ def _partition(bundle: dict[str, Any]) -> dict[str, Any]:
     s16 = [row for row in gameplay if row['stage'] == 's7']
     s17 = [row for row in gameplay if row['stage'] == 's8']
     unknown = [row for row in rows if row['stage'] == 'unknown']
-    gaps = [
+    s16_gaps = [
         row
         for row in s16
+        if row['coverage_status'] != 'executable'
+        or (
+            row['kind'] == 'event'
+            and row['admission_status'] != 'executable'
+        )
+    ]
+    s17_gaps = [
+        row
+        for row in s17
         if row['coverage_status'] != 'executable'
         or (
             row['kind'] == 'event'
@@ -213,7 +222,8 @@ def _partition(bundle: dict[str, Any]) -> dict[str, Any]:
         's16_count': len(s16),
         's17_count': len(s17),
         'unknown_count': len(unknown),
-        's16_gap_count': len(gaps),
+        's16_gap_count': len(s16_gaps),
+        's17_gap_count': len(s17_gaps),
         'blocked_graph_count': ledger['blocked_graph_count'],
         'family_counts': dict(
             sorted(
@@ -223,7 +233,8 @@ def _partition(bundle: dict[str, Any]) -> dict[str, Any]:
                 ).items()
             )
         ),
-        's16_gaps': gaps[:20],
+        's16_gaps': s16_gaps[:20],
+        's17_gaps': s17_gaps[:20],
         'unknown_rows': unknown[:20],
         's17_blockers': [
             {

@@ -17,6 +17,8 @@ from .dynamic_values import (
     store_from_state,
 )
 from .effect import EffectExecutionContext, EffectRegistry
+from .event_dispatch import EventDispatchResult, EventDispatchSystem
+from .action_event_contract import damage_listener_window_event
 from .summon import SummonSystem
 from .toughness import ToughnessPacket, ToughnessSystem
 from .ability_task_contract import (
@@ -47,12 +49,14 @@ class AbilityTaskSystem:
         evaluator: RuleEvaluator | None = None,
         reducer: MutationReducer | None = None,
         damage: DamageSystem | None = None,
+        event_dispatcher: EventDispatchSystem | None = None,
     ) -> None:
         self.rules = rules
         self.effect_registry = effect_registry
         self.evaluator = evaluator or RuleEvaluator()
         self.reducer = reducer or MutationReducer()
         self.damage = damage or DamageSystem(rules)
+        self.event_dispatcher = event_dispatcher
         self.toughness = ToughnessSystem(rules)
         self.summons = SummonSystem(rules)
         self.targets = TargetSystem()
@@ -287,6 +291,17 @@ class AbilityTaskSystem:
                     blocked_reason=admission_reason,
                 )
             ]
+        if is_process_only_ability_task(task):
+            return state, [], [], [], [
+                _task_process_record(
+                    task,
+                    ok=True,
+                    blocked_reason="process_only_ability_task",
+                    effect_id=task.effect_id,
+                    effect_opcode=task.opcode,
+                    effect_coverage="process_only",
+                )
+            ]
         if task.opcode == "PredicateTaskList":
             return self._execute_predicate_task(
                 state,
@@ -322,17 +337,6 @@ class AbilityTaskSystem:
                 task,
                 command=command,
             )
-        if is_process_only_ability_task(task):
-            return state, [], [], [], [
-                _task_process_record(
-                    task,
-                    ok=True,
-                    blocked_reason="process_only_ability_task",
-                    effect_id=task.effect_id,
-                    effect_opcode=task.opcode,
-                    effect_coverage="process_only",
-                )
-            ]
         if self.rules.damage_emissions_for_task(task.task_id):
             return self._execute_damage_task(
                 state,
@@ -664,6 +668,29 @@ class AbilityTaskSystem:
         rng_events: list[RNGEvent] = []
         records: list[dict[str, JSONValue]] = []
         ledger = DamageWindowLedger()
+        sequence_order: list[tuple[str, str]] = []
+        sequence_context: dict[
+            tuple[str, str],
+            dict[str, JSONValue],
+        ] = {}
+
+        def dispatch_damage_event(event: GameEvent) -> tuple[str, ...]:
+            nonlocal current
+            if self.event_dispatcher is None:
+                events.append(event)
+                return ()
+            result: EventDispatchResult = self.event_dispatcher.dispatch_event(
+                current,
+                event=event,
+                damage_window_ledger=ledger,
+            )
+            current = result.after_state
+            mutations.extend(result.mutations)
+            events.extend(result.events)
+            rng_events.extend(result.rng_events)
+            records.extend(result.records)
+            return result.errors
+
         for emission in emissions:
             if emission.coverage_status != "executable":
                 records.append(
@@ -799,6 +826,30 @@ class AbilityTaskSystem:
                 execution_path = str(
                     command.metadata.get("ability_task_execution_path") or ""
                 )
+                is_standalone = (
+                    action_definition.source_mode == "queue_standalone"
+                )
+                damage_source_id = (
+                    task.task_id
+                    if is_standalone
+                    else (
+                        f"action:{command.action_id}:"
+                        f"level:{command.action_level}"
+                    )
+                )
+                damage_source_kind = (
+                    "standalone_ability_damage"
+                    if is_standalone
+                    else "primary_action_damage"
+                )
+                damage_sequence_id = (
+                    f"{command.action_id}:{task.task_id}"
+                    if is_standalone
+                    else (
+                        f"action:{command.actor_id}:{command.action_id}:"
+                        f"level:{command.action_level}:task:{task.task_id}"
+                    )
+                )
                 packet = DamagePacket(
                     attacker_id=command.actor_id,
                     target_id=target_id,
@@ -816,9 +867,9 @@ class AbilityTaskSystem:
                     source_trace=emission.source.to_json(),
                     source_frame=DamageSourceFrame(
                         owner_id=command.actor_id,
-                        source_id=task.task_id,
-                        source_kind="standalone_ability_damage",
-                        sequence_id=f"{command.action_id}:{task.task_id}",
+                        source_id=damage_source_id,
+                        source_kind=damage_source_kind,
+                        sequence_id=damage_sequence_id,
                         target_id=target_id,
                         can_continue_after_lethal=True,
                         source_trace=emission.source.to_json(),
@@ -828,7 +879,8 @@ class AbilityTaskSystem:
                         "SkillType": action_definition.skill_effect,
                         "skill_type": action_definition.skill_effect,
                         "attack_type": action_definition.attack_type,
-                        "is_insert_action": True,
+                        "is_current_skill_active": not is_standalone,
+                        "is_insert_action": command.source == "queue",
                         "primary_action_target_id": primary_target,
                         "hit_index": profile.hit_index,
                         "target_group": emission.target_group,
@@ -841,12 +893,104 @@ class AbilityTaskSystem:
                         ),
                     },
                 )
+                sequence_id = (
+                    f"{task.task_id}:{execution_path}"
+                    if execution_path
+                    else task.task_id
+                )
+                sequence_key = (sequence_id, target_id)
+                if (
+                    self.event_dispatcher is not None
+                    and sequence_key not in sequence_context
+                ):
+                    before_errors = dispatch_damage_event(
+                        damage_listener_window_event(
+                            current,
+                            command,
+                            action_definition,
+                            event_type="damage.hit_sequence.before",
+                            target_id=target_id,
+                            selected_target_ids=target_resolution.selected,
+                            primary_target_id=primary_target,
+                            source_trace=emission.source.to_json(),
+                            damage_custom_name=emission.damage_custom_name,
+                            damage_tags=emission.damage_tags,
+                            sequence_id=sequence_id,
+                        )
+                    )
+                    if before_errors:
+                        records.append(
+                            _task_process_record(
+                                task,
+                                ok=False,
+                                blocked_reason=(
+                                    "ability_task_damage_before_window_blocked:"
+                                    + ",".join(before_errors)
+                                ),
+                            )
+                        )
+                        return (
+                            current,
+                            mutations,
+                            events,
+                            rng_events,
+                            records,
+                        )
+                    sequence_order.append(sequence_key)
+                    sequence_context[sequence_key] = {
+                        "target_id": target_id,
+                        "source_trace": emission.source.to_json(),
+                        "damage_custom_name": emission.damage_custom_name,
+                        "damage_tags": list(emission.damage_tags),
+                        "is_critical": False,
+                        "final_damage": 0.0,
+                    }
                 damage_result = self.damage.apply_packet(current, packet, window_ledger=ledger)
                 current = self.reducer.apply_all(current, damage_result.mutations)
                 mutations.extend(damage_result.mutations)
-                events.extend(damage_result.events)
                 rng_events.extend(damage_result.rng_events)
                 records.extend(damage_result.records)
+                for damage_event in damage_result.events:
+                    if damage_event.event_type == "damage.hit":
+                        amount = damage_event.payload.get("final_damage")
+                        if not isinstance(amount, (int, float)) or isinstance(
+                            amount,
+                            bool,
+                        ):
+                            amount = damage_event.payload.get("amount")
+                        if isinstance(amount, (int, float)) and not isinstance(
+                            amount,
+                            bool,
+                        ):
+                            context = sequence_context.get(sequence_key)
+                            if context is not None:
+                                context["final_damage"] = float(
+                                    context.get("final_damage") or 0.0
+                                ) + float(amount)
+                                context["is_critical"] = bool(
+                                    context.get("is_critical")
+                                ) or damage_event.payload.get(
+                                    "is_critical"
+                                ) is True
+                    dispatch_errors = dispatch_damage_event(damage_event)
+                    if dispatch_errors:
+                        records.append(
+                            _task_process_record(
+                                task,
+                                ok=False,
+                                blocked_reason=(
+                                    "ability_task_damage_event_blocked:"
+                                    + ",".join(dispatch_errors)
+                                ),
+                            )
+                        )
+                        return (
+                            current,
+                            mutations,
+                            events,
+                            rng_events,
+                            records,
+                        )
                 records.append(
                     _task_process_record(
                         task,
@@ -859,6 +1003,61 @@ class AbilityTaskSystem:
                         record_count=len(damage_result.records),
                     )
                 )
+        if self.event_dispatcher is not None:
+            for sequence_key in sequence_order:
+                context = sequence_context[sequence_key]
+                sequence_tags = context.get("damage_tags")
+                after_errors = dispatch_damage_event(
+                    damage_listener_window_event(
+                        current,
+                        command,
+                        action_definition,
+                        event_type="damage.hit_sequence.after",
+                        target_id=str(context["target_id"]),
+                        selected_target_ids=target_resolution.selected,
+                        primary_target_id=primary_target,
+                        source_trace=(
+                            context["source_trace"]
+                            if isinstance(context.get("source_trace"), dict)
+                            else {}
+                        ),
+                        is_critical=bool(context.get("is_critical")),
+                        final_damage=float(
+                            context.get("final_damage") or 0.0
+                        ),
+                        damage_custom_name=str(
+                            context.get("damage_custom_name") or ""
+                        ),
+                        damage_tags=tuple(
+                            tag
+                            for tag in (
+                                sequence_tags
+                                if isinstance(sequence_tags, (list, tuple))
+                                else ()
+                            )
+                            if isinstance(tag, str) and tag
+                        ),
+                        sequence_id=sequence_key[0],
+                    )
+                )
+                if after_errors:
+                    records.append(
+                        _task_process_record(
+                            task,
+                            ok=False,
+                            blocked_reason=(
+                                "ability_task_damage_after_window_blocked:"
+                                + ",".join(after_errors)
+                            ),
+                        )
+                    )
+                    return (
+                        current,
+                        mutations,
+                        events,
+                        rng_events,
+                        records,
+                    )
         return current, mutations, events, rng_events, records
 
     def _execute_predicate_task(
@@ -1118,4 +1317,8 @@ def _expression_binding_sources(expression: object) -> tuple[dict[str, JSONValue
     if not isinstance(expression, dict):
         return ()
     source = expression.get("binding_source")
-    return (source,) if isinstance(source, dict) else ()
+    return (
+        ({**source, "binding_role": "compiled_expression_fallback"},)
+        if isinstance(source, dict)
+        else ()
+    )

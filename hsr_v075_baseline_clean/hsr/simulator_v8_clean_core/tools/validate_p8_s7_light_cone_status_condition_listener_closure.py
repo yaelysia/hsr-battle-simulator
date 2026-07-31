@@ -4337,6 +4337,7 @@ def _lifecycle_matrix(bundle: dict[str, Any], formal: dict[str, Any]) -> dict[st
     _, startup_binding = _startup_dynamic_values(
         startup_effect.payload.get("standard"),
         startup_spec,
+        rules.engine_rule_registry(),
     )
     stack_sample = _find_real_status_reapplication(bundle, "stack")
     replace_sample = _find_real_status_reapplication(bundle, "replace")

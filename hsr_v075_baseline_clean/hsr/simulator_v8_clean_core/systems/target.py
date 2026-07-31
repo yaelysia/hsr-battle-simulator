@@ -16,7 +16,10 @@ from ..rules.expression_ir import (
     numeric_fixed_value,
 )
 from ..rules.ir import ConditionIR, TargetExpressionIR, TargetExpressionNodeIR
-from ..unit_eligibility import runtime_unit_is_unselectable
+from ..unit_eligibility import (
+    runtime_unit_is_battle_event_entity,
+    runtime_unit_is_unselectable,
+)
 from .rng import (
     RNGOutcome,
     RNGRequest,
@@ -3244,7 +3247,7 @@ def _is_battle_event_unit(state: BattleState, unit_id: str) -> bool:
     unit = state.units.get(unit_id)
     if unit is None:
         return False
-    return unit.flags.get("entity_type") == "battle_event" or unit.flags.get("battle_event_subtype") is not None
+    return runtime_unit_is_battle_event_entity(unit)
 
 
 def unit_is_unselectable(state: BattleState, unit_id: str) -> bool:

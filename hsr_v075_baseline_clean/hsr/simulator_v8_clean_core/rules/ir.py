@@ -1094,6 +1094,18 @@ class DamageEmissionIR:
     coverage_status: CoverageStatus = "blocked"
     blocked_reason: str = ""
     damage_custom_name: str = ""
+    damage_tags: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.damage_tags, (list, tuple))
+            or not all(isinstance(tag, str) and tag for tag in self.damage_tags)
+        ):
+            raise TypeError("damage tags must be non-empty strings")
+        tags = tuple(self.damage_tags)
+        if len(tags) != len(set(tags)):
+            raise ValueError("damage tags must be unique")
+        object.__setattr__(self, "damage_tags", tags)
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -1112,6 +1124,7 @@ class DamageEmissionIR:
             "coverage_status": self.coverage_status,
             "blocked_reason": self.blocked_reason,
             "damage_custom_name": self.damage_custom_name,
+            "damage_tags": list(self.damage_tags),
         }
 
 

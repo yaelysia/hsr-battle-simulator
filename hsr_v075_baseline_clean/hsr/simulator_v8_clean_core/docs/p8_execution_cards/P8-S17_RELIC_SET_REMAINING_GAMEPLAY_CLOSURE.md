@@ -122,10 +122,10 @@ git diff --check
 
 ## 唯一执行清单（仅验收线程可勾）
 
-- [ ] S16/S17 合集完整覆盖当前套装 gameplay，交集为空且指纹当前。
-- [ ] S17 各 family 和普通玩家已发布套装完整图严格零 gap、零 unknown。
-- [ ] 资源、HP、伤害、行动、队伍、波次、目标和 RNG 全部走通用系统。
-- [ ] 面板/条件/计划/mutation 顺序与 stale plan 失败语义正确。
-- [ ] 多 wearer、跨波次、队伍目标和 replay 不串线，来源反查完整。
-- [ ] 无套装专用 runtime、固定 ID、文本解释或部分执行。
-- [ ] `ready_for_review` evidence、实际触达所需的至多两项 direct 和资源审计完整。
+- [x] S16/S17 合集完整覆盖当前套装 gameplay，交集为空且指纹当前。
+- [x] S17 各 family 和普通玩家已发布套装完整图严格零 gap、零 unknown。
+- [x] 资源、HP、伤害、行动、队伍、波次、目标和 RNG 全部走通用系统。
+- [x] 面板/条件/计划/mutation 顺序与 stale plan 失败语义正确。
+- [x] 多 wearer、跨波次、队伍目标和 replay 不串线，来源反查完整。
+- [x] 无套装专用 runtime、固定 ID、文本解释或部分执行。
+- [x] `ready_for_review` evidence、实际触达所需的至多两项 direct 和资源审计完整。

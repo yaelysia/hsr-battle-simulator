@@ -3,6 +3,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Literal, Protocol
 
+from .unit_presence import unit_is_departed
+
 
 RuntimeCombatTeam = Literal["ally", "enemy", "neutral"]
 
@@ -77,16 +79,24 @@ def runtime_unit_is_on_field(unit: RuntimeUnitView) -> bool:
         return False
     if runtime_unit_lifecycle_status(unit) == "removed":
         return False
+    if unit_is_departed(unit):  # type: ignore[arg-type]
+        return False
     summon_kind = unit.flags.get("summon_kind")
     if not isinstance(summon_kind, str) or not summon_kind:
         return True
     lifecycle_source = unit.flags.get("lifecycle_source")
-    if not isinstance(lifecycle_source, Mapping):
-        return False
-    return (
-        lifecycle_source.get("admission_status") == "executable"
+    return bool(
+        isinstance(lifecycle_source, Mapping)
+        and lifecycle_source.get("admission_status") == "executable"
         and lifecycle_source.get("presence") == "field"
     )
+
+
+def runtime_unit_is_battle_event_entity(unit: RuntimeUnitView) -> bool:
+    """Whether one unit carries an admitted battle-event entity identity."""
+
+    entity_type = unit.flags.get("entity_type")
+    return entity_type == "battle_event"
 
 
 def runtime_unit_source_is_targetable(unit: RuntimeUnitView) -> bool:

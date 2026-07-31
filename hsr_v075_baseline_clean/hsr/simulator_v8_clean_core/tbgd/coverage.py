@@ -68,6 +68,7 @@ PROCESS_ONLY_ABILITY_TASK_OPCODES = frozenset(
         "GlobalMainIntensityEffect",
         "GlobalTimeSlow",
         "MoveToTargetPosition",
+        "RadialBlurEffect",
         "SetTeamFormation",
         "SkillExecutionStart",
         "SkillPerformFinish",

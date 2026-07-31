@@ -59,6 +59,7 @@ S7_TASK_FAMILIES = frozenset(
 
 S8_TASK_FAMILIES = frozenset(
     {
+        "AttachEntityDeparted",
         "DIHCJLDIMNA",
         "DamageByAttackProperty",
         "HealHP",
@@ -81,6 +82,7 @@ S8_TASK_FAMILIES = frozenset(
         "SetDynamicValueByAttackTargetCount",
         "SetDynamicValueByBehaviorFlagCount",
         "SetDynamicValueByBPChange",
+        "SetDynamicValueByChangeValue",
         "SetDynamicValueByDamageDataProperty",
         "SetDynamicValueByHealDataProperty",
         "SetDynamicValueByMaxBP",

@@ -28,6 +28,8 @@ from ..core.state_integrity import CommittedStateIntegrityGate
 from ..equipment.models import DynamicMechanismSelection
 from ..rules.ir import CombatantProfileIR, WaveDefinitionIR, WaveMonsterEntryIR
 from ..rules.engine_rule_registry import (
+    EngineRuleRegistry,
+    engine_numeric_binding_source,
     special_resource_initializer_numeric_binding_source,
 )
 from ..rules.evaluator import NumericEvaluationContext, RuleEvaluator
@@ -2677,7 +2679,11 @@ def _apply_startup_ability_effects(
                     traces.append(trace)
                     blocked.append(trace)
                     continue
-                dynamic_values, binding_trace = _startup_dynamic_values(effect.payload.get("standard"), spec)
+                dynamic_values, binding_trace = _startup_dynamic_values(
+                    effect.payload.get("standard"),
+                    spec,
+                    rules.engine_rule_registry(),
+                )
                 if binding_trace.get("admission_status") == "blocked":
                     trace = _startup_blocked_trace(
                             kind,
@@ -2830,6 +2836,7 @@ def _apply_startup_ability_effects(
 def _startup_dynamic_values(
     standard: object,
     spec: dict[str, Any],
+    engine_rules: EngineRuleRegistry,
 ) -> tuple[dict[str, float], dict[str, object]]:
     if not isinstance(standard, dict):
         return {}, {"admission_status": "not_applicable", "reason": "standard_payload_missing"}
@@ -2872,6 +2879,52 @@ def _startup_dynamic_values(
         }
     dynamic_values: dict[str, float] = {}
     bindings: list[dict[str, object]] = []
+    pending_requests: list[dict[str, object]] = []
+    for request in hash_requests:
+        engine_binding, engine_reason = engine_numeric_binding_source(
+            request.get("expression"),
+            engine_rules,
+        )
+        if engine_reason:
+            return {}, {
+                "admission_status": "blocked",
+                "blocked_reason": engine_reason,
+                "request_name": request["name"],
+                "hash": str(request["hash"]),
+            }
+        by_hash = (
+            engine_binding.get("by_hash")
+            if isinstance(engine_binding, dict)
+            else None
+        )
+        hash_key = str(request["hash"])
+        entry_key = by_hash.get(hash_key) if isinstance(by_hash, dict) else None
+        entries = (
+            engine_binding.get("entries")
+            if isinstance(engine_binding, dict)
+            else None
+        )
+        entry = entries.get(entry_key) if isinstance(entries, dict) else None
+        value = entry.get("value") if isinstance(entry, dict) else None
+        if (
+            isinstance(entry_key, str)
+            and isinstance(value, (int, float))
+            and not isinstance(value, bool)
+        ):
+            dynamic_values[hash_key] = float(value)
+            bindings.append(
+                {
+                    "name": request["name"],
+                    "hash": hash_key,
+                    "value": float(value),
+                    "numeric_fields": list(request["numeric_fields"]),
+                    "binding_source_kind": "engine_numeric_convention",
+                    "binding_source": entry,
+                }
+            )
+            continue
+        pending_requests.append(request)
+    hash_requests = pending_requests
     for index, request in enumerate(hash_requests):
         name = request["name"]
         raw_hash = request["hash"]
@@ -2969,6 +3022,7 @@ def _startup_numeric_hash_requests(
                 rows_by_hash[hash_key] = {
                     "name": name,
                     "hash": raw_hash,
+                    "expression": expression,
                     "expose_name": expose_name and len(hashes) == 1,
                     "numeric_fields": [name],
                 }

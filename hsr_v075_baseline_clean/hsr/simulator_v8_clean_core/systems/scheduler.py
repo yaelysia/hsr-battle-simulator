@@ -185,8 +185,13 @@ class CombatScheduler:
         self.status = StatusSystem(rules)
         self.effects = EffectRegistry(self.status)
         self.enemy_actions = EnemyActionSystem(rules)
-        self.ability_tasks = AbilityTaskSystem(rules, self.effects, reducer=self.reducer)
         self.event_dispatcher = EventDispatchSystem(rules, self.effects, reducer=self.reducer)
+        self.ability_tasks = AbilityTaskSystem(
+            rules,
+            self.effects,
+            reducer=self.reducer,
+            event_dispatcher=self.event_dispatcher,
+        )
         self.wave = WaveSystem(rules)
         self.phases = CombatPhaseMachine()
 

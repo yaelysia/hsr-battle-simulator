@@ -11,6 +11,7 @@ from ..rules.evaluator import NumericEvaluationContext, NumericEvaluationResult,
 from ..rules.expression_ir import is_typed_numeric_expression
 from ..rules.ir import EffectIR
 from ..rules.rulebook import RuleBook
+from ..unit_presence import plan_unit_departure_start
 from .damage import DamagePacket, DamageSourceFrame, DamageSystem, DamageWindowLedger
 from .dynamic_values import (
     binding_source_from_store,
@@ -106,6 +107,7 @@ class EffectRegistry:
         self.register("SetDynamicValueByAddValue", self._execute_set_dynamic_value_by_add_value)
         self.register("SetDynamicValueByModifierValue", self._execute_set_dynamic_value_by_modifier_value)
         self.register("OwnerEntityAddAbility", self._execute_owner_entity_add_ability)
+        self.register("AttachEntityDeparted", self._execute_attach_entity_departed)
         self.register("TriggerModifierCustomEvent", self._execute_trigger_modifier_custom_event)
         self.register("StackWeakness", self._execute_stack_weakness)
 
@@ -186,6 +188,8 @@ class EffectRegistry:
         if effect.opcode in {"DefineDynamicValue", "SetDynamicValue", "SetDynamicValueByAddValue", "SetDynamicValueByModifierValue"} and not _dynamic_value_payload_is_executable(effect):
             return "blocked"
         if effect.opcode == "OwnerEntityAddAbility" and not _ability_attachment_payload_is_executable(effect):
+            return "blocked"
+        if effect.opcode == "AttachEntityDeparted" and not _entity_departure_payload_is_executable(effect):
             return "blocked"
         if effect.opcode == "TriggerModifierCustomEvent" and not _custom_event_payload_is_executable(effect):
             return "blocked"
@@ -378,6 +382,13 @@ class EffectRegistry:
     ) -> EffectResult:
         return _execute_owner_entity_add_ability(effect, context)
 
+    def _execute_attach_entity_departed(
+        self,
+        effect: EffectIR,
+        context: EffectExecutionContext | None,
+    ) -> EffectResult:
+        return _execute_attach_entity_departed(effect, context)
+
     def _execute_trigger_modifier_custom_event(
         self,
         effect: EffectIR,
@@ -527,6 +538,20 @@ def _ability_attachment_payload_is_executable(effect: EffectIR) -> bool:
         and standard.get("target_relation") == "status_owner_entity"
         and isinstance(standard.get("ability_name"), str)
         and bool(standard.get("ability_name"))
+    )
+
+
+def _entity_departure_payload_is_executable(effect: EffectIR) -> bool:
+    standard = effect.payload.get("standard")
+    return bool(
+        isinstance(standard, dict)
+        and standard.get("schema_version")
+        == "hsr.entity_departure_attachment.v1"
+        and standard.get("target_alias") == "ModifierOwnerEntity"
+        and standard.get("target_source_mode")
+        in {"explicit_target_expression", "opcode_omitted_modifier_owner"}
+        and isinstance(standard.get("config_group_name"), str)
+        and _typed_target_reference_admitted(standard)
     )
 
 
@@ -1314,6 +1339,129 @@ def _execute_owner_entity_add_ability(
         trace={"effect_source": effect.source.to_json()},
     ).to_json()
     return EffectResult(mutations=(mutation,), records=(record,))
+
+
+def _execute_attach_entity_departed(
+    effect: EffectIR,
+    context: EffectExecutionContext | None,
+) -> EffectResult:
+    if context is None:
+        return _unsupported_effect(
+            effect,
+            "AttachEntityDeparted requires EffectExecutionContext",
+        )
+    standard = effect.payload.get("standard")
+    if not isinstance(standard, dict):
+        return _unsupported_effect(
+            effect,
+            "AttachEntityDeparted effect has no standardized payload",
+        )
+    target_id = _resolve_target_alias(
+        standard.get("target_alias"),
+        caster_id=context.caster_id,
+        owner_id=context.owner_id,
+        param_entity_id=context.param_entity_id,
+        current_action_target_id=context.current_action_target_id,
+    )
+    if not target_id or target_id not in context.state.units:
+        return _unsupported_effect(
+            effect,
+            "entity departure target is missing",
+            {"standard": standard},
+        )
+    event_payload = context.event_payload or {}
+    status_instance_id = event_payload.get("status_instance_id")
+    status_instance_source = event_payload.get("status_instance_source")
+    if (
+        not isinstance(status_instance_id, str)
+        or not status_instance_id
+        or not isinstance(status_instance_source, dict)
+        or not status_instance_source
+    ):
+        return _unsupported_effect(
+            effect,
+            "entity departure requires a source-backed status instance",
+            {"standard": standard},
+        )
+    source_trace: dict[str, JSONValue] = {
+        "effect_id": effect.effect_id,
+        "effect_source": effect.source.to_json(),
+        "status_instance_id": status_instance_id,
+        "status_instance_source": status_instance_source,
+    }
+    mutation_metadata: dict[str, JSONValue] = {
+        "effect_id": effect.effect_id,
+        "opcode": effect.opcode,
+        "source_id": context.source_id,
+        "caster_id": context.caster_id,
+        "target_id": target_id,
+        "standard": standard,
+        "effect_source": effect.source.to_json(),
+    }
+    mutation, blocked_reason = plan_unit_departure_start(
+        context.state,
+        unit_id=target_id,
+        source_status_instance_id=status_instance_id,
+        source_effect_id=effect.effect_id,
+        config_group_name=str(standard.get("config_group_name") or ""),
+        source_trace=source_trace,
+        mutation_source="effect_system",
+        mutation_metadata=mutation_metadata,
+    )
+    if blocked_reason:
+        return _unsupported_effect(
+            effect,
+            blocked_reason,
+            {"target_id": target_id, "standard": standard},
+        )
+    if mutation is None:
+        return EffectResult(
+            records=(
+                SettlementRecord(
+                    record_type="unit_departure_attachment",
+                    source="effect_system",
+                    process_only=True,
+                    payload={
+                        "effect_id": effect.effect_id,
+                        "target_id": target_id,
+                        "status_instance_id": status_instance_id,
+                        "already_attached": True,
+                    },
+                    trace=source_trace,
+                ).to_json(),
+            ),
+        )
+    record = SettlementRecord(
+        record_type="unit_departure_attachment",
+        source="effect_system",
+        mutation_id=mutation.stable_id(),
+        process_only=False,
+        payload={
+            "effect_id": effect.effect_id,
+            "target_id": target_id,
+            "status_instance_id": status_instance_id,
+            "config_group_name": standard.get("config_group_name"),
+            "path": list(mutation.path),
+            "before": mutation.before,
+            "after": mutation.after,
+        },
+        trace=source_trace,
+    ).to_json()
+    return EffectResult(
+        events=events_for_mutation(
+            mutation,
+            actor_id=context.caster_id,
+            source_id=context.source_id,
+            event_index=context.state.event_index,
+            extra_payload={
+                "effect_id": effect.effect_id,
+                "status_instance_id": status_instance_id,
+                "source_trace": source_trace,
+            },
+        ),
+        mutations=(mutation,),
+        records=(record,),
+    )
 
 
 def _execute_trigger_modifier_custom_event(

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, replace
 
 from ..core.model import BattleState, GameEvent, JSONValue, Mutation, RNGEvent
@@ -503,6 +504,8 @@ class StatusCallbackSystem:
         structured_dynamic_value_opcodes = {
             "StackProperty",
             "SetDynamicValueByCharacterCount",
+            "SetDynamicValueByBehaviorFlagCount",
+            "SetDynamicValueByChangeValue",
             "SetDynamicValueByCopying",
             "SetDynamicValueByCountOfBaseType",
             "SetDynamicValueByHPRatio",
@@ -4227,6 +4230,23 @@ def _context_dynamic_value(
             )
         return evaluation.value, {"numeric_evaluation": evaluation.to_json()}, ""
 
+    if opcode == "SetDynamicValueByChangeValue":
+        change_value = event_payload.get("change_value")
+        if (
+            not isinstance(change_value, (int, float))
+            or isinstance(change_value, bool)
+            or not math.isfinite(float(change_value))
+        ):
+            return None, {
+                "event_type": event.event_type if event is not None else "",
+                "event_window": event.window if event is not None else "",
+            }, "callback_change_value_missing"
+        return float(change_value), {
+            "kind": "event_change_value",
+            "event_id": event.event_id if event is not None else "",
+            "event_type": event.event_type if event is not None else "",
+        }, ""
+
     if opcode == "SetDynamicValueByAttackTargetCount":
         attacker_alias = str(payload.get("Attacker") or "ModifierOwnerEntity")
         expected_attacker = _resolve_callback_target_id(
@@ -4500,6 +4520,34 @@ def _context_dynamic_value(
         return float(len(admitted)), {
             "kind": "debuff_status_count",
             "target_id": target_id,
+            "status_instance_ids": [
+                str(item.get("instance_id") or "") for item in admitted
+            ],
+        }, ""
+    if opcode == "SetDynamicValueByBehaviorFlagCount":
+        if target is None:
+            return None, {
+                "target_id": target_id,
+            }, "behavior_flag_count_target_missing"
+        behavior_flag = payload.get("BehaviorFlag")
+        if not isinstance(behavior_flag, str) or not behavior_flag:
+            return None, {}, "behavior_flag_required"
+        details = target.flags.get("status_details", ())
+        if not isinstance(details, (list, tuple)):
+            return None, {
+                "target_id": target_id,
+            }, "status_details_invalid"
+        admitted = tuple(
+            item
+            for item in details
+            if isinstance(item, dict)
+            and isinstance(item.get("behavior_flags"), (list, tuple))
+            and behavior_flag in item["behavior_flags"]
+        )
+        return float(len(admitted)), {
+            "kind": "behavior_flag_status_count",
+            "target_id": target_id,
+            "behavior_flag": behavior_flag,
             "status_instance_ids": [
                 str(item.get("instance_id") or "") for item in admitted
             ],

@@ -3,12 +3,15 @@ from __future__ import annotations
 from dataclasses import replace
 
 from ..core.model import GameEvent, JSONValue, Mutation
+from ..core.unit_state_codec import unit_state_from_payload
 from ..resource_event_contract import (
     TEAM_SKILL_POINT_EVENT_CONTRACT,
     UNIT_ENERGY_EVENT_CONTRACT,
     resource_event_contract_for_path,
     resource_production_event_types,
 )
+from ..unit_eligibility import runtime_unit_is_battle_event_entity
+from ..unit_presence import departure_source_count
 
 
 MUTATION_BACKED_EVENT_TYPES = frozenset({
@@ -19,7 +22,10 @@ MUTATION_BACKED_EVENT_TYPES = frozenset({
     "toughness.before_hit",
     "action_delay.changed",
     "unit.created",
+    "battle_event.created",
     "unit.removed",
+    "unit.departed.started",
+    "unit.departed.ended",
     "unit.base_type.changed",
     "weakness.stacked",
     "elation.time.started",
@@ -91,6 +97,32 @@ def events_for_mutation(
                     payload=payload,
                 )
             )
+        battle_event_unit = _spawned_battle_event_unit(mutation, target_id)
+        if battle_event_unit is not None:
+            events.append(
+                GameEvent(
+                    event_type="battle_event.created",
+                    source_id=event_source_id,
+                    target_id=target_id,
+                    event_id=mutation_backed_event_id(
+                        mutation.stable_id(),
+                        "battle_event.created",
+                    ),
+                    window="OnListenBattleEventCreate",
+                    process_only=True,
+                    payload={
+                        **payload,
+                        "callback_events": ["OnListenBattleEventCreate"],
+                        "listener_scope": "global_listener",
+                        "unit_id": target_id,
+                        "param_entity_id": target_id,
+                        "battle_event_subtype": battle_event_unit.flags.get(
+                            "battle_event_subtype"
+                        ),
+                        "battle_event_entity": True,
+                    },
+                )
+            )
         return tuple(events)
 
     if _is_unit_removed_path(path, mutation):
@@ -138,6 +170,34 @@ def events_for_mutation(
                 after=mutation.after,
                 roster_operation="unit_base_type_change",
                 payload=payload,
+            ),
+        )
+
+    departure_event_type = _unit_departure_event_type(path, mutation)
+    if departure_event_type:
+        callback_event = (
+            "OnListenDepartedStart"
+            if departure_event_type == "unit.departed.started"
+            else "OnListenDepartedEnd"
+        )
+        return (
+            GameEvent(
+                event_type=departure_event_type,
+                source_id=event_source_id,
+                target_id=target_id,
+                event_id=mutation_backed_event_id(
+                    mutation.stable_id(),
+                    departure_event_type,
+                ),
+                window=callback_event,
+                process_only=True,
+                payload={
+                    **payload,
+                    "callback_events": [callback_event],
+                    "listener_scope": "global_listener",
+                    "unit_id": target_id,
+                    "param_entity_id": target_id,
+                },
             ),
         )
 
@@ -384,6 +444,27 @@ def _is_unit_base_type_path(path: tuple[str, ...]) -> bool:
     )
 
 
+def _unit_departure_event_type(
+    path: tuple[str, ...],
+    mutation: Mutation,
+) -> str:
+    if (
+        len(path) != 4
+        or path[0] != "units"
+        or path[2:] != ("flags", "departed_sources")
+        or mutation.op != "set"
+    ):
+        return ""
+    before_count = departure_source_count(mutation.before)
+    after_count = departure_source_count(mutation.after)
+    if before_count is None or after_count is None:
+        return ""
+    if before_count == 0 and after_count > 0:
+        return "unit.departed.started"
+    if before_count > 0 and after_count == 0:
+        return "unit.departed.ended"
+    return ""
+
 def _spawned_unit_base_type(value: JSONValue) -> str:
     if not isinstance(value, dict):
         return ""
@@ -395,6 +476,29 @@ def _spawned_unit_base_type(value: JSONValue) -> str:
         if isinstance(base_type, str) and base_type:
             return base_type
     return ""
+
+
+def _spawned_battle_event_unit(
+    mutation: Mutation,
+    target_id: str,
+):
+    metadata = mutation.metadata
+    if (
+        metadata.get("lifecycle_operation") != "unit_spawn"
+        or not isinstance(metadata.get("source_trace"), dict)
+        or not metadata.get("source_trace")
+    ):
+        return None
+    try:
+        unit = unit_state_from_payload(mutation.after)
+    except (TypeError, ValueError):
+        return None
+    if (
+        unit.unit_id != target_id
+        or not runtime_unit_is_battle_event_entity(unit)
+    ):
+        return None
+    return unit
 
 
 def _unit_base_type_changed_event(
@@ -514,11 +618,22 @@ def before_toughness_calculation_event(
     packet: dict[str, JSONValue],
     extra_payload: dict[str, JSONValue] | None = None,
 ) -> GameEvent:
+    packet_identity = str(
+        packet.get("toughness_emission_id")
+        or packet.get("source_task_id")
+        or packet.get("hit_profile_id")
+        or ""
+    )
+    if not packet_identity:
+        raise ValueError("toughness_before_calculation_packet_identity_missing")
     return GameEvent(
         event_type="toughness.before_hit",
         source_id=actor_id,
         target_id=target_id,
-        event_id=f"event:{event_index}:toughness_before_calculation:{actor_id}:{target_id}",
+        event_id=(
+            f"event:{event_index}:toughness_before_calculation:"
+            f"{actor_id}:{target_id}:{packet_identity}"
+        ),
         window="OnBeforeBeingStanceDamage",
         process_only=True,
         payload={

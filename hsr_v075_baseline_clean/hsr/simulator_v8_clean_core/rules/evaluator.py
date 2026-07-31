@@ -106,6 +106,7 @@ EXECUTABLE_CONDITION_OPCODES = {
     "ByCompareModifierValue",
     "ByCompareMonsterID",
     "ByCompareDamageCustomName",
+    "ByCompareDamageTag",
     "ByCompareTarget",
     "ByCompareTargetCount",
     "ByContainBehaviorFlag",
@@ -306,21 +307,31 @@ def _evaluate_dynamic_hash(
         )
     sources_checked: list[dict[str, Any]] = []
     matches: list[tuple[float, dict[str, Any]]] = []
+    fallback_matches: list[tuple[float, dict[str, Any]]] = []
     ambiguous_matches: list[dict[str, Any]] = []
     for index, source in enumerate(context.binding_sources):
         value, binding = _lookup_binding_source(source, key)
+        is_fallback = (
+            source.get("binding_role") == "compiled_expression_fallback"
+        )
         sources_checked.append(
             {
                 "source_type": str(source.get("source_type") or f"binding_source:{index}"),
                 "hit": value is not None,
+                "binding_role": (
+                    "compiled_expression_fallback"
+                    if is_fallback
+                    else "runtime"
+                ),
             }
         )
         if binding.get("ambiguous") is True:
             ambiguous_matches.append(binding)
         if value is not None:
-            matches.append((value, binding))
+            target = fallback_matches if is_fallback else matches
+            target.append((value, binding))
     sources_checked.append({"source_type": "explicit_dynamic_values", "hit": False})
-    if ambiguous_matches or len(matches) > 1:
+    if ambiguous_matches or len(matches) > 1 or len(fallback_matches) > 1:
         return NumericEvaluationResult(
             ok=False,
             value=None,
@@ -331,6 +342,10 @@ def _evaluate_dynamic_hash(
                 "sources_checked": sources_checked,
                 "match_count": len(matches),
                 "matches": [binding for _, binding in matches],
+                "fallback_match_count": len(fallback_matches),
+                "fallback_matches": [
+                    binding for _, binding in fallback_matches
+                ],
                 "ambiguous_matches": ambiguous_matches,
             },
             source_trace=source_trace,
@@ -338,6 +353,23 @@ def _evaluate_dynamic_hash(
         )
     if matches:
         value, binding = matches[0]
+        if fallback_matches and fallback_matches[0][0] != value:
+            return NumericEvaluationResult(
+                ok=False,
+                value=None,
+                expression_kind="dynamic_hash",
+                bindings={
+                    "hash": hash_value,
+                    "key": key,
+                    "sources_checked": sources_checked,
+                    "runtime_match": binding,
+                    "fallback_match": fallback_matches[0][1],
+                    "runtime_value": value,
+                    "fallback_value": fallback_matches[0][0],
+                },
+                source_trace=source_trace,
+                blocked_reason=f"dynamic_hash_binding_fallback_conflict:{key}",
+            )
         return NumericEvaluationResult(
             ok=True,
             value=value,
@@ -347,6 +379,26 @@ def _evaluate_dynamic_hash(
                 "key": key,
                 "value": value,
                 **binding,
+                **(
+                    {"verified_fallback": fallback_matches[0][1]}
+                    if fallback_matches
+                    else {}
+                ),
+            },
+            source_trace=source_trace,
+        )
+    if fallback_matches:
+        value, binding = fallback_matches[0]
+        return NumericEvaluationResult(
+            ok=True,
+            value=value,
+            expression_kind="dynamic_hash",
+            bindings={
+                "hash": hash_value,
+                "key": key,
+                "value": value,
+                **binding,
+                "binding_role": "compiled_expression_fallback",
             },
             source_trace=source_trace,
         )
@@ -1304,6 +1356,46 @@ def _evaluate_condition_payload(
             {"expected": expected, "actual": actual},
             source_trace,
         )
+    if opcode == "ByCompareDamageTag":
+        expected = _condition_damage_tags(payload.get("DamageTagList"))
+        if expected is None:
+            return _condition_blocked(
+                condition_id,
+                opcode,
+                "damage_tag_list_not_lowered",
+                {"payload": payload},
+                source_trace,
+            )
+        event_payload = context.event_payload or {}
+        has_tag_payload = any(
+            key in event_payload
+            for key in (
+                "damage_tags",
+                "damage_tag",
+            )
+        )
+        if not has_tag_payload:
+            return _condition_blocked(
+                condition_id,
+                opcode,
+                "damage_tag_event_payload_missing",
+                {},
+                source_trace,
+            )
+        actual = _event_damage_tags(event_payload)
+        matched = bool(set(expected) & set(actual))
+        return _condition_result(
+            matched,
+            condition_id,
+            opcode,
+            "damage_tag_compared",
+            {
+                "expected": list(expected),
+                "actual": list(actual),
+                "match_policy": "any",
+            },
+            source_trace,
+        )
     if opcode == "ByTargetListIntersects":
         first_targets, first_details = _condition_target_ids(payload.get("FirstTargetType"), context)
         if first_targets is None:
@@ -1883,6 +1975,40 @@ def _condition_behavior_flags(payload: dict[str, Any]) -> tuple[str, ...]:
     ):
         return tuple(plural)
     return ()
+
+
+def _condition_damage_tags(value: object) -> tuple[str, ...] | None:
+    if not isinstance(value, list) or not value:
+        return None
+    tags: list[str] = []
+    for item in value:
+        if (
+            not isinstance(item, dict)
+            or item.get("blocked_reason")
+            or not isinstance(item.get("name"), str)
+            or not item["name"]
+        ):
+            return None
+        name = str(item["name"])
+        if name in tags:
+            return None
+        tags.append(name)
+    return tuple(tags)
+
+
+def _event_damage_tags(payload: dict[str, Any]) -> tuple[str, ...]:
+    tags: list[str] = []
+    for key in ("damage_tags", "damage_tag"):
+        value = payload.get(key)
+        if isinstance(value, str) and value:
+            tags.append(value)
+        elif isinstance(value, (list, tuple, set)):
+            tags.extend(
+                item
+                for item in value
+                if isinstance(item, str) and item
+            )
+    return tuple(dict.fromkeys(tags))
 
 
 def _payload_flags(payload: dict[str, Any]) -> set[str]:

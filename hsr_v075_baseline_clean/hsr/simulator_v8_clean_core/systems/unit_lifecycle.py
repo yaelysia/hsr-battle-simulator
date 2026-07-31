@@ -14,6 +14,10 @@ from ..unit_eligibility import (
     runtime_unit_lifecycle_status,
     runtime_unit_source_is_targetable,
 )
+from ..unit_presence import (
+    unit_departure_blocked_reason,
+    unit_is_departed,
+)
 from ..core.unit_state_codec import unit_state_to_payload
 
 
@@ -82,6 +86,8 @@ class UnitLifecycleSystem:
         lifecycle_source = lifecycle_source if isinstance(lifecycle_source, dict) else {}
         presence = str(lifecycle_source.get("presence") or "") if summon_kind else "field"
         source_admitted = lifecycle_source.get("admission_status") == "executable" if summon_kind else True
+        departure_reason = unit_departure_blocked_reason(unit)
+        is_departed = unit_is_departed(unit)
         is_present = runtime_unit_is_on_field(unit)
         targetable = runtime_unit_source_is_targetable(unit)
         actionable = lifecycle_source.get("actionable") is True if summon_kind else True
@@ -97,6 +103,10 @@ class UnitLifecycleSystem:
             reason = "unit_removed"
         elif is_defeated:
             reason = "unit_defeated"
+        elif departure_reason:
+            reason = departure_reason
+        elif is_departed:
+            reason = "unit_departed"
         elif summon_kind and not source_admitted:
             reason = "summon_lifecycle_source_not_admitted"
         elif summon_kind and not is_present:
@@ -125,6 +135,8 @@ class UnitLifecycleSystem:
                 "lifecycle_authority": "unit_state.lifecycle_status",
                 "summon_kind": summon_kind,
                 "presence": presence,
+                "departed": is_departed,
+                "departure_blocked_reason": departure_reason,
                 "targetable": targetable,
                 "actionable": actionable,
                 "timeline_admitted": timeline_admitted,

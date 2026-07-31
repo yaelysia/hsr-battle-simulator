@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 from .ir import (
@@ -12,7 +13,7 @@ from .ir import (
 )
 
 
-ENGINE_RULE_REGISTRY_VERSION = "hsr_v8_engine_rules_v4"
+ENGINE_RULE_REGISTRY_VERSION = "hsr_v8_engine_rules_v6"
 ENGINE_RULE_SOURCE_KIND = "engine_convention"
 TIMELINE_RULE_APPLICABILITY = "all timeline units with positive effective speed"
 ULTIMATE_COST_RULE_APPLICABILITY = "admitted ultimate action committed from the ultimate queue window"
@@ -31,6 +32,9 @@ NORMAL_DAMAGE_ROUTE_FAMILIES = (
 HP_LOSS_ROUTE_FAMILIES = ("hp_loss",)
 DAMAGE_ROUTE_APPLICABILITY = "damage family exact match before HP mutation"
 SHIELD_PRIORITY_RULE_ID = "shield_priority_rule:engine_convention:priority_then_creation_order_v1"
+ENGINE_ZERO_FLOOR_BINDING_OPERATION = (
+    "bind_undeclared_dynamic_hash_to_zero_only_inside_typed_variadic_max_program"
+)
 ZERO_FLOOR_DYNAMIC_HASH = -1226284721
 ZERO_FLOOR_DYNAMIC_RULE_KIND = "typed_numeric_max_zero_floor_operand"
 ZERO_FLOOR_DYNAMIC_RULE_APPLICABILITY = (
@@ -42,6 +46,22 @@ RANGE_ZERO_FLOOR_DYNAMIC_RULE_KIND = (
 )
 RANGE_ZERO_FLOOR_DYNAMIC_RULE_APPLICABILITY = (
     "typed numeric range program using the undeclared dynamic hash only as a direct operand of variadic max"
+)
+EQUIPMENT_ZERO_FLOOR_DYNAMIC_HASH = 1776456860
+EQUIPMENT_ZERO_FLOOR_RULE_KIND = (
+    "typed_numeric_equipment_max_zero_floor_operand"
+)
+EQUIPMENT_ZERO_FLOOR_RULE_APPLICABILITY = (
+    "source-backed equipment numeric program using the undeclared dynamic hash "
+    "only as a direct operand of variadic max"
+)
+EQUIPMENT_ACCUMULATOR_ZERO_FLOOR_DYNAMIC_HASH = 1099313850
+EQUIPMENT_ACCUMULATOR_ZERO_FLOOR_RULE_KIND = (
+    "typed_numeric_equipment_accumulator_max_zero_floor_operand"
+)
+EQUIPMENT_ACCUMULATOR_ZERO_FLOOR_RULE_APPLICABILITY = (
+    "source-backed equipment accumulator program using the undeclared dynamic "
+    "hash only as a direct operand of variadic max"
 )
 SPECIAL_RESOURCE_ZERO_FLOOR_DYNAMIC_HASH = 1776456860
 SPECIAL_RESOURCE_ZERO_FLOOR_RULE_KIND = (
@@ -171,7 +191,7 @@ def build_engine_rule_registry() -> EngineRuleRegistry:
             DamageFormulaRuleIR(
                 damage_formula_rule_id="damage_formula_rule:engine_convention:typed_numeric_max_zero_floor_v1",
                 rule_kind=ZERO_FLOOR_DYNAMIC_RULE_KIND,
-                operation="bind_undeclared_dynamic_hash_to_zero_only_inside_typed_variadic_max_program",
+                operation=ENGINE_ZERO_FLOOR_BINDING_OPERATION,
                 numeric_parameters={
                     "dynamic_hash": float(ZERO_FLOOR_DYNAMIC_HASH),
                     "numeric_value": 0.0,
@@ -188,7 +208,7 @@ def build_engine_rule_registry() -> EngineRuleRegistry:
             DamageFormulaRuleIR(
                 damage_formula_rule_id="damage_formula_rule:engine_convention:typed_numeric_range_max_zero_floor_v1",
                 rule_kind=RANGE_ZERO_FLOOR_DYNAMIC_RULE_KIND,
-                operation="bind_undeclared_dynamic_hash_to_zero_only_inside_typed_variadic_max_program",
+                operation=ENGINE_ZERO_FLOOR_BINDING_OPERATION,
                 numeric_parameters={
                     "dynamic_hash": float(RANGE_ZERO_FLOOR_DYNAMIC_HASH),
                     "numeric_value": 0.0,
@@ -201,6 +221,48 @@ def build_engine_rule_registry() -> EngineRuleRegistry:
                 ),
                 registry_version=ENGINE_RULE_REGISTRY_VERSION,
                 applicability=RANGE_ZERO_FLOOR_DYNAMIC_RULE_APPLICABILITY,
+            ),
+            DamageFormulaRuleIR(
+                damage_formula_rule_id=(
+                    "damage_formula_rule:engine_convention:"
+                    "typed_numeric_equipment_max_zero_floor_v1"
+                ),
+                rule_kind=EQUIPMENT_ZERO_FLOOR_RULE_KIND,
+                operation=ENGINE_ZERO_FLOOR_BINDING_OPERATION,
+                numeric_parameters={
+                    "dynamic_hash": float(EQUIPMENT_ZERO_FLOOR_DYNAMIC_HASH),
+                    "numeric_value": 0.0,
+                },
+                source_kind=ENGINE_RULE_SOURCE_KIND,
+                source=_source(
+                    "NumericExpressionEngineConvention",
+                    "typed_numeric_equipment_max_zero_floor_v1",
+                    "The source-backed equipment expressions use this undeclared "
+                    "operand only as the direct zero floor of variadic max.",
+                ),
+                registry_version=ENGINE_RULE_REGISTRY_VERSION,
+                applicability=EQUIPMENT_ZERO_FLOOR_RULE_APPLICABILITY,
+            ),
+            DamageFormulaRuleIR(
+                damage_formula_rule_id=(
+                    "damage_formula_rule:engine_convention:"
+                    "typed_numeric_equipment_accumulator_max_zero_floor_v1"
+                ),
+                rule_kind=EQUIPMENT_ACCUMULATOR_ZERO_FLOOR_RULE_KIND,
+                operation=ENGINE_ZERO_FLOOR_BINDING_OPERATION,
+                numeric_parameters={
+                    "dynamic_hash": float(EQUIPMENT_ACCUMULATOR_ZERO_FLOOR_DYNAMIC_HASH),
+                    "numeric_value": 0.0,
+                },
+                source_kind=ENGINE_RULE_SOURCE_KIND,
+                source=_source(
+                    "NumericExpressionEngineConvention",
+                    "typed_numeric_equipment_accumulator_max_zero_floor_v1",
+                    "Source-backed equipment accumulator expressions use this "
+                    "undeclared operand only as the direct zero floor of variadic max.",
+                ),
+                registry_version=ENGINE_RULE_REGISTRY_VERSION,
+                applicability=EQUIPMENT_ACCUMULATOR_ZERO_FLOOR_RULE_APPLICABILITY,
             ),
         ),
         damage_route_rules=tuple(
@@ -285,56 +347,49 @@ def select_damage_formula_rule(
 
 def engine_numeric_binding_source(
     expression: object,
-    registry: EngineRuleRegistry | None = None,
+    registry: EngineRuleRegistry,
 ) -> tuple[dict[str, object] | None, str]:
-    """Return the audited engine binding only for its exact typed-program shape."""
+    """Resolve zero-floor operands from admitted Canonical IR engine rules."""
 
-    specifications = (
-        (
-            ZERO_FLOOR_DYNAMIC_HASH,
-            ZERO_FLOOR_DYNAMIC_RULE_KIND,
-            ZERO_FLOOR_DYNAMIC_RULE_APPLICABILITY,
-        ),
-        (
-            RANGE_ZERO_FLOOR_DYNAMIC_HASH,
-            RANGE_ZERO_FLOOR_DYNAMIC_RULE_KIND,
-            RANGE_ZERO_FLOOR_DYNAMIC_RULE_APPLICABILITY,
-        ),
-    )
+    rules_by_hash: dict[int, list[DamageFormulaRuleIR]] = {}
+    for rule in registry.damage_formula_rules:
+        if rule.operation != ENGINE_ZERO_FLOOR_BINDING_OPERATION:
+            continue
+        dynamic_hash = rule.numeric_parameters.get("dynamic_hash")
+        numeric_value = rule.numeric_parameters.get("numeric_value")
+        if (
+            not isinstance(dynamic_hash, (int, float))
+            or isinstance(dynamic_hash, bool)
+            or not math.isfinite(float(dynamic_hash))
+            or not float(dynamic_hash).is_integer()
+            or not isinstance(numeric_value, (int, float))
+            or isinstance(numeric_value, bool)
+            or not math.isfinite(float(numeric_value))
+            or float(numeric_value) != 0.0
+        ):
+            continue
+        rules_by_hash.setdefault(int(dynamic_hash), []).append(rule)
     present = tuple(
-        specification
-        for specification in specifications
-        if _contains_zero_floor_dynamic_hash(expression, specification[0])
+        (dynamic_hash, rules)
+        for dynamic_hash, rules in sorted(rules_by_hash.items())
+        if _contains_zero_floor_dynamic_hash(expression, dynamic_hash)
     )
     if not present:
         return None, ""
+    if any(len(rules) != 1 for _, rules in present):
+        return None, "engine_zero_floor_rule_ambiguous"
     if any(
         not _is_zero_floor_program(expression, dynamic_hash)
-        for dynamic_hash, _, _ in present
+        for dynamic_hash, _ in present
     ):
         return None, "engine_zero_floor_program_shape_not_admitted"
-    rule_registry = registry or build_engine_rule_registry()
     entries: dict[str, object] = {}
     by_hash: dict[str, str] = {}
-    for expected_hash, rule_kind, applicability in present:
-        rules = tuple(
-            rule
-            for rule in rule_registry.damage_formula_rules
-            if rule.rule_kind == rule_kind
-        )
-        if not rules:
-            return None, "engine_zero_floor_rule_missing"
-        if len(rules) != 1:
-            return None, "engine_zero_floor_rule_ambiguous"
+    for expected_hash, rules in present:
         rule = rules[0]
-        reason = engine_rule_admission_reason(
-            rule,
-            expected_applicability=applicability,
-        )
+        reason = _engine_numeric_rule_admission_reason(rule)
         if reason:
             return None, reason
-        if rule.operation != "bind_undeclared_dynamic_hash_to_zero_only_inside_typed_variadic_max_program":
-            return None, "engine_zero_floor_rule_operation_mismatch"
         dynamic_hash = rule.numeric_parameters.get("dynamic_hash")
         numeric_value = rule.numeric_parameters.get("numeric_value")
         if (
@@ -363,6 +418,23 @@ def engine_numeric_binding_source(
         "by_hash": by_hash,
         "by_name": {},
     }, ""
+
+
+def _engine_numeric_rule_admission_reason(
+    rule: DamageFormulaRuleIR,
+) -> str:
+    if rule.coverage_status != "executable":
+        return f"engine_rule_not_executable:{rule.coverage_status}"
+    if rule.source_kind != ENGINE_RULE_SOURCE_KIND:
+        return f"engine_rule_source_kind_not_admitted:{rule.source_kind}"
+    if rule.registry_version != ENGINE_RULE_REGISTRY_VERSION:
+        return (
+            "engine_rule_registry_version_mismatch:"
+            f"{rule.registry_version or 'missing'}"
+        )
+    if not rule.rule_kind or not rule.applicability:
+        return "engine_zero_floor_rule_semantics_missing"
+    return ""
 
 
 def special_resource_initializer_numeric_binding_source(

@@ -1026,6 +1026,9 @@ CANONICAL_EVENT_ALIASES: dict[str, tuple[tuple[str, str, str], ...]] = {
         ("OnListenAfterAttack", "global_listener", ""),
         ("OnAfterAttack", "actor_local", ""),
     ),
+    "action.attack_end": (
+        ("OnAfterAttackEnd", "actor_local", ""),
+    ),
     "action.end": (
         ("OnActionEnd", "actor_local", ""),
     ),
@@ -1042,13 +1045,30 @@ CANONICAL_EVENT_ALIASES: dict[str, tuple[tuple[str, str, str], ...]] = {
         ("OnListenCharacterDie", "owner_local", ""),
         ("OnTriggerDeathrattle", "owner_local", ""),
     ),
+    "battle_event.created": (
+        ("OnListenBattleEventCreate", "global_listener", ""),
+    ),
+    "unit.created": (
+        ("OnListenCharacterCreate", "global_listener", ""),
+        ("OnSnapshotCreate", "global_listener", ""),
+    ),
+    "summon.spawned": (
+        ("OnListenCharacterCreate", "global_listener", ""),
+        ("OnSnapshotCreate", "global_listener", ""),
+    ),
+    "unit.departed.started": (
+        ("OnListenDepartedStart", "global_listener", ""),
+    ),
+    "unit.departed.ended": (
+        ("OnListenDepartedEnd", "global_listener", ""),
+    ),
     "unit.before_dying": (
         ("OnBeforeDying", "owner_local", ""),
     ),
     "damage.hit": (
         ("OnAfterHit", "per_hit_target_local", ""),
-        ("OnHit", "per_hit_target_local", "downstream_intent_missing:per_hit_listener_execution_not_admitted"),
-        ("OnBeingHit", "being_hit_target_local", "downstream_intent_missing:being_hit_listener_execution_not_admitted"),
+        ("OnHit", "per_hit_target_local", ""),
+        ("OnBeingHit", "being_hit_target_local", ""),
     ),
     "damage.before_hit": (
         ("OnBeforeHit", "per_hit_target_local", ""),
@@ -1072,7 +1092,7 @@ CANONICAL_EVENT_ALIASES: dict[str, tuple[tuple[str, str, str], ...]] = {
         ("OnAfterBeingHitAll", "being_hit_target_local", ""),
     ),
     "toughness.hit": (
-        ("OnHit", "per_hit_target_local", "downstream_intent_missing:per_hit_listener_execution_not_admitted"),
+        ("OnHit", "per_hit_target_local", ""),
     ),
     "break.triggered": (
         ("OnTriggerBreak", "actor_local", "downstream_intent_missing:break_listener_execution_not_admitted"),
@@ -1221,7 +1241,11 @@ def _event_with_typed_param_entity(
     raw_param_entity_id = payload.get("param_entity_id")
     callback_events = payload.get("callback_events")
     creation_event = (
-        event.event_type in {"unit.created", "summon.spawned"}
+        event.event_type in {
+            "unit.created",
+            "summon.spawned",
+            "battle_event.created",
+        }
         or (
             isinstance(callback_events, (list, tuple))
             and "OnListenCharacterCreate" in callback_events
@@ -1449,6 +1473,29 @@ def _event_alias_for_callback(
 ) -> EventAlias:
     family = rules.status_event_family(callback_event) if rules is not None else None
     if family is None:
+        canonical_alias = next(
+            (
+                (scope_kind, blocked_dependency)
+                for admitted_callback, scope_kind, blocked_dependency in CANONICAL_EVENT_ALIASES.get(
+                    event.event_type,
+                    (),
+                )
+                if admitted_callback == callback_event
+            ),
+            None,
+        )
+        if canonical_alias is not None:
+            scope_kind, blocked_dependency = canonical_alias
+            return EventAlias(
+                callback_event=callback_event,
+                scope_kind=scope_kind,
+                source_basis=source_basis,
+                admission_status=(
+                    "blocked" if blocked_dependency else "executable"
+                ),
+                blocked_dependency=blocked_dependency,
+                runtime_event_source=event.event_type,
+            )
         return EventAlias(
             callback_event=callback_event,
             scope_kind=_scope_kind_for_callback_event(event, callback_event),
