@@ -11,7 +11,9 @@ turnbasedgamedata-main -> compiler/lowering -> Canonical IR -> Combat Core
 最近已验收生产基线：
 
 ```text
-P8-S19 已通过当前源码验收；父检查点为 P8-S18 `e87b211`
+P8-S0 至 P8-S21、P8-R1 和 P8-R2 已通过当前源码最终聚合验收
+P8-S20 检查点：afe6f7b
+P8 最终结论：live_validation_reports/v8_p8_equipment_build_light_cone_relic_final_checkpoint.md
 ```
 
 验证治理路线回正：
@@ -31,6 +33,7 @@ P8-S19 已通过当前源码验收；父检查点为 P8-S18 `e87b211`
 - P8-S0 至 P8-S8 光锥定义、实例、装配和机制闭合。
 - P8-R1-RUNTIME 与 P8-R2 召唤光环、记忆光锥事件链及当前光锥目录启动收口。
 - P8-S9 至 P8-S17 遗器定义、正式实例、主副词条、套装档位统计、统一静态贡献账本、动态能力启动以及当前全部套装 gameplay 机制。
+- P8-S18 至 P8-S21 构筑汇合、失败原子性、希儿完整示例和当前来源最终聚合。
 - CHAR-M1 记忆角色与忆灵 owned-combatant 构筑底座。
 - VG-R1 P8-S8 task/event 共享证据与 owned-combatant 窄投影试点。
 
@@ -38,7 +41,7 @@ P8-S19 已通过当前源码验收；父检查点为 P8-S18 `e87b211`
 
 - P3 历史检查点采用 P7 前口径；servant action graph 仍有真实内容缺口，不能称为完整继承。
 - P1-P7 完成的是底座和当前准入语义，不代表全角色、全怪物、全关卡和全部特殊模式完成。
-- P8-S8 与 R2 已证明当前光锥机制图和 162 张已发布光锥目录启动闭合，不等于所有正式角色构筑、遗器或完整 P8 构筑链已经完成。
+- P8 完成只表示当前装备来源和战斗消费链闭合；不包含角色动作图扩面、怪物卡、关卡、刷取养成、背包、自动配装或 UI。
 
 ## P8-R1 / P8-R2 裁决
 
@@ -73,9 +76,9 @@ VG-R1 曾确认两条动态值任务和一条死亡回响事件 family 失败。
 
 光锥轨已经推进至 R2 并验收，`P8-S9` 至 `P8-S17` 的遗器定义、实例、词条、套装统计、静态贡献、动态能力启动以及当前全部套装 gameplay 机制也已验收。`P8-S18` 已完成光锥与遗器构筑汇合：角色、光锥、行迹、遗器和套装使用统一贡献账本生成最终面板，正式出生在入场结算后按最终速度初始化时间线。
 
-P8-S19 已完成查询、来源审计、版本化构筑 manifest、重装配 replay 和紧凑语义状态。P8-S20 已完成希儿、《于夜色中》、四件“繁星璀璨的天才”和两件“繁星竞技场”的正式构筑纵切：六件成品遗器、最终面板、装备 provider、条件分支、来源审计和 replay 均通过。希儿完整动作图仍归后续角色卡内容阶段，不是装备阶段缺口。下一阶段只执行 P8-S21 当前源码聚合与文档收口。
+P8 装备阶段已完成最终收口。当前 source fingerprint `39b5d5d55a5d4d7e9a3739a5de098944b5851593de0f2311ffa661fe384a346a` 下，162 张已发布光锥、720 个普通玩家遗器模板、117 个主词条、48 个副词条、58 套遗器及 90 个套装档位均已进入正式定义、装配、runtime、来源审计和 replay 链；光锥与套装 gameplay gap、unknown 和 partial graph 均为 0。6 个 `CUSTOM` 模板保留真实来源但明确拒绝正式玩家构筑。希儿完整装备纵切通过；其角色动作图仍归后续角色卡内容阶段，不是 P8 缺口。最终结论见 `live_validation_reports/v8_p8_equipment_build_light_cone_relic_final_checkpoint.md`。
 
-P8-S9 当前事实：
+P8-S16 / S17 当前事实：
 
 - 已从当前来源完整建立 726 个遗器模板、6 个真实槽位、58 个套装和 90 个套装档位。
 - 模板、主副词条组、内外圈域和套装档位均进入类型化 Canonical IR 与 RuleBook，目录引用问题和已发布模板 blocked 均为零。
@@ -159,14 +162,13 @@ P8-S17 当前事实：
 
 必须保留：
 
-1. 不因光锥目录已闭合而提前宣称 P8 完成；遗器与最终构筑汇合尚未实施。
+1. P8-DONE 只覆盖装备定义、合法成品构筑与战斗执行，不能外推为全角色、全怪物或全关卡完成。
 2. R2 退役的未过滤聚合、九族组合和 VG-S3 registry 路线不得恢复。
 3. S18 已在 R2 与 S17 同一基线上完成硬汇合，后续阶段只能消费这一条装配与出生路径。
 4. 若继续验证治理，必须先证明新的真实重复点与现有共享证据具有相同生命周期。
 
 ## 仍未完成的大块
 
-- P8-S20 至 S21：希儿完整示例和当前来源聚合。
 - 剩余记忆角色 / 忆灵的属性、时间线和出生来源扩面。
 - 全角色、全怪物、全关卡和环境内容卡。
 - 目标、波次、召唤、特殊事件源和特殊玩法的剩余真实来源扩面。
@@ -179,12 +181,10 @@ P8-S17 当前事实：
 
 不要默认通读所有文档。根据任务选择：
 
-- 已验收 P8-S18 执行卡：
-  `docs/p8_execution_cards/P8-S18_FINAL_PANEL_AND_BIRTH_ORDER.md`。
-- 已验收 P8-S18 报告：
-  `live_validation_reports/P8-S18_FINAL_PANEL_AND_BIRTH_ORDER_ready_for_review.md`。
-- 已验收 P8-S17 报告：
-  `live_validation_reports/P8-S17_RELIC_SET_REMAINING_GAMEPLAY_CLOSURE_ready_for_review.md`。
+- P8 最终检查点：
+  `live_validation_reports/v8_p8_equipment_build_light_cone_relic_final_checkpoint.md`。
+- P8-S20 希儿完整构筑检查点：
+  `live_validation_reports/P8-S20_SEELE_COMPLETE_BUILD_SLICE_accepted.md`。
 - P8-S9 至 S21 的统一验证预算和执行索引：
   `docs/p8_execution_cards/README.md`。
 - 已验收 P8-R2 执行卡与最终差量：

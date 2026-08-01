@@ -101,6 +101,7 @@ UI 只负责编排、查询和展示，不定义规则。
 - `ready_for_review` 是执行 evidence 索引，不是验收裁决。
 - `checkpoint` 表示验收线程形成的阶段结论。
 - 查询当前状态先读最新 checkpoint；查询具体机制再读对应专项报告。
+- P8 装备体系最终 checkpoint：`../live_validation_reports/v8_p8_equipment_build_light_cone_relic_final_checkpoint.md`。
 - 不全量读取报告目录，不用旧报告的 `ok=true` 代替当前源码回归。
 - P1 历史位于 `live_validation_reports/archive/phase1/`。
 

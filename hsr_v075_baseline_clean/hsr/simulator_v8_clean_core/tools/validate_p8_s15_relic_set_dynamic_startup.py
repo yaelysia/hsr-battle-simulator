@@ -88,7 +88,8 @@ def _build_bundle(
     ir_transform: Callable[[CanonicalIR, TBGDLowering], CanonicalIR] | None = None,
 ) -> dict[str, Any]:
     root = tbgd_root.resolve()
-    catalog = require_complete_relic_catalog(build_relic_catalog(root))
+    catalog_result = build_relic_catalog(root)
+    catalog = require_complete_relic_catalog(catalog_result)
     lowering = TBGDLowering(root)
     equipment_definitions = (
         *catalog.set_thresholds,
@@ -271,7 +272,11 @@ def _build_bundle(
             raise TypeError("focused IR transform must return CanonicalIR")
     rules = RuleBook(ir)
     return {
+        "catalog_result": catalog_result,
         "catalog": catalog,
+        "tbgd_root": root,
+        "equipment_sources": dict(projection),
+        "ir": ir,
         "lowering": lowering,
         "card": card,
         "rules": rules,

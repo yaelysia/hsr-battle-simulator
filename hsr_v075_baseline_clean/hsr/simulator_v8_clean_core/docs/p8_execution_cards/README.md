@@ -6,6 +6,8 @@
 
 长期目标、全局红线和唯一阶段 checklist 仍以 `P8_EQUIPMENT_BUILD_LIGHT_CONE_RELIC_TASK_PLAN.md` 为准。本目录不是第二套总计划；每个文件只包含一个阶段的唯一执行清单。
 
+P8-S0 至 P8-S21、R1 和 R2 已于当前源码完成最终聚合验收。后续只在来源版本变化或装备契约被实际修改时重新进入相应责任阶段，不把本目录重新作为默认执行队列。最终结论见 `live_validation_reports/v8_p8_equipment_build_light_cone_relic_final_checkpoint.md`。
+
 ## 2. 依赖图与并行边界
 
 ```text
