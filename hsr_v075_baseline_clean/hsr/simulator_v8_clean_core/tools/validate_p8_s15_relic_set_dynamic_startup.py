@@ -82,13 +82,21 @@ def _build_bundle(
     tbgd_root: Path,
     *,
     require_blocked_sample: bool = True,
+    inject_duplicate_probe: bool = True,
     required_card_id: str | None = None,
+    extra_light_cone_definitions: tuple[Any, ...] = (),
     ir_transform: Callable[[CanonicalIR, TBGDLowering], CanonicalIR] | None = None,
 ) -> dict[str, Any]:
     root = tbgd_root.resolve()
     catalog = require_complete_relic_catalog(build_relic_catalog(root))
     lowering = TBGDLowering(root)
-    projection = sorted(_equipment_ability_source_projection(catalog.set_thresholds).items())
+    equipment_definitions = (
+        *catalog.set_thresholds,
+        *extra_light_cone_definitions,
+    )
+    projection = sorted(
+        _equipment_ability_source_projection(equipment_definitions).items()
+    )
     lowered_files = [
         lowering._lower_ability_file(
             root / relative,
@@ -134,11 +142,14 @@ def _build_bundle(
         graph_targets,
         parameter_reads,
     ) = lowering._lower_equipment_ability_graphs(
-        catalog.set_thresholds,
+        equipment_definitions,
         status_callbacks=callbacks,
     )
-    _, clean_thresholds, clean_refs = _attach_equipment_mechanism_refs(
-        (), catalog.set_thresholds, graphs, parameter_reads
+    light_cones, clean_thresholds, clean_refs = _attach_equipment_mechanism_refs(
+        extra_light_cone_definitions,
+        catalog.set_thresholds,
+        graphs,
+        parameter_reads,
     )
     cases = _choose_cases(
         catalog,
@@ -158,12 +169,20 @@ def _build_bundle(
     )
     mechanism_key = duplicate_thresholds[0].mechanism_ref_ids[0]
     formal_thresholds = (
-        *(item for item in clean_thresholds if item.definition_key != reserved.definition_key),
-        *duplicate_thresholds,
+        (
+            *(item for item in clean_thresholds if item.definition_key != reserved.definition_key),
+            *duplicate_thresholds,
+        )
+        if inject_duplicate_probe
+        else clean_thresholds
     )
     formal_refs = (
-        *(item for item in clean_refs if item.definition_key != mechanism_key),
-        *duplicate_refs,
+        (
+            *(item for item in clean_refs if item.definition_key != mechanism_key),
+            *duplicate_refs,
+        )
+        if inject_duplicate_probe
+        else clean_refs
     )
 
     characters = build_character_card_ir(
@@ -211,6 +230,7 @@ def _build_bundle(
         character_trace_nodes=characters.character_trace_nodes,
         character_eidolon_slots=characters.character_eidolon_slots,
         action_definitions=tuple(actions),
+        light_cone_definitions=light_cones,
         relic_domain_definitions=catalog.domain_definitions,
         relic_slot_definitions=catalog.slot_definitions,
         relic_main_affix_group_definitions=catalog.main_affix_group_definitions,
