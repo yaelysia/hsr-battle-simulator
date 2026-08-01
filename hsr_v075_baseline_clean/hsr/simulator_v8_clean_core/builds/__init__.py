@@ -22,6 +22,17 @@ from .models import (
     OwnedCombatantLifecycleAdmission,
     OwnedCombatantStatBinding,
 )
+from .manifest import (
+    BUILD_MANIFEST_SCHEMA_VERSION,
+    FORMAL_BUILD_MANIFEST_FLAG,
+    BuildLockedReplayResult,
+    BuildLockedReplayVerifier,
+    BuildManifestEntry,
+    BuildRuleIdentity,
+    FormalBuildManifest,
+    canonical_ir_fingerprint,
+    current_build_rule_identity,
+)
 
 __all__ = [
     "CharacterBasePanel",
@@ -40,6 +51,15 @@ __all__ = [
     "OwnedCombatantBuildAssemblyResult",
     "OwnedCombatantLifecycleAdmission",
     "OwnedCombatantStatBinding",
+    "BUILD_MANIFEST_SCHEMA_VERSION",
+    "FORMAL_BUILD_MANIFEST_FLAG",
+    "BuildLockedReplayResult",
+    "BuildLockedReplayVerifier",
+    "BuildManifestEntry",
+    "BuildRuleIdentity",
+    "FormalBuildManifest",
+    "canonical_ir_fingerprint",
+    "current_build_rule_identity",
     "assemble_character_build",
     "assemble_equipment_build",
     "validate_character_build_admission",

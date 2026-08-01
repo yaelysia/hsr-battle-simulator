@@ -123,10 +123,10 @@ git diff --check
 
 ## 唯一执行清单（仅验收线程可勾）
 
-- [ ] 装备目录、合法性和装配结果查询类型化、只读、fail-closed。
-- [ ] UI/外部层只提交选择，所有派生规则输入均拒绝。
-- [ ] manifest/fingerprint/version 可重新装配并锁定 snapshot/replay。
-- [ ] stale、篡改和伪来源回放 state unchanged。
-- [ ] compact state 不复制完整目录/ledger/raw，尺寸预算通过。
-- [ ] 静态/动态来源 walkback 完整；P7 契约未被实际改动，或已通过对应最小 direct。
-- [ ] `ready_for_review` evidence 完整，阶段无查询/回放 blocker。
+- [x] 装备目录、合法性和装配结果查询类型化、只读、fail-closed。
+- [x] UI/外部层只提交选择，所有派生规则输入均拒绝。
+- [x] manifest/fingerprint/version 可重新装配并锁定 snapshot/replay。
+- [x] stale、篡改和伪来源回放 state unchanged。
+- [x] compact state 不复制完整目录/ledger/raw，尺寸预算通过。
+- [x] 静态/动态来源 walkback 完整；P7 契约未被实际改动，或已通过对应最小 direct。
+- [x] `ready_for_review` evidence 完整，阶段无查询/回放 blocker。

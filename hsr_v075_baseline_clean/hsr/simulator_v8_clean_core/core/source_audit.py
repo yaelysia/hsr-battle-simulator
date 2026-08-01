@@ -397,6 +397,25 @@ class RuntimeSourceAuditor:
                     },
                 )
             )
+        settlement_provider_ids = tuple(
+            str(record.get("provider_id") or "")
+            for record in records
+            if record.get("record_type") == "ability_provider_registration"
+            and record.get("source") == "ability_provider_registry"
+            and record.get("mutation_id") == mutation.stable_id()
+            and record.get("unit_id") == owner_unit_id
+        )
+        if tuple(provider_ids) != settlement_provider_ids:
+            violations.append(
+                _violation(
+                    mutation,
+                    "ability_provider_settlement_mismatch",
+                    details={
+                        "provider_ids": list(provider_ids),
+                        "settlement_provider_ids": list(settlement_provider_ids),
+                    },
+                )
+            )
         for provider in providers:
             if not isinstance(provider, dict):
                 continue
@@ -457,11 +476,21 @@ class RuntimeSourceAuditor:
                 if isinstance(definition_key, dict)
                 else None
             )
-            definition_resolution = (
-                self.rules.light_cone_definition(definition_identity)
-                if isinstance(definition_identity, str) and definition_identity
+            definition_kind = (
+                definition_key.get("definition_kind")
+                if isinstance(definition_key, dict)
                 else None
             )
+            definition_resolution = None
+            if isinstance(definition_identity, str) and definition_identity:
+                if definition_kind == "light_cone":
+                    definition_resolution = self.rules.light_cone_definition(
+                        definition_identity
+                    )
+                elif definition_kind == "relic_set_threshold":
+                    definition_resolution = self.rules.relic_set_threshold(
+                        definition_identity
+                    )
             definition = (
                 definition_resolution.value
                 if definition_resolution is not None
@@ -477,8 +506,9 @@ class RuntimeSourceAuditor:
                 violations.append(
                     _violation(
                         mutation,
-                        "ability_provider_light_cone_definition_mismatch",
+                        "ability_provider_target_definition_mismatch",
                         details={
+                            "definition_kind": str(definition_kind or ""),
                             "definition_identity": definition_identity or "",
                             "mechanism_identity": mechanism_identity or "",
                         },

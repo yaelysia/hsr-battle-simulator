@@ -8,6 +8,10 @@ from simulator_v8_clean_core.core.reducer import MutationReducer
 from simulator_v8_clean_core.core.settlement import SettlementTraceabilityValidator
 from simulator_v8_clean_core.core.source_audit import RuntimeSourceAuditor
 from simulator_v8_clean_core.core.transition_contract import TransitionContractValidator
+from simulator_v8_clean_core.builds.manifest import (
+    FORMAL_BUILD_MANIFEST_FLAG,
+    BuildLockedReplayVerifier,
+)
 from simulator_v8_clean_core.rules.rulebook import RuleBook
 from simulator_v8_clean_core.scenarios.schema import RouteStepSpec, ScenarioSpec
 
@@ -49,11 +53,18 @@ def build_step_report(
         transition.transaction.settlement,
         transition.transaction.mutations,
     ).to_json()
-    replay = MutationReducer().replay_snapshot(
-        before_state,
-        transition.transaction.mutations,
-        transition.after.to_json(),
-    )
+    if FORMAL_BUILD_MANIFEST_FLAG in before_state.global_flags:
+        replay = BuildLockedReplayVerifier(rules).replay_snapshot(
+            before_state,
+            transition.transaction.mutations,
+            transition.after.to_json(),
+        )
+    else:
+        replay = MutationReducer().replay_snapshot(
+            before_state,
+            transition.transaction.mutations,
+            transition.after.to_json(),
+        )
     contract = TransitionContractValidator().validate(transition).to_json()
     blocked = blocked_records(records, transition_json)
     coverage_gaps = coverage_gap_records(records, transition_json)

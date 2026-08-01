@@ -181,7 +181,6 @@ def _rich_state() -> BattleState:
         statuses=("status:a",),
         shield_instances=(_shield_instance(10.0),),
         flags={
-            "lifecycle_status": "active",
             "status_details": [{"instance_id": "status:a:1", "modifier_name": "status:a", "remaining": 2}],
             "owner_id": "ally:owner",
             "source_trace": provenance,
@@ -196,7 +195,7 @@ def _rich_state() -> BattleState:
         hp=200.0,
         speed=90.0,
         action_value=50.0,
-        flags={"lifecycle_status": "active", "wave_member_kind": "stage_wave_enemy", "wave_index": 1},
+        flags={"wave_member_kind": "stage_wave_enemy", "wave_index": 1},
     )
     summon = UnitState(
         unit_id="summon:1",
@@ -207,7 +206,6 @@ def _rich_state() -> BattleState:
         speed=100.0,
         action_value=40.0,
         flags={
-            "lifecycle_status": "active",
             "summon_kind": "servant",
             "owner_id": "ally:actor",
             "lifecycle_source": {

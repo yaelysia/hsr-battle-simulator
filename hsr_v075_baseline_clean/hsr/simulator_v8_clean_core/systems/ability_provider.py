@@ -4,8 +4,17 @@ from dataclasses import dataclass
 import hashlib
 import json
 
-from ..core.model import BattleState, JSONValue, Mutation
+from ..core.model import (
+    ActionCommand,
+    ActionSettlement,
+    ActionTransaction,
+    BattleState,
+    BattleTransition,
+    JSONValue,
+    Mutation,
+)
 from ..core.reducer import MutationReducer
+from ..core.transition_outcome import ExecutionNodeResult, TransitionOutcome
 from ..equipment.models import DynamicMechanismSelection, EquipmentDefinitionKey
 from ..rules.rulebook import RuleBook
 
@@ -22,6 +31,84 @@ class AbilityProviderRegistrationResult:
     @property
     def state_unchanged(self) -> bool:
         return self.before_state == self.after_state
+
+    def to_transition(self) -> BattleTransition:
+        """Expose the registration's native mutation/settlement chain for audit."""
+
+        if not self.ok:
+            raise ValueError(
+                "blocked ability provider registration has no committed transition"
+            )
+        return BattleTransition(
+            transaction=ActionTransaction(
+                command=ActionCommand(
+                    actor_id="system:ability_provider_registry",
+                    action_id="system:ability_provider_registration",
+                    action_level=1,
+                    source="system",
+                ),
+                before=self.before_state.snapshot(),
+                mutations=self.mutations,
+                settlement=ActionSettlement(
+                    action_id="system:ability_provider_registration",
+                    actor_id="system:ability_provider_registry",
+                    target_ids=tuple(
+                        sorted(
+                            {
+                                str(record.get("unit_id") or "")
+                                for record in self.records
+                                if record.get("unit_id")
+                            }
+                        )
+                    ),
+                    records=self.records,
+                ),
+            ),
+            after=self.after_state.snapshot(),
+            outcome=TransitionOutcome(
+                category="committed",
+                node_results=(
+                    ExecutionNodeResult(
+                        node_kind="setup",
+                        node_id="ability_provider_registration",
+                        status="complete",
+                    ),
+                ),
+            ),
+        )
+
+
+def ability_provider_payload(
+    unit_id: str,
+    selection: DynamicMechanismSelection,
+) -> dict[str, JSONValue]:
+    """Project the canonical provider identity shared by startup and replay."""
+
+    if not isinstance(unit_id, str) or not unit_id:
+        raise ValueError("ability provider unit_id must be non-empty")
+    if not isinstance(selection, DynamicMechanismSelection):
+        raise TypeError("selection must be DynamicMechanismSelection")
+    semantic_key = _provider_semantic_key(
+        unit_id,
+        selection.provider_source_id,
+        selection.mechanism_key,
+    )
+    return {
+        "provider_id": _provider_id(semantic_key),
+        "provider_kind": "canonical_ability_graph",
+        "semantic_key": semantic_key,
+        "selection_id": selection.selection_id,
+        "owner_unit_id": unit_id,
+        "provider_source_id": selection.provider_source_id,
+        "target_definition_key": selection.target_definition_key.to_json(),
+        "parameter_basis": selection.parameter_basis.to_json(),
+        "mechanism_key": selection.mechanism_key.to_json(),
+        "graph_ref_id": selection.graph_ref_id,
+        "parameter_bindings": [
+            binding.to_json() for binding in selection.parameter_bindings
+        ],
+        "source": selection.source.to_json(),
+    }
 
 
 def register_dynamic_ability_providers(
@@ -126,28 +213,8 @@ def register_dynamic_ability_providers(
             ):
                 return _blocked(state, "ability_provider_parameter_value_source_mismatch")
 
-        semantic_key = _provider_semantic_key(
-            unit_id,
-            selection.provider_source_id,
-            selection.mechanism_key,
-        )
-        provider_id = _provider_id(semantic_key)
-        provider = {
-            "provider_id": provider_id,
-            "provider_kind": "canonical_ability_graph",
-            "semantic_key": semantic_key,
-            "selection_id": selection.selection_id,
-            "owner_unit_id": unit_id,
-            "provider_source_id": selection.provider_source_id,
-            "target_definition_key": selection.target_definition_key.to_json(),
-            "parameter_basis": selection.parameter_basis.to_json(),
-            "mechanism_key": selection.mechanism_key.to_json(),
-            "graph_ref_id": selection.graph_ref_id,
-            "parameter_bindings": [
-                binding.to_json() for binding in selection.parameter_bindings
-            ],
-            "source": selection.source.to_json(),
-        }
+        provider = ability_provider_payload(unit_id, selection)
+        provider_id = str(provider["provider_id"])
         unit_providers = providers_by_unit.setdefault(unit_id, {})
         prior = unit_providers.get(provider_id)
         if prior is not None:
@@ -268,7 +335,7 @@ def _provider_registration_record(
             for binding in bindings
             if isinstance(binding, dict)
         ],
-        "source": provider["source"],
+        "source_trace": provider["source"],
     }
 
 

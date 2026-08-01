@@ -8,6 +8,11 @@ from .identity import IdentityResolver
 from .schema import InitialStatusSpec, InitialSummonSpec, PanelInput, RNGSetupSpec, ScenarioSpec, UnitSpec
 from ..build_types import aggregate_static_stat_contributions
 from ..builds.character_assembler import assemble_character_build
+from ..builds.manifest import (
+    FORMAL_BUILD_MANIFEST_FLAG,
+    BuildManifestEntry,
+    FormalBuildManifest,
+)
 from ..builds.models import (
     CharacterBuildAssemblyResult,
     CharacterResourceBinding,
@@ -39,7 +44,10 @@ from ..rules.rulebook import RuleBook
 from ..rules.value_binding import ValueBindingRequest, ValueContext, ValueResolver
 from ..systems.effect import EffectRegistry
 from ..systems.event_dispatch import EventDispatchSystem
-from ..systems.ability_provider import register_dynamic_ability_providers
+from ..systems.ability_provider import (
+    AbilityProviderRegistrationResult,
+    register_dynamic_ability_providers,
+)
 from ..systems.status import StatusSystem
 from ..systems.summon import SummonSystem
 from ..systems.summon_runtime import empty_summon_runtime
@@ -59,6 +67,8 @@ class ScenarioBuildResult:
     setup_rng_events: tuple[RNGEvent, ...] = ()
     blocked_setup: tuple[dict[str, JSONValue], ...] = ()
     character_build_results: tuple[CharacterBuildAssemblyResult, ...] = ()
+    build_manifest: FormalBuildManifest | None = None
+    ability_provider_registration: AbilityProviderRegistrationResult | None = None
 
 
 @dataclass(frozen=True)
@@ -441,6 +451,10 @@ class ScenarioStateBuilder:
             )
 
         global_flags = dict(scenario.global_flags)
+        if FORMAL_BUILD_MANIFEST_FLAG in global_flags:
+            raise ValueError(
+                "scenario.global_flags cannot inject formal build manifest"
+            )
         if TIMELINE_INITIALIZATION_FLAG in global_flags:
             raise ValueError(
                 "scenario.global_flags cannot inject timeline initialization state"
@@ -461,6 +475,32 @@ class ScenarioStateBuilder:
                 "entity_count": 0,
             }
         )
+        build_manifest: FormalBuildManifest | None = None
+        if formal_assemblies:
+            build_manifest = FormalBuildManifest.create(
+                self.rules,
+                tuple(
+                    BuildManifestEntry.from_assembly(
+                        unit_id=unit.unit_id,
+                        build_input=unit.character_build,
+                        assembly_result=formal_assemblies[unit.unit_id],
+                    )
+                    for unit in scenario.units
+                    if unit.build_mode == "assembled_character_build"
+                    and unit.character_build is not None
+                ),
+            )
+            global_flags[FORMAL_BUILD_MANIFEST_FLAG] = build_manifest.to_json()
+            setup_records.append(
+                {
+                    "record_type": "formal_build_manifest",
+                    "source_kind": "canonical_build_assembly",
+                    "status": "locked",
+                    "schema_version": build_manifest.schema_version,
+                    "manifest_fingerprint": build_manifest.manifest_fingerprint,
+                    "entry_count": len(build_manifest.entries),
+                }
+            )
         wave_runtime = _initial_wave_runtime(self.rules, scenario)
         if wave_runtime:
             global_flags["wave_runtime"] = wave_runtime
@@ -627,6 +667,8 @@ class ScenarioStateBuilder:
                 *timeline_result.blocked,
             ),
             character_build_results=tuple(character_build_results),
+            build_manifest=build_manifest,
+            ability_provider_registration=provider_result,
         )
 
 
@@ -2367,6 +2409,8 @@ def _formal_character_activation(
     equipment_result = assembly.equipment_assembly_result
     if equipment_result is None:
         raise ValueError("formal character activation requires equipment assembly result")
+    flags["equipment_build_fingerprint"] = equipment_result.build_fingerprint
+    flags["equipment_result_fingerprint"] = equipment_result.result_fingerprint
     equipment_providers = tuple(equipment_result.dynamic_mechanisms)
     if any(
         selection.coverage_status != "executable" or selection.blocked_reason
