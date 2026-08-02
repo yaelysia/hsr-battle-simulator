@@ -7,13 +7,27 @@ import re
 from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
+from hashlib import sha256
 from operator import attrgetter
 from pathlib import Path
 from typing import Any, NamedTuple
 
 from ..dynamic_key_hash import tbgd_dynamic_key_hash
 from .coverage import ability_task_execution_mode, classify_opcode
-from .character_cards import build_character_card_ir
+from .character_ability_scope import (
+    CharacterAbilityRawSnapshot,
+    CharacterAbilityScopeProjectionCatalog,
+    build_character_ability_raw_snapshot,
+    build_character_ability_scope_projection,
+)
+from .character_ability_source_graph import (
+    _skill_entries,
+    build_character_ability_source_graph,
+)
+from .character_cards import (
+    CHARACTER_ACTION_DEFINITION_TABLES,
+    build_character_card_ir,
+)
 from .equipment_ability_families import (
     classify_equipment_callback,
     classify_equipment_condition,
@@ -74,6 +88,8 @@ from ..rules.ir import (
     BouncePolicyIR,
     CanonicalIR,
     CharacterDataCardIR,
+    CharacterAbilityDefinitionIR,
+    CharacterAbilitySourceGraphCatalogIR,
     CharacterEidolonSlotIR,
     CharacterEquipmentEligibilityIR,
     CharacterMechanismSlotIR,
@@ -123,6 +139,7 @@ from ..rules.ir import (
     WaveDefinitionIR,
     WaveMonsterEntryIR,
 )
+from ..rules.rulebook import CharacterAbilitySourceGraphQuery
 
 
 def _equipment_catalog_fingerprint_metadata(
@@ -284,14 +301,6 @@ ACTION_DEFINITION_TABLES: tuple[tuple[str, str, str], ...] = (
     ("ExcelOutput/AvatarServantSkillConfig.json", "servant_skill", "SkillID"),
 )
 
-CHARACTER_ACTION_DEFINITION_TABLES: tuple[tuple[str, str, str], ...] = (
-    ("ExcelOutput/AvatarSkillConfig.json", "avatar_skill", "SkillID"),
-    ("ExcelOutput/AvatarSkillConfigLD.json", "avatar_skill", "SkillID"),
-    ("ExcelOutput/CommonAvatarSkillConfig.json", "avatar_skill", "SkillID"),
-    ("ExcelOutput/CommonActiveSkillConfig.json", "active_skill", "SkillID"),
-)
-
-
 ELATION_MECHANIC_FILES: tuple[str, ...] = (
     "Config/GlobalConfig/GameCoreConstValue.json",
     "Config/GlobalConfig/PriorityConfig.json",
@@ -389,6 +398,59 @@ class TBGDLowering:
         self.tbgd_root = tbgd_root.resolve()
         self.limits = limits or LoweringLimits()
         self._damage_tag_registry = _damage_tag_registry(self.tbgd_root)
+
+    def build_character_ability_source_graph_catalog(
+        self,
+        *,
+        snapshot: CharacterAbilityRawSnapshot | None = None,
+        scope_catalog: CharacterAbilityScopeProjectionCatalog | None = None,
+    ) -> CharacterAbilitySourceGraphCatalogIR:
+        cached = getattr(self, "_character_ability_source_graph_catalog", None)
+        if cached is not None:
+            if type(cached) is not CharacterAbilitySourceGraphCatalogIR:
+                raise TypeError("invalid cached character ability source graph catalog")
+            cached_snapshot = getattr(self, "_character_ability_raw_snapshot", None)
+            cached_scope = getattr(self, "_character_ability_scope_catalog", None)
+            if (
+                snapshot is not None
+                and (
+                    type(snapshot) is not CharacterAbilityRawSnapshot
+                    or snapshot.snapshot_id != cached.snapshot_id
+                )
+            ) or (
+                scope_catalog is not None
+                and (
+                    type(scope_catalog) is not CharacterAbilityScopeProjectionCatalog
+                    or scope_catalog.catalog_id != cached.scope_catalog_id
+                )
+            ):
+                raise ValueError("cached character ability source closure mismatch")
+            if (
+                type(cached_snapshot) is not CharacterAbilityRawSnapshot
+                or type(cached_scope) is not CharacterAbilityScopeProjectionCatalog
+            ):
+                raise TypeError("cached character ability source context is invalid")
+            return cached
+        if snapshot is None:
+            snapshot = build_character_ability_raw_snapshot(self.tbgd_root)
+        elif type(snapshot) is not CharacterAbilityRawSnapshot:
+            raise TypeError("lowering requires the exact S0 character snapshot type")
+        if scope_catalog is None:
+            scope_catalog = build_character_ability_scope_projection(
+                self.tbgd_root,
+                snapshot=snapshot,
+            )
+        elif type(scope_catalog) is not CharacterAbilityScopeProjectionCatalog:
+            raise TypeError("lowering requires the exact S0 scope catalog type")
+        catalog = build_character_ability_source_graph(
+            self.tbgd_root,
+            snapshot=snapshot,
+            scope_catalog=scope_catalog,
+        )
+        self._character_ability_raw_snapshot = snapshot
+        self._character_ability_scope_catalog = scope_catalog
+        self._character_ability_source_graph_catalog = catalog
+        return catalog
 
     def build_owned_combatant_admission_projection(
         self,
@@ -1212,6 +1274,9 @@ class TBGDLowering:
         ]
 
     def build(self) -> CanonicalIR:
+        character_ability_source_graph_catalog = (
+            self.build_character_ability_source_graph_catalog()
+        )
         light_cone_catalog = build_light_cone_catalog(self.tbgd_root)
         light_cone_definitions = require_complete_light_cone_catalog(light_cone_catalog)
         relic_catalog_result = build_relic_catalog(self.tbgd_root)
@@ -1258,8 +1323,9 @@ class TBGDLowering:
         entities = list(_dedupe_entities(entities).values())
         character_cards = build_character_card_ir(
             self.tbgd_root,
-            max_records_per_table=self.limits.max_records_per_table,
+            max_records_per_table=None,
             skill_tables=CHARACTER_ACTION_DEFINITION_TABLES,
+            ability_source_graph_catalog=character_ability_source_graph_catalog,
         )
         avatar_profiles = character_cards.avatar_profiles
         character_data_cards = character_cards.character_data_cards
@@ -1675,9 +1741,22 @@ class TBGDLowering:
             effects=tuple(effects),
             conditions=tuple(conditions),
             formulas=tuple(formulas),
+            character_ability_source_graph_catalog=(
+                character_ability_source_graph_catalog
+            ),
             metadata={
                 "source": "turnbasedgamedata-main",
                 "lowering": "tbgd_first_v0_200",
+                "character_ability_source_graph": {
+                    "catalog_id": character_ability_source_graph_catalog.catalog_id,
+                    "snapshot_id": character_ability_source_graph_catalog.snapshot_id,
+                    "scope_catalog_id": (
+                        character_ability_source_graph_catalog.scope_catalog_id
+                    ),
+                    "source_fingerprint": (
+                        character_ability_source_graph_catalog.source_fingerprint
+                    ),
+                },
                 "limits": {
                     "max_records_per_table": self.limits.max_records_per_table,
                     "max_ability_files": self.limits.max_ability_files,
@@ -3045,12 +3124,8 @@ class TBGDLowering:
             definition.action_id.startswith("servant_skill:")
             for definition in definitions
         )
-        avatar_skill_rows = (
-            self._avatar_skill_rows_by_skill_id() if has_avatar_actions else {}
-        )
-        avatar_configs = (
-            self._avatar_configs_by_skill_id() if has_avatar_actions else {}
-        )
+        if has_avatar_actions:
+            self.build_character_ability_source_graph_catalog()
         monster_skill_rows = (
             self._monster_skill_rows_by_skill_id() if has_monster_actions else {}
         )
@@ -3076,10 +3151,7 @@ class TBGDLowering:
             if definition.action_id.startswith("avatar_skill:"):
                 binding, binding_phases, lowered_tasks = self._avatar_action_binding(
                     definition,
-                    avatar_skill_rows.get(definition.source.raw_id, {}),
-                    avatar_configs.get(definition.source.raw_id, []),
-                    avatar_skill_rows,
-                    ability_file_cache,
+                    lower_tasks=retain_lowered_details,
                 )
             elif definition.action_id.startswith("monster_skill:"):
                 if monster_ability_file_index is None:
@@ -3443,44 +3515,6 @@ class TBGDLowering:
             parameter_reads,
         )
 
-    def _avatar_skill_rows_by_skill_id(self) -> dict[str, dict[str, Any]]:
-        rows: dict[str, dict[str, Any]] = {}
-        for relative_path, _, id_key in CHARACTER_ACTION_DEFINITION_TABLES:
-            if "AvatarSkillConfig" not in relative_path and "CommonAvatarSkillConfig" not in relative_path:
-                continue
-            path = self.tbgd_root / relative_path
-            if not path.exists():
-                continue
-            data = json.loads(path.read_text(encoding="utf-8"))
-            if not isinstance(data, list):
-                continue
-            for row in data:
-                if isinstance(row, dict) and id_key in row:
-                    rows[str(row[id_key])] = row
-        return rows
-
-    def _avatar_configs_by_skill_id(self) -> dict[str, list[dict[str, Any]]]:
-        result: dict[str, list[dict[str, Any]]] = {}
-        for relative_path, index, row in self._avatar_config_rows_prefer_enhanced():
-            if not isinstance(row, dict):
-                continue
-            for skill_id in row.get("SkillList") or []:
-                config = {
-                    "relative_path": relative_path,
-                    "row_index": index,
-                    "avatar_id": row.get("AvatarID"),
-                    "json_path": row.get("JsonPath"),
-                    "skill_list": row.get("SkillList"),
-                    "version_kind": row.get("_v8_version_kind") or "base",
-                    "base_source_path": row.get("_v8_base_source_path") or relative_path,
-                    "base_skill_list": row.get("_v8_base_skill_list") or [],
-                    "enhanced_source_path": row.get("_v8_enhanced_source_path") or "",
-                    "enhanced_id": row.get("_v8_enhanced_id"),
-                    "enhanced_skill_list": row.get("_v8_enhanced_skill_list") or [],
-                }
-                result.setdefault(str(skill_id), []).append(config)
-        return result
-
     def _monster_skill_rows_by_skill_id(self) -> dict[str, dict[str, Any]]:
         rows: dict[str, dict[str, Any]] = {}
         for relative_path in ("ExcelOutput/MonsterSkillConfig.json", "ExcelOutput/MonsterSkillUniqueConfig.json"):
@@ -3663,81 +3697,355 @@ class TBGDLowering:
                     indexed.setdefault(ability_name, []).append(relative_path)
         return {name: tuple(paths) for name, paths in indexed.items()}
 
+    def _character_relation_document(
+        self,
+        source_path: str,
+        catalog: CharacterAbilitySourceGraphCatalogIR,
+    ) -> Any:
+        if type(catalog) is not CharacterAbilitySourceGraphCatalogIR:
+            raise TypeError("character relation resolver requires the exact catalog type")
+        expected_digest = catalog.relation_source_digests.get(source_path)
+        if not isinstance(expected_digest, str):
+            raise ValueError("character relation source is outside the S1 catalog")
+        cache = getattr(self, "_character_relation_document_cache", None)
+        if cache is None:
+            cache = {}
+            self._character_relation_document_cache = cache
+        if source_path in cache:
+            return cache[source_path]
+        path = (self.tbgd_root / source_path).resolve()
+        try:
+            path.relative_to(self.tbgd_root)
+        except ValueError as exc:
+            raise ValueError("character relation source escapes TBGD root") from exc
+        raw_bytes = path.read_bytes()
+        if sha256(raw_bytes).hexdigest() != expected_digest:
+            raise ValueError("character relation source digest changed after graph build")
+        document = json.loads(raw_bytes)
+        if not isinstance(document, (dict, list)):
+            raise ValueError("character relation source root is invalid")
+        cache[source_path] = document
+        return document
+
+    def _character_ability_definition_record(
+        self,
+        definition: CharacterAbilityDefinitionIR,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        if type(definition) is not CharacterAbilityDefinitionIR:
+            raise TypeError("ability resolver requires an exact typed definition")
+        catalog = self.build_character_ability_source_graph_catalog()
+        if definition.definition_kind == "presentation":
+            document = self._character_relation_document(
+                definition.source.source_path, catalog
+            )
+        else:
+            snapshot = getattr(self, "_character_ability_raw_snapshot", None)
+            if type(snapshot) is not CharacterAbilityRawSnapshot:
+                raise TypeError("S0 snapshot is unavailable for ability resolution")
+            document = snapshot.documents.get(definition.source.source_path)
+            source = next(
+                (
+                    item
+                    for item in snapshot.sources
+                    if item.source_id == definition.source_id
+                ),
+                None,
+            )
+            if (
+                document is None
+                or source is None
+                or source.source.source_path != definition.source.source_path
+                or source.content_sha256
+                != definition.source.evidence.get("content_sha256")
+            ):
+                raise ValueError("ability definition is outside the cached S0 source")
+        if not isinstance(document, Mapping):
+            raise ValueError("ability definition source is not an object")
+        ability_list = document.get("AbilityList")
+        ability_index = definition.source.evidence.get("ability_index")
+        if (
+            not isinstance(ability_list, list)
+            or not isinstance(ability_index, int)
+            or isinstance(ability_index, bool)
+            or ability_index < 0
+            or ability_index >= len(ability_list)
+            or not isinstance(ability_list[ability_index], Mapping)
+            or ability_list[ability_index].get("Name") != definition.ability_name
+        ):
+            raise ValueError("ability definition row identity is invalid")
+        record = thaw_json(ability_list[ability_index])
+        document_copy = thaw_json(document)
+        if not isinstance(record, dict) or not isinstance(document_copy, dict):
+            raise TypeError("ability definition thaw produced an invalid object")
+        return record, document_copy
+
     def _avatar_action_binding(
         self,
         definition: ActionDefinitionIR,
-        skill_row: dict[str, Any],
-        avatar_configs: list[dict[str, Any]],
-        avatar_skill_rows: dict[str, dict[str, Any]],
-        ability_file_cache: dict[str, dict[str, Any] | None],
+        *,
+        lower_tasks: bool = True,
     ) -> tuple[ActionAbilityBindingIR, list[AbilityPhaseIR], "_LoweredAbility"]:
-        skill_trigger_key = str(skill_row.get("SkillTriggerKey") or definition.source.evidence.get("skill_trigger_key") or "")
-        if not skill_trigger_key:
-            return _blocked_action_binding(definition, "missing_skill_trigger_key")
-        mainline_configs = [
-            config
-            for config in avatar_configs
-            if isinstance(config.get("json_path"), str)
-            and str(config.get("json_path", "")).startswith("Config/ConfigCharacter/Avatar/")
+        catalog = self.build_character_ability_source_graph_catalog()
+        actions = tuple(
+            action
+            for action in catalog.action_sources
+            if action.action_id == definition.action_id
+        )
+        query = CharacterAbilitySourceGraphQuery(catalog)
+        if len(actions) != 1:
+            retired = tuple(
+                source
+                for source in catalog.non_gameplay_skill_sources
+                if f"avatar_skill:{source.skill_id}" == definition.action_id
+            )
+            if len(retired) == 1:
+                query_result = query.query_action(
+                    retired[0].owner_avatar_id,
+                    definition.action_id,
+                )
+                return _blocked_action_binding(
+                    definition,
+                    query_result.blocked_reason,
+                )
+            return _blocked_action_binding(
+                definition,
+                "missing_or_ambiguous_character_action_source_graph",
+            )
+        action = actions[0]
+        query_result = query.query_action(
+            action.owner_avatar_id,
+            definition.action_id,
+        )
+        if query_result.status != "resolved":
+            return _blocked_action_binding(
+                definition,
+                query_result.blocked_reason or "character_action_source_graph_blocked",
+            )
+        level_sources = tuple(
+            source
+            for source in action.skill_sources
+            if source.evidence.get("level") == definition.level
+        )
+        if len(level_sources) != 1:
+            return _blocked_action_binding(
+                definition, "character_action_level_source_missing_or_ambiguous"
+            )
+        level_source = level_sources[0]
+        if (
+            definition.source.source_path != level_source.source_path
+            or definition.source.raw_id != action.skill_id
+            or definition.source.evidence.get("row_index")
+            != level_source.evidence.get("row_index")
+            or definition.source.evidence.get("level") != definition.level
+            or definition.skill_trigger_key != action.skill_trigger_key
+        ):
+            return _blocked_action_binding(
+                definition, "action_definition_source_graph_mismatch"
+            )
+
+        relation_document = self._character_relation_document(
+            level_source.source_path, catalog
+        )
+        row_index = level_source.evidence["row_index"]
+        if (
+            not isinstance(relation_document, list)
+            or not isinstance(row_index, int)
+            or isinstance(row_index, bool)
+            or row_index < 0
+            or row_index >= len(relation_document)
+            or not isinstance(relation_document[row_index], dict)
+        ):
+            return _blocked_action_binding(
+                definition, "character_action_level_row_invalid"
+            )
+        skill_row = dict(relation_document[row_index])
+        if (
+            str(skill_row.get("SkillID")) != action.skill_id
+            or skill_row.get("SkillTriggerKey") != action.skill_trigger_key
+            or int(_number_value(skill_row.get("Level"), 1.0)) != definition.level
+        ):
+            return _blocked_action_binding(
+                definition, "character_action_level_row_mismatch"
+            )
+        skill_row["_v8_source_path"] = level_source.source_path
+        skill_row["_v8_row_index"] = row_index
+
+        character_path = action.config_source.source_path
+        character_document = self._character_relation_document(
+            character_path, catalog
+        )
+        if not isinstance(character_document, dict):
+            return _blocked_action_binding(
+                definition, "avatar_character_config_not_readable", character_path
+            )
+        character_config = dict(character_document)
+        skill_entries = _skill_entries(character_config, action.skill_trigger_key)
+        expected_skill_path = action.config_source.evidence.get("json_path")
+        if len(skill_entries) != 1 or skill_entries[0][0] != expected_skill_path:
+            return _blocked_action_binding(
+                definition,
+                "character_action_config_relation_mismatch",
+                character_path,
+            )
+        skill_config = dict(skill_entries[0][1])
+
+        bindings_by_id = {binding.binding_id: binding for binding in catalog.bindings}
+        definitions_by_id = {
+            item.definition_id: item for item in catalog.definitions
+        }
+        source_bindings = tuple(
+            bindings_by_id[binding_id]
+            for binding_id in query_result.binding_ids
+        )
+        binding_order = {"entry": 0, "passive": 0, "phase": 1, "presentation": 2}
+        source_bindings = tuple(
+            sorted(
+                source_bindings,
+                key=lambda item: (
+                    binding_order.get(item.binding_kind, 3),
+                    item.ordinal,
+                    item.relation_id,
+                ),
+            )
+        )
+        gameplay_bindings = tuple(
+            binding
+            for binding in source_bindings
+            if binding.binding_kind in {"entry", "phase", "passive"}
+        )
+        presentation_bindings = tuple(
+            binding
+            for binding in source_bindings
+            if binding.binding_kind == "presentation"
+        )
+        if not gameplay_bindings:
+            return _blocked_action_binding(
+                definition, "character_action_has_no_gameplay_definition"
+            )
+
+        graph = next(
+            graph
+            for graph in catalog.graphs
+            if action.action_source_id in graph.action_source_ids
+        )
+        admitted_definition_ids = set(graph.definition_ids)
+        for shared_graph_id in graph.shared_graph_ids:
+            admitted_definition_ids.update(
+                next(
+                    shared_graph.definition_ids
+                    for shared_graph in catalog.graphs
+                    if shared_graph.graph_id == shared_graph_id
+                )
+            )
+        admitted_by_name: dict[str, list[CharacterAbilityDefinitionIR]] = {}
+        for item in catalog.definitions:
+            if item.definition_id in admitted_definition_ids:
+                admitted_by_name.setdefault(item.ability_name, []).append(item)
+
+        resolved_definitions: list[CharacterAbilityDefinitionIR] = []
+        resolved_ids: set[str] = set()
+        record_by_definition_id: dict[str, dict[str, Any]] = {}
+        document_by_definition_id: dict[str, dict[str, Any]] = {}
+
+        def add_gameplay_definition(item: CharacterAbilityDefinitionIR) -> None:
+            if item.definition_id in resolved_ids:
+                return
+            record, document = self._character_ability_definition_record(item)
+            resolved_ids.add(item.definition_id)
+            resolved_definitions.append(item)
+            record_by_definition_id[item.definition_id] = record
+            document_by_definition_id[item.definition_id] = document
+
+        for binding in gameplay_bindings:
+            add_gameplay_definition(definitions_by_id[binding.ability_definition_id])
+
+        client_only_names = list(
+            dict.fromkeys(binding.ability_name for binding in presentation_bindings)
+        )
+        client_only_paths = [
+            definitions_by_id[binding.ability_definition_id].source.source_path
+            for binding in presentation_bindings
         ]
-        if not mainline_configs:
-            return _blocked_action_binding(definition, "missing_mainline_avatar_config")
-        avatar_config = sorted(mainline_configs, key=lambda item: str(item.get("relative_path")))[0]
-        character_path = str(avatar_config.get("json_path") or "")
-        character_config = self._read_json_dict(character_path)
-        if character_config is None:
-            return _blocked_action_binding(definition, "avatar_character_config_not_readable", character_path)
-        skill_config = _skill_config_by_name(character_config, skill_trigger_key)
-        if not skill_config:
-            return _blocked_action_binding(definition, "skill_trigger_key_not_in_character_config", character_path)
-        entry_ability = str(skill_config.get("EntryAbility") or "")
-        ability_names = _ability_names_for_skill(character_config, skill_trigger_key, entry_ability)
-        if not entry_ability or not ability_names:
-            return _blocked_action_binding(definition, "missing_entry_ability_or_skill_ability_list", character_path)
-        ability_path = _avatar_ability_path_from_character_path(character_path)
-        ability_data = ability_file_cache.setdefault(ability_path, self._read_json_dict(ability_path))
-        if ability_data is None:
-            return _blocked_action_binding(definition, "avatar_ability_file_not_readable", ability_path)
-        ability_map = _ability_map(ability_data)
-        ability_names = _expand_triggered_ability_names(ability_names, ability_map)
-        camera_ability_path = _avatar_camera_ability_path_from_character_path(
-            character_path
+        unresolved_names: list[str] = []
+        queue = list(resolved_definitions)
+        queue_index = 0
+        while queue_index < len(queue):
+            current = queue[queue_index]
+            queue_index += 1
+            for child_name in _trigger_ability_names_from_value(
+                record_by_definition_id[current.definition_id]
+            ):
+                candidates = admitted_by_name.get(child_name, ())
+                selected_child = _select_trigger_ability_candidate(candidates)
+                if selected_child is None:
+                    if child_name not in unresolved_names:
+                        unresolved_names.append(child_name)
+                elif selected_child.definition_kind == "presentation":
+                    if child_name not in client_only_names:
+                        client_only_names.append(child_name)
+                    client_only_paths.append(selected_child.source.source_path)
+                elif selected_child.definition_id not in resolved_ids:
+                    add_gameplay_definition(selected_child)
+                    queue.append(selected_child)
+
+        if unresolved_names:
+            return _blocked_action_binding(
+                definition, "source_graph_definition_resolution_blocked"
+            )
+
+        direct_names = [binding.ability_name for binding in source_bindings]
+        ability_names = list(
+            dict.fromkeys(
+                [*direct_names, *(item.ability_name for item in resolved_definitions)]
+            )
         )
-        camera_ability_data = ability_file_cache.setdefault(
-            camera_ability_path,
-            self._read_json_dict(camera_ability_path),
+        entry_ability = next(
+            (
+                binding.ability_name
+                for binding in gameplay_bindings
+                if binding.binding_kind == "entry"
+            ),
+            str(skill_config.get("EntryAbility") or resolved_definitions[0].ability_name),
         )
-        camera_ability_map = (
-            _ability_map(camera_ability_data)
-            if camera_ability_data is not None
-            else {}
-        )
+        exact_ability_map = {
+            item.ability_name: record_by_definition_id[item.definition_id]
+            for item in resolved_definitions
+        }
+        config_source = {
+            "relative_path": action.config_source.evidence["inventory_source_path"],
+            "row_index": action.config_source.evidence["inventory_row_index"],
+            "avatar_id": action.owner_avatar_id,
+            "json_path": character_path,
+            "version_kind": action.config_source.evidence["selected_version"],
+        }
         source_context = _ability_graph_source_context(
             source_mode="mainline_avatar",
             skill_row=skill_row,
-            skill_trigger_key=skill_trigger_key,
+            skill_trigger_key=action.skill_trigger_key,
             character_path=character_path,
             character_config=character_config,
-            config_source=avatar_config,
+            config_source=config_source,
             config_kind="avatar_config",
-            ability_paths=(ability_path,),
-            skill_rows_by_trigger_key=_skill_rows_by_trigger_key_for_config(avatar_config, avatar_skill_rows, skill_row),
-            allowed_dynamic_hashes=_dynamic_hashes_for_ability_names(ability_names, ability_map),
+            ability_paths=tuple(
+                dict.fromkeys(item.source.source_path for item in resolved_definitions)
+            ),
+            skill_rows_by_trigger_key={action.skill_trigger_key: skill_row},
+            allowed_dynamic_hashes=_dynamic_hashes_for_ability_names(
+                [item.ability_name for item in resolved_definitions],
+                exact_ability_map,
+            ),
         )
         binding_id = f"action_binding:{definition.action_id}:{definition.level}"
         binding_phases: list[AbilityPhaseIR] = []
         lowered = _LoweredAbility()
-        missing_names = [name for name in ability_names if name not in ability_map]
-        client_only_names = [
-            name for name in missing_names if name in camera_ability_map
-        ]
-        unresolved_names = [
-            name for name in missing_names if name not in camera_ability_map
-        ]
-        for phase_index, ability_name in enumerate(ability_names):
-            ability = ability_map.get(ability_name)
-            if not isinstance(ability, dict):
-                continue
+        camera_paths = tuple(
+            dict.fromkeys(client_only_paths)
+        )
+        for phase_index, ability_definition in enumerate(resolved_definitions):
+            ability_name = ability_definition.ability_name
+            ability = record_by_definition_id[ability_definition.definition_id]
+            ability_path = ability_definition.source.source_path
+            ability_data = document_by_definition_id[ability_definition.definition_id]
             source = IRSource(
                 source_path=ability_path,
                 raw_type="AbilityList",
@@ -3746,30 +4054,37 @@ class TBGDLowering:
                     "action_id": definition.action_id,
                     "level": definition.level,
                     "phase_index": phase_index,
-                    "skill_trigger_key": skill_trigger_key,
+                    "skill_trigger_key": action.skill_trigger_key,
                     "entry_ability": entry_ability,
+                    "source_graph_action_source_id": action.action_source_id,
+                    "source_graph_definition_id": ability_definition.definition_id,
                     "ability_source_context": source_context,
                 },
             )
             phase_id = f"ability_phase:{definition.action_id}:{definition.level}:{phase_index}:{ability_name}"
-            phase_lowered = self._lower_ability_phase_tasks(
-                definition=definition,
-                phase_id=phase_id,
-                ability_name=ability_name,
-                ability=ability,
-                ability_path=ability_path,
-                source_context=source_context,
-                target_alias_registry=(
-                    ability_data.get("GlobalTargetAlias")
-                    if isinstance(ability_data.get("GlobalTargetAlias"), dict)
-                    else {}
-                ),
+            phase_lowered = (
+                self._lower_ability_phase_tasks(
+                    definition=definition,
+                    phase_id=phase_id,
+                    ability_name=ability_name,
+                    ability=ability,
+                    ability_path=ability_path,
+                    source_context=source_context,
+                    target_alias_registry=(
+                        ability_data.get("GlobalTargetAlias")
+                        if isinstance(ability_data.get("GlobalTargetAlias"), dict)
+                        else {}
+                    ),
+                )
+                if lower_tasks
+                else _LoweredAbility()
             )
-            _mark_client_only_trigger_ability_tasks(
-                phase_lowered,
-                client_only_ability_names=frozenset(client_only_names),
-                client_only_ability_path=camera_ability_path,
-            )
+            if lower_tasks:
+                _mark_client_only_trigger_ability_tasks(
+                    phase_lowered,
+                    client_only_ability_names=frozenset(client_only_names),
+                    client_only_ability_path=camera_paths[0] if camera_paths else "",
+                )
             lowered.merge(phase_lowered)
             binding_phases.append(
                 AbilityPhaseIR(
@@ -3788,27 +4103,22 @@ class TBGDLowering:
                     task_ids=tuple(task.task_id for task in phase_lowered.ability_tasks),
                 )
             )
-        blocked_reason = (
-            "missing_ability_phase_in_ability_file"
-            if unresolved_names
-            else ""
-        )
-        coverage_status = "blocked" if blocked_reason or not binding_phases else "executable"
+        blocked_reason = "" if binding_phases else "character_action_has_no_gameplay_definition"
+        coverage_status = "executable" if binding_phases else "blocked"
         source = IRSource(
             source_path=character_path,
             raw_type="AvatarCharacterConfig",
-            raw_id=skill_trigger_key,
+            raw_id=action.skill_trigger_key,
             evidence={
                 "action_id": definition.action_id,
                 "level": definition.level,
-                "avatar_id": _json_safe(avatar_config.get("avatar_id")),
-                "avatar_config": _json_safe(avatar_config),
-                "ability_file": ability_path,
-                "camera_ability_file": (
-                    camera_ability_path
-                    if camera_ability_data is not None
-                    else ""
-                ),
+                "avatar_id": action.owner_avatar_id,
+                "avatar_config": _json_safe(config_source),
+                "ability_files": [
+                    item.source.source_path for item in resolved_definitions
+                ],
+                "camera_ability_files": list(camera_paths),
+                "source_graph_action_source_id": action.action_source_id,
                 "client_only_ability_names": client_only_names,
                 "missing_ability_names": unresolved_names,
                 "trigger_expanded_ability_names": ability_names,
@@ -3819,14 +4129,16 @@ class TBGDLowering:
                 binding_id=binding_id,
                 action_id=definition.action_id,
                 level=definition.level,
-                skill_trigger_key=skill_trigger_key,
-                skill_name=str(skill_config.get("Name") or skill_trigger_key),
+                skill_trigger_key=action.skill_trigger_key,
+                skill_name=str(skill_config.get("Name") or action.skill_trigger_key),
                 entry_ability=entry_ability,
                 ability_names=tuple(ability_names),
                 config_source={
-                    "avatar_config": _json_safe(avatar_config),
+                    "avatar_config": _json_safe(config_source),
                     "character_config_path": character_path,
-                    "ability_file_path": ability_path,
+                    "ability_file_paths": [
+                        item.source.source_path for item in resolved_definitions
+                    ],
                 },
                 phase_ids=tuple(phase.phase_id for phase in binding_phases),
                 source_mode="mainline_avatar",
@@ -10517,6 +10829,29 @@ def _trigger_ability_names_from_value(value: Any) -> list[str]:
     return list(dict.fromkeys(name for name in names if name))
 
 
+def _select_trigger_ability_candidate(
+    candidates: list[CharacterAbilityDefinitionIR]
+    | tuple[CharacterAbilityDefinitionIR, ...],
+) -> CharacterAbilityDefinitionIR | None:
+    if type(candidates) not in {list, tuple} or any(
+        type(item) is not CharacterAbilityDefinitionIR for item in candidates
+    ):
+        raise TypeError("trigger ability candidates must be exact typed definitions")
+    gameplay = tuple(
+        item
+        for item in candidates
+        if item.definition_kind in {"character_main", "character_shared"}
+    )
+    if len(gameplay) == 1:
+        return gameplay[0]
+    presentation = tuple(
+        item for item in candidates if item.definition_kind == "presentation"
+    )
+    if not gameplay and len(presentation) == 1:
+        return presentation[0]
+    return None
+
+
 def _ability_names_from_value(value: Any) -> list[str]:
     names: list[str] = []
     if isinstance(value, str):
@@ -10554,30 +10889,6 @@ def _resolve_monster_ability_paths(
             continue
         resolved[ability_name] = paths[0]
     return resolved, missing, ambiguous
-
-
-def _avatar_ability_path_from_character_path(character_path: str) -> str:
-    path = Path(character_path)
-    name = path.name
-    if name.endswith("_Config.json"):
-        ability_name = name.replace("_Config.json", "_Ability.json")
-    else:
-        ability_name = f"{path.stem}_Ability.json"
-    if "Advanced" in path.parts:
-        return f"Config/ConfigAbility/Avatar/Advanced/{ability_name}"
-    return f"Config/ConfigAbility/Avatar/{ability_name}"
-
-
-def _avatar_camera_ability_path_from_character_path(
-    character_path: str,
-) -> str:
-    path = Path(character_path)
-    name = path.name
-    if name.endswith("_Config.json"):
-        camera_name = name.replace("_Config.json", "_Camera.json")
-    else:
-        camera_name = f"{path.stem}_Camera.json"
-    return f"Config/ConfigAbility/Avatar/Camera/{camera_name}"
 
 
 def _servant_ability_path_from_character_path(character_path: str) -> str:

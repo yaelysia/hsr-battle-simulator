@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Iterable, TypeVar
+from typing import Callable, Iterable, Literal, TypeVar
 
 from ..equipment.models import (
     CharacterEquipmentEligibilityIR,
@@ -50,6 +50,11 @@ from .ir import (
     ActionEventIR,
     AssistantAbilityResolutionIR,
     AvatarProfileIR,
+    CharacterAbilityBindingKind,
+    CharacterAbilityDefinitionIR,
+    CharacterAbilitySourceGraphCatalogIR,
+    CharacterActionSourceIR,
+    CharacterNonGameplaySkillSourceIR,
     CharacterEidolonSlotIR,
     CharacterMechanismSlotIR,
     CharacterTraceNodeIR,
@@ -106,6 +111,424 @@ from .ir import (
 
 
 @dataclass(frozen=True)
+class CharacterAbilitySourceGraphQueryResult:
+    status: Literal["resolved", "blocked"]
+    owner_avatar_id: str
+    action_id: str
+    ability_name: str
+    action_source_ids: tuple[str, ...]
+    non_gameplay_skill_source_ids: tuple[str, ...]
+    binding_ids: tuple[str, ...]
+    definition_ids: tuple[str, ...]
+    gap_ids: tuple[str, ...]
+    blocked_reason: str
+
+    def __post_init__(self) -> None:
+        if self.status not in {"resolved", "blocked"}:
+            raise ValueError("invalid character ability query status")
+        if not isinstance(self.owner_avatar_id, str) or not self.owner_avatar_id:
+            raise ValueError("character ability query owner is required")
+        if not isinstance(self.action_id, str) or not isinstance(
+            self.ability_name, str
+        ):
+            raise TypeError("character ability query references must be strings")
+        for field_name in (
+            "action_source_ids",
+            "non_gameplay_skill_source_ids",
+            "binding_ids",
+            "definition_ids",
+            "gap_ids",
+        ):
+            values = tuple(getattr(self, field_name))
+            if any(not isinstance(value, str) or not value for value in values):
+                raise TypeError(f"character ability query {field_name} is invalid")
+            if len(values) != len(set(values)):
+                raise ValueError(
+                    f"character ability query {field_name} contains duplicates"
+                )
+            object.__setattr__(self, field_name, tuple(sorted(values)))
+        if self.status == "resolved":
+            if (
+                self.blocked_reason
+                or self.non_gameplay_skill_source_ids
+                or not self.binding_ids
+                or not self.definition_ids
+            ):
+                raise ValueError("resolved character ability query is incomplete")
+        elif not self.blocked_reason:
+            raise ValueError("blocked character ability query must explain why")
+        if self.blocked_reason == "non_gameplay_skill_retired" and (
+            not self.action_id
+            or len(self.non_gameplay_skill_source_ids) != 1
+            or self.action_source_ids
+            or self.binding_ids
+            or self.definition_ids
+            or self.gap_ids
+        ):
+            raise ValueError("retired skill query result is inconsistent")
+
+
+@dataclass(frozen=True)
+class CharacterAbilityResolutionLedgerEntry:
+    relation_id: str
+    outcome: Literal["resolved", "blocked"]
+    binding_kind: CharacterAbilityBindingKind
+    owner_avatar_id: str
+    action_source_id: str
+    ability_name: str
+    result_id: str
+    source_path: str
+    json_path: str
+
+    def __post_init__(self) -> None:
+        if any(
+            not isinstance(value, str) or not value
+            for value in (
+                self.relation_id,
+                self.binding_kind,
+                self.result_id,
+                self.source_path,
+                self.json_path,
+            )
+        ):
+            raise ValueError("character ability resolution ledger entry is incomplete")
+        if self.outcome not in {"resolved", "blocked"}:
+            raise ValueError("character ability resolution ledger outcome is invalid")
+
+
+class CharacterAbilitySourceGraphQuery:
+    """Fail-closed narrow lookup over the P9-S1 source relationship graph."""
+
+    def __init__(self, catalog: CharacterAbilitySourceGraphCatalogIR) -> None:
+        if type(catalog) is not CharacterAbilitySourceGraphCatalogIR:
+            raise TypeError("source graph query requires the exact catalog type")
+        self._catalog = catalog
+        actions_by_action_id: dict[str, list[CharacterActionSourceIR]] = {}
+        for action in catalog.action_sources:
+            actions_by_action_id.setdefault(action.action_id, []).append(action)
+        self._actions_by_action_id = {
+            action_id: tuple(
+                sorted(actions, key=lambda action: action.action_source_id)
+            )
+            for action_id, actions in actions_by_action_id.items()
+        }
+        retired_by_action_id: dict[str, list[CharacterNonGameplaySkillSourceIR]] = {}
+        for source in catalog.non_gameplay_skill_sources:
+            retired_by_action_id.setdefault(
+                f"avatar_skill:{source.skill_id}", []
+            ).append(source)
+        self._retired_by_action_id = {
+            action_id: tuple(
+                sorted(
+                    sources,
+                    key=lambda source: source.non_gameplay_skill_source_id,
+                )
+            )
+            for action_id, sources in retired_by_action_id.items()
+        }
+        definitions_by_name: dict[str, list[CharacterAbilityDefinitionIR]] = {}
+        for definition in catalog.definitions:
+            definitions_by_name.setdefault(definition.ability_name, []).append(
+                definition
+            )
+        self._definitions_by_name = {
+            ability_name: tuple(
+                sorted(
+                    definitions,
+                    key=lambda definition: definition.definition_id,
+                )
+            )
+            for ability_name, definitions in definitions_by_name.items()
+        }
+
+    @property
+    def catalog(self) -> CharacterAbilitySourceGraphCatalogIR:
+        return self._catalog
+
+    def resolution_ledger(
+        self,
+    ) -> tuple[CharacterAbilityResolutionLedgerEntry, ...]:
+        entries = [
+            CharacterAbilityResolutionLedgerEntry(
+                relation_id=binding.relation_id,
+                outcome="resolved",
+                binding_kind=binding.binding_kind,
+                owner_avatar_id=binding.owner_avatar_id,
+                action_source_id=binding.action_source_id,
+                ability_name=binding.ability_name,
+                result_id=binding.binding_id,
+                source_path=binding.relation_source.source_path,
+                json_path=str(binding.relation_source.evidence["json_path"]),
+            )
+            for binding in self._catalog.bindings
+        ]
+        entries.extend(
+            CharacterAbilityResolutionLedgerEntry(
+                relation_id=gap.relation_id,
+                outcome="blocked",
+                binding_kind=gap.expected_binding_kind,
+                owner_avatar_id=gap.owner_avatar_id,
+                action_source_id=gap.action_source_id,
+                ability_name=gap.requested_ability_name,
+                result_id=gap.gap_id,
+                source_path=gap.source.source_path,
+                json_path=str(gap.source.evidence["json_path"]),
+            )
+            for gap in self._catalog.gaps
+        )
+        return tuple(sorted(entries, key=lambda entry: entry.relation_id))
+
+    @staticmethod
+    def _blocked(
+        *,
+        owner_avatar_id: str,
+        action_id: str = "",
+        ability_name: str = "",
+        action_source_ids: Iterable[str] = (),
+        non_gameplay_skill_source_ids: Iterable[str] = (),
+        binding_ids: Iterable[str] = (),
+        definition_ids: Iterable[str] = (),
+        gap_ids: Iterable[str] = (),
+        reason: str,
+    ) -> CharacterAbilitySourceGraphQueryResult:
+        return CharacterAbilitySourceGraphQueryResult(
+            status="blocked",
+            owner_avatar_id=owner_avatar_id,
+            action_id=action_id,
+            ability_name=ability_name,
+            action_source_ids=tuple(action_source_ids),
+            non_gameplay_skill_source_ids=tuple(non_gameplay_skill_source_ids),
+            binding_ids=tuple(binding_ids),
+            definition_ids=tuple(definition_ids),
+            gap_ids=tuple(gap_ids),
+            blocked_reason=reason,
+        )
+
+    @staticmethod
+    def _validate_owner(owner_avatar_id: str) -> None:
+        if not isinstance(owner_avatar_id, str) or not owner_avatar_id:
+            raise ValueError("character ability query owner is required")
+
+    def query_action(
+        self,
+        owner_avatar_id: str,
+        action_id: str,
+    ) -> CharacterAbilitySourceGraphQueryResult:
+        self._validate_owner(owner_avatar_id)
+        if not isinstance(action_id, str) or not action_id:
+            raise ValueError("character ability query action_id is required")
+        candidates = self._actions_by_action_id.get(action_id, ())
+        retired_candidates = self._retired_by_action_id.get(action_id, ())
+        own_retired = tuple(
+            source
+            for source in retired_candidates
+            if source.owner_avatar_id == owner_avatar_id
+        )
+        if own_retired:
+            return self._blocked(
+                owner_avatar_id=owner_avatar_id,
+                action_id=action_id,
+                non_gameplay_skill_source_ids=(
+                    source.non_gameplay_skill_source_id for source in own_retired
+                ),
+                reason=(
+                    "non_gameplay_skill_retired"
+                    if len(own_retired) == 1
+                    else "duplicate_non_gameplay_skill_source_blocked"
+                ),
+            )
+        own_candidates = tuple(
+            action
+            for action in candidates
+            if action.owner_avatar_id == owner_avatar_id
+        )
+        if not own_candidates:
+            reason = (
+                "cross_character_blocked"
+                if candidates or retired_candidates
+                else "missing_action_source_blocked"
+            )
+            return self._blocked(
+                owner_avatar_id=owner_avatar_id,
+                action_id=action_id,
+                action_source_ids=(
+                    action.action_source_id for action in candidates
+                ),
+                non_gameplay_skill_source_ids=(
+                    source.non_gameplay_skill_source_id
+                    for source in retired_candidates
+                ),
+                reason=reason,
+            )
+        if len(own_candidates) != 1:
+            kinds = {action.action_kind for action in own_candidates}
+            reason = (
+                "cross_kind_blocked"
+                if len(kinds) > 1
+                else "duplicate_action_source_blocked"
+            )
+            return self._blocked(
+                owner_avatar_id=owner_avatar_id,
+                action_id=action_id,
+                action_source_ids=(
+                    action.action_source_id for action in own_candidates
+                ),
+                reason=reason,
+            )
+        action = own_candidates[0]
+        related_gaps = tuple(
+            gap
+            for gap in self._catalog.gaps
+            if gap.owner_avatar_id == owner_avatar_id
+            and gap.expected_binding_kind != "presentation"
+            and (
+                gap.action_source_id == action.action_source_id
+                or action.action_source_id in gap.candidate_action_source_ids
+            )
+        )
+        action_bindings = tuple(
+            binding
+            for binding in self._catalog.bindings
+            if binding.action_source_id == action.action_source_id
+        )
+        gameplay_bindings = tuple(
+            binding
+            for binding in action_bindings
+            if binding.binding_kind in {"entry", "phase", "passive"}
+        )
+        if related_gaps:
+            return self._blocked(
+                owner_avatar_id=owner_avatar_id,
+                action_id=action_id,
+                action_source_ids=(action.action_source_id,),
+                binding_ids=(binding.binding_id for binding in action_bindings),
+                definition_ids=tuple(
+                    sorted(
+                        {
+                            binding.ability_definition_id
+                            for binding in action_bindings
+                        }
+                    )
+                ),
+                gap_ids=(gap.gap_id for gap in related_gaps),
+                reason="action_relationship_gap_blocked",
+            )
+        if not gameplay_bindings:
+            return self._blocked(
+                owner_avatar_id=owner_avatar_id,
+                action_id=action_id,
+                action_source_ids=(action.action_source_id,),
+                reason="missing_action_ability_binding_blocked",
+            )
+        return CharacterAbilitySourceGraphQueryResult(
+            status="resolved",
+            owner_avatar_id=owner_avatar_id,
+            action_id=action_id,
+            ability_name="",
+            action_source_ids=(action.action_source_id,),
+            non_gameplay_skill_source_ids=(),
+            binding_ids=tuple(binding.binding_id for binding in action_bindings),
+            definition_ids=tuple(
+                sorted(
+                    {
+                        binding.ability_definition_id
+                        for binding in action_bindings
+                    }
+                )
+            ),
+            gap_ids=(),
+            blocked_reason="",
+        )
+
+    def query_standalone_ability(
+        self,
+        owner_avatar_id: str,
+        ability_name: str,
+        *,
+        binding_kind: Literal["standalone", "presentation"] = "standalone",
+    ) -> CharacterAbilitySourceGraphQueryResult:
+        self._validate_owner(owner_avatar_id)
+        if not isinstance(ability_name, str) or not ability_name:
+            raise ValueError("character ability query ability_name is required")
+        if binding_kind not in {"standalone", "presentation"}:
+            raise ValueError("standalone query kind is invalid")
+        candidates = self._definitions_by_name.get(ability_name, ())
+        own_gameplay = tuple(
+            definition
+            for definition in candidates
+            if definition.definition_kind in {"character_main", "character_shared"}
+            and definition.owner_avatar_id in {"", owner_avatar_id}
+        )
+        own_presentation = tuple(
+            definition
+            for definition in candidates
+            if definition.definition_kind == "presentation"
+            and definition.owner_avatar_id == owner_avatar_id
+        )
+        foreign = tuple(
+            definition
+            for definition in candidates
+            if definition.owner_avatar_id not in {"", owner_avatar_id}
+        )
+        expected = own_presentation if binding_kind == "presentation" else own_gameplay
+        wrong_kind = own_gameplay if binding_kind == "presentation" else own_presentation
+        if not expected:
+            return self._blocked(
+                owner_avatar_id=owner_avatar_id,
+                ability_name=ability_name,
+                definition_ids=(
+                    definition.definition_id for definition in foreign
+                ),
+                reason=(
+                    "cross_character_blocked"
+                    if foreign
+                    else "wrong_kind_blocked"
+                    if wrong_kind
+                    else "source_gap_blocked"
+                ),
+            )
+        if len(expected) != 1:
+            return self._blocked(
+                owner_avatar_id=owner_avatar_id,
+                ability_name=ability_name,
+                definition_ids=(
+                    definition.definition_id for definition in expected
+                ),
+                reason="ambiguous_binding_blocked",
+            )
+        definition = expected[0]
+        matching_bindings = tuple(
+            binding
+            for binding in self._catalog.bindings
+            if binding.ability_definition_id == definition.definition_id
+            and binding.binding_kind == binding_kind
+            and binding.owner_avatar_id in {"", owner_avatar_id}
+        )
+        if len(matching_bindings) != 1:
+            return self._blocked(
+                owner_avatar_id=owner_avatar_id,
+                ability_name=ability_name,
+                definition_ids=(definition.definition_id,),
+                binding_ids=(
+                    binding.binding_id for binding in matching_bindings
+                ),
+                reason="missing_or_duplicate_typed_binding_blocked",
+            )
+        return CharacterAbilitySourceGraphQueryResult(
+            status="resolved",
+            owner_avatar_id=owner_avatar_id,
+            action_id="",
+            ability_name=ability_name,
+            action_source_ids=(),
+            non_gameplay_skill_source_ids=(),
+            binding_ids=(matching_bindings[0].binding_id,),
+            definition_ids=(definition.definition_id,),
+            gap_ids=(),
+            blocked_reason="",
+        )
+
+
+@dataclass(frozen=True)
 class EquipmentDynamicParameterContext:
     target_definition_key: EquipmentDefinitionKey
     parameter_basis: EquipmentParameterBasis
@@ -121,6 +544,16 @@ class RuleBook:
     ir: CanonicalIR
 
     def __post_init__(self) -> None:
+        catalog = self.ir.character_ability_source_graph_catalog
+        object.__setattr__(
+            self,
+            "_character_ability_source_graph_query",
+            (
+                CharacterAbilitySourceGraphQuery(catalog)
+                if catalog is not None
+                else None
+            ),
+        )
         object.__setattr__(self, "_entities", {entity.entity_id: entity for entity in self.ir.entities})
         modifier_definitions_by_name: dict[str, list[RuleEntity]] = {}
         status_entities_by_modifier: dict[str, list[RuleEntity]] = {}
@@ -1326,6 +1759,25 @@ class RuleBook:
             "_triggers_by_modifier_event",
             {key: tuple(value) for key, value in triggers_by_modifier_event.items()},
         )
+
+    def character_ability_source_graph_query(
+        self,
+    ) -> CharacterAbilitySourceGraphQuery | None:
+        return self._character_ability_source_graph_query
+
+    def query_character_action_source(
+        self,
+        owner_avatar_id: str,
+        action_id: str,
+    ) -> CharacterAbilitySourceGraphQueryResult:
+        query = self._character_ability_source_graph_query
+        if query is None:
+            return CharacterAbilitySourceGraphQuery._blocked(
+                owner_avatar_id=owner_avatar_id,
+                action_id=action_id,
+                reason="character_ability_source_graph_not_installed",
+            )
+        return query.query_action(owner_avatar_id, action_id)
 
     def entity(self, entity_id: str) -> RuleEntity | None:
         return self._entities.get(entity_id)

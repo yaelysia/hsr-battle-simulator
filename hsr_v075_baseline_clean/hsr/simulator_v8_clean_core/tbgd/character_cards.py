@@ -17,6 +17,8 @@ from ..rules.ir import (
     AvatarPromotionTierIR,
     AvatarProfileIR,
     BouncePolicyIR,
+    CharacterAbilityGraphRefIR,
+    CharacterAbilitySourceGraphCatalogIR,
     CharacterDataCardIR,
     CharacterEidolonSlotIR,
     CharacterMechanismSlotIR,
@@ -36,6 +38,12 @@ from .expression_lowering import lower_numeric_expression
 
 
 SkillTableSpec = tuple[str, str, str]
+CHARACTER_ACTION_DEFINITION_TABLES: tuple[SkillTableSpec, ...] = (
+    ("ExcelOutput/AvatarSkillConfig.json", "avatar_skill", "SkillID"),
+    ("ExcelOutput/AvatarSkillConfigLD.json", "avatar_skill", "SkillID"),
+    ("ExcelOutput/CommonAvatarSkillConfig.json", "avatar_skill", "SkillID"),
+    ("ExcelOutput/CommonActiveSkillConfig.json", "active_skill", "SkillID"),
+)
 
 
 @dataclass(frozen=True)
@@ -76,7 +84,24 @@ def build_character_card_ir(
     max_records_per_table: int | None,
     skill_tables: tuple[SkillTableSpec, ...],
     avatar_ids: frozenset[str] | None = None,
+    ability_source_graph_catalog: CharacterAbilitySourceGraphCatalogIR | None = None,
 ) -> CharacterCardBuildResult:
+    if (
+        ability_source_graph_catalog is not None
+        and type(ability_source_graph_catalog) is not CharacterAbilitySourceGraphCatalogIR
+    ):
+        raise TypeError(
+            "character card builder requires the exact source graph catalog type"
+        )
+    ability_graphs_by_avatar = {
+        graph.owner_avatar_id: graph
+        for graph in (
+            ability_source_graph_catalog.graphs
+            if ability_source_graph_catalog is not None
+            else ()
+        )
+        if graph.source_kind == "character_main"
+    }
     avatar_rows = _avatar_rows(
         tbgd_root,
         max_records_per_table=max_records_per_table,
@@ -242,6 +267,69 @@ def build_character_card_ir(
                 )
             )
         skill_ids = tuple(str(skill_id) for skill_id in row.get("SkillList") or ())
+        ability_graph = ability_graphs_by_avatar.get(avatar_id)
+        ability_source_graph_refs: tuple[CharacterAbilityGraphRefIR, ...] = ()
+        if ability_graph is not None:
+            selected_source = ability_graph.inventory_source
+            if type(selected_source) is not IRSource:
+                raise TypeError("owned ability graph inventory source is missing")
+            selected_evidence = selected_source.evidence
+            if (
+                selected_source.source_path != relative_path
+                or selected_evidence.get("row_index") != row_index
+                or selected_evidence.get("selected_version")
+                != str(row.get("_character_card_version_kind") or "base")
+                or selected_evidence.get("character_config_path")
+                != row.get("JsonPath")
+                or set(ability_graph.selected_skill_ids) != set(skill_ids)
+            ):
+                raise ValueError(
+                    "character card does not match its S0-selected ability graph row"
+                )
+            graph_refs: list[CharacterAbilityGraphRefIR] = []
+            graph_targets = (("owned", ability_graph.graph_id),) + tuple(
+                ("shared", graph_id) for graph_id in ability_graph.shared_graph_ids
+            )
+            for reference_kind, graph_id in graph_targets:
+                graph_refs.append(
+                    CharacterAbilityGraphRefIR(
+                        graph_ref_id=(
+                            f"character_ability_graph_ref:{card_id}:"
+                            f"{reference_kind}:{graph_id}"
+                        ),
+                        character_data_card_id=card_id,
+                        owner_avatar_id=avatar_id,
+                        graph_id=graph_id,
+                        reference_kind=reference_kind,
+                        source=IRSource(
+                            source_path=selected_source.source_path,
+                            raw_type=Path(relative_path).stem,
+                            raw_id=card_id,
+                            evidence={
+                                "graph_id": graph_id,
+                                "reference_kind": reference_kind,
+                                "source_graph_catalog_id": (
+                                    ability_source_graph_catalog.catalog_id
+                                    if ability_source_graph_catalog is not None
+                                    else ""
+                                ),
+                                "source_id": ability_graph.source_id,
+                                "avatar_id": avatar_id,
+                                "row_index": row_index,
+                                "selected_version": selected_evidence[
+                                    "selected_version"
+                                ],
+                                "character_config_path": selected_evidence[
+                                    "character_config_path"
+                                ],
+                                "content_sha256": selected_evidence[
+                                    "content_sha256"
+                                ],
+                            },
+                        ),
+                    )
+                )
+            ability_source_graph_refs = tuple(graph_refs)
         binding_ids = tuple(sorted(bindings_by_card.get(card_id, ())))
         bounce_policy_ids = tuple(sorted(bounce_policy_ids_by_card.get(card_id, ())))
         blocked_reason = ""
@@ -267,6 +355,7 @@ def build_character_card_ir(
                     row.get("_character_config_dynamic_value_bindings") or {}
                 ),
                 equipment_eligibility_id=equipment_eligibility_id,
+                ability_source_graph_refs=ability_source_graph_refs,
                 source=IRSource(
                     source_path=relative_path,
                     raw_type=Path(relative_path).stem,

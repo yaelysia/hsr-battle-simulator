@@ -1,11 +1,19 @@
 from .ir import (
     BattleStateTransitionIR,
     CanonicalIR,
+    CharacterAbilityBindingGapIR,
+    CharacterAbilityBindingIR,
+    CharacterAbilityDefinitionIR,
     CharacterAbilityExternalDependencyIR,
     CharacterAbilityFamilyIR,
     CharacterAbilityProjectionIR,
     CharacterAbilityScopeRecordIR,
     CharacterAbilitySourceIR,
+    CharacterAbilitySourceGraphCatalogIR,
+    CharacterAbilitySourceGraphIR,
+    CharacterAbilityGraphRefIR,
+    CharacterActionSourceIR,
+    CharacterNonGameplaySkillSourceIR,
     ConditionIR,
     EffectIR,
     FormulaIR,
@@ -16,16 +24,32 @@ from .ir import (
     TriggerIR,
 )
 from .evaluator import EvaluationContext, RuleEvaluator
-from .rulebook import RuleBook
+from .rulebook import (
+    CharacterAbilityResolutionLedgerEntry,
+    CharacterAbilitySourceGraphQuery,
+    CharacterAbilitySourceGraphQueryResult,
+    RuleBook,
+)
 
 __all__ = [
     "BattleStateTransitionIR",
     "CanonicalIR",
+    "CharacterAbilityBindingGapIR",
+    "CharacterAbilityBindingIR",
+    "CharacterAbilityDefinitionIR",
     "CharacterAbilityExternalDependencyIR",
     "CharacterAbilityFamilyIR",
     "CharacterAbilityProjectionIR",
     "CharacterAbilityScopeRecordIR",
     "CharacterAbilitySourceIR",
+    "CharacterAbilitySourceGraphCatalogIR",
+    "CharacterAbilitySourceGraphIR",
+    "CharacterAbilityGraphRefIR",
+    "CharacterAbilityResolutionLedgerEntry",
+    "CharacterAbilitySourceGraphQuery",
+    "CharacterAbilitySourceGraphQueryResult",
+    "CharacterActionSourceIR",
+    "CharacterNonGameplaySkillSourceIR",
     "ConditionIR",
     "EffectIR",
     "EvaluationContext",

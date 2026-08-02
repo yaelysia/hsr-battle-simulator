@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+import json
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
+from hashlib import sha256
 from typing import Any, Literal, cast
 
 from ..equipment.models import (
@@ -65,6 +67,15 @@ def _character_ability_source_json(source: IRSource) -> dict[str, JSONValue]:
     }
 
 
+def character_ability_stable_id(prefix: str, *parts: object) -> str:
+    payload = json.dumps(
+        [str(part) for part in parts],
+        ensure_ascii=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return f"{prefix}:{sha256(payload).hexdigest()}"
+
+
 CharacterAbilityScope = Literal[
     "gameplay",
     "build_resolution",
@@ -115,6 +126,36 @@ CharacterAbilityProjectionKind = Literal[
     "environment_dependency",
     "unit_topology",
     "input_action_contract",
+]
+CharacterAbilityDefinitionKind = Literal[
+    "character_main",
+    "character_shared",
+    "presentation",
+]
+CharacterActionSourceKind = Literal[
+    "basic",
+    "skill",
+    "ultimate",
+    "passive",
+    "maze",
+]
+CharacterAbilityBindingKind = Literal[
+    "entry",
+    "phase",
+    "passive",
+    "standalone",
+    "presentation",
+]
+CharacterAbilityBindingGapKind = Literal[
+    "source_gap_blocked",
+    "missing_entry_blocked",
+    "missing_phase_blocked",
+    "missing_action_source_blocked",
+    "duplicate_action_source_blocked",
+    "ambiguous_binding_blocked",
+    "cross_character_blocked",
+    "cross_kind_blocked",
+    "lowering_gap",
 ]
 
 
@@ -182,6 +223,28 @@ _CHARACTER_ABILITY_PROJECTION_KINDS = frozenset(
         "input_action_contract",
     }
 )
+_CHARACTER_ABILITY_DEFINITION_KINDS = frozenset(
+    {"character_main", "character_shared", "presentation"}
+)
+_CHARACTER_ACTION_SOURCE_KINDS = frozenset(
+    {"basic", "skill", "ultimate", "passive", "maze"}
+)
+_CHARACTER_ABILITY_BINDING_KINDS = frozenset(
+    {"entry", "phase", "passive", "standalone", "presentation"}
+)
+_CHARACTER_ABILITY_BINDING_GAP_KINDS = frozenset(
+    {
+        "source_gap_blocked",
+        "missing_entry_blocked",
+        "missing_phase_blocked",
+        "missing_action_source_blocked",
+        "duplicate_action_source_blocked",
+        "ambiguous_binding_blocked",
+        "cross_character_blocked",
+        "cross_kind_blocked",
+        "lowering_gap",
+    }
+)
 
 
 def _semantic_scope(value: str) -> str:
@@ -226,6 +289,14 @@ def _require_unique_strings(values: object, name: str) -> tuple[str, ...]:
 
 def _is_number(value: object) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _is_sha256(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdef" for character in value)
+    )
 
 
 def _validate_source_numeric_expression(value: object, field_name: str) -> None:
@@ -868,6 +939,1297 @@ class CharacterAbilityExternalDependencyIR:
 
 
 @dataclass(frozen=True)
+class CharacterAbilityDefinitionIR:
+    definition_id: str
+    source_id: str
+    owner_avatar_id: str
+    ability_name: str
+    definition_kind: CharacterAbilityDefinitionKind
+    source: IRSource
+
+    def __post_init__(self) -> None:
+        for field_name in ("definition_id", "source_id", "ability_name"):
+            value = getattr(self, field_name)
+            if not isinstance(value, str) or not value:
+                raise ValueError(f"character ability definition {field_name} is required")
+        if not isinstance(self.owner_avatar_id, str):
+            raise TypeError("character ability definition owner must be a string")
+        _require_string_enum(
+            self.definition_kind,
+            _CHARACTER_ABILITY_DEFINITION_KINDS,
+            "character ability definition_kind",
+        )
+        if self.definition_kind == "character_shared":
+            if self.owner_avatar_id:
+                raise ValueError("shared ability definition cannot have one avatar owner")
+        elif not self.owner_avatar_id:
+            raise ValueError("owned ability definition requires an avatar owner")
+        frozen_source = _immutable_character_ability_source(self.source)
+        if frozen_source.raw_id != self.ability_name:
+            raise ValueError("ability definition source identity mismatch")
+        expected_raw_type = (
+            "PresentationAbilityList"
+            if self.definition_kind == "presentation"
+            else "AbilityList"
+        )
+        if frozen_source.raw_type != expected_raw_type:
+            raise ValueError("ability definition source type mismatch")
+        evidence = frozen_source.evidence
+        if set(evidence) != {
+            "source_id",
+            "source_kind",
+            "avatar_id",
+            "json_path",
+            "ability_index",
+            "content_sha256",
+        }:
+            raise ValueError("ability definition evidence schema is invalid")
+        ability_index = evidence.get("ability_index")
+        digest = evidence.get("content_sha256")
+        if (
+            evidence.get("source_id") != self.source_id
+            or evidence.get("source_kind") != self.definition_kind
+            or evidence.get("avatar_id") != self.owner_avatar_id
+            or not isinstance(evidence.get("json_path"), str)
+            or not evidence.get("json_path")
+            or not isinstance(ability_index, int)
+            or isinstance(ability_index, bool)
+            or ability_index < 0
+            or not isinstance(digest, str)
+            or len(digest) != 64
+            or any(character not in "0123456789abcdef" for character in digest)
+        ):
+            raise ValueError("ability definition evidence is inconsistent")
+        object.__setattr__(self, "source", frozen_source)
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "definition_id": self.definition_id,
+            "source_id": self.source_id,
+            "owner_avatar_id": self.owner_avatar_id,
+            "ability_name": self.ability_name,
+            "definition_kind": self.definition_kind,
+            "source": _character_ability_source_json(self.source),
+            "coverage_status": (
+                "audit_only"
+                if self.definition_kind == "presentation"
+                else "lowered"
+            ),
+        }
+
+
+@dataclass(frozen=True)
+class CharacterActionSourceIR:
+    action_source_id: str
+    action_id: str
+    owner_avatar_id: str
+    skill_id: str
+    skill_trigger_key: str
+    action_kind: CharacterActionSourceKind
+    levels: tuple[int, ...]
+    highest_level: int
+    config_source: IRSource
+    skill_sources: tuple[IRSource, ...]
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "action_source_id",
+            "action_id",
+            "owner_avatar_id",
+            "skill_id",
+            "skill_trigger_key",
+        ):
+            value = getattr(self, field_name)
+            if not isinstance(value, str) or not value:
+                raise ValueError(f"character action source {field_name} is required")
+        if self.action_id != f"avatar_skill:{self.skill_id}":
+            raise ValueError("character action identity does not match skill identity")
+        _require_string_enum(
+            self.action_kind,
+            _CHARACTER_ACTION_SOURCE_KINDS,
+            "character action source kind",
+        )
+        level_values = tuple(self.levels)
+        if (
+            not level_values
+            or any(
+                not isinstance(level, int)
+                or isinstance(level, bool)
+                or level <= 0
+                for level in level_values
+            )
+            or level_values != tuple(sorted(set(level_values)))
+            or not isinstance(self.highest_level, int)
+            or isinstance(self.highest_level, bool)
+            or self.highest_level != level_values[-1]
+        ):
+            raise ValueError("character action levels are invalid")
+        config_source = _immutable_character_ability_source(self.config_source)
+        skill_source_values = tuple(self.skill_sources)
+        if any(type(source) is not IRSource for source in skill_source_values):
+            raise TypeError("character action skill sources must be exact IRSource values")
+        skill_sources = tuple(
+            sorted(
+                (_immutable_character_ability_source(source) for source in skill_source_values),
+                key=lambda source: (
+                    cast(int, source.evidence.get("level")),
+                    source.source_path,
+                    cast(int, source.evidence.get("row_index")),
+                ),
+            )
+        )
+        if len(skill_sources) != len(level_values):
+            raise ValueError("character action level sources do not reconcile")
+        if tuple(cast(int, source.evidence.get("level")) for source in skill_sources) != level_values:
+            raise ValueError("character action source levels are inconsistent")
+        if config_source.raw_id != self.skill_trigger_key:
+            raise ValueError("character action config source identity mismatch")
+        config_evidence = config_source.evidence
+        if set(config_evidence) != {
+            "source_id",
+            "avatar_id",
+            "skill_id",
+            "skill_trigger_key",
+            "json_path",
+            "inventory_source_path",
+            "inventory_row_index",
+            "selected_version",
+            "ability_source_path",
+            "inventory_content_sha256",
+            "content_sha256",
+        }:
+            raise ValueError("character action config evidence schema is invalid")
+        if (
+            config_evidence.get("avatar_id") != self.owner_avatar_id
+            or config_evidence.get("skill_id") != self.skill_id
+            or config_evidence.get("skill_trigger_key") != self.skill_trigger_key
+            or not isinstance(config_evidence.get("source_id"), str)
+            or not config_evidence.get("source_id")
+            or not isinstance(config_evidence.get("json_path"), str)
+            or not config_evidence.get("json_path")
+            or not isinstance(config_evidence.get("inventory_source_path"), str)
+            or not config_evidence.get("inventory_source_path")
+            or not isinstance(config_evidence.get("inventory_row_index"), int)
+            or isinstance(config_evidence.get("inventory_row_index"), bool)
+            or cast(int, config_evidence.get("inventory_row_index")) < 0
+            or config_evidence.get("selected_version") not in {"base", "enhanced"}
+            or not isinstance(config_evidence.get("ability_source_path"), str)
+            or not config_evidence.get("ability_source_path")
+            or not _is_sha256(config_evidence.get("inventory_content_sha256"))
+            or not _is_sha256(config_evidence.get("content_sha256"))
+        ):
+            raise ValueError("character action config evidence is inconsistent")
+        for source, level in zip(skill_sources, level_values, strict=True):
+            evidence = source.evidence
+            if set(evidence) != {
+                "avatar_id",
+                "skill_id",
+                "row_index",
+                "level",
+                "skill_trigger_key",
+                "content_sha256",
+            }:
+                raise ValueError("character action level evidence schema is invalid")
+            if (
+                source.raw_id != self.skill_id
+                or evidence.get("avatar_id") != self.owner_avatar_id
+                or evidence.get("skill_id") != self.skill_id
+                or evidence.get("skill_trigger_key") != self.skill_trigger_key
+                or evidence.get("level") != level
+                or not isinstance(evidence.get("row_index"), int)
+                or isinstance(evidence.get("row_index"), bool)
+                or cast(int, evidence.get("row_index")) < 0
+                or not _is_sha256(evidence.get("content_sha256"))
+            ):
+                raise ValueError("character action level evidence is inconsistent")
+        object.__setattr__(self, "levels", level_values)
+        object.__setattr__(self, "config_source", config_source)
+        object.__setattr__(self, "skill_sources", skill_sources)
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "action_source_id": self.action_source_id,
+            "action_id": self.action_id,
+            "owner_avatar_id": self.owner_avatar_id,
+            "skill_id": self.skill_id,
+            "skill_trigger_key": self.skill_trigger_key,
+            "action_kind": self.action_kind,
+            "levels": list(self.levels),
+            "highest_level": self.highest_level,
+            "config_source": _character_ability_source_json(self.config_source),
+            "skill_sources": [
+                _character_ability_source_json(source)
+                for source in self.skill_sources
+            ],
+        }
+
+
+@dataclass(frozen=True)
+class CharacterNonGameplaySkillSourceIR:
+    non_gameplay_skill_source_id: str
+    graph_id: str
+    owner_avatar_id: str
+    skill_id: str
+    raw_attack_type: str
+    raw_skill_effect: str
+    row_index: int
+    content_sha256: str
+    retired_reason: Literal["maze_normal_without_skill_trigger"]
+    source: IRSource
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "non_gameplay_skill_source_id",
+            "graph_id",
+            "owner_avatar_id",
+            "skill_id",
+            "retired_reason",
+        ):
+            value = getattr(self, field_name)
+            if not isinstance(value, str) or not value:
+                raise ValueError(f"non-gameplay skill source {field_name} is required")
+        if self.raw_attack_type != "MazeNormal":
+            raise ValueError("only MazeNormal skills can be retired as non-gameplay")
+        if not isinstance(self.raw_skill_effect, str):
+            raise TypeError("non-gameplay skill effect must retain its raw string")
+        if self.retired_reason != "maze_normal_without_skill_trigger":
+            raise ValueError("non-gameplay skill retired reason is invalid")
+        if (
+            not isinstance(self.row_index, int)
+            or isinstance(self.row_index, bool)
+            or self.row_index < 0
+            or not _is_sha256(self.content_sha256)
+        ):
+            raise ValueError("non-gameplay skill row evidence is invalid")
+        source = _immutable_character_ability_source(self.source)
+        evidence = source.evidence
+        if source.raw_type != "CharacterSkillActionRow" or source.raw_id != self.skill_id:
+            raise ValueError("non-gameplay skill source identity is invalid")
+        if set(evidence) != {
+            "graph_id",
+            "owner_avatar_id",
+            "skill_id",
+            "skill_trigger_key",
+            "attack_type",
+            "skill_effect",
+            "row_index",
+            "retired_reason",
+            "content_sha256",
+        }:
+            raise ValueError("non-gameplay skill evidence schema is invalid")
+        if (
+            evidence.get("graph_id") != self.graph_id
+            or evidence.get("owner_avatar_id") != self.owner_avatar_id
+            or evidence.get("skill_id") != self.skill_id
+            or evidence.get("skill_trigger_key") != ""
+            or evidence.get("attack_type") != self.raw_attack_type
+            or evidence.get("skill_effect") != self.raw_skill_effect
+            or evidence.get("row_index") != self.row_index
+            or evidence.get("retired_reason") != self.retired_reason
+            or evidence.get("content_sha256") != self.content_sha256
+            or self.non_gameplay_skill_source_id
+            != character_ability_stable_id(
+                "character_non_gameplay_skill_source",
+                self.graph_id,
+                self.owner_avatar_id,
+                self.skill_id,
+                source.source_path,
+                self.row_index,
+                self.raw_attack_type,
+                self.raw_skill_effect,
+                self.retired_reason,
+            )
+        ):
+            raise ValueError("non-gameplay skill evidence is inconsistent")
+        object.__setattr__(self, "source", source)
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "non_gameplay_skill_source_id": self.non_gameplay_skill_source_id,
+            "graph_id": self.graph_id,
+            "owner_avatar_id": self.owner_avatar_id,
+            "skill_id": self.skill_id,
+            "raw_attack_type": self.raw_attack_type,
+            "raw_skill_effect": self.raw_skill_effect,
+            "row_index": self.row_index,
+            "content_sha256": self.content_sha256,
+            "retired_reason": self.retired_reason,
+            "source": _character_ability_source_json(self.source),
+            "coverage_status": "non_gameplay_retired",
+        }
+
+
+@dataclass(frozen=True)
+class CharacterAbilityBindingIR:
+    binding_id: str
+    relation_id: str
+    graph_id: str
+    owner_avatar_id: str
+    action_source_id: str
+    ability_definition_id: str
+    ability_name: str
+    binding_kind: CharacterAbilityBindingKind
+    ordinal: int
+    relation_source: IRSource
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "binding_id",
+            "relation_id",
+            "graph_id",
+            "ability_definition_id",
+            "ability_name",
+        ):
+            value = getattr(self, field_name)
+            if not isinstance(value, str) or not value:
+                raise ValueError(f"character ability binding {field_name} is required")
+        if not isinstance(self.owner_avatar_id, str) or not isinstance(
+            self.action_source_id, str
+        ):
+            raise TypeError("character ability binding owner/action refs must be strings")
+        _require_string_enum(
+            self.binding_kind,
+            _CHARACTER_ABILITY_BINDING_KINDS,
+            "character ability binding kind",
+        )
+        if self.binding_kind in {"entry", "phase", "passive"} and not self.action_source_id:
+            raise ValueError("action entry, phase, and passive bindings require an action source")
+        if self.binding_kind == "standalone" and self.action_source_id:
+            raise ValueError("standalone ability cannot be action-bound")
+        if self.binding_kind != "standalone" and not self.owner_avatar_id:
+            raise ValueError("non-standalone ability bindings require an avatar owner")
+        if (
+            not isinstance(self.ordinal, int)
+            or isinstance(self.ordinal, bool)
+            or self.ordinal < 0
+        ):
+            raise ValueError("character ability binding ordinal is invalid")
+        relation_source = _immutable_character_ability_source(self.relation_source)
+        if relation_source.raw_id != self.ability_name:
+            raise ValueError("character ability binding source identity mismatch")
+        evidence = relation_source.evidence
+        if set(evidence) != {
+            "relation_id",
+            "graph_id",
+            "owner_avatar_id",
+            "action_source_id",
+            "skill_id",
+            "binding_kind",
+            "relation_ordinal",
+            "json_path",
+            "content_sha256",
+        }:
+            raise ValueError("character ability binding evidence schema is invalid")
+        if (
+            evidence.get("relation_id") != self.relation_id
+            or evidence.get("graph_id") != self.graph_id
+            or evidence.get("owner_avatar_id") != self.owner_avatar_id
+            or evidence.get("action_source_id") != self.action_source_id
+            or evidence.get("binding_kind") != self.binding_kind
+            or evidence.get("relation_ordinal") != self.ordinal
+            or not isinstance(evidence.get("skill_id"), str)
+            or not isinstance(evidence.get("json_path"), str)
+            or not evidence.get("json_path")
+            or not _is_sha256(evidence.get("content_sha256"))
+        ):
+            raise ValueError("character ability binding evidence is inconsistent")
+        object.__setattr__(self, "relation_source", relation_source)
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "binding_id": self.binding_id,
+            "relation_id": self.relation_id,
+            "graph_id": self.graph_id,
+            "owner_avatar_id": self.owner_avatar_id,
+            "action_source_id": self.action_source_id,
+            "ability_definition_id": self.ability_definition_id,
+            "ability_name": self.ability_name,
+            "binding_kind": self.binding_kind,
+            "ordinal": self.ordinal,
+            "relation_source": _character_ability_source_json(
+                self.relation_source
+            ),
+            "coverage_status": (
+                "audit_only"
+                if self.binding_kind == "presentation"
+                else "lowered"
+            ),
+        }
+
+
+@dataclass(frozen=True)
+class CharacterAbilityBindingGapIR:
+    gap_id: str
+    relation_id: str
+    graph_id: str
+    owner_avatar_id: str
+    action_source_id: str
+    requested_ability_name: str
+    expected_binding_kind: CharacterAbilityBindingKind
+    ordinal: int
+    gap_kind: CharacterAbilityBindingGapKind
+    candidate_definition_ids: tuple[str, ...]
+    candidate_action_source_ids: tuple[str, ...]
+    searched_source_ids: tuple[str, ...]
+    source: IRSource
+    blocked_reason: str
+
+    def __post_init__(self) -> None:
+        for field_name in ("gap_id", "relation_id", "graph_id", "blocked_reason"):
+            value = getattr(self, field_name)
+            if not isinstance(value, str) or not value:
+                raise ValueError(f"character ability gap {field_name} is required")
+        if (
+            not isinstance(self.owner_avatar_id, str)
+            or not isinstance(self.action_source_id, str)
+            or not isinstance(self.requested_ability_name, str)
+        ):
+            raise TypeError("character ability gap references must be strings")
+        _require_string_enum(
+            self.expected_binding_kind,
+            _CHARACTER_ABILITY_BINDING_KINDS,
+            "character ability gap expected kind",
+        )
+        _require_string_enum(
+            self.gap_kind,
+            _CHARACTER_ABILITY_BINDING_GAP_KINDS,
+            "character ability gap kind",
+        )
+        if (
+            not isinstance(self.ordinal, int)
+            or isinstance(self.ordinal, bool)
+            or self.ordinal < 0
+        ):
+            raise ValueError("character ability gap ordinal is invalid")
+        if not self.owner_avatar_id and self.expected_binding_kind != "standalone":
+            raise ValueError("only shared standalone gaps may omit an avatar owner")
+        candidate_ids = _require_unique_strings(
+            self.candidate_definition_ids,
+            "character ability gap candidates",
+        )
+        searched_ids = _require_unique_strings(
+            self.searched_source_ids,
+            "character ability gap searched sources",
+        )
+        action_candidate_ids = _require_unique_strings(
+            self.candidate_action_source_ids,
+            "character ability gap action candidates",
+        )
+        if self.gap_kind == "source_gap_blocked" and (
+            not self.requested_ability_name
+            or candidate_ids
+            or not searched_ids
+        ):
+            raise ValueError("source gaps require an exhausted candidate search")
+        if self.gap_kind in {
+            "ambiguous_binding_blocked",
+            "cross_character_blocked",
+            "cross_kind_blocked",
+            "duplicate_action_source_blocked",
+        } and not (candidate_ids or action_candidate_ids):
+            raise ValueError("candidate conflict gaps must retain candidates")
+        if self.gap_kind == "missing_phase_blocked" and self.requested_ability_name:
+            raise ValueError("missing phase-list gaps cannot invent an ability name")
+        source = _immutable_character_ability_source(self.source)
+        evidence = source.evidence
+        if set(evidence) != {
+            "relation_id",
+            "graph_id",
+            "owner_avatar_id",
+            "action_source_id",
+            "skill_id",
+            "binding_kind",
+            "relation_ordinal",
+            "json_path",
+            "content_sha256",
+        }:
+            raise ValueError("character ability gap evidence schema is invalid")
+        if (
+            evidence.get("relation_id") != self.relation_id
+            or evidence.get("graph_id") != self.graph_id
+            or evidence.get("owner_avatar_id") != self.owner_avatar_id
+            or evidence.get("action_source_id") != self.action_source_id
+            or evidence.get("binding_kind") != self.expected_binding_kind
+            or evidence.get("relation_ordinal") != self.ordinal
+            or not isinstance(evidence.get("skill_id"), str)
+            or not isinstance(evidence.get("json_path"), str)
+            or not evidence.get("json_path")
+            or not _is_sha256(evidence.get("content_sha256"))
+        ):
+            raise ValueError("character ability gap evidence is inconsistent")
+        object.__setattr__(self, "candidate_definition_ids", candidate_ids)
+        object.__setattr__(self, "candidate_action_source_ids", action_candidate_ids)
+        object.__setattr__(self, "searched_source_ids", searched_ids)
+        object.__setattr__(self, "source", source)
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "gap_id": self.gap_id,
+            "relation_id": self.relation_id,
+            "graph_id": self.graph_id,
+            "owner_avatar_id": self.owner_avatar_id,
+            "action_source_id": self.action_source_id,
+            "requested_ability_name": self.requested_ability_name,
+            "expected_binding_kind": self.expected_binding_kind,
+            "ordinal": self.ordinal,
+            "gap_kind": self.gap_kind,
+            "candidate_definition_ids": list(self.candidate_definition_ids),
+            "candidate_action_source_ids": list(self.candidate_action_source_ids),
+            "searched_source_ids": list(self.searched_source_ids),
+            "source": _character_ability_source_json(self.source),
+            "coverage_status": "blocked",
+            "blocked_reason": self.blocked_reason,
+        }
+
+
+@dataclass(frozen=True)
+class CharacterAbilitySourceGraphIR:
+    graph_id: str
+    source_id: str
+    source_kind: Literal["character_main", "character_shared"]
+    owner_avatar_id: str
+    definition_ids: tuple[str, ...]
+    action_source_ids: tuple[str, ...]
+    non_gameplay_skill_source_ids: tuple[str, ...]
+    binding_ids: tuple[str, ...]
+    gap_ids: tuple[str, ...]
+    selected_skill_ids: tuple[str, ...]
+    inventory_source: IRSource | None
+    shared_graph_ids: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        for field_name in ("graph_id", "source_id"):
+            value = getattr(self, field_name)
+            if not isinstance(value, str) or not value:
+                raise ValueError(f"character ability graph {field_name} is required")
+        _require_string_enum(
+            self.source_kind,
+            frozenset({"character_main", "character_shared"}),
+            "character ability graph source kind",
+        )
+        if not isinstance(self.owner_avatar_id, str):
+            raise TypeError("character ability graph owner must be a string")
+        if self.source_kind == "character_shared":
+            if self.owner_avatar_id or self.shared_graph_ids:
+                raise ValueError("shared ability graph cannot have an owner or shared refs")
+        elif not self.owner_avatar_id:
+            raise ValueError("character ability graph owner is required")
+        for field_name in (
+            "definition_ids",
+            "action_source_ids",
+            "non_gameplay_skill_source_ids",
+            "binding_ids",
+            "gap_ids",
+            "selected_skill_ids",
+            "shared_graph_ids",
+        ):
+            values = _require_unique_strings(
+                getattr(self, field_name),
+                f"character ability graph {field_name}",
+            )
+            if self.graph_id in values:
+                raise ValueError("character ability graph cannot reference itself")
+            object.__setattr__(self, field_name, values)
+        if not self.definition_ids:
+            raise ValueError("character ability graph must retain its definitions")
+        if self.source_kind == "character_shared":
+            if (
+                self.selected_skill_ids
+                or self.non_gameplay_skill_source_ids
+                or self.inventory_source is not None
+            ):
+                raise ValueError("shared ability graph cannot carry inventory selection")
+        else:
+            if type(self.inventory_source) is not IRSource:
+                raise TypeError("owned ability graph requires an exact inventory source")
+            inventory_source = _immutable_character_ability_source(self.inventory_source)
+            if inventory_source.raw_id != self.owner_avatar_id:
+                raise ValueError("owned ability graph inventory identity is inconsistent")
+            evidence = inventory_source.evidence
+            evidence_skill_ids = evidence.get("skill_ids")
+            if set(evidence) != {
+                "source_id",
+                "avatar_id",
+                "row_index",
+                "selected_version",
+                "character_config_path",
+                "ability_source_path",
+                "skill_ids",
+                "content_sha256",
+            }:
+                raise ValueError("owned ability graph inventory evidence schema is invalid")
+            if (
+                evidence.get("source_id") != self.source_id
+                or evidence.get("avatar_id") != self.owner_avatar_id
+                or not isinstance(evidence_skill_ids, (list, tuple))
+                or tuple(evidence_skill_ids) != self.selected_skill_ids
+                or not isinstance(evidence.get("row_index"), int)
+                or isinstance(evidence.get("row_index"), bool)
+                or cast(int, evidence.get("row_index")) < 0
+                or evidence.get("selected_version") not in {"base", "enhanced"}
+                or not isinstance(evidence.get("character_config_path"), str)
+                or not evidence.get("character_config_path")
+                or not isinstance(evidence.get("ability_source_path"), str)
+                or not evidence.get("ability_source_path")
+                or not _is_sha256(evidence.get("content_sha256"))
+            ):
+                raise ValueError("owned ability graph inventory evidence is inconsistent")
+            object.__setattr__(self, "inventory_source", inventory_source)
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "graph_id": self.graph_id,
+            "source_id": self.source_id,
+            "source_kind": self.source_kind,
+            "owner_avatar_id": self.owner_avatar_id,
+            "definition_ids": list(self.definition_ids),
+            "action_source_ids": list(self.action_source_ids),
+            "non_gameplay_skill_source_ids": list(
+                self.non_gameplay_skill_source_ids
+            ),
+            "binding_ids": list(self.binding_ids),
+            "gap_ids": list(self.gap_ids),
+            "selected_skill_ids": list(self.selected_skill_ids),
+            "inventory_source": (
+                _character_ability_source_json(self.inventory_source)
+                if self.inventory_source is not None
+                else None
+            ),
+            "shared_graph_ids": list(self.shared_graph_ids),
+        }
+
+
+@dataclass(frozen=True)
+class CharacterAbilityGraphRefIR:
+    graph_ref_id: str
+    character_data_card_id: str
+    owner_avatar_id: str
+    graph_id: str
+    reference_kind: Literal["owned", "shared"]
+    source: IRSource
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "graph_ref_id",
+            "character_data_card_id",
+            "owner_avatar_id",
+            "graph_id",
+        ):
+            value = getattr(self, field_name)
+            if not isinstance(value, str) or not value:
+                raise ValueError(
+                    f"character ability graph ref {field_name} is required"
+                )
+        _require_string_enum(
+            self.reference_kind,
+            frozenset({"owned", "shared"}),
+            "character ability graph reference kind",
+        )
+        source = _immutable_character_ability_source(self.source)
+        if source.raw_id != self.character_data_card_id:
+            raise ValueError("character ability card source identity mismatch")
+        if self.graph_ref_id != (
+            f"character_ability_graph_ref:{self.character_data_card_id}:"
+            f"{self.reference_kind}:{self.graph_id}"
+        ):
+            raise ValueError("character ability graph ref identity is inconsistent")
+        evidence = source.evidence
+        if set(evidence) != {
+            "graph_id",
+            "reference_kind",
+            "source_graph_catalog_id",
+            "source_id",
+            "avatar_id",
+            "row_index",
+            "selected_version",
+            "character_config_path",
+            "content_sha256",
+        }:
+            raise ValueError("character ability graph ref evidence schema is invalid")
+        if (
+            evidence.get("graph_id") != self.graph_id
+            or evidence.get("reference_kind") != self.reference_kind
+            or evidence.get("avatar_id") != self.owner_avatar_id
+            or not isinstance(evidence.get("source_graph_catalog_id"), str)
+            or not evidence.get("source_graph_catalog_id")
+            or not isinstance(evidence.get("source_id"), str)
+            or not evidence.get("source_id")
+            or not isinstance(evidence.get("row_index"), int)
+            or isinstance(evidence.get("row_index"), bool)
+            or cast(int, evidence.get("row_index")) < 0
+            or evidence.get("selected_version") not in {"base", "enhanced"}
+            or not isinstance(evidence.get("character_config_path"), str)
+            or not evidence.get("character_config_path")
+            or not _is_sha256(evidence.get("content_sha256"))
+        ):
+            raise ValueError("character ability graph ref evidence is inconsistent")
+        object.__setattr__(self, "source", source)
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "graph_ref_id": self.graph_ref_id,
+            "character_data_card_id": self.character_data_card_id,
+            "owner_avatar_id": self.owner_avatar_id,
+            "graph_id": self.graph_id,
+            "reference_kind": self.reference_kind,
+            "source": _character_ability_source_json(self.source),
+        }
+
+def _ambiguous_character_action_source_ids(
+    action_sources: tuple[CharacterActionSourceIR, ...],
+) -> frozenset[str]:
+    if type(action_sources) is not tuple or any(
+        type(action) is not CharacterActionSourceIR for action in action_sources
+    ):
+        raise TypeError("character action ambiguity requires exact typed sources")
+    actions_by_owner_id: dict[
+        tuple[str, str], list[CharacterActionSourceIR]
+    ] = {}
+    for action in action_sources:
+        actions_by_owner_id.setdefault(
+            (action.action_id, action.owner_avatar_id), []
+        ).append(action)
+    return frozenset(
+        action.action_source_id
+        for actions in actions_by_owner_id.values()
+        if len(actions) != 1
+        for action in actions
+    )
+
+
+@dataclass(frozen=True)
+class CharacterAbilitySourceGraphCatalogIR:
+    snapshot_id: str
+    scope_catalog_id: str
+    source_fingerprint: str
+    fingerprint_kind: Literal["complete", "partial"]
+    sources: tuple[CharacterAbilitySourceIR, ...]
+    relation_source_digests: Mapping[str, str]
+    definitions: tuple[CharacterAbilityDefinitionIR, ...]
+    action_sources: tuple[CharacterActionSourceIR, ...]
+    non_gameplay_skill_sources: tuple[CharacterNonGameplaySkillSourceIR, ...]
+    bindings: tuple[CharacterAbilityBindingIR, ...]
+    gaps: tuple[CharacterAbilityBindingGapIR, ...]
+    graphs: tuple[CharacterAbilitySourceGraphIR, ...]
+    build_counters: Mapping[str, Any]
+    catalog_id: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        for field_name in ("snapshot_id", "scope_catalog_id"):
+            value = getattr(self, field_name)
+            if not isinstance(value, str) or not value:
+                raise ValueError(f"character ability source catalog {field_name} is required")
+        if (
+            not isinstance(self.source_fingerprint, str)
+            or len(self.source_fingerprint) != 64
+            or any(
+                character not in "0123456789abcdef"
+                for character in self.source_fingerprint
+            )
+        ):
+            raise ValueError("character ability source graph fingerprint is invalid")
+        _require_string_enum(
+            self.fingerprint_kind,
+            frozenset({"complete", "partial"}),
+            "character ability source graph fingerprint kind",
+        )
+        collections = (
+            (self.sources, CharacterAbilitySourceIR, "sources", "source_id"),
+            (self.definitions, CharacterAbilityDefinitionIR, "definitions", "definition_id"),
+            (self.action_sources, CharacterActionSourceIR, "action_sources", "action_source_id"),
+            (self.non_gameplay_skill_sources, CharacterNonGameplaySkillSourceIR, "non_gameplay_skill_sources", "non_gameplay_skill_source_id"),
+            (self.bindings, CharacterAbilityBindingIR, "bindings", "binding_id"),
+            (self.gaps, CharacterAbilityBindingGapIR, "gaps", "gap_id"),
+            (self.graphs, CharacterAbilitySourceGraphIR, "graphs", "graph_id"),
+        )
+        normalized: dict[str, tuple[Any, ...]] = {}
+        for values, expected_type, field_name, identity_field in collections:
+            items = tuple(values)
+            if any(type(item) is not expected_type for item in items):
+                raise TypeError(
+                    f"character ability source catalog {field_name} contains an invalid IR value"
+                )
+            ordered = tuple(sorted(items, key=lambda item: getattr(item, identity_field)))
+            identities = [getattr(item, identity_field) for item in ordered]
+            if len(identities) != len(set(identities)):
+                raise ValueError(f"duplicate character ability {field_name} identity")
+            normalized[field_name] = ordered
+            object.__setattr__(self, field_name, ordered)
+        if not self.sources or not self.graphs:
+            raise ValueError("character ability source graph catalog cannot be empty")
+        if not isinstance(self.relation_source_digests, Mapping):
+            raise TypeError("relation source digests must be a mapping")
+        digests: dict[str, str] = {}
+        for path, digest in self.relation_source_digests.items():
+            if (
+                not isinstance(path, str)
+                or not path
+                or not isinstance(digest, str)
+                or len(digest) != 64
+                or any(character not in "0123456789abcdef" for character in digest)
+            ):
+                raise ValueError("relation source digest is invalid")
+            digests[path] = digest
+        if not isinstance(self.build_counters, Mapping):
+            raise TypeError("character ability source graph counters must be a mapping")
+        counters = cast(Mapping[str, Any], freeze_json(dict(self.build_counters)))
+        frozen_digests = cast(Mapping[str, str], freeze_json(dict(sorted(digests.items()))))
+        object.__setattr__(self, "relation_source_digests", frozen_digests)
+        object.__setattr__(self, "build_counters", counters)
+
+        sources_by_id = {source.source_id: source for source in self.sources}
+        source_path_digests = {
+            source.source.source_path: source.content_sha256
+            for source in self.sources
+        }
+        for source in self.sources:
+            evidence = source.source.evidence
+            if set(evidence) != {
+                "avatar_id",
+                "base_type",
+                "config_source_path",
+                "config_row_index",
+                "selected_version",
+            }:
+                raise ValueError("character ability S0 source evidence schema is invalid")
+            if (
+                evidence.get("avatar_id") != source.avatar_id
+                or evidence.get("base_type") != source.base_type
+                or not isinstance(evidence.get("config_source_path"), str)
+                or not evidence.get("config_source_path")
+                or not isinstance(evidence.get("config_row_index"), int)
+                or isinstance(evidence.get("config_row_index"), bool)
+                or cast(int, evidence.get("config_row_index")) < 0
+                or evidence.get("selected_version")
+                not in {"base", "enhanced", "shared"}
+            ):
+                raise ValueError("character ability S0 source evidence is inconsistent")
+        conflicting_digest_paths = set(source_path_digests) & set(frozen_digests)
+        if any(
+            source_path_digests[path] != frozen_digests[path]
+            for path in conflicting_digest_paths
+        ):
+            raise ValueError("character ability source digest maps conflict")
+        audited_digests = {**source_path_digests, **dict(frozen_digests)}
+        definitions_by_id = {
+            definition.definition_id: definition for definition in self.definitions
+        }
+        actions_by_id = {
+            action.action_source_id: action for action in self.action_sources
+        }
+        non_gameplay_by_id = {
+            source.non_gameplay_skill_source_id: source
+            for source in self.non_gameplay_skill_sources
+        }
+        bindings_by_id = {binding.binding_id: binding for binding in self.bindings}
+        gaps_by_id = {gap.gap_id: gap for gap in self.gaps}
+        graphs_by_id = {graph.graph_id: graph for graph in self.graphs}
+        definition_membership: dict[str, int] = {}
+        action_membership: dict[str, int] = {}
+        non_gameplay_membership: dict[str, int] = {}
+        binding_membership: dict[str, int] = {}
+        gap_membership: dict[str, int] = {}
+        for graph in self.graphs:
+            source = sources_by_id.get(graph.source_id)
+            if (
+                source is None
+                or source.source_kind != graph.source_kind
+                or source.avatar_id != graph.owner_avatar_id
+                or graph.graph_id
+                != character_ability_stable_id(
+                    "character_ability_source_graph", graph.source_id
+                )
+            ):
+                raise ValueError("character ability graph source reference is invalid")
+            if graph.source_kind == "character_main":
+                inventory_source = cast(IRSource, graph.inventory_source)
+                inventory_evidence = inventory_source.evidence
+                source_evidence = source.source.evidence
+                if (
+                    inventory_source.source_path
+                    != source_evidence.get("config_source_path")
+                    or inventory_evidence.get("row_index")
+                    != source_evidence.get("config_row_index")
+                    or inventory_evidence.get("selected_version")
+                    != source_evidence.get("selected_version")
+                    or inventory_evidence.get("ability_source_path")
+                    != source.source.source_path
+                    or inventory_evidence.get("content_sha256")
+                    != frozen_digests.get(inventory_source.source_path)
+                ):
+                    raise ValueError(
+                        "owned ability graph does not match its S0 inventory selection"
+                    )
+            if any(graph_id not in graphs_by_id for graph_id in graph.shared_graph_ids):
+                raise ValueError("character ability shared graph reference is dangling")
+            if any(item_id not in definitions_by_id for item_id in graph.definition_ids):
+                raise ValueError("character ability graph definition reference is dangling")
+            if any(item_id not in actions_by_id for item_id in graph.action_source_ids):
+                raise ValueError("character ability graph action reference is dangling")
+            if any(
+                item_id not in non_gameplay_by_id
+                for item_id in graph.non_gameplay_skill_source_ids
+            ):
+                raise ValueError("character graph non-gameplay source reference is dangling")
+            if any(item_id not in bindings_by_id for item_id in graph.binding_ids):
+                raise ValueError("character ability graph binding reference is dangling")
+            if any(item_id not in gaps_by_id for item_id in graph.gap_ids):
+                raise ValueError("character ability graph gap reference is dangling")
+            for item_id, membership in (
+                *((item_id, definition_membership) for item_id in graph.definition_ids),
+                *((item_id, action_membership) for item_id in graph.action_source_ids),
+                *((item_id, non_gameplay_membership) for item_id in graph.non_gameplay_skill_source_ids),
+                *((item_id, binding_membership) for item_id in graph.binding_ids),
+                *((item_id, gap_membership) for item_id in graph.gap_ids),
+            ):
+                membership[item_id] = membership.get(item_id, 0) + 1
+            for definition_id in graph.definition_ids:
+                definition = definitions_by_id[definition_id]
+                if graph.source_kind == "character_shared":
+                    if definition.definition_kind != "character_shared":
+                        raise ValueError("shared graph contains an owned definition")
+                elif (
+                    definition.definition_kind == "character_shared"
+                    or definition.owner_avatar_id != graph.owner_avatar_id
+                ):
+                    raise ValueError("owned graph contains a foreign definition")
+            if any(
+                actions_by_id[action_id].owner_avatar_id != graph.owner_avatar_id
+                for action_id in graph.action_source_ids
+            ):
+                raise ValueError("character ability graph contains a foreign action")
+            graph_actions = tuple(
+                actions_by_id[action_id] for action_id in graph.action_source_ids
+            )
+            graph_non_gameplay = tuple(
+                non_gameplay_by_id[source_id]
+                for source_id in graph.non_gameplay_skill_source_ids
+            )
+            if any(
+                action.skill_id not in graph.selected_skill_ids
+                for action in graph_actions
+            ):
+                raise ValueError("character ability graph contains an unselected action")
+            if any(
+                source.graph_id != graph.graph_id
+                or source.owner_avatar_id != graph.owner_avatar_id
+                or source.skill_id not in graph.selected_skill_ids
+                for source in graph_non_gameplay
+            ):
+                raise ValueError("character graph contains a foreign non-gameplay source")
+            if len({source.skill_id for source in graph_non_gameplay}) != len(
+                graph_non_gameplay
+            ):
+                raise ValueError("selected skill has duplicate non-gameplay sources")
+            action_skill_ids = {action.skill_id for action in graph_actions}
+            non_gameplay_skill_ids = {
+                source.skill_id for source in graph_non_gameplay
+            }
+            missing_action_skill_ids = {
+                cast(str, gaps_by_id[gap_id].source.evidence.get("skill_id"))
+                for gap_id in graph.gap_ids
+                if gaps_by_id[gap_id].gap_kind == "missing_action_source_blocked"
+            }
+            selected_skill_ids = set(graph.selected_skill_ids)
+            categories = (
+                action_skill_ids,
+                non_gameplay_skill_ids,
+                missing_action_skill_ids,
+            )
+            if (
+                set.union(*categories) != selected_skill_ids
+                or any(
+                    categories[left] & categories[right]
+                    for left in range(len(categories))
+                    for right in range(left + 1, len(categories))
+                )
+            ):
+                raise ValueError(
+                    "selected skills must have one exclusive admission outcome"
+                )
+        for values, membership, label in (
+            (definitions_by_id, definition_membership, "definition"),
+            (actions_by_id, action_membership, "action"),
+            (non_gameplay_by_id, non_gameplay_membership, "non-gameplay source"),
+            (bindings_by_id, binding_membership, "binding"),
+            (gaps_by_id, gap_membership, "gap"),
+        ):
+            if set(values) != set(membership) or any(
+                count != 1 for count in membership.values()
+            ):
+                raise ValueError(f"character ability {label} graph membership is not exclusive")
+        for source in self.non_gameplay_skill_sources:
+            if (
+                source.source.evidence.get("content_sha256")
+                != audited_digests.get(source.source.source_path)
+            ):
+                raise ValueError("non-gameplay skill source digest is invalid")
+        for definition in self.definitions:
+            if definition.definition_kind != "presentation":
+                source = sources_by_id.get(definition.source_id)
+                if (
+                    source is None
+                    or source.source.source_path != definition.source.source_path
+                    or definition.source.evidence.get("content_sha256")
+                    != source.content_sha256
+                ):
+                    raise ValueError("ability definition source reference is dangling")
+            elif (
+                definition.source.source_path not in frozen_digests
+                or definition.source.evidence.get("content_sha256")
+                != frozen_digests[definition.source.source_path]
+            ):
+                raise ValueError("presentation definition source digest is invalid")
+            ability_index = cast(int, definition.source.evidence["ability_index"])
+            if (
+                definition.source.evidence.get("json_path")
+                != f"$.AbilityList[{ability_index}]"
+                or definition.definition_id
+                != character_ability_stable_id(
+                    "character_ability_definition",
+                    definition.definition_kind,
+                    definition.source_id,
+                    definition.source.source_path,
+                    ability_index,
+                    definition.ability_name,
+                )
+            ):
+                raise ValueError("ability definition row identity is invalid")
+        for action in self.action_sources:
+            config_evidence = action.config_source.evidence
+            skill_source_paths = {
+                source.source_path for source in action.skill_sources
+            }
+            if (
+                len(skill_source_paths) != 1
+                or
+                action.config_source.source_path not in frozen_digests
+                or config_evidence.get("content_sha256")
+                != frozen_digests[action.config_source.source_path]
+                or config_evidence.get("inventory_content_sha256")
+                != frozen_digests.get(
+                    cast(str, config_evidence.get("inventory_source_path"))
+                )
+                or any(
+                    source.source_path not in frozen_digests
+                    or source.evidence.get("content_sha256")
+                    != frozen_digests[source.source_path]
+                    for source in action.skill_sources
+                )
+            ):
+                raise ValueError("character action relation source digest is invalid")
+            table_path = next(iter(skill_source_paths))
+            if action.action_source_id != character_ability_stable_id(
+                "character_action_source",
+                action.owner_avatar_id,
+                action.skill_id,
+                table_path,
+                action.skill_trigger_key,
+                action.action_kind,
+                action.config_source.source_path,
+                config_evidence.get("json_path"),
+                *(
+                    f"{source.evidence.get('row_index')}:{source.evidence.get('level')}"
+                    for source in action.skill_sources
+                ),
+            ):
+                raise ValueError("character action row identity is invalid")
+            action_graph = next(
+                graph
+                for graph in self.graphs
+                if action.action_source_id in graph.action_source_ids
+            )
+            inventory_source = cast(IRSource, action_graph.inventory_source)
+            inventory_evidence = inventory_source.evidence
+            if (
+                config_evidence.get("source_id") != action_graph.source_id
+                or config_evidence.get("inventory_source_path")
+                != inventory_source.source_path
+                or config_evidence.get("inventory_row_index")
+                != inventory_evidence.get("row_index")
+                or config_evidence.get("selected_version")
+                != inventory_evidence.get("selected_version")
+                or config_evidence.get("ability_source_path")
+                != inventory_evidence.get("ability_source_path")
+            ):
+                raise ValueError("character action does not use its graph inventory row")
+        ambiguous_action_source_ids = _ambiguous_character_action_source_ids(
+            self.action_sources
+        )
+        resolved_relation_ids: set[str] = set()
+        for binding in self.bindings:
+            definition = definitions_by_id.get(binding.ability_definition_id)
+            graph = graphs_by_id.get(binding.graph_id)
+            action = actions_by_id.get(binding.action_source_id) if binding.action_source_id else None
+            if (
+                definition is None
+                or graph is None
+                or binding.binding_id not in graph.binding_ids
+                or definition.ability_name != binding.ability_name
+                or definition.owner_avatar_id not in {"", binding.owner_avatar_id}
+                or (binding.action_source_id and action is None)
+                or (action is not None and action.owner_avatar_id != binding.owner_avatar_id)
+                or binding.action_source_id in ambiguous_action_source_ids
+                or (
+                    binding.binding_kind == "passive"
+                    and (action is None or action.action_kind != "passive")
+                )
+                or (
+                    binding.binding_kind in {"entry", "phase"}
+                    and (action is None or action.action_kind == "passive")
+                )
+                or (
+                    binding.binding_kind == "presentation"
+                    and definition.definition_kind != "presentation"
+                )
+                or (
+                    binding.binding_kind != "presentation"
+                    and definition.definition_kind == "presentation"
+                )
+                or binding.relation_source.evidence.get("content_sha256")
+                != audited_digests.get(binding.relation_source.source_path)
+                or binding.relation_source.evidence.get("skill_id")
+                != (action.skill_id if action is not None else "")
+                or (
+                    action is not None
+                    and binding.relation_source.source_path
+                    != action.config_source.source_path
+                )
+                or (
+                    action is None
+                    and binding.relation_source.source_path
+                    != definition.source.source_path
+                )
+                or binding.binding_id
+                != character_ability_stable_id(
+                    "character_ability_binding",
+                    binding.relation_id,
+                    binding.ability_definition_id,
+                )
+                or binding.relation_id
+                != character_ability_stable_id(
+                    "character_ability_relation",
+                    binding.graph_id,
+                    binding.owner_avatar_id,
+                    binding.action_source_id,
+                    binding.relation_source.evidence.get("skill_id"),
+                    binding.relation_source.raw_id,
+                    binding.binding_kind,
+                    binding.ordinal,
+                    binding.relation_source.source_path,
+                    binding.relation_source.evidence.get("json_path"),
+                )
+            ):
+                raise ValueError("character ability binding references are inconsistent")
+            if binding.relation_id in resolved_relation_ids:
+                raise ValueError(
+                    "character ability relation has duplicate outcomes"
+                )
+            resolved_relation_ids.add(binding.relation_id)
+        for gap in self.gaps:
+            graph = graphs_by_id.get(gap.graph_id)
+            gap_action = (
+                actions_by_id.get(gap.action_source_id)
+                if gap.action_source_id
+                else None
+            )
+            if (
+                graph is None
+                or gap.gap_id not in graph.gap_ids
+                or any(
+                    definition_id not in definitions_by_id
+                    for definition_id in gap.candidate_definition_ids
+                )
+                or any(
+                    action_source_id not in actions_by_id
+                    for action_source_id in gap.candidate_action_source_ids
+                )
+                or gap.source.evidence.get("content_sha256")
+                != audited_digests.get(gap.source.source_path)
+                or gap.relation_id in resolved_relation_ids
+                or (
+                    gap.action_source_id
+                    and (
+                        gap_action is None
+                        or gap_action.owner_avatar_id != gap.owner_avatar_id
+                        or gap.source.source_path
+                        != gap_action.config_source.source_path
+                        or gap.source.evidence.get("skill_id")
+                        != gap_action.skill_id
+                    )
+                )
+                or gap.gap_id
+                != character_ability_stable_id(
+                    "character_ability_binding_gap",
+                    gap.relation_id,
+                    gap.gap_kind,
+                    *gap.candidate_definition_ids,
+                    *gap.candidate_action_source_ids,
+                )
+                or gap.relation_id
+                != character_ability_stable_id(
+                    "character_ability_relation",
+                    gap.graph_id,
+                    gap.owner_avatar_id,
+                    gap.action_source_id,
+                    gap.source.evidence.get("skill_id"),
+                    gap.source.raw_id,
+                    gap.expected_binding_kind,
+                    gap.ordinal,
+                    gap.source.source_path,
+                    gap.source.evidence.get("json_path"),
+                )
+            ):
+                raise ValueError("character ability gap references are inconsistent")
+            resolved_relation_ids.add(gap.relation_id)
+        identity_payload = self._identity_payload()
+        catalog_id = "character_ability_source_graph_catalog:" + sha256(
+            json.dumps(
+                identity_payload,
+                ensure_ascii=True,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        object.__setattr__(self, "catalog_id", catalog_id)
+
+    @property
+    def source_catalog_complete(self) -> bool:
+        return self.fingerprint_kind == "complete"
+
+    @property
+    def current_bindings_fully_classified(self) -> bool:
+        return not any(gap.gap_kind == "lowering_gap" for gap in self.gaps)
+
+    def _identity_payload(self) -> dict[str, JSONValue]:
+        return {
+            "snapshot_id": self.snapshot_id,
+            "scope_catalog_id": self.scope_catalog_id,
+            "source_fingerprint": self.source_fingerprint,
+            "fingerprint_kind": self.fingerprint_kind,
+            "sources": [source.to_json() for source in self.sources],
+            "relation_source_digests": cast(
+                JSONValue, thaw_json(self.relation_source_digests)
+            ),
+            "definitions": [definition.to_json() for definition in self.definitions],
+            "action_sources": [action.to_json() for action in self.action_sources],
+            "non_gameplay_skill_sources": [
+                source.to_json() for source in self.non_gameplay_skill_sources
+            ],
+            "bindings": [binding.to_json() for binding in self.bindings],
+            "gaps": [gap.to_json() for gap in self.gaps],
+            "graphs": [graph.to_json() for graph in self.graphs],
+        }
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "catalog_id": self.catalog_id,
+            **self._identity_payload(),
+            "build_counters": cast(JSONValue, thaw_json(self.build_counters)),
+        }
+
+
+@dataclass(frozen=True)
 class FormulaIR:
     formula_id: str
     kind: str
@@ -1308,6 +2670,63 @@ class CharacterDataCardIR:
     card_contract: dict[str, JSONValue] = field(default_factory=dict)
     dynamic_value_bindings: dict[str, JSONValue] = field(default_factory=dict)
     equipment_eligibility_id: str = ""
+    ability_source_graph_refs: tuple[CharacterAbilityGraphRefIR, ...] = ()
+
+    def __post_init__(self) -> None:
+        for field_name in ("card_id", "entity_ref", "profile_id", "schema_version"):
+            value = getattr(self, field_name)
+            if not isinstance(value, str) or not value:
+                raise ValueError(f"character data card {field_name} is required")
+        if not self.entity_ref.startswith("avatar:") or not self.entity_ref[7:]:
+            raise ValueError("character data card entity_ref must identify an avatar")
+        owner_avatar_id = self.entity_ref[7:]
+        for field_name in (
+            "skill_ids",
+            "skill_formula_binding_ids",
+            "bounce_policy_ids",
+            "mechanism_slot_ids",
+            "trace_node_ids",
+            "eidolon_slot_ids",
+        ):
+            values = tuple(getattr(self, field_name))
+            if any(not isinstance(value, str) or not value for value in values):
+                raise TypeError(
+                    f"character data card {field_name} must contain non-empty strings"
+                )
+            if len(values) != len(set(values)):
+                raise ValueError(f"character data card {field_name} contains duplicates")
+            object.__setattr__(self, field_name, values)
+        refs = tuple(self.ability_source_graph_refs)
+        if any(type(ref) is not CharacterAbilityGraphRefIR for ref in refs):
+            raise TypeError(
+                "character data card graph refs must be exact CharacterAbilityGraphRefIR values"
+            )
+        refs = tuple(sorted(refs, key=lambda ref: ref.graph_ref_id))
+        if len({ref.graph_ref_id for ref in refs}) != len(refs):
+            raise ValueError("character data card graph refs contain duplicate identities")
+        if any(
+            ref.character_data_card_id != self.card_id
+            or ref.owner_avatar_id != owner_avatar_id
+            for ref in refs
+        ):
+            raise ValueError("character data card graph ref ownership is inconsistent")
+        if refs and sum(ref.reference_kind == "owned" for ref in refs) != 1:
+            raise ValueError("character data card must reference exactly one owned graph")
+        for field_name in (
+            "action_set",
+            "card_contract",
+            "dynamic_value_bindings",
+        ):
+            value = getattr(self, field_name)
+            if not isinstance(value, Mapping):
+                raise TypeError(f"character data card {field_name} must be a mapping")
+            object.__setattr__(
+                self,
+                field_name,
+                cast(dict[str, JSONValue], freeze_json(dict(value))),
+            )
+        object.__setattr__(self, "source", _immutable_character_ability_source(self.source))
+        object.__setattr__(self, "ability_source_graph_refs", refs)
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -1325,7 +2744,10 @@ class CharacterDataCardIR:
             "card_contract": self.card_contract,
             "dynamic_value_bindings": self.dynamic_value_bindings,
             "equipment_eligibility_id": self.equipment_eligibility_id,
-            "source": self.source.to_json(),
+            "ability_source_graph_refs": [
+                ref.to_json() for ref in self.ability_source_graph_refs
+            ],
+            "source": _character_ability_source_json(self.source),
             "coverage_status": self.coverage_status,
             "blocked_reason": self.blocked_reason,
         }
@@ -3162,7 +4584,122 @@ class CanonicalIR:
     effects: tuple[EffectIR, ...] = ()
     conditions: tuple[ConditionIR, ...] = ()
     formulas: tuple[FormulaIR, ...] = ()
+    character_ability_source_graph_catalog: CharacterAbilitySourceGraphCatalogIR | None = None
     metadata: dict[str, JSONValue] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        catalog = self.character_ability_source_graph_catalog
+        if catalog is None:
+            return
+        if type(catalog) is not CharacterAbilitySourceGraphCatalogIR:
+            raise TypeError(
+                "CanonicalIR character ability source catalog must be the exact internal type"
+            )
+        cards = tuple(self.character_data_cards)
+        if any(type(card) is not CharacterDataCardIR for card in cards):
+            raise TypeError(
+                "CanonicalIR character data cards must be exact CharacterDataCardIR values"
+            )
+        graphs_by_id = {graph.graph_id: graph for graph in catalog.graphs}
+        sources_by_id = {source.source_id: source for source in catalog.sources}
+        owned_graphs_by_avatar = {
+            graph.owner_avatar_id: graph
+            for graph in catalog.graphs
+            if graph.source_kind == "character_main"
+        }
+        if len(owned_graphs_by_avatar) != sum(
+            graph.source_kind == "character_main" for graph in catalog.graphs
+        ):
+            raise ValueError("character ability catalog has duplicate owner graphs")
+        cards_by_avatar: dict[str, CharacterDataCardIR] = {}
+        for card in cards:
+            owner_avatar_id = card.entity_ref[7:]
+            if owner_avatar_id in cards_by_avatar:
+                raise ValueError("CanonicalIR has duplicate character data cards")
+            cards_by_avatar[owner_avatar_id] = card
+            expected_owned_graph = owned_graphs_by_avatar.get(owner_avatar_id)
+            refs = card.ability_source_graph_refs
+            if expected_owned_graph is None:
+                if refs:
+                    raise ValueError(
+                        "character data card references a graph outside the catalog"
+                    )
+                continue
+            owned_refs = tuple(
+                ref for ref in refs if ref.reference_kind == "owned"
+            )
+            shared_refs = tuple(
+                ref for ref in refs if ref.reference_kind == "shared"
+            )
+            if (
+                len(owned_refs) != 1
+                or owned_refs[0].graph_id != expected_owned_graph.graph_id
+                or {ref.graph_id for ref in shared_refs}
+                != set(expected_owned_graph.shared_graph_ids)
+            ):
+                raise ValueError(
+                    "character data card graph refs do not close over its catalog graph"
+                )
+            inventory_source = cast(IRSource, expected_owned_graph.inventory_source)
+            inventory_evidence = inventory_source.evidence
+            if (
+                set(card.skill_ids) != set(expected_owned_graph.selected_skill_ids)
+                or card.source.source_path != inventory_source.source_path
+                or card.source.evidence.get("row_index")
+                != inventory_evidence.get("row_index")
+                or card.source.evidence.get("version_kind")
+                != inventory_evidence.get("selected_version")
+                or {
+                    str(skill_id)
+                    for skill_id in cast(
+                        Iterable[Any], card.source.evidence.get("skill_list") or ()
+                    )
+                    if skill_id is not None and str(skill_id)
+                }
+                != set(expected_owned_graph.selected_skill_ids)
+            ):
+                raise ValueError(
+                    "character data card does not match its selected ability source row"
+                )
+            owned_source = sources_by_id[expected_owned_graph.source_id]
+            for ref in refs:
+                graph = graphs_by_id.get(ref.graph_id)
+                if graph is None:
+                    raise ValueError("character data card graph ref is dangling")
+                if ref.reference_kind == "owned" and (
+                    graph.source_kind != "character_main"
+                    or graph.owner_avatar_id != owner_avatar_id
+                ):
+                    raise ValueError("owned character graph ref is inconsistent")
+                if ref.reference_kind == "shared" and (
+                    graph.source_kind != "character_shared" or graph.owner_avatar_id
+                ):
+                    raise ValueError("shared character graph ref is inconsistent")
+                ref_evidence = ref.source.evidence
+                if (
+                    ref.source.source_path != card.source.source_path
+                    or ref.source.raw_type != card.source.raw_type
+                    or ref_evidence.get("source_graph_catalog_id")
+                    != catalog.catalog_id
+                    or ref_evidence.get("source_id") != owned_source.source_id
+                    or ref_evidence.get("row_index")
+                    != inventory_evidence.get("row_index")
+                    or ref_evidence.get("selected_version")
+                    != inventory_evidence.get("selected_version")
+                    or ref_evidence.get("character_config_path")
+                    != inventory_evidence.get("character_config_path")
+                    or ref_evidence.get("content_sha256")
+                    != inventory_evidence.get("content_sha256")
+                ):
+                    raise ValueError(
+                        "character data card graph ref source is inconsistent"
+                    )
+        if catalog.source_catalog_complete and not set(
+            owned_graphs_by_avatar
+        ).issubset(cards_by_avatar):
+            raise ValueError(
+                "complete character ability catalog is missing an admitted character card"
+            )
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -3263,4 +4800,9 @@ class CanonicalIR:
             "effects": [effect.to_json() for effect in self.effects],
             "conditions": [condition.to_json() for condition in self.conditions],
             "formulas": [formula.to_json() for formula in self.formulas],
+            "character_ability_source_graph_catalog": (
+                self.character_ability_source_graph_catalog.to_json()
+                if self.character_ability_source_graph_catalog is not None
+                else None
+            ),
         }

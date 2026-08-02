@@ -5,6 +5,12 @@ from .character_ability_scope import (
     build_character_ability_scope_projection,
     character_ability_snapshot_fingerprint,
 )
+from .character_ability_source_graph import (
+    CharacterAbilitySourceGraphPlanMismatch,
+    build_character_ability_source_graph,
+    character_ability_path_from_config,
+    character_camera_ability_path_from_config,
+)
 from .discovery import DiscoveryReport, TBGDDiscovery
 from .lowering import (
     OwnedCombatantAdmissionProjection,
@@ -15,12 +21,16 @@ from .paths import find_tbgd_root
 __all__ = [
     "CharacterAbilityRawSnapshot",
     "CharacterAbilityScopeProjectionCatalog",
+    "CharacterAbilitySourceGraphPlanMismatch",
     "DiscoveryReport",
     "OwnedCombatantAdmissionProjection",
     "TBGDDiscovery",
     "TBGDLowering",
     "build_character_ability_raw_snapshot",
     "build_character_ability_scope_projection",
+    "build_character_ability_source_graph",
+    "character_ability_path_from_config",
+    "character_camera_ability_path_from_config",
     "character_ability_snapshot_fingerprint",
     "find_tbgd_root",
 ]

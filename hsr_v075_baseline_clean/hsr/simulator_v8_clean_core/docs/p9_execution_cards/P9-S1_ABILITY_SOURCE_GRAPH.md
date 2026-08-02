@@ -87,9 +87,9 @@ full_lowering_count=0
 
 ## 唯一执行清单
 
-- [ ] 共享角色能力只 lower 一次并可由角色卡引用。
-- [ ] action、phase、entry、passive 和 standalone 关系类型化。
-- [ ] 当前全部绑定缺口唯一闭合或诚实 source-gap。
-- [ ] 查询、冲突、顺序变化和伪来源负例 fail-closed。
-- [ ] 无角色/技能/固定 ID 绑定逻辑或兼容双轨。
-- [ ] 主验证、必要 direct 和资源审计通过并提交 `ready_for_review`。
+- [x] 共享角色能力只 lower 一次并可由角色卡引用。
+- [x] action、phase、entry、passive 和 standalone 关系类型化。
+- [x] 当前全部绑定缺口唯一闭合或诚实 source-gap。
+- [x] 查询、冲突、顺序变化和伪来源负例 fail-closed。
+- [x] 无角色/技能/固定 ID 绑定逻辑或兼容双轨。
+- [x] 主验证、必要 direct 和资源审计通过并提交 `ready_for_review`。
