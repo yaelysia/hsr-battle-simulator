@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass, field
 from decimal import Decimal
 
 from ..build_types import (
@@ -10,6 +11,7 @@ from ..build_types import (
     StaticStatContribution,
     aggregate_static_stat_contributions,
     canonical_decimal,
+    canonical_json_fingerprint,
     contribution_channel_for_application_kind,
     ir_source_from_json,
 )
@@ -18,8 +20,10 @@ from ..ir_types import IRSource, same_ir_source_raw_row
 from ..rules.ir import (
     AvatarProfileIR,
     AvatarPromotionTierIR,
+    CharacterBuildBindingIR,
+    CharacterBuildSelectorRelationIR,
     CharacterDataCardIR,
-    CharacterMechanismSlotIR,
+    CharacterEidolonSlotIR,
     CharacterTraceNodeIR,
     ServantDefinitionIR,
 )
@@ -31,11 +35,12 @@ from .models import (
     CharacterBasePanel,
     CharacterBuildAssemblyResult,
     CharacterBuildInput,
+    CharacterDynamicGraphRef,
     CharacterMechanismDiagnostic,
-    CharacterMechanismRef,
     CharacterPanelResource,
     CharacterResourceBinding,
     CharacterResourceInitializerBinding,
+    CharacterSelectorSpecialization,
     CharacterSkillLevelResolution,
     CharacterSkillLevelSource,
     OwnedCombatantActionBinding,
@@ -104,11 +109,28 @@ def assemble_character_build(
     selected_nodes, trace_errors = _selected_trace_nodes(rules, build)
     if trace_errors:
         return _blocked(build, *trace_errors)
+    selected_eidolons, eidolon_errors = _selected_eidolon_slots(
+        rules,
+        card,
+        build,
+    )
+    if eidolon_errors:
+        return _blocked(build, *eidolon_errors)
+    selected_bindings, binding_errors = _selected_build_bindings(
+        rules,
+        build,
+        selected_nodes,
+        selected_eidolons,
+    )
+    if binding_errors:
+        return _blocked(build, *binding_errors)
     skill_levels, skill_level_diagnostics, skill_level_errors = _resolve_effective_skill_levels(
         rules,
         card,
         build,
         selected_nodes,
+        selected_eidolons,
+        selected_bindings,
     )
     if skill_level_errors:
         return _blocked(build, *skill_level_errors)
@@ -130,56 +152,84 @@ def assemble_character_build(
         )
     contributions.extend(equipment_result.static_contributions)
     diagnostics: list[CharacterMechanismDiagnostic] = list(skill_level_diagnostics)
-    admitted_refs: list[CharacterMechanismRef] = []
-    for node in selected_nodes:
-        if not node.linked_mechanism_slot_ids:
+    diagnostics.extend(
+        CharacterMechanismDiagnostic(
+            diagnostic_id=(
+                f"character_mechanism_diagnostic:{gap.selector_gap_id}"
+            ),
+            mechanism_kind="build_selector_source_gap",
+            target_ref_id=gap.selector_gap_id,
+            reason=gap.blocked_reason,
+            source=gap.selector_source,
+        )
+        for gap in rules.character_build_selector_gaps_for_card(card.card_id)
+    )
+    direct_dynamic_bindings: list[CharacterBuildBindingIR] = []
+    for binding in selected_bindings:
+        if binding.projection_kind in {
+            "static_contribution",
+            "resource_contribution",
+        }:
+            contribution, error = _character_build_binding_contribution(binding)
+            if error or contribution is None:
+                return _blocked(
+                    build,
+                    error or "character_build_contribution_projection_missing",
+                )
+            contributions.append(contribution)
+        elif binding.projection_kind == "dynamic_graph_ref":
+            direct_dynamic_bindings.append(binding)
+        elif binding.projection_kind == "source_gap":
             diagnostics.append(
                 CharacterMechanismDiagnostic(
-                    diagnostic_id=f"character_mechanism_diagnostic:{node.trace_node_id}:unbound",
-                    mechanism_kind="trace_node_unbound",
-                    target_ref_id=node.trace_node_id,
-                    reason="trace_node_has_no_structured_effect_source",
-                    source=node.source,
+                    diagnostic_id=(
+                        f"character_mechanism_diagnostic:"
+                        f"{binding.build_binding_id}"
+                    ),
+                    mechanism_kind=(
+                        f"{binding.selection_kind}_source_gap"
+                    ),
+                    target_ref_id=binding.target_ref_id,
+                    reason=binding.blocked_reason,
+                    source=binding.source,
                 )
             )
-        for slot_id in node.linked_mechanism_slot_ids:
-            slot = rules.character_mechanism_slot(slot_id)
-            if slot is None or slot.character_data_card_id != build.character_card_id:
-                return _blocked(build, f"trace_linked_mechanism_slot_missing_or_wrong_card:{slot_id}")
-            if slot.mechanism_kind == "trace_static_stat_bonus":
-                contribution_result, error = _trace_static_contributions(node, slot)
-                if error:
-                    return _blocked(build, error)
-                contributions.extend(contribution_result)
-            elif slot.mechanism_kind == "trace_ability_hook":
-                mechanism_ref, diagnostic = _trace_dynamic_ref(rules, build, node, slot)
-                if mechanism_ref is not None:
-                    admitted_refs.append(mechanism_ref)
-                if diagnostic is not None:
-                    diagnostics.append(diagnostic)
-            elif slot.mechanism_kind == "trace_skill_level":
-                # The typed effective-skill-level channel above is the sole
-                # consumer.  It is not a dynamic mechanism payload.
-                continue
-            else:
-                diagnostics.append(
-                    CharacterMechanismDiagnostic(
-                        diagnostic_id=f"character_mechanism_diagnostic:{slot.mechanism_slot_id}",
-                        mechanism_kind=slot.mechanism_kind,
-                        target_ref_id=slot.mechanism_slot_id,
-                        reason=slot.blocked_reason or "trace_mechanism_kind_not_admitted",
-                        source=slot.source,
-                    )
-                )
-
-    eidolon_refs, eidolon_diagnostics = _eidolon_mechanisms(rules, build)
-    admitted_refs.extend(eidolon_refs)
-    diagnostics.extend(eidolon_diagnostics)
+        elif binding.projection_kind != "skill_level_change":
+            return _blocked(
+                build,
+                f"character_build_projection_kind_unknown:{binding.build_binding_id}",
+            )
+    (
+        dynamic_graph_refs,
+        selector_specializations,
+        dynamic_errors,
+    ) = _assemble_character_dynamic_roots(
+        rules,
+        card,
+        selected_nodes,
+        selected_eidolons,
+        tuple(direct_dynamic_bindings),
+    )
+    if dynamic_errors:
+        return _blocked(build, *dynamic_errors)
+    diagnostics.extend(
+        CharacterMechanismDiagnostic(
+            diagnostic_id=(
+                f"character_mechanism_diagnostic:{root.dynamic_graph_ref_id}"
+            ),
+            mechanism_kind="character_dynamic_graph_root",
+            target_ref_id=root.dynamic_graph_ref_id,
+            reason=root.blocked_reason,
+            source=root.root_source,
+        )
+        for root in dynamic_graph_refs
+    )
     owned_combatants, owned_diagnostics = _assemble_owned_combatants(
         rules,
         card,
         build,
         selected_nodes,
+        selected_bindings,
     )
     diagnostics.extend(owned_diagnostics)
     try:
@@ -207,7 +257,14 @@ def assemble_character_build(
             base_panel=panel,
             contribution_ledger=tuple(contributions),
             effective_skill_levels=tuple(skill_levels),
-            admitted_dynamic_mechanism_refs=tuple(admitted_refs),
+            selected_trace_node_ids=tuple(
+                node.trace_node_id for node in selected_nodes
+            ),
+            selected_eidolon_slot_ids=tuple(
+                slot.eidolon_slot_id for slot in selected_eidolons
+            ),
+            dynamic_graph_refs=tuple(dynamic_graph_refs),
+            selector_specializations=selector_specializations,
             resource_bindings=resource_bindings,
             owned_combatant_results=owned_combatants,
             unadmitted_mechanism_diagnostics=tuple(diagnostics),
@@ -458,22 +515,114 @@ def validate_character_build_admission(
                 errors.append(
                     f"skill_level_source_kind_not_admitted:{level_source.source_ref.stable_id}"
                 )
-    for mechanism in result.admitted_dynamic_mechanism_refs:
-        slot = rules.character_mechanism_slot(mechanism.source_ref.definition_identity)
+    selected_trace_ids = set(result.selected_trace_node_ids)
+    selected_eidolon_ids = set(result.selected_eidolon_slot_ids)
+    for node_id in selected_trace_ids:
+        node = rules.character_trace_node(node_id)
+        if node is None or node.character_data_card_id != build.character_card_id:
+            errors.append(f"selected_trace_node_not_resolvable:{node_id}")
+    for slot_id in selected_eidolon_ids:
+        slot = rules.character_eidolon_slot(slot_id)
+        if slot is None or slot.character_data_card_id != build.character_card_id:
+            errors.append(f"selected_eidolon_slot_not_resolvable:{slot_id}")
+    canonical_roots = {
+        item.dynamic_graph_ref_id: item
+        for item in canonical_result.dynamic_graph_refs
+    }
+    for dynamic_ref in result.dynamic_graph_refs:
+        graph = rules.character_ability_source_graph(dynamic_ref.source_graph_id)
+        graph_ref = next(
+            (
+                ref
+                for ref in card.ability_source_graph_refs
+                if ref.graph_ref_id == dynamic_ref.source_graph_ref_id
+            ),
+            None,
+        ) if card is not None else None
+        direct_bindings = tuple(
+            rules.character_build_binding(binding_id)
+            for binding_id in dynamic_ref.build_binding_ids
+        )
+        definition = (
+            rules.character_ability_definition(dynamic_ref.ability_definition_id)
+            if dynamic_ref.root_kind == "ability_definition"
+            else None
+        )
         if (
-            slot is None
-            or slot.character_data_card_id != build.character_card_id
-            or slot.source != mechanism.source
-            or slot.coverage_status != "executable"
+            canonical_roots.get(dynamic_ref.dynamic_graph_ref_id) != dynamic_ref
+            or graph is None
+            or graph_ref is None
+            or graph_ref.graph_id != graph.graph_id
+            or any(
+                binding is None
+                or binding.dynamic_ref_kind != "direct_ability"
+                or binding.selection_ref_id
+                not in selected_trace_ids.union(selected_eidolon_ids)
+                for binding in direct_bindings
+            )
+            or (
+                dynamic_ref.root_kind == "ability_definition"
+                and (
+                    definition is None
+                    or definition.definition_id != dynamic_ref.root_ref_id
+                    or definition.source != dynamic_ref.root_source
+                )
+            )
+            or (
+                dynamic_ref.root_kind == "source_graph"
+                and (
+                    (source := rules.character_ability_source(
+                        dynamic_ref.root_ref_id
+                    )) is None
+                    or source.source != dynamic_ref.root_source
+                    or graph.source_id != source.source_id
+                )
+            )
         ):
-            errors.append(f"mechanism_source_not_resolvable:{mechanism.mechanism_ref_id}")
-            continue
-        if mechanism.mechanism_kind in {"trace_ability", "eidolon_ability"}:
-            graph = rules.standalone_ability_graph(mechanism.target_ref_id)
-            if graph is None or graph.coverage_status != "executable":
-                errors.append(f"mechanism_target_graph_not_executable:{mechanism.mechanism_ref_id}")
-        else:
-            errors.append(f"mechanism_kind_not_admitted:{mechanism.mechanism_ref_id}")
+            errors.append(
+                f"dynamic_graph_ref_not_resolvable:{dynamic_ref.dynamic_graph_ref_id}"
+            )
+    canonical_specializations = {
+        item.specialization_id: item
+        for item in canonical_result.selector_specializations
+    }
+    selected_ids = selected_trace_ids.union(selected_eidolon_ids)
+    for specialization in result.selector_specializations:
+        relation = rules.character_build_selector_relation(
+            specialization.selector_relation_id
+        )
+        selection_matched = bool(
+            relation is not None
+            and selected_ids.intersection(relation.selection_ref_ids)
+        )
+        predicate_value = (
+            relation.selector_value_when_selected
+            if relation is not None and selection_matched
+            else not relation.selector_value_when_selected
+            if relation is not None
+            else False
+        )
+        subtree_path = (
+            relation.true_subtree_path
+            if relation is not None and predicate_value
+            else relation.false_subtree_path
+            if relation is not None
+            else ""
+        )
+        if (
+            canonical_specializations.get(specialization.specialization_id)
+            != specialization
+            or relation is None
+            or relation.character_data_card_id != build.character_card_id
+            or specialization.selection_matched != selection_matched
+            or specialization.predicate_value != predicate_value
+            or specialization.selected_subtree_path != subtree_path
+            or specialization.selector_source != relation.selector_source
+        ):
+            errors.append(
+                "selector_specialization_not_resolvable:"
+                f"{specialization.specialization_id}"
+            )
     profile = (
         rules.avatar_profile_by_profile_id(card.profile_id)
         if card is not None
@@ -899,11 +1048,114 @@ def _current_card_trace_nodes(
     )
 
 
+def _selected_eidolon_slots(
+    rules: RuleBook,
+    card: CharacterDataCardIR,
+    build: CharacterBuildInput,
+) -> tuple[tuple[CharacterEidolonSlotIR, ...], tuple[str, ...]]:
+    errors: list[str] = []
+    if build.eidolon_level < 0 or build.eidolon_level > 6:
+        return (), ("eidolon_level_outside_prefix_closed_range",)
+    slots = rules.character_eidolon_slots_for_card(card.card_id)
+    by_rank: dict[int, list[CharacterEidolonSlotIR]] = {}
+    expected_avatar_id = card.entity_ref.removeprefix("avatar:")
+    for slot in slots:
+        by_rank.setdefault(slot.rank, []).append(slot)
+        if (
+            slot.character_data_card_id != build.character_card_id
+            or slot.avatar_id != expected_avatar_id
+        ):
+            errors.append(
+                f"eidolon_slot_character_identity_mismatch:{slot.eidolon_slot_id}"
+            )
+    if set(by_rank) != set(range(1, 7)):
+        errors.append("eidolon_rank_catalog_not_prefix_complete")
+    if any(len(values) != 1 for values in by_rank.values()):
+        errors.append("eidolon_rank_catalog_duplicate_or_ambiguous")
+    selected = tuple(
+        by_rank[rank][0]
+        for rank in range(1, build.eidolon_level + 1)
+        if len(by_rank.get(rank, ())) == 1
+    )
+    if len(selected) != build.eidolon_level:
+        errors.append("eidolon_prefix_selection_incomplete")
+    if any(
+        not slot.build_bindings
+        and not rules.character_build_selector_relations_for_selection(
+            slot.eidolon_slot_id
+        )
+        for slot in selected
+    ):
+        errors.append("selected_eidolon_slot_has_no_build_binding")
+    return selected, tuple(sorted(set(errors)))
+
+
+def _selected_build_bindings(
+    rules: RuleBook,
+    build: CharacterBuildInput,
+    selected_nodes: tuple[CharacterTraceNodeIR, ...],
+    selected_eidolons: tuple[CharacterEidolonSlotIR, ...],
+) -> tuple[tuple[CharacterBuildBindingIR, ...], tuple[str, ...]]:
+    errors: list[str] = []
+    selections = (*selected_nodes, *selected_eidolons)
+    bindings = tuple(
+        binding
+        for selection in selections
+        for binding in selection.build_bindings
+    )
+    if any(
+        not selection.build_bindings
+        and not rules.character_build_selector_relations_for_selection(
+            selection.trace_node_id
+            if isinstance(selection, CharacterTraceNodeIR)
+            else selection.eidolon_slot_id
+        )
+        for selection in selections
+    ):
+        errors.append("selected_character_content_has_no_build_binding")
+    binding_ids = tuple(binding.build_binding_id for binding in bindings)
+    if len(binding_ids) != len(set(binding_ids)):
+        errors.append("selected_character_build_bindings_duplicate")
+    selected_ids = {
+        *(node.trace_node_id for node in selected_nodes),
+        *(slot.eidolon_slot_id for slot in selected_eidolons),
+    }
+    for binding in bindings:
+        canonical = rules.character_build_binding(binding.build_binding_id)
+        mechanism_slot = rules.character_mechanism_slot(
+            binding.mechanism_slot_id
+        )
+        if canonical is not binding:
+            errors.append(
+                f"character_build_binding_not_canonical:{binding.build_binding_id}"
+            )
+        if (
+            binding.character_data_card_id != build.character_card_id
+            or binding.selection_ref_id not in selected_ids
+        ):
+            errors.append(
+                f"character_build_binding_selection_mismatch:{binding.build_binding_id}"
+            )
+        if (
+            mechanism_slot is None
+            or mechanism_slot.character_data_card_id != build.character_card_id
+            or mechanism_slot.source != binding.source
+        ):
+            errors.append(
+                f"character_build_binding_slot_mismatch:{binding.build_binding_id}"
+            )
+    return (
+        tuple(sorted(bindings, key=lambda item: item.build_binding_id)),
+        tuple(sorted(set(errors))),
+    )
+
+
 def _assemble_owned_combatants(
     rules: RuleBook,
     card: CharacterDataCardIR,
     build: CharacterBuildInput,
     selected_nodes: tuple[CharacterTraceNodeIR, ...],
+    selected_bindings: tuple[CharacterBuildBindingIR, ...],
 ) -> tuple[
     tuple[OwnedCombatantBuildAssemblyResult, ...],
     tuple[CharacterMechanismDiagnostic, ...],
@@ -950,7 +1202,7 @@ def _assemble_owned_combatants(
             rules,
             card,
             build,
-            selected_nodes,
+            selected_bindings,
             definition,
         )
         for definition in sorted(
@@ -965,7 +1217,7 @@ def _assemble_owned_combatant_definition(
     rules: RuleBook,
     card: CharacterDataCardIR,
     build: CharacterBuildInput,
-    selected_nodes: tuple[CharacterTraceNodeIR, ...],
+    selected_bindings: tuple[CharacterBuildBindingIR, ...],
     definition: ServantDefinitionIR,
 ) -> OwnedCombatantBuildAssemblyResult:
     reasons: list[str] = []
@@ -986,8 +1238,7 @@ def _assemble_owned_combatant_definition(
     skill_levels, action_bindings, skill_reasons = _owned_combatant_skill_levels(
         rules,
         card,
-        build,
-        selected_nodes,
+        selected_bindings,
         definition,
     )
     reasons.extend(skill_reasons)
@@ -1200,8 +1451,7 @@ def _owned_combatant_stat_bindings(
 def _owned_combatant_skill_levels(
     rules: RuleBook,
     card: CharacterDataCardIR,
-    build: CharacterBuildInput,
-    selected_nodes: tuple[CharacterTraceNodeIR, ...],
+    selected_bindings: tuple[CharacterBuildBindingIR, ...],
     definition: ServantDefinitionIR,
 ) -> tuple[
     tuple[CharacterSkillLevelResolution, ...],
@@ -1209,65 +1459,40 @@ def _owned_combatant_skill_levels(
     tuple[str, ...],
 ]:
     reasons: list[str] = []
-    selected_by_skill: dict[str, tuple[CharacterTraceNodeIR, CharacterMechanismSlotIR]] = {}
+    selected_by_skill: dict[str, CharacterBuildBindingIR] = {}
     servant_skill_ids = set(definition.skill_ids)
-    for node in selected_nodes:
-        matched = servant_skill_ids.intersection(node.level_up_skill_ids)
-        if not matched:
+    for binding in selected_bindings:
+        if (
+            binding.projection_kind != "skill_level_change"
+            or binding.skill_level_change_kind != "base"
+            or binding.target_ref_id not in servant_skill_ids
+        ):
             continue
-        slots = tuple(
-            slot
-            for slot_id in node.linked_mechanism_slot_ids
-            if (slot := rules.character_mechanism_slot(slot_id)) is not None
-            and slot.mechanism_kind == "trace_skill_level"
-            and slot.coverage_status == "executable"
-            and slot.character_data_card_id == card.card_id
-        )
-        if len(slots) != 1:
-            reasons.append(f"owned_combatant_trace_skill_slot_not_unique:{node.trace_node_id}")
-            continue
-        for skill_id in matched:
-            if skill_id in selected_by_skill:
-                reasons.append(f"owned_combatant_skill_level_source_not_unique:{skill_id}")
-            else:
-                selected_by_skill[skill_id] = (node, slots[0])
+        skill_id = binding.target_ref_id
+        if skill_id in selected_by_skill:
+            reasons.append(f"owned_combatant_skill_level_source_not_unique:{skill_id}")
+        else:
+            selected_by_skill[skill_id] = binding
 
     bonus_sources_by_skill: dict[str, list[CharacterSkillLevelSource]] = {}
-    try:
-        eidolon_slots = rules.character_eidolon_slots_for_level(
-            card.card_id,
-            build.eidolon_level,
+    for binding in selected_bindings:
+        if (
+            binding.projection_kind != "skill_level_change"
+            or binding.skill_level_change_kind != "bonus"
+            or binding.target_ref_id not in servant_skill_ids
+        ):
+            continue
+        bonus_sources_by_skill.setdefault(binding.target_ref_id, []).append(
+            CharacterSkillLevelSource(
+                source_kind="eidolon_bonus",
+                level_value=binding.skill_level_value,
+                source_ref=BuildSourceRef(
+                    "character_mechanism_slot",
+                    binding.mechanism_slot_id,
+                ),
+                source=binding.source,
+            )
         )
-    except ValueError as exc:
-        reasons.append(str(exc))
-        eidolon_slots = ()
-    for eidolon in eidolon_slots:
-        for slot_id in eidolon.linked_mechanism_slot_ids:
-            slot = rules.character_mechanism_slot(slot_id)
-            if slot is None or slot.mechanism_kind != "eidolon_skill_level":
-                continue
-            bonuses = slot.semantics.get("skill_add_level_list")
-            if not isinstance(bonuses, Mapping):
-                continue
-            for raw_skill_id, raw_bonus in bonuses.items():
-                skill_id = str(raw_skill_id)
-                if skill_id not in servant_skill_ids:
-                    continue
-                bonus = raw_bonus.get("Value") if isinstance(raw_bonus, Mapping) else raw_bonus
-                if not isinstance(bonus, int) or isinstance(bonus, bool) or bonus <= 0:
-                    reasons.append(f"owned_combatant_eidolon_bonus_invalid:{skill_id}")
-                    continue
-                bonus_sources_by_skill.setdefault(skill_id, []).append(
-                    CharacterSkillLevelSource(
-                        source_kind="eidolon_bonus",
-                        level_value=bonus,
-                        source_ref=BuildSourceRef(
-                            "character_mechanism_slot",
-                            slot.mechanism_slot_id,
-                        ),
-                        source=slot.source,
-                    )
-                )
 
     action_entries: dict[str, Mapping[str, object]] = {}
     classified_required_action_skill_ids: set[str] = set()
@@ -1336,16 +1561,15 @@ def _owned_combatant_skill_levels(
                 source=base_definition_candidates[0].source,
             )
         else:
-            node, slot = selected
-            base_level = node.level
+            base_level = selected.skill_level_value
             base_source = CharacterSkillLevelSource(
                 source_kind="trace_base",
                 level_value=base_level,
                 source_ref=BuildSourceRef(
                     "character_mechanism_slot",
-                    slot.mechanism_slot_id,
+                    selected.mechanism_slot_id,
                 ),
-                source=slot.source,
+                source=selected.source,
             )
         bonus_sources = tuple(bonus_sources_by_skill.get(skill_id, ()))
         bonus = sum(source.level_value for source in bonus_sources)
@@ -1454,6 +1678,8 @@ def _resolve_effective_skill_levels(
     card: CharacterDataCardIR,
     build: CharacterBuildInput,
     selected_nodes: tuple[CharacterTraceNodeIR, ...],
+    selected_eidolons: tuple[CharacterEidolonSlotIR, ...],
+    selected_bindings: tuple[CharacterBuildBindingIR, ...],
 ) -> tuple[
     tuple[CharacterSkillLevelResolution, ...],
     tuple[CharacterMechanismDiagnostic, ...],
@@ -1493,89 +1719,69 @@ def _resolve_effective_skill_levels(
 
     all_nodes = _current_card_trace_nodes(rules, card)
     traced_skill_ids = {
-        skill_id
+        binding.target_ref_id
         for node in all_nodes
-        for skill_id in node.level_up_skill_ids
-        if skill_id in card_skill_ids
+        for binding in node.build_bindings
+        if binding.projection_kind == "skill_level_change"
+        and binding.skill_level_change_kind == "base"
+        and binding.target_ref_id in card_skill_ids
     }
-    selected_by_skill: dict[str, tuple[CharacterTraceNodeIR, CharacterMechanismSlotIR]] = {}
-    for node in selected_nodes:
-        if not node.level_up_skill_ids:
-            continue
-        skill_slots = tuple(
-            slot
-            for slot_id in node.linked_mechanism_slot_ids
-            if (slot := rules.character_mechanism_slot(slot_id)) is not None
-            and slot.mechanism_kind == "trace_skill_level"
-        )
-        if len(skill_slots) != 1:
-            errors.append(f"trace_skill_level_slot_not_unique:{node.trace_node_id}")
-            continue
-        slot = skill_slots[0]
+    selected_trace_ids = {node.trace_node_id for node in selected_nodes}
+    selected_eidolon_ids = {
+        slot.eidolon_slot_id for slot in selected_eidolons
+    }
+    selected_by_skill: dict[str, CharacterBuildBindingIR] = {}
+    for binding in selected_bindings:
         if (
-            slot.character_data_card_id != build.character_card_id
-            or slot.coverage_status != "executable"
+            binding.projection_kind != "skill_level_change"
+            or binding.skill_level_change_kind != "base"
         ):
-            errors.append(f"trace_skill_level_slot_not_executable:{slot.mechanism_slot_id}")
             continue
-        slot_skill_ids = slot.semantics.get("level_up_skill_ids")
-        if not isinstance(slot_skill_ids, (list, tuple)) or tuple(slot_skill_ids) != node.level_up_skill_ids:
-            errors.append(f"trace_skill_level_slot_source_mismatch:{slot.mechanism_slot_id}")
-            continue
-        if node.level <= 0 or node.level > node.max_level:
-            errors.append(f"trace_skill_level_outside_node_range:{node.trace_node_id}")
-            continue
-        for skill_id in (
-            skill_id for skill_id in node.level_up_skill_ids if skill_id in card_skill_ids
+        if (
+            binding.selection_kind != "trace"
+            or binding.selection_ref_id not in selected_trace_ids
         ):
-            if skill_id in selected_by_skill:
-                errors.append(f"skill_level_resolved_by_multiple_trace_nodes:{skill_id}")
-            else:
-                selected_by_skill[skill_id] = (node, slot)
+            errors.append(
+                f"trace_skill_level_binding_selection_mismatch:{binding.build_binding_id}"
+            )
+            continue
+        skill_id = binding.target_ref_id
+        if skill_id not in card_skill_ids:
+            continue
+        if skill_id in selected_by_skill:
+            errors.append(f"skill_level_resolved_by_multiple_trace_nodes:{skill_id}")
+        else:
+            selected_by_skill[skill_id] = binding
 
     bonus_sources_by_skill: dict[str, list[CharacterSkillLevelSource]] = {}
-    try:
-        eidolon_slots = rules.character_eidolon_slots_for_level(
-            build.character_card_id,
-            build.eidolon_level,
+    for binding in selected_bindings:
+        if (
+            binding.projection_kind != "skill_level_change"
+            or binding.skill_level_change_kind != "bonus"
+        ):
+            continue
+        if (
+            binding.selection_kind != "eidolon"
+            or binding.selection_ref_id not in selected_eidolon_ids
+        ):
+            errors.append(
+                f"eidolon_skill_level_binding_selection_mismatch:{binding.build_binding_id}"
+            )
+            continue
+        skill_id = binding.target_ref_id
+        if skill_id not in card_skill_ids:
+            continue
+        bonus_sources_by_skill.setdefault(skill_id, []).append(
+            CharacterSkillLevelSource(
+                source_kind="eidolon_bonus",
+                level_value=binding.skill_level_value,
+                source_ref=BuildSourceRef(
+                    "character_mechanism_slot",
+                    binding.mechanism_slot_id,
+                ),
+                source=binding.source,
+            )
         )
-    except ValueError as exc:
-        errors.append(str(exc))
-        eidolon_slots = ()
-    for eidolon_slot in eidolon_slots:
-        for mechanism_slot_id in eidolon_slot.linked_mechanism_slot_ids:
-            slot = rules.character_mechanism_slot(mechanism_slot_id)
-            if slot is None or slot.mechanism_kind != "eidolon_skill_level":
-                continue
-            if (
-                slot.character_data_card_id != build.character_card_id
-                or slot.coverage_status != "executable"
-            ):
-                errors.append(f"eidolon_skill_level_slot_not_executable:{mechanism_slot_id}")
-                continue
-            raw_bonuses = slot.semantics.get("skill_add_level_list")
-            if not isinstance(raw_bonuses, Mapping) or not raw_bonuses:
-                errors.append(f"eidolon_skill_level_source_missing:{mechanism_slot_id}")
-                continue
-            for raw_skill_id, raw_bonus in raw_bonuses.items():
-                skill_id = str(raw_skill_id)
-                bonus = raw_bonus.get("Value") if isinstance(raw_bonus, Mapping) else raw_bonus
-                if skill_id not in card_skill_ids:
-                    continue
-                if not isinstance(bonus, int) or isinstance(bonus, bool) or bonus <= 0:
-                    errors.append(f"eidolon_skill_level_bonus_invalid:{skill_id}")
-                else:
-                    bonus_sources_by_skill.setdefault(skill_id, []).append(
-                        CharacterSkillLevelSource(
-                            source_kind="eidolon_bonus",
-                            level_value=bonus,
-                            source_ref=BuildSourceRef(
-                                "character_mechanism_slot",
-                                slot.mechanism_slot_id,
-                            ),
-                            source=slot.source,
-                        )
-                    )
 
     resolutions: list[CharacterSkillLevelResolution] = []
     for skill_id in card.skill_ids:
@@ -1598,13 +1804,15 @@ def _resolve_effective_skill_levels(
         base_source: CharacterSkillLevelSource | None = None
         selected = selected_by_skill.get(skill_id)
         if selected is not None:
-            node, slot = selected
-            base_level = node.level
+            base_level = selected.skill_level_value
             base_source = CharacterSkillLevelSource(
                 source_kind="trace_base",
                 level_value=base_level,
-                source_ref=BuildSourceRef("character_mechanism_slot", slot.mechanism_slot_id),
-                source=slot.source,
+                source_ref=BuildSourceRef(
+                    "character_mechanism_slot",
+                    selected.mechanism_slot_id,
+                ),
+                source=selected.source,
             )
         elif skill_id in traced_skill_ids:
             errors.append(f"trace_skill_level_not_selected:{skill_id}")
@@ -1816,186 +2024,350 @@ def _base_contributions(tier: AvatarPromotionTierIR, level: int) -> list[StaticS
     return contributions
 
 
-def _trace_static_contributions(
-    node: CharacterTraceNodeIR,
-    slot: CharacterMechanismSlotIR,
-) -> tuple[list[StaticStatContribution], str]:
-    if slot.coverage_status != "executable":
-        return [], slot.blocked_reason or f"trace_static_slot_not_executable:{slot.mechanism_slot_id}"
-    raw_terms = slot.semantics.get("mapped_terms")
-    if not isinstance(raw_terms, (list, tuple)):
-        return [], f"trace_static_terms_missing:{slot.mechanism_slot_id}"
-    result: list[StaticStatContribution] = []
-    for position, raw_term in enumerate(raw_terms):
-        if not isinstance(raw_term, Mapping):
-            return [], f"trace_static_term_not_object:{slot.mechanism_slot_id}:{position}"
-        application_kind = raw_term.get("application_kind")
-        property_type = raw_term.get("target_key")
-        exact_value = raw_term.get("value")
-        if not isinstance(property_type, str) or not property_type:
-            return [], f"trace_static_property_missing:{slot.mechanism_slot_id}:{position}"
-        if not isinstance(exact_value, str):
-            return [], f"trace_static_value_not_exact_decimal:{slot.mechanism_slot_id}:{position}"
-        channel = contribution_channel_for_application_kind(application_kind)
-        if channel is None:
-            return [], f"trace_static_application_kind_not_admitted:{slot.mechanism_slot_id}:{position}"
-        pool, calculation_kind = channel
-        calculation = StatCalculation(calculation_kind, exact_value)
-        result.append(
-            StaticStatContribution(
-                contribution_id=f"character_trace:{node.trace_node_id}:{slot.mechanism_slot_id}:{position}",
-                contribution_pool=pool,
-                property_type=property_type,
-                exact_value=calculation.exact_value,
-                source_ref=BuildSourceRef("character_mechanism_slot", slot.mechanism_slot_id),
-                calculation=calculation,
-                source=slot.source,
-            )
+def _character_build_binding_contribution(
+    binding: CharacterBuildBindingIR,
+) -> tuple[StaticStatContribution | None, str]:
+    if binding.projection_kind not in {
+        "static_contribution",
+        "resource_contribution",
+    }:
+        return None, (
+            f"character_build_binding_not_contribution:{binding.build_binding_id}"
         )
-    if not result:
-        return [], f"trace_static_terms_empty:{slot.mechanism_slot_id}"
-    return result, ""
+    channel = contribution_channel_for_application_kind(binding.application_kind)
+    if channel is None:
+        return None, (
+            f"character_build_contribution_channel_missing:{binding.build_binding_id}"
+        )
+    pool, calculation_kind = channel
+    if (pool == "resource") != (
+        binding.projection_kind == "resource_contribution"
+    ):
+        return None, (
+            f"character_build_contribution_channel_mismatch:{binding.build_binding_id}"
+        )
+    calculation = StatCalculation(calculation_kind, binding.exact_value)
+    return (
+        StaticStatContribution(
+            contribution_id=f"character_build:{binding.build_binding_id}",
+            contribution_pool=pool,
+            property_type=binding.property_type,
+            exact_value=calculation.exact_value,
+            source_ref=BuildSourceRef(
+                "character_mechanism_slot",
+                binding.mechanism_slot_id,
+            ),
+            calculation=calculation,
+            source=binding.source,
+        ),
+        "",
+    )
 
 
-def _trace_dynamic_ref(
+@dataclass
+class _CharacterDynamicRootDraft:
+    root_kind: str
+    root_ref_id: str
+    character_card_id: str
+    source_graph_ref_id: str
+    source_graph_id: str
+    ability_definition_id: str
+    ability_name: str
+    root_source: IRSource
+    source_fingerprint: str
+    build_binding_ids: set[str] = field(default_factory=set)
+    specialization_ids: set[str] = field(default_factory=set)
+
+    @property
+    def identity(self) -> tuple[str, ...]:
+        return (
+            self.character_card_id,
+            self.source_graph_ref_id,
+            self.source_graph_id,
+            self.root_kind,
+            self.root_ref_id,
+            self.ability_definition_id,
+            self.source_fingerprint,
+        )
+
+    @property
+    def dynamic_graph_ref_id(self) -> str:
+        return (
+            f"character_dynamic_graph_ref:{self.character_card_id}:"
+            f"{self.source_graph_id}:{self.root_kind}:{self.root_ref_id}:"
+            f"{self.source_fingerprint}"
+        )
+
+    def materialize(self) -> CharacterDynamicGraphRef:
+        return CharacterDynamicGraphRef(
+            dynamic_graph_ref_id=self.dynamic_graph_ref_id,
+            root_kind=self.root_kind,  # type: ignore[arg-type]
+            root_ref_id=self.root_ref_id,
+            character_card_id=self.character_card_id,
+            source_graph_ref_id=self.source_graph_ref_id,
+            source_graph_id=self.source_graph_id,
+            ability_definition_id=self.ability_definition_id,
+            ability_name=self.ability_name,
+            build_binding_ids=tuple(sorted(self.build_binding_ids)),
+            specialization_ids=tuple(sorted(self.specialization_ids)),
+            root_source=self.root_source,
+            blocked_reason=(
+                "character_dynamic_graph_runtime_semantics_pending_p9_s4_s17"
+            ),
+        )
+
+
+def _dynamic_root_draft(
+    *,
+    root_kind: str,
+    root_ref_id: str,
+    character_card_id: str,
+    source_graph_ref_id: str,
+    source_graph_id: str,
+    ability_definition_id: str,
+    ability_name: str,
+    root_source: IRSource,
+) -> _CharacterDynamicRootDraft:
+    return _CharacterDynamicRootDraft(
+        root_kind=root_kind,
+        root_ref_id=root_ref_id,
+        character_card_id=character_card_id,
+        source_graph_ref_id=source_graph_ref_id,
+        source_graph_id=source_graph_id,
+        ability_definition_id=ability_definition_id,
+        ability_name=ability_name,
+        root_source=root_source,
+        source_fingerprint=canonical_json_fingerprint(root_source.to_json()),
+    )
+
+
+def _direct_dynamic_root_draft(
     rules: RuleBook,
-    build: CharacterBuildInput,
-    node: CharacterTraceNodeIR,
-    slot: CharacterMechanismSlotIR,
-) -> tuple[CharacterMechanismRef | None, CharacterMechanismDiagnostic | None]:
-    admission = slot.semantics.get("startup_admission")
-    graph_id = admission.get("standalone_ability_graph_id") if isinstance(admission, Mapping) else None
-    graph = rules.standalone_ability_graph(graph_id) if isinstance(graph_id, str) else None
-    if slot.coverage_status != "executable" or graph is None or graph.coverage_status != "executable":
-        reason = slot.blocked_reason or "trace_dynamic_graph_missing_or_not_executable"
-        return None, CharacterMechanismDiagnostic(
-            diagnostic_id=f"character_mechanism_diagnostic:{slot.mechanism_slot_id}",
-            mechanism_kind="trace_ability",
-            target_ref_id=str(graph_id or slot.linked_ir_ids.get("ability_name") or slot.mechanism_slot_id),
-            reason=reason,
-            source=slot.source,
+    binding: CharacterBuildBindingIR,
+) -> tuple[_CharacterDynamicRootDraft | None, str]:
+    card = rules.character_data_card(binding.character_data_card_id)
+    graph_ref = next(
+        (
+            ref
+            for ref in card.ability_source_graph_refs
+            if ref.graph_ref_id == binding.source_graph_ref_id
+        ),
+        None,
+    ) if card is not None else None
+    source_graph = rules.character_ability_source_graph(binding.source_graph_id)
+    ability_binding = rules.character_ability_binding(binding.ability_binding_id)
+    definition = rules.character_ability_definition(binding.ability_definition_id)
+    if (
+        binding.projection_kind != "dynamic_graph_ref"
+        or binding.dynamic_ref_kind != "direct_ability"
+        or card is None
+        or graph_ref is None
+        or graph_ref.graph_id != binding.source_graph_id
+        or source_graph is None
+        or ability_binding is None
+        or definition is None
+        or binding.relation_source is None
+        or binding.definition_source is None
+        or ability_binding.graph_id != source_graph.graph_id
+        or ability_binding.ability_definition_id != definition.definition_id
+        or ability_binding.ability_name != binding.target_ref_id
+        or definition.ability_name != binding.target_ref_id
+        or ability_binding.relation_source != binding.relation_source
+        or definition.source != binding.definition_source
+    ):
+        return None, (
+            f"direct_character_dynamic_graph_not_source_closed:"
+            f"{binding.build_binding_id}"
         )
-    return CharacterMechanismRef(
-        mechanism_ref_id=f"character_mechanism_ref:{slot.mechanism_slot_id}",
-        mechanism_kind="trace_ability",
-        character_card_id=build.character_card_id,
-        target_ref_id=graph.standalone_ability_graph_id,
-        source_ref=BuildSourceRef("character_mechanism_slot", slot.mechanism_slot_id),
-        source=slot.source,
-    ), None
+    draft = _dynamic_root_draft(
+        root_kind="ability_definition",
+        root_ref_id=definition.definition_id,
+        character_card_id=binding.character_data_card_id,
+        source_graph_ref_id=binding.source_graph_ref_id,
+        source_graph_id=binding.source_graph_id,
+        ability_definition_id=definition.definition_id,
+        ability_name=definition.ability_name,
+        root_source=definition.source,
+    )
+    draft.build_binding_ids.add(binding.build_binding_id)
+    return draft, ""
 
 
-def _eidolon_mechanisms(
+def _selector_dynamic_root_draft(
     rules: RuleBook,
-    build: CharacterBuildInput,
-) -> tuple[list[CharacterMechanismRef], list[CharacterMechanismDiagnostic]]:
-    refs: list[CharacterMechanismRef] = []
-    diagnostics: list[CharacterMechanismDiagnostic] = []
-    try:
-        eidolon_slots = rules.character_eidolon_slots_for_level(
-            build.character_card_id,
-            build.eidolon_level,
+    relation: CharacterBuildSelectorRelationIR,
+) -> tuple[_CharacterDynamicRootDraft | None, str]:
+    card = rules.character_data_card(relation.character_data_card_id)
+    graph_ref = next(
+        (
+            ref
+            for ref in card.ability_source_graph_refs
+            if ref.graph_ref_id == relation.source_graph_ref_id
+        ),
+        None,
+    ) if card is not None else None
+    source_graph = rules.character_ability_source_graph(relation.source_graph_id)
+    source = rules.character_ability_source(relation.source_id)
+    if (
+        card is None
+        or graph_ref is None
+        or graph_ref.graph_id != relation.source_graph_id
+        or source_graph is None
+        or source_graph.source_id != relation.source_id
+        or source is None
+        or source.source.source_path != relation.selector_source.source_path
+        or source.content_sha256 != relation.source_content_sha256
+    ):
+        return None, (
+            f"selector_dynamic_graph_not_source_closed:"
+            f"{relation.selector_relation_id}"
         )
-    except ValueError as exc:
-        return refs, [
-            CharacterMechanismDiagnostic(
-                diagnostic_id=f"character_mechanism_diagnostic:eidolon_level:{build.eidolon_level}",
-                mechanism_kind="eidolon",
-                target_ref_id=str(build.eidolon_level),
-                reason=str(exc),
+    if relation.location_kind == "ability_definition":
+        definition = rules.character_ability_definition(
+            relation.ability_definition_id
+        )
+        if (
+            definition is None
+            or definition.definition_id not in source_graph.definition_ids
+            or definition.source_id != relation.source_id
+            or definition.ability_name != relation.ability_name
+            or definition.source != relation.ability_definition_source
+        ):
+            return None, (
+                f"selector_dynamic_definition_not_source_closed:"
+                f"{relation.selector_relation_id}"
             )
-        ]
-    for eidolon_slot in eidolon_slots:
-        if eidolon_slot.coverage_status != "executable" or not eidolon_slot.linked_mechanism_slot_ids:
-            diagnostics.append(
-                CharacterMechanismDiagnostic(
-                    diagnostic_id=f"character_mechanism_diagnostic:{eidolon_slot.eidolon_slot_id}",
-                    mechanism_kind="eidolon",
-                    target_ref_id=eidolon_slot.eidolon_slot_id,
-                    reason=eidolon_slot.blocked_reason or "eidolon_mechanism_slot_missing",
-                    source=eidolon_slot.source,
-                )
-            )
+        return (
+            _dynamic_root_draft(
+                root_kind="ability_definition",
+                root_ref_id=definition.definition_id,
+                character_card_id=relation.character_data_card_id,
+                source_graph_ref_id=relation.source_graph_ref_id,
+                source_graph_id=relation.source_graph_id,
+                ability_definition_id=definition.definition_id,
+                ability_name=definition.ability_name,
+                root_source=definition.source,
+            ),
+            "",
+        )
+    return (
+        _dynamic_root_draft(
+            root_kind="source_graph",
+            root_ref_id=source.source_id,
+            character_card_id=relation.character_data_card_id,
+            source_graph_ref_id=relation.source_graph_ref_id,
+            source_graph_id=relation.source_graph_id,
+            ability_definition_id="",
+            ability_name="",
+            root_source=source.source,
+        ),
+        "",
+    )
+
+
+def _assemble_character_dynamic_roots(
+    rules: RuleBook,
+    card: CharacterDataCardIR,
+    selected_nodes: tuple[CharacterTraceNodeIR, ...],
+    selected_eidolons: tuple[CharacterEidolonSlotIR, ...],
+    direct_bindings: tuple[CharacterBuildBindingIR, ...],
+) -> tuple[
+    tuple[CharacterDynamicGraphRef, ...],
+    tuple[CharacterSelectorSpecialization, ...],
+    tuple[str, ...],
+]:
+    roots: dict[tuple[str, ...], _CharacterDynamicRootDraft] = {}
+    errors: list[str] = []
+    for binding in direct_bindings:
+        draft, error = _direct_dynamic_root_draft(rules, binding)
+        if draft is None:
+            errors.append(error or "direct_character_dynamic_root_missing")
             continue
-        for mechanism_slot_id in eidolon_slot.linked_mechanism_slot_ids:
-            slot = rules.character_mechanism_slot(mechanism_slot_id)
-            if slot is None or slot.character_data_card_id != build.character_card_id:
-                diagnostics.append(
-                    CharacterMechanismDiagnostic(
-                        diagnostic_id=f"character_mechanism_diagnostic:{mechanism_slot_id}",
-                        mechanism_kind="eidolon",
-                        target_ref_id=mechanism_slot_id,
-                        reason="eidolon_linked_mechanism_slot_missing_or_wrong_card",
-                        source=eidolon_slot.source,
-                    )
-                )
-                continue
-            if slot.coverage_status != "executable":
-                diagnostics.append(
-                    CharacterMechanismDiagnostic(
-                        diagnostic_id=f"character_mechanism_diagnostic:{slot.mechanism_slot_id}",
-                        mechanism_kind="eidolon",
-                        target_ref_id=slot.mechanism_slot_id,
-                        reason=slot.blocked_reason or "eidolon_mechanism_not_executable",
-                        source=slot.source,
-                    )
-                )
-                continue
-            if slot.mechanism_kind == "eidolon_skill_level":
-                # Skill-level bonuses are resolved into the static typed
-                # effective_skill_levels channel, never a dynamic mechanism.
-                continue
-            elif slot.mechanism_kind == "eidolon_ability_hook":
-                rank_abilities = slot.semantics.get("rank_ability")
-                if not isinstance(rank_abilities, (list, tuple)) or not rank_abilities:
-                    diagnostics.append(
-                        CharacterMechanismDiagnostic(
-                            diagnostic_id=f"character_mechanism_diagnostic:{slot.mechanism_slot_id}:ability",
-                            mechanism_kind="eidolon_ability",
-                            target_ref_id=slot.mechanism_slot_id,
-                            reason="eidolon_ability_source_missing",
-                            source=slot.source,
-                        )
-                    )
-                    continue
-                for index, ability_name in enumerate(rank_abilities):
-                    graph_candidates = tuple(
-                        graph
-                        for graph in rules.standalone_ability_graphs_by_name(str(ability_name))
-                        if graph.coverage_status == "executable"
-                    )
-                    if len(graph_candidates) != 1:
-                        diagnostics.append(
-                            CharacterMechanismDiagnostic(
-                                diagnostic_id=f"character_mechanism_diagnostic:{slot.mechanism_slot_id}:ability:{index}",
-                                mechanism_kind="eidolon_ability",
-                                target_ref_id=str(ability_name),
-                                reason="eidolon_ability_graph_missing_or_ambiguous",
-                                source=slot.source,
-                            )
-                        )
-                    else:
-                        refs.append(
-                            CharacterMechanismRef(
-                                mechanism_ref_id=f"character_mechanism_ref:{slot.mechanism_slot_id}:ability:{index}",
-                                mechanism_kind="eidolon_ability",
-                                character_card_id=build.character_card_id,
-                                target_ref_id=graph_candidates[0].standalone_ability_graph_id,
-                                source_ref=BuildSourceRef("character_mechanism_slot", slot.mechanism_slot_id),
-                                source=slot.source,
-                            )
-                        )
-            else:
-                diagnostics.append(
-                    CharacterMechanismDiagnostic(
-                        diagnostic_id=f"character_mechanism_diagnostic:{slot.mechanism_slot_id}:unsupported",
-                        mechanism_kind=slot.mechanism_kind,
-                        target_ref_id=slot.mechanism_slot_id,
-                        reason="eidolon_subsource_kind_not_admitted",
-                        source=slot.source,
-                    )
-                )
-    return refs, diagnostics
+        existing = roots.setdefault(draft.identity, draft)
+        existing.build_binding_ids.update(draft.build_binding_ids)
+
+    selected_ids = {
+        *(node.trace_node_id for node in selected_nodes),
+        *(slot.eidolon_slot_id for slot in selected_eidolons),
+    }
+    decisions: list[
+        tuple[
+            CharacterBuildSelectorRelationIR,
+            _CharacterDynamicRootDraft,
+            bool,
+            bool,
+            str,
+        ]
+    ] = []
+    for relation in rules.character_build_selector_relations_for_card(card.card_id):
+        draft, error = _selector_dynamic_root_draft(rules, relation)
+        if draft is None:
+            errors.append(error or "selector_dynamic_root_missing")
+            continue
+        selection_matched = bool(
+            selected_ids.intersection(relation.selection_ref_ids)
+        )
+        predicate_value = (
+            relation.selector_value_when_selected
+            if selection_matched
+            else not relation.selector_value_when_selected
+        )
+        selected_subtree_path = (
+            relation.true_subtree_path
+            if predicate_value
+            else relation.false_subtree_path
+        )
+        if selected_subtree_path:
+            roots.setdefault(draft.identity, draft)
+        decisions.append(
+            (
+                relation,
+                draft,
+                selection_matched,
+                predicate_value,
+                selected_subtree_path,
+            )
+        )
+    if errors:
+        return (), (), tuple(sorted(set(errors)))
+
+    specializations: list[CharacterSelectorSpecialization] = []
+    for relation, draft, selection_matched, predicate_value, subtree_path in decisions:
+        parent = roots.get(draft.identity)
+        specialization_id = (
+            f"character_selector_specialization:{relation.selector_relation_id}"
+        )
+        specialization = CharacterSelectorSpecialization(
+            specialization_id=specialization_id,
+            selector_relation_id=relation.selector_relation_id,
+            character_card_id=relation.character_data_card_id,
+            selection_kind=relation.selection_kind,
+            logical_selection_id=relation.logical_selection_id,
+            selection_ref_ids=relation.selection_ref_ids,
+            selection_matched=selection_matched,
+            predicate_value=predicate_value,
+            branch_kind=relation.branch_kind,
+            branch_root_path=relation.branch_root_path,
+            selected_subtree_path=subtree_path,
+            parent_dynamic_graph_ref_id=(
+                parent.dynamic_graph_ref_id if parent is not None else ""
+            ),
+            context_scope_record_ids=tuple(
+                context.scope_record_id for context in relation.context_refs
+            ),
+            selector_source=relation.selector_source,
+        )
+        specializations.append(specialization)
+        if parent is not None:
+            parent.specialization_ids.add(specialization_id)
+    return (
+        tuple(
+            roots[key].materialize()
+            for key in sorted(roots)
+        ),
+        tuple(sorted(specializations, key=lambda item: item.specialization_id)),
+        (),
+    )
 
 
 def _panel_from_aggregates(

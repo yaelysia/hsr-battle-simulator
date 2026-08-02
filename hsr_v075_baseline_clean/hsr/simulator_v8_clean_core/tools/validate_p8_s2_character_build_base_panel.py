@@ -13,7 +13,8 @@ from ..builds.character_assembler import assemble_character_build, validate_char
 from ..builds.models import (
     CharacterBuildAssemblyResult,
     CharacterBuildInput,
-    CharacterMechanismRef,
+    CharacterDynamicGraphRef,
+    CharacterMechanismDiagnostic,
 )
 from ..equipment.models import (
     EquipmentBuildInput,
@@ -845,7 +846,7 @@ def run_fixture_contract_validation(output_dir: Path) -> dict[str, Any]:
             and mixed_eidolon_result.effective_skill_levels[0].base_level == 1
             and mixed_eidolon_result.effective_skill_levels[0].eidolon_level_bonus == 1
             and mixed_eidolon_result.effective_skill_levels[0].effective_level == 2
-            and not mixed_eidolon_result.admitted_dynamic_mechanism_refs
+            and not mixed_eidolon_result.dynamic_graph_refs
             and any(
                 item.target_ref_id == eidolon_extra_slot.mechanism_slot_id
                 for item in mixed_eidolon_result.unadmitted_mechanism_diagnostics
@@ -2274,7 +2275,8 @@ def _model_contract_checks(
     trace_values.append("late_mutation")
     contribution_values = list(base_result.contribution_ledger)
     skill_level_values = list(base_result.effective_skill_levels)
-    mechanism_values = list(base_result.admitted_dynamic_mechanism_refs)
+    dynamic_values = list(base_result.dynamic_graph_refs)
+    specialization_values = list(base_result.selector_specializations)
     resource_binding_values = list(base_result.resource_bindings)
     owned_combatant_values = list(base_result.owned_combatant_results)
     detached_result = CharacterBuildAssemblyResult(
@@ -2285,7 +2287,10 @@ def _model_contract_checks(
         base_panel=base_result.base_panel,
         contribution_ledger=contribution_values,
         effective_skill_levels=skill_level_values,
-        admitted_dynamic_mechanism_refs=mechanism_values,
+        selected_trace_node_ids=base_result.selected_trace_node_ids,
+        selected_eidolon_slot_ids=base_result.selected_eidolon_slot_ids,
+        dynamic_graph_refs=dynamic_values,
+        selector_specializations=specialization_values,
         resource_bindings=resource_binding_values,
         owned_combatant_results=owned_combatant_values,
         equipment_assembly_result=base_result.equipment_assembly_result,
@@ -2293,7 +2298,8 @@ def _model_contract_checks(
     detached_json = detached_result.to_json()
     contribution_values.clear()
     skill_level_values.clear()
-    mechanism_values.clear()
+    dynamic_values.clear()
+    specialization_values.clear()
     resource_binding_values.clear()
     owned_combatant_values.clear()
     damaged_build = dict(base_build.to_json())
@@ -2803,17 +2809,32 @@ def _mechanism_admission_checks(
     executable_slot = next(
         slot for slot in ir.character_mechanism_slots if slot.coverage_status == "executable"
     )
-    fake_ref = CharacterMechanismRef(
-        mechanism_ref_id="validation:missing-graph-ref",
-        mechanism_kind="trace_ability",
+    fake_ref = CharacterDynamicGraphRef(
+        dynamic_graph_ref_id="validation:missing-graph-ref",
+        root_kind="source_graph",
+        root_ref_id="validation:missing-source",
         character_card_id=base_build.character_card_id,
-        target_ref_id="standalone_ability_graph:missing",
-        source_ref=BuildSourceRef("character_mechanism_slot", executable_slot.mechanism_slot_id),
-        source=executable_slot.source,
+        source_graph_ref_id="validation:missing-card-graph-ref",
+        source_graph_id="validation:missing-graph",
+        ability_definition_id="",
+        ability_name="",
+        build_binding_ids=("validation:missing-build-binding",),
+        specialization_ids=(),
+        root_source=executable_slot.source,
+        blocked_reason="validation_missing_dynamic_graph_root",
+    )
+    fake_diagnostic = CharacterMechanismDiagnostic(
+        diagnostic_id="validation:missing-graph-diagnostic",
+        mechanism_kind="character_dynamic_graph_root",
+        target_ref_id=fake_ref.dynamic_graph_ref_id,
+        reason=fake_ref.blocked_reason,
+        source=fake_ref.root_source,
     )
     fake_result = replace(
         base_result,
-        admitted_dynamic_mechanism_refs=(fake_ref,),
+        battle_admission_status="blocked",
+        dynamic_graph_refs=(fake_ref,),
+        unadmitted_mechanism_diagnostics=(fake_diagnostic,),
     )
     return {
         "every_trace_node_preserves_level_and_default_unlock_fields": all(

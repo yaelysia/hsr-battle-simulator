@@ -51,9 +51,15 @@ from .ir import (
     AssistantAbilityResolutionIR,
     AvatarProfileIR,
     CharacterAbilityBindingKind,
+    CharacterAbilityBindingIR,
     CharacterAbilityDefinitionIR,
+    CharacterAbilitySourceIR,
     CharacterAbilitySourceGraphCatalogIR,
+    CharacterAbilitySourceGraphIR,
     CharacterActionSourceIR,
+    CharacterBuildBindingIR,
+    CharacterBuildSelectorGapIR,
+    CharacterBuildSelectorRelationIR,
     CharacterNonGameplaySkillSourceIR,
     CharacterEidolonSlotIR,
     CharacterMechanismSlotIR,
@@ -554,6 +560,37 @@ class RuleBook:
                 else None
             ),
         )
+        object.__setattr__(
+            self,
+            "_character_ability_sources",
+            {source.source_id: source for source in catalog.sources}
+            if catalog is not None
+            else {},
+        )
+        object.__setattr__(
+            self,
+            "_character_ability_definitions",
+            {
+                definition.definition_id: definition
+                for definition in catalog.definitions
+            }
+            if catalog is not None
+            else {},
+        )
+        object.__setattr__(
+            self,
+            "_character_ability_bindings",
+            {binding.binding_id: binding for binding in catalog.bindings}
+            if catalog is not None
+            else {},
+        )
+        object.__setattr__(
+            self,
+            "_character_ability_source_graphs",
+            {graph.graph_id: graph for graph in catalog.graphs}
+            if catalog is not None
+            else {},
+        )
         object.__setattr__(self, "_entities", {entity.entity_id: entity for entity in self.ir.entities})
         modifier_definitions_by_name: dict[str, list[RuleEntity]] = {}
         status_entities_by_modifier: dict[str, list[RuleEntity]] = {}
@@ -966,6 +1003,320 @@ class RuleBook:
             {
                 key: tuple(sorted(value, key=lambda item: (item.rank, item.eidolon_slot_id)))
                 for key, value in eidolon_slots_by_card.items()
+            },
+        )
+        selector_relations = tuple(self.ir.character_build_selector_relations)
+        selector_gaps = tuple(self.ir.character_build_selector_gaps)
+        if any(
+            type(item) is not CharacterBuildSelectorRelationIR
+            for item in selector_relations
+        ) or any(
+            type(item) is not CharacterBuildSelectorGapIR
+            for item in selector_gaps
+        ):
+            raise TypeError("RuleBook selector ledger contains an invalid typed value")
+        relation_ids = tuple(
+            relation.selector_relation_id for relation in selector_relations
+        )
+        gap_ids = tuple(gap.selector_gap_id for gap in selector_gaps)
+        if len(relation_ids) != len(set(relation_ids)):
+            raise ValueError("RuleBook selector relation identities must be unique")
+        if len(gap_ids) != len(set(gap_ids)):
+            raise ValueError("RuleBook selector gap identities must be unique")
+        selector_identities = tuple(
+            item.selector_identity for item in (*selector_relations, *selector_gaps)
+        )
+        if len(selector_identities) != len(set(selector_identities)):
+            raise ValueError("RuleBook selector source identities must be unique")
+        selector_relations_by_id = {
+            relation.selector_relation_id: relation
+            for relation in selector_relations
+        }
+        selector_gaps_by_id = {
+            gap.selector_gap_id: gap for gap in selector_gaps
+        }
+        selector_relations_by_card: dict[
+            str, list[CharacterBuildSelectorRelationIR]
+        ] = {}
+        selector_relations_by_selection: dict[
+            str, list[CharacterBuildSelectorRelationIR]
+        ] = {}
+        selector_gaps_by_card: dict[str, list[CharacterBuildSelectorGapIR]] = {}
+        for relation in selector_relations:
+            selector_relations_by_card.setdefault(
+                relation.character_data_card_id,
+                [],
+            ).append(relation)
+            for selection_ref_id in relation.selection_ref_ids:
+                selector_relations_by_selection.setdefault(
+                    selection_ref_id,
+                    [],
+                ).append(relation)
+        for gap in selector_gaps:
+            selector_gaps_by_card.setdefault(
+                gap.character_data_card_id,
+                [],
+            ).append(gap)
+        for item in (*selector_relations, *selector_gaps):
+            evidence = item.selector_source.evidence
+            expected_opcode = (
+                "BySkillPointActivated"
+                if item.selector_kind == "skill_point"
+                else "ByRankActivated"
+            )
+            if (
+                item.selector_source.raw_id != item.selector_scope_record_id
+                or item.selector_source.raw_type != expected_opcode
+                or evidence.get("json_path")
+                != f"{item.selector_json_path}.$type"
+                or evidence.get("selector_projection_id")
+                != item.selector_projection_id
+                or evidence.get("selector_kind") != item.selector_kind
+                or evidence.get("selector_key") != (item.selector_key or None)
+                or evidence.get("selector_hash") != item.selector_hash
+                or evidence.get("source_content_sha256")
+                != item.source_content_sha256
+            ):
+                raise ValueError("RuleBook selector source identity is inconsistent")
+            card = self._character_data_cards.get(item.character_data_card_id)
+            expected_card_id = (
+                f"character_data_card:avatar:{item.owner_avatar_id}"
+            )
+            if (
+                card is None
+                or item.character_data_card_id != expected_card_id
+                or card.entity_ref != f"avatar:{item.owner_avatar_id}"
+                or item.selector_source.evidence.get("avatar_id")
+                != item.owner_avatar_id
+            ):
+                raise ValueError("character build selector owner/card mismatch")
+            source = self._character_ability_sources.get(item.source_id)
+            source_graph = self._character_ability_source_graphs.get(
+                item.source_graph_id
+            )
+            source_closed = (
+                source is not None
+                and source.source_kind == "character_main"
+                and source.avatar_id == item.owner_avatar_id
+                and source.source.source_path == item.selector_source.source_path
+                and source.content_sha256 == item.source_content_sha256
+                and source_graph is not None
+                and source_graph.source_id == source.source_id
+                and source_graph.source_kind == "character_main"
+                and source_graph.owner_avatar_id == item.owner_avatar_id
+            )
+            if isinstance(item, CharacterBuildSelectorRelationIR):
+                if not source_closed:
+                    raise ValueError(
+                        "character build selector relation is outside S1 source closure"
+                    )
+                graph_ref = next(
+                    (
+                        ref
+                        for ref in card.ability_source_graph_refs
+                        if ref.graph_ref_id == item.source_graph_ref_id
+                    ),
+                    None,
+                )
+                if graph_ref is None or graph_ref.graph_id != item.source_graph_id:
+                    raise ValueError(
+                        "character build selector relation has no card graph ref"
+                    )
+                selection_items: tuple[CharacterTraceNodeIR | CharacterEidolonSlotIR, ...]
+                if item.selection_kind == "trace":
+                    selection_items = tuple(
+                        self._character_trace_nodes.get(ref_id)
+                        for ref_id in item.selection_ref_ids
+                    )  # type: ignore[assignment]
+                    selection_closed = all(
+                        isinstance(selection, CharacterTraceNodeIR)
+                        and selection.character_data_card_id == item.character_data_card_id
+                        and selection.avatar_id == item.owner_avatar_id
+                        and selection.trace_id == item.logical_selection_id
+                        and selection.source.evidence.get("point_trigger_key")
+                        == item.selector_key
+                        for selection in selection_items
+                    )
+                else:
+                    selection_items = tuple(
+                        self._character_eidolon_slots.get(ref_id)
+                        for ref_id in item.selection_ref_ids
+                    )  # type: ignore[assignment]
+                    selection_closed = all(
+                        isinstance(selection, CharacterEidolonSlotIR)
+                        and selection.character_data_card_id == item.character_data_card_id
+                        and selection.avatar_id == item.owner_avatar_id
+                        and str(selection.rank) == item.logical_selection_id
+                        and selection.semantics.get("trigger_hash")
+                        == item.selector_hash
+                        for selection in selection_items
+                    )
+                if not selection_closed:
+                    raise ValueError(
+                        "character build selector relation selection is dangling"
+                    )
+                if item.location_kind == "ability_definition":
+                    definition = self._character_ability_definitions.get(
+                        item.ability_definition_id
+                    )
+                    if (
+                        definition is None
+                        or definition.definition_id not in source_graph.definition_ids
+                        or definition.source_id != item.source_id
+                        or definition.owner_avatar_id != item.owner_avatar_id
+                        or definition.ability_name != item.ability_name
+                        or definition.source != item.ability_definition_source
+                    ):
+                        raise ValueError(
+                            "character build selector ability definition is not source-closed"
+                        )
+            elif item.gap_kind not in {
+                "source_graph_missing",
+                "source_closure_mismatch",
+            } and not source_closed:
+                raise ValueError(
+                    "character build selector gap invented an S1 source closure"
+                )
+        object.__setattr__(
+            self,
+            "_character_build_selector_relations",
+            selector_relations_by_id,
+        )
+        object.__setattr__(
+            self,
+            "_character_build_selector_gaps",
+            selector_gaps_by_id,
+        )
+        object.__setattr__(
+            self,
+            "_character_build_selector_relations_by_card",
+            {
+                key: tuple(
+                    sorted(value, key=lambda item: item.selector_relation_id)
+                )
+                for key, value in selector_relations_by_card.items()
+            },
+        )
+        object.__setattr__(
+            self,
+            "_character_build_selector_relations_by_selection",
+            {
+                key: tuple(
+                    sorted(value, key=lambda item: item.selector_relation_id)
+                )
+                for key, value in selector_relations_by_selection.items()
+            },
+        )
+        object.__setattr__(
+            self,
+            "_character_build_selector_gaps_by_card",
+            {
+                key: tuple(sorted(value, key=lambda item: item.selector_gap_id))
+                for key, value in selector_gaps_by_card.items()
+            },
+        )
+        character_build_bindings = tuple(
+            binding
+            for item in (
+                *self.ir.character_trace_nodes,
+                *self.ir.character_eidolon_slots,
+            )
+            for binding in item.build_bindings
+        )
+        build_binding_ids = tuple(
+            binding.build_binding_id for binding in character_build_bindings
+        )
+        if len(build_binding_ids) != len(set(build_binding_ids)):
+            raise ValueError("character build binding identities must be globally unique")
+        mechanism_slots_by_id = {
+            slot.mechanism_slot_id: slot
+            for slot in self.ir.character_mechanism_slots
+        }
+        for binding in character_build_bindings:
+            mechanism_slot = mechanism_slots_by_id.get(binding.mechanism_slot_id)
+            if (
+                mechanism_slot is None
+                or mechanism_slot.character_data_card_id
+                != binding.character_data_card_id
+                or mechanism_slot.source != binding.source
+            ):
+                raise ValueError(
+                    "character build binding mechanism slot is not source-closed"
+                )
+            if binding.projection_kind == "dynamic_graph_ref":
+                card = self._character_data_cards.get(
+                    binding.character_data_card_id
+                )
+                graph_ref = next(
+                    (
+                        ref
+                        for ref in card.ability_source_graph_refs
+                        if ref.graph_ref_id == binding.source_graph_ref_id
+                    ),
+                    None,
+                ) if card is not None else None
+                source_graph = self._character_ability_source_graphs.get(
+                    binding.source_graph_id
+                )
+                if (
+                    graph_ref is None
+                    or graph_ref.graph_id != binding.source_graph_id
+                    or source_graph is None
+                ):
+                    raise ValueError(
+                        "dynamic character build binding is outside the S1 source graph"
+                    )
+                ability_binding = self._character_ability_bindings.get(
+                    binding.ability_binding_id
+                )
+                definition = self._character_ability_definitions.get(
+                    binding.ability_definition_id
+                )
+                if (
+                    binding.dynamic_ref_kind != "direct_ability"
+                    or ability_binding is None
+                    or definition is None
+                    or ability_binding.graph_id != source_graph.graph_id
+                    or ability_binding.ability_definition_id
+                    != definition.definition_id
+                    or ability_binding.relation_source
+                    != binding.relation_source
+                    or definition.source != binding.definition_source
+                ):
+                    raise ValueError(
+                        "direct character build binding is outside the S1 source graph"
+                    )
+        build_bindings_by_card: dict[str, list[CharacterBuildBindingIR]] = {}
+        build_bindings_by_selection: dict[str, list[CharacterBuildBindingIR]] = {}
+        for binding in character_build_bindings:
+            build_bindings_by_card.setdefault(
+                binding.character_data_card_id, []
+            ).append(binding)
+            build_bindings_by_selection.setdefault(
+                binding.selection_ref_id, []
+            ).append(binding)
+        object.__setattr__(
+            self,
+            "_character_build_bindings",
+            {
+                binding.build_binding_id: binding
+                for binding in character_build_bindings
+            },
+        )
+        object.__setattr__(
+            self,
+            "_character_build_bindings_by_card",
+            {
+                key: tuple(sorted(value, key=lambda item: item.build_binding_id))
+                for key, value in build_bindings_by_card.items()
+            },
+        )
+        object.__setattr__(
+            self,
+            "_character_build_bindings_by_selection",
+            {
+                key: tuple(sorted(value, key=lambda item: item.build_binding_id))
+                for key, value in build_bindings_by_selection.items()
             },
         )
         bounce_policies_by_action: dict[tuple[str, int], list[BouncePolicyIR]] = {}
@@ -1779,6 +2130,44 @@ class RuleBook:
             )
         return query.query_action(owner_avatar_id, action_id)
 
+    def query_character_standalone_ability(
+        self,
+        owner_avatar_id: str,
+        ability_name: str,
+    ) -> CharacterAbilitySourceGraphQueryResult:
+        query = self._character_ability_source_graph_query
+        if query is None:
+            return CharacterAbilitySourceGraphQuery._blocked(
+                owner_avatar_id=owner_avatar_id,
+                ability_name=ability_name,
+                reason="character_ability_source_graph_not_installed",
+            )
+        return query.query_standalone_ability(owner_avatar_id, ability_name)
+
+    def character_ability_definition(
+        self,
+        definition_id: str,
+    ) -> CharacterAbilityDefinitionIR | None:
+        return self._character_ability_definitions.get(definition_id)
+
+    def character_ability_source(
+        self,
+        source_id: str,
+    ) -> CharacterAbilitySourceIR | None:
+        return self._character_ability_sources.get(source_id)
+
+    def character_ability_binding(
+        self,
+        binding_id: str,
+    ) -> CharacterAbilityBindingIR | None:
+        return self._character_ability_bindings.get(binding_id)
+
+    def character_ability_source_graph(
+        self,
+        graph_id: str,
+    ) -> CharacterAbilitySourceGraphIR | None:
+        return self._character_ability_source_graphs.get(graph_id)
+
     def entity(self, entity_id: str) -> RuleEntity | None:
         return self._entities.get(entity_id)
 
@@ -2481,6 +2870,54 @@ class RuleBook:
         if eidolon_level < 0 or eidolon_level > 6:
             raise ValueError(f"eidolon_level must be between 0 and 6, got {eidolon_level!r}")
         return tuple(slot for slot in self.character_eidolon_slots_for_card(card_id) if slot.rank <= eidolon_level)
+
+    def character_build_binding(
+        self,
+        build_binding_id: str,
+    ) -> CharacterBuildBindingIR | None:
+        return self._character_build_bindings.get(build_binding_id)
+
+    def character_build_bindings_for_card(
+        self,
+        card_id: str,
+    ) -> tuple[CharacterBuildBindingIR, ...]:
+        return self._character_build_bindings_by_card.get(card_id, ())
+
+    def character_build_bindings_for_selection(
+        self,
+        selection_ref_id: str,
+    ) -> tuple[CharacterBuildBindingIR, ...]:
+        return self._character_build_bindings_by_selection.get(
+            selection_ref_id,
+            (),
+        )
+
+    def character_build_selector_relation(
+        self,
+        selector_relation_id: str,
+    ) -> CharacterBuildSelectorRelationIR | None:
+        return self._character_build_selector_relations.get(selector_relation_id)
+
+    def character_build_selector_relations_for_card(
+        self,
+        card_id: str,
+    ) -> tuple[CharacterBuildSelectorRelationIR, ...]:
+        return self._character_build_selector_relations_by_card.get(card_id, ())
+
+    def character_build_selector_relations_for_selection(
+        self,
+        selection_ref_id: str,
+    ) -> tuple[CharacterBuildSelectorRelationIR, ...]:
+        return self._character_build_selector_relations_by_selection.get(
+            selection_ref_id,
+            (),
+        )
+
+    def character_build_selector_gaps_for_card(
+        self,
+        card_id: str,
+    ) -> tuple[CharacterBuildSelectorGapIR, ...]:
+        return self._character_build_selector_gaps_by_card.get(card_id, ())
 
     def require_combatant_profile(self, entity_id: str) -> CombatantProfileIR:
         profile = self.combatant_profile(entity_id)

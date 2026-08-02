@@ -239,10 +239,6 @@ class ScenarioStateBuilder:
                     level.action_definition_source.to_json()
                     for level in assembly.effective_skill_levels
                 )
-                source_traces.extend(
-                    mechanism.source.to_json()
-                    for mechanism in assembly.admitted_dynamic_mechanism_refs
-                )
                 equipment_result = assembly.equipment_assembly_result
                 if equipment_result is None:
                     raise ValueError(
@@ -307,7 +303,9 @@ class ScenarioStateBuilder:
                             item.result_fingerprint
                             for item in assembly.owned_combatant_results
                         ],
-                        "legacy_trace_eidolon_paths_bypassed": True,
+                        "character_build_selector_source": (
+                            "character_build_assembly"
+                        ),
                     }
                 )
                 continue
@@ -338,7 +336,10 @@ class ScenarioStateBuilder:
                         "independent_rank_toggle_allowed": False,
                     }
                     flags["eidolon_source_traces"] = tuple(slot.source.to_json() for slot in eidolon_slots)
-                    runtime_activation = _eidolon_runtime_activation(self.value_resolver, eidolon_slots)
+                    runtime_activation = _kernel_fixture_eidolon_runtime_activation(
+                        self.value_resolver,
+                        eidolon_slots,
+                    )
                     flags.update(runtime_activation["flags"])
                     for startup_spec in runtime_activation["startup_specs"]:
                         eidolon_startup_specs.append({"unit_id": unit.unit_id, **startup_spec})
@@ -368,7 +369,12 @@ class ScenarioStateBuilder:
                 if isinstance(weaknesses, list):
                     flags["weaknesses"] = tuple(str(item) for item in weaknesses)
             resources = _resources_with_profile_resistances(panel, profile)
-            trace_activation = _trace_runtime_activation(self.rules, self.value_resolver, card, flags)
+            trace_activation = _kernel_fixture_trace_runtime_activation(
+                self.rules,
+                self.value_resolver,
+                card,
+                flags,
+            )
             flags.update(trace_activation["flags"])
             for startup_spec in trace_activation["startup_specs"]:
                 trace_startup_specs.append({"unit_id": unit.unit_id, **startup_spec})
@@ -2129,7 +2135,7 @@ def _initial_wave_runtime(rules: RuleBook, scenario: ScenarioSpec) -> dict[str, 
     }
 
 
-def _trace_runtime_activation(
+def _kernel_fixture_trace_runtime_activation(
     rules: RuleBook,
     value_resolver: ValueResolver,
     card: object | None,
@@ -2309,10 +2315,11 @@ def _formal_character_activation(
         "character_build_input_fingerprint": assembly.input_fingerprint,
         "character_build_result_fingerprint": assembly.result_fingerprint,
         "character_build_battle_admission_status": assembly.battle_admission_status,
-        "legacy_trace_runtime_activation_bypassed": True,
-        "legacy_eidolon_runtime_activation_bypassed": True,
-        "admitted_character_mechanism_ref_ids": tuple(
-            ref.mechanism_ref_id for ref in assembly.admitted_dynamic_mechanism_refs
+        "character_build_selector_source": "character_build_assembly",
+        "selected_trace_node_ids": assembly.selected_trace_node_ids,
+        "selected_eidolon_slot_ids": assembly.selected_eidolon_slot_ids,
+        "source_bound_dynamic_graph_ref_ids": tuple(
+            ref.dynamic_graph_ref_id for ref in assembly.dynamic_graph_refs
         ),
         "effective_skill_levels_by_action_id": {
             level.action_id: level.effective_level
@@ -2368,44 +2375,6 @@ def _formal_character_activation(
     flags["avatar_base_type"] = eligibility.character_path_type
     flags["avatar_base_type_source"] = eligibility.source.to_json()
     startup_specs: list[dict[str, Any]] = []
-    for mechanism in assembly.admitted_dynamic_mechanism_refs:
-        slot = rules.character_mechanism_slot(mechanism.source_ref.definition_identity)
-        if slot is None:
-            raise ValueError(f"admitted character mechanism slot disappeared: {mechanism.mechanism_ref_id}")
-        if mechanism.mechanism_kind in {"trace_ability", "eidolon_ability"}:
-            graph = rules.standalone_ability_graph(mechanism.target_ref_id)
-            if graph is None or graph.coverage_status != "executable":
-                raise ValueError(f"admitted character mechanism graph disappeared: {mechanism.mechanism_ref_id}")
-            admission = slot.semantics.get("startup_admission")
-            admitted_task_ids: tuple[str, ...] = ()
-            if isinstance(admission, dict):
-                raw_tasks = admission.get("admitted_tasks")
-                if isinstance(raw_tasks, (list, tuple)):
-                    admitted_task_ids = tuple(
-                        str(item.get("task_id"))
-                        for item in raw_tasks
-                        if isinstance(item, dict) and item.get("task_id")
-                    )
-            startup_specs.append(
-                {
-                    "kind": f"formal_{mechanism.mechanism_kind}",
-                    "slot": slot,
-                    "slot_id": slot.mechanism_slot_id,
-                    "slot_id_field": "mechanism_slot_id",
-                    "graph_ref_id": graph.standalone_ability_graph_id,
-                    "ability_name": graph.ability_name,
-                    "param_values": tuple(_number_items(slot.semantics.get("param_values"))),
-                    "dynamic_value_bindings": slot.semantics.get("dynamic_value_bindings"),
-                    "dynamic_value_binding_mode": (
-                        "configured_by_hash_required"
-                        if mechanism.mechanism_kind == "trace_ability"
-                        else "request_order_fallback"
-                    ),
-                    "admitted_task_ids": admitted_task_ids,
-                }
-            )
-        else:
-            raise ValueError(f"unsupported admitted character mechanism kind: {mechanism.mechanism_kind}")
     equipment_result = assembly.equipment_assembly_result
     if equipment_result is None:
         raise ValueError("formal character activation requires equipment assembly result")
@@ -2678,7 +2647,10 @@ def _resources_with_profile_resistances(
     return resources
 
 
-def _eidolon_runtime_activation(value_resolver: ValueResolver, eidolon_slots: tuple[object, ...]) -> dict[str, Any]:
+def _kernel_fixture_eidolon_runtime_activation(
+    value_resolver: ValueResolver,
+    eidolon_slots: tuple[object, ...],
+) -> dict[str, Any]:
     flags: dict[str, object] = {}
     startup_specs: list[dict[str, Any]] = []
     skill_level_bonus_by_action_id: dict[str, int] = {}

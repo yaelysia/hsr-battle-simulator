@@ -835,7 +835,8 @@ def _critical_negatives(
         "ok": illegal.assembly_status == "blocked"
         and illegal.base_panel is None
         and not illegal.contribution_ledger
-        and not illegal.admitted_dynamic_mechanism_refs,
+        and not illegal.dynamic_graph_refs
+        and not illegal.selector_specializations,
         "blocked_reasons": list(illegal.blocked_reasons),
     }
 

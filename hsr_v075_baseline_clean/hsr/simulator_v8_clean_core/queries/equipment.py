@@ -260,6 +260,7 @@ class CharacterBuildAssemblySummaryView:
     relic_set_tiers: tuple[JSONValue, ...]
     dynamic_mechanisms: tuple[JSONValue, ...]
     character_dynamic_mechanisms: tuple[JSONValue, ...]
+    character_selector_specializations: tuple[JSONValue, ...]
     battle_admission_blockers: tuple[JSONValue, ...]
     diagnostics: tuple[JSONValue, ...]
     blocked_reasons: tuple[str, ...]
@@ -272,6 +273,7 @@ class CharacterBuildAssemblySummaryView:
             "relic_set_tiers",
             "dynamic_mechanisms",
             "character_dynamic_mechanisms",
+            "character_selector_specializations",
             "battle_admission_blockers",
             "diagnostics",
         ):
@@ -301,6 +303,9 @@ class CharacterBuildAssemblySummaryView:
             ],
             "character_dynamic_mechanisms": [
                 _thawed(item) for item in self.character_dynamic_mechanisms
+            ],
+            "character_selector_specializations": [
+                _thawed(item) for item in self.character_selector_specializations
             ],
             "battle_admission_blockers": [
                 _thawed(item) for item in self.battle_admission_blockers
@@ -1124,7 +1129,10 @@ def assembly_summary(
             else ()
         ),
         character_dynamic_mechanisms=tuple(
-            item.to_json() for item in result.admitted_dynamic_mechanism_refs
+            item.to_json() for item in result.dynamic_graph_refs
+        ),
+        character_selector_specializations=tuple(
+            item.to_json() for item in result.selector_specializations
         ),
         battle_admission_blockers=(
             tuple(item.to_json() for item in equipment.battle_admission_blockers)

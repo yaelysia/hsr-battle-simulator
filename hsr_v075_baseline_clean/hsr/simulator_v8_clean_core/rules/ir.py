@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from hashlib import sha256
 from typing import Any, Literal, cast
 
@@ -115,12 +115,14 @@ CharacterAbilityAdmissionStatus = Literal[
     "blocked",
 ]
 CharacterAbilityProjectionScope = Literal[
+    "build_resolution",
     "battle_data_projection",
     "input_projection",
     "environment_input",
 ]
 CharacterAbilityMaterializationRole = Literal["selected", "ancestor_context"]
 CharacterAbilityProjectionKind = Literal[
+    "build_selector",
     "special_resource_state_fragment",
     "target_persistence",
     "environment_dependency",
@@ -157,6 +159,33 @@ CharacterAbilityBindingGapKind = Literal[
     "cross_kind_blocked",
     "lowering_gap",
 ]
+CharacterBuildSelectionKind = Literal["trace", "eidolon"]
+CharacterBuildSelectorKind = Literal["skill_point", "rank"]
+CharacterBuildSelectorLocationKind = Literal[
+    "ability_definition",
+    "source_root",
+]
+CharacterBuildSelectorGapKind = Literal[
+    "selection_missing",
+    "selection_ambiguous",
+    "cross_character",
+    "source_graph_missing",
+    "source_closure_mismatch",
+    "ability_definition_ambiguous",
+]
+CharacterBuildDynamicRefKind = Literal[
+    "none",
+    "direct_ability",
+]
+CharacterBuildProjectionKind = Literal[
+    "static_contribution",
+    "resource_contribution",
+    "skill_level_change",
+    "dynamic_graph_ref",
+    "source_gap",
+]
+CharacterSkillLevelChangeKind = Literal["base", "bonus", "none"]
+CharacterBuildRuntimeAdmissionStatus = Literal["not_applicable", "blocked"]
 
 
 _CHARACTER_ABILITY_ADMISSION_BY_SCOPE: dict[
@@ -216,6 +245,7 @@ _CHARACTER_ABILITY_MATERIALIZATION_ROLES = frozenset(
 )
 _CHARACTER_ABILITY_PROJECTION_KINDS = frozenset(
     {
+        "build_selector",
         "special_resource_state_fragment",
         "target_persistence",
         "environment_dependency",
@@ -348,6 +378,64 @@ def _validate_projection_payload(
     source_opcode: str,
     payload: Mapping[str, Any],
 ) -> None:
+    if projection_kind == "build_selector":
+        if (
+            projection_scope != "build_resolution"
+            or source_opcode not in {"BySkillPointActivated", "ByRankActivated"}
+            or set(payload)
+            != {
+                "operation",
+                "selector_kind",
+                "selector_key",
+                "selector_hash",
+                "inverse",
+                "selector_json_path",
+                "branch_kind",
+                "branch_root_path",
+                "true_subtree_path",
+                "false_subtree_path",
+            }
+        ):
+            raise ValueError("build selector projection contract mismatch")
+        selector_key = payload.get("selector_key")
+        selector_hash = payload.get("selector_hash")
+        expected_kind = (
+            "skill_point"
+            if source_opcode == "BySkillPointActivated"
+            else "rank"
+        )
+        if (
+            payload.get("operation") != "build_selector"
+            or payload.get("selector_kind") != expected_kind
+            or not isinstance(payload.get("inverse"), bool)
+            or not isinstance(payload.get("selector_json_path"), str)
+            or not payload.get("selector_json_path")
+            or payload.get("branch_kind")
+            not in {
+                "explicit_task_branches",
+                "predicate_gated_object",
+                "predicate_context",
+            }
+            or not isinstance(payload.get("branch_root_path"), str)
+            or not payload.get("branch_root_path")
+            or not isinstance(payload.get("true_subtree_path"), str)
+            or not isinstance(payload.get("false_subtree_path"), str)
+        ):
+            raise ValueError("build selector projection payload is invalid")
+        if source_opcode == "BySkillPointActivated":
+            if (
+                not isinstance(selector_key, str)
+                or not selector_key
+                or selector_hash is not None
+            ):
+                raise ValueError("skill-point selector key is invalid")
+        elif (
+            selector_key is not None
+            or not isinstance(selector_hash, int)
+            or isinstance(selector_hash, bool)
+        ):
+            raise ValueError("rank selector hash is invalid")
+        return
     if projection_kind == "special_resource_state_fragment":
         if projection_scope != "battle_data_projection" or source_opcode not in {
             "SetEnergyBarState",
@@ -492,6 +580,19 @@ def _validate_projection_field_lineage(
 ) -> None:
     raw_names = set(raw_field_names)
     ignored = set(ignored_client_fields)
+    if projection_kind == "build_selector":
+        required = (
+            {"PointTriggerKey"}
+            if source_opcode == "BySkillPointActivated"
+            else {"TriggerKey"}
+        )
+        if (
+            not required.issubset(raw_names)
+            or not raw_names.issubset(required | {"Inverse", "TargetType"})
+            or ignored
+        ):
+            raise ValueError("build selector raw field lineage mismatch")
+        return
     if projection_kind == "special_resource_state_fragment":
         if not ignored.issubset(
             {"EnergyDotPrefabPaths", "IconPath", "PrefabPath"}
@@ -825,6 +926,7 @@ class CharacterAbilityProjectionIR:
             self.projection_scope,
             frozenset(
                 {
+                    "build_resolution",
                     "battle_data_projection",
                     "input_projection",
                     "environment_input",
@@ -3043,6 +3145,682 @@ class ServantDefinitionIR:
 
 
 @dataclass(frozen=True)
+class CharacterBuildSelectorContextRefIR:
+    scope_record_id: str
+    family: Literal["TargetAlias"]
+    json_path: str
+    parent_branch_path: str
+    source: IRSource
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "scope_record_id",
+            "family",
+            "json_path",
+            "parent_branch_path",
+        ):
+            value = getattr(self, field_name)
+            if not isinstance(value, str) or not value:
+                raise ValueError(
+                    f"character build selector context {field_name} is required"
+                )
+        if self.family != "TargetAlias":
+            raise ValueError("selector context must be a TargetAlias record")
+        source = _immutable_character_ability_source(self.source)
+        evidence = source.evidence
+        if (
+            source.raw_id != self.scope_record_id
+            or source.raw_type != self.family
+            or evidence.get("json_path") != self.json_path
+            or evidence.get("parent_branch_path") != self.parent_branch_path
+            or not isinstance(
+                evidence.get("inherited_scope_record_id"),
+                str,
+            )
+        ):
+            raise ValueError("selector context source identity is inconsistent")
+        object.__setattr__(self, "source", source)
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "scope_record_id": self.scope_record_id,
+            "family": self.family,
+            "json_path": self.json_path,
+            "parent_branch_path": self.parent_branch_path,
+            "source": _character_ability_source_json(self.source),
+        }
+
+
+@dataclass(frozen=True)
+class CharacterBuildSelectorRelationIR:
+    selector_relation_id: str
+    character_data_card_id: str
+    owner_avatar_id: str
+    selection_kind: CharacterBuildSelectionKind
+    logical_selection_id: str
+    selection_ref_ids: tuple[str, ...]
+    selector_kind: CharacterBuildSelectorKind
+    selector_key: str
+    selector_hash: int | None
+    selector_value_when_selected: bool
+    selector_scope_record_id: str
+    selector_projection_id: str
+    source_id: str
+    source_graph_id: str
+    source_graph_ref_id: str
+    location_kind: CharacterBuildSelectorLocationKind
+    ability_definition_id: str
+    ability_name: str
+    source_content_sha256: str
+    selector_json_path: str
+    branch_kind: Literal[
+        "explicit_task_branches",
+        "predicate_gated_object",
+        "predicate_context",
+    ]
+    branch_root_path: str
+    true_subtree_path: str
+    false_subtree_path: str
+    selector_source: IRSource
+    ability_definition_source: IRSource | None = None
+    context_refs: tuple[CharacterBuildSelectorContextRefIR, ...] = ()
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "selector_relation_id",
+            "character_data_card_id",
+            "owner_avatar_id",
+            "logical_selection_id",
+            "selector_scope_record_id",
+            "selector_projection_id",
+            "source_id",
+            "source_graph_id",
+            "source_graph_ref_id",
+            "selector_json_path",
+            "branch_root_path",
+        ):
+            value = getattr(self, field_name)
+            if not isinstance(value, str) or not value:
+                raise ValueError(f"character build selector {field_name} is required")
+        _require_string_enum(
+            self.selection_kind,
+            frozenset({"trace", "eidolon"}),
+            "character build selector selection kind",
+        )
+        _require_string_enum(
+            self.selector_kind,
+            frozenset({"skill_point", "rank"}),
+            "character build selector kind",
+        )
+        _require_string_enum(
+            self.location_kind,
+            frozenset({"ability_definition", "source_root"}),
+            "character build selector location kind",
+        )
+        _require_string_enum(
+            self.branch_kind,
+            frozenset(
+                {
+                    "explicit_task_branches",
+                    "predicate_gated_object",
+                    "predicate_context",
+                }
+            ),
+            "character build selector branch kind",
+        )
+        selection_refs = _require_unique_strings(
+            self.selection_ref_ids,
+            "character build selector selection refs",
+        )
+        if not selection_refs:
+            raise ValueError("character build selector requires a selection ref")
+        if (self.selector_kind == "skill_point") != (
+            self.selection_kind == "trace"
+        ):
+            raise ValueError("selector kind does not match its selection domain")
+        if self.selector_kind == "skill_point":
+            if not self.selector_key or self.selector_hash is not None:
+                raise ValueError("skill-point selector identity is invalid")
+        elif (
+            self.selector_key
+            or not isinstance(self.selector_hash, int)
+            or isinstance(self.selector_hash, bool)
+        ):
+            raise ValueError("rank selector identity is invalid")
+        if not isinstance(self.selector_value_when_selected, bool):
+            raise TypeError("selector selected value must be boolean")
+        if not _is_sha256(self.source_content_sha256):
+            raise ValueError("selector source digest must be sha256")
+        for path in (
+            self.selector_json_path,
+            self.branch_root_path,
+            self.true_subtree_path,
+            self.false_subtree_path,
+        ):
+            if path and not path.startswith("$"):
+                raise ValueError("selector branch paths must be absolute JSON paths")
+        if not self.selector_json_path.startswith(self.branch_root_path):
+            raise ValueError("selector path is outside its branch root")
+        if any(
+            path and not path.startswith(self.branch_root_path)
+            for path in (self.true_subtree_path, self.false_subtree_path)
+        ):
+            raise ValueError("selector subtree path is outside its branch root")
+        selector_source = _immutable_character_ability_source(
+            self.selector_source
+        )
+        evidence = selector_source.evidence
+        expected_opcode = (
+            "BySkillPointActivated"
+            if self.selector_kind == "skill_point"
+            else "ByRankActivated"
+        )
+        if (
+            selector_source.raw_id != self.selector_scope_record_id
+            or selector_source.raw_type != expected_opcode
+            or evidence.get("json_path") != f"{self.selector_json_path}.$type"
+            or evidence.get("avatar_id") != self.owner_avatar_id
+            or evidence.get("selector_projection_id")
+            != self.selector_projection_id
+            or evidence.get("selector_kind") != self.selector_kind
+            or evidence.get("selector_key")
+            != (self.selector_key or None)
+            or evidence.get("selector_hash") != self.selector_hash
+            or evidence.get("source_content_sha256")
+            != self.source_content_sha256
+        ):
+            raise ValueError("selector source identity is inconsistent")
+        definition_source = (
+            _immutable_character_ability_source(
+                self.ability_definition_source
+            )
+            if self.ability_definition_source is not None
+            else None
+        )
+        if self.location_kind == "ability_definition":
+            if (
+                not self.ability_definition_id
+                or not self.ability_name
+                or definition_source is None
+                or definition_source.source_path != selector_source.source_path
+                or not self.selector_json_path.startswith(
+                    str(definition_source.evidence.get("json_path")) + "."
+                )
+            ):
+                raise ValueError("selector ability definition closure is invalid")
+        elif (
+            self.ability_definition_id
+            or self.ability_name
+            or definition_source is not None
+        ):
+            raise ValueError("source-root selector cannot invent an ability definition")
+        contexts = tuple(self.context_refs)
+        if any(
+            type(context) is not CharacterBuildSelectorContextRefIR
+            for context in contexts
+        ):
+            raise TypeError("selector context refs contain an invalid value")
+        if len({context.scope_record_id for context in contexts}) != len(contexts):
+            raise ValueError("selector context refs contain duplicate identities")
+        if any(
+            context.source.source_path != selector_source.source_path
+            or context.source.evidence.get("inherited_scope_record_id")
+            != self.selector_scope_record_id
+            for context in contexts
+        ):
+            raise ValueError("selector context refs are outside the selector source")
+        object.__setattr__(self, "selection_ref_ids", selection_refs)
+        object.__setattr__(self, "selector_source", selector_source)
+        object.__setattr__(self, "ability_definition_source", definition_source)
+        object.__setattr__(
+            self,
+            "context_refs",
+            tuple(sorted(contexts, key=lambda item: item.scope_record_id)),
+        )
+
+    @property
+    def selector_identity(self) -> tuple[object, ...]:
+        return (
+            self.owner_avatar_id,
+            self.selector_kind,
+            self.selector_key,
+            self.selector_hash,
+            self.selector_source.source_path,
+            self.selector_json_path,
+        )
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "selector_relation_id": self.selector_relation_id,
+            "character_data_card_id": self.character_data_card_id,
+            "owner_avatar_id": self.owner_avatar_id,
+            "selection_kind": self.selection_kind,
+            "logical_selection_id": self.logical_selection_id,
+            "selection_ref_ids": list(self.selection_ref_ids),
+            "selector_kind": self.selector_kind,
+            "selector_key": self.selector_key,
+            "selector_hash": self.selector_hash,
+            "selector_value_when_selected": self.selector_value_when_selected,
+            "selector_scope_record_id": self.selector_scope_record_id,
+            "selector_projection_id": self.selector_projection_id,
+            "source_id": self.source_id,
+            "source_graph_id": self.source_graph_id,
+            "source_graph_ref_id": self.source_graph_ref_id,
+            "location_kind": self.location_kind,
+            "ability_definition_id": self.ability_definition_id,
+            "ability_name": self.ability_name,
+            "source_content_sha256": self.source_content_sha256,
+            "selector_json_path": self.selector_json_path,
+            "branch_kind": self.branch_kind,
+            "branch_root_path": self.branch_root_path,
+            "true_subtree_path": self.true_subtree_path,
+            "false_subtree_path": self.false_subtree_path,
+            "selector_source": _character_ability_source_json(
+                self.selector_source
+            ),
+            "ability_definition_source": (
+                _character_ability_source_json(self.ability_definition_source)
+                if self.ability_definition_source is not None
+                else None
+            ),
+            "context_refs": [item.to_json() for item in self.context_refs],
+            "runtime_admission_status": "blocked",
+        }
+
+
+@dataclass(frozen=True)
+class CharacterBuildSelectorGapIR:
+    selector_gap_id: str
+    character_data_card_id: str
+    owner_avatar_id: str
+    selector_kind: CharacterBuildSelectorKind
+    selector_key: str
+    selector_hash: int | None
+    selector_scope_record_id: str
+    selector_projection_id: str
+    source_id: str
+    source_graph_id: str
+    source_content_sha256: str
+    selector_json_path: str
+    branch_root_path: str
+    selector_source: IRSource
+    gap_kind: CharacterBuildSelectorGapKind
+    candidate_ref_ids: tuple[str, ...]
+    blocked_reason: str
+    context_refs: tuple[CharacterBuildSelectorContextRefIR, ...] = ()
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "selector_gap_id",
+            "owner_avatar_id",
+            "selector_scope_record_id",
+            "selector_projection_id",
+            "selector_json_path",
+            "branch_root_path",
+            "blocked_reason",
+        ):
+            value = getattr(self, field_name)
+            if not isinstance(value, str) or not value:
+                raise ValueError(f"character selector gap {field_name} is required")
+        if any(
+            not isinstance(value, str)
+            for value in (
+                self.character_data_card_id,
+                self.source_id,
+                self.source_graph_id,
+            )
+        ):
+            raise TypeError("character selector gap refs must be strings")
+        _require_string_enum(
+            self.selector_kind,
+            frozenset({"skill_point", "rank"}),
+            "character selector gap kind",
+        )
+        _require_string_enum(
+            self.gap_kind,
+            frozenset(
+                {
+                    "selection_missing",
+                    "selection_ambiguous",
+                    "cross_character",
+                    "source_graph_missing",
+                    "source_closure_mismatch",
+                    "ability_definition_ambiguous",
+                }
+            ),
+            "character selector gap classification",
+        )
+        if self.selector_kind == "skill_point":
+            if not self.selector_key or self.selector_hash is not None:
+                raise ValueError("skill-point selector gap identity is invalid")
+        elif (
+            self.selector_key
+            or not isinstance(self.selector_hash, int)
+            or isinstance(self.selector_hash, bool)
+        ):
+            raise ValueError("rank selector gap identity is invalid")
+        if not _is_sha256(self.source_content_sha256):
+            raise ValueError("selector gap source digest must be sha256")
+        source = _immutable_character_ability_source(self.selector_source)
+        expected_opcode = (
+            "BySkillPointActivated"
+            if self.selector_kind == "skill_point"
+            else "ByRankActivated"
+        )
+        if (
+            source.raw_id != self.selector_scope_record_id
+            or source.raw_type != expected_opcode
+            or source.evidence.get("json_path")
+            != f"{self.selector_json_path}.$type"
+            or source.evidence.get("avatar_id") != self.owner_avatar_id
+            or source.evidence.get("selector_projection_id")
+            != self.selector_projection_id
+            or source.evidence.get("selector_kind") != self.selector_kind
+            or source.evidence.get("selector_key")
+            != (self.selector_key or None)
+            or source.evidence.get("selector_hash") != self.selector_hash
+            or source.evidence.get("source_content_sha256")
+            != self.source_content_sha256
+        ):
+            raise ValueError("selector gap source identity is inconsistent")
+        candidates = _require_unique_strings(
+            self.candidate_ref_ids,
+            "selector gap candidate refs",
+        )
+        contexts = tuple(self.context_refs)
+        if any(
+            type(context) is not CharacterBuildSelectorContextRefIR
+            for context in contexts
+        ):
+            raise TypeError("selector gap context refs contain an invalid value")
+        if len({context.scope_record_id for context in contexts}) != len(contexts):
+            raise ValueError("selector gap context refs contain duplicate identities")
+        if any(
+            context.source.source_path != source.source_path
+            or context.source.evidence.get("inherited_scope_record_id")
+            != self.selector_scope_record_id
+            for context in contexts
+        ):
+            raise ValueError("selector gap context refs are outside the selector source")
+        if self.gap_kind in {
+            "selection_ambiguous",
+            "cross_character",
+            "ability_definition_ambiguous",
+        } and not candidates:
+            raise ValueError("ambiguous selector gaps must retain candidates")
+        if self.gap_kind not in {
+            "source_graph_missing",
+            "source_closure_mismatch",
+        } and (not self.source_id or not self.source_graph_id):
+            raise ValueError("selector selection gap requires S1 source closure")
+        object.__setattr__(self, "selector_source", source)
+        object.__setattr__(self, "candidate_ref_ids", candidates)
+        object.__setattr__(
+            self,
+            "context_refs",
+            tuple(sorted(contexts, key=lambda item: item.scope_record_id)),
+        )
+
+    @property
+    def selector_identity(self) -> tuple[object, ...]:
+        return (
+            self.owner_avatar_id,
+            self.selector_kind,
+            self.selector_key,
+            self.selector_hash,
+            self.selector_source.source_path,
+            self.selector_json_path,
+        )
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "selector_gap_id": self.selector_gap_id,
+            "character_data_card_id": self.character_data_card_id,
+            "owner_avatar_id": self.owner_avatar_id,
+            "selector_kind": self.selector_kind,
+            "selector_key": self.selector_key,
+            "selector_hash": self.selector_hash,
+            "selector_scope_record_id": self.selector_scope_record_id,
+            "selector_projection_id": self.selector_projection_id,
+            "source_id": self.source_id,
+            "source_graph_id": self.source_graph_id,
+            "source_content_sha256": self.source_content_sha256,
+            "selector_json_path": self.selector_json_path,
+            "branch_root_path": self.branch_root_path,
+            "selector_source": _character_ability_source_json(
+                self.selector_source
+            ),
+            "gap_kind": self.gap_kind,
+            "candidate_ref_ids": list(self.candidate_ref_ids),
+            "blocked_reason": self.blocked_reason,
+            "context_refs": [item.to_json() for item in self.context_refs],
+            "runtime_admission_status": "blocked",
+        }
+
+
+@dataclass(frozen=True)
+class CharacterBuildBindingIR:
+    build_binding_id: str
+    character_data_card_id: str
+    owner_avatar_id: str
+    selection_kind: CharacterBuildSelectionKind
+    selection_ref_id: str
+    mechanism_slot_id: str
+    projection_kind: CharacterBuildProjectionKind
+    target_ref_id: str
+    ordinal: int
+    source: IRSource
+    application_kind: str = ""
+    property_type: str = ""
+    exact_value: str = ""
+    skill_level_change_kind: CharacterSkillLevelChangeKind = "none"
+    skill_level_value: int = 0
+    source_graph_ref_id: str = ""
+    source_graph_id: str = ""
+    ability_binding_id: str = ""
+    ability_definition_id: str = ""
+    relation_source: IRSource | None = None
+    definition_source: IRSource | None = None
+    candidate_ref_ids: tuple[str, ...] = ()
+    runtime_admission_status: CharacterBuildRuntimeAdmissionStatus = "not_applicable"
+    blocked_reason: str = ""
+    dynamic_ref_kind: CharacterBuildDynamicRefKind = "none"
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "build_binding_id",
+            "character_data_card_id",
+            "owner_avatar_id",
+            "selection_ref_id",
+            "mechanism_slot_id",
+            "target_ref_id",
+        ):
+            value = getattr(self, field_name)
+            if not isinstance(value, str) or not value:
+                raise ValueError(f"character build binding {field_name} is required")
+        _require_string_enum(
+            self.selection_kind,
+            frozenset({"trace", "eidolon"}),
+            "character build selection kind",
+        )
+        _require_string_enum(
+            self.projection_kind,
+            frozenset(
+                {
+                    "static_contribution",
+                    "resource_contribution",
+                    "skill_level_change",
+                    "dynamic_graph_ref",
+                    "source_gap",
+                }
+            ),
+            "character build projection kind",
+        )
+        _require_string_enum(
+            self.skill_level_change_kind,
+            frozenset({"base", "bonus", "none"}),
+            "character skill level change kind",
+        )
+        _require_string_enum(
+            self.runtime_admission_status,
+            frozenset({"not_applicable", "blocked"}),
+            "character build runtime admission status",
+        )
+        _require_string_enum(
+            self.dynamic_ref_kind,
+            frozenset({"none", "direct_ability"}),
+            "character build dynamic ref kind",
+        )
+        if (
+            not isinstance(self.ordinal, int)
+            or isinstance(self.ordinal, bool)
+            or self.ordinal < 0
+        ):
+            raise ValueError("character build binding ordinal is invalid")
+        source = _immutable_character_ability_source(self.source)
+        relation_source = (
+            _immutable_character_ability_source(self.relation_source)
+            if self.relation_source is not None
+            else None
+        )
+        definition_source = (
+            _immutable_character_ability_source(self.definition_source)
+            if self.definition_source is not None
+            else None
+        )
+        candidates = _require_unique_strings(
+            self.candidate_ref_ids,
+            "character build binding candidate refs",
+        )
+        graph_fields = (
+            self.source_graph_ref_id,
+            self.source_graph_id,
+            self.ability_binding_id,
+            self.ability_definition_id,
+        )
+        if (
+            self.projection_kind != "dynamic_graph_ref"
+            and self.dynamic_ref_kind != "none"
+        ):
+            raise ValueError("non-dynamic build binding cannot carry a dynamic ref")
+        if self.projection_kind in {
+            "static_contribution",
+            "resource_contribution",
+        }:
+            if (
+                not self.application_kind
+                or not self.property_type
+                or not self.exact_value
+                or self.skill_level_change_kind != "none"
+                or self.skill_level_value != 0
+                or any(graph_fields)
+                or relation_source is not None
+                or definition_source is not None
+                or candidates
+                or self.runtime_admission_status != "not_applicable"
+                or self.blocked_reason
+            ):
+                raise ValueError("static/resource character build binding is inconsistent")
+            if (
+                self.projection_kind == "resource_contribution"
+            ) != (self.application_kind == "resource_delta"):
+                raise ValueError("character build contribution channel is inconsistent")
+        elif self.projection_kind == "skill_level_change":
+            if (
+                self.skill_level_change_kind not in {"base", "bonus"}
+                or not isinstance(self.skill_level_value, int)
+                or isinstance(self.skill_level_value, bool)
+                or self.skill_level_value <= 0
+                or self.application_kind
+                or self.property_type
+                or self.exact_value
+                or any(graph_fields)
+                or relation_source is not None
+                or definition_source is not None
+                or candidates
+                or self.runtime_admission_status != "not_applicable"
+                or self.blocked_reason
+            ):
+                raise ValueError("skill-level character build binding is inconsistent")
+        elif self.projection_kind == "dynamic_graph_ref":
+            if (
+                self.dynamic_ref_kind == "none"
+                or not self.source_graph_ref_id
+                or not self.source_graph_id
+                or relation_source is None
+                or self.application_kind
+                or self.property_type
+                or self.exact_value
+                or self.skill_level_change_kind != "none"
+                or self.skill_level_value != 0
+                or candidates
+                or self.runtime_admission_status != "blocked"
+                or not self.blocked_reason
+            ):
+                raise ValueError("dynamic character graph binding is inconsistent")
+            if self.dynamic_ref_kind != "direct_ability" or (
+                not self.ability_binding_id
+                or not self.ability_definition_id
+                or definition_source is None
+            ):
+                raise ValueError("direct ability build binding is incomplete")
+        elif (
+            any(graph_fields)
+            or relation_source is not None
+            or definition_source is not None
+            or self.application_kind
+            or self.property_type
+            or self.exact_value
+            or self.skill_level_change_kind != "none"
+            or self.skill_level_value != 0
+            or self.runtime_admission_status != "blocked"
+            or not self.blocked_reason
+        ):
+            raise ValueError("source-gap character build binding is inconsistent")
+        object.__setattr__(self, "source", source)
+        object.__setattr__(self, "relation_source", relation_source)
+        object.__setattr__(self, "definition_source", definition_source)
+        object.__setattr__(self, "candidate_ref_ids", candidates)
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "build_binding_id": self.build_binding_id,
+            "character_data_card_id": self.character_data_card_id,
+            "owner_avatar_id": self.owner_avatar_id,
+            "selection_kind": self.selection_kind,
+            "selection_ref_id": self.selection_ref_id,
+            "mechanism_slot_id": self.mechanism_slot_id,
+            "projection_kind": self.projection_kind,
+            "target_ref_id": self.target_ref_id,
+            "ordinal": self.ordinal,
+            "application_kind": self.application_kind,
+            "property_type": self.property_type,
+            "exact_value": self.exact_value,
+            "skill_level_change_kind": self.skill_level_change_kind,
+            "skill_level_value": self.skill_level_value,
+            "source_graph_ref_id": self.source_graph_ref_id,
+            "source_graph_id": self.source_graph_id,
+            "ability_binding_id": self.ability_binding_id,
+            "ability_definition_id": self.ability_definition_id,
+            "dynamic_ref_kind": self.dynamic_ref_kind,
+            "relation_source": (
+                _character_ability_source_json(self.relation_source)
+                if self.relation_source is not None
+                else None
+            ),
+            "definition_source": (
+                _character_ability_source_json(self.definition_source)
+                if self.definition_source is not None
+                else None
+            ),
+            "candidate_ref_ids": list(self.candidate_ref_ids),
+            "runtime_admission_status": self.runtime_admission_status,
+            "blocked_reason": self.blocked_reason,
+            "source": _character_ability_source_json(self.source),
+        }
+
+
+@dataclass(frozen=True)
 class CharacterMechanismSlotIR:
     mechanism_slot_id: str
     character_data_card_id: str
@@ -3122,6 +3900,28 @@ class CharacterTraceNodeIR:
     level_up_skill_ids: tuple[str, ...] = ()
     extra_effect_ids: tuple[str, ...] = ()
     simple_extra_effect_ids: tuple[str, ...] = ()
+    build_bindings: tuple[CharacterBuildBindingIR, ...] = ()
+
+    def __post_init__(self) -> None:
+        bindings = tuple(self.build_bindings)
+        if any(type(binding) is not CharacterBuildBindingIR for binding in bindings):
+            raise TypeError("character trace build bindings must be exact typed values")
+        if len({binding.build_binding_id for binding in bindings}) != len(bindings):
+            raise ValueError("character trace build bindings contain duplicate identities")
+        if any(
+            binding.character_data_card_id != self.character_data_card_id
+            or binding.owner_avatar_id != self.avatar_id
+            or binding.selection_kind != "trace"
+            or binding.selection_ref_id != self.trace_node_id
+            or binding.source != self.source
+            for binding in bindings
+        ):
+            raise ValueError("character trace build binding ownership is inconsistent")
+        object.__setattr__(
+            self,
+            "build_bindings",
+            tuple(sorted(bindings, key=lambda binding: binding.build_binding_id)),
+        )
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -3139,6 +3939,7 @@ class CharacterTraceNodeIR:
             "level_up_skill_ids": list(self.level_up_skill_ids),
             "extra_effect_ids": list(self.extra_effect_ids),
             "simple_extra_effect_ids": list(self.simple_extra_effect_ids),
+            "build_bindings": [binding.to_json() for binding in self.build_bindings],
             "linked_mechanism_slot_ids": list(self.linked_mechanism_slot_ids),
             "source": self.source.to_json(),
             "coverage_status": self.coverage_status,
@@ -3159,6 +3960,28 @@ class CharacterEidolonSlotIR:
     blocked_reason: str = "eidolon_interface_reserved_v0_265"
     activation: dict[str, JSONValue] = field(default_factory=dict)
     semantics: dict[str, JSONValue] = field(default_factory=dict)
+    build_bindings: tuple[CharacterBuildBindingIR, ...] = ()
+
+    def __post_init__(self) -> None:
+        bindings = tuple(self.build_bindings)
+        if any(type(binding) is not CharacterBuildBindingIR for binding in bindings):
+            raise TypeError("character eidolon build bindings must be exact typed values")
+        if len({binding.build_binding_id for binding in bindings}) != len(bindings):
+            raise ValueError("character eidolon build bindings contain duplicate identities")
+        if any(
+            binding.character_data_card_id != self.character_data_card_id
+            or binding.owner_avatar_id != self.avatar_id
+            or binding.selection_kind != "eidolon"
+            or binding.selection_ref_id != self.eidolon_slot_id
+            or binding.source != self.source
+            for binding in bindings
+        ):
+            raise ValueError("character eidolon build binding ownership is inconsistent")
+        object.__setattr__(
+            self,
+            "build_bindings",
+            tuple(sorted(bindings, key=lambda binding: binding.build_binding_id)),
+        )
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -3170,6 +3993,7 @@ class CharacterEidolonSlotIR:
             "linked_mechanism_slot_ids": list(self.linked_mechanism_slot_ids),
             "activation": self.activation,
             "semantics": self.semantics,
+            "build_bindings": [binding.to_json() for binding in self.build_bindings],
             "source": self.source.to_json(),
             "coverage_status": self.coverage_status,
             "blocked_reason": self.blocked_reason,
@@ -4538,6 +5362,10 @@ class CanonicalIR:
     passive_mechanism_slots: tuple[PassiveMechanismSlotIR, ...] = ()
     character_trace_nodes: tuple[CharacterTraceNodeIR, ...] = ()
     character_eidolon_slots: tuple[CharacterEidolonSlotIR, ...] = ()
+    character_build_selector_relations: tuple[
+        CharacterBuildSelectorRelationIR, ...
+    ] = ()
+    character_build_selector_gaps: tuple[CharacterBuildSelectorGapIR, ...] = ()
     bounce_policies: tuple[BouncePolicyIR, ...] = ()
     combatant_profiles: tuple[CombatantProfileIR, ...] = ()
     action_definitions: tuple[ActionDefinitionIR, ...] = ()
@@ -4588,8 +5416,39 @@ class CanonicalIR:
     metadata: dict[str, JSONValue] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        relations = tuple(self.character_build_selector_relations)
+        gaps = tuple(self.character_build_selector_gaps)
+        if any(type(item) is not CharacterBuildSelectorRelationIR for item in relations):
+            raise TypeError("CanonicalIR selector relations must be exact typed values")
+        if any(type(item) is not CharacterBuildSelectorGapIR for item in gaps):
+            raise TypeError("CanonicalIR selector gaps must be exact typed values")
+        relations = tuple(replace(item) for item in relations)
+        gaps = tuple(replace(item) for item in gaps)
+        relation_ids = tuple(item.selector_relation_id for item in relations)
+        gap_ids = tuple(item.selector_gap_id for item in gaps)
+        if len(relation_ids) != len(set(relation_ids)):
+            raise ValueError("CanonicalIR selector relation identities must be unique")
+        if len(gap_ids) != len(set(gap_ids)):
+            raise ValueError("CanonicalIR selector gap identities must be unique")
+        selector_identities = tuple(
+            item.selector_identity for item in (*relations, *gaps)
+        )
+        if len(selector_identities) != len(set(selector_identities)):
+            raise ValueError("CanonicalIR selector source identities must be unique")
+        object.__setattr__(
+            self,
+            "character_build_selector_relations",
+            tuple(sorted(relations, key=lambda item: item.selector_relation_id)),
+        )
+        object.__setattr__(
+            self,
+            "character_build_selector_gaps",
+            tuple(sorted(gaps, key=lambda item: item.selector_gap_id)),
+        )
         catalog = self.character_ability_source_graph_catalog
         if catalog is None:
+            if relations or gaps:
+                raise ValueError("selector ledger requires the S1 source graph catalog")
             return
         if type(catalog) is not CharacterAbilitySourceGraphCatalogIR:
             raise TypeError(
@@ -4602,6 +5461,10 @@ class CanonicalIR:
             )
         graphs_by_id = {graph.graph_id: graph for graph in catalog.graphs}
         sources_by_id = {source.source_id: source for source in catalog.sources}
+        definitions_by_id = {
+            definition.definition_id: definition
+            for definition in catalog.definitions
+        }
         owned_graphs_by_avatar = {
             graph.owner_avatar_id: graph
             for graph in catalog.graphs
@@ -4694,6 +5557,62 @@ class CanonicalIR:
                     raise ValueError(
                         "character data card graph ref source is inconsistent"
                     )
+        for item in (*relations, *gaps):
+            card = cards_by_avatar.get(item.owner_avatar_id)
+            source = sources_by_id.get(item.source_id)
+            graph = graphs_by_id.get(item.source_graph_id)
+            source_closed = (
+                source is not None
+                and source.source_kind == "character_main"
+                and source.avatar_id == item.owner_avatar_id
+                and source.source.source_path == item.selector_source.source_path
+                and source.content_sha256 == item.source_content_sha256
+                and graph is not None
+                and graph.source_id == item.source_id
+                and graph.source_kind == "character_main"
+                and graph.owner_avatar_id == item.owner_avatar_id
+            )
+            if (
+                card is None
+                or card.card_id != item.character_data_card_id
+                or card.entity_ref != f"avatar:{item.owner_avatar_id}"
+            ):
+                raise ValueError("CanonicalIR selector owner/card mismatch")
+            if isinstance(item, CharacterBuildSelectorRelationIR):
+                graph_ref = next(
+                    (
+                        ref
+                        for ref in card.ability_source_graph_refs
+                        if ref.graph_ref_id == item.source_graph_ref_id
+                    ),
+                    None,
+                )
+                if (
+                    not source_closed
+                    or graph_ref is None
+                    or graph_ref.graph_id != item.source_graph_id
+                ):
+                    raise ValueError(
+                        "CanonicalIR selector relation is outside source closure"
+                    )
+                if item.location_kind == "ability_definition":
+                    definition = definitions_by_id.get(item.ability_definition_id)
+                    if (
+                        definition is None
+                        or definition.definition_id not in graph.definition_ids
+                        or definition.source_id != item.source_id
+                        or definition.owner_avatar_id != item.owner_avatar_id
+                        or definition.ability_name != item.ability_name
+                        or definition.source != item.ability_definition_source
+                    ):
+                        raise ValueError(
+                            "CanonicalIR selector definition is outside source closure"
+                        )
+            elif item.gap_kind not in {
+                "source_graph_missing",
+                "source_closure_mismatch",
+            } and not source_closed:
+                raise ValueError("CanonicalIR selector gap invented source closure")
         if catalog.source_catalog_complete and not set(
             owned_graphs_by_avatar
         ).issubset(cards_by_avatar):
@@ -4746,6 +5665,13 @@ class CanonicalIR:
             "passive_mechanism_slots": [slot.to_json() for slot in self.passive_mechanism_slots],
             "character_trace_nodes": [node.to_json() for node in self.character_trace_nodes],
             "character_eidolon_slots": [slot.to_json() for slot in self.character_eidolon_slots],
+            "character_build_selector_relations": [
+                relation.to_json()
+                for relation in self.character_build_selector_relations
+            ],
+            "character_build_selector_gaps": [
+                gap.to_json() for gap in self.character_build_selector_gaps
+            ],
             "bounce_policies": [policy.to_json() for policy in self.bounce_policies],
             "combatant_profiles": [profile.to_json() for profile in self.combatant_profiles],
             "action_definitions": [definition.to_json() for definition in self.action_definitions],

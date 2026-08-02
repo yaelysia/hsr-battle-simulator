@@ -1093,7 +1093,7 @@ def _assembly_evidence(result: Any) -> dict[str, Any]:
         ],
         "base_panel": result.base_panel.to_json() if result.base_panel is not None else None,
         "ledger_term_count": len(result.contribution_ledger),
-        "dynamic_mechanism_count": len(result.admitted_dynamic_mechanism_refs),
+        "dynamic_mechanism_count": len(result.dynamic_graph_refs),
         "equipment": (
             {
                 "assembly_status": equipment.assembly_status,

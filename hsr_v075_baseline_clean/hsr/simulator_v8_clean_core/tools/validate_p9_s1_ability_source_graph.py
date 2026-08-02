@@ -865,7 +865,7 @@ def main() -> int:
         scope_before = scope.summary_json()
         lowerer = TBGDLowering(root)
         catalog = lowerer.build_character_ability_source_graph_catalog(snapshot=snapshot, scope_catalog=scope)
-        cards = tuple(build_character_card_ir(root, max_records_per_table=None, skill_tables=CHARACTER_ACTION_DEFINITION_TABLES, ability_source_graph_catalog=catalog).character_data_cards)
+        cards = tuple(build_character_card_ir(root, max_records_per_table=None, skill_tables=CHARACTER_ACTION_DEFINITION_TABLES, ability_source_graph_catalog=catalog, ability_scope_catalog=scope).character_data_cards)
         narrow = CanonicalIR(version="p9_s1_narrow", character_data_cards=cards, character_ability_source_graph_catalog=catalog)
         selected = _selected_rows(snapshot)
         expected_definitions, camera_observation = _definition_oracle(root, snapshot, selected)

@@ -25,7 +25,6 @@ from ..ir_types import IRSource, JSONValue, same_ir_source_raw_row
 
 AssemblyStatus = Literal["assembled", "blocked"]
 BattleAdmissionStatus = Literal["admitted", "blocked"]
-MechanismKind = Literal["trace_ability", "eidolon_ability"]
 SkillLevelSourceKind = Literal["trace_base", "fixed_action", "eidolon_bonus"]
 _T = TypeVar("_T")
 
@@ -65,8 +64,13 @@ class CharacterBuildInput:
         require_int(self.level, "level")
         require_int(self.promotion, "promotion")
         require_int(self.eidolon_level, "eidolon_level")
-        if self.level <= 0 or self.promotion < 0 or self.eidolon_level < 0:
-            raise ValueError("character progression values are outside the non-negative input boundary")
+        if (
+            self.level <= 0
+            or self.promotion < 0
+            or self.eidolon_level < 0
+            or self.eidolon_level > 6
+        ):
+            raise ValueError("character progression values are outside the admitted input boundary")
         object.__setattr__(
             self,
             "unlocked_trace_node_ids",
@@ -905,55 +909,314 @@ class CharacterSkillLevelResolution:
 
 
 @dataclass(frozen=True)
-class CharacterMechanismRef:
-    mechanism_ref_id: str
-    mechanism_kind: MechanismKind
+class CharacterSelectorSpecialization:
+    specialization_id: str
+    selector_relation_id: str
     character_card_id: str
-    target_ref_id: str
-    source_ref: BuildSourceRef
-    source: IRSource
+    selection_kind: Literal["trace", "eidolon"]
+    logical_selection_id: str
+    selection_ref_ids: tuple[str, ...]
+    selection_matched: bool
+    predicate_value: bool
+    branch_kind: str
+    branch_root_path: str
+    selected_subtree_path: str
+    parent_dynamic_graph_ref_id: str
+    context_scope_record_ids: tuple[str, ...]
+    selector_source: IRSource
 
     def __post_init__(self) -> None:
-        require_text(self.mechanism_ref_id, "mechanism_ref_id")
-        if self.mechanism_kind not in {"trace_ability", "eidolon_ability"}:
-            raise ValueError("invalid character mechanism_kind")
-        require_text(self.character_card_id, "character_card_id")
-        require_text(self.target_ref_id, "target_ref_id")
-        if not isinstance(self.source_ref, BuildSourceRef):
-            raise TypeError("source_ref must be BuildSourceRef")
-        object.__setattr__(self, "source", immutable_ir_source(self.source))
+        for field_name in (
+            "specialization_id",
+            "selector_relation_id",
+            "character_card_id",
+            "logical_selection_id",
+            "branch_kind",
+            "branch_root_path",
+        ):
+            require_text(getattr(self, field_name), field_name)
+        if self.selection_kind not in {"trace", "eidolon"}:
+            raise ValueError("invalid selector specialization selection kind")
+        selection_refs = _string_sequence(
+            self.selection_ref_ids,
+            "selection_ref_ids",
+        )
+        if not selection_refs:
+            raise ValueError("selector specialization requires selection refs")
+        if not isinstance(self.selection_matched, bool) or not isinstance(
+            self.predicate_value,
+            bool,
+        ):
+            raise TypeError("selector specialization decisions must be boolean")
+        if self.branch_kind not in {
+            "explicit_task_branches",
+            "predicate_gated_object",
+            "predicate_context",
+        }:
+            raise ValueError("invalid selector specialization branch kind")
+        if not self.branch_root_path.startswith("$"):
+            raise ValueError("selector specialization branch root must be absolute")
+        if not isinstance(self.selected_subtree_path, str) or not isinstance(
+            self.parent_dynamic_graph_ref_id,
+            str,
+        ):
+            raise TypeError("selector specialization paths and parent must be strings")
+        if self.selected_subtree_path and (
+            not self.selected_subtree_path.startswith(self.branch_root_path)
+            or not self.parent_dynamic_graph_ref_id
+        ):
+            raise ValueError("selected selector subtree requires its exact parent root")
+        context_ids = _string_sequence(
+            self.context_scope_record_ids,
+            "context_scope_record_ids",
+        ) if self.context_scope_record_ids else ()
+        object.__setattr__(
+            self,
+            "selection_ref_ids",
+            tuple(sorted(selection_refs)),
+        )
+        object.__setattr__(
+            self,
+            "context_scope_record_ids",
+            tuple(sorted(context_ids)),
+        )
+        object.__setattr__(
+            self,
+            "selector_source",
+            immutable_ir_source(self.selector_source, "selector_source"),
+        )
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
-            "mechanism_ref_id": self.mechanism_ref_id,
-            "mechanism_kind": self.mechanism_kind,
+            "specialization_id": self.specialization_id,
+            "selector_relation_id": self.selector_relation_id,
             "character_card_id": self.character_card_id,
-            "target_ref_id": self.target_ref_id,
-            "source_ref": self.source_ref.to_json(),
-            "source": self.source.to_json(),
+            "selection_kind": self.selection_kind,
+            "logical_selection_id": self.logical_selection_id,
+            "selection_ref_ids": list(self.selection_ref_ids),
+            "selection_matched": self.selection_matched,
+            "predicate_value": self.predicate_value,
+            "branch_kind": self.branch_kind,
+            "branch_root_path": self.branch_root_path,
+            "selected_subtree_path": self.selected_subtree_path,
+            "parent_dynamic_graph_ref_id": self.parent_dynamic_graph_ref_id,
+            "context_scope_record_ids": list(self.context_scope_record_ids),
+            "selector_source": self.selector_source.to_json(),
+            "runtime_role": "selector_specialization_metadata",
         }
 
     @classmethod
-    def from_json(cls, value: object) -> CharacterMechanismRef:
+    def from_json(cls, value: object) -> CharacterSelectorSpecialization:
         row = _closed_mapping(
             value,
-            "mechanism_ref",
+            "character_selector_specialization",
             {
-                "mechanism_ref_id",
-                "mechanism_kind",
+                "specialization_id",
+                "selector_relation_id",
                 "character_card_id",
-                "target_ref_id",
-                "source_ref",
-                "source",
+                "selection_kind",
+                "logical_selection_id",
+                "selection_ref_ids",
+                "selection_matched",
+                "predicate_value",
+                "branch_kind",
+                "branch_root_path",
+                "selected_subtree_path",
+                "parent_dynamic_graph_ref_id",
+                "context_scope_record_ids",
+                "selector_source",
+                "runtime_role",
             },
         )
+        if row.get("runtime_role") != "selector_specialization_metadata":
+            raise ValueError("selector specialization cannot be executable")
+        selection_refs = row.get("selection_ref_ids")
+        context_ids = row.get("context_scope_record_ids")
+        if not isinstance(selection_refs, (list, tuple)) or not isinstance(
+            context_ids,
+            (list, tuple),
+        ):
+            raise TypeError("selector specialization refs must be arrays")
+        selection_matched = row.get("selection_matched")
+        predicate_value = row.get("predicate_value")
+        if not isinstance(selection_matched, bool) or not isinstance(
+            predicate_value,
+            bool,
+        ):
+            raise TypeError("selector specialization decisions must be booleans")
+        def string_value(name: str) -> str:
+            item = row.get(name)
+            if not isinstance(item, str):
+                raise TypeError(f"{name} must be a string")
+            return item
+
         return cls(
-            mechanism_ref_id=require_text(row.get("mechanism_ref_id"), "mechanism_ref_id"),
-            mechanism_kind=cast(MechanismKind, require_text(row.get("mechanism_kind"), "mechanism_kind")),
+            specialization_id=require_text(row.get("specialization_id"), "specialization_id"),
+            selector_relation_id=require_text(row.get("selector_relation_id"), "selector_relation_id"),
+            character_card_id=require_text(
+                row.get("character_card_id"),
+                "character_card_id",
+            ),
+            selection_kind=cast(
+                Literal["trace", "eidolon"],
+                require_text(row.get("selection_kind"), "selection_kind"),
+            ),
+            logical_selection_id=require_text(row.get("logical_selection_id"), "logical_selection_id"),
+            selection_ref_ids=tuple(
+                require_text(item, "selection_ref_ids[]") for item in selection_refs
+            ),
+            selection_matched=selection_matched,
+            predicate_value=predicate_value,
+            branch_kind=require_text(row.get("branch_kind"), "branch_kind"),
+            branch_root_path=require_text(row.get("branch_root_path"), "branch_root_path"),
+            selected_subtree_path=string_value("selected_subtree_path"),
+            parent_dynamic_graph_ref_id=string_value(
+                "parent_dynamic_graph_ref_id"
+            ),
+            context_scope_record_ids=tuple(
+                require_text(item, "context_scope_record_ids[]") for item in context_ids
+            ),
+            selector_source=ir_source_from_json(row.get("selector_source"), "selector_source"),
+        )
+
+
+@dataclass(frozen=True)
+class CharacterDynamicGraphRef:
+    dynamic_graph_ref_id: str
+    root_kind: Literal["ability_definition", "source_graph"]
+    root_ref_id: str
+    character_card_id: str
+    source_graph_ref_id: str
+    source_graph_id: str
+    ability_definition_id: str
+    ability_name: str
+    build_binding_ids: tuple[str, ...]
+    specialization_ids: tuple[str, ...]
+    root_source: IRSource
+    blocked_reason: str
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "dynamic_graph_ref_id",
+            "root_ref_id",
+            "character_card_id",
+            "source_graph_ref_id",
+            "source_graph_id",
+            "blocked_reason",
+        ):
+            require_text(getattr(self, field_name), field_name)
+        if self.root_kind not in {"ability_definition", "source_graph"}:
+            raise ValueError("invalid character dynamic graph root kind")
+        if not isinstance(self.ability_definition_id, str) or not isinstance(
+            self.ability_name,
+            str,
+        ):
+            raise TypeError("dynamic graph definition fields must be strings")
+        binding_ids = _string_sequence(
+            self.build_binding_ids,
+            "build_binding_ids",
+        ) if self.build_binding_ids else ()
+        specialization_ids = _string_sequence(
+            self.specialization_ids,
+            "specialization_ids",
+        ) if self.specialization_ids else ()
+        if not binding_ids and not specialization_ids:
+            raise ValueError("dynamic graph root requires a direct or specialized source")
+        if self.root_kind == "ability_definition":
+            if (
+                self.root_ref_id != self.ability_definition_id
+                or not self.ability_name
+            ):
+                raise ValueError("ability-definition dynamic root is inconsistent")
+        elif self.ability_definition_id or self.ability_name:
+            raise ValueError("source-graph dynamic root cannot invent a definition")
+        object.__setattr__(self, "build_binding_ids", tuple(sorted(binding_ids)))
+        object.__setattr__(
+            self,
+            "specialization_ids",
+            tuple(sorted(specialization_ids)),
+        )
+        object.__setattr__(
+            self,
+            "root_source",
+            immutable_ir_source(self.root_source, "root_source"),
+        )
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "dynamic_graph_ref_id": self.dynamic_graph_ref_id,
+            "root_kind": self.root_kind,
+            "root_ref_id": self.root_ref_id,
+            "character_card_id": self.character_card_id,
+            "source_graph_ref_id": self.source_graph_ref_id,
+            "source_graph_id": self.source_graph_id,
+            "ability_definition_id": self.ability_definition_id,
+            "ability_name": self.ability_name,
+            "build_binding_ids": list(self.build_binding_ids),
+            "specialization_ids": list(self.specialization_ids),
+            "root_source": self.root_source.to_json(),
+            "runtime_admission_status": "blocked",
+            "blocked_reason": self.blocked_reason,
+        }
+
+    @classmethod
+    def from_json(cls, value: object) -> CharacterDynamicGraphRef:
+        row = _closed_mapping(
+            value,
+            "character_dynamic_graph_ref",
+            {
+                "dynamic_graph_ref_id",
+                "root_kind",
+                "root_ref_id",
+                "character_card_id",
+                "source_graph_ref_id",
+                "source_graph_id",
+                "ability_definition_id",
+                "ability_name",
+                "build_binding_ids",
+                "specialization_ids",
+                "root_source",
+                "runtime_admission_status",
+                "blocked_reason",
+            },
+        )
+        if row.get("runtime_admission_status") != "blocked":
+            raise ValueError("character dynamic graph root cannot be admitted in S2")
+        binding_ids = row.get("build_binding_ids")
+        specialization_ids = row.get("specialization_ids")
+        if not isinstance(binding_ids, (list, tuple)) or not isinstance(
+            specialization_ids,
+            (list, tuple),
+        ):
+            raise TypeError("dynamic graph root refs must be arrays")
+        ability_definition_id = row.get("ability_definition_id")
+        ability_name = row.get("ability_name")
+        if not isinstance(ability_definition_id, str) or not isinstance(
+            ability_name,
+            str,
+        ):
+            raise TypeError("dynamic graph definition fields must be strings")
+        return cls(
+            dynamic_graph_ref_id=require_text(row.get("dynamic_graph_ref_id"), "dynamic_graph_ref_id"),
+            root_kind=cast(
+                Literal["ability_definition", "source_graph"],
+                require_text(row.get("root_kind"), "root_kind"),
+            ),
+            root_ref_id=require_text(row.get("root_ref_id"), "root_ref_id"),
             character_card_id=require_text(row.get("character_card_id"), "character_card_id"),
-            target_ref_id=require_text(row.get("target_ref_id"), "target_ref_id"),
-            source_ref=BuildSourceRef.from_json(row.get("source_ref")),
-            source=ir_source_from_json(row.get("source")),
+            source_graph_ref_id=require_text(row.get("source_graph_ref_id"), "source_graph_ref_id"),
+            source_graph_id=require_text(row.get("source_graph_id"), "source_graph_id"),
+            ability_definition_id=ability_definition_id,
+            ability_name=ability_name,
+            build_binding_ids=tuple(
+                require_text(item, "build_binding_ids[]") for item in binding_ids
+            ),
+            specialization_ids=tuple(
+                require_text(item, "specialization_ids[]")
+                for item in specialization_ids
+            ),
+            root_source=ir_source_from_json(row.get("root_source"), "root_source"),
+            blocked_reason=require_text(row.get("blocked_reason"), "blocked_reason"),
         )
 
 
@@ -1468,7 +1731,10 @@ class CharacterBuildAssemblyResult:
     base_panel: CharacterBasePanel | None = None
     contribution_ledger: tuple[StaticStatContribution, ...] = ()
     effective_skill_levels: tuple[CharacterSkillLevelResolution, ...] = ()
-    admitted_dynamic_mechanism_refs: tuple[CharacterMechanismRef, ...] = ()
+    selected_trace_node_ids: tuple[str, ...] = ()
+    selected_eidolon_slot_ids: tuple[str, ...] = ()
+    dynamic_graph_refs: tuple[CharacterDynamicGraphRef, ...] = ()
+    selector_specializations: tuple[CharacterSelectorSpecialization, ...] = ()
     resource_bindings: tuple[CharacterResourceBinding, ...] = ()
     owned_combatant_results: tuple[OwnedCombatantBuildAssemblyResult, ...] = ()
     unadmitted_mechanism_diagnostics: tuple[CharacterMechanismDiagnostic, ...] = ()
@@ -1503,12 +1769,35 @@ class CharacterBuildAssemblyResult:
             lambda item: item.skill_id,
             lambda item: item.action_id,
         )
-        mechanisms = self._typed_unique_sorted(
-            self.admitted_dynamic_mechanism_refs,
-            CharacterMechanismRef,
-            "admitted_dynamic_mechanism_refs",
-            lambda item: item.mechanism_ref_id,
-            lambda item: item.mechanism_ref_id,
+        selected_trace_node_ids = (
+            _string_sequence(
+                self.selected_trace_node_ids,
+                "selected_trace_node_ids",
+            )
+            if self.selected_trace_node_ids
+            else ()
+        )
+        selected_eidolon_slot_ids = (
+            _string_sequence(
+                self.selected_eidolon_slot_ids,
+                "selected_eidolon_slot_ids",
+            )
+            if self.selected_eidolon_slot_ids
+            else ()
+        )
+        dynamic_graph_refs = self._typed_unique_sorted(
+            self.dynamic_graph_refs,
+            CharacterDynamicGraphRef,
+            "dynamic_graph_refs",
+            lambda item: item.dynamic_graph_ref_id,
+            lambda item: item.dynamic_graph_ref_id,
+        )
+        selector_specializations = self._typed_unique_sorted(
+            self.selector_specializations,
+            CharacterSelectorSpecialization,
+            "selector_specializations",
+            lambda item: item.specialization_id,
+            lambda item: item.specialization_id,
         )
         resource_bindings = self._typed_unique_sorted(
             self.resource_bindings,
@@ -1552,14 +1841,24 @@ class CharacterBuildAssemblyResult:
             raise ValueError(
                 f"character contribution source kinds are not admitted: {invalid_contribution_source_kinds}"
             )
-        if any(
-            item.source_ref.definition_kind != "character_mechanism_slot"
-            for item in mechanisms
-        ):
-            raise ValueError("character mechanism refs must use the character_mechanism_slot namespace")
         object.__setattr__(self, "contribution_ledger", contributions)
         object.__setattr__(self, "effective_skill_levels", skill_levels)
-        object.__setattr__(self, "admitted_dynamic_mechanism_refs", mechanisms)
+        object.__setattr__(
+            self,
+            "selected_trace_node_ids",
+            tuple(sorted(selected_trace_node_ids)),
+        )
+        object.__setattr__(
+            self,
+            "selected_eidolon_slot_ids",
+            tuple(sorted(selected_eidolon_slot_ids)),
+        )
+        object.__setattr__(self, "dynamic_graph_refs", dynamic_graph_refs)
+        object.__setattr__(
+            self,
+            "selector_specializations",
+            selector_specializations,
+        )
         object.__setattr__(self, "resource_bindings", resource_bindings)
         object.__setattr__(self, "owned_combatant_results", owned_combatants)
         object.__setattr__(self, "unadmitted_mechanism_diagnostics", diagnostics)
@@ -1569,7 +1868,10 @@ class CharacterBuildAssemblyResult:
                 self.base_panel is not None
                 or contributions
                 or skill_levels
-                or mechanisms
+                or selected_trace_node_ids
+                or selected_eidolon_slot_ids
+                or dynamic_graph_refs
+                or selector_specializations
                 or resource_bindings
                 or owned_combatants
             ):
@@ -1644,8 +1946,61 @@ class CharacterBuildAssemblyResult:
                 for item in owned_combatants
             ):
                 raise ValueError("owned-combatant result parent identity mismatch")
+            roots_by_id = {
+                item.dynamic_graph_ref_id: item for item in dynamic_graph_refs
+            }
+            specializations_by_id = {
+                item.specialization_id: item for item in selector_specializations
+            }
+            referenced_specializations = tuple(
+                specialization_id
+                for root in dynamic_graph_refs
+                for specialization_id in root.specialization_ids
+            )
+            if (
+                len(referenced_specializations)
+                != len(set(referenced_specializations))
+                or set(referenced_specializations)
+                != {
+                    item.specialization_id
+                    for item in selector_specializations
+                    if item.parent_dynamic_graph_ref_id
+                }
+                or any(
+                    specialization_id not in specializations_by_id
+                    or specializations_by_id[
+                        specialization_id
+                    ].parent_dynamic_graph_ref_id
+                    != root.dynamic_graph_ref_id
+                    for root in dynamic_graph_refs
+                    for specialization_id in root.specialization_ids
+                )
+                or any(
+                    item.parent_dynamic_graph_ref_id
+                    and item.parent_dynamic_graph_ref_id not in roots_by_id
+                    for item in selector_specializations
+                )
+            ):
+                raise ValueError(
+                    "selector specializations must have one exact dynamic root parent"
+                )
+            direct_binding_ids = tuple(
+                binding_id
+                for root in dynamic_graph_refs
+                for binding_id in root.build_binding_ids
+            )
+            if len(direct_binding_ids) != len(set(direct_binding_ids)):
+                raise ValueError("dynamic graph roots cannot duplicate direct bindings")
             if reasons:
                 raise ValueError("assembled character result cannot carry static blocked reasons")
+            if dynamic_graph_refs and self.battle_admission_status != "blocked":
+                raise ValueError(
+                    "source-bound dynamic graph refs require blocked battle admission in S2"
+                )
+            if dynamic_graph_refs and not diagnostics:
+                raise ValueError(
+                    "source-bound dynamic graph refs require an admission diagnostic"
+                )
             if diagnostics and self.battle_admission_status != "blocked":
                 raise ValueError("unadmitted selected mechanisms must block battle admission")
             equipment_blocks_battle = (
@@ -1707,8 +2062,13 @@ class CharacterBuildAssemblyResult:
             "base_panel": self.base_panel.to_json() if self.base_panel is not None else None,
             "contribution_ledger": [item.to_json() for item in self.contribution_ledger],
             "effective_skill_levels": [item.to_json() for item in self.effective_skill_levels],
-            "admitted_dynamic_mechanism_refs": [
-                item.to_json() for item in self.admitted_dynamic_mechanism_refs
+            "selected_trace_node_ids": list(self.selected_trace_node_ids),
+            "selected_eidolon_slot_ids": list(self.selected_eidolon_slot_ids),
+            "dynamic_graph_refs": [
+                item.to_json() for item in self.dynamic_graph_refs
+            ],
+            "selector_specializations": [
+                item.to_json() for item in self.selector_specializations
             ],
             "resource_bindings": [item.to_json() for item in self.resource_bindings],
             "owned_combatant_results": [
@@ -1737,7 +2097,10 @@ class CharacterBuildAssemblyResult:
                 "base_panel",
                 "contribution_ledger",
                 "effective_skill_levels",
-                "admitted_dynamic_mechanism_refs",
+                "selected_trace_node_ids",
+                "selected_eidolon_slot_ids",
+                "dynamic_graph_refs",
+                "selector_specializations",
                 "resource_bindings",
                 "owned_combatant_results",
                 "unadmitted_mechanism_diagnostics",
@@ -1774,9 +2137,21 @@ class CharacterBuildAssemblyResult:
                 CharacterSkillLevelResolution.from_json(item)
                 for item in sequence("effective_skill_levels")
             ),
-            admitted_dynamic_mechanism_refs=tuple(
-                CharacterMechanismRef.from_json(item)
-                for item in sequence("admitted_dynamic_mechanism_refs")
+            selected_trace_node_ids=tuple(
+                require_text(item, "selected_trace_node_ids[]")
+                for item in sequence("selected_trace_node_ids")
+            ),
+            selected_eidolon_slot_ids=tuple(
+                require_text(item, "selected_eidolon_slot_ids[]")
+                for item in sequence("selected_eidolon_slot_ids")
+            ),
+            dynamic_graph_refs=tuple(
+                CharacterDynamicGraphRef.from_json(item)
+                for item in sequence("dynamic_graph_refs")
+            ),
+            selector_specializations=tuple(
+                CharacterSelectorSpecialization.from_json(item)
+                for item in sequence("selector_specializations")
             ),
             resource_bindings=tuple(
                 CharacterResourceBinding.from_json(item)

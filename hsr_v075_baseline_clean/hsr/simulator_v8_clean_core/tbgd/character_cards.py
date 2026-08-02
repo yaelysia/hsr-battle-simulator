@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from ..build_types import canonical_decimal, static_property_binding
 from ..dynamic_key_hash import tbgd_dynamic_key_hash
@@ -17,8 +18,16 @@ from ..rules.ir import (
     AvatarPromotionTierIR,
     AvatarProfileIR,
     BouncePolicyIR,
+    CharacterAbilityBindingIR,
+    CharacterAbilityDefinitionIR,
     CharacterAbilityGraphRefIR,
     CharacterAbilitySourceGraphCatalogIR,
+    CharacterAbilitySourceGraphIR,
+    CharacterAbilitySourceIR,
+    CharacterBuildBindingIR,
+    CharacterBuildSelectorContextRefIR,
+    CharacterBuildSelectorGapIR,
+    CharacterBuildSelectorRelationIR,
     CharacterDataCardIR,
     CharacterEidolonSlotIR,
     CharacterMechanismSlotIR,
@@ -28,13 +37,16 @@ from ..rules.ir import (
     SkillFormulaBindingIR,
     SpecialResourceDefinitionIR,
     SpecialResourceInitializerIR,
+    character_ability_stable_id,
 )
+from ..rules.rulebook import CharacterAbilitySourceGraphQuery
 from ..rules.expression_ir import (
     is_typed_numeric_expression,
     numeric_dynamic_hashes,
     numeric_fixed_value,
 )
 from .expression_lowering import lower_numeric_expression
+from .character_ability_scope import CharacterAbilityScopeProjectionCatalog
 
 
 SkillTableSpec = tuple[str, str, str]
@@ -54,8 +66,61 @@ class CharacterCardBuildResult:
     character_mechanism_slots: list[CharacterMechanismSlotIR]
     character_trace_nodes: list[CharacterTraceNodeIR]
     character_eidolon_slots: list[CharacterEidolonSlotIR]
+    character_build_selector_relations: list[CharacterBuildSelectorRelationIR]
+    character_build_selector_gaps: list[CharacterBuildSelectorGapIR]
     skill_formula_bindings: list[SkillFormulaBindingIR]
     bounce_policies: list[BouncePolicyIR]
+
+
+@dataclass(frozen=True)
+class _CharacterBuildGraphResolver:
+    query: CharacterAbilitySourceGraphQuery
+    bindings_by_id: dict[str, CharacterAbilityBindingIR]
+    definitions_by_id: dict[str, CharacterAbilityDefinitionIR]
+    graphs_by_id: dict[str, CharacterAbilitySourceGraphIR]
+    graphs_by_source_id: dict[str, tuple[CharacterAbilitySourceGraphIR, ...]]
+    sources_by_id: dict[str, CharacterAbilitySourceIR]
+    definitions_by_source_id: dict[str, tuple[CharacterAbilityDefinitionIR, ...]]
+    owned_graphs_by_avatar: dict[str, CharacterAbilitySourceGraphIR]
+
+    @classmethod
+    def from_catalog(
+        cls,
+        catalog: CharacterAbilitySourceGraphCatalogIR | None,
+    ) -> _CharacterBuildGraphResolver | None:
+        if catalog is None:
+            return None
+        graphs_by_source_id: dict[str, list[CharacterAbilitySourceGraphIR]] = {}
+        for graph in catalog.graphs:
+            graphs_by_source_id.setdefault(graph.source_id, []).append(graph)
+        definitions_by_source_id: dict[str, list[CharacterAbilityDefinitionIR]] = {}
+        for definition in catalog.definitions:
+            definitions_by_source_id.setdefault(
+                definition.source_id,
+                [],
+            ).append(definition)
+        return cls(
+            query=CharacterAbilitySourceGraphQuery(catalog),
+            bindings_by_id={item.binding_id: item for item in catalog.bindings},
+            definitions_by_id={
+                item.definition_id: item for item in catalog.definitions
+            },
+            graphs_by_id={item.graph_id: item for item in catalog.graphs},
+            graphs_by_source_id={
+                key: tuple(sorted(value, key=lambda item: item.graph_id))
+                for key, value in graphs_by_source_id.items()
+            },
+            sources_by_id={item.source_id: item for item in catalog.sources},
+            definitions_by_source_id={
+                key: tuple(sorted(value, key=lambda item: item.definition_id))
+                for key, value in definitions_by_source_id.items()
+            },
+            owned_graphs_by_avatar={
+                item.owner_avatar_id: item
+                for item in catalog.graphs
+                if item.source_kind == "character_main"
+            },
+        )
 
 
 SKILL_TEXT_BASIS_WORDS: dict[str, str] = {
@@ -85,6 +150,7 @@ def build_character_card_ir(
     skill_tables: tuple[SkillTableSpec, ...],
     avatar_ids: frozenset[str] | None = None,
     ability_source_graph_catalog: CharacterAbilitySourceGraphCatalogIR | None = None,
+    ability_scope_catalog: CharacterAbilityScopeProjectionCatalog | None = None,
 ) -> CharacterCardBuildResult:
     if (
         ability_source_graph_catalog is not None
@@ -93,6 +159,20 @@ def build_character_card_ir(
         raise TypeError(
             "character card builder requires the exact source graph catalog type"
         )
+    if (
+        ability_scope_catalog is not None
+        and type(ability_scope_catalog) is not CharacterAbilityScopeProjectionCatalog
+    ):
+        raise TypeError("character card builder requires the exact S0 scope catalog type")
+    if (ability_source_graph_catalog is None) != (ability_scope_catalog is None):
+        raise ValueError("S0 selector and S1 source graph catalogs must be supplied together")
+    if (
+        ability_source_graph_catalog is not None
+        and ability_scope_catalog is not None
+        and ability_source_graph_catalog.scope_catalog_id
+        != ability_scope_catalog.catalog_id
+    ):
+        raise ValueError("S0 selector and S1 source graph catalogs are not source-closed")
     ability_graphs_by_avatar = {
         graph.owner_avatar_id: graph
         for graph in (
@@ -102,6 +182,9 @@ def build_character_card_ir(
         )
         if graph.source_kind == "character_main"
     }
+    build_graph_resolver = _CharacterBuildGraphResolver.from_catalog(
+        ability_source_graph_catalog
+    )
     avatar_rows = _avatar_rows(
         tbgd_root,
         max_records_per_table=max_records_per_table,
@@ -193,17 +276,61 @@ def build_character_card_ir(
         ),
         max_records_per_table=max_records_per_table,
     )
-    trace_nodes = list({node.trace_node_id: node for node in trace_nodes}.values())
-    trace_slots = list({slot.mechanism_slot_id: slot for slot in trace_slots}.values())
-    trace_node_ids_by_card: dict[str, list[str]] = {}
-    for node in trace_nodes:
-        trace_node_ids_by_card.setdefault(node.character_data_card_id, []).append(node.trace_node_id)
+    selected_enhanced_ids = {
+        str(row["AvatarID"]): (
+            row.get("_character_card_enhanced_id")
+            if row.get("_character_card_version_kind") == "enhanced"
+            else None
+        )
+        for _relative_path, _row_index, row in avatar_rows
+    }
+    trace_nodes = [
+        node
+        for node in trace_nodes
+        if _trace_source_is_current(node.source, selected_enhanced_ids)
+    ]
+    trace_slots = [
+        slot
+        for slot in trace_slots
+        if _trace_source_is_current(slot.source, selected_enhanced_ids)
+    ]
+    trace_nodes = list(
+        _require_unique_typed_items(
+            trace_nodes,
+            identity=lambda node: node.trace_node_id,
+            label="current trace node",
+        )
+    )
+    trace_slots = list(
+        _require_unique_typed_items(
+            trace_slots,
+            identity=lambda slot: slot.mechanism_slot_id,
+            label="current trace mechanism slot",
+        )
+    )
     eidolon_slots_by_card: dict[str, list[CharacterEidolonSlotIR]] = {}
     for relative_path, row_index, row in avatar_rows:
         avatar_id = str(row["AvatarID"])
         card_id = f"character_data_card:avatar:{avatar_id}"
         for slot in _eidolon_slots_from_avatar_row(relative_path, row_index, row, card_id, rank_rows_by_id):
             eidolon_slots_by_card.setdefault(card_id, []).append(slot)
+    eidolon_slots = [
+        slot for slots in eidolon_slots_by_card.values() for slot in slots
+    ]
+    selector_relations, selector_gaps = _build_selector_ledger(
+        ability_scope_catalog,
+        build_graph_resolver,
+        trace_nodes,
+        eidolon_slots,
+    )
+    eidolon_slots_by_card = {}
+    for slot in eidolon_slots:
+        eidolon_slots_by_card.setdefault(slot.character_data_card_id, []).append(slot)
+    trace_node_ids_by_card: dict[str, list[str]] = {}
+    for node in trace_nodes:
+        trace_node_ids_by_card.setdefault(node.character_data_card_id, []).append(
+            node.trace_node_id
+        )
     eidolon_slot_ids_by_card = {
         card_id: [slot.eidolon_slot_id for slot in slots] for card_id, slots in eidolon_slots_by_card.items()
     }
@@ -219,6 +346,65 @@ def build_character_card_ir(
         if slot.linked_mechanism_slot_ids
         for mechanism_slot in _eidolon_mechanism_slots(slot)
     )
+    mechanism_slots_by_id = {
+        slot.mechanism_slot_id: slot for slot in mechanism_slots
+    }
+    selector_relations_by_selection: dict[
+        str, list[CharacterBuildSelectorRelationIR]
+    ] = {}
+    for relation in selector_relations:
+        for selection_ref_id in relation.selection_ref_ids:
+            selector_relations_by_selection.setdefault(
+                selection_ref_id,
+                [],
+            ).append(relation)
+    trace_slots_by_id = {
+        slot.mechanism_slot_id: slot
+        for slot in mechanism_slots
+        if slot.mechanism_slot_id
+        in {
+            slot_id
+            for node in trace_nodes
+            for slot_id in node.linked_mechanism_slot_ids
+        }
+    }
+    trace_nodes = [
+        replace(
+            node,
+            build_bindings=_trace_build_bindings(
+                node,
+                trace_slots_by_id,
+                build_graph_resolver,
+                tuple(
+                    selector_relations_by_selection.get(
+                        node.trace_node_id,
+                        (),
+                    )
+                ),
+            ),
+        )
+        for node in trace_nodes
+    ]
+    eidolon_slots_by_card = {
+        card_id: [
+            replace(
+                slot,
+                build_bindings=_eidolon_build_bindings(
+                    slot,
+                    mechanism_slots_by_id,
+                    build_graph_resolver,
+                    tuple(
+                        selector_relations_by_selection.get(
+                            slot.eidolon_slot_id,
+                            (),
+                        )
+                    ),
+                ),
+            )
+            for slot in slots
+        ]
+        for card_id, slots in eidolon_slots_by_card.items()
+    }
     mechanism_slot_ids_by_card: dict[str, list[str]] = {}
     for slot in mechanism_slots:
         if slot.character_data_card_id:
@@ -387,6 +573,23 @@ def build_character_card_ir(
                         "mechanism_slot_count": len(mechanism_slot_ids_by_card.get(card_id, ())),
                         "trace_node_count": len(trace_node_ids_by_card.get(card_id, ())),
                         "eidolon_slot_count": len(eidolon_slot_ids_by_card.get(card_id, ())),
+                        "trace_build_binding_count": sum(
+                            len(node.build_bindings)
+                            for node in trace_nodes
+                            if node.character_data_card_id == card_id
+                        ),
+                        "eidolon_build_binding_count": sum(
+                            len(slot.build_bindings)
+                            for slot in eidolon_slots_by_card.get(card_id, ())
+                        ),
+                        "selector_relation_count": sum(
+                            relation.character_data_card_id == card_id
+                            for relation in selector_relations
+                        ),
+                        "selector_gap_count": sum(
+                            gap.character_data_card_id == card_id
+                            for gap in selector_gaps
+                        ),
                         "builder": "character_data_card_v0_265",
                     },
                 ),
@@ -407,6 +610,8 @@ def build_character_card_ir(
                 for slot in slots
             }.values()
         ),
+        character_build_selector_relations=selector_relations,
+        character_build_selector_gaps=selector_gaps,
         skill_formula_bindings=skill_formula_bindings,
         bounce_policies=bounce_policies,
     )
@@ -651,6 +856,969 @@ def _eidolon_mechanism_slots(slot: CharacterEidolonSlotIR) -> tuple[CharacterMec
             )
         )
     return tuple(result)
+
+
+def _trace_source_is_current(
+    source: IRSource,
+    selected_enhanced_ids: Mapping[str, object],
+) -> bool:
+    avatar_id = source.evidence.get("avatar_id")
+    if not isinstance(avatar_id, str) or avatar_id not in selected_enhanced_ids:
+        return False
+    selected_enhanced_id = selected_enhanced_ids[avatar_id]
+    source_enhanced_id = source.evidence.get("enhanced_id")
+    return (
+        source_enhanced_id is None
+        if selected_enhanced_id is None
+        else str(source_enhanced_id) == str(selected_enhanced_id)
+    )
+
+
+def _require_unique_typed_items(
+    items: list[Any],
+    *,
+    identity: Any,
+    label: str,
+) -> tuple[Any, ...]:
+    by_id: dict[str, Any] = {}
+    for item in items:
+        item_id = identity(item)
+        if not isinstance(item_id, str) or not item_id:
+            raise ValueError(f"{label} identity is missing")
+        if item_id in by_id:
+            raise ValueError(f"duplicate {label} identity:{item_id}")
+        by_id[item_id] = item
+    return tuple(by_id[key] for key in sorted(by_id))
+
+
+def _selector_contexts_by_scope(
+    scope_catalog: CharacterAbilityScopeProjectionCatalog,
+    selector_scope_ids: frozenset[str],
+) -> dict[str, tuple[CharacterBuildSelectorContextRefIR, ...]]:
+    contexts: dict[str, list[CharacterBuildSelectorContextRefIR]] = {}
+    selector_records = {
+        record.record_id: record
+        for record in scope_catalog.scope_records
+        if record.record_id in selector_scope_ids
+    }
+    selector_branches: dict[str, tuple[str, ...]] = {}
+    for projection in scope_catalog.projections:
+        if (
+            projection.scope_record_id not in selector_scope_ids
+            or projection.projection_kind != "build_selector"
+        ):
+            continue
+        selector_branches[projection.scope_record_id] = tuple(
+            path
+            for path in (
+                projection.payload.get("true_subtree_path"),
+                projection.payload.get("false_subtree_path"),
+            )
+            if isinstance(path, str) and path
+        )
+    for record in scope_catalog.scope_records:
+        if (
+            record.materialization_role != "selected"
+            or record.family != "TargetAlias"
+        ):
+            continue
+        json_path = record.source.evidence.get("json_path")
+        parent_branch_path = record.source.evidence.get("parent_branch_path")
+        if (
+            not isinstance(json_path, str)
+            or not json_path
+            or not isinstance(parent_branch_path, str)
+            or not parent_branch_path
+        ):
+            raise ValueError("build selector TargetAlias source path is incomplete")
+        matching_selector_ids = tuple(
+            selector_id
+            for selector_id, branches in selector_branches.items()
+            if selector_records[selector_id].source.source_path
+            == record.source.source_path
+            and any(
+                json_path == branch
+                or (
+                    json_path.startswith(branch)
+                    and json_path[len(branch) : len(branch) + 1] in {".", "["}
+                )
+                for branch in branches
+            )
+        )
+        for selector_id in matching_selector_ids:
+            contexts.setdefault(selector_id, []).append(
+                CharacterBuildSelectorContextRefIR(
+                    scope_record_id=record.record_id,
+                    family="TargetAlias",
+                    json_path=json_path,
+                    parent_branch_path=parent_branch_path,
+                    source=IRSource(
+                        source_path=record.source.source_path,
+                        raw_type=record.source.raw_type,
+                        raw_id=record.source.raw_id,
+                        evidence={
+                            **record.source.evidence,
+                            "inherited_scope_record_id": selector_id,
+                        },
+                    ),
+                )
+            )
+    return {
+        key: tuple(sorted(value, key=lambda item: item.scope_record_id))
+        for key, value in contexts.items()
+    }
+
+
+def _selector_gap(
+    *,
+    record_id: str,
+    projection_id: str,
+    card_id: str,
+    owner_avatar_id: str,
+    selector_kind: str,
+    selector_key: str,
+    selector_hash: int | None,
+    source_id: str,
+    source_graph_id: str,
+    source_content_sha256: str,
+    selector_json_path: str,
+    branch_root_path: str,
+    selector_source: IRSource,
+    gap_kind: str,
+    candidates: tuple[str, ...],
+    reason: str,
+    contexts: tuple[CharacterBuildSelectorContextRefIR, ...],
+) -> CharacterBuildSelectorGapIR:
+    return CharacterBuildSelectorGapIR(
+        selector_gap_id=character_ability_stable_id(
+            "character_build_selector_gap",
+            projection_id,
+            gap_kind,
+        ),
+        character_data_card_id=card_id,
+        owner_avatar_id=owner_avatar_id,
+        selector_kind=cast(Any, selector_kind),
+        selector_key=selector_key,
+        selector_hash=selector_hash,
+        selector_scope_record_id=record_id,
+        selector_projection_id=projection_id,
+        source_id=source_id,
+        source_graph_id=source_graph_id,
+        source_content_sha256=source_content_sha256,
+        selector_json_path=selector_json_path,
+        branch_root_path=branch_root_path,
+        selector_source=selector_source,
+        gap_kind=cast(Any, gap_kind),
+        candidate_ref_ids=tuple(sorted(set(candidates))),
+        blocked_reason=reason,
+        context_refs=contexts,
+    )
+
+
+def _build_selector_ledger(
+    scope_catalog: CharacterAbilityScopeProjectionCatalog | None,
+    resolver: _CharacterBuildGraphResolver | None,
+    trace_nodes: list[CharacterTraceNodeIR],
+    eidolon_slots: list[CharacterEidolonSlotIR],
+) -> tuple[
+    list[CharacterBuildSelectorRelationIR],
+    list[CharacterBuildSelectorGapIR],
+]:
+    if scope_catalog is None and resolver is None:
+        return [], []
+    if scope_catalog is None or resolver is None:
+        raise ValueError("selector ledger requires both S0 and S1 catalogs")
+
+    selector_records = tuple(
+        record
+        for record in scope_catalog.scope_records
+        if record.materialization_role == "selected"
+        and record.effective_scope == "build_resolution"
+        and record.family in {"BySkillPointActivated", "ByRankActivated"}
+    )
+    selector_scope_ids = frozenset(record.record_id for record in selector_records)
+    projections_by_scope: dict[str, list[Any]] = {}
+    for projection in scope_catalog.projections:
+        if (
+            projection.projection_scope == "build_resolution"
+            and projection.projection_kind == "build_selector"
+        ):
+            projections_by_scope.setdefault(
+                projection.scope_record_id,
+                [],
+            ).append(projection)
+    if set(projections_by_scope) != set(selector_scope_ids) or any(
+        len(values) != 1 for values in projections_by_scope.values()
+    ):
+        raise ValueError(
+            "every S0 build selector must have exactly one typed projection"
+        )
+    contexts_by_scope = _selector_contexts_by_scope(
+        scope_catalog,
+        selector_scope_ids,
+    )
+    scope_sources_by_path: dict[str, list[CharacterAbilitySourceIR]] = {}
+    for source in scope_catalog.sources:
+        scope_sources_by_path.setdefault(source.source.source_path, []).append(source)
+
+    trace_groups: dict[
+        tuple[str, str], dict[str, list[CharacterTraceNodeIR]]
+    ] = {}
+    for node in trace_nodes:
+        point_trigger_key = node.source.evidence.get("point_trigger_key")
+        if not isinstance(point_trigger_key, str) or not point_trigger_key:
+            continue
+        trace_groups.setdefault(
+            (node.avatar_id, point_trigger_key),
+            {},
+        ).setdefault(node.trace_id, []).append(node)
+    rank_groups: dict[
+        tuple[str, int], dict[str, list[CharacterEidolonSlotIR]]
+    ] = {}
+    for slot in eidolon_slots:
+        trigger_hash = slot.semantics.get("trigger_hash")
+        if not isinstance(trigger_hash, int) or isinstance(trigger_hash, bool):
+            continue
+        rank_groups.setdefault(
+            (slot.avatar_id, trigger_hash),
+            {},
+        ).setdefault(str(slot.rank), []).append(slot)
+
+    relations: list[CharacterBuildSelectorRelationIR] = []
+    gaps: list[CharacterBuildSelectorGapIR] = []
+    for record in sorted(selector_records, key=lambda item: item.record_id):
+        projection = projections_by_scope[record.record_id][0]
+        payload = projection.payload
+        selector_kind = payload.get("selector_kind")
+        selector_key_value = payload.get("selector_key")
+        selector_hash_value = payload.get("selector_hash")
+        selector_key = (
+            selector_key_value if isinstance(selector_key_value, str) else ""
+        )
+        selector_hash = (
+            selector_hash_value
+            if isinstance(selector_hash_value, int)
+            and not isinstance(selector_hash_value, bool)
+            else None
+        )
+        owner_avatar_id = record.source.evidence.get("avatar_id")
+        selector_json_path = payload.get("selector_json_path")
+        branch_root_path = payload.get("branch_root_path")
+        if (
+            selector_kind not in {"skill_point", "rank"}
+            or not isinstance(owner_avatar_id, str)
+            or not owner_avatar_id
+            or not isinstance(selector_json_path, str)
+            or not selector_json_path
+            or not isinstance(branch_root_path, str)
+            or not branch_root_path
+        ):
+            raise ValueError("typed S0 selector projection is incomplete")
+        card_id = f"character_data_card:avatar:{owner_avatar_id}"
+        contexts = contexts_by_scope.get(record.record_id, ())
+        scope_source_candidates = scope_sources_by_path.get(
+            record.source.source_path,
+            [],
+        )
+        if len(scope_source_candidates) != 1:
+            raise ValueError("S0 selector source path is not uniquely source-backed")
+        scope_source = scope_source_candidates[0]
+        source_id = scope_source.source_id
+        source_digest = scope_source.content_sha256
+        selector_source = IRSource(
+            source_path=record.source.source_path,
+            raw_type=record.source.raw_type,
+            raw_id=record.source.raw_id,
+            evidence={
+                **record.source.evidence,
+                "selector_projection_id": projection.projection_id,
+                "selector_kind": selector_kind,
+                "selector_key": selector_key or None,
+                "selector_hash": selector_hash,
+                "source_content_sha256": source_digest,
+            },
+        )
+        source_graphs = resolver.graphs_by_source_id.get(source_id, ())
+        source_graph = source_graphs[0] if len(source_graphs) == 1 else None
+        s1_source = resolver.sources_by_id.get(source_id)
+        source_closed = (
+            s1_source is not None
+            and s1_source.source.source_path == record.source.source_path
+            and s1_source.content_sha256 == source_digest
+            and s1_source.source_kind == "character_main"
+            and s1_source.avatar_id == owner_avatar_id
+        )
+        common_gap = {
+            "record_id": record.record_id,
+            "projection_id": projection.projection_id,
+            "card_id": card_id,
+            "owner_avatar_id": owner_avatar_id,
+            "selector_kind": selector_kind,
+            "selector_key": selector_key,
+            "selector_hash": selector_hash,
+            "source_content_sha256": source_digest,
+            "selector_json_path": selector_json_path,
+            "branch_root_path": branch_root_path,
+            "selector_source": selector_source,
+            "contexts": contexts,
+        }
+        if not source_closed:
+            gaps.append(
+                _selector_gap(
+                    **common_gap,
+                    source_id=source_id,
+                    source_graph_id="",
+                    gap_kind="source_closure_mismatch",
+                    candidates=tuple(graph.graph_id for graph in source_graphs),
+                    reason="selector_source_does_not_close_over_S1_character_owner",
+                )
+            )
+            continue
+        if (
+            source_graph is None
+            or source_graph.source_kind != "character_main"
+            or source_graph.owner_avatar_id != owner_avatar_id
+        ):
+            gaps.append(
+                _selector_gap(
+                    **common_gap,
+                    source_id=source_id,
+                    source_graph_id="",
+                    gap_kind="source_graph_missing",
+                    candidates=tuple(graph.graph_id for graph in source_graphs),
+                    reason="selector_S1_source_graph_missing_or_ambiguous",
+                )
+            )
+            continue
+
+        matching_definitions = tuple(
+            definition
+            for definition in resolver.definitions_by_source_id.get(source_id, ())
+            if definition.source.source_path == record.source.source_path
+            if isinstance(definition.source.evidence.get("json_path"), str)
+            and (
+                selector_json_path
+                == str(definition.source.evidence["json_path"])
+                or selector_json_path.startswith(
+                    str(definition.source.evidence["json_path"]) + "."
+                )
+            )
+        )
+        if len(matching_definitions) > 1:
+            gaps.append(
+                _selector_gap(
+                    **common_gap,
+                    source_id=source_id,
+                    source_graph_id=source_graph.graph_id,
+                    gap_kind="ability_definition_ambiguous",
+                    candidates=tuple(
+                        definition.definition_id
+                        for definition in matching_definitions
+                    ),
+                    reason="selector_path_matches_multiple_S1_ability_definitions",
+                )
+            )
+            continue
+        definition = matching_definitions[0] if matching_definitions else None
+
+        if selector_kind == "skill_point":
+            own_groups = trace_groups.get((owner_avatar_id, selector_key), {})
+            foreign_refs = tuple(
+                node.trace_node_id
+                for (foreign_owner, key), groups in trace_groups.items()
+                if foreign_owner != owner_avatar_id and key == selector_key
+                for nodes in groups.values()
+                for node in nodes
+            )
+        else:
+            if selector_hash is None:
+                raise ValueError("rank selector projection lost its typed hash")
+            own_groups = rank_groups.get((owner_avatar_id, selector_hash), {})
+            foreign_refs = tuple(
+                slot.eidolon_slot_id
+                for (foreign_owner, trigger_hash), groups in rank_groups.items()
+                if foreign_owner != owner_avatar_id
+                and trigger_hash == selector_hash
+                for slots in groups.values()
+                for slot in slots
+            )
+        own_refs = tuple(
+            ref_id
+            for values in own_groups.values()
+            for ref_id in (
+                item.trace_node_id
+                if isinstance(item, CharacterTraceNodeIR)
+                else item.eidolon_slot_id
+                for item in values
+            )
+        )
+        if len(own_groups) != 1:
+            gap_kind = (
+                "selection_ambiguous"
+                if len(own_groups) > 1
+                else "cross_character"
+                if foreign_refs
+                else "selection_missing"
+            )
+            gaps.append(
+                _selector_gap(
+                    **common_gap,
+                    source_id=source_id,
+                    source_graph_id=source_graph.graph_id,
+                    gap_kind=gap_kind,
+                    candidates=own_refs or foreign_refs,
+                    reason=f"selector_{gap_kind}",
+                )
+            )
+            continue
+        logical_selection_id, selected_values = next(iter(own_groups.items()))
+        selection_ref_ids = tuple(
+            sorted(
+                (
+                    value.trace_node_id
+                    if isinstance(value, CharacterTraceNodeIR)
+                    else value.eidolon_slot_id
+                    for value in selected_values
+                )
+            )
+        )
+        inverse = payload.get("inverse")
+        if not isinstance(inverse, bool):
+            raise ValueError("selector projection inverse is not typed")
+        relation = CharacterBuildSelectorRelationIR(
+            selector_relation_id=character_ability_stable_id(
+                "character_build_selector_relation",
+                projection.projection_id,
+                logical_selection_id,
+            ),
+            character_data_card_id=card_id,
+            owner_avatar_id=owner_avatar_id,
+            selection_kind=(
+                "trace" if selector_kind == "skill_point" else "eidolon"
+            ),
+            logical_selection_id=logical_selection_id,
+            selection_ref_ids=selection_ref_ids,
+            selector_kind=cast(Any, selector_kind),
+            selector_key=selector_key,
+            selector_hash=selector_hash,
+            selector_value_when_selected=not inverse,
+            selector_scope_record_id=record.record_id,
+            selector_projection_id=projection.projection_id,
+            source_id=source_id,
+            source_graph_id=source_graph.graph_id,
+            source_graph_ref_id=(
+                f"character_ability_graph_ref:{card_id}:"
+                f"owned:{source_graph.graph_id}"
+            ),
+            location_kind=(
+                "ability_definition" if definition is not None else "source_root"
+            ),
+            ability_definition_id=(
+                definition.definition_id if definition is not None else ""
+            ),
+            ability_name=definition.ability_name if definition is not None else "",
+            source_content_sha256=source_digest,
+            selector_json_path=selector_json_path,
+            branch_kind=cast(Any, payload.get("branch_kind")),
+            branch_root_path=branch_root_path,
+            true_subtree_path=str(payload.get("true_subtree_path") or ""),
+            false_subtree_path=str(payload.get("false_subtree_path") or ""),
+            selector_source=selector_source,
+            ability_definition_source=(
+                definition.source if definition is not None else None
+            ),
+            context_refs=contexts,
+        )
+        relations.append(relation)
+    return (
+        sorted(relations, key=lambda item: item.selector_relation_id),
+        sorted(gaps, key=lambda item: item.selector_gap_id),
+    )
+
+
+def _build_binding_id(
+    selection_ref_id: str,
+    projection_kind: str,
+    ordinal: int,
+) -> str:
+    return (
+        f"character_build_binding:{selection_ref_id}:"
+        f"{projection_kind}:{ordinal}"
+    )
+
+
+def _source_gap_build_binding(
+    *,
+    card_id: str,
+    avatar_id: str,
+    selection_kind: str,
+    selection_ref_id: str,
+    mechanism_slot_id: str,
+    target_ref_id: str,
+    ordinal: int,
+    source: IRSource,
+    reason: str,
+    candidate_ref_ids: tuple[str, ...] = (),
+) -> CharacterBuildBindingIR:
+    return CharacterBuildBindingIR(
+        build_binding_id=_build_binding_id(
+            selection_ref_id,
+            "source_gap",
+            ordinal,
+        ),
+        character_data_card_id=card_id,
+        owner_avatar_id=avatar_id,
+        selection_kind=selection_kind,  # type: ignore[arg-type]
+        selection_ref_id=selection_ref_id,
+        mechanism_slot_id=mechanism_slot_id,
+        projection_kind="source_gap",
+        target_ref_id=target_ref_id,
+        ordinal=ordinal,
+        source=source,
+        candidate_ref_ids=candidate_ref_ids,
+        runtime_admission_status="blocked",
+        blocked_reason=reason,
+    )
+
+
+def _dynamic_graph_build_binding(
+    *,
+    resolver: _CharacterBuildGraphResolver | None,
+    card_id: str,
+    avatar_id: str,
+    selection_kind: str,
+    selection_ref_id: str,
+    mechanism_slot_id: str,
+    ability_name: str,
+    ordinal: int,
+    source: IRSource,
+) -> CharacterBuildBindingIR:
+    if resolver is None:
+        return _source_gap_build_binding(
+            card_id=card_id,
+            avatar_id=avatar_id,
+            selection_kind=selection_kind,
+            selection_ref_id=selection_ref_id,
+            mechanism_slot_id=mechanism_slot_id,
+            target_ref_id=ability_name,
+            ordinal=ordinal,
+            source=source,
+            reason="character_ability_source_graph_not_installed",
+        )
+    resolution = resolver.query.query_standalone_ability(
+        avatar_id,
+        ability_name,
+    )
+    candidate_ref_ids = tuple(
+        sorted(
+            {
+                *resolution.binding_ids,
+                *resolution.definition_ids,
+                *resolution.gap_ids,
+            }
+        )
+    )
+    if (
+        resolution.status != "resolved"
+        or len(resolution.binding_ids) != 1
+        or len(resolution.definition_ids) != 1
+    ):
+        return _source_gap_build_binding(
+            card_id=card_id,
+            avatar_id=avatar_id,
+            selection_kind=selection_kind,
+            selection_ref_id=selection_ref_id,
+            mechanism_slot_id=mechanism_slot_id,
+            target_ref_id=ability_name,
+            ordinal=ordinal,
+            source=source,
+            reason=resolution.blocked_reason or "dynamic_graph_binding_not_unique",
+            candidate_ref_ids=candidate_ref_ids,
+        )
+    ability_binding = resolver.bindings_by_id.get(resolution.binding_ids[0])
+    definition = resolver.definitions_by_id.get(resolution.definition_ids[0])
+    source_graph = (
+        resolver.graphs_by_id.get(ability_binding.graph_id)
+        if ability_binding is not None
+        else None
+    )
+    owned_graph = resolver.owned_graphs_by_avatar.get(avatar_id)
+    if (
+        ability_binding is None
+        or definition is None
+        or source_graph is None
+        or owned_graph is None
+        or ability_binding.ability_definition_id != definition.definition_id
+        or ability_binding.ability_name != ability_name
+        or definition.ability_name != ability_name
+        or ability_binding.owner_avatar_id not in {"", avatar_id}
+        or definition.owner_avatar_id not in {"", avatar_id}
+    ):
+        return _source_gap_build_binding(
+            card_id=card_id,
+            avatar_id=avatar_id,
+            selection_kind=selection_kind,
+            selection_ref_id=selection_ref_id,
+            mechanism_slot_id=mechanism_slot_id,
+            target_ref_id=ability_name,
+            ordinal=ordinal,
+            source=source,
+            reason="dynamic_graph_binding_identity_mismatch",
+            candidate_ref_ids=candidate_ref_ids,
+        )
+    if source_graph.graph_id == owned_graph.graph_id:
+        reference_kind = "owned"
+    elif source_graph.graph_id in owned_graph.shared_graph_ids:
+        reference_kind = "shared"
+    else:
+        return _source_gap_build_binding(
+            card_id=card_id,
+            avatar_id=avatar_id,
+            selection_kind=selection_kind,
+            selection_ref_id=selection_ref_id,
+            mechanism_slot_id=mechanism_slot_id,
+            target_ref_id=ability_name,
+            ordinal=ordinal,
+            source=source,
+            reason="dynamic_graph_outside_character_card_source_closure",
+            candidate_ref_ids=candidate_ref_ids,
+        )
+    return CharacterBuildBindingIR(
+        build_binding_id=_build_binding_id(
+            selection_ref_id,
+            "dynamic_graph_ref",
+            ordinal,
+        ),
+        character_data_card_id=card_id,
+        owner_avatar_id=avatar_id,
+        selection_kind=selection_kind,  # type: ignore[arg-type]
+        selection_ref_id=selection_ref_id,
+        mechanism_slot_id=mechanism_slot_id,
+        projection_kind="dynamic_graph_ref",
+        target_ref_id=ability_name,
+        ordinal=ordinal,
+        source=source,
+        source_graph_ref_id=(
+            f"character_ability_graph_ref:{card_id}:"
+            f"{reference_kind}:{source_graph.graph_id}"
+        ),
+        source_graph_id=source_graph.graph_id,
+        ability_binding_id=ability_binding.binding_id,
+        ability_definition_id=definition.definition_id,
+        relation_source=ability_binding.relation_source,
+        definition_source=definition.source,
+        dynamic_ref_kind="direct_ability",
+        runtime_admission_status="blocked",
+        blocked_reason="dynamic_graph_runtime_semantics_pending_p9_s4_s17",
+    )
+
+
+def _finalize_selection_bindings(
+    bindings: list[CharacterBuildBindingIR],
+    selector_relations: tuple[CharacterBuildSelectorRelationIR, ...],
+) -> tuple[CharacterBuildBindingIR, ...]:
+    generic_gap_reasons = {
+        "trace_extra_effect_has_no_structured_effect_source",
+        "eidolon_extra_effect_has_no_structured_effect_source",
+        "trace_node_has_no_structured_effect_source",
+        "eidolon_runtime_effect_not_admitted_v0_265",
+    }
+    filtered = [
+        binding
+        for binding in bindings
+        if not (
+            selector_relations
+            and binding.projection_kind == "source_gap"
+            and binding.blocked_reason in generic_gap_reasons
+        )
+    ]
+    if not filtered and not selector_relations:
+        raise ValueError("selection did not produce a build binding classification")
+    return tuple(
+        replace(
+            binding,
+            ordinal=ordinal,
+            build_binding_id=_build_binding_id(
+                binding.selection_ref_id,
+                binding.projection_kind,
+                ordinal,
+            ),
+        )
+        for ordinal, binding in enumerate(filtered)
+    )
+
+
+def _trace_build_bindings(
+    node: CharacterTraceNodeIR,
+    slots_by_id: dict[str, CharacterMechanismSlotIR],
+    resolver: _CharacterBuildGraphResolver | None,
+    selector_relations: tuple[CharacterBuildSelectorRelationIR, ...],
+) -> tuple[CharacterBuildBindingIR, ...]:
+    bindings: list[CharacterBuildBindingIR] = []
+    ordinal = 0
+    for mechanism_slot_id in node.linked_mechanism_slot_ids:
+        slot = slots_by_id.get(mechanism_slot_id)
+        if (
+            slot is None
+            or slot.character_data_card_id != node.character_data_card_id
+            or slot.source != node.source
+        ):
+            raise ValueError("trace mechanism slot identity/source mismatch")
+        if slot.mechanism_kind == "trace_static_stat_bonus":
+            terms = slot.semantics.get("mapped_terms")
+            if not isinstance(terms, (list, tuple)) or not terms:
+                bindings.append(
+                    _source_gap_build_binding(
+                        card_id=node.character_data_card_id,
+                        avatar_id=node.avatar_id,
+                        selection_kind="trace",
+                        selection_ref_id=node.trace_node_id,
+                        mechanism_slot_id=mechanism_slot_id,
+                        target_ref_id=mechanism_slot_id,
+                        ordinal=ordinal,
+                        source=node.source,
+                        reason=slot.blocked_reason or "trace_static_terms_missing",
+                    )
+                )
+                ordinal += 1
+                continue
+            for term in terms:
+                if not isinstance(term, Mapping):
+                    raise TypeError("trace static term must be a mapping")
+                application_kind = term.get("application_kind")
+                property_type = term.get("target_key")
+                exact_value = term.get("value")
+                if (
+                    not isinstance(application_kind, str)
+                    or not isinstance(property_type, str)
+                    or not isinstance(exact_value, str)
+                ):
+                    raise ValueError("trace static term is not fully typed")
+                projection_kind = (
+                    "resource_contribution"
+                    if application_kind == "resource_delta"
+                    else "static_contribution"
+                )
+                bindings.append(
+                    CharacterBuildBindingIR(
+                        build_binding_id=_build_binding_id(
+                            node.trace_node_id,
+                            projection_kind,
+                            ordinal,
+                        ),
+                        character_data_card_id=node.character_data_card_id,
+                        owner_avatar_id=node.avatar_id,
+                        selection_kind="trace",
+                        selection_ref_id=node.trace_node_id,
+                        mechanism_slot_id=mechanism_slot_id,
+                        projection_kind=projection_kind,  # type: ignore[arg-type]
+                        target_ref_id=property_type,
+                        ordinal=ordinal,
+                        source=node.source,
+                        application_kind=application_kind,
+                        property_type=property_type,
+                        exact_value=exact_value,
+                    )
+                )
+                ordinal += 1
+        elif slot.mechanism_kind == "trace_skill_level":
+            for skill_id in node.level_up_skill_ids:
+                bindings.append(
+                    CharacterBuildBindingIR(
+                        build_binding_id=_build_binding_id(
+                            node.trace_node_id,
+                            "skill_level_change",
+                            ordinal,
+                        ),
+                        character_data_card_id=node.character_data_card_id,
+                        owner_avatar_id=node.avatar_id,
+                        selection_kind="trace",
+                        selection_ref_id=node.trace_node_id,
+                        mechanism_slot_id=mechanism_slot_id,
+                        projection_kind="skill_level_change",
+                        target_ref_id=skill_id,
+                        ordinal=ordinal,
+                        source=node.source,
+                        skill_level_change_kind="base",
+                        skill_level_value=node.level,
+                    )
+                )
+                ordinal += 1
+        elif slot.mechanism_kind == "trace_ability_hook":
+            ability_name = slot.linked_ir_ids.get("ability_name")
+            if not isinstance(ability_name, str) or not ability_name:
+                raise ValueError("trace ability slot has no typed ability identity")
+            bindings.append(
+                _dynamic_graph_build_binding(
+                    resolver=resolver,
+                    card_id=node.character_data_card_id,
+                    avatar_id=node.avatar_id,
+                    selection_kind="trace",
+                    selection_ref_id=node.trace_node_id,
+                    mechanism_slot_id=mechanism_slot_id,
+                    ability_name=ability_name,
+                    ordinal=ordinal,
+                    source=node.source,
+                )
+            )
+            ordinal += 1
+        elif slot.mechanism_kind == "trace_extra_effect":
+            target_ids = (*node.extra_effect_ids, *node.simple_extra_effect_ids)
+            for target_id in target_ids or (mechanism_slot_id,):
+                bindings.append(
+                    _source_gap_build_binding(
+                        card_id=node.character_data_card_id,
+                        avatar_id=node.avatar_id,
+                        selection_kind="trace",
+                        selection_ref_id=node.trace_node_id,
+                        mechanism_slot_id=mechanism_slot_id,
+                        target_ref_id=str(target_id),
+                        ordinal=ordinal,
+                        source=node.source,
+                        reason="trace_extra_effect_has_no_structured_effect_source",
+                    )
+                )
+                ordinal += 1
+        else:
+            bindings.append(
+                _source_gap_build_binding(
+                    card_id=node.character_data_card_id,
+                    avatar_id=node.avatar_id,
+                    selection_kind="trace",
+                    selection_ref_id=node.trace_node_id,
+                    mechanism_slot_id=mechanism_slot_id,
+                    target_ref_id=mechanism_slot_id,
+                    ordinal=ordinal,
+                    source=node.source,
+                    reason=slot.blocked_reason or "trace_projection_kind_not_classified",
+                )
+            )
+            ordinal += 1
+    return _finalize_selection_bindings(bindings, selector_relations)
+
+
+def _eidolon_build_bindings(
+    eidolon: CharacterEidolonSlotIR,
+    slots_by_id: dict[str, CharacterMechanismSlotIR],
+    resolver: _CharacterBuildGraphResolver | None,
+    selector_relations: tuple[CharacterBuildSelectorRelationIR, ...],
+) -> tuple[CharacterBuildBindingIR, ...]:
+    bindings: list[CharacterBuildBindingIR] = []
+    ordinal = 0
+    for mechanism_slot_id in eidolon.linked_mechanism_slot_ids:
+        slot = slots_by_id.get(mechanism_slot_id)
+        if (
+            slot is None
+            or slot.character_data_card_id != eidolon.character_data_card_id
+            or slot.source != eidolon.source
+        ):
+            raise ValueError("eidolon mechanism slot identity/source mismatch")
+        if slot.mechanism_kind == "eidolon_skill_level":
+            raw_bonuses = slot.semantics.get("skill_add_level_list")
+            if not isinstance(raw_bonuses, Mapping) or not raw_bonuses:
+                raise ValueError("eidolon skill-level source is missing")
+            for raw_skill_id, raw_bonus in sorted(
+                raw_bonuses.items(),
+                key=lambda item: str(item[0]),
+            ):
+                bonus = (
+                    raw_bonus.get("Value")
+                    if isinstance(raw_bonus, Mapping)
+                    else raw_bonus
+                )
+                if not isinstance(bonus, int) or isinstance(bonus, bool) or bonus <= 0:
+                    bindings.append(
+                        _source_gap_build_binding(
+                            card_id=eidolon.character_data_card_id,
+                            avatar_id=eidolon.avatar_id,
+                            selection_kind="eidolon",
+                            selection_ref_id=eidolon.eidolon_slot_id,
+                            mechanism_slot_id=mechanism_slot_id,
+                            target_ref_id=str(raw_skill_id),
+                            ordinal=ordinal,
+                            source=eidolon.source,
+                            reason="eidolon_skill_level_bonus_not_positive_integer",
+                        )
+                    )
+                else:
+                    bindings.append(
+                        CharacterBuildBindingIR(
+                            build_binding_id=_build_binding_id(
+                                eidolon.eidolon_slot_id,
+                                "skill_level_change",
+                                ordinal,
+                            ),
+                            character_data_card_id=eidolon.character_data_card_id,
+                            owner_avatar_id=eidolon.avatar_id,
+                            selection_kind="eidolon",
+                            selection_ref_id=eidolon.eidolon_slot_id,
+                            mechanism_slot_id=mechanism_slot_id,
+                            projection_kind="skill_level_change",
+                            target_ref_id=str(raw_skill_id),
+                            ordinal=ordinal,
+                            source=eidolon.source,
+                            skill_level_change_kind="bonus",
+                            skill_level_value=bonus,
+                        )
+                    )
+                ordinal += 1
+        elif slot.mechanism_kind == "eidolon_ability_hook":
+            ability_names = slot.semantics.get("rank_ability")
+            if not isinstance(ability_names, (list, tuple)) or not ability_names:
+                raise ValueError("eidolon ability source is missing")
+            for ability_name in ability_names:
+                bindings.append(
+                    _dynamic_graph_build_binding(
+                        resolver=resolver,
+                        card_id=eidolon.character_data_card_id,
+                        avatar_id=eidolon.avatar_id,
+                        selection_kind="eidolon",
+                        selection_ref_id=eidolon.eidolon_slot_id,
+                        mechanism_slot_id=mechanism_slot_id,
+                        ability_name=str(ability_name),
+                        ordinal=ordinal,
+                        source=eidolon.source,
+                    )
+                )
+                ordinal += 1
+        elif slot.mechanism_kind == "eidolon_extra_effect":
+            raw_ids = slot.semantics.get("extra_effect_id_list")
+            target_ids = (
+                tuple(str(value) for value in raw_ids)
+                if isinstance(raw_ids, (list, tuple))
+                else ()
+            )
+            for target_id in target_ids or (mechanism_slot_id,):
+                bindings.append(
+                    _source_gap_build_binding(
+                        card_id=eidolon.character_data_card_id,
+                        avatar_id=eidolon.avatar_id,
+                        selection_kind="eidolon",
+                        selection_ref_id=eidolon.eidolon_slot_id,
+                        mechanism_slot_id=mechanism_slot_id,
+                        target_ref_id=target_id,
+                        ordinal=ordinal,
+                        source=eidolon.source,
+                        reason="eidolon_extra_effect_has_no_structured_effect_source",
+                    )
+                )
+                ordinal += 1
+        else:
+            bindings.append(
+                _source_gap_build_binding(
+                    card_id=eidolon.character_data_card_id,
+                    avatar_id=eidolon.avatar_id,
+                    selection_kind="eidolon",
+                    selection_ref_id=eidolon.eidolon_slot_id,
+                    mechanism_slot_id=mechanism_slot_id,
+                    target_ref_id=eidolon.rank_id or eidolon.eidolon_slot_id,
+                    ordinal=ordinal,
+                    source=eidolon.source,
+                    reason=slot.blocked_reason or "eidolon_projection_kind_not_classified",
+                )
+            )
+            ordinal += 1
+    return _finalize_selection_bindings(bindings, selector_relations)
 
 
 def _trace_static_stat_terms(status_add_list: list[Any]) -> tuple[list[dict[str, JSONValue]], str]:
@@ -907,6 +2075,30 @@ def _trace_nodes_and_slots(
                         blocked_reason="trace_extra_effect_runtime_admission_pending",
                     )
                 )
+            if not linked_slot_ids:
+                slot_id = (
+                    f"character_mechanism_slot:{card_id}:trace:"
+                    f"{point_id}:{level}:unbound"
+                )
+                linked_slot_ids.append(slot_id)
+                slots.append(
+                    CharacterMechanismSlotIR(
+                        mechanism_slot_id=slot_id,
+                        character_data_card_id=card_id,
+                        mechanism_kind="trace_unbound",
+                        runtime_system="character_card_assembly",
+                        linked_ir_ids={"trace_node_id": trace_node_id},
+                        activation={
+                            "kind": "trace_unlock",
+                            "trace_node_id": trace_node_id,
+                            "default_enabled": default_unlocked,
+                        },
+                        semantics={},
+                        source=source,
+                        coverage_status="blocked",
+                        blocked_reason="trace_node_has_no_structured_effect_source",
+                    )
+                )
             trace_nodes.append(
                 CharacterTraceNodeIR(
                     trace_node_id=trace_node_id,
@@ -1028,6 +2220,15 @@ def _eidolon_slots_from_avatar_row(
         rank_row: dict[str, Any] = {}
         if rank_row_info is not None:
             rank_relative_path, rank_row_index, rank_row = rank_row_info
+        raw_trigger = rank_row.get("Trigger")
+        trigger_hash = (
+            raw_trigger.get("Hash")
+            if isinstance(raw_trigger, Mapping)
+            and set(raw_trigger) == {"Hash"}
+            and isinstance(raw_trigger.get("Hash"), int)
+            and not isinstance(raw_trigger.get("Hash"), bool)
+            else None
+        )
         mechanism_slot_ids: list[str] = []
         coverage_status = "executable" if rank_id and rank_row_info else "blocked"
         blocked_reason = ""
@@ -1038,6 +2239,7 @@ def _eidolon_slots_from_avatar_row(
         semantics = {
             "rank": index + 1,
             "rank_id": rank_id,
+            "trigger_hash": trigger_hash,
             "rank_ability": _json_safe(rank_row.get("RankAbility") or []),
             "skill_add_level_list": _json_safe(rank_row.get("SkillAddLevelList") or {}),
             "extra_effect_id_list": _json_safe(rank_row.get("ExtraEffectIDList") or []),
@@ -1062,10 +2264,10 @@ def _eidolon_slots_from_avatar_row(
                 mechanism_slot_ids.append(
                     f"character_mechanism_slot:{card_id}:eidolon:{index + 1}:extra_effect"
                 )
-            if not mechanism_slot_ids:
-                mechanism_slot_ids.append(
-                    f"character_mechanism_slot:{card_id}:eidolon:{index + 1}:unbound"
-                )
+        if not mechanism_slot_ids:
+            mechanism_slot_ids.append(
+                f"character_mechanism_slot:{card_id}:eidolon:{index + 1}:unbound"
+            )
         slots.append(
             CharacterEidolonSlotIR(
                 eidolon_slot_id=f"character_eidolon_slot:{card_id}:rank:{index + 1}",
@@ -1089,6 +2291,7 @@ def _eidolon_slots_from_avatar_row(
                         "rank_config_rank": _json_safe(rank_row.get("Rank")),
                         "rank_name": _json_safe(rank_row.get("Name")),
                         "rank_desc": _json_safe(rank_row.get("Desc")),
+                        "trigger_hash": trigger_hash,
                         "rank_ability": _json_safe(rank_row.get("RankAbility") or []),
                         "skill_add_level_list": _json_safe(rank_row.get("SkillAddLevelList") or {}),
                         "extra_effect_id_list": _json_safe(rank_row.get("ExtraEffectIDList") or []),

@@ -458,7 +458,12 @@ class TBGDLowering:
         offensive_action_only: bool = False,
         max_servant_count: int | None = None,
     ) -> OwnedCombatantAdmissionProjection:
-        """Build only the source-backed sets required for servant admission."""
+        """Build only the source-backed sets required for servant admission.
+
+        The owner-card read below supplies formula bindings for servant actions. It
+        is not a complete character-card directory and does not consume build
+        selectors; complete character builds require the paired S0/S1 catalogs.
+        """
 
         servant_rows = self._servant_config_rows()
         if offensive_action_only:
@@ -1326,6 +1331,7 @@ class TBGDLowering:
             max_records_per_table=None,
             skill_tables=CHARACTER_ACTION_DEFINITION_TABLES,
             ability_source_graph_catalog=character_ability_source_graph_catalog,
+            ability_scope_catalog=self._character_ability_scope_catalog,
         )
         avatar_profiles = character_cards.avatar_profiles
         character_data_cards = character_cards.character_data_cards
@@ -1695,6 +1701,12 @@ class TBGDLowering:
             passive_mechanism_slots=tuple(passive_mechanism_slots),
             character_trace_nodes=tuple(character_trace_nodes),
             character_eidolon_slots=tuple(character_eidolon_slots),
+            character_build_selector_relations=tuple(
+                character_cards.character_build_selector_relations
+            ),
+            character_build_selector_gaps=tuple(
+                character_cards.character_build_selector_gaps
+            ),
             bounce_policies=tuple(bounce_policies),
             combatant_profiles=tuple(combatant_profiles),
             action_definitions=tuple(action_definitions),

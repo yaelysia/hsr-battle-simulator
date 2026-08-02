@@ -1067,6 +1067,17 @@ class _BranchContext:
 
 
 @dataclass(frozen=True)
+class _SelectorBranchContext:
+    branch_kind: Literal[
+        "explicit_task_branches",
+        "predicate_gated_object",
+    ]
+    branch_root_path: str
+    true_subtree_path: str
+    false_subtree_path: str
+
+
+@dataclass(frozen=True)
 class _ScopeDraft:
     record_id: str
     occurrence_kind: CharacterAbilityOccurrenceKind
@@ -1080,6 +1091,42 @@ class _ScopeDraft:
     parent_branch_path: str
     inherited_scope_record_id: str
     raw_container: Mapping[str, Any]
+    selector_branch: _SelectorBranchContext | None
+
+
+def _selector_branch_context(
+    path: str,
+    container: Mapping[str, Any],
+) -> _SelectorBranchContext | None:
+    opcode = _short_type(container.get("$type"))
+    if opcode in {"ByAnd", "ByAny", "ByNot"}:
+        return None
+    true_path = ""
+    false_path = ""
+    if "SuccessTaskList" in container:
+        true_path = _child_path(path, "SuccessTaskList")
+    elif "TaskList" in container:
+        true_path = _child_path(path, "TaskList")
+    if "FailedTaskList" in container:
+        false_path = _child_path(path, "FailedTaskList")
+    if true_path or false_path:
+        return _SelectorBranchContext(
+            branch_kind="explicit_task_branches",
+            branch_root_path=path,
+            true_subtree_path=true_path,
+            false_subtree_path=false_path,
+        )
+    substantive_fields = set(container).difference(
+        {"$type", "Predicate", "Condition", "Inverse"}
+    )
+    if not substantive_fields:
+        return None
+    return _SelectorBranchContext(
+        branch_kind="predicate_gated_object",
+        branch_root_path=path,
+        true_subtree_path=path,
+        false_subtree_path="",
+    )
 
 
 class _DocumentClassifier:
@@ -1096,7 +1143,7 @@ class _DocumentClassifier:
         self.issues: list[CharacterAbilityProjectionIssue] = []
 
     def classify(self, document: Mapping[str, Any]) -> None:
-        self._walk(document, "$", None, None)
+        self._walk(document, "$", None, None, None)
 
     def _walk(
         self,
@@ -1104,6 +1151,7 @@ class _DocumentClassifier:
         path: str,
         terminal_branch: _BranchContext | None,
         parent_branch: _BranchContext | None,
+        selector_branch: _SelectorBranchContext | None,
     ) -> None:
         if isinstance(value, (list, tuple)):
             for index, item in enumerate(value):
@@ -1112,6 +1160,7 @@ class _DocumentClassifier:
                     f"{path}[{index}]",
                     terminal_branch,
                     parent_branch,
+                    selector_branch,
                 )
             return
         if not isinstance(value, Mapping):
@@ -1214,6 +1263,7 @@ class _DocumentClassifier:
                     else object_terminal
                 ),
                 parent_branch=parent_branch,
+                selector_branch=selector_branch,
                 local_semantic_kind=(
                     "combat_decode_required"
                     if conflicting_markers
@@ -1250,6 +1300,7 @@ class _DocumentClassifier:
                     else object_terminal
                 ),
                 parent_branch=parent_branch,
+                selector_branch=selector_branch,
                 local_semantic_kind=(
                     "combat_decode_required"
                     if conflicting_markers
@@ -1269,6 +1320,14 @@ class _DocumentClassifier:
 
         for key, child in value.items():
             child_path = _child_path(path, key)
+            child_selector_branch = selector_branch
+            if key in {"Predicate", "Condition"} and isinstance(
+                child,
+                (Mapping, list, tuple),
+            ):
+                local_selector_branch = _selector_branch_context(path, value)
+                if local_selector_branch is not None:
+                    child_selector_branch = local_selector_branch
             if key.startswith("On") and isinstance(child, (Mapping, list, tuple)):
                 semantic_kind = STRUCTURAL_ENTRY_KINDS.get(key)
                 if semantic_kind is None:
@@ -1288,6 +1347,7 @@ class _DocumentClassifier:
                     raw_container={"entry": key, "value": child},
                     terminal_branch=child_terminal,
                     parent_branch=child_parent,
+                    selector_branch=child_selector_branch,
                 )
                 entry_context = _BranchContext(
                     entry_record.record_id,
@@ -1299,9 +1359,21 @@ class _DocumentClassifier:
                     entry_record.effective_scope
                 ):
                     entry_terminal = entry_context
-                self._walk(child, child_path, entry_terminal, entry_context)
+                self._walk(
+                    child,
+                    child_path,
+                    entry_terminal,
+                    entry_context,
+                    child_selector_branch,
+                )
             else:
-                self._walk(child, child_path, child_terminal, child_parent)
+                self._walk(
+                    child,
+                    child_path,
+                    child_terminal,
+                    child_parent,
+                    child_selector_branch,
+                )
 
     def _event_semantic_kind(
         self,
@@ -1331,6 +1403,7 @@ class _DocumentClassifier:
         raw_container: Mapping[str, Any],
         terminal_branch: _BranchContext | None,
         parent_branch: _BranchContext | None,
+        selector_branch: _SelectorBranchContext | None,
         local_semantic_kind: CharacterAbilitySemanticKind | None = None,
     ) -> _ScopeDraft:
         nominal_scope = _scope_for_semantic(semantic_kind)
@@ -1368,6 +1441,7 @@ class _DocumentClassifier:
                 terminal_branch.record_id if terminal_branch is not None else ""
             ),
             raw_container=raw_container,
+            selector_branch=selector_branch,
         )
         self.drafts.append(record)
         return record
@@ -1414,6 +1488,7 @@ class _DocumentClassifier:
             if (
                 draft.nominal_scope
                 not in {
+                    "build_resolution",
                     "battle_data_projection",
                     "input_projection",
                     "environment_input",
@@ -1424,6 +1499,7 @@ class _DocumentClassifier:
             projection, blocked_reason = _project_node(
                 records_by_id[draft.record_id],
                 draft.raw_container,
+                draft.selector_branch,
             )
             if projection is not None:
                 projections.append(projection)
@@ -1947,6 +2023,7 @@ def _materialize_scope_record(
 def _project_node(
     record: CharacterAbilityScopeRecordIR,
     raw_node: Mapping[str, Any],
+    selector_branch: _SelectorBranchContext | None,
 ) -> tuple[CharacterAbilityProjectionIR | None, str]:
     opcode = record.family
     fields = {key: value for key, value in raw_node.items() if key != "$type"}
@@ -1961,7 +2038,61 @@ def _project_node(
     payload: dict[str, JSONValue] = {}
     ignored_fields: tuple[str, ...] = ()
 
-    if opcode in {"SetEnergyBarState", "SetSummonerEnergyBarState"}:
+    if opcode in {"BySkillPointActivated", "ByRankActivated"}:
+        inverse = fields.get("Inverse", False)
+        if not isinstance(inverse, bool):
+            return None, "build_selector_inverse_not_boolean"
+        selector_key: str | None = None
+        selector_hash: int | None = None
+        if opcode == "BySkillPointActivated":
+            raw_key = fields.get("PointTriggerKey")
+            if not isinstance(raw_key, str) or not raw_key:
+                return None, "build_selector_point_trigger_key_missing"
+            selector_key = raw_key
+        else:
+            trigger_key = fields.get("TriggerKey")
+            raw_hash = (
+                trigger_key.get("Hash")
+                if isinstance(trigger_key, Mapping)
+                else None
+            )
+            if not isinstance(raw_hash, int) or isinstance(raw_hash, bool):
+                return None, "build_selector_rank_trigger_hash_missing"
+            if set(trigger_key) != {"Hash"}:
+                return None, "build_selector_rank_trigger_shape_invalid"
+            selector_hash = raw_hash
+        selector_json_path = str(record.source.evidence["json_path"])
+        if selector_json_path.endswith(".$type"):
+            selector_json_path = selector_json_path.removesuffix(".$type")
+        branch_kind = "predicate_context"
+        branch_root_path = str(record.parent_branch_path).removesuffix(".$type")
+        true_subtree_path = ""
+        false_subtree_path = ""
+        if selector_branch is not None:
+            branch_kind = selector_branch.branch_kind
+            branch_root_path = selector_branch.branch_root_path
+            true_subtree_path = selector_branch.true_subtree_path
+            false_subtree_path = selector_branch.false_subtree_path
+        if not branch_root_path:
+            return None, "build_selector_branch_boundary_missing"
+        projection_kind = "build_selector"
+        payload = {
+            "operation": "build_selector",
+            "selector_kind": (
+                "skill_point"
+                if opcode == "BySkillPointActivated"
+                else "rank"
+            ),
+            "selector_key": selector_key,
+            "selector_hash": selector_hash,
+            "inverse": inverse,
+            "selector_json_path": selector_json_path,
+            "branch_kind": branch_kind,
+            "branch_root_path": branch_root_path,
+            "true_subtree_path": true_subtree_path,
+            "false_subtree_path": false_subtree_path,
+        }
+    elif opcode in {"SetEnergyBarState", "SetSummonerEnergyBarState"}:
         projection_kind = "special_resource_state_fragment"
         unknown_fields = sorted(
             set(fields) - _SPECIAL_RESOURCE_CLIENT_FIELDS - _SPECIAL_RESOURCE_FIELDS

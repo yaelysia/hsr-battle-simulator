@@ -87,9 +87,9 @@ assembly_fingerprint_covers_diagnostics=true
 
 ## 唯一执行清单
 
-- [ ] 最终技能、行迹和星魂选择规范化且不可变。
-- [ ] 当前全部内容来源绑定为静态贡献、动态引用或诚实 gap。
-- [ ] 静态/动态、assembly/admission 边界清晰且无部分执行。
-- [ ] 重复、冲突、跨角色、旧 flags 和篡改负例 fail-closed。
-- [ ] runtime 不再重复解释构筑选择。
-- [ ] 主验证、必要 direct 和资源审计通过并提交 `ready_for_review`。
+- [x] 最终技能、行迹和星魂选择规范化且不可变。
+- [x] 当前全部内容来源绑定为静态贡献、动态引用或诚实 gap。
+- [x] 静态/动态、assembly/admission 边界清晰且无部分执行。
+- [x] 重复、冲突、跨角色、旧 flags 和篡改负例 fail-closed。
+- [x] runtime 不再重复解释构筑选择。
+- [x] 主验证、必要 direct 和资源审计通过并提交 `ready_for_review`。
