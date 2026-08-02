@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from ..equipment.models import (
     CharacterEquipmentEligibilityIR,
@@ -18,6 +19,7 @@ from ..equipment.models import (
     RelicSubAffixGroupDefinitionIR,
     RelicTemplateDefinitionIR,
 )
+from ..immutable_json import freeze_json, thaw_json
 from ..ir_types import CoverageStatus, IRSource, JSONValue
 
 
@@ -32,6 +34,837 @@ def _ir_json_value(value: Any) -> JSONValue:
     if callable(to_json):
         return _ir_json_value(to_json())
     raise TypeError(f"unsupported IR JSON value: {type(value).__name__}")
+
+
+def _immutable_character_ability_source(source: IRSource) -> IRSource:
+    if type(source) is not IRSource:
+        raise TypeError("character ability source must be an IRSource")
+    for field_name, value in (
+        ("source_path", source.source_path),
+        ("raw_type", source.raw_type),
+        ("raw_id", source.raw_id),
+    ):
+        if not isinstance(value, str) or not value:
+            raise ValueError(f"character ability source {field_name} is required")
+    if not isinstance(source.evidence, Mapping):
+        raise TypeError("character ability source evidence must be an object")
+    return IRSource(
+        source_path=source.source_path,
+        raw_type=source.raw_type,
+        raw_id=source.raw_id,
+        evidence=cast(dict[str, JSONValue], freeze_json(dict(source.evidence))),
+    )
+
+
+def _character_ability_source_json(source: IRSource) -> dict[str, JSONValue]:
+    return {
+        "source_path": source.source_path,
+        "raw_type": source.raw_type,
+        "raw_id": source.raw_id,
+        "evidence": cast(dict[str, JSONValue], thaw_json(source.evidence)),
+    }
+
+
+CharacterAbilityScope = Literal[
+    "gameplay",
+    "build_resolution",
+    "battle_data_projection",
+    "input_projection",
+    "environment_input",
+    "non_gameplay",
+    "decode_required",
+]
+CharacterAbilitySemanticKind = Literal[
+    "combat_runtime",
+    "combat_condition",
+    "combat_control_flow",
+    "simulation_sequence",
+    "contextual_data",
+    "combat_event",
+    "build_resolution",
+    "battle_data_projection",
+    "input_control_projection",
+    "environment_input",
+    "presentation_only",
+    "client_only_excluded",
+    "ai_excluded",
+    "telemetry_excluded",
+    "combat_decode_required",
+]
+CharacterAbilityOccurrenceKind = Literal[
+    "typed_node",
+    "event",
+    "structural_entry",
+]
+CharacterAbilityAdmissionStatus = Literal[
+    "gameplay_candidate",
+    "build_only",
+    "projection_only",
+    "retired",
+    "blocked",
+]
+CharacterAbilityProjectionScope = Literal[
+    "battle_data_projection",
+    "input_projection",
+    "environment_input",
+]
+CharacterAbilityMaterializationRole = Literal["selected", "ancestor_context"]
+CharacterAbilityProjectionKind = Literal[
+    "special_resource_state_fragment",
+    "target_persistence",
+    "environment_dependency",
+    "unit_topology",
+    "input_action_contract",
+]
+
+
+_CHARACTER_ABILITY_ADMISSION_BY_SCOPE: dict[
+    CharacterAbilityScope,
+    CharacterAbilityAdmissionStatus,
+] = {
+    "gameplay": "gameplay_candidate",
+    "build_resolution": "build_only",
+    "battle_data_projection": "projection_only",
+    "input_projection": "projection_only",
+    "environment_input": "projection_only",
+    "non_gameplay": "retired",
+    "decode_required": "blocked",
+}
+
+_CHARACTER_ABILITY_COVERAGE_BY_SCOPE: dict[
+    CharacterAbilityScope,
+    CoverageStatus,
+] = {
+    "gameplay": "discovered_only",
+    "build_resolution": "lowered",
+    "battle_data_projection": "lowered",
+    "input_projection": "lowered",
+    "environment_input": "lowered",
+    "non_gameplay": "audit_only",
+    "decode_required": "blocked",
+}
+
+_CHARACTER_ABILITY_SCOPES = frozenset(_CHARACTER_ABILITY_ADMISSION_BY_SCOPE)
+_CHARACTER_ABILITY_SEMANTIC_KINDS = frozenset(
+    {
+        "combat_runtime",
+        "combat_condition",
+        "combat_control_flow",
+        "simulation_sequence",
+        "contextual_data",
+        "combat_event",
+        "build_resolution",
+        "battle_data_projection",
+        "input_control_projection",
+        "environment_input",
+        "presentation_only",
+        "client_only_excluded",
+        "ai_excluded",
+        "telemetry_excluded",
+        "combat_decode_required",
+    }
+)
+_CHARACTER_ABILITY_OCCURRENCE_KINDS = frozenset(
+    {"typed_node", "event", "structural_entry"}
+)
+_CHARACTER_ABILITY_ADMISSION_STATUSES = frozenset(
+    _CHARACTER_ABILITY_ADMISSION_BY_SCOPE.values()
+)
+_CHARACTER_ABILITY_MATERIALIZATION_ROLES = frozenset(
+    {"selected", "ancestor_context"}
+)
+_CHARACTER_ABILITY_PROJECTION_KINDS = frozenset(
+    {
+        "special_resource_state_fragment",
+        "target_persistence",
+        "environment_dependency",
+        "unit_topology",
+        "input_action_contract",
+    }
+)
+
+
+def _semantic_scope(value: str) -> str:
+    if value in {
+        "combat_runtime",
+        "combat_condition",
+        "combat_control_flow",
+        "simulation_sequence",
+        "contextual_data",
+        "combat_event",
+    }:
+        return "gameplay"
+    if value in {
+        "presentation_only",
+        "client_only_excluded",
+        "ai_excluded",
+        "telemetry_excluded",
+    }:
+        return "non_gameplay"
+    if value == "input_control_projection":
+        return "input_projection"
+    if value == "combat_decode_required":
+        return "decode_required"
+    return value
+
+
+def _require_string_enum(value: object, allowed: frozenset[str], name: str) -> str:
+    if not isinstance(value, str) or value not in allowed:
+        raise ValueError(f"invalid {name}: {value!r}")
+    return value
+
+
+def _require_unique_strings(values: object, name: str) -> tuple[str, ...]:
+    if not isinstance(values, tuple) or any(
+        not isinstance(value, str) or not value for value in values
+    ):
+        raise TypeError(f"{name} must be a tuple of non-empty strings")
+    if len(values) != len(set(values)):
+        raise ValueError(f"{name} contains duplicates")
+    return tuple(sorted(values))
+
+
+def _is_number(value: object) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _validate_source_numeric_expression(value: object, field_name: str) -> None:
+    if not isinstance(value, Mapping) or set(value) not in (
+        {"IsDynamic", "FixedValue"},
+        {"IsDynamic", "PostfixExpr"},
+    ):
+        raise ValueError(f"invalid {field_name} source expression shape")
+    dynamic = value.get("IsDynamic")
+    if not isinstance(dynamic, bool):
+        raise TypeError(f"{field_name}.IsDynamic must be boolean")
+    if dynamic:
+        postfix = value.get("PostfixExpr")
+        if not isinstance(postfix, Mapping) or set(postfix) != {
+            "OpCodes",
+            "FixedValues",
+            "DynamicHashes",
+        }:
+            raise ValueError(f"invalid {field_name}.PostfixExpr shape")
+        if not isinstance(postfix.get("OpCodes"), str):
+            raise TypeError(f"{field_name}.PostfixExpr.OpCodes must be a string")
+        fixed_values = postfix.get("FixedValues")
+        dynamic_hashes = postfix.get("DynamicHashes")
+        if not isinstance(fixed_values, (list, tuple)) or any(
+            not isinstance(item, Mapping)
+            or set(item) != {"Value"}
+            or not _is_number(item.get("Value"))
+            for item in fixed_values
+        ):
+            raise ValueError(f"invalid {field_name}.PostfixExpr.FixedValues")
+        if not isinstance(dynamic_hashes, (list, tuple)) or any(
+            not isinstance(item, int) or isinstance(item, bool)
+            for item in dynamic_hashes
+        ):
+            raise ValueError(f"invalid {field_name}.PostfixExpr.DynamicHashes")
+    else:
+        fixed = value.get("FixedValue")
+        if (
+            not isinstance(fixed, Mapping)
+            or set(fixed) != {"Value"}
+            or not _is_number(fixed.get("Value"))
+        ):
+            raise ValueError(f"invalid {field_name}.FixedValue")
+
+
+def _validate_projection_payload(
+    projection_kind: str,
+    projection_scope: str,
+    source_opcode: str,
+    payload: Mapping[str, Any],
+) -> None:
+    if projection_kind == "special_resource_state_fragment":
+        if projection_scope != "battle_data_projection" or source_opcode not in {
+            "SetEnergyBarState",
+            "SetSummonerEnergyBarState",
+        }:
+            raise ValueError("special resource projection kind/scope/opcode mismatch")
+        if set(payload) != {"operation", "resource_fields"}:
+            raise ValueError("invalid special resource projection payload keys")
+        expected_operation = (
+            "summoner_resource_state"
+            if source_opcode == "SetSummonerEnergyBarState"
+            else "resource_state"
+        )
+        if payload.get("operation") != expected_operation:
+            raise ValueError("invalid special resource projection operation")
+        fields = payload.get("resource_fields")
+        if not isinstance(fields, Mapping):
+            raise TypeError("special resource fields must be an object")
+        allowed = {
+            "Active",
+            "ActiveCount",
+            "BarType",
+            "CD",
+            "CurrentCount",
+            "CurrentState",
+            "MaxCount",
+            "TargetType",
+        }
+        if not fields or not set(fields).issubset(allowed):
+            raise ValueError("special resource fields are empty or unknown")
+        for name in ("ActiveCount", "CD", "CurrentCount", "MaxCount"):
+            if name in fields:
+                _validate_source_numeric_expression(fields[name], name)
+        if "Active" in fields:
+            active = fields["Active"]
+            if not isinstance(active, str) or active not in {"True", "False"}:
+                raise ValueError("invalid special resource Active value")
+        if "BarType" in fields and (
+            not isinstance(fields["BarType"], int)
+            or isinstance(fields["BarType"], bool)
+            or fields["BarType"] < 0
+        ):
+            raise ValueError("invalid special resource BarType")
+        if "CurrentState" in fields and (
+            not isinstance(fields["CurrentState"], str)
+            or not fields["CurrentState"]
+        ):
+            raise ValueError("invalid special resource CurrentState")
+        if "TargetType" in fields:
+            target = fields["TargetType"]
+            if (
+                not isinstance(target, Mapping)
+                or set(target) != {"$type", "Alias"}
+                or target.get("$type") != "RPG.GameCore.TargetAlias"
+                or not isinstance(target.get("Alias"), str)
+                or not target.get("Alias")
+            ):
+                raise ValueError("invalid special resource target selector")
+        return
+    if projection_kind == "target_persistence":
+        if (
+            projection_scope != "input_projection"
+            or source_opcode != "SetTeamLockTarget"
+            or set(payload)
+            != {
+                "operation",
+                "team",
+                "target_selector",
+                "persists_across_phases",
+            }
+        ):
+            raise ValueError("target persistence projection contract mismatch")
+        selector = payload.get("target_selector")
+        if (
+            payload.get("operation") != "team_lock_target"
+            or not isinstance(payload.get("team"), str)
+            or not payload.get("team")
+            or payload.get("persists_across_phases") is not True
+            or not isinstance(selector, Mapping)
+            or set(selector) != {"kind", "alias"}
+            or selector.get("kind") != "target_alias"
+            or not isinstance(selector.get("alias"), str)
+            or not selector.get("alias")
+        ):
+            raise ValueError("invalid target persistence projection payload")
+        return
+    if projection_kind == "environment_dependency":
+        if projection_scope != "environment_input" or source_opcode not in {
+            "ByInTurnBasedGameModeState",
+            "ByIsMazeSkillAffectCurrentWave",
+            "ByIsStageFirstWave",
+            "SetDynamicValueByWaveStageCount",
+            "SetDynamicValueByWorldLevel",
+        }:
+            raise ValueError("environment projection kind/scope/opcode mismatch")
+        if source_opcode.startswith("By"):
+            if (
+                set(payload) != {"operation", "environment_key", "parameters"}
+                or payload.get("operation") != "predicate_input"
+                or not isinstance(payload.get("environment_key"), str)
+                or not payload.get("environment_key")
+                or not isinstance(payload.get("parameters"), Mapping)
+                or payload.get("parameters")
+            ):
+                raise ValueError("invalid environment predicate projection")
+        elif (
+            set(payload)
+            != {"operation", "environment_key", "write_to_key", "context_scope"}
+            or payload.get("operation") != "dynamic_value_input"
+            or not isinstance(payload.get("environment_key"), str)
+            or not payload.get("environment_key")
+            or not isinstance(payload.get("write_to_key"), str)
+            or not payload.get("write_to_key")
+            or not isinstance(payload.get("context_scope"), str)
+        ):
+            raise ValueError("invalid environment dynamic-value projection")
+        return
+    if projection_kind == "unit_topology":
+        if (
+            projection_scope != "battle_data_projection"
+            or source_opcode != "SetExcludeInMultiCharacterFormation"
+        ):
+            raise ValueError("unit topology projection kind/scope/opcode mismatch")
+        raise ValueError("unit topology has no admitted current-source payload shape")
+    if projection_kind == "input_action_contract":
+        if (
+            projection_scope != "input_projection"
+            or source_opcode
+            not in {"SetDeathDragonSkillButtonState", "SetUseTemporaryLockTarget"}
+        ):
+            raise ValueError("input action projection kind/scope/opcode mismatch")
+        raise ValueError("input action has no admitted current-source payload shape")
+    raise ValueError(f"unknown character ability projection kind:{projection_kind}")
+
+
+def _validate_projection_field_lineage(
+    projection_kind: str,
+    source_opcode: str,
+    payload: Mapping[str, Any],
+    raw_field_names: tuple[str, ...],
+    ignored_client_fields: tuple[str, ...],
+) -> None:
+    raw_names = set(raw_field_names)
+    ignored = set(ignored_client_fields)
+    if projection_kind == "special_resource_state_fragment":
+        if not ignored.issubset(
+            {"EnergyDotPrefabPaths", "IconPath", "PrefabPath"}
+        ):
+            raise ValueError("special resource projection ignores unknown client fields")
+        resource_fields = payload["resource_fields"]
+        if not isinstance(resource_fields, Mapping):
+            raise TypeError("special resource fields must be an object")
+        if raw_names != set(resource_fields) | ignored:
+            raise ValueError("special resource projection raw field lineage mismatch")
+        return
+    if projection_kind == "target_persistence":
+        if raw_names != {"TargetType", "Team"} or ignored:
+            raise ValueError("target persistence raw field lineage mismatch")
+        return
+    if projection_kind == "environment_dependency":
+        expected = (
+            set()
+            if source_opcode.startswith("By")
+            else {"ContextScope", "WriteToKey"}
+        )
+        if raw_names != expected or ignored:
+            raise ValueError("environment projection raw field lineage mismatch")
+        return
+    raise ValueError("projection kind has no admitted field lineage")
+
+
+@dataclass(frozen=True)
+class CharacterAbilitySourceIR:
+    source_id: str
+    source_kind: Literal["character_main", "character_shared"]
+    avatar_id: str
+    base_type: str
+    content_sha256: str
+    byte_size: int
+    source: IRSource
+    coverage_status: CoverageStatus = "lowered"
+    blocked_reason: str = ""
+
+    def __post_init__(self) -> None:
+        _require_string_enum(
+            self.source_kind,
+            frozenset({"character_main", "character_shared"}),
+            "character ability source_kind",
+        )
+        if not isinstance(self.source_id, str) or not self.source_id:
+            raise ValueError("character ability source identity must be non-empty")
+        if (
+            not isinstance(self.avatar_id, str)
+            or not isinstance(self.base_type, str)
+            or not self.base_type
+            or not isinstance(self.blocked_reason, str)
+        ):
+            raise ValueError("character ability source metadata is invalid")
+        if (
+            not isinstance(self.content_sha256, str)
+            or len(self.content_sha256) != 64
+            or any(character not in "0123456789abcdef" for character in self.content_sha256)
+        ):
+            raise ValueError("character ability source digest must be sha256")
+        if (
+            not isinstance(self.byte_size, int)
+            or isinstance(self.byte_size, bool)
+            or self.byte_size < 0
+        ):
+            raise ValueError("character ability source byte size must be non-negative")
+        if self.source_kind == "character_main" and not self.avatar_id:
+            raise ValueError("character main ability source must identify its avatar")
+        if self.source_kind == "character_shared" and self.avatar_id:
+            raise ValueError("character shared ability source cannot identify one avatar")
+        if self.coverage_status not in {"lowered", "blocked"}:
+            raise ValueError("invalid character ability source coverage")
+        if self.coverage_status == "blocked" and not self.blocked_reason:
+            raise ValueError("blocked character ability source must explain why")
+        if self.coverage_status != "blocked" and self.blocked_reason:
+            raise ValueError("non-blocked character ability source cannot carry a block")
+        frozen_source = _immutable_character_ability_source(self.source)
+        if frozen_source.raw_id != self.source_id:
+            raise ValueError("character ability source raw identity mismatch")
+        if frozen_source.raw_type != "character_ability_source":
+            raise ValueError("character ability source raw type mismatch")
+        object.__setattr__(self, "source", frozen_source)
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "source_id": self.source_id,
+            "source_kind": self.source_kind,
+            "avatar_id": self.avatar_id,
+            "base_type": self.base_type,
+            "content_sha256": self.content_sha256,
+            "byte_size": self.byte_size,
+            "source": _character_ability_source_json(self.source),
+            "coverage_status": self.coverage_status,
+            "blocked_reason": self.blocked_reason,
+        }
+
+
+@dataclass(frozen=True)
+class CharacterAbilityScopeRecordIR:
+    record_id: str
+    occurrence_kind: CharacterAbilityOccurrenceKind
+    family: str
+    semantic_kind: CharacterAbilitySemanticKind
+    nominal_scope: CharacterAbilityScope
+    effective_scope: CharacterAbilityScope
+    admission_status: CharacterAbilityAdmissionStatus
+    source: IRSource
+    materialization_role: CharacterAbilityMaterializationRole = "selected"
+    parent_record_id: str = ""
+    parent_branch_path: str = ""
+    raw_fields: Mapping[str, Any] = field(default_factory=dict)
+    coverage_status: CoverageStatus = "discovered_only"
+    blocked_reason: str = ""
+
+    def __post_init__(self) -> None:
+        _require_string_enum(
+            self.occurrence_kind,
+            _CHARACTER_ABILITY_OCCURRENCE_KINDS,
+            "character ability occurrence_kind",
+        )
+        _require_string_enum(
+            self.semantic_kind,
+            _CHARACTER_ABILITY_SEMANTIC_KINDS,
+            "character ability semantic_kind",
+        )
+        _require_string_enum(
+            self.nominal_scope,
+            _CHARACTER_ABILITY_SCOPES,
+            "character ability nominal_scope",
+        )
+        _require_string_enum(
+            self.effective_scope,
+            _CHARACTER_ABILITY_SCOPES,
+            "character ability effective_scope",
+        )
+        _require_string_enum(
+            self.admission_status,
+            _CHARACTER_ABILITY_ADMISSION_STATUSES,
+            "character ability admission_status",
+        )
+        _require_string_enum(
+            self.materialization_role,
+            _CHARACTER_ABILITY_MATERIALIZATION_ROLES,
+            "character ability materialization_role",
+        )
+        if (
+            not isinstance(self.record_id, str)
+            or not self.record_id
+            or not isinstance(self.family, str)
+            or not self.family
+            or not isinstance(self.blocked_reason, str)
+        ):
+            raise ValueError("character ability scope record identity must be non-empty")
+        if not isinstance(self.parent_record_id, str) or not self.parent_record_id:
+            raise ValueError("character ability scope record parent identity is required")
+        if not isinstance(self.parent_branch_path, str) or not self.parent_branch_path:
+            raise ValueError("character ability scope record parent path is required")
+        expected_admission = _CHARACTER_ABILITY_ADMISSION_BY_SCOPE[
+            self.effective_scope
+        ]
+        if _semantic_scope(self.semantic_kind) != self.effective_scope:
+            raise ValueError("character ability semantic kind does not match effective scope")
+        if self.admission_status != expected_admission:
+            raise ValueError("character ability admission does not match effective scope")
+        expected_coverage = _CHARACTER_ABILITY_COVERAGE_BY_SCOPE[
+            self.effective_scope
+        ]
+        if self.coverage_status != expected_coverage:
+            raise ValueError("character ability coverage does not match effective scope")
+        if not isinstance(self.raw_fields, Mapping):
+            raise TypeError("character ability raw fields must be an object")
+        frozen_raw_fields = cast(
+            Mapping[str, Any], freeze_json(dict(self.raw_fields))
+        )
+        if self.effective_scope == "decode_required":
+            if not self.blocked_reason or not frozen_raw_fields:
+                raise ValueError(
+                    "decode-required character ability records must preserve raw fields"
+                )
+        elif self.blocked_reason or frozen_raw_fields:
+            raise ValueError(
+                "classified character ability records cannot carry decode-only fields"
+            )
+        frozen_source = _immutable_character_ability_source(self.source)
+        if frozen_source.raw_id != self.record_id:
+            raise ValueError("character ability scope record raw identity mismatch")
+        if frozen_source.raw_type != self.family:
+            raise ValueError("character ability scope record raw type mismatch")
+        evidence = frozen_source.evidence
+        expected_evidence = {
+            "json_path",
+            "parent_branch_path",
+            "inherited_scope_record_id",
+            "nominal_semantic_kind",
+            "source_kind",
+            "avatar_id",
+        }
+        if set(evidence) != expected_evidence:
+            raise ValueError("character ability scope evidence schema is invalid")
+        json_path = evidence.get("json_path")
+        inherited_id = evidence.get("inherited_scope_record_id")
+        nominal_semantic = evidence.get("nominal_semantic_kind")
+        source_kind = evidence.get("source_kind")
+        avatar_id = evidence.get("avatar_id")
+        if (
+            not isinstance(json_path, str)
+            or not json_path
+            or evidence.get("parent_branch_path") != self.parent_branch_path
+            or not isinstance(inherited_id, str)
+            or not isinstance(nominal_semantic, str)
+            or nominal_semantic not in _CHARACTER_ABILITY_SEMANTIC_KINDS
+            or _semantic_scope(nominal_semantic) != self.nominal_scope
+            or not isinstance(source_kind, str)
+            or source_kind not in {"character_main", "character_shared"}
+            or not isinstance(avatar_id, str)
+            or (source_kind == "character_main" and not avatar_id)
+            or (source_kind == "character_shared" and bool(avatar_id))
+        ):
+            raise ValueError("character ability scope evidence is inconsistent")
+        object.__setattr__(self, "raw_fields", frozen_raw_fields)
+        object.__setattr__(self, "source", frozen_source)
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "record_id": self.record_id,
+            "occurrence_kind": self.occurrence_kind,
+            "family": self.family,
+            "semantic_kind": self.semantic_kind,
+            "nominal_scope": self.nominal_scope,
+            "effective_scope": self.effective_scope,
+            "admission_status": self.admission_status,
+            "materialization_role": self.materialization_role,
+            "parent_record_id": self.parent_record_id,
+            "parent_branch_path": self.parent_branch_path,
+            "raw_fields": cast(JSONValue, thaw_json(self.raw_fields)),
+            "source": _character_ability_source_json(self.source),
+            "coverage_status": self.coverage_status,
+            "blocked_reason": self.blocked_reason,
+        }
+
+
+@dataclass(frozen=True)
+class CharacterAbilityFamilyIR:
+    family: str
+    occurrence_kind: CharacterAbilityOccurrenceKind
+    semantic_kind: CharacterAbilitySemanticKind
+    nominal_scope: CharacterAbilityScope
+    occurrence_count: int
+    source_paths: tuple[str, ...]
+    effective_scope_counts: Mapping[str, int]
+
+    def __post_init__(self) -> None:
+        _require_string_enum(
+            self.occurrence_kind,
+            _CHARACTER_ABILITY_OCCURRENCE_KINDS,
+            "character ability family occurrence_kind",
+        )
+        _require_string_enum(
+            self.semantic_kind,
+            _CHARACTER_ABILITY_SEMANTIC_KINDS,
+            "character ability family semantic_kind",
+        )
+        _require_string_enum(
+            self.nominal_scope,
+            _CHARACTER_ABILITY_SCOPES,
+            "character ability family nominal_scope",
+        )
+        if _semantic_scope(self.semantic_kind) != self.nominal_scope:
+            raise ValueError("character ability family semantic scope mismatch")
+        if (
+            not isinstance(self.family, str)
+            or not self.family
+            or not isinstance(self.occurrence_count, int)
+            or isinstance(self.occurrence_count, bool)
+            or self.occurrence_count <= 0
+        ):
+            raise ValueError("character ability family summary must be non-empty")
+        source_paths = _require_unique_strings(
+            self.source_paths,
+            "character ability family source_paths",
+        )
+        if not source_paths:
+            raise ValueError("character ability family summary must retain its sources")
+        if not isinstance(self.effective_scope_counts, Mapping):
+            raise TypeError("character ability family scope counts must be a mapping")
+        scope_counts: dict[str, int] = {}
+        for scope, count in self.effective_scope_counts.items():
+            _require_string_enum(
+                scope,
+                _CHARACTER_ABILITY_SCOPES,
+                "character ability family effective scope",
+            )
+            if not isinstance(count, int) or isinstance(count, bool) or count <= 0:
+                raise ValueError("character ability family scope count must be positive")
+            scope_counts[scope] = count
+        if sum(scope_counts.values()) != self.occurrence_count:
+            raise ValueError("character ability family scope counts do not reconcile")
+        object.__setattr__(self, "source_paths", tuple(source_paths))
+        object.__setattr__(self, "effective_scope_counts", freeze_json(scope_counts))
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "family": self.family,
+            "occurrence_kind": self.occurrence_kind,
+            "semantic_kind": self.semantic_kind,
+            "nominal_scope": self.nominal_scope,
+            "occurrence_count": self.occurrence_count,
+            "source_paths": list(self.source_paths),
+            "effective_scope_counts": cast(
+                JSONValue, thaw_json(self.effective_scope_counts)
+            ),
+        }
+
+
+@dataclass(frozen=True)
+class CharacterAbilityProjectionIR:
+    projection_id: str
+    scope_record_id: str
+    projection_scope: CharacterAbilityProjectionScope
+    projection_kind: CharacterAbilityProjectionKind
+    source_opcode: str
+    payload: Mapping[str, Any]
+    raw_field_names: tuple[str, ...]
+    ignored_client_fields: tuple[str, ...]
+    source: IRSource
+    coverage_status: CoverageStatus = "lowered"
+    blocked_reason: str = ""
+
+    def __post_init__(self) -> None:
+        _require_string_enum(
+            self.projection_scope,
+            frozenset(
+                {
+                    "battle_data_projection",
+                    "input_projection",
+                    "environment_input",
+                }
+            ),
+            "character ability projection_scope",
+        )
+        _require_string_enum(
+            self.projection_kind,
+            _CHARACTER_ABILITY_PROJECTION_KINDS,
+            "character ability projection_kind",
+        )
+        if (
+            not isinstance(self.projection_id, str)
+            or not self.projection_id
+            or not isinstance(self.scope_record_id, str)
+            or not self.scope_record_id
+            or not isinstance(self.blocked_reason, str)
+        ):
+            raise ValueError("character ability projection identity must be non-empty")
+        if not isinstance(self.source_opcode, str) or not self.source_opcode:
+            raise ValueError("character ability projection kind must be non-empty")
+        raw_field_names = _require_unique_strings(
+            self.raw_field_names,
+            "character ability projection raw_field_names",
+        )
+        ignored_client_fields = _require_unique_strings(
+            self.ignored_client_fields,
+            "character ability projection ignored_client_fields",
+        )
+        if not set(ignored_client_fields).issubset(raw_field_names):
+            raise ValueError("ignored client fields must be raw source fields")
+        if self.coverage_status not in {"lowered", "blocked"}:
+            raise ValueError("invalid character ability projection coverage")
+        if self.coverage_status == "blocked" and not self.blocked_reason:
+            raise ValueError("blocked character ability projection must explain why")
+        if self.coverage_status != "blocked" and self.blocked_reason:
+            raise ValueError("non-blocked character ability projection cannot carry a block")
+        if not isinstance(self.payload, Mapping):
+            raise TypeError("character ability projection payload must be an object")
+        frozen_payload = cast(Mapping[str, Any], freeze_json(dict(self.payload)))
+        _validate_projection_payload(
+            self.projection_kind,
+            self.projection_scope,
+            self.source_opcode,
+            frozen_payload,
+        )
+        _validate_projection_field_lineage(
+            self.projection_kind,
+            self.source_opcode,
+            frozen_payload,
+            raw_field_names,
+            ignored_client_fields,
+        )
+        frozen_source = _immutable_character_ability_source(self.source)
+        if frozen_source.raw_id != self.scope_record_id:
+            raise ValueError("character ability projection source identity mismatch")
+        if frozen_source.raw_type != self.source_opcode:
+            raise ValueError("character ability projection source type mismatch")
+        object.__setattr__(self, "payload", frozen_payload)
+        object.__setattr__(self, "raw_field_names", raw_field_names)
+        object.__setattr__(self, "ignored_client_fields", ignored_client_fields)
+        object.__setattr__(self, "source", frozen_source)
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "projection_id": self.projection_id,
+            "scope_record_id": self.scope_record_id,
+            "projection_scope": self.projection_scope,
+            "projection_kind": self.projection_kind,
+            "source_opcode": self.source_opcode,
+            "payload": cast(JSONValue, thaw_json(self.payload)),
+            "raw_field_names": list(self.raw_field_names),
+            "ignored_client_fields": list(self.ignored_client_fields),
+            "runtime_admission": "projection_only",
+            "source": _character_ability_source_json(self.source),
+            "coverage_status": self.coverage_status,
+            "blocked_reason": self.blocked_reason,
+        }
+
+
+@dataclass(frozen=True)
+class CharacterAbilityExternalDependencyIR:
+    dependency_id: str
+    projection_kind: CharacterAbilityProjectionKind
+    status: Literal["external_content_dependency", "not_proven"]
+    reason: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.dependency_id, str) or not self.dependency_id:
+            raise ValueError("external dependency identity must be non-empty")
+        _require_string_enum(
+            self.projection_kind,
+            _CHARACTER_ABILITY_PROJECTION_KINDS,
+            "external dependency projection_kind",
+        )
+        _require_string_enum(
+            self.status,
+            frozenset({"external_content_dependency", "not_proven"}),
+            "external dependency status",
+        )
+        if not isinstance(self.reason, str) or not self.reason:
+            raise ValueError("external dependency reason must be non-empty")
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "dependency_id": self.dependency_id,
+            "projection_kind": self.projection_kind,
+            "status": self.status,
+            "reason": self.reason,
+        }
 
 
 @dataclass(frozen=True)

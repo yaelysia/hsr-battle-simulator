@@ -1,6 +1,11 @@
 from .ir import (
     BattleStateTransitionIR,
     CanonicalIR,
+    CharacterAbilityExternalDependencyIR,
+    CharacterAbilityFamilyIR,
+    CharacterAbilityProjectionIR,
+    CharacterAbilityScopeRecordIR,
+    CharacterAbilitySourceIR,
     ConditionIR,
     EffectIR,
     FormulaIR,
@@ -16,6 +21,11 @@ from .rulebook import RuleBook
 __all__ = [
     "BattleStateTransitionIR",
     "CanonicalIR",
+    "CharacterAbilityExternalDependencyIR",
+    "CharacterAbilityFamilyIR",
+    "CharacterAbilityProjectionIR",
+    "CharacterAbilityScopeRecordIR",
+    "CharacterAbilitySourceIR",
     "ConditionIR",
     "EffectIR",
     "EvaluationContext",

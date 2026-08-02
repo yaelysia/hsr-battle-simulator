@@ -74,6 +74,14 @@ VG-R1 曾确认两条动态值任务和一条死亡回响事件 family 失败。
 
 ## 当前工作
 
+P9 非记忆、非欢愉角色共享机制收口已完成 P9-S0 验收。当前 79 条已发布目标角色记录和一份
+共享角色能力已形成来源字节闭合、分支范围完整、可按 family 过滤的窄目录；10,432 条非战斗
+记录已退役，435 条战斗数据/输入/环境投影已类型化，213 条混淆来源继续诚实 blocked。记忆与
+欢愉专属机制继续延期。总计划位于
+`simulator_v8_clean_core/P9_CHARACTER_SHARED_MECHANISM_CLOSURE_TASK_PLAN.md`，S0-S20 单阶段
+执行卡入口位于 `simulator_v8_clean_core/docs/p9_execution_cards/README.md`。下一步只能基于 S0
+检查点执行 P9-S1 共享来源、动作阶段和能力入口来源图，不能跳到后续 runtime 机制阶段。
+
 光锥轨已经推进至 R2 并验收，`P8-S9` 至 `P8-S17` 的遗器定义、实例、词条、套装统计、静态贡献、动态能力启动以及当前全部套装 gameplay 机制也已验收。`P8-S18` 已完成光锥与遗器构筑汇合：角色、光锥、行迹、遗器和套装使用统一贡献账本生成最终面板，正式出生在入场结算后按最终速度初始化时间线。
 
 P8 装备阶段已完成最终收口。当前 source fingerprint `39b5d5d55a5d4d7e9a3739a5de098944b5851593de0f2311ffa661fe384a346a` 下，162 张已发布光锥、720 个普通玩家遗器模板、117 个主词条、48 个副词条、58 套遗器及 90 个套装档位均已进入正式定义、装配、runtime、来源审计和 replay 链；光锥与套装 gameplay gap、unknown 和 partial graph 均为 0。6 个 `CUSTOM` 模板保留真实来源但明确拒绝正式玩家构筑。希儿完整装备纵切通过；其角色动作图仍归后续角色卡内容阶段，不是 P8 缺口。最终结论见 `live_validation_reports/v8_p8_equipment_build_light_cone_relic_final_checkpoint.md`。
@@ -181,6 +189,10 @@ P8-S17 当前事实：
 
 不要默认通读所有文档。根据任务选择：
 
+- P9 总计划与唯一 checklist：
+  `simulator_v8_clean_core/P9_CHARACTER_SHARED_MECHANISM_CLOSURE_TASK_PLAN.md`。
+- P9 单阶段执行入口：`simulator_v8_clean_core/docs/p9_execution_cards/README.md`；新线程只读
+  当前阶段卡及卡内直接依赖。
 - P8 最终检查点：
   `live_validation_reports/v8_p8_equipment_build_light_cone_relic_final_checkpoint.md`。
 - P8-S20 希儿完整构筑检查点：

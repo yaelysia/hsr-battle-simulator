@@ -35,6 +35,20 @@ docs/p8_execution_cards/README.md
 docs/character_execution_cards/
 ```
 
+全角色机制闭合：
+
+```text
+P9_CHARACTER_SHARED_MECHANISM_CLOSURE_TASK_PLAN.md
+docs/p9_execution_cards/README.md
+docs/character_execution_cards/CHARACTER_ABILITY_SCOPE_CLASSIFICATION.md
+docs/character_execution_cards/CHARACTER_CATALOG_READINESS_INVENTORY.md
+docs/character_execution_cards/CHARACTER_SHARED_MECHANISM_GAP_PLAN.md
+```
+
+P9 总计划保存总目标、严格阶段顺序和唯一 checklist；执行卡索引保存 S0-S20 的单阶段入口。
+后三份依次是纳入/排除范围、当前可用程度以及共享机制归并的权威基线。
+需要逐族审计时再读 `CHARACTER_ABILITY_SCOPE_LEDGER.md`，普通执行线程不默认读取该附录。
+
 验证治理与状态完整性执行卡：
 
 ```text
@@ -84,6 +98,7 @@ UI 只负责编排、查询和展示，不定义规则。
 - `P6_ARCHITECTURE_BOUNDARY_REFACTOR_TASK_PLAN.md`
 - `P7_KERNEL_TRUST_AND_COMBAT_SEMANTICS_REPAIR_TASK_PLAN.md`
 - `P8_EQUIPMENT_BUILD_LIGHT_CONE_RELIC_TASK_PLAN.md`
+- `P9_CHARACTER_SHARED_MECHANISM_CLOSURE_TASK_PLAN.md`
 - `VALIDATION_GOVERNANCE_AND_STATE_INTEGRITY_PLAN.md`
 
 这些计划是按需参考资料，不是新线程必读列表。当前执行状态以 `CODEX_HANDOFF.md` 和对应 checklist 为准。
