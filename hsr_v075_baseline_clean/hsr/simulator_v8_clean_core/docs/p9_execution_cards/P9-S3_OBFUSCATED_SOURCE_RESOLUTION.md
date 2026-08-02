@@ -85,9 +85,9 @@ obfuscated_specific_runtime_handlers=0
 
 ## 唯一执行清单
 
-- [ ] 当前 decode-required 与 missing ability 集合完整重算。
-- [ ] 每项有结构化、可复核的来源裁决。
-- [ ] 已解码项只建立 typed IR 和下游责任归属。
-- [ ] 未解码/真缺源保持 blocked，零猜测执行。
-- [ ] 无混淆族或角色专属 runtime handler。
-- [ ] 主验证、必要 codec direct 和资源审计通过并提交 `ready_for_review`。
+- [x] 当前 decode-required 与 missing ability 集合完整重算。
+- [x] 每项有结构化、可复核的来源裁决。
+- [x] 已解码项只建立 typed IR 和下游责任归属。
+- [x] 未解码/真缺源保持 blocked，零猜测执行。
+- [x] 无混淆族或角色专属 runtime handler。
+- [x] 主验证、必要 codec direct 和资源审计通过并提交 `ready_for_review`。

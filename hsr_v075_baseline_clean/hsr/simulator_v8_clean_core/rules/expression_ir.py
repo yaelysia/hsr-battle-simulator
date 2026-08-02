@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .ir import JSONValue
+from ..ir_types import JSONValue
 
 
 NUMERIC_EXPRESSION_SCHEMA = "hsr.numeric_expression.v1"
@@ -53,6 +53,106 @@ def is_typed_numeric_expression(value: object) -> bool:
     return kind in {"fixed", "dynamic_hash", "missing", "unsupported"} and not any(
         key in value for key in ("PostfixExpr", "OpCodes", "FixedValue", "raw")
     )
+
+
+def is_exact_numeric_expression(value: object) -> bool:
+    """Validate the canonical numeric-expression schema without extensions."""
+
+    if not isinstance(value, dict) or value.get("schema_version") != NUMERIC_EXPRESSION_SCHEMA:
+        return False
+    kind = value.get("kind")
+    supported = value.get("supported")
+    if kind == "fixed":
+        fixed = value.get("value")
+        return (
+            set(value) == {"schema_version", "kind", "value", "supported"}
+            and supported is True
+            and isinstance(fixed, (int, float))
+            and not isinstance(fixed, bool)
+        )
+    if kind == "dynamic_hash":
+        hash_value = value.get("hash")
+        return (
+            set(value) == {"schema_version", "kind", "hash", "supported"}
+            and supported is True
+            and (
+                hash_value is None
+                or isinstance(hash_value, (bool, int, float, str))
+            )
+        )
+    if kind in {"missing", "unsupported"}:
+        reason = value.get("reason")
+        return (
+            set(value) == {"schema_version", "kind", "supported", "reason"}
+            and supported is False
+            and isinstance(reason, str)
+            and bool(reason)
+        )
+    if kind != "program" or supported is not True or set(value) != {
+        "schema_version",
+        "kind",
+        "supported",
+        "instructions",
+    }:
+        return False
+    instructions = value.get("instructions")
+    if not isinstance(instructions, list) or not instructions:
+        return False
+    stack_depth = 0
+    ended = False
+    for index, instruction in enumerate(instructions):
+        if not isinstance(instruction, dict):
+            return False
+        opcode = instruction.get("opcode")
+        if opcode == "end":
+            if set(instruction) != {"opcode"} or ended or index != len(instructions) - 1:
+                return False
+            ended = True
+            continue
+        if ended:
+            return False
+        if opcode == "push_fixed":
+            fixed = instruction.get("value")
+            if (
+                set(instruction) != {"opcode", "value"}
+                or not isinstance(fixed, (int, float))
+                or isinstance(fixed, bool)
+            ):
+                return False
+            stack_depth += 1
+            continue
+        if opcode == "push_dynamic":
+            hash_value = instruction.get("hash")
+            if set(instruction) != {"opcode", "hash"} or not (
+                hash_value is None
+                or isinstance(hash_value, (bool, int, float, str))
+            ):
+                return False
+            stack_depth += 1
+            continue
+        if opcode == "negate":
+            if set(instruction) != {"opcode"} or stack_depth < 1:
+                return False
+            continue
+        if opcode in {"add", "sub", "mul", "div"}:
+            if set(instruction) != {"opcode"} or stack_depth < 2:
+                return False
+            stack_depth -= 1
+            continue
+        if opcode == "max":
+            operand_count = instruction.get("operand_count")
+            if (
+                set(instruction) != {"opcode", "operand_count"}
+                or not isinstance(operand_count, int)
+                or isinstance(operand_count, bool)
+                or operand_count < 2
+                or stack_depth < operand_count
+            ):
+                return False
+            stack_depth -= operand_count - 1
+            continue
+        return False
+    return ended and stack_depth == 1
 
 
 def numeric_dynamic_hashes(value: object) -> tuple[JSONValue, ...]:

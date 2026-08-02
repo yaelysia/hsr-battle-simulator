@@ -24,6 +24,7 @@ from .character_ability_source_graph import (
     _skill_entries,
     build_character_ability_source_graph,
 )
+from .character_source_resolution import build_character_ability_source_resolution
 from .character_cards import (
     CHARACTER_ACTION_DEFINITION_TABLES,
     build_character_card_ir,
@@ -90,6 +91,7 @@ from ..rules.ir import (
     CharacterDataCardIR,
     CharacterAbilityDefinitionIR,
     CharacterAbilitySourceGraphCatalogIR,
+    CharacterAbilitySourceResolutionCatalogIR,
     CharacterEidolonSlotIR,
     CharacterEquipmentEligibilityIR,
     CharacterMechanismSlotIR,
@@ -450,6 +452,73 @@ class TBGDLowering:
         self._character_ability_raw_snapshot = snapshot
         self._character_ability_scope_catalog = scope_catalog
         self._character_ability_source_graph_catalog = catalog
+        return catalog
+
+    def build_character_ability_source_resolution_catalog(
+        self,
+        *,
+        snapshot: CharacterAbilityRawSnapshot | None = None,
+        scope_catalog: CharacterAbilityScopeProjectionCatalog | None = None,
+        source_graph_catalog: CharacterAbilitySourceGraphCatalogIR | None = None,
+    ) -> CharacterAbilitySourceResolutionCatalogIR:
+        cached = getattr(self, "_character_ability_source_resolution_catalog", None)
+        if cached is not None:
+            if type(cached) is not CharacterAbilitySourceResolutionCatalogIR:
+                raise TypeError("invalid cached character ability source resolution catalog")
+            if (
+                snapshot is not None
+                and (
+                    type(snapshot) is not CharacterAbilityRawSnapshot
+                    or snapshot.snapshot_id
+                    != getattr(
+                        self, "_character_ability_raw_snapshot", None
+                    ).snapshot_id
+                )
+            ) or (
+                scope_catalog is not None
+                and (
+                    type(scope_catalog) is not CharacterAbilityScopeProjectionCatalog
+                    or scope_catalog.catalog_id != cached.scope_catalog_id
+                )
+            ) or (
+                source_graph_catalog is not None
+                and (
+                    type(source_graph_catalog)
+                    is not CharacterAbilitySourceGraphCatalogIR
+                    or source_graph_catalog.catalog_id
+                    != cached.source_graph_catalog_id
+                )
+            ):
+                raise ValueError("cached character source resolution closure mismatch")
+            return cached
+        if source_graph_catalog is None:
+            source_graph_catalog = self.build_character_ability_source_graph_catalog(
+                snapshot=snapshot,
+                scope_catalog=scope_catalog,
+            )
+            snapshot = getattr(self, "_character_ability_raw_snapshot")
+            scope_catalog = getattr(self, "_character_ability_scope_catalog")
+        else:
+            if type(source_graph_catalog) is not CharacterAbilitySourceGraphCatalogIR:
+                raise TypeError("source resolution requires the exact S1 catalog type")
+            if snapshot is None or scope_catalog is None:
+                raise ValueError(
+                    "explicit S1 source graph requires its S0 snapshot and scope catalog"
+                )
+        if type(snapshot) is not CharacterAbilityRawSnapshot or type(
+            scope_catalog
+        ) is not CharacterAbilityScopeProjectionCatalog:
+            raise TypeError("source resolution requires exact S0 prerequisite types")
+        catalog = build_character_ability_source_resolution(
+            self.tbgd_root,
+            snapshot=snapshot,
+            scope_catalog=scope_catalog,
+            source_graph_catalog=source_graph_catalog,
+        )
+        self._character_ability_raw_snapshot = snapshot
+        self._character_ability_scope_catalog = scope_catalog
+        self._character_ability_source_graph_catalog = source_graph_catalog
+        self._character_ability_source_resolution_catalog = catalog
         return catalog
 
     def build_owned_combatant_admission_projection(

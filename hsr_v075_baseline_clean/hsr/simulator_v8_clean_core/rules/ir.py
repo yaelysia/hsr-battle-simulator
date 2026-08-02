@@ -23,6 +23,7 @@ from ..equipment.models import (
 )
 from ..immutable_json import freeze_json, thaw_json
 from ..ir_types import CoverageStatus, IRSource, JSONValue
+from .expression_ir import is_exact_numeric_expression
 
 
 def _ir_json_value(value: Any) -> JSONValue:
@@ -74,6 +75,35 @@ def character_ability_stable_id(prefix: str, *parts: object) -> str:
         separators=(",", ":"),
     ).encode("utf-8")
     return f"{prefix}:{sha256(payload).hexdigest()}"
+
+
+def character_ability_scope_record_id(
+    occurrence_kind: str,
+    source_path: str,
+    json_path: str,
+    family: str,
+) -> str:
+    parts = (occurrence_kind, source_path, json_path, family)
+    if any(not isinstance(part, str) or not part for part in parts):
+        raise ValueError("character ability scope identity parts are required")
+    identity = "\0".join(parts).encode("utf-8")
+    return f"character_ability_scope:{sha256(identity).hexdigest()[:24]}"
+
+
+def character_ability_definition_package_owner(
+    source_path: str,
+) -> CharacterAbilityDefinitionPackageOwner:
+    if not isinstance(source_path, str) or not source_path.startswith(
+        "Config/ConfigAbility/"
+    ):
+        raise ValueError("ability definition source is outside ConfigAbility")
+    if source_path.startswith("Config/ConfigAbility/Avatar/Camera/"):
+        return "character_presentation_ability"
+    if source_path.startswith("Config/ConfigAbility/Avatar/"):
+        return "character_ability"
+    if source_path.startswith("Config/ConfigAbility/Activity/"):
+        return "shared_activity_ability"
+    return "shared_ability_package"
 
 
 CharacterAbilityScope = Literal[
@@ -186,6 +216,37 @@ CharacterBuildProjectionKind = Literal[
 ]
 CharacterSkillLevelChangeKind = Literal["base", "bonus", "none"]
 CharacterBuildRuntimeAdmissionStatus = Literal["not_applicable", "blocked"]
+CharacterSourceResolutionOutcome = Literal[
+    "decoded_to_package",
+    "source_gap_blocked",
+    "non_gameplay",
+]
+CharacterDecodedSourceKind = Literal[
+    "dynamic_value_definition",
+    "dynamic_value_write",
+    "action_queue_precheck",
+    "target_alias",
+]
+CharacterSourceResolutionSubjectKind = Literal[
+    "source_graph_gap",
+    "ability_task_reference",
+]
+CharacterDecodedPackageOwner = Literal[
+    "character_dynamic_values",
+    "character_action_queue",
+    "character_target_expression",
+]
+CharacterAbilityDefinitionPackageOwner = Literal[
+    "character_presentation_ability",
+    "character_ability",
+    "shared_activity_ability",
+    "shared_ability_package",
+]
+CharacterEquivalentRawType = Literal[
+    "RPG.GameCore.DefineDynamicValue",
+    "RPG.GameCore.SetDynamicValue",
+    "RPG.GameCore.TargetAlias",
+]
 
 
 _CHARACTER_ABILITY_ADMISSION_BY_SCOPE: dict[
@@ -275,6 +336,67 @@ _CHARACTER_ABILITY_BINDING_GAP_KINDS = frozenset(
         "lowering_gap",
     }
 )
+_CHARACTER_SOURCE_RESOLUTION_OUTCOMES = frozenset(
+    {"decoded_to_package", "source_gap_blocked", "non_gameplay"}
+)
+_CHARACTER_DECODED_SOURCE_KINDS = frozenset(
+    {
+        "dynamic_value_definition",
+        "dynamic_value_write",
+        "action_queue_precheck",
+        "target_alias",
+    }
+)
+_CHARACTER_SOURCE_RESOLUTION_SUBJECT_KINDS = frozenset(
+    {"source_graph_gap", "ability_task_reference"}
+)
+_CHARACTER_DECODED_PACKAGE_OWNERS = frozenset(
+    {
+        "character_dynamic_values",
+        "character_action_queue",
+        "character_target_expression",
+    }
+)
+_CHARACTER_ABILITY_DEFINITION_PACKAGE_OWNERS = frozenset(
+    {
+        "character_presentation_ability",
+        "character_ability",
+        "shared_activity_ability",
+        "shared_ability_package",
+    }
+)
+_CHARACTER_EQUIVALENT_RAW_TYPES = frozenset(
+    {
+        "RPG.GameCore.DefineDynamicValue",
+        "RPG.GameCore.SetDynamicValue",
+        "RPG.GameCore.TargetAlias",
+    }
+)
+_CHARACTER_DECODE_FAMILY_CONTRACTS: dict[
+    str,
+    tuple[str, str, frozenset[str]],
+] = {
+    "LAJIKDENEOO": (
+        "character_dynamic_values",
+        "RPG.GameCore.SetDynamicValue",
+        frozenset({"target_alias", "dynamic_key", "value_expression"}),
+    ),
+    "NKLOMENKLHK": (
+        "character_dynamic_values",
+        "RPG.GameCore.DefineDynamicValue",
+        frozenset({"target_alias", "dynamic_key"}),
+    ),
+    "IKDAKCBKFAB": (
+        "character_action_queue",
+        "",
+        frozenset(),
+    ),
+    "TargetAlias": (
+        "character_target_expression",
+        "RPG.GameCore.TargetAlias",
+        frozenset({"alias"}),
+    ),
+}
 
 
 def _semantic_scope(value: str) -> str:
@@ -2321,6 +2443,956 @@ class CharacterAbilitySourceGraphCatalogIR:
             "bindings": [binding.to_json() for binding in self.bindings],
             "gaps": [gap.to_json() for gap in self.gaps],
             "graphs": [graph.to_json() for graph in self.graphs],
+        }
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "catalog_id": self.catalog_id,
+            **self._identity_payload(),
+            "build_counters": cast(JSONValue, thaw_json(self.build_counters)),
+        }
+
+
+@dataclass(frozen=True)
+class CharacterDecodedSourceIR:
+    decoded_id: str
+    scope_record_id: str
+    source_family: str
+    source_occurrence_kind: CharacterAbilityOccurrenceKind
+    decoded_kind: CharacterDecodedSourceKind
+    package_owner: CharacterDecodedPackageOwner
+    payload: Mapping[str, Any]
+    source: IRSource
+    runtime_admission: Literal["not_admitted"] = "not_admitted"
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "decoded_id",
+            "scope_record_id",
+            "source_family",
+            "package_owner",
+        ):
+            if not isinstance(getattr(self, field_name), str) or not getattr(
+                self, field_name
+            ):
+                raise ValueError(f"decoded character source {field_name} is required")
+        _require_string_enum(
+            self.source_occurrence_kind,
+            _CHARACTER_ABILITY_OCCURRENCE_KINDS,
+            "decoded character source occurrence kind",
+        )
+        _require_string_enum(
+            self.decoded_kind,
+            _CHARACTER_DECODED_SOURCE_KINDS,
+            "decoded character source kind",
+        )
+        _require_string_enum(
+            self.package_owner,
+            _CHARACTER_DECODED_PACKAGE_OWNERS,
+            "decoded character package owner",
+        )
+        expected_owner = {
+            "dynamic_value_definition": "character_dynamic_values",
+            "dynamic_value_write": "character_dynamic_values",
+            "action_queue_precheck": "character_action_queue",
+            "target_alias": "character_target_expression",
+        }[self.decoded_kind]
+        if self.package_owner != expected_owner:
+            raise ValueError("decoded character kind and package owner disagree")
+        if self.runtime_admission != "not_admitted":
+            raise ValueError("decoded character source cannot enter runtime in S3")
+        if not isinstance(self.payload, Mapping):
+            raise TypeError("decoded character source payload must be an object")
+        payload = cast(Mapping[str, Any], freeze_json(dict(self.payload)))
+        expected_keys = {
+            "dynamic_value_definition": {"target_alias", "dynamic_key"},
+            "dynamic_value_write": {
+                "target_alias",
+                "dynamic_key",
+                "value_expression",
+                "operation",
+            },
+            "action_queue_precheck": {"metric", "threshold_expression"},
+            "target_alias": {"alias"},
+        }[self.decoded_kind]
+        if set(payload) != expected_keys:
+            raise ValueError("decoded character source payload schema is invalid")
+        string_fields = {
+            "dynamic_value_definition": ("target_alias", "dynamic_key"),
+            "dynamic_value_write": ("target_alias", "dynamic_key"),
+            "action_queue_precheck": ("metric",),
+            "target_alias": ("alias",),
+        }[self.decoded_kind]
+        if any(
+            not isinstance(payload.get(field_name), str)
+            or not payload.get(field_name)
+            for field_name in string_fields
+        ):
+            raise ValueError("decoded character source string field is invalid")
+        if self.decoded_kind == "dynamic_value_write":
+            operation = payload.get("operation")
+            if operation is not None and (
+                not isinstance(operation, str) or not operation
+            ):
+                raise ValueError("decoded dynamic write operation is invalid")
+        if self.decoded_kind == "action_queue_precheck" and (
+            payload.get("metric") != "SameTagInsertUnusedCount"
+        ):
+            raise ValueError("decoded action queue precheck metric is invalid")
+        expression_key = {
+            "dynamic_value_write": "value_expression",
+            "action_queue_precheck": "threshold_expression",
+        }.get(self.decoded_kind)
+        if expression_key is not None:
+            expression = payload.get(expression_key)
+            if not is_exact_numeric_expression(thaw_json(expression)):
+                raise ValueError("decoded character numeric expression is untyped")
+        source = _immutable_character_ability_source(self.source)
+        if (
+            source.raw_id != self.scope_record_id
+            or source.raw_type != self.source_family
+        ):
+            raise ValueError("decoded character source identity is inconsistent")
+        evidence = source.evidence
+        if set(evidence) != {
+            "json_path",
+            "parent_branch_path",
+            "inherited_scope_record_id",
+            "nominal_semantic_kind",
+            "source_kind",
+            "avatar_id",
+        } or (
+            not isinstance(evidence.get("json_path"), str)
+            or not evidence.get("json_path")
+            or not isinstance(evidence.get("parent_branch_path"), str)
+            or not evidence.get("parent_branch_path")
+            or not isinstance(evidence.get("inherited_scope_record_id"), str)
+            or not isinstance(evidence.get("nominal_semantic_kind"), str)
+            or evidence.get("source_kind")
+            not in {"character_main", "character_shared"}
+            or not isinstance(evidence.get("avatar_id"), str)
+        ):
+            raise ValueError("decoded character source evidence schema is invalid")
+        if self.scope_record_id != character_ability_scope_record_id(
+            self.source_occurrence_kind,
+            source.source_path,
+            evidence.get("json_path"),
+            self.source_family,
+        ):
+            raise ValueError("decoded character scope identity is invalid")
+        if self.decoded_kind == "action_queue_precheck" and not cast(
+            str, evidence.get("json_path")
+        ).endswith(".PreCheck.$type"):
+            raise ValueError("decoded action queue precheck source path is invalid")
+        if self.decoded_id != character_ability_stable_id(
+            "character_decoded_source",
+            self.scope_record_id,
+            self.source_family,
+            self.source_occurrence_kind,
+            self.decoded_kind,
+            self.package_owner,
+            source.source_path,
+            evidence.get("json_path"),
+        ):
+            raise ValueError("decoded character source stable identity is invalid")
+        object.__setattr__(self, "payload", payload)
+        object.__setattr__(self, "source", source)
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "decoded_id": self.decoded_id,
+            "scope_record_id": self.scope_record_id,
+            "source_family": self.source_family,
+            "source_occurrence_kind": self.source_occurrence_kind,
+            "decoded_kind": self.decoded_kind,
+            "package_owner": self.package_owner,
+            "payload": cast(JSONValue, thaw_json(self.payload)),
+            "source": _character_ability_source_json(self.source),
+            "coverage_status": "lowered",
+            "runtime_admission": self.runtime_admission,
+        }
+
+
+@dataclass(frozen=True)
+class CharacterEquivalentStructureEvidenceIR:
+    evidence_id: str
+    raw_type: CharacterEquivalentRawType
+    observed_fields: tuple[str, ...]
+    field_role_mapping: Mapping[str, str]
+    source: IRSource
+
+    def __post_init__(self) -> None:
+        _require_string_enum(
+            self.raw_type,
+            _CHARACTER_EQUIVALENT_RAW_TYPES,
+            "character equivalent raw type",
+        )
+        observed_fields = _require_unique_strings(
+            self.observed_fields, "character equivalent observed fields"
+        )
+        if "$type" not in observed_fields:
+            raise ValueError("character equivalent evidence must retain $type")
+        if not isinstance(self.field_role_mapping, Mapping):
+            raise TypeError("character equivalent field roles must be a mapping")
+        allowed_roles = {
+            "RPG.GameCore.DefineDynamicValue": {
+                "TargetType": "target_alias",
+                "DynamicKey": "dynamic_key",
+            },
+            "RPG.GameCore.SetDynamicValue": {
+                "TargetType": "target_alias",
+                "DynamicKey": "dynamic_key",
+                "Value": "value_expression",
+                "SetType": "operation",
+            },
+            "RPG.GameCore.TargetAlias": {"Alias": "alias"},
+        }[self.raw_type]
+        roles: dict[str, str] = {}
+        for field_name, role in self.field_role_mapping.items():
+            if (
+                not isinstance(field_name, str)
+                or not isinstance(role, str)
+                or field_name not in observed_fields
+                or allowed_roles.get(field_name) != role
+            ):
+                raise ValueError("character equivalent field role is invalid")
+            roles[field_name] = role
+        if not roles:
+            raise ValueError("character equivalent evidence has no normalized role")
+        frozen_roles = cast(
+            Mapping[str, str], freeze_json(dict(sorted(roles.items())))
+        )
+        source = _immutable_character_ability_source(self.source)
+        evidence = source.evidence
+        if set(evidence) != {"json_path", "content_sha256"} or (
+            source.raw_id != self.evidence_id
+            or source.raw_type != self.raw_type
+            or not isinstance(evidence.get("json_path"), str)
+            or not evidence.get("json_path")
+            or not _is_sha256(evidence.get("content_sha256"))
+        ):
+            raise ValueError("character equivalent source evidence is inconsistent")
+        if self.evidence_id != character_ability_stable_id(
+            "character_equivalent_structure_evidence",
+            self.raw_type,
+            source.source_path,
+            evidence.get("json_path"),
+            evidence.get("content_sha256"),
+            *observed_fields,
+            *(f"{key}:{value}" for key, value in frozen_roles.items()),
+        ):
+            raise ValueError("character equivalent evidence identity is invalid")
+        object.__setattr__(self, "observed_fields", observed_fields)
+        object.__setattr__(self, "field_role_mapping", frozen_roles)
+        object.__setattr__(self, "source", source)
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "evidence_id": self.evidence_id,
+            "raw_type": self.raw_type,
+            "observed_fields": list(self.observed_fields),
+            "field_role_mapping": cast(
+                JSONValue, thaw_json(self.field_role_mapping)
+            ),
+            "source": _character_ability_source_json(self.source),
+            "coverage_status": "audit_only",
+        }
+
+
+@dataclass(frozen=True)
+class CharacterDecodeFamilyResolutionIR:
+    resolution_id: str
+    family: str
+    outcome: CharacterSourceResolutionOutcome
+    scope_record_ids: tuple[str, ...]
+    decoded_item_ids: tuple[str, ...]
+    package_owner: CharacterDecodedPackageOwner | Literal[""]
+    observed_fields: tuple[str, ...]
+    parent_families: tuple[str, ...]
+    target_aliases: tuple[str, ...]
+    value_shapes: tuple[str, ...]
+    condition_families: tuple[str, ...]
+    graph_neighbor_families: tuple[str, ...]
+    source_paths: tuple[str, ...]
+    candidate_equivalent_types: tuple[str, ...]
+    candidate_evidence: tuple[CharacterEquivalentStructureEvidenceIR, ...]
+    blocked_reason: str = ""
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.family, str) or not self.family:
+            raise ValueError("decode family identity is required")
+        _require_string_enum(
+            self.outcome,
+            _CHARACTER_SOURCE_RESOLUTION_OUTCOMES,
+            "decode family outcome",
+        )
+        for field_name in (
+            "scope_record_ids",
+            "decoded_item_ids",
+            "observed_fields",
+            "parent_families",
+            "target_aliases",
+            "value_shapes",
+            "condition_families",
+            "graph_neighbor_families",
+            "source_paths",
+            "candidate_equivalent_types",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _require_unique_strings(
+                    getattr(self, field_name), f"decode family {field_name}"
+                ),
+            )
+        evidence_items = tuple(self.candidate_evidence)
+        if any(
+            type(item) is not CharacterEquivalentStructureEvidenceIR
+            for item in evidence_items
+        ):
+            raise TypeError("decode family candidate evidence must be typed")
+        evidence_items = tuple(
+            sorted(evidence_items, key=lambda item: item.evidence_id)
+        )
+        evidence_ids = [item.evidence_id for item in evidence_items]
+        if len(evidence_ids) != len(set(evidence_ids)):
+            raise ValueError("decode family candidate evidence is duplicated")
+        if evidence_items and set(self.candidate_equivalent_types) != {
+            item.raw_type for item in evidence_items
+        }:
+            raise ValueError("decode family equivalent evidence type is inconsistent")
+        object.__setattr__(self, "candidate_evidence", evidence_items)
+        if not self.scope_record_ids or not self.observed_fields or not self.source_paths:
+            raise ValueError("decode family dossier is incomplete")
+        if not isinstance(self.package_owner, str) or not isinstance(
+            self.blocked_reason, str
+        ):
+            raise TypeError("decode family resolution metadata must be strings")
+        if self.package_owner:
+            _require_string_enum(
+                self.package_owner,
+                _CHARACTER_DECODED_PACKAGE_OWNERS,
+                "decode family package owner",
+            )
+        if self.outcome == "decoded_to_package":
+            if (
+                not self.package_owner
+                or self.blocked_reason
+                or len(self.scope_record_ids) != len(self.decoded_item_ids)
+            ):
+                raise ValueError("decoded family must lower every current occurrence")
+            contract = _CHARACTER_DECODE_FAMILY_CONTRACTS.get(self.family)
+            if contract is None or self.package_owner != contract[0]:
+                raise ValueError("decoded family package contract is invalid")
+            equivalent_type, required_roles = contract[1], contract[2]
+            if equivalent_type:
+                if not evidence_items or any(
+                    item.raw_type != equivalent_type
+                    or not required_roles.issubset(
+                        set(item.field_role_mapping.values())
+                    )
+                    for item in evidence_items
+                ):
+                    raise ValueError("decoded family equivalent evidence is incompatible")
+            elif evidence_items:
+                raise ValueError("queue precheck family cannot invent equivalent evidence")
+            if self.family == "IKDAKCBKFAB" and self.parent_families != (
+                "TurnInsertAction",
+            ):
+                raise ValueError("queue precheck family parent context is invalid")
+        elif self.outcome == "source_gap_blocked":
+            if self.package_owner or self.decoded_item_ids or not self.blocked_reason:
+                raise ValueError("blocked family cannot publish decoded ownership")
+        elif self.package_owner or self.decoded_item_ids or self.blocked_reason:
+            raise ValueError("non-gameplay family resolution is inconsistent")
+        if self.resolution_id != character_ability_stable_id(
+            "character_decode_family_resolution",
+            self.family,
+            self.outcome,
+            self.package_owner,
+            *self.scope_record_ids,
+            *self.decoded_item_ids,
+            *(item.evidence_id for item in self.candidate_evidence),
+            self.blocked_reason,
+        ):
+            raise ValueError("decode family resolution identity is invalid")
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "resolution_id": self.resolution_id,
+            "family": self.family,
+            "outcome": self.outcome,
+            "scope_record_ids": list(self.scope_record_ids),
+            "decoded_item_ids": list(self.decoded_item_ids),
+            "package_owner": self.package_owner,
+            "dossier": {
+                "observed_fields": list(self.observed_fields),
+                "parent_families": list(self.parent_families),
+                "target_aliases": list(self.target_aliases),
+                "value_shapes": list(self.value_shapes),
+                "condition_families": list(self.condition_families),
+                "graph_neighbor_families": list(
+                    self.graph_neighbor_families
+                ),
+                "source_paths": list(self.source_paths),
+                "candidate_equivalent_types": list(
+                    self.candidate_equivalent_types
+                ),
+                "candidate_evidence": [
+                    item.to_json() for item in self.candidate_evidence
+                ],
+            },
+            "coverage_status": (
+                "lowered"
+                if self.outcome == "decoded_to_package"
+                else "audit_only"
+                if self.outcome == "non_gameplay"
+                else "blocked"
+            ),
+            "blocked_reason": self.blocked_reason,
+        }
+
+
+@dataclass(frozen=True)
+class CharacterAbilityDefinitionCandidateIR:
+    candidate_id: str
+    ability_name: str
+    package_owner: CharacterAbilityDefinitionPackageOwner
+    source: IRSource
+
+    def __post_init__(self) -> None:
+        for field_name in ("candidate_id", "ability_name", "package_owner"):
+            if not isinstance(getattr(self, field_name), str) or not getattr(
+                self, field_name
+            ):
+                raise ValueError(f"ability candidate {field_name} is required")
+        _require_string_enum(
+            self.package_owner,
+            _CHARACTER_ABILITY_DEFINITION_PACKAGE_OWNERS,
+            "ability definition package owner",
+        )
+        source = _immutable_character_ability_source(self.source)
+        evidence = source.evidence
+        if set(evidence) != {
+            "ability_name",
+            "json_path",
+            "content_sha256",
+            "byte_size",
+            "package_owner",
+        }:
+            raise ValueError("ability candidate evidence schema is invalid")
+        if (
+            source.raw_id != self.candidate_id
+            or source.raw_type != "character_ability_definition_candidate"
+            or evidence.get("ability_name") != self.ability_name
+            or evidence.get("package_owner") != self.package_owner
+            or not isinstance(evidence.get("json_path"), str)
+            or not evidence.get("json_path")
+            or not _is_sha256(evidence.get("content_sha256"))
+            or not isinstance(evidence.get("byte_size"), int)
+            or isinstance(evidence.get("byte_size"), bool)
+            or cast(int, evidence.get("byte_size")) < 0
+        ):
+            raise ValueError("ability candidate source evidence is inconsistent")
+        if self.candidate_id != character_ability_stable_id(
+            "character_ability_definition_candidate",
+            source.source_path,
+            evidence.get("json_path"),
+            self.ability_name,
+            evidence.get("content_sha256"),
+        ):
+            raise ValueError("ability candidate stable identity is invalid")
+        if self.package_owner != character_ability_definition_package_owner(
+            source.source_path
+        ):
+            raise ValueError("ability candidate package domain is invalid")
+        object.__setattr__(self, "source", source)
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "candidate_id": self.candidate_id,
+            "ability_name": self.ability_name,
+            "package_owner": self.package_owner,
+            "source": _character_ability_source_json(self.source),
+            "coverage_status": "audit_only",
+        }
+
+
+@dataclass(frozen=True)
+class CharacterAbilityReferenceResolutionIR:
+    resolution_id: str
+    subject_kind: CharacterSourceResolutionSubjectKind
+    subject_id: str
+    owner_avatar_id: str
+    ability_name: str
+    reference_opcode: str
+    outcome: CharacterSourceResolutionOutcome
+    package_owner: CharacterAbilityDefinitionPackageOwner | Literal[""]
+    candidate_ids: tuple[str, ...]
+    source: IRSource
+    source_graph_gap_kind: CharacterAbilityBindingGapKind | Literal[""] = ""
+    source_graph_candidate_definition_ids: tuple[str, ...] = ()
+    source_graph_candidate_action_source_ids: tuple[str, ...] = ()
+    blocked_reason: str = ""
+
+    def __post_init__(self) -> None:
+        for field_name in ("resolution_id", "subject_id"):
+            if not isinstance(getattr(self, field_name), str) or not getattr(
+                self, field_name
+            ):
+                raise ValueError(f"ability reference resolution {field_name} is required")
+        _require_string_enum(
+            self.subject_kind,
+            _CHARACTER_SOURCE_RESOLUTION_SUBJECT_KINDS,
+            "ability reference subject kind",
+        )
+        _require_string_enum(
+            self.outcome,
+            _CHARACTER_SOURCE_RESOLUTION_OUTCOMES,
+            "ability reference outcome",
+        )
+        if any(
+            not isinstance(value, str)
+            for value in (
+                self.owner_avatar_id,
+                self.ability_name,
+                self.reference_opcode,
+                self.package_owner,
+                self.blocked_reason,
+            )
+        ):
+            raise TypeError("ability reference resolution metadata must be strings")
+        candidate_ids = _require_unique_strings(
+            self.candidate_ids, "ability reference candidates"
+        )
+        source_graph_definition_ids = _require_unique_strings(
+            self.source_graph_candidate_definition_ids,
+            "source graph gap definition candidates",
+        )
+        source_graph_action_ids = _require_unique_strings(
+            self.source_graph_candidate_action_source_ids,
+            "source graph gap action candidates",
+        )
+        if self.package_owner:
+            _require_string_enum(
+                self.package_owner,
+                _CHARACTER_ABILITY_DEFINITION_PACKAGE_OWNERS,
+                "ability reference package owner",
+            )
+        if self.outcome in {"decoded_to_package", "non_gameplay"}:
+            if (
+                len(candidate_ids) != 1
+                or not self.package_owner
+                or self.blocked_reason
+                or not self.ability_name
+            ):
+                raise ValueError("resolved ability reference must identify one package row")
+        elif self.package_owner or not self.blocked_reason:
+            raise ValueError("blocked ability reference cannot publish package ownership")
+        source = _immutable_character_ability_source(self.source)
+        evidence = source.evidence
+        if self.subject_kind == "ability_task_reference":
+            if (
+                self.source_graph_gap_kind
+                or source_graph_definition_ids
+                or source_graph_action_ids
+            ):
+                raise ValueError("ability task reference cannot carry S1 gap identity")
+            if set(evidence) != {
+                "ability_name",
+                "json_path",
+                "owner_avatar_id",
+                "content_sha256",
+            } or (
+                source.raw_id != self.subject_id
+                or source.raw_type != self.reference_opcode
+                or evidence.get("ability_name") != self.ability_name
+                or evidence.get("owner_avatar_id") != self.owner_avatar_id
+                or not isinstance(evidence.get("json_path"), str)
+                or not evidence.get("json_path")
+                or not _is_sha256(evidence.get("content_sha256"))
+            ):
+                raise ValueError("ability task reference evidence is inconsistent")
+            if self.subject_id != character_ability_stable_id(
+                "character_ability_task_reference",
+                source.source_path,
+                evidence.get("json_path"),
+                self.reference_opcode,
+                self.ability_name,
+            ):
+                raise ValueError("ability task reference identity is invalid")
+        elif set(evidence) != {
+            "relation_id",
+            "graph_id",
+            "owner_avatar_id",
+            "action_source_id",
+            "skill_id",
+            "binding_kind",
+            "relation_ordinal",
+            "json_path",
+            "content_sha256",
+        } or (
+            source.raw_type != "CharacterAbilityRelation"
+            or not isinstance(source.raw_id, str)
+            or not source.raw_id
+            or not isinstance(evidence.get("relation_id"), str)
+            or not evidence.get("relation_id")
+            or not isinstance(evidence.get("graph_id"), str)
+            or not evidence.get("graph_id")
+            or evidence.get("owner_avatar_id") != self.owner_avatar_id
+            or not isinstance(evidence.get("action_source_id"), str)
+            or not isinstance(evidence.get("skill_id"), str)
+            or evidence.get("binding_kind") != self.reference_opcode
+            or not isinstance(evidence.get("relation_ordinal"), int)
+            or isinstance(evidence.get("relation_ordinal"), bool)
+            or cast(int, evidence.get("relation_ordinal")) < 0
+            or not isinstance(evidence.get("json_path"), str)
+            or not evidence.get("json_path")
+            or not _is_sha256(evidence.get("content_sha256"))
+        ):
+            raise ValueError("source graph gap evidence is inconsistent")
+        else:
+            _require_string_enum(
+                self.source_graph_gap_kind,
+                _CHARACTER_ABILITY_BINDING_GAP_KINDS,
+                "source graph gap kind",
+            )
+            expected_relation_id = character_ability_stable_id(
+                "character_ability_relation",
+                evidence.get("graph_id"),
+                self.owner_avatar_id,
+                evidence.get("action_source_id"),
+                evidence.get("skill_id"),
+                source.raw_id,
+                self.reference_opcode,
+                evidence.get("relation_ordinal"),
+                source.source_path,
+                evidence.get("json_path"),
+            )
+            if evidence.get("relation_id") != expected_relation_id:
+                raise ValueError("source graph relation identity is invalid")
+            if self.subject_id != character_ability_stable_id(
+                "character_ability_binding_gap",
+                expected_relation_id,
+                self.source_graph_gap_kind,
+                *source_graph_definition_ids,
+                *source_graph_action_ids,
+            ):
+                raise ValueError("source graph gap identity is invalid")
+        if self.resolution_id != character_ability_stable_id(
+            "character_ability_reference_resolution",
+            self.subject_kind,
+            self.subject_id,
+        ):
+            raise ValueError("ability reference resolution identity is invalid")
+        object.__setattr__(self, "candidate_ids", candidate_ids)
+        object.__setattr__(
+            self,
+            "source_graph_candidate_definition_ids",
+            source_graph_definition_ids,
+        )
+        object.__setattr__(
+            self,
+            "source_graph_candidate_action_source_ids",
+            source_graph_action_ids,
+        )
+        object.__setattr__(self, "source", source)
+
+    def to_json(self) -> dict[str, JSONValue]:
+        return {
+            "resolution_id": self.resolution_id,
+            "subject_kind": self.subject_kind,
+            "subject_id": self.subject_id,
+            "owner_avatar_id": self.owner_avatar_id,
+            "ability_name": self.ability_name,
+            "reference_opcode": self.reference_opcode,
+            "outcome": self.outcome,
+            "package_owner": self.package_owner,
+            "candidate_ids": list(self.candidate_ids),
+            "source_graph_gap_kind": self.source_graph_gap_kind,
+            "source_graph_candidate_definition_ids": list(
+                self.source_graph_candidate_definition_ids
+            ),
+            "source_graph_candidate_action_source_ids": list(
+                self.source_graph_candidate_action_source_ids
+            ),
+            "source": _character_ability_source_json(self.source),
+            "coverage_status": (
+                "audit_only"
+                if self.outcome == "non_gameplay"
+                else "blocked"
+                if self.outcome == "source_gap_blocked"
+                else "lowered"
+            ),
+            "blocked_reason": self.blocked_reason,
+        }
+
+
+@dataclass(frozen=True)
+class CharacterAbilitySourceResolutionCatalogIR:
+    scope_catalog_id: str
+    source_graph_catalog_id: str
+    source_fingerprint: str
+    package_search_root: str
+    package_manifest_digests: Mapping[str, str]
+    package_manifest_sizes: Mapping[str, int]
+    decode_required_record_ids: tuple[str, ...]
+    source_graph_gap_ids: tuple[str, ...]
+    unresolved_reference_ids: tuple[str, ...]
+    family_resolutions: tuple[CharacterDecodeFamilyResolutionIR, ...]
+    decoded_items: tuple[CharacterDecodedSourceIR, ...]
+    definition_candidates: tuple[CharacterAbilityDefinitionCandidateIR, ...]
+    reference_resolutions: tuple[CharacterAbilityReferenceResolutionIR, ...]
+    build_counters: Mapping[str, Any]
+    catalog_id: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "scope_catalog_id",
+            "source_graph_catalog_id",
+            "package_search_root",
+        ):
+            if not isinstance(getattr(self, field_name), str) or not getattr(
+                self, field_name
+            ):
+                raise ValueError(f"source resolution catalog {field_name} is required")
+        if not _is_sha256(self.source_fingerprint):
+            raise ValueError("source resolution fingerprint is invalid")
+        for field_name in (
+            "decode_required_record_ids",
+            "source_graph_gap_ids",
+            "unresolved_reference_ids",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _require_unique_strings(
+                    getattr(self, field_name), f"source resolution {field_name}"
+                ),
+            )
+        typed_collections = (
+            (
+                self.family_resolutions,
+                CharacterDecodeFamilyResolutionIR,
+                "family_resolutions",
+                "resolution_id",
+            ),
+            (self.decoded_items, CharacterDecodedSourceIR, "decoded_items", "decoded_id"),
+            (
+                self.definition_candidates,
+                CharacterAbilityDefinitionCandidateIR,
+                "definition_candidates",
+                "candidate_id",
+            ),
+            (
+                self.reference_resolutions,
+                CharacterAbilityReferenceResolutionIR,
+                "reference_resolutions",
+                "resolution_id",
+            ),
+        )
+        for values, expected_type, field_name, identity_field in typed_collections:
+            items = tuple(values)
+            if any(type(item) is not expected_type for item in items):
+                raise TypeError(f"source resolution {field_name} contains invalid IR")
+            ordered = tuple(sorted(items, key=lambda item: getattr(item, identity_field)))
+            identities = [getattr(item, identity_field) for item in ordered]
+            if len(identities) != len(set(identities)):
+                raise ValueError(f"source resolution {field_name} identity is duplicated")
+            object.__setattr__(self, field_name, ordered)
+        if not self.family_resolutions or not self.decode_required_record_ids:
+            raise ValueError("source resolution decode catalog cannot be empty")
+        if not isinstance(self.package_manifest_digests, Mapping) or not isinstance(
+            self.package_manifest_sizes, Mapping
+        ):
+            raise TypeError("source resolution package manifest must be mappings")
+        digests: dict[str, str] = {}
+        sizes: dict[str, int] = {}
+        for path, digest in self.package_manifest_digests.items():
+            if not isinstance(path, str) or not path or not _is_sha256(digest):
+                raise ValueError("source resolution package digest is invalid")
+            digests[path] = digest
+        for path, size in self.package_manifest_sizes.items():
+            if (
+                not isinstance(path, str)
+                or not path
+                or not isinstance(size, int)
+                or isinstance(size, bool)
+                or size < 0
+            ):
+                raise ValueError("source resolution package size is invalid")
+            sizes[path] = size
+        if not digests or set(digests) != set(sizes):
+            raise ValueError("source resolution package manifest is incomplete")
+        frozen_digests = cast(
+            Mapping[str, str], freeze_json(dict(sorted(digests.items())))
+        )
+        frozen_sizes = cast(
+            Mapping[str, int], freeze_json(dict(sorted(sizes.items())))
+        )
+        if not isinstance(self.build_counters, Mapping):
+            raise TypeError("source resolution build counters must be a mapping")
+        counters = cast(Mapping[str, Any], freeze_json(dict(self.build_counters)))
+        object.__setattr__(self, "package_manifest_digests", frozen_digests)
+        object.__setattr__(self, "package_manifest_sizes", frozen_sizes)
+        object.__setattr__(self, "build_counters", counters)
+
+        decoded_by_id = {item.decoded_id: item for item in self.decoded_items}
+        family_record_ids = {
+            record_id
+            for resolution in self.family_resolutions
+            for record_id in resolution.scope_record_ids
+        }
+        family_decoded_ids = {
+            decoded_id
+            for resolution in self.family_resolutions
+            for decoded_id in resolution.decoded_item_ids
+        }
+        if family_record_ids != set(self.decode_required_record_ids):
+            raise ValueError("decode family resolutions do not cover the current set")
+        if family_decoded_ids != set(decoded_by_id):
+            raise ValueError("decoded family item membership is incomplete")
+        if len(family_record_ids) != sum(
+            len(resolution.scope_record_ids)
+            for resolution in self.family_resolutions
+        ):
+            raise ValueError("decode family record membership is not exclusive")
+        for resolution in self.family_resolutions:
+            items = [decoded_by_id[item_id] for item_id in resolution.decoded_item_ids]
+            if resolution.outcome == "decoded_to_package" and (
+                {item.scope_record_id for item in items}
+                != set(resolution.scope_record_ids)
+                or any(
+                    item.source_family != resolution.family
+                    or item.package_owner != resolution.package_owner
+                    for item in items
+                )
+            ):
+                raise ValueError("decoded family item ownership is inconsistent")
+            if any(path not in frozen_digests for path in resolution.source_paths):
+                raise ValueError("decode family source path is outside the package manifest")
+            if items and {
+                item.source.source_path for item in items
+            } != set(resolution.source_paths):
+                raise ValueError("decoded family source path membership is inconsistent")
+            for item in items:
+                if item.source.source_path not in frozen_digests:
+                    raise ValueError("decoded source path is outside the package manifest")
+            for equivalent in resolution.candidate_evidence:
+                source_path = equivalent.source.source_path
+                if (
+                    source_path not in frozen_digests
+                    or equivalent.source.evidence.get("content_sha256")
+                    != frozen_digests[source_path]
+                ):
+                    raise ValueError("equivalent structure evidence is stale")
+
+        expected_subjects = {
+            ("source_graph_gap", item_id)
+            for item_id in self.source_graph_gap_ids
+        } | {
+            ("ability_task_reference", item_id)
+            for item_id in self.unresolved_reference_ids
+        }
+        actual_subjects = {
+            (resolution.subject_kind, resolution.subject_id)
+            for resolution in self.reference_resolutions
+        }
+        if actual_subjects != expected_subjects:
+            raise ValueError("ability reference resolution closure is incomplete")
+        candidates_by_id = {
+            candidate.candidate_id: candidate
+            for candidate in self.definition_candidates
+        }
+        referenced_candidate_ids = {
+            candidate_id
+            for resolution in self.reference_resolutions
+            for candidate_id in resolution.candidate_ids
+        }
+        if referenced_candidate_ids != set(candidates_by_id):
+            raise ValueError("ability candidate membership is incomplete")
+        for candidate in self.definition_candidates:
+            source_path = candidate.source.source_path
+            evidence = candidate.source.evidence
+            if (
+                source_path not in frozen_digests
+                or evidence.get("content_sha256") != frozen_digests[source_path]
+                or evidence.get("byte_size") != frozen_sizes[source_path]
+            ):
+                raise ValueError("ability candidate package evidence is stale")
+        for resolution in self.reference_resolutions:
+            candidates = [
+                candidates_by_id[candidate_id]
+                for candidate_id in resolution.candidate_ids
+            ]
+            if resolution.outcome in {"decoded_to_package", "non_gameplay"} and (
+                len(candidates) != 1
+                or candidates[0].package_owner != resolution.package_owner
+                or candidates[0].ability_name != resolution.ability_name
+            ):
+                raise ValueError("resolved ability reference package ownership is forged")
+            if resolution.subject_kind == "ability_task_reference":
+                source_path = resolution.source.source_path
+                if (
+                    source_path not in frozen_digests
+                    or resolution.source.evidence.get("content_sha256")
+                    != frozen_digests[source_path]
+                ):
+                    raise ValueError("ability task reference source is stale")
+        identity_payload = self._identity_payload()
+        object.__setattr__(
+            self,
+            "catalog_id",
+            "character_ability_source_resolution_catalog:"
+            + sha256(
+                json.dumps(
+                    identity_payload,
+                    ensure_ascii=True,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest(),
+        )
+
+    @property
+    def all_decode_items_have_structured_resolution(self) -> bool:
+        return bool(self.decode_required_record_ids) and {
+            record_id
+            for resolution in self.family_resolutions
+            for record_id in resolution.scope_record_ids
+        } == set(self.decode_required_record_ids)
+
+    @property
+    def missing_ability_search_closure_complete(self) -> bool:
+        return bool(self.package_manifest_digests) and len(
+            self.reference_resolutions
+        ) == len(self.source_graph_gap_ids) + len(self.unresolved_reference_ids)
+
+    def _identity_payload(self) -> dict[str, JSONValue]:
+        return {
+            "scope_catalog_id": self.scope_catalog_id,
+            "source_graph_catalog_id": self.source_graph_catalog_id,
+            "source_fingerprint": self.source_fingerprint,
+            "package_search_root": self.package_search_root,
+            "package_manifest_digests": cast(
+                JSONValue, thaw_json(self.package_manifest_digests)
+            ),
+            "package_manifest_sizes": cast(
+                JSONValue, thaw_json(self.package_manifest_sizes)
+            ),
+            "decode_required_record_ids": list(self.decode_required_record_ids),
+            "source_graph_gap_ids": list(self.source_graph_gap_ids),
+            "unresolved_reference_ids": list(self.unresolved_reference_ids),
+            "family_resolutions": [
+                resolution.to_json() for resolution in self.family_resolutions
+            ],
+            "decoded_items": [item.to_json() for item in self.decoded_items],
+            "definition_candidates": [
+                candidate.to_json() for candidate in self.definition_candidates
+            ],
+            "reference_resolutions": [
+                resolution.to_json() for resolution in self.reference_resolutions
+            ],
         }
 
     def to_json(self) -> dict[str, JSONValue]:
