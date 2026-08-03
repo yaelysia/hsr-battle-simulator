@@ -464,7 +464,6 @@ def build_character_ability_source_graph(
         or scope_catalog.source_fingerprint != snapshot.source_fingerprint
         or scope_catalog.fingerprint_kind != snapshot.fingerprint_kind
         or scope_catalog.source_filter != snapshot.source_filter
-        or scope_catalog.family_filter
         or not same_character_ability_s0_sources(
             scope_catalog.sources, snapshot.sources
         )

@@ -23,7 +23,7 @@ from ..equipment.models import (
 )
 from ..immutable_json import freeze_json, thaw_json
 from ..ir_types import CoverageStatus, IRSource, JSONValue
-from .expression_ir import is_exact_numeric_expression
+from .expression_ir import DynamicValueOperationIR, is_exact_numeric_expression
 
 
 def _ir_json_value(value: Any) -> JSONValue:
@@ -2463,6 +2463,7 @@ class CharacterDecodedSourceIR:
     package_owner: CharacterDecodedPackageOwner
     payload: Mapping[str, Any]
     source: IRSource
+    typed_operation: Mapping[str, Any] | None = None
     runtime_admission: Literal["not_admitted"] = "not_admitted"
 
     def __post_init__(self) -> None:
@@ -2548,6 +2549,22 @@ class CharacterDecodedSourceIR:
             if not is_exact_numeric_expression(thaw_json(expression)):
                 raise ValueError("decoded character numeric expression is untyped")
         source = _immutable_character_ability_source(self.source)
+        dynamic_kind = self.decoded_kind in {
+            "dynamic_value_definition",
+            "dynamic_value_write",
+        }
+        if dynamic_kind:
+            if not isinstance(self.typed_operation, Mapping):
+                raise TypeError("decoded dynamic source requires a typed operation")
+            typed_operation = cast(
+                Mapping[str, Any],
+                freeze_json(dict(self.typed_operation)),
+            )
+            DynamicValueOperationIR.from_spec(thaw_json(typed_operation), source)
+        elif self.typed_operation is not None:
+            raise ValueError("non-dynamic decoded source cannot carry a dynamic operation")
+        else:
+            typed_operation = None
         if (
             source.raw_id != self.scope_record_id
             or source.raw_type != self.source_family
@@ -2597,6 +2614,7 @@ class CharacterDecodedSourceIR:
             raise ValueError("decoded character source stable identity is invalid")
         object.__setattr__(self, "payload", payload)
         object.__setattr__(self, "source", source)
+        object.__setattr__(self, "typed_operation", typed_operation)
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -2607,6 +2625,7 @@ class CharacterDecodedSourceIR:
             "decoded_kind": self.decoded_kind,
             "package_owner": self.package_owner,
             "payload": cast(JSONValue, thaw_json(self.payload)),
+            "typed_operation": cast(JSONValue, thaw_json(self.typed_operation)),
             "source": _character_ability_source_json(self.source),
             "coverage_status": "lowered",
             "runtime_admission": self.runtime_admission,
@@ -6485,6 +6504,7 @@ class CanonicalIR:
     conditions: tuple[ConditionIR, ...] = ()
     formulas: tuple[FormulaIR, ...] = ()
     character_ability_source_graph_catalog: CharacterAbilitySourceGraphCatalogIR | None = None
+    character_ability_source_resolution_catalog: CharacterAbilitySourceResolutionCatalogIR | None = None
     metadata: dict[str, JSONValue] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -6518,6 +6538,17 @@ class CanonicalIR:
             tuple(sorted(gaps, key=lambda item: item.selector_gap_id)),
         )
         catalog = self.character_ability_source_graph_catalog
+        resolution_catalog = self.character_ability_source_resolution_catalog
+        if resolution_catalog is not None and (
+            type(resolution_catalog) is not CharacterAbilitySourceResolutionCatalogIR
+            or catalog is None
+            or resolution_catalog.source_graph_catalog_id != catalog.catalog_id
+            or resolution_catalog.scope_catalog_id != catalog.scope_catalog_id
+            or resolution_catalog.source_fingerprint != catalog.source_fingerprint
+        ):
+            raise ValueError(
+                "CanonicalIR character ability source resolution is inconsistent"
+            )
         if catalog is None:
             if relations or gaps:
                 raise ValueError("selector ledger requires the S1 source graph catalog")
@@ -6801,6 +6832,11 @@ class CanonicalIR:
             "character_ability_source_graph_catalog": (
                 self.character_ability_source_graph_catalog.to_json()
                 if self.character_ability_source_graph_catalog is not None
+                else None
+            ),
+            "character_ability_source_resolution_catalog": (
+                self.character_ability_source_resolution_catalog.to_json()
+                if self.character_ability_source_resolution_catalog is not None
                 else None
             ),
         }

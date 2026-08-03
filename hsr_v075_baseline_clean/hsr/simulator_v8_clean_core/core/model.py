@@ -419,7 +419,12 @@ class BattleState:
     def snapshot(self) -> "Snapshot":
         units = {unit_id: unit.to_snapshot() for unit_id, unit in sorted(self.units.items())}
         global_flags = {
-            "dynamic_value_store": {"entries": {}, "by_hash": {}, "by_name": {}},
+            "dynamic_value_store": {
+                "entries": {},
+                "by_hash": {},
+                "by_name": {},
+                "operation_ledger": {},
+            },
             **self.global_flags,
         }
         combat_units = {

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from typing import Any
@@ -13,7 +14,11 @@ from ..equipment.models import (
     RelicSetThresholdParameterBasis,
 )
 from ..ir_types import IRSource
-from .evaluator import NumericEvaluationContext, RuleEvaluator
+from .evaluator import (
+    NumericEvaluationContext,
+    NumericEvaluationResult,
+    RuleEvaluator,
+)
 from .expression_ir import numeric_dynamic_hash, numeric_fixed_value
 from .rulebook import RuleBook
 
@@ -891,13 +896,12 @@ class ValueResolver:
         request: ValueBindingRequest,
         context: ValueContext,
     ) -> ValueResolution:
-        result = self.numeric_evaluator.evaluate_numeric(
+        result = resolve_runtime_numeric_expression(
             request.expression,
-            NumericEvaluationContext(
-                dynamic_values=context.dynamic_values or {},
-                binding_sources=context.binding_sources,
-                source_trace=request.source_trace or context.source_trace,
-            ),
+            dynamic_values=context.dynamic_values or {},
+            binding_sources=context.binding_sources,
+            source_trace=request.source_trace or context.source_trace,
+            evaluator=self.numeric_evaluator,
         )
         if not result.ok or result.value is None:
             return self._blocked(
@@ -917,6 +921,7 @@ class ValueResolver:
             delegate_resolution=result.to_json(),
             context_keys=context.available_keys(),
         )
+
 
     def _from_static(
         self,
@@ -965,11 +970,34 @@ class ValueResolver:
         )
 
 
+def resolve_runtime_numeric_expression(
+    expression: JSONValue,
+    *,
+    dynamic_values: dict[str, float] | None = None,
+    binding_sources: tuple[dict[str, Any], ...] = (),
+    source_trace: dict[str, JSONValue] | None = None,
+    evaluator: RuleEvaluator | None = None,
+) -> NumericEvaluationResult:
+    """Single runtime value-binding face for canonical numeric expressions."""
+
+    return (evaluator or RuleEvaluator()).evaluate_numeric(
+        expression,
+        NumericEvaluationContext(
+            dynamic_values=dynamic_values or {},
+            binding_sources=binding_sources,
+            source_trace=source_trace or {},
+        ),
+    )
+
+
 def _numeric_json_value(value: Any) -> float | None:
     if isinstance(value, bool):
         return None
     if isinstance(value, (int, float)):
-        return float(value)
+        try:
+            return float(value) if math.isfinite(float(value)) else None
+        except OverflowError:
+            return None
     if isinstance(value, dict):
         return _numeric_json_value(value.get("Value"))
     return None

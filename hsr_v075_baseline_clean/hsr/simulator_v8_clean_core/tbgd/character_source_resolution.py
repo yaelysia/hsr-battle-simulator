@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Callable, Literal, cast
 
 from ..ir_types import IRSource, JSONValue
+from ..rules.expression_ir import DynamicValueOperationIR
 from ..rules.ir import (
     CharacterAbilityDefinitionCandidateIR,
     CharacterAbilityDefinitionPackageOwner,
@@ -28,7 +29,10 @@ from .character_ability_scope import (
     CharacterAbilityRawSnapshot,
     CharacterAbilityScopeProjectionCatalog,
 )
-from .expression_lowering import lower_numeric_expression
+from .expression_lowering import (
+    lower_decoded_dynamic_value_operation_spec,
+    lower_numeric_expression,
+)
 
 
 PACKAGE_SEARCH_ROOT = "Config/ConfigAbility"
@@ -148,6 +152,42 @@ _DECODE_SPECS: dict[str, _DecodeSpec] = {
         decoder=_decode_target_alias,
     ),
 }
+
+
+def character_dynamic_value_decode_families() -> tuple[str, ...]:
+    return tuple(
+        sorted(
+            family
+            for family, spec in _DECODE_SPECS.items()
+            if spec.package_owner == "character_dynamic_values"
+            and spec.decoded_kind
+            in {"dynamic_value_definition", "dynamic_value_write"}
+        )
+    )
+
+
+def lower_character_decoded_dynamic_value_operation(
+    record: CharacterAbilityScopeRecordIR,
+) -> DynamicValueOperationIR:
+    spec = _DECODE_SPECS.get(record.family)
+    if (
+        spec is None
+        or spec.package_owner != "character_dynamic_values"
+        or spec.decoded_kind
+        not in {"dynamic_value_definition", "dynamic_value_write"}
+    ):
+        raise ValueError("scope record is not an S3 dynamic value source")
+    actual_fields = frozenset(str(key) for key in record.raw_fields)
+    if (
+        not spec.required_fields.issubset(actual_fields)
+        or actual_fields - spec.required_fields - spec.optional_fields
+    ):
+        raise ValueError("decoded dynamic value raw field schema mismatch")
+    payload = spec.decoder(record.raw_fields)
+    return DynamicValueOperationIR.from_spec(
+        lower_decoded_dynamic_value_operation_spec(spec.decoded_kind, payload),
+        record.source,
+    )
 _EQUIVALENT_REQUIRED_ROLES: dict[str, frozenset[str]] = {
     spec.equivalent_type: spec.required_equivalent_roles
     for spec in _DECODE_SPECS.values()
@@ -622,6 +662,19 @@ def _family_resolutions(
                         ):
                             raise ValueError("raw_field_schema_mismatch")
                         payload = spec.decoder(record.raw_fields)
+                        typed_operation: dict[str, JSONValue] | None = None
+                        if spec.decoded_kind in {
+                            "dynamic_value_definition",
+                            "dynamic_value_write",
+                        }:
+                            operation = DynamicValueOperationIR.from_spec(
+                                lower_decoded_dynamic_value_operation_spec(
+                                    spec.decoded_kind,
+                                    payload,
+                                ),
+                                record.source,
+                            )
+                            typed_operation = operation.to_spec_json()
                         decoded_id = character_ability_stable_id(
                             "character_decoded_source",
                             record.record_id,
@@ -642,6 +695,7 @@ def _family_resolutions(
                                 package_owner=spec.package_owner,
                                 payload=payload,
                                 source=record.source,
+                                typed_operation=typed_operation,
                             )
                         )
                 except (KeyError, TypeError, ValueError) as exc:

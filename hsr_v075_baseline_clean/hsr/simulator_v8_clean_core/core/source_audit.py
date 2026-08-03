@@ -174,11 +174,25 @@ class RuntimeSourceAuditor:
         self.rules = rules
 
     def validate_transition(self, transition: BattleTransition) -> SourceAuditResult:
-        records = _records_by_mutation_id(transition)
+        records = (
+            transition.transaction.settlement.records
+            if transition.transaction.settlement
+            else ()
+        )
+        return self.validate_execution(transition.transaction.mutations, records)
+
+    def validate_execution(
+        self,
+        mutations: tuple[Mutation, ...],
+        records: tuple[dict[str, JSONValue], ...],
+    ) -> SourceAuditResult:
+        """Audit a committed production result before it is wrapped as a transition."""
+
+        records_by_mutation = _records_by_mutation_id(records)
         violations: list[SourceAuditViolation] = []
         traces: list[dict[str, JSONValue]] = []
-        for mutation in transition.transaction.mutations:
-            mutation_records = records.get(mutation.stable_id(), ())
+        for mutation in mutations:
+            mutation_records = records_by_mutation.get(mutation.stable_id(), ())
             if not mutation_records:
                 violations.append(_violation(mutation, "mutation_has_no_settlement_record"))
                 continue
@@ -187,8 +201,8 @@ class RuntimeSourceAuditor:
                 traces.append(trace)
         return SourceAuditResult(
             ok=not violations,
-            checked_mutations=len(transition.transaction.mutations),
-            checked_records=sum(len(value) for value in records.values()),
+            checked_mutations=len(mutations),
+            checked_records=sum(len(value) for value in records_by_mutation.values()),
             violations=tuple(violations),
             traces=tuple(traces),
         )
@@ -2281,8 +2295,9 @@ class RuntimeSourceAuditor:
         _audit_source(effect.source, effect.coverage_status, mutation, violations, executable_required=True)
 
 
-def _records_by_mutation_id(transition: BattleTransition) -> dict[str, tuple[dict[str, JSONValue], ...]]:
-    records = transition.transaction.settlement.records if transition.transaction.settlement else ()
+def _records_by_mutation_id(
+    records: tuple[dict[str, JSONValue], ...],
+) -> dict[str, tuple[dict[str, JSONValue], ...]]:
     by_id: dict[str, list[dict[str, JSONValue]]] = {}
     for record in records:
         mutation_id = record.get("mutation_id") if isinstance(record, dict) else None

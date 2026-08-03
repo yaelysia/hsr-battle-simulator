@@ -8,14 +8,17 @@ from ..core.model import BattleState, GameEvent, JSONValue, Mutation, RNGEvent, 
 from ..core.settlement import SettlementRecord
 from ..core.transition_outcome import ExecutionNodeResult
 from ..rules.evaluator import NumericEvaluationContext, NumericEvaluationResult, RuleEvaluator
-from ..rules.expression_ir import is_typed_numeric_expression
+from ..rules.expression_ir import DynamicValueOperationIR, is_typed_numeric_expression
 from ..rules.ir import EffectIR
 from ..rules.rulebook import RuleBook
 from ..unit_presence import plan_unit_departure_start
 from .damage import DamagePacket, DamageSourceFrame, DamageSystem, DamageWindowLedger
 from .dynamic_values import (
+    DynamicValueExecutionRequest,
     binding_source_from_store,
+    execute_dynamic_value_plan,
     find_status_detail,
+    plan_dynamic_value_operation,
     status_binding_sources,
     store_from_state,
     upsert_dynamic_value,
@@ -102,10 +105,13 @@ class EffectRegistry:
         self.register("SetEnergyBarState", self._execute_mechanism_bar_state)
         self.register("SetMonsterEnergyBarState", self._execute_mechanism_bar_state)
         self.register("SetSummonerEnergyBarState", self._execute_mechanism_bar_state)
-        self.register("DefineDynamicValue", self._execute_define_dynamic_value)
-        self.register("SetDynamicValue", self._execute_set_dynamic_value)
-        self.register("SetDynamicValueByAddValue", self._execute_set_dynamic_value_by_add_value)
-        self.register("SetDynamicValueByModifierValue", self._execute_set_dynamic_value_by_modifier_value)
+        for opcode in (
+            "DefineDynamicValue",
+            "SetDynamicValue",
+            "SetDynamicValueByAddValue",
+            "SetDynamicValueByModifierValue",
+        ):
+            self.register(opcode, self._execute_dynamic_value_operation)
         self.register("OwnerEntityAddAbility", self._execute_owner_entity_add_ability)
         self.register("AttachEntityDeparted", self._execute_attach_entity_departed)
         self.register("TriggerModifierCustomEvent", self._execute_trigger_modifier_custom_event)
@@ -122,6 +128,8 @@ class EffectRegistry:
 
     def execute(self, effect: EffectIR, context: EffectExecutionContext | None = None) -> EffectResult:
         handler = self._handlers.get(effect.opcode)
+        if handler is None and _is_dynamic_value_effect(effect.opcode):
+            handler = self._execute_dynamic_value_operation
         if not handler:
             return EffectResult(
                 unsupported=(effect.opcode,),
@@ -140,14 +148,18 @@ class EffectRegistry:
             reason = f"effect_not_executable:{coverage}"
             if specific_reason:
                 reason = f"{reason}:{specific_reason}"
-            result = _unsupported_effect(
-                effect,
-                reason,
-                {
-                    "coverage_status": effect.coverage_status,
-                    "effective_coverage": coverage,
-                    "blocked_reason": specific_reason or _effect_blocked_reason(effect),
-                },
+            result = (
+                _blocked_dynamic_value_effect(reason)
+                if _is_dynamic_value_effect(effect.opcode)
+                else _unsupported_effect(
+                    effect,
+                    reason,
+                    {
+                        "coverage_status": effect.coverage_status,
+                        "effective_coverage": coverage,
+                        "blocked_reason": specific_reason or _effect_blocked_reason(effect),
+                    },
+                )
             )
         else:
             result = handler(effect, context)
@@ -167,6 +179,11 @@ class EffectRegistry:
         )
 
     def coverage(self, effect: EffectIR) -> str:
+        dynamic_operation = _dynamic_value_operation_spec(effect)
+        if dynamic_operation is not None:
+            return dynamic_operation.coverage_status
+        if _is_dynamic_value_effect(effect.opcode):
+            return "blocked"
         if effect.opcode not in self._handlers:
             return effect.coverage_status
         if effect.coverage_status != "executable":
@@ -184,8 +201,6 @@ class EffectRegistry:
         if effect.opcode == "LoseHPByRatio" and not _hp_loss_ratio_payload_is_executable(effect):
             return "blocked"
         if effect.opcode in {"SetEnergyBarState", "SetMonsterEnergyBarState", "SetSummonerEnergyBarState"} and not _mechanism_bar_payload_is_executable(effect):
-            return "blocked"
-        if effect.opcode in {"DefineDynamicValue", "SetDynamicValue", "SetDynamicValueByAddValue", "SetDynamicValueByModifierValue"} and not _dynamic_value_payload_is_executable(effect):
             return "blocked"
         if effect.opcode == "OwnerEntityAddAbility" and not _ability_attachment_payload_is_executable(effect):
             return "blocked"
@@ -359,21 +374,12 @@ class EffectRegistry:
     def _execute_mechanism_bar_state(self, effect: EffectIR, context: EffectExecutionContext | None) -> EffectResult:
         return _execute_mechanism_bar_state(effect, context)
 
-    def _execute_set_dynamic_value(self, effect: EffectIR, context: EffectExecutionContext | None) -> EffectResult:
-        return _execute_set_dynamic_value(effect, context)
-
-    def _execute_define_dynamic_value(self, effect: EffectIR, context: EffectExecutionContext | None) -> EffectResult:
-        return _execute_set_dynamic_value(effect, context)
-
-    def _execute_set_dynamic_value_by_add_value(self, effect: EffectIR, context: EffectExecutionContext | None) -> EffectResult:
-        return _execute_set_dynamic_value_by_add_value(effect, context)
-
-    def _execute_set_dynamic_value_by_modifier_value(
+    def _execute_dynamic_value_operation(
         self,
         effect: EffectIR,
         context: EffectExecutionContext | None,
     ) -> EffectResult:
-        return _execute_set_dynamic_value_by_modifier_value(effect, context)
+        return _execute_dynamic_value_operation(effect, context)
 
     def _execute_owner_entity_add_ability(
         self,
@@ -499,36 +505,28 @@ def _mechanism_bar_payload_is_executable(effect: EffectIR) -> bool:
 
 
 def _dynamic_value_payload_is_executable(effect: EffectIR) -> bool:
+    operation = _dynamic_value_operation_spec(effect)
+    return operation is not None and operation.coverage_status == "executable"
+
+
+def _dynamic_value_operation_spec(
+    effect: EffectIR,
+) -> DynamicValueOperationIR | None:
     standard = effect.payload.get("standard")
-    if not isinstance(standard, dict):
-        return False
-    dynamic_target_aliases = SUPPORTED_EFFECT_TARGET_ALIASES | {"LevelEntity"}
-    if effect.opcode in {"DefineDynamicValue", "SetDynamicValue"}:
-        return (
-            standard.get("target_alias") in dynamic_target_aliases
-            and isinstance(standard.get("value_name"), str)
-            and bool(standard.get("value_name"))
-            and _runtime_numeric_payload_is_executable(standard.get("value_expr"))
-        )
-    if effect.opcode == "SetDynamicValueByAddValue":
-        return (
-            standard.get("target_alias") in dynamic_target_aliases
-            and isinstance(standard.get("value_name"), str)
-            and bool(standard.get("value_name"))
-            and _runtime_numeric_payload_is_executable(standard.get("add_value"))
-        )
-    if effect.opcode == "SetDynamicValueByModifierValue":
-        return (
-            standard.get("target_alias") in SUPPORTED_EFFECT_TARGET_ALIASES
-            and standard.get("source_target_alias") in SUPPORTED_EFFECT_TARGET_ALIASES
-            and isinstance(standard.get("source_modifier"), str)
-            and bool(standard.get("source_modifier"))
-            and standard.get("source_value_name") in {"Layer", "LifeTime"}
-            and isinstance(standard.get("target_value_name"), str)
-            and bool(standard.get("target_value_name"))
-            and _runtime_numeric_payload_is_executable(standard.get("multiplier"))
-        )
-    return False
+    spec = standard.get("dynamic_operation") if isinstance(standard, dict) else None
+    if not isinstance(spec, dict):
+        return None
+    try:
+        return DynamicValueOperationIR.from_spec(spec, effect.source)
+    except (TypeError, ValueError):
+        return None
+
+
+def _is_dynamic_value_effect(opcode: object) -> bool:
+    return isinstance(opcode, str) and (
+        opcode in {"DefineDynamicValue", "SetModifierDynamicValue"}
+        or opcode.startswith("SetDynamicValue")
+    )
 
 
 def _ability_attachment_payload_is_executable(effect: EffectIR) -> bool:
@@ -601,6 +599,13 @@ def _effect_payload_blocked_reason(effect: EffectIR) -> str:
     blocked_reason = standard.get("blocked_reason")
     if isinstance(blocked_reason, str) and blocked_reason:
         return blocked_reason
+    operation_spec = standard.get("dynamic_operation")
+    if _is_dynamic_value_effect(effect.opcode) and _dynamic_value_operation_spec(effect) is None:
+        return "typed_dynamic_value_operation_missing_or_invalid"
+    if isinstance(operation_spec, dict):
+        operation_reason = operation_spec.get("blocked_reason")
+        if isinstance(operation_reason, str) and operation_reason:
+            return operation_reason
     if effect.opcode == "AddModifier":
         modifier_name = standard.get("modifier_name")
         if not isinstance(modifier_name, str) or not modifier_name:
@@ -1113,8 +1118,8 @@ def _execute_hp_loss_ratio(
     actual_loss = max(0.0, before_hp - after_hp)
     applied_ratio = actual_loss / float(target.max_hp)
     dynamic_owner_id = context.owner_id or context.caster_id
-    source_detail = _find_effect_status_detail(context, dynamic_owner_id, effect)
-    dynamic_result_hash = _status_internal_dynamic_hash(
+    source_detail = _find_hp_loss_owner_status_detail(context, dynamic_owner_id, effect)
+    dynamic_result_hash = _hp_loss_status_dynamic_hash(
         source_detail,
         dynamic_result_name,
     )
@@ -1146,7 +1151,7 @@ def _execute_hp_loss_ratio(
             "hp_mutation_id": hp_mutation_id,
         },
     )
-    dynamic_result = _dynamic_value_store_result(
+    dynamic_result = _hp_loss_dynamic_result(
         effect,
         context,
         target_id=dynamic_owner_id,
@@ -1817,174 +1822,93 @@ def _execute_stack_weakness(
     )
 
 
-def _execute_set_dynamic_value(effect: EffectIR, context: EffectExecutionContext | None) -> EffectResult:
+def _execute_dynamic_value_operation(
+    effect: EffectIR,
+    context: EffectExecutionContext | None,
+) -> EffectResult:
     if context is None:
-        return _unsupported_effect(effect, "dynamic_value_store requires EffectExecutionContext")
-    standard = effect.payload.get("standard")
-    if not isinstance(standard, dict):
-        return _unsupported_effect(effect, "SetDynamicValue effect has no standardized payload")
+        return _blocked_dynamic_value_effect(
+            "dynamic_value_operation requires EffectExecutionContext",
+        )
+    operation = _dynamic_value_operation_spec(effect)
+    if operation is None:
+        return _blocked_dynamic_value_effect("typed_dynamic_value_operation_missing")
+    payload = context.event_payload or {}
     target_id = _resolve_target_alias(
-        standard.get("target_alias"),
+        operation.target_alias,
         caster_id=context.caster_id,
         owner_id=context.owner_id,
         param_entity_id=context.param_entity_id,
         current_action_target_id=context.current_action_target_id,
     )
-    if target_id is None:
-        return _unsupported_effect(effect, f"unsupported_or_missing_target_alias:{standard.get('target_alias')}")
-    if target_id != "level:global" and target_id not in context.state.units:
-        return _unsupported_effect(effect, f"target unit {target_id!r} is not in state")
-    value_name = standard.get("value_name")
-    if not isinstance(value_name, str) or not value_name:
-        return _unsupported_effect(effect, "dynamic_value_name_required", {"standard": standard})
-    evaluation = _evaluate_numeric(effect, context, standard.get("value_expr"))
-    if not evaluation.ok or evaluation.value is None:
-        return _unsupported_effect(
-            effect,
-            f"unsupported_formula:{evaluation.blocked_reason or 'numeric_evaluation_failed'}",
-            {"numeric_evaluation": evaluation.to_json(), "standard": standard},
+    status_instance_id = str(payload.get("status_instance_id") or "")
+    if not status_instance_id and effect.owner_modifier_name and target_id in context.state.units:
+        details = context.state.units[target_id].flags.get("status_details", ())
+        candidates = tuple(
+            str(detail.get("instance_id") or "")
+            for detail in details
+            if isinstance(detail, dict)
+            and detail.get("modifier_name") == effect.owner_modifier_name
+            and isinstance(detail.get("instance_id"), str)
+            and detail.get("instance_id")
+        ) if isinstance(details, (list, tuple)) else ()
+        if len(candidates) > 1:
+            return _blocked_dynamic_value_effect("dynamic_status_instance_ambiguous")
+        status_instance_id = candidates[0] if candidates else ""
+    selected_status_detail: dict[str, JSONValue] | None = None
+    if status_instance_id and target_id in context.state.units:
+        details = context.state.units[target_id].flags.get("status_details", ())
+        matches = tuple(
+            detail
+            for detail in (details if isinstance(details, (list, tuple)) else ())
+            if isinstance(detail, dict) and detail.get("instance_id") == status_instance_id
         )
-    return _dynamic_value_store_result(
-        effect,
-        context,
-        target_id=target_id,
-        value_name=value_name,
-        value=evaluation.value,
-        value_hash=standard.get("hash"),
-        standard=standard,
-        evaluation=evaluation,
-        source_value={
-            "kind": "value_expr",
-            "expression": standard.get("value_expr"),
-        },
-    )
-
-
-def _execute_set_dynamic_value_by_add_value(effect: EffectIR, context: EffectExecutionContext | None) -> EffectResult:
-    if context is None:
-        return _unsupported_effect(effect, "dynamic_value_store requires EffectExecutionContext")
-    standard = effect.payload.get("standard")
-    if not isinstance(standard, dict):
-        return _unsupported_effect(effect, "SetDynamicValueByAddValue effect has no standardized payload")
-    target_id = _resolve_target_alias(
-        standard.get("target_alias"),
+        if len(matches) > 1:
+            return _blocked_dynamic_value_effect("dynamic_status_instance_ambiguous")
+        selected_status_detail = matches[0] if matches else None
+    request = DynamicValueExecutionRequest(
         caster_id=context.caster_id,
-        owner_id=context.owner_id,
-        param_entity_id=context.param_entity_id,
-        current_action_target_id=context.current_action_target_id,
+        source_id=context.source_id,
+        effect_id=effect.effect_id,
+        opcode=effect.opcode,
+        owner_id=context.owner_id or context.caster_id,
+        param_entity_id=context.param_entity_id or "",
+        current_action_target_id=context.current_action_target_id or "",
+        ability_instance_id=str(payload.get("ability_instance_id") or ""),
+        status_instance_id=status_instance_id,
+        event_id=str(payload.get("event_id") or ""),
+        operation_event_id=str(payload.get("operation_event_id") or ""),
+        task_id=str(payload.get("task_id") or ""),
+        status_modifier_name=effect.owner_modifier_name,
+        status_id=str(
+            payload.get("status_id")
+            or (selected_status_detail or {}).get("status_id")
+            or ""
+        ),
+        status_source_id=str(
+            payload.get("status_source_id")
+            or (selected_status_detail or {}).get("source_id")
+            or ""
+        ),
+        binding_sources=_binding_sources(context),
     )
-    if target_id is None:
-        return _unsupported_effect(effect, f"unsupported_or_missing_target_alias:{standard.get('target_alias')}")
-    if target_id != "level:global" and target_id not in context.state.units:
-        return _unsupported_effect(effect, f"target unit {target_id!r} is not in state")
-    value_name = standard.get("value_name")
-    if not isinstance(value_name, str) or not value_name:
-        return _unsupported_effect(effect, "dynamic_value_name_required", {"standard": standard})
-    add_value = _evaluate_numeric(effect, context, standard.get("add_value"))
-    if not add_value.ok or add_value.value is None:
-        return _unsupported_effect(
-            effect,
-            f"unsupported_formula:{add_value.blocked_reason or 'numeric_evaluation_failed'}",
-            {"numeric_evaluation": add_value.to_json(), "standard": standard},
-        )
-    current_value, current_source = _current_dynamic_value(context, target_id, value_name)
-    value = current_value + add_value.value
-    min_value = _optional_numeric(effect, context, standard.get("min_value"))
-    max_value = _optional_numeric(effect, context, standard.get("max_value"))
-    if min_value is not None:
-        value = max(min_value, value)
-    if max_value is not None:
-        value = min(max_value, value)
-    return _dynamic_value_store_result(
-        effect,
-        context,
-        target_id=target_id,
-        value_name=value_name,
-        value=value,
-        value_hash=standard.get("hash"),
-        standard=standard,
-        evaluation=add_value,
-        source_value={
-            "kind": "add_value",
-            "current_value": current_value,
-            "current_source": current_source,
-            "add_value": add_value.value,
-            "min_value": min_value,
-            "max_value": max_value,
-        },
+    plan = plan_dynamic_value_operation(context.state, operation, request)
+    if not plan.ok:
+        return _blocked_dynamic_value_effect(plan.blocked_reason)
+    executed = execute_dynamic_value_plan(context.state, plan)
+    if not executed.ok:
+        return _blocked_dynamic_value_effect(executed.blocked_reason)
+    return EffectResult(
+        mutations=executed.mutations,
+        records=tuple(dict(record) for record in executed.records),
     )
 
 
-def _execute_set_dynamic_value_by_modifier_value(effect: EffectIR, context: EffectExecutionContext | None) -> EffectResult:
-    if context is None:
-        return _unsupported_effect(effect, "dynamic_value_store requires EffectExecutionContext")
-    standard = effect.payload.get("standard")
-    if not isinstance(standard, dict):
-        return _unsupported_effect(effect, "SetDynamicValueByModifierValue effect has no standardized payload")
-    source_target_id = _resolve_target_alias(
-        standard.get("source_target_alias"),
-        caster_id=context.caster_id,
-        owner_id=context.owner_id,
-        param_entity_id=context.param_entity_id,
-        current_action_target_id=context.current_action_target_id,
-    )
-    target_id = _resolve_target_alias(
-        standard.get("target_alias"),
-        caster_id=context.caster_id,
-        owner_id=context.owner_id,
-        param_entity_id=context.param_entity_id,
-        current_action_target_id=context.current_action_target_id,
-    )
-    if source_target_id is None:
-        return _unsupported_effect(effect, f"unsupported_or_missing_source_target_alias:{standard.get('source_target_alias')}")
-    if target_id is None:
-        return _unsupported_effect(effect, f"unsupported_or_missing_target_alias:{standard.get('target_alias')}")
-    if source_target_id not in context.state.units or target_id not in context.state.units:
-        return _unsupported_effect(effect, "source_or_target_unit_not_in_state", {"standard": standard})
-    source_modifier = standard.get("source_modifier")
-    if not isinstance(source_modifier, str) or not source_modifier:
-        return _unsupported_effect(effect, "source_modifier_required", {"standard": standard})
-    detail = find_status_detail(context.state, source_target_id, modifier_name=source_modifier)
-    if detail is None:
-        return _unsupported_effect(
-            effect,
-            "source_modifier_status_not_present",
-            {"standard": standard, "source_target_id": source_target_id},
-        )
-    source_value, source_reason = _modifier_value(detail, standard.get("source_value_name"))
-    if source_value is None:
-        return _unsupported_effect(effect, source_reason, {"standard": standard, "source_status": detail})
-    multiplier = _evaluate_numeric(effect, context, standard.get("multiplier"))
-    if not multiplier.ok or multiplier.value is None:
-        return _unsupported_effect(
-            effect,
-            f"unsupported_formula:{multiplier.blocked_reason or 'numeric_evaluation_failed'}",
-            {"numeric_evaluation": multiplier.to_json(), "standard": standard},
-        )
-    target_value_name = standard.get("target_value_name")
-    if not isinstance(target_value_name, str) or not target_value_name:
-        return _unsupported_effect(effect, "target_value_name_required", {"standard": standard})
-    return _dynamic_value_store_result(
-        effect,
-        context,
-        target_id=target_id,
-        value_name=target_value_name,
-        value=source_value * multiplier.value,
-        value_hash=standard.get("target_hash"),
-        standard=standard,
-        evaluation=multiplier,
-        source_value={
-            "kind": "modifier_value",
-            "source_target_id": source_target_id,
-            "source_modifier": source_modifier,
-            "source_value_name": standard.get("source_value_name"),
-            "source_value": source_value,
-            "source_status_instance_id": detail.get("instance_id"),
-        },
-    )
+def _blocked_dynamic_value_effect(reason: str) -> EffectResult:
+    return EffectResult(unsupported=(reason,))
 
 
-def _dynamic_value_store_result(
+def _hp_loss_dynamic_result(
     effect: EffectIR,
     context: EffectExecutionContext,
     *,
@@ -1997,11 +1921,11 @@ def _dynamic_value_store_result(
     source_value: dict[str, JSONValue],
 ) -> EffectResult:
     before = store_from_state(context.state)
-    source_detail = _find_effect_status_detail(context, target_id, effect)
+    source_detail = _find_hp_loss_owner_status_detail(context, target_id, effect)
     resolved_value_hash = (
         value_hash
         if isinstance(value_hash, (str, int))
-        else _status_internal_dynamic_hash(source_detail, value_name)
+        else _hp_loss_status_dynamic_hash(source_detail, value_name)
     )
     after = upsert_dynamic_value(
         before,
@@ -2060,7 +1984,7 @@ def _dynamic_value_store_result(
         },
         trace={"effect_source": effect.source.to_json()},
     ).to_json()
-    status_mutation = _status_dynamic_value_mutation(
+    status_mutation = _hp_loss_status_dynamic_result_mutation(
         context,
         target_id=target_id,
         source_detail=source_detail,
@@ -2097,7 +2021,7 @@ def _dynamic_value_store_result(
     return EffectResult(mutations=mutations, records=records)
 
 
-def _status_internal_dynamic_hash(
+def _hp_loss_status_dynamic_hash(
     source_detail: dict[str, JSONValue] | None,
     value_name: str,
 ) -> str | None:
@@ -2149,7 +2073,7 @@ def _status_internal_dynamic_hash(
     return candidates[0] if len(candidates) == 1 else None
 
 
-def _find_effect_status_detail(
+def _find_hp_loss_owner_status_detail(
     context: EffectExecutionContext,
     target_id: str,
     effect: EffectIR,
@@ -2161,7 +2085,7 @@ def _find_effect_status_detail(
     return find_status_detail(context.state, target_id, modifier_name=effect.owner_modifier_name)
 
 
-def _status_dynamic_value_mutation(
+def _hp_loss_status_dynamic_result_mutation(
     context: EffectExecutionContext,
     *,
     target_id: str,
@@ -2229,22 +2153,6 @@ def _status_dynamic_value_mutation(
             "effect_source": effect.source.to_json(),
         },
     )
-
-
-def _modifier_value(detail: dict[str, JSONValue], value_name: object) -> tuple[float | None, str]:
-    if value_name == "Layer":
-        value = detail.get("stacks")
-        return (float(value), "ok") if isinstance(value, (int, float)) else (None, "source_layer_not_numeric")
-    if value_name == "MaxLayer":
-        value = detail.get("max_stacks")
-        return (float(value), "ok") if isinstance(value, (int, float)) else (None, "source_max_layer_not_numeric")
-    if value_name == "LifeTime":
-        for key in ("remaining_duration", "duration"):
-            value = detail.get(key)
-            if isinstance(value, (int, float)):
-                return float(value), "ok"
-        return None, "source_lifetime_not_numeric"
-    return None, f"unsupported_modifier_value_type:{value_name}"
 
 
 def _mutation_effect_result(

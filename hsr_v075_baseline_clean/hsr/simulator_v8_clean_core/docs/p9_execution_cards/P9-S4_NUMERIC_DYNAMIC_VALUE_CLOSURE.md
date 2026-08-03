@@ -89,9 +89,9 @@ character_specific_numeric_handlers=0
 
 ## 唯一执行清单
 
-- [ ] 当前动态值 family 全部进入统一 typed operation。
-- [ ] operand、作用域、生命周期和操作身份来源真实。
-- [ ] 普通 ability 与公共 effect 路由唯一，无 callback 第二套实现。
-- [ ] 缺值、冲突、非有限和 stale plan 原子 blocked。
-- [ ] 正式 transition、settlement、audit 和 replay 证据闭合。
-- [ ] 主验证、必要 direct 和资源审计通过并提交 `ready_for_review`。
+- [x] 当前动态值 family 全部进入统一 typed operation。
+- [x] operand、作用域、生命周期和操作身份来源真实。
+- [x] 普通 ability 与公共 effect 路由唯一，无 callback 第二套实现。
+- [x] 缺值、冲突、非有限和 stale plan 原子 blocked。
+- [x] 正式 transition、settlement、audit 和 replay 证据闭合。
+- [x] 主验证、必要 direct 和资源审计通过并提交 `ready_for_review`。

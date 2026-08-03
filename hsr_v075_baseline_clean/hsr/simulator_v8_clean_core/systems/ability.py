@@ -383,6 +383,15 @@ class AbilityTaskSystem:
                     "task_id": task.task_id,
                     "hit_index": task.task_index,
                     "rng_decision_index": task.task_index,
+                    "ability_instance_id": (
+                        f"ability_action:{state.event_index}:"
+                        f"{command.actor_id}:{command.action_id}:{command.action_level}"
+                    ),
+                    "operation_event_id": (
+                        f"ability_task:{state.event_index}:{command.actor_id}:"
+                        f"{command.action_id}:{task.task_id}:"
+                        f"{command.metadata.get('ability_task_execution_path', task.task_index)}"
+                    ),
                 },
                 binding_sources=_binding_sources(
                     self.rules,

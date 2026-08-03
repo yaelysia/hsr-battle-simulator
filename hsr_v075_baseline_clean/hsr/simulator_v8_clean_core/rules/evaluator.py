@@ -238,7 +238,10 @@ class RuleEvaluator:
             )
         assert isinstance(expression, dict)
         kind = str(expression.get("kind") or "")
-        if kind == "fixed" and isinstance(expression.get("value"), (int, float)) and not isinstance(expression.get("value"), bool):
+        if (
+            kind == "fixed"
+            and _finite_number(expression.get("value"))
+        ):
             return NumericEvaluationResult(
                 ok=True,
                 value=float(expression["value"]),
@@ -285,13 +288,23 @@ def _evaluate_dynamic_hash(
     source_trace: dict[str, Any],
 ) -> NumericEvaluationResult:
     hash_value = expression.get("hash")
+    if (
+        isinstance(hash_value, bool)
+        or isinstance(hash_value, float) and not math.isfinite(hash_value)
+        or hash_value is not None and not isinstance(hash_value, (int, float, str))
+    ):
+        return NumericEvaluationResult(
+            ok=False,
+            value=None,
+            expression_kind="dynamic_hash",
+            bindings={"hash": hash_value},
+            source_trace=source_trace,
+            blocked_reason="dynamic_hash_identity_invalid",
+        )
     key = str(hash_value)
     values = context.dynamic_values or {}
     explicit_value = values.get(key)
-    if isinstance(explicit_value, (int, float)) and not isinstance(
-        explicit_value,
-        bool,
-    ):
+    if _finite_number(explicit_value):
         return NumericEvaluationResult(
             ok=True,
             value=float(explicit_value),
@@ -441,16 +454,20 @@ def _evaluate_numeric_program(
             continue
         if opcode == "push_fixed":
             value = instruction.get("value")
-            if not isinstance(value, (int, float)) or isinstance(value, bool):
+            if not _finite_number(value):
                 return _numeric_program_blocked("numeric_program_fixed_operand_invalid", source_trace, index)
             stack.append(float(value))
             continue
         if opcode == "push_dynamic":
-            result = _evaluate_dynamic_hash(
-                numeric_dynamic_hash(instruction.get("hash")),
-                context,
-                source_trace,
-            )
+            try:
+                dynamic_expression = numeric_dynamic_hash(instruction.get("hash"))
+            except (TypeError, ValueError):
+                return _numeric_program_blocked(
+                    "numeric_program_dynamic_hash_invalid",
+                    source_trace,
+                    index,
+                )
+            result = _evaluate_dynamic_hash(dynamic_expression, context, source_trace)
             dynamic_operands.append(result.to_json())
             if not result.ok or result.value is None:
                 return _numeric_program_blocked(
@@ -469,6 +486,12 @@ def _evaluate_numeric_program(
                     index,
                 )
             stack[-1] = -stack[-1]
+            if not math.isfinite(stack[-1]):
+                return _numeric_program_blocked(
+                    "numeric_program_non_finite_result",
+                    source_trace,
+                    index,
+                )
             continue
         if opcode == "max":
             operand_count = instruction.get("operand_count")
@@ -499,15 +522,22 @@ def _evaluate_numeric_program(
         rhs = stack.pop()
         lhs = stack.pop()
         if opcode == "add":
-            stack.append(lhs + rhs)
+            result = lhs + rhs
         elif opcode == "sub":
-            stack.append(lhs - rhs)
+            result = lhs - rhs
         elif opcode == "mul":
-            stack.append(lhs * rhs)
+            result = lhs * rhs
         elif rhs == 0:
             return _numeric_program_blocked("numeric_program_division_by_zero", source_trace, index)
         else:
-            stack.append(lhs / rhs)
+            result = lhs / rhs
+        if not math.isfinite(result):
+            return _numeric_program_blocked(
+                "numeric_program_non_finite_result",
+                source_trace,
+                index,
+            )
+        stack.append(result)
     if not ended:
         return _numeric_program_blocked("numeric_program_end_missing", source_trace, len(instructions))
     if len(stack) != 1:
@@ -1811,11 +1841,12 @@ def _state_unit(context: EvaluationContext, unit_id: str) -> Any | None:
 
 
 def _finite_number(value: object) -> bool:
-    return (
-        isinstance(value, (int, float))
-        and not isinstance(value, bool)
-        and math.isfinite(float(value))
-    )
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return False
+    try:
+        return math.isfinite(float(value))
+    except OverflowError:
+        return False
 
 
 def _first_event_number(
@@ -2102,12 +2133,12 @@ def _lookup_binding_source(source: dict[str, Any], key: str) -> tuple[float | No
     if value is not None:
         return value, _binding_metadata(source, entry_key, entry, matched_by="name")
     values = source.get("values")
-    if isinstance(values, dict) and isinstance(values.get(key), (int, float)):
+    if isinstance(values, dict) and _finite_number(values.get(key)):
         return float(values[key]), {
             "source_type": str(source.get("source_type") or "binding_source"),
             "matched_by": "values",
         }
-    if isinstance(source.get(key), (int, float)):
+    if _finite_number(source.get(key)):
         return float(source[key]), {
             "source_type": str(source.get("source_type") or "binding_source"),
             "matched_by": "direct_key",
@@ -2123,9 +2154,9 @@ def _lookup_index(
     if not isinstance(index, dict) or key not in index:
         return None, None, None, ()
     indexed = index[key]
-    if isinstance(indexed, (int, float)):
+    if _finite_number(indexed):
         return float(indexed), None, None, ()
-    if isinstance(indexed, dict) and isinstance(indexed.get("value"), (int, float)):
+    if isinstance(indexed, dict) and _finite_number(indexed.get("value")):
         return float(indexed["value"]), None, indexed, ()
     keys = indexed if isinstance(indexed, list) else [indexed]
     resolved = tuple(
@@ -2133,7 +2164,7 @@ def _lookup_index(
         for entry_key in keys
         if isinstance(entry_key, str)
         and isinstance(entries.get(entry_key), dict)
-        and isinstance(entries[entry_key].get("value"), (int, float))
+        and _finite_number(entries[entry_key].get("value"))
     )
     if len(resolved) > 1:
         return None, None, None, resolved
@@ -2141,11 +2172,9 @@ def _lookup_index(
         if not isinstance(entry_key, str):
             continue
         entry = entries.get(entry_key)
-        if isinstance(entry, dict) and isinstance(entry.get("value"), (int, float)):
+        if isinstance(entry, dict) and _finite_number(entry.get("value")):
             return float(entry["value"]), entry_key, entry, ()
     return None, None, None, ()
-
-
 def _ambiguous_binding_metadata(
     source: dict[str, Any],
     entry_keys: tuple[str, ...],

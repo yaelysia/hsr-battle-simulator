@@ -24,7 +24,11 @@ from .character_ability_source_graph import (
     _skill_entries,
     build_character_ability_source_graph,
 )
-from .character_source_resolution import build_character_ability_source_resolution
+from .character_source_resolution import (
+    build_character_ability_source_resolution,
+    character_dynamic_value_decode_families,
+    lower_character_decoded_dynamic_value_operation,
+)
 from .character_cards import (
     CHARACTER_ACTION_DEFINITION_TABLES,
     build_character_card_ir,
@@ -61,13 +65,19 @@ from ..rules.ability_properties import ability_property_is_runtime_readable
 from ..rules.engine_rule_registry import build_engine_rule_registry
 from ..rules.expression_ir import (
     CONDITION_EXPRESSION_NODE_SCHEMA,
+    DynamicValueOperationIR,
     NUMERIC_EXPRESSION_SCHEMA,
     TARGET_EXPRESSION_NODE_SCHEMA,
     is_typed_numeric_expression,
     numeric_dynamic_hashes,
+    numeric_fixed,
     numeric_missing,
 )
-from .expression_lowering import lower_numeric_expression
+from .expression_lowering import (
+    is_dynamic_value_opcode,
+    lower_dynamic_value_operation_spec,
+    lower_numeric_expression,
+)
 from ..rules.ir import (
     AbilityPropertyRangeIR,
     AbilityPropertyWatcherIR,
@@ -520,6 +530,182 @@ class TBGDLowering:
         self._character_ability_source_graph_catalog = source_graph_catalog
         self._character_ability_source_resolution_catalog = catalog
         return catalog
+
+    def build_character_action_ability_slice(
+        self,
+        definition: ActionDefinitionIR,
+        *,
+        snapshot: CharacterAbilityRawSnapshot,
+        scope_catalog: CharacterAbilityScopeProjectionCatalog,
+        source_graph_catalog: CharacterAbilitySourceGraphCatalogIR,
+    ) -> CanonicalIR:
+        """Lower one source-backed character action through the production path."""
+
+        if type(definition) is not ActionDefinitionIR:
+            raise TypeError("character action slice requires an exact action definition")
+        graph_catalog = self.build_character_ability_source_graph_catalog(
+            snapshot=snapshot,
+            scope_catalog=scope_catalog,
+        )
+        if graph_catalog.catalog_id != source_graph_catalog.catalog_id:
+            raise ValueError("character action slice source graph mismatch")
+        action_sources = tuple(
+            item
+            for item in graph_catalog.action_sources
+            if item.action_id == definition.action_id
+        )
+        if len(action_sources) != 1:
+            raise ValueError("character action slice owner is missing or ambiguous")
+        owner_avatar_id = action_sources[0].owner_avatar_id
+        binding, phases, lowered = self._avatar_action_binding(definition)
+        action_events, hit_profiles = _lower_action_execution_ir(
+            [definition], [binding], phases, [], []
+        )
+        damage_emissions = _lower_damage_emissions(
+            lowered.ability_tasks,
+            lowered.effects,
+            hit_profiles,
+            [],
+            self._damage_tag_registry,
+        )
+        toughness_emissions = _lower_toughness_emissions(
+            lowered.ability_tasks,
+            lowered.effects,
+            hit_profiles,
+        )
+        ability_tasks = _admit_damage_ability_tasks(
+            lowered.ability_tasks,
+            damage_emissions,
+            toughness_emissions,
+            hit_profiles,
+        )
+        avatar_rows = [
+            item
+            for item in self._avatar_config_rows_prefer_enhanced()
+            if str(item[2].get("AvatarID")) == owner_avatar_id
+        ]
+        action_sets = self._lower_combatant_action_sets(
+            [definition],
+            entity_types=frozenset({"avatar"}),
+            avatar_config_rows=avatar_rows,
+        )
+        action_sets, action_admissions = _lower_action_admissions(
+            action_sets,
+            [definition],
+        )
+        owner_entities = self._lower_entity_table(
+            "ExcelOutput/AvatarConfig.json",
+            ENTITY_TABLES["ExcelOutput/AvatarConfig.json"],
+            entity_ids=frozenset({f"avatar:{owner_avatar_id}"}),
+        )
+        return CanonicalIR(
+            version=BASELINE_VERSION,
+            entities=tuple(
+                _dedupe_entities([*owner_entities, *lowered.entities]).values()
+            ),
+            action_definitions=(definition,),
+            action_ability_bindings=(binding,),
+            ability_phases=tuple(phases),
+            ability_tasks=tuple(ability_tasks),
+            action_events=tuple(action_events),
+            hit_profiles=tuple(hit_profiles),
+            damage_emissions=tuple(damage_emissions),
+            toughness_emissions=tuple(toughness_emissions),
+            status_callbacks=tuple(lowered.status_callbacks),
+            status_callback_tasks=tuple(lowered.status_callback_tasks),
+            ability_property_watchers=tuple(lowered.ability_property_watchers),
+            ability_property_ranges=tuple(lowered.ability_property_ranges),
+            status_damage_emissions=tuple(lowered.status_damage_emissions),
+            damage_modifiers=tuple(lowered.damage_modifiers),
+            action_delay_emissions=tuple(lowered.action_delay_emissions),
+            queue_intents=tuple(lowered.queue_intents),
+            skill_continuations=tuple(lowered.skill_continuations),
+            target_expressions=tuple(lowered.target_expressions),
+            combatant_action_sets=tuple(action_sets),
+            action_admissions=tuple(action_admissions),
+            triggers=tuple(lowered.triggers),
+            effects=tuple(lowered.effects),
+            conditions=tuple(lowered.conditions),
+            formulas=tuple(lowered.formulas),
+            metadata={
+                "projection": "character_action_ability_slice",
+                "action_id": definition.action_id,
+                "action_level": definition.level,
+                "owner_entity_ref": f"avatar:{owner_avatar_id}",
+                "source_graph_catalog_id": source_graph_catalog.catalog_id,
+            },
+        )
+
+    def _decoded_dynamic_task_projection(
+        self,
+        *,
+        ability_path: str,
+        ability_index: int | None,
+        task_path: str,
+        source_opcode: str,
+    ) -> tuple[str, dict[str, JSONValue], IRSource, str] | None:
+        if ability_index is None:
+            return None
+        catalog = getattr(
+            self,
+            "_character_ability_source_resolution_catalog",
+            None,
+        )
+        json_path = f"$.AbilityList[{ability_index}].{task_path}.$type"
+        decoded_id = ""
+        if type(catalog) is CharacterAbilitySourceResolutionCatalogIR:
+            matches = tuple(
+                item
+                for item in catalog.decoded_items
+                if item.source_family == source_opcode
+                and item.source.source_path == ability_path
+                and item.source.evidence.get("json_path") == json_path
+                and item.typed_operation is not None
+            )
+            if len(matches) > 1:
+                raise ValueError("decoded dynamic task source is ambiguous")
+            if matches:
+                decoded = matches[0]
+                operation = DynamicValueOperationIR.from_spec(
+                    thaw_json(decoded.typed_operation),
+                    decoded.source,
+                )
+                decoded_id = decoded.decoded_id
+            else:
+                operation = None
+        else:
+            operation = None
+        if operation is None:
+            if source_opcode not in character_dynamic_value_decode_families():
+                return None
+            scope_catalog = getattr(self, "_character_ability_scope_catalog", None)
+            if type(scope_catalog) is not CharacterAbilityScopeProjectionCatalog:
+                raise TypeError("decoded dynamic task requires a typed scope catalog")
+            records = tuple(
+                record
+                for record in scope_catalog.scope_records
+                if record.family == source_opcode
+                and record.source.source_path == ability_path
+                and record.source.evidence.get("json_path") == json_path
+            )
+            if len(records) != 1:
+                raise ValueError("decoded dynamic task scope record is missing or ambiguous")
+            operation = lower_character_decoded_dynamic_value_operation(records[0])
+            decoded_id = records[0].record_id
+        runtime_opcode = {
+            "define": "DefineDynamicValue",
+            "set": "SetDynamicValue",
+            "add": "SetDynamicValueByAddValue",
+            "copy": "SetDynamicValueByCopying",
+        }.get(operation.operation_kind)
+        if runtime_opcode is None:
+            raise ValueError("decoded dynamic operation kind is unsupported")
+        return (
+            runtime_opcode,
+            operation.to_spec_json(),
+            operation.source,
+            decoded_id,
+        )
 
     def build_owned_combatant_admission_projection(
         self,
@@ -1351,6 +1537,9 @@ class TBGDLowering:
         character_ability_source_graph_catalog = (
             self.build_character_ability_source_graph_catalog()
         )
+        character_ability_source_resolution_catalog = (
+            self.build_character_ability_source_resolution_catalog()
+        )
         light_cone_catalog = build_light_cone_catalog(self.tbgd_root)
         light_cone_definitions = require_complete_light_cone_catalog(light_cone_catalog)
         relic_catalog_result = build_relic_catalog(self.tbgd_root)
@@ -1825,6 +2014,9 @@ class TBGDLowering:
             character_ability_source_graph_catalog=(
                 character_ability_source_graph_catalog
             ),
+            character_ability_source_resolution_catalog=(
+                character_ability_source_resolution_catalog
+            ),
             metadata={
                 "source": "turnbasedgamedata-main",
                 "lowering": "tbgd_first_v0_200",
@@ -1836,6 +2028,15 @@ class TBGDLowering:
                     ),
                     "source_fingerprint": (
                         character_ability_source_graph_catalog.source_fingerprint
+                    ),
+                },
+                "character_ability_source_resolution": {
+                    "catalog_id": (
+                        character_ability_source_resolution_catalog.catalog_id
+                    ),
+                    "typed_dynamic_operation_count": sum(
+                        item.typed_operation is not None
+                        for item in character_ability_source_resolution_catalog.decoded_items
                     ),
                 },
                 "limits": {
@@ -4150,6 +4351,13 @@ class TBGDLowering:
                     ability_name=ability_name,
                     ability=ability,
                     ability_path=ability_path,
+                    ability_index=(
+                        ability_definition.source.evidence.get("ability_index")
+                        if type(
+                            ability_definition.source.evidence.get("ability_index")
+                        ) is int
+                        else None
+                    ),
                     source_context=source_context,
                     target_alias_registry=(
                         ability_data.get("GlobalTargetAlias")
@@ -4611,6 +4819,7 @@ class TBGDLowering:
         ability_name: str,
         ability: dict[str, Any],
         ability_path: str,
+        ability_index: int | None = None,
         source_context: dict[str, Any] | None = None,
         target_alias_registry: dict[str, Any] | None = None,
     ) -> "_LoweredAbility":
@@ -4626,6 +4835,7 @@ class TBGDLowering:
                     phase_id=phase_id,
                     ability_name=ability_name,
                     ability_path=ability_path,
+                    ability_index=ability_index,
                     callback_kind=callback_kind,
                     task_index=task_index,
                     task_path=f"{callback_kind}[{task_index}]",
@@ -4645,6 +4855,7 @@ class TBGDLowering:
         phase_id: str,
         ability_name: str,
         ability_path: str,
+        ability_index: int | None,
         callback_kind: str,
         task_index: int,
         task_path: str,
@@ -4656,7 +4867,14 @@ class TBGDLowering:
         lowered = _LoweredAbility()
         if not isinstance(task, dict):
             return lowered
-        opcode = _short_gamecore_type(task.get("$type"))
+        source_opcode = _short_gamecore_type(task.get("$type"))
+        decoded_dynamic = self._decoded_dynamic_task_projection(
+            ability_path=ability_path,
+            ability_index=ability_index,
+            task_path=task_path,
+            source_opcode=source_opcode,
+        )
+        opcode = decoded_dynamic[0] if decoded_dynamic is not None else source_opcode
         task_id = f"ability_task:{phase_id}:{callback_kind}:{task_path}:{opcode}"
         source = IRSource(
             source_path=ability_path,
@@ -4669,6 +4887,8 @@ class TBGDLowering:
                 "callback_kind": callback_kind,
                 "task_index": task_index,
                 "task_path": task_path,
+                "ability_index": ability_index,
+                "source_opcode": source_opcode,
                 "branch": branch,
                 "parent_task_id": parent_task_id,
                 "ability_source_context": _json_safe(source_context or {}),
@@ -4700,6 +4920,7 @@ class TBGDLowering:
                     phase_id=phase_id,
                     ability_name=ability_name,
                     ability_path=ability_path,
+                    ability_index=ability_index,
                     callback_kind=callback_kind,
                     task_index=child_index,
                     task_path=f"{task_path}.SuccessTaskList[{child_index}]",
@@ -4721,6 +4942,7 @@ class TBGDLowering:
                     phase_id=phase_id,
                     ability_name=ability_name,
                     ability_path=ability_path,
+                    ability_index=ability_index,
                     callback_kind=callback_kind,
                     task_index=child_index,
                     task_path=f"{task_path}.FailedTaskList[{child_index}]",
@@ -4781,6 +5003,7 @@ class TBGDLowering:
                         phase_id=phase_id,
                         ability_name=ability_name,
                         ability_path=ability_path,
+                        ability_index=ability_index,
                         callback_kind=callback_kind,
                         task_index=child_index,
                         task_path=f"{task_path}.TaskList[{child_index}]",
@@ -4838,7 +5061,18 @@ class TBGDLowering:
             return lowered
 
         effect_id = f"effect:{task_id}"
-        payload = _effect_payload(task, opcode, "")
+        payload = (
+            {
+                "standard": {"dynamic_operation": decoded_dynamic[1]},
+                "decoded_source_ref": {
+                    "decoded_id": decoded_dynamic[3],
+                    "source_family": source_opcode,
+                },
+            }
+            if decoded_dynamic is not None
+            else _effect_payload(task, opcode, "")
+        )
+        effect_source = decoded_dynamic[2] if decoded_dynamic is not None else source
         payload, task_target_expressions = _attach_target_expressions_to_effect_payload(
             payload,
             task,
@@ -4885,7 +5119,7 @@ class TBGDLowering:
                 effect_id=effect_id,
                 opcode=opcode,
                 payload=payload,
-                source=source,
+                source=effect_source,
                 coverage_status=coverage_status,
             )
         )
@@ -14280,11 +14514,40 @@ def _effect_payload(value: dict[str, Any], opcode: str, source_modifier_name: st
         payload["standard"] = _standard_trigger_modifier_custom_event_payload(value)
     elif opcode == "StackWeakness":
         payload["standard"] = _standard_stack_weakness_payload(value)
+    if is_dynamic_value_opcode(opcode):
+        standard = payload.get("standard")
+        if not isinstance(standard, dict):
+            standard = _standard_generic_dynamic_value_payload(
+                value,
+                opcode,
+                source_modifier_name,
+            )
+        standard = dict(standard)
+        standard["dynamic_operation"] = lower_dynamic_value_operation_spec(
+            opcode,
+            standard,
+        )
+        payload["standard"] = standard
     family = _task_damage_family(value, opcode)
     if family != "unknown":
         payload["damage_formula_family"] = family
         payload["bypasses_normal_multipliers"] = family in {"true_damage", "hp_loss"}
     return payload
+
+
+def lower_character_dynamic_value_operation(
+    opcode: str,
+    raw_fields: dict[str, Any],
+    source: IRSource,
+    *,
+    source_modifier_name: str = "",
+) -> DynamicValueOperationIR:
+    payload = _effect_payload(raw_fields, opcode, source_modifier_name)
+    standard = payload.get("standard")
+    spec = standard.get("dynamic_operation") if isinstance(standard, dict) else None
+    if not isinstance(spec, dict):
+        raise ValueError(f"dynamic value operation was not lowered:{opcode}")
+    return DynamicValueOperationIR.from_spec(spec, source)
 
 
 _PROCESS_ONLY_TASK_FIELD_TYPES: dict[str, dict[str, str]] = {
@@ -15527,6 +15790,19 @@ def _effect_coverage_status(opcode: str, payload: dict[str, Any]) -> str:
             if standard.get("target_alias") == "ModifierOwnerEntity"
             and standard.get("target_expression_coverage_status") == "executable"
             and isinstance(standard.get("config_group_name"), str)
+            else "blocked"
+        )
+    if is_dynamic_value_opcode(opcode):
+        standard = payload.get("standard")
+        operation = (
+            standard.get("dynamic_operation")
+            if isinstance(standard, dict)
+            else None
+        )
+        return (
+            "executable"
+            if isinstance(operation, dict)
+            and operation.get("coverage_status") == "executable"
             else "blocked"
         )
     if opcode == "DefineDynamicValue":
@@ -18898,7 +19174,7 @@ def _standard_trigger_ability_payload(value: dict[str, Any]) -> dict[str, Any]:
 def _standard_define_dynamic_value_payload(value: dict[str, Any]) -> dict[str, Any]:
     value_expr = _numeric_expr_summary(value.get("ResetValue"))
     if value_expr.get("kind") == "missing":
-        value_expr = {"kind": "fixed", "value": 0.0, "source_basis": "tbgd_define_dynamic_value_missing_reset_defaults_to_zero"}
+        value_expr = numeric_fixed(0.0)
     value_name = _value_field(value.get("DynamicKey"))
     target_alias = _target_alias(value.get("TargetType")) or "ModifierOwnerEntity"
     payload = {
@@ -18909,6 +19185,11 @@ def _standard_define_dynamic_value_payload(value: dict[str, Any]) -> dict[str, A
         "value_name": value_name,
         "hash": None,
         "value_expr": value_expr,
+        "value_source_basis": (
+            "tbgd_define_dynamic_value_missing_reset_defaults_to_zero"
+            if "ResetValue" not in value
+            else "explicit_tbgd_field"
+        ),
         "raw_formula_fields": {
             "DynamicKey": _json_safe(value.get("DynamicKey")),
             "ResetValue": _json_safe(value.get("ResetValue")),
@@ -18979,6 +19260,7 @@ def _standard_set_dynamic_value_by_modifier_value_payload(
         "target_hash": None,
         "target_alias": target_alias,
         "source_target_alias": source_target_alias,
+        "context_scope": _value_field(value.get("ContextScope")),
         "multiplier": multiplier,
         "raw_formula_fields": {
             "ModifierName": _json_safe(value.get("ModifierName")),
@@ -19003,6 +19285,181 @@ def _standard_set_dynamic_value_by_modifier_value_payload(
     elif not _numeric_expr_can_be_runtime_bound(multiplier):
         payload["blocked_reason"] = str(multiplier.get("reason") or "fixed_or_bound_multiplier_required")
     return payload
+
+
+def _standard_generic_dynamic_value_payload(
+    value: dict[str, Any],
+    opcode: str,
+    source_modifier_name: str,
+) -> dict[str, Any]:
+    destination_fields = (
+        ("ToDynamicKey",)
+        if opcode == "SetDynamicValueByCopying"
+        else ("WriteToKey",)
+        if opcode == "SetDynamicValueByWaveStageCount"
+        else (
+            "DynamicKey",
+            "Key",
+            "TargetDynamicKey",
+            "TargetKey",
+            "DynamicFloatSet",
+        )
+    )
+    destination_key = _first_dynamic_string(
+        value,
+        destination_fields,
+    )
+    target_field = (
+        "ToTargetType"
+        if opcode == "SetDynamicValueByCopying"
+        else "WriteTargetType"
+        if opcode == "SetDynamicValueByWeaknessCount"
+        else "TargetType"
+    )
+    target_alias = _target_alias(value.get(target_field)) or "ModifierOwnerEntity"
+    source_target_alias = (
+        _target_alias(value.get("FromTargetType"))
+        if opcode == "SetDynamicValueByCopying"
+        else _target_alias(value.get("ReadTargetType"))
+        or _target_alias(value.get("SourceTargetType"))
+        or target_alias
+    )
+    property_name = (
+        _first_dynamic_string(value, ("Value",))
+        if opcode in {
+            "SetDynamicValueByProperty",
+            "SetDynamicValueByPropertyClientOnly",
+        }
+        else _first_dynamic_string(
+            value,
+            ("PropertyName", "PropertyType", "DataProperty", "AbilityProperty"),
+        )
+    )
+    status_identity = _first_dynamic_string(
+        value,
+        ("ModifierName", "StatusID", "StatusType", "StatusName"),
+    )
+    resource_name = _first_dynamic_string(
+        value,
+        ("ResourceName", "ResourceType", "BPType"),
+    )
+    source_key = _first_dynamic_string(
+        value,
+        (
+            "FromDynamicKey",
+            "SourceDynamicKey",
+            "SourceKey",
+            "ReadDynamicKey",
+            "CopyKey",
+        ),
+    )
+    resource_name = (
+        "skill_points"
+        if opcode == "SetDynamicValueByCurrentBP"
+        else "max_skill_points"
+        if opcode == "SetDynamicValueByMaxBP"
+        else resource_name
+    )
+    multiplier = (
+        _numeric_expr_summary(value.get("Multiplier"))
+        if "Multiplier" in value
+        else None
+    )
+    payload: dict[str, Any] = {
+        "kind": "dynamic_value_store",
+        "opcode": opcode,
+        "target_alias": target_alias,
+        "status_scope": _value_field(
+            value.get("TargetContextScope")
+            if opcode == "SetDynamicValueByCopying"
+            else value.get("ContextScope")
+        ),
+        "value_name": destination_key,
+        "hash": _value_field(value.get("Hash")),
+        "operation": _value_field(value.get("Operation")),
+        "operand_parameters": {
+            "source_target_alias": source_target_alias,
+            "source_key": source_key,
+            "source_hash": _value_field(value.get("SourceHash")),
+            "source_modifier": _first_dynamic_string(
+                value,
+                ("FromModifierName",),
+            ),
+            "property_name": property_name,
+            "status_identity": status_identity,
+            "count_mode": (
+                "debuff"
+                if opcode == "SetDynamicValueByStatusCount"
+                else None
+            ),
+            "modifier_name": _value_field(value.get("ModifierName"))
+            or source_modifier_name,
+            "modifier_value_name": _value_field(value.get("ValueType")),
+            "resource_name": resource_name,
+            "event_property": _value_field(value.get("Property")),
+            "value_type": _value_field(value.get("ValueType")),
+            "base_types": _json_safe(value.get("BaseTypeList")),
+            "alive_only": _json_safe(value.get("AliveOnly")),
+            "predicate": _json_safe(value.get("Predicate")),
+            "attacker_alias": _target_alias(value.get("Attacker"))
+            or _target_alias(value.get("AttackerTargetType")),
+            "defender_alias": _target_alias(value.get("DefenderTargetType")),
+            "attack_type": _value_field(value.get("AttackType")),
+            "damage_type": _value_field(value.get("DamageType")),
+            "force_stance_break_ratio": _json_safe(
+                value.get("ForceStanceBreakRatio")
+            ),
+            "stance_value": _json_safe(value.get("StanceValue")),
+            "add_force_stance_damage": _json_safe(
+                value.get("AddForceStanceDamageFlag")
+            ),
+            "skill_trigger_key": _json_safe(value.get("SkillTriggerKey")),
+            "status_flag": _value_field(value.get("Flag")),
+            "variate_type": _value_field(value.get("VariateType")),
+            "minimum": (
+                _numeric_expr_summary(value.get("Min"))
+                if "Min" in value
+                else None
+            ),
+            "maximum": (
+                _numeric_expr_summary(value.get("Max"))
+                if "Max" in value
+                else None
+            ),
+            "integer_only": _json_safe(value.get("IsInt")),
+            "weakness_filter": _json_safe(value.get("WeaknessFilter")),
+            "write_target_alias": _target_alias(value.get("WriteTargetType")),
+            "wave_stage_source": (
+                "battle_wave_stage"
+                if opcode == "SetDynamicValueByWaveStageCount"
+                else None
+            ),
+        },
+    }
+    if opcode == "SetModifierDynamicValue":
+        payload["value_expr"] = _numeric_expr_summary(value.get("NewValue"))
+        payload["status_scope"] = "ContextModifier"
+    if opcode == "SetDynamicValueClientOnly":
+        payload["value_expr"] = _numeric_expr_summary(value.get("Value"))
+        payload["blocked_reason"] = "client_only_dynamic_value"
+    elif opcode == "SetDynamicValueByPropertyClientOnly":
+        payload["blocked_reason"] = "client_only_dynamic_value"
+    if multiplier is not None:
+        payload["multiplier"] = multiplier
+    if target_alias not in EXECUTABLE_TARGET_ALIASES | {"LevelEntity"}:
+        payload["blocked_reason"] = f"unsupported_target_alias:{target_alias}"
+    return payload
+
+
+def _first_dynamic_string(
+    value: dict[str, Any],
+    fields: tuple[str, ...],
+) -> str | None:
+    for field_name in fields:
+        field_value = _value_field(value.get(field_name))
+        if isinstance(field_value, str) and field_value:
+            return field_value
+    return None
 
 
 def _dynamic_value_bindings(value: Any) -> dict[str, Any]:
