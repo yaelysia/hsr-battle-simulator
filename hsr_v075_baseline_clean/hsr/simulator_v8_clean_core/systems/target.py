@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
-from typing import Any
+from typing import Any, Literal
 
 from ..core.model import BattleState, JSONValue, RNGEvent, TargetResolution
+from ..immutable_json import freeze_json, thaw_json
 from ..rules.evaluator import (
     EvaluationContext,
     NumericEvaluationContext,
@@ -92,7 +94,7 @@ class TargetEnumerationResult:
 
 @dataclass(frozen=True)
 class TargetExpressionResult:
-    ok: bool
+    status: Literal["resolved", "blocked"]
     target_ids: tuple[str, ...] = ()
     blocked_reason: str = ""
     expression_id: str = ""
@@ -101,17 +103,51 @@ class TargetExpressionResult:
     metadata: dict[str, JSONValue] = field(default_factory=dict)
     rng_events: tuple[RNGEvent, ...] = ()
 
+    def __post_init__(self) -> None:
+        if self.status not in {"resolved", "blocked"}:
+            raise ValueError("target expression result status is invalid")
+        if isinstance(self.target_ids, str):
+            raise TypeError("target identifiers must be an iterable of strings")
+        target_ids = tuple(self.target_ids)
+        if any(not isinstance(target_id, str) or not target_id for target_id in target_ids):
+            raise ValueError("resolved target identifiers must be non-empty strings")
+        object.__setattr__(self, "target_ids", target_ids)
+        if not isinstance(self.metadata, Mapping):
+            raise TypeError("target result metadata must be an object")
+        object.__setattr__(self, "metadata", freeze_json(dict(self.metadata)))
+        if len(self.target_ids) != len(set(self.target_ids)):
+            raise ValueError("resolved target identifiers must be unique")
+        if not isinstance(self.rng_events, tuple):
+            raise TypeError("target result RNG events must be a tuple")
+        if any(type(event) is not RNGEvent for event in self.rng_events):
+            raise TypeError("target result RNG events must be exact RNGEvent values")
+        if self.status == "resolved":
+            if self.blocked_reason:
+                raise ValueError("resolved target result carries a blocked payload")
+        elif self.target_ids or self.rng_events or not self.blocked_reason:
+            raise ValueError("blocked target result must carry only a reason")
+
+    @property
+    def resolved(self) -> bool:
+        return self.status == "resolved"
+
+    @property
+    def blocked(self) -> bool:
+        return self.status == "blocked"
+
     def to_json(self) -> dict[str, JSONValue]:
         return {
-            "ok": self.ok,
+            "status": self.status,
             "target_ids": list(self.target_ids),
             "blocked_reason": self.blocked_reason,
             "expression_id": self.expression_id,
             "expression_kind": self.expression_kind,
             "alias": self.alias,
-            "metadata": self.metadata,
+            "metadata": thaw_json(self.metadata),
             "rng_events": [event.to_json() for event in self.rng_events],
         }
+
+
 
 
 class TargetSystem:
@@ -144,7 +180,7 @@ class TargetSystem:
         if expression.coverage_status != "executable":
             reason = expression.blocked_reason or f"target_expression_not_executable:{expression.coverage_status}"
             return TargetExpressionResult(
-                ok=False,
+                status="blocked",
                 blocked_reason=reason,
                 expression_id=expression.target_expression_id,
                 expression_kind=expression.expression_kind,
@@ -168,16 +204,15 @@ class TargetSystem:
         metadata["resolution_steps"] = result.steps
         if result.blocked_reason:
             return TargetExpressionResult(
-                ok=False,
+                status="blocked",
                 blocked_reason=result.blocked_reason,
                 expression_id=expression.target_expression_id,
                 expression_kind=expression.expression_kind,
                 alias=expression.alias,
                 metadata=metadata,
-                rng_events=result.rng_events,
             )
         return TargetExpressionResult(
-            ok=True,
+            status="resolved",
             target_ids=result.target_ids,
             expression_id=expression.target_expression_id,
             expression_kind=expression.expression_kind,
@@ -202,6 +237,18 @@ class TargetSystem:
     ) -> TargetExpressionResult:
         """Resolve an already-typed inline node for condition consumers."""
 
+        metadata: dict[str, JSONValue] = {
+            "target_expression_node": node.to_json(),
+            "resolution_steps": [],
+        }
+        if node.runtime_blocked_reason:
+            return TargetExpressionResult(
+                status="blocked",
+                blocked_reason=node.runtime_blocked_reason,
+                expression_kind=node.expression_kind,
+                alias=node.alias,
+                metadata=metadata,
+            )
         result = _resolve_expression_payload(
             state,
             node,
@@ -216,21 +263,17 @@ class TargetSystem:
             dynamic_values=dynamic_values,
             binding_sources=binding_sources,
         )
-        metadata: dict[str, JSONValue] = {
-            "target_expression_node": node.to_json(),
-            "resolution_steps": result.steps,
-        }
+        metadata["resolution_steps"] = result.steps
         if result.blocked_reason:
             return TargetExpressionResult(
-                ok=False,
+                status="blocked",
                 blocked_reason=result.blocked_reason,
                 expression_kind=node.expression_kind,
                 alias=node.alias,
                 metadata=metadata,
-                rng_events=result.rng_events,
             )
         return TargetExpressionResult(
-            ok=True,
+            status="resolved",
             target_ids=result.target_ids,
             expression_kind=node.expression_kind,
             alias=node.alias,
@@ -275,7 +318,7 @@ class TargetSystem:
                 dynamic_values=dynamic_values,
                 binding_sources=binding_sources,
             )
-            if result.ok:
+            if result.resolved:
                 resolved[key] = result.target_ids
             else:
                 errors[key] = result.blocked_reason
@@ -987,6 +1030,14 @@ def _resolve_target_query(
     entity_type = raw.query_entity_type_mask
     if entity_type != "Servant":
         return _inline_result(path, "TargetQuery", "", (), f"target_query_entity_type_not_supported:{entity_type or 'missing'}")
+    if raw.query_alive_state_mask:
+        return _inline_result(
+            path,
+            "TargetQuery",
+            "",
+            (),
+            f"target_query_alive_state_mask_deferred_s5b:{raw.query_alive_state_mask}",
+        )
     candidates, reason = _servant_entity_list(state)
     steps: list[JSONValue] = [
         {
@@ -1170,6 +1221,43 @@ def _resolve_filter_expression(
     condition = raw.predicate
     if condition is None:
         return _inline_result(path, "TargetFilter", "", (), "target_filter_predicate_missing", steps)
+    return _resolve_filter_candidates(
+        state,
+        condition,
+        caster_id=caster_id,
+        owner_id=owner_id,
+        param_entity_id=param_entity_id,
+        current_action_target_id=current_action_target_id,
+        target_resolution=target_resolution,
+        event_payload=event_payload,
+        dynamic_values=dynamic_values,
+        binding_sources=binding_sources,
+        candidate_targets=candidate_targets,
+        path=path,
+        steps=tuple(steps),
+        rng_events=source_result.rng_events if explicit_target is not None else (),
+    )
+
+
+def _resolve_filter_candidates(
+    state: BattleState,
+    condition: ConditionIR,
+    *,
+    caster_id: str,
+    owner_id: str | None,
+    param_entity_id: str | None,
+    current_action_target_id: str | None,
+    target_resolution: TargetResolution | None,
+    event_payload: dict[str, JSONValue],
+    dynamic_values: dict[str, float] | None,
+    binding_sources: tuple[dict[str, JSONValue], ...],
+    candidate_targets: tuple[str, ...],
+    path: str,
+    steps: tuple[JSONValue, ...],
+    rng_events: tuple[RNGEvent, ...],
+) -> _ExpressionResolution:
+    if not candidate_targets:
+        return _inline_result(path, "TargetFilter", "", (), "target_filter_candidate_missing", list(steps), rng_events)
     evaluator = RuleEvaluator()
     selected: list[str] = []
     condition_results: list[JSONValue] = []
@@ -1217,7 +1305,7 @@ def _resolve_filter_expression(
                 (),
                 f"target_filter_condition_blocked:{result.reason}",
                 [*steps, {"condition_results": condition_results}],
-                source_result.rng_events if explicit_target is not None else (),
+                rng_events,
             )
         if result.result:
             selected.append(candidate_id)
@@ -1228,7 +1316,7 @@ def _resolve_filter_expression(
         tuple(selected),
         "",
         [*steps, {"condition_results": condition_results}],
-        source_result.rng_events if explicit_target is not None else (),
+        rng_events,
     )
 
 
@@ -1273,12 +1361,9 @@ def _resolve_retarget_expression(
     steps = list(source_result.steps)
     rng_events = list(source_result.rng_events)
     if raw.predicate is not None:
-        filter_result = _resolve_filter_expression(
+        filter_result = _resolve_filter_candidates(
             state,
-            TargetExpressionNodeIR(
-                expression_kind="TargetFilter",
-                predicate=raw.predicate,
-            ),
+            raw.predicate,
             caster_id=caster_id,
             owner_id=owner_id,
             param_entity_id=param_entity_id,
@@ -1289,22 +1374,23 @@ def _resolve_retarget_expression(
             binding_sources=binding_sources,
             candidate_targets=candidate_targets,
             path=f"{path}.predicate",
+            steps=tuple(steps),
+            rng_events=tuple(rng_events),
         )
-        steps.extend(filter_result.steps)
-        rng_events.extend(filter_result.rng_events)
         if filter_result.blocked_reason:
-            return _inline_result(path, "Retarget", "", (), filter_result.blocked_reason, steps, tuple(rng_events))
+            return _inline_result(
+                path,
+                "Retarget",
+                "",
+                (),
+                filter_result.blocked_reason,
+                list(filter_result.steps),
+                filter_result.rng_events,
+            )
         candidate_targets = filter_result.target_ids
+        steps = list(filter_result.steps)
+        rng_events = list(filter_result.rng_events)
     max_number_expr = raw.max_number_expr
-    if (
-        isinstance(max_number_expr, dict)
-        and max_number_expr.get("kind") == "missing"
-    ):
-        # TBGD omits MaxNumber for the ordinary Retarget form.  The typed
-        # node retains that omission as evidence; runtime applies the schema
-        # default (the whole deterministic set, or the one result selected by
-        # ByRandom) instead of attempting to evaluate a synthetic number.
-        max_number_expr = None
     max_number, max_step, max_reason = _positive_int_from_numeric(
         max_number_expr or None,
         dynamic_values=dynamic_values,
@@ -1897,7 +1983,7 @@ def _ids_from_registry_value(value: JSONValue) -> tuple[str, ...]:
 def _resolve_sort_expression(
     state: BattleState,
     candidate_targets: tuple[str, ...],
-    payload: TargetExpressionNodeIR,
+    payload: Any,
     *,
     expression_kind: str,
     path: str,
@@ -2007,7 +2093,7 @@ def _break_damage_added_ratio_sort_value(unit: Any, sort_key: str) -> tuple[floa
 
 def _resolve_take_expression(
     candidate_targets: tuple[str, ...],
-    payload: TargetExpressionNodeIR,
+    payload: Any,
     *,
     expression_kind: str,
     dynamic_values: dict[str, float] | None,
@@ -2079,7 +2165,7 @@ def _resolve_take_expression(
 def _resolve_adjacent_expression(
     state: BattleState,
     candidate_targets: tuple[str, ...],
-    payload: TargetExpressionNodeIR,
+    payload: Any,
     *,
     path: str,
 ) -> _ExpressionResolution:
@@ -2695,7 +2781,17 @@ def _apply_alias_operation(
     return _inline_result(path, "TargetAliasOperation", "", (), f"target_alias_operation_not_supported:{kind or 'missing'}")
 
 
-def _typed_alias_operation_node(operation: dict[str, JSONValue]) -> TargetExpressionNodeIR:
+@dataclass(frozen=True)
+class _AliasOperationPayload:
+    adjacent_side: str = ""
+    count_expr: Mapping[str, JSONValue] = field(default_factory=dict)
+    index_type: str = ""
+    index_expr: Mapping[str, JSONValue] = field(default_factory=dict)
+    sort_key: str = ""
+    highest_first: bool = False
+
+
+def _typed_alias_operation_node(operation: dict[str, JSONValue]) -> _AliasOperationPayload:
     kind = str(operation.get("kind") or "")
     numeric = operation.get("IndexValue") if kind == "TargetIndex" else operation.get("Count")
     numeric_expr: dict[str, JSONValue] = {}
@@ -2706,13 +2802,11 @@ def _typed_alias_operation_node(operation: dict[str, JSONValue]) -> TargetExpres
             "value": float(numeric),
             "supported": True,
         }
-    return TargetExpressionNodeIR(
-        expression_kind=kind,
+    return _AliasOperationPayload(
         adjacent_side=str(operation.get("SideType") or "Both"),
         count_expr=numeric_expr if kind == "TargetTake" else {},
         index_type=str(operation.get("IndexType") or "IndexStrict"),
         index_expr=numeric_expr if kind == "TargetIndex" else {},
-        sort_kind=kind if kind.startswith("TargetSort") else "",
         sort_key=str(
             operation.get("PropertyType")
             or operation.get("PropertyRatioType")

@@ -14,7 +14,7 @@ from ..ir_types import IRSource, JSONValue
 NUMERIC_EXPRESSION_SCHEMA = "hsr.numeric_expression.v1"
 NUMERIC_OPERAND_SCHEMA = "hsr.numeric_operand.v1"
 DYNAMIC_VALUE_OPERATION_SCHEMA = "hsr.dynamic_value_operation.v1"
-TARGET_EXPRESSION_NODE_SCHEMA = "hsr.target_expression_node.v1"
+TARGET_EXPRESSION_NODE_SCHEMA = "hsr.target_expression_node.v2"
 CONDITION_EXPRESSION_NODE_SCHEMA = "hsr.condition_expression_node.v1"
 
 

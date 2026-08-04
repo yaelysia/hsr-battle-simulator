@@ -70,7 +70,7 @@ manual_validation_task_expansion=false
 
 - 当前来源存在无法证明终止的 gameplay loop：保持 blocked 并暂停阶段，不设任意 cap。
 - 模板引用缺失：source gap；不得复制相邻模板内容。
-- projectile 需要真实战斗距离公式且来源存在：交 S5 relation 扩展；纯视觉距离不实现。
+- projectile 需要真实战斗距离公式且来源存在：退回 S5B relation 扩展；纯视觉距离不实现。
 - effect 领域缺口记录给 S10-S17，S8 只证明 graph 能正确到达并原子阻断。
 
 ## 拟改范围

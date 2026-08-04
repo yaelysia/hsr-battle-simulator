@@ -10,7 +10,7 @@ from dataclasses import dataclass, field, replace
 from hashlib import sha256
 from operator import attrgetter
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, cast
 
 from ..dynamic_key_hash import tbgd_dynamic_key_hash
 from .coverage import ability_task_execution_mode, classify_opcode
@@ -55,7 +55,7 @@ from ..equipment.models import (
     RelicSetThresholdIR,
     make_equipment_source,
 )
-from ..immutable_json import thaw_json
+from ..immutable_json import freeze_json, thaw_json
 from ..resource_event_contract import (
     resource_callback_runtime_sources,
     resource_scope_for_callback,
@@ -2175,15 +2175,9 @@ class TBGDLowering:
 
     def _lower_global_target_expressions(self) -> list[TargetExpressionIR]:
         alias_relative = "Config/GlobalConfig/TargetAliasConfig.json"
-        operation_relative = "Config/GlobalConfig/TargetOperationConfig.json"
         alias_path = self.tbgd_root / alias_relative
-        operation_path = self.tbgd_root / operation_relative
         alias_config = _json_object_from_path(alias_path)
-        operation_config = _json_object_from_path(operation_path)
         alias_dict = alias_config.get("AliasDict") if isinstance(alias_config.get("AliasDict"), dict) else {}
-        operation_dict = (
-            operation_config.get("OperationDict") if isinstance(operation_config.get("OperationDict"), dict) else {}
-        )
         expressions: list[TargetExpressionIR] = []
         for alias, raw in sorted(alias_dict.items()):
             if not isinstance(alias, str) or not isinstance(raw, dict):
@@ -2196,66 +2190,17 @@ class TBGDLowering:
                     "source_path": alias_relative,
                     "target_config_path": alias_relative,
                     "alias": alias,
+                    "json_path": f"$.AliasDict.{alias}",
                 },
             )
             expression = _target_expression_from_raw(
                 raw,
-                field_name=f"AliasDict.{alias}",
+                field_name="$self",
                 expression_id=f"target_expression:global_alias:{_safe_id(alias)}",
                 source=source,
             )
             if expression is not None:
                 expressions.append(expression)
-        safe_bases = sorted(alias for alias in P1_6_SAFE_DOT_TARGET_BASE_ALIASES if alias in alias_dict)
-        safe_operations = sorted(operation for operation in P1_6_SAFE_DOT_TARGET_OPERATIONS if operation in operation_dict)
-        for base_alias in safe_bases:
-            for operation in safe_operations:
-                raw = {"$type": "RPG.GameCore.TargetAlias", "Alias": f"{base_alias}.{operation}"}
-                coverage_status, blocked_reason, admission_batch = _target_expression_admission(
-                    "TargetAlias",
-                    raw["Alias"],
-                    raw,
-                )
-                expressions.append(
-                    TargetExpressionIR(
-                        target_expression_id=(
-                            "target_expression:global_alias_chain:"
-                            f"{_safe_id(base_alias)}:{_safe_id(operation)}"
-                        ),
-                        expression_kind="TargetAlias",
-                        alias=raw["Alias"],
-                        payload={
-                            "field_name": "TargetAliasConfig.AliasDict + TargetOperationConfig.OperationDict",
-                            "audit_raw": _json_safe(raw),
-                        },
-                        node=_target_expression_execution_node(raw),
-                        source=IRSource(
-                            source_path=f"{alias_relative}+{operation_relative}",
-                            raw_type="TargetAliasOperationChain",
-                            raw_id=raw["Alias"],
-                            evidence={
-                                "source_path": alias_relative,
-                                "target_config_path": alias_relative,
-                                "operation_config_path": operation_relative,
-                                "base_alias": base_alias,
-                                "operation": operation,
-                                "base_alias_raw_type": _short_gamecore_type(
-                                    alias_dict.get(base_alias, {}).get("$type")
-                                    if isinstance(alias_dict.get(base_alias), dict)
-                                    else ""
-                                ),
-                                "operation_raw_type": _short_gamecore_type(
-                                    operation_dict.get(operation, {}).get("$type")
-                                    if isinstance(operation_dict.get(operation), dict)
-                                    else ""
-                                ),
-                            },
-                        ),
-                        coverage_status=coverage_status,
-                        blocked_reason=blocked_reason,
-                        admission_batch=admission_batch,
-                    )
-                )
         return expressions
 
     def _lower_combatant_profiles(self) -> list[CombatantProfileIR]:
@@ -4888,6 +4833,11 @@ class TBGDLowering:
                 "task_index": task_index,
                 "task_path": task_path,
                 "ability_index": ability_index,
+                "json_path": (
+                    f"$.AbilityList[{ability_index}].{task_path}"
+                    if isinstance(ability_index, int)
+                    else ""
+                ),
                 "source_opcode": source_opcode,
                 "branch": branch,
                 "parent_task_id": parent_task_id,
@@ -5166,19 +5116,27 @@ class TBGDLowering:
         if not isinstance(predicate, dict):
             return None
         opcode = _short_gamecore_type(predicate.get("$type"))
+        condition_source = _condition_source_from_parent(source, "Predicate")
         payload = _condition_payload_with_tbgd_defaults(
             opcode,
-            _typed_condition_payload(_compact_payload(predicate), target_alias_registry),
+            _typed_condition_payload(
+                _compact_payload(predicate),
+                target_alias_registry,
+                source=condition_source,
+            ),
         )
-        status = "executable" if _condition_payload_executable(opcode, payload) else classify_opcode(opcode)
+        target_blocked_reason = _condition_payload_target_blocked_reason(payload)
+        status = "blocked" if target_blocked_reason else (
+            "executable" if _condition_payload_executable(opcode, payload) else classify_opcode(opcode)
+        )
         return ConditionIR(
             condition_id=f"condition:{task_id}:{opcode}",
             opcode=opcode,
             payload=payload,
-            source=source,
+            source=condition_source,
             coverage_status=status,
             expression_schema_version=CONDITION_EXPRESSION_NODE_SCHEMA,
-            blocked_reason="" if status == "executable" else f"condition_not_admitted:{opcode}",
+            blocked_reason="" if status == "executable" else target_blocked_reason or f"condition_not_admitted:{opcode}",
         )
 
     def _read_json_dict(self, relative_path: str) -> dict[str, Any] | None:
@@ -6058,12 +6016,18 @@ class TBGDLowering:
         *,
         ability_file_order: int,
         selected_equipment_sources: dict[int, IRSource] | None = None,
+        raw_document: Mapping[str, Any] | None = None,
     ) -> "_LoweredAbility":
         relative = relative_source_path(self.tbgd_root, path)
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            return _LoweredAbility()
+        if raw_document is None:
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                return _LoweredAbility()
+        elif isinstance(raw_document, Mapping):
+            data = raw_document
+        else:
+            raise TypeError("ability lowering raw document must be a mapping")
         modifier_maps = self._modifier_maps(
             data,
             selected_ability_indices=(
@@ -6192,6 +6156,7 @@ class TBGDLowering:
                     callback_id=callback_id,
                     event=event,
                     callback_index=callback_index,
+                    task_list_json_path=f"{callback_json_path}.CallbackConfig",
                     queue_priority_lookup=queue_priority_lookup,
                     source_context=callback_source_context,
                     task_templates=task_templates,
@@ -6594,6 +6559,7 @@ class TBGDLowering:
                 callback_id=callback_id,
                 event=event,
                 callback_index=callback_index,
+                task_list_json_path=branch_path,
                 queue_priority_lookup=queue_priority_lookup,
                 source_context=callback_source_context,
                 task_templates=task_templates,
@@ -6685,6 +6651,7 @@ class TBGDLowering:
         callback_id: str,
         event: str,
         callback_index: int,
+        task_list_json_path: str,
         queue_priority_lookup: dict[tuple[str, str], QueuePriorityIR],
         source_context: dict[str, Any] | None = None,
         task_templates: dict[str, tuple["_TaskListTemplateBinding", ...]] | None = None,
@@ -6702,7 +6669,7 @@ class TBGDLowering:
                 event=event,
                 callback_index=callback_index,
                 task_index=task_index,
-                task_path=f"CallbackConfig[{task_index}]",
+                task_path=f"{task_list_json_path}[{task_index}]",
                 branch="root",
                 parent_task_id="",
                 queue_priority_lookup=queue_priority_lookup,
@@ -6759,6 +6726,7 @@ class TBGDLowering:
             "task": _json_safe(raw_task),
             **schema_alias_evidence,
             **_json_safe(source_context or {}),
+            "json_path": task_path,
         }
         if opcode == "Retarget":
             evidence["retarget"] = _retarget_task_evidence(task)
@@ -6889,6 +6857,7 @@ class TBGDLowering:
         failed_task_ids: list[str] = []
         template_blocked_reason = ""
         child_task_list: Any = task.get("TaskList") or []
+        child_task_list_json_path = f"{task_path}.TaskList"
         child_template_stack = template_stack
         if opcode == "IncludeTaskListTemplate":
             template_name = task.get("Name")
@@ -6913,6 +6882,7 @@ class TBGDLowering:
             else:
                 binding = bindings[0]
                 child_task_list = list(binding.task_list)
+                child_task_list_json_path = f"{binding.json_path}.TaskList"
                 child_template_stack = (*template_stack, template_name)
                 evidence["task_list_template"] = {
                     "name": template_name,
@@ -6930,11 +6900,7 @@ class TBGDLowering:
                 event=event,
                 callback_index=callback_index,
                 task_index=child_index,
-                task_path=(
-                    f"{task_path}.Template[{task.get('Name')}].TaskList[{child_index}]"
-                    if opcode == "IncludeTaskListTemplate"
-                    else f"{task_path}.TaskList[{child_index}]"
-                ),
+                task_path=f"{child_task_list_json_path}[{child_index}]",
                 branch=f"{branch}:task_list",
                 parent_task_id=task_id,
                 queue_priority_lookup=queue_priority_lookup,
@@ -7131,12 +7097,14 @@ class TBGDLowering:
         equipment_source_admitted = bool(
             source.evidence.get("equipment_ability_source_admitted")
         )
+        condition_source = _condition_source_from_parent(source, "Predicate")
         payload = _condition_payload_with_tbgd_defaults(
             opcode,
             _typed_condition_payload(
                 _compact_payload(predicate),
                 equipment_scope=equipment_source_admitted,
                 damage_tag_registry=self._damage_tag_registry,
+                source=condition_source,
             ),
         )
         family_stage = (
@@ -7144,7 +7112,11 @@ class TBGDLowering:
             if equipment_source_admitted
             else "unknown"
         )
-        if equipment_source_admitted and family_stage not in {"s7", "s8"}:
+        target_blocked_reason = _condition_payload_target_blocked_reason(payload)
+        if target_blocked_reason:
+            status = "blocked"
+            blocked_reason = target_blocked_reason
+        elif equipment_source_admitted and family_stage not in {"s7", "s8"}:
             status = "blocked"
             blocked_reason = (
                 "equipment_condition_family_unclassified"
@@ -7163,7 +7135,7 @@ class TBGDLowering:
             condition_id=f"condition:{source.source_path}:{source.raw_id}:{source.evidence.get('callback_index')}:{condition_path}:{opcode}",
             opcode=opcode,
             payload=payload,
-            source=source,
+            source=condition_source,
             coverage_status=status,
             expression_schema_version=CONDITION_EXPRESSION_NODE_SCHEMA,
             blocked_reason=blocked_reason,
@@ -14852,40 +14824,6 @@ def _attach_target_expressions_to_effect_payload(
             "admission_batch": expression.admission_batch,
             "source": expression.source.to_json(),
         }
-    opcode = _short_gamecore_type(task.get("$type"))
-    implicit_target_semantics = {
-        "RemoveSelfModifier": "RemoveSelfModifier.current_modifier_owner",
-        "AttachEntityDeparted": "AttachEntityDeparted.current_modifier_owner",
-    }
-    if opcode in implicit_target_semantics and "TargetType" not in refs_by_field:
-        implicit_source = IRSource(
-            source_path=source.source_path,
-            raw_type=source.raw_type,
-            raw_id=source.raw_id,
-            evidence={
-                **source.evidence,
-                "implicit_target_semantics": implicit_target_semantics[opcode],
-                "implicit_target_source_opcode": opcode,
-                "implicit_target_raw_field_absent": True,
-            },
-        )
-        expression = _target_expression_from_raw(
-            {"$type": "RPG.GameCore.TargetAlias", "Alias": "ModifierOwnerEntity"},
-            field_name=f"implicit:{implicit_target_semantics[opcode]}",
-            expression_id=f"target_expression:{effect_id}:implicit_modifier_owner",
-            source=implicit_source,
-        )
-        if expression is not None:
-            expressions.append(expression)
-            refs_by_field["TargetType"] = {
-                "target_expression_id": expression.target_expression_id,
-                "expression_kind": expression.expression_kind,
-                "alias": expression.alias,
-                "coverage_status": expression.coverage_status,
-                "blocked_reason": expression.blocked_reason,
-                "admission_batch": expression.admission_batch,
-                "source": expression.source.to_json(),
-            }
     if not expressions:
         return payload, []
     updated = dict(payload)
@@ -14945,24 +14883,39 @@ def _nested_target_expression_fields(
 
 
 def _target_info_expression_fields(value: Any) -> tuple[tuple[str, dict[str, Any]], ...]:
-    if isinstance(value, str) and _target_alias_admitted(value):
-        return (("TargetInfo", {"$type": "RPG.GameCore.TargetAlias", "Alias": value}),)
+    # A string alias is an implicit engine input, not a raw target-expression
+    # node.  It must remain an alias in the surrounding payload; creating a
+    # synthetic TargetAlias here would give it a source path that does not
+    # exist in TBGD.
+    if isinstance(value, str):
+        return ()
     if not isinstance(value, dict):
         return ()
     target_type = value.get("TargetType")
     if _is_target_expression_node(target_type):
         assert isinstance(target_type, dict)
         return (("TargetInfo.TargetType", target_type),)
-    if isinstance(target_type, str) and _target_alias_admitted(target_type):
-        return (("TargetInfo.TargetType", {"$type": "RPG.GameCore.TargetAlias", "Alias": target_type}),)
+    if isinstance(target_type, str):
+        return ()
     return ()
 
 
 def _is_target_expression_node(value: Any) -> bool:
     if not isinstance(value, dict):
         return False
-    node_type = str(value.get("$type") or "")
-    return node_type.startswith("RPG.GameCore.Target") or node_type == "RPG.GameCore.Retarget"
+    node_type = value.get("$type")
+    if node_type is not None and not isinstance(node_type, str):
+        return True
+    return isinstance(node_type, str) and (
+        node_type.startswith("RPG.GameCore.Target") or node_type == "RPG.GameCore.Retarget"
+    )
+
+
+def _target_raw_expression_kind(raw: dict[str, Any]) -> str:
+    node_type = raw.get("$type")
+    if node_type is not None and not isinstance(node_type, str):
+        return "UnknownTargetExpression"
+    return _target_expression_kind(node_type or "", raw)
 
 
 def _target_expression_from_raw(
@@ -14975,35 +14928,96 @@ def _target_expression_from_raw(
     if not _is_target_expression_node(value):
         return None
     assert isinstance(value, dict)
-    node_type = str(value.get("$type") or "")
-    expression_kind = _target_expression_kind(node_type, value)
+    # A typed runtime node is only valid when its parent can point to the
+    # exact raw location.  Older lowering callers sometimes have only a
+    # logical task label; silently manufacturing a JSON path for those would
+    # make the result executable without source lineage.
+    if not _has_raw_json_path(source):
+        return None
+    expression_kind = _target_raw_expression_kind(value)
     alias = _target_alias(value) or ""
-    coverage_status, blocked_reason, admission_batch = _target_expression_admission(expression_kind, alias, value)
+    target_source = _target_expression_source(
+        source,
+        expression_id=expression_id,
+        field_name=field_name,
+        expression_kind=expression_kind,
+    )
+    coverage_status, blocked_reason, admission_batch = _target_expression_admission(
+        expression_kind,
+        alias,
+        value,
+        source=target_source,
+    )
+    node = _target_expression_execution_node(value, target_source)
+    node_blocked_reason = _target_node_contract_blocked_reason(node)
+    if node_blocked_reason:
+        coverage_status = "blocked"
+        blocked_reason = node_blocked_reason
     return TargetExpressionIR(
         target_expression_id=expression_id,
         expression_kind=expression_kind,
         alias=alias,
-        payload={
-            "field_name": field_name,
-            "audit_raw": _json_safe(value),
-        },
-        node=_target_expression_execution_node(value),
-        source=IRSource(
-            source_path=source.source_path,
-            raw_type="TargetExpression",
-            raw_id=expression_id,
-            evidence={
-                **source.evidence,
-                "target_expression_field": field_name,
-                "target_expression_kind": expression_kind,
-                "target_alias": alias,
-                "source_raw_type": source.raw_type,
-                "source_raw_id": source.raw_id,
-            },
-        ),
+        node=node,
+        source=target_source,
         coverage_status=coverage_status,
         blocked_reason=blocked_reason,
         admission_batch=admission_batch,
+    )
+
+
+def _has_raw_json_path(source: IRSource) -> bool:
+    json_path = source.evidence.get("json_path")
+    return (
+        isinstance(source.source_path, str)
+        and bool(source.source_path)
+        and isinstance(json_path, str)
+        and bool(json_path)
+        and json_path.startswith("$")
+    )
+
+
+def _target_node_contract_blocked_reason(node: TargetExpressionNodeIR) -> str:
+    if node.runtime_blocked_reason:
+        return node.runtime_blocked_reason
+    if node.expression_kind == "TargetUnsupported":
+        return str(node.payload["blocked_reason"])
+    for child in node.children:
+        reason = _target_node_contract_blocked_reason(child)
+        if reason:
+            return reason
+    for child in (node.candidate, node.target, node.query_target, node.query_compare):
+        if child is not None:
+            reason = _target_node_contract_blocked_reason(child)
+            if reason:
+                return reason
+    if node.predicate is not None and node.predicate.coverage_status != "executable":
+        return node.predicate.blocked_reason or "target_predicate_not_executable"
+    return ""
+
+
+def _target_expression_source(
+    source: IRSource,
+    *,
+    expression_id: str,
+    field_name: str,
+    expression_kind: str,
+) -> IRSource:
+    evidence = dict(source.evidence)
+    base_path = evidence.get("json_path")
+    if not isinstance(base_path, str) or not base_path.startswith("$"):
+        raise ValueError("target expression source requires an exact raw JSON path")
+    json_path = base_path if field_name == "$self" else f"{base_path}.{field_name}"
+    return IRSource(
+        source_path=source.source_path,
+        raw_type="TargetExpression",
+        raw_id=expression_id,
+        evidence={
+            "json_path": json_path,
+            "source_raw_type": source.raw_type,
+            "source_raw_id": source.raw_id,
+            "target_expression_field": field_name,
+            "target_expression_kind": expression_kind,
+        },
     )
 
 
@@ -15015,15 +15029,21 @@ def _target_expression_kind(node_type: str, value: dict[str, Any]) -> str:
     return "UnknownTargetExpression"
 
 
-def _target_expression_admission(kind: str, alias: str, raw: dict[str, Any]) -> tuple[str, str, str]:
+def _target_expression_admission(
+    kind: str,
+    alias: str,
+    raw: dict[str, Any],
+    *,
+    source: IRSource | None = None,
+) -> tuple[str, str, str]:
     if kind == "TargetAlias" and _target_alias_admitted(alias):
         return "executable", "", "p1_6_target_pipeline" if _target_alias_chain_admitted(alias) else "v0_288_target_alias_core"
     if kind in {"TargetConcat", "TargetSequence", "TargetFilter", "Retarget"}:
-        reason = _target_expression_runtime_blocked_reason(raw)
+        reason = _target_expression_runtime_blocked_reason(raw, source=source)
         if not reason:
             return "executable", "", "p1_6_target_pipeline" if _target_expression_uses_p1_6_node(raw) else "v0_289_target_sequence_filter_retarget"
         return "blocked", reason, "p1_6_target_pipeline" if _target_expression_uses_p1_6_node(raw) else "v0_289_target_sequence_filter_retarget"
-    reason = _target_expression_runtime_blocked_reason(raw)
+    reason = _target_expression_runtime_blocked_reason(raw, source=source)
     if not reason and _target_expression_kind_admitted(kind, raw):
         return "executable", "", "p1_6_target_pipeline"
     if kind.startswith("TargetSort"):
@@ -15044,8 +15064,12 @@ def _target_alias_admitted(alias: str) -> bool:
     ) or _target_alias_chain_admitted(alias)
 
 
-def _target_expression_runtime_blocked_reason(raw: dict[str, Any]) -> str:
-    kind = _target_expression_kind(str(raw.get("$type") or ""), raw)
+def _target_expression_runtime_blocked_reason(
+    raw: dict[str, Any],
+    *,
+    source: IRSource | None = None,
+) -> str:
+    kind = _target_raw_expression_kind(raw)
     if kind == "TargetAlias":
         alias = _target_alias(raw) or ""
         return "" if _target_alias_admitted(alias) else f"target_alias_not_admitted:{alias or 'missing'}"
@@ -15053,49 +15077,69 @@ def _target_expression_runtime_blocked_reason(raw: dict[str, Any]) -> str:
         targets = raw.get("Targets")
         if not isinstance(targets, list) or not targets:
             return "target_concat_children_missing"
-        return _first_target_expression_child_blocked_reason(targets)
+        return _first_target_expression_child_blocked_reason(targets, source=source, field_name="Targets")
     if kind == "TargetSequence":
         sequence = raw.get("Sequence")
         if not isinstance(sequence, list) or not sequence:
             return "target_sequence_children_missing"
-        return _first_target_expression_child_blocked_reason(sequence)
+        return _first_target_expression_child_blocked_reason(sequence, source=source, field_name="Sequence")
     if kind == "TargetFilter":
         predicate = raw.get("Predicate")
         if not isinstance(predicate, dict):
             return "target_filter_predicate_missing"
+        if source is None:
+            return "target_filter_predicate_source_missing"
         predicate_node = _typed_condition_execution_node(
             predicate,
             equipment_scope=True,
+            source=_target_child_source(source, "Predicate", "TargetPredicate"),
         )
         opcode = str(predicate_node.get("opcode") or "")
         if predicate_node.get("supported") is not True:
             return f"target_filter_condition_not_admitted:{opcode or 'missing'}"
         target = raw.get("TargetType") or raw.get("Target") or raw.get("Targets")
         if isinstance(target, dict):
-            return _target_expression_runtime_blocked_reason(target)
+            return _target_expression_runtime_blocked_reason(
+                target,
+                source=_target_child_source(source, "TargetType", "TargetExpression") if source is not None else None,
+            )
         return ""
     if kind == "Retarget":
         target = raw.get("TargetType")
         if not isinstance(target, dict):
             return "retarget_target_type_missing"
-        reason = _target_expression_runtime_blocked_reason(target)
+        reason = _target_expression_runtime_blocked_reason(
+            target,
+            source=_target_child_source(source, "TargetType", "TargetExpression") if source is not None else None,
+        )
         if reason:
             return reason
         predicate = raw.get("Predicate")
         if isinstance(predicate, dict):
+            if source is None:
+                return "retarget_predicate_source_missing"
             predicate_node = _typed_condition_execution_node(
                 predicate,
                 equipment_scope=True,
+                source=_target_child_source(source, "Predicate", "TargetPredicate"),
             )
             opcode = str(predicate_node.get("opcode") or "")
             if predicate_node.get("supported") is not True:
                 return f"retarget_condition_not_admitted:{opcode or 'missing'}"
+        include_limbo = raw.get("IncludeLimbo", False)
+        if type(include_limbo) is not bool:
+            return "retarget_include_limbo_invalid"
+        if include_limbo:
+            return "retarget_include_limbo_deferred_s5b"
+        by_random = _target_boolean_field(raw, "ByRandom")
+        if by_random is None:
+            return "retarget_by_random_invalid"
         max_number = raw.get("MaxNumber")
         if max_number is not None and not _numeric_expr_can_be_runtime_bound(_numeric_expr_summary(max_number)):
             return "retarget_max_number_not_executable"
         return ""
     if kind == "TargetQuery":
-        return _target_query_blocked_reason(raw)
+        return _target_query_blocked_reason(raw, source=source)
     reason = _target_pipeline_node_blocked_reason(kind, raw)
     if reason != "target_pipeline_node_not_matched":
         return reason
@@ -15106,11 +15150,23 @@ def _target_expression_runtime_blocked_reason(raw: dict[str, Any]) -> str:
     return f"target_expression_kind_not_admitted:{kind or 'missing'}"
 
 
-def _first_target_expression_child_blocked_reason(children: list[Any]) -> str:
-    for child in children:
+def _first_target_expression_child_blocked_reason(
+    children: list[Any],
+    *,
+    source: IRSource | None,
+    field_name: str,
+) -> str:
+    for index, child in enumerate(children):
         if not isinstance(child, dict):
             return "target_expression_child_not_object"
-        reason = _target_expression_runtime_blocked_reason(child)
+        reason = _target_expression_runtime_blocked_reason(
+            child,
+            source=(
+                _target_child_source(source, f"{field_name}[{index}]", "TargetExpression")
+                if source is not None
+                else None
+            ),
+        )
         if reason:
             return reason
     return ""
@@ -15120,15 +15176,53 @@ def _target_expression_kind_admitted(kind: str, raw: dict[str, Any]) -> bool:
     return _target_pipeline_node_blocked_reason(kind, raw) == ""
 
 
+def _target_string_field(raw: dict[str, Any], field_name: str, default: str = "") -> str | None:
+    value = raw.get(field_name, default)
+    return value if isinstance(value, str) else None
+
+
+def _target_boolean_field(raw: dict[str, Any], field_name: str, default: bool = False) -> bool | None:
+    value = raw.get(field_name, default)
+    return value if type(value) is bool else None
+
+
+def _target_fetch_field_reason(kind: str, name: str, unique_name: str) -> str:
+    if kind == "TargetFetchPartner":
+        return "target_fetch_partner_unique_name_unused" if unique_name else ""
+    if kind == "TargetFetchUniqueNameEntity":
+        if name:
+            return "target_fetch_unique_name_name_unused"
+        return "" if unique_name else "unique_entity_key_missing"
+    if name:
+        return "target_fetch_name_unused"
+    return "target_fetch_unique_name_unused" if unique_name else ""
+
+
 def _target_pipeline_node_blocked_reason(kind: str, raw: dict[str, Any]) -> str:
     if kind in P1_6_SAFE_TARGET_FETCH_KINDS:
-        if kind == "TargetFetchUniqueNameEntity" and not raw.get("UniqueName"):
-            return "unique_entity_key_missing"
-        return ""
+        name = _target_string_field(raw, "Name")
+        if name is None:
+            return "target_fetch_name_invalid"
+        unique_name = _target_string_field(raw, "UniqueName")
+        if unique_name is None:
+            return "target_fetch_unique_name_invalid"
+        return _target_fetch_field_reason(kind, name, unique_name)
     if kind == "TargetMapAdjoinEntity":
-        side = str(raw.get("SideType") or "")
-        return "" if side in {"", "Both", "Left", "Right"} else f"target_adjacent_side_not_admitted:{side}"
-    if kind in {"TargetMapSummoner", "TargetMapSummonedMinions"}:
+        side = _target_string_field(raw, "SideType", "Both")
+        if side not in {"Both", "Left", "Right"}:
+            return "target_adjacent_side_invalid" if side is None else f"target_adjacent_side_not_admitted:{side or 'missing'}"
+        counting_option = raw.get("CountingOption", "")
+        if not isinstance(counting_option, str):
+            return "target_adjacent_counting_option_invalid"
+        if counting_option:
+            return f"target_adjacent_counting_option_deferred_s5b:{counting_option}"
+        return ""
+    if kind == "TargetMapSummoner":
+        recursive = raw.get("Recursive", False)
+        if type(recursive) is not bool:
+            return "target_summoner_recursive_invalid"
+        return "" if not recursive else "target_summoner_recursive_deferred_s5b"
+    if kind == "TargetMapSummonedMinions":
         return ""
     if kind == "TargetReverse":
         return ""
@@ -15142,28 +15236,45 @@ def _target_pipeline_node_blocked_reason(kind: str, raw: dict[str, Any]) -> str:
             return "target_take_count_not_executable"
         return ""
     if kind == "TargetIndex":
-        index_type = str(raw.get("IndexType") or "IndexStrict")
+        index_type = _target_string_field(raw, "IndexType", "IndexStrict")
         if index_type not in {"First", "IndexStrict", "Last"}:
-            return f"target_index_type_not_admitted:{index_type or 'missing'}"
+            return "target_index_type_invalid" if index_type is None else f"target_index_type_not_admitted:{index_type or 'missing'}"
         index_value = raw.get("IndexValue")
+        if index_type in {"First", "Last"} and index_value is not None:
+            return "target_index_value_unused"
         if index_value is not None and not _numeric_expr_can_be_runtime_bound(_numeric_expr_summary(index_value)):
             return "target_index_value_not_executable"
         return ""
     if kind == "TargetSortByProperty":
-        property_type = str(raw.get("PropertyType") or "")
-        return "" if property_type in P1_6_SAFE_TARGET_PROPERTY_SORTS else f"target_sort_property_not_admitted:{property_type or 'missing'}"
+        property_type = _target_string_field(raw, "PropertyType")
+        if property_type in P1_6_SAFE_TARGET_PROPERTY_SORTS:
+            highest_first = _target_boolean_field(raw, "HighestFirst")
+            return "" if highest_first is not None else "target_sort_highest_first_invalid"
+        return "target_sort_property_invalid" if property_type is None else f"target_sort_property_not_admitted:{property_type or 'missing'}"
     if kind == "TargetSortByPropertyRatio":
-        property_type = str(raw.get("PropertyRatioType") or "")
-        return "" if property_type in P1_6_SAFE_TARGET_RATIO_SORTS else f"target_sort_ratio_not_admitted:{property_type or 'missing'}"
+        property_type = _target_string_field(raw, "PropertyRatioType")
+        if property_type in P1_6_SAFE_TARGET_RATIO_SORTS:
+            highest_first = _target_boolean_field(raw, "HighestFirst")
+            return "" if highest_first is not None else "target_sort_highest_first_invalid"
+        return "target_sort_ratio_invalid" if property_type is None else f"target_sort_ratio_not_admitted:{property_type or 'missing'}"
     if kind == "TargetSortByFormation":
-        return ""
+        return "" if _target_boolean_field(raw, "HighestFirst") is not None else "target_sort_highest_first_invalid"
     return "target_pipeline_node_not_matched"
 
 
-def _target_query_blocked_reason(raw: dict[str, Any]) -> str:
-    entity_type = str(raw.get("EntityTypeMask") or "")
+def _target_query_blocked_reason(
+    raw: dict[str, Any],
+    *,
+    source: IRSource | None = None,
+) -> str:
+    entity_type = _target_string_field(raw, "EntityTypeMask")
     if entity_type != "Servant":
-        return f"target_query_entity_type_not_admitted:{entity_type or 'missing'}"
+        return "target_query_entity_type_invalid" if entity_type is None else f"target_query_entity_type_not_admitted:{entity_type or 'missing'}"
+    alive_state_mask = _target_string_field(raw, "AliveStateMask")
+    if alive_state_mask is None:
+        return "target_query_alive_state_mask_invalid"
+    if alive_state_mask:
+        return f"target_query_alive_state_mask_deferred_s5b:{alive_state_mask}"
     predicate = raw.get("Predicate")
     if predicate is None:
         return ""
@@ -15176,17 +15287,31 @@ def _target_query_blocked_reason(raw: dict[str, Any]) -> str:
     compare = predicate.get("CompareType")
     if not isinstance(target, dict) or not isinstance(compare, dict):
         return "target_query_compare_target_missing"
-    target_reason = _target_expression_runtime_blocked_reason(target)
+    target_reason = _target_expression_runtime_blocked_reason(
+        target,
+        source=(
+            _target_child_source(source, "Predicate.TargetType", "TargetExpression")
+            if source is not None
+            else None
+        ),
+    )
     if target_reason:
         return f"target_query_target_type_blocked:{target_reason}"
-    compare_reason = _target_expression_runtime_blocked_reason(compare)
+    compare_reason = _target_expression_runtime_blocked_reason(
+        compare,
+        source=(
+            _target_child_source(source, "Predicate.CompareType", "TargetExpression")
+            if source is not None
+            else None
+        ),
+    )
     if compare_reason:
         return f"target_query_compare_type_blocked:{compare_reason}"
     return ""
 
 
 def _target_expression_uses_p1_6_node(raw: dict[str, Any]) -> bool:
-    kind = _target_expression_kind(str(raw.get("$type") or ""), raw)
+    kind = _target_raw_expression_kind(raw)
     if _target_pipeline_node_blocked_reason(kind, raw) != "target_pipeline_node_not_matched":
         return True
     if kind == "TargetQuery" and not _target_query_blocked_reason(raw):
@@ -15259,178 +15384,302 @@ def _target_alias_dot_chain_admitted(alias: str) -> bool:
     return all(part in P1_6_SAFE_DOT_TARGET_OPERATIONS for part in parts[1:])
 
 
-def _target_expression_normalized_payload(raw: dict[str, Any]) -> TargetExpressionNodeIR:
-    return _target_expression_execution_node(raw)
-
-
 def _target_expression_execution_node(
     raw: dict[str, Any],
-    target_alias_registry: dict[str, Any] | None = None,
-    expansion_stack: tuple[str, ...] = (),
+    source: IRSource,
 ) -> TargetExpressionNodeIR:
-    kind = _target_expression_kind(str(raw.get("$type") or ""), raw)
+    kind = _target_raw_expression_kind(raw)
     alias = _target_alias(raw) or ""
-    if kind == "TargetAlias" and alias and isinstance(target_alias_registry, dict):
-        expanded_raw = target_alias_registry.get(alias)
-        if isinstance(expanded_raw, dict) and alias not in expansion_stack:
-            expanded = _target_expression_execution_node(
-                expanded_raw,
-                target_alias_registry,
-                (*expansion_stack, alias),
-            )
-            return replace(expanded, name=alias)
-    children: tuple[TargetExpressionNodeIR, ...] = ()
-    candidate: TargetExpressionNodeIR | None = None
-    predicate: ConditionIR | None = None
-    target: TargetExpressionNodeIR | None = None
-    query_target: TargetExpressionNodeIR | None = None
-    query_compare: TargetExpressionNodeIR | None = None
-    query_entity_type_mask = ""
-    query_alive_state_mask = ""
-    fetch_kind = ""
-    unique_name = ""
-    name = ""
-    adjacent_side = ""
-    by_random = False
-    max_number_expr: dict[str, JSONValue] = {}
-    count_expr: dict[str, JSONValue] = {}
-    index_type = ""
-    index_expr: dict[str, JSONValue] = {}
-    sort_kind = ""
-    sort_key = ""
-    highest_first = False
+    node_source = _target_expression_node_source(source, kind)
     if kind == "TargetConcat":
-        children = tuple(
-            _target_expression_execution_node(item, target_alias_registry, expansion_stack)
-            for item in raw.get("Targets") or []
-            if isinstance(item, dict)
-        )
-    elif kind == "TargetSequence":
-        children = tuple(
-            _target_expression_execution_node(item, target_alias_registry, expansion_stack)
-            for item in raw.get("Sequence") or []
-            if isinstance(item, dict)
-        )
-    elif kind == "TargetFilter":
-        candidate_raw = next(
-            (
-                raw.get(key)
-                for key in ("TargetType", "Target", "Targets")
-                if isinstance(raw.get(key), dict)
-            ),
-            None,
-        )
+        return _target_children_node(raw, "Targets", kind, node_source)
+    if kind == "TargetSequence":
+        return _target_children_node(raw, "Sequence", kind, node_source)
+    if kind == "TargetAlias":
+        if not alias:
+            return _target_unsupported_node(node_source, kind, "target_alias_missing")
+        return TargetExpressionNodeIR.build(kind, node_source, {"alias": alias})
+    if kind == "TargetFilter":
+        candidate_key, candidate_raw = _first_target_child(raw, ("TargetType", "Target", "Targets"))
+        predicate_raw = raw.get("Predicate")
+        if not isinstance(predicate_raw, dict):
+            return _target_unsupported_node(node_source, kind, "target_filter_predicate_missing")
         candidate = (
-            _target_expression_execution_node(candidate_raw, target_alias_registry, expansion_stack)
-            if isinstance(candidate_raw, dict)
+            _target_expression_execution_node(
+                candidate_raw,
+                _target_child_source(node_source, candidate_key, "TargetExpression"),
+            )
+            if candidate_key and isinstance(candidate_raw, dict)
             else None
         )
-        predicate_raw = raw.get("Predicate")
-        predicate = (
-            _condition_ir_from_typed_target_predicate(predicate_raw, target_alias_registry)
-            if isinstance(predicate_raw, dict)
-            else None
+        predicate = _condition_ir_from_typed_target_predicate(
+            predicate_raw,
+            _target_child_source(node_source, "Predicate", "TargetPredicate"),
         )
-    elif kind == "Retarget":
+        return TargetExpressionNodeIR.build(
+            kind,
+            node_source,
+            {"candidate": candidate, "predicate": predicate},
+        )
+    if kind == "Retarget":
         target_raw = raw.get("TargetType")
-        target = (
-            _target_expression_execution_node(target_raw, target_alias_registry, expansion_stack)
-            if isinstance(target_raw, dict)
-            else None
+        if not isinstance(target_raw, dict):
+            return _target_unsupported_node(node_source, kind, "retarget_target_type_missing")
+        target = _target_expression_execution_node(
+            target_raw,
+            _target_child_source(node_source, "TargetType", "TargetExpression"),
         )
         predicate_raw = raw.get("Predicate")
         predicate = (
-            _condition_ir_from_typed_target_predicate(predicate_raw, target_alias_registry)
+            _condition_ir_from_typed_target_predicate(
+                predicate_raw,
+                _target_child_source(node_source, "Predicate", "TargetPredicate"),
+            )
             if isinstance(predicate_raw, dict)
             else None
         )
-        by_random = bool(raw.get("ByRandom"))
-        max_number_expr = _numeric_expr_summary(raw.get("MaxNumber"))
-    elif kind == "TargetQuery":
-        query_entity_type_mask = str(raw.get("EntityTypeMask") or "")
-        query_alive_state_mask = str(raw.get("AliveStateMask") or "")
+        include_limbo = raw.get("IncludeLimbo", False)
+        if type(include_limbo) is not bool:
+            return _target_unsupported_node(node_source, kind, "retarget_include_limbo_invalid")
+        by_random = _target_boolean_field(raw, "ByRandom")
+        if by_random is None:
+            return _target_unsupported_node(node_source, kind, "retarget_by_random_invalid")
+        max_number_expr = (
+            _numeric_expr_summary(raw["MaxNumber"])
+            if raw.get("MaxNumber") is not None
+            else {}
+        )
+        if max_number_expr and not _numeric_expr_can_be_runtime_bound(max_number_expr):
+            return _target_unsupported_node(node_source, kind, "retarget_max_number_not_executable")
+        return TargetExpressionNodeIR.build(
+            kind,
+            node_source,
+            {
+                "target": target,
+                "predicate": predicate,
+                "by_random": by_random,
+                "max_number_expr": max_number_expr,
+                "include_limbo": include_limbo,
+            },
+        )
+    if kind == "TargetQuery":
+        entity_type_mask = _target_string_field(raw, "EntityTypeMask")
+        if entity_type_mask != "Servant":
+            return _target_unsupported_node(
+                node_source,
+                kind,
+                "target_query_entity_type_invalid"
+                if entity_type_mask is None
+                else f"target_query_entity_type_not_admitted:{entity_type_mask or 'missing'}",
+            )
+        alive_state_mask = _target_string_field(raw, "AliveStateMask")
+        if alive_state_mask is None:
+            return _target_unsupported_node(node_source, kind, "target_query_alive_state_mask_invalid")
         predicate_raw = raw.get("Predicate")
+        query_target: TargetExpressionNodeIR | None = None
+        query_compare: TargetExpressionNodeIR | None = None
         if isinstance(predicate_raw, dict) and _short_gamecore_type(predicate_raw.get("$type")) == "ByCompareTarget":
             left = predicate_raw.get("TargetType")
             right = predicate_raw.get("CompareType")
             query_target = (
-                _target_expression_execution_node(left, target_alias_registry, expansion_stack)
+                _target_expression_execution_node(
+                    left,
+                    _target_child_source(node_source, "Predicate.TargetType", "TargetExpression"),
+                )
                 if isinstance(left, dict)
                 else None
             )
             query_compare = (
-                _target_expression_execution_node(right, target_alias_registry, expansion_stack)
+                _target_expression_execution_node(
+                    right,
+                    _target_child_source(node_source, "Predicate.CompareType", "TargetExpression"),
+                )
                 if isinstance(right, dict)
                 else None
             )
-    elif kind in P1_6_SAFE_TARGET_FETCH_KINDS:
-        fetch_kind = kind
-        unique_name = str(raw.get("UniqueName") or "")
-        name = str(raw.get("Name") or "")
-    elif kind == "TargetMapAdjoinEntity":
-        adjacent_side = str(raw.get("SideType") or "Both")
-    elif kind == "TargetShuffle":
-        by_random = True
-    elif kind == "TargetTake":
-        count_expr = _numeric_expr_summary(raw.get("Count"))
-    elif kind == "TargetIndex":
-        index_type = str(raw.get("IndexType") or "IndexStrict")
-        index_expr = _numeric_expr_summary(raw.get("IndexValue")) if raw.get("IndexValue") is not None else {}
-    elif kind == "TargetSortByProperty":
-        sort_kind = kind
-        sort_key = str(raw.get("PropertyType") or "")
-        highest_first = bool(raw.get("HighestFirst"))
-    elif kind == "TargetSortByPropertyRatio":
-        sort_kind = kind
-        sort_key = str(raw.get("PropertyRatioType") or "")
-        highest_first = bool(raw.get("HighestFirst"))
-    elif kind == "TargetSortByFormation":
-        sort_kind = kind
-        sort_key = "formation_position"
-        highest_first = bool(raw.get("HighestFirst"))
-    return TargetExpressionNodeIR(
-        expression_kind=kind,
-        alias=alias,
-        children=children,
-        candidate=candidate,
-        predicate=predicate,
-        target=target,
-        query_entity_type_mask=query_entity_type_mask,
-        query_alive_state_mask=query_alive_state_mask,
-        query_target=query_target,
-        query_compare=query_compare,
-        fetch_kind=fetch_kind,
-        unique_name=unique_name,
-        name=name,
-        adjacent_side=adjacent_side,
-        by_random=by_random,
-        max_number_expr=max_number_expr,
-        count_expr=count_expr,
-        index_type=index_type,
-        index_expr=index_expr,
-        sort_kind=sort_kind,
-        sort_key=sort_key,
-        highest_first=highest_first,
+        if (query_target is None) != (query_compare is None):
+            return _target_unsupported_node(node_source, kind, "target_query_compare_target_missing")
+        return TargetExpressionNodeIR.build(
+            kind,
+            node_source,
+            {
+                "entity_type_mask": entity_type_mask,
+                "alive_state_mask": alive_state_mask,
+                "target": query_target,
+                "compare": query_compare,
+            },
+        )
+    if kind in _TYPED_TARGET_FETCH_KINDS:
+        name = _target_string_field(raw, "Name")
+        if name is None:
+            return _target_unsupported_node(node_source, kind, "target_fetch_name_invalid")
+        unique_name = _target_string_field(raw, "UniqueName")
+        if unique_name is None:
+            return _target_unsupported_node(node_source, kind, "target_fetch_unique_name_invalid")
+        fetch_reason = _target_fetch_field_reason(kind, name, unique_name)
+        if fetch_reason:
+            return _target_unsupported_node(node_source, kind, fetch_reason)
+        return TargetExpressionNodeIR.build(
+            kind,
+            node_source,
+            {"name": name, "unique_name": unique_name},
+        )
+    if kind == "TargetMapAdjoinEntity":
+        side = _target_string_field(raw, "SideType", "Both")
+        if side not in {"Both", "Left", "Right"}:
+            return _target_unsupported_node(
+                node_source,
+                kind,
+                "target_adjacent_side_invalid" if side is None else f"target_adjacent_side_not_admitted:{side or 'missing'}",
+            )
+        counting_option = raw.get("CountingOption", "")
+        if not isinstance(counting_option, str):
+            return _target_unsupported_node(node_source, kind, "target_adjacent_counting_option_invalid")
+        return TargetExpressionNodeIR.build(
+            kind, node_source, {"side": side, "counting_option": counting_option}
+        )
+    if kind == "TargetMapSummoner":
+        recursive = raw.get("Recursive", False)
+        if type(recursive) is not bool:
+            return _target_unsupported_node(node_source, kind, "target_summoner_recursive_invalid")
+        return TargetExpressionNodeIR.build(kind, node_source, {"recursive": recursive})
+    if kind in {"TargetMapSummonedMinions", "TargetReverse", "TargetShuffle"}:
+        return TargetExpressionNodeIR.build(kind, node_source, {})
+    if kind == "TargetTake":
+        count = raw.get("Count")
+        if count is None:
+            return _target_unsupported_node(node_source, kind, "target_take_count_missing")
+        count_expr = _numeric_expr_summary(count)
+        if not _numeric_expr_can_be_runtime_bound(count_expr):
+            return _target_unsupported_node(node_source, kind, "target_take_count_not_executable")
+        return TargetExpressionNodeIR.build(kind, node_source, {"count_expr": count_expr})
+    if kind == "TargetIndex":
+        index_type = _target_string_field(raw, "IndexType", "IndexStrict")
+        if index_type not in {"First", "IndexStrict", "Last"}:
+            return _target_unsupported_node(
+                node_source,
+                kind,
+                "target_index_type_invalid" if index_type is None else f"target_index_type_not_admitted:{index_type or 'missing'}",
+            )
+        index_value = raw.get("IndexValue")
+        if index_type in {"First", "Last"} and index_value is not None:
+            return _target_unsupported_node(node_source, kind, "target_index_value_unused")
+        index_expr = _numeric_expr_summary(index_value) if index_value is not None else {}
+        if index_expr and not _numeric_expr_can_be_runtime_bound(index_expr):
+            return _target_unsupported_node(node_source, kind, "target_index_value_not_executable")
+        return TargetExpressionNodeIR.build(
+            kind,
+            node_source,
+            {
+                "index_type": index_type,
+                "index_expr": index_expr,
+            },
+        )
+    if kind == "TargetSortByProperty":
+        sort_key = _target_string_field(raw, "PropertyType")
+        if sort_key not in P1_6_SAFE_TARGET_PROPERTY_SORTS:
+            return _target_unsupported_node(node_source, kind, "target_sort_property_invalid" if sort_key is None else f"target_sort_property_not_admitted:{sort_key or 'missing'}")
+        highest_first = _target_boolean_field(raw, "HighestFirst")
+        if highest_first is None:
+            return _target_unsupported_node(node_source, kind, "target_sort_highest_first_invalid")
+        return TargetExpressionNodeIR.build(kind, node_source, {"sort_key": sort_key, "highest_first": highest_first})
+    if kind == "TargetSortByPropertyRatio":
+        sort_key = _target_string_field(raw, "PropertyRatioType")
+        if sort_key not in P1_6_SAFE_TARGET_RATIO_SORTS:
+            return _target_unsupported_node(node_source, kind, "target_sort_ratio_invalid" if sort_key is None else f"target_sort_ratio_not_admitted:{sort_key or 'missing'}")
+        highest_first = _target_boolean_field(raw, "HighestFirst")
+        if highest_first is None:
+            return _target_unsupported_node(node_source, kind, "target_sort_highest_first_invalid")
+        return TargetExpressionNodeIR.build(kind, node_source, {"sort_key": sort_key, "highest_first": highest_first})
+    if kind == "TargetSortByFormation":
+        highest_first = _target_boolean_field(raw, "HighestFirst")
+        if highest_first is None:
+            return _target_unsupported_node(node_source, kind, "target_sort_highest_first_invalid")
+        return TargetExpressionNodeIR.build(kind, node_source, {"sort_key": "formation_position", "highest_first": highest_first})
+    return _target_unsupported_node(node_source, kind, f"target_expression_kind_not_typed:{kind or 'missing'}")
+
+
+_TYPED_TARGET_FETCH_KINDS = frozenset(
+    {
+        "TargetFetchCaster",
+        "TargetFetchModifierOwner",
+        "TargetFetchOwner",
+        "TargetFetchAbilityTarget",
+        "TargetFetchCurrentActionTarget",
+        "TargetFetchParamEntityList",
+        "TargetFetchActualOwner",
+        "TargetFetchPartner",
+        "TargetFetchUniqueNameEntity",
+    }
+)
+
+
+def _target_expression_node_source(source: IRSource, kind: str) -> IRSource:
+    return IRSource(
+        source_path=source.source_path,
+        raw_type=kind or "UnknownTargetExpression",
+        raw_id=source.raw_id,
+        evidence={**source.evidence, "node_kind": kind or "UnknownTargetExpression"},
     )
+
+
+def _target_child_source(source: IRSource, suffix: str, raw_type: str) -> IRSource:
+    json_path = str(source.evidence["json_path"])
+    return IRSource(
+        source_path=source.source_path,
+        raw_type=raw_type,
+        raw_id=f"{source.raw_id}:{suffix}",
+        evidence={"json_path": f"{json_path}.{suffix}"},
+    )
+
+
+def _target_children_node(
+    raw: dict[str, Any],
+    field_name: str,
+    kind: str,
+    source: IRSource,
+) -> TargetExpressionNodeIR:
+    children_raw = raw.get(field_name)
+    if not isinstance(children_raw, list) or not children_raw or not all(isinstance(item, dict) for item in children_raw):
+        return _target_unsupported_node(source, kind, f"target_{field_name.lower()}_children_missing")
+    children = tuple(
+        _target_expression_execution_node(
+            item,
+            _target_child_source(source, f"{field_name}[{index}]", "TargetExpression"),
+        )
+        for index, item in enumerate(children_raw)
+    )
+    return TargetExpressionNodeIR.build(kind, source, {"children": children})
+
+
+def _target_unsupported_node(source: IRSource, kind: str, blocked_reason: str) -> TargetExpressionNodeIR:
+    return TargetExpressionNodeIR.build(
+        "TargetUnsupported",
+        source,
+        {"original_kind": kind or "UnknownTargetExpression", "blocked_reason": blocked_reason},
+    )
+
+
+def _first_target_child(raw: dict[str, Any], keys: tuple[str, ...]) -> tuple[str, Any]:
+    for key in keys:
+        value = raw.get(key)
+        if isinstance(value, dict):
+            return key, value
+    return "", None
 
 
 def _condition_ir_from_typed_target_predicate(
     raw: dict[str, Any],
-    target_alias_registry: dict[str, Any] | None = None,
+    source: IRSource,
 ) -> ConditionIR:
-    node = _typed_condition_execution_node(raw, target_alias_registry)
+    node = _typed_condition_execution_node(raw, source=source)
     opcode = str(node.get("opcode") or "UnknownCondition")
     metadata = {"schema_version", "expression_kind", "opcode", "supported", "blocked_reason"}
     return ConditionIR(
-        condition_id=f"target_predicate:{_safe_id(opcode)}",
+        condition_id=f"target_predicate:{_safe_id(str(source.evidence['json_path']))}:{_safe_id(opcode)}",
         opcode=opcode,
         payload={key: value for key, value in node.items() if key not in metadata},
-        source=IRSource(
-            source_path="CanonicalIR.TargetExpressionIR.node",
-            raw_type="TargetPredicateIR",
-            raw_id=opcode,
-            evidence={},
-        ),
+        source=source,
         coverage_status="executable" if node.get("supported") is True else "blocked",
         expression_schema_version=str(node.get("schema_version") or ""),
         blocked_reason=str(node.get("blocked_reason") or ""),
@@ -15445,6 +15694,7 @@ def _typed_condition_execution_node(
     damage_tag_registry: dict[
         int, tuple[dict[str, Any], ...]
     ] | None = None,
+    source: IRSource,
 ) -> dict[str, Any]:
     opcode = _short_gamecore_type(raw.get("$type"))
     payload = _condition_payload_with_tbgd_defaults(
@@ -15454,6 +15704,7 @@ def _typed_condition_execution_node(
             target_alias_registry,
             equipment_scope=equipment_scope,
             damage_tag_registry=damage_tag_registry,
+            source=source,
         ),
     )
     family_stage = (
@@ -15465,6 +15716,8 @@ def _typed_condition_execution_node(
         family_stage in {"s7", "s8"}
         and _condition_payload_executable(opcode, payload)
     )
+    target_blocked_reason = _condition_payload_target_blocked_reason(payload)
+    executable = executable and not target_blocked_reason
     return {
         "schema_version": CONDITION_EXPRESSION_NODE_SCHEMA,
         "expression_kind": opcode,
@@ -15475,9 +15728,12 @@ def _typed_condition_execution_node(
             ""
             if executable
             else (
-                "equipment_condition_family_unclassified"
-                if equipment_scope and family_stage == "unknown"
-                else f"condition_not_admitted:{opcode}"
+                target_blocked_reason
+                or (
+                    "equipment_condition_family_unclassified"
+                    if equipment_scope and family_stage == "unknown"
+                    else f"condition_not_admitted:{opcode}"
+                )
             )
         ),
     }
@@ -15491,12 +15747,25 @@ def _typed_condition_payload(
     damage_tag_registry: dict[
         int, tuple[dict[str, Any], ...]
     ] | None = None,
+    source: IRSource,
 ) -> dict[str, Any]:
     lowered: dict[str, Any] = {}
+    if type(source) is not IRSource:
+        raise TypeError("typed condition lowering requires a real parent source")
+    condition_source = source
     for key, value in payload.items():
         if _is_target_expression_node(value):
             assert isinstance(value, dict)
-            lowered[key] = _target_expression_execution_node(value, target_alias_registry)
+            if _has_raw_json_path(condition_source):
+                lowered[key] = _target_expression_execution_node(
+                    value,
+                    _target_child_source(condition_source, key, "TargetExpression"),
+                )
+            else:
+                lowered[key] = {
+                    "blocked_reason": "nested_target_source_missing",
+                    "source_path": condition_source.source_path,
+                }
         elif key in {
             "Chance",
             "CompareValue",
@@ -15507,12 +15776,16 @@ def _typed_condition_payload(
         }:
             lowered[key] = _numeric_expr_summary(value)
         elif key == "Predicate" and isinstance(value, dict):
-            lowered[key] = _typed_condition_execution_node(
-                value,
-                target_alias_registry,
-                equipment_scope=equipment_scope,
-                damage_tag_registry=damage_tag_registry,
-            )
+            if _has_raw_json_path(condition_source):
+                lowered[key] = _typed_condition_execution_node(
+                    value,
+                    target_alias_registry,
+                    equipment_scope=equipment_scope,
+                    damage_tag_registry=damage_tag_registry,
+                    source=_target_child_source(condition_source, key, "TargetPredicate"),
+                )
+            else:
+                lowered[key] = {"blocked_reason": "nested_target_source_missing"}
         elif key == "PredicateList" and isinstance(value, list):
             lowered[key] = [
                 _typed_condition_execution_node(
@@ -15520,10 +15793,11 @@ def _typed_condition_payload(
                     target_alias_registry,
                     equipment_scope=equipment_scope,
                     damage_tag_registry=damage_tag_registry,
+                    source=_target_child_source(condition_source, f"{key}[{index}]", "TargetPredicate"),
                 )
-                if isinstance(item, dict)
+                if isinstance(item, dict) and _has_raw_json_path(condition_source)
                 else {"schema_version": CONDITION_EXPRESSION_NODE_SCHEMA, "supported": False, "blocked_reason": "condition_child_not_object"}
-                for item in value
+                for index, item in enumerate(value)
             ]
         elif key == "DamageTagList":
             lowered[key] = _typed_damage_tag_list(
@@ -15533,6 +15807,19 @@ def _typed_condition_payload(
         else:
             lowered[key] = _json_safe(value)
     return lowered
+
+
+def _condition_source_from_parent(source: IRSource, field_name: str) -> IRSource:
+    """Derive nested condition lineage without manufacturing a raw location."""
+
+    if _has_raw_json_path(source):
+        return _target_child_source(source, field_name, "Condition")
+    return IRSource(
+        source_path=source.source_path,
+        raw_type="Condition",
+        raw_id=f"{source.raw_id}:{field_name}",
+        evidence=cast(dict[str, JSONValue], freeze_json(dict(source.evidence))),
+    )
 
 
 def _typed_damage_tag_list(
@@ -16036,14 +16323,10 @@ def _equipment_task_admission(
     payload = _effect_payload(task, opcode, modifier_name)
     standard = payload.get("standard")
     target_raw = task.get("TargetType")
-    if (
-        isinstance(standard, dict)
-        and isinstance(target_raw, dict)
-        and _target_expression_kind(str(target_raw.get("$type") or ""), target_raw)
-        != "TargetAlias"
-        and not _target_expression_runtime_blocked_reason(target_raw)
-    ):
-        standard["target_expression_coverage_status"] = "executable"
+    # This admission helper has no exact raw-node source.  It must not grant
+    # executable target status by re-evaluating an untracked nested payload;
+    # the source-aware target lowering path is the sole producer of that
+    # status.
     coverage = _effect_coverage_status(opcode, payload)
     if coverage == "executable":
         return "executable", ""
@@ -18627,6 +18910,8 @@ def _condition_payload_executable(opcode: str, payload: dict[str, Any]) -> bool:
 def _condition_target_node_executable(node: TargetExpressionNodeIR) -> bool:
     if node.schema_version != TARGET_EXPRESSION_NODE_SCHEMA:
         return False
+    if node.runtime_blocked_reason:
+        return False
     if node.expression_kind == "TargetAlias":
         return _target_alias_admitted(node.alias) or node.alias == "AllUnselectable"
     if node.expression_kind in {"TargetSequence", "TargetConcat"}:
@@ -18648,6 +18933,18 @@ def _condition_target_node_executable(node: TargetExpressionNodeIR) -> bool:
             and _condition_target_node_executable(node.query_compare)
         )
     return False
+
+
+def _condition_payload_target_blocked_reason(value: Any) -> str:
+    if type(value) is TargetExpressionNodeIR:
+        return value.runtime_blocked_reason
+    if type(value) is ConditionIR:
+        return value.blocked_reason if value.coverage_status != "executable" else _condition_payload_target_blocked_reason(value.payload)
+    if isinstance(value, Mapping):
+        return next((reason for child in value.values() if (reason := _condition_payload_target_blocked_reason(child))), "")
+    if isinstance(value, (list, tuple)):
+        return next((reason for child in value if (reason := _condition_payload_target_blocked_reason(child))), "")
+    return ""
 
 
 def _condition_target_value_executable(value: Any) -> bool:

@@ -1537,7 +1537,7 @@ def _execute_trigger_modifier_custom_event(
         dynamic_values=context.dynamic_values,
         binding_sources=_binding_sources(context),
     )
-    if not target_result.ok:
+    if not target_result.resolved:
         return EffectResult(
             rng_events=target_result.rng_events,
             unsupported=(
@@ -1710,7 +1710,7 @@ def _execute_stack_weakness(
         dynamic_values=context.dynamic_values,
         binding_sources=_binding_sources(context),
     )
-    if not target_result.ok:
+    if not target_result.resolved:
         return EffectResult(
             rng_events=target_result.rng_events,
             unsupported=(

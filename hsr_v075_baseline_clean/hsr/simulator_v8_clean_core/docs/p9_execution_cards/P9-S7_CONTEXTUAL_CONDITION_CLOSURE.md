@@ -22,7 +22,7 @@ S6 应关闭 committed-state 条件并留下 S7 集合。典型 S7 条件包括�
 1. 校验并消费 S6/S7 分区，S7 集合不得增删或与 S6 重叠。
 2. 类型化 action/skill/turn/queue/event/damage/heal/resource/toughness 上下文字段及身份。
 3. 条件 lowering 只引用明确字段；缺 payload、错误事件 window 或过期 action identity blocked。
-4. 复用 S4 numeric、S5 relation 和 S6 comparator/quantifier，不按条件名复制 evaluator 分支。
+4. 复用 S4 numeric、S5B relation 和 S6 comparator/quantifier，不按条件名复制 evaluator 分支。
 5. 为每个 transient 字段绑定现有或未来 S9-S17 生产者，并输出 producer obligation ledger。
 6. 当前已有正式生产入口的高频族至少各有真实 true/false/blocked 证据。
 

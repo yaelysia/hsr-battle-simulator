@@ -45,7 +45,8 @@ docs/character_execution_cards/CHARACTER_CATALOG_READINESS_INVENTORY.md
 docs/character_execution_cards/CHARACTER_SHARED_MECHANISM_GAP_PLAN.md
 ```
 
-P9 总计划保存总目标、严格阶段顺序和唯一 checklist；执行卡索引保存 S0-S20 的单阶段入口。
+P9 总计划保存总目标、严格阶段顺序和唯一 checklist；执行卡索引保存各阶段入口，其中原 S5
+按架构边界拆为严格串行的 S5A-S5D。
 后三份依次是纳入/排除范围、当前可用程度以及共享机制归并的权威基线。
 需要逐族审计时再读 `CHARACTER_ABILITY_SCOPE_LEDGER.md`，普通执行线程不默认读取该附录。
 

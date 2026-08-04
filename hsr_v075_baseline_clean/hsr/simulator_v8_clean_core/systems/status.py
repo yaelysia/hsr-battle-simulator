@@ -1060,7 +1060,7 @@ class StatusSystem:
             dynamic_values=resolved_dynamic_values,
             binding_sources=binding_sources,
         )
-        if not target_result.ok:
+        if not target_result.resolved:
             return _halo_blocked_result(
                 f"halo_target_resolution_blocked:{target_result.blocked_reason}",
                 {
@@ -1437,7 +1437,7 @@ class StatusSystem:
                 binding_sources=binding_sources,
             )
             trace = result.to_json()
-            if not result.ok:
+            if not result.resolved:
                 empty_group_reason = f"target group empty:{expression.alias}"
                 if (
                     expression.alias in SUPPORTED_ADD_MODIFIER_GROUP_TARGET_ALIASES
@@ -3024,7 +3024,7 @@ def _on_create_define_dynamic_values(
                 dynamic_values=None,
                 binding_sources=binding_sources,
             )
-            if not target_result.ok or target_result.rng_events or target_id not in target_result.target_ids:
+            if not target_result.resolved or target_result.rng_events or target_id not in target_result.target_ids:
                 continue
             value_name = standard.get("value_name")
             if not isinstance(value_name, str) or not value_name:
@@ -5180,7 +5180,7 @@ def _defeated_halo_member_remains_related(
         dynamic_values=dynamic_values,
         binding_sources=binding_sources,
     )
-    if not result.ok:
+    if not result.resolved:
         return False, (
             "halo_non_alive_membership_resolution_blocked:"
             f"{result.blocked_reason}"

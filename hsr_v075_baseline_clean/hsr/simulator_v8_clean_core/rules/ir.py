@@ -4,6 +4,7 @@ import json
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from hashlib import sha256
+from types import MappingProxyType
 from typing import Any, Literal, cast
 
 from ..equipment.models import (
@@ -3440,6 +3441,58 @@ class FormulaIR:
         }
 
 
+class _FrozenIRPayloadDict(dict[str, Any]):
+    """Dict-compatible immutable payload that can contain typed IR children."""
+
+    def __init__(self, values: Mapping[str, Any]) -> None:
+        if not all(isinstance(key, str) for key in values):
+            raise TypeError("IR payload keys must be strings")
+        dict.__init__(self, {key: _freeze_ir_payload_value(value) for key, value in values.items()})
+
+    def _immutable(self, *_args: object, **_kwargs: object) -> None:
+        raise TypeError("frozen IR payload cannot be mutated")
+
+    __setitem__ = _immutable
+    __delitem__ = _immutable
+    clear = _immutable
+    pop = _immutable
+    popitem = _immutable
+    setdefault = _immutable
+    update = _immutable
+    __ior__ = _immutable
+
+
+class _FrozenIRPayloadList(list[Any]):
+    def __init__(self, values: Iterable[Any]) -> None:
+        list.__init__(self, [_freeze_ir_payload_value(value) for value in values])
+
+    def _immutable(self, *_args: object, **_kwargs: object) -> None:
+        raise TypeError("frozen IR payload cannot be mutated")
+
+    __setitem__ = _immutable
+    __delitem__ = _immutable
+    append = _immutable
+    clear = _immutable
+    extend = _immutable
+    insert = _immutable
+    pop = _immutable
+    remove = _immutable
+    reverse = _immutable
+    sort = _immutable
+    __iadd__ = _immutable
+    __imul__ = _immutable
+
+
+def _freeze_ir_payload_value(value: Any) -> Any:
+    if type(value) in (TargetExpressionNodeIR, ConditionIR):
+        return value
+    if isinstance(value, Mapping):
+        return _FrozenIRPayloadDict(value)
+    if isinstance(value, (list, tuple)):
+        return _FrozenIRPayloadList(value)
+    return freeze_json(value)
+
+
 @dataclass(frozen=True)
 class ConditionIR:
     condition_id: str
@@ -3449,6 +3502,39 @@ class ConditionIR:
     coverage_status: CoverageStatus = "unsupported"
     expression_schema_version: str = ""
     blocked_reason: str = ""
+
+    def __post_init__(self) -> None:
+        if type(self) is not ConditionIR:
+            raise TypeError("condition IR must not be subclassed")
+        if not isinstance(self.condition_id, str) or not self.condition_id:
+            raise ValueError("condition identity is required")
+        if not isinstance(self.opcode, str) or not self.opcode:
+            raise ValueError("condition opcode is required")
+        if not isinstance(self.payload, Mapping):
+            raise TypeError("condition payload must be an object")
+        if not isinstance(self.source, IRSource):
+            raise TypeError("condition source must be IRSource")
+        if self.coverage_status == "executable" and self.blocked_reason:
+            raise ValueError("executable condition cannot carry a blocked reason")
+        if self.coverage_status == "blocked" and not self.blocked_reason:
+            raise ValueError("blocked condition requires a reason")
+        object.__setattr__(self, "payload", _FrozenIRPayloadDict(self.payload))
+        object.__setattr__(
+            self,
+            "source",
+            IRSource(
+                source_path=self.source.source_path,
+                raw_type=self.source.raw_type,
+                raw_id=self.source.raw_id,
+                evidence=freeze_json(dict(self.source.evidence)),
+            ),
+        )
+        _validate_condition_target_sources(self)
+        nested_target_blocked_reason = _payload_target_node_blocked_reason(self.payload)
+        if self.coverage_status == "executable" and nested_target_blocked_reason:
+            raise ValueError("executable condition cannot contain a blocked target")
+        if self.coverage_status == "blocked" and nested_target_blocked_reason and self.blocked_reason != nested_target_blocked_reason:
+            raise ValueError("blocked condition must retain its nested target reason")
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
@@ -3461,59 +3547,664 @@ class ConditionIR:
             "blocked_reason": self.blocked_reason,
         }
 
+    @classmethod
+    def from_json(cls, value: object) -> "ConditionIR":
+        if not isinstance(value, Mapping) or set(value) != {
+            "condition_id",
+            "opcode",
+            "payload",
+            "source",
+            "coverage_status",
+            "expression_schema_version",
+            "blocked_reason",
+        }:
+            raise ValueError("condition JSON schema is invalid")
+        source = _ir_source_from_json(value.get("source"))
+        payload = value.get("payload")
+        if not isinstance(payload, Mapping):
+            raise TypeError("condition JSON payload must be an object")
+        return cls(
+            condition_id=_json_required_string(value, "condition_id"),
+            opcode=_json_required_string(value, "opcode"),
+            payload=_condition_payload_from_json(payload),
+            source=source,
+            coverage_status=cast(CoverageStatus, _json_required_string(value, "coverage_status")),
+            expression_schema_version=_json_required_string(value, "expression_schema_version"),
+            blocked_reason=_json_required_string(value, "blocked_reason"),
+        )
+
+
+def _condition_payload_from_json(value: Mapping[str, object]) -> Mapping[str, Any]:
+    """Restore typed children embedded in a condition payload.
+
+    Target predicates are allowed to contain target expressions.  Treating
+    their serialized form as plain JSON preserves the bytes but loses the
+    executable type contract, so decode only the exact tagged schemas here.
+    """
+
+    def decode(item: object) -> Any:
+        if isinstance(item, Mapping):
+            keys = set(item)
+            if keys == {
+                "schema_version", "node_id", "expression_kind", "source", "payload",
+            }:
+                return TargetExpressionNodeIR.from_json(item)
+            if keys == {
+                "condition_id", "opcode", "payload", "source", "coverage_status",
+                "expression_schema_version", "blocked_reason",
+            }:
+                return ConditionIR.from_json(item)
+            return {str(key): decode(child) for key, child in item.items()}
+        if isinstance(item, list):
+            return [decode(child) for child in item]
+        return item
+
+    return cast(Mapping[str, Any], decode(value))
+
+
+def _ir_source_from_json(value: object) -> IRSource:
+    if not isinstance(value, Mapping) or set(value) != {
+        "source_path",
+        "raw_type",
+        "raw_id",
+        "evidence",
+    }:
+        raise ValueError("IR source JSON schema is invalid")
+    evidence = value.get("evidence")
+    if not isinstance(evidence, Mapping):
+        raise TypeError("IR source evidence must be an object")
+    return IRSource(
+        source_path=_json_required_string(value, "source_path"),
+        raw_type=_json_required_string(value, "raw_type"),
+        raw_id=_json_required_string(value, "raw_id"),
+        evidence=cast(dict[str, JSONValue], freeze_json(dict(evidence))),
+    )
+
+
+def _json_required_string(value: Mapping[str, object], field_name: str) -> str:
+    field_value = value.get(field_name)
+    if not isinstance(field_value, str):
+        raise TypeError(f"JSON field must be a string:{field_name}")
+    return field_value
+
+
+_TARGET_NODE_PAYLOAD_FIELDS: dict[str, frozenset[str]] = {
+    "TargetAlias": frozenset({"alias"}),
+    "TargetConcat": frozenset({"children"}),
+    "TargetSequence": frozenset({"children"}),
+    "TargetFilter": frozenset({"candidate", "predicate"}),
+    "Retarget": frozenset({"target", "predicate", "by_random", "max_number_expr", "include_limbo"}),
+    "TargetQuery": frozenset({
+        "entity_type_mask",
+        "alive_state_mask",
+        "target",
+        "compare",
+    }),
+    "TargetFetchCaster": frozenset({"name", "unique_name"}),
+    "TargetFetchModifierOwner": frozenset({"name", "unique_name"}),
+    "TargetFetchOwner": frozenset({"name", "unique_name"}),
+    "TargetFetchAbilityTarget": frozenset({"name", "unique_name"}),
+    "TargetFetchCurrentActionTarget": frozenset({"name", "unique_name"}),
+    "TargetFetchParamEntityList": frozenset({"name", "unique_name"}),
+    "TargetFetchActualOwner": frozenset({"name", "unique_name"}),
+    "TargetFetchPartner": frozenset({"name", "unique_name"}),
+    "TargetFetchUniqueNameEntity": frozenset({"name", "unique_name"}),
+    "TargetMapAdjoinEntity": frozenset({"side", "counting_option"}),
+    "TargetMapSummoner": frozenset({"recursive"}),
+    "TargetMapSummonedMinions": frozenset(),
+    "TargetReverse": frozenset(),
+    "TargetShuffle": frozenset(),
+    "TargetTake": frozenset({"count_expr"}),
+    "TargetIndex": frozenset({"index_type", "index_expr"}),
+    "TargetSortByProperty": frozenset({"sort_key", "highest_first"}),
+    "TargetSortByPropertyRatio": frozenset({"sort_key", "highest_first"}),
+    "TargetSortByFormation": frozenset({"sort_key", "highest_first"}),
+    "TargetUnsupported": frozenset({"original_kind", "blocked_reason"}),
+}
+
+_TARGET_SORT_PROPERTY_KEYS = frozenset({"CurrentHP", "MaxHP", "CurrentStance", "MaxStance"})
+_TARGET_SORT_RATIO_KEYS = frozenset({"HPRatio", "StanceRatio"})
+
+
+def _target_node_source(source: IRSource) -> IRSource:
+    if type(source) is not IRSource:
+        raise TypeError("target node source must be exact IRSource")
+    evidence = source.evidence
+    if (
+        not isinstance(source.source_path, str)
+        or not source.source_path
+        or not isinstance(source.raw_type, str)
+        or not source.raw_type
+        or not isinstance(source.raw_id, str)
+        or not source.raw_id
+        or not isinstance(evidence, Mapping)
+        or not isinstance(evidence.get("json_path"), str)
+        or not str(evidence["json_path"])
+        or not str(evidence["json_path"]).startswith("$")
+    ):
+        raise ValueError("target node source requires a raw JSON path")
+    return IRSource(
+        source_path=source.source_path,
+        raw_type=source.raw_type,
+        raw_id=source.raw_id,
+        evidence=cast(dict[str, JSONValue], freeze_json(dict(evidence))),
+    )
+
+
+def _target_node_stable_id(
+    expression_kind: str,
+    source: IRSource,
+    payload: Mapping[str, Any],
+) -> str:
+    canonical = {
+        "expression_kind": expression_kind,
+        "source_path": source.source_path,
+        "raw_type": source.raw_type,
+        "raw_id": source.raw_id,
+        "json_path": source.evidence["json_path"],
+        "payload": _target_node_payload_json(payload),
+    }
+    encoded = json.dumps(canonical, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return f"target_expression_node:{sha256(encoded).hexdigest()}"
+
+
+def _target_node_payload_json(value: Any) -> JSONValue:
+    if isinstance(value, TargetExpressionNodeIR):
+        return value.to_json()
+    if isinstance(value, ConditionIR):
+        return value.to_json()
+    if isinstance(value, Mapping):
+        return {str(key): _target_node_payload_json(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_target_node_payload_json(item) for item in value]
+    return _ir_json_value(value)
+
+
+def _target_node_json_value(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return freeze_json(dict(value))
+    return value
+
 
 @dataclass(frozen=True)
 class TargetExpressionNodeIR:
+    node_id: str
     expression_kind: str
-    alias: str = ""
-    children: tuple["TargetExpressionNodeIR", ...] = ()
-    candidate: "TargetExpressionNodeIR | None" = None
-    predicate: ConditionIR | None = None
-    target: "TargetExpressionNodeIR | None" = None
-    query_entity_type_mask: str = ""
-    query_alive_state_mask: str = ""
-    query_target: "TargetExpressionNodeIR | None" = None
-    query_compare: "TargetExpressionNodeIR | None" = None
-    fetch_kind: str = ""
-    unique_name: str = ""
-    name: str = ""
-    adjacent_side: str = ""
-    by_random: bool = False
-    max_number_expr: dict[str, JSONValue] = field(default_factory=dict)
-    count_expr: dict[str, JSONValue] = field(default_factory=dict)
-    index_type: str = ""
-    index_expr: dict[str, JSONValue] = field(default_factory=dict)
-    sort_kind: str = ""
-    sort_key: str = ""
-    highest_first: bool = False
-    schema_version: str = "hsr.target_expression_node.v1"
+    source: IRSource
+    payload: Mapping[str, Any]
+    schema_version: str = "hsr.target_expression_node.v2"
+
+    def __post_init__(self) -> None:
+        if type(self) is not TargetExpressionNodeIR:
+            raise TypeError("target expression node must not be subclassed")
+        expected_fields = _TARGET_NODE_PAYLOAD_FIELDS.get(self.expression_kind)
+        if expected_fields is None:
+            raise ValueError(f"unknown target expression node kind:{self.expression_kind}")
+        if self.schema_version != "hsr.target_expression_node.v2":
+            raise ValueError("target expression node schema version is invalid")
+        if not isinstance(self.payload, Mapping) or set(self.payload) != expected_fields:
+            raise ValueError(f"target node payload schema is invalid:{self.expression_kind}")
+        source = _target_node_source(self.source)
+        payload = _validate_target_node_payload(self.expression_kind, self.payload)
+        _validate_target_node_sources(self.expression_kind, source, payload)
+        expected_id = _target_node_stable_id(self.expression_kind, source, payload)
+        if self.node_id != expected_id:
+            raise ValueError("target expression node identity does not close")
+        object.__setattr__(self, "source", source)
+        object.__setattr__(self, "payload", payload)
+
+    @classmethod
+    def build(
+        cls,
+        expression_kind: str,
+        source: IRSource,
+        payload: Mapping[str, Any],
+    ) -> "TargetExpressionNodeIR":
+        validated_source = _target_node_source(source)
+        validated_payload = _validate_target_node_payload(expression_kind, payload)
+        return cls(
+            node_id=_target_node_stable_id(expression_kind, validated_source, validated_payload),
+            expression_kind=expression_kind,
+            source=validated_source,
+            payload=validated_payload,
+            schema_version="hsr.target_expression_node.v2",
+        )
+
+    @property
+    def alias(self) -> str:
+        return cast(str, self.payload.get("alias", ""))
+
+    @property
+    def children(self) -> tuple["TargetExpressionNodeIR", ...]:
+        return cast(tuple["TargetExpressionNodeIR", ...], self.payload.get("children", ()))
+
+    @property
+    def candidate(self) -> "TargetExpressionNodeIR | None":
+        return cast("TargetExpressionNodeIR | None", self.payload.get("candidate"))
+
+    @property
+    def predicate(self) -> ConditionIR | None:
+        return cast(ConditionIR | None, self.payload.get("predicate"))
+
+    @property
+    def target(self) -> "TargetExpressionNodeIR | None":
+        return cast("TargetExpressionNodeIR | None", self.payload.get("target"))
+
+    @property
+    def query_entity_type_mask(self) -> str:
+        return cast(str, self.payload.get("entity_type_mask", ""))
+
+    @property
+    def query_alive_state_mask(self) -> str:
+        return cast(str, self.payload.get("alive_state_mask", ""))
+
+    @property
+    def query_target(self) -> "TargetExpressionNodeIR | None":
+        return cast("TargetExpressionNodeIR | None", self.payload.get("target"))
+
+    @property
+    def query_compare(self) -> "TargetExpressionNodeIR | None":
+        return cast("TargetExpressionNodeIR | None", self.payload.get("compare"))
+
+    @property
+    def fetch_kind(self) -> str:
+        return self.expression_kind if self.expression_kind.startswith("TargetFetch") else ""
+
+    @property
+    def unique_name(self) -> str:
+        return cast(str, self.payload.get("unique_name", ""))
+
+    @property
+    def name(self) -> str:
+        return cast(str, self.payload.get("name", ""))
+
+    @property
+    def adjacent_side(self) -> str:
+        return cast(str, self.payload.get("side", ""))
+
+    @property
+    def adjacent_counting_option(self) -> str:
+        return cast(str, self.payload.get("counting_option", ""))
+
+    @property
+    def recursive_summoner(self) -> bool:
+        return cast(bool, self.payload.get("recursive", False))
+
+    @property
+    def by_random(self) -> bool:
+        return cast(bool, self.payload.get("by_random", False))
+
+    @property
+    def include_limbo(self) -> bool:
+        return cast(bool, self.payload.get("include_limbo", False))
+
+    @property
+    def max_number_expr(self) -> Mapping[str, JSONValue]:
+        return cast(Mapping[str, JSONValue], self.payload.get("max_number_expr", {}))
+
+    @property
+    def count_expr(self) -> Mapping[str, JSONValue]:
+        return cast(Mapping[str, JSONValue], self.payload.get("count_expr", {}))
+
+    @property
+    def index_type(self) -> str:
+        return cast(str, self.payload.get("index_type", ""))
+
+    @property
+    def index_expr(self) -> Mapping[str, JSONValue]:
+        return cast(Mapping[str, JSONValue], self.payload.get("index_expr", {}))
+
+    @property
+    def sort_kind(self) -> str:
+        return self.expression_kind if self.expression_kind.startswith("TargetSort") else ""
+
+    @property
+    def sort_key(self) -> str:
+        return cast(str, self.payload.get("sort_key", ""))
+
+    @property
+    def highest_first(self) -> bool:
+        return cast(bool, self.payload.get("highest_first", False))
+
+    @property
+    def runtime_blocked_reason(self) -> str:
+        return _target_node_blocked_reason(self)
 
     def to_json(self) -> dict[str, JSONValue]:
         return {
             "schema_version": self.schema_version,
+            "node_id": self.node_id,
             "expression_kind": self.expression_kind,
-            "alias": self.alias,
-            "children": [child.to_json() for child in self.children],
-            "candidate": self.candidate.to_json() if self.candidate is not None else None,
-            "predicate": self.predicate.to_json() if self.predicate is not None else None,
-            "target": self.target.to_json() if self.target is not None else None,
-            "query_entity_type_mask": self.query_entity_type_mask,
-            "query_alive_state_mask": self.query_alive_state_mask,
-            "query_target": self.query_target.to_json() if self.query_target is not None else None,
-            "query_compare": self.query_compare.to_json() if self.query_compare is not None else None,
-            "fetch_kind": self.fetch_kind,
-            "unique_name": self.unique_name,
-            "name": self.name,
-            "adjacent_side": self.adjacent_side,
-            "by_random": self.by_random,
-            "max_number_expr": self.max_number_expr,
-            "count_expr": self.count_expr,
-            "index_type": self.index_type,
-            "index_expr": self.index_expr,
-            "sort_kind": self.sort_kind,
-            "sort_key": self.sort_key,
-            "highest_first": self.highest_first,
+            "source": self.source.to_json(),
+            "payload": _target_node_payload_json(self.payload),
         }
+
+    @classmethod
+    def from_json(cls, value: object) -> "TargetExpressionNodeIR":
+        if not isinstance(value, Mapping) or set(value) != {
+            "schema_version",
+            "node_id",
+            "expression_kind",
+            "source",
+            "payload",
+        }:
+            raise ValueError("target expression node JSON schema is invalid")
+        payload = _target_node_payload_from_json(
+            _json_required_string(value, "expression_kind"),
+            value.get("payload"),
+        )
+        return cls(
+            node_id=_json_required_string(value, "node_id"),
+            expression_kind=_json_required_string(value, "expression_kind"),
+            source=_ir_source_from_json(value.get("source")),
+            payload=payload,
+            schema_version=_json_required_string(value, "schema_version"),
+        )
+
+
+def _validate_target_node_payload(
+    expression_kind: str,
+    payload: Mapping[str, Any],
+) -> Mapping[str, Any]:
+    expected = _TARGET_NODE_PAYLOAD_FIELDS.get(expression_kind)
+    if expected is None or set(payload) != expected:
+        raise ValueError(f"target node payload schema is invalid:{expression_kind}")
+    normalized: dict[str, Any] = {}
+    for field_name, value in payload.items():
+        if field_name == "children":
+            if not isinstance(value, tuple) or not value or any(type(item) is not TargetExpressionNodeIR for item in value):
+                raise TypeError("target node children must be a non-empty tuple of exact nodes")
+            normalized[field_name] = value
+        elif field_name in {"candidate", "target", "compare"}:
+            if value is not None and type(value) is not TargetExpressionNodeIR:
+                raise TypeError(f"target node {field_name} must be an exact node or null")
+            normalized[field_name] = value
+        elif field_name == "predicate":
+            if value is not None and type(value) is not ConditionIR:
+                raise TypeError("target predicate must be an exact ConditionIR or null")
+            normalized[field_name] = value
+        elif field_name in {"by_random", "highest_first", "recursive", "include_limbo"}:
+            if not isinstance(value, bool):
+                raise TypeError(f"target node {field_name} must be boolean")
+            normalized[field_name] = value
+        elif field_name in {"max_number_expr", "count_expr", "index_expr"}:
+            if not isinstance(value, Mapping):
+                raise TypeError(f"target node {field_name} must be an object")
+            numeric = dict(value)
+            if numeric and not is_exact_numeric_expression(numeric):
+                raise ValueError(f"target node {field_name} must be an exact numeric expression")
+            normalized[field_name] = freeze_json(numeric)
+        elif field_name in {
+            "alias", "entity_type_mask", "alive_state_mask", "name", "unique_name",
+            "side", "counting_option", "index_type", "sort_key", "original_kind", "blocked_reason",
+        }:
+            if not isinstance(value, str):
+                raise TypeError(f"target node {field_name} must be a string")
+            normalized[field_name] = value
+        else:
+            raise ValueError(f"unknown target node field:{field_name}")
+    if expression_kind == "TargetAlias" and not normalized["alias"]:
+        raise ValueError("target alias cannot be empty")
+    if expression_kind == "TargetFilter" and normalized["predicate"] is None:
+        raise ValueError("target filter requires a predicate")
+    if expression_kind == "Retarget" and normalized["target"] is None:
+        raise ValueError("retarget requires a target")
+    if expression_kind == "TargetQuery" and (
+        (normalized["target"] is None) != (normalized["compare"] is None)
+    ):
+        raise ValueError("target query comparison requires both sides")
+    if expression_kind == "TargetQuery" and normalized["entity_type_mask"] != "Servant":
+        raise ValueError("target query entity type is invalid")
+    if expression_kind == "TargetMapAdjoinEntity" and normalized["side"] not in {
+        "Both", "Left", "Right",
+    }:
+        raise ValueError("target adjacent side is invalid")
+    if expression_kind == "TargetSortByProperty" and normalized["sort_key"] not in _TARGET_SORT_PROPERTY_KEYS:
+        raise ValueError("target sort property is invalid")
+    if expression_kind == "TargetSortByPropertyRatio" and normalized["sort_key"] not in _TARGET_SORT_RATIO_KEYS:
+        raise ValueError("target sort ratio is invalid")
+    if expression_kind == "TargetSortByFormation" and normalized["sort_key"] != "formation_position":
+        raise ValueError("target formation sort key is invalid")
+    if expression_kind == "TargetTake" and not normalized["count_expr"]:
+        raise ValueError("target take requires a count")
+    if expression_kind == "TargetTake" and not _target_numeric_expression_runtime_bound(
+        normalized["count_expr"]
+    ):
+        raise ValueError("target take count must be runtime-bound")
+    if expression_kind == "Retarget" and normalized["max_number_expr"] and not _target_numeric_expression_runtime_bound(
+        normalized["max_number_expr"]
+    ):
+        raise ValueError("retarget maximum number must be runtime-bound")
+    if expression_kind == "TargetIndex" and normalized["index_type"] not in {
+        "First", "IndexStrict", "Last",
+    }:
+        raise ValueError("target index type is invalid")
+    if expression_kind == "TargetIndex" and normalized["index_type"] in {"First", "Last"} and normalized["index_expr"]:
+        raise ValueError("first and last target indexes cannot carry an index expression")
+    if expression_kind == "TargetIndex" and normalized["index_type"] == "IndexStrict" and normalized["index_expr"] and not _target_numeric_expression_runtime_bound(
+        normalized["index_expr"]
+    ):
+        raise ValueError("strict target index must be runtime-bound")
+    fetch_reason = _target_fetch_payload_reason(expression_kind, normalized)
+    if fetch_reason:
+        raise ValueError(fetch_reason)
+    if expression_kind == "TargetFetchUniqueNameEntity" and not normalized["unique_name"]:
+        raise ValueError("unique target fetch requires a unique name")
+    if expression_kind == "TargetUnsupported" and (
+        not normalized["original_kind"] or not normalized["blocked_reason"]
+    ):
+        raise ValueError("blocked target node requires source kind and reason")
+    return MappingProxyType(normalized)
+
+
+def _target_numeric_expression_runtime_bound(value: Mapping[str, Any]) -> bool:
+    if not is_exact_numeric_expression(dict(value)) or value.get("supported") is not True:
+        return False
+    kind = value.get("kind")
+    return kind in {"fixed", "program"} or (kind == "dynamic_hash" and value.get("hash") is not None)
+
+
+def _target_fetch_payload_reason(expression_kind: str, payload: Mapping[str, Any]) -> str:
+    if not expression_kind.startswith("TargetFetch"):
+        return ""
+    name = cast(str, payload.get("name", ""))
+    unique_name = cast(str, payload.get("unique_name", ""))
+    if expression_kind == "TargetFetchPartner":
+        return "target_fetch_partner_unique_name_unused" if unique_name else ""
+    if expression_kind == "TargetFetchUniqueNameEntity":
+        return "target_fetch_unique_name_name_unused" if name else ""
+    if name:
+        return "target_fetch_name_unused"
+    if unique_name:
+        return "target_fetch_unique_name_unused"
+    return ""
+
+
+def _source_descends_from(parent: IRSource, child: IRSource, suffixes: tuple[str, ...]) -> bool:
+    parent_path = parent.evidence.get("json_path")
+    child_path = child.evidence.get("json_path")
+    if (
+        child.source_path != parent.source_path
+        or not isinstance(parent_path, str)
+        or not isinstance(child_path, str)
+        or not _json_path_descends_from(parent_path, child_path)
+        or not child.raw_id.startswith(parent.raw_id + ":")
+    ):
+        return False
+    relative_path = child_path[len(parent_path):]
+    return any(_json_path_matches_field_prefix(relative_path, suffix) for suffix in suffixes)
+
+
+def _json_path_descends_from(parent_path: str, child_path: str) -> bool:
+    return child_path.startswith(parent_path) and len(child_path) > len(parent_path) and child_path[len(parent_path)] in ".["
+
+
+def _json_path_matches_field_prefix(relative_path: str, field_prefix: str) -> bool:
+    if field_prefix == ".":
+        return relative_path.startswith((".", "["))
+    if not relative_path.startswith(field_prefix):
+        return False
+    remaining = relative_path[len(field_prefix):]
+    if field_prefix.endswith("["):
+        index_end = remaining.find("]")
+        return index_end > 0 and remaining[:index_end].isdigit() and len(remaining) == index_end + 1
+    return not remaining
+
+
+def _validate_target_node_sources(
+    expression_kind: str,
+    source: IRSource,
+    payload: Mapping[str, Any],
+) -> None:
+    child_prefixes: tuple[str, ...] = ()
+    children = cast(tuple[TargetExpressionNodeIR, ...], payload.get("children", ()))
+    if expression_kind == "TargetConcat":
+        child_prefixes = (".Targets[",)
+    elif expression_kind == "TargetSequence":
+        child_prefixes = (".Sequence[",)
+    for child in children:
+        if not _source_descends_from(source, child.source, child_prefixes):
+            raise ValueError("target child source does not close to its parent")
+
+    child_specs: tuple[tuple[str, tuple[str, ...]], ...] = ()
+    if expression_kind == "TargetFilter":
+        child_specs = (("candidate", (".TargetType", ".Target", ".Targets")),)
+    elif expression_kind == "Retarget":
+        child_specs = (("target", (".TargetType",)),)
+    elif expression_kind == "TargetQuery":
+        child_specs = (
+            ("target", (".Predicate.TargetType",)),
+            ("compare", (".Predicate.CompareType",)),
+        )
+    for field_name, suffixes in child_specs:
+        child = payload.get(field_name)
+        if child is not None and not _source_descends_from(
+            source, cast(TargetExpressionNodeIR, child).source, suffixes
+        ):
+            raise ValueError("target child source does not close to its parent")
+
+    if expression_kind in {"TargetFilter", "Retarget"}:
+        predicate = cast(ConditionIR | None, payload.get("predicate"))
+        if predicate is not None:
+            if not _source_descends_from(source, predicate.source, (".Predicate",)):
+                raise ValueError("target predicate source does not close to its parent")
+            _validate_condition_target_sources(predicate)
+
+
+def _validate_condition_target_sources(condition: ConditionIR) -> None:
+    parent_path = condition.source.evidence.get("json_path")
+    if not isinstance(parent_path, str) or not parent_path.startswith("$"):
+        if _condition_payload_contains_target(value=condition.payload):
+            raise ValueError("nested condition target requires an exact parent source")
+        return
+
+    def source_closes(source: IRSource, expected_path: str) -> bool:
+        return (
+            source.source_path == condition.source.source_path
+            and source.evidence.get("json_path") == expected_path
+            and source.raw_id.startswith(condition.source.raw_id + ":")
+        )
+
+    def visit(value: object, expected_path: str) -> None:
+        if type(value) is TargetExpressionNodeIR:
+            if not source_closes(value.source, expected_path):
+                raise ValueError("nested condition target source does not close")
+            return
+        if type(value) is ConditionIR:
+            if not source_closes(value.source, expected_path):
+                raise ValueError("nested condition source does not close")
+            return
+        if isinstance(value, Mapping):
+            for key, child in value.items():
+                if not isinstance(key, str):
+                    raise TypeError("condition payload keys must be strings")
+                visit(child, f"{expected_path}.{key}")
+        elif isinstance(value, (list, tuple)):
+            for index, child in enumerate(value):
+                visit(child, f"{expected_path}[{index}]")
+
+    visit(condition.payload, parent_path)
+
+
+def _condition_payload_contains_target(*, value: object) -> bool:
+    if type(value) in {TargetExpressionNodeIR, ConditionIR}:
+        return True
+    if isinstance(value, Mapping):
+        return any(_condition_payload_contains_target(value=child) for child in value.values())
+    if isinstance(value, (list, tuple)):
+        return any(_condition_payload_contains_target(value=child) for child in value)
+    return False
+
+
+def _target_node_blocked_reason(node: TargetExpressionNodeIR) -> str:
+    if node.expression_kind == "TargetUnsupported":
+        return cast(str, node.payload["blocked_reason"])
+    if node.expression_kind == "TargetMapSummoner" and node.recursive_summoner:
+        return "target_summoner_recursive_deferred_s5b"
+    if node.expression_kind == "TargetMapAdjoinEntity" and node.adjacent_counting_option:
+        return f"target_adjacent_counting_option_deferred_s5b:{node.adjacent_counting_option}"
+    if node.expression_kind == "Retarget" and node.include_limbo:
+        return "retarget_include_limbo_deferred_s5b"
+    if node.expression_kind == "TargetQuery" and node.query_alive_state_mask:
+        return f"target_query_alive_state_mask_deferred_s5b:{node.query_alive_state_mask}"
+    for child in node.children:
+        reason = _target_node_blocked_reason(child)
+        if reason:
+            return reason
+    for child in (node.candidate, node.target, node.query_target, node.query_compare):
+        if child is not None:
+            reason = _target_node_blocked_reason(child)
+            if reason:
+                return reason
+    if node.predicate is not None:
+        if node.predicate.coverage_status != "executable":
+            return node.predicate.blocked_reason or "target_predicate_not_executable"
+        for value in node.predicate.payload.values():
+            reason = _payload_target_node_blocked_reason(value)
+            if reason:
+                return reason
+    return ""
+
+
+def _payload_target_node_blocked_reason(value: object) -> str:
+    if type(value) is TargetExpressionNodeIR:
+        return _target_node_blocked_reason(value)
+    if type(value) is ConditionIR:
+        if value.coverage_status != "executable":
+            return value.blocked_reason or "condition_not_executable"
+        return _payload_target_node_blocked_reason(value.payload)
+    if isinstance(value, Mapping):
+        for child in value.values():
+            reason = _payload_target_node_blocked_reason(child)
+            if reason:
+                return reason
+    elif isinstance(value, (list, tuple)):
+        for child in value:
+            reason = _payload_target_node_blocked_reason(child)
+            if reason:
+                return reason
+    return ""
+
+
+def _target_node_payload_from_json(
+    expression_kind: str,
+    value: object,
+) -> Mapping[str, Any]:
+    if not isinstance(value, Mapping):
+        raise TypeError("target node JSON payload must be an object")
+    decoded: dict[str, Any] = {}
+    for field_name, field_value in value.items():
+        if field_name == "children":
+            if not isinstance(field_value, list):
+                raise TypeError("target node JSON children must be an array")
+            decoded[field_name] = tuple(TargetExpressionNodeIR.from_json(item) for item in field_value)
+        elif field_name in {"candidate", "target", "compare"}:
+            decoded[field_name] = None if field_value is None else TargetExpressionNodeIR.from_json(field_value)
+        elif field_name == "predicate":
+            decoded[field_name] = None if field_value is None else ConditionIR.from_json(field_value)
+        else:
+            decoded[field_name] = field_value
+    return _validate_target_node_payload(expression_kind, decoded)
 
 
 @dataclass(frozen=True)
@@ -3521,7 +4212,6 @@ class TargetExpressionIR:
     target_expression_id: str
     expression_kind: str
     alias: str
-    payload: dict[str, JSONValue]
     source: IRSource
     node: TargetExpressionNodeIR | None = None
     coverage_status: CoverageStatus = "blocked"
@@ -3529,12 +4219,46 @@ class TargetExpressionIR:
     admission_batch: str = ""
     runtime_scope: str = "effect_target"
 
+    def __post_init__(self) -> None:
+        if type(self) is not TargetExpressionIR:
+            raise TypeError("target expression IR must not be subclassed")
+        if not isinstance(self.target_expression_id, str) or not self.target_expression_id:
+            raise ValueError("target expression identity is required")
+        if not isinstance(self.expression_kind, str) or not self.expression_kind:
+            raise ValueError("target expression kind is required")
+        if not isinstance(self.alias, str):
+            raise TypeError("target expression alias must be a string")
+        source = _target_node_source(self.source)
+        if self.node is not None and type(self.node) is not TargetExpressionNodeIR:
+            raise TypeError("target expression node must be exact typed IR")
+        if self.coverage_status not in {"executable", "blocked"}:
+            raise ValueError("target expression coverage must be executable or blocked")
+        if self.node is not None and (
+            self.node.source.source_path != source.source_path
+            or self.node.source.raw_id != source.raw_id
+            or self.node.source.evidence.get("json_path") != source.evidence.get("json_path")
+        ):
+            raise ValueError("target expression root and node source do not close")
+        node_blocked_reason = _target_node_blocked_reason(self.node) if self.node is not None else ""
+        if self.coverage_status == "executable":
+            if self.node is None or self.blocked_reason:
+                raise ValueError("executable target expression must have an unblocked node")
+            if self.node.expression_kind != self.expression_kind or node_blocked_reason:
+                raise ValueError("executable target expression contains a blocked or mismatched node")
+        elif self.coverage_status == "blocked":
+            if not self.blocked_reason:
+                raise ValueError("blocked target expression requires a reason")
+            if node_blocked_reason and self.blocked_reason != node_blocked_reason:
+                raise ValueError("blocked target expression must retain its node reason")
+        elif self.blocked_reason:
+            raise ValueError("non-blocked target expression cannot carry a block")
+        object.__setattr__(self, "source", source)
+
     def to_json(self) -> dict[str, JSONValue]:
         return {
             "target_expression_id": self.target_expression_id,
             "expression_kind": self.expression_kind,
             "alias": self.alias,
-            "payload": self.payload,
             "node": self.node.to_json() if self.node is not None else None,
             "source": self.source.to_json(),
             "coverage_status": self.coverage_status,
@@ -3542,6 +4266,38 @@ class TargetExpressionIR:
             "admission_batch": self.admission_batch,
             "runtime_scope": self.runtime_scope,
         }
+
+    @property
+    def fingerprint(self) -> str:
+        encoded = json.dumps(self.to_json(), ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        return sha256(encoded).hexdigest()
+
+    @classmethod
+    def from_json(cls, value: object) -> "TargetExpressionIR":
+        if not isinstance(value, Mapping) or set(value) != {
+            "target_expression_id",
+            "expression_kind",
+            "alias",
+            "node",
+            "source",
+            "coverage_status",
+            "blocked_reason",
+            "admission_batch",
+            "runtime_scope",
+        }:
+            raise ValueError("target expression JSON schema is invalid")
+        node_value = value.get("node")
+        return cls(
+            target_expression_id=_json_required_string(value, "target_expression_id"),
+            expression_kind=_json_required_string(value, "expression_kind"),
+            alias=_json_required_string(value, "alias"),
+            node=None if node_value is None else TargetExpressionNodeIR.from_json(node_value),
+            source=_ir_source_from_json(value.get("source")),
+            coverage_status=cast(CoverageStatus, _json_required_string(value, "coverage_status")),
+            blocked_reason=_json_required_string(value, "blocked_reason"),
+            admission_batch=_json_required_string(value, "admission_batch"),
+            runtime_scope=_json_required_string(value, "runtime_scope"),
+        )
 
 
 @dataclass(frozen=True)

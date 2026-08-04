@@ -2048,6 +2048,23 @@ class RuleBook:
         )
         object.__setattr__(self, "_target_expressions", target_expressions)
         object.__setattr__(self, "_target_expression_conflicts", target_expression_conflicts)
+        target_expressions_by_source: dict[tuple[str, str], list[TargetExpressionIR]] = {}
+        for expression in self.ir.target_expressions:
+            json_path = expression.source.evidence.get("json_path")
+            if not isinstance(json_path, str) or not json_path:
+                raise ValueError("target expression source JSON path is missing")
+            target_expressions_by_source.setdefault(
+                (expression.source.source_path, json_path),
+                [],
+            ).append(expression)
+        object.__setattr__(
+            self,
+            "_target_expressions_by_source",
+            {
+                key: tuple(sorted(values, key=lambda item: item.target_expression_id))
+                for key, values in target_expressions_by_source.items()
+            },
+        )
         wave_definitions_by_stage: dict[str, list[WaveDefinitionIR]] = {}
         wave_entries_by_definition_wave: dict[tuple[str, int], list[WaveMonsterEntryIR]] = {}
         for definition in self.ir.wave_definitions:
@@ -2966,6 +2983,18 @@ class RuleBook:
 
     def target_expressions(self) -> tuple[TargetExpressionIR, ...]:
         return self.ir.target_expressions
+
+    def target_expressions_for_source(
+        self,
+        source_path: str,
+        json_path: str,
+    ) -> tuple[TargetExpressionIR, ...]:
+        """Return the exact target expressions lowered from one raw node path."""
+        if not isinstance(source_path, str) or not source_path:
+            raise ValueError("target source path is required")
+        if not isinstance(json_path, str) or not json_path:
+            raise ValueError("target JSON path is required")
+        return self._target_expressions_by_source.get((source_path, json_path), ())
 
     def wave_definition(self, wave_definition_id: str) -> WaveDefinitionIR | None:
         return self._wave_definitions.get(wave_definition_id)

@@ -1252,7 +1252,7 @@ class StatusCallbackSystem:
                 )
             ),
         )
-        if not resolution.ok:
+        if not resolution.resolved:
             reason = resolution.blocked_reason or "retarget_resolution_failed"
             return StatusCallbackExecutionResult(
                 ok=False,
@@ -1818,7 +1818,7 @@ class StatusCallbackSystem:
             )
             target_rng_events = resolution.rng_events
             target_resolution_payload = resolution.to_json()
-            if not resolution.ok:
+            if not resolution.resolved:
                 reason = resolution.blocked_reason or "target_expression_resolution_failed"
                 if (
                     str(alias)
@@ -2471,7 +2471,7 @@ class StatusCallbackSystem:
                 dynamic_values=context.dynamic_values,
                 binding_sources=context.binding_sources,
             )
-            if not resolution.ok or not resolution.target_ids:
+            if not resolution.resolved or not resolution.target_ids:
                 reason = (
                     resolution.blocked_reason
                     or "additional_damage_target_resolution_failed"
@@ -4240,7 +4240,7 @@ def _condition_context(
                 event_payload=payload,
                 binding_sources=callback_binding_sources,
             )
-            if resolution.ok:
+            if resolution.resolved:
                 resolved_target_groups[key] = resolution.target_ids
             else:
                 target_resolution_errors[key] = resolution.blocked_reason

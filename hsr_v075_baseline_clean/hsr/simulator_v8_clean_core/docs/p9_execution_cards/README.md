@@ -1,10 +1,13 @@
-# P9-S0 至 P9-S20 执行卡索引
+# P9 执行卡索引
 
 ## 1. 用途
 
 本目录保存 P9 非记忆、非欢愉角色共享机制收口的单阶段执行卡。总目标、严格依赖和唯一
 阶段 checklist 位于 `P9_CHARACTER_SHARED_MECHANISM_CLOSURE_TASK_PLAN.md`。本目录不是
 第二套总计划；每个文件只约束一个阶段。
+
+P9-S5 已按目标 IR、实体关系、动作交互和随机账本拆为 S5A-S5D。不存在可执行的旧 S5
+总卡；执行线程必须严格按 A、B、C、D 顺序推进，不能合并施工。
 
 执行线程最多提交 `ready_for_review`，不得勾总计划、提交 Git 或提前进入下一卡。验收线程
 通过代码审查和聚焦 evidence 后才更新卡片与总 checklist，并建立阶段检查点。
@@ -28,6 +31,22 @@
 - 不能以旧验证变绿作为目标；旧假设过时则迁移仍有效谓词或退役。
 - 不兼容旧弱接口时不建双轨兼容层，除非用户明确要求。
 - 发现记忆、欢愉或非战斗产品范围时分类记录，不提前实现。
+
+### `ready_for_review` 硬门槛
+
+提交前必须在报告中逐项给出以下闭合证据；缺一项不得使用 `ready_for_review`：
+
+1. 当前卡定义的非法、矛盾或未准入状态已由生产模型、lowering、装配或原子提交边界直接
+   拒绝，不能只依靠验证器发现，也不能留给 runtime 静默忽略。
+2. 本次改变的公开类型、返回状态和字段已通过 CodeGraph 核对全部正式生产调用者；报告列出
+   实际迁移范围和仍保留旧接口的明确理由，不能只搜索卡内点名样例。
+3. 当前目录全部已知 gap 已按原因和下游 owner 聚合；每个分组至少保留一个包含文件、记录
+   身份和具体位置的代表来源。允许后续阶段负责，但不得漏报或用通用原因覆盖精确 blocker。
+4. 每项执行清单都有生产不变量、正式调用链或真实来源 evidence 对应。一个边界只保留一个
+   最小负例；不得增加并列 CLI、重复 matrix 或验证专用 runtime 来制造完成证据。
+
+任一项未闭合时提交 `blocked`；发现卡片职责或语义错误时提交 `plan_mismatch`；仅缺少卡内
+明确导航信息时提交 `context_gap`。已接受的 deferred 不阻止提交，但必须满足第三项交接要求。
 
 ## 4. 共用验证协议
 
@@ -75,6 +94,10 @@ git diff --check
 到达任一上限立即停止并提交资源证据。不得提高限制、并发补跑、压缩可读性或拆文件绕过
 代码预算。主入口达到单次预算 80% 即使通过，也必须先缩窄投影/evidence 才能最终验收。
 
+S5A-S5D 是原 S5 的职责拆分，不获得四倍验证预算。后序卡不得重跑前序主入口；四次最终
+主入口墙钟合计目标 20 分钟、evidence 合计 8 MiB、新增验证代码合计目标 2,400 非空行。
+超过任一总量应暂停重新划分证据，不能通过增加 CLI mode 或重复矩阵继续扩张。
+
 ## 6. Gap 口径
 
 - `source_gap_blocked`：raw 确实缺失或无法唯一证明；必须排除扫描/lowering/谓词错误。
@@ -94,7 +117,10 @@ git diff --check
 | S2 | `P9-S2_TRACE_EIDOLON_BUILD_BINDING.md` | 5.6 Sol / max / Goal |
 | S3 | `P9-S3_OBFUSCATED_SOURCE_RESOLUTION.md` | 5.6 Sol / max / Goal |
 | S4 | `P9-S4_NUMERIC_DYNAMIC_VALUE_CLOSURE.md` | 5.6 Sol / max / 普通聚焦 |
-| S5 | `P9-S5_TARGET_ENTITY_RELATION_CLOSURE.md` | 5.6 Sol / max / 普通聚焦 |
+| S5A | `P9-S5A_TARGET_SOURCE_AND_TYPED_CONTRACT.md` | 5.6 Terra / xhigh / 普通聚焦 |
+| S5B | `P9-S5B_ENTITY_RELATION_DETERMINISTIC_TARGET.md` | 5.6 Terra / xhigh / Goal |
+| S5C | `P9-S5C_ACTION_TARGET_QUERY_SUBMIT.md` | 5.6 Terra / xhigh / 普通聚焦 |
+| S5D | `P9-S5D_RANDOM_TARGET_AND_AGGREGATE.md` | 5.6 Sol / xhigh / 普通聚焦 |
 | S6 | `P9-S6_STATE_ENTITY_CONDITION_CLOSURE.md` | 5.6 Sol / xhigh / Goal |
 | S7 | `P9-S7_CONTEXTUAL_CONDITION_CLOSURE.md` | 5.6 Sol / max / Goal |
 | S8 | `P9-S8_CONTROL_FLOW_SEQUENCE_CLOSURE.md` | 5.6 Sol / max / Goal |

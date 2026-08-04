@@ -1114,7 +1114,7 @@ class AbilityTaskSystem:
                 event_payload=event_payload,
                 binding_sources=binding_sources,
             )
-            if target_result.ok:
+            if target_result.resolved:
                 resolved_target_groups[field_name] = target_result.target_ids
             else:
                 target_resolution_errors[field_name] = target_result.blocked_reason

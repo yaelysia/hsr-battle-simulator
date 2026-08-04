@@ -3,7 +3,7 @@
 ## 执行配置
 
 - 对应问题：P9-I07 第一部分；机制包 M05。
-- 硬前置：P9-S5 已验收并形成检查点。
+- 硬前置：P9-S5D 已验收并形成检查点，即 S5A-S5D 四段均已通过。
 - 推荐：5.6 Sol / `xhigh` / Goal 模式。
 - 理由：条件数量较多但本卡只处理 committed state、数据卡身份和目标集合可直接提供的 operand，适合按 family 批量闭合。
 
@@ -21,7 +21,7 @@ body-part 等条件通过统一 operand + comparator + quantifier 求值。
 1. 从当前 45 个缺口动态分区；不得手工维护固定名单作为完整性来源。
 2. 建立 committed-state operand：属性/生命、角色与怪物卡身份、队伍/实体关系、状态/行为标记、目标集合。
 3. 建立 any/all/not/and 等组合和列表量词的短路、空集合和 blocked 语义。
-4. 复用 S4 numeric、S5 target/relation，不在 evaluator 复制取值逻辑。
+4. 复用 S4 numeric、S5A typed target 和 S5B relation，不在 evaluator 复制取值逻辑。
 5. 未知 property、错误 operand kind、跨实体身份和关系损坏返回 blocked，不返回 false 掩盖错误。
 6. 输出 S7 继承的剩余 family manifest、来源指纹和所需 transient context 字段。
 
@@ -46,7 +46,7 @@ body-part 等条件通过统一 operand + comparator + quantifier 求值。
 | 分区完整 | S6/S7 合集等于当前缺口，交集为空 | condition partition |
 | S6 family 闭合 | 每族 lowering/evaluator/负例一致 | state-condition matrix |
 | 组合语义正确 | any/all/and/not 与 empty/blocked 分离 | quantifier matrix |
-| 上下文复用 | operand 由 S4/S5/committed state 提供 | call-path audit |
+| 上下文复用 | operand 由 S4/S5A-S5B/committed state 提供 | call-path audit |
 | S7 依赖清晰 | 每个剩余族记录所需 transient context | handoff manifest |
 
 ## 结构化通过谓词
@@ -75,7 +75,7 @@ character_specific_condition_handlers=0
 
 - `rules/evaluator.py`、`rules/expression_ir.py`、`rules/ir.py`。
 - `tbgd/expression_lowering.py` 的条件 operand/quantifier 投影。
-- S4/S5 公共查询只做必要扩展；不改事件/伤害生产者。
+- S4/S5A-S5B 公共查询只做必要扩展；不改事件/伤害生产者。
 - 主验证 `tools/validate_p9_s6_state_entity_condition_closure.py` 和报告。
 
 ## 验证与资源
@@ -90,6 +90,6 @@ character_specific_condition_handlers=0
 - [ ] 当前缺口条件形成 S6/S7 穷尽互斥分区。
 - [ ] S6 committed-state/entity/list family 零内部 gap。
 - [ ] false、blocked、empty 和组合量词语义正确。
-- [ ] 复用 S4/S5 operand 与 relation，无重复取值系统。
+- [ ] 复用 S4/S5A-S5B operand 与 relation，无重复取值系统。
 - [ ] S7 剩余 manifest 当前、完整、可追溯。
 - [ ] 主验证、必要 direct 和资源审计通过并提交 `ready_for_review`。
